@@ -22,16 +22,21 @@ type IntegrationsHandler struct {
 	integrationStatus *store.IntegrationStatusStore
 	db                database.DBProvider
 	notify            *notifications.Emitter
+	reports           *store.ReportStore
 }
 
 // NewIntegrationsHandler creates a new integrations handler.
-func NewIntegrationsHandler(hosts *store.HostsStore, docker *store.DockerStore, integrationStatus *store.IntegrationStatusStore, db database.DBProvider, notify *notifications.Emitter) *IntegrationsHandler {
+// reports is optional; when non-nil the docker endpoint records an Agent
+// Activity row for every inbound payload so the per-host timeline shows
+// integration cycles alongside report and ping cycles.
+func NewIntegrationsHandler(hosts *store.HostsStore, docker *store.DockerStore, integrationStatus *store.IntegrationStatusStore, db database.DBProvider, notify *notifications.Emitter, reports *store.ReportStore) *IntegrationsHandler {
 	return &IntegrationsHandler{
 		hosts:             hosts,
 		docker:            docker,
 		integrationStatus: integrationStatus,
 		db:                db,
 		notify:            notify,
+		reports:           reports,
 	}
 }
 
@@ -260,6 +265,7 @@ func convertDockerPayloadToStore(p *dockerPayloadReq) *store.DockerReceivePayloa
 
 // ReceiveDockerData handles POST /api/v1/integrations/docker (agent endpoint, API key auth).
 func (h *IntegrationsHandler) ReceiveDockerData(w http.ResponseWriter, r *http.Request) {
+	dockerStart := time.Now()
 	defer func() {
 		if err := recover(); err != nil {
 			slog.Error("integrations docker handler panic", "error", err, "stack", string(debug.Stack()))
@@ -387,6 +393,30 @@ func (h *IntegrationsHandler) ReceiveDockerData(w http.ResponseWriter, r *http.R
 				"updates_found": result.UpdatesFound,
 			},
 		})
+	}
+
+	// Record one Agent Activity row for the docker integration cycle. The
+	// docker section ALWAYS counts as "Updated" here — the agent only POSTs
+	// to this endpoint when the server's last ping flagged docker as stale,
+	// so by definition fresh data arrived.
+	if h.reports != nil {
+		procSec := time.Since(dockerStart).Seconds()
+		var payloadKb *float64
+		if r.ContentLength > 0 {
+			v := float64(r.ContentLength) / 1024.0
+			payloadKb = &v
+		}
+		if err := h.reports.InsertActivityRow(r.Context(), store.AgentActivityInsert{
+			HostID:            host.ID,
+			ReportType:        "docker",
+			SectionsSent:      []string{"docker"},
+			SectionsUnchanged: []string{},
+			PayloadSizeKb:     payloadKb,
+			ServerProcessing:  &procSec,
+			Status:            "success",
+		}); err != nil {
+			slog.Warn("docker: failed to record agent activity row", "host_id", host.ID, "error", err)
+		}
 	}
 
 	JSON(w, http.StatusOK, dockerResponse{

@@ -42,6 +42,7 @@ type ResolvedConfig struct {
 	DefaultUserRole             string
 	SessionInactivityTimeoutMin int
 	PatchRunStallTimeoutMin     int
+	AgentReportsRetentionDays   int
 	TfaMaxRememberSessions      int
 	DBTransactionLongTimeout    int
 	JwtExpiresIn                string
@@ -91,6 +92,9 @@ func ResolveConfig(ctx context.Context, cfg *Config, settings *models.Settings) 
 	// A sub-5-minute stall window kills patch runs that are still
 	// legitimately starting on slow hosts.
 	out.PatchRunStallTimeoutMin = clampPatchRunStall(resolveInt("PATCH_RUN_STALL_TIMEOUT_MIN", settings.PatchRunStallTimeoutMinutes, cfg.PatchRunStallTimeoutMin))
+	// Re-clamp at every resolve so a DB-edited value below the floor (or
+	// above the ceiling) can't bypass the env-loader's safety bounds.
+	out.AgentReportsRetentionDays = clampAgentReportsRetentionDays(resolveInt("AGENT_REPORTS_RETENTION_DAYS", settings.AgentReportsRetentionDays, cfg.AgentReportsRetentionDays))
 	out.TfaMaxRememberSessions = resolveInt("TFA_MAX_REMEMBER_SESSIONS", settings.TfaMaxRememberSessions, cfg.TfaMaxRememberSessions)
 	out.DBTransactionLongTimeout = resolveInt("DB_TRANSACTION_LONG_TIMEOUT", settings.DBTransactionLongTimeout, cfg.DBTransactionLongTimeout)
 	out.JwtExpiresIn = resolveString("JWT_EXPIRES_IN", settings.JwtExpiresIn, cfg.JWTExpiresIn)
@@ -130,6 +134,7 @@ func resolveFromEnvAndDefaults(cfg *Config) *ResolvedConfig {
 		DefaultUserRole:             cfg.DefaultUserRole,
 		SessionInactivityTimeoutMin: cfg.SessionInactivityTimeoutMin,
 		PatchRunStallTimeoutMin:     clampPatchRunStall(cfg.PatchRunStallTimeoutMin),
+		AgentReportsRetentionDays:   clampAgentReportsRetentionDays(cfg.AgentReportsRetentionDays),
 		TfaMaxRememberSessions:      cfg.TfaMaxRememberSessions,
 		DBTransactionLongTimeout:    cfg.DBTransactionLongTimeout,
 		JwtExpiresIn:                cfg.JWTExpiresIn,
@@ -146,6 +151,20 @@ func resolveFromEnvAndDefaults(cfg *Config) *ResolvedConfig {
 func clampPatchRunStall(v int) int {
 	if v < 5 {
 		return 5
+	}
+	return v
+}
+
+// clampAgentReportsRetentionDays enforces the 7..365 day window the env
+// loader applies. Re-clamped at every resolve so a DB-edited value can't
+// bypass the bounds even after restart. Mirrors the validator in
+// store.UpdateConfigKey for symmetric three-layer validation.
+func clampAgentReportsRetentionDays(v int) int {
+	if v < 7 {
+		return 7
+	}
+	if v > 365 {
+		return 365
 	}
 	return v
 }

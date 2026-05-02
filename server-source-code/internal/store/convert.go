@@ -106,6 +106,7 @@ func dbSettingToModel(s db.Setting) models.Settings {
 		LockoutDurationMinutes:          pgInt32ToIntPtr(s.LockoutDurationMinutes),
 		SessionInactivityTimeoutMinutes: pgInt32ToIntPtr(s.SessionInactivityTimeoutMinutes),
 		PatchRunStallTimeoutMinutes:     pgInt32ToIntPtr(s.PatchRunStallTimeoutMinutes),
+		AgentReportsRetentionDays:       pgInt32ToIntPtr(s.AgentReportsRetentionDays),
 		TfaMaxRememberSessions:          pgInt32ToIntPtr(s.TfaMaxRememberSessions),
 		PasswordMinLength:               pgInt32ToIntPtr(s.PasswordMinLength),
 		PasswordRequireUppercase:        s.PasswordRequireUppercase,

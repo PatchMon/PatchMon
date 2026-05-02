@@ -43,6 +43,11 @@ type PingRequest struct {
 	Hashes       PingHashes  `json:"hashes,omitempty"`
 	Metrics      PingMetrics `json:"metrics,omitempty"`
 	AgentVersion string      `json:"agentVersion,omitempty"`
+	// AgentExecutionMs is the agent-side wall-clock time in milliseconds
+	// spent collecting the data shipped in this ping (mostly hashing). Used
+	// by the Agent Activity UI to surface "agent took N ms" alongside the
+	// server-processing duration. Optional — older agents may omit it.
+	AgentExecutionMs *int `json:"agentExecutionMs,omitempty"`
 }
 
 // SectionPackages and friends are the closed set of section identifiers used
@@ -54,6 +59,7 @@ const (
 	SectionRepos      = "repos"
 	SectionInterfaces = "interfaces"
 	SectionHostname   = "hostname"
+	SectionMetrics    = "metrics"
 	SectionDocker     = "docker"
 	SectionCompliance = "compliance"
 )

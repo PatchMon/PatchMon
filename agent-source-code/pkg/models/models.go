@@ -116,6 +116,10 @@ type ReportPayload struct {
 	// included in the payload. Server validates against its own canonical
 	// hash and stores them so the next ping can hash-gate.
 	Hashes ReportHashes `json:"hashes,omitempty"`
+	// AgentExecutionMs is the wall-clock time in milliseconds the agent
+	// spent collecting the data shipped in this report. Used by the server's
+	// Agent Activity feed; older servers ignore it.
+	AgentExecutionMs *int `json:"agentExecutionMs,omitempty"`
 }
 
 // ReportHashes is the four "main report" canonical hashes the agent ships
@@ -158,6 +162,10 @@ type PingRequest struct {
 	Hashes       PingHashes  `json:"hashes,omitempty"`
 	Metrics      PingMetrics `json:"metrics,omitempty"`
 	AgentVersion string      `json:"agentVersion,omitempty"`
+	// AgentExecutionMs is the wall-clock time in milliseconds the agent
+	// spent collecting the data shipped in this ping. Used by the server's
+	// Agent Activity feed; older servers ignore it.
+	AgentExecutionMs *int `json:"agentExecutionMs,omitempty"`
 }
 
 // Section identifiers used in PingResponse.RequestFull and
@@ -168,6 +176,7 @@ const (
 	SectionRepos      = "repos"
 	SectionInterfaces = "interfaces"
 	SectionHostname   = "hostname"
+	SectionMetrics    = "metrics"
 	SectionDocker     = "docker"
 	SectionCompliance = "compliance"
 )

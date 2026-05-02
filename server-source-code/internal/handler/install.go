@@ -320,6 +320,7 @@ func (h *InstallHandler) BootstrapExchange(w http.ResponseWriter, r *http.Reques
 // (without `requestFull`), and their next /hosts/update is treated as a
 // full report.
 func (h *InstallHandler) ServePing(w http.ResponseWriter, r *http.Request) {
+	pingStart := time.Now()
 	defer func() {
 		if err := recover(); err != nil {
 			slog.Error("ping handler panic", "error", err, "stack", string(debug.Stack()))
@@ -424,6 +425,66 @@ func (h *InstallHandler) ServePing(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(requestFull) > 0 {
 		resp["requestFull"] = requestFull
+	}
+
+	// Record one update_history row per ping cycle for the Agent Activity
+	// feed. Best-effort: failure is logged but does not fail the ping — the
+	// agent has already done its work and the activity row is a UI nicety.
+	// sections_unchanged = enabled hash-gated sections \ requestFull (server
+	// is happy with whatever the agent has stored for those). Metrics ride on
+	// every ping body, so they are the only "updated" section for a normal
+	// body ping; legacy empty-body pings emit no updated sections.
+	stale := make(map[string]struct{}, len(requestFull))
+	for _, s := range requestFull {
+		stale[s] = struct{}{}
+	}
+	pingSections := []string{
+		models.SectionPackages,
+		models.SectionRepos,
+		models.SectionInterfaces,
+		models.SectionHostname,
+	}
+	if checkin.DockerEnabled {
+		pingSections = append(pingSections, models.SectionDocker)
+	}
+	if checkin.ComplianceEnabled {
+		pingSections = append(pingSections, models.SectionCompliance)
+	}
+	unchanged := []string{}
+	if hasBody {
+		unchanged = make([]string, 0, len(pingSections))
+		for _, s := range pingSections {
+			if _, ok := stale[s]; !ok {
+				unchanged = append(unchanged, s)
+			}
+		}
+	}
+	sectionsSent := []string{}
+	if hasBody {
+		sectionsSent = append(sectionsSent, models.SectionMetrics)
+	}
+	procSec := time.Since(pingStart).Seconds()
+	var payloadKb *float64
+	if r.ContentLength > 0 {
+		v := float64(r.ContentLength) / 1024.0
+		payloadKb = &v
+	}
+	var agentExec *int
+	if hasBody && req.AgentExecutionMs != nil {
+		agentExec = req.AgentExecutionMs
+	}
+	if err := h.reports.InsertActivityRow(r.Context(), store.AgentActivityInsert{
+		HostID:            checkin.ID,
+		ReportType:        "ping",
+		SectionsSent:      sectionsSent,
+		SectionsUnchanged: unchanged,
+		PayloadSizeKb:     payloadKb,
+		ServerProcessing:  &procSec,
+		AgentExecutionMs:  agentExec,
+		Status:            "success",
+		ErrorMessage:      nil,
+	}); err != nil {
+		slog.Warn("ping: failed to record agent activity row", "host_id", checkin.ID, "error", err)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

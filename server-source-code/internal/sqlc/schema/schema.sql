@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS settings (
     lockout_duration_minutes INTEGER,
     session_inactivity_timeout_minutes INTEGER,
     patch_run_stall_timeout_minutes INTEGER,
+    agent_reports_retention_days INTEGER,
     tfa_max_remember_sessions INTEGER,
     password_min_length INTEGER,
     password_require_uppercase BOOLEAN,
@@ -338,8 +339,16 @@ CREATE TABLE IF NOT EXISTS update_history (
     execution_time DOUBLE PRECISION,
     timestamp TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     status TEXT NOT NULL DEFAULT 'success',
-    error_message TEXT
+    error_message TEXT,
+    report_type TEXT NOT NULL DEFAULT 'full',
+    sections_sent TEXT[] NOT NULL DEFAULT '{}',
+    sections_unchanged TEXT[] NOT NULL DEFAULT '{}',
+    agent_execution_ms INTEGER
 );
+CREATE INDEX IF NOT EXISTS idx_update_history_host_id_timestamp
+    ON update_history (host_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_update_history_timestamp_for_retention
+    ON update_history (timestamp);
 
 -- system_statistics
 CREATE TABLE IF NOT EXISTS system_statistics (

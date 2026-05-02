@@ -586,6 +586,74 @@ func (h *PatchRunCleanupHandler) cleanupDB(ctx context.Context, d *database.DB, 
 	})
 }
 
+// AgentReportsCleanupHandler sweeps update_history (the Agent Activity feed
+// table) on a daily schedule, deleting rows older than the configured
+// retention window. Mirrors PatchRunCleanupHandler exactly: a getRetentionDays
+// closure is invoked once per sweep so DB-edited values take effect on the
+// next cron tick without a server restart.
+type AgentReportsCleanupHandler struct {
+	defaultDB        *database.DB
+	poolCache        *hostctx.PoolCache
+	log              *slog.Logger
+	getRetentionDays func() int
+}
+
+// NewAgentReportsCleanupHandler creates an agent-reports-cleanup handler.
+// getRetentionDays is invoked once per sweep to read the current effective
+// retention (env -> DB -> default). Pass nil only in test fixtures; the
+// worker falls back to 30 days when the callback is missing.
+func NewAgentReportsCleanupHandler(defaultDB *database.DB, poolCache *hostctx.PoolCache, log *slog.Logger, getRetentionDays func() int) *AgentReportsCleanupHandler {
+	return &AgentReportsCleanupHandler{defaultDB: defaultDB, poolCache: poolCache, log: log, getRetentionDays: getRetentionDays}
+}
+
+// ProcessTask implements asynq.Handler.
+func (h *AgentReportsCleanupHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
+	retentionDays := h.resolveRetentionDays()
+	if len(t.Payload()) > 0 {
+		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		count, err := h.cleanupDB(ctx, d, retentionDays)
+		if err != nil {
+			return err
+		}
+		if count > 0 {
+			h.log.Info("agent reports cleanup: deleted", "count", count, "retention_days", retentionDays)
+		}
+		return nil
+	}
+	forEachDB(ctx, h.defaultDB, h.poolCache, func(ctx context.Context, d *database.DB, host string) {
+		count, err := h.cleanupDB(ctx, d, retentionDays)
+		if err != nil {
+			h.log.Warn("agent reports cleanup failed", "host", host, "error", err)
+			return
+		}
+		if count > 0 {
+			h.log.Info("agent reports cleanup: deleted", "host", host, "count", count, "retention_days", retentionDays)
+		}
+	})
+	h.log.Info("agent reports cleanup completed", "retention_days", retentionDays)
+	return nil
+}
+
+func (h *AgentReportsCleanupHandler) resolveRetentionDays() int {
+	if h.getRetentionDays == nil {
+		return 30
+	}
+	v := h.getRetentionDays()
+	// Mirror the env-loader bounds; defensive against a stale callback that
+	// might temporarily return an out-of-range value during a config swap.
+	if v < 7 {
+		return 7
+	}
+	if v > 365 {
+		return 365
+	}
+	return v
+}
+
+func (h *AgentReportsCleanupHandler) cleanupDB(ctx context.Context, d *database.DB, retentionDays int) (int64, error) {
+	return d.Queries.DeleteOldUpdateHistory(ctx, int32(retentionDays))
+}
+
 // AlertCleanupHandler handles alert-cleanup jobs.
 type AlertCleanupHandler struct {
 	defaultDB   *database.DB

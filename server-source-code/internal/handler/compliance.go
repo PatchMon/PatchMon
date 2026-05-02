@@ -38,10 +38,13 @@ type ComplianceHandler struct {
 	integrationStatus *store.IntegrationStatusStore
 	ssgContentDir     string
 	notify            *notifications.Emitter
+	reports           *store.ReportStore
 }
 
 // NewComplianceHandler creates a new compliance handler.
-func NewComplianceHandler(complianceStore *store.ComplianceStore, hostsStore *store.HostsStore, registry *agentregistry.Registry, queueClient *asynq.Client, queueInspector *asynq.Inspector, integrationStatus *store.IntegrationStatusStore, ssgContentDir string, notify *notifications.Emitter) *ComplianceHandler {
+// reports is optional; when non-nil ReceiveScans records an Agent Activity
+// row per inbound compliance payload.
+func NewComplianceHandler(complianceStore *store.ComplianceStore, hostsStore *store.HostsStore, registry *agentregistry.Registry, queueClient *asynq.Client, queueInspector *asynq.Inspector, integrationStatus *store.IntegrationStatusStore, ssgContentDir string, notify *notifications.Emitter, reports *store.ReportStore) *ComplianceHandler {
 	return &ComplianceHandler{
 		complianceStore:   complianceStore,
 		hostsStore:        hostsStore,
@@ -51,6 +54,7 @@ func NewComplianceHandler(complianceStore *store.ComplianceStore, hostsStore *st
 		integrationStatus: integrationStatus,
 		ssgContentDir:     ssgContentDir,
 		notify:            notify,
+		reports:           reports,
 	}
 }
 
@@ -239,6 +243,7 @@ type complianceResultItem struct {
 
 // ReceiveScans handles POST /api/v1/compliance/scans (agent endpoint, API key auth).
 func (h *ComplianceHandler) ReceiveScans(w http.ResponseWriter, r *http.Request) {
+	scanStart := time.Now()
 	apiID := r.Header.Get("X-API-ID")
 	apiKey := r.Header.Get("X-API-KEY")
 	if apiID == "" || apiKey == "" {
@@ -489,6 +494,30 @@ func (h *ComplianceHandler) ReceiveScans(w http.ResponseWriter, r *http.Request)
 					},
 				})
 			}
+		}
+	}
+
+	// Record one Agent Activity row for the compliance scan submission. Like
+	// docker, the compliance section is always "Updated" here — the agent
+	// only POSTs scans when the server's last ping flagged compliance as
+	// stale (or the agent ran a scheduled scan).
+	if h.reports != nil {
+		procSec := time.Since(scanStart).Seconds()
+		var payloadKb *float64
+		if r.ContentLength > 0 {
+			v := float64(r.ContentLength) / 1024.0
+			payloadKb = &v
+		}
+		if err := h.reports.InsertActivityRow(r.Context(), store.AgentActivityInsert{
+			HostID:            host.ID,
+			ReportType:        "compliance",
+			SectionsSent:      []string{"compliance"},
+			SectionsUnchanged: []string{},
+			PayloadSizeKb:     payloadKb,
+			ServerProcessing:  &procSec,
+			Status:            "success",
+		}); err != nil {
+			slog.Warn("compliance: failed to record agent activity row", "host_id", host.ID, "error", err)
 		}
 	}
 

@@ -475,7 +475,7 @@ func (h *ApiHostsHandler) GetHostAgentQueue(w http.ResponseWriter, r *http.Reque
 	}
 	queueStatus := map[string]int{"waiting": 0, "active": 0, "delayed": 0, "failed": 0}
 	if h.inspector != nil {
-		data, err := queue.GetHostJobs(ctx, h.inspector, host.ApiID, limit)
+		data, err := queue.GetHostJobs(ctx, h.inspector, id, host.ApiID, limit)
 		if err == nil {
 			queueStatus["waiting"] = data.Waiting
 			queueStatus["active"] = data.Active

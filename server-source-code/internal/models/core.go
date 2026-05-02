@@ -164,6 +164,7 @@ type Settings struct {
 	LockoutDurationMinutes          *int       `db:"lockout_duration_minutes"`
 	SessionInactivityTimeoutMinutes *int       `db:"session_inactivity_timeout_minutes"`
 	PatchRunStallTimeoutMinutes     *int       `db:"patch_run_stall_timeout_minutes"`
+	AgentReportsRetentionDays       *int       `db:"agent_reports_retention_days"`
 	TfaMaxRememberSessions          *int       `db:"tfa_max_remember_sessions"`
 	PasswordMinLength               *int       `db:"password_min_length"`
 	PasswordRequireUppercase        *bool      `db:"password_require_uppercase"`

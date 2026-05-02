@@ -128,6 +128,11 @@ type ReportPayload struct {
 	// included. Server validates them against its own canonicalisation and
 	// stores them on the host row so the next ping can be hash-gated.
 	Hashes ReportHashes `json:"hashes,omitempty"`
+	// AgentExecutionMs is the agent-side data-collection wall-clock time in
+	// milliseconds. Optional (older agents may omit it); when present it is
+	// stored on the matching update_history row so the Agent Activity UI can
+	// show "agent took N ms" alongside the server-processing duration.
+	AgentExecutionMs *int `json:"agentExecutionMs,omitempty"`
 }
 
 // ReportHashes is the four "main report" canonical hashes the agent ships
@@ -145,6 +150,60 @@ type ProcessReportResult struct {
 	PackagesProcessed int
 	UpdatesAvailable  int
 	SecurityUpdates   int
+}
+
+// AgentActivityInsert is the thin set of fields the synchronous "side-channel"
+// handlers (ping, docker integration, compliance scan) write to update_history
+// for the Agent Activity feed. The full /hosts/update path goes through
+// ProcessReport directly and uses its own InsertUpdateHistory call inside the
+// transaction.
+type AgentActivityInsert struct {
+	HostID            string
+	ReportType        string // "ping" | "docker" | "compliance"
+	SectionsSent      []string
+	SectionsUnchanged []string
+	PayloadSizeKb     *float64
+	ServerProcessing  *float64 // store unit is seconds (matches execution_time legacy)
+	AgentExecutionMs  *int
+	Status            string  // "success" | "error"
+	ErrorMessage      *string // optional human-readable failure reason
+}
+
+// InsertActivityRow inserts a single non-/hosts/update agent comm row into
+// update_history. Used by the ping handler, docker integration handler, and
+// compliance handler so the Agent Activity feed shows every cycle (not just
+// full/partial reports). Failure here is intentionally non-fatal at the call
+// site — the activity row is a UI nicety, not part of the core data path.
+func (s *ReportStore) InsertActivityRow(ctx context.Context, in AgentActivityInsert) error {
+	d := s.db.DB(ctx)
+	sectionsSent := in.SectionsSent
+	if sectionsSent == nil {
+		sectionsSent = []string{}
+	}
+	sectionsUnchanged := in.SectionsUnchanged
+	if sectionsUnchanged == nil {
+		sectionsUnchanged = []string{}
+	}
+	var agentExec *int32
+	if in.AgentExecutionMs != nil {
+		v := int32(*in.AgentExecutionMs)
+		agentExec = &v
+	}
+	return d.Queries.InsertUpdateHistory(ctx, db.InsertUpdateHistoryParams{
+		ID:                uuid.New().String(),
+		HostID:            in.HostID,
+		PackagesCount:     0,
+		SecurityCount:     0,
+		TotalPackages:     nil,
+		PayloadSizeKb:     in.PayloadSizeKb,
+		ExecutionTime:     in.ServerProcessing,
+		Status:            in.Status,
+		ErrorMessage:      in.ErrorMessage,
+		ReportType:        in.ReportType,
+		SectionsSent:      sectionsSent,
+		SectionsUnchanged: sectionsUnchanged,
+		AgentExecutionMs:  agentExec,
+	})
 }
 
 // ReportSections selects which top-level blocks ProcessReport will write.
@@ -186,6 +245,43 @@ func SectionsFromList(names []string) ReportSections {
 		}
 	}
 	return s
+}
+
+// mainSectionsFromSections returns the section identifiers (closed set) the
+// agent shipped fresh data for. Used to populate update_history.sections_sent
+// for the Agent Activity feed.
+func mainSectionsFromSections(s ReportSections) []string {
+	out := []string{}
+	if s.Packages {
+		out = append(out, "packages")
+	}
+	if s.Repos {
+		out = append(out, "repos")
+	}
+	if s.Interfaces {
+		out = append(out, "interfaces")
+	}
+	if s.Hostname {
+		out = append(out, "hostname")
+	}
+	return out
+}
+
+// mainSectionsUnchanged returns the main-report section identifiers NOT in
+// `sent`. Drives the "Skipped" chip rendering in the Agent Activity UI.
+func mainSectionsUnchanged(sent []string) []string {
+	all := []string{"packages", "repos", "interfaces", "hostname"}
+	in := make(map[string]struct{}, len(sent))
+	for _, s := range sent {
+		in[s] = struct{}{}
+	}
+	out := make([]string, 0, len(all))
+	for _, s := range all {
+		if _, ok := in[s]; !ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // sortReportInputs sorts payload.Packages and payload.Repositories in-place
@@ -566,21 +662,41 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 
 	totalPkg := int32(len(payload.Packages))
 	execTime := payload.ExecutionTime
+	// Discriminate full vs partial for the Agent Activity feed: a payload
+	// without a Sections list is a legacy/full report, anything that arrived
+	// with a Sections list is treated as a partial even if every section is
+	// claimed (the agent voluntarily told us it's a /hosts/update follow-up
+	// to a hash-gated ping).
+	reportType := "full"
+	if len(payload.Sections) > 0 {
+		reportType = "partial"
+	}
+	sectionsSent := mainSectionsFromSections(sections)
+	sectionsUnchanged := mainSectionsUnchanged(sectionsSent)
+	var agentExecMs *int32
+	if payload.AgentExecutionMs != nil {
+		v := int32(*payload.AgentExecutionMs)
+		agentExecMs = &v
+	}
 	// Retry safety: if WithRetry re-runs ProcessReport after a 40P01/40001,
 	// the BeginLong transaction is rolled back so this update_history row
 	// never commits. Each attempt allocates a fresh id and Postgres NOW()
 	// gives a fresh timestamp — exactly one history row will land per
 	// successful commit. That re-allocation per attempt is intentional.
 	if err := q.InsertUpdateHistory(ctx, db.InsertUpdateHistoryParams{
-		ID:            uuid.New().String(),
-		HostID:        hostID,
-		PackagesCount: int32(updatesCount),
-		SecurityCount: int32(securityCount),
-		TotalPackages: &totalPkg,
-		PayloadSizeKb: &payloadSizeKb,
-		ExecutionTime: &execTime,
-		Status:        "success",
-		ErrorMessage:  nil,
+		ID:                uuid.New().String(),
+		HostID:            hostID,
+		PackagesCount:     int32(updatesCount),
+		SecurityCount:     int32(securityCount),
+		TotalPackages:     &totalPkg,
+		PayloadSizeKb:     &payloadSizeKb,
+		ExecutionTime:     &execTime,
+		Status:            "success",
+		ErrorMessage:      nil,
+		ReportType:        reportType,
+		SectionsSent:      sectionsSent,
+		SectionsUnchanged: sectionsUnchanged,
+		AgentExecutionMs:  agentExecMs,
 	}); err != nil {
 		return nil, fmt.Errorf("InsertUpdateHistory: %w", err)
 	}

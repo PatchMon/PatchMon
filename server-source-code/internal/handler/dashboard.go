@@ -3,7 +3,9 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
@@ -19,12 +21,13 @@ type DashboardHandler struct {
 	packages  *store.PackagesStore
 	users     *store.UsersStore
 	docker    *store.DockerStore
+	activity  *store.AgentActivityStore
 	inspector *asynq.Inspector
 }
 
 // NewDashboardHandler creates a new dashboard handler.
-func NewDashboardHandler(dashboard *store.DashboardStore, hosts *store.HostsStore, packages *store.PackagesStore, users *store.UsersStore, docker *store.DockerStore, inspector *asynq.Inspector) *DashboardHandler {
-	return &DashboardHandler{dashboard: dashboard, hosts: hosts, packages: packages, users: users, docker: docker, inspector: inspector}
+func NewDashboardHandler(dashboard *store.DashboardStore, hosts *store.HostsStore, packages *store.PackagesStore, users *store.UsersStore, docker *store.DockerStore, activity *store.AgentActivityStore, inspector *asynq.Inspector) *DashboardHandler {
+	return &DashboardHandler{dashboard: dashboard, hosts: hosts, packages: packages, users: users, docker: docker, activity: activity, inspector: inspector}
 }
 
 // Stats handles GET /dashboard/stats.
@@ -238,7 +241,7 @@ func (h *DashboardHandler) HostQueue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.inspector != nil {
-		queueData, err := queue.GetHostJobs(r.Context(), h.inspector, host.ApiID, limit)
+		queueData, err := queue.GetHostJobs(r.Context(), h.inspector, hostID, host.ApiID, limit)
 		if err == nil {
 			data["waiting"] = queueData.Waiting
 			data["active"] = queueData.Active
@@ -301,4 +304,186 @@ func (h *DashboardHandler) HostQueue(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"data":    data,
 	})
+}
+
+// activityItem is the wire shape returned by HostActivity for each merged
+// row. Combines Agent Activity (update_history) rows with live asynq jobs
+// for a unified per-host timeline.
+type activityItem struct {
+	Kind               string     `json:"kind"`
+	ID                 string     `json:"id"`
+	OccurredAt         time.Time  `json:"occurred_at"`
+	Type               string     `json:"type"`
+	JobID              *string    `json:"job_id,omitempty"`
+	JobName            *string    `json:"job_name,omitempty"`
+	QueueName          *string    `json:"queue_name,omitempty"`
+	SectionsSent       []string   `json:"sections_sent"`
+	SectionsUnchanged  []string   `json:"sections_unchanged"`
+	PayloadSizeKb      *float64   `json:"payload_size_kb,omitempty"`
+	ServerProcessingMs *float64   `json:"server_processing_ms,omitempty"`
+	AgentExecutionMs   *int       `json:"agent_execution_ms,omitempty"`
+	AttemptNumber      *int       `json:"attempt_number,omitempty"`
+	Status             string     `json:"status"`
+	ErrorMessage       *string    `json:"error_message,omitempty"`
+	PackagesCount      *int       `json:"packages_count,omitempty"`
+	SecurityCount      *int       `json:"security_count,omitempty"`
+	CompletedAt        *time.Time `json:"completed_at,omitempty"`
+	Output             *string    `json:"output,omitempty"`
+}
+
+// HostActivity handles GET /dashboard/hosts/:hostId/activity. Returns the
+// unified Agent Activity feed plus the four queue stat counts (waiting,
+// active, delayed, failed) above the table.
+//
+// Query params:
+//
+//	direction: "" (all) | "in" (reports) | "out" (jobs)
+//	type:      comma-separated report-type / job-name filter
+//	status:    comma-separated status filter
+//	since:     RFC3339 timestamp; rows older than this are excluded
+//	search:    case-insensitive ILIKE match on error_message and job output
+//	limit:     default 50, max 500
+//	offset:    default 0
+func (h *DashboardHandler) HostActivity(w http.ResponseWriter, r *http.Request) {
+	hostID := chi.URLParam(r, "hostId")
+	limit := parseIntQuery(r, "limit", 50)
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	offset := parseIntQuery(r, "offset", 0)
+	direction := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("direction")))
+	typesFilter := splitCSV(r.URL.Query().Get("type"))
+	statusFilter := splitCSV(r.URL.Query().Get("status"))
+	search := strings.TrimSpace(r.URL.Query().Get("search"))
+	var sinceTs *time.Time
+	if v := strings.TrimSpace(r.URL.Query().Get("since")); v != "" {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			sinceTs = &t
+		}
+	}
+
+	host, err := h.hosts.GetByID(r.Context(), hostID)
+	if err != nil || host == nil {
+		Error(w, http.StatusNotFound, "Host not found")
+		return
+	}
+
+	// Stats block: same data the existing HostQueue endpoint returned, kept
+	// verbatim so the migrated UI can re-use the existing stat-card design.
+	stats := map[string]int{"waiting": 0, "active": 0, "delayed": 0, "failed": 0}
+	var liveJobs []queue.HostJobRow
+	if h.inspector != nil {
+		queueData, qerr := queue.GetHostJobs(r.Context(), h.inspector, hostID, host.ApiID, limit)
+		if qerr == nil && queueData != nil {
+			stats["waiting"] = queueData.Waiting
+			stats["active"] = queueData.Active
+			stats["delayed"] = queueData.Delayed
+			stats["failed"] = queueData.Failed
+			liveJobs = queueData.JobHistory
+		}
+	}
+
+	if direction != "in" && direction != "out" {
+		direction = ""
+	}
+
+	items := make([]activityItem, 0, limit)
+	liveByJobID := make(map[string]queue.HostJobRow, len(liveJobs))
+	for _, j := range liveJobs {
+		if j.JobID != "" {
+			liveByJobID[j.JobID] = j
+		}
+	}
+
+	rows, total, err := h.activity.List(r.Context(), store.ListAgentActivityParams{
+		HostID:    hostID,
+		Direction: direction,
+		Types:     typesFilter,
+		Statuses:  statusFilter,
+		Search:    search,
+		Since:     sinceTs,
+		Limit:     limit,
+		Offset:    offset,
+	})
+	if err != nil {
+		slog.Error("agent activity list failed", "host_id", hostID, "error", err)
+		Error(w, http.StatusInternalServerError, "Failed to load agent activity")
+		return
+	}
+
+	for _, row := range rows {
+		item := activityItemFromStore(row)
+		if row.Kind == "job" && row.JobID != nil {
+			if live, ok := liveByJobID[*row.JobID]; ok {
+				applyLiveJobState(&item, live)
+			}
+		}
+		items = append(items, item)
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"hostId":       hostID,
+		"apiId":        host.ApiID,
+		"friendlyName": host.FriendlyName,
+		"stats":        stats,
+		"items":        items,
+		"total":        total,
+	})
+}
+
+func splitCSV(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func applyLiveJobState(item *activityItem, live queue.HostJobRow) {
+	item.Status = live.Status
+	attempt := live.AttemptNumber
+	item.AttemptNumber = &attempt
+	item.ErrorMessage = live.ErrorMessage
+	item.QueueName = live.QueueName
+	item.CompletedAt = live.CompletedAt
+	if live.Output != nil {
+		if s, ok := live.Output.(string); ok {
+			item.Output = &s
+		}
+	}
+}
+
+func activityItemFromStore(r store.AgentActivityRow) activityItem {
+	return activityItem{
+		Kind:               r.Kind,
+		ID:                 r.ID,
+		OccurredAt:         r.OccurredAt,
+		Type:               r.Type,
+		JobID:              r.JobID,
+		JobName:            r.JobName,
+		QueueName:          r.QueueName,
+		SectionsSent:       r.SectionsSent,
+		SectionsUnchanged:  r.SectionsUnchanged,
+		PayloadSizeKb:      r.PayloadSizeKb,
+		ServerProcessingMs: r.ServerProcessingMs,
+		AgentExecutionMs:   r.AgentExecutionMs,
+		AttemptNumber:      r.AttemptNumber,
+		Status:             r.Status,
+		ErrorMessage:       r.ErrorMessage,
+		PackagesCount:      r.PackagesCount,
+		SecurityCount:      r.SecurityCount,
+		CompletedAt:        r.CompletedAt,
+		Output:             r.Output,
+	}
 }

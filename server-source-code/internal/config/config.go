@@ -61,6 +61,11 @@ type Config struct {
 	// cleanup marks it as timed_out. Default 30, minimum 5.
 	PatchRunStallTimeoutMin int
 
+	// AgentReportsRetentionDays controls how long Agent Activity rows
+	// (update_history) are kept before the daily cleanup sweep deletes them.
+	// Default 30, minimum 7, maximum 365.
+	AgentReportsRetentionDays int
+
 	// Redis (for bootstrap tokens, asynq job queues, TFA lockout, etc.)
 	RedisHost           string
 	RedisPort           int
@@ -212,9 +217,10 @@ func Load() (*Config, error) {
 		EnableLogging: getEnv("ENABLE_LOGGING", "") == "true",
 		LogLevel:      getEnv("LOG_LEVEL", "info"),
 
-		EnablePprof:             getEnv("ENABLE_PPROF", "") == "true",
-		MemstatsIntervalSec:     getEnvInt("MEMSTATS_INTERVAL_SEC", 60),
-		PatchRunStallTimeoutMin: getEnvInt("PATCH_RUN_STALL_TIMEOUT_MIN", 30),
+		EnablePprof:               getEnv("ENABLE_PPROF", "") == "true",
+		MemstatsIntervalSec:       getEnvInt("MEMSTATS_INTERVAL_SEC", 60),
+		PatchRunStallTimeoutMin:   getEnvInt("PATCH_RUN_STALL_TIMEOUT_MIN", 30),
+		AgentReportsRetentionDays: getEnvInt("AGENT_REPORTS_RETENTION_DAYS", 30),
 
 		RedisHost:           getEnv("REDIS_HOST", "localhost"),
 		RedisPort:           getEnvInt("REDIS_PORT", 6379),
@@ -305,6 +311,18 @@ func Load() (*Config, error) {
 	if cfg.PatchRunStallTimeoutMin < 5 {
 		slog.Warn("PATCH_RUN_STALL_TIMEOUT_MIN below minimum, clamping to 5", "value", cfg.PatchRunStallTimeoutMin)
 		cfg.PatchRunStallTimeoutMin = 5
+	}
+
+	// AGENT_REPORTS_RETENTION_DAYS: floor 7 (a week of history protects most
+	// forensic use cases), ceiling 365 (one year keeps update_history bounded
+	// on busy fleets without blowing past Postgres practical sizes).
+	if cfg.AgentReportsRetentionDays < 7 {
+		slog.Warn("AGENT_REPORTS_RETENTION_DAYS below minimum, clamping to 7", "value", cfg.AgentReportsRetentionDays)
+		cfg.AgentReportsRetentionDays = 7
+	}
+	if cfg.AgentReportsRetentionDays > 365 {
+		slog.Warn("AGENT_REPORTS_RETENTION_DAYS above maximum, clamping to 365", "value", cfg.AgentReportsRetentionDays)
+		cfg.AgentReportsRetentionDays = 365
 	}
 
 	if err := cfg.Validate(); err != nil {

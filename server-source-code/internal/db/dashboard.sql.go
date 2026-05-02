@@ -12,7 +12,10 @@ import (
 )
 
 const countUpdateHistory = `-- name: CountUpdateHistory :one
-SELECT COUNT(*)::int FROM update_history WHERE host_id = $1
+SELECT COUNT(*)::int
+FROM update_history
+WHERE host_id = $1
+  AND report_type IN ('full', 'partial')
 `
 
 func (q *Queries) CountUpdateHistory(ctx context.Context, hostID string) (int32, error) {
@@ -123,7 +126,7 @@ SELECT
     pc.security_updates AS security_updates,
     hws.cnt AS hosts_with_security_updates,
     (SELECT COUNT(*)::int FROM repositories WHERE is_active = true) AS total_repos,
-    (SELECT COUNT(*)::int FROM update_history WHERE timestamp >= $1 AND status = 'success') AS recent_updates_24h
+    (SELECT COUNT(*)::int FROM update_history WHERE timestamp >= $1 AND status = 'success' AND report_type IN ('full', 'partial')) AS recent_updates_24h
 FROM host_counts hc
 CROSS JOIN hosts_needing_updates hnu
 CROSS JOIN hosts_with_security hws
@@ -584,6 +587,7 @@ SELECT id, host_id, packages_count, security_count, total_packages,
     payload_size_kb, execution_time, timestamp, status, error_message
 FROM update_history
 WHERE host_id = $1
+  AND report_type IN ('full', 'partial')
 ORDER BY timestamp DESC
 LIMIT $2 OFFSET $3
 `
@@ -594,15 +598,28 @@ type GetUpdateHistoryParams struct {
 	Offset int32  `json:"offset"`
 }
 
-func (q *Queries) GetUpdateHistory(ctx context.Context, arg GetUpdateHistoryParams) ([]UpdateHistory, error) {
+type GetUpdateHistoryRow struct {
+	ID            string           `json:"id"`
+	HostID        string           `json:"host_id"`
+	PackagesCount int32            `json:"packages_count"`
+	SecurityCount int32            `json:"security_count"`
+	TotalPackages *int32           `json:"total_packages"`
+	PayloadSizeKb *float64         `json:"payload_size_kb"`
+	ExecutionTime *float64         `json:"execution_time"`
+	Timestamp     pgtype.Timestamp `json:"timestamp"`
+	Status        string           `json:"status"`
+	ErrorMessage  *string          `json:"error_message"`
+}
+
+func (q *Queries) GetUpdateHistory(ctx context.Context, arg GetUpdateHistoryParams) ([]GetUpdateHistoryRow, error) {
 	rows, err := q.db.Query(ctx, getUpdateHistory, arg.HostID, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []UpdateHistory
+	var items []GetUpdateHistoryRow
 	for rows.Next() {
-		var i UpdateHistory
+		var i GetUpdateHistoryRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.HostID,
@@ -632,6 +649,7 @@ SELECT DATE(timestamp)::text as ts,
     MAX(COALESCE(total_packages, 0))::int as total_packages
 FROM update_history
 WHERE host_id = $1 AND timestamp >= $2 AND timestamp <= $3 AND status = 'success'
+  AND report_type IN ('full', 'partial')
   AND COALESCE(total_packages, 0) >= 0
   AND packages_count >= 0
   AND security_count >= 0
@@ -684,6 +702,7 @@ SELECT DATE(timestamp) as ts, COUNT(*)::int as cnt,
     COALESCE(SUM(security_count), 0)::int as sec_sum
 FROM update_history
 WHERE timestamp >= $1
+  AND report_type IN ('full', 'partial')
 GROUP BY DATE(timestamp)
 ORDER BY ts
 `
@@ -725,6 +744,7 @@ SELECT id, host_id, packages_count, security_count, total_packages,
     payload_size_kb, execution_time, timestamp, status, error_message
 FROM update_history
 WHERE host_id = $1 AND timestamp >= $2 AND timestamp <= $3 AND status = 'success'
+  AND report_type IN ('full', 'partial')
 ORDER BY timestamp ASC
 `
 
@@ -734,15 +754,28 @@ type ListUpdateHistoryByDateRangeParams struct {
 	Timestamp_2 pgtype.Timestamp `json:"timestamp_2"`
 }
 
-func (q *Queries) ListUpdateHistoryByDateRange(ctx context.Context, arg ListUpdateHistoryByDateRangeParams) ([]UpdateHistory, error) {
+type ListUpdateHistoryByDateRangeRow struct {
+	ID            string           `json:"id"`
+	HostID        string           `json:"host_id"`
+	PackagesCount int32            `json:"packages_count"`
+	SecurityCount int32            `json:"security_count"`
+	TotalPackages *int32           `json:"total_packages"`
+	PayloadSizeKb *float64         `json:"payload_size_kb"`
+	ExecutionTime *float64         `json:"execution_time"`
+	Timestamp     pgtype.Timestamp `json:"timestamp"`
+	Status        string           `json:"status"`
+	ErrorMessage  *string          `json:"error_message"`
+}
+
+func (q *Queries) ListUpdateHistoryByDateRange(ctx context.Context, arg ListUpdateHistoryByDateRangeParams) ([]ListUpdateHistoryByDateRangeRow, error) {
 	rows, err := q.db.Query(ctx, listUpdateHistoryByDateRange, arg.HostID, arg.Timestamp, arg.Timestamp_2)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []UpdateHistory
+	var items []ListUpdateHistoryByDateRangeRow
 	for rows.Next() {
-		var i UpdateHistory
+		var i ListUpdateHistoryByDateRangeRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.HostID,

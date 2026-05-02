@@ -12,7 +12,7 @@ import (
 )
 
 const getFirstSettings = `-- name: GetFirstSettings :one
-SELECT id, server_url, server_protocol, server_host, server_port, created_at, updated_at, update_interval, auto_update, default_compliance_mode, compliance_scan_interval, package_cache_refresh_mode, package_cache_refresh_max_age, github_repo_url, ssh_key_path, repository_type, last_update_check, latest_version, update_available, signup_enabled, default_user_role, ignore_ssl_self_signed, logo_dark, logo_light, favicon, logo_dark_data, logo_light_data, favicon_data, logo_dark_content_type, logo_light_content_type, favicon_content_type, metrics_enabled, metrics_anonymous_id, metrics_last_sent, show_github_version_on_login, ai_enabled, ai_provider, ai_model, ai_api_key, alerts_enabled, discord_oauth_enabled, discord_client_id, discord_client_secret, discord_redirect_uri, discord_button_text, oidc_enabled, oidc_issuer_url, oidc_client_id, oidc_client_secret, oidc_redirect_uri, oidc_scopes, oidc_auto_create_users, oidc_default_role, oidc_disable_local_auth, oidc_button_text, oidc_sync_roles, oidc_admin_group, oidc_superadmin_group, oidc_host_manager_group, oidc_readonly_group, oidc_user_group, oidc_enforce_https, max_login_attempts, lockout_duration_minutes, session_inactivity_timeout_minutes, patch_run_stall_timeout_minutes, tfa_max_remember_sessions, password_min_length, password_require_uppercase, password_require_lowercase, password_require_number, password_require_special, enable_hsts, json_body_limit, agent_update_body_limit, db_transaction_long_timeout, cors_origin, enable_logging, log_level, timezone, jwt_expires_in, max_tfa_attempts, tfa_lockout_duration_minutes, tfa_remember_me_expires_in, trust_proxy, rate_limit_window_ms, rate_limit_max, auth_rate_limit_window_ms, auth_rate_limit_max, agent_rate_limit_window_ms, agent_rate_limit_max, password_rate_limit_window_ms, password_rate_limit_max, auth_browser_session_cookies FROM settings LIMIT 1
+SELECT id, server_url, server_protocol, server_host, server_port, created_at, updated_at, update_interval, auto_update, default_compliance_mode, compliance_scan_interval, package_cache_refresh_mode, package_cache_refresh_max_age, github_repo_url, ssh_key_path, repository_type, last_update_check, latest_version, update_available, signup_enabled, default_user_role, ignore_ssl_self_signed, logo_dark, logo_light, favicon, logo_dark_data, logo_light_data, favicon_data, logo_dark_content_type, logo_light_content_type, favicon_content_type, metrics_enabled, metrics_anonymous_id, metrics_last_sent, show_github_version_on_login, ai_enabled, ai_provider, ai_model, ai_api_key, alerts_enabled, discord_oauth_enabled, discord_client_id, discord_client_secret, discord_redirect_uri, discord_button_text, oidc_enabled, oidc_issuer_url, oidc_client_id, oidc_client_secret, oidc_redirect_uri, oidc_scopes, oidc_auto_create_users, oidc_default_role, oidc_disable_local_auth, oidc_button_text, oidc_sync_roles, oidc_admin_group, oidc_superadmin_group, oidc_host_manager_group, oidc_readonly_group, oidc_user_group, oidc_enforce_https, max_login_attempts, lockout_duration_minutes, session_inactivity_timeout_minutes, patch_run_stall_timeout_minutes, agent_reports_retention_days, tfa_max_remember_sessions, password_min_length, password_require_uppercase, password_require_lowercase, password_require_number, password_require_special, enable_hsts, json_body_limit, agent_update_body_limit, db_transaction_long_timeout, cors_origin, enable_logging, log_level, timezone, jwt_expires_in, max_tfa_attempts, tfa_lockout_duration_minutes, tfa_remember_me_expires_in, trust_proxy, rate_limit_window_ms, rate_limit_max, auth_rate_limit_window_ms, auth_rate_limit_max, agent_rate_limit_window_ms, agent_rate_limit_max, password_rate_limit_window_ms, password_rate_limit_max, auth_browser_session_cookies FROM settings LIMIT 1
 `
 
 func (q *Queries) GetFirstSettings(ctx context.Context) (Setting, error) {
@@ -85,6 +85,7 @@ func (q *Queries) GetFirstSettings(ctx context.Context) (Setting, error) {
 		&i.LockoutDurationMinutes,
 		&i.SessionInactivityTimeoutMinutes,
 		&i.PatchRunStallTimeoutMinutes,
+		&i.AgentReportsRetentionDays,
 		&i.TfaMaxRememberSessions,
 		&i.PasswordMinLength,
 		&i.PasswordRequireUppercase,
@@ -346,8 +347,9 @@ UPDATE settings SET
     password_rate_limit_window_ms = COALESCE($30, password_rate_limit_window_ms),
     password_rate_limit_max = COALESCE($31, password_rate_limit_max),
     auth_browser_session_cookies = COALESCE($32, auth_browser_session_cookies),
-    patch_run_stall_timeout_minutes = COALESCE($33, patch_run_stall_timeout_minutes)
-WHERE id = $34
+    patch_run_stall_timeout_minutes = COALESCE($33, patch_run_stall_timeout_minutes),
+    agent_reports_retention_days = COALESCE($34, agent_reports_retention_days)
+WHERE id = $35
 `
 
 type UpdateSettingsConfigParams struct {
@@ -384,6 +386,7 @@ type UpdateSettingsConfigParams struct {
 	PasswordRateLimitMax            *int32  `json:"password_rate_limit_max"`
 	AuthBrowserSessionCookies       *bool   `json:"auth_browser_session_cookies"`
 	PatchRunStallTimeoutMinutes     *int32  `json:"patch_run_stall_timeout_minutes"`
+	AgentReportsRetentionDays       *int32  `json:"agent_reports_retention_days"`
 	ID                              string  `json:"id"`
 }
 
@@ -422,6 +425,7 @@ func (q *Queries) UpdateSettingsConfig(ctx context.Context, arg UpdateSettingsCo
 		arg.PasswordRateLimitMax,
 		arg.AuthBrowserSessionCookies,
 		arg.PatchRunStallTimeoutMinutes,
+		arg.AgentReportsRetentionDays,
 		arg.ID,
 	)
 	return err

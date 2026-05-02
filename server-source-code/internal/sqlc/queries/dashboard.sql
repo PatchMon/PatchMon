@@ -88,13 +88,17 @@ WHERE hp.host_id = $1
 ORDER BY hp.is_security_update DESC, hp.needs_update DESC;
 
 -- name: CountUpdateHistory :one
-SELECT COUNT(*)::int FROM update_history WHERE host_id = $1;
+SELECT COUNT(*)::int
+FROM update_history
+WHERE host_id = $1
+  AND report_type IN ('full', 'partial');
 
 -- name: GetUpdateHistory :many
 SELECT id, host_id, packages_count, security_count, total_packages,
     payload_size_kb, execution_time, timestamp, status, error_message
 FROM update_history
 WHERE host_id = $1
+  AND report_type IN ('full', 'partial')
 ORDER BY timestamp DESC
 LIMIT $2 OFFSET $3;
 
@@ -112,6 +116,7 @@ SELECT DATE(timestamp) as ts, COUNT(*)::int as cnt,
     COALESCE(SUM(security_count), 0)::int as sec_sum
 FROM update_history
 WHERE timestamp >= $1
+  AND report_type IN ('full', 'partial')
 GROUP BY DATE(timestamp)
 ORDER BY ts;
 
@@ -120,6 +125,7 @@ SELECT id, host_id, packages_count, security_count, total_packages,
     payload_size_kb, execution_time, timestamp, status, error_message
 FROM update_history
 WHERE host_id = $1 AND timestamp >= $2 AND timestamp <= $3 AND status = 'success'
+  AND report_type IN ('full', 'partial')
 ORDER BY timestamp ASC;
 
 -- name: GetUpdateHistoryDaily :many
@@ -129,6 +135,7 @@ SELECT DATE(timestamp)::text as ts,
     MAX(COALESCE(total_packages, 0))::int as total_packages
 FROM update_history
 WHERE host_id = $1 AND timestamp >= $2 AND timestamp <= $3 AND status = 'success'
+  AND report_type IN ('full', 'partial')
   AND COALESCE(total_packages, 0) >= 0
   AND packages_count >= 0
   AND security_count >= 0
@@ -174,7 +181,7 @@ SELECT
     pc.security_updates AS security_updates,
     hws.cnt AS hosts_with_security_updates,
     (SELECT COUNT(*)::int FROM repositories WHERE is_active = true) AS total_repos,
-    (SELECT COUNT(*)::int FROM update_history WHERE timestamp >= sqlc.arg('since') AND status = 'success') AS recent_updates_24h
+    (SELECT COUNT(*)::int FROM update_history WHERE timestamp >= sqlc.arg('since') AND status = 'success' AND report_type IN ('full', 'partial')) AS recent_updates_24h
 FROM host_counts hc
 CROSS JOIN hosts_needing_updates hnu
 CROSS JOIN hosts_with_security hws

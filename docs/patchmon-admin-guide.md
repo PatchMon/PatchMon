@@ -681,8 +681,7 @@ The tab strip is context-aware. Some tabs only appear under certain conditions:
 | **Host Info** | Yes | Default landing tab. |
 | **Network** | Yes | |
 | **System** | Yes | |
-| **Package Reports** | Yes | Historical inventory snapshots. |
-| **Agent Queue** | Yes | Background jobs for this host. |
+| **Agent Activity** | Yes | Unified timeline of agent comm cycles (ping, full report, partial report, Docker, compliance) and outbound queue jobs. Replaces the separate Package Reports and Agent Queue tabs from earlier releases. |
 | **Notes** | Yes | Free-text notes. |
 | **Integrations** | Yes | Per-host Docker / Compliance toggles. |
 | **Reporting** | Conditional | Hidden when global alerts are off. |
@@ -736,27 +735,26 @@ Hardware and OS specifics collected on each report:
 
 This tab is read-only. All values come from the agent report.
 
-### Package Reports
+### Agent Activity
 
-Paginated history of package inventory snapshots the agent has sent. Useful for:
+Unified timeline of every agent comm cycle for this host. Each row is one of:
 
-- Auditing when a package was installed, removed, or upgraded.
-- Comparing two reports to understand what a patch run changed.
-- Proving a package state at a given date to an auditor.
+- **Ping**: hash-gated check-in (every cycle, even when nothing changed).
+- **Full / Partial**: `/hosts/update` with the full inventory or just the sections the server flagged as stale.
+- **Docker / Compliance**: integration-specific submissions.
+- **Job**: outbound queue jobs the server sent to the agent (fetch report, patch run, integration setup, etc.).
 
-Each row shows the report timestamp, total packages, outdated count, security count, and a link to expand the full per-package diff.
+The four queue stat cards (Waiting / Active / Delayed / Failed) sit above the table and reflect in-flight server-to-agent jobs. The auto-refresh interval is 30 seconds.
 
-### Agent Queue
+Each report row also shows section chips: green "Updated" chips for sections the agent shipped fresh data for this cycle, and muted "Skipped" chips for sections the server already had a matching hash for. Use this tab to:
 
-Live view of the background jobs queued for this host (fetch report, patch commands, compliance scans, integration config syncs, agent updates, etc.). The tab auto-refreshes every 30 seconds. You see:
+- Confirm a host is actively checking in (look for recent `Ping` rows).
+- Audit when a package, repo, network interface, or hostname change last propagated.
+- Trace a "my Fetch Report click didn't do anything" complaint by following the job row through `Waiting → Active → Completed` (or `Failed` with the error message).
 
-- **Waiting**: queued but not yet picked up.
-- **Active**: currently running.
-- **Delayed**: scheduled for later.
-- **Failed**: error state with the last error message.
-- **Job History**: recently completed jobs with timestamps and outcome.
+Retention is governed by the `AGENT_REPORTS_RETENTION_DAYS` environment variable (default 30 days, range 7..365). The daily cleanup sweep at 02:00 deletes anything older. See the operator guide for tuning details.
 
-Use this tab to trace a "my Fetch Report click didn't do anything" complaint.
+> Earlier releases split this view across two tabs (Package Reports and Agent Queue). Bookmarks against the old `?tab=history` and `?tab=queue` query params redirect to `?tab=activity`.
 
 ### Notes
 
@@ -874,7 +872,7 @@ Quick reference for the most-asked "how do I…" questions:
 | Trigger an immediate report | Page header → **Fetch Report** |
 | Force the agent to self-update | **Host Info** tab → **Update Now** |
 | Open a shell in the browser | **Terminal** tab |
-| See what the agent is doing right now | **Agent Queue** tab |
+| See what the agent is doing right now | **Agent Activity** tab |
 | Change which host groups the host is in | **Host Info** tab → **Host Groups** field (or the Hosts table inline edit) |
 | Turn Docker monitoring on / off | **Integrations** tab → **Docker** toggle, then **Apply** in header |
 | Run CIS scans | **Integrations** tab → **Compliance** selector → **Enabled** or **On-Demand** |
@@ -885,7 +883,7 @@ Quick reference for the most-asked "how do I…" questions:
 
 ### Mobile Layout
 
-On smaller screens, the tab strip is replaced with stacked cards (**Host Information**, **Network**, **System**, **Package Reports**, and so on). The action buttons collapse into an icon row. Some dense sections (for example the Integrations mode selector) show a **Manage in Integrations tab** shortcut.
+On smaller screens, the tab strip is replaced with stacked cards (**Host Information**, **Network**, **System**, **Agent Activity**, and so on). The action buttons collapse into an icon row. Some dense sections (for example the Integrations mode selector) show a **Manage in Integrations tab** shortcut.
 
 All data shown on mobile is the same as on desktop; only the layout changes.
 

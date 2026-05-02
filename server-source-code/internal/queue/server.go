@@ -63,6 +63,7 @@ func NewServer(opts asynq.RedisClientOpt, registry *agentregistry.Registry, db *
 			QueueVersionUpdateCheck:          1,
 			QueueComplianceScanCleanup:       1,
 			QueuePatchRunCleanup:             1,
+			QueueAgentReportsCleanup:         1,
 			QueueSSGUpdateCheck:              1,
 			QueueUpdateThresholdMonitor:      1,
 			QueueCompliance:                  2,
@@ -93,6 +94,11 @@ type MuxOpts struct {
 	// (env -> DB -> default) at sweep time. Lets operators tune via Settings →
 	// Environment without restarting. If nil, the worker falls back to 30.
 	GetPatchRunStallTimeoutMin func() int
+	// GetAgentReportsRetentionDays returns the current effective retention
+	// window for update_history rows (env -> DB -> default) at sweep time.
+	// Same restart-free pattern as GetPatchRunStallTimeoutMin. If nil, the
+	// worker falls back to 30.
+	GetAgentReportsRetentionDays func() int
 }
 
 // Mux returns a ServeMux with all handlers registered.
@@ -120,6 +126,7 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	mux.Handle(TypeVersionUpdateCheck, wrap(TypeVersionUpdateCheck, NewVersionUpdateCheckHandler(db, opts.PoolCache, opts.ServerVersion, opts.Emit, log)))
 	mux.Handle(TypeComplianceScanCleanup, wrap(TypeComplianceScanCleanup, NewComplianceScanCleanupHandler(db, opts.PoolCache, log)))
 	mux.Handle(TypePatchRunCleanup, wrap(TypePatchRunCleanup, NewPatchRunCleanupHandler(db, opts.PoolCache, log, opts.GetPatchRunStallTimeoutMin)))
+	mux.Handle(TypeAgentReportsCleanup, wrap(TypeAgentReportsCleanup, NewAgentReportsCleanupHandler(db, opts.PoolCache, log, opts.GetAgentReportsRetentionDays)))
 	mux.Handle(TypeSSGUpdateCheck, wrap(TypeSSGUpdateCheck, NewSSGUpdateCheckHandler(registry, db, opts.PoolCache, opts.QueueClient, opts.SSGContentDir, log)))
 	mux.Handle(TypeSSGUpgrade, wrap(TypeSSGUpgrade, NewSSGUpgradeHandler(registry, db, opts.PoolCache, log)))
 	complianceStore := store.NewComplianceStore(db)
@@ -230,6 +237,14 @@ func NewScheduler(opts asynq.RedisClientOpt, db *database.DB, log *slog.Logger) 
 
 	patchRunCleanupTask := asynq.NewTask(TypePatchRunCleanup, nil)
 	if _, err := scheduler.Register("*/10 * * * *", patchRunCleanupTask, asynq.Queue(QueuePatchRunCleanup), asynq.Retention(AutomationRetention)); err != nil {
+		return nil, err
+	}
+
+	// Agent Activity (update_history) retention sweep. Daily at 02:00 — co-located
+	// with orphan-repo cleanup so all the "delete old rows" sweeps fire in one
+	// quiet window.
+	agentReportsCleanupTask := asynq.NewTask(TypeAgentReportsCleanup, nil)
+	if _, err := scheduler.Register("0 2 * * *", agentReportsCleanupTask, asynq.Queue(QueueAgentReportsCleanup), asynq.Retention(AutomationRetention)); err != nil {
 		return nil, err
 	}
 

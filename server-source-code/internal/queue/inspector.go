@@ -8,6 +8,8 @@ import (
 	"github.com/hibiken/asynq"
 )
 
+const hostJobsInspectPageSize = 100
+
 // HostQueueData is the result of GetHostJobs for a host.
 type HostQueueData struct {
 	Waiting    int
@@ -32,10 +34,11 @@ type HostJobRow struct {
 	CompletedAt   *time.Time  `json:"completed_at,omitempty"`
 }
 
-// GetHostJobs returns queue stats and live job list for a host (by api_id).
-// It inspects the agent-commands queue and filters tasks by api_id in payload.
-// Caller should merge with DB job_history for full history.
-func GetHostJobs(ctx context.Context, inspector *asynq.Inspector, apiID string, limit int) (*HostQueueData, error) {
+// GetHostJobs returns queue stats and live job list for a host.
+// It inspects queues that can contain host-targeted jobs and filters tasks by
+// api_id or hostId in the task payload. Caller should merge with DB job_history
+// for full history.
+func GetHostJobs(ctx context.Context, inspector *asynq.Inspector, hostID, apiID string, limit int) (*HostQueueData, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -45,47 +48,53 @@ func GetHostJobs(ctx context.Context, inspector *asynq.Inspector, apiID string, 
 
 	data := &HostQueueData{JobHistory: []HostJobRow{}}
 
-	// Only agent-commands queue has host-specific jobs (report_now with api_id)
-	queueName := QueueAgentCommands
+	queueNames := []string{
+		QueueAgentCommands,
+		QueueCompliance,
+		QueuePatching,
+		QueueScheduledReports,
+	}
 
-	// Helper to filter tasks by api_id in payload
+	// Helper to filter tasks by api_id / host_id in payload.
 	filterByApiID := func(tasks []*asynq.TaskInfo) ([]*asynq.TaskInfo, int) {
 		var out []*asynq.TaskInfo
 		for _, t := range tasks {
-			var p ReportNowPayload
+			var p struct {
+				ApiID       string `json:"api_id"`
+				HostID      string `json:"hostId"`
+				HostIDSnake string `json:"host_id"`
+			}
 			if err := json.Unmarshal(t.Payload, &p); err != nil {
 				continue
 			}
-			if p.ApiID == apiID {
+			if (apiID != "" && p.ApiID == apiID) || (hostID != "" && (p.HostID == hostID || p.HostIDSnake == hostID)) {
 				out = append(out, t)
 			}
 		}
 		return out, len(out)
 	}
-
-	// List all task types from the queue
-	pending, _ := inspector.ListPendingTasks(queueName)
-	active, _ := inspector.ListActiveTasks(queueName)
-	scheduled, _ := inspector.ListScheduledTasks(queueName)
-	retry, _ := inspector.ListRetryTasks(queueName)
-	completed, _ := inspector.ListCompletedTasks(queueName, asynq.PageSize(limit))
-
-	hostPending, n1 := filterByApiID(pending)
-	hostActive, n2 := filterByApiID(active)
-	hostScheduled, n3 := filterByApiID(scheduled)
-	hostRetry, n4 := filterByApiID(retry)
-	hostCompleted, _ := filterByApiID(completed)
-
-	data.Waiting = n1
-	data.Active = n2
-	data.Delayed = n3
-	data.Failed = n4
+	listAll := func(fetch func(int) ([]*asynq.TaskInfo, error)) []*asynq.TaskInfo {
+		var out []*asynq.TaskInfo
+		for page := 1; ; page++ {
+			if ctx.Err() != nil {
+				return out
+			}
+			tasks, err := fetch(page)
+			if err != nil {
+				return out
+			}
+			out = append(out, tasks...)
+			if len(tasks) < hostJobsInspectPageSize {
+				return out
+			}
+		}
+	}
 
 	// Build job history: live jobs first (active, waiting, delayed, retry, completed), then we'll merge with DB
 	liveJobIDs := make(map[string]bool)
 	rows := []HostJobRow{}
 
-	appendTask := func(t *asynq.TaskInfo, state string) {
+	appendTask := func(queueName string, t *asynq.TaskInfo, state string) {
 		if liveJobIDs[t.ID] {
 			return
 		}
@@ -118,32 +127,60 @@ func GetHostJobs(ctx context.Context, inspector *asynq.Inspector, apiID string, 
 			ID:            t.ID,
 			JobID:         t.ID,
 			JobName:       t.Type,
-			QueueName:     &queueName,
 			Status:        state,
 			AttemptNumber: attempt,
 			ErrorMessage:  errMsg,
 			CreatedAt:     &createdAt,
 		}
+		qn := queueName
+		row.QueueName = &qn
 		if state == "completed" && !t.CompletedAt.IsZero() {
 			row.CompletedAt = &t.CompletedAt
 		}
 		rows = append(rows, row)
 	}
 
-	for _, t := range hostActive {
-		appendTask(t, "active")
-	}
-	for _, t := range hostPending {
-		appendTask(t, "waiting")
-	}
-	for _, t := range hostScheduled {
-		appendTask(t, "delayed")
-	}
-	for _, t := range hostRetry {
-		appendTask(t, "failed")
-	}
-	for _, t := range hostCompleted {
-		appendTask(t, "completed")
+	for _, queueName := range queueNames {
+		pending := listAll(func(page int) ([]*asynq.TaskInfo, error) {
+			return inspector.ListPendingTasks(queueName, asynq.Page(page), asynq.PageSize(hostJobsInspectPageSize))
+		})
+		active := listAll(func(page int) ([]*asynq.TaskInfo, error) {
+			return inspector.ListActiveTasks(queueName, asynq.Page(page), asynq.PageSize(hostJobsInspectPageSize))
+		})
+		scheduled := listAll(func(page int) ([]*asynq.TaskInfo, error) {
+			return inspector.ListScheduledTasks(queueName, asynq.Page(page), asynq.PageSize(hostJobsInspectPageSize))
+		})
+		retry := listAll(func(page int) ([]*asynq.TaskInfo, error) {
+			return inspector.ListRetryTasks(queueName, asynq.Page(page), asynq.PageSize(hostJobsInspectPageSize))
+		})
+		completed, _ := inspector.ListCompletedTasks(queueName, asynq.PageSize(limit))
+
+		hostPending, n1 := filterByApiID(pending)
+		hostActive, n2 := filterByApiID(active)
+		hostScheduled, n3 := filterByApiID(scheduled)
+		hostRetry, n4 := filterByApiID(retry)
+		hostCompleted, _ := filterByApiID(completed)
+
+		data.Waiting += n1
+		data.Active += n2
+		data.Delayed += n3
+		data.Failed += n4
+
+		for _, t := range hostActive {
+			appendTask(queueName, t, "active")
+		}
+		for _, t := range hostPending {
+			appendTask(queueName, t, "waiting")
+		}
+		for _, t := range hostScheduled {
+			appendTask(queueName, t, "delayed")
+		}
+		for _, t := range hostRetry {
+			appendTask(queueName, t, "failed")
+		}
+		for _, t := range hostCompleted {
+			appendTask(queueName, t, "completed")
+		}
 	}
 
 	// Trim to limit

@@ -76,6 +76,21 @@ func (s *SettingsStore) UpdateConfigKey(ctx context.Context, settingsID, key str
 			return errors.New("PATCH_RUN_STALL_TIMEOUT_MIN must be at least 5")
 		}
 		arg.PatchRunStallTimeoutMinutes = &v
+	case "AGENT_REPORTS_RETENTION_DAYS":
+		v, ok := toInt32(value)
+		if !ok {
+			return errors.New("AGENT_REPORTS_RETENTION_DAYS requires an integer value")
+		}
+		// Mirror env-loader bounds (see config.clampAgentReportsRetentionDays).
+		// Floor 7 days protects "what happened last week" forensics; ceiling
+		// 365 days keeps the table from growing unbounded on busy fleets.
+		if v < 7 {
+			return errors.New("AGENT_REPORTS_RETENTION_DAYS must be at least 7")
+		}
+		if v > 365 {
+			return errors.New("AGENT_REPORTS_RETENTION_DAYS must be at most 365")
+		}
+		arg.AgentReportsRetentionDays = &v
 	case "TFA_MAX_REMEMBER_SESSIONS":
 		if v, ok := toInt32(value); ok {
 			arg.TfaMaxRememberSessions = &v

@@ -623,6 +623,7 @@ type Setting struct {
 	LockoutDurationMinutes          *int32           `json:"lockout_duration_minutes"`
 	SessionInactivityTimeoutMinutes *int32           `json:"session_inactivity_timeout_minutes"`
 	PatchRunStallTimeoutMinutes     *int32           `json:"patch_run_stall_timeout_minutes"`
+	AgentReportsRetentionDays       *int32           `json:"agent_reports_retention_days"`
 	TfaMaxRememberSessions          *int32           `json:"tfa_max_remember_sessions"`
 	PasswordMinLength               *int32           `json:"password_min_length"`
 	PasswordRequireUppercase        *bool            `json:"password_require_uppercase"`
@@ -664,16 +665,20 @@ type SystemStatistic struct {
 }
 
 type UpdateHistory struct {
-	ID            string           `json:"id"`
-	HostID        string           `json:"host_id"`
-	PackagesCount int32            `json:"packages_count"`
-	SecurityCount int32            `json:"security_count"`
-	TotalPackages *int32           `json:"total_packages"`
-	PayloadSizeKb *float64         `json:"payload_size_kb"`
-	ExecutionTime *float64         `json:"execution_time"`
-	Timestamp     pgtype.Timestamp `json:"timestamp"`
-	Status        string           `json:"status"`
-	ErrorMessage  *string          `json:"error_message"`
+	ID                string           `json:"id"`
+	HostID            string           `json:"host_id"`
+	PackagesCount     int32            `json:"packages_count"`
+	SecurityCount     int32            `json:"security_count"`
+	TotalPackages     *int32           `json:"total_packages"`
+	PayloadSizeKb     *float64         `json:"payload_size_kb"`
+	ExecutionTime     *float64         `json:"execution_time"`
+	Timestamp         pgtype.Timestamp `json:"timestamp"`
+	Status            string           `json:"status"`
+	ErrorMessage      *string          `json:"error_message"`
+	ReportType        string           `json:"report_type"`
+	SectionsSent      []string         `json:"sections_sent"`
+	SectionsUnchanged []string         `json:"sections_unchanged"`
+	AgentExecutionMs  *int32           `json:"agent_execution_ms"`
 }
 
 type User struct {

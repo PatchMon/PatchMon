@@ -89,6 +89,22 @@ export const dashboardAPI = {
 		const url = `/dashboard/hosts/${hostId}/queue${queryString ? `?${queryString}` : ""}`;
 		return api.get(url);
 	},
+	getHostActivity: (hostId, params = {}) => {
+		// Drop empty values so we don't end up with `?type=&status=` noise on the wire.
+		const filtered = Object.entries(params).reduce((acc, [key, value]) => {
+			if (value === undefined || value === null || value === "") return acc;
+			if (Array.isArray(value)) {
+				if (value.length === 0) return acc;
+				acc[key] = value.join(",");
+				return acc;
+			}
+			acc[key] = value;
+			return acc;
+		}, {});
+		const queryString = new URLSearchParams(filtered).toString();
+		const url = `/dashboard/hosts/${hostId}/activity${queryString ? `?${queryString}` : ""}`;
+		return api.get(url);
+	},
 	getHostWsStatus: (hostId) => api.get(`/dashboard/hosts/${hostId}/ws-status`),
 	getWsStatusByApiId: (apiId) => api.get(`/ws/status/${apiId}`),
 	getPackageTrends: (params = {}) => {

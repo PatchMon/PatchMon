@@ -162,20 +162,23 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	repositoriesHandler := handler.NewRepositoriesHandler(store.NewRepositoriesStore(dbProvider))
 	dockerStore := store.NewDockerStore(dbProvider)
 	dashboardStore := store.NewDashboardStore(dbProvider)
+	agentActivityStore := store.NewAgentActivityStore(dbProvider)
 	dashboardHandler := handler.NewDashboardHandler(
 		dashboardStore,
 		hostsStore,
 		store.NewPackagesStore(dbProvider),
 		usersStore,
 		dockerStore,
+		agentActivityStore,
 		queueInspector,
 	)
 	hostGroupsHandler := handler.NewHostGroupsHandler(hostGroupsStore, hostsStore)
 	dashboardPrefsHandler := handler.NewDashboardPreferencesHandler(dashboardPrefsStore)
 	dockerHandler := handler.NewDockerHandler(dockerStore)
-	integrationsHandler := handler.NewIntegrationsHandler(hostsStore, store.NewDockerStore(dbProvider), integrationStatusStore, dbProvider, notifyEmit)
+	reportStore := store.NewReportStore(dbProvider)
+	integrationsHandler := handler.NewIntegrationsHandler(hostsStore, store.NewDockerStore(dbProvider), integrationStatusStore, dbProvider, notifyEmit, reportStore)
 	complianceStore := store.NewComplianceStore(dbProvider)
-	complianceHandler := handler.NewComplianceHandler(complianceStore, hostsStore, registry, queueClient, queueInspector, integrationStatusStore, cfg.SSGContentDir, notifyEmit)
+	complianceHandler := handler.NewComplianceHandler(complianceStore, hostsStore, registry, queueClient, queueInspector, integrationStatusStore, cfg.SSGContentDir, notifyEmit, reportStore)
 	autoEnrollmentStore := store.NewAutoEnrollmentStore(dbProvider)
 	autoEnrollmentHandler := handler.NewAutoEnrollmentHandler(autoEnrollmentStore, hostGroupsStore, hostsStore, settingsStore, log, cfg)
 
@@ -187,7 +190,6 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	if rdb != nil {
 		sshTicketStore = store.NewSshTicketStore(redisResolver)
 	}
-	reportStore := store.NewReportStore(dbProvider)
 	installHandler := handler.NewInstallHandler(hostsStore, settingsStore, bootstrapStore, reportStore)
 	sshProxySessions := sshproxy.NewSessions()
 	alertsStore := store.NewAlertsStore(dbProvider)
@@ -552,6 +554,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/hosts", dashboardHandler.Hosts)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/hosts/{hostId}", dashboardHandler.HostDetail)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/hosts/{hostId}/queue", dashboardHandler.HostQueue)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/hosts/{hostId}/activity", dashboardHandler.HostActivity)
 			r.With(middleware.RequirePermission("can_view_packages", permissionsStore)).Get("/dashboard/packages", dashboardHandler.Packages)
 			r.With(middleware.RequirePermission("can_view_packages", permissionsStore)).Get("/dashboard/package-trends", dashboardHandler.PackageTrends)
 			r.With(middleware.RequirePermission("can_view_users", permissionsStore)).Get("/dashboard/recent-users", dashboardHandler.RecentUsers)

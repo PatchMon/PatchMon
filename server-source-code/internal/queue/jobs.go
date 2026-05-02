@@ -56,6 +56,8 @@ const (
 	QueuePatchRunCleanup         = "patch-run-cleanup"
 	TypeMetricsSend              = "metrics-send"
 	QueueMetricsSend             = "metrics-send"
+	TypeAgentReportsCleanup      = "agent-reports-cleanup"
+	QueueAgentReportsCleanup     = "agent-reports-cleanup"
 )
 
 // RunScanPayload is the payload for run_scan job.
@@ -299,6 +301,17 @@ func NewPatchRunCleanupTask(host string) (*asynq.Task, error) {
 		return nil, err
 	}
 	return asynq.NewTask(TypePatchRunCleanup, payload, asynq.Queue(QueuePatchRunCleanup), asynq.MaxRetry(2), asynq.Retention(AutomationRetention)), nil
+}
+
+// NewAgentReportsCleanupTask creates an agent-reports-cleanup task. Mirrors
+// the patch-run-cleanup pattern: the schedule fires the empty-payload variant
+// (sweeps all contexts), automation page can fire a per-context variant.
+func NewAgentReportsCleanupTask(host string) (*asynq.Task, error) {
+	payload, err := json.Marshal(AutomationPayload{Host: host})
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TypeAgentReportsCleanup, payload, asynq.Queue(QueueAgentReportsCleanup), asynq.MaxRetry(2), asynq.Retention(AutomationRetention)), nil
 }
 
 // NewSSGUpdateCheckTask creates an ssg-update-check task (manual trigger from automation page).

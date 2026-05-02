@@ -180,5 +180,19 @@ FROM jsonb_to_recordset(sqlc.arg('payload')::jsonb)
 ORDER BY package_id;
 
 -- name: InsertUpdateHistory :exec
-INSERT INTO update_history (id, host_id, packages_count, security_count, total_packages, payload_size_kb, execution_time, timestamp, status, error_message)
-VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9);
+-- Persists a single agent activity row for the per-host Agent Activity feed.
+-- report_type discriminates 'full' / 'partial' / 'ping' / 'docker' / 'compliance'.
+-- sections_sent / sections_unchanged drive the "Updated / Skipped" chip pair in
+-- the UI (legacy rows pre-000043 stay at the column defaults so the UI shows
+-- "—" for them). agent_execution_ms is the agent-side data-collection time
+-- shipped on the wire; nullable for older agents.
+INSERT INTO update_history (
+    id, host_id, packages_count, security_count, total_packages,
+    payload_size_kb, execution_time, timestamp, status, error_message,
+    report_type, sections_sent, sections_unchanged, agent_execution_ms
+)
+VALUES (
+    $1, $2, $3, $4, $5,
+    $6, $7, NOW(), $8, $9,
+    $10, $11, $12, $13
+);

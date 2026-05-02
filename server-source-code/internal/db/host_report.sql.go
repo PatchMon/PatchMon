@@ -211,22 +211,40 @@ func (q *Queries) GetPackageByName(ctx context.Context, name string) (Package, e
 }
 
 const insertUpdateHistory = `-- name: InsertUpdateHistory :exec
-INSERT INTO update_history (id, host_id, packages_count, security_count, total_packages, payload_size_kb, execution_time, timestamp, status, error_message)
-VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9)
+INSERT INTO update_history (
+    id, host_id, packages_count, security_count, total_packages,
+    payload_size_kb, execution_time, timestamp, status, error_message,
+    report_type, sections_sent, sections_unchanged, agent_execution_ms
+)
+VALUES (
+    $1, $2, $3, $4, $5,
+    $6, $7, NOW(), $8, $9,
+    $10, $11, $12, $13
+)
 `
 
 type InsertUpdateHistoryParams struct {
-	ID            string   `json:"id"`
-	HostID        string   `json:"host_id"`
-	PackagesCount int32    `json:"packages_count"`
-	SecurityCount int32    `json:"security_count"`
-	TotalPackages *int32   `json:"total_packages"`
-	PayloadSizeKb *float64 `json:"payload_size_kb"`
-	ExecutionTime *float64 `json:"execution_time"`
-	Status        string   `json:"status"`
-	ErrorMessage  *string  `json:"error_message"`
+	ID                string   `json:"id"`
+	HostID            string   `json:"host_id"`
+	PackagesCount     int32    `json:"packages_count"`
+	SecurityCount     int32    `json:"security_count"`
+	TotalPackages     *int32   `json:"total_packages"`
+	PayloadSizeKb     *float64 `json:"payload_size_kb"`
+	ExecutionTime     *float64 `json:"execution_time"`
+	Status            string   `json:"status"`
+	ErrorMessage      *string  `json:"error_message"`
+	ReportType        string   `json:"report_type"`
+	SectionsSent      []string `json:"sections_sent"`
+	SectionsUnchanged []string `json:"sections_unchanged"`
+	AgentExecutionMs  *int32   `json:"agent_execution_ms"`
 }
 
+// Persists a single agent activity row for the per-host Agent Activity feed.
+// report_type discriminates 'full' / 'partial' / 'ping' / 'docker' / 'compliance'.
+// sections_sent / sections_unchanged drive the "Updated / Skipped" chip pair in
+// the UI (legacy rows pre-000043 stay at the column defaults so the UI shows
+// "—" for them). agent_execution_ms is the agent-side data-collection time
+// shipped on the wire; nullable for older agents.
 func (q *Queries) InsertUpdateHistory(ctx context.Context, arg InsertUpdateHistoryParams) error {
 	_, err := q.db.Exec(ctx, insertUpdateHistory,
 		arg.ID,
@@ -238,6 +256,10 @@ func (q *Queries) InsertUpdateHistory(ctx context.Context, arg InsertUpdateHisto
 		arg.ExecutionTime,
 		arg.Status,
 		arg.ErrorMessage,
+		arg.ReportType,
+		arg.SectionsSent,
+		arg.SectionsUnchanged,
+		arg.AgentExecutionMs,
 	)
 	return err
 }

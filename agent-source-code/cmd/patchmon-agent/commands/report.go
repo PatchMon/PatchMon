@@ -169,6 +169,10 @@ func collectReportData() (*collectedReport, error) {
 	}
 
 	executionTime := time.Since(startTime).Seconds()
+	// Same elapsed time, expressed as int milliseconds for the Agent Activity
+	// feed (server stores it on update_history.agent_execution_ms). Kept as a
+	// pointer so older servers see the field omitted when collection failed.
+	executionMs := int(time.Since(startTime).Milliseconds())
 	payload := &models.ReportPayload{
 		Packages:               packageList,
 		Repositories:           repoList,
@@ -196,6 +200,7 @@ func collectReportData() (*collectedReport, error) {
 		NeedsReboot:            needsReboot,
 		RebootReason:           rebootReason,
 		PackageManager:         detectedPackageMgr,
+		AgentExecutionMs:       &executionMs,
 	}
 	return &collectedReport{Payload: payload, StartAt: startTime}, nil
 }
@@ -563,6 +568,10 @@ func runCheckIn(ctx context.Context) error {
 	dockerHash := lastDockerHash()
 	complianceHash := lastComplianceHash()
 
+	// Surface agent-side data-collection time on the ping for the server's
+	// Agent Activity feed. Reuses the value already computed in
+	// collectReportData (collected.StartAt → now would re-time the same
+	// thing, so we just forward the payload's value).
 	pingReq := &models.PingRequest{
 		AgentVersion: pkgversion.Version,
 		Hashes: models.PingHashes{
@@ -584,6 +593,7 @@ func runCheckIn(ctx context.Context) error {
 			NeedsReboot:  boolPtr(payload.NeedsReboot),
 			RebootReason: strPtrIfNonEmpty(payload.RebootReason),
 		},
+		AgentExecutionMs: payload.AgentExecutionMs,
 	}
 
 	httpClient := client.New(cfgManager, logger)
@@ -687,6 +697,9 @@ func sendPartialReport(ctx context.Context, httpClient *client.Client, full *mod
 			InterfacesHash: full.Hashes.InterfacesHash,
 			HostnameHash:   full.Hashes.HostnameHash,
 		},
+		// Forward agent-side collection time so the server's Agent Activity
+		// row reflects the work that produced this partial.
+		AgentExecutionMs: full.AgentExecutionMs,
 	}
 	if wantPackages {
 		partial.Packages = full.Packages

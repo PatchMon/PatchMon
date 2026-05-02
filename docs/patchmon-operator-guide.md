@@ -1835,6 +1835,12 @@ Configuration for the Guacamole daemon (`guacd`) that powers in-browser RDP sess
 |----------|---------|----------|-------------|
 | `PATCH_RUN_STALL_TIMEOUT_MIN` | `30` | No | Minutes a patch run can stay in `running` state before the periodic cleanup (every 10 minutes) marks it as `timed_out`. Minimum `5`; values below 5 are clamped at startup with a warning. Also editable via Settings → Environment in the web UI; the env var still wins if set. Changes made in the UI take effect on the next cleanup sweep without a restart. |
 
+### Reporting
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `AGENT_REPORTS_RETENTION_DAYS` | `30` | No | Days to retain Agent Activity rows (every ping, full report, partial report, Docker upload, and compliance scan submission writes one row). The daily cleanup sweep at 02:00 deletes anything older. Range `7`..`365`; values outside the range are clamped at startup with a warning. Also editable via Settings → Environment in the web UI; the env var still wins if set. Changes made in the UI take effect on the next cleanup sweep without a restart. |
+
 ---
 
 ### 12. Body Limits

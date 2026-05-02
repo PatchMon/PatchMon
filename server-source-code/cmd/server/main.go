@@ -144,19 +144,31 @@ func main() {
 		r := config.ResolveConfig(context.Background(), cfg, s)
 		return r.PatchRunStallTimeoutMin
 	}
+	// Same closure shape for the Agent Activity retention sweep — operators
+	// can edit AGENT_REPORTS_RETENTION_DAYS via Settings → Environment and
+	// the next daily sweep picks up the change.
+	getAgentReportsRetentionDays := func() int {
+		s, err := settingsStore.GetFirst(context.Background())
+		if err != nil {
+			return cfg.AgentReportsRetentionDays
+		}
+		r := config.ResolveConfig(context.Background(), cfg, s)
+		return r.AgentReportsRetentionDays
+	}
 	queueMux := queue.Mux(queue.MuxOpts{
-		Registry:                   registry,
-		DB:                         db,
-		RDB:                        rdb,
-		RedisCache:                 redisCache,
-		PoolCache:                  poolCache,
-		QueueClient:                queueClient,
-		ServerVersion:              cfg.Version,
-		SSGContentDir:              cfg.SSGContentDir,
-		Log:                        slog,
-		Emit:                       notifyEmit,
-		Enc:                        enc,
-		GetPatchRunStallTimeoutMin: getPatchRunStallTimeoutMin,
+		Registry:                     registry,
+		DB:                           db,
+		RDB:                          rdb,
+		RedisCache:                   redisCache,
+		PoolCache:                    poolCache,
+		QueueClient:                  queueClient,
+		ServerVersion:                cfg.Version,
+		SSGContentDir:                cfg.SSGContentDir,
+		Log:                          slog,
+		Emit:                         notifyEmit,
+		Enc:                          enc,
+		GetPatchRunStallTimeoutMin:   getPatchRunStallTimeoutMin,
+		GetAgentReportsRetentionDays: getAgentReportsRetentionDays,
 	})
 	go func() {
 		if err := queueSrv.Run(queueMux); err != nil {

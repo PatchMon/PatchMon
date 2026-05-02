@@ -98,6 +98,20 @@ type Querier interface {
 	CountActiveAdmins(ctx context.Context) (int64, error)
 	CountActiveRepositories(ctx context.Context) (int32, error)
 	CountAdmins(ctx context.Context) (int64, error)
+	// Agent Activity feed. Returns the merged time-ordered stream of agent comm
+	// rows for a given host: inbound reports (update_history) AND outbound jobs
+	// (job_history). The two source tables have different shapes; this query
+	// normalises them to one column set and discriminates via the `kind` column
+	// ('report' or 'job'). Caller passes the host_id, optional direction / type /
+	// status filters, optional search string (ILIKE on error_message and job
+	// output), optional time-range / limit / offset for pagination.
+	//
+	// CountAgentActivity returns the filtered total separately so stale/deep-linked
+	// pages beyond the end can still report the real total.
+	//
+	// The since_ts arg uses sqlc.narg (nullable) on both branches; pgx encodes
+	// pgtype.Timestamp{Valid:false} as SQL NULL, which the IS NULL guard catches.
+	CountAgentActivity(ctx context.Context, arg CountAgentActivityParams) (int32, error)
 	CountComplianceResultsByScan(ctx context.Context, arg CountComplianceResultsByScanParams) (int64, error)
 	CountComplianceScansByHost(ctx context.Context, hostID string) (int64, error)
 	CountComplianceScansHistory(ctx context.Context, arg CountComplianceScansHistoryParams) (int64, error)
@@ -172,6 +186,9 @@ type Querier interface {
 	DeleteNetwork(ctx context.Context, id string) error
 	DeleteNotificationDestination(ctx context.Context, id string) error
 	DeleteNotificationRoute(ctx context.Context, id string) error
+	// Retention sweep target. Returns the number of rows deleted so the worker
+	// can log the volume.
+	DeleteOldUpdateHistory(ctx context.Context, retentionDays int32) (int64, error)
 	DeleteOldestTfaRememberSession(ctx context.Context, userID string) error
 	DeletePackagesByIDs(ctx context.Context, dollar_1 []string) error
 	DeletePatchPolicy(ctx context.Context, id string) error
@@ -312,7 +329,7 @@ type Querier interface {
 	GetTopFailingRulesFromScans(ctx context.Context, dollar_1 []string) ([]GetTopFailingRulesFromScansRow, error)
 	GetTopWarningRulesFromScans(ctx context.Context, dollar_1 []string) ([]GetTopWarningRulesFromScansRow, error)
 	GetUpdateCountsByImageIDs(ctx context.Context, dollar_1 []string) ([]GetUpdateCountsByImageIDsRow, error)
-	GetUpdateHistory(ctx context.Context, arg GetUpdateHistoryParams) ([]UpdateHistory, error)
+	GetUpdateHistory(ctx context.Context, arg GetUpdateHistoryParams) ([]GetUpdateHistoryRow, error)
 	GetUpdateHistoryDaily(ctx context.Context, arg GetUpdateHistoryDailyParams) ([]GetUpdateHistoryDailyRow, error)
 	GetUpdateTrends(ctx context.Context, timestamp pgtype.Timestamp) ([]GetUpdateTrendsRow, error)
 	GetUpdatesCountByPackageIDs(ctx context.Context, arg GetUpdatesCountByPackageIDsParams) ([]GetUpdatesCountByPackageIDsRow, error)
@@ -339,11 +356,18 @@ type Querier interface {
 	InsertReleaseNotesAcceptance(ctx context.Context, arg InsertReleaseNotesAcceptanceParams) (string, error)
 	InsertScheduledReportRun(ctx context.Context, arg InsertScheduledReportRunParams) (ScheduledReportRun, error)
 	InsertSystemStatistics(ctx context.Context, arg InsertSystemStatisticsParams) error
+	// Persists a single agent activity row for the per-host Agent Activity feed.
+	// report_type discriminates 'full' / 'partial' / 'ping' / 'docker' / 'compliance'.
+	// sections_sent / sections_unchanged drive the "Updated / Skipped" chip pair in
+	// the UI (legacy rows pre-000043 stay at the column defaults so the UI shows
+	// "—" for them). agent_execution_ms is the agent-side data-collection time
+	// shipped on the wire; nullable for older agents.
 	InsertUpdateHistory(ctx context.Context, arg InsertUpdateHistoryParams) error
 	ListActiveAlertsByType(ctx context.Context, type_ string) ([]ListActiveAlertsByTypeRow, error)
 	ListActiveComplianceScans(ctx context.Context) ([]ListActiveComplianceScansRow, error)
 	ListActivePatchRuns(ctx context.Context) ([]ListActivePatchRunsRow, error)
 	ListActiveUsers(ctx context.Context) ([]User, error)
+	ListAgentActivity(ctx context.Context, arg ListAgentActivityParams) ([]ListAgentActivityRow, error)
 	ListAlertActions(ctx context.Context) ([]AlertAction, error)
 	ListAlertConfig(ctx context.Context) ([]ListAlertConfigRow, error)
 	ListAlertHistoryByAlertID(ctx context.Context, alertID string) ([]ListAlertHistoryByAlertIDRow, error)
@@ -406,7 +430,7 @@ type Querier interface {
 	ListStalledComplianceScansWithDetails(ctx context.Context, startedAt pgtype.Timestamp) ([]ListStalledComplianceScansWithDetailsRow, error)
 	ListSystemStatisticsByDateRange(ctx context.Context, arg ListSystemStatisticsByDateRangeParams) ([]SystemStatistic, error)
 	ListTrustedDevicesForUser(ctx context.Context, userID string) ([]UserTrustedDevice, error)
-	ListUpdateHistoryByDateRange(ctx context.Context, arg ListUpdateHistoryByDateRangeParams) ([]UpdateHistory, error)
+	ListUpdateHistoryByDateRange(ctx context.Context, arg ListUpdateHistoryByDateRangeParams) ([]ListUpdateHistoryByDateRangeRow, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]User, error)
 	ListVolumes(ctx context.Context, arg ListVolumesParams) ([]DockerVolume, error)
 	// User-initiated cancel from StopRun. Deliberately does NOT touch shell_output
