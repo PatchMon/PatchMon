@@ -1,10 +1,17 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	keepPreviousData,
+	useMutation,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import {
 	AlertTriangle,
 	ArrowDown,
 	ArrowUp,
 	ArrowUpDown,
 	Check,
+	ChevronLeft,
+	ChevronRight,
 	Columns,
 	Database,
 	GripVertical,
@@ -22,6 +29,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { dashboardAPI, repositoryAPI } from "../utils/api";
 
+const REPOSITORIES_PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
+const REPOSITORIES_DEFAULT_PAGE_SIZE = 50;
+const REPOSITORIES_PAGE_SIZE_STORAGE_KEY = "repositories-page-size";
+
 const Repositories = () => {
 	const queryClient = useQueryClient();
 	const navigate = useNavigate();
@@ -34,6 +45,14 @@ const Repositories = () => {
 	const [sortDirection, setSortDirection] = useState("asc");
 	const [showColumnSettings, setShowColumnSettings] = useState(false);
 	const [deleteModalData, setDeleteModalData] = useState(null);
+	const [currentPage, setCurrentPage] = useState(1);
+	const [pageSize, setPageSize] = useState(() => {
+		const saved = localStorage.getItem(REPOSITORIES_PAGE_SIZE_STORAGE_KEY);
+		const parsed = Number.parseInt(saved, 10);
+		return REPOSITORIES_PAGE_SIZE_OPTIONS.includes(parsed)
+			? parsed
+			: REPOSITORIES_DEFAULT_PAGE_SIZE;
+	});
 
 	// Debounce search for backend
 	const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -89,17 +108,31 @@ const Repositories = () => {
 
 	// Build backend filter params
 	const repoQueryParams = useMemo(() => {
-		const params = {};
+		const params = {
+			limit: pageSize,
+			offset: (currentPage - 1) * pageSize,
+			sort: sortField,
+			order: sortDirection,
+		};
 		if (hostFilter && hostFilter !== "all") params.host = hostFilter;
 		if (debouncedSearch) params.search = debouncedSearch;
 		if (filterStatus && filterStatus !== "all") params.status = filterStatus;
 		if (filterType && filterType !== "all") params.type = filterType;
 		return params;
-	}, [hostFilter, debouncedSearch, filterStatus, filterType]);
+	}, [
+		hostFilter,
+		debouncedSearch,
+		filterStatus,
+		filterType,
+		pageSize,
+		currentPage,
+		sortField,
+		sortDirection,
+	]);
 
 	// Fetch repositories
 	const {
-		data: repositories = [],
+		data: repositoriesResponse,
 		isLoading,
 		error,
 		refetch,
@@ -107,7 +140,17 @@ const Repositories = () => {
 	} = useQuery({
 		queryKey: ["repositories", repoQueryParams],
 		queryFn: () => repositoryAPI.list(repoQueryParams).then((res) => res.data),
+		placeholderData: keepPreviousData,
 	});
+	const repositories = repositoriesResponse?.items || [];
+	const totalRepositories = repositoriesResponse?.total || 0;
+	const totalPages = Math.max(1, Math.ceil(totalRepositories / pageSize));
+	const pageStart =
+		totalRepositories === 0 ? 0 : (repositoriesResponse?.offset || 0) + 1;
+	const pageEnd = Math.min(
+		(repositoriesResponse?.offset || 0) + repositories.length,
+		totalRepositories,
+	);
 
 	// Fetch repository statistics
 	const { data: stats } = useQuery({
@@ -117,8 +160,9 @@ const Repositories = () => {
 
 	// Fetch host information when filtering by host
 	const { data: hosts } = useQuery({
-		queryKey: ["hosts"],
-		queryFn: () => dashboardAPI.getHosts().then((res) => res.data),
+		queryKey: ["hostOptions", hostFilter],
+		queryFn: () =>
+			dashboardAPI.getHostOptions({ limit: 5000 }).then((res) => res.data),
 		staleTime: 5 * 60 * 1000,
 		enabled: !!hostFilter,
 	});
@@ -130,8 +174,8 @@ const Repositories = () => {
 	const deleteRepositoryMutation = useMutation({
 		mutationFn: (repositoryId) => repositoryAPI.delete(repositoryId),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["repositories"]);
-			queryClient.invalidateQueries(["repository-stats"]);
+			queryClient.invalidateQueries({ queryKey: ["repositories"] });
+			queryClient.invalidateQueries({ queryKey: ["repository-stats"] });
 		},
 	});
 
@@ -219,43 +263,31 @@ const Repositories = () => {
 		setDeleteModalData(null);
 	};
 
-	// Sort repositories (search, type, status filtered by backend)
+	// Repositories are filtered, sorted, and paginated by the backend.
 	const filteredAndSortedRepositories = useMemo(() => {
-		if (!repositories) return [];
-		const sorted = [...repositories];
+		return repositories || [];
+	}, [repositories]);
 
-		// Sort repositories
-		sorted.sort((a, b) => {
-			let aValue = a[sortField];
-			let bValue = b[sortField];
+	// biome-ignore lint/correctness/useExhaustiveDependencies: Reset to the first page when filters, sorting, or page size change.
+	useEffect(() => {
+		setCurrentPage(1);
+	}, [
+		debouncedSearch,
+		filterType,
+		filterStatus,
+		hostFilter,
+		pageSize,
+		sortField,
+		sortDirection,
+	]);
 
-			// Handle special cases
-			if (sortField === "security") {
-				// Use the same logic as filtering to determine isSecure
-				const aIsSecure =
-					a.isSecure !== undefined ? a.isSecure : a.url.startsWith("https://");
-				const bIsSecure =
-					b.isSecure !== undefined ? b.isSecure : b.url.startsWith("https://");
-				// Sort by boolean: true (Secure) comes before false (Insecure) when ascending
-				aValue = aIsSecure ? 1 : 0;
-				bValue = bIsSecure ? 1 : 0;
-			} else if (sortField === "status") {
-				aValue = a.is_active ? "Active" : "Inactive";
-				bValue = b.is_active ? "Active" : "Inactive";
-			}
-
-			if (typeof aValue === "string") {
-				aValue = aValue.toLowerCase();
-				bValue = bValue.toLowerCase();
-			}
-
-			if (aValue < bValue) return sortDirection === "asc" ? -1 : 1;
-			if (aValue > bValue) return sortDirection === "asc" ? 1 : -1;
-			return 0;
-		});
-
-		return sorted;
-	}, [repositories, sortField, sortDirection]);
+	const handlePageSizeChange = (nextPageSize) => {
+		setPageSize(nextPageSize);
+		localStorage.setItem(
+			REPOSITORIES_PAGE_SIZE_STORAGE_KEY,
+			String(nextPageSize),
+		);
+	};
 
 	if (isLoading) {
 		return (
@@ -695,6 +727,58 @@ const Repositories = () => {
 						)}
 					</div>
 				</div>
+				{totalRepositories > 0 && (
+					<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 py-3 border-t border-secondary-200 dark:border-secondary-600">
+						<div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+							<div className="flex items-center gap-2">
+								<span className="text-sm text-secondary-700 dark:text-white">
+									Rows per page:
+								</span>
+								<select
+									value={pageSize}
+									onChange={(e) =>
+										handlePageSizeChange(Number.parseInt(e.target.value, 10))
+									}
+									className="text-sm border border-secondary-300 dark:border-secondary-600 rounded px-2 py-1 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white min-h-[36px]"
+								>
+									{REPOSITORIES_PAGE_SIZE_OPTIONS.map((size) => (
+										<option key={size} value={size}>
+											{size}
+										</option>
+									))}
+								</select>
+							</div>
+							<span className="text-sm text-secondary-700 dark:text-white">
+								{pageStart}-{pageEnd} of {totalRepositories}
+							</span>
+						</div>
+						<div className="flex items-center gap-2">
+							<button
+								type="button"
+								onClick={() => setCurrentPage((page) => Math.max(page - 1, 1))}
+								disabled={currentPage <= 1}
+								className="p-2 rounded border border-secondary-300 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+								aria-label="Previous repositories page"
+							>
+								<ChevronLeft className="h-4 w-4" />
+							</button>
+							<span className="text-sm text-secondary-700 dark:text-white">
+								Page {currentPage} of {totalPages}
+							</span>
+							<button
+								type="button"
+								onClick={() =>
+									setCurrentPage((page) => Math.min(page + 1, totalPages))
+								}
+								disabled={currentPage >= totalPages}
+								className="p-2 rounded border border-secondary-300 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+								aria-label="Next repositories page"
+							>
+								<ChevronRight className="h-4 w-4" />
+							</button>
+						</div>
+					</div>
+				)}
 			</div>
 
 			{/* Column Settings Modal */}

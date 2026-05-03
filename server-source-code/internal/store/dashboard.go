@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
@@ -10,6 +11,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // DashboardStore provides dashboard stats.
@@ -22,9 +24,14 @@ func NewDashboardStore(db database.DBProvider) *DashboardStore {
 	return &DashboardStore{db: db}
 }
 
+// withWorkMem is a thin wrapper around the package-level helper so existing
+// dashboard call sites (s.withWorkMem(...)) keep compiling.
+func (s *DashboardStore) withWorkMem(ctx context.Context, fn func(q *db.Queries) error) error {
+	return withWorkMemTx(ctx, s.db, fn)
+}
+
 // GetStats returns dashboard statistics matching Node backend structure for frontend compatibility.
 func (s *DashboardStore) GetStats(ctx context.Context) (map[string]interface{}, error) {
-	d := s.db.DB(ctx)
 	now := time.Now()
 	updateIntervalMinutes := 60
 	if settings, _ := s.getSettings(ctx); settings != nil {
@@ -37,12 +44,45 @@ func (s *DashboardStore) GetStats(ctx context.Context) (map[string]interface{}, 
 	thresholdTime := now.Add(-time.Duration(thresholdMinutes) * time.Minute)
 	offlineThreshold := now.Add(-time.Duration(updateIntervalMinutes*3) * time.Minute)
 
-	stats, err := d.Queries.GetDashboardStats(ctx, db.GetDashboardStatsParams{
-		LastUpdate:   pgtime.From(thresholdTime),
-		LastUpdate_2: pgtime.From(offlineThreshold),
+	// Collect everything that benefits from the work_mem bump in a single
+	// transaction. Settings + tableExists stay outside (they're cheap and
+	// don't need session memory).
+	var (
+		stats  db.GetDashboardStatsRow
+		osRows []db.GetOSDistributionByTypeAndVersionRow
+		trends = []interface{}{}
+		hasUH  = s.tableExists(ctx, "update_history")
+		runErr error
+	)
+	runErr = s.withWorkMem(ctx, func(q *db.Queries) error {
+		var err error
+		stats, err = q.GetDashboardStats(ctx, db.GetDashboardStatsParams{
+			LastUpdate:   pgtime.From(thresholdTime),
+			LastUpdate_2: pgtime.From(offlineThreshold),
+		})
+		if err != nil {
+			return err
+		}
+		osRows, _ = q.GetOSDistributionByTypeAndVersion(ctx)
+		if hasUH {
+			trendsSince := now.AddDate(0, 0, -7)
+			trendRows, _ := q.GetUpdateTrends(ctx, pgtime.From(trendsSince))
+			for _, r := range trendRows {
+				tsStr := ""
+				if r.Ts.Valid {
+					tsStr = r.Ts.Time.Format(time.RFC3339)
+				}
+				trends = append(trends, map[string]interface{}{
+					"timestamp": tsStr,
+					"_count":    map[string]interface{}{"id": r.Cnt},
+					"_sum":      map[string]interface{}{"packages_count": r.PkgSum, "security_count": r.SecSum},
+				})
+			}
+		}
+		return nil
 	})
-	if err != nil {
-		return nil, err
+	if runErr != nil {
+		return nil, runErr
 	}
 
 	totalHosts := int(stats.TotalHosts)
@@ -61,7 +101,6 @@ func (s *DashboardStore) GetStats(ctx context.Context) (map[string]interface{}, 
 		upToDateHosts = 0
 	}
 
-	osRows, _ := d.Queries.GetOSDistributionByTypeAndVersion(ctx)
 	osDistribution := make([]map[string]interface{}, len(osRows))
 	for i, r := range osRows {
 		osDistribution[i] = map[string]interface{}{
@@ -83,23 +122,6 @@ func (s *DashboardStore) GetStats(ctx context.Context) (map[string]interface{}, 
 	packageUpdateDistribution := []map[string]interface{}{
 		{"name": "Security", "count": securityUpdates},
 		{"name": "Regular", "count": regularUpdates},
-	}
-
-	trends := []interface{}{}
-	if s.tableExists(ctx, "update_history") {
-		trendsSince := now.AddDate(0, 0, -7)
-		trendRows, _ := d.Queries.GetUpdateTrends(ctx, pgtime.From(trendsSince))
-		for _, r := range trendRows {
-			tsStr := ""
-			if r.Ts.Valid {
-				tsStr = r.Ts.Time.Format(time.RFC3339)
-			}
-			trends = append(trends, map[string]interface{}{
-				"timestamp": tsStr,
-				"_count":    map[string]interface{}{"id": r.Cnt},
-				"_sum":      map[string]interface{}{"packages_count": r.PkgSum, "security_count": r.SecSum},
-			})
-		}
 	}
 
 	return map[string]interface{}{
@@ -235,62 +257,259 @@ type HostWithCounts struct {
 	TotalPackagesCount   int
 }
 
-// HostsListParams holds optional filters for GetHostsWithCounts.
-type HostsListParams struct {
-	Search    string
-	Group     string
-	Status    string
-	OS        string
-	OSVersion string
+type dashboardHostRow struct {
+	ID                     string
+	MachineID              *string
+	FriendlyName           string
+	Hostname               *string
+	IP                     *string
+	OSType                 string
+	OSVersion              string
+	Status                 string
+	AgentVersion           *string
+	AutoUpdate             bool
+	Notes                  *string
+	ApiID                  string
+	NeedsReboot            *bool
+	RebootReason           *string
+	SystemUptime           *string
+	DockerEnabled          bool
+	ComplianceEnabled      bool
+	ComplianceOnDemandOnly bool
+	LastUpdate             pgtype.Timestamp
+	SsgVersion             interface{}
+	UpdatesCount           int32
+	SecurityUpdatesCount   int32
+	TotalPackagesCount     int32
 }
 
-// GetHostsWithCounts returns hosts with update counts for dashboard.
-func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsListParams) ([]map[string]interface{}, error) {
-	d := s.db.DB(ctx)
-	arg := db.GetHostsWithCountsParams{}
+// HostsListParams holds optional filters for GetHostsWithCounts.
+//
+// Sort/Order/Limit/Offset drive server-side pagination. Defaults:
+// Sort = "last_update", Order = "desc", Limit = 100, Offset = 0.
+//
+// The hard cap (HostsListMaxLimit, 5000) is a sanity bound to prevent
+// pathological requests from materialising tens of millions of host_packages
+// rows in one transaction; it is not a UX-facing page size limit. The
+// HTTP handler enforces a smaller cap (500) for caller-supplied `limit`
+// to keep paginated UIs honest, but server-internal callers (legacy
+// unwrapped /dashboard/hosts, notification report renderer) may pass up
+// to HostsListMaxLimit when they intentionally want a wide page.
+type HostsListParams struct {
+	Search      string
+	Group       string
+	Status      string
+	OS          string
+	OSVersion   string
+	Filter      string
+	SelectedIDs []string
+	RebootOnly  bool
+	HideStale   bool
+	Sort        string // whitelisted public sort key
+	Order       string // "asc" | "desc"
+	Limit       int    // page size (1..HostsListMaxLimit; default 100)
+	Offset      int    // starting row (>= 0)
+}
+
+// HostsListMaxLimit is the absolute upper bound on rows returned by
+// GetHostsWithCounts in a single call. Sized to comfortably cover any
+// realistic single-screen fleet view; beyond this, callers should
+// paginate. At ~1 KB per host JSON the resulting payload is ~5 MB.
+const HostsListMaxLimit = 5000
+
+// HostsListResult bundles a paginated page of hosts with the total
+// count matching the same filters. Total is what the UI uses to render
+// "Showing X-Y of Z" and the page selector.
+type HostsListResult struct {
+	Items  []map[string]interface{} `json:"items"`
+	Total  int                      `json:"total"`
+	Limit  int                      `json:"limit"`
+	Offset int                      `json:"offset"`
+}
+
+// hostsListSortWhitelist maps the public sort keys to the same identifiers
+// used in the SQL CASE statements. Keep in sync with the ORDER BY clause
+// in queries/dashboard.sql:GetHostsWithCounts.
+var hostsListSortWhitelist = map[string]string{
+	"agent_version":    "agent_version",
+	"friendly_name":    "friendly_name",
+	"group":            "group",
+	"hostname":         "hostname",
+	"integrations":     "integrations",
+	"ip":               "ip",
+	"last_update":      "last_update",
+	"needs_reboot":     "needs_reboot",
+	"notes":            "notes",
+	"os_type":          "os_type",
+	"os_version":       "os_version",
+	"security_updates": "security_updates",
+	"ssg_version":      "ssg_version",
+	"status":           "status",
+	"updates":          "updates",
+	"uptime":           "uptime",
+}
+
+// HostsListSortKey normalises a public sort key to the identifier used by
+// the sqlc query. The boolean return lets handlers reject unsupported sorts
+// instead of silently serving a different order than requested.
+func HostsListSortKey(sort string) (string, bool) {
+	if sort == "" {
+		return "last_update", true
+	}
+	key, ok := hostsListSortWhitelist[sort]
+	return key, ok
+}
+
+// GetHostsWithCounts returns a page of hosts with package counts plus the
+// total matching the same filters. Backwards-compat: callers that pass
+// a zero Limit get the default (100), matching the previous "all rows"
+// shape only insofar as small fleets fit in one page.
+func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsListParams) (*HostsListResult, error) {
+	limit := params.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > HostsListMaxLimit {
+		limit = HostsListMaxLimit
+	}
+	offset := params.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	sortKey, ok := HostsListSortKey(params.Sort)
+	if !ok {
+		sortKey = "last_update"
+	}
+	order := strings.ToLower(params.Order)
+	if order != "asc" && order != "desc" {
+		order = "desc"
+	}
+
+	arg := db.GetHostsWithCountsParams{
+		SelectedIds:    params.SelectedIDs,
+		StaleThreshold: pgtime.From(time.Now().Add(-time.Duration(UpdateIntervalMinutes(ctx, s)*2) * time.Minute)),
+		RebootOnly:     params.RebootOnly,
+		HideStale:      params.HideStale,
+		SortKey:        sortKey,
+		SortDir:        order,
+		RowLimit:       safeconv.ClampToInt32(limit),
+		RowOffset:      safeconv.ClampToInt32(offset),
+	}
+	countArg := db.CountHostsForListParams{
+		SelectedIds:    params.SelectedIDs,
+		StaleThreshold: arg.StaleThreshold,
+		RebootOnly:     params.RebootOnly,
+		HideStale:      params.HideStale,
+	}
 	if params.Search != "" {
 		arg.Search = &params.Search
+		countArg.Search = &params.Search
 	}
 	if params.Group != "" {
 		arg.Group = &params.Group
+		countArg.Group = &params.Group
 	}
 	if params.Status != "" {
 		arg.Status = &params.Status
+		countArg.Status = &params.Status
 	}
 	if params.OS != "" {
 		arg.Os = &params.OS
+		countArg.Os = &params.OS
 	}
 	if params.OSVersion != "" {
 		arg.OsVersion = &params.OSVersion
+		countArg.OsVersion = &params.OSVersion
+	}
+	if params.Filter != "" {
+		arg.Filter = &params.Filter
+		countArg.Filter = &params.Filter
+	}
+	pageArg := db.GetHostsWithPageCountsParams{
+		SelectedIds:    arg.SelectedIds,
+		StaleThreshold: arg.StaleThreshold,
+		RebootOnly:     arg.RebootOnly,
+		HideStale:      arg.HideStale,
+		SortKey:        arg.SortKey,
+		SortDir:        arg.SortDir,
+		RowLimit:       arg.RowLimit,
+		RowOffset:      arg.RowOffset,
+		Search:         arg.Search,
+		Group:          arg.Group,
+		Status:         arg.Status,
+		Os:             arg.Os,
+		OsVersion:      arg.OsVersion,
+		Filter:         arg.Filter,
 	}
 
-	rows, err := d.Queries.GetHostsWithCounts(ctx, arg)
-	if err != nil {
-		return nil, err
-	}
-
-	hostIDs := make([]string, len(rows))
-	for i, r := range rows {
-		hostIDs[i] = r.ID
-	}
-	groupsMap := make(map[string][]map[string]interface{})
-	if len(hostIDs) > 0 {
-		groupRows, _ := d.Queries.GetHostGroupsForHosts(ctx, hostIDs)
+	var (
+		rows      []dashboardHostRow
+		total     int32
+		groupsMap = make(map[string][]map[string]interface{})
+	)
+	if err := s.withWorkMem(ctx, func(q *db.Queries) error {
+		var err error
+		if sortKey == "updates" || sortKey == "security_updates" {
+			fullRows, fullErr := q.GetHostsWithCounts(ctx, arg)
+			if fullErr != nil {
+				return fullErr
+			}
+			rows = make([]dashboardHostRow, len(fullRows))
+			for i, r := range fullRows {
+				rows[i] = dashboardHostRow{
+					ID: r.ID, MachineID: r.MachineID, FriendlyName: r.FriendlyName, Hostname: r.Hostname,
+					IP: r.Ip, OSType: r.OsType, OSVersion: r.OsVersion, Status: r.Status,
+					AgentVersion: r.AgentVersion, AutoUpdate: r.AutoUpdate, Notes: r.Notes, ApiID: r.ApiID,
+					NeedsReboot: r.NeedsReboot, RebootReason: r.RebootReason, SystemUptime: r.SystemUptime,
+					DockerEnabled: r.DockerEnabled, ComplianceEnabled: r.ComplianceEnabled,
+					ComplianceOnDemandOnly: r.ComplianceOnDemandOnly, LastUpdate: r.LastUpdate,
+					SsgVersion: r.SsgVersion, UpdatesCount: r.UpdatesCount,
+					SecurityUpdatesCount: r.SecurityUpdatesCount, TotalPackagesCount: r.TotalPackagesCount,
+				}
+			}
+		} else {
+			pageRows, pageErr := q.GetHostsWithPageCounts(ctx, pageArg)
+			if pageErr != nil {
+				return pageErr
+			}
+			rows = make([]dashboardHostRow, len(pageRows))
+			for i, r := range pageRows {
+				rows[i] = dashboardHostRow{
+					ID: r.ID, MachineID: r.MachineID, FriendlyName: r.FriendlyName, Hostname: r.Hostname,
+					IP: r.Ip, OSType: r.OsType, OSVersion: r.OsVersion, Status: r.Status,
+					AgentVersion: r.AgentVersion, AutoUpdate: r.AutoUpdate, Notes: r.Notes, ApiID: r.ApiID,
+					NeedsReboot: r.NeedsReboot, RebootReason: r.RebootReason, SystemUptime: r.SystemUptime,
+					DockerEnabled: r.DockerEnabled, ComplianceEnabled: r.ComplianceEnabled,
+					ComplianceOnDemandOnly: r.ComplianceOnDemandOnly, LastUpdate: r.LastUpdate,
+					SsgVersion: r.SsgVersion, UpdatesCount: r.UpdatesCount,
+					SecurityUpdatesCount: r.SecurityUpdatesCount, TotalPackagesCount: r.TotalPackagesCount,
+				}
+			}
+		}
+		total, err = q.CountHostsForList(ctx, countArg)
+		if err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return nil
+		}
+		hostIDs := make([]string, len(rows))
+		for i, r := range rows {
+			hostIDs[i] = r.ID
+		}
+		groupRows, _ := q.GetHostGroupsForHosts(ctx, hostIDs)
 		for _, r := range groupRows {
 			m := map[string]interface{}{
 				"host_groups": map[string]interface{}{"id": r.ID, "name": r.Name, "color": r.Color},
 			}
 			groupsMap[r.HostID] = append(groupsMap[r.HostID], m)
 		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
-	updateIntervalMinutes := 60
-	if settings, _ := s.getSettings(ctx); settings != nil {
-		updateIntervalMinutes = settings.UpdateInterval
-		if updateIntervalMinutes <= 0 {
-			updateIntervalMinutes = 60
-		}
-	}
+	updateIntervalMinutes := UpdateIntervalMinutes(ctx, s)
 	thresholdMinutes := updateIntervalMinutes * 2
 	thresholdTime := time.Now().Add(-time.Duration(thresholdMinutes) * time.Minute)
 
@@ -318,7 +537,7 @@ func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsLis
 		}
 		result[i] = map[string]interface{}{
 			"id": h.ID, "machine_id": h.MachineID, "friendly_name": h.FriendlyName, "hostname": h.Hostname,
-			"ip": h.Ip, "os_type": h.OsType, "os_version": h.OsVersion,
+			"ip": h.IP, "os_type": h.OSType, "os_version": h.OSVersion,
 			"status": h.Status, "agent_version": h.AgentVersion, "auto_update": h.AutoUpdate,
 			"notes": h.Notes, "api_id": h.ApiID, "needs_reboot": h.NeedsReboot, "reboot_reason": h.RebootReason,
 			"system_uptime":  h.SystemUptime,
@@ -331,7 +550,109 @@ func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsLis
 			"totalPackagesCount": h.TotalPackagesCount,
 		}
 	}
-	return result, nil
+	return &HostsListResult{
+		Items:  result,
+		Total:  int(total),
+		Limit:  limit,
+		Offset: offset,
+	}, nil
+}
+
+// HostCountsResult is the wire shape for the cheap host-counts endpoint.
+// All fields are non-nullable counts derived in a single SQL pass.
+type HostCountsResult struct {
+	Total        int `json:"total"`
+	Up           int `json:"up"`
+	Stale        int `json:"stale"`
+	Down         int `json:"down"`
+	Inactive     int `json:"inactive"`
+	NeedsReboot  int `json:"needsReboot"`
+	NeedsUpdates int `json:"needsUpdates"`
+}
+
+// GetHostCounts returns sidebar-shaped host counters in one round-trip.
+// stale = active + last_update older than the stale threshold but newer
+// than the down threshold. down = active + last_update older than the
+// down threshold. The two thresholds are computed by the caller from
+// the configured update interval.
+func (s *DashboardStore) GetHostCounts(ctx context.Context, staleThreshold, downThreshold time.Time) (*HostCountsResult, error) {
+	d := s.db.DB(ctx)
+	row, err := d.Queries.GetHostCounts(ctx, db.GetHostCountsParams{
+		LastUpdate:   pgtime.From(staleThreshold),
+		LastUpdate_2: pgtime.From(downThreshold),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &HostCountsResult{
+		Total:        int(row.Total),
+		Up:           int(row.Up),
+		Stale:        int(row.Stale),
+		Down:         int(row.Down),
+		Inactive:     int(row.Inactive),
+		NeedsReboot:  int(row.NeedsReboot),
+		NeedsUpdates: int(row.NeedsUpdates),
+	}, nil
+}
+
+// GetHostFilterOptions returns cheap host-only filter metadata for the Hosts UI.
+func (s *DashboardStore) GetHostFilterOptions(ctx context.Context) (map[string]interface{}, error) {
+	d := s.db.DB(ctx)
+	rows, err := d.Queries.GetOSDistributionByTypeAndVersion(ctx)
+	if err != nil {
+		return nil, err
+	}
+	osDistribution := make([]map[string]interface{}, len(rows))
+	for i, r := range rows {
+		osDistribution[i] = map[string]interface{}{
+			"name":       r.Name,
+			"count":      r.Count,
+			"os_type":    r.OsType,
+			"os_version": r.OsVersion,
+		}
+	}
+	return map[string]interface{}{"osDistribution": osDistribution}, nil
+}
+
+// GetNavigationStats returns cheap sidebar/header counters without running
+// the full dashboard aggregate query.
+func (s *DashboardStore) GetNavigationStats(ctx context.Context) (map[string]interface{}, error) {
+	d := s.db.DB(ctx)
+	row, err := d.Queries.GetNavigationStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+	lastUpdated := time.Now().Format(time.RFC3339)
+	if row.LastUpdated.Valid {
+		lastUpdated = row.LastUpdated.Time.Format(time.RFC3339)
+	}
+	return map[string]interface{}{
+		"cards": map[string]interface{}{
+			"totalHosts":            int(row.TotalHosts),
+			"totalOutdatedPackages": int(row.TotalOutdatedPackages),
+			"totalRepos":            int(row.TotalRepos),
+		},
+		"lastUpdated": lastUpdated,
+	}, nil
+}
+
+// UpdateIntervalMinutesOrDefault reads the configured agent update
+// interval (Settings.UpdateInterval) with a 60-minute fallback. Used by
+// the host-counts handler to derive stale/down thresholds.
+func (s *DashboardStore) UpdateIntervalMinutesOrDefault(ctx context.Context) int {
+	return UpdateIntervalMinutes(ctx, s)
+}
+
+// UpdateIntervalMinutes reads the configured agent update interval with a
+// conservative fallback. It is a helper so the list and count endpoints use
+// exactly the same stale/down thresholds.
+func UpdateIntervalMinutes(ctx context.Context, s *DashboardStore) int {
+	if settings, _ := s.getSettings(ctx); settings != nil {
+		if settings.UpdateInterval > 0 {
+			return settings.UpdateInterval
+		}
+	}
+	return 60
 }
 
 // GetHostDetail returns host detail with packages and history for dashboard (matches Node structure).

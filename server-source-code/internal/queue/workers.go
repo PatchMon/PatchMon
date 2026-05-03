@@ -654,6 +654,50 @@ func (h *AgentReportsCleanupHandler) cleanupDB(ctx context.Context, d *database.
 	return d.Queries.DeleteOldUpdateHistory(ctx, int32(retentionDays))
 }
 
+// PackageStatsRefreshHandler refreshes mv_package_stats so the Packages
+// list page can render its per-package counters via an indexed hash join
+// against the matview instead of aggregating host_packages on every
+// request. Runs CONCURRENTLY (briefly row-locks the matview rather than
+// blocking readers), tolerates the rare lock-conflict case by surfacing
+// the error to asynq's retry machinery rather than swallowing it.
+type PackageStatsRefreshHandler struct {
+	defaultDB *database.DB
+	poolCache *hostctx.PoolCache
+	log       *slog.Logger
+}
+
+// NewPackageStatsRefreshHandler creates a package-stats-refresh handler.
+func NewPackageStatsRefreshHandler(defaultDB *database.DB, poolCache *hostctx.PoolCache, log *slog.Logger) *PackageStatsRefreshHandler {
+	return &PackageStatsRefreshHandler{defaultDB: defaultDB, poolCache: poolCache, log: log}
+}
+
+// ProcessTask implements asynq.Handler.
+func (h *PackageStatsRefreshHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
+	if len(t.Payload()) > 0 {
+		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		return h.refresh(ctx, d, "")
+	}
+	forEachDB(ctx, h.defaultDB, h.poolCache, func(ctx context.Context, d *database.DB, host string) {
+		if err := h.refresh(ctx, d, host); err != nil {
+			h.log.Warn("package stats refresh failed", "host", host, "error", err)
+		}
+	})
+	h.log.Debug("package stats refresh completed")
+	return nil
+}
+
+// refresh is a thin wrapper so the per-host loop and the explicit-payload
+// path share a single execution path. The CONCURRENTLY variant requires
+// the unique index defined in migration 000047 (mv_package_stats_pkey).
+func (h *PackageStatsRefreshHandler) refresh(ctx context.Context, d *database.DB, host string) error {
+	start := time.Now()
+	if _, err := d.Exec(ctx, "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_package_stats"); err != nil {
+		return err
+	}
+	h.log.Debug("package stats refreshed", "host", host, "duration_ms", time.Since(start).Milliseconds())
+	return nil
+}
+
 // AlertCleanupHandler handles alert-cleanup jobs.
 type AlertCleanupHandler struct {
 	defaultDB   *database.DB

@@ -803,3 +803,19 @@ CREATE TABLE IF NOT EXISTS scheduled_report_runs (
     summary_hash TEXT,
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- mv_package_stats — materialised view of per-package install / update /
+-- security counters. Refreshed CONCURRENTLY by the asynq scheduler every
+-- couple of minutes (see TypePackageStatsRefresh). Declared here so sqlc
+-- can resolve column references in queries that join against it; the
+-- authoritative definition lives in
+-- migrations/000047_v2-0-4_package_stats_mat_view.up.sql.
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_package_stats AS
+SELECT
+    hp.package_id,
+    COUNT(*)::int                                                                  AS total_installs,
+    COUNT(*) FILTER (WHERE hp.needs_update)::int                                   AS updates_needed,
+    COUNT(*) FILTER (WHERE hp.needs_update AND hp.is_security_update)::int         AS security_updates
+FROM host_packages hp
+GROUP BY hp.package_id;
+CREATE UNIQUE INDEX IF NOT EXISTS mv_package_stats_pkey ON mv_package_stats (package_id);

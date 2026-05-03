@@ -401,6 +401,103 @@ func (q *Queries) GetHostsByIDs(ctx context.Context, dollar_1 []string) ([]Host,
 	return items, nil
 }
 
+const listExistingHostApiIDs = `-- name: ListExistingHostApiIDs :many
+SELECT api_id FROM hosts WHERE api_id = ANY($1::text[])
+`
+
+func (q *Queries) ListExistingHostApiIDs(ctx context.Context, dollar_1 []string) ([]string, error) {
+	rows, err := q.db.Query(ctx, listExistingHostApiIDs, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var api_id string
+		if err := rows.Scan(&api_id); err != nil {
+			return nil, err
+		}
+		items = append(items, api_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHostApiIDs = `-- name: ListHostApiIDs :many
+SELECT api_id FROM hosts ORDER BY friendly_name ASC
+`
+
+func (q *Queries) ListHostApiIDs(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, listHostApiIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var api_id string
+		if err := rows.Scan(&api_id); err != nil {
+			return nil, err
+		}
+		items = append(items, api_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHostOptions = `-- name: ListHostOptions :many
+SELECT id, friendly_name, hostname, os_type, status
+FROM hosts
+WHERE ($1::text IS NULL OR friendly_name ILIKE '%' || $1 || '%' OR hostname ILIKE '%' || $1 || '%')
+ORDER BY friendly_name ASC, hostname ASC NULLS LAST, id ASC
+LIMIT $3::int
+OFFSET $2::int
+`
+
+type ListHostOptionsParams struct {
+	Search    *string `json:"search"`
+	RowOffset int32   `json:"row_offset"`
+	RowLimit  int32   `json:"row_limit"`
+}
+
+type ListHostOptionsRow struct {
+	ID           string  `json:"id"`
+	FriendlyName string  `json:"friendly_name"`
+	Hostname     *string `json:"hostname"`
+	OsType       string  `json:"os_type"`
+	Status       string  `json:"status"`
+}
+
+func (q *Queries) ListHostOptions(ctx context.Context, arg ListHostOptionsParams) ([]ListHostOptionsRow, error) {
+	rows, err := q.db.Query(ctx, listHostOptions, arg.Search, arg.RowOffset, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListHostOptionsRow
+	for rows.Next() {
+		var i ListHostOptionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FriendlyName,
+			&i.Hostname,
+			&i.OsType,
+			&i.Status,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listHosts = `-- name: ListHosts :many
 SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id, packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash, last_full_report_at FROM hosts ORDER BY friendly_name
 `

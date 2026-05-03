@@ -37,16 +37,29 @@ SELECT COUNT(*)::int FROM packages p
 WHERE ($1::text IS NULL OR p.name ILIKE '%' || $1 || '%' OR p.description ILIKE '%' || $1 || '%')
 AND ($2::text IS NULL OR p.category = $2)
 AND (
-    $3::text IS NULL
-    AND $4::text IS NULL
+    $3::text IS DISTINCT FROM 'false'
+    OR NOT EXISTS (
+        SELECT 1 FROM host_packages hp_security
+        WHERE hp_security.package_id = p.id
+        AND hp_security.needs_update = true
+        AND hp_security.is_security_update = true
+    )
+)
+AND (
+    $4::text IS NULL
     AND $5::text IS NULL
+    AND $3::text IS NULL
     AND $6::text IS NULL
     OR EXISTS (
         SELECT 1 FROM host_packages hp
         WHERE hp.package_id = p.id
-        AND ($3::text IS NULL OR hp.host_id = $3)
-        AND ($4::text IS NULL OR ($4 = 'true' AND hp.needs_update = true))
-        AND ($5::text IS NULL OR ($5 = 'true' AND hp.needs_update = true AND hp.is_security_update = true))
+        AND ($4::text IS NULL OR hp.host_id = $4)
+        AND ($5::text IS NULL OR ($5 = 'true' AND hp.needs_update = true))
+        AND (
+            $3::text IS NULL
+            OR ($3 = 'true' AND hp.needs_update = true AND hp.is_security_update = true)
+            OR ($3 = 'false' AND hp.needs_update = true AND hp.is_security_update = false)
+        )
         AND ($6::text IS NULL OR hp.source_repository_id = $6)
     )
 )
@@ -55,9 +68,9 @@ AND (
 type CountPackagesParams struct {
 	Search           *string `json:"search"`
 	Category         *string `json:"category"`
+	IsSecurityUpdate *string `json:"is_security_update"`
 	HostID           *string `json:"host_id"`
 	NeedsUpdate      *string `json:"needs_update"`
-	IsSecurityUpdate *string `json:"is_security_update"`
 	RepositoryID     *string `json:"repository_id"`
 }
 
@@ -65,9 +78,9 @@ func (q *Queries) CountPackages(ctx context.Context, arg CountPackagesParams) (i
 	row := q.db.QueryRow(ctx, countPackages,
 		arg.Search,
 		arg.Category,
+		arg.IsSecurityUpdate,
 		arg.HostID,
 		arg.NeedsUpdate,
-		arg.IsSecurityUpdate,
 		arg.RepositoryID,
 	)
 	var column_1 int32
@@ -150,44 +163,8 @@ func (q *Queries) GetHostPackageStatsByHostIDs(ctx context.Context, dollar_1 []s
 	return items, nil
 }
 
-const getHostPackageStatsByPackageIDs = `-- name: GetHostPackageStatsByPackageIDs :many
-SELECT package_id, COUNT(*)::int as cnt FROM host_packages
-WHERE package_id = ANY($1::text[])
-AND ($2::text IS NULL OR host_id = $2)
-GROUP BY package_id
-`
-
-type GetHostPackageStatsByPackageIDsParams struct {
-	Column1 []string `json:"column_1"`
-	HostID  *string  `json:"host_id"`
-}
-
-type GetHostPackageStatsByPackageIDsRow struct {
-	PackageID string `json:"package_id"`
-	Cnt       int32  `json:"cnt"`
-}
-
-func (q *Queries) GetHostPackageStatsByPackageIDs(ctx context.Context, arg GetHostPackageStatsByPackageIDsParams) ([]GetHostPackageStatsByPackageIDsRow, error) {
-	rows, err := q.db.Query(ctx, getHostPackageStatsByPackageIDs, arg.Column1, arg.HostID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetHostPackageStatsByPackageIDsRow
-	for rows.Next() {
-		var i GetHostPackageStatsByPackageIDsRow
-		if err := rows.Scan(&i.PackageID, &i.Cnt); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getHostPackagesWithHostsByPackageID = `-- name: GetHostPackagesWithHostsByPackageID :many
+
 SELECT hp.id, hp.host_id, hp.package_id, hp.current_version, hp.available_version,
     hp.needs_update, hp.is_security_update, hp.last_checked,
     hp.source_repository_id,
@@ -223,6 +200,11 @@ type GetHostPackagesWithHostsByPackageIDRow struct {
 	HostNeedsReboot    *bool            `json:"host_needs_reboot"`
 }
 
+// (Removed) GetHostPackageStatsByPackageIDs / GetUpdatesCountByPackageIDs /
+// GetSecurityCountByPackageIDs — superseded by mv_package_stats. The
+// per-package counters returned to the Packages list page now come from
+// ListPackages itself (which joins the matview), so the previous
+// per-id aggregate round-trips are no longer needed.
 func (q *Queries) GetHostPackagesWithHostsByPackageID(ctx context.Context, packageID string) ([]GetHostPackagesWithHostsByPackageIDRow, error) {
 	rows, err := q.db.Query(ctx, getHostPackagesWithHostsByPackageID, packageID)
 	if err != nil {
@@ -263,13 +245,22 @@ func (q *Queries) GetHostPackagesWithHostsByPackageID(ctx context.Context, packa
 }
 
 const getHostRefsForPackageIDs = `-- name: GetHostRefsForPackageIDs :many
-SELECT hp.package_id, h.id as host_id, h.friendly_name, h.os_type,
-    hp.current_version, hp.available_version, hp.needs_update, hp.is_security_update
-FROM host_packages hp
-JOIN hosts h ON h.id = hp.host_id
-WHERE hp.package_id = ANY($1::text[])
-AND ($2::text IS NULL OR hp.host_id = $2)
-ORDER BY hp.needs_update DESC, h.friendly_name
+WITH ranked_refs AS (
+    SELECT hp.package_id, h.id as host_id, h.friendly_name, h.os_type,
+        hp.current_version, hp.available_version, hp.needs_update, hp.is_security_update,
+        row_number() OVER (
+            PARTITION BY hp.package_id
+            ORDER BY hp.needs_update DESC, h.friendly_name ASC, h.id ASC
+        ) AS rn
+    FROM host_packages hp
+    JOIN hosts h ON h.id = hp.host_id
+    WHERE hp.package_id = ANY($1::text[])
+    AND ($2::text IS NULL OR hp.host_id = $2)
+)
+SELECT package_id, host_id, friendly_name, os_type, current_version, available_version, needs_update, is_security_update
+FROM ranked_refs
+WHERE rn <= 10
+ORDER BY package_id, needs_update DESC, friendly_name ASC
 `
 
 type GetHostRefsForPackageIDsParams struct {
@@ -372,43 +363,6 @@ func (q *Queries) GetPendingUpdateCountsPerHost(ctx context.Context) ([]GetPendi
 	return items, nil
 }
 
-const getSecurityCountByPackageIDs = `-- name: GetSecurityCountByPackageIDs :many
-SELECT package_id, COUNT(*)::int as cnt FROM host_packages
-WHERE package_id = ANY($1::text[]) AND needs_update = true AND is_security_update = true
-AND ($2::text IS NULL OR host_id = $2)
-GROUP BY package_id
-`
-
-type GetSecurityCountByPackageIDsParams struct {
-	Column1 []string `json:"column_1"`
-	HostID  *string  `json:"host_id"`
-}
-
-type GetSecurityCountByPackageIDsRow struct {
-	PackageID string `json:"package_id"`
-	Cnt       int32  `json:"cnt"`
-}
-
-func (q *Queries) GetSecurityCountByPackageIDs(ctx context.Context, arg GetSecurityCountByPackageIDsParams) ([]GetSecurityCountByPackageIDsRow, error) {
-	rows, err := q.db.Query(ctx, getSecurityCountByPackageIDs, arg.Column1, arg.HostID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetSecurityCountByPackageIDsRow
-	for rows.Next() {
-		var i GetSecurityCountByPackageIDsRow
-		if err := rows.Scan(&i.PackageID, &i.Cnt); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getSourceReposByPackageIDs = `-- name: GetSourceReposByPackageIDs :many
 SELECT DISTINCT hp.package_id, r.id as repo_id, r.name as repo_name, r.url as repo_url, r.repo_type
 FROM host_packages hp
@@ -447,43 +401,6 @@ func (q *Queries) GetSourceReposByPackageIDs(ctx context.Context, arg GetSourceR
 			&i.RepoUrl,
 			&i.RepoType,
 		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getUpdatesCountByPackageIDs = `-- name: GetUpdatesCountByPackageIDs :many
-SELECT package_id, COUNT(*)::int as cnt FROM host_packages
-WHERE package_id = ANY($1::text[]) AND needs_update = true
-AND ($2::text IS NULL OR host_id = $2)
-GROUP BY package_id
-`
-
-type GetUpdatesCountByPackageIDsParams struct {
-	Column1 []string `json:"column_1"`
-	HostID  *string  `json:"host_id"`
-}
-
-type GetUpdatesCountByPackageIDsRow struct {
-	PackageID string `json:"package_id"`
-	Cnt       int32  `json:"cnt"`
-}
-
-func (q *Queries) GetUpdatesCountByPackageIDs(ctx context.Context, arg GetUpdatesCountByPackageIDsParams) ([]GetUpdatesCountByPackageIDsRow, error) {
-	rows, err := q.db.Query(ctx, getUpdatesCountByPackageIDs, arg.Column1, arg.HostID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetUpdatesCountByPackageIDsRow
-	for rows.Next() {
-		var i GetUpdatesCountByPackageIDsRow
-		if err := rows.Scan(&i.PackageID, &i.Cnt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -672,58 +589,134 @@ func (q *Queries) ListOrphanedPackages(ctx context.Context) ([]ListOrphanedPacka
 }
 
 const listPackages = `-- name: ListPackages :many
-SELECT p.id, p.name, p.description, p.category, p.latest_version, p.created_at
-FROM packages p
-WHERE ($1::text IS NULL OR p.name ILIKE '%' || $1 || '%' OR p.description ILIKE '%' || $1 || '%')
-AND ($2::text IS NULL OR p.category = $2)
-AND (
-    $3::text IS NULL
-    AND $4::text IS NULL
-    AND $5::text IS NULL
-    AND $6::text IS NULL
-    OR EXISTS (
-        SELECT 1 FROM host_packages hp
-        WHERE hp.package_id = p.id
-        AND ($3::text IS NULL OR hp.host_id = $3)
-        AND ($4::text IS NULL OR ($4 = 'true' AND hp.needs_update = true))
-        AND ($5::text IS NULL OR ($5 = 'true' AND hp.needs_update = true AND hp.is_security_update = true))
-        AND ($6::text IS NULL OR hp.source_repository_id = $6)
+WITH filtered_packages AS (
+    SELECT p.id, p.name, p.description, p.category, p.latest_version, p.created_at
+    FROM packages p
+    WHERE ($5::text IS NULL OR p.name ILIKE '%' || $5 || '%' OR p.description ILIKE '%' || $5 || '%')
+    AND ($6::text IS NULL OR p.category = $6)
+    AND (
+        $7::text IS DISTINCT FROM 'false'
+        OR NOT EXISTS (
+            SELECT 1 FROM host_packages hp_security
+            WHERE hp_security.package_id = p.id
+            AND hp_security.needs_update = true
+            AND hp_security.is_security_update = true
+        )
     )
+    AND (
+        $8::text IS NULL
+        AND $9::text IS NULL
+        AND $7::text IS NULL
+        AND $10::text IS NULL
+        OR EXISTS (
+            SELECT 1 FROM host_packages hp
+            WHERE hp.package_id = p.id
+            AND ($8::text IS NULL OR hp.host_id = $8)
+            AND ($9::text IS NULL OR ($9 = 'true' AND hp.needs_update = true))
+            AND (
+                $7::text IS NULL
+                OR ($7 = 'true' AND hp.needs_update = true AND hp.is_security_update = true)
+                OR ($7 = 'false' AND hp.needs_update = true AND hp.is_security_update = false)
+            )
+            AND ($10::text IS NULL OR hp.source_repository_id = $10)
+        )
+    )
+),
+enriched_packages AS (
+    SELECT fp.id,
+           fp.name,
+           fp.description,
+           fp.category,
+           fp.latest_version,
+           fp.created_at,
+           COALESCE(s.total_installs, 0)::int AS total_installs,
+           COALESCE(s.updates_needed, 0)::int AS updates_needed,
+           COALESCE(s.security_updates, 0)::int AS security_updates,
+           CASE
+               WHEN COALESCE(s.security_updates, 0) > 0 THEN 0
+               WHEN COALESCE(s.updates_needed, 0) > 0 THEN 1
+               ELSE 2
+           END AS status_rank
+    FROM filtered_packages fp
+    LEFT JOIN mv_package_stats s ON s.package_id = fp.id
 )
-ORDER BY p.name ASC
-LIMIT $8 OFFSET $7
+SELECT id, name, description, category, latest_version, created_at,
+       total_installs, updates_needed, security_updates
+FROM enriched_packages
+ORDER BY
+    CASE WHEN $1::text = 'name'          AND $2::text = 'asc'  THEN name END ASC,
+    CASE WHEN $1::text = 'name'          AND $2::text = 'desc' THEN name END DESC,
+    CASE WHEN $1::text = 'latestVersion' AND $2::text = 'asc'  THEN latest_version END ASC NULLS LAST,
+    CASE WHEN $1::text = 'latestVersion' AND $2::text = 'desc' THEN latest_version END DESC NULLS LAST,
+    CASE WHEN $1::text = 'packageHosts'  AND $2::text = 'asc'  THEN total_installs END ASC,
+    CASE WHEN $1::text = 'packageHosts'  AND $2::text = 'desc' THEN total_installs END DESC,
+    CASE WHEN $1::text = 'status'        AND $2::text = 'asc'  THEN status_rank END ASC,
+    CASE WHEN $1::text = 'status'        AND $2::text = 'desc' THEN status_rank END DESC,
+    name ASC,
+    id ASC
+LIMIT $4 OFFSET $3
 `
 
 type ListPackagesParams struct {
-	Search           *string `json:"search"`
-	Category         *string `json:"category"`
-	HostID           *string `json:"host_id"`
-	NeedsUpdate      *string `json:"needs_update"`
-	IsSecurityUpdate *string `json:"is_security_update"`
-	RepositoryID     *string `json:"repository_id"`
+	SortKey          string  `json:"sort_key"`
+	SortDir          string  `json:"sort_dir"`
 	Offset           int32   `json:"offset"`
 	Limit            int32   `json:"limit"`
+	Search           *string `json:"search"`
+	Category         *string `json:"category"`
+	IsSecurityUpdate *string `json:"is_security_update"`
+	HostID           *string `json:"host_id"`
+	NeedsUpdate      *string `json:"needs_update"`
+	RepositoryID     *string `json:"repository_id"`
 }
 
 type ListPackagesRow struct {
-	ID            string           `json:"id"`
-	Name          string           `json:"name"`
-	Description   *string          `json:"description"`
-	Category      *string          `json:"category"`
-	LatestVersion *string          `json:"latest_version"`
-	CreatedAt     pgtype.Timestamp `json:"created_at"`
+	ID              string           `json:"id"`
+	Name            string           `json:"name"`
+	Description     *string          `json:"description"`
+	Category        *string          `json:"category"`
+	LatestVersion   *string          `json:"latest_version"`
+	CreatedAt       pgtype.Timestamp `json:"created_at"`
+	TotalInstalls   int32            `json:"total_installs"`
+	UpdatesNeeded   int32            `json:"updates_needed"`
+	SecurityUpdates int32            `json:"security_updates"`
 }
 
+// Per-package counts come from mv_package_stats (a materialised view of
+// per-package install / update / security counters refreshed every couple
+// of minutes by the asynq scheduler — see TypePackageStatsRefresh).
+//
+// Why a matview rather than a fresh aggregate per request:
+//   - Global GROUP BY over the full host_packages table (~1.3 M rows at
+//     1k-host scale) needs ~140 MB work_mem to avoid disk spill and
+//     still takes ~10 s for the aggregation.
+//   - LEFT JOIN LATERAL with a per-package COUNT lookup is fast per
+//     call but with ~2.3 M `packages` rows the outer driver costs
+//     ~30 s before LIMIT can fire.
+//   - mv_package_stats stores the counters keyed by package_id and is
+//     joined here as a single indexed hash join. Sub-millisecond lookup
+//     for the small page we LIMIT to. Trade-off: counters are stale by
+//     up to the refresh interval (2 min) — acceptable on an admin page.
+//
+// Return the per-package counters from mv_package_stats alongside the
+// core fields so the store can render the page response without firing
+// additional aggregate round-trips. These are global counts (i.e.
+// "this package is installed on N hosts across the fleet"), not
+// host-filtered — that matches the existing UX where the per-row
+// "Installed On" badge always shows the package's full footprint even
+// when a host filter is active in the table above.
 func (q *Queries) ListPackages(ctx context.Context, arg ListPackagesParams) ([]ListPackagesRow, error) {
 	rows, err := q.db.Query(ctx, listPackages,
-		arg.Search,
-		arg.Category,
-		arg.HostID,
-		arg.NeedsUpdate,
-		arg.IsSecurityUpdate,
-		arg.RepositoryID,
+		arg.SortKey,
+		arg.SortDir,
 		arg.Offset,
 		arg.Limit,
+		arg.Search,
+		arg.Category,
+		arg.IsSecurityUpdate,
+		arg.HostID,
+		arg.NeedsUpdate,
+		arg.RepositoryID,
 	)
 	if err != nil {
 		return nil, err
@@ -739,6 +732,9 @@ func (q *Queries) ListPackages(ctx context.Context, arg ListPackagesParams) ([]L
 			&i.Category,
 			&i.LatestVersion,
 			&i.CreatedAt,
+			&i.TotalInstalls,
+			&i.UpdatesNeeded,
+			&i.SecurityUpdates,
 		); err != nil {
 			return nil, err
 		}

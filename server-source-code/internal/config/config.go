@@ -13,7 +13,7 @@ import (
 )
 
 // DefaultVersion is the default server version. Bump this when releasing; config_test.go uses it.
-const DefaultVersion = "2.0.2"
+const DefaultVersion = "2.0.3"
 
 // Config holds application configuration loaded from environment.
 // Uses same variable names as PatchMon/server for compatibility.

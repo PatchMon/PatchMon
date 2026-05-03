@@ -1,4 +1,8 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	keepPreviousData,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import {
 	AlertTriangle,
 	ArrowDown,
@@ -27,6 +31,8 @@ import PatchWizard from "../components/PatchWizard";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import { dashboardAPI, packagesAPI } from "../utils/api";
+
+const PACKAGES_PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
 
 function formatRepoName(name) {
 	if (!name) return "\u2014";
@@ -58,7 +64,7 @@ const Packages = () => {
 		if (saved) {
 			const parsedSize = parseInt(saved, 10);
 			// Validate that the saved page size is one of the allowed values
-			if ([25, 50, 100, 200].includes(parsedSize)) {
+			if (PACKAGES_PAGE_SIZE_OPTIONS.includes(parsedSize)) {
 				return parsedSize;
 			}
 		}
@@ -184,9 +190,18 @@ const Packages = () => {
 			updateStatusFilter,
 			categoryFilter,
 			debouncedSearch,
+			currentPage,
+			pageSize,
+			sortField,
+			sortDirection,
 		],
 		queryFn: () => {
-			const params = { limit: 10000 }; // High limit to effectively get all packages
+			const params = {
+				page: currentPage,
+				limit: pageSize,
+				sort: sortField,
+				order: sortDirection,
+			};
 			if (hostFilter && hostFilter !== "all") {
 				params.host = hostFilter;
 			}
@@ -201,9 +216,13 @@ const Packages = () => {
 				params.needsUpdate = "true";
 			} else if (updateStatusFilter === "security-updates") {
 				params.isSecurityUpdate = "true";
+			} else if (updateStatusFilter === "regular-updates") {
+				params.needsUpdate = "true";
+				params.isSecurityUpdate = "false";
 			}
 			return packagesAPI.getAll(params).then((res) => res.data);
 		},
+		placeholderData: keepPreviousData,
 		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
@@ -223,6 +242,11 @@ const Packages = () => {
 			packageHosts: pkg.packageHosts || [],
 		}));
 	}, [packagesResponse]);
+	const packagePagination = packagesResponse?.pagination || {};
+	const totalPackages = packagePagination.total || 0;
+	const totalPages = Math.max(1, packagePagination.pages || 1);
+	const startIndex = totalPackages === 0 ? 0 : (currentPage - 1) * pageSize;
+	const endIndex = Math.min(startIndex + packages.length, totalPackages);
 
 	// Fetch dashboard stats for card counts (consistent with homepage)
 	const { data: dashboardStats, refetch: refetchDashboardStats } = useQuery({
@@ -230,6 +254,13 @@ const Packages = () => {
 		queryFn: () => dashboardAPI.getStats().then((res) => res.data),
 		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
+	});
+
+	const { data: categories = [] } = useQuery({
+		queryKey: ["packageCategories"],
+		queryFn: () => packagesAPI.getCategories().then((res) => res.data),
+		staleTime: 5 * 60 * 1000,
+		refetchOnWindowFocus: false,
 	});
 
 	// Handle refresh - refetch all related data
@@ -241,8 +272,8 @@ const Packages = () => {
 	// call; this handler only routes the user to the right place afterwards.
 	const handlePatchAllSuccess = (_mode, info) => {
 		setShowPatchConfirmModal(false);
-		queryClient.invalidateQueries(["patching-dashboard"]);
-		queryClient.invalidateQueries(["patching-runs"]);
+		queryClient.invalidateQueries({ queryKey: ["patching-dashboard"] });
+		queryClient.invalidateQueries({ queryKey: ["patching-runs"] });
 		const runs = info?.runs || [];
 		const immediate = runs.filter((r) => r.immediate);
 		if (immediate.length === 1) {
@@ -276,10 +307,11 @@ const Packages = () => {
 		}
 	};
 
-	// Fetch hosts data to get total packages count
+	// Lightweight host options for the host filter and patch wizard labels.
 	const { data: hosts } = useQuery({
-		queryKey: ["hosts"],
-		queryFn: () => dashboardAPI.getHosts().then((res) => res.data),
+		queryKey: ["hostOptions", "packages"],
+		queryFn: () =>
+			dashboardAPI.getHostOptions({ limit: 5000 }).then((res) => res.data),
 		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
@@ -295,102 +327,25 @@ const Packages = () => {
 			.toLowerCase()
 			.includes("windows");
 
-	// Filter and sort packages
+	// Packages are filtered, sorted, and paginated by the backend.
 	const filteredAndSortedPackages = useMemo(() => {
-		if (!packages) return [];
-
-		// Filter packages
-		const filtered = packages.filter((pkg) => {
-			const matchesCategory =
-				categoryFilter === "all" || pkg.category === categoryFilter;
-
-			const matchesUpdateStatus =
-				updateStatusFilter === "all-packages" ||
-				(updateStatusFilter === "needs-updates" &&
-					(pkg.stats?.updatesNeeded || 0) > 0) ||
-				(updateStatusFilter === "security-updates" &&
-					(pkg.stats?.securityUpdates || 0) > 0) ||
-				(updateStatusFilter === "regular-updates" &&
-					(pkg.stats?.updatesNeeded || 0) > 0 &&
-					(pkg.stats?.securityUpdates || 0) === 0);
-
-			// Host filter: when set, backend already returned only packages on that host.
-			// No need to re-check packageHosts (truncated for display; backend did the filter).
-			return matchesCategory && matchesUpdateStatus;
-		});
-
-		// Sorting
-		filtered.sort((a, b) => {
-			let aValue, bValue;
-
-			switch (sortField) {
-				case "name":
-					aValue = a.name?.toLowerCase() || "";
-					bValue = b.name?.toLowerCase() || "";
-					break;
-				case "latestVersion":
-					aValue = a.latestVersion?.toLowerCase() || "";
-					bValue = b.latestVersion?.toLowerCase() || "";
-					break;
-				case "packageHosts":
-					aValue = a.packageHostsCount || a.packageHosts?.length || 0;
-					bValue = b.packageHostsCount || b.packageHosts?.length || 0;
-					break;
-				case "status": {
-					// Handle sorting for the three status states: Up to Date, Update Available, Security Update Available
-					const aNeedsUpdates = (a.stats?.updatesNeeded || 0) > 0;
-					const bNeedsUpdates = (b.stats?.updatesNeeded || 0) > 0;
-
-					// Define priority order: Security Update (0) > Regular Update (1) > Up to Date (2)
-					let aPriority, bPriority;
-
-					if (!aNeedsUpdates) {
-						aPriority = 2; // Up to Date
-					} else if ((a.stats?.securityUpdates || 0) > 0) {
-						aPriority = 0; // Security Update
-					} else {
-						aPriority = 1; // Regular Update
-					}
-
-					if (!bNeedsUpdates) {
-						bPriority = 2; // Up to Date
-					} else if ((b.stats?.securityUpdates || 0) > 0) {
-						bPriority = 0; // Security Update
-					} else {
-						bPriority = 1; // Regular Update
-					}
-
-					aValue = aPriority;
-					bValue = bPriority;
-					break;
-				}
-				default:
-					aValue = a.name?.toLowerCase() || "";
-					bValue = b.name?.toLowerCase() || "";
-			}
-
-			if (aValue < bValue) return sortDirection === "asc" ? -1 : 1;
-			if (aValue > bValue) return sortDirection === "asc" ? 1 : -1;
-			return 0;
-		});
-
-		return filtered;
-	}, [packages, categoryFilter, updateStatusFilter, sortField, sortDirection]);
-
-	// Calculate pagination
-	const totalPages = Math.ceil(filteredAndSortedPackages.length / pageSize);
-	const startIndex = (currentPage - 1) * pageSize;
-	const endIndex = startIndex + pageSize;
-	const paginatedPackages = filteredAndSortedPackages.slice(
-		startIndex,
-		endIndex,
-	);
+		return packages || [];
+	}, [packages]);
+	const paginatedPackages = filteredAndSortedPackages;
 
 	// Reset to first page when filters or page size change
 	// biome-ignore lint/correctness/useExhaustiveDependencies: We want this effect to run when filter values or page size change to reset pagination
 	useEffect(() => {
 		setCurrentPage(1);
-	}, [searchTerm, categoryFilter, updateStatusFilter, hostFilter, pageSize]);
+	}, [
+		debouncedSearch,
+		categoryFilter,
+		updateStatusFilter,
+		hostFilter,
+		pageSize,
+		sortField,
+		sortDirection,
+	]);
 
 	// Function to handle page size change and save to localStorage
 	const handlePageSizeChange = (newPageSize) => {
@@ -586,26 +541,8 @@ const Packages = () => {
 		}
 	};
 
-	// Get unique categories
-	const categories =
-		[...new Set(packages?.map((pkg) => pkg.category).filter(Boolean))] || [];
-
-	// Calculate unique package hosts
-	const uniquePackageHosts = new Set();
-	packages?.forEach((pkg) => {
-		// Only count hosts for packages that need updates
-		if ((pkg.stats?.updatesNeeded || 0) > 0) {
-			const packageHosts = pkg.packageHosts || [];
-			packageHosts.forEach((host) => {
-				uniquePackageHosts.add(host.hostId);
-			});
-		}
-	});
-	const uniquePackageHostsCount = uniquePackageHosts.size;
-
 	// Calculate total packages installed
-	// Show unique package count (same as table) for consistency
-	const totalPackagesCount = packages?.length || 0;
+	const totalPackagesCount = totalPackages;
 
 	// Calculate total installations across all hosts
 	const totalInstallationsCount =
@@ -615,16 +552,14 @@ const Packages = () => {
 	// Derive outdated count from packages data (same source as table, includes all OSes e.g. Windows).
 	// When filtered by security-updates, we only have security packages in the list, so use dashboard for total outdated.
 	const outdatedPackagesCount =
-		updateStatusFilter === "security-updates"
-			? (dashboardStats?.cards?.totalOutdatedPackages ?? 0)
-			: (packages?.filter((p) => (p.stats?.updatesNeeded || 0) > 0).length ??
-				dashboardStats?.cards?.totalOutdatedPackages ??
-				0);
+		dashboardStats?.cards?.totalOutdatedPackages ??
+		packages?.filter((p) => (p.stats?.updatesNeeded || 0) > 0).length ??
+		0;
 
 	// Derive security count from packages when we have all or security-filtered data.
 	const securityUpdatesCount =
-		packages?.filter((p) => (p.stats?.securityUpdates || 0) > 0).length ??
 		dashboardStats?.cards?.securityUpdates ??
+		packages?.filter((p) => (p.stats?.securityUpdates || 0) > 0).length ??
 		0;
 
 	if (isLoading) {
@@ -825,7 +760,7 @@ const Packages = () => {
 								Outdated Hosts
 							</p>
 							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
-								{uniquePackageHostsCount}
+								{dashboardStats?.cards?.hostsNeedingUpdates ?? 0}
 							</p>
 						</div>
 					</div>
@@ -1218,9 +1153,7 @@ const Packages = () => {
 									</select>
 								</div>
 								<span className="text-sm text-secondary-700 dark:text-white">
-									{startIndex + 1}-
-									{Math.min(endIndex, filteredAndSortedPackages.length)} of{" "}
-									{filteredAndSortedPackages.length}
+									{startIndex + 1}-{endIndex} of {totalPackages}
 								</span>
 							</div>
 							<div className="flex items-center gap-2">
@@ -1331,8 +1264,8 @@ const Packages = () => {
 					onSuccess={(mode, info) => {
 						setSelectedPackages([]);
 						setShowPatchPackageMultiHostModal(false);
-						queryClient.invalidateQueries(["patching-dashboard"]);
-						queryClient.invalidateQueries(["patching-runs"]);
+						queryClient.invalidateQueries({ queryKey: ["patching-dashboard"] });
+						queryClient.invalidateQueries({ queryKey: ["patching-runs"] });
 						const runs = info?.runs || [];
 						if (mode === "approval") {
 							toast.success(

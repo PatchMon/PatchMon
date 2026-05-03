@@ -92,18 +92,20 @@ const Layout = ({ children }) => {
 		useSettings();
 	const canManageBilling =
 		publicSettings?.admin_mode === true && hasPermission("can_manage_billing");
+	const canViewHostsAllowed = canViewHosts();
 	const { updateAvailable } = useUpdateNotification();
 	const { themeConfig } = useColorTheme();
 	const userMenuRef = useRef(null);
 
-	// Fetch dashboard stats for the "Last updated" info
+	// Fetch cheap navigation counters; full dashboard stats are page-local.
 	const {
 		data: stats,
 		refetch,
 		isFetching,
 	} = useQuery({
-		queryKey: ["dashboardStats"],
-		queryFn: () => dashboardAPI.getStats().then((res) => res.data),
+		queryKey: ["navigationStats"],
+		queryFn: () => dashboardAPI.getNavigationStats().then((res) => res.data),
+		enabled: canViewDashboard(),
 		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
@@ -121,12 +123,10 @@ const Layout = ({ children }) => {
 		staleTime: 300000, // Consider data stale after 5 minutes
 	});
 
-	// Fetch hosts for connection status (only if user can view hosts)
-	// Use dashboardAPI.getHosts() to match Hosts.jsx page and ensure api_id is included
-	const { data: hosts } = useQuery({
-		queryKey: ["hosts", "sidebar"],
-		queryFn: () => dashboardAPI.getHosts().then((res) => res.data),
-		enabled: canViewHosts(),
+	const { data: hostCounts } = useQuery({
+		queryKey: ["hostCounts"],
+		queryFn: () => dashboardAPI.getHostCounts().then((res) => res.data),
+		enabled: canViewHostsAllowed,
 		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
 		refetchOnWindowFocus: false,
 	});
@@ -139,68 +139,6 @@ const Layout = ({ children }) => {
 		refetchInterval: 30000, // Refresh every 30 seconds to reduce API load
 		staleTime: 0, // Always consider stale
 	});
-
-	// Track WebSocket status for hosts
-	const [wsStatusMap, setWsStatusMap] = useState({});
-
-	// Fetch WebSocket status for hosts
-	useEffect(() => {
-		if (!hosts || !Array.isArray(hosts) || hosts.length === 0) return;
-
-		// Fetch initial WebSocket status for all hosts
-		const fetchInitialStatus = async () => {
-			const apiIds = hosts
-				.filter((host) => host.api_id)
-				.map((host) => host.api_id);
-
-			if (apiIds.length === 0) return;
-
-			try {
-				const response = await fetch(
-					`/api/v1/ws/status?apiIds=${apiIds.join(",")}`,
-					{
-						credentials: "include",
-					},
-				);
-				if (response.ok) {
-					const result = await response.json();
-					setWsStatusMap(result.data);
-				}
-			} catch (_error) {
-				// Silently handle errors
-			}
-		};
-
-		fetchInitialStatus();
-
-		// Poll every 10 seconds for status updates
-		const pollInterval = setInterval(() => {
-			const apiIds = hosts
-				.filter((host) => host.api_id)
-				.map((host) => host.api_id);
-
-			if (apiIds.length === 0) return;
-
-			fetch(`/api/v1/ws/status?apiIds=${apiIds.join(",")}`, {
-				credentials: "include",
-			})
-				.then((response) => response.json())
-				.then((result) => {
-					if (result.success && result.data) {
-						setWsStatusMap(result.data);
-					} else if (result.data) {
-						setWsStatusMap(result.data);
-					}
-				})
-				.catch(() => {
-					// Silently handle errors
-				});
-		}, 10000);
-
-		return () => {
-			clearInterval(pollInterval);
-		};
-	}, [hosts]);
 
 	// Check for new release notes when user or version changes.
 	// Wait until public settings have loaded so ReleaseNotesModal can snapshot
@@ -1216,54 +1154,14 @@ const Layout = ({ children }) => {
 																				<span className="truncate flex items-center gap-2 flex-1">
 																					{subItem.name}
 																					{subItem.name === "Hosts" &&
-																						hosts &&
-																						Array.isArray(hosts) &&
-																						hosts.length > 0 && (
+																						(hostCounts?.total ||
+																							stats?.cards?.totalHosts) > 0 && (
 																							<div className="ml-2 flex items-center gap-1">
-																								{(() => {
-																									// Use the exact same logic as Hosts.jsx page
-																									const connectedCount =
-																										hosts?.filter(
-																											(h) =>
-																												wsStatusMap[h.api_id]
-																													?.connected === true,
-																										).length || 0;
-																									const offlineCount =
-																										hosts?.filter(
-																											(h) =>
-																												wsStatusMap[h.api_id]
-																													?.connected !== true,
-																										).length || 0;
-
-																									// If we have WebSocket data, show connected/disconnected badges
-																									// Otherwise show total count as fallback
-																									if (
-																										Object.keys(wsStatusMap)
-																											.length > 0
-																									) {
-																										return (
-																											<>
-																												{connectedCount > 0 && (
-																													<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-200">
-																														{connectedCount}
-																													</span>
-																												)}
-																												{offlineCount > 0 && (
-																													<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200">
-																														{offlineCount}
-																													</span>
-																												)}
-																											</>
-																										);
-																									}
-
-																									// Fallback: show total count if WebSocket status not available yet
-																									return (
-																										<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700 dark:bg-secondary-600 dark:text-secondary-200">
-																											{hosts?.length || 0}
-																										</span>
-																									);
-																								})()}
+																								<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700 dark:bg-secondary-600 dark:text-secondary-200">
+																									{hostCounts?.total ??
+																										stats?.cards?.totalHosts ??
+																										0}
+																								</span>
 																							</div>
 																						)}
 																					{/* {subItem.name === "Packages" &&

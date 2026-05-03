@@ -231,7 +231,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			agentOpts...,
 		)
 	}
-	wsStatusHandler := handler.NewWSStatusHandler(registry)
+	wsStatusHandler := handler.NewWSStatusHandler(registry, hostsStore)
 	var sshTicketHandler *handler.SshTicketHandler
 	if sshTicketStore != nil {
 		sshTicketHandler = handler.NewSshTicketHandler(sshTicketStore, hostsStore, dbProvider, notifyEmit)
@@ -506,9 +506,11 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/agent/download", agentVersionHandler.ServeAgentDownload)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Post("/agent/version/check", agentVersionHandler.CheckForUpdates)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Post("/agent/version/refresh", agentVersionHandler.RefreshCurrentVersion)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/ws/status/summary", wsStatusHandler.ServeSummary)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/ws/status", wsStatusHandler.ServeStatusBulk)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/ws/status/{apiId}", wsStatusHandler.ServeStatusSingle)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/hosts", hostsHandler.List)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/hosts/options", hostsHandler.Options)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Get("/hosts/admin/list", hostsHandler.AdminList)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/hosts/{hostId}/integrations", hostsHandler.GetIntegrations)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/hosts/{hostId}/integrations/{integrationName}/status", hostsHandler.GetIntegrationStatus)
@@ -551,7 +553,10 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Put("/repositories/{repositoryId}", repositoriesHandler.Update)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Delete("/repositories/{repositoryId}", repositoriesHandler.Delete)
 			r.With(middleware.RequirePermission("can_view_dashboard", permissionsStore)).Get("/dashboard/stats", dashboardHandler.Stats)
+			r.With(middleware.RequirePermission("can_view_dashboard", permissionsStore)).Get("/dashboard/navigation-stats", dashboardHandler.NavigationStats)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/host-filter-options", dashboardHandler.HostFilterOptions)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/hosts", dashboardHandler.Hosts)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/host-counts", dashboardHandler.HostCounts)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/hosts/{hostId}", dashboardHandler.HostDetail)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/hosts/{hostId}/queue", dashboardHandler.HostQueue)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/hosts/{hostId}/activity", dashboardHandler.HostActivity)

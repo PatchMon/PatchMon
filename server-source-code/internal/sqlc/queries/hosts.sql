@@ -7,6 +7,14 @@ FROM hosts
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2;
 
+-- name: ListHostOptions :many
+SELECT id, friendly_name, hostname, os_type, status
+FROM hosts
+WHERE (sqlc.narg('search')::text IS NULL OR friendly_name ILIKE '%' || sqlc.narg('search') || '%' OR hostname ILIKE '%' || sqlc.narg('search') || '%')
+ORDER BY friendly_name ASC, hostname ASC NULLS LAST, id ASC
+LIMIT sqlc.arg('row_limit')::int
+OFFSET sqlc.arg('row_offset')::int;
+
 -- name: CountHosts :one
 SELECT COUNT(*) FROM hosts WHERE status = 'active';
 
@@ -21,6 +29,12 @@ DELETE FROM hosts WHERE id = ANY($1::text[]);
 
 -- name: GetHostByApiID :one
 SELECT * FROM hosts WHERE api_id = $1;
+
+-- name: ListExistingHostApiIDs :many
+SELECT api_id FROM hosts WHERE api_id = ANY($1::text[]);
+
+-- name: ListHostApiIDs :many
+SELECT api_id FROM hosts ORDER BY friendly_name ASC;
 
 -- name: CreateHost :exec
 INSERT INTO hosts (

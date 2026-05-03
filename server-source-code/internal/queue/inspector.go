@@ -8,7 +8,10 @@ import (
 	"github.com/hibiken/asynq"
 )
 
-const hostJobsInspectPageSize = 100
+const (
+	hostJobsInspectPageSize = 100
+	hostJobsInspectMaxPages = 5
+)
 
 // HostQueueData is the result of GetHostJobs for a host.
 type HostQueueData struct {
@@ -75,7 +78,7 @@ func GetHostJobs(ctx context.Context, inspector *asynq.Inspector, hostID, apiID 
 	}
 	listAll := func(fetch func(int) ([]*asynq.TaskInfo, error)) []*asynq.TaskInfo {
 		var out []*asynq.TaskInfo
-		for page := 1; ; page++ {
+		for page := 1; page <= hostJobsInspectMaxPages; page++ {
 			if ctx.Err() != nil {
 				return out
 			}
@@ -88,6 +91,7 @@ func GetHostJobs(ctx context.Context, inspector *asynq.Inspector, hostID, apiID 
 				return out
 			}
 		}
+		return out
 	}
 
 	// Build job history: live jobs first (active, waiting, delayed, retry, completed), then we'll merge with DB

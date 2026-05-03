@@ -29,9 +29,10 @@ func (h *PackagesHandler) List(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 {
 		limit = 50
 	}
-	if limit > 10000 {
-		limit = 10000
+	if limit > 500 {
+		limit = 500
 	}
+	page = clampPageForLimit(page, limit)
 	search := q.Get("search")
 	if len(search) > 200 {
 		search = search[:200]
@@ -45,6 +46,8 @@ func (h *PackagesHandler) List(w http.ResponseWriter, r *http.Request) {
 		IsSecurityUpdate: q.Get("isSecurityUpdate"),
 		Host:             q.Get("host"),
 		Repository:       q.Get("repository"),
+		Sort:             q.Get("sort"),
+		Order:            q.Get("order"),
 	}
 	pkgs, total, err := h.packages.List(r.Context(), params)
 	if err != nil {
@@ -104,6 +107,7 @@ func (h *PackagesHandler) GetHosts(w http.ResponseWriter, r *http.Request) {
 	if limit > 500 {
 		limit = 500
 	}
+	page = clampPageForLimit(page, limit)
 	search := q.Get("search")
 	if len(search) > 200 {
 		search = search[:200]
@@ -153,9 +157,7 @@ func (h *PackagesHandler) GetActivity(w http.ResponseWriter, r *http.Request) {
 		limit = 200
 	}
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-	if offset < 0 {
-		offset = 0
-	}
+	offset = clampOffset(offset)
 	activities, err := h.packages.GetActivity(r.Context(), packageID, limit, offset)
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to fetch package activity")

@@ -40,33 +40,189 @@ func (h *DashboardHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, stats)
 }
 
+// NavigationStats handles GET /dashboard/navigation-stats.
+func (h *DashboardHandler) NavigationStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := h.dashboard.GetNavigationStats(r.Context())
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to load navigation stats")
+		return
+	}
+	JSON(w, http.StatusOK, stats)
+}
+
+// HostFilterOptions handles GET /dashboard/host-filter-options.
+func (h *DashboardHandler) HostFilterOptions(w http.ResponseWriter, r *http.Request) {
+	options, err := h.dashboard.GetHostFilterOptions(r.Context())
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to load host filter options")
+		return
+	}
+	JSON(w, http.StatusOK, options)
+}
+
+// hostsListAPIPageLimit is the per-page cap enforced on caller-supplied
+// `limit` values via the public HTTP API. The store's broader
+// HostsListMaxLimit (5000) is only reachable by trusted internal callers
+// (the legacy unwrapped path and the notification report renderer).
+const hostsListAPIPageLimit = 500
+
+const (
+	maxSelectedHostIDsQueryLength = 20000
+	maxSelectedHostIDs            = 1000
+)
+
+func parseCSVQuery(value string, maxItems int) ([]string, bool) {
+	if value == "" {
+		return []string{}, false
+	}
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			if _, ok := seen[trimmed]; ok {
+				continue
+			}
+			if len(out) >= maxItems {
+				return nil, true
+			}
+			seen[trimmed] = struct{}{}
+			out = append(out, trimmed)
+		}
+	}
+	return out, false
+}
+
+func validHostsListFilter(filter string) bool {
+	switch filter {
+	case "", "needsUpdates", "inactive", "upToDate", "stale", "selected", "offline":
+		return true
+	default:
+		return false
+	}
+}
+
 // Hosts handles GET /dashboard/hosts.
+//
+// Supports server-side pagination via `limit` (default 100, max 500),
+// `offset` (default 0), `sort` (whitelisted: last_update, friendly_name,
+// hostname, os_type, status), `order` (asc|desc).
+//
+// Backwards compat: when no `limit` param is sent, the response shape
+// stays the legacy bare-array form so older frontend builds keep
+// working — and we pass HostsListMaxLimit (5000) to the store so the
+// "show me everything" use case is preserved at typical fleet sizes.
+// Newer callers that pass `limit` get the wrapped shape
+// `{items, total, limit, offset}` and can render a pager.
 func (h *DashboardHandler) Hosts(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	search := q.Get("search")
 	if len(search) > 200 {
 		search = search[:200]
 	}
-	params := store.HostsListParams{
-		Search:    search,
-		Group:     q.Get("group"),
-		Status:    q.Get("status"),
-		OS:        q.Get("os"),
-		OSVersion: q.Get("osVersion"),
+	limitRaw := q.Get("limit")
+	filter := q.Get("filter")
+	if !validHostsListFilter(filter) {
+		Error(w, http.StatusBadRequest, "Unsupported host filter")
+		return
 	}
-	hosts, err := h.dashboard.GetHostsWithCounts(r.Context(), params)
+	if filter == "offline" && limitRaw != "" {
+		Error(w, http.StatusBadRequest, "offline filter is not supported with server-side pagination")
+		return
+	}
+	sortKey := q.Get("sort")
+	if _, ok := store.HostsListSortKey(sortKey); !ok {
+		Error(w, http.StatusBadRequest, "Unsupported sort field")
+		return
+	}
+	order := strings.ToLower(q.Get("order"))
+	if order != "" && order != "asc" && order != "desc" {
+		Error(w, http.StatusBadRequest, "Unsupported sort order")
+		return
+	}
+	selectedIDs := []string{}
+	if filter == "selected" {
+		selectedRaw := q.Get("selected")
+		if len(selectedRaw) > maxSelectedHostIDsQueryLength {
+			Error(w, http.StatusBadRequest, "selected query is too large")
+			return
+		}
+		ids, tooMany := parseCSVQuery(selectedRaw, maxSelectedHostIDs)
+		if tooMany {
+			Error(w, http.StatusBadRequest, "too many selected hosts requested")
+			return
+		}
+		selectedIDs = ids
+	}
+	params := store.HostsListParams{
+		Search:      search,
+		Group:       q.Get("group"),
+		Status:      q.Get("status"),
+		OS:          q.Get("os"),
+		OSVersion:   q.Get("osVersion"),
+		Filter:      filter,
+		SelectedIDs: selectedIDs,
+		RebootOnly:  q.Get("reboot") == "true",
+		HideStale:   q.Get("hideStale") == "true",
+		Sort:        sortKey,
+		Order:       order,
+		Offset:      clampOffset(parseIntQuery(r, "offset", 0)),
+	}
+	if limitRaw == "" {
+		// Legacy "give me everything" path — bare-array response, store
+		// uses its broader cap so 1k-host fleets keep working.
+		params.Limit = store.HostsListMaxLimit
+	} else {
+		// Caller asked for a specific page — enforce the smaller API cap
+		// to keep payloads honest; default 100 if the value is junk.
+		params.Limit = parseIntQuery(r, "limit", 100)
+		if params.Limit > hostsListAPIPageLimit {
+			params.Limit = hostsListAPIPageLimit
+		}
+	}
+	res, err := h.dashboard.GetHostsWithCounts(r.Context(), params)
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to load hosts")
 		return
 	}
-	JSON(w, http.StatusOK, hosts)
+	if res == nil {
+		res = &store.HostsListResult{Items: []map[string]interface{}{}}
+	}
+	if limitRaw == "" {
+		// Legacy unwrapped shape — the bare array.
+		JSON(w, http.StatusOK, res.Items)
+		return
+	}
+	JSON(w, http.StatusOK, res)
+}
+
+// HostCounts handles GET /dashboard/host-counts.
+//
+// Returns cheap counter values for the sidebar / navbar widgets so they
+// don't need to download the full host list. Computed off the `hosts`
+// table only — sub-millisecond at any realistic fleet size.
+func (h *DashboardHandler) HostCounts(w http.ResponseWriter, r *http.Request) {
+	now := time.Now()
+	updateIntervalMinutes := h.dashboard.UpdateIntervalMinutesOrDefault(r.Context())
+	staleThreshold := now.Add(-time.Duration(updateIntervalMinutes*2) * time.Minute)
+	downThreshold := now.Add(-time.Duration(updateIntervalMinutes*3) * time.Minute)
+
+	counts, err := h.dashboard.GetHostCounts(r.Context(), staleThreshold, downThreshold)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to load host counts")
+		return
+	}
+	JSON(w, http.StatusOK, counts)
 }
 
 // HostDetail handles GET /dashboard/hosts/:hostId.
 func (h *DashboardHandler) HostDetail(w http.ResponseWriter, r *http.Request) {
 	hostID := chi.URLParam(r, "hostId")
 	limit := parseIntQuery(r, "limit", 10)
-	offset := parseIntQuery(r, "offset", 0)
+	if limit > 100 {
+		limit = 100
+	}
+	offset := clampOffset(parseIntQuery(r, "offset", 0))
 	include := r.URL.Query().Get("include")
 
 	detail, err := h.dashboard.GetHostDetail(r.Context(), hostID, limit, offset)
@@ -221,6 +377,9 @@ func (h *DashboardHandler) RecentCollection(w http.ResponseWriter, r *http.Reque
 func (h *DashboardHandler) HostQueue(w http.ResponseWriter, r *http.Request) {
 	hostID := chi.URLParam(r, "hostId")
 	limit := parseIntQuery(r, "limit", 20)
+	if limit > 100 {
+		limit = 100
+	}
 
 	host, err := h.hosts.GetByID(r.Context(), hostID)
 	if err != nil || host == nil {
@@ -353,7 +512,7 @@ func (h *DashboardHandler) HostActivity(w http.ResponseWriter, r *http.Request) 
 	if limit > 500 {
 		limit = 500
 	}
-	offset := parseIntQuery(r, "offset", 0)
+	offset := clampOffset(parseIntQuery(r, "offset", 0))
 	direction := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("direction")))
 	typesFilter := splitCSV(r.URL.Query().Get("type"))
 	statusFilter := splitCSV(r.URL.Query().Get("status"))

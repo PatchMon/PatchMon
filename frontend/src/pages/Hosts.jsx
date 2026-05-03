@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	keepPreviousData,
+	useMutation,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import {
 	AlertTriangle,
 	ArrowDown,
@@ -7,6 +12,8 @@ import {
 	CheckCircle,
 	CheckSquare,
 	ChevronDown,
+	ChevronLeft,
+	ChevronRight,
 	Clock,
 	Columns,
 	Container,
@@ -44,6 +51,56 @@ import {
 } from "../utils/api";
 import { getOSDisplayName, OSIcon } from "../utils/osIcons.jsx";
 
+const HOSTS_PAGE_SIZE_OPTIONS = [25, 50, 100, 200, 500];
+const HOSTS_DEFAULT_PAGE_SIZE = 50;
+const HOSTS_PAGE_SIZE_STORAGE_KEY = "hosts-page-size";
+const WS_STATUS_BATCH_SIZE = 200;
+
+const HOSTS_SORT_FIELDS = {
+	agent_version: "agent_version",
+	friendlyName: "friendly_name",
+	group: "group",
+	hostname: "hostname",
+	integrations: "integrations",
+	ip: "ip",
+	last_update: "last_update",
+	needs_reboot: "needs_reboot",
+	notes: "notes",
+	os: "os_type",
+	os_version: "os_version",
+	security_updates: "security_updates",
+	ssg_version: "ssg_version",
+	status: "status",
+	updates: "updates",
+	uptime: "uptime",
+};
+
+const normalisePageSize = (value) => {
+	const parsed = Number.parseInt(value, 10);
+	return HOSTS_PAGE_SIZE_OPTIONS.includes(parsed)
+		? parsed
+		: HOSTS_DEFAULT_PAGE_SIZE;
+};
+
+const fetchWsStatusBatches = async (apiIds) => {
+	const merged = {};
+	for (let i = 0; i < apiIds.length; i += WS_STATUS_BATCH_SIZE) {
+		const batch = apiIds.slice(i, i + WS_STATUS_BATCH_SIZE);
+		const query = new URLSearchParams({ apiIds: batch.join(",") }).toString();
+		const response = await fetch(`/api/v1/ws/status?${query}`, {
+			credentials: "include",
+		});
+		if (!response.ok) {
+			throw new Error("Failed to fetch WebSocket status");
+		}
+		const result = await response.json();
+		if (result.data) {
+			Object.assign(merged, result.data);
+		}
+	}
+	return merged;
+};
+
 const Hosts = () => {
 	const hostGroupFilterId = useId();
 	const statusFilterId = useId();
@@ -51,13 +108,21 @@ const Hosts = () => {
 	const osVersionFilterId = useId();
 	const [showAddModal, setShowAddModal] = useState(false);
 	const [selectedHosts, setSelectedHosts] = useState([]);
+	// O(1) `.has()` lookup for the per-row "is this host selected?" check
+	// inside the table's row map. Without this, `selectedHosts.includes(id)`
+	// for every row × every selection is O(n²) — at 1k hosts that's a
+	// million comparisons per render.
+	const selectedHostsSet = useMemo(
+		() => new Set(selectedHosts),
+		[selectedHosts],
+	);
 	const [showBulkAssignModal, setShowBulkAssignModal] = useState(false);
 	const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
 	const [bulkFetchReportMessage, setBulkFetchReportMessage] = useState({
 		text: "",
 		type: "success", // "success" or "error"
 	});
-	const [searchParams] = useSearchParams();
+	const [searchParams, setSearchParams] = useSearchParams();
 	const navigate = useNavigate();
 
 	// Table state
@@ -72,6 +137,12 @@ const Hosts = () => {
 	const [groupBy, setGroupBy] = useState("none");
 	const [showColumnSettings, setShowColumnSettings] = useState(false);
 	const [hideStale, setHideStale] = useState(false);
+	const page = Math.max(1, Number.parseInt(searchParams.get("page"), 10) || 1);
+	const pageSize = normalisePageSize(
+		searchParams.get("pageSize") ||
+			localStorage.getItem(HOSTS_PAGE_SIZE_STORAGE_KEY),
+	);
+	const offset = (page - 1) * pageSize;
 
 	// Debounce search for backend (avoid refetch on every keystroke)
 	const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -281,7 +352,16 @@ const Hosts = () => {
 		queryClient,
 	]);
 
-	// Build backend filter params (search, group, status, os, osVersion)
+	// Build backend filter params. Offline connection status is shown as a
+	// fleet summary, not as a paginated table filter, because live WS state
+	// is not stored in the database.
+	const urlFilter = searchParams.get("filter") || "";
+	useEffect(() => {
+		if (urlFilter !== "offline") return;
+		const next = new URLSearchParams(searchParams);
+		next.delete("filter");
+		navigate(`/hosts?${next.toString()}`, { replace: true });
+	}, [urlFilter, searchParams, navigate]);
 	const hostsQueryParams = useMemo(() => {
 		const params = {};
 		if (debouncedSearch) params.search = debouncedSearch;
@@ -290,11 +370,35 @@ const Hosts = () => {
 		if (osFilter && osFilter !== "all") params.os = osFilter;
 		if (osVersionFilter && osVersionFilter !== "all")
 			params.osVersion = osVersionFilter;
+		if (urlFilter) params.filter = urlFilter;
+		if (urlFilter === "selected") {
+			const selected = searchParams.get("selected");
+			if (selected) params.selected = selected;
+		}
+		if (searchParams.get("reboot") === "true") params.reboot = "true";
+		if (hideStale) params.hideStale = "true";
+		params.limit = pageSize;
+		params.offset = offset;
+		params.sort = HOSTS_SORT_FIELDS[sortField] || "last_update";
+		params.order = sortDirection;
 		return params;
-	}, [debouncedSearch, groupFilter, statusFilter, osFilter, osVersionFilter]);
+	}, [
+		debouncedSearch,
+		groupFilter,
+		statusFilter,
+		osFilter,
+		osVersionFilter,
+		urlFilter,
+		searchParams,
+		hideStale,
+		pageSize,
+		offset,
+		sortField,
+		sortDirection,
+	]);
 
 	const {
-		data: hosts,
+		data: hostsResponse,
 		isLoading,
 		error,
 		refetch,
@@ -303,9 +407,61 @@ const Hosts = () => {
 		queryKey: ["hosts", hostsQueryParams],
 		queryFn: () =>
 			dashboardAPI.getHosts(hostsQueryParams).then((res) => res.data),
+		placeholderData: keepPreviousData,
 		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
+
+	const hostsPage = useMemo(() => {
+		if (Array.isArray(hostsResponse)) {
+			return {
+				items: hostsResponse,
+				total: hostsResponse.length,
+				limit: hostsResponse.length || pageSize,
+				offset: 0,
+				legacy: true,
+			};
+		}
+		return {
+			items: hostsResponse?.items || [],
+			total: hostsResponse?.total || 0,
+			limit: hostsResponse?.limit || pageSize,
+			offset: hostsResponse?.offset || offset,
+			legacy: false,
+		};
+	}, [hostsResponse, offset, pageSize]);
+
+	const hosts = hostsPage.items;
+	const totalHosts = hostsPage.total;
+	const totalPages = Math.max(1, Math.ceil(totalHosts / pageSize));
+	const pageStart = totalHosts === 0 ? 0 : hostsPage.offset + 1;
+	const pageEnd = Math.min(hostsPage.offset + hosts.length, totalHosts);
+
+	const paginationResetSignature = JSON.stringify({
+		search: debouncedSearch,
+		group: groupFilter,
+		status: statusFilter,
+		os: osFilter,
+		osVersion: osVersionFilter,
+		filter: urlFilter,
+		selected: searchParams.get("selected") || "",
+		reboot: searchParams.get("reboot") || "",
+		hideStale,
+		sortField,
+		sortDirection,
+		pageSize,
+	});
+	const previousPaginationResetSignature = useRef(paginationResetSignature);
+	useEffect(() => {
+		if (previousPaginationResetSignature.current === paginationResetSignature) {
+			return;
+		}
+		previousPaginationResetSignature.current = paginationResetSignature;
+		if (page === 1) return;
+		const next = new URLSearchParams(searchParams);
+		next.set("page", "1");
+		setSearchParams(next, { replace: true });
+	}, [page, paginationResetSignature, searchParams, setSearchParams]);
 
 	const { data: hostGroups } = useQuery({
 		queryKey: ["hostGroups"],
@@ -337,6 +493,28 @@ const Hosts = () => {
 		},
 	});
 
+	const { data: hostFilterOptions } = useQuery({
+		queryKey: ["hostFilterOptions"],
+		queryFn: () => dashboardAPI.getHostFilterOptions().then((res) => res.data),
+		staleTime: 5 * 60 * 1000,
+		refetchOnWindowFocus: false,
+	});
+
+	const { data: hostCounts } = useQuery({
+		queryKey: ["hostCounts"],
+		queryFn: () => dashboardAPI.getHostCounts().then((res) => res.data),
+		staleTime: 5 * 60 * 1000,
+		refetchOnWindowFocus: false,
+	});
+
+	const { data: wsStatusSummary } = useQuery({
+		queryKey: ["wsStatusSummary"],
+		queryFn: () => dashboardAPI.getWsStatusSummary().then((res) => res.data),
+		refetchInterval: 10000,
+		staleTime: 10000,
+		refetchOnWindowFocus: false,
+	});
+
 	// State for auto-update confirmation dialog
 	const [autoUpdateDialog, setAutoUpdateDialog] = useState({
 		show: false,
@@ -344,14 +522,14 @@ const Hosts = () => {
 		hostName: null,
 	});
 
-	// Track WebSocket status for all hosts
+	// Track WebSocket status for the currently loaded page.
 	const [wsStatusMap, setWsStatusMap] = useState({});
 
-	// Fetch initial WebSocket status for all hosts
+	// Fetch initial WebSocket status for the current page.
 	useEffect(() => {
 		if (!hosts || hosts.length === 0) return;
+		let cancelled = false;
 
-		// Fetch initial WebSocket status for all hosts
 		const fetchInitialStatus = async () => {
 			const apiIds = hosts
 				.filter((host) => host.api_id)
@@ -360,15 +538,9 @@ const Hosts = () => {
 			if (apiIds.length === 0) return;
 
 			try {
-				const response = await fetch(
-					`/api/v1/ws/status?apiIds=${apiIds.join(",")}`,
-					{
-						credentials: "include",
-					},
-				);
-				if (response.ok) {
-					const result = await response.json();
-					setWsStatusMap(result.data);
+				const statusMap = await fetchWsStatusBatches(apiIds);
+				if (!cancelled) {
+					setWsStatusMap(statusMap);
 				}
 			} catch (_error) {
 				// Silently handle errors
@@ -376,11 +548,15 @@ const Hosts = () => {
 		};
 
 		fetchInitialStatus();
+		return () => {
+			cancelled = true;
+		};
 	}, [hosts]);
 
-	// Subscribe to WebSocket status changes for all hosts via polling (lightweight alternative to SSE)
+	// Subscribe to WebSocket status changes for the current page via polling.
 	useEffect(() => {
 		if (!hosts || hosts.length === 0) return;
+		let cancelled = false;
 
 		// Use polling instead of SSE to avoid connection pool issues
 		// Poll every 10 seconds instead of 19 persistent connections
@@ -391,13 +567,10 @@ const Hosts = () => {
 
 			if (apiIds.length === 0) return;
 
-			fetch(`/api/v1/ws/status?apiIds=${apiIds.join(",")}`, {
-				credentials: "include",
-			})
-				.then((response) => response.json())
-				.then((result) => {
-					if (result.success && result.data) {
-						setWsStatusMap(result.data);
+			fetchWsStatusBatches(apiIds)
+				.then((statusMap) => {
+					if (!cancelled) {
+						setWsStatusMap(statusMap);
 					}
 				})
 				.catch(() => {
@@ -407,6 +580,7 @@ const Hosts = () => {
 
 		// Cleanup function
 		return () => {
+			cancelled = true;
 			clearInterval(pollInterval);
 		};
 	}, [hosts]);
@@ -414,23 +588,8 @@ const Hosts = () => {
 	const bulkUpdateGroupMutation = useMutation({
 		mutationFn: ({ hostIds, groupIds }) =>
 			adminHostsAPI.bulkUpdateGroups(hostIds, groupIds),
-		onSuccess: (data) => {
-			// Update the cache with the new host data
-			if (data?.hosts) {
-				queryClient.setQueryData(["hosts"], (oldData) => {
-					if (!oldData) return oldData;
-					return oldData.map((host) => {
-						const updatedHost = data.hosts.find((h) => h.id === host.id);
-						if (updatedHost) {
-							return updatedHost;
-						}
-						return host;
-					});
-				});
-			}
-
-			// Also invalidate to ensure consistency
-			queryClient.invalidateQueries(["hosts"]);
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["hosts"] });
 			setSelectedHosts([]);
 			setShowBulkAssignModal(false);
 		},
@@ -442,23 +601,15 @@ const Hosts = () => {
 				.updateFriendlyName(hostId, friendlyName)
 				.then((res) => res.data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["hosts"]);
+			queryClient.invalidateQueries({ queryKey: ["hosts"] });
 		},
 	});
 
 	const updateHostGroupsMutation = useMutation({
 		mutationFn: ({ hostId, groupIds }) =>
 			adminHostsAPI.updateGroups(hostId, groupIds).then((res) => res.data),
-		onSuccess: (data) => {
-			// Update the cache with the new host data
-			queryClient.setQueryData(["hosts"], (oldData) => {
-				if (!oldData) return oldData;
-				return oldData.map((host) =>
-					host.id === data.host.id ? data.host : host,
-				);
-			});
-			// Also invalidate to ensure consistency
-			queryClient.invalidateQueries(["hosts"]);
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["hosts"] });
 		},
 	});
 
@@ -468,7 +619,7 @@ const Hosts = () => {
 				.toggleAutoUpdate(hostId, autoUpdate)
 				.then((res) => res.data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["hosts"]);
+			queryClient.invalidateQueries({ queryKey: ["hosts"] });
 		},
 	});
 
@@ -477,8 +628,8 @@ const Hosts = () => {
 		mutationFn: () =>
 			settingsAPI.update({ autoUpdate: true }).then((res) => res.data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["settings"]);
-			queryClient.invalidateQueries(["serverUrl"]);
+			queryClient.invalidateQueries({ queryKey: ["settings"] });
+			queryClient.invalidateQueries({ queryKey: ["serverUrl"] });
 		},
 	});
 
@@ -536,7 +687,7 @@ const Hosts = () => {
 	const bulkDeleteMutation = useMutation({
 		mutationFn: (hostIds) => adminHostsAPI.deleteBulk(hostIds),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["hosts"]);
+			queryClient.invalidateQueries({ queryKey: ["hosts"] });
 			setSelectedHosts([]);
 			setShowBulkDeleteModal(false);
 		},
@@ -546,7 +697,7 @@ const Hosts = () => {
 		mutationFn: (hostIds) =>
 			adminHostsAPI.fetchReportBulk(hostIds).then((res) => res.data),
 		onSuccess: (data) => {
-			queryClient.invalidateQueries(["hosts"]);
+			queryClient.invalidateQueries({ queryKey: ["hosts"] });
 			// Show success message
 			if (data?.successCount !== undefined) {
 				const message = `Report fetch queued for ${data.successCount} of ${data.totalRequested} host${data.totalRequested !== 1 ? "s" : ""}`;
@@ -633,14 +784,23 @@ const Hosts = () => {
 		}
 		return null;
 	}, [searchParams, selectedHosts]);
+	const selectedHostIdsSetForFilter = useMemo(
+		() => (selectedHostIdsForFilter ? new Set(selectedHostIdsForFilter) : null),
+		[selectedHostIdsForFilter],
+	);
 
-	// Table filtering and sorting logic
+	// Table filtering and sorting logic.
+	//
+	// `wsStatusMap` is intentionally NOT a dep of this memo — it changes
+	// every 10 s (status poll) and should only update the visible connection
+	// badges, not force a table re-sort.
 	const filteredAndSortedHosts = useMemo(() => {
 		if (!hosts || !Array.isArray(hosts)) return [];
+		if (!hostsPage.legacy) return hosts;
 
 		const filtered = hosts.filter((host) => {
 			// Search, group, status, os are filtered by backend - trust the result
-			// URL filter for hosts needing updates, inactive hosts, up-to-date hosts, stale hosts, offline hosts, reboot required, or selected hosts
+			// URL filter for hosts needing updates, inactive hosts, up-to-date hosts, stale hosts, reboot required, or selected hosts.
 			const filter = searchParams.get("filter");
 			const rebootParam = searchParams.get("reboot");
 			const selectedIds =
@@ -652,12 +812,10 @@ const Hosts = () => {
 					(host.effectiveStatus || host.status) === "inactive") &&
 				(filter !== "upToDate" || (!host.isStale && host.updatesCount === 0)) &&
 				(filter !== "stale" || host.isStale) &&
-				(filter !== "offline" ||
-					wsStatusMap[host.api_id]?.connected !== true) &&
 				(filter !== "selected" ||
 					(selectedIds &&
 						selectedIds.length > 0 &&
-						selectedIds.includes(host.id))) &&
+						selectedHostIdsSetForFilter?.has(host.id))) &&
 				(!rebootParam || host.needs_reboot === true);
 
 			// Hide stale filter
@@ -801,16 +959,25 @@ const Hosts = () => {
 		return filtered;
 	}, [
 		hosts,
+		hostsPage.legacy,
 		sortField,
 		sortDirection,
 		searchParams,
 		hideStale,
-		wsStatusMap,
 		selectedHostIdsForFilter,
+		selectedHostIdsSetForFilter,
 	]);
+
+	const filteredHosts = filteredAndSortedHosts;
 
 	// Get unique OS types from hosts for dynamic dropdown
 	const uniqueOsTypes = useMemo(() => {
+		const distribution = hostFilterOptions?.osDistribution;
+		if (Array.isArray(distribution) && distribution.length > 0) {
+			return Array.from(
+				new Set(distribution.map((item) => item.os_type).filter(Boolean)),
+			).sort();
+		}
 		if (!hosts) return [];
 		const osTypes = new Set();
 		hosts.forEach((host) => {
@@ -819,10 +986,27 @@ const Hosts = () => {
 			}
 		});
 		return Array.from(osTypes).sort();
-	}, [hosts]);
+	}, [hostFilterOptions, hosts]);
 
 	// Get unique OS versions for the selected OS type (for OS version filter dropdown)
 	const uniqueOsVersionsForFilter = useMemo(() => {
+		const distribution = hostFilterOptions?.osDistribution;
+		if (
+			Array.isArray(distribution) &&
+			distribution.length > 0 &&
+			osFilter &&
+			osFilter !== "all"
+		) {
+			const filterLower = osFilter.toLowerCase();
+			return Array.from(
+				new Set(
+					distribution
+						.filter((item) => item.os_type?.toLowerCase() === filterLower)
+						.map((item) => item.os_version)
+						.filter(Boolean),
+				),
+			).sort();
+		}
 		if (!hosts || !osFilter || osFilter === "all") return [];
 		const versions = new Set();
 		const filterLower = osFilter.toLowerCase();
@@ -836,16 +1020,16 @@ const Hosts = () => {
 			}
 		});
 		return Array.from(versions).sort();
-	}, [hosts, osFilter]);
+	}, [hostFilterOptions, hosts, osFilter]);
 
 	// Group hosts by selected field
 	const groupedHosts = useMemo(() => {
 		if (groupBy === "none") {
-			return { "All Hosts": filteredAndSortedHosts };
+			return { "All Hosts": filteredHosts };
 		}
 
 		const groups = {};
-		filteredAndSortedHosts.forEach((host) => {
+		filteredHosts.forEach((host) => {
 			if (groupBy === "group") {
 				// Handle multiple groups per host
 				const memberships = host.host_group_memberships || [];
@@ -889,7 +1073,7 @@ const Hosts = () => {
 		});
 
 		return groups;
-	}, [filteredAndSortedHosts, groupBy]);
+	}, [filteredHosts, groupBy]);
 
 	const handleSort = (field) => {
 		if (sortField === field) {
@@ -907,6 +1091,20 @@ const Hosts = () => {
 		) : (
 			<ArrowDown className="h-4 w-4" />
 		);
+	};
+
+	const setPageParam = (nextPage) => {
+		const next = new URLSearchParams(searchParams);
+		next.set("page", String(Math.min(Math.max(nextPage, 1), totalPages)));
+		setSearchParams(next);
+	};
+
+	const setPageSizeParam = (nextPageSize) => {
+		localStorage.setItem(HOSTS_PAGE_SIZE_STORAGE_KEY, String(nextPageSize));
+		const next = new URLSearchParams(searchParams);
+		next.set("pageSize", String(nextPageSize));
+		next.set("page", "1");
+		setSearchParams(next);
 	};
 
 	// Column management functions (persist to server so config is shared across browsers)
@@ -965,7 +1163,7 @@ const Hosts = () => {
 						onClick={() => handleSelectHost(host.id)}
 						className="flex items-center gap-2 hover:text-secondary-700"
 					>
-						{selectedHosts.includes(host.id) ? (
+						{selectedHostsSet.has(host.id) ? (
 							<CheckSquare className="h-4 w-4 text-primary-600" />
 						) : (
 							<Square className="h-4 w-4 text-secondary-400" />
@@ -1255,18 +1453,7 @@ const Hosts = () => {
 		navigate(`/hosts?${newSearchParams.toString()}`, { replace: true });
 	};
 
-	const handleConnectionStatusClick = () => {
-		// Filter to show offline hosts (not connected via WebSocket)
-		setStatusFilter("all");
-		setShowFilters(true);
-		// Clear conflicting filters and set offline filter
-		const newSearchParams = new URLSearchParams(window.location.search);
-		newSearchParams.set("filter", "offline");
-		newSearchParams.delete("reboot"); // Clear reboot filter when switching to offline
-		navigate(`/hosts?${newSearchParams.toString()}`, { replace: true });
-	};
-
-	if (isLoading) {
+	if (isLoading && !hostsResponse) {
 		return (
 			<div className="flex items-center justify-center h-64">
 				<RefreshCw className="h-8 w-8 animate-spin text-primary-600" />
@@ -1348,7 +1535,7 @@ const Hosts = () => {
 								Total Hosts
 							</p>
 							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
-								{hosts?.length || 0}
+								{hostCounts?.total ?? totalHosts}
 							</p>
 						</div>
 					</div>
@@ -1365,7 +1552,8 @@ const Hosts = () => {
 								Needs Updates
 							</p>
 							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
-								{hosts?.filter((h) => h.updatesCount > 0).length || 0}
+								{hostCounts?.needsUpdates ??
+									hosts.filter((h) => h.updatesCount > 0).length}
 							</p>
 						</div>
 					</div>
@@ -1387,16 +1575,13 @@ const Hosts = () => {
 								Needs Reboots
 							</p>
 							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
-								{hosts?.filter((h) => h.needs_reboot === true).length || 0}
+								{hostCounts?.needsReboot ??
+									hosts.filter((h) => h.needs_reboot === true).length}
 							</p>
 						</div>
 					</div>
 				</button>
-				<button
-					type="button"
-					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full"
-					onClick={handleConnectionStatusClick}
-				>
+				<div className="card p-4 text-left w-full">
 					<div className="flex items-center">
 						<Wifi className="h-5 w-5 text-primary-600 mr-2" />
 						<div className="flex-1">
@@ -1404,14 +1589,12 @@ const Hosts = () => {
 								Connection Status
 							</p>
 							{(() => {
-								const connectedCount =
-									hosts?.filter(
-										(h) => wsStatusMap[h.api_id]?.connected === true,
-									).length || 0;
-								const offlineCount =
-									hosts?.filter(
-										(h) => wsStatusMap[h.api_id]?.connected !== true,
-									).length || 0;
+								const totalForStatus = hostCounts?.total ?? 0;
+								const connectedCount = wsStatusSummary?.connected ?? 0;
+								const offlineCount = Math.max(
+									totalForStatus - connectedCount,
+									0,
+								);
 								return (
 									<div className="flex gap-4">
 										<div className="flex items-center gap-1">
@@ -1437,7 +1620,7 @@ const Hosts = () => {
 							})()}
 						</div>
 					</div>
-				</button>
+				</div>
 			</div>
 
 			{/* Hosts List */}
@@ -1700,7 +1883,7 @@ const Hosts = () => {
 									credentials
 								</p>
 							</div>
-						) : filteredAndSortedHosts.length === 0 ? (
+						) : filteredHosts.length === 0 ? (
 							<div className="text-center py-8">
 								<Search className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
 								<p className="text-secondary-500">
@@ -1731,7 +1914,7 @@ const Hosts = () => {
 														const isInactive =
 															(host.effectiveStatus || host.status) ===
 															"inactive";
-														const isSelected = selectedHosts.includes(host.id);
+														const isSelected = selectedHostsSet.has(host.id);
 														const wsStatus = wsStatusMap[host.api_id];
 														const groupIds =
 															host.host_group_memberships?.map(
@@ -1968,7 +2151,7 @@ const Hosts = () => {
 																				className="flex items-center gap-2 hover:text-secondary-700"
 																			>
 																				{groupHosts.every((host) =>
-																					selectedHosts.includes(host.id),
+																					selectedHostsSet.has(host.id),
 																				) ? (
 																					<CheckSquare className="h-4 w-4" />
 																				) : (
@@ -2134,7 +2317,7 @@ const Hosts = () => {
 																const isInactive =
 																	(host.effectiveStatus || host.status) ===
 																	"inactive";
-																const isSelected = selectedHosts.includes(
+																const isSelected = selectedHostsSet.has(
 																	host.id,
 																);
 
@@ -2171,6 +2354,56 @@ const Hosts = () => {
 							</div>
 						)}
 					</div>
+					{!hostsPage.legacy && (
+						<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4 pt-4 border-t border-secondary-200 dark:border-secondary-600">
+							<div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+								<div className="flex items-center gap-2">
+									<span className="text-sm text-secondary-700 dark:text-white">
+										Rows per page:
+									</span>
+									<select
+										value={pageSize}
+										onChange={(e) =>
+											setPageSizeParam(Number.parseInt(e.target.value, 10))
+										}
+										className="text-sm border border-secondary-300 dark:border-secondary-600 rounded px-2 py-1 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white min-h-[36px]"
+									>
+										{HOSTS_PAGE_SIZE_OPTIONS.map((size) => (
+											<option key={size} value={size}>
+												{size}
+											</option>
+										))}
+									</select>
+								</div>
+								<span className="text-sm text-secondary-700 dark:text-white">
+									{pageStart}-{pageEnd} of {totalHosts}
+								</span>
+							</div>
+							<div className="flex items-center gap-2">
+								<button
+									type="button"
+									onClick={() => setPageParam(page - 1)}
+									disabled={page <= 1}
+									className="p-2 rounded border border-secondary-300 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+									aria-label="Previous hosts page"
+								>
+									<ChevronLeft className="h-4 w-4" />
+								</button>
+								<span className="text-sm text-secondary-700 dark:text-white">
+									Page {page} of {totalPages}
+								</span>
+								<button
+									type="button"
+									onClick={() => setPageParam(page + 1)}
+									disabled={page >= totalPages}
+									className="p-2 rounded border border-secondary-300 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+									aria-label="Next hosts page"
+								>
+									<ChevronRight className="h-4 w-4" />
+								</button>
+							</div>
+						</div>
+					)}
 				</div>
 			</div>
 
@@ -2178,7 +2411,7 @@ const Hosts = () => {
 			<AddHostWizard
 				isOpen={showAddModal}
 				onClose={() => setShowAddModal(false)}
-				onSuccess={() => queryClient.invalidateQueries(["hosts"])}
+				onSuccess={() => queryClient.invalidateQueries({ queryKey: ["hosts"] })}
 			/>
 
 			{/* Bulk Assign Modal */}

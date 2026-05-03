@@ -74,3 +74,29 @@ func parseIntQuery(r *http.Request, key string, def int) int {
 	}
 	return n
 }
+
+const maxPaginationOffset = 50000
+
+func clampOffset(offset int) int {
+	if offset < 0 {
+		return 0
+	}
+	if offset > maxPaginationOffset {
+		return maxPaginationOffset
+	}
+	return offset
+}
+
+func clampPageForLimit(page, limit int) int {
+	if page < 1 {
+		return 1
+	}
+	if limit < 1 {
+		return page
+	}
+	maxPage := maxPaginationOffset/limit + 1
+	if page > maxPage {
+		return maxPage
+	}
+	return page
+}

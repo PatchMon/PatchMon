@@ -58,6 +58,12 @@ const (
 	QueueMetricsSend             = "metrics-send"
 	TypeAgentReportsCleanup      = "agent-reports-cleanup"
 	QueueAgentReportsCleanup     = "agent-reports-cleanup"
+	// TypePackageStatsRefresh runs `REFRESH MATERIALIZED VIEW CONCURRENTLY
+	// mv_package_stats` so the Packages list page can render its per-package
+	// counters via a sub-millisecond hash join instead of aggregating
+	// host_packages on every request.
+	TypePackageStatsRefresh  = "package-stats-refresh"
+	QueuePackageStatsRefresh = "package-stats-refresh"
 )
 
 // RunScanPayload is the payload for run_scan job.

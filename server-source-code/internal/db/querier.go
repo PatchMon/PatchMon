@@ -121,6 +121,10 @@ type Querier interface {
 	CountDockerHosts(ctx context.Context) (int32, error)
 	CountEnabledHostRepositories(ctx context.Context) (int32, error)
 	CountHosts(ctx context.Context) (int64, error)
+	// Total count matching the same filter set as GetHostsWithCounts. Used by
+	// the paginated UI so it can render "Showing X-Y of Z" and a correct page
+	// count.
+	CountHostsForList(ctx context.Context, arg CountHostsForListParams) (int32, error)
 	CountHostsForPackage(ctx context.Context, arg CountHostsForPackageParams) (int32, error)
 	CountImages(ctx context.Context, arg CountImagesParams) (int32, error)
 	CountNetworks(ctx context.Context, arg CountNetworksParams) (int32, error)
@@ -129,6 +133,7 @@ type Querier interface {
 	CountPatchRuns(ctx context.Context, arg CountPatchRunsParams) (int64, error)
 	CountPatchRunsTotal(ctx context.Context) (int64, error)
 	CountRepositories(ctx context.Context) (int32, error)
+	CountRepositoriesForList(ctx context.Context, arg CountRepositoriesForListParams) (int32, error)
 	CountSecureRepositories(ctx context.Context) (int32, error)
 	CountSuperadmins(ctx context.Context) (int64, error)
 	CountTfaRememberSessionsByUser(ctx context.Context, userID string) (int64, error)
@@ -257,6 +262,10 @@ type Querier interface {
 	// and the six per-section hashes the server compares against incoming agent
 	// hashes.
 	GetHostCheckin(ctx context.Context, apiID string) (GetHostCheckinRow, error)
+	// Cheap host-only counts for the sidebar / navbar widgets. Replaces the
+	// old pattern of fetching the entire host list and computing counts in
+	// the browser. $1 = stale threshold, $2 = down threshold (timestamps).
+	GetHostCounts(ctx context.Context, arg GetHostCountsParams) (GetHostCountsRow, error)
 	GetHostCountsForRepos(ctx context.Context, dollar_1 []string) ([]GetHostCountsForReposRow, error)
 	GetHostDockerStats(ctx context.Context, hostID string) (GetHostDockerStatsRow, error)
 	GetHostGroupByID(ctx context.Context, id string) (HostGroup, error)
@@ -266,8 +275,12 @@ type Querier interface {
 	GetHostIDsByGroupIDs(ctx context.Context, dollar_1 []string) ([]string, error)
 	GetHostPackageStats(ctx context.Context, hostID string) (GetHostPackageStatsRow, error)
 	GetHostPackageStatsByHostIDs(ctx context.Context, dollar_1 []string) ([]GetHostPackageStatsByHostIDsRow, error)
-	GetHostPackageStatsByPackageIDs(ctx context.Context, arg GetHostPackageStatsByPackageIDsParams) ([]GetHostPackageStatsByPackageIDsRow, error)
 	GetHostPackagesForScopedApi(ctx context.Context, hostID string) ([]GetHostPackagesForScopedApiRow, error)
+	// (Removed) GetHostPackageStatsByPackageIDs / GetUpdatesCountByPackageIDs /
+	// GetSecurityCountByPackageIDs — superseded by mv_package_stats. The
+	// per-package counters returned to the Packages list page now come from
+	// ListPackages itself (which joins the matview), so the previous
+	// per-id aggregate round-trips are no longer needed.
 	GetHostPackagesWithHostsByPackageID(ctx context.Context, packageID string) ([]GetHostPackagesWithHostsByPackageIDRow, error)
 	GetHostPackagesWithPackages(ctx context.Context, hostID string) ([]GetHostPackagesWithPackagesRow, error)
 	GetHostRefsForPackageIDs(ctx context.Context, arg GetHostRefsForPackageIDsParams) ([]GetHostRefsForPackageIDsRow, error)
@@ -280,7 +293,15 @@ type Querier interface {
 	GetHostWindowsUpdates(ctx context.Context, hostID string) ([]GetHostWindowsUpdatesRow, error)
 	GetHostsByIDs(ctx context.Context, dollar_1 []string) ([]Host, error)
 	GetHostsForPackageTrends(ctx context.Context) ([]GetHostsForPackageTrendsRow, error)
+	// Paginated host list for the Hosts UI. Filtering and ordering happen
+	// over the full matching set, then LIMIT/OFFSET selects the current page.
+	// That keeps header sorting correct across all hosts, not just the page
+	// already loaded in the browser.
 	GetHostsWithCounts(ctx context.Context, arg GetHostsWithCountsParams) ([]GetHostsWithCountsRow, error)
+	// Fast path for host-column sorting: order/page hosts first, then aggregate
+	// package counts only for the visible page. Package-count sorting uses
+	// GetHostsWithCounts so the sort still applies across the full filtered set.
+	GetHostsWithPageCounts(ctx context.Context, arg GetHostsWithPageCountsParams) ([]GetHostsWithPageCountsRow, error)
 	// Images
 	GetImageByID(ctx context.Context, id string) (DockerImage, error)
 	GetImageIDByRepositoryTagImageID(ctx context.Context, arg GetImageIDByRepositoryTagImageIDParams) (string, error)
@@ -293,6 +314,7 @@ type Querier interface {
 	GetLatestComplianceScanByHost(ctx context.Context, hostID string) (GetLatestComplianceScanByHostRow, error)
 	GetLatestComplianceScanByHostAndType(ctx context.Context, arg GetLatestComplianceScanByHostAndTypeParams) (GetLatestComplianceScanByHostAndTypeRow, error)
 	GetLatestSystemStatistics(ctx context.Context) (GetLatestSystemStatisticsRow, error)
+	GetNavigationStats(ctx context.Context) (GetNavigationStatsRow, error)
 	// Networks
 	GetNetworkByID(ctx context.Context, id string) (DockerNetwork, error)
 	GetNetworksByHostID(ctx context.Context, hostID string) ([]DockerNetwork, error)
@@ -315,12 +337,12 @@ type Querier interface {
 	GetRecentComplianceScans(ctx context.Context) ([]GetRecentComplianceScansRow, error)
 	GetRecentHosts(ctx context.Context, limit int32) ([]GetRecentHostsRow, error)
 	GetRecentUsers(ctx context.Context, limit int32) ([]GetRecentUsersRow, error)
+	GetRepoCountsForRepos(ctx context.Context, dollar_1 []string) ([]GetRepoCountsForReposRow, error)
 	GetRepositoryByID(ctx context.Context, id string) (Repository, error)
 	GetRepositoryForDelete(ctx context.Context, id string) (GetRepositoryForDeleteRow, error)
 	GetRolePermissions(ctx context.Context, role string) (RolePermission, error)
 	GetRuleAggregationsFromScans(ctx context.Context, arg GetRuleAggregationsFromScansParams) ([]GetRuleAggregationsFromScansRow, error)
 	GetScheduledReportByID(ctx context.Context, id string) (ScheduledReport, error)
-	GetSecurityCountByPackageIDs(ctx context.Context, arg GetSecurityCountByPackageIDsParams) ([]GetSecurityCountByPackageIDsRow, error)
 	GetSessionByID(ctx context.Context, arg GetSessionByIDParams) (UserSession, error)
 	GetSessionByRefreshToken(ctx context.Context, refreshToken string) (UserSession, error)
 	GetSourceReposByPackageIDs(ctx context.Context, arg GetSourceReposByPackageIDsParams) ([]GetSourceReposByPackageIDsRow, error)
@@ -332,7 +354,6 @@ type Querier interface {
 	GetUpdateHistory(ctx context.Context, arg GetUpdateHistoryParams) ([]GetUpdateHistoryRow, error)
 	GetUpdateHistoryDaily(ctx context.Context, arg GetUpdateHistoryDailyParams) ([]GetUpdateHistoryDailyRow, error)
 	GetUpdateTrends(ctx context.Context, timestamp pgtype.Timestamp) ([]GetUpdateTrendsRow, error)
-	GetUpdatesCountByPackageIDs(ctx context.Context, arg GetUpdatesCountByPackageIDsParams) ([]GetUpdatesCountByPackageIDsRow, error)
 	GetUserByDiscordID(ctx context.Context, discordID *string) (User, error)
 	GetUserByDiscordIDOrEmail(ctx context.Context, arg GetUserByDiscordIDOrEmailParams) (User, error)
 	GetUserByEmail(ctx context.Context, lower string) (User, error)
@@ -382,8 +403,11 @@ type Querier interface {
 	ListContainers(ctx context.Context, arg ListContainersParams) ([]DockerContainer, error)
 	ListDashboardPreferencesByUserID(ctx context.Context, userID string) ([]DashboardPreference, error)
 	ListDockerHostsPaginated(ctx context.Context, arg ListDockerHostsPaginatedParams) ([]ListDockerHostsPaginatedRow, error)
+	ListExistingHostApiIDs(ctx context.Context, dollar_1 []string) ([]string, error)
+	ListHostApiIDs(ctx context.Context) ([]string, error)
 	ListHostGroups(ctx context.Context) ([]HostGroup, error)
 	ListHostGroupsWithHostCount(ctx context.Context) ([]ListHostGroupsWithHostCountRow, error)
+	ListHostOptions(ctx context.Context, arg ListHostOptionsParams) ([]ListHostOptionsRow, error)
 	ListHosts(ctx context.Context) ([]Host, error)
 	ListHostsForComplianceDashboard(ctx context.Context) ([]ListHostsForComplianceDashboardRow, error)
 	ListHostsForPackage(ctx context.Context, arg ListHostsForPackageParams) ([]ListHostsForPackageRow, error)
@@ -400,6 +424,28 @@ type Querier interface {
 	ListOrphanedImages(ctx context.Context) ([]ListOrphanedImagesRow, error)
 	ListOrphanedPackages(ctx context.Context) ([]ListOrphanedPackagesRow, error)
 	ListOrphanedRepositories(ctx context.Context) ([]ListOrphanedRepositoriesRow, error)
+	// Per-package counts come from mv_package_stats (a materialised view of
+	// per-package install / update / security counters refreshed every couple
+	// of minutes by the asynq scheduler — see TypePackageStatsRefresh).
+	//
+	// Why a matview rather than a fresh aggregate per request:
+	//   * Global GROUP BY over the full host_packages table (~1.3 M rows at
+	//     1k-host scale) needs ~140 MB work_mem to avoid disk spill and
+	//     still takes ~10 s for the aggregation.
+	//   * LEFT JOIN LATERAL with a per-package COUNT lookup is fast per
+	//     call but with ~2.3 M `packages` rows the outer driver costs
+	//     ~30 s before LIMIT can fire.
+	//   * mv_package_stats stores the counters keyed by package_id and is
+	//     joined here as a single indexed hash join. Sub-millisecond lookup
+	//     for the small page we LIMIT to. Trade-off: counters are stale by
+	//     up to the refresh interval (2 min) — acceptable on an admin page.
+	// Return the per-package counters from mv_package_stats alongside the
+	// core fields so the store can render the page response without firing
+	// additional aggregate round-trips. These are global counts (i.e.
+	// "this package is installed on N hosts across the fleet"), not
+	// host-filtered — that matches the existing UX where the per-row
+	// "Installed On" badge always shows the package's full footprint even
+	// when a host filter is active in the table above.
 	ListPackages(ctx context.Context, arg ListPackagesParams) ([]ListPackagesRow, error)
 	// patch_policies
 	ListPatchPolicies(ctx context.Context) ([]PatchPolicy, error)
@@ -421,7 +467,7 @@ type Querier interface {
 	ListPatchRunsOrderByStatus(ctx context.Context, arg ListPatchRunsOrderByStatusParams) ([]ListPatchRunsOrderByStatusRow, error)
 	ListPatchRunsOrderByStatusDesc(ctx context.Context, arg ListPatchRunsOrderByStatusDescParams) ([]ListPatchRunsOrderByStatusDescRow, error)
 	ListRecentPatchRuns(ctx context.Context, limit int32) ([]ListRecentPatchRunsRow, error)
-	ListRepositories(ctx context.Context, arg ListRepositoriesParams) ([]Repository, error)
+	ListRepositories(ctx context.Context, arg ListRepositoriesParams) ([]ListRepositoriesRow, error)
 	ListRoles(ctx context.Context) ([]RolePermission, error)
 	ListScheduledReports(ctx context.Context) ([]ScheduledReport, error)
 	ListScheduledReportsDue(ctx context.Context, nextRunAt pgtype.Timestamp) ([]ScheduledReport, error)

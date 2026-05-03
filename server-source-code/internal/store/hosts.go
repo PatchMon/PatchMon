@@ -72,6 +72,57 @@ func (s *HostsStore) ListPaginated(ctx context.Context, limit, offset int) ([]mo
 	return out, nil
 }
 
+// HostOption is a lightweight host reference for filters and selectors.
+type HostOption struct {
+	ID           string  `json:"id"`
+	FriendlyName string  `json:"friendly_name"`
+	Hostname     *string `json:"hostname"`
+	OSType       string  `json:"os_type"`
+	Status       string  `json:"status"`
+}
+
+// ListOptions returns lightweight host records without package counts or groups.
+func (s *HostsStore) ListOptions(ctx context.Context, search string, limit, offset int) ([]HostOption, error) {
+	d := s.db.DB(ctx)
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	arg := db.ListHostOptionsParams{
+		RowLimit:  safeconv.ClampToInt32(limit),
+		RowOffset: safeconv.ClampToInt32(offset),
+	}
+	if search != "" {
+		arg.Search = &search
+	}
+	rows, err := d.Queries.ListHostOptions(ctx, arg)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]HostOption, len(rows))
+	for i, r := range rows {
+		out[i] = HostOption{
+			ID:           r.ID,
+			FriendlyName: r.FriendlyName,
+			Hostname:     r.Hostname,
+			OSType:       r.OsType,
+			Status:       r.Status,
+		}
+	}
+	return out, nil
+}
+
+// ListApiIDs returns all host API IDs for scoped registry summary counts.
+func (s *HostsStore) ListApiIDs(ctx context.Context) ([]string, error) {
+	d := s.db.DB(ctx)
+	return d.Queries.ListHostApiIDs(ctx)
+}
+
 // Count returns total host count.
 func (s *HostsStore) Count(ctx context.Context) (int, error) {
 	d := s.db.DB(ctx)
@@ -122,6 +173,23 @@ func (s *HostsStore) GetByApiID(ctx context.Context, apiID string) (*models.Host
 		return nil, err
 	}
 	return dbHostToModel(h), nil
+}
+
+// ListExistingApiIDs returns requested api_ids that exist in this database context.
+func (s *HostsStore) ListExistingApiIDs(ctx context.Context, apiIDs []string) (map[string]struct{}, error) {
+	if len(apiIDs) == 0 {
+		return map[string]struct{}{}, nil
+	}
+	d := s.db.DB(ctx)
+	rows, err := d.Queries.ListExistingHostApiIDs(ctx, apiIDs)
+	if err != nil {
+		return nil, err
+	}
+	allowed := make(map[string]struct{}, len(rows))
+	for _, id := range rows {
+		allowed[id] = struct{}{}
+	}
+	return allowed, nil
 }
 
 // Create creates a new host.

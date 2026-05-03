@@ -205,6 +205,19 @@ func main() {
 		}
 	}()
 
+	// Refresh the package stats matview shortly after startup so the
+	// Packages page reflects up-to-date counters after every deploy
+	// rather than waiting up to 2 minutes for the next scheduled run.
+	go func() {
+		time.Sleep(15 * time.Second)
+		t := asynq.NewTask(queue.TypePackageStatsRefresh, []byte("{}"))
+		if _, err := queueClient.Enqueue(t, asynq.Queue(queue.QueuePackageStatsRefresh)); err != nil {
+			slog.Debug("startup package-stats-refresh enqueue skipped", "error", err)
+		} else {
+			slog.Info("startup package-stats-refresh enqueued")
+		}
+	}()
+
 	httpHandler, guacdProc := server.NewRouter(ctx, cfg, db, rdb, registry, queueClient, queueInspector, ctxRegistry, poolCache, redisCache, notifyEmit, slog, frontendFS)
 
 	var memstatsCancel context.CancelFunc

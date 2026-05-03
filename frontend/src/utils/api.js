@@ -74,10 +74,17 @@ api.interceptors.response.use(
 // Dashboard API
 export const dashboardAPI = {
 	getStats: () => api.get("/dashboard/stats"),
+	getNavigationStats: () => api.get("/dashboard/navigation-stats"),
 	getHosts: (params = {}) => {
 		const queryString = new URLSearchParams(params).toString();
 		return api.get(`/dashboard/hosts${queryString ? `?${queryString}` : ""}`);
 	},
+	getHostOptions: (params = {}) => api.get("/hosts/options", { params }),
+	// Cheap host counts for the sidebar / navbar widgets — runs as a single
+	// COUNT query against `hosts`, returns sub-millisecond. Lets the
+	// sidebar drop its full-list fetch.
+	getHostCounts: () => api.get("/dashboard/host-counts"),
+	getHostFilterOptions: () => api.get("/dashboard/host-filter-options"),
 	getPackages: () => api.get("/dashboard/packages"),
 	getHostDetail: (hostId, params = {}) => {
 		const queryString = new URLSearchParams(params).toString();
@@ -106,6 +113,7 @@ export const dashboardAPI = {
 		return api.get(url);
 	},
 	getHostWsStatus: (hostId) => api.get(`/dashboard/hosts/${hostId}/ws-status`),
+	getWsStatusSummary: () => api.get("/ws/status/summary"),
 	getWsStatusByApiId: (apiId) => api.get(`/ws/status/${apiId}`),
 	getPackageTrends: (params = {}) => {
 		const queryString = new URLSearchParams(params).toString();

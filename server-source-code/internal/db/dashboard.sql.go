@@ -11,6 +11,86 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countHostsForList = `-- name: CountHostsForList :one
+WITH base_hosts AS (
+    SELECT h.id, h.status, h.last_update, h.needs_reboot
+    FROM hosts h
+    WHERE ($4::text IS NULL OR h.friendly_name ILIKE '%' || $4 || '%' OR h.hostname ILIKE '%' || $4 || '%' OR h.ip ILIKE '%' || $4 || '%' OR h.os_type ILIKE '%' || $4 || '%' OR h.notes ILIKE '%' || $4 || '%')
+    AND (
+        $5::text IS NULL
+        OR ($5 = 'ungrouped' AND NOT EXISTS (SELECT 1 FROM host_group_memberships hgm WHERE hgm.host_id = h.id))
+        OR ($5 != 'ungrouped' AND EXISTS (SELECT 1 FROM host_group_memberships hgm WHERE hgm.host_id = h.id AND hgm.host_group_id = $5))
+    )
+    AND ($6::text IS NULL OR h.status = $6)
+    AND ($7::text IS NULL OR h.os_type ILIKE $7)
+    AND ($8::text IS NULL OR h.os_version ILIKE $8)
+    AND (
+        $1::text IS DISTINCT FROM 'selected'
+        OR h.id = ANY($9::text[])
+    )
+),
+filtered_hosts AS (
+    SELECT bh.id,
+           (bh.status = 'active' AND bh.last_update < $10::timestamp) AS is_stale,
+           CASE
+               WHEN bh.status = 'active' AND bh.last_update < $10::timestamp THEN 'inactive'
+               ELSE bh.status
+           END AS effective_status,
+           bh.needs_reboot
+    FROM base_hosts bh
+)
+SELECT COUNT(*)::int
+FROM filtered_hosts
+WHERE (
+    $1::text IS NULL
+    OR ($1 = 'needsUpdates' AND EXISTS (
+        SELECT 1 FROM host_packages hp WHERE hp.host_id = filtered_hosts.id AND hp.needs_update
+    ))
+    OR ($1 = 'inactive' AND effective_status = 'inactive')
+    OR ($1 = 'upToDate' AND is_stale = false AND NOT EXISTS (
+        SELECT 1 FROM host_packages hp WHERE hp.host_id = filtered_hosts.id AND hp.needs_update
+    ))
+    OR ($1 = 'stale' AND is_stale = true)
+    OR ($1 = 'selected')
+)
+AND ($2::boolean = false OR needs_reboot = true)
+AND ($3::boolean = false OR is_stale = false)
+`
+
+type CountHostsForListParams struct {
+	Filter         *string          `json:"filter"`
+	RebootOnly     bool             `json:"reboot_only"`
+	HideStale      bool             `json:"hide_stale"`
+	Search         *string          `json:"search"`
+	Group          *string          `json:"group"`
+	Status         *string          `json:"status"`
+	Os             *string          `json:"os"`
+	OsVersion      *string          `json:"os_version"`
+	SelectedIds    []string         `json:"selected_ids"`
+	StaleThreshold pgtype.Timestamp `json:"stale_threshold"`
+}
+
+// Total count matching the same filter set as GetHostsWithCounts. Used by
+// the paginated UI so it can render "Showing X-Y of Z" and a correct page
+// count.
+func (q *Queries) CountHostsForList(ctx context.Context, arg CountHostsForListParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countHostsForList,
+		arg.Filter,
+		arg.RebootOnly,
+		arg.HideStale,
+		arg.Search,
+		arg.Group,
+		arg.Status,
+		arg.Os,
+		arg.OsVersion,
+		arg.SelectedIds,
+		arg.StaleThreshold,
+	)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countUpdateHistory = `-- name: CountUpdateHistory :one
 SELECT COUNT(*)::int
 FROM update_history
@@ -36,11 +116,33 @@ WITH host_counts AS (
 ),
 hp_package_counts AS (
     SELECT
-        COUNT(DISTINCT host_id)::int AS hosts_needing_updates,
-        COUNT(DISTINCT package_id)::int AS total_outdated_packages,
-        COUNT(DISTINCT package_id) FILTER (WHERE is_security_update)::int AS security_updates
-    FROM host_packages
-    WHERE needs_update = true
+        COALESCE((
+            SELECT COUNT(*)::int
+            FROM (
+                SELECT hp.host_id
+                FROM host_packages hp
+                WHERE hp.needs_update = true
+                GROUP BY hp.host_id
+            ) hosts_with_updates
+        ), 0)::int AS hosts_needing_updates,
+        COALESCE((
+            SELECT COUNT(*)::int
+            FROM (
+                SELECT hp.package_id
+                FROM host_packages hp
+                WHERE hp.needs_update = true
+                GROUP BY hp.package_id
+            ) outdated_packages
+        ), 0)::int AS total_outdated_packages,
+        COALESCE((
+            SELECT COUNT(*)::int
+            FROM (
+                SELECT hp.package_id
+                FROM host_packages hp
+                WHERE hp.needs_update = true AND hp.is_security_update = true
+                GROUP BY hp.package_id
+            ) security_packages
+        ), 0)::int AS security_updates
 )
 SELECT
     hc.total_hosts,
@@ -154,6 +256,53 @@ func (q *Queries) GetHomepageStats(ctx context.Context, since pgtype.Timestamp) 
 		&i.HostsWithSecurityUpdates,
 		&i.TotalRepos,
 		&i.RecentUpdates24h,
+	)
+	return i, err
+}
+
+const getHostCounts = `-- name: GetHostCounts :one
+SELECT
+    COUNT(*)::int                                                                              AS total,
+    COUNT(*) FILTER (WHERE status = 'active' AND last_update >= $1)::int                       AS up,
+    COUNT(*) FILTER (WHERE status = 'active' AND last_update <  $1 AND last_update >= $2)::int AS stale,
+    COUNT(*) FILTER (WHERE status = 'active' AND last_update <  $2)::int                       AS down,
+    COUNT(*) FILTER (WHERE status = 'inactive')::int                                           AS inactive,
+    COUNT(*) FILTER (WHERE needs_reboot = true)::int                                           AS needs_reboot,
+    COUNT(*) FILTER (WHERE EXISTS (
+        SELECT 1 FROM host_packages hp WHERE hp.host_id = hosts.id AND hp.needs_update = true
+    ))::int                                                                                    AS needs_updates
+FROM hosts
+`
+
+type GetHostCountsParams struct {
+	LastUpdate   pgtype.Timestamp `json:"last_update"`
+	LastUpdate_2 pgtype.Timestamp `json:"last_update_2"`
+}
+
+type GetHostCountsRow struct {
+	Total        int32 `json:"total"`
+	Up           int32 `json:"up"`
+	Stale        int32 `json:"stale"`
+	Down         int32 `json:"down"`
+	Inactive     int32 `json:"inactive"`
+	NeedsReboot  int32 `json:"needs_reboot"`
+	NeedsUpdates int32 `json:"needs_updates"`
+}
+
+// Cheap host-only counts for the sidebar / navbar widgets. Replaces the
+// old pattern of fetching the entire host list and computing counts in
+// the browser. $1 = stale threshold, $2 = down threshold (timestamps).
+func (q *Queries) GetHostCounts(ctx context.Context, arg GetHostCountsParams) (GetHostCountsRow, error) {
+	row := q.db.QueryRow(ctx, getHostCounts, arg.LastUpdate, arg.LastUpdate_2)
+	var i GetHostCountsRow
+	err := row.Scan(
+		&i.Total,
+		&i.Up,
+		&i.Stale,
+		&i.Down,
+		&i.Inactive,
+		&i.NeedsReboot,
+		&i.NeedsUpdates,
 	)
 	return i, err
 }
@@ -317,36 +466,130 @@ func (q *Queries) GetHostsForPackageTrends(ctx context.Context) ([]GetHostsForPa
 }
 
 const getHostsWithCounts = `-- name: GetHostsWithCounts :many
-SELECT h.id, h.machine_id, h.friendly_name, h.hostname, h.ip, h.os_type, h.os_version,
-    h.status, h.agent_version, h.auto_update, h.notes, h.api_id,
-    h.needs_reboot, h.reboot_reason, h.system_uptime, h.docker_enabled, h.compliance_enabled, h.compliance_on_demand_only,
-    h.last_update,
-    h.compliance_scanner_status->'scanner_info'->>'ssg_version' as ssg_version,
-    COALESCE(uc.cnt, 0)::int as updates_count,
-    COALESCE(sc.cnt, 0)::int as security_updates_count,
-    COALESCE(tc.cnt, 0)::int as total_packages_count
-FROM hosts h
-LEFT JOIN (SELECT host_id, COUNT(*) as cnt FROM host_packages WHERE needs_update = true GROUP BY host_id) uc ON uc.host_id = h.id
-LEFT JOIN (SELECT host_id, COUNT(*) as cnt FROM host_packages WHERE needs_update = true AND is_security_update = true GROUP BY host_id) sc ON sc.host_id = h.id
-LEFT JOIN (SELECT host_id, COUNT(*) as cnt FROM host_packages GROUP BY host_id) tc ON tc.host_id = h.id
-WHERE ($1::text IS NULL OR h.friendly_name ILIKE '%' || $1 || '%' OR h.hostname ILIKE '%' || $1 || '%' OR h.ip ILIKE '%' || $1 || '%' OR h.os_type ILIKE '%' || $1 || '%' OR h.notes ILIKE '%' || $1 || '%')
-AND (
-    $2::text IS NULL
-    OR ($2 = 'ungrouped' AND NOT EXISTS (SELECT 1 FROM host_group_memberships hgm WHERE hgm.host_id = h.id))
-    OR ($2 != 'ungrouped' AND EXISTS (SELECT 1 FROM host_group_memberships hgm WHERE hgm.host_id = h.id AND hgm.host_group_id = $2))
+WITH base_hosts AS (
+    SELECT h.id, h.machine_id, h.friendly_name, h.hostname, h.ip, h.os_type, h.os_version,
+        h.status, h.agent_version, h.auto_update, h.notes, h.api_id,
+        h.needs_reboot, h.reboot_reason, h.system_uptime, h.docker_enabled, h.compliance_enabled, h.compliance_on_demand_only,
+        h.last_update,
+        h.compliance_scanner_status->'scanner_info'->>'ssg_version' as ssg_version,
+        COALESCE((
+            SELECT MIN(hg.name)
+            FROM host_group_memberships hgm
+            JOIN host_groups hg ON hg.id = hgm.host_group_id
+            WHERE hgm.host_id = h.id
+        ), '')::text AS first_group_name
+    FROM hosts h
+    WHERE ($5::text IS NULL OR h.friendly_name ILIKE '%' || $5 || '%' OR h.hostname ILIKE '%' || $5 || '%' OR h.ip ILIKE '%' || $5 || '%' OR h.os_type ILIKE '%' || $5 || '%' OR h.notes ILIKE '%' || $5 || '%')
+    AND (
+        $6::text IS NULL
+        OR ($6 = 'ungrouped' AND NOT EXISTS (SELECT 1 FROM host_group_memberships hgm WHERE hgm.host_id = h.id))
+        OR ($6 != 'ungrouped' AND EXISTS (SELECT 1 FROM host_group_memberships hgm WHERE hgm.host_id = h.id AND hgm.host_group_id = $6))
+    )
+    AND ($7::text IS NULL OR h.status = $7)
+    AND ($8::text IS NULL OR h.os_type ILIKE $8)
+    AND ($9::text IS NULL OR h.os_version ILIKE $9)
+    AND (
+        $10::text IS DISTINCT FROM 'selected'
+        OR h.id = ANY($11::text[])
+    )
+),
+hp_counts AS (
+    SELECT hp.host_id,
+           COUNT(*) FILTER (WHERE hp.needs_update)::int                                AS updates_count,
+           COUNT(*) FILTER (WHERE hp.needs_update AND hp.is_security_update)::int       AS security_count,
+           COUNT(*)::int                                                               AS total_count
+    FROM host_packages hp
+    JOIN base_hosts bh ON bh.id = hp.host_id
+    GROUP BY hp.host_id
+),
+enriched_hosts AS (
+    SELECT bh.id, bh.machine_id, bh.friendly_name, bh.hostname, bh.ip, bh.os_type, bh.os_version, bh.status, bh.agent_version, bh.auto_update, bh.notes, bh.api_id, bh.needs_reboot, bh.reboot_reason, bh.system_uptime, bh.docker_enabled, bh.compliance_enabled, bh.compliance_on_demand_only, bh.last_update, bh.ssg_version, bh.first_group_name,
+           COALESCE(hp.updates_count, 0)::int AS updates_count,
+           COALESCE(hp.security_count, 0)::int AS security_updates_count,
+           COALESCE(hp.total_count, 0)::int AS total_packages_count,
+           (bh.status = 'active' AND bh.last_update < $12::timestamp) AS is_stale,
+           CASE
+               WHEN bh.status = 'active' AND bh.last_update < $12::timestamp THEN 'inactive'
+               ELSE bh.status
+           END AS effective_status,
+           ((CASE WHEN bh.docker_enabled THEN 1 ELSE 0 END) + (CASE WHEN bh.compliance_enabled THEN 1 ELSE 0 END))::int AS integrations_count
+    FROM base_hosts bh
+    LEFT JOIN hp_counts hp ON hp.host_id = bh.id
+),
+filtered_hosts AS (
+    SELECT id, machine_id, friendly_name, hostname, ip, os_type, os_version, status, agent_version, auto_update, notes, api_id, needs_reboot, reboot_reason, system_uptime, docker_enabled, compliance_enabled, compliance_on_demand_only, last_update, ssg_version, first_group_name, updates_count, security_updates_count, total_packages_count, is_stale, effective_status, integrations_count
+    FROM enriched_hosts
+    WHERE (
+        $10::text IS NULL
+        OR ($10 = 'needsUpdates' AND updates_count > 0)
+        OR ($10 = 'inactive' AND effective_status = 'inactive')
+        OR ($10 = 'upToDate' AND is_stale = false AND updates_count = 0)
+        OR ($10 = 'stale' AND is_stale = true)
+        OR ($10 = 'selected')
+    )
+    AND ($13::boolean = false OR needs_reboot = true)
+    AND ($14::boolean = false OR is_stale = false)
 )
-AND ($3::text IS NULL OR h.status = $3)
-AND ($4::text IS NULL OR h.os_type ILIKE $4)
-AND ($5::text IS NULL OR h.os_version ILIKE $5)
-ORDER BY h.last_update DESC NULLS LAST
+SELECT id, machine_id, friendly_name, hostname, ip, os_type, os_version,
+    status, agent_version, auto_update, notes, api_id,
+    needs_reboot, reboot_reason, system_uptime, docker_enabled, compliance_enabled, compliance_on_demand_only,
+    last_update, ssg_version, updates_count, security_updates_count, total_packages_count
+FROM filtered_hosts
+ORDER BY
+    CASE WHEN $1::text = 'friendly_name'      AND $2::text = 'asc'  THEN friendly_name END ASC,
+    CASE WHEN $1::text = 'friendly_name'      AND $2::text = 'desc' THEN friendly_name END DESC,
+    CASE WHEN $1::text = 'hostname'           AND $2::text = 'asc'  THEN hostname END ASC NULLS LAST,
+    CASE WHEN $1::text = 'hostname'           AND $2::text = 'desc' THEN hostname END DESC NULLS LAST,
+    CASE WHEN $1::text = 'ip'                 AND $2::text = 'asc'  THEN ip END ASC NULLS LAST,
+    CASE WHEN $1::text = 'ip'                 AND $2::text = 'desc' THEN ip END DESC NULLS LAST,
+    CASE WHEN $1::text = 'group'              AND $2::text = 'asc'  THEN first_group_name END ASC,
+    CASE WHEN $1::text = 'group'              AND $2::text = 'desc' THEN first_group_name END DESC,
+    CASE WHEN $1::text = 'os_type'            AND $2::text = 'asc'  THEN os_type END ASC,
+    CASE WHEN $1::text = 'os_type'            AND $2::text = 'desc' THEN os_type END DESC,
+    CASE WHEN $1::text = 'os_version'         AND $2::text = 'asc'  THEN os_version END ASC,
+    CASE WHEN $1::text = 'os_version'         AND $2::text = 'desc' THEN os_version END DESC,
+    CASE WHEN $1::text = 'agent_version'      AND $2::text = 'asc'  THEN agent_version END ASC NULLS LAST,
+    CASE WHEN $1::text = 'agent_version'      AND $2::text = 'desc' THEN agent_version END DESC NULLS LAST,
+    CASE WHEN $1::text = 'status'             AND $2::text = 'asc'  THEN effective_status END ASC,
+    CASE WHEN $1::text = 'status'             AND $2::text = 'desc' THEN effective_status END DESC,
+    CASE WHEN $1::text = 'updates'            AND $2::text = 'asc'  THEN updates_count END ASC,
+    CASE WHEN $1::text = 'updates'            AND $2::text = 'desc' THEN updates_count END DESC,
+    CASE WHEN $1::text = 'security_updates'   AND $2::text = 'asc'  THEN security_updates_count END ASC,
+    CASE WHEN $1::text = 'security_updates'   AND $2::text = 'desc' THEN security_updates_count END DESC,
+    CASE WHEN $1::text = 'needs_reboot'       AND $2::text = 'asc'  THEN needs_reboot END ASC,
+    CASE WHEN $1::text = 'needs_reboot'       AND $2::text = 'desc' THEN needs_reboot END DESC,
+    CASE WHEN $1::text = 'uptime'             AND $2::text = 'asc'  THEN system_uptime END ASC NULLS LAST,
+    CASE WHEN $1::text = 'uptime'             AND $2::text = 'desc' THEN system_uptime END DESC NULLS LAST,
+    CASE WHEN $1::text = 'last_update'        AND $2::text = 'asc'  THEN last_update END ASC NULLS LAST,
+    CASE WHEN $1::text = 'last_update'        AND $2::text = 'desc' THEN last_update END DESC NULLS LAST,
+    CASE WHEN $1::text = 'ssg_version'        AND $2::text = 'asc'  THEN ssg_version END ASC NULLS LAST,
+    CASE WHEN $1::text = 'ssg_version'        AND $2::text = 'desc' THEN ssg_version END DESC NULLS LAST,
+    CASE WHEN $1::text = 'notes'              AND $2::text = 'asc'  THEN notes END ASC NULLS LAST,
+    CASE WHEN $1::text = 'notes'              AND $2::text = 'desc' THEN notes END DESC NULLS LAST,
+    CASE WHEN $1::text = 'integrations'       AND $2::text = 'asc'  THEN integrations_count END ASC,
+    CASE WHEN $1::text = 'integrations'       AND $2::text = 'desc' THEN integrations_count END DESC,
+    -- Default sort (also the tiebreaker for every key above): newest activity first.
+    last_update DESC NULLS LAST,
+    id ASC -- stable ordering across paginated requests
+LIMIT  $4::int
+OFFSET $3::int
 `
 
 type GetHostsWithCountsParams struct {
-	Search    *string `json:"search"`
-	Group     *string `json:"group"`
-	Status    *string `json:"status"`
-	Os        *string `json:"os"`
-	OsVersion *string `json:"os_version"`
+	SortKey        string           `json:"sort_key"`
+	SortDir        string           `json:"sort_dir"`
+	RowOffset      int32            `json:"row_offset"`
+	RowLimit       int32            `json:"row_limit"`
+	Search         *string          `json:"search"`
+	Group          *string          `json:"group"`
+	Status         *string          `json:"status"`
+	Os             *string          `json:"os"`
+	OsVersion      *string          `json:"os_version"`
+	Filter         *string          `json:"filter"`
+	SelectedIds    []string         `json:"selected_ids"`
+	StaleThreshold pgtype.Timestamp `json:"stale_threshold"`
+	RebootOnly     bool             `json:"reboot_only"`
+	HideStale      bool             `json:"hide_stale"`
 }
 
 type GetHostsWithCountsRow struct {
@@ -375,13 +618,26 @@ type GetHostsWithCountsRow struct {
 	TotalPackagesCount     int32            `json:"total_packages_count"`
 }
 
+// Paginated host list for the Hosts UI. Filtering and ordering happen
+// over the full matching set, then LIMIT/OFFSET selects the current page.
+// That keeps header sorting correct across all hosts, not just the page
+// already loaded in the browser.
 func (q *Queries) GetHostsWithCounts(ctx context.Context, arg GetHostsWithCountsParams) ([]GetHostsWithCountsRow, error) {
 	rows, err := q.db.Query(ctx, getHostsWithCounts,
+		arg.SortKey,
+		arg.SortDir,
+		arg.RowOffset,
+		arg.RowLimit,
 		arg.Search,
 		arg.Group,
 		arg.Status,
 		arg.Os,
 		arg.OsVersion,
+		arg.Filter,
+		arg.SelectedIds,
+		arg.StaleThreshold,
+		arg.RebootOnly,
+		arg.HideStale,
 	)
 	if err != nil {
 		return nil, err
@@ -423,6 +679,283 @@ func (q *Queries) GetHostsWithCounts(ctx context.Context, arg GetHostsWithCounts
 		return nil, err
 	}
 	return items, nil
+}
+
+const getHostsWithPageCounts = `-- name: GetHostsWithPageCounts :many
+WITH base_hosts AS (
+    SELECT h.id, h.machine_id, h.friendly_name, h.hostname, h.ip, h.os_type, h.os_version,
+        h.status, h.agent_version, h.auto_update, h.notes, h.api_id,
+        h.needs_reboot, h.reboot_reason, h.system_uptime, h.docker_enabled, h.compliance_enabled, h.compliance_on_demand_only,
+        h.last_update,
+        h.compliance_scanner_status->'scanner_info'->>'ssg_version' as ssg_version,
+        COALESCE((
+            SELECT MIN(hg.name)
+            FROM host_group_memberships hgm
+            JOIN host_groups hg ON hg.id = hgm.host_group_id
+            WHERE hgm.host_id = h.id
+        ), '')::text AS first_group_name,
+        (h.status = 'active' AND h.last_update < $3::timestamp) AS is_stale,
+        CASE
+            WHEN h.status = 'active' AND h.last_update < $3::timestamp THEN 'inactive'
+            ELSE h.status
+        END AS effective_status,
+        ((CASE WHEN h.docker_enabled THEN 1 ELSE 0 END) + (CASE WHEN h.compliance_enabled THEN 1 ELSE 0 END))::int AS integrations_count
+    FROM hosts h
+    WHERE ($4::text IS NULL OR h.friendly_name ILIKE '%' || $4 || '%' OR h.hostname ILIKE '%' || $4 || '%' OR h.ip ILIKE '%' || $4 || '%' OR h.os_type ILIKE '%' || $4 || '%' OR h.notes ILIKE '%' || $4 || '%')
+    AND (
+        $5::text IS NULL
+        OR ($5 = 'ungrouped' AND NOT EXISTS (SELECT 1 FROM host_group_memberships hgm WHERE hgm.host_id = h.id))
+        OR ($5 != 'ungrouped' AND EXISTS (SELECT 1 FROM host_group_memberships hgm WHERE hgm.host_id = h.id AND hgm.host_group_id = $5))
+    )
+    AND ($6::text IS NULL OR h.status = $6)
+    AND ($7::text IS NULL OR h.os_type ILIKE $7)
+    AND ($8::text IS NULL OR h.os_version ILIKE $8)
+    AND (
+        $9::text IS DISTINCT FROM 'selected'
+        OR h.id = ANY($10::text[])
+    )
+),
+filtered_hosts AS (
+    SELECT id, machine_id, friendly_name, hostname, ip, os_type, os_version, status, agent_version, auto_update, notes, api_id, needs_reboot, reboot_reason, system_uptime, docker_enabled, compliance_enabled, compliance_on_demand_only, last_update, ssg_version, first_group_name, is_stale, effective_status, integrations_count
+    FROM base_hosts bh
+    WHERE (
+        $9::text IS NULL
+        OR ($9 = 'needsUpdates' AND EXISTS (
+            SELECT 1 FROM host_packages hp WHERE hp.host_id = bh.id AND hp.needs_update
+        ))
+        OR ($9 = 'inactive' AND bh.effective_status = 'inactive')
+        OR ($9 = 'upToDate' AND bh.is_stale = false AND NOT EXISTS (
+            SELECT 1 FROM host_packages hp WHERE hp.host_id = bh.id AND hp.needs_update
+        ))
+        OR ($9 = 'stale' AND bh.is_stale = true)
+        OR ($9 = 'selected')
+    )
+    AND ($11::boolean = false OR bh.needs_reboot = true)
+    AND ($12::boolean = false OR bh.is_stale = false)
+),
+ordered_page AS (
+    SELECT id, machine_id, friendly_name, hostname, ip, os_type, os_version, status, agent_version, auto_update, notes, api_id, needs_reboot, reboot_reason, system_uptime, docker_enabled, compliance_enabled, compliance_on_demand_only, last_update, ssg_version, first_group_name, is_stale, effective_status, integrations_count
+    FROM filtered_hosts
+    ORDER BY
+        CASE WHEN $1::text = 'friendly_name'    AND $2::text = 'asc'  THEN friendly_name END ASC,
+        CASE WHEN $1::text = 'friendly_name'    AND $2::text = 'desc' THEN friendly_name END DESC,
+        CASE WHEN $1::text = 'hostname'         AND $2::text = 'asc'  THEN hostname END ASC NULLS LAST,
+        CASE WHEN $1::text = 'hostname'         AND $2::text = 'desc' THEN hostname END DESC NULLS LAST,
+        CASE WHEN $1::text = 'ip'               AND $2::text = 'asc'  THEN ip END ASC NULLS LAST,
+        CASE WHEN $1::text = 'ip'               AND $2::text = 'desc' THEN ip END DESC NULLS LAST,
+        CASE WHEN $1::text = 'group'            AND $2::text = 'asc'  THEN first_group_name END ASC,
+        CASE WHEN $1::text = 'group'            AND $2::text = 'desc' THEN first_group_name END DESC,
+        CASE WHEN $1::text = 'os_type'          AND $2::text = 'asc'  THEN os_type END ASC,
+        CASE WHEN $1::text = 'os_type'          AND $2::text = 'desc' THEN os_type END DESC,
+        CASE WHEN $1::text = 'os_version'       AND $2::text = 'asc'  THEN os_version END ASC,
+        CASE WHEN $1::text = 'os_version'       AND $2::text = 'desc' THEN os_version END DESC,
+        CASE WHEN $1::text = 'agent_version'    AND $2::text = 'asc'  THEN agent_version END ASC NULLS LAST,
+        CASE WHEN $1::text = 'agent_version'    AND $2::text = 'desc' THEN agent_version END DESC NULLS LAST,
+        CASE WHEN $1::text = 'status'           AND $2::text = 'asc'  THEN effective_status END ASC,
+        CASE WHEN $1::text = 'status'           AND $2::text = 'desc' THEN effective_status END DESC,
+        CASE WHEN $1::text = 'needs_reboot'     AND $2::text = 'asc'  THEN needs_reboot END ASC,
+        CASE WHEN $1::text = 'needs_reboot'     AND $2::text = 'desc' THEN needs_reboot END DESC,
+        CASE WHEN $1::text = 'uptime'           AND $2::text = 'asc'  THEN system_uptime END ASC NULLS LAST,
+        CASE WHEN $1::text = 'uptime'           AND $2::text = 'desc' THEN system_uptime END DESC NULLS LAST,
+        CASE WHEN $1::text = 'last_update'      AND $2::text = 'asc'  THEN last_update END ASC NULLS LAST,
+        CASE WHEN $1::text = 'last_update'      AND $2::text = 'desc' THEN last_update END DESC NULLS LAST,
+        CASE WHEN $1::text = 'ssg_version'      AND $2::text = 'asc'  THEN ssg_version END ASC NULLS LAST,
+        CASE WHEN $1::text = 'ssg_version'      AND $2::text = 'desc' THEN ssg_version END DESC NULLS LAST,
+        CASE WHEN $1::text = 'notes'            AND $2::text = 'asc'  THEN notes END ASC NULLS LAST,
+        CASE WHEN $1::text = 'notes'            AND $2::text = 'desc' THEN notes END DESC NULLS LAST,
+        CASE WHEN $1::text = 'integrations'     AND $2::text = 'asc'  THEN integrations_count END ASC,
+        CASE WHEN $1::text = 'integrations'     AND $2::text = 'desc' THEN integrations_count END DESC,
+        last_update DESC NULLS LAST,
+        id ASC
+    LIMIT  $14::int
+    OFFSET $13::int
+),
+page_counts AS (
+    SELECT hp.host_id,
+           COUNT(*) FILTER (WHERE hp.needs_update)::int                          AS updates_count,
+           COUNT(*) FILTER (WHERE hp.needs_update AND hp.is_security_update)::int AS security_count,
+           COUNT(*)::int                                                         AS total_count
+    FROM host_packages hp
+    JOIN ordered_page op ON op.id = hp.host_id
+    GROUP BY hp.host_id
+)
+SELECT op.id, op.machine_id, op.friendly_name, op.hostname, op.ip, op.os_type, op.os_version,
+    op.status, op.agent_version, op.auto_update, op.notes, op.api_id,
+    op.needs_reboot, op.reboot_reason, op.system_uptime, op.docker_enabled, op.compliance_enabled, op.compliance_on_demand_only,
+    op.last_update, op.ssg_version,
+    COALESCE(pc.updates_count, 0)::int AS updates_count,
+    COALESCE(pc.security_count, 0)::int AS security_updates_count,
+    COALESCE(pc.total_count, 0)::int AS total_packages_count
+FROM ordered_page op
+LEFT JOIN page_counts pc ON pc.host_id = op.id
+ORDER BY
+    CASE WHEN $1::text = 'friendly_name'    AND $2::text = 'asc'  THEN op.friendly_name END ASC,
+    CASE WHEN $1::text = 'friendly_name'    AND $2::text = 'desc' THEN op.friendly_name END DESC,
+    CASE WHEN $1::text = 'hostname'         AND $2::text = 'asc'  THEN op.hostname END ASC NULLS LAST,
+    CASE WHEN $1::text = 'hostname'         AND $2::text = 'desc' THEN op.hostname END DESC NULLS LAST,
+    CASE WHEN $1::text = 'ip'               AND $2::text = 'asc'  THEN op.ip END ASC NULLS LAST,
+    CASE WHEN $1::text = 'ip'               AND $2::text = 'desc' THEN op.ip END DESC NULLS LAST,
+    CASE WHEN $1::text = 'group'            AND $2::text = 'asc'  THEN op.first_group_name END ASC,
+    CASE WHEN $1::text = 'group'            AND $2::text = 'desc' THEN op.first_group_name END DESC,
+    CASE WHEN $1::text = 'os_type'          AND $2::text = 'asc'  THEN op.os_type END ASC,
+    CASE WHEN $1::text = 'os_type'          AND $2::text = 'desc' THEN op.os_type END DESC,
+    CASE WHEN $1::text = 'os_version'       AND $2::text = 'asc'  THEN op.os_version END ASC,
+    CASE WHEN $1::text = 'os_version'       AND $2::text = 'desc' THEN op.os_version END DESC,
+    CASE WHEN $1::text = 'agent_version'    AND $2::text = 'asc'  THEN op.agent_version END ASC NULLS LAST,
+    CASE WHEN $1::text = 'agent_version'    AND $2::text = 'desc' THEN op.agent_version END DESC NULLS LAST,
+    CASE WHEN $1::text = 'status'           AND $2::text = 'asc'  THEN op.effective_status END ASC,
+    CASE WHEN $1::text = 'status'           AND $2::text = 'desc' THEN op.effective_status END DESC,
+    CASE WHEN $1::text = 'needs_reboot'     AND $2::text = 'asc'  THEN op.needs_reboot END ASC,
+    CASE WHEN $1::text = 'needs_reboot'     AND $2::text = 'desc' THEN op.needs_reboot END DESC,
+    CASE WHEN $1::text = 'uptime'           AND $2::text = 'asc'  THEN op.system_uptime END ASC NULLS LAST,
+    CASE WHEN $1::text = 'uptime'           AND $2::text = 'desc' THEN op.system_uptime END DESC NULLS LAST,
+    CASE WHEN $1::text = 'last_update'      AND $2::text = 'asc'  THEN op.last_update END ASC NULLS LAST,
+    CASE WHEN $1::text = 'last_update'      AND $2::text = 'desc' THEN op.last_update END DESC NULLS LAST,
+    CASE WHEN $1::text = 'ssg_version'      AND $2::text = 'asc'  THEN op.ssg_version END ASC NULLS LAST,
+    CASE WHEN $1::text = 'ssg_version'      AND $2::text = 'desc' THEN op.ssg_version END DESC NULLS LAST,
+    CASE WHEN $1::text = 'notes'            AND $2::text = 'asc'  THEN op.notes END ASC NULLS LAST,
+    CASE WHEN $1::text = 'notes'            AND $2::text = 'desc' THEN op.notes END DESC NULLS LAST,
+    CASE WHEN $1::text = 'integrations'     AND $2::text = 'asc'  THEN op.integrations_count END ASC,
+    CASE WHEN $1::text = 'integrations'     AND $2::text = 'desc' THEN op.integrations_count END DESC,
+    op.last_update DESC NULLS LAST,
+    op.id ASC
+`
+
+type GetHostsWithPageCountsParams struct {
+	SortKey        string           `json:"sort_key"`
+	SortDir        string           `json:"sort_dir"`
+	StaleThreshold pgtype.Timestamp `json:"stale_threshold"`
+	Search         *string          `json:"search"`
+	Group          *string          `json:"group"`
+	Status         *string          `json:"status"`
+	Os             *string          `json:"os"`
+	OsVersion      *string          `json:"os_version"`
+	Filter         *string          `json:"filter"`
+	SelectedIds    []string         `json:"selected_ids"`
+	RebootOnly     bool             `json:"reboot_only"`
+	HideStale      bool             `json:"hide_stale"`
+	RowOffset      int32            `json:"row_offset"`
+	RowLimit       int32            `json:"row_limit"`
+}
+
+type GetHostsWithPageCountsRow struct {
+	ID                     string           `json:"id"`
+	MachineID              *string          `json:"machine_id"`
+	FriendlyName           string           `json:"friendly_name"`
+	Hostname               *string          `json:"hostname"`
+	Ip                     *string          `json:"ip"`
+	OsType                 string           `json:"os_type"`
+	OsVersion              string           `json:"os_version"`
+	Status                 string           `json:"status"`
+	AgentVersion           *string          `json:"agent_version"`
+	AutoUpdate             bool             `json:"auto_update"`
+	Notes                  *string          `json:"notes"`
+	ApiID                  string           `json:"api_id"`
+	NeedsReboot            *bool            `json:"needs_reboot"`
+	RebootReason           *string          `json:"reboot_reason"`
+	SystemUptime           *string          `json:"system_uptime"`
+	DockerEnabled          bool             `json:"docker_enabled"`
+	ComplianceEnabled      bool             `json:"compliance_enabled"`
+	ComplianceOnDemandOnly bool             `json:"compliance_on_demand_only"`
+	LastUpdate             pgtype.Timestamp `json:"last_update"`
+	SsgVersion             interface{}      `json:"ssg_version"`
+	UpdatesCount           int32            `json:"updates_count"`
+	SecurityUpdatesCount   int32            `json:"security_updates_count"`
+	TotalPackagesCount     int32            `json:"total_packages_count"`
+}
+
+// Fast path for host-column sorting: order/page hosts first, then aggregate
+// package counts only for the visible page. Package-count sorting uses
+// GetHostsWithCounts so the sort still applies across the full filtered set.
+func (q *Queries) GetHostsWithPageCounts(ctx context.Context, arg GetHostsWithPageCountsParams) ([]GetHostsWithPageCountsRow, error) {
+	rows, err := q.db.Query(ctx, getHostsWithPageCounts,
+		arg.SortKey,
+		arg.SortDir,
+		arg.StaleThreshold,
+		arg.Search,
+		arg.Group,
+		arg.Status,
+		arg.Os,
+		arg.OsVersion,
+		arg.Filter,
+		arg.SelectedIds,
+		arg.RebootOnly,
+		arg.HideStale,
+		arg.RowOffset,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetHostsWithPageCountsRow
+	for rows.Next() {
+		var i GetHostsWithPageCountsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.MachineID,
+			&i.FriendlyName,
+			&i.Hostname,
+			&i.Ip,
+			&i.OsType,
+			&i.OsVersion,
+			&i.Status,
+			&i.AgentVersion,
+			&i.AutoUpdate,
+			&i.Notes,
+			&i.ApiID,
+			&i.NeedsReboot,
+			&i.RebootReason,
+			&i.SystemUptime,
+			&i.DockerEnabled,
+			&i.ComplianceEnabled,
+			&i.ComplianceOnDemandOnly,
+			&i.LastUpdate,
+			&i.SsgVersion,
+			&i.UpdatesCount,
+			&i.SecurityUpdatesCount,
+			&i.TotalPackagesCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getNavigationStats = `-- name: GetNavigationStats :one
+SELECT
+    (SELECT COUNT(*)::int FROM hosts) AS total_hosts,
+    (SELECT COUNT(*)::int FROM repositories) AS total_repos,
+    COALESCE((
+        SELECT unique_packages_count::int
+        FROM system_statistics
+        ORDER BY timestamp DESC
+        LIMIT 1
+    ), 0)::int AS total_outdated_packages,
+    NOW()::timestamp AS last_updated
+`
+
+type GetNavigationStatsRow struct {
+	TotalHosts            int32            `json:"total_hosts"`
+	TotalRepos            int32            `json:"total_repos"`
+	TotalOutdatedPackages int32            `json:"total_outdated_packages"`
+	LastUpdated           pgtype.Timestamp `json:"last_updated"`
+}
+
+func (q *Queries) GetNavigationStats(ctx context.Context) (GetNavigationStatsRow, error) {
+	row := q.db.QueryRow(ctx, getNavigationStats)
+	var i GetNavigationStatsRow
+	err := row.Scan(
+		&i.TotalHosts,
+		&i.TotalRepos,
+		&i.TotalOutdatedPackages,
+		&i.LastUpdated,
+	)
+	return i, err
 }
 
 const getOSDistribution = `-- name: GetOSDistribution :many

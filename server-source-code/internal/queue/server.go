@@ -64,6 +64,7 @@ func NewServer(opts asynq.RedisClientOpt, registry *agentregistry.Registry, db *
 			QueueComplianceScanCleanup:       1,
 			QueuePatchRunCleanup:             1,
 			QueueAgentReportsCleanup:         1,
+			QueuePackageStatsRefresh:         1,
 			QueueSSGUpdateCheck:              1,
 			QueueUpdateThresholdMonitor:      1,
 			QueueCompliance:                  2,
@@ -127,6 +128,7 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	mux.Handle(TypeComplianceScanCleanup, wrap(TypeComplianceScanCleanup, NewComplianceScanCleanupHandler(db, opts.PoolCache, log)))
 	mux.Handle(TypePatchRunCleanup, wrap(TypePatchRunCleanup, NewPatchRunCleanupHandler(db, opts.PoolCache, log, opts.GetPatchRunStallTimeoutMin)))
 	mux.Handle(TypeAgentReportsCleanup, wrap(TypeAgentReportsCleanup, NewAgentReportsCleanupHandler(db, opts.PoolCache, log, opts.GetAgentReportsRetentionDays)))
+	mux.Handle(TypePackageStatsRefresh, wrap(TypePackageStatsRefresh, NewPackageStatsRefreshHandler(db, opts.PoolCache, log)))
 	mux.Handle(TypeSSGUpdateCheck, wrap(TypeSSGUpdateCheck, NewSSGUpdateCheckHandler(registry, db, opts.PoolCache, opts.QueueClient, opts.SSGContentDir, log)))
 	mux.Handle(TypeSSGUpgrade, wrap(TypeSSGUpgrade, NewSSGUpgradeHandler(registry, db, opts.PoolCache, log)))
 	complianceStore := store.NewComplianceStore(db)
@@ -245,6 +247,16 @@ func NewScheduler(opts asynq.RedisClientOpt, db *database.DB, log *slog.Logger) 
 	// quiet window.
 	agentReportsCleanupTask := asynq.NewTask(TypeAgentReportsCleanup, nil)
 	if _, err := scheduler.Register("0 2 * * *", agentReportsCleanupTask, asynq.Queue(QueueAgentReportsCleanup), asynq.Retention(AutomationRetention)); err != nil {
+		return nil, err
+	}
+
+	// Package stats matview refresh. Every 2 minutes — drives the
+	// Packages list page's per-package counters. Worst-case staleness
+	// on screen = this interval. REFRESH CONCURRENTLY produces brief
+	// row-level locks rather than a full table lock so this does not
+	// block readers.
+	packageStatsRefreshTask := asynq.NewTask(TypePackageStatsRefresh, nil)
+	if _, err := scheduler.Register("*/2 * * * *", packageStatsRefreshTask, asynq.Queue(QueuePackageStatsRefresh), asynq.Retention(AutomationRetention)); err != nil {
 		return nil, err
 	}
 

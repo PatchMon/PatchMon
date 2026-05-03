@@ -61,13 +61,30 @@ func (h *RepositoriesHandler) List(w http.ResponseWriter, r *http.Request) {
 		Search: search,
 		Status: q.Get("status"),
 		Type:   q.Get("type"),
+		Limit:  parseIntQuery(r, "limit", 50),
+		Offset: parseIntQuery(r, "offset", 0),
+		Sort:   q.Get("sort"),
+		Order:  q.Get("order"),
 	}
-	repos, err := h.repos.List(r.Context(), params)
+	paginated := q.Has("limit") || q.Has("offset") || q.Has("sort") || q.Has("order")
+	if !paginated {
+		params.Legacy = true
+		params.Limit = 5000
+	}
+	if !params.Legacy && params.Limit > 500 {
+		params.Limit = 500
+	}
+	params.Offset = clampOffset(params.Offset)
+	result, err := h.repos.List(r.Context(), params)
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to fetch repositories")
 		return
 	}
-	JSON(w, http.StatusOK, repos)
+	if !paginated {
+		JSON(w, http.StatusOK, result.Items)
+		return
+	}
+	JSON(w, http.StatusOK, result)
 }
 
 // GetByHost handles GET /repositories/host/:hostId.

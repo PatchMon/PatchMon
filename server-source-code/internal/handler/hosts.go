@@ -59,6 +59,25 @@ func (h *HostsHandler) List(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, hosts)
 }
 
+// Options handles GET /hosts/options.
+func (h *HostsHandler) Options(w http.ResponseWriter, r *http.Request) {
+	search := r.URL.Query().Get("search")
+	if len(search) > 200 {
+		search = search[:200]
+	}
+	limit := parseIntQuery(r, "limit", 100)
+	offset := parseIntQuery(r, "offset", 0)
+	if limit > 5000 {
+		limit = 5000
+	}
+	options, err := h.hosts.ListOptions(r.Context(), search, limit, offset)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to load host options")
+		return
+	}
+	JSON(w, http.StatusOK, options)
+}
+
 // AdminList handles GET /hosts/admin/list.
 func (h *HostsHandler) AdminList(w http.ResponseWriter, r *http.Request) {
 	returnAll := r.URL.Query().Get("all") == "true"

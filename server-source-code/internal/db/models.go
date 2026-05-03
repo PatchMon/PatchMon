@@ -381,6 +381,13 @@ type JobHistory struct {
 	CompletedAt   pgtype.Timestamp `json:"completed_at"`
 }
 
+type MvPackageStat struct {
+	PackageID       string `json:"package_id"`
+	TotalInstalls   int32  `json:"total_installs"`
+	UpdatesNeeded   int32  `json:"updates_needed"`
+	SecurityUpdates int32  `json:"security_updates"`
+}
+
 type NotificationDeliveryLog struct {
 	ID                string           `json:"id"`
 	EventFingerprint  string           `json:"event_fingerprint"`
