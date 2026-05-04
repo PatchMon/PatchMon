@@ -80,6 +80,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 		const base = `${serverUrl}/api/v1/hosts/install`;
 		const params = new URLSearchParams();
 		if (host?.expected_platform === "freebsd") params.set("os", "freebsd");
+		if (host?.expected_platform === "openbsd") params.set("os", "openbsd");
 		if (host?.expected_platform === "windows" || host?.os_type === "windows")
 			params.set("os", "windows");
 		if (forceInstall && host?.expected_platform !== "windows")
@@ -90,7 +91,10 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 
 	// Helper function to build the shell command suffix (no sudo on FreeBSD/pfSense)
 	const getShellCommand = () => {
-		const use_sudo = host?.expected_platform !== "freebsd";
+		// BSDs don't ship with sudo by default
+		const use_sudo =
+			host?.expected_platform !== "freebsd" &&
+			host?.expected_platform !== "openbsd";
 		const base = use_sudo ? "sudo sh" : "sh";
 		return forceInstall ? `${base} -s -- --force` : base;
 	};
