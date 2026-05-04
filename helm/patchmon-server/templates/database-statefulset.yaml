@@ -1,0 +1,150 @@
+{{- if .Values.database.enabled -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "patchmon.fullname" . }}-database
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "patchmon.database.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  serviceName: {{ include "patchmon.fullname" . }}-database
+  replicas: {{ .Values.database.replicaCount }}
+  {{- if .Values.database.updateStrategy }}
+  updateStrategy:
+    {{- toYaml .Values.database.updateStrategy | nindent 4 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "patchmon.database.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "patchmon.database.selectorLabels" . | nindent 8 }}
+      {{- with .Values.database.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.database.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        {{- if .Values.database.initContainers.fixPermissions.enabled }}
+        - name: fix-permissions
+          image: busybox
+          command:
+            - sh
+            - "-c"
+            - "chown -R {{ .Values.database.podSecurityContext.runAsUser }}:{{ .Values.database.podSecurityContext.runAsGroup }} /var/lib/postgresql/data"
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+        {{- end }}
+      containers:
+        - name: postgres
+          image: {{ include "patchmon.database.image" . }}
+          imagePullPolicy: {{ .Values.database.image.pullPolicy }}
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.database.auth.database | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.database.auth.username | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "patchmon.database.secretName" . }}
+                  key: {{ .Values.database.auth.existingSecretPasswordKey }}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgres
+              containerPort: {{ .Values.database.service.port }}
+              protocol: TCP
+          {{- if .Values.database.livenessProbe.enabled }}
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - "-U"
+                - {{ .Values.database.auth.username | quote }}
+                - "-d"
+                - {{ .Values.database.auth.database | quote }}
+            initialDelaySeconds: {{ .Values.database.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.database.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.database.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.database.livenessProbe.failureThreshold }}
+          {{- end }}
+          {{- if .Values.database.readinessProbe.enabled }}
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - "-U"
+                - {{ .Values.database.auth.username | quote }}
+                - "-d"
+                - {{ .Values.database.auth.database | quote }}
+            initialDelaySeconds: {{ .Values.database.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.database.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.database.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.database.readinessProbe.failureThreshold }}
+          {{- end }}
+          {{- with .Values.database.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.database.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+      {{- with .Values.database.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.database.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.database.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- if .Values.database.persistence.enabled }}
+  volumeClaimTemplates:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: postgres-data
+        {{- with .Values.database.persistence.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      spec:
+        accessModes:
+          {{- range .Values.database.persistence.accessModes }}
+          - {{ . | quote }}
+          {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.database.persistence.size | quote }}
+        {{- $storageClass := include "patchmon.storageClass" (dict "local" .Values.database.persistence.storageClass "global" .Values.global) }}
+        {{- if $storageClass }}
+        storageClassName: {{ $storageClass }}
+        {{- end }}
+  {{- end }}
+{{- end }}

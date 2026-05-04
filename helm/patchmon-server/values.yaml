@@ -1,0 +1,526 @@
+# Default values for patchmon
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Global settings
+global:
+  # Global image registry override
+  imageRegistry: ""
+  # Global image tag override for server
+  # If set, this overrides server.image.tag
+  imageTag: ""
+  # Global image pull secrets
+  imagePullSecrets: []
+  # Global storage class
+  storageClass: ""
+
+# Chart name overrides
+nameOverride: ""
+fullnameOverride: "patchmon-prod"
+
+# Common labels to add to all resources
+commonLabels: {}
+
+# Common annotations to add to all resources
+commonAnnotations: {}
+
+# PostgreSQL Database configuration
+database:
+  enabled: true
+  image:
+    registry: "docker.io"
+    repository: postgres
+    tag: "18-alpine"
+    pullPolicy: IfNotPresent
+  
+  # host: ""
+  # port: 5432
+  
+  # Database credentials
+  auth:
+    database: patchmon_db
+    username: patchmon_user
+    password: ""
+    existingSecret: ""
+    existingSecretPasswordKey: "postgres-password"
+  
+  # StatefulSet configuration
+  replicaCount: 1
+  updateStrategy:
+    type: RollingUpdate
+  
+  # Resource limits
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  
+  # Persistence configuration
+  persistence:
+    enabled: true
+    storageClass: ""  # Uses global.storageClass if empty
+    accessModes:
+      - ReadWriteOnce
+    size: 5Gi
+    annotations: {}
+  
+  # Probes configuration
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 3
+    periodSeconds: 3
+    timeoutSeconds: 5
+    failureThreshold: 7
+  
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 3
+    periodSeconds: 3
+    timeoutSeconds: 5
+    failureThreshold: 7
+  
+  # Service configuration
+  service:
+    type: ClusterIP
+    port: 5432
+  
+  # Pod annotations
+  podAnnotations: {}
+  
+  # Pod security context
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 70
+    runAsGroup: 70
+    fsGroup: 70
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  
+  # Container security context
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: false
+    runAsUser: 70
+    runAsGroup: 70
+    runAsNonRoot: true
+  
+  # Init containers
+  initContainers:
+    fixPermissions:
+      enabled: false  # Enable if volume ownership is incorrect (e.g. wrong UID/GID on existing PVC)
+
+  # Node selector
+  nodeSelector: {}
+  
+  # Tolerations
+  tolerations: []
+  
+  # Affinity
+  affinity: {}
+
+# Redis configuration
+redis:
+  enabled: true
+  image:
+    registry: "docker.io"
+    repository: redis
+    tag: "8-alpine"
+    pullPolicy: IfNotPresent
+  
+  # Redis authentication
+  auth:
+    password: ""
+    existingSecret: ""
+    existingSecretPasswordKey: "redis-password"
+  
+  # StatefulSet configuration
+  replicaCount: 1
+  updateStrategy:
+    type: RollingUpdate
+  
+  # Resource limits
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  
+  # Persistence configuration
+  persistence:
+    enabled: true
+    storageClass: ""  # Uses global.storageClass if empty
+    accessModes:
+      - ReadWriteOnce
+    size: 5Gi
+    annotations: {}
+  
+  # Probes configuration
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 3
+    periodSeconds: 3
+    timeoutSeconds: 5
+    failureThreshold: 7
+  
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 3
+    periodSeconds: 3
+    timeoutSeconds: 5
+    failureThreshold: 7
+  
+  # Service configuration
+  service:
+    type: ClusterIP
+    port: 6379
+  
+  # Pod annotations
+  podAnnotations: {}
+  
+  # Pod security context
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 999
+    runAsGroup: 1000
+    fsGroup: 1000
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  
+  # Container security context
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: false
+    runAsUser: 999
+    runAsGroup: 1000
+    runAsNonRoot: true
+  
+  # Init containers
+  initContainers:
+    fixPermissions:
+      enabled: false  # Enable if volume ownership is incorrect (e.g. wrong UID/GID on existing PVC)
+
+  # Node selector
+  nodeSelector: {}
+  
+  # Tolerations
+  tolerations: []
+  
+  # Affinity
+  affinity: {}
+
+# Server configuration (serves frontend static files + backend API in a single Go binary)
+server:
+  enabled: true
+  image:
+    registry: "ghcr.io"
+    repository: patchmon/patchmon-server
+    tag: 2.0.2
+    pullPolicy: IfNotPresent
+  
+  # Deployment configuration
+  replicaCount: 1
+  updateStrategy:
+    type: RollingUpdate
+  
+  # Resource limits
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+    requests:
+      cpu: 10m
+      memory: 256Mi
+  
+  # Horizontal Pod Autoscaler
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+  
+
+  # Environment variables
+  env:
+    # Logging
+    enableLogging: true
+    logLevel: info
+    logToConsole: true
+    # Server configuration
+    serverProtocol: http # http or https (if https, configure ingress accordingly)
+    serverHost: patchmon.example.com
+    serverPort: "80" # Use "443" for https
+    corsOrigin: http://patchmon.example.com # Set to https://... if using https
+    # Database connection pool
+    dbConnectionLimit: "30"
+    dbPoolTimeout: "20"
+    dbConnectTimeout: "10"
+    dbIdleTimeout: "300"
+    dbMaxLifetime: "1800"
+    # Rate limiting
+    rateLimitWindowMs: "900000"
+    rateLimitMax: "5000"
+    authRateLimitWindowMs: "600000"
+    authRateLimitMax: "500"
+    agentRateLimitWindowMs: "60000"
+    agentRateLimitMax: "1000"
+    # Redis configuration
+    # redisHost: ""
+    # redisPort: "6379"
+    redisDb: "0"
+    # Security
+    # Trust proxy headers from ingress controller and internal cluster networks
+    trustProxy: "true"
+    enableHsts: false
+    # User management
+    defaultUserRole: "user"
+    autoCreateRolePermissions: false
+  
+  jwtSecret: ""
+  existingSecret: ""
+  existingSecretJwtKey: "jwt-secret"
+  
+  aiEncryptionKey: ""
+  existingSecretAiEncryptionKey: "ai-encryption-key"
+  
+  # OIDC configuration
+  oidc:
+    enabled: false
+    issuerUrl: ""
+    clientId: ""
+    clientSecret: ""
+    existingSecret: ""
+    existingSecretClientSecretKey: "oidc-client-secret"
+    scopes: "openid profile email"
+    buttonText: "Login with SSO"
+    autoCreateUsers: true
+    defaultRole: "user"
+    syncRoles: true
+    disableLocalAuth: false
+    sessionTtl: 86400
+    # Group mapping for role synchronization
+    groups:
+      superadmin: ""
+      admin: ""
+      hostManager: ""
+      user: ""
+      readonly: ""
+  
+  # Probes configuration
+  livenessProbe:
+    enabled: true
+    tcpSocket:
+      port: 3000
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 10
+  
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /health
+      port: 3000
+      httpHeaders:
+        - name: Host
+          value: localhost
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 10
+  
+  # Service configuration
+  service:
+    annotations: []
+    type: ClusterIP
+    port: 3000
+  
+  # Pod annotations
+  podAnnotations: {}
+  
+  # Pod security context
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  
+  # Container security context
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    runAsNonRoot: true
+  
+  # Init containers
+  initContainers:
+    waitForDatabase:
+      enabled: true
+    waitForRedis:
+      enabled: true
+    waitForGuacd:
+      enabled: true
+  
+  extraEnv: []
+    # - name: NODE_EXTRA_CA_CERTS
+    #   value: /etc/ssl/certs/authentik-ca.crt
+  extraVolumeMounts: []
+    # - name: authentik-ca
+    #   mountPath: /etc/ssl/certs/authentik-ca.crt
+    #   subPath: ca.crt
+    #   readOnly: true
+  extraVolumes: []
+    # - name: authentik-ca
+    #   configMap:
+    #     name: authentik-ca
+
+
+
+  # Node selector
+  nodeSelector: {}
+  
+  # Tolerations
+  tolerations: []
+  
+  # Affinity
+  affinity: {}
+  
+  # Topology spread constraints
+  topologySpreadConstraints: []
+
+# Guacamole proxy daemon (guacd) configuration
+guacd:
+  enabled: true
+  image:
+    registry: "docker.io"
+    repository: guacamole/guacd
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  
+  # Deployment configuration
+  replicaCount: 1
+  updateStrategy:
+    type: RollingUpdate
+  
+  # Resource limits
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+    requests:
+      cpu: 10m
+      memory: 32Mi
+  
+  # Service configuration
+  service:
+    type: ClusterIP
+    port: 4822
+  
+  # Pod annotations
+  podAnnotations: {}
+  
+  # Pod security context
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  
+  # Container security context
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+  
+  # Probes configuration
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  
+  # Node selector
+  nodeSelector: {}
+  
+  # Tolerations
+  tolerations: []
+  
+  # Affinity
+  affinity: {}
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: ""
+  annotations:
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/client-body-buffer-size: "4m"
+    nginx.ingress.kubernetes.io/websocket-services: "server"
+  hosts:
+    - host: patchmon.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+          service:
+            name: server
+            port: 3000
+  # tls:
+  #   - secretName: patchmon-tls
+  #     hosts:
+  #       - patchmon.example.com
+
+# Service Account
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: false
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+# ConfigMap for application configuration
+configMap:
+  create: true
+  annotations: {}
+
+# Secret for sensitive data
+secret:
+  create: true
+  annotations: {}
