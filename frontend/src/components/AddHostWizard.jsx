@@ -2,7 +2,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle, Copy, Download, RefreshCw, Wifi, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { DiWindows } from "react-icons/di";
-import { SiFreebsd, SiLinux, SiMacos } from "react-icons/si";
+import { FaApple } from "react-icons/fa";
+import { SiFreebsd, SiLinux } from "react-icons/si";
 import { useNavigate } from "react-router-dom";
 import {
 	adminHostsAPI,
@@ -376,7 +377,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 										: "border-secondary-300 dark:border-secondary-600 hover:border-primary-400"
 								}`}
 							>
-								<SiMacos className="h-12 w-12 text-secondary-700 dark:text-secondary-200 mb-2" />
+								<FaApple className="h-12 w-12 text-secondary-700 dark:text-secondary-200 mb-2" />
 								<span className="text-sm font-medium">macOS</span>
 							</button>
 							<button

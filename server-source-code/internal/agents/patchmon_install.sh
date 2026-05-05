@@ -674,12 +674,37 @@ if [ -f "/usr/local/bin/patchmon-agent.sh" ]; then
 fi
 
 # Download the binary
-curl $CURL_FLAGS \
+TMP_AGENT_BINARY=$(mktemp /tmp/patchmon-agent.XXXXXX)
+HTTP_STATUS=$(curl -sS $CURL_FLAGS \
     -H "X-API-ID: $API_ID" \
     -H "X-API-KEY: $API_KEY" \
+    -w "%{http_code}" \
     "$PATCHMON_URL/api/v1/hosts/agent/download?arch=$ARCHITECTURE&os=$PATCHMON_OS&force=binary" \
-    -o /usr/local/bin/patchmon-agent
+    -o "$TMP_AGENT_BINARY")
 
+if [ "$HTTP_STATUS" != "200" ]; then
+    printf "%b\n" "${RED}ERROR: Agent binary download failed with HTTP status $HTTP_STATUS:${NC}" >&2
+    if [ -s "$TMP_AGENT_BINARY" ]; then
+        cat "$TMP_AGENT_BINARY" >&2
+    fi
+    rm -f "$TMP_AGENT_BINARY"
+    error "Failed to download PatchMon agent binary for $PATCHMON_OS/$ARCHITECTURE. Verify the server has the matching binary."
+fi
+
+if [ ! -s "$TMP_AGENT_BINARY" ]; then
+    rm -f "$TMP_AGENT_BINARY"
+    error "Downloaded agent binary is empty. Please verify the server package bundle."
+fi
+
+# Detect error payloads returned as JSON instead of a binary
+if [ "$(head -c 1 "$TMP_AGENT_BINARY" 2>/dev/null)" = "{" ]; then
+    printf "%b\n" "${RED}ERROR: Received error response when downloading agent binary:${NC}" >&2
+    cat "$TMP_AGENT_BINARY" >&2
+    rm -f "$TMP_AGENT_BINARY"
+    error "Agent binary download failed"
+fi
+
+mv "$TMP_AGENT_BINARY" /usr/local/bin/patchmon-agent
 chmod +x /usr/local/bin/patchmon-agent
 
 # Get the agent version from the binary
