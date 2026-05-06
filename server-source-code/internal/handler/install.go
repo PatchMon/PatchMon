@@ -142,8 +142,8 @@ func (h *InstallHandler) ServeInstall(w http.ResponseWriter, r *http.Request) {
 		architecture = ""
 	}
 	osParam := r.URL.Query().Get("os")
-	if osParam != "linux" && osParam != "freebsd" && osParam != "windows" && osParam != "darwin" {
-		osParam = "linux"
+	if osParam != "" && osParam != "linux" && osParam != "freebsd" && osParam != "windows" && osParam != "darwin" {
+		osParam = ""
 	}
 
 	// Windows: serve PowerShell script with env vars
@@ -192,11 +192,14 @@ func (h *InstallHandler) ServeInstall(w http.ResponseWriter, r *http.Request) {
 	if forceInstall {
 		forceStr = "true"
 	}
+	osExport := ""
+	if osParam != "" {
+		osExport = fmt.Sprintf("export PATCHMON_OS=\"%s\"\n", osParam)
+	}
 
 	envBlock := fmt.Sprintf(`#!/bin/sh
 export PATCHMON_URL="%s"
-export PATCHMON_OS="%s"
-export BOOTSTRAP_TOKEN="%s"
+%sexport BOOTSTRAP_TOKEN="%s"
 export CURL_FLAGS="%s"
 export SKIP_SSL_VERIFY="%s"
 export FORCE_INSTALL="%s"
@@ -222,7 +225,7 @@ fetch_credentials() {
     fi
 }
 fetch_credentials
-`, serverURL, osParam, token, curlFlags, skipSSLVerify, forceStr, archExport)
+`, serverURL, osExport, token, curlFlags, skipSSLVerify, forceStr, archExport)
 
 	// Remove shebang from original script and prepend env block
 	script := h.scriptBase
