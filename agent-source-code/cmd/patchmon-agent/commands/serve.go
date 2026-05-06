@@ -2513,6 +2513,11 @@ func runPatchBrew(ctx context.Context, httpClient *client.Client, patchRunID, pa
 		return fmt.Errorf("%s: %w", errMsg, err)
 	}
 
+	brewEnv := append(os.Environ(),
+		"HOMEBREW_ALLOW_RUN_AS_ROOT=1",
+		"HOMEBREW_NO_AUTO_UPDATE=1",
+	)
+
 	if err := httpClient.SendPatchOutput(ctx, patchRunID, "started", "", ""); err != nil {
 		logger.WithError(err).Warn("Failed to send patch started to server")
 	}
@@ -2524,7 +2529,7 @@ func runPatchBrew(ctx context.Context, httpClient *client.Client, patchRunID, pa
 	runStep := func(isDryRunStep bool, errTag, errFmt, name string, args ...string) (error, bool) {
 		sink.WriteString(formatCmd(name, args...))
 		sink.Flush()
-		err := runStreamingPatchStep(ctx, sink, os.Environ(), name, args...)
+		err := runStreamingPatchStep(ctx, sink, brewEnv, name, args...)
 		if err == nil {
 			return nil, false
 		}
@@ -2539,6 +2544,7 @@ func runPatchBrew(ctx context.Context, httpClient *client.Client, patchRunID, pa
 
 	brewPackageInstalled := func(pkg string) bool {
 		cmd := exec.Command("brew", "list", "--versions", pkg)
+		cmd.Env = brewEnv
 		return cmd.Run() == nil
 	}
 

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -407,12 +408,52 @@ func (d *Detector) getSystemUptime(ctx context.Context) string {
 // getLoadAverage gets system load average
 func (d *Detector) getLoadAverage(ctx context.Context) []float64 {
 	loadAvg, err := load.AvgWithContext(ctx)
-	if err != nil {
-		d.logger.WithError(err).Warn("Failed to get load average")
-		return []float64{0, 0, 0}
+	if err == nil {
+		return []float64{loadAvg.Load1, loadAvg.Load5, loadAvg.Load15}
 	}
 
-	return []float64{loadAvg.Load1, loadAvg.Load5, loadAvg.Load15}
+	if runtime.GOOS == "darwin" {
+		if darwinLoad := d.getDarwinLoadAverage(); len(darwinLoad) == 3 {
+			return darwinLoad
+		}
+	}
+
+	d.logger.WithError(err).Warn("Failed to get load average")
+	return []float64{0, 0, 0}
+}
+
+func (d *Detector) getDarwinLoadAverage() []float64 {
+	out, err := exec.Command("sysctl", "-n", "vm.loadavg").Output()
+	if err != nil {
+		d.logger.WithError(err).Debug("Failed to run sysctl vm.loadavg")
+		return nil
+	}
+
+	// Example output: { 1.23 0.97 0.75 }
+	fields := strings.Fields(string(out))
+	if len(fields) < 3 {
+		return nil
+	}
+
+	var loads []float64
+	for _, field := range fields {
+		field = strings.Trim(field, "{} ")
+		if field == "" {
+			continue
+		}
+		value, err := strconv.ParseFloat(field, 64)
+		if err != nil {
+			d.logger.WithError(err).Debugf("Failed to parse load average value %q", field)
+			return nil
+		}
+		loads = append(loads, value)
+	}
+
+	if len(loads) < 3 {
+		return nil
+	}
+
+	return loads[:3]
 }
 
 // GetMachineID returns the system's machine ID using gopsutil

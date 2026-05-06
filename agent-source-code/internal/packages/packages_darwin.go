@@ -5,12 +5,26 @@ package packages
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
 
 	"patchmon-agent/pkg/models"
 )
+
+func newBrewCommand(args ...string) *exec.Cmd {
+	brewPath := findBrewBinary()
+	if brewPath == "" {
+		brewPath = "brew"
+	}
+	cmd := exec.Command(brewPath, args...)
+	cmd.Env = append(os.Environ(),
+		"HOMEBREW_ALLOW_RUN_AS_ROOT=1",
+		"HOMEBREW_NO_AUTO_UPDATE=1",
+	)
+	return cmd
+}
 
 // BrewOutdatedEntry matches the JSON output of `brew outdated --json=v2`
 type BrewOutdatedEntry struct {
@@ -28,7 +42,7 @@ type BrewOutdatedResponse struct {
 // CollectPackages returns all installed Homebrew packages,
 // flagging any that have updates available.
 func CollectPackages() ([]models.Package, error) {
-	return collectDarwinPackages(true)
+	return collectDarwinPackages(false)
 }
 
 // CollectDarwinPackages returns available packages for macOS hosts.
@@ -51,7 +65,10 @@ func collectDarwinPackages(requireBrew bool) ([]models.Package, error) {
 	if useBrew {
 		installed, err := getInstalledPackages()
 		if err != nil {
-			return nil, fmt.Errorf("brew list failed: %w", err)
+			if requireBrew {
+				return nil, fmt.Errorf("brew list failed: %w", err)
+			}
+			installed = map[string]string{}
 		}
 
 		outdated, err := getOutdatedPackages()
@@ -84,9 +101,10 @@ func collectDarwinPackages(requireBrew bool) ([]models.Package, error) {
 
 func getInstalledPackages() (map[string]string, error) {
 	// `brew list --versions` outputs: packagename version [version...]
-	out, err := exec.Command("brew", "list", "--versions").Output()
+	cmd := newBrewCommand("list", "--versions")
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("brew list --versions failed: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 
 	result := make(map[string]string)
@@ -100,7 +118,8 @@ func getInstalledPackages() (map[string]string, error) {
 }
 
 func getOutdatedPackages() (map[string]string, error) {
-	out, err := exec.Command("brew", "outdated", "--json=v2").Output()
+	cmd := newBrewCommand("outdated", "--json=v2")
+	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
