@@ -538,7 +538,7 @@ func verifyMinisignSignature(publicKeyB64 string, data, sigFile []byte) (string,
 	if len(sigRaw) != 74 {
 		return "", fmt.Errorf("invalid signature length: expected 74 bytes, got %d", len(sigRaw))
 	}
-	if sigRaw[0] != 'E' || sigRaw[1] != 'd' {
+	if sigRaw[0] != 'E' || sigRaw[1] != 'D' {
 		return "", fmt.Errorf("unsupported signature algorithm: expected Ed")
 	}
 	// Verify key ID matches

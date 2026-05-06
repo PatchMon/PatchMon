@@ -36,7 +36,7 @@ func signData(t *testing.T, priv ed25519.PrivateKey, keyID, data []byte, trusted
 	sig := ed25519.Sign(priv, h[:])
 
 	// minisign signature: algorithm(2) + keyID(8) + signature(64)
-	sigRaw := append([]byte("Ed"), keyID...)
+	sigRaw := append([]byte("ED"), keyID...)
 	sigRaw = append(sigRaw, sig...)
 	sigB64 := base64.StdEncoding.EncodeToString(sigRaw)
 
