@@ -40,6 +40,7 @@ database:
   auth:
     database: patchmon_db
     username: patchmon_user
+    # -- Password for the database user. It is strongly recommended to use existingSecret instead.
     password: ""
     existingSecret: ""
     existingSecretPasswordKey: "postgres-password"
@@ -136,6 +137,7 @@ redis:
   
   # Redis authentication
   auth:
+    # -- Password for Redis. It is strongly recommended to use existingSecret instead.
     password: ""
     existingSecret: ""
     existingSecretPasswordKey: "redis-password"
@@ -504,6 +506,31 @@ ingress:
   #   - secretName: patchmon-tls
   #     hosts:
   #       - patchmon.example.com
+
+# Gateway API HTTPRoute configuration
+# Requires the Gateway API CRDs to be installed in the cluster.
+# ref: https://gateway-api.sigs.k8s.io/
+route:
+  enabled: false
+  kind: HTTPRoute
+  group: gateway.networking.k8s.io
+  version: v1
+  annotations: {}
+  # -- Hostnames that this route should match.
+  hostnames:
+    - patchmon.example.com
+  # -- Path prefix to match. Use "/patchmon" to host at a subpath.
+  path: /
+  # -- When path is a subpath (e.g. /patchmon), strip the prefix before forwarding
+  # to the backend so the application receives requests at /.
+  stripPathPrefix: true
+  # -- Weight for the backend reference (1-100).
+  weight: 100
+  parentRefs:
+    - name: gateway
+      kind: Gateway
+      namespace: kube-system
+      sectionName: websecure
 
 # Service Account
 serviceAccount:
