@@ -68,11 +68,14 @@ sign-all: check-signing-key
 	@[ -n "$(PATCHMON_SIGNING_PRIVATE_KEY)" ] || (echo "❌ Error: PATCHMON_SIGNING_PRIVATE_KEY (path to private key file) is not set."; exit 1)
 	@command -v minisign >/dev/null 2>&1 || (echo "❌ Error: minisign is not installed. See https://jedisct1.github.io/minisign/"; exit 1)
 	@echo "Signing agent binaries..."
-	@[ -n "$(MINISIGN_PASSWORD)" ] || (echo "❌ Error: MINISIGN_PASSWORD is not set. Export it before running sign-all."; exit 1)
 	@for f in $(GOBIN)/$(BINARY_NAME)-linux-* $(GOBIN)/$(BINARY_NAME)-freebsd-* $(GOBIN)/$(BINARY_NAME)-windows-*.exe; do \
 		case "$$f" in *.minisig) continue ;; esac; \
 		[ -f "$$f" ] || continue; \
-		printf '%s\n' "$(MINISIGN_PASSWORD)" | minisign -S -s $(PATCHMON_SIGNING_PRIVATE_KEY) -m "$$f" -x "$$f.minisig" -W && echo "  ✅ Signed $$f" || { echo "  ❌ Failed to sign $$f (wrong password?)"; exit 1; }; \
+		if [ -n "$(MINISIGN_PASSWORD)" ]; then \
+			printf '%s\n' "$(MINISIGN_PASSWORD)" | minisign -S -s $(PATCHMON_SIGNING_PRIVATE_KEY) -m "$$f" -x "$$f.minisig" -W && echo "  ✅ Signed $$f" || { echo "  ❌ Failed to sign $$f (wrong password?)"; exit 1; }; \
+		else \
+			minisign -S -s $(PATCHMON_SIGNING_PRIVATE_KEY) -m "$$f" -x "$$f.minisig" && echo "  ✅ Signed $$f" || { echo "  ❌ Failed to sign $$f"; exit 1; }; \
+		fi; \
 	done
 
 # Build all (Linux + FreeBSD + Windows), sign, and copy to backend serve dirs
