@@ -1,10 +1,13 @@
 package commands
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -23,6 +26,7 @@ import (
 	"patchmon-agent/internal/pkgversion"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/blake2b"
 )
 
 const (
@@ -188,6 +192,31 @@ func updateAgent() error {
 		return fmt.Errorf("binary hash mismatch: expected %s, got %s", versionInfo.Hash, actualHash)
 	}
 	logger.WithField("hash", actualHash).Info("Binary integrity verified successfully")
+
+	// SECURITY: Verify cryptographic signature (Ed25519 via minisign)
+	// This ensures the binary was signed by the holder of the private key, even if the server is compromised.
+	if pkgversion.SigningPublicKey == "" {
+		logger.Error("No signing public key compiled into this binary — refusing to update")
+		return fmt.Errorf("update aborted: binary was built without a signing public key (set PATCHMON_SIGNING_PUBLIC_KEY at build time)")
+	}
+	sigData, err := fetchAgentSignature()
+	if err != nil {
+		return fmt.Errorf("failed to fetch agent signature: %w", err)
+	}
+	signedVersion, err := verifyMinisignSignature(pkgversion.SigningPublicKey, newAgentData, sigData)
+	if err != nil {
+		logger.WithError(err).Error("Cryptographic signature verification failed — refusing to install binary")
+		return fmt.Errorf("signature verification failed: %w", err)
+	}
+	logger.WithField("signedVersion", signedVersion).Info("Cryptographic signature verified successfully")
+
+	// Downgrade protection: the version in the signature must be greater than the current version.
+	// This prevents a compromised server from serving an old but validly-signed binary.
+	if signedVersion != "" {
+		if compareVersions(signedVersion, currentVersion) <= 0 {
+			return fmt.Errorf("downgrade rejected: signed binary version %s is not newer than current version %s", signedVersion, currentVersion)
+		}
+	}
 
 	// Get the new version from server version info (more reliable than parsing binary output)
 	newVersion := currentVersion // Default to current if we can't determine
@@ -470,6 +499,176 @@ func getPlatform() string {
 	default:
 		return "linux"
 	}
+}
+
+// verifyMinisignSignature verifies a minisign Ed25519 signature over data using the given base64-encoded public key.
+// Returns the version string extracted from the trusted comment (format: "PatchMon Agent <version>").
+// The minisign public key format is: base64(algorithm[2] + keyID[8] + ed25519PublicKey[32])
+// The minisign signature format (per line): untrusted comment, base64(algorithm[2] + keyID[8] + signature[64]), trusted comment, global signature.
+func verifyMinisignSignature(publicKeyB64 string, data, sigFile []byte) (string, error) {
+	// Decode public key
+	pubKeyRaw, err := base64.StdEncoding.DecodeString(publicKeyB64)
+	if err != nil {
+		return "", fmt.Errorf("invalid public key encoding: %w", err)
+	}
+	// algorithm(2) + keyID(8) + ed25519 key(32) = 42 bytes
+	if len(pubKeyRaw) != 42 {
+		return "", fmt.Errorf("invalid public key length: expected 42 bytes, got %d", len(pubKeyRaw))
+	}
+	if pubKeyRaw[0] != 'E' || pubKeyRaw[1] != 'd' {
+		return "", fmt.Errorf("unsupported signing algorithm: expected Ed (Ed25519)")
+	}
+	pubKey := ed25519.PublicKey(pubKeyRaw[10:]) // skip algorithm(2) + keyID(8)
+
+	// Parse signature file: line 0 = untrusted comment, line 1 = base64 sig, line 2 = trusted comment, line 3 = global sig
+	lines := strings.Split(strings.ReplaceAll(string(sigFile), "\r\n", "\n"), "\n")
+	// Filter empty trailing lines
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) < 4 {
+		return "", fmt.Errorf("invalid signature file: expected 4 lines, got %d", len(lines))
+	}
+
+	sigRaw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(lines[1]))
+	if err != nil {
+		return "", fmt.Errorf("invalid signature encoding: %w", err)
+	}
+	// algorithm(2) + keyID(8) + signature(64) = 74 bytes
+	if len(sigRaw) != 74 {
+		return "", fmt.Errorf("invalid signature length: expected 74 bytes, got %d", len(sigRaw))
+	}
+	if sigRaw[0] != 'E' || sigRaw[1] != 'd' {
+		return "", fmt.Errorf("unsupported signature algorithm: expected Ed")
+	}
+	// Verify key ID matches
+	if !bytes.Equal(pubKeyRaw[2:10], sigRaw[2:10]) {
+		return "", fmt.Errorf("signature key ID does not match public key")
+	}
+	sig := sigRaw[10:] // skip algorithm(2) + keyID(8)
+
+	// minisign signs a prehash: Blake2b-512 of the data
+	h := blake2b.Sum512(data)
+	if !ed25519.Verify(pubKey, h[:], sig) {
+		return "", fmt.Errorf("Ed25519 signature is invalid")
+	}
+
+	// Extract version from trusted comment (format: "trusted comment: PatchMon Agent <version>")
+	trustedComment := strings.TrimPrefix(strings.TrimSpace(lines[2]), "trusted comment: ")
+	signedVersion := strings.TrimPrefix(strings.TrimSpace(trustedComment), "PatchMon Agent ")
+	signedVersion = strings.TrimPrefix(signedVersion, "v")
+
+	return signedVersion, nil
+}
+
+// compareVersions compares two semantic version strings.
+// Returns 1 if v1 > v2, -1 if v1 < v2, 0 if equal.
+func compareVersions(v1, v2 string) int {
+	parse := func(v string) []int {
+		v = strings.TrimPrefix(v, "v")
+		parts := strings.Split(v, ".")
+		nums := make([]int, 0, len(parts))
+		for _, p := range parts {
+			n := 0
+			for _, c := range p {
+				if c >= '0' && c <= '9' {
+					n = n*10 + int(c-'0')
+				} else {
+					break
+				}
+			}
+			nums = append(nums, n)
+		}
+		return nums
+	}
+	p1, p2 := parse(v1), parse(v2)
+	max := len(p1)
+	if len(p2) > max {
+		max = len(p2)
+	}
+	for i := 0; i < max; i++ {
+		a, b := 0, 0
+		if i < len(p1) {
+			a = p1[i]
+		}
+		if i < len(p2) {
+			b = p2[i]
+		}
+		if a > b {
+			return 1
+		}
+		if a < b {
+			return -1
+		}
+	}
+	return 0
+}
+
+// fetchAgentSignature downloads the minisign signature file for the agent binary from the server.
+func fetchAgentSignature() ([]byte, error) {
+	cfg := cfgManager.GetConfig()
+
+	if err := cfgManager.LoadCredentials(); err != nil {
+		return nil, fmt.Errorf("failed to load credentials: %w", err)
+	}
+	credentials := cfgManager.GetCredentials()
+
+	architecture := getArchitecture()
+	platform := getPlatform()
+	url := fmt.Sprintf("%s/api/v1/hosts/agent/signature?arch=%s&os=%s", cfg.PatchmonServer, architecture, platform)
+
+	ctx, cancel := context.WithTimeout(context.Background(), versionCheckTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("User-Agent", fmt.Sprintf("patchmon-agent/%s", pkgversion.Version))
+	req.Header.Set("X-API-ID", credentials.APIID)
+	req.Header.Set("X-API-KEY", credentials.APIKey)
+
+	httpClient := &http.Client{
+		Timeout: versionCheckTimeout,
+		Transport: &http.Transport{
+			ResponseHeaderTimeout: 5 * time.Second,
+		},
+	}
+
+	if cfg.SkipSSLVerify || client.IsSkipSSLVerifyEnvSet() {
+		httpClient.Transport = &http.Transport{
+			ResponseHeaderTimeout: 5 * time.Second,
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		}
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.WithError(closeErr).Debug("Failed to close signature response body")
+		}
+	}()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("signature file not found on server (status 404) — ensure the release was signed")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("server returned status %d for signature request", resp.StatusCode)
+	}
+
+	const maxSigSize = 512 * 1024 // 512 KB — minisig files are tiny (~150 bytes)
+	sigData, err := io.ReadAll(io.LimitReader(resp.Body, maxSigSize))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read signature data: %w", err)
+	}
+
+	return sigData, nil
 }
 
 // copyFile copies a file from src to dst

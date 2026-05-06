@@ -59,7 +59,12 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           GOARM: ${{ (matrix.goos == 'linux' || matrix.goos == 'freebsd') && matrix.goarch == 'arm' && '6' || '' }}
           CGO_ENABLED: 0
+          PATCHMON_SIGNING_PUBLIC_KEY: ${{ vars.PATCHMON_SIGNING_PUBLIC_KEY }}
         run: |
+          if [ -z "${PATCHMON_SIGNING_PUBLIC_KEY}" ]; then
+            echo "❌ Error: PATCHMON_SIGNING_PUBLIC_KEY is not set. Set it as a repository variable before releasing."
+            exit 1
+          fi
           OUTPUT_BASE="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
           OUTPUT_NAME="${OUTPUT_BASE}${{ matrix.goos == 'windows' && '.exe' || '' }}"
           # Strip leading "v" so "v2.0.0" becomes "2.0.0" — diagnostics.go prints
@@ -67,7 +72,7 @@ jobs:
           VERSION="${{ github.event.release.tag_name }}"
           VERSION="${VERSION#v}"
           go build -buildvcs=false \
-            -ldflags="-s -w -X patchmon-agent/internal/pkgversion.Version=${VERSION}" \
+            -ldflags="-s -w -X patchmon-agent/internal/pkgversion.Version=${VERSION} -X patchmon-agent/internal/pkgversion.SigningPublicKey=${PATCHMON_SIGNING_PUBLIC_KEY}" \
             -o "${OUTPUT_NAME}" ./cmd/patchmon-agent
 
       - name: Verify binary exists and is executable
@@ -159,11 +164,33 @@ jobs:
             fi
           fi
 
+      - name: Install minisign
+        run: |
+          curl -fsSL https://github.com/jedisct1/minisign/releases/download/0.11/minisign-0.11-linux.tar.gz \
+            | tar xz --strip-components=2 -C /usr/local/bin minisign-linux/x86_64/minisign
+          minisign -v
+
+      - name: Sign agent binary
+        working-directory: agent-source-code
+        env:
+          MINISIGN_PRIVATE_KEY: ${{ secrets.AGENT_SIGNING_PRIVATE_KEY }}
+        run: |
+          OUTPUT_BASE="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
+          OUTPUT_NAME="${OUTPUT_BASE}${{ matrix.goos == 'windows' && '.exe' || '' }}"
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"
+          printf '%s' "${MINISIGN_PRIVATE_KEY}" > /tmp/minisign.key
+          minisign -S -s /tmp/minisign.key -m "${OUTPUT_NAME}" -t "PatchMon Agent ${VERSION}" -x "${OUTPUT_NAME}.minisig"
+          rm -f /tmp/minisign.key
+          echo "✅ Signed ${OUTPUT_NAME}"
+
       - name: Upload agent binary to release
         uses: softprops/action-gh-release@b25b93d384199fc0fc8c2e126b2d937a0cbeb2ae
         with:
           tag_name: ${{ github.event.release.tag_name }}
-          files: agent-source-code/patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+          files: |
+            agent-source-code/patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+            agent-source-code/patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}.minisig
 
       - name: Build summary
         run: |

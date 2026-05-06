@@ -811,3 +811,84 @@ func (h *InstallHandler) ServeAgentDownload(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, binaryName))
 	http.ServeContent(w, r, binaryName, info.ModTime(), f)
 }
+
+// ServeAgentSignature handles GET /api/v1/hosts/agent/signature.
+// Requires X-API-ID and X-API-KEY headers. Serves the minisign signature file for the agent binary.
+func (h *InstallHandler) ServeAgentSignature(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if err := recover(); err != nil {
+			slog.Error("agent signature handler panic", "error", err, "stack", string(debug.Stack()))
+			JSON(w, http.StatusInternalServerError, map[string]string{"error": "Internal Server Error"})
+		}
+	}()
+
+	apiID := r.Header.Get("X-API-ID")
+	apiKey := r.Header.Get("X-API-KEY")
+	if apiID == "" || apiKey == "" {
+		JSON(w, http.StatusUnauthorized, map[string]string{"error": "API credentials required"})
+		return
+	}
+
+	host, err := h.hosts.GetByApiID(r.Context(), apiID)
+	if err != nil || host == nil {
+		JSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid API credentials"})
+		return
+	}
+
+	ok, err := util.VerifyAPIKey(apiKey, host.ApiKey)
+	if err != nil || !ok {
+		JSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid API credentials"})
+		return
+	}
+
+	architecture := r.URL.Query().Get("arch")
+	if architecture == "" {
+		architecture = "amd64"
+	}
+
+	osParam := r.URL.Query().Get("os")
+	if osParam == "" {
+		osParam = "linux"
+	}
+
+	validOss := map[string]bool{"linux": true, "freebsd": true, "windows": true}
+	if !validOss[osParam] {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid os. Must be one of: linux, freebsd, windows"})
+		return
+	}
+
+	binaryName := fmt.Sprintf("patchmon-agent-%s-%s", osParam, architecture)
+	if osParam == "windows" {
+		binaryName = binaryName + ".exe"
+	}
+	sigName := binaryName + ".minisig"
+
+	binDir := util.GetAgentsDir()
+	sigPath, err := util.SafePathUnderBase(binDir, sigName)
+	if err != nil {
+		JSON(w, http.StatusNotFound, map[string]string{
+			"error": fmt.Sprintf("Signature file not found for %s/%s. Ensure %s exists in the agent binaries directory.", osParam, architecture, sigName),
+		})
+		return
+	}
+
+	info, err := os.Stat(sigPath)
+	if err != nil || info.IsDir() {
+		JSON(w, http.StatusNotFound, map[string]string{
+			"error": fmt.Sprintf("Signature file not found for %s/%s. Run the signing step for this release.", osParam, architecture),
+		})
+		return
+	}
+
+	f, err := os.Open(sigPath)
+	if err != nil {
+		slog.Error("failed to open agent signature file", "path", sigPath, "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to serve signature file"})
+		return
+	}
+	defer func() { _ = f.Close() }()
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, sigName))
+	http.ServeContent(w, r, sigName, info.ModTime(), f)
+}
