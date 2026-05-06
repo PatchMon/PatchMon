@@ -1,0 +1,75 @@
+name: Release Helm Chart
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  helm-release:
+    name: Package and Release Helm Chart
+    runs-on: ubuntu-latest
+    if: startsWith(github.event.release.tag_name, 'v')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          fetch-depth: 0
+
+      - name: Set up Helm
+        uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112
+        with:
+          version: latest
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          # Strip leading 'v' for chart version (semver without prefix)
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Update Chart.yaml version
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
+          sed -i "s/^version:.*/version: ${VERSION}/" helm/patchmon-server/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"${TAG}\"/" helm/patchmon-server/Chart.yaml
+
+      - name: Update image tag in values.yaml
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          sed -i "s/^    tag: .*/    tag: ${VERSION}/" helm/patchmon-server/values.yaml
+
+      - name: Lint Helm chart
+        run: helm lint helm/patchmon-server
+
+      - name: Package Helm chart
+        run: |
+          mkdir -p dist
+          helm package helm/patchmon-server --destination dist/
+
+      - name: Upload chart to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          gh release upload "${{ github.event.release.tag_name }}" \
+            dist/patchmon-${VERSION}.tgz \
+            --clobber
+
+      - name: Log in to GHCR (OCI registry)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io \
+            --username ${{ github.actor }} \
+            --password-stdin
+
+      - name: Push chart to GHCR OCI registry
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          helm push dist/patchmon-${VERSION}.tgz oci://ghcr.io/${{ github.repository_owner }}/helm
