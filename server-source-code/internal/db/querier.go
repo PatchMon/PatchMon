@@ -509,6 +509,12 @@ type Querier interface {
 	// always-populated for a simpler caller contract.
 	UpsertRepository(ctx context.Context, arg UpsertRepositoryParams) (string, error)
 	UpsertRolePermissions(ctx context.Context, arg UpsertRolePermissionsParams) (RolePermission, error)
+	// User API tokens (long-lived bearer tokens for automation)
+	ListUserApiTokens(ctx context.Context, userID string) ([]ListUserApiTokensRow, error)
+	GetUserApiTokenByHash(ctx context.Context, tokenHash string) (GetUserApiTokenByHashRow, error)
+	CreateUserApiToken(ctx context.Context, arg CreateUserApiTokenParams) (ListUserApiTokensRow, error)
+	DeleteUserApiToken(ctx context.Context, id string) error
+	UpdateUserApiTokenLastUsed(ctx context.Context, id string) error
 }
 
 var _ Querier = (*Queries)(nil)

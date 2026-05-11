@@ -178,6 +178,8 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	complianceHandler := handler.NewComplianceHandler(complianceStore, hostsStore, registry, queueClient, queueInspector, integrationStatusStore, cfg.SSGContentDir, notifyEmit)
 	autoEnrollmentStore := store.NewAutoEnrollmentStore(dbProvider)
 	autoEnrollmentHandler := handler.NewAutoEnrollmentHandler(autoEnrollmentStore, hostGroupsStore, hostsStore, settingsStore, log, cfg)
+	userApiTokenStore := store.NewUserApiTokenStore(dbProvider)
+	userApiTokenHandler := handler.NewUserApiTokenHandler(userApiTokenStore, log)
 
 	var bootstrapStore *store.BootstrapStore
 	var sshTicketStore *store.SshTicketStore
@@ -389,7 +391,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitGeneral))
-			r.Use(middleware.AuthWithSessionCheck(cfg, store.NewSessionsStore(dbProvider), resolved, log))
+			r.Use(middleware.AuthWithUserApiToken(cfg, store.NewSessionsStore(dbProvider), resolved, userApiTokenStore, log))
 			// Swagger UI - JWT protected, documents integration API endpoints only
 			r.Get("/api-docs", func(w http.ResponseWriter, r *http.Request) {
 				http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
@@ -690,6 +692,11 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/auto-enrollment/tokens/{tokenId}", autoEnrollmentHandler.GetByID)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Patch("/auto-enrollment/tokens/{tokenId}", autoEnrollmentHandler.Update)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Delete("/auto-enrollment/tokens/{tokenId}", autoEnrollmentHandler.Delete)
+
+			// User API tokens (long-lived tokens for automation/scripting)
+			r.Get("/api-tokens", userApiTokenHandler.List)
+			r.Post("/api-tokens", userApiTokenHandler.Create)
+			r.Delete("/api-tokens/{id}", userApiTokenHandler.Delete)
 		})
 	})
 
