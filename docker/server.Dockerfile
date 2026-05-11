@@ -1,7 +1,7 @@
 # Development stage - run with go run, source can be volume-mounted for live reload
 FROM golang:1.26-alpine AS development
 
-RUN apk add --no-cache git ca-certificates tzdata curl node npm
+RUN apk add --no-cache git ca-certificates tzdata curl nodejs npm
 
 WORKDIR /app
 
@@ -14,7 +14,7 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm install --ignore-scripts --legacy-peer-deps 2>/dev/null || true
 COPY frontend/ ./
-RUN npm run build 2>/dev/null || mkdir -p dist && echo '<!DOCTYPE html><html><body>Build frontend first</body></html>' > dist/index.html
+RUN npm run build 2>/dev/null || (mkdir -p dist && echo '<!DOCTYPE html><html><body>Build frontend first</body></html>' > dist/index.html)
 
 WORKDIR /app/server
 COPY server-source-code/ ./

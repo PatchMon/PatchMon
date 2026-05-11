@@ -596,10 +596,62 @@ func markRecentUpdate() {
 	logger.Debug("Marked recent update to prevent update loops")
 }
 
-// restartService restarts the patchmon-agent service (supports systemd, OpenRC, and FreeBSD rc.d)
+// restartService restarts the patchmon-agent service (supports systemd, OpenRC, FreeBSD rc.d, and OpenBSD rc.d)
 func restartService(_ string, _ string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+
+	// OpenBSD: use rcctl restart
+	if runtime.GOOS == "openbsd" {
+		logger.Debug("Detected OpenBSD, scheduling service restart via helper script")
+		if err := os.MkdirAll("/etc/patchmon", 0700); err != nil {
+			logger.WithError(err).Warn("Failed to create /etc/patchmon directory, will try anyway")
+		}
+		helperScript := `#!/bin/sh
+sleep 2
+rcctl restart patchmon_agent 2>/dev/null || rcctl start patchmon_agent 2>/dev/null
+rm -f "$0"
+`
+		randomBytes := make([]byte, 8)
+		if _, err := rand.Read(randomBytes); err != nil {
+			randomBytes = []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
+		}
+		helperPath := filepath.Join("/etc/patchmon", fmt.Sprintf("restart-%s.sh", hex.EncodeToString(randomBytes)))
+		dirInfo, err := os.Lstat("/etc/patchmon")
+		if err == nil && dirInfo.Mode()&os.ModeSymlink != 0 {
+			logger.Warn("Security: /etc/patchmon is a symlink, refusing to create helper script")
+			os.Exit(0)
+		}
+		file, err := os.OpenFile(helperPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0700)
+		if err != nil {
+			logger.WithError(err).Warn("Failed to create restart helper script, exiting to let rcctl auto-restart")
+			os.Exit(0)
+		}
+		if _, err := file.WriteString(helperScript); err != nil {
+			_ = file.Close()
+			_ = os.Remove(helperPath)
+			os.Exit(0)
+		}
+		_ = file.Close()
+		fileInfo, err := os.Lstat(helperPath)
+		if err != nil || fileInfo.Mode()&os.ModeSymlink != 0 {
+			_ = os.Remove(helperPath)
+			os.Exit(0)
+		}
+		cmd := exec.Command("/bin/sh", helperPath)
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		cmd.SysProcAttr = sysProcAttrForDetach()
+		if err := cmd.Start(); err != nil {
+			_ = os.Remove(helperPath)
+			logger.WithError(err).Warn("Failed to start restart helper, exiting to let rcctl handle restart")
+			os.Exit(0)
+		}
+		logger.Info("Scheduled service restart via helper script (OpenBSD), exiting now...")
+		time.Sleep(500 * time.Millisecond)
+		os.Exit(0)
+		return nil
+	}
 
 	// FreeBSD / pfSense: use service patchmon_agent restart (rc.d)
 	if runtime.GOOS == "freebsd" {

@@ -138,6 +138,16 @@ get_machine_id() {
         echo "patchmon-freebsd-$(hostname 2>/dev/null)-$(date +%s 2>/dev/null)"
         return
     fi
+    # OpenBSD: use hw.uuid sysctl
+    if [ "$(uname -s 2>/dev/null)" = "OpenBSD" ]; then
+        _uuid=$(sysctl -n hw.uuid 2>/dev/null)
+        if [ -n "$_uuid" ]; then
+            echo "$_uuid"
+            return
+        fi
+        echo "patchmon-openbsd-$(hostname 2>/dev/null)-$(date +%s 2>/dev/null)"
+        return
+    fi
     # Linux: try multiple sources
     if [ -f /etc/machine-id ]; then
         cat /etc/machine-id
@@ -169,11 +179,19 @@ if [ -z "$ARCHITECTURE" ]; then
         "i386"|"i686")
             ARCHITECTURE="386"
             ;;
-        "aarch64"|"arm64")
+        "aarch64")
             ARCHITECTURE="arm64"
             ;;
         "armv7l"|"armv6l"|"arm")
             ARCHITECTURE="arm"
+            ;;
+        "amd64")
+            # OpenBSD and FreeBSD report uname -m as "amd64" directly
+            ARCHITECTURE="amd64"
+            ;;
+        "arm64")
+            # OpenBSD and FreeBSD report uname -m as "arm64" directly
+            ARCHITECTURE="arm64"
             ;;
         *)
             warning "Unknown architecture '$arch_raw', defaulting to amd64"
@@ -182,10 +200,10 @@ if [ -z "$ARCHITECTURE" ]; then
     esac
 fi
 
-# Validate architecture (FreeBSD supports amd64 and arm64 only)
-if [ "$PATCHMON_OS" = "freebsd" ]; then
+# Validate architecture (FreeBSD and OpenBSD support amd64 and arm64 only)
+if [ "$PATCHMON_OS" = "freebsd" ] || [ "$PATCHMON_OS" = "openbsd" ]; then
     if [ "$ARCHITECTURE" != "amd64" ] && [ "$ARCHITECTURE" != "arm64" ]; then
-        error "Invalid architecture '$ARCHITECTURE' for FreeBSD. Must be one of: amd64, arm64"
+        error "Invalid architecture '$ARCHITECTURE' for $PATCHMON_OS. Must be one of: amd64, arm64"
     fi
 else
     if [ "$ARCHITECTURE" != "amd64" ] && [ "$ARCHITECTURE" != "386" ] && [ "$ARCHITECTURE" != "arm64" ] && [ "$ARCHITECTURE" != "arm" ]; then
@@ -484,6 +502,17 @@ elif [ "$(uname -s 2>/dev/null)" = "FreeBSD" ] || [ "$PATCHMON_OS" = "freebsd" ]
         if ! command -v curl >/dev/null 2>&1; then
             warning "curl not found. On FreeBSD: pkg install curl"
             warning "On pfSense: install curl from System > Package Manager, or enable FreeBSD pkg repos."
+        fi
+    fi
+elif [ "$(uname -s 2>/dev/null)" = "OpenBSD" ] || [ "$PATCHMON_OS" = "openbsd" ]; then
+    # OpenBSD: only curl is required
+    info "Detected OpenBSD (pkg_add)"
+    echo ""
+    if ! command -v curl >/dev/null 2>&1; then
+        info "Ensuring curl is installed..."
+        pkg_add -I curl >/dev/null 2>&1 || true
+        if ! command -v curl >/dev/null 2>&1; then
+            warning "curl not found. Install manually: pkg_add curl"
         fi
     fi
 else
@@ -866,9 +895,67 @@ EOF
         success "PatchMon Agent service configured"
     fi
     SERVICE_TYPE="rc.d"
+elif [ "$(uname -s 2>/dev/null)" = "OpenBSD" ] || [ "$PATCHMON_OS" = "openbsd" ]; then
+    # OpenBSD: use rcctl / rc.d
+    info "Setting up OpenBSD rc.d service..."
+    RCD_SCRIPT="/etc/rc.d/patchmon_agent"
+    cat > "$RCD_SCRIPT" << 'EOF'
+#!/bin/ksh
+#
+# PatchMon Agent rc.d script for OpenBSD
+#
+# patchmon-agent runs in the foreground (does not self-daemonize).
+# rc_start backgrounds it inside a subshell so patchmon-agent is reparented
+# to init before rc.subr's _rc_wait_for_start fires "pkill -ALRM -P $$" to
+# rc_cmd's children.  Because the subshell has already exited, patchmon-agent
+# is never a direct child of the rc_cmd shell and the SIGALRM cannot reach it.
+# rc_start returns 0 immediately so rc.subr prints "(ok)" without timeout.
+#
+daemon="/usr/local/bin/patchmon-agent"
+daemon_flags="serve"
+daemon_user="root"
+
+. /etc/rc.d/rc.subr
+
+_PIDFILE="/var/run/patchmon_agent.pid"
+
+rc_start() {
+    ( nohup ${daemon} ${daemon_flags} >/dev/null 2>&1 & echo $! ) > ${_PIDFILE}
+}
+
+rc_check() {
+    [ -f ${_PIDFILE} ] && kill -0 "$(cat ${_PIDFILE})" 2>/dev/null
+}
+
+rc_stop() {
+    [ -f ${_PIDFILE} ] && kill -TERM "$(cat ${_PIDFILE})" 2>/dev/null
+}
+
+rc_post() {
+    rm -f ${_PIDFILE}
+}
+
+rc_cmd $1
+EOF
+    chmod +x "$RCD_SCRIPT"
+    if command -v rcctl >/dev/null 2>&1; then
+        rcctl enable patchmon_agent 2>/dev/null || true
+        rcctl start patchmon_agent
+        sleep 1
+        if rcctl check patchmon_agent 2>/dev/null | grep -q "ok"; then
+            success "PatchMon Agent service started successfully"
+            info "WebSocket connection established"
+        else
+            warning "Service may have failed to start. Check: rcctl check patchmon_agent"
+        fi
+    else
+        "$RCD_SCRIPT" start
+        success "PatchMon Agent service configured"
+    fi
+    SERVICE_TYPE="openbsd-rcd"
 else
     # No init system detected, use crontab as fallback
-    warning "No init system detected (systemd, OpenRC, or FreeBSD). Using crontab for service management."
+    warning "No init system detected (systemd, OpenRC, FreeBSD, or OpenBSD). Using crontab for service management."
     
     # Clean up old crontab entries if they exist
     if crontab -l 2>/dev/null | grep -q "patchmon-agent"; then
@@ -903,6 +990,8 @@ elif [ "$SERVICE_TYPE" = "openrc" ]; then
     echo "   • OpenRC service configured and running"
 elif [ "$SERVICE_TYPE" = "rc.d" ]; then
     echo "   • FreeBSD rc.d service configured and running"
+elif [ "$SERVICE_TYPE" = "openbsd-rcd" ]; then
+    echo "   • OpenBSD rc.d service configured and running"
 else
     echo "   • Service configured via crontab"
 fi
@@ -939,6 +1028,10 @@ elif [ "$SERVICE_TYPE" = "rc.d" ]; then
     echo "   • Service status: service patchmon_agent status"
     echo "   • Service logs: tail -f /etc/patchmon/logs/patchmon-agent.log"
     echo "   • Restart service: service patchmon_agent restart"
+elif [ "$SERVICE_TYPE" = "openbsd-rcd" ]; then
+    echo "   • Service status: rcctl check patchmon_agent"
+    echo "   • Service logs: tail -f /etc/patchmon/logs/patchmon-agent.log"
+    echo "   • Restart service: rcctl restart patchmon_agent"
 else
     echo "   • Service logs: tail -f /etc/patchmon/logs/patchmon-agent.log"
     echo "   • Restart service: pkill -f 'patchmon-agent serve' && /usr/local/bin/patchmon-agent serve &"

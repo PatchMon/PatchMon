@@ -2028,6 +2028,22 @@ func freeBSDUpdateOutputHasPendingUpdates(output string) bool {
 	return strings.Contains(output, "will be updated") || strings.Contains(output, "will be installed")
 }
 
+// isOpenBSDSyspatchID reports whether name refers to a syspatch entry.
+// This covers both the canonical single-entry name "syspatch" and any full
+// patch ID in the form "NNN_component" (e.g. "015_tmppath") for forward compatibility.
+func isOpenBSDSyspatchID(name string) bool {
+	if name == "syspatch" {
+		return true
+	}
+	// Patch IDs from syspatch -c have the form "NNN_component"
+	if len(name) < 5 || name[3] != '_' {
+		return false
+	}
+	return name[0] >= '0' && name[0] <= '9' &&
+		name[1] >= '0' && name[1] <= '9' &&
+		name[2] >= '0' && name[2] <= '9'
+}
+
 func splitFreeBSDPatchTargets(packageNames []string) ([]string, bool) {
 	filtered := make([]string, 0, len(packageNames))
 	includeBase := false
@@ -2213,7 +2229,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		return runPatchWindows(ctx, httpClient, patchRunID, patchType, packageNames, dryRun)
 	}
 
-	if pkgManager != "apt" && pkgManager != "dnf" && pkgManager != "yum" && pkgManager != "pkg" && pkgManager != "pacman" {
+	if pkgManager != "apt" && pkgManager != "dnf" && pkgManager != "yum" && pkgManager != "pkg" && pkgManager != "pacman" && pkgManager != "pkg_info" {
 		errMsg := fmt.Sprintf("package manager %q not supported for patching (apt, dnf, yum, pkg, pacman required)", pkgManager)
 		_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", errMsg)
 		return fmt.Errorf("%s", errMsg)
@@ -2244,6 +2260,13 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 				return fmt.Errorf("freebsd-update not found: %w", err)
 			}
 		}
+	case "pkg_info":
+		// OpenBSD: pkg_add -u for binary packages, syspatch for base patches
+		if _, err := exec.LookPath("pkg_add"); err != nil {
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "pkg_add not found: not an OpenBSD system")
+			return fmt.Errorf("pkg_add not found: %w", err)
+		}
+		upgradeBin = "pkg_add"
 	case "pacman":
 		if _, err := exec.LookPath("pacman"); err != nil {
 			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "pacman not found: Arch Linux package manager not installed")
@@ -2286,6 +2309,37 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		return fmt.Errorf(errFmt, err), true
 	}
 
+	// runSyspatch runs syspatch and handles exit code 2, which means syspatch
+	// updated itself and must be re-run to install remaining patches.
+	// Returns (error, shouldAbort).
+	runSyspatch := func(args ...string) (error, bool) {
+		sink.WriteString(formatCmd("syspatch", args...))
+		sink.Flush()
+		err := runStreamingPatchStep(ctx, sink, env, "syspatch", args...)
+		if err == nil {
+			return nil, false
+		}
+		// Exit code 2: syspatch updated itself — re-run to install remaining patches
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
+			sink.WriteString("\n[syspatch] Updated itself, re-running to install remaining patches...\n")
+			sink.Flush()
+			sink.WriteString(formatCmd("syspatch", args...))
+			sink.Flush()
+			err2 := runStreamingPatchStep(ctx, sink, env, "syspatch", args...)
+			if err2 == nil {
+				return nil, false
+			}
+			logger.WithError(err2).Warn("syspatch (re-run) failed")
+			sink.WriteString(fmt.Sprintf("\n[syspatch error] %s\n", err2.Error()))
+			sink.Flush()
+			return fmt.Errorf("syspatch failed: %w", err2), true
+		}
+		logger.WithError(err).Warn("syspatch failed")
+		sink.WriteString(fmt.Sprintf("\n[syspatch error] %s\n", err.Error()))
+		sink.Flush()
+		return fmt.Errorf("syspatch failed: %w", err), true
+	}
+
 	var stepErr error
 
 	if includeFreeBSDBase {
@@ -2316,6 +2370,8 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 			if err, abort := runStep(false, "pkg update", "pkg update failed: %w", upgradeBin, "update"); abort {
 				stepErr = err
 			}
+		case "pkg_info":
+			// OpenBSD: no separate cache update step — pkg_add fetches on demand
 		case "pacman":
 			if err, abort := runStep(false, "pacman refresh", "pacman -Sy failed: %w", "pacman", "-Sy", "--noconfirm"); abort {
 				stepErr = err
@@ -2348,6 +2404,27 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 				} else {
 					if err, abort := runStep(false, "pkg upgrade", "pkg upgrade failed: %w", upgradeBin, "upgrade", "-y"); abort {
 						stepErr = err
+					}
+				}
+			case "pkg_info":
+				// OpenBSD patch_all: run syspatch for base patches, then pkg_add -u for all binary packages
+				if dryRun {
+					if err, abort := runStep(true, "syspatch -c", "syspatch -c failed: %w", "syspatch", "-c"); abort {
+						stepErr = err
+					}
+					if stepErr == nil {
+						if err, abort := runStep(false, "pkg_add -u -n", "pkg_add -u -n failed: %w", "pkg_add", "-u", "-n"); abort {
+							stepErr = err
+						}
+					}
+				} else {
+					if err, abort := runSyspatch(); abort {
+						stepErr = err
+					}
+					if stepErr == nil {
+						if err, abort := runStep(false, "pkg_add -u", "pkg_add -u failed: %w", "pkg_add", "-u"); abort {
+							stepErr = err
+						}
 					}
 				}
 			case "pacman":
@@ -2414,6 +2491,42 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 					args := append([]string{"-S", "--noconfirm"}, packageNames...)
 					if err, abort := runStep(false, "pacman -S", "pacman -S failed: %w", "pacman", args...); abort {
 						stepErr = err
+					}
+				}
+			case "pkg_info":
+				// OpenBSD patch_package: syspatch for base patches, pkg_add -u for binary packages.
+				// Syspatch entries have Names that are patch IDs: "NNN_component" (e.g. "015_tmppath").
+				openBSDSyspatches := []string{}
+				openBSDPkgs := []string{}
+				for _, name := range packageNames {
+					if isOpenBSDSyspatchID(name) {
+						openBSDSyspatches = append(openBSDSyspatches, name)
+					} else {
+						openBSDPkgs = append(openBSDPkgs, name)
+					}
+				}
+				if len(openBSDSyspatches) > 0 {
+					if dryRun {
+						if err, abort := runStep(true, "syspatch -c", "syspatch -c failed: %w", "syspatch", "-c"); abort {
+							stepErr = err
+						}
+					} else {
+						if err, abort := runSyspatch(); abort {
+							stepErr = err
+						}
+					}
+				}
+				if stepErr == nil && len(openBSDPkgs) > 0 {
+					if dryRun {
+						args := append([]string{"-u", "-n"}, openBSDPkgs...)
+						if err, abort := runStep(false, "pkg_add -u -n", "pkg_add -u -n failed: %w", "pkg_add", args...); abort {
+							stepErr = err
+						}
+					} else {
+						args := append([]string{"-u"}, openBSDPkgs...)
+						if err, abort := runStep(false, "pkg_add -u", "pkg_add -u failed: %w", "pkg_add", args...); abort {
+							stepErr = err
+						}
 					}
 				}
 			default: // dnf, yum
