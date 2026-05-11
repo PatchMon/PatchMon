@@ -53,11 +53,11 @@ func CollectDarwinPackages() ([]models.Package, error) {
 }
 
 func collectDarwinPackages(requireBrew bool) ([]models.Package, error) {
-	useBrew := true
-	if _, err := exec.LookPath("brew"); err != nil {
-		useBrew = false
+	brewPath := findBrewBinary()
+	useBrew := brewPath != ""
+	if !useBrew {
 		if requireBrew {
-			return nil, fmt.Errorf("brew not found: %w", err)
+			return nil, fmt.Errorf("brew not found")
 		}
 	}
 
