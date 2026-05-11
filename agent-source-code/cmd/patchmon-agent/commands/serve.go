@@ -1185,7 +1185,7 @@ var (
 	// Rule IDs: same as profile IDs (e.g., xccdf_org.ssgproject.content_rule_audit_rules_...)
 	validRuleIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_.\-]+$`)
 	// APT package names: alphanumeric, dots, plus, minus, underscores (no path/command injection)
-	validAptPackagePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+-_]*$`)
+	validAptPackagePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+-_@]*$`)
 	// Docker image names: alphanumeric, slashes, colons, dots, hyphens, underscores (e.g., ubuntu:22.04, myregistry.io/app:v1)
 	validDockerImagePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.\-/:@]*$`)
 	// Docker container names: alphanumeric, underscores, hyphens (e.g., my-container, container_1)
