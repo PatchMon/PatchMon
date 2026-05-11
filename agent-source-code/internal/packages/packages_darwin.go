@@ -184,6 +184,8 @@ func parseSoftwareUpdateList(output string) []string {
 
 	for _, match := range labelPattern.FindAllStringSubmatch(output, -1) {
 		label := strings.TrimSpace(match[1])
+		label = strings.TrimPrefix(label, "Label: ")
+		label = strings.TrimSpace(label)
 		if label == "" {
 			continue
 		}
@@ -201,6 +203,8 @@ func parseSoftwareUpdateList(output string) []string {
 	labelPattern = regexp.MustCompile(`(?m)^\s*Label:\s*(.+)$`)
 	for _, match := range labelPattern.FindAllStringSubmatch(output, -1) {
 		label := strings.TrimSpace(match[1])
+		label = strings.TrimPrefix(label, "Label: ")
+		label = strings.TrimSpace(label)
 		if label == "" {
 			continue
 		}
