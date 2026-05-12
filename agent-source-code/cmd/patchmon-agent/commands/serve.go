@@ -2560,6 +2560,12 @@ func runPatchBrew(ctx context.Context, httpClient *client.Client, patchRunID, pa
 		return cmd.Run() == nil
 	}
 
+	brewFormulaExists := func(pkg string) bool {
+		cmd := exec.Command("sudo", "-u", sudoUser, "brew", "info", pkg)
+		cmd.Env = brewEnv
+		return cmd.Run() == nil
+	}
+
 	softwareUpdateAvailable := func() bool {
 		_, err := exec.LookPath("softwareupdate")
 		return err == nil
@@ -2613,13 +2619,25 @@ func runPatchBrew(ctx context.Context, httpClient *client.Client, patchRunID, pa
 						stepErr = err
 					}
 				}
-			} else {
+			} else if brewFormulaExists(pkg) {
 				if dryRun {
 					if err, abort := runStep(true, "brew install --dry-run", "brew install --dry-run failed: %w", "brew", "install", "--dry-run", pkg); abort {
 						stepErr = err
 					}
 				} else {
 					if err, abort := runStep(false, "brew install", "brew install failed: %w", "brew", "install", pkg); abort {
+						stepErr = err
+					}
+				}
+			} else {
+				// Assume softwareupdate package
+				if dryRun {
+					// For dry-run, check if softwareupdate lists it
+					if err, abort := runStep(true, "softwareupdate --list", "softwareupdate --list failed: %w", "softwareupdate", "--list"); abort {
+						stepErr = err
+					}
+				} else {
+					if err, abort := runStep(false, "softwareupdate --install", "softwareupdate --install failed: %w", "softwareupdate", "--install", pkg); abort {
 						stepErr = err
 					}
 				}
