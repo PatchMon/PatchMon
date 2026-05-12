@@ -18,9 +18,16 @@ func newBrewCommand(args ...string) *exec.Cmd {
 	if brewPath == "" {
 		brewPath = "brew"
 	}
-	cmd := exec.Command(brewPath, args...)
+	sudoUser := os.Getenv("SUDO_USER")
+	if sudoUser == "" {
+		sudoUser = os.Getenv("USER")
+	}
+	if sudoUser == "" {
+		sudoUser = "root"
+	}
+	cmd := exec.Command("sudo", "-u", sudoUser, brewPath)
+	cmd.Args = append(cmd.Args, args...)
 	cmd.Env = append(os.Environ(),
-		"HOMEBREW_ALLOW_RUN_AS_ROOT=1",
 		"HOMEBREW_NO_AUTO_UPDATE=1",
 	)
 	return cmd

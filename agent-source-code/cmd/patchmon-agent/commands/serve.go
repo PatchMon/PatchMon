@@ -1185,7 +1185,7 @@ var (
 	// Rule IDs: same as profile IDs (e.g., xccdf_org.ssgproject.content_rule_audit_rules_...)
 	validRuleIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_.\-]+$`)
 	// APT package names: alphanumeric, dots, plus, minus, underscores (no path/command injection)
-	validAptPackagePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+-_@]*$`)
+	validAptPackagePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+\-_ @]*$`)
 	// Docker image names: alphanumeric, slashes, colons, dots, hyphens, underscores (e.g., ubuntu:22.04, myregistry.io/app:v1)
 	validDockerImagePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.\-/:@]*$`)
 	// Docker container names: alphanumeric, underscores, hyphens (e.g., my-container, container_1)
@@ -2513,8 +2513,15 @@ func runPatchBrew(ctx context.Context, httpClient *client.Client, patchRunID, pa
 		return fmt.Errorf("%s: %w", errMsg, err)
 	}
 
+	sudoUser := os.Getenv("SUDO_USER")
+	if sudoUser == "" {
+		sudoUser = os.Getenv("USER")
+	}
+	if sudoUser == "" {
+		sudoUser = "root"
+	}
+
 	brewEnv := append(os.Environ(),
-		"HOMEBREW_ALLOW_RUN_AS_ROOT=1",
 		"HOMEBREW_NO_AUTO_UPDATE=1",
 	)
 
@@ -2527,6 +2534,11 @@ func runPatchBrew(ctx context.Context, httpClient *client.Client, patchRunID, pa
 	sink := newStreamSink(httpClient, patchRunID, &fullOutput)
 
 	runStep := func(isDryRunStep bool, errTag, errFmt, name string, args ...string) (error, bool) {
+		// For brew commands, run as the original user via sudo
+		if name == "brew" {
+			args = append([]string{"-u", sudoUser, "brew"}, args...)
+			name = "sudo"
+		}
 		sink.WriteString(formatCmd(name, args...))
 		sink.Flush()
 		err := runStreamingPatchStep(ctx, sink, brewEnv, name, args...)
@@ -2543,7 +2555,7 @@ func runPatchBrew(ctx context.Context, httpClient *client.Client, patchRunID, pa
 	}
 
 	brewPackageInstalled := func(pkg string) bool {
-		cmd := exec.Command("brew", "list", "--versions", pkg)
+		cmd := exec.Command("sudo", "-u", sudoUser, "brew", "list", "--versions", pkg)
 		cmd.Env = brewEnv
 		return cmd.Run() == nil
 	}
