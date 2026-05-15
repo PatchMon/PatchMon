@@ -2513,13 +2513,7 @@ func runPatchBrew(ctx context.Context, httpClient *client.Client, patchRunID, pa
 		return fmt.Errorf("%s: %w", errMsg, err)
 	}
 
-	sudoUser := os.Getenv("SUDO_USER")
-	if sudoUser == "" {
-		sudoUser = os.Getenv("USER")
-	}
-	if sudoUser == "" {
-		sudoUser = "root"
-	}
+	sudoUser := getConsoleUser()
 
 	brewEnv := append(os.Environ(),
 		"HOMEBREW_NO_AUTO_UPDATE=1",

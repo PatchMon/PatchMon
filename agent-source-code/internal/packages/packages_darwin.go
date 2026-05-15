@@ -14,18 +14,31 @@ import (
 	"patchmon-agent/pkg/models"
 )
 
+// getConsoleUser returns the logged-in console user. Falls back to
+// stat /dev/console so it works when running as a launchd service
+// (where SUDO_USER is not set).
+func getConsoleUser() string {
+	if u := os.Getenv("SUDO_USER"); u != "" {
+		return u
+	}
+	out, err := exec.Command("stat", "-f", "%Su", "/dev/console").Output()
+	if err == nil {
+		if u := strings.TrimSpace(string(out)); u != "" && u != "root" {
+			return u
+		}
+	}
+	if u := os.Getenv("USER"); u != "" {
+		return u
+	}
+	return "root"
+}
+
 func newBrewCommand(args ...string) *exec.Cmd {
 	brewPath := findBrewBinary()
 	if brewPath == "" {
 		brewPath = "brew"
 	}
-	sudoUser := os.Getenv("SUDO_USER")
-	if sudoUser == "" {
-		sudoUser = os.Getenv("USER")
-	}
-	if sudoUser == "" {
-		sudoUser = "root"
-	}
+	sudoUser := getConsoleUser()
 	cmd := exec.Command("sudo", "-u", sudoUser, brewPath)
 	cmd.Args = append(cmd.Args, args...)
 	cmd.Env = append(os.Environ(),
