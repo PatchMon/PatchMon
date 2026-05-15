@@ -2525,8 +2525,9 @@ func runPatchBrew(ctx context.Context, httpClient *client.Client, patchRunID, pa
 		return fmt.Errorf(errMsg)
 	}
 
+	consoleUser := getConsoleUser()
+
 	brewEnv := append(os.Environ(),
-		"HOMEBREW_ALLOW_RUN_AS_ROOT=1",
 		"HOMEBREW_NO_AUTO_UPDATE=1",
 	)
 
@@ -2538,14 +2539,31 @@ func runPatchBrew(ctx context.Context, httpClient *client.Client, patchRunID, pa
 	fullOutput.Grow(8192)
 	sink := newStreamSink(httpClient, patchRunID, &fullOutput)
 
+	brewCmd := func(args ...string) *exec.Cmd {
+		if consoleUser != "" {
+			return exec.Command("sudo", append([]string{"-u", consoleUser, brewPath}, args...)...)
+		}
+		return exec.Command(brewPath, args...)
+	}
+
 	runStep := func(isDryRunStep bool, errTag, errFmt, name string, args ...string) (error, bool) {
-		execName := name
+		var execName string
+		var execArgs []string
 		if name == "brew" {
-			execName = brewPath
+			if consoleUser != "" {
+				execName = "sudo"
+				execArgs = append([]string{"-u", consoleUser, brewPath}, args...)
+			} else {
+				execName = brewPath
+				execArgs = args
+			}
+		} else {
+			execName = name
+			execArgs = args
 		}
 		sink.WriteString(formatCmd(name, args...))
 		sink.Flush()
-		err := runStreamingPatchStep(ctx, sink, brewEnv, execName, args...)
+		err := runStreamingPatchStep(ctx, sink, brewEnv, execName, execArgs...)
 		if err == nil {
 			return nil, false
 		}
@@ -2559,13 +2577,13 @@ func runPatchBrew(ctx context.Context, httpClient *client.Client, patchRunID, pa
 	}
 
 	brewPackageInstalled := func(pkg string) bool {
-		cmd := exec.Command(brewPath, "list", "--versions", pkg)
+		cmd := brewCmd("list", "--versions", pkg)
 		cmd.Env = brewEnv
 		return cmd.Run() == nil
 	}
 
 	brewFormulaExists := func(pkg string) bool {
-		cmd := exec.Command(brewPath, "info", pkg)
+		cmd := brewCmd("info", pkg)
 		cmd.Env = brewEnv
 		return cmd.Run() == nil
 	}
