@@ -35,7 +35,11 @@ func getConsoleUser() string {
 func newBrewCommand(consoleUser, brewPath string, args ...string) *exec.Cmd {
 	var cmd *exec.Cmd
 	if consoleUser != "" {
-		cmdArgs := append([]string{"-n", "-u", consoleUser, brewPath}, args...)
+		cmdArgs := append([]string{"-n", "-u", consoleUser, "env",
+			"HOMEBREW_NO_AUTO_UPDATE=1",
+			"HOMEBREW_NO_ANALYTICS=1",
+			"HOMEBREW_NO_ENV_HINTS=1",
+			brewPath}, args...)
 		cmd = exec.Command("sudo", cmdArgs...)
 	} else {
 		cmd = exec.Command(brewPath, args...)
