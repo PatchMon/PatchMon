@@ -25,10 +25,12 @@ func RedisOpts() asynq.RedisClientOpt {
 	port := getEnvInt("REDIS_PORT", defaultRedisPort)
 	db := getEnvInt("REDIS_DB", defaultRedisDB)
 	password := os.Getenv("REDIS_PASSWORD")
+	username := os.Getenv("REDIS_USER")
 
 	return asynq.RedisClientOpt{
 		Addr:      fmt.Sprintf("%s:%d", host, port),
 		Password:  password,
+		Username:  username,
 		DB:        db,
 		TLSConfig: patchmonredis.TLSConfigFromEnv(),
 	}
