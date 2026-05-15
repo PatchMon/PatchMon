@@ -139,7 +139,14 @@ get_machine_id() {
         return
     fi
     if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
-        _uuid=$(ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null | awk -F'"' '/IOPlatformUUID/ {print $4}')
+        _uuid=""
+        _ioreg_retries=5
+        while [ "$_ioreg_retries" -gt 0 ]; do
+            _uuid=$(ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null | awk -F'"' '/IOPlatformUUID/ {print $4}')
+            [ -n "$_uuid" ] && break
+            _ioreg_retries=$((_ioreg_retries - 1))
+            [ "$_ioreg_retries" -gt 0 ] && sleep 2
+        done
         if [ -n "$_uuid" ]; then
             echo "$_uuid"
             return
@@ -933,6 +940,12 @@ elif [ "$(uname -s 2>/dev/null)" = "Darwin" ] || [ "$PATCHMON_OS" = "darwin" ]; 
     info "Setting up macOS launchd service..."
 
     PLIST_PATH="/Library/LaunchDaemons/net.patchmon.patchmon-agent.plist"
+
+    # Kill any running agent processes to avoid duplicates after reinstall
+    if pkill -f 'patchmon-agent serve' 2>/dev/null; then
+        warning "Killed existing PatchMon agent process"
+        sleep 1
+    fi
 
     # Unload existing service if it is loaded
     if launchctl list 2>/dev/null | grep -q "net.patchmon.patchmon-agent"; then

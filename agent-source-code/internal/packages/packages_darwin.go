@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 
 	"patchmon-agent/pkg/models"
 )
@@ -108,8 +109,19 @@ func collectDarwinPackages(requireBrew bool) ([]models.Package, error) {
 
 func getInstalledPackages() (map[string]string, error) {
 	// `brew list --versions` outputs: packagename version [version...]
-	cmd := newBrewCommand("list", "--versions")
-	out, err := cmd.CombinedOutput()
+	// Retry a few times on startup when brew may not yet be responsive.
+	var out []byte
+	var err error
+	for attempt := range 3 {
+		cmd := newBrewCommand("list", "--versions")
+		out, err = cmd.CombinedOutput()
+		if err == nil {
+			break
+		}
+		if attempt < 2 {
+			time.Sleep(time.Duration(attempt+1) * 5 * time.Second)
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("brew list --versions failed: %s: %w", strings.TrimSpace(string(out)), err)
 	}
@@ -125,8 +137,18 @@ func getInstalledPackages() (map[string]string, error) {
 }
 
 func getOutdatedPackages() (map[string]string, error) {
-	cmd := newBrewCommand("outdated", "--json=v2")
-	out, err := cmd.Output()
+	var out []byte
+	var err error
+	for attempt := range 3 {
+		cmd := newBrewCommand("outdated", "--json=v2")
+		out, err = cmd.Output()
+		if err == nil {
+			break
+		}
+		if attempt < 2 {
+			time.Sleep(time.Duration(attempt+1) * 5 * time.Second)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
