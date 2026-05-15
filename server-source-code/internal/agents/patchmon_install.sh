@@ -939,6 +939,31 @@ elif [ "$(uname -s 2>/dev/null)" = "Darwin" ] || [ "$PATCHMON_OS" = "darwin" ]; 
     # macOS: create and load launchd plist directly
     info "Setting up macOS launchd service..."
 
+    # Grant the launchd daemon (root) permission to invoke brew as the console user.
+    # Without this, sudo in a TTY-less launchd context is rejected.
+    CONSOLE_USER=$(stat -f "%Su" /dev/console 2>/dev/null || echo "")
+    if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
+        info "Configuring sudoers for brew access as user: $CONSOLE_USER"
+        BREW_SUDOERS_FILE="/etc/sudoers.d/patchmon"
+        : > "$BREW_SUDOERS_FILE"
+        _found_brew=false
+        for BREW_PATH in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+            if [ -f "$BREW_PATH" ]; then
+                echo "root ALL=($CONSOLE_USER) NOPASSWD: $BREW_PATH" >> "$BREW_SUDOERS_FILE"
+                _found_brew=true
+            fi
+        done
+        if $_found_brew; then
+            chmod 440 "$BREW_SUDOERS_FILE"
+            success "Sudoers entry created for brew access as $CONSOLE_USER"
+        else
+            rm -f "$BREW_SUDOERS_FILE"
+            warning "Homebrew not found - brew update detection may not work until Homebrew is installed"
+        fi
+    else
+        warning "Could not determine console user - brew update detection may not work"
+    fi
+
     PLIST_PATH="/Library/LaunchDaemons/net.patchmon.patchmon-agent.plist"
 
     # Kill any running agent processes to avoid duplicates after reinstall
