@@ -910,6 +910,9 @@ PLIST_EOF
 
     chmod 644 "$PLIST_PATH"
 
+    # Kill any existing agent processes before loading to avoid duplicates
+    pkill -f "patchmon-agent serve" 2>/dev/null || true
+
     # Load the service
     if launchctl load "$PLIST_PATH"; then
         success "PatchMon Agent launchd service started successfully"
@@ -934,11 +937,13 @@ else
     (crontab -l 2>/dev/null; echo "@reboot /usr/local/bin/patchmon-agent serve >/dev/null 2>&1") | crontab -
     info "Added crontab entry for PatchMon agent"
     
-    # Start the agent manually
-    /usr/local/bin/patchmon-agent serve >/dev/null 2>&1 &
-    success "PatchMon Agent started in background"
-    info "WebSocket connection established"
-    
+    # Start the agent manually (only if launchd is not already managing it)
+    if ! launchctl list net.patchmon.patchmon-agent >/dev/null 2>&1; then
+        /usr/local/bin/patchmon-agent serve >/dev/null 2>&1 &
+        success "PatchMon Agent started in background"
+        info "WebSocket connection established"
+    fi
+
     SERVICE_TYPE="crontab"
 fi
 
