@@ -32,28 +32,11 @@ func getConsoleUser() string {
 	return ""
 }
 
-func getConsoleUserUID(consoleUser string) string {
-	out, err := exec.Command("id", "-u", consoleUser).Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
-
-func newBrewCommand(args ...string) *exec.Cmd {
-	brewPath := findBrewBinary()
-	if brewPath == "" {
-		brewPath = "brew"
-	}
-	consoleUser := getConsoleUser()
+func newBrewCommand(consoleUser, brewPath string, args ...string) *exec.Cmd {
 	var cmd *exec.Cmd
 	if consoleUser != "" {
-		uid := getConsoleUserUID(consoleUser)
-		if uid != "" {
-			cmd = exec.Command("launchctl", append([]string{"asuser", uid, brewPath}, args...)...)
-		} else {
-			cmd = exec.Command(brewPath, args...)
-		}
+		cmdArgs := append([]string{"-n", "-u", consoleUser, brewPath}, args...)
+		cmd = exec.Command("sudo", cmdArgs...)
 	} else {
 		cmd = exec.Command(brewPath, args...)
 	}
@@ -98,9 +81,11 @@ func collectDarwinPackages(requireBrew bool) ([]models.Package, error) {
 		}
 	}
 
+	consoleUser := getConsoleUser()
+
 	packages := make([]models.Package, 0)
 	if useBrew {
-		installed, err := getInstalledPackages()
+		installed, err := getInstalledPackages(consoleUser, brewPath)
 		if err != nil {
 			if requireBrew {
 				return nil, fmt.Errorf("brew list failed: %w", err)
@@ -108,7 +93,7 @@ func collectDarwinPackages(requireBrew bool) ([]models.Package, error) {
 			installed = map[string]string{}
 		}
 
-		outdated, err := getOutdatedPackages()
+		outdated, err := getOutdatedPackages(consoleUser, brewPath)
 		if err != nil {
 			outdated = map[string]string{}
 		}
@@ -136,13 +121,13 @@ func collectDarwinPackages(requireBrew bool) ([]models.Package, error) {
 	return packages, nil
 }
 
-func getInstalledPackages() (map[string]string, error) {
+func getInstalledPackages(consoleUser, brewPath string) (map[string]string, error) {
 	// `brew list --versions` outputs: packagename version [version...]
 	// Retry a few times on startup when brew may not yet be responsive.
 	var out []byte
 	var err error
 	for attempt := range 3 {
-		cmd := newBrewCommand("list", "--versions")
+		cmd := newBrewCommand(consoleUser, brewPath, "list", "--versions")
 		out, err = cmd.CombinedOutput()
 		if err == nil {
 			break
@@ -165,11 +150,11 @@ func getInstalledPackages() (map[string]string, error) {
 	return result, nil
 }
 
-func getOutdatedPackages() (map[string]string, error) {
+func getOutdatedPackages(consoleUser, brewPath string) (map[string]string, error) {
 	var out []byte
 	var err error
 	for attempt := range 3 {
-		cmd := newBrewCommand("outdated", "--json=v2")
+		cmd := newBrewCommand(consoleUser, brewPath, "outdated", "--json=v2")
 		out, err = cmd.Output()
 		if err == nil {
 			break
