@@ -2507,15 +2507,26 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 }
 
 func runPatchBrew(ctx context.Context, httpClient *client.Client, patchRunID, patchType string, packageNames []string, dryRun bool) error {
-	if _, err := exec.LookPath("brew"); err != nil {
+	brewPath := ""
+	for _, p := range []string{"/opt/homebrew/bin/brew", "/usr/local/bin/brew", "/opt/local/bin/brew"} {
+		if _, err := os.Stat(p); err == nil {
+			brewPath = p
+			break
+		}
+	}
+	if brewPath == "" {
+		if p, err := exec.LookPath("brew"); err == nil {
+			brewPath = p
+		}
+	}
+	if brewPath == "" {
 		errMsg := "brew not found: macOS Homebrew package manager is required for brew patching"
 		_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", errMsg)
-		return fmt.Errorf("%s: %w", errMsg, err)
+		return fmt.Errorf(errMsg)
 	}
 
-	sudoUser := getConsoleUser()
-
 	brewEnv := append(os.Environ(),
+		"HOMEBREW_ALLOW_RUN_AS_ROOT=1",
 		"HOMEBREW_NO_AUTO_UPDATE=1",
 	)
 
@@ -2528,14 +2539,13 @@ func runPatchBrew(ctx context.Context, httpClient *client.Client, patchRunID, pa
 	sink := newStreamSink(httpClient, patchRunID, &fullOutput)
 
 	runStep := func(isDryRunStep bool, errTag, errFmt, name string, args ...string) (error, bool) {
-		// For brew commands, run as the original user via sudo
+		execName := name
 		if name == "brew" {
-			args = append([]string{"-u", sudoUser, "brew"}, args...)
-			name = "sudo"
+			execName = brewPath
 		}
 		sink.WriteString(formatCmd(name, args...))
 		sink.Flush()
-		err := runStreamingPatchStep(ctx, sink, brewEnv, name, args...)
+		err := runStreamingPatchStep(ctx, sink, brewEnv, execName, args...)
 		if err == nil {
 			return nil, false
 		}
@@ -2549,13 +2559,13 @@ func runPatchBrew(ctx context.Context, httpClient *client.Client, patchRunID, pa
 	}
 
 	brewPackageInstalled := func(pkg string) bool {
-		cmd := exec.Command("sudo", "-u", sudoUser, "brew", "list", "--versions", pkg)
+		cmd := exec.Command(brewPath, "list", "--versions", pkg)
 		cmd.Env = brewEnv
 		return cmd.Run() == nil
 	}
 
 	brewFormulaExists := func(pkg string) bool {
-		cmd := exec.Command("sudo", "-u", sudoUser, "brew", "info", pkg)
+		cmd := exec.Command(brewPath, "info", pkg)
 		cmd.Env = brewEnv
 		return cmd.Run() == nil
 	}
