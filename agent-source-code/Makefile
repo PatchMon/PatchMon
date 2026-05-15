@@ -59,12 +59,12 @@ build-windows:
 .PHONY: build-darwin-amd64
 build-darwin-amd64:
 	@mkdir -p $(BUILD_DIR)
-	@CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-darwin-amd64 ./cmd/patchmon-agent
+	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-darwin-amd64 ./cmd/patchmon-agent
 
 .PHONY: build-darwin-arm64
 build-darwin-arm64:
 	@mkdir -p $(BUILD_DIR)
-	@CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-darwin-arm64 ./cmd/patchmon-agent
+	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-darwin-arm64 ./cmd/patchmon-agent
 
 
 # Build all (Linux + FreeBSD + Windows + Darwin) and copy to backend serve dirs
