@@ -2597,8 +2597,14 @@ func runPatchBrew(ctx context.Context, httpClient *client.Client, patchRunID, pa
 
 	if patchType == "patch_all" {
 		if dryRun {
-			if err, abort := runStep(true, "brew outdated", "brew outdated failed: %w", "brew", "outdated", "--json=v2"); abort {
-				stepErr = err
+			if consoleUser != "" {
+				if err, abort := runStep(true, "brew outdated", "brew outdated failed: %w", "sudo", "-n", "-u", consoleUser, brewPath, "outdated", "--json=v2"); abort {
+					stepErr = err
+				}
+			} else {
+				if err, abort := runStep(true, "brew outdated", "brew outdated failed: %w", brewPath, "outdated", "--json=v2"); abort {
+					stepErr = err
+				}
 			}
 			if stepErr == nil && softwareUpdateAvailable() {
 				if err, abort := runStep(true, "softwareupdate --list", "softwareupdate --list failed: %w", "softwareupdate", "--list"); abort {
