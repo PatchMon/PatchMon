@@ -32,6 +32,14 @@ func getConsoleUser() string {
 	return ""
 }
 
+func getConsoleUserUID(consoleUser string) string {
+	out, err := exec.Command("id", "-u", consoleUser).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func newBrewCommand(args ...string) *exec.Cmd {
 	brewPath := findBrewBinary()
 	if brewPath == "" {
@@ -40,7 +48,12 @@ func newBrewCommand(args ...string) *exec.Cmd {
 	consoleUser := getConsoleUser()
 	var cmd *exec.Cmd
 	if consoleUser != "" {
-		cmd = exec.Command("sudo", append([]string{"-u", consoleUser, brewPath}, args...)...)
+		uid := getConsoleUserUID(consoleUser)
+		if uid != "" {
+			cmd = exec.Command("launchctl", append([]string{"asuser", uid, brewPath}, args...)...)
+		} else {
+			cmd = exec.Command(brewPath, args...)
+		}
 	} else {
 		cmd = exec.Command(brewPath, args...)
 	}
