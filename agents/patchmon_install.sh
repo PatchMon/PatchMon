@@ -913,9 +913,8 @@ elif [ "$(uname -s 2>/dev/null)" = "Darwin" ] || [ "$PATCHMON_OS" = "darwin" ]; 
     <string>net.patchmon.patchmon-agent</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/sh</string>
-        <string>-c</string>
-        <string>sleep 30 &amp;&amp; /usr/local/bin/patchmon-agent serve</string>
+        <string>/usr/local/bin/patchmon-agent</string>
+        <string>serve</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
