@@ -929,15 +929,57 @@ EOF
     fi
     SERVICE_TYPE="rc.d"
 elif [ "$(uname -s 2>/dev/null)" = "Darwin" ] || [ "$PATCHMON_OS" = "darwin" ]; then
-    # macOS: install launchd service using the agent install-service command
+    # macOS: create and load launchd plist directly
     info "Setting up macOS launchd service..."
-    if /usr/local/bin/patchmon-agent install-service >/dev/null 2>/dev/null; then
-        success "macOS launchd service installed successfully"
+
+    PLIST_PATH="/Library/LaunchDaemons/net.patchmon.patchmon-agent.plist"
+
+    # Unload existing service if it is loaded
+    if launchctl list 2>/dev/null | grep -q "net.patchmon.patchmon-agent"; then
+        warning "Stopping existing PatchMon agent service..."
+        launchctl unload "$PLIST_PATH" 2>/dev/null || true
+    fi
+
+    # Write the launchd plist
+    cat > "$PLIST_PATH" << 'PLIST_EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>net.patchmon.patchmon-agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/patchmon-agent</string>
+        <string>serve</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/opt/homebrew/sbin</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/etc/patchmon/logs/patchmon-agent.log</string>
+    <key>StandardErrorPath</key>
+    <string>/etc/patchmon/logs/patchmon-agent.log</string>
+</dict>
+</plist>
+PLIST_EOF
+
+    chmod 644 "$PLIST_PATH"
+
+    # Load the service
+    if launchctl load "$PLIST_PATH"; then
+        success "PatchMon Agent launchd service started successfully"
         info "WebSocket connection established"
     else
-        warning "Could not install launchd service automatically."
-        warning "Run '/usr/local/bin/patchmon-agent install-service' manually on macOS."
+        warning "Service may have failed to start. Check status with: launchctl list net.patchmon.patchmon-agent"
     fi
+
     SERVICE_TYPE="launchd"
 else
     # No init system detected, use crontab as fallback
@@ -1015,9 +1057,9 @@ elif [ "$SERVICE_TYPE" = "rc.d" ]; then
     echo "   • Service logs: tail -f /etc/patchmon/logs/patchmon-agent.log"
     echo "   • Restart service: service patchmon_agent restart"
 elif [ "$SERVICE_TYPE" = "launchd" ]; then
-    echo "   • Service status: launchctl print system/net.patchmon.patchmon-agent"
-    echo "   • Service logs: tail -f /etc/patchmon/logs/patchmon-agent.out.log /etc/patchmon/logs/patchmon-agent.err.log"
-    echo "   • Restart service: launchctl kickstart -k system/net.patchmon.patchmon-agent"
+    echo "   • Service status: launchctl list net.patchmon.patchmon-agent"
+    echo "   • Service logs: tail -f /etc/patchmon/logs/patchmon-agent.log"
+    echo "   • Restart service: launchctl unload /Library/LaunchDaemons/net.patchmon.patchmon-agent.plist && launchctl load /Library/LaunchDaemons/net.patchmon.patchmon-agent.plist"
 else
     echo "   • Service logs: tail -f /etc/patchmon/logs/patchmon-agent.log"
     echo "   • Restart service: pkill -f 'patchmon-agent serve' && /usr/local/bin/patchmon-agent serve &"
