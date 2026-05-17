@@ -247,7 +247,7 @@ func (d *Detector) GetSystemInfo() models.SystemInfo {
 	info := models.SystemInfo{
 		KernelVersion: d.GetKernelVersion(),
 		SELinuxStatus: d.getSELinuxStatus(),
-		SystemUptime:  d.getSystemUptime(ctx),
+		SystemUptime:  d.getSystemUptime(),
 		LoadAverage:   d.getLoadAverage(ctx),
 	}
 
@@ -262,31 +262,38 @@ func (d *Detector) GetSystemInfo() models.SystemInfo {
 
 // GetArchitecture returns the system architecture
 func (d *Detector) GetArchitecture() string {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	info, err := host.InfoWithContext(ctx)
-	if err != nil {
+	// On macOS, gopsutil may be slow on cold boot — retry with backoff
+	for attempt := range 3 {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		info, err := host.InfoWithContext(ctx)
+		cancel()
+		if err == nil {
+			return info.KernelArch
+		}
+		if attempt < 2 {
+			time.Sleep(time.Duration(attempt+1) * 5 * time.Second)
+		}
 		d.logger.WithError(err).Warn("Failed to get architecture")
-		return constants.ArchUnknown
 	}
-
-	return info.KernelArch
+	return constants.ArchUnknown
 }
 
 // GetHostname returns the system hostname
 func (d *Detector) GetHostname() (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	info, err := host.InfoWithContext(ctx)
-	if err != nil {
+	// On macOS, gopsutil may be slow on cold boot — retry with backoff
+	for attempt := range 3 {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		info, err := host.InfoWithContext(ctx)
+		cancel()
+		if err == nil {
+			return info.Hostname, nil
+		}
+		if attempt < 2 {
+			time.Sleep(time.Duration(attempt+1) * 5 * time.Second)
+		}
 		d.logger.WithError(err).Warn("Failed to get hostname")
-		// Fallback to os.Hostname
-		return os.Hostname()
 	}
-
-	return info.Hostname, nil
+	return os.Hostname()
 }
 
 // GetIPAddress gets the primary IP address using network interfaces
@@ -383,26 +390,31 @@ func (d *Detector) getSELinuxStatus() string {
 }
 
 // getSystemUptime gets system uptime
-func (d *Detector) getSystemUptime(ctx context.Context) string {
-	info, err := host.InfoWithContext(ctx)
-	if err != nil {
+func (d *Detector) getSystemUptime() string {
+	// On macOS, gopsutil may be slow on cold boot — retry with backoff
+	for attempt := range 3 {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		info, err := host.InfoWithContext(ctx)
+		cancel()
+		if err == nil {
+			uptime := time.Duration(info.Uptime) * time.Second
+			days := int(uptime.Hours() / 24)
+			hours := int(uptime.Hours()) % 24
+			minutes := int(uptime.Minutes()) % 60
+			if days > 0 {
+				return fmt.Sprintf("%d days, %d hours, %d minutes", days, hours, minutes)
+			}
+			if hours > 0 {
+				return fmt.Sprintf("%d hours, %d minutes", hours, minutes)
+			}
+			return fmt.Sprintf("%d minutes", minutes)
+		}
+		if attempt < 2 {
+			time.Sleep(time.Duration(attempt+1) * 5 * time.Second)
+		}
 		d.logger.WithError(err).Warn("Failed to get uptime")
-		return "Unknown"
 	}
-
-	uptime := time.Duration(info.Uptime) * time.Second
-
-	days := int(uptime.Hours() / 24)
-	hours := int(uptime.Hours()) % 24
-	minutes := int(uptime.Minutes()) % 60
-
-	if days > 0 {
-		return fmt.Sprintf("%d days, %d hours, %d minutes", days, hours, minutes)
-	}
-	if hours > 0 {
-		return fmt.Sprintf("%d hours, %d minutes", hours, minutes)
-	}
-	return fmt.Sprintf("%d minutes", minutes)
+	return "Unknown"
 }
 
 // getLoadAverage gets system load average
@@ -458,20 +470,21 @@ func (d *Detector) getDarwinLoadAverage() []float64 {
 
 // GetMachineID returns the system's machine ID using gopsutil
 func (d *Detector) GetMachineID() string {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Use gopsutil's HostID which reads from standard locations
-	// (/etc/machine-id, /var/lib/dbus/machine-id, etc.)
-	hostID, err := host.HostIDWithContext(ctx)
-	if err != nil {
-		d.logger.WithError(err).Warn("Failed to get host ID, using hostname as fallback")
-		// Fallback to hostname if we can't get machine ID
-		if hostname, err := os.Hostname(); err == nil {
-			return hostname
+	// On macOS, gopsutil may be slow on cold boot — retry with backoff
+	for attempt := range 3 {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		hostID, err := host.HostIDWithContext(ctx)
+		cancel()
+		if err == nil {
+			return hostID
 		}
-		return "unknown"
+		if attempt < 2 {
+			time.Sleep(time.Duration(attempt+1) * 5 * time.Second)
+		}
+		d.logger.WithError(err).Warn("Failed to get host ID")
 	}
-
-	return hostID
+	if hostname, err := os.Hostname(); err == nil {
+		return hostname
+	}
+	return "unknown"
 }
