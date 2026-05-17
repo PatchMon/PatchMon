@@ -3,7 +3,6 @@
 package repositories
 
 import (
-	"os"
 	"os/exec"
 	"strings"
 
@@ -11,12 +10,7 @@ import (
 )
 
 func newBrewCommand(args ...string) *exec.Cmd {
-	cmd := exec.Command("brew", args...)
-	cmd.Env = append(os.Environ(),
-		"HOMEBREW_ALLOW_RUN_AS_ROOT=1",
-		"HOMEBREW_NO_AUTO_UPDATE=1",
-	)
-	return cmd
+	return exec.Command("/usr/local/bin/patchmon-brew", args...)
 }
 
 // CollectRepositories returns configured Homebrew taps,

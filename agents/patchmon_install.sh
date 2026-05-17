@@ -870,29 +870,50 @@ elif [ "$(uname -s 2>/dev/null)" = "Darwin" ] || [ "$PATCHMON_OS" = "darwin" ]; 
     # macOS: create and load launchd plist directly
     info "Setting up macOS launchd service..."
 
-    # Grant the launchd daemon (root) permission to invoke brew as the console user.
-    # Without this, sudo in a TTY-less launchd context is rejected.
-    CONSOLE_USER=$(stat -f "%Su" /dev/console 2>/dev/null || echo "")
+    # Write the patchmon-brew wrapper. The agent runs as root (launchd daemon) but
+    # brew must run as the GUI user. This script resolves the console user at runtime
+    # so it works correctly even if the user changes between installs.
+    BREW_WRAPPER="/usr/local/bin/patchmon-brew"
+    cat > "$BREW_WRAPPER" << 'BREW_EOF'
+#!/bin/sh
+CONSOLE_USER=$(stat -f "%Su" /dev/console 2>/dev/null || echo "")
+for BREW_PATH in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+    [ -f "$BREW_PATH" ] || continue
     if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
-        info "Configuring sudoers for brew access as user: $CONSOLE_USER"
-        BREW_SUDOERS_FILE="/etc/sudoers.d/patchmon"
-        : > "$BREW_SUDOERS_FILE"
-        _found_brew=false
-        for BREW_PATH in /opt/homebrew/bin/brew /usr/local/bin/brew; do
-            if [ -f "$BREW_PATH" ]; then
-                echo "root ALL=($CONSOLE_USER) NOPASSWD: $BREW_PATH" >> "$BREW_SUDOERS_FILE"
-                _found_brew=true
-            fi
-        done
-        if $_found_brew; then
-            chmod 440 "$BREW_SUDOERS_FILE"
-            success "Sudoers entry created for brew access as $CONSOLE_USER"
-        else
-            rm -f "$BREW_SUDOERS_FILE"
-            warning "Homebrew not found - brew update detection may not work until Homebrew is installed"
-        fi
+        exec sudo -n -u "$CONSOLE_USER" env \
+            HOMEBREW_NO_AUTO_UPDATE=1 \
+            HOMEBREW_NO_ANALYTICS=1 \
+            HOMEBREW_NO_ENV_HINTS=1 \
+            "$BREW_PATH" "$@"
     else
-        warning "Could not determine console user - brew update detection may not work"
+        exec env \
+            HOMEBREW_NO_AUTO_UPDATE=1 \
+            HOMEBREW_NO_ANALYTICS=1 \
+            HOMEBREW_NO_ENV_HINTS=1 \
+            "$BREW_PATH" "$@"
+    fi
+done
+exit 1
+BREW_EOF
+    chmod 755 "$BREW_WRAPPER"
+    success "patchmon-brew wrapper written to $BREW_WRAPPER"
+
+    # Grant root permission to invoke brew as any console user via the wrapper.
+    BREW_SUDOERS_FILE="/etc/sudoers.d/patchmon"
+    : > "$BREW_SUDOERS_FILE"
+    _found_brew=false
+    for BREW_PATH in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+        if [ -f "$BREW_PATH" ]; then
+            echo "root ALL=(ALL) NOPASSWD: $BREW_PATH" >> "$BREW_SUDOERS_FILE"
+            _found_brew=true
+        fi
+    done
+    if $_found_brew; then
+        chmod 440 "$BREW_SUDOERS_FILE"
+        success "Sudoers entry created for brew access"
+    else
+        rm -f "$BREW_SUDOERS_FILE"
+        warning "Homebrew not found - brew update detection may not work until Homebrew is installed"
     fi
 
     PLIST_PATH="/Library/LaunchDaemons/net.patchmon.patchmon-agent.plist"

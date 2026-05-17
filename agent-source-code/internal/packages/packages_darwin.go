@@ -5,7 +5,6 @@ package packages
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -14,40 +13,10 @@ import (
 	"patchmon-agent/pkg/models"
 )
 
-// getConsoleUser returns the logged-in GUI user. Falls back to stat /dev/console
-// so it works when running as a launchd service (where SUDO_USER is not set).
-func getConsoleUser() string {
-	if u := os.Getenv("SUDO_USER"); u != "" {
-		return u
-	}
-	out, err := exec.Command("stat", "-f", "%Su", "/dev/console").Output()
-	if err == nil {
-		if u := strings.TrimSpace(string(out)); u != "" && u != "root" {
-			return u
-		}
-	}
-	if u := os.Getenv("USER"); u != "" && u != "root" {
-		return u
-	}
-	return ""
-}
+const brewWrapper = "/usr/local/bin/patchmon-brew"
 
-func newBrewCommand(consoleUser, brewPath string, args ...string) *exec.Cmd {
-	var cmd *exec.Cmd
-	if consoleUser != "" {
-		cmdArgs := append([]string{"-n", "-u", consoleUser, "env",
-			"HOMEBREW_NO_AUTO_UPDATE=1",
-			"HOMEBREW_NO_ANALYTICS=1",
-			"HOMEBREW_NO_ENV_HINTS=1",
-			brewPath}, args...)
-		cmd = exec.Command("sudo", cmdArgs...)
-	} else {
-		cmd = exec.Command(brewPath, args...)
-	}
-	cmd.Env = append(os.Environ(),
-		"HOMEBREW_NO_AUTO_UPDATE=1",
-	)
-	return cmd
+func newBrewCommand(args ...string) *exec.Cmd {
+	return exec.Command(brewWrapper, args...)
 }
 
 // BrewOutdatedEntry matches the JSON output of `brew outdated --json=v2`
@@ -77,19 +46,16 @@ func CollectDarwinPackages() ([]models.Package, error) {
 }
 
 func collectDarwinPackages(requireBrew bool) ([]models.Package, error) {
-	brewPath := findBrewBinary()
-	useBrew := brewPath != ""
+	useBrew := findBrewBinary() != ""
 	if !useBrew {
 		if requireBrew {
 			return nil, fmt.Errorf("brew not found")
 		}
 	}
 
-	consoleUser := getConsoleUser()
-
 	packages := make([]models.Package, 0)
 	if useBrew {
-		installed, err := getInstalledPackages(consoleUser, brewPath)
+		installed, err := getInstalledPackages()
 		if err != nil {
 			if requireBrew {
 				return nil, fmt.Errorf("brew list failed: %w", err)
@@ -97,7 +63,7 @@ func collectDarwinPackages(requireBrew bool) ([]models.Package, error) {
 			installed = map[string]string{}
 		}
 
-		outdated, err := getOutdatedPackages(consoleUser, brewPath)
+		outdated, err := getOutdatedPackages()
 		if err != nil {
 			outdated = map[string]string{}
 		}
@@ -125,13 +91,13 @@ func collectDarwinPackages(requireBrew bool) ([]models.Package, error) {
 	return packages, nil
 }
 
-func getInstalledPackages(consoleUser, brewPath string) (map[string]string, error) {
+func getInstalledPackages() (map[string]string, error) {
 	// `brew list --versions` outputs: packagename version [version...]
 	// Retry a few times on startup when brew may not yet be responsive.
 	var out []byte
 	var err error
 	for attempt := range 3 {
-		cmd := newBrewCommand(consoleUser, brewPath, "list", "--versions")
+		cmd := newBrewCommand("list", "--versions")
 		out, err = cmd.CombinedOutput()
 		if err == nil {
 			break
@@ -154,11 +120,11 @@ func getInstalledPackages(consoleUser, brewPath string) (map[string]string, erro
 	return result, nil
 }
 
-func getOutdatedPackages(consoleUser, brewPath string) (map[string]string, error) {
+func getOutdatedPackages() (map[string]string, error) {
 	var out []byte
 	var err error
 	for attempt := range 3 {
-		cmd := newBrewCommand(consoleUser, brewPath, "outdated", "--json=v2")
+		cmd := newBrewCommand("outdated", "--json=v2")
 		out, err = cmd.Output()
 		if err == nil {
 			break
