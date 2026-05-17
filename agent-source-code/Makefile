@@ -55,21 +55,35 @@ build-windows:
 	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-windows-amd64.exe ./cmd/patchmon-agent
 	@GOOS=windows GOARCH=arm64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-windows-arm64.exe ./cmd/patchmon-agent
 
-# Build all (Linux + FreeBSD + Windows) and copy to backend serve dirs
+# Build Darwin binaries only (amd64, arm64)
+.PHONY: build-darwin-amd64
+build-darwin-amd64:
+	@mkdir -p $(BUILD_DIR)
+	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-darwin-amd64 ./cmd/patchmon-agent
+
+.PHONY: build-darwin-arm64
+build-darwin-arm64:
+	@mkdir -p $(BUILD_DIR)
+	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-darwin-arm64 ./cmd/patchmon-agent
+
+
+# Build all (Linux + FreeBSD + Windows + Darwin) and copy to backend serve dirs
 .PHONY: build-all
-build-all: build-linux build-freebsd build-windows
+build-all: build-linux build-freebsd build-windows build-darwin-amd64 build-darwin-arm64
 	@mkdir -p $(AGENTS_REPO) $(AGENTS_DOCKER)
-	@for f in $(GOBIN)/$(BINARY_NAME)-linux-* $(GOBIN)/$(BINARY_NAME)-freebsd-* $(GOBIN)/$(BINARY_NAME)-windows-*.exe; do \
+	@for f in $(GOBIN)/$(BINARY_NAME)-linux-* $(GOBIN)/$(BINARY_NAME)-freebsd-* $(GOBIN)/$(BINARY_NAME)-windows-*.exe $(GOBIN)/$(BINARY_NAME)-darwin-*; do \
 		[ -f "$$f" ] && cp "$$f" $(AGENTS_REPO)/ && cp "$$f" $(AGENTS_DOCKER)/; \
 	done
 	@echo "Done. agents/ and docker/compose_dev_data/agents/ updated."
+
+
 
 # Build all agent binaries into agents-prebuilt/ (for local Docker backend build)
 .PHONY: build-all-for-docker
 build-all-for-docker:
 	@mkdir -p ../agents-prebuilt
 	@$(MAKE) build-all
-	@cp $(BUILD_DIR)/$(BINARY_NAME)-linux-* $(BUILD_DIR)/$(BINARY_NAME)-freebsd-* $(BUILD_DIR)/$(BINARY_NAME)-windows-*.exe ../agents-prebuilt/ 2>/dev/null || true
+	@cp $(BUILD_DIR)/$(BINARY_NAME)-linux-* $(BUILD_DIR)/$(BINARY_NAME)-freebsd-* $(BUILD_DIR)/$(BINARY_NAME)-windows-*.exe $(BUILD_DIR)/$(BINARY_NAME)-darwin-* ../agents-prebuilt/ 2>/dev/null || true
 	@echo "Agent binaries copied to agents-prebuilt/"
 
 # Install dependencies

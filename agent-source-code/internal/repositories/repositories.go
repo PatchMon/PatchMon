@@ -55,6 +55,8 @@ func (m *Manager) GetRepositories() ([]models.Repository, error) {
 		return m.pacmanManager.GetRepositories()
 	case "pkg":
 		return m.freebsdManager.GetRepositories()
+	case "brew":
+		return CollectRepositories()
 	default:
 		m.logger.WithField("package_manager", packageManager).Warn("Unsupported package manager")
 		return []models.Repository{}, nil
@@ -107,6 +109,13 @@ func (m *Manager) detectPackageManager() string {
 	}
 	if _, err := exec.LookPath("yum"); err == nil {
 		return "yum"
+	}
+
+	// Check for Homebrew on macOS
+	if runtime.GOOS == "darwin" {
+		if _, err := exec.LookPath("brew"); err == nil {
+			return "brew"
+		}
 	}
 
 	return "unknown"

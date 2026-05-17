@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -185,6 +186,11 @@ func (d *Detector) DetectOS() (osType, osVersion string, err error) {
 		return d.getFreeBSDInfo()
 	}
 
+	// Check for macOS first
+	if runtime.GOOS == "darwin" {
+		return d.getDarwinOSInfo()
+	}
+
 	// Try to parse /etc/os-release first
 	osReleaseInfo, err := d.parseOSRelease()
 	if err != nil {
@@ -241,7 +247,7 @@ func (d *Detector) GetSystemInfo() models.SystemInfo {
 	info := models.SystemInfo{
 		KernelVersion: d.GetKernelVersion(),
 		SELinuxStatus: d.getSELinuxStatus(),
-		SystemUptime:  d.getSystemUptime(ctx),
+		SystemUptime:  d.getSystemUptime(),
 		LoadAverage:   d.getLoadAverage(ctx),
 	}
 
@@ -256,31 +262,38 @@ func (d *Detector) GetSystemInfo() models.SystemInfo {
 
 // GetArchitecture returns the system architecture
 func (d *Detector) GetArchitecture() string {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	info, err := host.InfoWithContext(ctx)
-	if err != nil {
+	// On macOS, gopsutil may be slow on cold boot — retry with backoff
+	for attempt := range 3 {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		info, err := host.InfoWithContext(ctx)
+		cancel()
+		if err == nil {
+			return info.KernelArch
+		}
+		if attempt < 2 {
+			time.Sleep(time.Duration(attempt+1) * 5 * time.Second)
+		}
 		d.logger.WithError(err).Warn("Failed to get architecture")
-		return constants.ArchUnknown
 	}
-
-	return info.KernelArch
+	return constants.ArchUnknown
 }
 
 // GetHostname returns the system hostname
 func (d *Detector) GetHostname() (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	info, err := host.InfoWithContext(ctx)
-	if err != nil {
+	// On macOS, gopsutil may be slow on cold boot — retry with backoff
+	for attempt := range 3 {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		info, err := host.InfoWithContext(ctx)
+		cancel()
+		if err == nil {
+			return info.Hostname, nil
+		}
+		if attempt < 2 {
+			time.Sleep(time.Duration(attempt+1) * 5 * time.Second)
+		}
 		d.logger.WithError(err).Warn("Failed to get hostname")
-		// Fallback to os.Hostname
-		return os.Hostname()
 	}
-
-	return info.Hostname, nil
+	return os.Hostname()
 }
 
 // GetIPAddress gets the primary IP address using network interfaces
@@ -316,6 +329,10 @@ func (d *Detector) GetIPAddress() string {
 
 // GetKernelVersion gets the kernel version
 func (d *Detector) GetKernelVersion() string {
+	if runtime.GOOS == "darwin" {
+		return d.getDarwinKernelVersion()
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -330,8 +347,8 @@ func (d *Detector) GetKernelVersion() string {
 
 // getSELinuxStatus gets SELinux status using file reading
 func (d *Detector) getSELinuxStatus() string {
-	// Windows and FreeBSD don't use SELinux
-	if runtime.GOOS == "windows" || d.isFreeBSD() {
+	// Windows, macOS and FreeBSD don't use SELinux
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" || d.isFreeBSD() {
 		return constants.SELinuxDisabled
 	}
 
@@ -373,55 +390,101 @@ func (d *Detector) getSELinuxStatus() string {
 }
 
 // getSystemUptime gets system uptime
-func (d *Detector) getSystemUptime(ctx context.Context) string {
-	info, err := host.InfoWithContext(ctx)
-	if err != nil {
+func (d *Detector) getSystemUptime() string {
+	// On macOS, gopsutil may be slow on cold boot — retry with backoff
+	for attempt := range 3 {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		info, err := host.InfoWithContext(ctx)
+		cancel()
+		if err == nil {
+			uptime := time.Duration(info.Uptime) * time.Second
+			days := int(uptime.Hours() / 24)
+			hours := int(uptime.Hours()) % 24
+			minutes := int(uptime.Minutes()) % 60
+			if days > 0 {
+				return fmt.Sprintf("%d days, %d hours, %d minutes", days, hours, minutes)
+			}
+			if hours > 0 {
+				return fmt.Sprintf("%d hours, %d minutes", hours, minutes)
+			}
+			return fmt.Sprintf("%d minutes", minutes)
+		}
+		if attempt < 2 {
+			time.Sleep(time.Duration(attempt+1) * 5 * time.Second)
+		}
 		d.logger.WithError(err).Warn("Failed to get uptime")
-		return "Unknown"
 	}
-
-	uptime := time.Duration(info.Uptime) * time.Second
-
-	days := int(uptime.Hours() / 24)
-	hours := int(uptime.Hours()) % 24
-	minutes := int(uptime.Minutes()) % 60
-
-	if days > 0 {
-		return fmt.Sprintf("%d days, %d hours, %d minutes", days, hours, minutes)
-	}
-	if hours > 0 {
-		return fmt.Sprintf("%d hours, %d minutes", hours, minutes)
-	}
-	return fmt.Sprintf("%d minutes", minutes)
+	return "Unknown"
 }
 
 // getLoadAverage gets system load average
 func (d *Detector) getLoadAverage(ctx context.Context) []float64 {
 	loadAvg, err := load.AvgWithContext(ctx)
-	if err != nil {
-		d.logger.WithError(err).Warn("Failed to get load average")
-		return []float64{0, 0, 0}
+	if err == nil {
+		return []float64{loadAvg.Load1, loadAvg.Load5, loadAvg.Load15}
 	}
 
-	return []float64{loadAvg.Load1, loadAvg.Load5, loadAvg.Load15}
+	if runtime.GOOS == "darwin" {
+		if darwinLoad := d.getDarwinLoadAverage(); len(darwinLoad) == 3 {
+			return darwinLoad
+		}
+	}
+
+	d.logger.WithError(err).Warn("Failed to get load average")
+	return []float64{0, 0, 0}
+}
+
+func (d *Detector) getDarwinLoadAverage() []float64 {
+	out, err := exec.Command("sysctl", "-n", "vm.loadavg").Output()
+	if err != nil {
+		d.logger.WithError(err).Debug("Failed to run sysctl vm.loadavg")
+		return nil
+	}
+
+	// Example output: { 1.23 0.97 0.75 }
+	fields := strings.Fields(string(out))
+	if len(fields) < 3 {
+		return nil
+	}
+
+	var loads []float64
+	for _, field := range fields {
+		field = strings.Trim(field, "{} ")
+		if field == "" {
+			continue
+		}
+		value, err := strconv.ParseFloat(field, 64)
+		if err != nil {
+			d.logger.WithError(err).Debugf("Failed to parse load average value %q", field)
+			return nil
+		}
+		loads = append(loads, value)
+	}
+
+	if len(loads) < 3 {
+		return nil
+	}
+
+	return loads[:3]
 }
 
 // GetMachineID returns the system's machine ID using gopsutil
 func (d *Detector) GetMachineID() string {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Use gopsutil's HostID which reads from standard locations
-	// (/etc/machine-id, /var/lib/dbus/machine-id, etc.)
-	hostID, err := host.HostIDWithContext(ctx)
-	if err != nil {
-		d.logger.WithError(err).Warn("Failed to get host ID, using hostname as fallback")
-		// Fallback to hostname if we can't get machine ID
-		if hostname, err := os.Hostname(); err == nil {
-			return hostname
+	// On macOS, gopsutil may be slow on cold boot — retry with backoff
+	for attempt := range 3 {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		hostID, err := host.HostIDWithContext(ctx)
+		cancel()
+		if err == nil {
+			return hostID
 		}
-		return "unknown"
+		if attempt < 2 {
+			time.Sleep(time.Duration(attempt+1) * 5 * time.Second)
+		}
+		d.logger.WithError(err).Warn("Failed to get host ID")
 	}
-
-	return hostID
+	if hostname, err := os.Hostname(); err == nil {
+		return hostname
+	}
+	return "unknown"
 }

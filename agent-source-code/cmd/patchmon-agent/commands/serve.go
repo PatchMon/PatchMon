@@ -1185,7 +1185,7 @@ var (
 	// Rule IDs: same as profile IDs (e.g., xccdf_org.ssgproject.content_rule_audit_rules_...)
 	validRuleIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_.\-]+$`)
 	// APT package names: alphanumeric, dots, plus, minus, underscores (no path/command injection)
-	validAptPackagePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+-_]*$`)
+	validAptPackagePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+\-_ @]*$`)
 	// Docker image names: alphanumeric, slashes, colons, dots, hyphens, underscores (e.g., ubuntu:22.04, myregistry.io/app:v1)
 	validDockerImagePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.\-/:@]*$`)
 	// Docker container names: alphanumeric, underscores, hyphens (e.g., my-container, container_1)
@@ -2213,8 +2213,16 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		return runPatchWindows(ctx, httpClient, patchRunID, patchType, packageNames, dryRun)
 	}
 
+	if pkgManager == "brew" {
+		return runPatchBrew(ctx, httpClient, patchRunID, patchType, packageNames, dryRun)
+	}
+
+	if pkgManager == "darwin" {
+		return runPatchDarwin(ctx, httpClient, patchRunID, patchType, packageNames, dryRun)
+	}
+
 	if pkgManager != "apt" && pkgManager != "dnf" && pkgManager != "yum" && pkgManager != "pkg" && pkgManager != "pacman" {
-		errMsg := fmt.Sprintf("package manager %q not supported for patching (apt, dnf, yum, pkg, pacman required)", pkgManager)
+		errMsg := fmt.Sprintf("package manager %q not supported for patching (apt, dnf, yum, pkg, pacman, brew required)", pkgManager)
 		_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
@@ -2495,6 +2503,348 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 	if wasStopped {
 		return fmt.Errorf("patch run stopped by user")
 	}
+	return nil
+}
+
+func runPatchBrew(ctx context.Context, httpClient *client.Client, patchRunID, patchType string, packageNames []string, dryRun bool) error {
+	brewPath := ""
+	for _, p := range []string{"/opt/homebrew/bin/brew", "/usr/local/bin/brew", "/opt/local/bin/brew"} {
+		if _, err := os.Stat(p); err == nil {
+			brewPath = p
+			break
+		}
+	}
+	if brewPath == "" {
+		if p, err := exec.LookPath("brew"); err == nil {
+			brewPath = p
+		}
+	}
+	if brewPath == "" {
+		errMsg := "brew not found: macOS Homebrew package manager is required for brew patching"
+		_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", errMsg)
+		return fmt.Errorf(errMsg)
+	}
+
+	consoleUser := getConsoleUser()
+
+	brewEnv := append(os.Environ(),
+		"HOMEBREW_NO_AUTO_UPDATE=1",
+	)
+
+	if err := httpClient.SendPatchOutput(ctx, patchRunID, "started", "", ""); err != nil {
+		logger.WithError(err).Warn("Failed to send patch started to server")
+	}
+
+	var fullOutput strings.Builder
+	fullOutput.Grow(8192)
+	sink := newStreamSink(httpClient, patchRunID, &fullOutput)
+
+	brewCmd := func(args ...string) *exec.Cmd {
+		if consoleUser != "" {
+			return exec.Command("sudo", append([]string{"-u", consoleUser, brewPath}, args...)...)
+		}
+		return exec.Command(brewPath, args...)
+	}
+
+	runStep := func(isDryRunStep bool, errTag, errFmt, name string, args ...string) (error, bool) {
+		var execName string
+		var execArgs []string
+		if name == "brew" {
+			if consoleUser != "" {
+				execName = "sudo"
+				execArgs = append([]string{"-u", consoleUser, brewPath}, args...)
+			} else {
+				execName = brewPath
+				execArgs = args
+			}
+		} else {
+			execName = name
+			execArgs = args
+		}
+		sink.WriteString(formatCmd(name, args...))
+		sink.Flush()
+		err := runStreamingPatchStep(ctx, sink, brewEnv, execName, execArgs...)
+		if err == nil {
+			return nil, false
+		}
+		if isDryRunStep && isDryRunExit1Success(err, fullOutput.String()) {
+			return nil, false
+		}
+		logger.WithError(err).Warn(errTag + " failed")
+		sink.WriteString(fmt.Sprintf("\n[%s error] %s\n", errTag, err.Error()))
+		sink.Flush()
+		return fmt.Errorf(errFmt, err), true
+	}
+
+	brewPackageInstalled := func(pkg string) bool {
+		cmd := brewCmd("list", "--versions", pkg)
+		cmd.Env = brewEnv
+		return cmd.Run() == nil
+	}
+
+	brewFormulaExists := func(pkg string) bool {
+		cmd := brewCmd("info", pkg)
+		cmd.Env = brewEnv
+		return cmd.Run() == nil
+	}
+
+	softwareUpdateAvailable := func() bool {
+		_, err := exec.LookPath("softwareupdate")
+		return err == nil
+	}
+
+	var stepErr error
+
+	if patchType == "patch_all" {
+		if dryRun {
+			if consoleUser != "" {
+				if err, abort := runStep(true, "brew outdated", "brew outdated failed: %w", "sudo", "-n", "-u", consoleUser, brewPath, "outdated", "--json=v2"); abort {
+					stepErr = err
+				}
+			} else {
+				if err, abort := runStep(true, "brew outdated", "brew outdated failed: %w", brewPath, "outdated", "--json=v2"); abort {
+					stepErr = err
+				}
+			}
+			if stepErr == nil && softwareUpdateAvailable() {
+				if err, abort := runStep(true, "softwareupdate --list", "softwareupdate --list failed: %w", "softwareupdate", "--list"); abort {
+					stepErr = err
+				}
+			}
+		} else {
+			if err, abort := runStep(false, "brew update", "brew update failed: %w", "brew", "update"); abort {
+				stepErr = err
+			}
+			if stepErr == nil {
+				if err, abort := runStep(false, "brew upgrade", "brew upgrade failed: %w", "brew", "upgrade"); abort {
+					stepErr = err
+				}
+			}
+			if stepErr == nil && softwareUpdateAvailable() {
+				if err, abort := runStep(false, "softwareupdate --install --all", "softwareupdate --install --all failed: %w", "softwareupdate", "--install", "--all"); abort {
+					stepErr = err
+				}
+			}
+		}
+	} else {
+		if len(packageNames) == 0 {
+			sink.Flush()
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), "package_names required for patch_package")
+			return fmt.Errorf("package_names required for patch_package")
+		}
+
+		for _, pkg := range packageNames {
+			if stepErr != nil {
+				break
+			}
+			if brewPackageInstalled(pkg) {
+				if dryRun {
+					if err, abort := runStep(true, "brew upgrade --dry-run", "brew upgrade --dry-run failed: %w", "brew", "upgrade", "--dry-run", pkg); abort {
+						stepErr = err
+					}
+				} else {
+					if err, abort := runStep(false, "brew upgrade", "brew upgrade failed: %w", "brew", "upgrade", pkg); abort {
+						stepErr = err
+					}
+				}
+			} else if brewFormulaExists(pkg) {
+				if dryRun {
+					if err, abort := runStep(true, "brew install --dry-run", "brew install --dry-run failed: %w", "brew", "install", "--dry-run", pkg); abort {
+						stepErr = err
+					}
+				} else {
+					if err, abort := runStep(false, "brew install", "brew install failed: %w", "brew", "install", pkg); abort {
+						stepErr = err
+					}
+				}
+			} else {
+				// Assume softwareupdate package
+				if dryRun {
+					// For dry-run, check if softwareupdate lists it
+					if err, abort := runStep(true, "softwareupdate --list", "softwareupdate --list failed: %w", "softwareupdate", "--list"); abort {
+						stepErr = err
+					}
+				} else {
+					if err, abort := runStep(false, "softwareupdate --install", "softwareupdate --install failed: %w", "softwareupdate", "--install", pkg); abort {
+						stepErr = err
+					}
+				}
+			}
+		}
+	}
+
+	sink.Flush()
+
+	_, wasStopped := patchRunStopped.LoadAndDelete(patchRunID)
+
+	trailer := patchRunTrailer(wasStopped, stepErr, dryRun)
+	sink.WriteString(trailer)
+	sink.Flush()
+
+	finalCtx, finalCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer finalCancel()
+
+	switch {
+	case wasStopped:
+		if err := httpClient.SendPatchOutput(finalCtx, patchRunID, "cancelled", fullOutput.String(), "stopped by user"); err != nil {
+			logger.WithError(err).Warn("Failed to send patch cancelled output to server")
+		}
+		return fmt.Errorf("patch run stopped by user")
+	case stepErr != nil:
+		if err := httpClient.SendPatchOutput(finalCtx, patchRunID, "failed", fullOutput.String(), stepErr.Error()); err != nil {
+			logger.WithError(err).Warn("Failed to send patch failed output to server")
+		}
+		return stepErr
+	default:
+		stage := "completed"
+		if dryRun {
+			stage = "dry_run_completed"
+		}
+		if err := httpClient.SendPatchOutput(finalCtx, patchRunID, stage, fullOutput.String(), ""); err != nil {
+			logger.WithError(err).Warn("Failed to send patch output to server")
+			return err
+		}
+	}
+
+	if !dryRun && (wasStopped || stepErr == nil) {
+		logger.Info("Sending post-patch report to refresh package lists...")
+		reportDone := make(chan error, 1)
+		go func() { reportDone <- sendReport(false) }()
+		select {
+		case err := <-reportDone:
+			if err != nil {
+				logger.WithError(err).Warn("Post-patch report failed")
+			} else {
+				logger.Info("Post-patch report sent successfully")
+			}
+		case <-time.After(2 * time.Minute):
+			logger.Warn("Post-patch report timed out after 2 minutes; will retry on next scheduled report")
+		}
+	}
+
+	return nil
+}
+
+func runPatchDarwin(ctx context.Context, httpClient *client.Client, patchRunID, patchType string, packageNames []string, dryRun bool) error {
+	if _, err := exec.LookPath("softwareupdate"); err != nil {
+		errMsg := "softwareupdate not found: macOS system update tooling is required"
+		_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", errMsg)
+		return fmt.Errorf("%s: %w", errMsg, err)
+	}
+
+	if err := httpClient.SendPatchOutput(ctx, patchRunID, "started", "", ""); err != nil {
+		logger.WithError(err).Warn("Failed to send patch started to server")
+	}
+
+	var fullOutput strings.Builder
+	fullOutput.Grow(8192)
+	sink := newStreamSink(httpClient, patchRunID, &fullOutput)
+
+	runStep := func(isDryRunStep bool, errTag, errFmt, name string, args ...string) (error, bool) {
+		sink.WriteString(formatCmd(name, args...))
+		sink.Flush()
+		err := runStreamingPatchStep(ctx, sink, os.Environ(), name, args...)
+		if err == nil {
+			return nil, false
+		}
+		if isDryRunStep && isDryRunExit1Success(err, fullOutput.String()) {
+			return nil, false
+		}
+		logger.WithError(err).Warn(errTag + " failed")
+		sink.WriteString(fmt.Sprintf("\n[%s error] %s\n", errTag, err.Error()))
+		sink.Flush()
+		return fmt.Errorf(errFmt, err), true
+	}
+
+	var stepErr error
+
+	if patchType == "patch_all" {
+		if dryRun {
+			if err, abort := runStep(true, "softwareupdate --list", "softwareupdate --list failed: %w", "softwareupdate", "--list"); abort {
+				stepErr = err
+			}
+		} else {
+			if err, abort := runStep(false, "softwareupdate --install --all", "softwareupdate --install --all failed: %w", "softwareupdate", "--install", "--all"); abort {
+				stepErr = err
+			}
+		}
+	} else {
+		if len(packageNames) == 0 {
+			sink.Flush()
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", fullOutput.String(), "package_names required for patch_package")
+			return fmt.Errorf("package_names required for patch_package")
+		}
+
+		if dryRun {
+			if err, abort := runStep(true, "softwareupdate --list", "softwareupdate --list failed: %w", "softwareupdate", "--list"); abort {
+				stepErr = err
+			}
+		} else {
+			for _, pkg := range packageNames {
+				if stepErr != nil {
+					break
+				}
+				if err, abort := runStep(false, "softwareupdate --install", "softwareupdate --install failed: %w", "softwareupdate", "--install", pkg); abort {
+					stepErr = err
+				}
+			}
+		}
+	}
+
+	sink.Flush()
+
+	needsReboot, rebootReason := system.New(logger).CheckRebootRequired()
+	if !dryRun && needsReboot {
+		fullOutput.WriteString(fmt.Sprintf("\n[Reboot Required] %s\n", rebootReason))
+	}
+
+	_, wasStopped := patchRunStopped.LoadAndDelete(patchRunID)
+
+	trailer := patchRunTrailer(wasStopped, stepErr, dryRun)
+	sink.WriteString(trailer)
+	sink.Flush()
+
+	finalCtx, finalCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer finalCancel()
+
+	switch {
+	case wasStopped:
+		if err := httpClient.SendPatchOutput(finalCtx, patchRunID, "cancelled", fullOutput.String(), "stopped by user"); err != nil {
+			logger.WithError(err).Warn("Failed to send patch cancelled output to server")
+		}
+		return fmt.Errorf("patch run stopped by user")
+	case stepErr != nil:
+		if err := httpClient.SendPatchOutput(finalCtx, patchRunID, "failed", fullOutput.String(), stepErr.Error()); err != nil {
+			logger.WithError(err).Warn("Failed to send patch failed output to server")
+		}
+		return stepErr
+	default:
+		stage := "completed"
+		if dryRun {
+			stage = "dry_run_completed"
+		}
+		if err := httpClient.SendPatchOutput(finalCtx, patchRunID, stage, fullOutput.String(), ""); err != nil {
+			logger.WithError(err).Warn("Failed to send patch output to server")
+			return err
+		}
+	}
+
+	if !dryRun && (wasStopped || stepErr == nil) {
+		logger.Info("Sending post-patch report to refresh package lists...")
+		reportDone := make(chan error, 1)
+		go func() { reportDone <- sendReport(false) }()
+		select {
+		case err := <-reportDone:
+			if err != nil {
+				logger.WithError(err).Warn("Post-patch report failed")
+			} else {
+				logger.Info("Post-patch report sent successfully")
+			}
+		case <-time.After(2 * time.Minute):
+			logger.Warn("Post-patch report timed out after 2 minutes; will retry on next scheduled report")
+		}
+	}
+
 	return nil
 }
 

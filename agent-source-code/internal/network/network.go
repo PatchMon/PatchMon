@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -74,6 +75,12 @@ func (m *Manager) getGatewayIP() string {
 	// If no IPv4 gateway found, try IPv6
 	if gw := m.getIPv6GatewayIP(); gw != "" {
 		return gw
+	}
+
+	if runtime.GOOS == "darwin" {
+		if gw := m.getGatewayViaRouteGet(false); gw != "" {
+			return gw
+		}
 	}
 
 	return ""
@@ -185,6 +192,38 @@ func (m *Manager) getGatewayViaNetstat(ipv6 bool) string {
 		}
 	}
 
+	if runtime.GOOS == "darwin" {
+		return m.getGatewayViaRouteGet(ipv6)
+	}
+
+	return ""
+}
+
+func (m *Manager) getGatewayViaRouteGet(ipv6 bool) string {
+	args := []string{"get", "default"}
+	if ipv6 {
+		args = []string{"get", "-inet6", "default"}
+	}
+
+	output, err := exec.Command("route", args...).Output()
+	if err != nil {
+		m.logger.WithError(err).Debug("Failed to run route get default")
+		return ""
+	}
+
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		if fields[0] == "gateway:" {
+			gateway := fields[1]
+			if net.ParseIP(gateway) != nil {
+				return gateway
+			}
+		}
+	}
+
 	return ""
 }
 
@@ -245,17 +284,52 @@ func (m *Manager) getDNSServers() []string {
 
 	// Read /etc/resolv.conf
 	data, err := os.ReadFile("/etc/resolv.conf")
-	if err != nil {
+	if err == nil {
+		for line := range strings.SplitSeq(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "nameserver") {
+				fields := strings.Fields(line)
+				if len(fields) > 1 {
+					servers = append(servers, fields[1])
+				}
+			}
+		}
+	} else {
 		m.logger.WithError(err).Warn("Failed to read /etc/resolv.conf")
+	}
+
+	if len(servers) == 0 && runtime.GOOS == "darwin" {
+		servers = m.getDNSServersDarwin()
+	}
+
+	return servers
+}
+
+func (m *Manager) getDNSServersDarwin() []string {
+	servers := make([]string, 0, 4)
+	if _, err := exec.LookPath("scutil"); err != nil {
 		return servers
 	}
 
-	for line := range strings.SplitSeq(string(data), "\n") {
+	out, err := exec.Command("scutil", "--dns").Output()
+	if err != nil {
+		m.logger.WithError(err).Debug("Failed to run scutil --dns")
+		return servers
+	}
+
+	seen := make(map[string]struct{})
+	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "nameserver") {
-			fields := strings.Fields(line)
-			if len(fields) > 1 {
-				servers = append(servers, fields[1])
+			parts := strings.Fields(line)
+			if len(parts) >= 3 {
+				server := parts[len(parts)-1]
+				if net.ParseIP(server) != nil {
+					if _, exists := seen[server]; !exists {
+						seen[server] = struct{}{}
+						servers = append(servers, server)
+					}
+				}
 			}
 		}
 	}
@@ -383,29 +457,55 @@ func (m *Manager) gatewayTablesByInterface() (ipv4, ipv6 map[string]string) {
 	ipv4 = make(map[string]string)
 	ipv6 = make(map[string]string)
 
-	if _, err := exec.LookPath("ip"); err != nil {
+	if _, err := exec.LookPath("ip"); err == nil {
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			out, err := exec.Command("ip", "route", "show").Output()
+			if err != nil {
+				return
+			}
+			parseIPRouteDefaults(string(out), ipv4)
+		}()
+		go func() {
+			defer wg.Done()
+			out, err := exec.Command("ip", "-6", "route", "show").Output()
+			if err != nil {
+				return
+			}
+			parseIPRouteDefaults(string(out), ipv6)
+		}()
+		wg.Wait()
 		return ipv4, ipv6
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		out, err := exec.Command("ip", "route", "show").Output()
-		if err != nil {
-			return
+	if runtime.GOOS == "darwin" {
+		return m.gatewayTablesByInterfaceDarwin()
+	}
+
+	return ipv4, ipv6
+}
+
+func (m *Manager) gatewayTablesByInterfaceDarwin() (map[string]string, map[string]string) {
+	ipv4 := make(map[string]string)
+	ipv6 := make(map[string]string)
+
+	out, err := exec.Command("route", "get", "default").Output()
+	if err == nil {
+		iface, gateway := parseRouteGetOutput(string(out))
+		if iface != "" && gateway != "" {
+			ipv4[iface] = gateway
 		}
-		parseIPRouteDefaults(string(out), ipv4)
-	}()
-	go func() {
-		defer wg.Done()
-		out, err := exec.Command("ip", "-6", "route", "show").Output()
-		if err != nil {
-			return
+	}
+
+	out6, err := exec.Command("route", "get", "-inet6", "default").Output()
+	if err == nil {
+		iface, gateway := parseRouteGetOutput(string(out6))
+		if iface != "" && gateway != "" {
+			ipv6[iface] = gateway
 		}
-		parseIPRouteDefaults(string(out), ipv6)
-	}()
-	wg.Wait()
+	}
 
 	return ipv4, ipv6
 }
@@ -448,6 +548,10 @@ func parseIPRouteDefaults(output string, out map[string]string) {
 // default route. Used as a fallback when the batched `ip route` call didn't
 // populate the interface (e.g. `ip` binary unavailable).
 func (m *Manager) getInterfaceGatewayFromProc(interfaceName string) string {
+	if runtime.GOOS == "darwin" {
+		return m.getInterfaceGatewayDarwin(interfaceName)
+	}
+
 	data, err := os.ReadFile("/proc/net/route")
 	if err != nil {
 		return ""
@@ -461,6 +565,37 @@ func (m *Manager) getInterfaceGatewayFromProc(interfaceName string) string {
 		}
 	}
 	return ""
+}
+
+func (m *Manager) getInterfaceGatewayDarwin(interfaceName string) string {
+	out, err := exec.Command("route", "get", "default").Output()
+	if err != nil {
+		return ""
+	}
+
+	iface, gateway := parseRouteGetOutput(string(out))
+	if iface == interfaceName {
+		return gateway
+	}
+
+	return ""
+}
+
+func parseRouteGetOutput(output string) (string, string) {
+	var iface, gateway string
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		if fields[0] == "interface:" {
+			iface = fields[1]
+		}
+		if fields[0] == "gateway:" {
+			gateway = fields[1]
+		}
+	}
+	return iface, gateway
 }
 
 // getLinkSpeedAndDuplex gets the link speed (in Mbps) and duplex mode for an interface

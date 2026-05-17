@@ -138,6 +138,22 @@ get_machine_id() {
         echo "patchmon-freebsd-$(hostname 2>/dev/null)-$(date +%s 2>/dev/null)"
         return
     fi
+    if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
+        _uuid=""
+        _ioreg_retries=5
+        while [ "$_ioreg_retries" -gt 0 ]; do
+            _uuid=$(ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null | awk -F'"' '/IOPlatformUUID/ {print $4}')
+            [ -n "$_uuid" ] && break
+            _ioreg_retries=$((_ioreg_retries - 1))
+            [ "$_ioreg_retries" -gt 0 ] && sleep 2
+        done
+        if [ -n "$_uuid" ]; then
+            echo "$_uuid"
+            return
+        fi
+        echo "patchmon-darwin-$(hostname 2>/dev/null)-$(date +%s 2>/dev/null)"
+        return
+    fi
     # Linux: try multiple sources
     if [ -f /etc/machine-id ]; then
         cat /etc/machine-id
@@ -154,8 +170,20 @@ if [ -z "$PATCHMON_URL" ] || [ -z "$API_ID" ] || [ -z "$API_KEY" ]; then
     error "Missing required parameters. This script should be called via the PatchMon web interface."
 fi
 
-# Default PATCHMON_OS to linux if not set (backward compatibility when os param not in URL)
-PATCHMON_OS="${PATCHMON_OS:-linux}"
+# Default PATCHMON_OS based on environment or runtime if not set
+if [ -z "$PATCHMON_OS" ]; then
+    case "$(uname -s 2>/dev/null)" in
+        Darwin)
+            PATCHMON_OS="darwin"
+            ;;
+        FreeBSD)
+            PATCHMON_OS="freebsd"
+            ;;
+        *)
+            PATCHMON_OS="linux"
+            ;;
+    esac
+fi
 
 # Auto-detect architecture if not explicitly set
 if [ -z "$ARCHITECTURE" ]; then
@@ -471,6 +499,21 @@ elif command -v apk >/dev/null 2>&1; then
     echo ""
     info "Installing curl..."
     install_apk_packages curl
+elif [ "$(uname -s 2>/dev/null)" = "Darwin" ] || [ "$PATCHMON_OS" = "darwin" ]; then
+    # macOS: curl should be available, otherwise attempt Homebrew install
+    info "Detected macOS"
+    echo ""
+    if ! command -v curl >/dev/null 2>&1; then
+        info "curl is not installed. Attempting to install via Homebrew..."
+        if command -v brew >/dev/null 2>&1; then
+            brew install curl || true
+        else
+            warning "curl not found and Homebrew is not installed."
+            warning "Install Homebrew and run: brew install curl"
+        fi
+    else
+        success "curl already installed"
+    fi
 elif [ "$(uname -s 2>/dev/null)" = "FreeBSD" ] || [ "$PATCHMON_OS" = "freebsd" ]; then
     # FreeBSD/pfSense: only curl is required. Skip pkg if curl already present
     # (on pfSense, pkg repos may be unconfigured and "pkg install curl" can fail with "no match")
@@ -638,12 +681,37 @@ if [ -f "/usr/local/bin/patchmon-agent.sh" ]; then
 fi
 
 # Download the binary
-curl $CURL_FLAGS \
+TMP_AGENT_BINARY=$(mktemp /tmp/patchmon-agent.XXXXXX)
+HTTP_STATUS=$(curl -sS $CURL_FLAGS \
     -H "X-API-ID: $API_ID" \
     -H "X-API-KEY: $API_KEY" \
+    -w "%{http_code}" \
     "$PATCHMON_URL/api/v1/hosts/agent/download?arch=$ARCHITECTURE&os=$PATCHMON_OS&force=binary" \
-    -o /usr/local/bin/patchmon-agent
+    -o "$TMP_AGENT_BINARY")
 
+if [ "$HTTP_STATUS" != "200" ]; then
+    printf "%b\n" "${RED}ERROR: Agent binary download failed with HTTP status $HTTP_STATUS:${NC}" >&2
+    if [ -s "$TMP_AGENT_BINARY" ]; then
+        cat "$TMP_AGENT_BINARY" >&2
+    fi
+    rm -f "$TMP_AGENT_BINARY"
+    error "Failed to download PatchMon agent binary for $PATCHMON_OS/$ARCHITECTURE. Verify the server has the matching binary."
+fi
+
+if [ ! -s "$TMP_AGENT_BINARY" ]; then
+    rm -f "$TMP_AGENT_BINARY"
+    error "Downloaded agent binary is empty. Please verify the server package bundle."
+fi
+
+# Detect error payloads returned as JSON instead of a binary
+if [ "$(head -c 1 "$TMP_AGENT_BINARY" 2>/dev/null)" = "{" ]; then
+    printf "%b\n" "${RED}ERROR: Received error response when downloading agent binary:${NC}" >&2
+    cat "$TMP_AGENT_BINARY" >&2
+    rm -f "$TMP_AGENT_BINARY"
+    error "Agent binary download failed"
+fi
+
+mv "$TMP_AGENT_BINARY" /usr/local/bin/patchmon-agent
 chmod +x /usr/local/bin/patchmon-agent
 
 # Get the agent version from the binary
@@ -867,9 +935,114 @@ EOF
         success "PatchMon Agent service configured"
     fi
     SERVICE_TYPE="rc.d"
+elif [ "$(uname -s 2>/dev/null)" = "Darwin" ] || [ "$PATCHMON_OS" = "darwin" ]; then
+    # macOS: create and load launchd plist directly
+    info "Setting up macOS launchd service..."
+
+    # Write the patchmon-brew wrapper. The agent runs as root (launchd daemon) but
+    # brew must run as the GUI user. This script resolves the console user at runtime
+    # so it works correctly even if the user changes between installs.
+    BREW_WRAPPER="/usr/local/bin/patchmon-brew"
+    cat > "$BREW_WRAPPER" << 'BREW_EOF'
+#!/bin/sh
+CONSOLE_USER=$(stat -f "%Su" /dev/console 2>/dev/null || echo "")
+for BREW_PATH in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+    [ -f "$BREW_PATH" ] || continue
+    if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
+        exec sudo -n -u "$CONSOLE_USER" env \
+            HOMEBREW_NO_AUTO_UPDATE=1 \
+            HOMEBREW_NO_ANALYTICS=1 \
+            HOMEBREW_NO_ENV_HINTS=1 \
+            "$BREW_PATH" "$@"
+    else
+        exec env \
+            HOMEBREW_NO_AUTO_UPDATE=1 \
+            HOMEBREW_NO_ANALYTICS=1 \
+            HOMEBREW_NO_ENV_HINTS=1 \
+            "$BREW_PATH" "$@"
+    fi
+done
+exit 1
+BREW_EOF
+    chmod 755 "$BREW_WRAPPER"
+    success "patchmon-brew wrapper written to $BREW_WRAPPER"
+
+    # Grant root permission to invoke brew as any console user via the wrapper.
+    BREW_SUDOERS_FILE="/etc/sudoers.d/patchmon"
+    : > "$BREW_SUDOERS_FILE"
+    _found_brew=false
+    for BREW_PATH in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+        if [ -f "$BREW_PATH" ]; then
+            echo "root ALL=(ALL) NOPASSWD: $BREW_PATH" >> "$BREW_SUDOERS_FILE"
+            _found_brew=true
+        fi
+    done
+    if $_found_brew; then
+        chmod 440 "$BREW_SUDOERS_FILE"
+        success "Sudoers entry created for brew access"
+    else
+        rm -f "$BREW_SUDOERS_FILE"
+        warning "Homebrew not found - brew update detection may not work until Homebrew is installed"
+    fi
+
+    PLIST_PATH="/Library/LaunchDaemons/net.patchmon.patchmon-agent.plist"
+
+    # Kill any running agent processes to avoid duplicates after reinstall
+    if pkill -f 'patchmon-agent serve' 2>/dev/null; then
+        warning "Killed existing PatchMon agent process"
+        sleep 1
+    fi
+
+    # Unload existing service if it is loaded
+    if launchctl list 2>/dev/null | grep -q "net.patchmon.patchmon-agent"; then
+        warning "Stopping existing PatchMon agent service..."
+        launchctl unload "$PLIST_PATH" 2>/dev/null || true
+    fi
+
+    # Write the launchd plist
+    cat > "$PLIST_PATH" << 'PLIST_EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>net.patchmon.patchmon-agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/patchmon-agent</string>
+        <string>serve</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/opt/homebrew/sbin</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/etc/patchmon/logs/patchmon-agent.log</string>
+    <key>StandardErrorPath</key>
+    <string>/etc/patchmon/logs/patchmon-agent.log</string>
+</dict>
+</plist>
+PLIST_EOF
+
+    chmod 644 "$PLIST_PATH"
+
+    # Load the service
+    if launchctl load "$PLIST_PATH"; then
+        success "PatchMon Agent launchd service started successfully"
+        info "WebSocket connection established"
+    else
+        warning "Service may have failed to start. Check status with: launchctl list net.patchmon.patchmon-agent"
+    fi
+
+    SERVICE_TYPE="launchd"
 else
     # No init system detected, use crontab as fallback
-    warning "No init system detected (systemd, OpenRC, or FreeBSD). Using crontab for service management."
+    warning "No init system detected (systemd, OpenRC, FreeBSD, or macOS). Using crontab for service management."
     
     # Clean up old crontab entries if they exist
     if crontab -l 2>/dev/null | grep -q "patchmon-agent"; then
@@ -882,11 +1055,13 @@ else
     (crontab -l 2>/dev/null; echo "@reboot /usr/local/bin/patchmon-agent serve >/dev/null 2>&1") | crontab -
     info "Added crontab entry for PatchMon agent"
     
-    # Start the agent manually
-    /usr/local/bin/patchmon-agent serve >/dev/null 2>&1 &
-    success "PatchMon Agent started in background"
-    info "WebSocket connection established"
-    
+    # Start the agent manually (only if launchd is not already managing it)
+    if ! launchctl list net.patchmon.patchmon-agent >/dev/null 2>&1; then
+        /usr/local/bin/patchmon-agent serve >/dev/null 2>&1 &
+        success "PatchMon Agent started in background"
+        info "WebSocket connection established"
+    fi
+
     SERVICE_TYPE="crontab"
 fi
 
@@ -904,6 +1079,8 @@ elif [ "$SERVICE_TYPE" = "openrc" ]; then
     echo "   • OpenRC service configured and running"
 elif [ "$SERVICE_TYPE" = "rc.d" ]; then
     echo "   • FreeBSD rc.d service configured and running"
+elif [ "$SERVICE_TYPE" = "launchd" ]; then
+    echo "   • macOS launchd service configured and running"
 else
     echo "   • Service configured via crontab"
 fi
@@ -940,6 +1117,10 @@ elif [ "$SERVICE_TYPE" = "rc.d" ]; then
     echo "   • Service status: service patchmon_agent status"
     echo "   • Service logs: tail -f /etc/patchmon/logs/patchmon-agent.log"
     echo "   • Restart service: service patchmon_agent restart"
+elif [ "$SERVICE_TYPE" = "launchd" ]; then
+    echo "   • Service status: launchctl list net.patchmon.patchmon-agent"
+    echo "   • Service logs: tail -f /etc/patchmon/logs/patchmon-agent.log"
+    echo "   • Restart service: launchctl unload /Library/LaunchDaemons/net.patchmon.patchmon-agent.plist && launchctl load /Library/LaunchDaemons/net.patchmon.patchmon-agent.plist"
 else
     echo "   • Service logs: tail -f /etc/patchmon/logs/patchmon-agent.log"
     echo "   • Restart service: pkill -f 'patchmon-agent serve' && /usr/local/bin/patchmon-agent serve &"

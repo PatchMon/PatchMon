@@ -68,6 +68,10 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 		return m.pacmanManager.GetPackages()
 	case "pkg":
 		return m.freebsdManager.GetPackages()
+	case "brew":
+		return CollectPackages()
+	case "darwin":
+		return CollectDarwinPackages()
 	default:
 		return nil, fmt.Errorf("unsupported package manager: %s", packageManager)
 	}
@@ -124,6 +128,14 @@ func (m *Manager) DetectPackageManager() string {
 		return "pacman"
 	}
 
+	// Check for Homebrew on macOS
+	if runtime.GOOS == "darwin" {
+		if findBrewBinary() != "" {
+			return "brew"
+		}
+		return "darwin"
+	}
+
 	return "unknown"
 }
 
@@ -139,6 +151,18 @@ func GetPkgBinaryPath() string {
 		}
 	}
 	return "pkg"
+}
+
+func findBrewBinary() string {
+	if path, err := exec.LookPath("brew"); err == nil {
+		return path
+	}
+	for _, p := range []string{"/opt/homebrew/bin/brew", "/usr/local/bin/brew", "/opt/local/bin/brew"} {
+		if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() && (info.Mode()&0111) != 0 {
+			return p
+		}
+	}
+	return ""
 }
 
 // stringMapToPackageMap converts name->version map to name->Package for package managers

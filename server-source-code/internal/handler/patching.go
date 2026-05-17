@@ -29,7 +29,7 @@ import (
 
 const patchRunJobIDPrefix = "patch-run-"
 
-var packageNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+-_]*$`)
+var packageNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+\-_ @]*$`)
 
 // deletablePatchRunStatuses are statuses where the run can be deleted (not yet executed or cancelled).
 var deletablePatchRunStatuses = map[string]bool{

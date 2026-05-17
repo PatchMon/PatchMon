@@ -247,6 +247,17 @@ if [ -f "/usr/local/bin/patchmon-agent.sh" ]; then
     AGENTS_REMOVED=1
 fi
 
+# Remove macOS brew wrapper and sudoers entry
+if [ -f "/usr/local/bin/patchmon-brew" ]; then
+    warning "Removing brew wrapper: /usr/local/bin/patchmon-brew"
+    rm -f /usr/local/bin/patchmon-brew
+    AGENTS_REMOVED=1
+fi
+if [ -f "/etc/sudoers.d/patchmon" ]; then
+    warning "Removing sudoers entry: /etc/sudoers.d/patchmon"
+    rm -f /etc/sudoers.d/patchmon
+fi
+
 # Remove backup files for Go agent
 if ls /usr/local/bin/patchmon-agent.backup.* >/dev/null 2>&1; then
     warning "Removing Go agent backup files..."
