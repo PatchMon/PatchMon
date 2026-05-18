@@ -1066,7 +1066,7 @@ const Integrations = () => {
 										infrastructure.
 									</p>
 									<a
-										href="https://patchmon.net/docs/patchmon-api-integrations-guide#proxmox-lxc-auto-enrollment-guide"
+										href="https://patchmon.net/docs/patchmon-api-integrations-guide#auto-enrolment-api-docs"
 										target="_blank"
 										rel="noopener noreferrer"
 										className="inline-flex items-center gap-2 px-3 py-2 bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 text-white rounded-lg text-sm transition-colors"
