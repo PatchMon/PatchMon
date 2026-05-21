@@ -196,6 +196,7 @@ const DashboardSettingsModal = ({ isOpen, onClose }) => {
 				if (cardId === "osDistributionBar") return "Bar chart";
 				if (cardId === "osDistributionDoughnut") return "Doughnut chart";
 				if (cardId === "updateStatus") return "Pie chart";
+				if (cardId === "hostSecurityUpdateStatus") return "Pie chart";
 				if (cardId === "packagePriority") return "Pie chart";
 				if (cardId === "recentUsers") return "Table";
 				if (cardId === "recentCollection") return "Table";

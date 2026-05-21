@@ -47,6 +47,7 @@ func (s *DashboardStore) GetStats(ctx context.Context) (map[string]interface{}, 
 
 	totalHosts := int(stats.TotalHosts)
 	hostsNeedingUpdates := int(stats.HostsNeedingUpdates)
+       hostsWithSecurityUpdates := int(stats.HostsWithSecurityUpdates)
 	totalOutdatedPackages := int(stats.TotalOutdatedPackages)
 	erroredHosts := int(stats.ErroredHosts)
 	securityUpdates := int(stats.SecurityUpdates)
@@ -60,6 +61,10 @@ func (s *DashboardStore) GetStats(ctx context.Context) (map[string]interface{}, 
 	if upToDateHosts < 0 {
 		upToDateHosts = 0
 	}
+       regularUpdateHosts := hostsNeedingUpdates - hostsWithSecurityUpdates
+       if regularUpdateHosts < 0 {
+               regularUpdateHosts = 0
+       }
 
 	osRows, _ := d.Queries.GetOSDistributionByTypeAndVersion(ctx)
 	osDistribution := make([]map[string]interface{}, len(osRows))
@@ -75,6 +80,12 @@ func (s *DashboardStore) GetStats(ctx context.Context) (map[string]interface{}, 
 		{"name": "Needs updates", "count": hostsNeedingUpdates},
 		{"name": "Errored", "count": erroredHosts},
 	}
+
+       securityUpdateDistribution := []map[string]interface{}{
+               {"name": "Security updates to pass", "count": hostsWithSecurityUpdates},
+               {"name": "Updates to pass", "count": regularUpdateHosts},
+               {"name": "Up to date", "count": upToDateHosts},
+       }
 
 	regularUpdates := totalOutdatedPackages - securityUpdates
 	if regularUpdates < 0 {
@@ -119,6 +130,7 @@ func (s *DashboardStore) GetStats(ctx context.Context) (map[string]interface{}, 
 		"charts": map[string]interface{}{
 			"osDistribution":            osDistribution,
 			"updateStatusDistribution":  updateStatusDistribution,
+                       "securityUpdateDistribution":  securityUpdateDistribution,
 			"packageUpdateDistribution": packageUpdateDistribution,
 		},
 		"trends":      trends,

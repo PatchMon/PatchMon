@@ -90,6 +90,7 @@ var defaultCardLayout = []struct {
 	{CardID: "recentAlerts", RequiredPermission: "can_view_hosts", Order: 36, Enabled: true, ColSpan: 1},
 	{CardID: "alertResponderWorkload", RequiredPermission: "can_view_hosts", Order: 37, Enabled: true, ColSpan: 1},
 	{CardID: "deliveryByDestination", RequiredPermission: "can_view_hosts", Order: 38, Enabled: true, ColSpan: 2},
+	{CardID: "hostSecurityUpdateStatus", RequiredPermission: "can_view_hosts", Order: 39, Enabled: true, ColSpan: 1},
 }
 
 // Card metadata (matches Node CARD_METADATA).

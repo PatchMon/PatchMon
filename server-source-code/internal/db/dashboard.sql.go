@@ -34,6 +34,7 @@ WITH host_counts AS (
 hp_package_counts AS (
     SELECT
         COUNT(DISTINCT host_id)::int AS hosts_needing_updates,
+        COUNT(DISTINCT host_id) FILTER (WHERE is_security_update = true)::int AS hosts_with_security_updates,
         COUNT(DISTINCT package_id)::int AS total_outdated_packages,
         COUNT(DISTINCT package_id) FILTER (WHERE is_security_update)::int AS security_updates
     FROM host_packages
@@ -43,6 +44,7 @@ SELECT
     hc.total_hosts,
     hpc.hosts_needing_updates,
     hpc.total_outdated_packages,
+       hpc.hosts_with_security_updates,
     hc.errored_hosts,
     hpc.security_updates,
     hc.offline_hosts,
@@ -63,6 +65,7 @@ type GetDashboardStatsRow struct {
 	TotalHosts            int32 `json:"total_hosts"`
 	HostsNeedingUpdates   int32 `json:"hosts_needing_updates"`
 	TotalOutdatedPackages int32 `json:"total_outdated_packages"`
+       HostsWithSecurityUpdates int32 `json:"hosts_with_security_updates"`
 	ErroredHosts          int32 `json:"errored_hosts"`
 	SecurityUpdates       int32 `json:"security_updates"`
 	OfflineHosts          int32 `json:"offline_hosts"`
@@ -79,6 +82,7 @@ func (q *Queries) GetDashboardStats(ctx context.Context, arg GetDashboardStatsPa
 		&i.TotalHosts,
 		&i.HostsNeedingUpdates,
 		&i.TotalOutdatedPackages,
+               &i.HostsWithSecurityUpdates,
 		&i.ErroredHosts,
 		&i.SecurityUpdates,
 		&i.OfflineHosts,
