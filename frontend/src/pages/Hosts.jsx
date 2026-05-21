@@ -97,6 +97,14 @@ const Hosts = () => {
 			setShowFilters(true);
 			setStatusFilter("all");
 			// We'll filter hosts with updates > 0 in the filtering logic
+		} else if (filter === "securityUpdates") {
+			setShowFilters(true);
+			setStatusFilter("all");
+			// We'll filter hosts with security updates > 0 in the filtering logic
+		} else if (filter === "regularUpdates") {
+			setShowFilters(true);
+			setStatusFilter("all");
+			// We'll filter hosts with only regular (non-security) updates in the filtering logic
 		} else if (filter === "inactive") {
 			setShowFilters(true);
 			setStatusFilter("inactive");
@@ -648,6 +656,10 @@ const Hosts = () => {
 			const matchesUrlFilter =
 				(filter !== "needsUpdates" ||
 					(host.updatesCount && host.updatesCount > 0)) &&
+				(filter !== "securityUpdates" ||
+					(host.securityUpdatesCount && host.securityUpdatesCount > 0)) &&
+				(filter !== "regularUpdates" ||
+					(host.updatesCount > 0 && !(host.securityUpdatesCount > 0))) &&
 				(filter !== "inactive" ||
 					(host.effectiveStatus || host.status) === "inactive") &&
 				(filter !== "upToDate" || (!host.isStale && host.updatesCount === 0)) &&
