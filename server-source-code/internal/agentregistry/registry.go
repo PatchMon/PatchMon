@@ -141,6 +141,26 @@ func (r *Registry) Unregister(apiID string) {
 	delete(r.conns, apiID)
 }
 
+// UnregisterConn removes the registry entry for apiID **only if** the stored
+// connection is still the one passed in. A late-firing deferred Unregister
+// from a zombie ServeWS goroutine (kernel TCP timeout on a half-open socket)
+// must not wipe out a newer live connection that has since taken its place.
+//
+// Returns true if the entry was removed, false if the stored entry belongs to
+// a different (newer) connection or no entry exists. Callers can use the
+// return value to gate side-effects like onDisconnect alerting so that a
+// superseded zombie does not trigger a spurious host-down alert.
+func (r *Registry) UnregisterConn(apiID string, conn *websocket.Conn) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if e, ok := r.conns[apiID]; !ok || e.ws != conn {
+		return false
+	}
+	delete(r.meta, apiID)
+	delete(r.conns, apiID)
+	return true
+}
+
 // Get returns connection info for an api_id.
 func (r *Registry) Get(apiID string) ConnectionInfo {
 	r.mu.RLock()

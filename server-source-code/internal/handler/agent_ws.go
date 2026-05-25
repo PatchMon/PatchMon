@@ -14,6 +14,16 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// Server-side ping cadence and read timeout for the agent WS. Together they
+// detect a half-open socket in bounded time (~agentReadTimeout) rather than
+// waiting on kernel TCP keepalive (Linux default ≈ 2h). Must be at least as
+// short as the agent's own ping cadence so we don't fight each other.
+const (
+	agentPingInterval = 30 * time.Second
+	agentReadTimeout  = 90 * time.Second
+	agentPingTimeout  = 5 * time.Second
+)
+
 // OnSshProxyMessage is called when agent sends ssh_proxy_* messages.
 type OnSshProxyMessage func(apiID string, msg []byte)
 
@@ -118,22 +128,53 @@ func (h *AgentWSHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	if h.onConnect != nil {
 		h.onConnect(connCtx, apiID)
 	}
+
+	// pingDone signals the ping goroutine to exit when this handler returns.
+	// Single defer keeps a strict teardown order: (1) stop the pinger so it
+	// can't race on the conn, (2) conn-scoped unregister so a zombie goroutine
+	// from a stale TCP socket doesn't wipe out a newer live registration, and
+	// (3) only fire onDisconnect when WE were the authoritative connection.
+	pingDone := make(chan struct{})
 	defer func() {
-		if h.onDisconnect != nil {
+		close(pingDone)
+		removed := h.registry.UnregisterConn(apiID, conn)
+		if removed && h.onDisconnect != nil {
 			h.onDisconnect(connCtx, apiID)
 		}
-		h.registry.Unregister(apiID)
 		_ = conn.Close()
 	}()
 
 	slog.Info("agent ws connected", "api_id", apiID)
 
-	// Configure connection
+	// Configure connection. Set an initial read deadline so a half-open socket
+	// is detected within agentReadTimeout even before the first pong arrives.
+	// The pong handler refreshes it each time the agent acknowledges our ping.
 	conn.SetReadLimit(512 * 1024) // 512KB max message
+	_ = conn.SetReadDeadline(time.Now().Add(agentReadTimeout))
 	conn.SetPongHandler(func(string) error {
-		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		return nil
+		return conn.SetReadDeadline(time.Now().Add(agentReadTimeout))
 	})
+
+	// Server-initiated ping ticker. Without this, the read deadline above can
+	// only ever fire (we never see a pong because we never sent a ping), so a
+	// healthy agent would be disconnected every 90s. SendMessageWithTimeout
+	// goes through the per-conn write mutex so it doesn't race with other
+	// writers (SSH/RDP proxy traffic).
+	go func() {
+		t := time.NewTicker(agentPingInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-pingDone:
+				return
+			case <-t.C:
+				if err := h.registry.SendMessageWithTimeout(apiID, websocket.PingMessage, nil, agentPingTimeout); err != nil {
+					// Conn is gone or wedged — read loop will notice next.
+					return
+				}
+			}
+		}
+	}()
 
 	// Read loop - process messages from agent
 	for {
