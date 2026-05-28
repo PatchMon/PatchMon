@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+	Activity,
 	AlertCircle,
 	BarChart3,
 	BookOpen,
@@ -42,6 +43,20 @@ const metricsAPI = {
 		}).then((res) => res.json()),
 };
 
+const prometheusAPI = {
+	getSettings: () =>
+		fetch("/api/v1/prometheus/settings", {
+			credentials: "include",
+		}).then((res) => res.json()),
+	updateSettings: (data) =>
+		fetch("/api/v1/prometheus/settings", {
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			credentials: "include",
+			body: JSON.stringify(data),
+		}).then((res) => res.json()),
+};
+
 const SettingsMetrics = () => {
 	const queryClient = useQueryClient();
 	const [showFullId, setShowFullId] = useState(false);
@@ -54,6 +69,12 @@ const SettingsMetrics = () => {
 	} = useQuery({
 		queryKey: ["metrics-settings"],
 		queryFn: () => metricsAPI.getSettings(),
+	});
+
+	// Fetch Prometheus exporter settings
+	const { data: prometheusSettings, isLoading: prometheusLoading } = useQuery({
+		queryKey: ["prometheus-settings"],
+		queryFn: () => prometheusAPI.getSettings(),
 	});
 
 	// Toggle metrics mutation
@@ -78,6 +99,15 @@ const SettingsMetrics = () => {
 		mutationFn: () => metricsAPI.sendNow(),
 		onSuccess: () => {
 			queryClient.invalidateQueries(["metrics-settings"]);
+		},
+	});
+
+	// Toggle Prometheus exporter mutation
+	const togglePrometheusMutation = useMutation({
+		mutationFn: (enabled) =>
+			prometheusAPI.updateSettings({ prometheus_enabled: enabled }),
+		onSuccess: () => {
+			queryClient.invalidateQueries(["prometheus-settings"]);
 		},
 	});
 
@@ -390,6 +420,194 @@ const SettingsMetrics = () => {
 								</a>
 							</li>
 						</ul>
+					</div>
+				</div>
+			</div>
+
+			{/* ── Prometheus Exporter ───────────────────────────────────────────── */}
+			<div className="border-t border-secondary-200 dark:border-secondary-700 pt-8">
+				{/* Section Header */}
+				<div className="flex items-center mb-6">
+					<Activity className="h-6 w-6 text-primary-600 mr-3" />
+					<div>
+						<h2 className="text-xl font-semibold text-secondary-900 dark:text-white">
+							Prometheus Exporter
+						</h2>
+						<p className="text-sm text-secondary-600 dark:text-white mt-1">
+							Expose a{" "}
+							<code className="font-mono bg-secondary-100 dark:bg-secondary-700 px-1 rounded">
+								/metrics
+							</code>{" "}
+							endpoint for Prometheus scraping
+						</p>
+					</div>
+				</div>
+
+				{/* Toggle card */}
+				<div className="bg-white dark:bg-secondary-800 rounded-lg border border-secondary-200 dark:border-secondary-700 p-6">
+					<div className="flex items-start justify-between">
+						<div className="flex-1">
+							<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-2">
+								Enable Prometheus Exporter
+							</h3>
+							<p className="text-sm text-secondary-600 dark:text-white">
+								When enabled, PatchMon exposes{" "}
+								<code className="font-mono bg-secondary-100 dark:bg-secondary-700 px-1 rounded text-xs">
+									GET /metrics
+								</code>{" "}
+								in Prometheus text format. This endpoint is public — no
+								authentication is required, so restrict access via your firewall
+								or reverse proxy if needed.
+							</p>
+						</div>
+						<button
+							type="button"
+							onClick={() =>
+								togglePrometheusMutation.mutate(
+									!prometheusSettings?.prometheus_enabled,
+								)
+							}
+							disabled={prometheusLoading || togglePrometheusMutation.isPending}
+							className={`ml-4 relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-md border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+								prometheusSettings?.prometheus_enabled
+									? "bg-primary-600"
+									: "bg-secondary-200 dark:bg-secondary-700"
+							} ${prometheusLoading || togglePrometheusMutation.isPending ? "opacity-50" : ""}`}
+						>
+							<span
+								className={`inline-block h-5 w-5 transform rounded-md bg-white shadow ring-0 transition duration-200 ease-in-out ${
+									prometheusSettings?.prometheus_enabled
+										? "translate-x-5"
+										: "translate-x-0"
+								}`}
+							/>
+						</button>
+					</div>
+
+					{/* Status */}
+					<div className="mt-4 pt-4 border-t border-secondary-200 dark:border-secondary-700">
+						<div className="flex items-center text-sm">
+							{prometheusSettings?.prometheus_enabled ? (
+								<>
+									<CheckCircle className="h-4 w-4 text-green-500 mr-2" />
+									<span className="text-green-700 dark:text-green-400">
+										Exporter active — scrape{" "}
+										<code className="font-mono bg-secondary-100 dark:bg-secondary-700 px-1 rounded">
+											/metrics
+										</code>{" "}
+										from your Prometheus server
+									</span>
+								</>
+							) : (
+								<>
+									<EyeOff className="h-4 w-4 text-secondary-500 mr-2" />
+									<span className="text-secondary-600 dark:text-white">
+										Exporter disabled —{" "}
+										<code className="font-mono bg-secondary-100 dark:bg-secondary-700 px-1 rounded">
+											/metrics
+										</code>{" "}
+										returns 503
+									</span>
+								</>
+							)}
+						</div>
+					</div>
+				</div>
+
+				{/* Available metrics info */}
+				<div className="mt-4 bg-secondary-50 dark:bg-secondary-800/50 border border-secondary-200 dark:border-secondary-700 rounded-lg p-6">
+					<div className="flex">
+						<Info className="h-5 w-5 text-secondary-500 dark:text-white flex-shrink-0 mt-0.5" />
+						<div className="ml-3 text-sm text-secondary-700 dark:text-white">
+							<h4 className="font-medium mb-2">Exported metrics</h4>
+							<ul className="space-y-1 font-mono text-xs">
+								<li>
+									<span className="text-primary-600 dark:text-primary-400">
+										patchmon_hosts_total
+									</span>{" "}
+									— total monitored hosts
+								</li>
+								<li>
+									<span className="text-primary-600 dark:text-primary-400">
+										patchmon_hosts_needing_updates_total
+									</span>{" "}
+									— hosts with ≥1 pending update
+								</li>
+								<li>
+									<span className="text-primary-600 dark:text-primary-400">
+										patchmon_hosts_needing_security_updates_total
+									</span>{" "}
+									— hosts with ≥1 pending security update
+								</li>
+								<li>
+									<span className="text-primary-600 dark:text-primary-400">
+										patchmon_hosts_errored_total
+									</span>{" "}
+									— hosts not seen for 2× update interval
+								</li>
+								<li>
+									<span className="text-primary-600 dark:text-primary-400">
+										patchmon_hosts_offline_total
+									</span>{" "}
+									— hosts not seen for 3× update interval
+								</li>
+								<li>
+									<span className="text-primary-600 dark:text-primary-400">
+										patchmon_hosts_needing_reboot_total
+									</span>{" "}
+									— hosts with a pending reboot
+								</li>
+								<li>
+									<span className="text-primary-600 dark:text-primary-400">
+										patchmon_pending_updates_total&#123;type&#125;
+									</span>{" "}
+									— unique packages pending update, by <em>regular</em> /{" "}
+									<em>security</em>
+								</li>
+								<li>
+									<span className="text-primary-600 dark:text-primary-400">
+										patchmon_installed_packages_total
+									</span>{" "}
+									— total installed packages across all hosts
+								</li>
+								<li>
+									<span className="text-primary-600 dark:text-primary-400">
+										patchmon_host_pending_updates&#123;host_id,name,…,os_version&#125;
+									</span>{" "}
+									— per-host regular pending updates
+								</li>
+								<li>
+									<span className="text-primary-600 dark:text-primary-400">
+										patchmon_host_security_updates&#123;host_id,name,…,os_version&#125;
+									</span>{" "}
+									— per-host security pending updates
+								</li>
+								<li>
+									<span className="text-primary-600 dark:text-primary-400">
+										patchmon_host_installed_packages_total&#123;host_id,name,…,os_version&#125;
+									</span>{" "}
+									— per-host total installed packages
+								</li>
+								<li>
+									<span className="text-primary-600 dark:text-primary-400">
+										patchmon_host_last_seen_seconds&#123;host_id,name,…,os_version&#125;
+									</span>{" "}
+									— last agent check-in (unix timestamp)
+								</li>
+								<li>
+									<span className="text-primary-600 dark:text-primary-400">
+										patchmon_host_pending_reboot&#123;host_id,name,…,os_version&#125;
+									</span>{" "}
+									— reboot required: <em>1</em> = yes, <em>0</em> = no
+								</li>
+								<li>
+									<span className="text-primary-600 dark:text-primary-400">
+										patchmon_scrape_timestamp_seconds
+									</span>{" "}
+									— time these metrics were collected
+								</li>
+							</ul>
+						</div>
 					</div>
 				</div>
 			</div>

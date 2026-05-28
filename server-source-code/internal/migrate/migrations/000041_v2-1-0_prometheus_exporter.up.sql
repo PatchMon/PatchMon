@@ -1,0 +1,2 @@
+ALTER TABLE settings
+    ADD COLUMN IF NOT EXISTS prometheus_enabled BOOLEAN NOT NULL DEFAULT false;
