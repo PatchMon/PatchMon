@@ -226,8 +226,16 @@ func compareKernelVersions(v1, v2 string) int {
 			if n1 > n2 {
 				return 1
 			}
+		} else if err1 == nil && err2 != nil && p2 != "" {
+			// p1 is a numeric sub-revision (e.g. the "1" in deb13.1) and p2
+			// is a non-numeric label (e.g. the arch suffix "amd64").
+			// A version with an extra numeric sub-revision is newer.
+			return 1
+		} else if err1 != nil && err2 == nil && p1 != "" {
+			// Symmetric: p2 has the extra numeric sub-revision.
+			return -1
 		} else {
-			// At least one is not a number, compare as strings
+			// Both non-numeric: compare as strings
 			if p1 < p2 {
 				return -1
 			}
@@ -240,10 +248,16 @@ func compareKernelVersions(v1, v2 string) int {
 	return 0
 }
 
-// parseKernelVersion parses a kernel version string into comparable parts
-// "6.14.11-2-pve" -> ["6", "14", "11", "2", "pve"]
+// parseKernelVersion parses a kernel version string into comparable parts.
+// Splits on ".", "-" and "+" so that Debian-style versions like
+// "6.12.90+deb13.1-amd64" are tokenised correctly:
+//
+//	"6.14.11-2-pve"           -> ["6", "14", "11", "2", "pve"]
+//	"6.12.90+deb13.1-amd64"   -> ["6", "12", "90", "deb13", "1", "amd64"]
+//	"6.12.90+deb13-amd64"     -> ["6", "12", "90", "deb13", "amd64"]
 func parseKernelVersion(version string) []string {
-	// Replace dots and dashes with spaces, then split
+	// Replace dots, dashes and plus signs with spaces, then split
+	version = strings.ReplaceAll(version, "+", " ")
 	version = strings.ReplaceAll(version, ".", " ")
 	version = strings.ReplaceAll(version, "-", " ")
 	parts := strings.Fields(version)
