@@ -2259,7 +2259,10 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 				stepErr = err
 			}
 		default:
-			if err, abort := runStep(false, upgradeBin+" makecache", upgradeBin+" makecache failed: %w", upgradeBin, "makecache", "-q"); abort {
+			// -y/--assumeyes accepts new GPG key imports non-interactively.
+			// Without it, dnf prompts "Is this ok [y/N]:" for keys like the
+			// PostgreSQL pgdg repo and the patch run hangs/fails.
+			if err, abort := runStep(false, upgradeBin+" makecache", upgradeBin+" makecache failed: %w", upgradeBin, "makecache", "-q", "-y"); abort {
 				stepErr = err
 			}
 		}
