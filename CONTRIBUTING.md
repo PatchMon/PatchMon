@@ -262,7 +262,7 @@ AI disclosure is used for review context, not as a judgement. Maintainers may as
 
 - < 400 lines changed: easy to review, fast merge.
 - 400-1000 lines: OK if cohesive, but consider splitting.
-- > 1000 lines: please discuss with maintainers on Discord first.
+- \> 1000 lines: please discuss with maintainers on Discord first.
 
 ### What maintainers look for
 
