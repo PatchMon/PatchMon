@@ -12,10 +12,10 @@ LDFLAGS=-ldflags "-s -w"
 BUILD_FLAGS=-buildvcs=false
 
 # Go variables
-GOBASE=$(shell pwd)
+GOBASE="$(shell pwd)"
 GOBIN=$(GOBASE)/$(BUILD_DIR)
 # Prefer go from PATH; fallback to /usr/local/go/bin for environments that need it
-GO_CMD ?= $(shell command -v go 2>/dev/null || echo /usr/local/go/bin/go)
+GO_CMD ?= "$(shell command -v go 2>/dev/null || echo /usr/local/go/bin/go)"
 # Prefer golangci-lint from PATH when available
 GOLANGCI_LINT_CMD ?= $(shell command -v golangci-lint 2>/dev/null || echo /root/go/bin/golangci-lint)
 
