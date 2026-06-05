@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"regexp"
 
 	"patchmon-agent/internal/logutil"
 )
@@ -243,11 +244,14 @@ func compareKernelVersions(v1, v2 string) int {
 // parseKernelVersion parses a kernel version string into comparable parts
 // "6.14.11-2-pve" -> ["6", "14", "11", "2", "pve"]
 func parseKernelVersion(version string) []string {
-	// Replace dots and dashes with spaces, then split
-	version = strings.ReplaceAll(version, ".", " ")
-	version = strings.ReplaceAll(version, "-", " ")
-	parts := strings.Fields(version)
-	return parts
+    //Extract MAJOR.MINOR.PATCH version and extra (all char after the PATCH digit)
+	versionRegex := regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)(.*)$`)
+	matches := versionRegex.FindStringSubmatch(version)
+
+    //remove the first element
+    matches = matches[1:]
+
+	return matches
 }
 
 // getLatestKernelFromRPM queries RPM for installed kernel packages
