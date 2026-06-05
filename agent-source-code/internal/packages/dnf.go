@@ -304,7 +304,8 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 
 		// Skip header lines and empty lines
 		if line == "" || strings.Contains(line, "Loaded plugins") ||
-			strings.Contains(line, "Last metadata") || strings.HasPrefix(line, "Loading") {
+			strings.Contains(line, "Last metadata") || strings.HasPrefix(line, "Loading") ||
+            strings.HasPrefix(line, "Updating Subscription") {
 			continue
 		}
 
