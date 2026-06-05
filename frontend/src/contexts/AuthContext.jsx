@@ -668,6 +668,7 @@ export const AuthProvider = ({ children }) => {
 	const canManageAlerts = () => hasPermission("can_manage_alerts");
 	const canManageAutomation = () => hasPermission("can_manage_automation");
 	const canUseRemoteAccess = () => hasPermission("can_use_remote_access");
+	const canRebootHosts = () => hasPermission("can_reboot_hosts");
 
 	// Module feature flagging (multi-context). `tenant.modules` is a comma-separated
 	// string, or "*" for wildcard (all modules). In single-context (self-hosted)
@@ -881,6 +882,7 @@ export const AuthProvider = ({ children }) => {
 		canManageAlerts,
 		canManageAutomation,
 		canUseRemoteAccess,
+		canRebootHosts,
 		acceptReleaseNotes,
 		// Multi-context module feature flags
 		tenant,
