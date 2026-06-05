@@ -57,6 +57,32 @@ func (d *Detector) CheckRebootRequired() (bool, string) {
 	return false, ""
 }
 
+// ScheduleReboot schedules a system reboot after the given delay in minutes.
+// The reason is shown to logged-in users where the platform supports it.
+func (d *Detector) ScheduleReboot(delayMinutes int, reason string) error {
+	if delayMinutes < 1 {
+		delayMinutes = 1
+	}
+
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("shutdown", "/r", "/t", strconv.Itoa(delayMinutes*60), "/c", reason)
+	} else {
+		cmd = exec.Command("shutdown", "-r", fmt.Sprintf("+%d", delayMinutes), reason)
+	}
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("failed to schedule reboot: %w (output: %s)", err, strings.TrimSpace(string(output)))
+	}
+
+	d.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
+		"delay_minutes": delayMinutes,
+		"reason":        reason,
+	})).Info("System reboot scheduled")
+	return nil
+}
+
 // checkWindowsRebootRequired checks if Windows requires a reboot (per UsoClient/WUA docs)
 // Checks: RebootRequired registry, PendingFileRenameOperations, CBS reboot-pending
 func (d *Detector) checkWindowsRebootRequired() (bool, string) {

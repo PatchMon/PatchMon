@@ -368,6 +368,10 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 				if err := sendReport(false); err != nil {
 					logger.WithError(err).Warn("report_now failed")
 				}
+			case "reboot":
+				if err := executeReboot(m.rebootOnlyIfRequired); err != nil {
+					logger.WithError(err).Warn("reboot failed")
+				}
 			case "update_agent":
 				if err := updateAgent(); err != nil {
 					logger.WithError(err).Warn("update_agent failed")
@@ -1130,6 +1134,55 @@ func startIntegrationMonitoring(ctx context.Context, eventChan chan<- interface{
 	}
 }
 
+// rebootDelayMinutes is the fixed delay before a server-triggered reboot executes,
+// giving the agent time to flush logs and giving admins a window to cancel on the host.
+const rebootDelayMinutes = 1
+
+// insecureRebootTransport reports whether the command channel to the server
+// is open to MITM injection, and why: either TLS verification is disabled
+// (skip_ssl_verify) or the server URL uses plain http://, which results in an
+// unencrypted ws:// WebSocket.
+func insecureRebootTransport(cfg *models.Config) (bool, string) {
+	if cfg.SkipSSLVerify || client.IsSkipSSLVerifyEnvSet() {
+		return true, "TLS verification is disabled (skip_ssl_verify)"
+	}
+	server := strings.ToLower(strings.TrimSpace(cfg.PatchmonServer))
+	if strings.HasPrefix(server, "http://") || strings.HasPrefix(server, "ws://") {
+		return true, "server URL uses unencrypted http:// (plain ws:// WebSocket)"
+	}
+	return false, ""
+}
+
+// executeReboot schedules a system reboot requested by the server via WebSocket.
+// When onlyIfRequired is set, the reboot is skipped unless the system reports
+// a pending reboot (kernel update, reboot-required flag, etc.).
+func executeReboot(onlyIfRequired bool) error {
+	// Fail closed: over an insecure channel a destructive command must not be
+	// trusted. Lab environments can opt in explicitly via
+	// allow_reboot_insecure_transport in the agent config.
+	cfg := cfgManager.GetConfig()
+	if insecure, reason := insecureRebootTransport(cfg); insecure {
+		if !cfg.AllowRebootInsecure {
+			logger.WithField("reason", reason).Error("Refusing remote reboot: the command channel is not MITM-protected. Set allow_reboot_insecure_transport: true in the agent config to allow this in trusted networks.")
+			return fmt.Errorf("remote reboot refused: %s", reason)
+		}
+		logger.WithField("reason", reason).Warn("Executing remote reboot over an insecure channel (allow_reboot_insecure_transport is enabled)")
+	}
+
+	detector := system.New(logger)
+
+	if onlyIfRequired {
+		needsReboot, reason := detector.CheckRebootRequired()
+		if !needsReboot {
+			logger.Info("Reboot skipped: system does not require a reboot")
+			return nil
+		}
+		logger.WithField("reason", logutil.Sanitize(reason)).Info("Reboot required, proceeding with scheduled reboot")
+	}
+
+	return detector.ScheduleReboot(rebootDelayMinutes, "PatchMon remote reboot")
+}
+
 type wsMsg struct {
 	kind                      string
 	interval                  int
@@ -1170,6 +1223,8 @@ type wsMsg struct {
 	packageNames []string
 	dryRun       bool
 	sshProxyData string // SSH input data
+	// reboot fields
+	rebootOnlyIfRequired bool // For reboot: only reboot if the system reports a pending reboot
 	// RDP proxy fields
 	rdpProxySessionID string // Unique session ID for RDP proxy
 	rdpProxyHost      string // RDP target host (default localhost)
@@ -1601,6 +1656,8 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 			PackageName  string   `json:"package_name"`
 			PackageNames []string `json:"package_names"`
 			DryRun       bool     `json:"dry_run"`
+			// reboot fields
+			OnlyIfRequired *bool `json:"only_if_required"` // For reboot: skip unless a reboot is pending; required, fail-safe
 		}
 		if err := json.Unmarshal(data, &payload); err != nil {
 			logger.WithError(err).WithField("message_bytes", len(data)).Warn("Failed to parse WebSocket message")
@@ -1614,6 +1671,16 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 		case "report_now":
 			logger.Info("report_now received")
 			out <- wsMsg{kind: "report_now"}
+		case "reboot":
+			// Fail-safe: only_if_required is mandatory. A message without it
+			// (malformed or from an outdated server) must not cause an
+			// unconditional reboot.
+			if payload.OnlyIfRequired == nil {
+				logger.Warn("reboot message missing only_if_required field, ignoring")
+				continue
+			}
+			logger.WithField("only_if_required", *payload.OnlyIfRequired).Info("reboot received")
+			out <- wsMsg{kind: "reboot", rebootOnlyIfRequired: *payload.OnlyIfRequired}
 		case "update_agent":
 			logger.Info("update_agent received")
 			out <- wsMsg{kind: "update_agent"}
