@@ -51,6 +51,7 @@ func (h *PermissionsHandler) GetRoles(w http.ResponseWriter, r *http.Request) {
 			"can_manage_automation":      p.CanManageAutomation,
 			"can_use_remote_access":      p.CanUseRemoteAccess,
 			"can_manage_billing":         p.CanManageBilling,
+			"can_reboot_hosts":           p.CanRebootHosts,
 			"created_at":                 p.CreatedAt,
 			"updated_at":                 p.UpdatedAt,
 		}
@@ -108,6 +109,7 @@ func (h *PermissionsHandler) UpdateRole(w http.ResponseWriter, r *http.Request) 
 		CanManageAutomation     *bool `json:"can_manage_automation"`
 		CanUseRemoteAccess      *bool `json:"can_use_remote_access"`
 		CanManageBilling        *bool `json:"can_manage_billing"`
+		CanRebootHosts          *bool `json:"can_reboot_hosts"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		Error(w, http.StatusBadRequest, "Invalid request body")
@@ -141,6 +143,7 @@ func (h *PermissionsHandler) UpdateRole(w http.ResponseWriter, r *http.Request) 
 		CanManageAutomation:     boolVal(req.CanManageAutomation),
 		CanUseRemoteAccess:      boolVal(req.CanUseRemoteAccess),
 		CanManageBilling:        boolVal(req.CanManageBilling),
+		CanRebootHosts:          boolVal(req.CanRebootHosts),
 	}
 	if err := h.permissions.UpsertRole(r.Context(), p); err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to update role permissions")
@@ -201,6 +204,7 @@ func roleToResponse(p *models.RolePermission) map[string]interface{} {
 		"can_manage_automation":      p.CanManageAutomation,
 		"can_use_remote_access":      p.CanUseRemoteAccess,
 		"can_manage_billing":         p.CanManageBilling,
+		"can_reboot_hosts":           p.CanRebootHosts,
 		"created_at":                 p.CreatedAt, "updated_at": p.UpdatedAt,
 	}
 }
@@ -243,6 +247,7 @@ func (h *PermissionsHandler) UserPermissions(w http.ResponseWriter, r *http.Requ
 		"can_manage_automation":      p.CanManageAutomation,
 		"can_use_remote_access":      p.CanUseRemoteAccess,
 		"can_manage_billing":         p.CanManageBilling,
+		"can_reboot_hosts":           p.CanRebootHosts,
 	})
 }
 
@@ -256,6 +261,6 @@ func fullPermissions() map[string]bool {
 		"can_manage_patching": true, "can_manage_compliance": true,
 		"can_manage_docker": true, "can_manage_alerts": true,
 		"can_manage_automation": true, "can_use_remote_access": true,
-		"can_manage_billing": true,
+		"can_manage_billing": true, "can_reboot_hosts": true,
 	}
 }

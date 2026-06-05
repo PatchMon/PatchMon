@@ -33,6 +33,7 @@ func dbRolePermissionToModel(r db.RolePermission) models.RolePermission {
 		CanManageAutomation:     r.CanManageAutomation,
 		CanUseRemoteAccess:      r.CanUseRemoteAccess,
 		CanManageBilling:        r.CanManageBilling,
+		CanRebootHosts:          r.CanRebootHosts,
 		CreatedAt:               pgTime(r.CreatedAt),
 		UpdatedAt:               pgTime(r.UpdatedAt),
 	}
@@ -479,6 +480,7 @@ func dbHostToModel(h db.Host) *models.Host {
 		Notes:                        h.Notes,
 		NeedsReboot:                  h.NeedsReboot,
 		RebootReason:                 h.RebootReason,
+		AllowReboot:                  h.AllowReboot,
 		DockerEnabled:                h.DockerEnabled,
 		ComplianceEnabled:            h.ComplianceEnabled,
 		ComplianceOnDemandOnly:       h.ComplianceOnDemandOnly,

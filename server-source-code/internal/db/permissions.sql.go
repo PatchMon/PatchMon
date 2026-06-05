@@ -30,7 +30,7 @@ func (q *Queries) DeleteRolePermissions(ctx context.Context, role string) error 
 }
 
 const getRolePermissions = `-- name: GetRolePermissions :one
-SELECT id, role, can_view_dashboard, can_view_hosts, can_manage_hosts, can_view_packages, can_manage_packages, can_view_users, can_manage_users, can_manage_superusers, can_view_reports, can_export_data, can_manage_settings, can_manage_notifications, can_view_notification_logs, can_manage_patching, can_manage_compliance, can_manage_docker, can_manage_alerts, can_manage_automation, can_use_remote_access, can_manage_billing, created_at, updated_at FROM role_permissions WHERE role = $1
+SELECT id, role, can_view_dashboard, can_view_hosts, can_manage_hosts, can_view_packages, can_manage_packages, can_view_users, can_manage_users, can_manage_superusers, can_view_reports, can_export_data, can_manage_settings, can_manage_notifications, can_view_notification_logs, can_manage_patching, can_manage_compliance, can_manage_docker, can_manage_alerts, can_manage_automation, can_use_remote_access, can_manage_billing, can_reboot_hosts, created_at, updated_at FROM role_permissions WHERE role = $1
 `
 
 func (q *Queries) GetRolePermissions(ctx context.Context, role string) (RolePermission, error) {
@@ -59,6 +59,7 @@ func (q *Queries) GetRolePermissions(ctx context.Context, role string) (RolePerm
 		&i.CanManageAutomation,
 		&i.CanUseRemoteAccess,
 		&i.CanManageBilling,
+		&i.CanRebootHosts,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -66,7 +67,7 @@ func (q *Queries) GetRolePermissions(ctx context.Context, role string) (RolePerm
 }
 
 const listRoles = `-- name: ListRoles :many
-SELECT id, role, can_view_dashboard, can_view_hosts, can_manage_hosts, can_view_packages, can_manage_packages, can_view_users, can_manage_users, can_manage_superusers, can_view_reports, can_export_data, can_manage_settings, can_manage_notifications, can_view_notification_logs, can_manage_patching, can_manage_compliance, can_manage_docker, can_manage_alerts, can_manage_automation, can_use_remote_access, can_manage_billing, created_at, updated_at FROM role_permissions ORDER BY role
+SELECT id, role, can_view_dashboard, can_view_hosts, can_manage_hosts, can_view_packages, can_manage_packages, can_view_users, can_manage_users, can_manage_superusers, can_view_reports, can_export_data, can_manage_settings, can_manage_notifications, can_view_notification_logs, can_manage_patching, can_manage_compliance, can_manage_docker, can_manage_alerts, can_manage_automation, can_use_remote_access, can_manage_billing, can_reboot_hosts, created_at, updated_at FROM role_permissions ORDER BY role
 `
 
 func (q *Queries) ListRoles(ctx context.Context) ([]RolePermission, error) {
@@ -101,6 +102,7 @@ func (q *Queries) ListRoles(ctx context.Context) ([]RolePermission, error) {
 			&i.CanManageAutomation,
 			&i.CanUseRemoteAccess,
 			&i.CanManageBilling,
+			&i.CanRebootHosts,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -122,11 +124,11 @@ INSERT INTO role_permissions (
     can_manage_notifications, can_view_notification_logs,
     can_manage_patching, can_manage_compliance, can_manage_docker,
     can_manage_alerts, can_manage_automation, can_use_remote_access,
-    can_manage_billing,
+    can_manage_billing, can_reboot_hosts,
     created_at, updated_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-    $16, $17, $18, $19, $20, $21, $22,
+    $16, $17, $18, $19, $20, $21, $22, $23,
     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 )
 ON CONFLICT (role) DO UPDATE SET
@@ -150,8 +152,9 @@ ON CONFLICT (role) DO UPDATE SET
     can_manage_automation = EXCLUDED.can_manage_automation,
     can_use_remote_access = EXCLUDED.can_use_remote_access,
     can_manage_billing = EXCLUDED.can_manage_billing,
+    can_reboot_hosts = EXCLUDED.can_reboot_hosts,
     updated_at = CURRENT_TIMESTAMP
-RETURNING id, role, can_view_dashboard, can_view_hosts, can_manage_hosts, can_view_packages, can_manage_packages, can_view_users, can_manage_users, can_manage_superusers, can_view_reports, can_export_data, can_manage_settings, can_manage_notifications, can_view_notification_logs, can_manage_patching, can_manage_compliance, can_manage_docker, can_manage_alerts, can_manage_automation, can_use_remote_access, can_manage_billing, created_at, updated_at
+RETURNING id, role, can_view_dashboard, can_view_hosts, can_manage_hosts, can_view_packages, can_manage_packages, can_view_users, can_manage_users, can_manage_superusers, can_view_reports, can_export_data, can_manage_settings, can_manage_notifications, can_view_notification_logs, can_manage_patching, can_manage_compliance, can_manage_docker, can_manage_alerts, can_manage_automation, can_use_remote_access, can_manage_billing, can_reboot_hosts, created_at, updated_at
 `
 
 type UpsertRolePermissionsParams struct {
@@ -177,6 +180,7 @@ type UpsertRolePermissionsParams struct {
 	CanManageAutomation     bool   `json:"can_manage_automation"`
 	CanUseRemoteAccess      bool   `json:"can_use_remote_access"`
 	CanManageBilling        bool   `json:"can_manage_billing"`
+	CanRebootHosts          bool   `json:"can_reboot_hosts"`
 }
 
 func (q *Queries) UpsertRolePermissions(ctx context.Context, arg UpsertRolePermissionsParams) (RolePermission, error) {
@@ -203,6 +207,7 @@ func (q *Queries) UpsertRolePermissions(ctx context.Context, arg UpsertRolePermi
 		arg.CanManageAutomation,
 		arg.CanUseRemoteAccess,
 		arg.CanManageBilling,
+		arg.CanRebootHosts,
 	)
 	var i RolePermission
 	err := row.Scan(
@@ -228,6 +233,7 @@ func (q *Queries) UpsertRolePermissions(ctx context.Context, arg UpsertRolePermi
 		&i.CanManageAutomation,
 		&i.CanUseRemoteAccess,
 		&i.CanManageBilling,
+		&i.CanRebootHosts,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

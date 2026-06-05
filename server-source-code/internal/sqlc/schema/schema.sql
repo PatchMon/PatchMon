@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS role_permissions (
     can_manage_automation BOOLEAN NOT NULL DEFAULT false,
     can_use_remote_access BOOLEAN NOT NULL DEFAULT false,
     can_manage_billing BOOLEAN NOT NULL DEFAULT false,
+    can_reboot_hosts BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP(3) NOT NULL
 );
@@ -228,6 +229,7 @@ CREATE TABLE IF NOT EXISTS hosts (
     notes TEXT,
     needs_reboot BOOLEAN DEFAULT false,
     reboot_reason TEXT,
+    allow_reboot BOOLEAN NOT NULL DEFAULT false,
     docker_enabled BOOLEAN NOT NULL DEFAULT false,
     compliance_enabled BOOLEAN NOT NULL DEFAULT false,
     compliance_on_demand_only BOOLEAN NOT NULL DEFAULT true,

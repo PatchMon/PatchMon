@@ -4,13 +4,20 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"slices"
+	"strings"
+	"sync"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
@@ -535,6 +542,349 @@ func (h *HostsHandler) FetchReportBulk(w http.ResponseWriter, r *http.Request) {
 		"message":  "Fetch report requested",
 		"success":  true,
 		"enqueued": enqueued,
+	})
+}
+
+// maxRebootBatchSize caps a single bulk reboot request. Prevents an accidental
+// (or scripted) select-all from rebooting an entire fleet in one call.
+const maxRebootBatchSize = 100
+
+// isContainerized reports whether the server runs inside a container
+// (Docker creates /.dockerenv, Podman /run/.containerenv).
+var isContainerized = sync.OnceValue(func() bool {
+	for _, p := range []string{"/.dockerenv", "/run/.containerenv"} {
+		if _, err := os.Stat(p); err == nil {
+			return true
+		}
+	}
+	return false
+})
+
+// normalizeMachineID canonicalizes a machine identifier for comparison:
+// agents report gopsutil's host.HostID() (on Linux the dashed DMI product
+// UUID), while operators may configure the undashed /etc/machine-id form.
+func normalizeMachineID(s string) string {
+	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(s)), "-", "")
+}
+
+// serverMachineIDs caches the normalized candidate identifiers of the machine
+// running the PatchMon server itself, for the reboot self-exclusion check.
+//
+// Agents report gopsutil's host.HostID(), which on Linux prefers the DMI
+// product UUID and falls back to /etc/machine-id (e.g. in LXC or VMs without
+// DMI). The server therefore collects every identifier its own host may be
+// known by: the PM_SERVER_MACHINE_ID override, the DMI product UUID (sysfs is
+// host-wide even inside containers), the host's machine-id bind-mounted to
+// /run/host-machine-id (see docker-compose), and the local machine-id files
+// outside containers. An empty result means self-exclusion cannot work;
+// RebootBulk fails closed in that case.
+var serverMachineIDs = sync.OnceValue(func() []string {
+	var ids []string
+	add := func(s string) {
+		if n := normalizeMachineID(s); n != "" && !slices.Contains(ids, n) {
+			ids = append(ids, n)
+		}
+	}
+	add(os.Getenv("PM_SERVER_MACHINE_ID"))
+	if b, err := os.ReadFile("/sys/class/dmi/id/product_uuid"); err == nil {
+		add(string(b))
+	}
+	// The Docker host's machine-id, bind-mounted read-only into the container.
+	if b, err := os.ReadFile("/run/host-machine-id"); err == nil {
+		add(string(b))
+	}
+	if !isContainerized() {
+		for _, p := range []string{"/etc/machine-id", "/var/lib/dbus/machine-id"} {
+			if b, err := os.ReadFile(p); err == nil {
+				add(string(b))
+			}
+		}
+	}
+	return ids
+})
+
+// isSelfHost reports whether the given host is the machine the PatchMon server
+// itself runs on. Matches on machine_id only: a hostname fallback would let a
+// host that merely shares the server's (short) hostname dodge reboots, and
+// hostnames are agent-reported and freely choosable.
+func isSelfHost(host *models.Host) bool {
+	if host.MachineID == nil {
+		return false
+	}
+	id := normalizeMachineID(*host.MachineID)
+	return id != "" && slices.Contains(serverMachineIDs(), id)
+}
+
+// AllowRebootBulk handles PUT /hosts/bulk/allow-reboot. Sets the allow_reboot
+// allowlist flag on the given hosts. The change is audited before it is
+// applied (fail closed): the flag gates a destructive action, so an
+// unauditable change must not happen. The PatchMon server's own host is
+// refused here as well, mirroring the reboot self-exclusion.
+func (h *HostsHandler) AllowRebootBulk(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		HostIDs     []string `json:"hostIds"`
+		AllowReboot bool     `json:"allowReboot"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		Error(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if len(req.HostIDs) == 0 {
+		Error(w, http.StatusBadRequest, "hostIds required")
+		return
+	}
+
+	seen := make(map[string]struct{}, len(req.HostIDs))
+	hostIDs := make([]string, 0, len(req.HostIDs))
+	for _, id := range req.HostIDs {
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		hostIDs = append(hostIDs, id)
+	}
+
+	hosts, err := h.hosts.GetByIDs(r.Context(), hostIDs)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to resolve hosts")
+		return
+	}
+	found := make(map[string]*models.Host, len(hosts))
+	for i := range hosts {
+		found[hosts[i].ID] = &hosts[i]
+	}
+
+	updateIDs := []string{}
+	updated := []map[string]string{}
+	skipped := []map[string]string{}
+	for _, hostID := range hostIDs {
+		host, ok := found[hostID]
+		if !ok {
+			skipped = append(skipped, map[string]string{"hostId": hostID, "reason": "Host not found"})
+			continue
+		}
+		hostname := host.FriendlyName
+		if host.Hostname != nil && *host.Hostname != "" {
+			hostname = *host.Hostname
+		}
+		if req.AllowReboot && isSelfHost(host) {
+			skipped = append(skipped, map[string]string{"hostId": hostID, "hostname": hostname, "reason": "PatchMon server host cannot be made rebootable"})
+			continue
+		}
+		updateIDs = append(updateIDs, hostID)
+		updated = append(updated, map[string]string{"hostId": hostID, "hostname": hostname})
+	}
+
+	if len(updateIDs) > 0 {
+		if err := h.writeAuditLog(r, "host_allow_reboot_updated", true, map[string]interface{}{
+			"allow_reboot": req.AllowReboot,
+			"hosts":        updated,
+			"skipped":      skipped,
+		}); err != nil {
+			slog.Error("refusing allow_reboot change: audit log write failed", "error", err)
+			Error(w, http.StatusInternalServerError, "Failed to write audit log")
+			return
+		}
+		if err := h.hosts.UpdateAllowReboot(r.Context(), updateIDs, req.AllowReboot); err != nil {
+			// The intent entry above is already written; log the divergence.
+			slog.Error("allow_reboot update failed after audit write", "error", err)
+			Error(w, http.StatusInternalServerError, "Failed to update hosts")
+			return
+		}
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"message": "Reboot permission " + map[bool]string{true: "granted", false: "revoked"}[req.AllowReboot],
+		"success": true,
+		"updated": len(updateIDs),
+		"skipped": skipped,
+	})
+}
+
+// RebootBulk handles POST /hosts/bulk/reboot. The host running the PatchMon
+// server itself is excluded and reported back in the skipped list.
+func (h *HostsHandler) RebootBulk(w http.ResponseWriter, r *http.Request) {
+	if h.queueClient == nil {
+		Error(w, http.StatusServiceUnavailable, "Queue service unavailable")
+		return
+	}
+	var req struct {
+		HostIDs        []string `json:"hostIds"`
+		OnlyIfRequired bool     `json:"onlyIfRequired"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		Error(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if len(req.HostIDs) == 0 {
+		Error(w, http.StatusBadRequest, "hostIds required")
+		return
+	}
+
+	// Fail closed: without a known server machine identity the self-exclusion
+	// check cannot work, so no reboot is allowed at all.
+	if len(serverMachineIDs()) == 0 {
+		slog.Error("refusing reboot request: self-exclusion not configured (no DMI product UUID, no /run/host-machine-id mount, no PM_SERVER_MACHINE_ID)")
+		Error(w, http.StatusServiceUnavailable, "Reboot refused: self-exclusion is not configured. Mount the host's /etc/machine-id to /run/host-machine-id or set PM_SERVER_MACHINE_ID.")
+		return
+	}
+
+	// Deduplicate before the batch-size check so repeated IDs neither inflate
+	// the count nor produce duplicate audit entries / misleading skip reasons.
+	seen := make(map[string]struct{}, len(req.HostIDs))
+	hostIDs := make([]string, 0, len(req.HostIDs))
+	for _, id := range req.HostIDs {
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		hostIDs = append(hostIDs, id)
+	}
+	if len(hostIDs) > maxRebootBatchSize {
+		Error(w, http.StatusBadRequest, fmt.Sprintf("Too many hosts: maximum %d per reboot request", maxRebootBatchSize))
+		return
+	}
+
+	// Phase 1: resolve hosts, apply the allow_reboot allowlist and the
+	// self-exclusion check. allow_reboot is fail-closed by design: hosts an
+	// operator never opted in are not rebootable.
+	type rebootTarget struct {
+		host     *models.Host
+		hostID   string
+		hostname string
+	}
+	targets := []rebootTarget{}
+	requested := []map[string]string{}
+	skipped := []map[string]string{}
+	for _, hostID := range hostIDs {
+		host, err := h.hosts.GetByID(r.Context(), hostID)
+		if err != nil || host == nil {
+			skipped = append(skipped, map[string]string{"hostId": hostID, "reason": "Host not found"})
+			continue
+		}
+		hostname := host.FriendlyName
+		if host.Hostname != nil && *host.Hostname != "" {
+			hostname = *host.Hostname
+		}
+		if isSelfHost(host) {
+			skipped = append(skipped, map[string]string{"hostId": hostID, "hostname": hostname, "reason": "PatchMon server host cannot be rebooted"})
+			continue
+		}
+		if !host.AllowReboot {
+			skipped = append(skipped, map[string]string{"hostId": hostID, "hostname": hostname, "reason": "Reboot not allowed for this host (allow_reboot is not set)"})
+			continue
+		}
+		targets = append(targets, rebootTarget{host: host, hostID: hostID, hostname: hostname})
+		requested = append(requested, map[string]string{"hostId": hostID, "hostname": hostname})
+	}
+
+	// Phase 2: write the audit intent BEFORE enqueueing. Fail closed: a reboot
+	// that cannot be audited must not happen.
+	if err := h.auditRebootRequest(r, req.OnlyIfRequired, requested, skipped); err != nil {
+		slog.Error("refusing reboot request: audit log write failed", "error", err)
+		Error(w, http.StatusInternalServerError, "Failed to write audit log")
+		return
+	}
+
+	// Phase 3: enqueue. Per-host delivery status is tracked in job_history.
+	enqueued := 0
+	failed := []map[string]string{}
+	for _, t := range targets {
+		task, err := queue.NewRebootTask(queue.RebootPayload{
+			ApiID:          t.host.ApiID,
+			Host:           hostFromRequest(r),
+			OnlyIfRequired: req.OnlyIfRequired,
+		})
+		if err != nil {
+			failed = append(failed, map[string]string{"hostId": t.hostID, "hostname": t.hostname, "reason": "Failed to create reboot task"})
+			continue
+		}
+		if _, err := h.queueClient.Enqueue(task); err != nil {
+			reason := "Failed to enqueue reboot task"
+			if errors.Is(err, asynq.ErrTaskIDConflict) {
+				reason = "Reboot already pending for this host (cooldown)"
+			}
+			failed = append(failed, map[string]string{"hostId": t.hostID, "hostname": t.hostname, "reason": reason})
+			continue
+		}
+		enqueued++
+	}
+	skipped = append(skipped, failed...)
+
+	// Phase 4: record the effective outcome. The intent entry above can claim
+	// success while every enqueue fails; this follow-up entry closes that gap.
+	// Best effort: the action already happened, so a write failure is logged
+	// rather than turned into a client error.
+	if err := h.auditRebootResult(r, enqueued, failed); err != nil {
+		slog.Error("failed to write reboot result audit log", "error", err)
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"message":  "Reboot requested",
+		"success":  true,
+		"enqueued": enqueued,
+		"skipped":  skipped,
+	})
+}
+
+// auditRebootRequest writes an audit_logs entry attributing the reboot request
+// to the acting user, before any task is enqueued. job_history covers the
+// per-host command lifecycle but has no user attribution, so this destructive
+// action is additionally audited here.
+func (h *HostsHandler) auditRebootRequest(r *http.Request, onlyIfRequired bool, requested, skipped []map[string]string) error {
+	return h.writeAuditLog(r, "host_reboot_requested", len(requested) > 0, map[string]interface{}{
+		"only_if_required": onlyIfRequired,
+		"requested":        requested,
+		"skipped":          skipped,
+	})
+}
+
+// auditRebootResult records the effective enqueue outcome, complementing the
+// intent entry written by auditRebootRequest.
+func (h *HostsHandler) auditRebootResult(r *http.Request, enqueued int, failed []map[string]string) error {
+	return h.writeAuditLog(r, "host_reboot_enqueued", enqueued > 0, map[string]interface{}{
+		"enqueued": enqueued,
+		"failed":   failed,
+	})
+}
+
+// writeAuditLog inserts an audit_logs entry attributed to the acting user.
+func (h *HostsHandler) writeAuditLog(r *http.Request, event string, success bool, detail map[string]interface{}) error {
+	if h.db == nil {
+		return fmt.Errorf("no database available for audit log")
+	}
+	ctx := r.Context()
+	d := h.db.DB(ctx)
+	if d == nil {
+		return fmt.Errorf("no database available for audit log")
+	}
+
+	var userID *string
+	if uid, _ := ctx.Value(middleware.UserIDKey).(string); uid != "" {
+		userID = &uid
+	}
+	var requestID *string
+	if rid, _ := ctx.Value(middleware.RequestIDKey).(string); rid != "" {
+		requestID = &rid
+	}
+	ip := clientIPFromRequest(r)
+	ua := r.UserAgent()
+
+	var details *string
+	if b, err := json.Marshal(detail); err == nil {
+		s := string(b)
+		details = &s
+	}
+
+	return d.Queries.InsertAuditLog(ctx, db.InsertAuditLogParams{
+		ID:        uuid.New().String(),
+		Event:     event,
+		UserID:    userID,
+		IpAddress: &ip,
+		UserAgent: &ua,
+		RequestID: requestID,
+		Details:   details,
+		Success:   success,
 	})
 }
 
@@ -1233,7 +1583,7 @@ func hostToResponse(h *models.Host, groups []models.HostGroup) map[string]interf
 		"os_type": h.OSType, "os_version": h.OSVersion, "architecture": h.Architecture,
 		"last_update": h.LastUpdate, "status": h.Status, "api_id": h.ApiID, "agent_version": h.AgentVersion,
 		"auto_update": h.AutoUpdate, "created_at": h.CreatedAt, "notes": h.Notes,
-		"system_uptime": h.SystemUptime, "needs_reboot": h.NeedsReboot,
+		"system_uptime": h.SystemUptime, "needs_reboot": h.NeedsReboot, "allow_reboot": h.AllowReboot,
 		"docker_enabled": h.DockerEnabled, "compliance_enabled": h.ComplianceEnabled,
 		"package_manager": h.PackageManager, "primary_interface": h.PrimaryInterface,
 		"awaiting_post_patch_report_run_id": h.AwaitingPostPatchReportRunID,

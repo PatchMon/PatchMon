@@ -321,6 +321,7 @@ func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsLis
 			"ip": h.Ip, "os_type": h.OsType, "os_version": h.OsVersion,
 			"status": h.Status, "agent_version": h.AgentVersion, "auto_update": h.AutoUpdate,
 			"notes": h.Notes, "api_id": h.ApiID, "needs_reboot": h.NeedsReboot, "reboot_reason": h.RebootReason,
+			"allow_reboot":   h.AllowReboot,
 			"system_uptime":  h.SystemUptime,
 			"docker_enabled": h.DockerEnabled, "compliance_enabled": h.ComplianceEnabled,
 			"compliance_on_demand_only": h.ComplianceOnDemandOnly,
