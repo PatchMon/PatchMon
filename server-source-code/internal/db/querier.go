@@ -323,6 +323,7 @@ type Querier interface {
 	HostInHostGroup(ctx context.Context, arg HostInHostGroupParams) (bool, error)
 	IncrementAutoEnrollmentHostsCreated(ctx context.Context, id string) error
 	InsertAlertHistory(ctx context.Context, arg InsertAlertHistoryParams) (AlertHistory, error)
+	InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) error
 	InsertDashboardPreference(ctx context.Context, arg InsertDashboardPreferenceParams) error
 	InsertHostGroupMembership(ctx context.Context, arg InsertHostGroupMembershipParams) error
 	InsertHostRepository(ctx context.Context, arg InsertHostRepositoryParams) error
@@ -440,6 +441,7 @@ type Querier interface {
 	UpdateHostPing(ctx context.Context, id string) error
 	UpdateHostPrimaryInterface(ctx context.Context, arg UpdateHostPrimaryInterfaceParams) error
 	UpdateHostRebootStatus(ctx context.Context, arg UpdateHostRebootStatusParams) error
+	UpdateHostsAllowReboot(ctx context.Context, arg UpdateHostsAllowRebootParams) error
 	UpdateJobHistoryCompleted(ctx context.Context, jobID string) error
 	UpdateJobHistoryDelayed(ctx context.Context, jobID string) error
 	UpdateJobHistoryFailed(ctx context.Context, arg UpdateJobHistoryFailedParams) error

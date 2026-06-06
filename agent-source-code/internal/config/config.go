@@ -367,6 +367,7 @@ func (m *Manager) SaveConfig() error {
 	configViper.Set("log_file", m.config.LogFile)
 	configViper.Set("log_level", m.config.LogLevel)
 	configViper.Set("skip_ssl_verify", m.config.SkipSSLVerify)
+	configViper.Set("allow_reboot_insecure_transport", m.config.AllowRebootInsecure)
 	configViper.Set("update_interval", m.config.UpdateInterval)
 	configViper.Set("report_offset", m.config.ReportOffset)
 	configViper.Set("package_cache_refresh_mode", m.config.PackageCacheRefreshMode)

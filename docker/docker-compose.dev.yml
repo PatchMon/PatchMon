@@ -64,9 +64,9 @@ services:
       DATABASE_URL: postgresql://patchmon_user:1NS3CU6E_DEV_D8_PASSW0RD@database:5432/patchmon_db
       JWT_SECRET: INS3CURE_DEV_7WT_5ECR3T
       SERVER_PROTOCOL: http
-      SERVER_HOST: localhost
+      SERVER_HOST: ${PM_SERVER_HOST:-localhost}
       SERVER_PORT: 3000
-      CORS_ORIGIN: http://localhost:3000
+      CORS_ORIGIN: http://localhost:3000,http://${PM_SERVER_HOST:-localhost}:3000
       # Database Connection Pool Configuration (Prisma)
       DB_CONNECTION_LIMIT: 30
       DB_POOL_TIMEOUT: 20
@@ -85,6 +85,17 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: 1NS3CU6E_DEV_R3DIS_PASSW0RD
       REDIS_DB: 0
+      # Optional override for the reboot self-exclusion check. Normally NOT
+      # needed: the server auto-detects the Docker host's DMI product UUID
+      # (/sys/class/dmi/id/product_uuid), which is what agents report as
+      # machine_id. Only set this when that file is unreadable (e.g. rootless
+      # container) - use the host's product_uuid value, not /etc/machine-id:
+      #   export PM_SERVER_MACHINE_ID=$(sudo cat /sys/class/dmi/id/product_uuid)
+      PM_SERVER_MACHINE_ID: ${PM_SERVER_MACHINE_ID:-}
+    volumes:
+      # Host machine-id for the reboot self-exclusion check: agents on hosts
+      # without readable DMI (e.g. LXC) report this value as machine_id.
+      - /etc/machine-id:/run/host-machine-id:ro
     ports:
       - "3000:3000"
     networks:

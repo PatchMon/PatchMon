@@ -65,6 +65,7 @@ func (s *HostsStore) ListPaginated(ctx context.Context, limit, offset int) ([]mo
 			Notes:             r.Notes,
 			SystemUptime:      r.SystemUptime,
 			NeedsReboot:       r.NeedsReboot,
+			AllowReboot:       r.AllowReboot,
 			DockerEnabled:     r.DockerEnabled,
 			ComplianceEnabled: r.ComplianceEnabled,
 		}
@@ -202,6 +203,17 @@ func (s *HostsStore) UpdateAutoUpdate(ctx context.Context, id string, autoUpdate
 	return d.Queries.UpdateHostAutoUpdate(ctx, db.UpdateHostAutoUpdateParams{
 		AutoUpdate: autoUpdate,
 		ID:         id,
+	})
+}
+
+// UpdateAllowReboot updates the allow_reboot flag for a set of hosts.
+// Remote reboot is allowlist-based: only hosts with allow_reboot = true
+// can be rebooted via the bulk reboot endpoint.
+func (s *HostsStore) UpdateAllowReboot(ctx context.Context, ids []string, allow bool) error {
+	d := s.db.DB(ctx)
+	return d.Queries.UpdateHostsAllowReboot(ctx, db.UpdateHostsAllowRebootParams{
+		AllowReboot: allow,
+		Ids:         ids,
 	})
 }
 

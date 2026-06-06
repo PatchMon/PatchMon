@@ -287,6 +287,7 @@ type Host struct {
 	Notes                        *string          `json:"notes"`
 	NeedsReboot                  *bool            `json:"needs_reboot"`
 	RebootReason                 *string          `json:"reboot_reason"`
+	AllowReboot                  bool             `json:"allow_reboot"`
 	DockerEnabled                bool             `json:"docker_enabled"`
 	ComplianceEnabled            bool             `json:"compliance_enabled"`
 	ComplianceOnDemandOnly       bool             `json:"compliance_on_demand_only"`
@@ -521,6 +522,7 @@ type RolePermission struct {
 	CanManageAutomation     bool             `json:"can_manage_automation"`
 	CanUseRemoteAccess      bool             `json:"can_use_remote_access"`
 	CanManageBilling        bool             `json:"can_manage_billing"`
+	CanRebootHosts          bool             `json:"can_reboot_hosts"`
 	CreatedAt               pgtype.Timestamp `json:"created_at"`
 	UpdatedAt               pgtype.Timestamp `json:"updated_at"`
 }

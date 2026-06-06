@@ -18,11 +18,14 @@ import {
 	FolderPlus,
 	GripVertical,
 	Plus,
+	Power,
 	RefreshCw,
 	RotateCcw,
 	Search,
 	Server,
 	Shield,
+	ShieldCheck,
+	ShieldOff,
 	Square,
 	Trash2,
 	Wifi,
@@ -34,6 +37,7 @@ import AddHostWizard from "../components/AddHostWizard";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import InlineToggle from "../components/InlineToggle";
+import { useAuth } from "../contexts/AuthContext";
 import {
 	adminHostsAPI,
 	dashboardAPI,
@@ -53,6 +57,8 @@ const Hosts = () => {
 	const [selectedHosts, setSelectedHosts] = useState([]);
 	const [showBulkAssignModal, setShowBulkAssignModal] = useState(false);
 	const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+	const [showBulkRebootModal, setShowBulkRebootModal] = useState(false);
+	const { canRebootHosts } = useAuth();
 	const [bulkFetchReportMessage, setBulkFetchReportMessage] = useState({
 		text: "",
 		type: "success", // "success" or "error"
@@ -180,18 +186,24 @@ const Hosts = () => {
 			{ id: "integrations", label: "Integrations", visible: true, order: 10 },
 			{ id: "status", label: "Status", visible: true, order: 11 },
 			{ id: "needs_reboot", label: "Reboot", visible: true, order: 12 },
-			{ id: "uptime", label: "Uptime", visible: true, order: 13 },
-			{ id: "updates", label: "Updates", visible: true, order: 14 },
+			{
+				id: "allow_reboot",
+				label: "Reboot Allowed",
+				visible: true,
+				order: 13,
+			},
+			{ id: "uptime", label: "Uptime", visible: true, order: 14 },
+			{ id: "updates", label: "Updates", visible: true, order: 15 },
 			{
 				id: "security_updates",
 				label: "Security Updates",
 				visible: true,
-				order: 15,
+				order: 16,
 			},
-			{ id: "ssg_version", label: "SSG Version", visible: false, order: 16 },
-			{ id: "notes", label: "Notes", visible: false, order: 17 },
-			{ id: "last_update", label: "Last Update", visible: true, order: 18 },
-			{ id: "actions", label: "Actions", visible: true, order: 19 },
+			{ id: "ssg_version", label: "SSG Version", visible: false, order: 17 },
+			{ id: "notes", label: "Notes", visible: false, order: 18 },
+			{ id: "last_update", label: "Last Update", visible: true, order: 19 },
+			{ id: "actions", label: "Actions", visible: true, order: 20 },
 		],
 		[],
 	);
@@ -577,6 +589,80 @@ const Hosts = () => {
 		},
 	});
 
+	const bulkRebootMutation = useMutation({
+		mutationFn: ({ hostIds, onlyIfRequired }) =>
+			adminHostsAPI.rebootBulk(hostIds, onlyIfRequired).then((res) => res.data),
+		onSuccess: (data) => {
+			queryClient.invalidateQueries(["hosts"]);
+			setSelectedHosts([]);
+			setShowBulkRebootModal(false);
+			const enqueued = data?.enqueued ?? 0;
+			let message = `Reboot queued for ${enqueued} host${enqueued !== 1 ? "s" : ""}`;
+			if (data?.skipped?.length > 0) {
+				const reasons = data.skipped
+					.map((s) => `${s.hostname || s.hostId}: ${s.reason}`)
+					.join(", ");
+				message += ` — skipped: ${reasons}`;
+			}
+			setBulkFetchReportMessage({
+				text: message,
+				type: enqueued > 0 ? "success" : "error",
+			});
+			setTimeout(
+				() => setBulkFetchReportMessage({ text: "", type: "success" }),
+				8000,
+			);
+		},
+		onError: (error) => {
+			const errorMsg =
+				error.response?.data?.error ||
+				error.response?.data?.details ||
+				"Failed to request reboot";
+			setBulkFetchReportMessage({ text: errorMsg, type: "error" });
+			setTimeout(
+				() => setBulkFetchReportMessage({ text: "", type: "error" }),
+				5000,
+			);
+		},
+	});
+
+	const bulkAllowRebootMutation = useMutation({
+		mutationFn: ({ hostIds, allowReboot }) =>
+			adminHostsAPI
+				.allowRebootBulk(hostIds, allowReboot)
+				.then((res) => res.data),
+		onSuccess: (data, variables) => {
+			queryClient.invalidateQueries(["hosts"]);
+			const updated = data?.updated ?? 0;
+			let message = `Reboot ${variables.allowReboot ? "allowed" : "disallowed"} for ${updated} host${updated !== 1 ? "s" : ""}`;
+			if (data?.skipped?.length > 0) {
+				const reasons = data.skipped
+					.map((s) => `${s.hostname || s.hostId}: ${s.reason}`)
+					.join(", ");
+				message += ` — skipped: ${reasons}`;
+			}
+			setBulkFetchReportMessage({
+				text: message,
+				type: updated > 0 ? "success" : "error",
+			});
+			setTimeout(
+				() => setBulkFetchReportMessage({ text: "", type: "success" }),
+				8000,
+			);
+		},
+		onError: (error) => {
+			const errorMsg =
+				error.response?.data?.error ||
+				error.response?.data?.details ||
+				"Failed to update reboot permission";
+			setBulkFetchReportMessage({ text: errorMsg, type: "error" });
+			setTimeout(
+				() => setBulkFetchReportMessage({ text: "", type: "error" }),
+				5000,
+			);
+		},
+	});
+
 	// Helper functions for bulk selection
 	const handleSelectHost = (hostId) => {
 		setSelectedHosts((prev) =>
@@ -620,6 +706,14 @@ const Hosts = () => {
 
 	const handleBulkFetchReport = () => {
 		bulkFetchReportMutation.mutate(selectedHosts);
+	};
+
+	const handleBulkReboot = (onlyIfRequired) => {
+		bulkRebootMutation.mutate({ hostIds: selectedHosts, onlyIfRequired });
+	};
+
+	const handleBulkAllowReboot = (allowReboot) => {
+		bulkAllowRebootMutation.mutate({ hostIds: selectedHosts, allowReboot });
 	};
 
 	// Resolve selected host IDs for filter=selected (from URL or state)
@@ -735,6 +829,10 @@ const Hosts = () => {
 					// Sort by boolean: false (0) comes before true (1)
 					aValue = a.needs_reboot ? 1 : 0;
 					bValue = b.needs_reboot ? 1 : 0;
+					break;
+				case "allow_reboot":
+					aValue = a.allow_reboot ? 1 : 0;
+					bValue = b.allow_reboot ? 1 : 0;
 					break;
 				case "uptime": {
 					// Parse uptime strings like "X days, Y hours, Z minutes" into total minutes for numeric sorting
@@ -1157,6 +1255,28 @@ const Hosts = () => {
 						)}
 					</div>
 				);
+			case "allow_reboot":
+				return (
+					<div className="flex justify-center">
+						{host.allow_reboot ? (
+							<span
+								className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+								title="Remote reboot is allowed for this host"
+							>
+								<ShieldCheck className="h-3 w-3" />
+								Allowed
+							</span>
+						) : (
+							<span
+								className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-secondary-300"
+								title='Remote reboot is not allowed. Select the host and use "Allow Reboot".'
+							>
+								<ShieldOff className="h-3 w-3" />
+								No
+							</span>
+						)}
+					</div>
+				);
 			case "uptime":
 				return (
 					<div className="text-sm text-secondary-900 dark:text-white">
@@ -1490,6 +1610,43 @@ const Hosts = () => {
 									<span className="hidden sm:inline">Assign to Group</span>
 									<span className="sm:hidden">Assign</span>
 								</button>
+								{canRebootHosts() && (
+									<>
+										<button
+											type="button"
+											onClick={() => handleBulkAllowReboot(true)}
+											disabled={bulkAllowRebootMutation.isPending}
+											className="btn-outline flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 min-h-[44px] text-xs sm:text-sm"
+											title="Allow remote reboot for selected hosts"
+										>
+											<ShieldCheck className="h-4 w-4 flex-shrink-0" />
+											<span className="hidden sm:inline">Allow Reboot</span>
+											<span className="sm:hidden">Allow</span>
+										</button>
+										<button
+											type="button"
+											onClick={() => handleBulkAllowReboot(false)}
+											disabled={bulkAllowRebootMutation.isPending}
+											className="btn-outline flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 min-h-[44px] text-xs sm:text-sm"
+											title="Disallow remote reboot for selected hosts"
+										>
+											<ShieldOff className="h-4 w-4 flex-shrink-0" />
+											<span className="hidden sm:inline">Disallow Reboot</span>
+											<span className="sm:hidden">Disallow</span>
+										</button>
+										<button
+											type="button"
+											onClick={() => setShowBulkRebootModal(true)}
+											disabled={bulkRebootMutation.isPending}
+											className="btn-danger flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 min-h-[44px] text-xs sm:text-sm"
+											title="Reboot selected hosts"
+										>
+											<Power className="h-4 w-4 flex-shrink-0" />
+											<span className="hidden sm:inline">Reboot selected</span>
+											<span className="sm:hidden">Reboot</span>
+										</button>
+									</>
+								)}
 								<button
 									type="button"
 									onClick={() => setShowBulkDeleteModal(true)}
@@ -2102,6 +2259,17 @@ const Hosts = () => {
 																				{column.label}
 																				{getSortIcon("needs_reboot")}
 																			</button>
+																		) : column.id === "allow_reboot" ? (
+																			<button
+																				type="button"
+																				onClick={() =>
+																					handleSort("allow_reboot")
+																				}
+																				className="flex items-center gap-2 hover:text-secondary-700"
+																			>
+																				{column.label}
+																				{getSortIcon("allow_reboot")}
+																			</button>
 																		) : column.id === "uptime" ? (
 																			<button
 																				type="button"
@@ -2200,6 +2368,17 @@ const Hosts = () => {
 					onClose={() => setShowBulkDeleteModal(false)}
 					onDelete={handleBulkDelete}
 					isLoading={bulkDeleteMutation.isPending}
+				/>
+			)}
+
+			{/* Bulk Reboot Modal */}
+			{showBulkRebootModal && (
+				<BulkRebootModal
+					selectedHosts={selectedHosts}
+					hosts={hosts}
+					onClose={() => setShowBulkRebootModal(false)}
+					onReboot={handleBulkReboot}
+					isLoading={bulkRebootMutation.isPending}
 				/>
 			)}
 
@@ -2489,6 +2668,182 @@ const BulkDeleteModal = ({
 								{isLoading
 									? "Deleting..."
 									: `Delete ${selectedHosts.length} Host${selectedHosts.length !== 1 ? "s" : ""}`}
+							</button>
+						</div>
+					</form>
+				</div>
+			</div>
+		</div>
+	);
+};
+
+// Bulk Reboot Modal Component
+const BulkRebootModal = ({
+	selectedHosts,
+	hosts,
+	onClose,
+	onReboot,
+	isLoading,
+}) => {
+	const [onlyIfRequired, setOnlyIfRequired] = useState(false);
+	const [confirmText, setConfirmText] = useState("");
+	const onlyIfRequiredId = useId();
+	const confirmTextId = useId();
+
+	// Remote reboot is allowlist-based: hosts without allow_reboot are
+	// skipped server-side, so reflect that in the dialog instead of
+	// pretending the whole selection will reboot.
+	const selected = hosts.filter((host) => selectedHosts.includes(host.id));
+	const hostName = (host) => host.friendly_name || host.hostname || host.id;
+	const rebootableNames = selected
+		.filter((host) => host.allow_reboot)
+		.map(hostName);
+	const blockedNames = selected
+		.filter((host) => !host.allow_reboot)
+		.map(hostName);
+
+	// Extra friction for large batches: typing REBOOT forces a conscious
+	// decision when a select-all would otherwise restart a whole fleet.
+	const requiresTypedConfirmation = rebootableNames.length > 10;
+	const confirmed = !requiresTypedConfirmation || confirmText === "REBOOT";
+
+	const handleSubmit = (e) => {
+		e.preventDefault();
+		if (!confirmed || rebootableNames.length === 0) return;
+		onReboot(onlyIfRequired);
+	};
+
+	return (
+		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+			<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4">
+				<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
+					<div className="flex items-center justify-between">
+						<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+							Reboot Hosts
+						</h3>
+						<button
+							type="button"
+							onClick={onClose}
+							className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
+							disabled={isLoading}
+						>
+							<X className="h-5 w-5" />
+						</button>
+					</div>
+				</div>
+
+				<div className="px-6 py-4">
+					<div className="mb-4">
+						<div className="flex items-center gap-2 mb-3">
+							<AlertTriangle className="h-5 w-5 text-danger-600" />
+							<h4 className="text-sm font-medium text-danger-800 dark:text-danger-200">
+								Warning: Hosts will be restarted
+							</h4>
+						</div>
+						<p className="text-sm text-secondary-600 dark:text-white mb-4">
+							You are about to reboot {rebootableNames.length} host
+							{rebootableNames.length !== 1 ? "s" : ""}. Each host reboots one
+							minute after receiving the command. The host running the PatchMon
+							server is always excluded.
+						</p>
+					</div>
+
+					<div className="mb-4">
+						<p className="text-sm text-secondary-600 dark:text-white mb-2">
+							Hosts to be rebooted:
+						</p>
+						<div className="max-h-32 overflow-y-auto bg-secondary-50 dark:bg-secondary-700 rounded-md p-3">
+							{rebootableNames.length === 0 && (
+								<div className="text-sm text-secondary-500 dark:text-secondary-300">
+									None of the selected hosts allows remote reboot. Use "Allow
+									Reboot" first.
+								</div>
+							)}
+							{rebootableNames.map((friendlyName) => (
+								<div
+									key={friendlyName}
+									className="text-sm text-secondary-700 dark:text-white"
+								>
+									• {friendlyName}
+								</div>
+							))}
+						</div>
+					</div>
+
+					{blockedNames.length > 0 && (
+						<div className="mb-4">
+							<p className="text-sm text-secondary-600 dark:text-white mb-2">
+								Skipped (remote reboot not allowed for these hosts):
+							</p>
+							<div className="max-h-24 overflow-y-auto bg-secondary-50 dark:bg-secondary-700 rounded-md p-3">
+								{blockedNames.map((friendlyName) => (
+									<div
+										key={friendlyName}
+										className="text-sm text-secondary-500 dark:text-secondary-300 line-through"
+									>
+										• {friendlyName}
+									</div>
+								))}
+							</div>
+						</div>
+					)}
+
+					<form onSubmit={handleSubmit} className="space-y-4">
+						<label
+							htmlFor={onlyIfRequiredId}
+							className="flex items-start gap-2 text-sm text-secondary-700 dark:text-white cursor-pointer"
+						>
+							<input
+								id={onlyIfRequiredId}
+								type="checkbox"
+								checked={onlyIfRequired}
+								onChange={(e) => setOnlyIfRequired(e.target.checked)}
+								className="mt-0.5 rounded border-secondary-300 dark:border-secondary-600"
+							/>
+							<span>
+								Only reboot hosts that report a pending reboot (kernel update,
+								reboot-required flag)
+							</span>
+						</label>
+						{requiresTypedConfirmation && (
+							<div>
+								<label
+									htmlFor={confirmTextId}
+									className="block text-sm text-secondary-700 dark:text-white mb-1"
+								>
+									You are rebooting more than 10 hosts. Type{" "}
+									<strong>REBOOT</strong> to confirm:
+								</label>
+								<input
+									id={confirmTextId}
+									type="text"
+									value={confirmText}
+									onChange={(e) => setConfirmText(e.target.value)}
+									placeholder="REBOOT"
+									autoComplete="off"
+									className="px-3 py-2 w-full border border-secondary-300 dark:border-secondary-600 rounded-lg focus:ring-2 focus:ring-danger-500 focus:border-danger-500 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white placeholder-secondary-400"
+								/>
+							</div>
+						)}
+						<div className="flex justify-end gap-3 pt-4">
+							<button
+								type="button"
+								onClick={onClose}
+								className="btn-outline"
+								disabled={isLoading}
+							>
+								Cancel
+							</button>
+							<button
+								type="submit"
+								className="btn-danger"
+								disabled={
+									isLoading || !confirmed || rebootableNames.length === 0
+								}
+							>
+								{isLoading
+									? "Requesting..."
+									: `Reboot ${rebootableNames.length} Host${rebootableNames.length !== 1 ? "s" : ""}`}
 							</button>
 						</div>
 					</form>

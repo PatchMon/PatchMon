@@ -92,6 +92,7 @@ type RolePermission struct {
 	CanManageAutomation     bool      `db:"can_manage_automation"`
 	CanUseRemoteAccess      bool      `db:"can_use_remote_access"`
 	CanManageBilling        bool      `db:"can_manage_billing"`
+	CanRebootHosts          bool      `db:"can_reboot_hosts"`
 	CreatedAt               time.Time `db:"created_at"`
 	UpdatedAt               time.Time `db:"updated_at"`
 }

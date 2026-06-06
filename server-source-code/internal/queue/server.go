@@ -98,6 +98,7 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	registry, db, log := opts.Registry, opts.DB, opts.Log
 	wrap := func(typ string, h asynq.Handler) asynq.Handler { return loggingHandler(typ, h, log) }
 	mux.Handle(TypeReportNow, wrap(TypeReportNow, NewReportNowHandler(registry, db, log)))
+	mux.Handle(TypeReboot, wrap(TypeReboot, NewRebootHandler(registry, db, log)))
 	mux.Handle(TypeRefreshIntegrationStatus, wrap(TypeRefreshIntegrationStatus, NewRefreshIntegrationStatusHandler(registry, db, log)))
 	mux.Handle(TypeDockerInventoryRefresh, wrap(TypeDockerInventoryRefresh, NewDockerInventoryRefreshHandler(registry, db, log)))
 	mux.Handle(TypeUpdateAgent, wrap(TypeUpdateAgent, NewUpdateAgentHandler(registry, db, log)))

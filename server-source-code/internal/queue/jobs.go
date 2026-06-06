@@ -19,6 +19,7 @@ import (
 
 const (
 	TypeReportNow                = "report_now"
+	TypeReboot                   = "reboot"
 	TypeRefreshIntegrationStatus = "refresh_integration_status"
 	TypeDockerInventoryRefresh   = "docker_inventory_refresh"
 	TypeUpdateAgent              = "update_agent"
@@ -184,6 +185,37 @@ func NewReportNowTask(apiID, host string) (*asynq.Task, error) {
 		return nil, err
 	}
 	return asynq.NewTask(TypeReportNow, payload, asynq.Queue(QueueAgentCommands), asynq.MaxRetry(3)), nil
+}
+
+// RebootPayload is the payload for reboot job.
+type RebootPayload struct {
+	ApiID          string `json:"api_id"`
+	Host           string `json:"host,omitempty"`
+	OnlyIfRequired bool   `json:"only_if_required"`
+}
+
+// rebootCooldown is how long a completed reboot task is retained in the queue
+// backend. While retained, its TaskID blocks re-enqueueing, giving each host a
+// per-host cooldown. Chosen to outlast the agent's 1-minute reboot delay so a
+// double submit cannot send a second shutdown command to a host that is about
+// to go down.
+const rebootCooldown = 2 * time.Minute
+
+// NewRebootTask creates a reboot task. MaxRetry is intentionally 0: a reboot
+// command must never be retried automatically. TaskID deduplicates reboot
+// requests for the same agent; Retention keeps the completed task around so
+// the dedupe acts as a cooldown rather than only covering the in-queue window.
+func NewRebootTask(p RebootPayload) (*asynq.Task, error) {
+	payload, err := json.Marshal(p)
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TypeReboot, payload,
+		asynq.Queue(QueueAgentCommands),
+		asynq.MaxRetry(0),
+		asynq.TaskID("reboot-"+p.ApiID),
+		asynq.Retention(rebootCooldown),
+	), nil
 }
 
 // NewRefreshIntegrationStatusTask creates a refresh_integration_status task.
@@ -398,6 +430,81 @@ func (h *ReportNowHandler) ProcessTask(ctx context.Context, t *asynq.Task) error
 		_ = h.db.Queries.UpdateJobHistoryCompleted(ctx, taskID)
 	}
 	h.log.Info("report_now sent", "api_id", p.ApiID)
+	return nil
+}
+
+// RebootHandler handles reboot jobs.
+type RebootHandler struct {
+	registry *agentregistry.Registry
+	db       *database.DB
+	log      *slog.Logger
+}
+
+// NewRebootHandler creates a reboot handler.
+func NewRebootHandler(registry *agentregistry.Registry, db *database.DB, log *slog.Logger) *RebootHandler {
+	return &RebootHandler{registry: registry, db: db, log: log}
+}
+
+// ProcessTask implements asynq.Handler. Unlike report_now, the reboot command
+// carries a payload (only_if_required) and is never retried: the task has
+// MaxRetry(0), and write failures mark job_history as failed immediately.
+func (h *RebootHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
+	var p RebootPayload
+	if err := json.Unmarshal(t.Payload(), &p); err != nil {
+		return err
+	}
+
+	taskID, _ := asynq.GetTaskID(ctx)
+
+	// Log to job_history so the reboot shows up in the Agent Queue tab
+	if h.db != nil && taskID != "" {
+		host, err := h.db.Queries.GetHostByApiID(ctx, p.ApiID)
+		var hostID *string
+		if err == nil {
+			hostID = &host.ID
+		}
+		apiIDPtr := &p.ApiID
+		_ = h.db.Queries.InsertJobHistory(ctx, db.InsertJobHistoryParams{
+			ID:            uuid.New().String(),
+			JobID:         taskID,
+			QueueName:     QueueAgentCommands,
+			JobName:       TypeReboot,
+			HostID:        hostID,
+			ApiID:         apiIDPtr,
+			Status:        "active",
+			AttemptNumber: 1,
+		})
+	}
+
+	if !h.registry.IsConnected(p.ApiID) {
+		h.log.Warn("reboot: agent not connected", "api_id", p.ApiID)
+		if taskID != "" && h.db != nil {
+			msg := "Agent not connected"
+			_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
+		}
+		return nil // Don't retry - a reboot must be re-triggered explicitly by the user
+	}
+
+	msg, err := json.Marshal(map[string]interface{}{
+		"type":             TypeReboot,
+		"only_if_required": p.OnlyIfRequired,
+	})
+	if err != nil {
+		return err
+	}
+	if err := h.registry.SendMessage(p.ApiID, websocket.TextMessage, msg); err != nil {
+		h.log.Warn("reboot: write failed", "api_id", p.ApiID, "error", err)
+		if taskID != "" && h.db != nil {
+			errMsg := "WebSocket write failed: " + err.Error()
+			_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
+		}
+		return err // No retry (MaxRetry 0); task is archived
+	}
+
+	if taskID != "" && h.db != nil {
+		_ = h.db.Queries.UpdateJobHistoryCompleted(ctx, taskID)
+	}
+	h.log.Info("reboot sent", "api_id", p.ApiID, "only_if_required", p.OnlyIfRequired)
 	return nil
 }
 

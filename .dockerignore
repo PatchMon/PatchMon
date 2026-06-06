@@ -29,9 +29,11 @@
 **/build
 **/coverage
 
-# Go binaries and test artifacts (built during Docker build, not from repo)
-**/*.exe
-!agents-prebuilt/patchmon-agent-*.exe
+# Go binaries and test artifacts (built during Docker build, not from repo).
+# Scoped to agent-source-code instead of **/*.exe + a !agents-prebuilt
+# negation: any negation forces the context walker to descend into excluded
+# directories, which fails on unreadable dev data (compose_dev_data/db).
+agent-source-code/**/*.exe
 **/*.test
 **/*.out
 **/*.prof

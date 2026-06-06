@@ -135,6 +135,10 @@ export const adminHostsAPI = {
 	fetchReport: (hostId) => api.post(`/hosts/${hostId}/fetch-report`),
 	fetchReportBulk: (hostIds) =>
 		api.post("/hosts/bulk/fetch-report", { hostIds }),
+	rebootBulk: (hostIds, onlyIfRequired) =>
+		api.post("/hosts/bulk/reboot", { hostIds, onlyIfRequired }),
+	allowRebootBulk: (hostIds, allowReboot) =>
+		api.put("/hosts/bulk/allow-reboot", { hostIds, allowReboot }),
 	updateFriendlyName: (hostId, friendlyName) =>
 		api.patch(`/hosts/${hostId}/friendly-name`, {
 			friendly_name: friendlyName,
