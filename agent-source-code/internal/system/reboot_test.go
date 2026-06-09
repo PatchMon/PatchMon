@@ -60,6 +60,18 @@ func TestCompareKernelVersions(t *testing.T) {
 			v2:       "6.12.90+deb13.1-amd64",
 			expected: 1,
 		},
+		{
+			name:     "v1 newest major versions in Debian format",
+			v1:       "7.0.10+deb13-amd64",
+			v2:       "6.12.90+deb13.1-amd64",
+			expected: 1,
+		},
+		{
+			name:     "v1 newest minor versions in Debian format",
+			v1:       "7.0.10+deb13-amd64",
+			v2:       "7.0.7+deb13-amd64",
+			expected: 1,
+		},
 	}
 
 	// Exécution des cas de test
