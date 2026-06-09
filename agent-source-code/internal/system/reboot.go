@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
-	"regexp"
 
 	"patchmon-agent/internal/logutil"
 )
@@ -227,15 +227,16 @@ func compareKernelVersions(v1, v2 string) int {
 			if n1 > n2 {
 				return 1
 			}
-		} else {
-			// At least one is not a number, compare as strings
-			if p1 < p2 {
-				return -1
-			}
-			if p1 > p2 {
-				return 1
-			}
+			continue
 		}
+		// At least one is not a number, compare as strings
+		if p1 < p2 {
+			return -1
+		}
+		if p1 > p2 {
+			return 1
+		}
+
 	}
 
 	return 0
@@ -244,14 +245,74 @@ func compareKernelVersions(v1, v2 string) int {
 // parseKernelVersion parses a kernel version string into comparable parts
 // "6.14.11-2-pve" -> ["6", "14", "11", "2", "pve"]
 func parseKernelVersion(version string) []string {
-    //Extract MAJOR.MINOR.PATCH version and extra (all char after the PATCH digit)
+	// Extract MAJOR.MINOR.PATCH version and extra (all char after the PATCH digit)
 	versionRegex := regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)(.*)$`)
 	matches := versionRegex.FindStringSubmatch(version)
+	if matches == nil {
+		return removeTrailingArchToken(splitKernelVersionParts(version))
+	}
 
-    //remove the first element
-    matches = matches[1:]
+	parts := append([]string{}, matches[1:4]...)
+	parts = append(parts, splitKernelVersionParts(matches[4])...)
 
-	return matches
+	return removeTrailingArchToken(parts)
+}
+
+func splitKernelVersionParts(version string) []string {
+	return strings.FieldsFunc(version, func(r rune) bool {
+		return r == '.' || r == '-' || r == '+'
+	})
+}
+
+func removeTrailingArchToken(parts []string) []string {
+	if len(parts) == 0 {
+		return parts
+	}
+
+	if isKernelArchToken(parts[len(parts)-1]) {
+		return parts[:len(parts)-1]
+	}
+
+	return parts
+}
+
+func isKernelArchToken(part string) bool {
+	switch strings.ToLower(part) {
+	case
+		"2712",
+		"aarch64",
+		"alpha",
+		"amd64",
+		"arm",
+		"arm64",
+		"armel",
+		"armhf",
+		"armv7l",
+		"i386",
+		"i486",
+		"i586",
+		"i686",
+		"ia64",
+		"m68k",
+		"mips",
+		"mipsel",
+		"mips64el",
+		"powerpc",
+		"ppc64",
+		"ppc64le",
+		"ppc64el",
+		"riscv64",
+		"s390x",
+		"sh4",
+		"sparc64",
+		"v7l",
+		"v8",
+		"x64",
+		"x86_64":
+		return true
+	default:
+		return false
+	}
 }
 
 // getLatestKernelFromRPM queries RPM for installed kernel packages

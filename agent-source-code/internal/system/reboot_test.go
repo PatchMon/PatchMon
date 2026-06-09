@@ -78,6 +78,30 @@ func TestCompareKernelVersions(t *testing.T) {
 			v2:       "7.0.9-hardened1-1-hardened",
 			expected: 0,
 		},
+		{
+			name:     "Same versions in Raspbian Linux only arch change",
+			v1:       "6.12.62+rpt-rpi-2712",
+			v2:       "6.12.62+rpt-rpi-v8",
+			expected: 0,
+		},
+		{
+			name:     "v1 newest minor versions in Raspbian Linux",
+			v1:       "6.12.93+rpt-rpi-2712",
+			v2:       "6.12.62+rpt-rpi-v8",
+			expected: 1,
+		},
+		{
+			name:     "v1 is unknow versions in Raspbian Linux",
+			v1:       "unknow",
+			v2:       "6.12.62+rpt-rpi-v8",
+			expected: 1,
+		},
+		{
+			name:     "v1 empty versions in Raspbian Linux",
+			v1:       "",
+			v2:       "6.12.62+rpt-rpi-v8",
+			expected: -1,
+		},
 	}
 
 	// Exécution des cas de test
