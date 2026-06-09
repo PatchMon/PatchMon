@@ -72,6 +72,12 @@ func TestCompareKernelVersions(t *testing.T) {
 			v2:       "7.0.7+deb13-amd64",
 			expected: 1,
 		},
+		{
+			name:     "same versions in Arch Linux",
+			v1:       "7.0.9-hardened1-1-hardened",
+			v2:       "7.0.9-hardened1-1-hardened",
+			expected: 0,
+		},
 	}
 
 	// Exécution des cas de test
