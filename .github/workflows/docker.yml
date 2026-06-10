@@ -26,6 +26,8 @@ permissions:
   contents: read
   packages: write
   pull-requests: write
+  id-token: write
+  attestations: write
 
 jobs:
   build-agents:
@@ -178,7 +180,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=server
           cache-to: type=gha,mode=max,scope=server
-          provenance: false
+          provenance: true
           # Force gzip on all layers (including base image layers from dhi.io/alpine-base
           # which ship as zstd). Without force-compression, mixed zstd/gzip manifests
           # break Podman <5.7 and Docker without the containerd image store.
