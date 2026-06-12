@@ -18,7 +18,13 @@ import (
 
 const (
 	agentDNSDomain = "agent.vcheck.patchmon.net"
-	agentVersionRe = `(?i)(?:PatchMon Agent v|patchmon-agent v|version )?([0-9]+\.[0-9]+\.[0-9]+)`
+	// agentVersionRe extracts the version from the bundled binary's --version
+	// output. The optional pre-release suffix (e.g. 2.0.3-rc1, 2.0.3-test5)
+	// MUST be captured: agents compare this string against their own version
+	// to decide whether to self-update, and truncating "2.0.3-test5" to
+	// "2.0.3" makes every agent running the pre-release see a permanent
+	// mismatch and reinstall itself after each report, forever.
+	agentVersionRe = `(?i)(?:PatchMon Agent v|patchmon-agent v|version )?([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.]*)?)`
 )
 
 // AgentVersionHandler handles agent version routes.
