@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -332,10 +333,19 @@ func sendReport(outputJSON bool) error {
 				logger.WithError(err).Warn("Failed to check for updates after report (non-critical)")
 				return
 			}
-			if versionInfo.HasUpdate {
+			// Compare OUR version against the agent version the server ships.
+			// versionInfo.HasUpdate must not gate this: it reports whether the
+			// SERVER is behind the public upstream release (admin-UI info).
+			// Keying the self-update on it made every agent re-install the
+			// identical binary and restart after each report whenever the
+			// server lagged upstream — killing in-flight work (e.g. the
+			// post-patch reboot step) in the process.
+			runningVersion := strings.TrimPrefix(pkgversion.Version, "v")
+			serverAgentVersion := strings.TrimPrefix(versionInfo.LatestVersion, "v")
+			if serverAgentVersion != "" && serverAgentVersion != runningVersion {
 				logger.WithFields(logrus.Fields{
-					"current": versionInfo.CurrentVersion,
-					"latest":  versionInfo.LatestVersion,
+					"current": runningVersion,
+					"latest":  serverAgentVersion,
 				}).Info("Update available, automatically updating...")
 
 				if err := updateAgent(); err != nil {

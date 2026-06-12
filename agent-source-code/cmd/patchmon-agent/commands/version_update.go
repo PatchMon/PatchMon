@@ -153,8 +153,14 @@ func updateAgent() error {
 		latestVersion := strings.TrimPrefix(versionInfo.LatestVersion, "v")
 		logger.WithField("current", currentVersion).WithField("latest", latestVersion).Debug("Version check")
 
-		// Check if update is actually needed
-		if currentVersion == latestVersion && !versionInfo.HasUpdate {
+		// Check if update is actually needed. latestVersion is the agent
+		// version bundled with the server — the only thing that decides
+		// whether THIS agent should update. versionInfo.HasUpdate is about
+		// the server being behind the public upstream release (admin-UI
+		// info); honouring it here used to make agents re-download the
+		// identical binary and restart on every report cycle whenever the
+		// server lagged upstream.
+		if currentVersion == latestVersion {
 			logger.WithField("version", currentVersion).Info("Agent is already at the latest version, skipping update")
 			return nil
 		}
