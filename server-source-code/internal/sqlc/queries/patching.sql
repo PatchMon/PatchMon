@@ -251,6 +251,34 @@ WHERE id = $1;
 -- name: DeletePatchPolicy :exec
 DELETE FROM patch_policies WHERE id = $1;
 
+-- name: UpdatePatchPolicyAutoPatch :exec
+UPDATE patch_policies
+SET auto_patch_enabled = sqlc.arg('auto_patch_enabled'),
+    auto_patch_days = sqlc.narg('auto_patch_days'),
+    auto_patch_time = sqlc.narg('auto_patch_time'),
+    auto_reboot = sqlc.arg('auto_reboot'),
+    updated_at = NOW()
+WHERE id = sqlc.arg('id');
+
+-- name: ListAutoPatchPolicies :many
+SELECT * FROM patch_policies WHERE auto_patch_enabled = true ORDER BY name ASC;
+
+-- name: SetPatchPolicyAutoPatchLastRun :exec
+UPDATE patch_policies SET auto_patch_last_run_at = NOW() WHERE id = $1;
+
+-- name: ListPatchPolicyTargetHostIDs :many
+SELECT ppa1.target_id AS host_id FROM patch_policy_assignments ppa1
+WHERE ppa1.patch_policy_id = $1 AND ppa1.target_type = 'host'
+UNION
+SELECT hgm.host_id AS host_id FROM host_group_memberships hgm
+JOIN patch_policy_assignments ppa2
+  ON ppa2.target_type = 'host_group' AND ppa2.target_id = hgm.host_group_id
+WHERE ppa2.patch_policy_id = $1;
+
+-- name: ListHostIDsWithActivePatchRuns :many
+SELECT DISTINCT host_id FROM patch_runs
+WHERE status IN ('queued', 'running', 'pending_validation', 'pending_approval', 'validated');
+
 -- patch_policy_assignments
 -- name: GetDirectPatchPolicyAssignment :one
 SELECT pp.* FROM patch_policy_assignments ppa

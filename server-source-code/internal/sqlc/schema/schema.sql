@@ -647,6 +647,11 @@ CREATE TABLE IF NOT EXISTS patch_policies (
     delay_minutes INTEGER,
     fixed_time_utc TEXT,
     timezone TEXT,
+    auto_reboot BOOLEAN NOT NULL DEFAULT false,
+    auto_patch_enabled BOOLEAN NOT NULL DEFAULT false,
+    auto_patch_days TEXT,
+    auto_patch_time TEXT,
+    auto_patch_last_run_at TIMESTAMP(3),
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP(3) NOT NULL
 );
