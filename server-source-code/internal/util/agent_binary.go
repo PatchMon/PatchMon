@@ -11,7 +11,13 @@ import (
 	"time"
 )
 
-const agentVersionRe = `(?i)(?:PatchMon Agent v|patchmon-agent v|version )?([0-9]+\.[0-9]+\.[0-9]+)`
+// agentVersionRe extracts the version from agent binary --version output.
+// The optional pre-release suffix (2.0.3-rc1, 2.0.3-test5) must be captured:
+// the agent-facing /hosts/agent/version endpoint serves this string and
+// agents compare it against their own version to decide whether to
+// self-update. Truncating the suffix makes every pre-release agent see a
+// permanent mismatch and reinstall itself after each report.
+const agentVersionRe = `(?i)(?:PatchMon Agent v|patchmon-agent v|version )?([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.]*)?)`
 
 // GetAgentsDir returns the agents binary directory from env (AGENT_BINARIES_DIR, AGENTS_DIR) or "agents".
 func GetAgentsDir() string {
