@@ -15,7 +15,7 @@ const cancelStalledPatchRuns = `-- name: CancelStalledPatchRuns :execrows
 UPDATE patch_runs
 SET status = 'cancelled', error_message = $2, completed_at = NOW(), updated_at = NOW()
 WHERE status = 'running'
-  AND started_at < $1
+  AND (started_at < $1 OR (started_at IS NULL AND created_at < $1))
 `
 
 type CancelStalledPatchRunsParams struct {
@@ -23,6 +23,11 @@ type CancelStalledPatchRunsParams struct {
 	ErrorMessage *string          `json:"error_message"`
 }
 
+// started_at IS NULL must be handled explicitly: a run whose agent died
+// before reporting the "started" stage (e.g. killed by a service restart
+// mid-run) sits at status='running' with NULL started_at, and `NULL < $1`
+// never matches - leaving a ghost row that blocks schedulers which treat
+// the host as busy. Fall back to created_at for those rows.
 func (q *Queries) CancelStalledPatchRuns(ctx context.Context, arg CancelStalledPatchRunsParams) (int64, error) {
 	result, err := q.db.Exec(ctx, cancelStalledPatchRuns, arg.StartedAt, arg.ErrorMessage)
 	if err != nil {

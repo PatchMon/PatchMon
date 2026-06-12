@@ -303,7 +303,12 @@ VALUES ($1, $2, $3, NOW(), NOW());
 DELETE FROM patch_policy_exclusions WHERE patch_policy_id = $1 AND host_id = $2;
 
 -- name: CancelStalledPatchRuns :execrows
+-- started_at IS NULL must be handled explicitly: a run whose agent died
+-- before reporting the "started" stage (e.g. killed by a service restart
+-- mid-run) sits at status='running' with NULL started_at, and `NULL < $1`
+-- never matches - leaving a ghost row that blocks schedulers which treat
+-- the host as busy. Fall back to created_at for those rows.
 UPDATE patch_runs
 SET status = 'cancelled', error_message = $2, completed_at = NOW(), updated_at = NOW()
 WHERE status = 'running'
-  AND started_at < $1;
+  AND (started_at < $1 OR (started_at IS NULL AND created_at < $1));
