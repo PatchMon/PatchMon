@@ -1337,6 +1337,10 @@ function PoliciesTab() {
 		patch_delay_type: "immediate",
 		delay_minutes: 60,
 		fixed_time_utc: "03:00",
+		auto_patch_enabled: false,
+		auto_patch_days: [],
+		auto_patch_time: "03:00",
+		auto_reboot: false,
 	});
 	const [expandedPolicyId, setExpandedPolicyId] = useState(null);
 
@@ -1394,6 +1398,10 @@ function PoliciesTab() {
 			patch_delay_type: "immediate",
 			delay_minutes: 60,
 			fixed_time_utc: "03:00",
+			auto_patch_enabled: false,
+			auto_patch_days: [],
+			auto_patch_time: "03:00",
+			auto_reboot: false,
 		});
 
 	const openCreate = () => {
@@ -1410,12 +1418,34 @@ function PoliciesTab() {
 			patch_delay_type: policy.patch_delay_type || "immediate",
 			delay_minutes: policy.delay_minutes ?? 60,
 			fixed_time_utc: policy.fixed_time_utc || "03:00",
+			auto_patch_enabled: policy.auto_patch_enabled || false,
+			auto_patch_days: policy.auto_patch_days
+				? policy.auto_patch_days
+						.split(",")
+						.map((d) => Number(d.trim()))
+						.filter((d) => !Number.isNaN(d))
+				: [],
+			auto_patch_time: policy.auto_patch_time || "03:00",
+			auto_reboot: policy.auto_reboot || false,
 		});
 		setShowModal(true);
 	};
 
+	const toggleAutoPatchDay = (day) => {
+		setForm((prev) => ({
+			...prev,
+			auto_patch_days: prev.auto_patch_days.includes(day)
+				? prev.auto_patch_days.filter((d) => d !== day)
+				: [...prev.auto_patch_days, day].sort((a, b) => a - b),
+		}));
+	};
+
 	const handleSubmit = (e) => {
 		e.preventDefault();
+		if (form.auto_patch_enabled && form.auto_patch_days.length === 0) {
+			toast.error("Select at least one day for automated patching");
+			return;
+		}
 		const payload = {
 			name: form.name.trim(),
 			description: form.description.trim() || null,
@@ -1424,6 +1454,12 @@ function PoliciesTab() {
 				form.patch_delay_type === "delayed" ? Number(form.delay_minutes) : null,
 			fixed_time_utc:
 				form.patch_delay_type === "fixed_time" ? form.fixed_time_utc : null,
+			auto_patch_enabled: form.auto_patch_enabled,
+			auto_patch_days: form.auto_patch_enabled
+				? form.auto_patch_days.join(",")
+				: null,
+			auto_patch_time: form.auto_patch_enabled ? form.auto_patch_time : null,
+			auto_reboot: form.auto_patch_enabled ? form.auto_reboot : false,
 		};
 		if (editingPolicy) {
 			updateMutation.mutate({ id: editingPolicy.id, data: payload });
@@ -1442,6 +1478,17 @@ function PoliciesTab() {
 			return `${label} at ${policy.fixed_time_utc} (${orgTimezone})`;
 		}
 		return label;
+	};
+
+	const formatAutoSchedule = (policy) => {
+		if (!policy.auto_patch_enabled) return null;
+		const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+		const days = (policy.auto_patch_days || "")
+			.split(",")
+			.filter(Boolean)
+			.map((d) => dayNames[Number(d.trim())] ?? d)
+			.join(", ");
+		return `Auto: ${days} at ${policy.auto_patch_time} (${orgTimezone})${policy.auto_reboot ? " + reboot" : ""}`;
 	};
 
 	return (
@@ -1520,6 +1567,11 @@ function PoliciesTab() {
 													<Clock className="h-3.5 w-3.5" />
 													{formatSchedule(policy)}
 												</span>
+												{formatAutoSchedule(policy) && (
+													<span className="block text-xs text-green-600 dark:text-green-400">
+														{formatAutoSchedule(policy)}
+													</span>
+												)}
 											</td>
 											<td className="px-4 py-3 whitespace-nowrap text-sm">
 												<button
@@ -1697,6 +1749,102 @@ function PoliciesTab() {
 									</p>
 								</div>
 							)}
+
+							{/* Automated patching schedule */}
+							<div className="border-t border-secondary-200 dark:border-secondary-600 pt-4 space-y-3">
+								<label className="flex items-center gap-2 cursor-pointer">
+									<input
+										type="checkbox"
+										checked={form.auto_patch_enabled}
+										onChange={(e) =>
+											setForm((f) => ({
+												...f,
+												auto_patch_enabled: e.target.checked,
+											}))
+										}
+										className="rounded border-secondary-300 dark:border-secondary-600"
+									/>
+									<span className="text-sm font-medium text-secondary-700 dark:text-secondary-300">
+										Automated patching
+									</span>
+								</label>
+								<p className="text-xs text-secondary-500 dark:text-secondary-400">
+									Automatically run "Patch all" on every host assigned to this
+									policy (directly or via groups, respecting exclusions) on
+									the selected days — no manual trigger needed.
+								</p>
+								{form.auto_patch_enabled && (
+									<>
+										<div>
+											<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+												Days
+											</span>
+											<div className="flex flex-wrap gap-1.5">
+												{["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(
+													(label, day) => (
+														<button
+															key={label}
+															type="button"
+															onClick={() => toggleAutoPatchDay(day)}
+															className={`px-2.5 py-1.5 rounded text-xs font-medium border ${
+																form.auto_patch_days.includes(day)
+																	? "bg-primary-600 text-white border-primary-600"
+																	: "bg-white dark:bg-secondary-700 text-secondary-700 dark:text-secondary-300 border-secondary-300 dark:border-secondary-600"
+															}`}
+														>
+															{label}
+														</button>
+													),
+												)}
+											</div>
+										</div>
+										<div>
+											<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+												Time (HH:MM)
+											</label>
+											<input
+												type="text"
+												placeholder="03:00"
+												value={form.auto_patch_time}
+												onChange={(e) =>
+													setForm((f) => ({
+														...f,
+														auto_patch_time: e.target.value,
+													}))
+												}
+												className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2"
+											/>
+											<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+												Organization timezone (
+												<span className="font-medium">{orgTimezone}</span>).
+											</p>
+										</div>
+										<label className="flex items-center gap-2 cursor-pointer">
+											<input
+												type="checkbox"
+												checked={form.auto_reboot}
+												onChange={(e) =>
+													setForm((f) => ({
+														...f,
+														auto_reboot: e.target.checked,
+													}))
+												}
+												className="rounded border-secondary-300 dark:border-secondary-600"
+											/>
+											<span className="text-sm text-secondary-700 dark:text-secondary-300">
+												Reboot after patching if the host requires it
+											</span>
+										</label>
+										<p className="text-xs text-amber-600 dark:text-amber-400">
+											Hosts reboot ~1 minute after a successful automated
+											patch run, only when a pending reboot is detected
+											(kernel/libc updates). Manual patch runs never trigger
+											this.
+										</p>
+									</>
+								)}
+							</div>
+
 							<div className="flex justify-end gap-2 pt-2">
 								<button
 									type="button"
