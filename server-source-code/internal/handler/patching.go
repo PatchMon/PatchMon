@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1068,16 +1069,20 @@ func (h *PatchingHandler) ListPolicies(w http.ResponseWriter, r *http.Request) {
 		assignments, _ := h.assignments.ListByPolicy(r.Context(), p.ID)
 		exclusions, _ := h.exclusions.ListByPolicy(r.Context(), p.ID)
 		out[i] = map[string]interface{}{
-			"id":               p.ID,
-			"name":             p.Name,
-			"description":      p.Description,
-			"patch_delay_type": p.PatchDelayType,
-			"delay_minutes":    p.DelayMinutes,
-			"fixed_time_utc":   p.FixedTimeUtc,
-			"timezone":         p.Timezone,
-			"created_at":       pgTimeToISO(p.CreatedAt),
-			"updated_at":       pgTimeToISO(p.UpdatedAt),
-			"_count":           map[string]int{"assignments": len(assignments), "exclusions": len(exclusions)},
+			"id":                 p.ID,
+			"name":               p.Name,
+			"description":        p.Description,
+			"patch_delay_type":   p.PatchDelayType,
+			"delay_minutes":      p.DelayMinutes,
+			"fixed_time_utc":     p.FixedTimeUtc,
+			"timezone":           p.Timezone,
+			"auto_patch_enabled": p.AutoPatchEnabled,
+			"auto_patch_days":    p.AutoPatchDays,
+			"auto_patch_time":    p.AutoPatchTime,
+			"auto_reboot":        p.AutoReboot,
+			"created_at":         pgTimeToISO(p.CreatedAt),
+			"updated_at":         pgTimeToISO(p.UpdatedAt),
+			"_count":             map[string]int{"assignments": len(assignments), "exclusions": len(exclusions)},
 		}
 	}
 	JSON(w, http.StatusOK, out)
@@ -1122,17 +1127,21 @@ func (h *PatchingHandler) GetPolicy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"id":               policy.ID,
-		"name":             policy.Name,
-		"description":      policy.Description,
-		"patch_delay_type": policy.PatchDelayType,
-		"delay_minutes":    policy.DelayMinutes,
-		"fixed_time_utc":   policy.FixedTimeUtc,
-		"timezone":         policy.Timezone,
-		"created_at":       pgTimeToISO(policy.CreatedAt),
-		"updated_at":       pgTimeToISO(policy.UpdatedAt),
-		"assignments":      assignmentsResp,
-		"exclusions":       exclusions,
+		"id":                 policy.ID,
+		"name":               policy.Name,
+		"description":        policy.Description,
+		"patch_delay_type":   policy.PatchDelayType,
+		"delay_minutes":      policy.DelayMinutes,
+		"fixed_time_utc":     policy.FixedTimeUtc,
+		"timezone":           policy.Timezone,
+		"auto_patch_enabled": policy.AutoPatchEnabled,
+		"auto_patch_days":    policy.AutoPatchDays,
+		"auto_patch_time":    policy.AutoPatchTime,
+		"auto_reboot":        policy.AutoReboot,
+		"created_at":         pgTimeToISO(policy.CreatedAt),
+		"updated_at":         pgTimeToISO(policy.UpdatedAt),
+		"assignments":        assignmentsResp,
+		"exclusions":         exclusions,
 	})
 }
 
@@ -1162,6 +1171,30 @@ func validatePolicyInput(name, patchDelayType string, delayMinutes *int32, fixed
 	return ""
 }
 
+// validateAutoPatchInput enforces rules for the automated-patching fields.
+// Returns a 400 error string when malformed; empty string on success.
+func validateAutoPatchInput(enabled bool, days, timeOfDay *string) string {
+	if !enabled {
+		return ""
+	}
+	if days == nil || strings.TrimSpace(*days) == "" {
+		return "auto_patch_days is required when auto_patch_enabled is true"
+	}
+	for _, part := range strings.Split(*days, ",") {
+		n, err := strconv.Atoi(strings.TrimSpace(part))
+		if err != nil || n < 0 || n > 6 {
+			return "auto_patch_days must be a comma-separated list of weekday numbers 0-6 (0=Sunday)"
+		}
+	}
+	if timeOfDay == nil || strings.TrimSpace(*timeOfDay) == "" {
+		return "auto_patch_time is required when auto_patch_enabled is true"
+	}
+	if _, _, _, err := store.ParseHHMM(*timeOfDay); err != nil {
+		return "auto_patch_time must be HH:MM"
+	}
+	return ""
+}
+
 // CreatePolicy handles POST /patching/policies.
 func (h *PatchingHandler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -1173,13 +1206,21 @@ func (h *PatchingHandler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 		// Timezone is accepted for backward compatibility with older clients
 		// but ignored — fixed-time scheduling now uses the org-resolved
 		// timezone. The DB column is persisted as NULL.
-		Timezone *string `json:"timezone"`
+		Timezone         *string `json:"timezone"`
+		AutoPatchEnabled bool    `json:"auto_patch_enabled"`
+		AutoPatchDays    *string `json:"auto_patch_days"`
+		AutoPatchTime    *string `json:"auto_patch_time"`
+		AutoReboot       bool    `json:"auto_reboot"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
 		return
 	}
 	if msg := validatePolicyInput(body.Name, body.PatchDelayType, body.DelayMinutes, body.FixedTimeUtc); msg != "" {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": msg})
+		return
+	}
+	if msg := validateAutoPatchInput(body.AutoPatchEnabled, body.AutoPatchDays, body.AutoPatchTime); msg != "" {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
 	}
@@ -1197,17 +1238,26 @@ func (h *PatchingHandler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create policy"})
 		return
 	}
+	if err := h.patchPolicies.SetAutoPatchConfig(r.Context(), id, body.AutoPatchEnabled, body.AutoPatchDays, body.AutoPatchTime, body.AutoReboot); err != nil {
+		h.log.Error("patching: set auto-patch config error", "policy_id", id, "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to save automated patching settings"})
+		return
+	}
 	policy, _ := h.patchPolicies.GetByID(r.Context(), id)
 	resp := map[string]interface{}{
-		"id":               id,
-		"name":             body.Name,
-		"description":      body.Description,
-		"patch_delay_type": body.PatchDelayType,
-		"delay_minutes":    body.DelayMinutes,
-		"fixed_time_utc":   body.FixedTimeUtc,
-		"timezone":         nil,
-		"created_at":       time.Now().UTC().Format(time.RFC3339),
-		"updated_at":       time.Now().UTC().Format(time.RFC3339),
+		"id":                 id,
+		"name":               body.Name,
+		"description":        body.Description,
+		"patch_delay_type":   body.PatchDelayType,
+		"delay_minutes":      body.DelayMinutes,
+		"fixed_time_utc":     body.FixedTimeUtc,
+		"timezone":           nil,
+		"auto_patch_enabled": body.AutoPatchEnabled,
+		"auto_patch_days":    body.AutoPatchDays,
+		"auto_patch_time":    body.AutoPatchTime,
+		"auto_reboot":        body.AutoReboot,
+		"created_at":         time.Now().UTC().Format(time.RFC3339),
+		"updated_at":         time.Now().UTC().Format(time.RFC3339),
 	}
 	if policy != nil {
 		resp["created_at"] = pgTimeToISO(policy.CreatedAt)
@@ -1232,13 +1282,21 @@ func (h *PatchingHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request) {
 		// Timezone is accepted for backward compatibility but ignored — see
 		// CreatePolicy. The DB column is overwritten with NULL on every
 		// update so the column eventually drains across the fleet.
-		Timezone *string `json:"timezone"`
+		Timezone         *string `json:"timezone"`
+		AutoPatchEnabled bool    `json:"auto_patch_enabled"`
+		AutoPatchDays    *string `json:"auto_patch_days"`
+		AutoPatchTime    *string `json:"auto_patch_time"`
+		AutoReboot       bool    `json:"auto_reboot"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
 		return
 	}
 	if msg := validatePolicyInput(body.Name, body.PatchDelayType, body.DelayMinutes, body.FixedTimeUtc); msg != "" {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": msg})
+		return
+	}
+	if msg := validateAutoPatchInput(body.AutoPatchEnabled, body.AutoPatchDays, body.AutoPatchTime); msg != "" {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": msg})
 		return
 	}
@@ -1252,15 +1310,24 @@ func (h *PatchingHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request) {
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to update policy"})
 		return
 	}
+	if err := h.patchPolicies.SetAutoPatchConfig(r.Context(), id, body.AutoPatchEnabled, body.AutoPatchDays, body.AutoPatchTime, body.AutoReboot); err != nil {
+		h.log.Error("patching: set auto-patch config error", "policy_id", id, "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to save automated patching settings"})
+		return
+	}
 	policy, _ := h.patchPolicies.GetByID(r.Context(), id)
 	resp := map[string]interface{}{
-		"id":               id,
-		"name":             body.Name,
-		"description":      body.Description,
-		"patch_delay_type": body.PatchDelayType,
-		"delay_minutes":    body.DelayMinutes,
-		"fixed_time_utc":   body.FixedTimeUtc,
-		"timezone":         nil,
+		"id":                 id,
+		"name":               body.Name,
+		"description":        body.Description,
+		"patch_delay_type":   body.PatchDelayType,
+		"delay_minutes":      body.DelayMinutes,
+		"fixed_time_utc":     body.FixedTimeUtc,
+		"timezone":           nil,
+		"auto_patch_enabled": body.AutoPatchEnabled,
+		"auto_patch_days":    body.AutoPatchDays,
+		"auto_patch_time":    body.AutoPatchTime,
+		"auto_reboot":        body.AutoReboot,
 	}
 	if policy != nil {
 		resp["created_at"] = pgTimeToISO(policy.CreatedAt)

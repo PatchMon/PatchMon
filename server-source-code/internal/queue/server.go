@@ -101,6 +101,7 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	mux.Handle(TypeRefreshIntegrationStatus, wrap(TypeRefreshIntegrationStatus, NewRefreshIntegrationStatusHandler(registry, db, log)))
 	mux.Handle(TypeDockerInventoryRefresh, wrap(TypeDockerInventoryRefresh, NewDockerInventoryRefreshHandler(registry, db, log)))
 	mux.Handle(TypeUpdateAgent, wrap(TypeUpdateAgent, NewUpdateAgentHandler(registry, db, log)))
+	mux.Handle(TypeRebootHost, wrap(TypeRebootHost, NewRebootHostHandler(registry, db, log)))
 	dbResolver := &hostctx.DBResolver{Default: db}
 	mux.Handle(TypeHostStatusMonitor, wrap(TypeHostStatusMonitor, NewHostStatusMonitorHandler(db, opts.PoolCache, opts.Emit, log)))
 	mux.Handle(TypeUpdateThresholdMonitor, wrap(TypeUpdateThresholdMonitor, NewUpdateThresholdMonitorHandler(db, opts.PoolCache, opts.Emit, log)))
@@ -127,6 +128,9 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	mux.Handle(TypeInstallComplianceTools, wrap(TypeInstallComplianceTools, NewInstallComplianceToolsHandler(registry, db, opts.RDB, opts.RedisCache, log)))
 	patchRunsStore := store.NewPatchRunsStore(&hostctx.DBResolver{Default: db})
 	mux.Handle(TypeRunPatch, wrap(TypeRunPatch, NewRunPatchHandler(registry, patchRunsStore, opts.PoolCache, opts.QueueClient, log)))
+	patchPoliciesStore := store.NewPatchPoliciesStore(dbResolver)
+	hostsStoreForAutoPatch := store.NewHostsStore(dbResolver)
+	mux.Handle(TypeAutoPatchDispatch, wrap(TypeAutoPatchDispatch, NewAutoPatchDispatchHandler(patchPoliciesStore, patchRunsStore, hostsStoreForAutoPatch, db, opts.QueueClient, log)))
 	mux.Handle(TypeMetricsSend, wrap(TypeMetricsSend, NewMetricsSendHandler(db, opts.PoolCache, opts.ServerVersion, log)))
 	return mux
 }
@@ -248,6 +252,14 @@ func NewScheduler(opts asynq.RedisClientOpt, db *database.DB, log *slog.Logger) 
 	// This hourly fallback catches any reports missed during restarts or edge cases.
 	dispatchReports := asynq.NewTask(TypeScheduledReportsDispatch, nil)
 	if _, err := scheduler.Register("0 * * * *", dispatchReports, asynq.Queue(QueueScheduledReports), asynq.Retention(AutomationRetention)); err != nil {
+		return nil, err
+	}
+
+	// Automated patching: poll every minute for policies whose schedule slot
+	// is due. The handler itself enforces at-most-once-per-slot semantics via
+	// auto_patch_last_run_at, so the tight cadence only buys slot precision.
+	autoPatchDispatch := asynq.NewTask(TypeAutoPatchDispatch, nil)
+	if _, err := scheduler.Register("* * * * *", autoPatchDispatch, asynq.Queue(QueuePatching), asynq.Retention(time.Hour)); err != nil {
 		return nil, err
 	}
 
