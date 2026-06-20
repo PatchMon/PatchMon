@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"mime/quotedprintable"
 	"net"
 	"net/http"
 	"net/smtp"
@@ -605,6 +606,106 @@ type emailConfig struct {
 	UseTLS   bool   `json:"use_tls"`
 }
 
+const emailRecommendedLineLength = 78
+
+func buildEmailMessage(from, to, subject, html string) []byte {
+	var msg strings.Builder
+	writeEmailHeader(&msg, "From", from)
+	writeEmailHeader(&msg, "To", to)
+	msg.WriteString(foldEmailHeader("Subject", subject))
+	msg.WriteString("MIME-Version: 1.0\r\n")
+	msg.WriteString("Content-Type: text/html; charset=utf-8\r\n")
+	msg.WriteString("Content-Transfer-Encoding: quoted-printable\r\n")
+	msg.WriteString("\r\n")
+
+	qp := quotedprintable.NewWriter(&msg)
+	_, _ = qp.Write([]byte(html))
+	_ = qp.Close()
+
+	return []byte(msg.String())
+}
+
+func writeEmailHeader(msg *strings.Builder, name, value string) {
+	msg.WriteString(name)
+	msg.WriteString(": ")
+	msg.WriteString(sanitizeEmailHeaderValue(value))
+	msg.WriteString("\r\n")
+}
+
+func foldEmailHeader(name, value string) string {
+	value = sanitizeEmailHeaderValue(value)
+	prefix := name + ": "
+	if value == "" {
+		return prefix + "\r\n"
+	}
+
+	var out strings.Builder
+	remaining := value
+	for linePrefix := prefix; remaining != ""; linePrefix = "\t" {
+		maxValueLength := emailRecommendedLineLength - len(linePrefix)
+		if maxValueLength < 1 {
+			maxValueLength = 1
+		}
+		if len(linePrefix)+len(remaining) <= emailRecommendedLineLength {
+			out.WriteString(linePrefix)
+			out.WriteString(remaining)
+			out.WriteString("\r\n")
+			break
+		}
+
+		cut := headerFoldIndex(remaining, maxValueLength)
+		out.WriteString(linePrefix)
+		out.WriteString(strings.TrimRight(remaining[:cut], " \t"))
+		out.WriteString("\r\n")
+		remaining = strings.TrimLeft(remaining[cut:], " \t")
+	}
+
+	return out.String()
+}
+
+func sanitizeEmailHeaderValue(value string) string {
+	value = strings.NewReplacer("\r", " ", "\n", " ").Replace(value)
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func headerFoldIndex(value string, maxBytes int) int {
+	if len(value) <= maxBytes {
+		return len(value)
+	}
+	bestSpace := -1
+	for i, r := range value {
+		if i > maxBytes {
+			break
+		}
+		if r == ' ' || r == '\t' {
+			bestSpace = i
+		}
+	}
+	if bestSpace > 0 {
+		return bestSpace
+	}
+	return utf8SafeCut(value, maxBytes)
+}
+
+func utf8SafeCut(value string, maxBytes int) int {
+	if maxBytes <= 0 {
+		_, size := utf8.DecodeRuneInString(value)
+		return size
+	}
+	cut := 0
+	for i := range value {
+		if i > maxBytes {
+			break
+		}
+		cut = i
+	}
+	if cut > 0 {
+		return cut
+	}
+	_, size := utf8.DecodeRuneInString(value)
+	return size
+}
+
 func (h *NotificationDeliverHandler) sendWebhook(ctx context.Context, plain string, p notifications.NotificationDeliverPayload) error {
 	var cfg webhookConfig
 	if err := json.Unmarshal([]byte(plain), &cfg); err != nil {
@@ -756,11 +857,8 @@ func (h *NotificationDeliverHandler) sendEmail(ctx context.Context, plain string
 		cfg.SMTPPort = 587
 	}
 	subject := fmt.Sprintf("[%s] %s", strings.ToUpper(p.Severity), p.Title)
-	// Sanitize subject to prevent SMTP header injection via \r\n in host names / alert titles.
-	subject = strings.NewReplacer("\r", "", "\n", "").Replace(subject)
 	html := buildEmailHTML(p)
-	msg := []byte(fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n%s",
-		cfg.From, cfg.To, subject, html))
+	msg := buildEmailMessage(cfg.From, cfg.To, subject, html)
 	addr := cfg.SMTPHost + ":" + strconv.Itoa(cfg.SMTPPort)
 	var auth smtp.Auth
 	if cfg.Username != "" {
