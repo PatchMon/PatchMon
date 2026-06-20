@@ -3,7 +3,9 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
@@ -27,6 +29,118 @@ const (
 	// decommissioned or permanently unreachable agents.
 	maxScanRequeueAttempts = 30 // ~30 minutes at 1-minute intervals
 )
+
+type complianceScannerStatusPayload struct {
+	Components  map[string]string `json:"components"`
+	ScannerInfo struct {
+		OpenSCAPAvailable    *bool `json:"openscap_available"`
+		DockerBenchAvailable *bool `json:"docker_bench_available"`
+	} `json:"scanner_info"`
+}
+
+// ValidateComplianceScanReadiness checks scanner state the agent has already reported.
+// Unknown or absent scanner status is allowed so older agents are not blocked.
+func ValidateComplianceScanReadiness(scannerStatus []byte, profileType string, profileID *string, openscapEnabled, dockerBenchEnabled bool) error {
+	requested := requestedComplianceScanners(profileType, profileID)
+	if len(requested) == 0 {
+		if openscapEnabled {
+			requested = append(requested, "openscap")
+		}
+		if dockerBenchEnabled {
+			requested = append(requested, "docker-bench")
+		}
+		if len(requested) == 0 {
+			return fmt.Errorf("no compliance scanners are enabled for this host")
+		}
+	}
+
+	for _, scanner := range requested {
+		switch scanner {
+		case "openscap":
+			if !openscapEnabled {
+				return fmt.Errorf("OpenSCAP scanner is disabled for this host")
+			}
+		case "docker-bench":
+			if !dockerBenchEnabled {
+				return fmt.Errorf("docker-bench scanner is disabled for this host")
+			}
+		}
+	}
+
+	status, ok := parseComplianceScannerStatus(scannerStatus)
+	if !ok {
+		return nil
+	}
+	for _, scanner := range requested {
+		if componentStatus, blocked := blockedScannerStatus(status, scanner); blocked {
+			return fmt.Errorf("%s scanner is %s", scannerDisplayName(scanner), componentStatus)
+		}
+	}
+	return nil
+}
+
+func requestedComplianceScanners(profileType string, profileID *string) []string {
+	if profileID != nil && strings.TrimSpace(*profileID) == "docker-bench" {
+		return []string{"docker-bench"}
+	}
+
+	switch strings.TrimSpace(profileType) {
+	case "openscap":
+		return []string{"openscap"}
+	case "docker-bench":
+		return []string{"docker-bench"}
+	case "", "all":
+		return nil
+	default:
+		return []string{"openscap"}
+	}
+}
+
+func parseComplianceScannerStatus(raw []byte) (complianceScannerStatusPayload, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return complianceScannerStatusPayload{}, false
+	}
+	var status complianceScannerStatusPayload
+	if err := json.Unmarshal(raw, &status); err != nil {
+		return complianceScannerStatusPayload{}, false
+	}
+	return status, true
+}
+
+func blockedScannerStatus(status complianceScannerStatusPayload, scanner string) (string, bool) {
+	if status.Components != nil {
+		if value, ok := status.Components[scanner]; ok {
+			normalized := strings.ToLower(strings.TrimSpace(value))
+			if normalized != "" && normalized != "ready" {
+				return normalized, true
+			}
+			return "", false
+		}
+	}
+
+	switch scanner {
+	case "openscap":
+		if status.ScannerInfo.OpenSCAPAvailable != nil && !*status.ScannerInfo.OpenSCAPAvailable {
+			return "unavailable", true
+		}
+	case "docker-bench":
+		if status.ScannerInfo.DockerBenchAvailable != nil && !*status.ScannerInfo.DockerBenchAvailable {
+			return "unavailable", true
+		}
+	}
+	return "", false
+}
+
+func scannerDisplayName(scanner string) string {
+	switch scanner {
+	case "openscap":
+		return "OpenSCAP"
+	case "docker-bench":
+		return "Docker Bench"
+	default:
+		return scanner
+	}
+}
 
 // RunScanHandler handles run_scan jobs.
 type RunScanHandler struct {
@@ -141,6 +255,19 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 			return nil
 		} else {
 			effectiveProfileType = "all"
+		}
+	}
+
+	if err == nil {
+		if readinessErr := ValidateComplianceScanReadiness(host.ComplianceScannerStatus, effectiveProfileType, p.ProfileID, openscapEnabled, dockerBenchEnabled); readinessErr != nil {
+			h.log.Warn("run_scan: scanner not ready", "host_id", p.HostID, "error", readinessErr)
+			if taskID != "" && d != nil {
+				msg := readinessErr.Error()
+				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{
+					JobID: taskID, ErrorMessage: &msg,
+				})
+			}
+			return nil
 		}
 	}
 
