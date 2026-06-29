@@ -1,5 +1,20 @@
 import { Monitor } from "lucide-react";
 import { DiWindows } from "react-icons/di";
+
+const UCSLogoIcon = ({ className, title }) => (
+	<svg
+		xmlns="http://www.w3.org/2000/svg"
+		viewBox="0 0 20 20"
+		className={className}
+		fill="#DD042D"
+		aria-label={title}
+	>
+		<path d="M15.989.38h-9.59A3.198 3.198 0 0 0 3.2 3.58h2.877v9.291c.06.709 1.093 1.486 3.23 1.622 1.75.109 3.397-.545 3.812-1.526V3.588c.366.034 2.418.565 2.803 2.554.027.115.045.232.055.35v.006c.008.09.012.181.012.28v9.593h-2.877v-1.394a3.638 3.638 0 0 1-1.997 1.394h-4.72a3.159 3.159 0 0 1-3.199-3.199V3.58A3.198 3.198 0 0 0 0 6.777v9.594a3.198 3.198 0 0 0 3.198 3.199h9.593a3.199 3.199 0 0 0 3.198-3.2 3.196 3.196 0 0 0 3.198-3.197V3.579A3.198 3.198 0 0 0 15.989.38Z" />
+	</svg>
+);
+
+export { UCSLogoIcon };
+
 // Import OS icons from react-icons Simple Icons - using only confirmed available icons
 import {
 	SiAlmalinux,
@@ -55,6 +70,9 @@ export const getOSIcon = (osType) => {
 
 	// Elementary OS
 	if (os.includes("elementary")) return SiElementary;
+
+	// Univention Corporate Server
+	if (os.includes("univention") || os === "ucs") return UCSLogoIcon;
 
 	// Debian
 	if (os.includes("debian")) return SiDebian;
@@ -166,6 +184,9 @@ export const getOSDisplayName = (osType) => {
 
 	// Elementary OS
 	if (os.includes("elementary")) return "Elementary OS";
+
+	// Univention Corporate Server
+	if (os.includes("univention") || os === "ucs") return "Univention Corporate Server";
 
 	// Debian
 	if (os.includes("debian")) return "Debian";
