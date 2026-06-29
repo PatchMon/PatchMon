@@ -2213,7 +2213,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		return runPatchWindows(ctx, httpClient, patchRunID, patchType, packageNames, dryRun)
 	}
 
-	if pkgManager != "apt" && pkgManager != "dnf" && pkgManager != "yum" && pkgManager != "pkg" && pkgManager != "pacman" {
+	if pkgManager != "apt" && pkgManager != "ucs" && pkgManager != "dnf" && pkgManager != "yum" && pkgManager != "pkg" && pkgManager != "pacman" {
 		errMsg := fmt.Sprintf("package manager %q not supported for patching (apt, dnf, yum, pkg, pacman required)", pkgManager)
 		_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", errMsg)
 		return fmt.Errorf("%s", errMsg)
@@ -2225,6 +2225,13 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 	freeBSDPkgTargets := packageNames
 	includeFreeBSDBase := pkgManager == "pkg" && patchType == "patch_all"
 	switch pkgManager {
+	case "ucs":
+		if _, err := exec.LookPath("univention-upgrade"); err != nil {
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "univention-upgrade not found: not a Univention Corporate Server system")
+			return fmt.Errorf("univention-upgrade not found: %w", err)
+		}
+		env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
+		upgradeBin = "univention-upgrade"
 	case "apt":
 		if _, err := exec.LookPath("apt-get"); err != nil {
 			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "apt-get not found: not a Debian/Ubuntu system or apt not installed")
@@ -2308,7 +2315,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 	if stepErr == nil && needsPkgTransaction {
 		// Update package cache
 		switch pkgManager {
-		case "apt":
+		case "ucs", "apt":
 			if err, abort := runStep(false, "apt-get update", "apt-get update failed: %w", "apt-get", "update", "-qq"); abort {
 				stepErr = err
 			}
@@ -2330,6 +2337,16 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 	if stepErr == nil {
 		if patchType == "patch_all" {
 			switch pkgManager {
+			case "ucs":
+				if dryRun {
+					if err, abort := runStep(false, "apt-get -s upgrade", "apt-get -s upgrade failed: %w", "apt-get", "-s", "upgrade"); abort {
+						stepErr = err
+					}
+				} else {
+					if err, abort := runStep(false, "univention-upgrade", "univention-upgrade failed: %w", "univention-upgrade", "--noninteractive"); abort {
+						stepErr = err
+					}
+				}
 			case "apt":
 				if dryRun {
 					if err, abort := runStep(false, "apt-get -s upgrade", "apt-get -s upgrade failed: %w", "apt-get", "-s", "upgrade"); abort {
@@ -2378,6 +2395,18 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 				return fmt.Errorf("package_names required for patch_package")
 			}
 			switch pkgManager {
+			case "ucs":
+				if dryRun {
+					args := append([]string{"-s", "install"}, packageNames...)
+					if err, abort := runStep(false, "apt-get -s install", "apt-get -s install failed: %w", "apt-get", args...); abort {
+						stepErr = err
+					}
+				} else {
+					args := append([]string{"-y"}, packageNames...)
+					if err, abort := runStep(false, "univention-install", "univention-install failed: %w", "univention-install", args...); abort {
+						stepErr = err
+					}
+				}
 			case "apt":
 				if dryRun {
 					args := append([]string{"-s", "install"}, packageNames...)
