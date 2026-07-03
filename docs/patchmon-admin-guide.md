@@ -180,7 +180,7 @@ Some items only appear depending on your deployment or your edition. For example
 | Host Groups | `/settings/host-groups` | Organise hosts into groups for policy and visibility | `can_manage_settings` |
 | Agent Updates | `/settings/agent-config` | Global auto-update behaviour, update interval | `can_manage_settings` |
 | Agent Version | `/settings/agent-version` | Check and manage bundled agent binary versions | `can_manage_settings` |
-| API integrations | `/settings/integrations` | Auto-enrolment tokens, Proxmox LXC, getHomepage, etc. | `can_manage_settings` |
+| API integrations | `/settings/integrations` | Auto-enrolment tokens, Proxmox LXC, dashboard widgets, etc. | `can_manage_settings` |
 | AI Terminal | `/settings/ai-terminal` | Configure AI provider for SSH terminal assist (Max tier) | `can_manage_settings` + `ai` module |
 | Server URL | `/settings/server-url` | Protocol, host, and port agents use to connect back | `can_manage_settings` |
 | Environment | `/settings/environment` | Read and edit server environment variables from the UI | `can_manage_settings` |
@@ -289,8 +289,8 @@ See Managing the PatchMon Agent for how agents consume this information.
 
 Auto-enrolment tokens and per-integration API credentials:
 
-- **Auto-enrolment tokens**: one-shot or long-lived tokens that let enrolment scripts register new hosts without a human in the loop. Each token can be scoped to specific host groups and flagged for integrations like Proxmox LXC or getHomepage.
-- **Integration-type tokens**: the scoped token model used by the integration `/api/*` routes, including `gethomepage` for the dashboard widget.
+- **Auto-enrolment tokens**: one-shot or long-lived tokens that let enrolment scripts register new hosts without a human in the loop. Each token can be scoped to specific host groups and flagged for integrations like Proxmox LXC or dashboard widgets.
+- **Integration-type tokens**: the scoped token model used by the integration `/api/*` routes, including the historical `gethomepage` type for GetHomepage and Homarr dashboard widgets.
 
 #### AI Terminal
 

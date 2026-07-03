@@ -3,7 +3,7 @@
 	"info": {
 		"title": "PatchMon Integration API",
 		"version": "1.0.0",
-		"description": "PatchMon API documentation for integrations. Covers scoped credentials, GetHomepage widget, agent endpoints, and auto-enrollment. For full application documentation, see: https://patchmon.net/docs/patchmon-api-integrations-guide#integration-api-documentation"
+		"description": "PatchMon API documentation for integrations. Covers scoped credentials, GetHomepage and Homarr dashboard widgets, agent endpoints, and auto-enrollment. For full application documentation, see: https://patchmon.net/docs/patchmon-api-integrations-guide#integration-api-documentation"
 	},
 	"servers": [
 		{
@@ -16,7 +16,7 @@
 			"basicAuth": {
 				"type": "http",
 				"scheme": "basic",
-				"description": "Basic Auth using API credentials (token_key:token_secret). Used for Scoped API and GetHomepage endpoints."
+				"description": "Basic Auth using API credentials (token_key:token_secret). Used for Scoped API and dashboard widget endpoints."
 			},
 			"apiKeyAuth": {
 				"type": "apiKey",
@@ -50,8 +50,8 @@
 			"description": "Endpoints using scoped credentials (Basic Auth, integration_type api)"
 		},
 		{
-			"name": "GetHomepage",
-			"description": "Widget statistics for GetHomepage dashboard (Basic Auth, integration_type gethomepage)"
+			"name": "Dashboard Widgets",
+			"description": "Widget statistics for GetHomepage and Homarr dashboards (Basic Auth, integration_type gethomepage)"
 		},
 		{
 			"name": "Agent / Install",
@@ -815,9 +815,9 @@
 		},
 		"/gethomepage/stats": {
 			"get": {
-				"tags": ["GetHomepage"],
-				"summary": "Get homepage widget statistics",
-				"description": "Returns widget statistics for GetHomepage dashboard (total hosts, outdated packages, security updates, OS distribution, etc.). Requires Basic Auth with GetHomepage credentials.",
+				"tags": ["Dashboard Widgets"],
+				"summary": "Get dashboard widget statistics",
+				"description": "Returns shared widget statistics for GetHomepage and Homarr dashboards (total hosts, outdated packages, security updates, OS distribution, etc.). Requires Basic Auth with dashboard widget credentials.",
 				"security": [{ "basicAuth": [] }],
 				"responses": {
 					"200": {
@@ -874,9 +874,9 @@
 		},
 		"/gethomepage/health": {
 			"get": {
-				"tags": ["GetHomepage"],
-				"summary": "GetHomepage health check",
-				"description": "Simple health check for the GetHomepage API. Requires Basic Auth with GetHomepage credentials.",
+				"tags": ["Dashboard Widgets"],
+				"summary": "Dashboard widget health check",
+				"description": "Simple health check for the dashboard widget API used by GetHomepage and Homarr. Requires Basic Auth with dashboard widget credentials.",
 				"security": [{ "basicAuth": [] }],
 				"responses": {
 					"200": {
@@ -887,7 +887,7 @@
 								"example": {
 									"status": "ok",
 									"timestamp": "2025-03-01T12:00:00Z",
-									"api_key": "GetHomepage Widget"
+									"api_key": "Homarr Dashboard"
 								}
 							}
 						}

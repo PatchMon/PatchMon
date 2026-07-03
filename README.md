@@ -110,7 +110,7 @@ The core of PatchMon - orchestrate updates across your fleet with validation, ap
 
 | Capability | What It Does |
 |---|---|
-| **Integrations** | 33+ integrations including Proxmox LXC auto-enrolment, getHomepage, Ansible and more. |
+| **Integrations** | 33+ integrations including Proxmox LXC auto-enrolment, GetHomepage, Homarr, Ansible and more. |
 | **REST API** | Full `/api/v1` with JWT authentication and interactive Swagger / OpenAPI docs at `/api-docs`. |
 
 ---
@@ -201,7 +201,7 @@ Full documentation at **[patchmon.net/docs](https://patchmon.net/docs)**.
 | Environment variables | [Env vars reference](https://patchmon.net/docs/patchmon-operator-guide#patchmon-environment-variables-reference) |
 | Integration API | [Integration API docs](https://patchmon.net/docs/patchmon-api-integrations-guide#integration-api-documentation) |
 | Proxmox LXC auto-enrolment | [Proxmox guide](https://patchmon.net/docs/patchmon-api-integrations-guide#proxmox-lxc-auto-enrollment-guide) |
-| getHomepage dashboard card | [getHomepage integration](https://patchmon.net/docs/patchmon-api-integrations-guide#gethomepage-dashboard-card) |
+| GetHomepage and Homarr dashboard widgets | [Dashboard widget integration](https://patchmon.net/docs/patchmon-api-integrations-guide#gethomepage-dashboard-card) |
 | Metrics collection | [Metrics info](https://patchmon.net/docs/patchmon-admin-guide#metrics-and-telemetry) |
 
 ---

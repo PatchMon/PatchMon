@@ -113,8 +113,9 @@ package_counts AS (
     SELECT
         COUNT(DISTINCT package_id)::int AS total_outdated,
         COUNT(DISTINCT package_id) FILTER (WHERE is_security_update)::int AS security_updates
-    FROM host_packages
-    WHERE needs_update = true
+    FROM host_packages hp
+    JOIN active_hosts ah ON ah.id = hp.host_id
+    WHERE hp.needs_update = true
 )
 SELECT
     hc.total_hosts,
@@ -123,7 +124,10 @@ SELECT
     pc.security_updates AS security_updates,
     hws.cnt AS hosts_with_security_updates,
     (SELECT COUNT(*)::int FROM repositories WHERE is_active = true) AS total_repos,
-    (SELECT COUNT(*)::int FROM update_history WHERE timestamp >= $1 AND status = 'success') AS recent_updates_24h
+    (SELECT COUNT(*)::int
+     FROM update_history uh
+     JOIN active_hosts ah ON ah.id = uh.host_id
+     WHERE uh.timestamp >= $1 AND uh.status = 'success') AS recent_updates_24h
 FROM host_counts hc
 CROSS JOIN hosts_needing_updates hnu
 CROSS JOIN hosts_with_security hws
