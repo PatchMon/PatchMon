@@ -126,7 +126,7 @@ func (s *DashboardStore) GetStats(ctx context.Context) (map[string]interface{}, 
 	}, nil
 }
 
-// GetHomepageStats returns statistics for the GetHomepage widget (matches Node backend structure).
+// GetHomepageStats returns statistics for dashboard widgets using the legacy GetHomepage-compatible contract.
 func (s *DashboardStore) GetHomepageStats(ctx context.Context) (map[string]interface{}, error) {
 	d := s.db.DB(ctx)
 	now := time.Now()

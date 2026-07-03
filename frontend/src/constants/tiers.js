@@ -55,7 +55,7 @@ export const TIER_FEATURES = [
 		max: true,
 	},
 	{
-		label: "Host groups, dashboards, search, Gethomepage",
+		label: "Host groups, dashboards, search, GetHomepage, Homarr",
 		starter: true,
 		plus: true,
 		max: true,

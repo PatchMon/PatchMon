@@ -1,16 +1,16 @@
 ---
 title: "PatchMon API & Integrations Guide"
-description: "Discord, gethomepage, Ansible, Proxmox auto-enrollment, plus the Auto-Enrollment and Integration REST APIs with an embedded OpenAPI browser."
+description: "Discord, GetHomepage, Homarr, Ansible, Proxmox auto-enrollment, plus the Auto-Enrollment and Integration REST APIs with an embedded OpenAPI browser."
 ---
 
 # PatchMon API & Integrations Guide
 
-This guide covers PatchMon's third-party integrations (Discord, gethomepage, Ansible, Proxmox LXC auto-enrollment) and the REST APIs exposed by the server (Auto-Enrollment API, Integration API). A live, interactive API browser rendered from the server's OpenAPI spec is embedded in the published version of this book on patchmon.net/docs.
+This guide covers PatchMon's third-party integrations (Discord, GetHomepage, Homarr, Ansible, Proxmox LXC auto-enrollment) and the REST APIs exposed by the server (Auto-Enrollment API, Integration API). A live, interactive API browser rendered from the server's OpenAPI spec is embedded in the published version of this book on patchmon.net/docs.
 
 ## Table of Contents
 
 - [Chapter 1: Discord Notifications](#discord-notifications)
-- [Chapter 2: gethomepage Dashboard Card](#gethomepage-dashboard-card)
+- [Chapter 2: Dashboard Widgets for GetHomepage and Homarr](#gethomepage-dashboard-card)
 - [Chapter 3: Ansible Dynamic Inventory](#ansible-dynamic-inventory)
 - [Chapter 4: Proxmox LXC Auto-Enrollment Guide](#proxmox-lxc-auto-enrollment-guide)
 - [Chapter 5: Auto-Enrollment API Documentation](#auto-enrolment-api-docs)
@@ -327,9 +327,9 @@ The webhook URL encodes the target channel. In Discord, go to server settings �
 
 ---
 
-## Chapter 2: gethomepage Dashboard Card {#gethomepage-dashboard-card}
+## Chapter 2: Dashboard Widgets for GetHomepage and Homarr {#gethomepage-dashboard-card}
 
-PatchMon exposes a dedicated read-only endpoint designed to be consumed by a [GetHomepage](https://gethomepage.dev/) (formerly *Homepage*) `customapi` widget. Drop a PatchMon card into your existing homepage to see total hosts, pending updates, and security updates at a glance.
+PatchMon exposes a dedicated read-only endpoint designed for dashboard widgets. It supports [GetHomepage](https://gethomepage.dev/) (formerly *Homepage*) through a `customapi` widget and Homarr through its PatchMon integration/widget. Add PatchMon to either dashboard to see total hosts, pending updates, security updates, and OS distribution at a glance.
 
 > **Related pages:**
 > - [Integration API Documentation](#integration-api-documentation): the generic scoped API (a different integration type)
@@ -340,10 +340,11 @@ PatchMon exposes a dedicated read-only endpoint designed to be consumed by a [Ge
 ### At a glance
 
 - **Endpoint:** `GET /api/v1/gethomepage/stats`
-- **Auth:** HTTP Basic, using a PatchMon-issued API key dedicated to the GetHomepage integration
-- **Widget type:** [`customapi`](https://gethomepage.dev/widgets/services/customapi/) in GetHomepage
+- **Auth:** HTTP Basic, using a PatchMon-issued dashboard widget API key
+- **GetHomepage widget type:** [`customapi`](https://gethomepage.dev/widgets/services/customapi/)
+- **Homarr widget type:** PatchMon integration + PatchMon widget
 - **Fields available:** 8 core metrics + a top-3 OS breakdown + a full `os_distribution` array
-- **Rate limit:** shares the standard API rate limit; GetHomepage polls every 60 seconds, well within the limit
+- **Rate limit:** shares the standard API rate limit; normal GetHomepage and Homarr polling intervals sit well within the limit
 
 #### Default widget
 
@@ -353,29 +354,29 @@ Out of the box the widget shows three metrics:
 - **Hosts Needing Updates**
 - **Security Updates**
 
-Additional metrics can be added by editing the `mappings:` in your GetHomepage `services.yml`. See [Configuration options](#configuration-options) below.
+GetHomepage users can add metrics by editing the `mappings:` in `services.yml`. Homarr users configure the available stats inside the PatchMon widget options.
 
 ---
 
 ### Prerequisites
 
-- A running PatchMon 2.x instance reachable from the machine running GetHomepage.
-- GetHomepage already installed and rendering at least one page.
-- Network path between GetHomepage and PatchMon on HTTP or HTTPS. HTTPS is strongly recommended.
+- A running PatchMon 2.x instance reachable from the machine running GetHomepage or Homarr.
+- GetHomepage or Homarr already installed and rendering at least one dashboard.
+- Network path between the dashboard app and PatchMon on HTTP or HTTPS. HTTPS is strongly recommended.
 - PatchMon admin access (you need `can_manage_settings` to create API keys).
 
 ---
 
 ### Setup
 
-#### Step 1: Create a GetHomepage API key
+#### Step 1: Create a dashboard widget API key
 
 1. Sign in to PatchMon as an admin.
 2. Go to **Settings → Integrations**.
-3. Open the **GetHomepage** tab.
+3. Open the **Dashboard Widgets** tab.
 4. Click **New API Key** and fill in:
-   - **Token Name**: e.g. `GetHomepage dashboard`.
-   - **Allowed IP Addresses** *(optional)*: restrict to the IP of the machine running GetHomepage.
+   - **Token Name**: e.g. `Homarr dashboard` or `GetHomepage dashboard`.
+   - **Allowed IP Addresses** *(optional)*: restrict to the outbound IP of the machine running the dashboard app.
    - **Expiration Date** *(optional)*: set one if this is a temporary key.
 5. Click **Create Token**.
 
@@ -385,12 +386,28 @@ A success modal is shown with:
 
 - **Token Key**: the API username.
 - **Token Secret**: the API password. **Shown only once. Save it immediately.**
-- **Base64-encoded credentials**: pre-built `Authorization: Basic` value, ready to paste.
-- **Complete widget configuration**: a ready-to-drop-in YAML snippet.
+- **Base64-encoded credentials**: pre-built `Authorization: Basic` value for GetHomepage.
+- **Complete GetHomepage widget configuration**: a ready-to-drop-in YAML snippet.
+- **Homarr configuration values**: the PatchMon URL, API key, and API secret.
 
-> Click **Copy Config** to copy the full YAML block. The secret is never retrievable again after you close this modal. If you lose it, you have to delete the key and create a new one.
+> The secret is never retrievable again after you close this modal. If you lose it, you have to delete the key and create a new one.
 
-#### Step 3: Configure GetHomepage
+#### Step 3A: Configure Homarr
+
+1. In Homarr, add a new **PatchMon** integration.
+2. Set the URL to your PatchMon base URL, for example `https://patchmon.example.com`.
+3. Paste the PatchMon **Token Key** into Homarr's API key field.
+4. Paste the PatchMon **Token Secret** into Homarr's API secret field.
+5. Save the integration and run the connection test.
+6. Add the **PatchMon** widget to a board and choose the stats you want to display.
+
+Homarr handles the Basic authentication header automatically and calls:
+
+```text
+GET https://patchmon.example.com/api/v1/gethomepage/stats
+```
+
+#### Step 3B: Configure GetHomepage
 
 ##### Option A: Paste the copied YAML (quickest)
 
@@ -463,7 +480,7 @@ The YAML looks like this:
 
 #### Customising the fields displayed
 
-The default configuration displays **3 metrics**. You can add more. PatchMon returns **8 numeric metrics** and the top-3 OS breakdown, and the widget supports 6–8 comfortably before it becomes cluttered.
+The default GetHomepage configuration displays **3 metrics**. You can add more. PatchMon returns **8 numeric metrics** and the top-3 OS breakdown. GetHomepage supports 6–8 mappings comfortably before it becomes cluttered, while Homarr exposes its own widget options for choosing stats, thresholds, and OS distribution display.
 
 Each `mappings` entry has two parts:
 
@@ -476,9 +493,9 @@ Each `mappings` entry has two parts:
 |-------|------|-------------|---------------------|
 | `total_hosts` | Number | Total active hosts in PatchMon | Yes |
 | `hosts_needing_updates` | Number | Hosts with at least one outdated package | Yes |
-| `security_updates` | Number | Total security updates available across all hosts | Yes |
+| `security_updates` | Number | Distinct security updates available across active hosts | Yes |
 | `up_to_date_hosts` | Number | Hosts with zero outdated packages | No |
-| `total_outdated_packages` | Number | Sum of all outdated packages across hosts | No |
+| `total_outdated_packages` | Number | Distinct outdated packages across active hosts | No |
 | `hosts_with_security_updates` | Number | Hosts requiring at least one security patch | No |
 | `total_repos` | Number | Active repositories being monitored | No |
 | `recent_updates_24h` | Number | Successful updates in the last 24 hours | No |
@@ -488,7 +505,7 @@ Each `mappings` entry has two parts:
 | `top_os_2_count` | Number | Count of the 2nd most common OS | No |
 | `top_os_3_name` | String | Name of the 3rd most common OS | No |
 | `top_os_3_count` | Number | Count of the 3rd most common OS | No |
-| `os_distribution` | Array | Full OS breakdown (advanced use only; GetHomepage cannot render arrays directly) | No |
+| `os_distribution` | Array | Full OS breakdown (used directly by Homarr; advanced use only in GetHomepage because `customapi` cannot render arrays directly) | No |
 | `last_updated` | String (ISO 8601) | Timestamp the stats were generated | No |
 
 > The `top_os_*_name` string fields render poorly in `customapi` widgets. Use the corresponding `_count` fields and put the OS name in the `label:`. See [Displaying OS distribution](#displaying-os-distribution).
@@ -721,14 +738,16 @@ icon: /icons/patchmon.png
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/v1/gethomepage/stats` | Returns the widget payload described above |
+| `GET` | `/api/v1/gethomepage/stats` | Returns the shared dashboard widget payload used by GetHomepage and Homarr |
 | `GET` | `/api/v1/gethomepage/health` | Simple liveness probe. Returns `status: "ok"`, the current timestamp, and the name of the API key used. |
 
 #### Authentication
 
 - **Type:** HTTP Basic Authentication
 - **Format:** `Authorization: Basic <base64(token_key:token_secret)>`
-- **Token type:** `gethomepage` (enforced server-side; a credential created under the **API** tab won't work here, and vice versa)
+- **Token type:** `gethomepage` (the historical internal token type for dashboard widgets; a credential created under the **API** tab won't work here, and vice versa)
+
+Homarr asks for the API key and API secret separately and builds this header for you. GetHomepage expects you to provide the already-encoded `Authorization` header in `services.yml`.
 
 #### Stats response
 
@@ -763,7 +782,7 @@ icon: /icons/patchmon.png
 {
   "status": "ok",
   "timestamp": "2026-04-24T12:34:56Z",
-  "api_key": "GetHomepage dashboard"
+  "api_key": "Homarr dashboard"
 }
 ```
 
@@ -773,7 +792,7 @@ icon: /icons/patchmon.png
 
 #### Viewing existing keys
 
-Go to **Settings → Integrations → GetHomepage**. For each key you see:
+Go to **Settings → Integrations → Dashboard Widgets**. For each key you see:
 
 - Token name
 - Creation date
@@ -799,18 +818,19 @@ Go to **Settings → Integrations → GetHomepage**. For each key you see:
 
 #### Error: "Missing or invalid authorization header"
 
-GetHomepage is not sending the `Authorization` header correctly.
+The dashboard app is not sending the `Authorization` header correctly.
 
-- Verify the `headers:` section is properly indented in `services.yml`.
-- Re-encode the credentials; make sure you used `-n` with `echo` so no trailing newline ends up in the base64.
-- Confirm you're using `type: customapi`, as other widget types ignore arbitrary headers.
+- For GetHomepage, verify the `headers:` section is properly indented in `services.yml`.
+- For GetHomepage, re-encode the credentials; make sure you used `-n` with `echo` so no trailing newline ends up in the base64.
+- For GetHomepage, confirm you're using `type: customapi`, as other widget types ignore arbitrary headers.
+- For Homarr, verify the PatchMon integration has the Token Key in the API key field and the Token Secret in the API secret field.
 
 #### Error: "Invalid API key"
 
 The key does not exist in PatchMon.
 
-- Check **Settings → Integrations → GetHomepage** for the key.
-- Re-create the key if it's missing, update the GetHomepage config with the new credentials.
+- Check **Settings → Integrations → Dashboard Widgets** for the key.
+- Re-create the key if it's missing, then update Homarr or GetHomepage with the new credentials.
 
 #### Error: "API key is disabled" / "API key has expired"
 
@@ -818,18 +838,19 @@ Enable the key, or create a new one with a later expiration.
 
 #### Error: "IP address not allowed"
 
-Your GetHomepage instance's outbound IP is not in the credential's allowlist. Either add it, or remove the allowlist if not needed.
+Your dashboard app's outbound IP is not in the credential's allowlist. Either add it, or remove the allowlist if not needed.
 
 #### Widget shows nothing
 
 Work through this checklist:
 
-- Can GetHomepage reach PatchMon at all? Test with `curl` from inside the GetHomepage container: `curl -v https://patchmon.example.com/api/v1/gethomepage/health -H "Authorization: Basic ..."`
+- Can the dashboard app reach PatchMon at all? Test with `curl` from inside the Homarr or GetHomepage container: `curl -v https://patchmon.example.com/api/v1/gethomepage/health -H "Authorization: Basic ..."`
 - Is the API key active and not expired?
-- Is the base64 credential correct?
-- Is `services.yml` valid YAML? (run `yamllint services.yml` if unsure)
-- Has GetHomepage been restarted since the last change?
-- Check GetHomepage's container logs for error messages.
+- For GetHomepage, is the base64 credential correct?
+- For GetHomepage, is `services.yml` valid YAML? (run `yamllint services.yml` if unsure)
+- For GetHomepage, has the container or service been restarted since the last change?
+- For Homarr, did the PatchMon integration connection test pass before adding the widget?
+- Check the dashboard app's logs for error messages.
 
 #### Testing the endpoint directly
 
@@ -848,12 +869,12 @@ Every numeric field in the response (including `top_os_*_count`) can be used in 
 
 ### Security best practices
 
-- **Always use HTTPS.** The credentials are sent on every 60-second poll. Don't put them on the wire in the clear.
-- **IP-restrict the key** to the GetHomepage instance's IP.
+- **Always use HTTPS.** The credentials are sent on dashboard widget requests. Don't put them on the wire in the clear.
+- **IP-restrict the key** to the dashboard app's outbound IP.
 - **Give the key an expiration** and rotate it as part of your normal credential rotation.
 - **Monitor the last-used timestamp** to spot suspicious activity.
-- **One key per GetHomepage instance** if you're running several, to make rotation and revocation easier.
-- **Store `services.yml` with appropriate file permissions** on the GetHomepage host.
+- **One key per dashboard instance** if you're running several, to make rotation and revocation easier.
+- **Store dashboard configuration securely**, including Homarr secrets and GetHomepage `services.yml`.
 
 ---
 
@@ -861,11 +882,11 @@ Every numeric field in the response (including `top_os_*_count`) can be used in 
 
 ```
 ┌──────────────────┐
-│   GetHomepage    │
-│    Dashboard     │
+│ GetHomepage or   │
+│ Homarr Dashboard │
 └────────┬─────────┘
          │
-         │ HTTP(S) GET, every 60s
+         │ HTTP(S) GET widget request
          │ Authorization: Basic <base64>
          │
          ▼
@@ -895,7 +916,7 @@ Every numeric field in the response (including `top_os_*_count`) can be used in 
 
 ### Rate limiting
 
-The `/api/v1/gethomepage/*` endpoints are subject to PatchMon's general API rate limit of 100 requests per 15 minutes per IP by default. GetHomepage's default poll interval of 60 seconds sits well within this limit (15 requests per 15 minutes). If you lower GetHomepage's poll interval aggressively, you may start hitting `429 Too Many Requests`; stay above 10 seconds.
+The `/api/v1/gethomepage/*` endpoints are subject to PatchMon's general API rate limit of 100 requests per 15 minutes per IP by default. GetHomepage's default poll interval of 60 seconds and Homarr's cached widget requests sit well within this limit. If you lower polling intervals aggressively, you may start hitting `429 Too Many Requests`; stay above 10 seconds.
 
 ---
 
@@ -903,6 +924,7 @@ The `/api/v1/gethomepage/*` endpoints are subject to PatchMon's general API rate
 
 - **PatchMon documentation:** [patchmon.net/docs](https://patchmon.net/docs)
 - **GetHomepage documentation:** [gethomepage.dev](https://gethomepage.dev)
+- **Homarr documentation:** [homarr.dev](https://homarr.dev)
 - **PatchMon Discord:** [patchmon.net/discord](https://patchmon.net/discord)
 - **GitHub issues:** [github.com/PatchMon/PatchMon/issues](https://github.com/PatchMon/PatchMon/issues)
 

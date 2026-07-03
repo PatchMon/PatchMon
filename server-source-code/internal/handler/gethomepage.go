@@ -18,7 +18,7 @@ func NewGetHomepageHandler(dashboard *store.DashboardStore) *GetHomepageHandler 
 	return &GetHomepageHandler{dashboard: dashboard}
 }
 
-// Stats handles GET /gethomepage/stats. Returns widget statistics for GetHomepage dashboard.
+// Stats handles GET /gethomepage/stats. Returns shared dashboard widget statistics.
 func (h *GetHomepageHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	stats, err := h.dashboard.GetHomepageStats(r.Context())
 	if err != nil {

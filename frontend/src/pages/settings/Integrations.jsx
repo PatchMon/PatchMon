@@ -532,7 +532,7 @@ const Integrations = () => {
 								: "bg-secondary-50 dark:bg-secondary-700 text-secondary-700 dark:text-white border border-secondary-200 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600"
 						}`}
 					>
-						<span>GetHomepage</span>
+						<span>Dashboard Widgets</span>
 						{activeTab === "gethomepage" && (
 							<CheckCircle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
 						)}
@@ -612,7 +612,7 @@ const Integrations = () => {
 									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-secondary-300 hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
 							}`}
 						>
-							GetHomepage
+							Dashboard Widgets
 						</button>
 						<button
 							type="button"
@@ -1289,7 +1289,7 @@ const Integrations = () => {
 						</div>
 					)}
 
-					{/* GetHomepage Tab */}
+					{/* Dashboard Widgets Tab */}
 					{activeTab === "gethomepage" && (
 						<div className="space-y-6">
 							{/* Header with New API Key Button */}
@@ -1300,11 +1300,11 @@ const Integrations = () => {
 									</div>
 									<div className="min-w-0">
 										<h3 className="text-base md:text-lg font-semibold text-secondary-900 dark:text-white">
-											GetHomepage Widget Integration
+											Dashboard Widget Integrations
 										</h3>
 										<p className="text-xs md:text-sm text-secondary-600 dark:text-white">
 											Create API keys to display PatchMon statistics in your
-											GetHomepage dashboard
+											GetHomepage or Homarr dashboard
 										</p>
 									</div>
 								</div>
@@ -1327,9 +1327,9 @@ const Integrations = () => {
 									(token) => token.metadata?.integration_type === "gethomepage",
 								).length === 0 ? (
 								<div className="text-center py-8 text-secondary-600 dark:text-white">
-									<p>No GetHomepage API keys created yet.</p>
+									<p>No dashboard widget API keys created yet.</p>
 									<p className="text-sm mt-2">
-										Create an API key to enable GetHomepage widget integration.
+										Create an API key to enable GetHomepage or Homarr widgets.
 									</p>
 								</div>
 							) : (
@@ -1351,7 +1351,7 @@ const Integrations = () => {
 																{token.token_name}
 															</h4>
 															<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
-																GetHomepage
+																Dashboard Widget
 															</span>
 															{token.is_active ? (
 																<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
@@ -1437,7 +1437,7 @@ const Integrations = () => {
 							<div className="bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg p-4 md:p-6">
 								<div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
 									<h3 className="text-base md:text-lg font-semibold text-primary-900 dark:text-primary-200">
-										How to Use GetHomepage Integration
+										How to Use Dashboard Widget Integrations
 									</h3>
 									<a
 										href="https://patchmon.net/docs/patchmon-api-integrations-guide#gethomepage-dashboard-card"
@@ -1453,15 +1453,36 @@ const Integrations = () => {
 									<li>Create a new API key using the button above</li>
 									<li>Copy the API key and secret from the success dialog</li>
 									<li>
-										Add the following widget configuration to your GetHomepage{" "}
-										<code className="bg-primary-100 dark:bg-primary-900/40 px-1 py-0.5 rounded text-xs">
-											services.yml
-										</code>{" "}
-										file:
+										Use the key and secret in Homarr, or paste the YAML into
+										GetHomepage.
 									</li>
 								</ol>
 
 								<div className="mt-4 p-3 bg-primary-100 dark:bg-primary-900/40 rounded border border-primary-200 dark:border-primary-700">
+									<h4 className="text-sm font-semibold text-primary-900 dark:text-primary-200 mb-2">
+										Homarr setup
+									</h4>
+									<ol className="list-decimal list-inside space-y-1 text-xs text-primary-800 dark:text-primary-300">
+										<li>Add a PatchMon integration in Homarr.</li>
+										<li>
+											Set the URL to{" "}
+											<code className="bg-primary-50 dark:bg-primary-900/60 px-1 rounded">
+												{server_url}
+											</code>
+											.
+										</li>
+										<li>
+											Paste the API key as the username and the API secret as
+											the password.
+										</li>
+										<li>Add the PatchMon widget to a Homarr board.</li>
+									</ol>
+								</div>
+
+								<div className="mt-4 p-3 bg-primary-100 dark:bg-primary-900/40 rounded border border-primary-200 dark:border-primary-700">
+									<h4 className="text-sm font-semibold text-primary-900 dark:text-primary-200 mb-2">
+										GetHomepage customapi setup
+									</h4>
 									<pre className="text-xs text-primary-800 dark:text-primary-300 whitespace-pre-wrap overflow-x-auto font-mono">
 										{`- PatchMon:
     href: ${server_url}
@@ -1473,11 +1494,11 @@ const Integrations = () => {
       headers:
         Authorization: Basic BASE64_ENCODED_CREDENTIALS
       mappings:
-       - field: total_hosts
+        - field: total_hosts
           label: Total Hosts
-       - field: hosts_needing_updates
+        - field: hosts_needing_updates
           label: Needs Updates
-       - field: security_updates
+        - field: security_updates
           label: Security Updates`}
 									</pre>
 								</div>
@@ -1769,7 +1790,7 @@ const Integrations = () => {
 							<div className="flex items-center justify-between mb-4">
 								<h2 className="text-lg md:text-xl font-bold text-secondary-900 dark:text-white">
 									{activeTab === "gethomepage"
-										? "Create GetHomepage API Key"
+										? "Create Dashboard Widget API Key"
 										: activeTab === "proxmox"
 											? "Create Proxmox Token"
 											: activeTab === "auto-enrollment-direct"
@@ -1805,7 +1826,7 @@ const Integrations = () => {
 										}
 										placeholder={
 											activeTab === "gethomepage"
-												? "e.g., GetHomepage Widget"
+												? "e.g., Homarr Dashboard"
 												: activeTab === "proxmox"
 													? "e.g., Proxmox Production"
 													: activeTab === "auto-enrollment-direct"
@@ -1992,7 +2013,7 @@ const Integrations = () => {
 									<h2 className="text-base md:text-lg font-bold text-secondary-900 dark:text-white truncate">
 										{new_token.metadata?.integration_type === "gethomepage" ||
 										activeTab === "gethomepage"
-											? "API Key Created Successfully"
+											? "Dashboard Widget API Key Created Successfully"
 											: new_token.metadata?.integration_type === "api" ||
 													activeTab === "scoped-credentials"
 												? "API Credential Created Successfully"
@@ -2366,12 +2387,37 @@ const Integrations = () => {
 								{(new_token.metadata?.integration_type === "gethomepage" ||
 									activeTab === "gethomepage") && (
 									<div className="mt-3 space-y-3">
+										<div className="p-3 bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded">
+											<h3 className="text-sm font-semibold text-primary-900 dark:text-primary-200 mb-2">
+												Homarr configuration
+											</h3>
+											<div className="space-y-1 text-xs text-primary-800 dark:text-primary-300">
+												<p>
+													<strong>URL:</strong>{" "}
+													<code className="bg-primary-100 dark:bg-primary-900/40 px-1 rounded">
+														{server_url}
+													</code>
+												</p>
+												<p>
+													<strong>API key:</strong> use the Token Key above.
+												</p>
+												<p>
+													<strong>API secret:</strong> use the Token Secret
+													above.
+												</p>
+												<p>
+													Homarr handles the Basic authentication header
+													automatically.
+												</p>
+											</div>
+										</div>
+
 										<div>
 											<label
 												htmlFor={token_base64_id}
 												className="block text-xs font-medium text-secondary-700 dark:text-white mb-1"
 											>
-												Base64 Encoded Credentials
+												Base64 Encoded Credentials for GetHomepage
 											</label>
 											<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
 												<input
@@ -2429,11 +2475,11 @@ const Integrations = () => {
       headers:
         Authorization: Basic ${base64Creds}
       mappings:
-       - field: total_hosts
+        - field: total_hosts
           label: Total Hosts
-       - field: hosts_needing_updates
+        - field: hosts_needing_updates
           label: Needs Updates
-       - field: security_updates
+        - field: security_updates
           label: Security Updates`;
 														copy_to_clipboard(config, "gethomepage-config");
 													}}
@@ -2468,11 +2514,11 @@ const Integrations = () => {
       headers:
         Authorization: Basic ${base64Creds}
       mappings:
-       - field: total_hosts
+        - field: total_hosts
           label: Total Hosts
-       - field: hosts_needing_updates
+        - field: hosts_needing_updates
           label: Needs Updates
-       - field: security_updates
+        - field: security_updates
           label: Security Updates`;
 												})()}
 												readOnly
@@ -2480,7 +2526,7 @@ const Integrations = () => {
 												className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono text-xs resize-none"
 											/>
 											<p className="text-xs text-secondary-500 dark:text-white mt-1">
-												💡 Paste into your GetHomepage{" "}
+												Tip: Paste into your GetHomepage{" "}
 												<code className="bg-secondary-100 dark:bg-secondary-700 px-1 rounded">
 													services.yml
 												</code>

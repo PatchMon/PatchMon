@@ -14,7 +14,7 @@ read top-to-bottom and ships as a downloadable PDF on the website:
 | --- | --- |
 | `patchmon-admin-guide.md` | Day-to-day usage for admins/operators in the web UI |
 | `patchmon-operator-guide.md` | Install, configure, OIDC SSO, agent management, troubleshooting |
-| `patchmon-api-integrations-guide.md` | Discord, gethomepage, Ansible, Proxmox auto-enrollment, REST APIs |
+| `patchmon-api-integrations-guide.md` | Discord, GetHomepage, Homarr, Ansible, Proxmox auto-enrollment, REST APIs |
 | `patchmon-release-notes.md` | Version-by-version release notes (auto-built from `server-source-code/internal/handler/release_notes_data/`) |
 | `assets/` | Images referenced by the books |
 

@@ -379,9 +379,9 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequireApiScope("host", "delete")).Delete("/hosts/{id}", apiHostsHandler.DeleteHost)
 		})
 
-		// GetHomepage widget API (Basic Auth with auto_enrollment_tokens, integration_type "gethomepage")
+		// Dashboard widget API (Basic Auth with auto_enrollment_tokens, integration_type "gethomepage")
 		gethomepageHandler := handler.NewGetHomepageHandler(dashboardStore)
-		r.Route("/gethomepage", func(r chi.Router) {
+		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitGeneral)).Route("/gethomepage", func(r chi.Router) {
 			r.Use(middleware.ApiAuthForIntegration(autoEnrollmentStore, "gethomepage", log))
 			r.Get("/stats", gethomepageHandler.Stats)
 			r.Get("/health", gethomepageHandler.Health)
