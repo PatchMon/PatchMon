@@ -41,6 +41,54 @@ bash.x86_64                          5.1.8-6.el9_1                        @baseo
 			input:    "",
 			expected: map[string]models.Package{},
 		},
+		{
+			name: "subscription-manager messages are not packages (issue #864)",
+			input: `Updating Subscription Management repositories.
+Unable to read consumer identity
+
+This system is not registered with an entitlement server. You can use subscription-manager to register.
+
+Installed Packages
+bash.x86_64                          5.1.8-6.el9_1                        @baseos`,
+			expected: map[string]models.Package{
+				"bash": {
+					Name:           "bash",
+					CurrentVersion: "5.1.8-6.el9_1",
+					NeedsUpdate:    false,
+				},
+			},
+		},
+		{
+			name: "package name containing dots keeps full name",
+			input: `Installed Packages
+python3.11.x86_64                    3.11.9-7.el9_5.2                     @appstream`,
+			expected: map[string]models.Package{
+				"python3.11": {
+					Name:           "python3.11",
+					CurrentVersion: "3.11.9-7.el9_5.2",
+					NeedsUpdate:    false,
+				},
+			},
+		},
+		{
+			name: "wrapped long package name (legacy yum)",
+			input: `Installed Packages
+NetworkManager-config-server.noarch
+                                     1:1.18.8-2.el7_9                     @updates
+bash.x86_64                          4.2.46-35.el7_9                      @updates`,
+			expected: map[string]models.Package{
+				"NetworkManager-config-server": {
+					Name:           "NetworkManager-config-server",
+					CurrentVersion: "1:1.18.8-2.el7_9",
+					NeedsUpdate:    false,
+				},
+				"bash": {
+					Name:           "bash",
+					CurrentVersion: "4.2.46-35.el7_9",
+					NeedsUpdate:    false,
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -85,6 +133,31 @@ systemd.x86_64                    252-14.el9_2.2                  baseos`,
 			},
 			expected:         2,
 			expectedSecurity: 1,
+		},
+		{
+			name: "subscription-manager messages are not upgradable packages (issue #864)",
+			input: `Updating Subscription Management repositories.
+Unable to read consumer identity
+
+This system is not registered with an entitlement server. You can use subscription-manager to register.
+
+Last metadata expiration check: 0:19:27 ago on Mon Jul  6 10:00:00 2026.
+kernel.x86_64                     5.14.0-284.30.1.el9_2           baseos`,
+			pkgMgr: "dnf",
+			// Simulate phantom entries created by older agents from the same
+			// noise lines: they must not turn the messages into packages.
+			installedPackages: map[string]models.Package{
+				"kernel.x86_64": {
+					Name:           "kernel.x86_64",
+					CurrentVersion: "5.14.0-284.30.1.el9_1",
+				},
+				"This":     {Name: "This", CurrentVersion: "system"},
+				"Unable":   {Name: "Unable", CurrentVersion: "to"},
+				"Updating": {Name: "Updating", CurrentVersion: "Subscription"},
+			},
+			securityPackages: map[string]bool{},
+			expected:         1,
+			expectedSecurity: 0,
 		},
 	}
 
