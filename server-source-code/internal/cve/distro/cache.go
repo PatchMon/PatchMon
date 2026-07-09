@@ -129,6 +129,25 @@ func (c *advisoryCache) put(key string, set *AdvisorySet, err error) {
 	c.items[key] = cachedAdvisory{err: err, expires: time.Now().Add(c.negTTL)}
 }
 
+// lookup returns an existing good result (fresh in-memory, last-known-good, or
+// on-disk) WITHOUT triggering a fetch. It lets a caller prefer already-known
+// complete data before falling back to a cheaper bulk source.
+func (c *advisoryCache) lookup(key string) (*AdvisorySet, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.items[key]; ok && time.Now().Before(e.expires) && e.err == nil && e.set != nil {
+		return e.set, true
+	}
+	if g := c.good[key]; g != nil {
+		return g, true
+	}
+	if d := c.loadDisk(key); d != nil {
+		c.good[key] = d
+		return d, true
+	}
+	return nil, false
+}
+
 // do returns a fresh cached result if present; otherwise it kicks off a
 // background refresh and returns the last known good result (or nil "pending").
 // It never blocks on fetch.

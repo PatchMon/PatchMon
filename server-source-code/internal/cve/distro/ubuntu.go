@@ -13,12 +13,18 @@ import (
 // affected; not-affected/DNE → not affected).
 type Ubuntu struct {
 	cache   *advisoryCache
+	oval    *ubuntuOVAL
 	baseURL string
 }
 
-// NewUbuntu creates an Ubuntu source using the live security API.
+// NewUbuntu creates an Ubuntu source. It prefers Canonical's bulk OVAL feed and
+// falls back to the per-CVE ubuntu.com API when OVAL lacks a CVE.
 func NewUbuntu() *Ubuntu {
-	return &Ubuntu{cache: newAdvisoryCache("ubuntu"), baseURL: "https://ubuntu.com/security/cves"}
+	return &Ubuntu{
+		cache:   newAdvisoryCache("ubuntu"),
+		oval:    newUbuntuOVAL(),
+		baseURL: "https://ubuntu.com/security/cves",
+	}
 }
 
 func (u *Ubuntu) Distro() string { return "ubuntu" }
@@ -76,14 +82,40 @@ type ubuntuCVE struct {
 	} `json:"packages"`
 }
 
+// Advisories resolves a CVE, preferring already-known complete data, then the
+// bulk OVAL feed, then the per-CVE ubuntu.com API. Precedence:
+//  1. cached/seeded per-CVE JSON (complete statuses) — never refetched if present
+//  2. OVAL bulk feed (fixed versions per series) — no per-CVE rate limit
+//  3. while OVAL is still loading, return "pending" rather than hammering the API
+//  4. fall back to the per-CVE JSON API (cached, disk-persisted) when OVAL has
+//     no data for the CVE (or its data is too thin — no generic fix listed)
 func (u *Ubuntu) Advisories(ctx context.Context, cve string) (*AdvisorySet, error) {
 	cve = strings.ToUpper(strings.TrimSpace(cve))
+
+	// 1. Complete per-CVE JSON we already have (cache or disk seed) wins.
+	if set, ok := u.cache.lookup(cve); ok && set != nil && set.Known {
+		return set, nil
+	}
+
+	// 2/3. Bulk OVAL.
+	if u.oval != nil {
+		byRel, covered, ready := u.oval.advisorySet(cve)
+		if covered {
+			return &AdvisorySet{CVEID: cve, Distro: "ubuntu", Source: "Ubuntu OVAL", Known: true, ByRelease: byRel}, nil
+		}
+		if !ready {
+			// Still warming up — don't hammer the rate-limited API yet.
+			return &AdvisorySet{CVEID: cve, Distro: "ubuntu", Source: "Ubuntu OVAL (loading)", Known: false, ByRelease: map[string]Advisory{}}, nil
+		}
+	}
+
+	// 4. Per-CVE JSON fallback (background fetch, disk-persisted, stale-tolerant).
 	return u.cache.do(cve, func(fctx context.Context) (*AdvisorySet, error) {
-		return u.fetch(fctx, cve)
+		return u.fetchJSON(fctx, cve)
 	})
 }
 
-func (u *Ubuntu) fetch(ctx context.Context, cve string) (*AdvisorySet, error) {
+func (u *Ubuntu) fetchJSON(ctx context.Context, cve string) (*AdvisorySet, error) {
 	url := u.baseURL + "/" + cve + ".json"
 	var data ubuntuCVE
 	found, err := getJSON(ctx, url, nil, &data)
