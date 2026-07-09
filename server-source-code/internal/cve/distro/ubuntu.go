@@ -50,13 +50,19 @@ func (u *Ubuntu) ReleaseKey(osVersion string) string {
 	return ""
 }
 
-// isUbuntuKernelPkg matches the generic/flavour kernel source packages while
-// excluding linux-firmware (as fetch_ubuntu.py does).
-func isUbuntuKernelPkg(name string) bool {
-	if name == "linux" {
-		return true
-	}
-	return strings.HasPrefix(name, "linux-") && !strings.Contains(name, "firmware")
+// hweRe matches the generic HWE kernel source package, e.g. "linux-hwe-6.8".
+var hweRe = regexp.MustCompile(`^linux-hwe-\d+\.\d+$`)
+
+// isGenericUbuntuKernelPkg matches only the source packages that build the
+// *generic* kernel a typical host runs: the GA "linux" and the HWE
+// "linux-hwe-<M.N>". It deliberately excludes flavour/cloud variants
+// (linux-aws, linux-azure*, linux-gcp, linux-lowlatency*, linux-realtime,
+// linux-oem, linux-nvidia, linux-oracle, linux-ibm, linux-riscv, ...), because
+// merging their statuses into one series would let, say, a "needed"
+// linux-azure-fde-6.8 wrongly mark a fixed generic linux-hwe-6.8 as affected.
+// Non-generic hosts are handled as "unknown" (a known limitation).
+func isGenericUbuntuKernelPkg(name string) bool {
+	return name == "linux" || hweRe.MatchString(name)
 }
 
 type ubuntuCVE struct {
@@ -135,7 +141,7 @@ func (u *Ubuntu) parse(data *ubuntuCVE, set *AdvisorySet) {
 	}
 
 	for _, pkg := range data.Packages {
-		if !isUbuntuKernelPkg(pkg.Name) {
+		if !isGenericUbuntuKernelPkg(pkg.Name) {
 			continue
 		}
 		for _, st := range pkg.Statuses {

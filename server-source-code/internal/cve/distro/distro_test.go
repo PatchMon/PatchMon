@@ -139,6 +139,35 @@ func TestUbuntuHWESelect(t *testing.T) {
 	}
 }
 
+// Regression: a generic HWE kernel must be judged against its own generic
+// source package (linux-hwe-6.8), not polluted by cloud/lowlatency flavours in
+// the same series (which would wrongly flip a fixed host to "affected").
+func TestUbuntuGenericNotPollutedByFlavours(t *testing.T) {
+	const fx = `{"packages":[
+	  {"name":"linux-hwe-6.8","statuses":[{"status":"released","release_codename":"jammy","description":"6.8.0-124.124~22.04.1"}]},
+	  {"name":"linux-azure-fde-6.8","statuses":[{"status":"needed","release_codename":"jammy","description":""}]},
+	  {"name":"linux-lowlatency-hwe-6.8","statuses":[{"status":"released","release_codename":"jammy","description":"6.8.0-117.117.1~22.04.1"}]}
+	]}`
+	var data ubuntuCVE
+	if err := json.Unmarshal([]byte(fx), &data); err != nil {
+		t.Fatal(err)
+	}
+	set := &AdvisorySet{CVEID: "CVE-X", Distro: "ubuntu", Known: true, ByRelease: map[string]Advisory{}}
+	u := NewUbuntu()
+	u.parse(&data, set)
+	u.cache.put("CVE-X", set, nil)
+	if adv := set.ByRelease["jammy/6.8"]; adv.Decision != DecisionFixed || adv.FixedVersion != "6.8.0-124.124~22.04.1" {
+		t.Fatalf("jammy/6.8 = %+v, want fixed 6.8.0-124.124~22.04.1", adv)
+	}
+	e := NewEvaluator(u)
+	if r := e.Evaluate(context.Background(), "CVE-X", Host{OSType: "Ubuntu", OSVersion: "22.04", KernelVersion: "6.8.0-124-generic", KernelPkgVersion: "6.8.0-124.124~22.04.1"}); r.Status != StatusPatched {
+		t.Errorf("6.8.0-124 host: got %s want patched", r.Status)
+	}
+	if r := e.Evaluate(context.Background(), "CVE-X", Host{OSType: "Ubuntu", OSVersion: "22.04", KernelVersion: "6.8.0-100-generic", KernelPkgVersion: "6.8.0-100.100~22.04.1"}); r.Status != StatusVulnerable {
+		t.Errorf("6.8.0-100 host: got %s want vulnerable", r.Status)
+	}
+}
+
 func TestUbuntuReleaseKey(t *testing.T) {
 	u := NewUbuntu()
 	for in, want := range map[string]string{
