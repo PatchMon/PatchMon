@@ -343,7 +343,16 @@ const Hosts = () => {
 		if (osFilter && osFilter !== "all") params.os = osFilter;
 		if (osVersionFilter && osVersionFilter !== "all")
 			params.osVersion = osVersionFilter;
-		if (debouncedKernelFilter) params.kernel = debouncedKernelFilter;
+		if (debouncedKernelFilter) {
+			// A CVE id uses the distro-aware path (?cve=): each host is evaluated
+			// against its distribution's fixed kernel package version. A plain
+			// version expression uses the kernel-version filter (?kernel=).
+			if (/^CVE-\d{4}-\d{4,}$/i.test(debouncedKernelFilter)) {
+				params.cve = debouncedKernelFilter;
+			} else {
+				params.kernel = debouncedKernelFilter;
+			}
+		}
 		return params;
 	}, [
 		debouncedSearch,
@@ -354,14 +363,11 @@ const Hosts = () => {
 		debouncedKernelFilter,
 	]);
 
-	// When the kernel filter is a CVE id, resolve it to the affected upstream
-	// kernel version ranges (via NVD) so the user can see what it expands to.
+	// When the kernel filter is a CVE id the hosts are filtered distro-aware
+	// (?cve=). We additionally resolve the CVE's upstream kernel ranges via NVD
+	// for an informational reference line.
 	const isCveFilter = /^CVE-\d{4}-\d{4,}$/i.test(debouncedKernelFilter);
-	const {
-		data: cveKernelInfo,
-		error: cveKernelError,
-		isFetching: cveKernelLoading,
-	} = useQuery({
+	const { data: cveKernelInfo } = useQuery({
 		queryKey: ["cveKernelRanges", debouncedKernelFilter],
 		queryFn: () =>
 			dashboardAPI
@@ -1150,6 +1156,14 @@ const Hosts = () => {
 								(→ {installed})
 							</span>
 						)}
+						{host.cve_status === "vulnerable" && host.cve_fixed_version && (
+							<span
+								className="ml-1 text-xs text-red-600 dark:text-red-400"
+								title={`${host.cve_distro || "distro"} fix: ${host.cve_fixed_version}`}
+							>
+								(fix: {host.cve_fixed_version})
+							</span>
+						)}
 					</div>
 				);
 			}
@@ -1797,32 +1811,27 @@ const Hosts = () => {
 											Filter hosts by running kernel. Operators:{" "}
 											<code>&lt;</code> <code>&lt;=</code> <code>=</code>{" "}
 											<code>&gt;=</code> <code>&gt;</code>, range{" "}
-											<code>a..b</code>, or a CVE id.
+											<code>a..b</code>. Or enter a CVE id to show hosts
+											affected per their distribution (Ubuntu, Debian, RHEL,
+											Fedora, Proxmox, CentOS/Alma).
 										</p>
-										{isCveFilter && cveKernelLoading && (
-											<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
-												Resolving {debouncedKernelFilter} via NVD…
-											</p>
-										)}
-										{isCveFilter && cveKernelError && (
-											<p className="mt-1 text-xs text-red-600 dark:text-red-400">
-												{cveKernelError?.response?.data?.error ||
-													"Could not resolve CVE (server may lack internet access)."}
+										{isCveFilter && (
+											<p className="mt-1 text-xs text-secondary-600 dark:text-secondary-300">
+												Showing hosts whose distribution reports them{" "}
+												<span className="text-red-600 dark:text-red-400">
+													vulnerable
+												</span>{" "}
+												to {debouncedKernelFilter} — each host's installed
+												kernel package is compared against its distro's fixed
+												version. Hosts on unsupported distros are shown as
+												unknown and excluded.
 											</p>
 										)}
 										{isCveFilter && cveKernelInfo?.ranges?.length > 0 && (
-											<div className="mt-1 text-xs text-secondary-600 dark:text-secondary-300">
-												<span className="font-medium">
-													{cveKernelInfo.cve_id}
-												</span>{" "}
-												affects upstream kernels:{" "}
+											<div className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+												Upstream affected ranges (NVD):{" "}
 												{cveKernelInfo.ranges.map(formatKernelRange).join("; ")}
 												.
-												<span className="block text-amber-600 dark:text-amber-400">
-													Note: NVD reports upstream ranges only — distro
-													backports are renumbered. Combine with the OS filter
-													for distro-specific results.
-												</span>
 											</div>
 										)}
 									</div>
