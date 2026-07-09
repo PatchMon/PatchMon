@@ -28,7 +28,7 @@ const (
 // backgroundFetchTimeout bounds a background refresh (which runs off the
 // request path, so it can afford generous retries against a rate-limited
 // tracker without blocking the Hosts page).
-const backgroundFetchTimeout = 120 * time.Second
+const backgroundFetchTimeout = 150 * time.Second
 
 // advisoryCache memoizes parsed AdvisorySets per CVE for a single source. It is
 // the caching layer of the live seam; results are keyed by CVE id.
@@ -152,14 +152,20 @@ func getJSON(ctx context.Context, url string, headers map[string]string, out any
 	// egress IP with bursty 503s, so retry generously with growing backoff to
 	// step outside the throttle window. The result is cached for hours once a
 	// single fetch lands, so the extra latency is paid at most once.
-	const maxAttempts = 12
+	// Space retries ~8s apart rather than in a tight burst: rate limiters like
+	// Cloudflare (ubuntu.com) throttle bursts hardest, so spaced requests slip
+	// through where a burst gets a wall of 503s. This runs in the background so
+	// the spacing costs no request latency. A successful source returns on the
+	// first attempt with no wait.
+	const maxAttempts = 8
+	const retryGap = 8 * time.Second
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
 				return false, ctx.Err()
-			case <-time.After(time.Second):
+			case <-time.After(retryGap):
 			}
 		}
 		found, retry, e := getJSONOnce(ctx, url, headers, out)
