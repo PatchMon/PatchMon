@@ -151,6 +151,118 @@ func asString(v interface{}) string {
 	return ""
 }
 
+// parseCVEList splits a comma/space/semicolon/newline-separated list into
+// unique, validated, upper-cased CVE ids (capped to avoid abuse).
+func parseCVEList(raw string) []string {
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
+	})
+	seen := map[string]bool{}
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		id := strings.ToUpper(strings.TrimSpace(p))
+		if !cve.IsCVEID(id) || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+		if len(out) >= 100 {
+			break
+		}
+	}
+	return out
+}
+
+// CVEReport handles GET /dashboard/cve-report?cves=CVE-...,CVE-... . For each
+// CVE it returns the hosts their distribution reports vulnerable, plus a status
+// breakdown, evaluating every host against its distro's fixed kernel version.
+func (h *DashboardHandler) CVEReport(w http.ResponseWriter, r *http.Request) {
+	if h.distroEval == nil {
+		Error(w, http.StatusServiceUnavailable, "Distro CVE evaluation is not available")
+		return
+	}
+	cves := parseCVEList(r.URL.Query().Get("cves"))
+	if len(cves) == 0 {
+		Error(w, http.StatusBadRequest, "Provide one or more CVE identifiers in the 'cves' parameter")
+		return
+	}
+
+	ctx := r.Context()
+	hosts, err := h.dashboard.GetHostsWithCounts(ctx, store.HostsListParams{})
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to load hosts")
+		return
+	}
+	ids := make([]string, 0, len(hosts))
+	for _, hm := range hosts {
+		if id, ok := hm["id"].(string); ok {
+			ids = append(ids, id)
+		}
+	}
+	kpkgs, err := h.dashboard.GetKernelPackagesForHosts(ctx, ids)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to load kernel packages")
+		return
+	}
+
+	// Precompute the evaluator input for every host once.
+	type hostEntry struct {
+		dh      distro.Host
+		summary map[string]interface{}
+	}
+	entries := make([]hostEntry, 0, len(hosts))
+	for _, hm := range hosts {
+		id, _ := hm["id"].(string)
+		var pkgs []distro.KernelPackage
+		for _, p := range kpkgs[id] {
+			pkgs = append(pkgs, distro.KernelPackage{Name: p.Name, Version: p.Version})
+		}
+		osType := asString(hm["os_type"])
+		uname := asString(hm["kernel_version"])
+		sel := distro.SelectRunningKernel(osType, uname, pkgs)
+		entries = append(entries, hostEntry{
+			dh: distro.Host{
+				OSType:           osType,
+				OSVersion:        asString(hm["os_version"]),
+				KernelVersion:    uname,
+				KernelPkgName:    sel.Name,
+				KernelPkgVersion: sel.Version,
+			},
+			summary: hm,
+		})
+	}
+
+	results := make([]map[string]interface{}, 0, len(cves))
+	for _, cveID := range cves {
+		counts := map[string]int{"vulnerable": 0, "patched": 0, "not_affected": 0, "unknown": 0}
+		vulnHosts := make([]map[string]interface{}, 0)
+		for _, e := range entries {
+			res := h.distroEval.Evaluate(ctx, cveID, e.dh)
+			counts[string(res.Status)]++
+			if res.Status == distro.StatusVulnerable {
+				vulnHosts = append(vulnHosts, map[string]interface{}{
+					"id":             e.summary["id"],
+					"friendly_name":  e.summary["friendly_name"],
+					"hostname":       e.summary["hostname"],
+					"os_type":        e.summary["os_type"],
+					"os_version":     e.summary["os_version"],
+					"kernel_version": e.summary["kernel_version"],
+					"fixed_version":  res.FixedVersion,
+					"distro":         res.Distro,
+					"release":        res.Release,
+				})
+			}
+		}
+		results = append(results, map[string]interface{}{
+			"cve_id": cveID,
+			"counts": counts,
+			"hosts":  vulnHosts,
+		})
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{"cves": cves, "results": results})
+}
+
 // resolveKernelFilter turns a raw kernel filter value (version expression or
 // CVE id) into a KernelFilter. On failure it returns a nil filter plus an HTTP
 // status and message for the caller to surface.

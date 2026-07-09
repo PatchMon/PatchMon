@@ -31,6 +31,7 @@ import SettingsUsers from "./pages/settings/SettingsUsers";
 
 // Lazy load detail/settings pages (less frequently navigated)
 const HostDetail = lazy(() => import("./pages/HostDetail"));
+const CveReport = lazy(() => import("./pages/CveReport"));
 const PackageDetail = lazy(() => import("./pages/PackageDetail"));
 const PatchingRunDetail = lazy(() => import("./pages/patching/RunDetail"));
 const Profile = lazy(() => import("./pages/Profile"));
@@ -162,6 +163,14 @@ function AppRoutes() {
 						element={
 							<ProtectedRoute requirePermission="can_view_hosts">
 								<HostDetail />
+							</ProtectedRoute>
+						}
+					/>
+					<Route
+						path="/cve-report"
+						element={
+							<ProtectedRoute requirePermission="can_view_hosts">
+								<CveReport />
 							</ProtectedRoute>
 						}
 					/>

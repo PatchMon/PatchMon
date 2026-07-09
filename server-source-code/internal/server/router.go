@@ -552,6 +552,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_view_dashboard", permissionsStore)).Get("/dashboard/stats", dashboardHandler.Stats)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/hosts", dashboardHandler.Hosts)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/cve/{cveId}/kernel-ranges", dashboardHandler.CVEKernelRanges)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/cve-report", dashboardHandler.CVEReport)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/hosts/{hostId}", dashboardHandler.HostDetail)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/hosts/{hostId}/queue", dashboardHandler.HostQueue)
 			r.With(middleware.RequirePermission("can_view_packages", permissionsStore)).Get("/dashboard/packages", dashboardHandler.Packages)

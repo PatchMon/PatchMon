@@ -249,6 +249,11 @@ const Layout = ({ children }) => {
 			if (canViewHosts()) {
 				assetItems.push({ name: "Hosts", href: "/hosts", icon: Server });
 				assetItems.push({
+					name: "CVE Report",
+					href: "/cve-report",
+					icon: AlertTriangle,
+				});
+				assetItems.push({
 					name: "Repos",
 					href: "/repositories",
 					icon: GitBranch,

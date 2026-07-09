@@ -103,6 +103,8 @@ export const dashboardAPI = {
 	},
 	getCVEKernelRanges: (cveId) =>
 		api.get(`/dashboard/cve/${encodeURIComponent(cveId)}/kernel-ranges`),
+	getCVEReport: (cves) =>
+		api.get(`/dashboard/cve-report?cves=${encodeURIComponent(cves)}`),
 	getRecentUsers: () => api.get("/dashboard/recent-users"),
 	getRecentCollection: () => api.get("/dashboard/recent-collection"),
 	triggerSystemStatistics: () =>
