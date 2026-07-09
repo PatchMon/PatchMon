@@ -1,0 +1,79 @@
+# Builds the PatchMon server image from docker/server.zot.Dockerfile (public
+# base images, no Docker Hardened Images subscription needed) and publishes it
+# to GHCR so the draft PR has a pullable image for testing.
+#
+# Runs on push to the feature branch and on manual dispatch. The image lands at
+# ghcr.io/wmp/patchmon-server:pr-871 (also tagged with the short SHA).
+# NOTE: after the first run, make the package public in GHCR package settings
+# so reviewers can pull it without authentication.
+name: PR image (GHCR)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/kernel-cve-host-filter
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: agent-source-code/go.mod
+
+      - name: Build agent binaries (agents-prebuilt/)
+        working-directory: agent-source-code
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p ../agents-prebuilt
+          for target in \
+            linux/amd64 linux/arm64 linux/386 linux/arm \
+            freebsd/amd64 freebsd/arm64 freebsd/386 freebsd/arm \
+            windows/amd64 windows/arm64; do
+            GOOS=${target%/*}; GOARCH=${target#*/}
+            export GOOS GOARCH
+            case "$GOARCH" in arm) export GOARM=6 ;; *) unset GOARM ;; esac
+            SUFFIX=""; case "$GOOS" in windows) SUFFIX=".exe" ;; esac
+            go build -buildvcs=false -ldflags="-s -w" \
+              -o "../agents-prebuilt/patchmon-agent-${GOOS}-${GOARCH}${SUFFIX}" ./cmd/patchmon-agent
+          done
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push (linux/amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/server.zot.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/wmp/patchmon-server:pr-871
+            ghcr.io/wmp/patchmon-server:sha-${{ github.sha }}
+          provenance: false
+
+      - name: Summary
+        run: |
+          echo "### Image published" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "ghcr.io/wmp/patchmon-server:pr-871" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "If the package is private, make it public in GHCR package settings." >> "$GITHUB_STEP_SUMMARY"
