@@ -104,18 +104,25 @@ type HostMatcher interface {
 type Host struct {
 	OSType           string // raw os_type from the host record
 	OSVersion        string // raw os_version (e.g. "24.04", "12", "9.4")
-	KernelVersion    string // running uname (fallback when no package version)
-	KernelPkgName    string // installed kernel package name (may be empty)
-	KernelPkgVersion string // installed kernel package current_version (may be empty)
+	KernelVersion    string // running uname
+	KernelPkgName    string // running kernel package name (may be empty)
+	KernelPkgVersion string // running kernel package version (may be empty)
+	// InstalledKernels are all installed kernel packages (name+version). Used to
+	// tell "vulnerable, reboot required" (a fixed kernel is installed but not
+	// booted) from "vulnerable, update required" (no fixed kernel installed).
+	InstalledKernels []KernelPackage
 }
 
-// Result is the per-host evaluation outcome.
+// Result is the per-host evaluation outcome. Status reflects the RUNNING kernel;
+// RebootRequired is set when the host is vulnerable now but a non-vulnerable
+// kernel is already installed (just needs a reboot).
 type Result struct {
-	Status       Status `json:"status"`
-	FixedVersion string `json:"fixed_version,omitempty"`
-	Release      string `json:"release,omitempty"`
-	Source       string `json:"source,omitempty"`
-	Distro       string `json:"distro,omitempty"`
+	Status         Status `json:"status"`
+	FixedVersion   string `json:"fixed_version,omitempty"`
+	Release        string `json:"release,omitempty"`
+	Source         string `json:"source,omitempty"`
+	Distro         string `json:"distro,omitempty"`
+	RebootRequired bool   `json:"reboot_required,omitempty"`
 }
 
 // Evaluator resolves per-host CVE status across the registered distro sources.
@@ -175,21 +182,45 @@ func (e *Evaluator) Evaluate(ctx context.Context, cve string, h Host) Result {
 		return Result{Status: StatusUnknown, Distro: family, Source: sourceURL(set)}
 	}
 
-	// Select the advisory for this host. Series-aware sources (Ubuntu, Proxmox)
-	// pick by the host's running kernel series; the rest key by release.
+	// Status of the currently RUNNING kernel — this is the host's live exposure.
+	res := e.resolveKernel(src, set, family, h.OSVersion, h.KernelVersion, h.KernelPkgVersion)
+
+	// If the running kernel is vulnerable, check whether any already-installed
+	// kernel is safe (fixed/not-affected). If so, the fix is on disk and the
+	// host only needs a reboot; otherwise a package update is required first.
+	if res.Status == StatusVulnerable {
+		for _, k := range h.InstalledKernels {
+			if k.Version == "" {
+				continue
+			}
+			st := e.resolveKernel(src, set, family, h.OSVersion, k.Version, k.Version)
+			if st.Status == StatusPatched || st.Status == StatusNotAffected {
+				res.RebootRequired = true
+				break
+			}
+		}
+	}
+	return res
+}
+
+// resolveKernel evaluates a single kernel against the advisory set. kernelVersion
+// determines the kernel series (for series-aware sources); pkgVersion is the
+// installed package version compared against the distro's fixed version.
+func (e *Evaluator) resolveKernel(src Source, set *AdvisorySet, family, osVersion, kernelVersion, pkgVersion string) Result {
+	probe := Host{OSType: family, OSVersion: osVersion, KernelVersion: kernelVersion, KernelPkgVersion: pkgVersion}
 	var adv Advisory
 	var ok bool
 	if hm, isHM := src.(HostMatcher); isHM {
-		adv, ok = hm.SelectAdvisory(set, h)
+		adv, ok = hm.SelectAdvisory(set, probe)
 	} else {
-		rel := src.ReleaseKey(h.OSVersion)
+		rel := src.ReleaseKey(osVersion)
 		if rel == "" {
 			return Result{Status: StatusUnknown, Distro: family, Source: set.Source}
 		}
 		adv, ok = set.ByRelease[rel]
 	}
 	if !ok {
-		return Result{Status: StatusUnknown, Distro: family, Release: src.ReleaseKey(h.OSVersion), Source: set.Source}
+		return Result{Status: StatusUnknown, Distro: family, Release: src.ReleaseKey(osVersion), Source: set.Source}
 	}
 
 	res := Result{Distro: family, Release: adv.Release, Source: set.Source, FixedVersion: adv.FixedVersion}
@@ -197,15 +228,13 @@ func (e *Evaluator) Evaluate(ctx context.Context, cve string, h Host) Result {
 	case DecisionNotAffected:
 		res.Status = StatusNotAffected
 	case DecisionAffected:
-		// Affected with no fix available: the host is vulnerable regardless of
-		// its installed version.
 		res.Status = StatusVulnerable
 	case DecisionFixed:
-		if adv.FixedVersion == "" || h.KernelPkgVersion == "" {
+		if adv.FixedVersion == "" || pkgVersion == "" {
 			res.Status = StatusUnknown
 			return res
 		}
-		if src.CompareVersions(h.KernelPkgVersion, adv.FixedVersion) >= 0 {
+		if src.CompareVersions(pkgVersion, adv.FixedVersion) >= 0 {
 			res.Status = StatusPatched
 		} else {
 			res.Status = StatusVulnerable

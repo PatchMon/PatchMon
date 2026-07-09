@@ -128,12 +128,14 @@ func (h *DashboardHandler) annotateCVEStatus(ctx context.Context, hosts []map[st
 			KernelVersion:    uname,
 			KernelPkgName:    sel.Name,
 			KernelPkgVersion: sel.Version,
+			InstalledKernels: pkgs,
 		})
 		hm["cve_status"] = string(res.Status)
 		hm["cve_fixed_version"] = res.FixedVersion
 		hm["cve_release"] = res.Release
 		hm["cve_distro"] = res.Distro
 		hm["cve_kernel_pkg"] = sel.Version
+		hm["cve_reboot_required"] = res.RebootRequired
 	}
 	return nil
 }
@@ -227,6 +229,7 @@ func (h *DashboardHandler) CVEReport(w http.ResponseWriter, r *http.Request) {
 				KernelVersion:    uname,
 				KernelPkgName:    sel.Name,
 				KernelPkgVersion: sel.Version,
+				InstalledKernels: pkgs,
 			},
 			summary: hm,
 		})
@@ -241,15 +244,16 @@ func (h *DashboardHandler) CVEReport(w http.ResponseWriter, r *http.Request) {
 			counts[string(res.Status)]++
 			if res.Status == distro.StatusVulnerable {
 				vulnHosts = append(vulnHosts, map[string]interface{}{
-					"id":             e.summary["id"],
-					"friendly_name":  e.summary["friendly_name"],
-					"hostname":       e.summary["hostname"],
-					"os_type":        e.summary["os_type"],
-					"os_version":     e.summary["os_version"],
-					"kernel_version": e.summary["kernel_version"],
-					"fixed_version":  res.FixedVersion,
-					"distro":         res.Distro,
-					"release":        res.Release,
+					"id":              e.summary["id"],
+					"friendly_name":   e.summary["friendly_name"],
+					"hostname":        e.summary["hostname"],
+					"os_type":         e.summary["os_type"],
+					"os_version":      e.summary["os_version"],
+					"kernel_version":  e.summary["kernel_version"],
+					"fixed_version":   res.FixedVersion,
+					"distro":          res.Distro,
+					"release":         res.Release,
+					"reboot_required": res.RebootRequired,
 				})
 			}
 		}

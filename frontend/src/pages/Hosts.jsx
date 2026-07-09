@@ -63,10 +63,16 @@ const CveStatusBadge = ({ host }) => {
 		not_affected: "text-secondary-500 dark:text-secondary-400",
 		unknown: "text-amber-600 dark:text-amber-400",
 	};
+	let vulnLabel = "vulnerable";
+	if (host.cve_reboot_required) {
+		vulnLabel = "vulnerable — reboot to fix";
+	} else if (host.cve_fixed_version) {
+		vulnLabel = `vulnerable — update to ${host.cve_fixed_version}`;
+	} else {
+		vulnLabel = "vulnerable — no fix yet";
+	}
 	const labels = {
-		vulnerable: host.cve_fixed_version
-			? `vulnerable (fix: ${host.cve_fixed_version})`
-			: "vulnerable",
+		vulnerable: vulnLabel,
 		patched: "patched",
 		not_affected: "not affected",
 		unknown: "unknown",

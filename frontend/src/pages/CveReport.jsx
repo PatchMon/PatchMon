@@ -124,7 +124,7 @@ const CveResultCard = ({ result }) => {
 								<th className="px-4 py-2 text-left">Host</th>
 								<th className="px-4 py-2 text-left">OS</th>
 								<th className="px-4 py-2 text-left">Kernel</th>
-								<th className="px-4 py-2 text-left">Fix</th>
+								<th className="px-4 py-2 text-left">Remediation</th>
 							</tr>
 						</thead>
 						<tbody className="divide-y divide-secondary-100 dark:divide-secondary-700">
@@ -144,10 +144,14 @@ const CveResultCard = ({ result }) => {
 									<td className="px-4 py-2 font-mono text-secondary-700 dark:text-secondary-200">
 										{h.kernel_version || "N/A"}
 									</td>
-									<td className="px-4 py-2 font-mono text-secondary-700 dark:text-secondary-200">
-										{h.fixed_version ? (
-											<span className="text-green-700 dark:text-green-400">
-												{h.fixed_version}
+									<td className="px-4 py-2 text-xs">
+										{h.reboot_required ? (
+											<span className="text-orange-600 dark:text-orange-400">
+												reboot required (fixed kernel installed)
+											</span>
+										) : h.fixed_version ? (
+											<span className="text-red-600 dark:text-red-400 font-mono">
+												update → {h.fixed_version}
 											</span>
 										) : (
 											<span className="text-amber-600 dark:text-amber-400">
