@@ -101,6 +101,8 @@ export const dashboardAPI = {
 		const url = `/dashboard/package-spike-analysis${queryString ? `?${queryString}` : ""}`;
 		return api.get(url);
 	},
+	getCVEKernelRanges: (cveId) =>
+		api.get(`/dashboard/cve/${encodeURIComponent(cveId)}/kernel-ranges`),
 	getRecentUsers: () => api.get("/dashboard/recent-users"),
 	getRecentCollection: () => api.get("/dashboard/recent-collection"),
 	triggerSystemStatistics: () =>

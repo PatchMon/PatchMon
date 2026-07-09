@@ -10,6 +10,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 )
 
 // DashboardStore provides dashboard stats.
@@ -242,6 +243,10 @@ type HostsListParams struct {
 	Status    string
 	OS        string
 	OSVersion string
+	// Kernel, when non-nil, restricts results to hosts whose running kernel
+	// version matches the filter. Applied in Go (after the SQL query) because
+	// version-range comparison is not expressible in the query.
+	Kernel *util.KernelFilter
 }
 
 // GetHostsWithCounts returns hosts with update counts for dashboard.
@@ -294,8 +299,20 @@ func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsLis
 	thresholdMinutes := updateIntervalMinutes * 2
 	thresholdTime := time.Now().Add(-time.Duration(thresholdMinutes) * time.Minute)
 
-	result := make([]map[string]interface{}, len(rows))
-	for i, h := range rows {
+	result := make([]map[string]interface{}, 0, len(rows))
+	for _, h := range rows {
+		// Kernel-version filter (running kernel). Applied here because the
+		// comparison spans version ranges that SQL cannot express.
+		if params.Kernel != nil {
+			kv := ""
+			if h.KernelVersion != nil {
+				kv = *h.KernelVersion
+			}
+			if !params.Kernel.Matches(kv) {
+				continue
+			}
+		}
+
 		var lastUpdate *time.Time
 		if h.LastUpdate.Valid {
 			lastUpdate = &h.LastUpdate.Time
@@ -316,9 +333,10 @@ func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsLis
 		if hostGroups == nil {
 			hostGroups = []map[string]interface{}{}
 		}
-		result[i] = map[string]interface{}{
+		result = append(result, map[string]interface{}{
 			"id": h.ID, "machine_id": h.MachineID, "friendly_name": h.FriendlyName, "hostname": h.Hostname,
 			"ip": h.Ip, "os_type": h.OsType, "os_version": h.OsVersion,
+			"kernel_version": h.KernelVersion, "installed_kernel_version": h.InstalledKernelVersion,
 			"status": h.Status, "agent_version": h.AgentVersion, "auto_update": h.AutoUpdate,
 			"notes": h.Notes, "api_id": h.ApiID, "needs_reboot": h.NeedsReboot, "reboot_reason": h.RebootReason,
 			"system_uptime":  h.SystemUptime,
@@ -329,7 +347,7 @@ func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsLis
 			"ssg_version":            h.SsgVersion,
 			"updatesCount":           h.UpdatesCount, "securityUpdatesCount": h.SecurityUpdatesCount,
 			"totalPackagesCount": h.TotalPackagesCount,
-		}
+		})
 	}
 	return result, nil
 }

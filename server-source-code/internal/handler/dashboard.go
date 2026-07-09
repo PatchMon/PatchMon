@@ -1,13 +1,17 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/PatchMon/PatchMon/server-source-code/internal/cve"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/go-chi/chi/v5"
 	"github.com/hibiken/asynq"
 )
@@ -20,11 +24,12 @@ type DashboardHandler struct {
 	users     *store.UsersStore
 	docker    *store.DockerStore
 	inspector *asynq.Inspector
+	cve       *cve.Service
 }
 
 // NewDashboardHandler creates a new dashboard handler.
-func NewDashboardHandler(dashboard *store.DashboardStore, hosts *store.HostsStore, packages *store.PackagesStore, users *store.UsersStore, docker *store.DockerStore, inspector *asynq.Inspector) *DashboardHandler {
-	return &DashboardHandler{dashboard: dashboard, hosts: hosts, packages: packages, users: users, docker: docker, inspector: inspector}
+func NewDashboardHandler(dashboard *store.DashboardStore, hosts *store.HostsStore, packages *store.PackagesStore, users *store.UsersStore, docker *store.DockerStore, inspector *asynq.Inspector, cveService *cve.Service) *DashboardHandler {
+	return &DashboardHandler{dashboard: dashboard, hosts: hosts, packages: packages, users: users, docker: docker, inspector: inspector, cve: cveService}
 }
 
 // Stats handles GET /dashboard/stats.
@@ -51,12 +56,67 @@ func (h *DashboardHandler) Hosts(w http.ResponseWriter, r *http.Request) {
 		OS:        q.Get("os"),
 		OSVersion: q.Get("osVersion"),
 	}
+
+	// Optional kernel-version filter. The value is either a version expression
+	// (e.g. "<6.18.36", "5.15..6.1", "6.8") or a CVE identifier
+	// (e.g. "CVE-2026-46331"), which is resolved to affected kernel ranges.
+	if kernel := strings.TrimSpace(q.Get("kernel")); kernel != "" {
+		filter, status, msg := h.resolveKernelFilter(r.Context(), kernel)
+		if filter == nil {
+			Error(w, status, msg)
+			return
+		}
+		params.Kernel = filter
+	}
+
 	hosts, err := h.dashboard.GetHostsWithCounts(r.Context(), params)
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to load hosts")
 		return
 	}
 	JSON(w, http.StatusOK, hosts)
+}
+
+// resolveKernelFilter turns a raw kernel filter value (version expression or
+// CVE id) into a KernelFilter. On failure it returns a nil filter plus an HTTP
+// status and message for the caller to surface.
+func (h *DashboardHandler) resolveKernelFilter(ctx context.Context, value string) (*util.KernelFilter, int, string) {
+	if cve.IsCVEID(value) {
+		if h.cve == nil {
+			return nil, http.StatusServiceUnavailable, "CVE lookup is not available"
+		}
+		res, err := h.cve.Lookup(ctx, value)
+		if err != nil {
+			return nil, http.StatusBadGateway, err.Error()
+		}
+		return res.Filter, 0, ""
+	}
+	filter, err := util.ParseKernelExpr(value)
+	if err != nil {
+		return nil, http.StatusBadRequest, "Invalid kernel filter: " + err.Error()
+	}
+	return filter, 0, ""
+}
+
+// CVEKernelRanges handles GET /dashboard/cve/{cveId}/kernel-ranges. It resolves
+// a CVE identifier to the affected upstream Linux-kernel version ranges so the
+// UI can display what a CVE filter expands to.
+func (h *DashboardHandler) CVEKernelRanges(w http.ResponseWriter, r *http.Request) {
+	cveID := chi.URLParam(r, "cveId")
+	if !cve.IsCVEID(cveID) {
+		Error(w, http.StatusBadRequest, "Invalid CVE identifier")
+		return
+	}
+	if h.cve == nil {
+		Error(w, http.StatusServiceUnavailable, "CVE lookup is not available")
+		return
+	}
+	res, err := h.cve.Lookup(r.Context(), cveID)
+	if err != nil {
+		Error(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	JSON(w, http.StatusOK, res)
 }
 
 // HostDetail handles GET /dashboard/hosts/:hostId.

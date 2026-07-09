@@ -315,6 +315,7 @@ func (q *Queries) GetHostsForPackageTrends(ctx context.Context) ([]GetHostsForPa
 
 const getHostsWithCounts = `-- name: GetHostsWithCounts :many
 SELECT h.id, h.machine_id, h.friendly_name, h.hostname, h.ip, h.os_type, h.os_version,
+    h.kernel_version, h.installed_kernel_version,
     h.status, h.agent_version, h.auto_update, h.notes, h.api_id,
     h.needs_reboot, h.reboot_reason, h.system_uptime, h.docker_enabled, h.compliance_enabled, h.compliance_on_demand_only,
     h.last_update,
@@ -354,6 +355,8 @@ type GetHostsWithCountsRow struct {
 	Ip                     *string          `json:"ip"`
 	OsType                 string           `json:"os_type"`
 	OsVersion              string           `json:"os_version"`
+	KernelVersion          *string          `json:"kernel_version"`
+	InstalledKernelVersion *string          `json:"installed_kernel_version"`
 	Status                 string           `json:"status"`
 	AgentVersion           *string          `json:"agent_version"`
 	AutoUpdate             bool             `json:"auto_update"`
@@ -395,6 +398,8 @@ func (q *Queries) GetHostsWithCounts(ctx context.Context, arg GetHostsWithCounts
 			&i.Ip,
 			&i.OsType,
 			&i.OsVersion,
+			&i.KernelVersion,
+			&i.InstalledKernelVersion,
 			&i.Status,
 			&i.AgentVersion,
 			&i.AutoUpdate,
