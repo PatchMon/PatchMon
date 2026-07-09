@@ -115,6 +115,21 @@ func (u *Ubuntu) Advisories(ctx context.Context, cve string) (*AdvisorySet, erro
 	})
 }
 
+// ResolveForHost fetches the live per-CVE JSON (cached, disk-persisted) when a
+// host's kernel wasn't covered by OVAL. This catches "affected, no fix yet"
+// series OVAL omits. The fetch is backgrounded and cached, so it hits
+// ubuntu.com at most once per CVE and is reused for all hosts afterwards.
+func (u *Ubuntu) ResolveForHost(ctx context.Context, cve string, _ Host) (*AdvisorySet, bool) {
+	cve = strings.ToUpper(strings.TrimSpace(cve))
+	set, err := u.cache.do(cve, func(fctx context.Context) (*AdvisorySet, error) {
+		return u.fetchJSON(fctx, cve)
+	})
+	if err != nil || set == nil || !set.Known {
+		return nil, false
+	}
+	return set, true
+}
+
 func (u *Ubuntu) fetchJSON(ctx context.Context, cve string) (*AdvisorySet, error) {
 	url := u.baseURL + "/" + cve + ".json"
 	var data ubuntuCVE

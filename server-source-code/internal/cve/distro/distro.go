@@ -90,6 +90,15 @@ type Source interface {
 	CompareVersions(a, b string) int
 }
 
+// HostResolver is an optional Source capability: when the primary (bulk) source
+// yields no verdict for a specific host's kernel, provide a richer per-host
+// AdvisorySet (e.g. by fetching the live per-CVE API). Used to catch cases the
+// bulk feed omits — notably Ubuntu OVAL, which lists fixed versions but not
+// "affected, no fix yet" series like an EOL HWE kernel.
+type HostResolver interface {
+	ResolveForHost(ctx context.Context, cve string, h Host) (*AdvisorySet, bool)
+}
+
 // HostMatcher is an optional Source capability for distributions where a single
 // release ships multiple kernel series simultaneously (e.g. Ubuntu HWE: jammy
 // carries both the 5.15 GA kernel and rolling 5.19/6.2/6.5/6.8 HWE kernels).
@@ -184,6 +193,18 @@ func (e *Evaluator) Evaluate(ctx context.Context, cve string, h Host) Result {
 
 	// Status of the currently RUNNING kernel — this is the host's live exposure.
 	res := e.resolveKernel(src, set, family, h.OSVersion, h.KernelVersion, h.KernelPkgVersion)
+
+	// If the bulk source had no verdict for this host's kernel (e.g. Ubuntu OVAL
+	// lists only fixed series, not an affected-no-fix HWE kernel), ask the source
+	// for richer per-host data (live per-CVE API) and re-evaluate against it.
+	if res.Status == StatusUnknown {
+		if hr, ok := src.(HostResolver); ok {
+			if jset, ok2 := hr.ResolveForHost(ctx, cve, h); ok2 && jset != nil && jset.Known {
+				set = jset
+				res = e.resolveKernel(src, set, family, h.OSVersion, h.KernelVersion, h.KernelPkgVersion)
+			}
+		}
+	}
 
 	// If the running kernel is vulnerable, check whether any already-installed
 	// kernel is safe (fixed/not-affected). If so, the fix is on disk and the
