@@ -91,3 +91,22 @@ func TestFromKernelRangesOR(t *testing.T) {
 		t.Error("6.2.0-1 should not match either range")
 	}
 }
+
+func TestAboveAllRanges(t *testing.T) {
+	dp := []KernelRange{{Lo: "5.8", LoIncl: true, Hi: "5.10.102"}, {Lo: "5.15", LoIncl: true, Hi: "5.15.25"}, {Lo: "5.16", LoIncl: true, Hi: "5.16.11"}}
+	if !AboveAllRanges("6.8.0-124-generic", dp) {
+		t.Error("6.8 should be above Dirty Pipe ranges")
+	}
+	if AboveAllRanges("5.15.0-50", dp) {
+		t.Error("5.15.0-50 (in range) must not be 'above all'")
+	}
+	// A kernel in a gap between disjoint ranges must NOT count as above-all.
+	gap := []KernelRange{{Lo: "3.15", LoIncl: true, Hi: "5.15.149"}, {Lo: "6.1", LoIncl: true, Hi: "6.1.76"}}
+	if AboveAllRanges("5.19.0-50", gap) {
+		t.Error("5.19 in a gap must not be 'above all'")
+	}
+	// Exact / open-ended ranges can never be proven 'above'.
+	if AboveAllRanges("9.0", []KernelRange{{Exact: "6.8"}}) {
+		t.Error("exact range: cannot conclude above")
+	}
+}

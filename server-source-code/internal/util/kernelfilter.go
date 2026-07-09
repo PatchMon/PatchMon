@@ -168,6 +168,32 @@ func FromKernelRanges(label string, ranges []KernelRange) *KernelFilter {
 	return &KernelFilter{Ranges: ranges, Label: label}
 }
 
+// AboveAllRanges reports whether kernel is strictly newer than the entire
+// vulnerable span — i.e. past the upper bound of every range. It is used to
+// safely conclude "not affected" for an old CVE on a much newer kernel, while
+// avoiding false negatives: a kernel sitting in a gap BETWEEN affected ranges
+// (a common NVD/CPE artifact) does NOT qualify, nor does any range that is
+// open-ended above or version-exact (no upper bound to be past).
+func AboveAllRanges(kernel string, ranges []KernelRange) bool {
+	if strings.TrimSpace(kernel) == "" || len(ranges) == 0 {
+		return false
+	}
+	for _, r := range ranges {
+		if r.Hi == "" { // open-ended or exact range: cannot prove we're past it
+			return false
+		}
+		c := CompareKernelVersions(kernel, r.Hi)
+		if r.HiIncl {
+			if c <= 0 { // affected includes Hi; safe only if strictly greater
+				return false
+			}
+		} else if c < 0 { // affected below Hi; safe if >= Hi
+			return false
+		}
+	}
+	return true
+}
+
 // hasNumericComponent reports whether s contains at least one numeric version
 // component, used to reject nonsense filter values early.
 func hasNumericComponent(s string) bool {

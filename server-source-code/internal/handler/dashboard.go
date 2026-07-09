@@ -156,10 +156,10 @@ func (h *DashboardHandler) kernelNewerThanCVE(ctx context.Context, cveID, kernel
 		return false
 	}
 	res, err := h.cve.Lookup(ctx, cveID)
-	if err != nil || res == nil || res.Filter == nil || len(res.Ranges) == 0 {
+	if err != nil || res == nil || len(res.Ranges) == 0 {
 		return false
 	}
-	return !res.Filter.Matches(kernelVersion)
+	return util.AboveAllRanges(kernelVersion, res.Ranges)
 }
 
 // asString reads a string or *string map value, returning "" for anything else.
