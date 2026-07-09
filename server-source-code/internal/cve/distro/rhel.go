@@ -49,7 +49,7 @@ type RHEL struct {
 
 // NewRHEL creates a RHEL source using the live CSAF VEX data feed.
 func NewRHEL() *RHEL {
-	return &RHEL{cache: newAdvisoryCache(), baseURL: "https://access.redhat.com/security/data/csaf/v2/vex"}
+	return &RHEL{cache: newAdvisoryCache("rhel"), baseURL: "https://access.redhat.com/security/data/csaf/v2/vex"}
 }
 
 func (r *RHEL) Distro() string { return "rhel" }

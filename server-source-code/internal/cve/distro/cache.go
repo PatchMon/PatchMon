@@ -7,9 +7,18 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
+
+// diskCacheDir, when set via the CVE_CACHE_DIR env var, persists each source's
+// successful AdvisorySet to a JSON file so it survives restarts and does not
+// need to be re-fetched from a rate-limited tracker. This is the lightweight
+// POC form of the DB-sync seam.
+var diskCacheDir = strings.TrimSpace(os.Getenv("CVE_CACHE_DIR"))
 
 // Default cache lifetimes for live source lookups. A future DB-sync source can
 // bypass these entirely by serving pre-fetched AdvisorySets.
@@ -40,6 +49,7 @@ const backgroundFetchTimeout = 150 * time.Second
 // resilient to a flaky upstream; a completed background fetch is cached for
 // hours and served instantly thereafter.
 type advisoryCache struct {
+	ns       string // namespace (distro) for on-disk file names
 	mu       sync.Mutex
 	items    map[string]cachedAdvisory
 	good     map[string]*AdvisorySet
@@ -54,13 +64,55 @@ type cachedAdvisory struct {
 	expires time.Time
 }
 
-func newAdvisoryCache() *advisoryCache {
+func newAdvisoryCache(ns string) *advisoryCache {
 	return &advisoryCache{
+		ns:       ns,
 		items:    make(map[string]cachedAdvisory),
 		good:     make(map[string]*AdvisorySet),
 		inflight: make(map[string]bool),
 		ttl:      defaultTTL,
 		negTTL:   defaultNegTTL,
+	}
+}
+
+// diskPath returns the on-disk cache file for a key, or "" when disk caching is
+// disabled.
+func (c *advisoryCache) diskPath(key string) string {
+	if diskCacheDir == "" {
+		return ""
+	}
+	safe := strings.NewReplacer("/", "_", ":", "_", "..", "_").Replace(c.ns + "_" + key)
+	return filepath.Join(diskCacheDir, safe+".json")
+}
+
+func (c *advisoryCache) loadDisk(key string) *AdvisorySet {
+	p := c.diskPath(key)
+	if p == "" {
+		return nil
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil
+	}
+	var s AdvisorySet
+	if json.Unmarshal(b, &s) != nil {
+		return nil
+	}
+	return &s
+}
+
+func (c *advisoryCache) saveDisk(key string, set *AdvisorySet) {
+	p := c.diskPath(key)
+	if p == "" || set == nil {
+		return
+	}
+	b, err := json.Marshal(set)
+	if err != nil {
+		return
+	}
+	tmp := fmt.Sprintf("%s.tmp.%d", p, os.Getpid())
+	if os.WriteFile(tmp, b, 0o644) == nil {
+		_ = os.Rename(tmp, p)
 	}
 }
 
@@ -91,12 +143,19 @@ func (c *advisoryCache) do(key string, fetch func(context.Context) (*AdvisorySet
 		}
 		return e.set, e.err
 	}
+	// Fall back to the on-disk copy (persisted from a prior successful fetch)
+	// before treating the result as pending.
+	if c.good[key] == nil {
+		if d := c.loadDisk(key); d != nil {
+			c.good[key] = d
+		}
+	}
 	if !c.inflight[key] {
 		c.inflight[key] = true
 		go c.refresh(key, fetch)
 	}
 	if g := c.good[key]; g != nil {
-		return g, nil // serve stale while refreshing
+		return g, nil // serve stale/disk while refreshing
 	}
 	return nil, nil // pending -> StatusUnknown for now
 }
@@ -138,6 +197,7 @@ func (c *advisoryCache) refresh(key string, fetch func(context.Context) (*Adviso
 	log.Printf("[cve/distro] refresh %s OK: known=%v releases=%d", key, set != nil && set.Known, n)
 	c.good[key] = set
 	c.items[key] = cachedAdvisory{set: set, expires: time.Now().Add(c.ttl)}
+	c.saveDisk(key, set)
 }
 
 // httpClient is the shared client for live source lookups.

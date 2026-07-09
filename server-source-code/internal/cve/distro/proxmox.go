@@ -43,7 +43,7 @@ type Proxmox struct {
 // Ubuntu source. The Ubuntu source is consulted (and cached by Ubuntu) for the
 // actual CVE data; Proxmox only remaps the result onto VE major keys.
 func NewProxmox(ub *Ubuntu) *Proxmox {
-	return &Proxmox{ubuntu: ub, cache: newAdvisoryCache()}
+	return &Proxmox{ubuntu: ub, cache: newAdvisoryCache("proxmox")}
 }
 
 func (p *Proxmox) Distro() string { return "proxmox" }

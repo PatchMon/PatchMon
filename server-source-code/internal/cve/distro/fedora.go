@@ -30,7 +30,7 @@ type Fedora struct {
 
 // NewFedora creates a Fedora source using the live Bodhi API.
 func NewFedora() *Fedora {
-	return &Fedora{cache: newAdvisoryCache(), baseURL: "https://bodhi.fedoraproject.org"}
+	return &Fedora{cache: newAdvisoryCache("fedora"), baseURL: "https://bodhi.fedoraproject.org"}
 }
 
 func (f *Fedora) Distro() string { return "fedora" }

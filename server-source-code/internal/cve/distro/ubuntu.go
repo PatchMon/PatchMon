@@ -18,7 +18,7 @@ type Ubuntu struct {
 
 // NewUbuntu creates an Ubuntu source using the live security API.
 func NewUbuntu() *Ubuntu {
-	return &Ubuntu{cache: newAdvisoryCache(), baseURL: "https://ubuntu.com/security/cves"}
+	return &Ubuntu{cache: newAdvisoryCache("ubuntu"), baseURL: "https://ubuntu.com/security/cves"}
 }
 
 func (u *Ubuntu) Distro() string { return "ubuntu" }
