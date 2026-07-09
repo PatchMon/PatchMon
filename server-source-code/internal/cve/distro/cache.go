@@ -18,13 +18,16 @@ const (
 	// so a blip does not poison results, and we prefer serving the last known
 	// good result over caching the error at all (see do()).
 	defaultNegTTL = 90 * time.Second
-	httpTimeout   = 15 * time.Second
+	// Short per-attempt timeout so a hung connection (ubuntu.com sometimes
+	// stalls) fails fast and we can retry again within the background window,
+	// rather than burning the whole budget on one stall.
+	httpTimeout = 8 * time.Second
 )
 
 // backgroundFetchTimeout bounds a background refresh (which runs off the
 // request path, so it can afford generous retries against a rate-limited
 // tracker without blocking the Hosts page).
-const backgroundFetchTimeout = 90 * time.Second
+const backgroundFetchTimeout = 120 * time.Second
 
 // advisoryCache memoizes parsed AdvisorySets per CVE for a single source. It is
 // the caching layer of the live seam; results are keyed by CVE id.
@@ -97,11 +100,22 @@ func (c *advisoryCache) do(key string, fetch func(context.Context) (*AdvisorySet
 	return nil, nil // pending -> StatusUnknown for now
 }
 
-// refresh performs a background fetch with generous retries and caches it.
+// refresh performs a background fetch with generous retries and caches it. A
+// recover guards against a parser panic wedging the in-flight flag (which would
+// permanently block future refreshes for this key).
 func (c *advisoryCache) refresh(key string, fetch func(context.Context) (*AdvisorySet, error)) {
-	ctx, cancel := context.WithTimeout(context.Background(), backgroundFetchTimeout)
-	defer cancel()
-	set, err := fetch(ctx)
+	var set *AdvisorySet
+	var err error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("panic in distro fetch: %v", r)
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), backgroundFetchTimeout)
+		defer cancel()
+		set, err = fetch(ctx)
+	}()
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -131,14 +145,14 @@ func getJSON(ctx context.Context, url string, headers map[string]string, out any
 	// egress IP with bursty 503s, so retry generously with growing backoff to
 	// step outside the throttle window. The result is cached for hours once a
 	// single fetch lands, so the extra latency is paid at most once.
-	const maxAttempts = 6
+	const maxAttempts = 12
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
 				return false, ctx.Err()
-			case <-time.After(time.Duration(attempt) * 1200 * time.Millisecond):
+			case <-time.After(time.Second):
 			}
 		}
 		found, retry, e := getJSONOnce(ctx, url, headers, out)

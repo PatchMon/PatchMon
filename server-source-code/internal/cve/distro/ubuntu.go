@@ -148,7 +148,11 @@ func (u *Ubuntu) parse(data *ubuntuCVE, set *AdvisorySet) {
 				continue
 			}
 			key := code + "/" + series
-			base := strings.ToLower(strings.Fields(st.Status)[0])
+			fields := strings.Fields(st.Status)
+			if len(fields) == 0 {
+				continue
+			}
+			base := strings.ToLower(fields[0])
 			switch base {
 			case "released":
 				consider(key, DecisionFixed, st.Description)
