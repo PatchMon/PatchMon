@@ -21,17 +21,27 @@ const (
 	httpTimeout   = 15 * time.Second
 )
 
+// backgroundFetchTimeout bounds a background refresh (which runs off the
+// request path, so it can afford generous retries against a rate-limited
+// tracker without blocking the Hosts page).
+const backgroundFetchTimeout = 90 * time.Second
+
 // advisoryCache memoizes parsed AdvisorySets per CVE for a single source. It is
-// the caching layer of the live seam; results are keyed by CVE id. It keeps the
-// last successful result per key ("good") and serves it when a later refresh
-// fails, so a flaky upstream degrades gracefully instead of flipping hosts to
-// "unknown".
+// the caching layer of the live seam; results are keyed by CVE id.
+//
+// Lookups never block on the network: on a cache miss the fetch runs in a
+// background goroutine (detached from the request context) and the caller gets
+// the last known good result if any, or a nil "pending" result that surfaces as
+// StatusUnknown until the refresh lands. This keeps the Hosts request fast and
+// resilient to a flaky upstream; a completed background fetch is cached for
+// hours and served instantly thereafter.
 type advisoryCache struct {
-	mu     sync.Mutex
-	items  map[string]cachedAdvisory
-	good   map[string]*AdvisorySet
-	ttl    time.Duration
-	negTTL time.Duration
+	mu       sync.Mutex
+	items    map[string]cachedAdvisory
+	good     map[string]*AdvisorySet
+	inflight map[string]bool
+	ttl      time.Duration
+	negTTL   time.Duration
 }
 
 type cachedAdvisory struct {
@@ -42,10 +52,11 @@ type cachedAdvisory struct {
 
 func newAdvisoryCache() *advisoryCache {
 	return &advisoryCache{
-		items:  make(map[string]cachedAdvisory),
-		good:   make(map[string]*AdvisorySet),
-		ttl:    defaultTTL,
-		negTTL: defaultNegTTL,
+		items:    make(map[string]cachedAdvisory),
+		good:     make(map[string]*AdvisorySet),
+		inflight: make(map[string]bool),
+		ttl:      defaultTTL,
+		negTTL:   defaultNegTTL,
 	}
 }
 
@@ -62,34 +73,50 @@ func (c *advisoryCache) put(key string, set *AdvisorySet, err error) {
 	c.items[key] = cachedAdvisory{err: err, expires: time.Now().Add(c.negTTL)}
 }
 
-// do returns a cached result if fresh, otherwise runs fetch and caches it. On a
-// fetch error it serves the last known good result if one exists (with a short
-// re-check window), rather than surfacing the transient failure.
-func (c *advisoryCache) do(key string, fetch func() (*AdvisorySet, error)) (*AdvisorySet, error) {
+// do returns a fresh cached result if present; otherwise it kicks off a
+// background refresh and returns the last known good result (or nil "pending").
+// It never blocks on fetch.
+func (c *advisoryCache) do(key string, fetch func(context.Context) (*AdvisorySet, error)) (*AdvisorySet, error) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	if e, ok := c.items[key]; ok && time.Now().Before(e.expires) {
-		c.mu.Unlock()
+		if e.err != nil {
+			if g := c.good[key]; g != nil {
+				return g, nil
+			}
+		}
 		return e.set, e.err
 	}
-	good := c.good[key]
-	c.mu.Unlock()
+	if !c.inflight[key] {
+		c.inflight[key] = true
+		go c.refresh(key, fetch)
+	}
+	if g := c.good[key]; g != nil {
+		return g, nil // serve stale while refreshing
+	}
+	return nil, nil // pending -> StatusUnknown for now
+}
 
-	set, err := fetch()
+// refresh performs a background fetch with generous retries and caches it.
+func (c *advisoryCache) refresh(key string, fetch func(context.Context) (*AdvisorySet, error)) {
+	ctx, cancel := context.WithTimeout(context.Background(), backgroundFetchTimeout)
+	defer cancel()
+	set, err := fetch(ctx)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.inflight[key] = false
 	if err != nil {
-		if good != nil {
-			// Serve stale-but-good; re-check again after negTTL.
-			c.items[key] = cachedAdvisory{set: good, expires: time.Now().Add(c.negTTL)}
-			return good, nil
+		if g := c.good[key]; g != nil {
+			// Keep serving good; re-check after negTTL.
+			c.items[key] = cachedAdvisory{set: g, expires: time.Now().Add(c.negTTL)}
+			return
 		}
 		c.items[key] = cachedAdvisory{err: err, expires: time.Now().Add(c.negTTL)}
-		return nil, err
+		return
 	}
 	c.good[key] = set
 	c.items[key] = cachedAdvisory{set: set, expires: time.Now().Add(c.ttl)}
-	return set, nil
 }
 
 // httpClient is the shared client for live source lookups.

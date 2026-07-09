@@ -72,8 +72,8 @@ type ubuntuCVE struct {
 
 func (u *Ubuntu) Advisories(ctx context.Context, cve string) (*AdvisorySet, error) {
 	cve = strings.ToUpper(strings.TrimSpace(cve))
-	return u.cache.do(cve, func() (*AdvisorySet, error) {
-		return u.fetch(ctx, cve)
+	return u.cache.do(cve, func(fctx context.Context) (*AdvisorySet, error) {
+		return u.fetch(fctx, cve)
 	})
 }
 
