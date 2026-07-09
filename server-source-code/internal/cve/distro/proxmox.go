@@ -85,12 +85,9 @@ func (p *Proxmox) ReleaseKey(osVersion string) string {
 
 func (p *Proxmox) Advisories(ctx context.Context, cve string) (*AdvisorySet, error) {
 	cve = strings.ToUpper(strings.TrimSpace(cve))
-	if set, err, ok := p.cache.get(cve); ok {
-		return set, err
-	}
-	set, err := p.build(ctx, cve)
-	p.cache.put(cve, set, err)
-	return set, err
+	return p.cache.do(cve, func() (*AdvisorySet, error) {
+		return p.build(ctx, cve)
+	})
 }
 
 func (p *Proxmox) build(ctx context.Context, cve string) (*AdvisorySet, error) {

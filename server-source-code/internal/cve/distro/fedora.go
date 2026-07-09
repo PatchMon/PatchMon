@@ -83,12 +83,9 @@ type bodhiUpdate struct {
 
 func (f *Fedora) Advisories(ctx context.Context, cve string) (*AdvisorySet, error) {
 	cve = strings.ToUpper(strings.TrimSpace(cve))
-	if set, err, ok := f.cache.get(cve); ok {
-		return set, err
-	}
-	set, err := f.fetch(ctx, cve)
-	f.cache.put(cve, set, err)
-	return set, err
+	return f.cache.do(cve, func() (*AdvisorySet, error) {
+		return f.fetch(ctx, cve)
+	})
 }
 
 func (f *Fedora) fetch(ctx context.Context, cve string) (*AdvisorySet, error) {

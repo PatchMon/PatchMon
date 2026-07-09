@@ -13,16 +13,23 @@ import (
 // Default cache lifetimes for live source lookups. A future DB-sync source can
 // bypass these entirely by serving pre-fetched AdvisorySets.
 const (
-	defaultTTL    = 6 * time.Hour
-	defaultNegTTL = 30 * time.Minute
+	defaultTTL = 6 * time.Hour
+	// Transient upstream failures (e.g. ubuntu.com 503) are cached only briefly
+	// so a blip does not poison results, and we prefer serving the last known
+	// good result over caching the error at all (see do()).
+	defaultNegTTL = 90 * time.Second
 	httpTimeout   = 15 * time.Second
 )
 
 // advisoryCache memoizes parsed AdvisorySets per CVE for a single source. It is
-// the caching layer of the live seam; results are keyed by CVE id.
+// the caching layer of the live seam; results are keyed by CVE id. It keeps the
+// last successful result per key ("good") and serves it when a later refresh
+// fails, so a flaky upstream degrades gracefully instead of flipping hosts to
+// "unknown".
 type advisoryCache struct {
 	mu     sync.Mutex
 	items  map[string]cachedAdvisory
+	good   map[string]*AdvisorySet
 	ttl    time.Duration
 	negTTL time.Duration
 }
@@ -34,28 +41,55 @@ type cachedAdvisory struct {
 }
 
 func newAdvisoryCache() *advisoryCache {
-	return &advisoryCache{items: make(map[string]cachedAdvisory), ttl: defaultTTL, negTTL: defaultNegTTL}
+	return &advisoryCache{
+		items:  make(map[string]cachedAdvisory),
+		good:   make(map[string]*AdvisorySet),
+		ttl:    defaultTTL,
+		negTTL: defaultNegTTL,
+	}
 }
 
-// get returns a cached entry if present and unexpired.
-func (c *advisoryCache) get(key string) (*AdvisorySet, error, bool) {
+// put stores a result directly (used by tests to seed the cache). A successful
+// result also becomes the last-known-good.
+func (c *advisoryCache) put(key string, set *AdvisorySet, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if e, ok := c.items[key]; ok && time.Now().Before(e.expires) {
-		return e.set, e.err, true
+	if err == nil {
+		c.good[key] = set
+		c.items[key] = cachedAdvisory{set: set, expires: time.Now().Add(c.ttl)}
+		return
 	}
-	return nil, nil, false
+	c.items[key] = cachedAdvisory{err: err, expires: time.Now().Add(c.negTTL)}
 }
 
-// put stores an entry, using the negative TTL when err != nil.
-func (c *advisoryCache) put(key string, set *AdvisorySet, err error) {
-	ttl := c.ttl
-	if err != nil {
-		ttl = c.negTTL
-	}
+// do returns a cached result if fresh, otherwise runs fetch and caches it. On a
+// fetch error it serves the last known good result if one exists (with a short
+// re-check window), rather than surfacing the transient failure.
+func (c *advisoryCache) do(key string, fetch func() (*AdvisorySet, error)) (*AdvisorySet, error) {
 	c.mu.Lock()
-	c.items[key] = cachedAdvisory{set: set, err: err, expires: time.Now().Add(ttl)}
+	if e, ok := c.items[key]; ok && time.Now().Before(e.expires) {
+		c.mu.Unlock()
+		return e.set, e.err
+	}
+	good := c.good[key]
 	c.mu.Unlock()
+
+	set, err := fetch()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err != nil {
+		if good != nil {
+			// Serve stale-but-good; re-check again after negTTL.
+			c.items[key] = cachedAdvisory{set: good, expires: time.Now().Add(c.negTTL)}
+			return good, nil
+		}
+		c.items[key] = cachedAdvisory{err: err, expires: time.Now().Add(c.negTTL)}
+		return nil, err
+	}
+	c.good[key] = set
+	c.items[key] = cachedAdvisory{set: set, expires: time.Now().Add(c.ttl)}
+	return set, nil
 }
 
 // httpClient is the shared client for live source lookups.

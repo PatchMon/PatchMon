@@ -134,12 +134,9 @@ var rhelArches = []string{
 
 func (r *RHEL) Advisories(ctx context.Context, cve string) (*AdvisorySet, error) {
 	cve = strings.ToUpper(strings.TrimSpace(cve))
-	if set, err, ok := r.cache.get(cve); ok {
-		return set, err
-	}
-	set, err := r.fetch(ctx, cve)
-	r.cache.put(cve, set, err)
-	return set, err
+	return r.cache.do(cve, func() (*AdvisorySet, error) {
+		return r.fetch(ctx, cve)
+	})
 }
 
 func (r *RHEL) fetch(ctx context.Context, cve string) (*AdvisorySet, error) {
