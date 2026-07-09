@@ -107,54 +107,52 @@ func (p *Proxmox) build(ctx context.Context, cve string) (*AdvisorySet, error) {
 	if err != nil {
 		return nil, err
 	}
-	if ub != nil {
-		set.Source = ub.Source + " (Proxmox kernel derived from Ubuntu base)"
-	}
 	if ub == nil || !ub.Known {
-		set.Known = false
 		return set, nil
 	}
+	// Pass the Ubuntu advisories through unchanged (keyed by Ubuntu
+	// codename/series); SelectAdvisory maps a Proxmox host onto them.
 	set.Known = true
-	for veMajor := range proxmoxToUbuntu {
-		for k, adv := range remapFromUbuntu(ub, veMajor) {
-			set.ByRelease[k] = adv
-		}
+	set.Source = ub.Source + " (Proxmox kernel derived from Ubuntu base)"
+	for k, adv := range ub.ByRelease {
+		set.ByRelease[k] = adv
 	}
 	return set, nil
 }
 
-// remapFromUbuntu projects an Ubuntu AdvisorySet onto a single Proxmox VE major
-// version. It looks up the Ubuntu base codename(s) that VE major imports and
-// merges their verdicts (affected > fixed > not_affected; among fixes keep the
-// lowest version) exactly as ubuntu.go merges kernel flavours. It returns a map
-// with a single {veMajor: Advisory} entry, or an empty map when none of the
-// bases have a verdict for this CVE (i.e. Proxmox has no derived data).
-func remapFromUbuntu(set *AdvisorySet, veMajor string) map[string]Advisory {
-	out := map[string]Advisory{}
-	if set == nil {
-		return out
+// SelectAdvisory maps a Proxmox host to the underlying Ubuntu kernel advisory:
+// the host's VE major picks the Ubuntu base codename(s), and the host's running
+// kernel series picks the series. Verdicts across candidate bases are merged
+// (affected > fixed > lowest-version).
+func (p *Proxmox) SelectAdvisory(set *AdvisorySet, h Host) (Advisory, bool) {
+	veMajor := p.ReleaseKey(h.OSVersion)
+	bases := proxmoxToUbuntu[veMajor]
+	if len(bases) == 0 {
+		return Advisory{}, false
 	}
-	bases, ok := proxmoxToUbuntu[veMajor]
-	if !ok {
-		return out
+	series := kernelSeries(h.KernelVersion)
+	if series == "" {
+		series = kernelSeries(h.KernelPkgVersion)
 	}
-	var have bool
+	if series == "" {
+		return Advisory{}, false
+	}
 	var cur ubuntuCand
+	have := false
 	for _, code := range bases {
-		adv, ok := set.ByRelease[code]
+		adv, ok := set.ByRelease[code+"/"+series]
 		if !ok {
 			continue
 		}
 		cand := ubuntuCand{decision: adv.Decision, fixed: adv.FixedVersion}
 		if !have {
 			cur, have = cand, true
-			continue
+		} else {
+			cur = mergeCand(cur, cand)
 		}
-		cur = mergeCand(cur, cand)
 	}
 	if !have {
-		return out
+		return Advisory{}, false
 	}
-	out[veMajor] = Advisory{Release: veMajor, Decision: cur.decision, FixedVersion: cur.fixed}
-	return out
+	return Advisory{Release: veMajor + "/" + series, Decision: cur.decision, FixedVersion: cur.fixed}, true
 }

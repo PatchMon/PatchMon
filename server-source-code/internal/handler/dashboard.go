@@ -77,16 +77,16 @@ func (h *DashboardHandler) Hosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Distro-aware CVE filter: keep only hosts whose distribution declares them
-	// affected by the CVE (running kernel package older than the distro's fix),
-	// annotating every returned host with its per-distro status.
+	// Distro-aware CVE evaluation: annotate every host with its per-distro
+	// status (vulnerable/patched/not_affected/unknown) so nothing is silently
+	// hidden. The frontend surfaces the status and lets the user focus on the
+	// vulnerable ones.
 	if cveID := strings.TrimSpace(q.Get("cve")); cveID != "" {
 		if !cve.IsCVEID(cveID) {
 			Error(w, http.StatusBadRequest, "Invalid CVE identifier")
 			return
 		}
-		hosts, err = h.applyCVEFilter(r.Context(), hosts, cveID)
-		if err != nil {
+		if err := h.annotateCVEStatus(r.Context(), hosts, cveID); err != nil {
 			Error(w, http.StatusServiceUnavailable, err.Error())
 			return
 		}
@@ -95,12 +95,12 @@ func (h *DashboardHandler) Hosts(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, hosts)
 }
 
-// applyCVEFilter evaluates each host's per-distro status for the CVE and returns
-// only the vulnerable ones, annotating them with cve_status/cve_fixed_version/
-// cve_release/cve_distro.
-func (h *DashboardHandler) applyCVEFilter(ctx context.Context, hosts []map[string]interface{}, cveID string) ([]map[string]interface{}, error) {
+// annotateCVEStatus evaluates each host's per-distro status for the CVE and
+// annotates it in place with cve_status/cve_fixed_version/cve_release/
+// cve_distro/cve_kernel_pkg.
+func (h *DashboardHandler) annotateCVEStatus(ctx context.Context, hosts []map[string]interface{}, cveID string) error {
 	if h.distroEval == nil {
-		return nil, fmt.Errorf("distro CVE evaluation is not available")
+		return fmt.Errorf("distro CVE evaluation is not available")
 	}
 	ids := make([]string, 0, len(hosts))
 	for _, hm := range hosts {
@@ -110,10 +110,9 @@ func (h *DashboardHandler) applyCVEFilter(ctx context.Context, hosts []map[strin
 	}
 	kpkgs, err := h.dashboard.GetKernelPackagesForHosts(ctx, ids)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load kernel packages")
+		return fmt.Errorf("failed to load kernel packages")
 	}
 
-	out := make([]map[string]interface{}, 0, len(hosts))
 	for _, hm := range hosts {
 		id, _ := hm["id"].(string)
 		var pkgs []distro.KernelPackage
@@ -135,11 +134,8 @@ func (h *DashboardHandler) applyCVEFilter(ctx context.Context, hosts []map[strin
 		hm["cve_release"] = res.Release
 		hm["cve_distro"] = res.Distro
 		hm["cve_kernel_pkg"] = sel.Version
-		if res.Status == distro.StatusVulnerable {
-			out = append(out, hm)
-		}
 	}
-	return out, nil
+	return nil
 }
 
 // asString reads a string or *string map value, returning "" for anything else.

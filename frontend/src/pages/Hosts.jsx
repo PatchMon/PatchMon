@@ -54,6 +54,33 @@ const formatKernelRange = (r) => {
 	return parts.length > 0 ? parts.join(", ") : "all versions";
 };
 
+// CveStatusBadge renders a host's per-distro CVE verdict next to its kernel.
+const CveStatusBadge = ({ host }) => {
+	const status = host.cve_status;
+	const styles = {
+		vulnerable: "text-red-600 dark:text-red-400",
+		patched: "text-green-600 dark:text-green-400",
+		not_affected: "text-secondary-500 dark:text-secondary-400",
+		unknown: "text-amber-600 dark:text-amber-400",
+	};
+	const labels = {
+		vulnerable: host.cve_fixed_version
+			? `vulnerable (fix: ${host.cve_fixed_version})`
+			: "vulnerable",
+		patched: "patched",
+		not_affected: "not affected",
+		unknown: "unknown",
+	};
+	return (
+		<span
+			className={`ml-1 text-xs ${styles[status] || styles.unknown}`}
+			title={`${host.cve_distro || "distro"}${host.cve_release ? ` ${host.cve_release}` : ""}`}
+		>
+			({labels[status] || status})
+		</span>
+	);
+};
+
 const Hosts = () => {
 	const hostGroupFilterId = useId();
 	const statusFilterId = useId();
@@ -391,6 +418,17 @@ const Hosts = () => {
 		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
+
+	// Count per-distro CVE verdicts across the returned hosts (when a CVE filter
+	// is active) for the summary banner.
+	const cveSummary = useMemo(() => {
+		if (!isCveFilter || !Array.isArray(hosts)) return null;
+		const c = { vulnerable: 0, patched: 0, not_affected: 0, unknown: 0 };
+		for (const h of hosts) {
+			if (h.cve_status && c[h.cve_status] !== undefined) c[h.cve_status] += 1;
+		}
+		return c;
+	}, [isCveFilter, hosts]);
 
 	const { data: hostGroups } = useQuery({
 		queryKey: ["hostGroups"],
@@ -1156,14 +1194,7 @@ const Hosts = () => {
 								(→ {installed})
 							</span>
 						)}
-						{host.cve_status === "vulnerable" && host.cve_fixed_version && (
-							<span
-								className="ml-1 text-xs text-red-600 dark:text-red-400"
-								title={`${host.cve_distro || "distro"} fix: ${host.cve_fixed_version}`}
-							>
-								(fix: {host.cve_fixed_version})
-							</span>
-						)}
+						{host.cve_status && <CveStatusBadge host={host} />}
 					</div>
 				);
 			}
@@ -1817,14 +1848,29 @@ const Hosts = () => {
 										</p>
 										{isCveFilter && (
 											<p className="mt-1 text-xs text-secondary-600 dark:text-secondary-300">
-												Showing hosts whose distribution reports them{" "}
-												<span className="text-red-600 dark:text-red-400">
-													vulnerable
-												</span>{" "}
-												to {debouncedKernelFilter} — each host's installed
-												kernel package is compared against its distro's fixed
-												version. Hosts on unsupported distros are shown as
-												unknown and excluded.
+												Each host's installed kernel package is compared against
+												its distribution's fixed version for{" "}
+												{debouncedKernelFilter}. Status is shown next to the
+												kernel (enable the Kernel column).
+											</p>
+										)}
+										{isCveFilter && cveSummary && (
+											<p className="mt-1 text-xs">
+												<span className="text-red-600 dark:text-red-400 font-medium">
+													{cveSummary.vulnerable} vulnerable
+												</span>
+												{" · "}
+												<span className="text-green-600 dark:text-green-400">
+													{cveSummary.patched} patched
+												</span>
+												{" · "}
+												<span className="text-secondary-500 dark:text-secondary-400">
+													{cveSummary.not_affected} not affected
+												</span>
+												{" · "}
+												<span className="text-amber-600 dark:text-amber-400">
+													{cveSummary.unknown} unknown
+												</span>
 											</p>
 										)}
 										{isCveFilter && cveKernelInfo?.ranges?.length > 0 && (

@@ -90,6 +90,16 @@ type Source interface {
 	CompareVersions(a, b string) int
 }
 
+// HostMatcher is an optional Source capability for distributions where a single
+// release ships multiple kernel series simultaneously (e.g. Ubuntu HWE: jammy
+// carries both the 5.15 GA kernel and rolling 5.19/6.2/6.5/6.8 HWE kernels).
+// Such a source keys its advisories per kernel series and selects the one that
+// matches the host's running kernel. Sources that don't implement it fall back
+// to a plain ByRelease[ReleaseKey(osVersion)] lookup.
+type HostMatcher interface {
+	SelectAdvisory(set *AdvisorySet, h Host) (Advisory, bool)
+}
+
 // Host carries what the evaluator needs about a single host.
 type Host struct {
 	OSType           string // raw os_type from the host record
@@ -164,16 +174,25 @@ func (e *Evaluator) Evaluate(ctx context.Context, cve string, h Host) Result {
 	if err != nil || set == nil || !set.Known {
 		return Result{Status: StatusUnknown, Distro: family, Source: sourceURL(set)}
 	}
-	rel := src.ReleaseKey(h.OSVersion)
-	if rel == "" {
-		return Result{Status: StatusUnknown, Distro: family, Source: set.Source}
+
+	// Select the advisory for this host. Series-aware sources (Ubuntu, Proxmox)
+	// pick by the host's running kernel series; the rest key by release.
+	var adv Advisory
+	var ok bool
+	if hm, isHM := src.(HostMatcher); isHM {
+		adv, ok = hm.SelectAdvisory(set, h)
+	} else {
+		rel := src.ReleaseKey(h.OSVersion)
+		if rel == "" {
+			return Result{Status: StatusUnknown, Distro: family, Source: set.Source}
+		}
+		adv, ok = set.ByRelease[rel]
 	}
-	adv, ok := set.ByRelease[rel]
 	if !ok {
-		return Result{Status: StatusUnknown, Distro: family, Release: rel, Source: set.Source}
+		return Result{Status: StatusUnknown, Distro: family, Release: src.ReleaseKey(h.OSVersion), Source: set.Source}
 	}
 
-	res := Result{Distro: family, Release: rel, Source: set.Source, FixedVersion: adv.FixedVersion}
+	res := Result{Distro: family, Release: adv.Release, Source: set.Source, FixedVersion: adv.FixedVersion}
 	switch adv.Decision {
 	case DecisionNotAffected:
 		res.Status = StatusNotAffected

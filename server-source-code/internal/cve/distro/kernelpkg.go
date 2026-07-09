@@ -1,6 +1,21 @@
 package distro
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
+
+var seriesRe = regexp.MustCompile(`(\d+)\.(\d+)`)
+
+// kernelSeries extracts the MAJOR.MINOR kernel series from a version or uname
+// string: "5.19.0-50-generic" -> "5.19", "5.19.0-50.50" -> "5.19". Returns ""
+// when no series is present.
+func kernelSeries(v string) string {
+	if m := seriesRe.FindStringSubmatch(strings.TrimSpace(v)); m != nil {
+		return m[1] + "." + m[2]
+	}
+	return ""
+}
 
 // KernelPackage is an installed kernel-related package on a host.
 type KernelPackage struct {

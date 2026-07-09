@@ -85,14 +85,57 @@ func TestUbuntuParse(t *testing.T) {
 	set := &AdvisorySet{CVEID: "CVE-X", Distro: "ubuntu", Known: true, ByRelease: map[string]Advisory{}}
 	NewUbuntu().parse(&data, set)
 
-	if adv := set.ByRelease["jammy"]; adv.Decision != DecisionFixed || adv.FixedVersion != "5.15.0-89.99" {
-		t.Errorf("jammy: %+v", adv)
+	// The base `linux` package maps to each codename's GA series.
+	if adv := set.ByRelease["jammy/5.15"]; adv.Decision != DecisionFixed || adv.FixedVersion != "5.15.0-89.99" {
+		t.Errorf("jammy/5.15: %+v", adv)
 	}
-	if adv := set.ByRelease["noble"]; adv.Decision != DecisionAffected {
-		t.Errorf("noble: %+v", adv)
+	if adv := set.ByRelease["noble/6.8"]; adv.Decision != DecisionAffected {
+		t.Errorf("noble/6.8: %+v", adv)
 	}
-	if adv := set.ByRelease["focal"]; adv.Decision != DecisionNotAffected {
-		t.Errorf("focal: %+v", adv)
+	if adv := set.ByRelease["focal/5.4"]; adv.Decision != DecisionNotAffected {
+		t.Errorf("focal/5.4: %+v", adv)
+	}
+}
+
+func TestUbuntuHWESelect(t *testing.T) {
+	// jammy ships GA 5.15 (fixed) plus an HWE 5.19 that is still affected. A
+	// host on 5.19 must be judged vulnerable, not patched against the 5.15 fix.
+	const fixture = `{"packages":[
+	  {"name":"linux","statuses":[{"status":"released","release_codename":"jammy","description":"5.15.0-100.110"}]},
+	  {"name":"linux-hwe-5.19","statuses":[{"status":"needed","release_codename":"jammy","description":""}]}
+	]}`
+	var data ubuntuCVE
+	if err := json.Unmarshal([]byte(fixture), &data); err != nil {
+		t.Fatal(err)
+	}
+	set := &AdvisorySet{CVEID: "CVE-X", Distro: "ubuntu", Known: true, ByRelease: map[string]Advisory{}}
+	u := NewUbuntu()
+	u.parse(&data, set)
+	// Seed the cache so Evaluate does not hit the network.
+	u.cache.put("CVE-X", set, nil)
+
+	e := NewEvaluator(u)
+	// Host on the HWE 5.19 kernel — affected (no HWE fix yet).
+	got := e.Evaluate(context.Background(), "CVE-X", Host{
+		OSType: "Ubuntu", OSVersion: "22.04.3 LTS (Jammy Jellyfish)",
+		KernelVersion: "5.19.0-50-generic", KernelPkgVersion: "5.19.0-50.50",
+	})
+	if got.Status != StatusVulnerable {
+		t.Errorf("HWE 5.19 host: got %s want vulnerable (fix is for GA 5.15 only)", got.Status)
+	}
+	// Host on the GA 5.15 kernel, below the fix — vulnerable.
+	got = e.Evaluate(context.Background(), "CVE-X", Host{
+		OSType: "Ubuntu", OSVersion: "22.04", KernelVersion: "5.15.0-89-generic", KernelPkgVersion: "5.15.0-89.99",
+	})
+	if got.Status != StatusVulnerable {
+		t.Errorf("GA 5.15 old host: got %s want vulnerable", got.Status)
+	}
+	// Host on the GA 5.15 kernel, at the fix — patched.
+	got = e.Evaluate(context.Background(), "CVE-X", Host{
+		OSType: "Ubuntu", OSVersion: "22.04", KernelVersion: "5.15.0-100-generic", KernelPkgVersion: "5.15.0-100.110",
+	})
+	if got.Status != StatusPatched {
+		t.Errorf("GA 5.15 patched host: got %s want patched", got.Status)
 	}
 }
 
