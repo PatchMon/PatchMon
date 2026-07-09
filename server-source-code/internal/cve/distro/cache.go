@@ -100,14 +100,18 @@ var httpClient = &http.Client{Timeout: httpTimeout}
 // error. Transient statuses (429/5xx) are retried a few times with backoff; a
 // final non-2xx/404 status or transport failure returns an error.
 func getJSON(ctx context.Context, url string, headers map[string]string, out any) (found bool, err error) {
-	const maxAttempts = 3
+	// Distro trackers (notably ubuntu.com via Cloudflare) rate-limit a shared
+	// egress IP with bursty 503s, so retry generously with growing backoff to
+	// step outside the throttle window. The result is cached for hours once a
+	// single fetch lands, so the extra latency is paid at most once.
+	const maxAttempts = 6
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
 				return false, ctx.Err()
-			case <-time.After(time.Duration(attempt) * 750 * time.Millisecond):
+			case <-time.After(time.Duration(attempt) * 1200 * time.Millisecond):
 			}
 		}
 		found, retry, e := getJSONOnce(ctx, url, headers, out)
