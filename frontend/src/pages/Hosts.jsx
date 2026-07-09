@@ -80,7 +80,7 @@ const CveStatusBadge = ({ host }) => {
 	return (
 		<span
 			className={`ml-1 text-xs ${styles[status] || styles.unknown}`}
-			title={`${host.cve_distro || "distro"}${host.cve_release ? ` ${host.cve_release}` : ""}`}
+			title={`${host.cve_distro || "distro"}${host.cve_release ? ` ${host.cve_release}` : ""}${host.cve_note ? ` — ${host.cve_note}` : ""}`}
 		>
 			({labels[status] || status})
 		</span>

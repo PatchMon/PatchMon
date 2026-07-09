@@ -130,7 +130,12 @@ func (h *DashboardHandler) annotateCVEStatus(ctx context.Context, hosts []map[st
 			KernelPkgVersion: sel.Version,
 			InstalledKernels: pkgs,
 		})
-		hm["cve_status"] = string(res.Status)
+		status := string(res.Status)
+		if res.Status == distro.StatusUnknown && h.kernelNewerThanCVE(ctx, cveID, uname) {
+			status = string(distro.StatusNotAffected)
+			hm["cve_note"] = "kernel newer than affected range (NVD)"
+		}
+		hm["cve_status"] = status
 		hm["cve_fixed_version"] = res.FixedVersion
 		hm["cve_release"] = res.Release
 		hm["cve_distro"] = res.Distro
@@ -138,6 +143,23 @@ func (h *DashboardHandler) annotateCVEStatus(ctx context.Context, hosts []map[st
 		hm["cve_reboot_required"] = res.RebootRequired
 	}
 	return nil
+}
+
+// kernelNewerThanCVE reports whether the host's running kernel is provably
+// outside (newer than) all upstream affected ranges for the CVE per NVD. Used
+// only to downgrade a distro "unknown" to not_affected — e.g. an old CVE
+// (Dirty Pipe, fixed by 5.16.11) against a 6.8 kernel the distro tracker no
+// longer lists. It never upgrades to vulnerable, since a distro may have
+// backported a fix to a version that still looks in-range upstream.
+func (h *DashboardHandler) kernelNewerThanCVE(ctx context.Context, cveID, kernelVersion string) bool {
+	if h.cve == nil || strings.TrimSpace(kernelVersion) == "" {
+		return false
+	}
+	res, err := h.cve.Lookup(ctx, cveID)
+	if err != nil || res == nil || res.Filter == nil || len(res.Ranges) == 0 {
+		return false
+	}
+	return !res.Filter.Matches(kernelVersion)
 }
 
 // asString reads a string or *string map value, returning "" for anything else.
@@ -241,8 +263,12 @@ func (h *DashboardHandler) CVEReport(w http.ResponseWriter, r *http.Request) {
 		vulnHosts := make([]map[string]interface{}, 0)
 		for _, e := range entries {
 			res := h.distroEval.Evaluate(ctx, cveID, e.dh)
-			counts[string(res.Status)]++
-			if res.Status == distro.StatusVulnerable {
+			status := res.Status
+			if status == distro.StatusUnknown && h.kernelNewerThanCVE(ctx, cveID, e.dh.KernelVersion) {
+				status = distro.StatusNotAffected
+			}
+			counts[string(status)]++
+			if status == distro.StatusVulnerable {
 				vulnHosts = append(vulnHosts, map[string]interface{}{
 					"id":              e.summary["id"],
 					"friendly_name":   e.summary["friendly_name"],
