@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -121,6 +122,7 @@ func (c *advisoryCache) refresh(key string, fetch func(context.Context) (*Adviso
 	defer c.mu.Unlock()
 	c.inflight[key] = false
 	if err != nil {
+		log.Printf("[cve/distro] refresh %s FAILED: %v", key, err)
 		if g := c.good[key]; g != nil {
 			// Keep serving good; re-check after negTTL.
 			c.items[key] = cachedAdvisory{set: g, expires: time.Now().Add(c.negTTL)}
@@ -129,6 +131,11 @@ func (c *advisoryCache) refresh(key string, fetch func(context.Context) (*Adviso
 		c.items[key] = cachedAdvisory{err: err, expires: time.Now().Add(c.negTTL)}
 		return
 	}
+	n := 0
+	if set != nil {
+		n = len(set.ByRelease)
+	}
+	log.Printf("[cve/distro] refresh %s OK: known=%v releases=%d", key, set != nil && set.Known, n)
 	c.good[key] = set
 	c.items[key] = cachedAdvisory{set: set, expires: time.Now().Add(c.ttl)}
 }
