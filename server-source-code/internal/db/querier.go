@@ -262,6 +262,11 @@ type Querier interface {
 	GetImageUpdatesByImageID(ctx context.Context, imageID string) ([]DockerImageUpdate, error)
 	GetImagesByIDs(ctx context.Context, dollar_1 []string) ([]DockerImage, error)
 	GetImagesBySource(ctx context.Context) ([]GetImagesBySourceRow, error)
+	// Returns installed kernel-related packages for the given hosts so the CVE
+	// evaluator can compare each host's kernel package version against a distro's
+	// fixed version. Covers Debian/Ubuntu (linux, linux-image-*), RHEL/Fedora/
+	// CentOS (kernel, kernel-core) and Proxmox (pve-kernel-*, proxmox-kernel-*).
+	GetKernelPackagesForHosts(ctx context.Context, dollar_1 []string) ([]GetKernelPackagesForHostsRow, error)
 	GetLatestAlertHistoryForAlerts(ctx context.Context, dollar_1 []string) ([]GetLatestAlertHistoryForAlertsRow, error)
 	GetLatestCompletedScans(ctx context.Context) ([]GetLatestCompletedScansRow, error)
 	GetLatestCompletedScansByProfile(ctx context.Context, profileID string) ([]GetLatestCompletedScansByProfileRow, error)

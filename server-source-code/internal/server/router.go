@@ -17,6 +17,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/cve"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/cve/distro"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/guacd"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/handler"
@@ -171,6 +172,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		dockerStore,
 		queueInspector,
 		cve.NewService(),
+		distro.NewEvaluator(distro.DefaultSources()...),
 	)
 	hostGroupsHandler := handler.NewHostGroupsHandler(hostGroupsStore, hostsStore)
 	dashboardPrefsHandler := handler.NewDashboardPreferencesHandler(dashboardPrefsStore)

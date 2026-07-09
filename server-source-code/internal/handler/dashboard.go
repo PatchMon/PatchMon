@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/cve"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/cve/distro"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
@@ -18,18 +19,19 @@ import (
 
 // DashboardHandler handles dashboard routes.
 type DashboardHandler struct {
-	dashboard *store.DashboardStore
-	hosts     *store.HostsStore
-	packages  *store.PackagesStore
-	users     *store.UsersStore
-	docker    *store.DockerStore
-	inspector *asynq.Inspector
-	cve       *cve.Service
+	dashboard  *store.DashboardStore
+	hosts      *store.HostsStore
+	packages   *store.PackagesStore
+	users      *store.UsersStore
+	docker     *store.DockerStore
+	inspector  *asynq.Inspector
+	cve        *cve.Service
+	distroEval *distro.Evaluator
 }
 
 // NewDashboardHandler creates a new dashboard handler.
-func NewDashboardHandler(dashboard *store.DashboardStore, hosts *store.HostsStore, packages *store.PackagesStore, users *store.UsersStore, docker *store.DockerStore, inspector *asynq.Inspector, cveService *cve.Service) *DashboardHandler {
-	return &DashboardHandler{dashboard: dashboard, hosts: hosts, packages: packages, users: users, docker: docker, inspector: inspector, cve: cveService}
+func NewDashboardHandler(dashboard *store.DashboardStore, hosts *store.HostsStore, packages *store.PackagesStore, users *store.UsersStore, docker *store.DockerStore, inspector *asynq.Inspector, cveService *cve.Service, distroEval *distro.Evaluator) *DashboardHandler {
+	return &DashboardHandler{dashboard: dashboard, hosts: hosts, packages: packages, users: users, docker: docker, inspector: inspector, cve: cveService, distroEval: distroEval}
 }
 
 // Stats handles GET /dashboard/stats.
@@ -74,7 +76,83 @@ func (h *DashboardHandler) Hosts(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to load hosts")
 		return
 	}
+
+	// Distro-aware CVE filter: keep only hosts whose distribution declares them
+	// affected by the CVE (running kernel package older than the distro's fix),
+	// annotating every returned host with its per-distro status.
+	if cveID := strings.TrimSpace(q.Get("cve")); cveID != "" {
+		if !cve.IsCVEID(cveID) {
+			Error(w, http.StatusBadRequest, "Invalid CVE identifier")
+			return
+		}
+		hosts, err = h.applyCVEFilter(r.Context(), hosts, cveID)
+		if err != nil {
+			Error(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+	}
+
 	JSON(w, http.StatusOK, hosts)
+}
+
+// applyCVEFilter evaluates each host's per-distro status for the CVE and returns
+// only the vulnerable ones, annotating them with cve_status/cve_fixed_version/
+// cve_release/cve_distro.
+func (h *DashboardHandler) applyCVEFilter(ctx context.Context, hosts []map[string]interface{}, cveID string) ([]map[string]interface{}, error) {
+	if h.distroEval == nil {
+		return nil, fmt.Errorf("distro CVE evaluation is not available")
+	}
+	ids := make([]string, 0, len(hosts))
+	for _, hm := range hosts {
+		if id, ok := hm["id"].(string); ok {
+			ids = append(ids, id)
+		}
+	}
+	kpkgs, err := h.dashboard.GetKernelPackagesForHosts(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load kernel packages")
+	}
+
+	out := make([]map[string]interface{}, 0, len(hosts))
+	for _, hm := range hosts {
+		id, _ := hm["id"].(string)
+		var pkgs []distro.KernelPackage
+		for _, p := range kpkgs[id] {
+			pkgs = append(pkgs, distro.KernelPackage{Name: p.Name, Version: p.Version})
+		}
+		osType := asString(hm["os_type"])
+		uname := asString(hm["kernel_version"])
+		sel := distro.SelectRunningKernel(osType, uname, pkgs)
+		res := h.distroEval.Evaluate(ctx, cveID, distro.Host{
+			OSType:           osType,
+			OSVersion:        asString(hm["os_version"]),
+			KernelVersion:    uname,
+			KernelPkgName:    sel.Name,
+			KernelPkgVersion: sel.Version,
+		})
+		hm["cve_status"] = string(res.Status)
+		hm["cve_fixed_version"] = res.FixedVersion
+		hm["cve_release"] = res.Release
+		hm["cve_distro"] = res.Distro
+		hm["cve_kernel_pkg"] = sel.Version
+		if res.Status == distro.StatusVulnerable {
+			out = append(out, hm)
+		}
+	}
+	return out, nil
+}
+
+// asString reads a string or *string map value, returning "" for anything else.
+func asString(v interface{}) string {
+	switch s := v.(type) {
+	case string:
+		return s
+	case *string:
+		if s != nil {
+			return *s
+		}
+	}
+	return ""
 }
 
 // resolveKernelFilter turns a raw kernel filter value (version expression or

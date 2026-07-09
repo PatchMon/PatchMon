@@ -352,6 +352,29 @@ func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsLis
 	return result, nil
 }
 
+// KernelPackage is an installed kernel-related package on a host.
+type KernelPackage struct {
+	Name    string
+	Version string
+}
+
+// GetKernelPackagesForHosts returns, per host id, the installed kernel-related
+// packages used by the CVE evaluator to compare against distro fixed versions.
+func (s *DashboardStore) GetKernelPackagesForHosts(ctx context.Context, hostIDs []string) (map[string][]KernelPackage, error) {
+	out := make(map[string][]KernelPackage)
+	if len(hostIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.DB(ctx).Queries.GetKernelPackagesForHosts(ctx, hostIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		out[r.HostID] = append(out[r.HostID], KernelPackage{Name: r.Name, Version: r.CurrentVersion})
+	}
+	return out, nil
+}
+
 // GetHostDetail returns host detail with packages and history for dashboard (matches Node structure).
 func (s *DashboardStore) GetHostDetail(ctx context.Context, hostID string, historyLimit, historyOffset int) (map[string]interface{}, error) {
 	d := s.db.DB(ctx)

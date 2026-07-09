@@ -427,6 +427,51 @@ func (q *Queries) GetHostsWithCounts(ctx context.Context, arg GetHostsWithCounts
 	return items, nil
 }
 
+const getKernelPackagesForHosts = `-- name: GetKernelPackagesForHosts :many
+SELECT hp.host_id, p.name, hp.current_version
+FROM host_packages hp
+JOIN packages p ON p.id = hp.package_id
+WHERE hp.host_id = ANY($1::text[])
+  AND (
+    p.name = 'linux'
+    OR p.name = 'kernel'
+    OR p.name = 'kernel-core'
+    OR p.name LIKE 'linux-image-%'
+    OR p.name LIKE 'pve-kernel-%'
+    OR p.name LIKE 'proxmox-kernel-%'
+  )
+`
+
+type GetKernelPackagesForHostsRow struct {
+	HostID         string `json:"host_id"`
+	Name           string `json:"name"`
+	CurrentVersion string `json:"current_version"`
+}
+
+// Returns installed kernel-related packages for the given hosts so the CVE
+// evaluator can compare each host's kernel package version against a distro's
+// fixed version. Covers Debian/Ubuntu (linux, linux-image-*), RHEL/Fedora/
+// CentOS (kernel, kernel-core) and Proxmox (pve-kernel-*, proxmox-kernel-*).
+func (q *Queries) GetKernelPackagesForHosts(ctx context.Context, dollar_1 []string) ([]GetKernelPackagesForHostsRow, error) {
+	rows, err := q.db.Query(ctx, getKernelPackagesForHosts, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetKernelPackagesForHostsRow
+	for rows.Next() {
+		var i GetKernelPackagesForHostsRow
+		if err := rows.Scan(&i.HostID, &i.Name, &i.CurrentVersion); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getOSDistribution = `-- name: GetOSDistribution :many
 SELECT os_type as name, COUNT(*)::int as count FROM hosts WHERE status = 'active' GROUP BY os_type
 `
