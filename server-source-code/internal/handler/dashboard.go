@@ -320,6 +320,20 @@ func (h *DashboardHandler) CVEReport(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]interface{}{"cves": cves, "results": results})
 }
 
+// CVEDataSources handles GET /dashboard/cve/sources — freshness of the CVE
+// databases: per source, the last update attempt/success, whether it succeeded,
+// how many CVEs are held and the newest CVE known.
+func (h *DashboardHandler) CVEDataSources(w http.ResponseWriter, r *http.Request) {
+	if h.distroEval == nil {
+		Error(w, http.StatusServiceUnavailable, "Distro CVE evaluation is not available")
+		return
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"sources":      h.distroEval.SourcesStatus(),
+		"generated_at": time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
 // resolveKernelFilter turns a raw kernel filter value (version expression or
 // CVE id) into a KernelFilter. On failure it returns a nil filter plus an HTTP
 // status and message for the caller to surface.

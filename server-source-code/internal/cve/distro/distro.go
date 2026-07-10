@@ -23,7 +23,39 @@ package distro
 import (
 	"context"
 	"strings"
+	"time"
 )
+
+// DataEntry describes the freshness of one cached data set (e.g. a distro's
+// per-release OVAL index): when it was last refreshed, whether it succeeded,
+// how many CVEs it holds and the newest CVE it knows about.
+type DataEntry struct {
+	Source      string     `json:"source"`
+	Kind        string     `json:"kind"`
+	LastAttempt *time.Time `json:"last_attempt,omitempty"`
+	LastSuccess *time.Time `json:"last_success,omitempty"`
+	OK          bool       `json:"ok"`
+	Error       string     `json:"error,omitempty"`
+	Count       int        `json:"count"`
+	Newest      string     `json:"newest_cve,omitempty"`
+	FromDisk    bool       `json:"from_disk"`
+}
+
+// StatusReporter is an optional Source capability exposing data-freshness info.
+type StatusReporter interface {
+	DataStatus() []DataEntry
+}
+
+// SourcesStatus aggregates freshness across all sources that report it.
+func (e *Evaluator) SourcesStatus() []DataEntry {
+	var out []DataEntry
+	for _, s := range e.sources {
+		if sr, ok := s.(StatusReporter); ok {
+			out = append(out, sr.DataStatus()...)
+		}
+	}
+	return out
+}
 
 // Status is the per-host verdict for a CVE.
 type Status string

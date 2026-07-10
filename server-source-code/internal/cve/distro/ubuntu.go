@@ -29,6 +29,14 @@ func NewUbuntu() *Ubuntu {
 
 func (u *Ubuntu) Distro() string { return "ubuntu" }
 
+// DataStatus reports the freshness of the Ubuntu OVAL indexes.
+func (u *Ubuntu) DataStatus() []DataEntry {
+	if u.oval == nil {
+		return nil
+	}
+	return u.oval.status()
+}
+
 func (u *Ubuntu) CompareVersions(a, b string) int { return CompareDpkg(a, b) }
 
 // ubuntuReleases maps Ubuntu version numbers to codenames used by the tracker.

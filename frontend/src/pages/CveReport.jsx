@@ -1,8 +1,81 @@
-import { useMutation } from "@tanstack/react-query";
-import { AlertTriangle, Search, ShieldCheck } from "lucide-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { AlertTriangle, Database, Search, ShieldCheck } from "lucide-react";
 import { useId, useState } from "react";
 import { Link } from "react-router-dom";
 import { dashboardAPI } from "../utils/api";
+
+// CveDataSources shows the freshness of the CVE databases: last update attempt/
+// success, whether it succeeded, how many CVEs and the newest CVE known.
+const CveDataSources = () => {
+	const { data } = useQuery({
+		queryKey: ["cveDataSources"],
+		queryFn: () => dashboardAPI.getCVEDataSources().then((r) => r.data),
+		refetchInterval: 30000,
+	});
+	const sources = data?.sources || [];
+	const fmt = (t) => (t ? new Date(t).toLocaleString() : "—");
+	return (
+		<details className="mb-6 border border-secondary-200 dark:border-secondary-700 rounded-lg">
+			<summary className="px-4 py-2 cursor-pointer text-sm font-medium text-secondary-700 dark:text-secondary-200 flex items-center gap-2">
+				<Database className="h-4 w-4" />
+				CVE data sources ({sources.length})
+			</summary>
+			<div className="overflow-x-auto">
+				<table className="min-w-full text-xs">
+					<thead className="bg-secondary-50 dark:bg-secondary-700 uppercase text-secondary-500 dark:text-secondary-300">
+						<tr>
+							<th className="px-4 py-2 text-left">Source</th>
+							<th className="px-4 py-2 text-left">Status</th>
+							<th className="px-4 py-2 text-left">Last success</th>
+							<th className="px-4 py-2 text-left">Last attempt</th>
+							<th className="px-4 py-2 text-right">CVEs</th>
+							<th className="px-4 py-2 text-left">Newest CVE</th>
+						</tr>
+					</thead>
+					<tbody className="divide-y divide-secondary-100 dark:divide-secondary-700">
+						{sources.length === 0 && (
+							<tr>
+								<td
+									colSpan={6}
+									className="px-4 py-3 text-secondary-500 dark:text-secondary-400"
+								>
+									No data sources loaded yet.
+								</td>
+							</tr>
+						)}
+						{sources.map((s) => (
+							<tr key={s.source}>
+								<td className="px-4 py-2 font-mono">{s.source}</td>
+								<td className="px-4 py-2">
+									{s.ok ? (
+										<span className="text-green-600 dark:text-green-400">
+											ok{s.from_disk ? " (disk)" : ""}
+										</span>
+									) : s.error ? (
+										<span
+											className="text-red-600 dark:text-red-400"
+											title={s.error}
+										>
+											failed
+										</span>
+									) : (
+										<span className="text-amber-600 dark:text-amber-400">
+											loading…
+										</span>
+									)}
+								</td>
+								<td className="px-4 py-2">{fmt(s.last_success)}</td>
+								<td className="px-4 py-2">{fmt(s.last_attempt)}</td>
+								<td className="px-4 py-2 text-right">{s.count || 0}</td>
+								<td className="px-4 py-2 font-mono">{s.newest_cve || "—"}</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+			</div>
+		</details>
+	);
+};
 
 // CveReport lets an operator paste a list of CVE identifiers and get, per CVE,
 // the hosts their distribution reports vulnerable (installed kernel package
@@ -76,6 +149,8 @@ const CveReport = () => {
 					{mutation.error?.response?.data?.error || "Report failed."}
 				</div>
 			)}
+
+			<CveDataSources />
 
 			<div className="space-y-6">
 				{results.map((r) => (
