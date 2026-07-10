@@ -50,6 +50,8 @@ type Result struct {
 	Published    string             `json:"published,omitempty"`
 	LastModified string             `json:"last_modified,omitempty"`
 	References   []string           `json:"references,omitempty"`
+	Weaknesses   []string           `json:"weaknesses,omitempty"` // CWE ids
+	Labels       []string           `json:"labels,omitempty"`     // derived: RCE/LPE/DoS/…
 	Ranges       []util.KernelRange `json:"ranges"`
 	Filter       *util.KernelFilter `json:"-"`
 }
@@ -97,6 +99,11 @@ type nvdResponse struct {
 			References []struct {
 				URL string `json:"url"`
 			} `json:"references"`
+			Weaknesses []struct {
+				Description []struct {
+					Value string `json:"value"`
+				} `json:"description"`
+			} `json:"weaknesses"`
 			Configurations []struct {
 				Nodes []struct {
 					CPEMatch []cpeMatch `json:"cpeMatch"`
@@ -211,6 +218,16 @@ func (s *Service) fetch(ctx context.Context, cveID string) (*Result, error) {
 		}
 		res.References = append(res.References, ref.URL)
 	}
+	seenCWE := map[string]bool{}
+	for _, w := range v.Weaknesses {
+		for _, d := range w.Description {
+			if strings.HasPrefix(d.Value, "CWE-") && !seenCWE[d.Value] {
+				seenCWE[d.Value] = true
+				res.Weaknesses = append(res.Weaknesses, d.Value)
+			}
+		}
+	}
+	res.Labels = deriveLabels(res.CVSSVector, res.Description, res.Weaknesses)
 
 	for _, cfg := range v.Configurations {
 		for _, node := range cfg.Nodes {
@@ -232,6 +249,99 @@ func (s *Service) fetch(ctx context.Context, cveID string) (*Result, error) {
 
 	res.Filter = util.FromKernelRanges(res.CVEID, res.Ranges)
 	return res, nil
+}
+
+// cweNames maps common CWE ids to a short weakness label.
+var cweNames = map[string]string{
+	"CWE-416": "use-after-free",
+	"CWE-415": "double-free",
+	"CWE-787": "out-of-bounds write",
+	"CWE-125": "out-of-bounds read",
+	"CWE-476": "NULL deref",
+	"CWE-362": "race condition",
+	"CWE-190": "integer overflow",
+	"CWE-401": "memory leak",
+	"CWE-119": "buffer overflow",
+	"CWE-120": "buffer overflow",
+	"CWE-200": "info exposure",
+	"CWE-269": "privilege management",
+	"CWE-770": "resource exhaustion",
+	"CWE-667": "improper locking",
+}
+
+// vectorField returns the value of a CVSS vector field (e.g. "AV" -> "L").
+func vectorField(vector, key string) string {
+	for _, part := range strings.Split(strings.ToUpper(vector), "/") {
+		if kv := strings.SplitN(part, ":", 2); len(kv) == 2 && kv[0] == key {
+			return kv[1]
+		}
+	}
+	return ""
+}
+
+// deriveLabels produces heuristic impact labels (RCE/LPE/DoS/…) from the CVSS
+// vector, description keywords and CWE ids. Heuristic, not authoritative.
+func deriveLabels(vector, description string, cwes []string) []string {
+	var out []string
+	add := func(s string) {
+		for _, x := range out {
+			if x == s {
+				return
+			}
+		}
+		out = append(out, s)
+	}
+	av := vectorField(vector, "AV")
+	cI := vectorField(vector, "C")
+	iI := vectorField(vector, "I")
+	aI := vectorField(vector, "A")
+	prI := vectorField(vector, "PR")
+	d := strings.ToLower(description)
+	highImpact := cI == "H" || iI == "H"
+
+	switch av {
+	case "N":
+		add("Remote")
+	case "A":
+		add("Adjacent")
+	case "L":
+		add("Local")
+	case "P":
+		add("Physical")
+	}
+
+	switch {
+	case strings.Contains(d, "remote code execution"), av == "N" && iI == "H" && (strings.Contains(d, "code execution") || strings.Contains(d, "overflow") || strings.Contains(d, "use-after-free")):
+		add("RCE")
+	}
+	if strings.Contains(d, "privilege escalation") || strings.Contains(d, "local privilege") ||
+		(av == "L" && iI == "H" && cI == "H" && prI != "N") {
+		add("LPE")
+	}
+	if aI == "H" && cI == "N" && iI == "N" {
+		add("DoS")
+	}
+	if cI == "H" && iI != "H" && !containsLabel(out, "RCE") && !containsLabel(out, "LPE") {
+		add("Info leak")
+	}
+	if !highImpact && aI != "H" && (strings.Contains(d, "denial of service") || strings.Contains(d, "crash")) {
+		add("DoS")
+	}
+	for _, cwe := range cwes {
+		if name, ok := cweNames[cwe]; ok {
+			add(name)
+		}
+	}
+	return out
+}
+
+func containsLabel(labels []string, s string) bool {
+	for _, x := range labels {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 // cpeMatchToRange converts a single NVD cpeMatch entry into a KernelRange.

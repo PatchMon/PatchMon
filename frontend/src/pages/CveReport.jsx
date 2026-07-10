@@ -176,6 +176,27 @@ const severityColor = (sev) => {
 	}
 };
 
+// labelColor styles the impact/weakness chips (RCE/LPE loudest).
+const labelColor = (lab) => {
+	switch (lab) {
+		case "RCE":
+			return "bg-red-600 text-white";
+		case "LPE":
+			return "bg-orange-600 text-white";
+		case "DoS":
+			return "bg-amber-500 text-white";
+		case "Info leak":
+			return "bg-yellow-500 text-black";
+		case "Remote":
+		case "Local":
+		case "Adjacent":
+		case "Physical":
+			return "bg-secondary-500 text-white";
+		default:
+			return "bg-secondary-200 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200";
+	}
+};
+
 const rangeFrom = (r) =>
 	r.Exact ? `= ${r.Exact}` : r.Lo ? `${r.LoIncl ? "≥" : ">"} ${r.Lo}` : "(any)";
 const rangeTo = (r) =>
@@ -216,6 +237,14 @@ const CveResultCard = ({ result }) => {
 							{nvd.cvss_score ? ` ${nvd.cvss_score}` : ""}
 						</span>
 					)}
+					{(nvd.labels || []).map((lab) => (
+						<span
+							key={lab}
+							className={`px-2 py-0.5 rounded text-xs font-medium ${labelColor(lab)}`}
+						>
+							{lab}
+						</span>
+					))}
 				</div>
 				<div className="flex items-center gap-3 text-xs">
 					<span className="text-red-600 dark:text-red-400 font-medium">

@@ -50,3 +50,27 @@ func TestCPEMatchToRange(t *testing.T) {
 		t.Errorf("expected exact 6.1.2, got %+v", exact)
 	}
 }
+
+func hasLabel(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+func TestDeriveLabels(t *testing.T) {
+	l := deriveLabels("CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:N/C:H/I:H/A:H", "local privilege escalation via use-after-free", []string{"CWE-416"})
+	if !hasLabel(l, "LPE") || !hasLabel(l, "Local") || !hasLabel(l, "use-after-free") {
+		t.Errorf("LPE case: %v", l)
+	}
+	l = deriveLabels("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", "remote code execution overflow", []string{"CWE-787"})
+	if !hasLabel(l, "RCE") || !hasLabel(l, "Remote") {
+		t.Errorf("RCE case: %v", l)
+	}
+	l = deriveLabels("CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H", "crash", []string{"CWE-476"})
+	if !hasLabel(l, "DoS") {
+		t.Errorf("DoS case: %v", l)
+	}
+}

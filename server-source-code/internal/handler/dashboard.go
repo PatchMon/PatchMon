@@ -310,6 +310,8 @@ func (h *DashboardHandler) CVEReport(w http.ResponseWriter, r *http.Request) {
 					"published":     nv.Published,
 					"last_modified": nv.LastModified,
 					"references":    nv.References,
+					"weaknesses":    nv.Weaknesses,
+					"labels":        nv.Labels,
 					"ranges":        nv.Ranges,
 				}
 			}
