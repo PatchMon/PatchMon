@@ -1,30 +1,38 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
+	"sync"
 	"time"
 
+	"github.com/PatchMon/PatchMon/server-source-code/internal/cve"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/cve/distro"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/go-chi/chi/v5"
 	"github.com/hibiken/asynq"
 )
 
 // DashboardHandler handles dashboard routes.
 type DashboardHandler struct {
-	dashboard *store.DashboardStore
-	hosts     *store.HostsStore
-	packages  *store.PackagesStore
-	users     *store.UsersStore
-	docker    *store.DockerStore
-	inspector *asynq.Inspector
+	dashboard  *store.DashboardStore
+	hosts      *store.HostsStore
+	packages   *store.PackagesStore
+	users      *store.UsersStore
+	docker     *store.DockerStore
+	inspector  *asynq.Inspector
+	cve        *cve.Service
+	distroEval *distro.Evaluator
 }
 
 // NewDashboardHandler creates a new dashboard handler.
-func NewDashboardHandler(dashboard *store.DashboardStore, hosts *store.HostsStore, packages *store.PackagesStore, users *store.UsersStore, docker *store.DockerStore, inspector *asynq.Inspector) *DashboardHandler {
-	return &DashboardHandler{dashboard: dashboard, hosts: hosts, packages: packages, users: users, docker: docker, inspector: inspector}
+func NewDashboardHandler(dashboard *store.DashboardStore, hosts *store.HostsStore, packages *store.PackagesStore, users *store.UsersStore, docker *store.DockerStore, inspector *asynq.Inspector, cveService *cve.Service, distroEval *distro.Evaluator) *DashboardHandler {
+	return &DashboardHandler{dashboard: dashboard, hosts: hosts, packages: packages, users: users, docker: docker, inspector: inspector, cve: cveService, distroEval: distroEval}
 }
 
 // Stats handles GET /dashboard/stats.
@@ -51,12 +59,383 @@ func (h *DashboardHandler) Hosts(w http.ResponseWriter, r *http.Request) {
 		OS:        q.Get("os"),
 		OSVersion: q.Get("osVersion"),
 	}
+
+	// Optional kernel-version filter. The value is either a version expression
+	// (e.g. "<6.18.36", "5.15..6.1", "6.8") or a CVE identifier
+	// (e.g. "CVE-2026-46331"), which is resolved to affected kernel ranges.
+	if kernel := strings.TrimSpace(q.Get("kernel")); kernel != "" {
+		filter, status, msg := h.resolveKernelFilter(r.Context(), kernel)
+		if filter == nil {
+			Error(w, status, msg)
+			return
+		}
+		params.Kernel = filter
+	}
+
 	hosts, err := h.dashboard.GetHostsWithCounts(r.Context(), params)
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to load hosts")
 		return
 	}
+
+	// Distro-aware CVE evaluation: annotate every host with its per-distro
+	// status (vulnerable/patched/not_affected/unknown) so nothing is silently
+	// hidden. The frontend surfaces the status and lets the user focus on the
+	// vulnerable ones.
+	if cveID := strings.TrimSpace(q.Get("cve")); cveID != "" {
+		if !cve.IsCVEID(cveID) {
+			Error(w, http.StatusBadRequest, "Invalid CVE identifier")
+			return
+		}
+		if err := h.annotateCVEStatus(r.Context(), hosts, cveID); err != nil {
+			Error(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
+	}
+
 	JSON(w, http.StatusOK, hosts)
+}
+
+// annotateCVEStatus evaluates each host's per-distro status for the CVE and
+// annotates it in place with cve_status/cve_fixed_version/cve_release/
+// cve_distro/cve_kernel_pkg.
+func (h *DashboardHandler) annotateCVEStatus(ctx context.Context, hosts []map[string]interface{}, cveID string) error {
+	if h.distroEval == nil {
+		return fmt.Errorf("distro CVE evaluation is not available")
+	}
+	ids := make([]string, 0, len(hosts))
+	for _, hm := range hosts {
+		if id, ok := hm["id"].(string); ok {
+			ids = append(ids, id)
+		}
+	}
+	kpkgs, err := h.dashboard.GetKernelPackagesForHosts(ctx, ids)
+	if err != nil {
+		return fmt.Errorf("failed to load kernel packages")
+	}
+
+	for _, hm := range hosts {
+		id, _ := hm["id"].(string)
+		var pkgs []distro.KernelPackage
+		for _, p := range kpkgs[id] {
+			pkgs = append(pkgs, distro.KernelPackage{Name: p.Name, Version: p.Version})
+		}
+		osType := asString(hm["os_type"])
+		uname := asString(hm["kernel_version"])
+		sel := distro.SelectRunningKernel(osType, uname, pkgs)
+		res := h.distroEval.Evaluate(ctx, cveID, distro.Host{
+			OSType:           osType,
+			OSVersion:        asString(hm["os_version"]),
+			KernelVersion:    uname,
+			KernelPkgName:    sel.Name,
+			KernelPkgVersion: sel.Version,
+			InstalledKernels: pkgs,
+		})
+		status := string(res.Status)
+		if res.Status == distro.StatusUnknown {
+			if v := h.nvdVerdict(ctx, cveID, uname); v != "" {
+				status = v
+				hm["cve_note"] = "resolved via NVD upstream ranges"
+			}
+		}
+		hm["cve_status"] = status
+		hm["cve_fixed_version"] = res.FixedVersion
+		hm["cve_release"] = res.Release
+		hm["cve_distro"] = res.Distro
+		hm["cve_kernel_pkg"] = sel.Version
+		hm["cve_reboot_required"] = res.RebootRequired
+	}
+	return nil
+}
+
+// nvdVerdict resolves a host whose distribution has no verdict (unknown /
+// won't-fix "ignored") using the CVE's upstream NVD version ranges: "vulnerable"
+// if the running kernel falls in an affected range, "not_affected" if it sits
+// outside every range (below, above, or in a gap — those versions simply aren't
+// affected upstream), or "" when NVD has no data. Only applied to unknown hosts,
+// so it never overrides an authoritative distro verdict (a real backported fix
+// shows up as released/not-affected, not unknown).
+func (h *DashboardHandler) nvdVerdict(ctx context.Context, cveID, kernelVersion string) string {
+	if h.cve == nil || strings.TrimSpace(kernelVersion) == "" {
+		return ""
+	}
+	res, err := h.cve.Lookup(ctx, cveID)
+	if err != nil || res == nil || res.Filter == nil || len(res.Ranges) == 0 {
+		return ""
+	}
+	if res.Filter.Matches(kernelVersion) {
+		return "vulnerable"
+	}
+	return "not_affected"
+}
+
+// asString reads a string or *string map value, returning "" for anything else.
+func asString(v interface{}) string {
+	switch s := v.(type) {
+	case string:
+		return s
+	case *string:
+		if s != nil {
+			return *s
+		}
+	}
+	return ""
+}
+
+// parseCVEList splits a comma/space/semicolon/newline-separated list into
+// unique, validated, upper-cased CVE ids (capped to avoid abuse).
+func parseCVEList(raw string) []string {
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
+	})
+	seen := map[string]bool{}
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		id := strings.ToUpper(strings.TrimSpace(p))
+		if !cve.IsCVEID(id) || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+		if len(out) >= 100 {
+			break
+		}
+	}
+	return out
+}
+
+// CVEReport handles GET /dashboard/cve-report?cves=CVE-...,CVE-... . For each
+// CVE it returns the hosts their distribution reports vulnerable, plus a status
+// breakdown, evaluating every host against its distro's fixed kernel version.
+func (h *DashboardHandler) CVEReport(w http.ResponseWriter, r *http.Request) {
+	if h.distroEval == nil {
+		Error(w, http.StatusServiceUnavailable, "Distro CVE evaluation is not available")
+		return
+	}
+	cves := parseCVEList(r.URL.Query().Get("cves"))
+	if len(cves) == 0 {
+		Error(w, http.StatusBadRequest, "Provide one or more CVE identifiers in the 'cves' parameter")
+		return
+	}
+
+	ctx := r.Context()
+	hosts, err := h.dashboard.GetHostsWithCounts(ctx, store.HostsListParams{})
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to load hosts")
+		return
+	}
+	ids := make([]string, 0, len(hosts))
+	for _, hm := range hosts {
+		if id, ok := hm["id"].(string); ok {
+			ids = append(ids, id)
+		}
+	}
+	kpkgs, err := h.dashboard.GetKernelPackagesForHosts(ctx, ids)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to load kernel packages")
+		return
+	}
+
+	// Precompute the evaluator input for every host once.
+	type hostEntry struct {
+		dh      distro.Host
+		summary map[string]interface{}
+	}
+	entries := make([]hostEntry, 0, len(hosts))
+	for _, hm := range hosts {
+		id, _ := hm["id"].(string)
+		var pkgs []distro.KernelPackage
+		for _, p := range kpkgs[id] {
+			pkgs = append(pkgs, distro.KernelPackage{Name: p.Name, Version: p.Version})
+		}
+		osType := asString(hm["os_type"])
+		uname := asString(hm["kernel_version"])
+		sel := distro.SelectRunningKernel(osType, uname, pkgs)
+		entries = append(entries, hostEntry{
+			dh: distro.Host{
+				OSType:           osType,
+				OSVersion:        asString(hm["os_version"]),
+				KernelVersion:    uname,
+				KernelPkgName:    sel.Name,
+				KernelPkgVersion: sel.Version,
+				InstalledKernels: pkgs,
+			},
+			summary: hm,
+		})
+	}
+
+	results := make([]map[string]interface{}, 0, len(cves))
+	for _, cveID := range cves {
+		counts := map[string]int{"vulnerable": 0, "patched": 0, "not_affected": 0, "unknown": 0}
+		vulnHosts := make([]map[string]interface{}, 0)
+		for _, e := range entries {
+			res := h.distroEval.Evaluate(ctx, cveID, e.dh)
+			status := res.Status
+			if status == distro.StatusUnknown {
+				switch h.nvdVerdict(ctx, cveID, e.dh.KernelVersion) {
+				case "vulnerable":
+					status = distro.StatusVulnerable
+				case "not_affected":
+					status = distro.StatusNotAffected
+				}
+			}
+			counts[string(status)]++
+			if status == distro.StatusVulnerable {
+				vulnHosts = append(vulnHosts, map[string]interface{}{
+					"id":              e.summary["id"],
+					"friendly_name":   e.summary["friendly_name"],
+					"hostname":        e.summary["hostname"],
+					"os_type":         e.summary["os_type"],
+					"os_version":      e.summary["os_version"],
+					"kernel_version":  e.summary["kernel_version"],
+					"fixed_version":   res.FixedVersion,
+					"distro":          res.Distro,
+					"release":         res.Release,
+					"reboot_required": res.RebootRequired,
+				})
+			}
+		}
+		entry := map[string]interface{}{
+			"cve_id": cveID,
+			"counts": counts,
+			"hosts":  vulnHosts,
+		}
+		// Enrich with NVD metadata (cached) — severity/score/description/ranges.
+		if h.cve != nil {
+			if nv, err := h.cve.Lookup(ctx, cveID); err == nil && nv != nil {
+				entry["nvd"] = map[string]interface{}{
+					"description":   nv.Description,
+					"cvss_score":    nv.CVSSScore,
+					"cvss_severity": nv.CVSSSeverity,
+					"cvss_vector":   nv.CVSSVector,
+					"published":     nv.Published,
+					"last_modified": nv.LastModified,
+					"references":    nv.References,
+					"weaknesses":    nv.Weaknesses,
+					"labels":        nv.Labels,
+					"ranges":        nv.Ranges,
+				}
+			}
+		}
+		results = append(results, entry)
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{"cves": cves, "results": results})
+}
+
+// CVEDataSources handles GET /dashboard/cve/sources — freshness of the CVE
+// databases: per source, the last update attempt/success, whether it succeeded,
+// how many CVEs are held and the newest CVE known.
+func (h *DashboardHandler) CVEDataSources(w http.ResponseWriter, r *http.Request) {
+	if h.distroEval == nil {
+		Error(w, http.StatusServiceUnavailable, "Distro CVE evaluation is not available")
+		return
+	}
+	ctx := r.Context()
+	sources := h.distroEval.SourcesStatus()
+
+	// Append the NVD upstream source (in-memory cache; used to reconcile
+	// unknown distro verdicts and to enrich the CVE report).
+	if h.cve != nil {
+		st := h.cve.Status()
+		sources = append(sources, distro.DataEntry{
+			Source:      "nvd (upstream kernel ranges)",
+			Kind:        "on-demand",
+			LastAttempt: st.LastAttempt,
+			LastSuccess: st.LastSuccess,
+			OK:          st.LastError == "",
+			Error:       st.LastError,
+			Count:       st.Count,
+			Newest:      st.Newest,
+			NewestDate:  st.NewestDate,
+		})
+	}
+
+	// Resolve the publication date of each source's newest CVE via NVD (cached).
+	// Distinct CVE ids are looked up concurrently within a short budget so a cold
+	// NVD cache does not stall the report.
+	if h.cve != nil {
+		want := map[string]struct{}{}
+		for i := range sources {
+			if sources[i].Newest != "" && sources[i].NewestDate == "" {
+				want[sources[i].Newest] = struct{}{}
+			}
+		}
+		if len(want) > 0 {
+			dctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			var mu sync.Mutex
+			dates := map[string]string{}
+			var wg sync.WaitGroup
+			for id := range want {
+				wg.Add(1)
+				go func(id string) {
+					defer wg.Done()
+					if res, err := h.cve.Lookup(dctx, id); err == nil && res != nil && res.Published != "" {
+						mu.Lock()
+						dates[id] = res.Published
+						mu.Unlock()
+					}
+				}(id)
+			}
+			wg.Wait()
+			for i := range sources {
+				if d, ok := dates[sources[i].Newest]; ok {
+					sources[i].NewestDate = d
+				}
+			}
+		}
+	}
+
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"sources":      sources,
+		"generated_at": time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// resolveKernelFilter turns a raw kernel filter value (version expression or
+// CVE id) into a KernelFilter. On failure it returns a nil filter plus an HTTP
+// status and message for the caller to surface.
+func (h *DashboardHandler) resolveKernelFilter(ctx context.Context, value string) (*util.KernelFilter, int, string) {
+	if cve.IsCVEID(value) {
+		if h.cve == nil {
+			return nil, http.StatusServiceUnavailable, "CVE lookup is not available"
+		}
+		res, err := h.cve.Lookup(ctx, value)
+		if err != nil {
+			return nil, http.StatusBadGateway, err.Error()
+		}
+		if res.Filter == nil {
+			return nil, http.StatusUnprocessableEntity, fmt.Sprintf("%s has no Linux kernel version ranges in NVD; filter by kernel version manually", value)
+		}
+		return res.Filter, 0, ""
+	}
+	filter, err := util.ParseKernelExpr(value)
+	if err != nil {
+		return nil, http.StatusBadRequest, "Invalid kernel filter: " + err.Error()
+	}
+	return filter, 0, ""
+}
+
+// CVEKernelRanges handles GET /dashboard/cve/{cveId}/kernel-ranges. It resolves
+// a CVE identifier to the affected upstream Linux-kernel version ranges so the
+// UI can display what a CVE filter expands to.
+func (h *DashboardHandler) CVEKernelRanges(w http.ResponseWriter, r *http.Request) {
+	cveID := chi.URLParam(r, "cveId")
+	if !cve.IsCVEID(cveID) {
+		Error(w, http.StatusBadRequest, "Invalid CVE identifier")
+		return
+	}
+	if h.cve == nil {
+		Error(w, http.StatusServiceUnavailable, "CVE lookup is not available")
+		return
+	}
+	res, err := h.cve.Lookup(r.Context(), cveID)
+	if err != nil {
+		Error(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	JSON(w, http.StatusOK, res)
 }
 
 // HostDetail handles GET /dashboard/hosts/:hostId.

@@ -44,6 +44,49 @@ import {
 } from "../utils/api";
 import { getOSDisplayName, OSIcon } from "../utils/osIcons.jsx";
 
+// formatKernelRange renders a resolved CVE kernel range (from the backend) as a
+// short human-readable constraint, e.g. "≥5.15, <6.1.2" or "= 6.1.2".
+const formatKernelRange = (r) => {
+	if (r.Exact) return `= ${r.Exact}`;
+	const parts = [];
+	if (r.Lo) parts.push(`${r.LoIncl ? "≥" : ">"} ${r.Lo}`);
+	if (r.Hi) parts.push(`${r.HiIncl ? "≤" : "<"} ${r.Hi}`);
+	return parts.length > 0 ? parts.join(", ") : "all versions";
+};
+
+// CveStatusBadge renders a host's per-distro CVE verdict next to its kernel.
+const CveStatusBadge = ({ host }) => {
+	const status = host.cve_status;
+	const styles = {
+		vulnerable: "text-red-600 dark:text-red-400",
+		patched: "text-green-600 dark:text-green-400",
+		not_affected: "text-secondary-500 dark:text-secondary-400",
+		unknown: "text-amber-600 dark:text-amber-400",
+	};
+	let vulnLabel = "vulnerable";
+	if (host.cve_reboot_required) {
+		vulnLabel = "vulnerable — reboot to fix";
+	} else if (host.cve_fixed_version) {
+		vulnLabel = `vulnerable — update to ${host.cve_fixed_version}`;
+	} else {
+		vulnLabel = "vulnerable — no fix yet";
+	}
+	const labels = {
+		vulnerable: vulnLabel,
+		patched: "patched",
+		not_affected: "not affected",
+		unknown: "unknown",
+	};
+	return (
+		<span
+			className={`ml-1 text-xs ${styles[status] || styles.unknown}`}
+			title={`${host.cve_distro || "distro"}${host.cve_release ? ` ${host.cve_release}` : ""}${host.cve_note ? ` — ${host.cve_note}` : ""}`}
+		>
+			({labels[status] || status})
+		</span>
+	);
+};
+
 const Hosts = () => {
 	const hostGroupFilterId = useId();
 	const statusFilterId = useId();
@@ -57,7 +100,7 @@ const Hosts = () => {
 		text: "",
 		type: "success", // "success" or "error"
 	});
-	const [searchParams] = useSearchParams();
+	const [searchParams, setSearchParams] = useSearchParams();
 	const navigate = useNavigate();
 
 	// Table state
@@ -68,7 +111,11 @@ const Hosts = () => {
 	const [statusFilter, setStatusFilter] = useState("all");
 	const [osFilter, setOsFilter] = useState("all");
 	const [osVersionFilter, setOsVersionFilter] = useState("all");
+	// Kernel-version filter: a version expression ("<6.18.36", "5.15..6.1",
+	// "6.8") or a CVE id ("CVE-2026-46331"). Shared via the ?kernel= URL param.
+	const [kernelFilter, setKernelFilter] = useState("");
 	const [showFilters, setShowFilters] = useState(false);
+	const kernelFilterId = useId();
 	const [groupBy, setGroupBy] = useState("none");
 	const [showColumnSettings, setShowColumnSettings] = useState(false);
 	const [hideStale, setHideStale] = useState(false);
@@ -85,6 +132,37 @@ const Hosts = () => {
 			if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
 		};
 	}, [searchTerm]);
+
+	// Debounce kernel filter for backend (and URL sync)
+	const [debouncedKernelFilter, setDebouncedKernelFilter] = useState("");
+	const kernelDebounceRef = useRef(null);
+	useEffect(() => {
+		if (kernelDebounceRef.current) clearTimeout(kernelDebounceRef.current);
+		kernelDebounceRef.current = setTimeout(() => {
+			setDebouncedKernelFilter(kernelFilter?.trim() || "");
+		}, 400);
+		return () => {
+			if (kernelDebounceRef.current) clearTimeout(kernelDebounceRef.current);
+		};
+	}, [kernelFilter]);
+
+	// Keep the ?kernel= URL param in sync so the filtered view is shareable.
+	useEffect(() => {
+		setSearchParams(
+			(prev) => {
+				const next = new URLSearchParams(prev);
+				if (debouncedKernelFilter) {
+					if (next.get("kernel") === debouncedKernelFilter) return prev;
+					next.set("kernel", debouncedKernelFilter);
+				} else {
+					if (!next.has("kernel")) return prev;
+					next.delete("kernel");
+				}
+				return next;
+			},
+			{ replace: true },
+		);
+	}, [debouncedKernelFilter, setSearchParams]);
 
 	// Handle URL filter parameters
 	useEffect(() => {
@@ -121,6 +199,13 @@ const Hosts = () => {
 		if (osFilterParam) {
 			setShowFilters(true);
 			setOsFilter(osFilterParam);
+		}
+
+		// Handle kernel-version / CVE filter parameter (shareable link)
+		const kernelParam = searchParams.get("kernel");
+		if (kernelParam) {
+			setShowFilters(true);
+			setKernelFilter(kernelParam);
 		}
 
 		// Handle OS version filter parameter (from dashboard OS distribution chart click)
@@ -169,6 +254,7 @@ const Hosts = () => {
 			{ id: "group", label: "Group", visible: true, order: 4 },
 			{ id: "os", label: "OS", visible: true, order: 5 },
 			{ id: "os_version", label: "OS Version", visible: false, order: 6 },
+			{ id: "kernel_version", label: "Kernel", visible: false, order: 6.5 },
 			{ id: "agent_version", label: "Agent Version", visible: true, order: 7 },
 			{
 				id: "auto_update",
@@ -290,8 +376,40 @@ const Hosts = () => {
 		if (osFilter && osFilter !== "all") params.os = osFilter;
 		if (osVersionFilter && osVersionFilter !== "all")
 			params.osVersion = osVersionFilter;
+		if (debouncedKernelFilter) {
+			// A CVE id uses the distro-aware path (?cve=): each host is evaluated
+			// against its distribution's fixed kernel package version. A plain
+			// version expression uses the kernel-version filter (?kernel=).
+			if (/^CVE-\d{4}-\d{4,}$/i.test(debouncedKernelFilter)) {
+				params.cve = debouncedKernelFilter;
+			} else {
+				params.kernel = debouncedKernelFilter;
+			}
+		}
 		return params;
-	}, [debouncedSearch, groupFilter, statusFilter, osFilter, osVersionFilter]);
+	}, [
+		debouncedSearch,
+		groupFilter,
+		statusFilter,
+		osFilter,
+		osVersionFilter,
+		debouncedKernelFilter,
+	]);
+
+	// When the kernel filter is a CVE id the hosts are filtered distro-aware
+	// (?cve=). We additionally resolve the CVE's upstream kernel ranges via NVD
+	// for an informational reference line.
+	const isCveFilter = /^CVE-\d{4}-\d{4,}$/i.test(debouncedKernelFilter);
+	const { data: cveKernelInfo } = useQuery({
+		queryKey: ["cveKernelRanges", debouncedKernelFilter],
+		queryFn: () =>
+			dashboardAPI
+				.getCVEKernelRanges(debouncedKernelFilter)
+				.then((r) => r.data),
+		enabled: isCveFilter,
+		retry: false,
+		staleTime: 60 * 60 * 1000,
+	});
 
 	const {
 		data: hosts,
@@ -306,6 +424,17 @@ const Hosts = () => {
 		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
+
+	// Count per-distro CVE verdicts across the returned hosts (when a CVE filter
+	// is active) for the summary banner.
+	const cveSummary = useMemo(() => {
+		if (!isCveFilter || !Array.isArray(hosts)) return null;
+		const c = { vulnerable: 0, patched: 0, not_affected: 0, unknown: 0 };
+		for (const h of hosts) {
+			if (h.cve_status && c[h.cve_status] !== undefined) c[h.cve_status] += 1;
+		}
+		return c;
+	}, [isCveFilter, hosts]);
 
 	const { data: hostGroups } = useQuery({
 		queryKey: ["hostGroups"],
@@ -715,6 +844,19 @@ const Hosts = () => {
 					aValue = a.os_version?.toLowerCase() || "zzz_unknown";
 					bValue = b.os_version?.toLowerCase() || "zzz_unknown";
 					break;
+				case "kernel_version": {
+					// Numeric-aware key: zero-pad the leading version components so
+					// 6.18.0 sorts after 6.8.0. Unknown kernels sort last.
+					const kernelKey = (v) =>
+						(v || "")
+							.split(/[.-]/)
+							.slice(0, 4)
+							.map((p) => String(Number.parseInt(p, 10) || 0).padStart(6, "0"))
+							.join(".");
+					aValue = a.kernel_version ? kernelKey(a.kernel_version) : "zzzzzz";
+					bValue = b.kernel_version ? kernelKey(b.kernel_version) : "zzzzzz";
+					break;
+				}
 				case "agent_version":
 					aValue = a.agent_version?.toLowerCase() || "zzz_no_version";
 					bValue = b.agent_version?.toLowerCase() || "zzz_no_version";
@@ -1043,6 +1185,25 @@ const Hosts = () => {
 						{host.os_version || "N/A"}
 					</div>
 				);
+			case "kernel_version": {
+				const running = host.kernel_version || "";
+				const installed = host.installed_kernel_version || "";
+				const rebootPending = installed && running && installed !== running;
+				return (
+					<div className="text-sm text-secondary-900 dark:text-white font-mono">
+						{running || "N/A"}
+						{rebootPending && (
+							<span
+								className="ml-1 text-xs text-amber-600 dark:text-amber-400"
+								title={`Installed kernel ${installed} is pending a reboot`}
+							>
+								(→ {installed})
+							</span>
+						)}
+						{host.cve_status && <CveStatusBadge host={host} />}
+					</div>
+				);
+			}
 			case "agent_version":
 				return (
 					<div className="text-sm text-secondary-900 dark:text-white">
@@ -1668,6 +1829,64 @@ const Hosts = () => {
 												</select>
 											</div>
 										)}
+									<div className="lg:col-span-2">
+										<label
+											htmlFor={kernelFilterId}
+											className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-1"
+										>
+											Kernel version / CVE
+										</label>
+										<input
+											id={kernelFilterId}
+											type="text"
+											value={kernelFilter}
+											onChange={(e) => setKernelFilter(e.target.value)}
+											placeholder="e.g. <6.18.36, 5.15..6.1, 6.8 or CVE-2026-46331"
+											className="w-full border border-secondary-300 dark:border-secondary-600 rounded-lg px-3 py-2.5 sm:py-2 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white min-h-[44px] font-mono"
+										/>
+										<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+											Filter hosts by running kernel. Operators:{" "}
+											<code>&lt;</code> <code>&lt;=</code> <code>=</code>{" "}
+											<code>&gt;=</code> <code>&gt;</code>, range{" "}
+											<code>a..b</code>. Or enter a CVE id to show hosts
+											affected per their distribution (Ubuntu, Debian, RHEL,
+											Fedora, Proxmox, CentOS/Alma).
+										</p>
+										{isCveFilter && (
+											<p className="mt-1 text-xs text-secondary-600 dark:text-secondary-300">
+												Each host's installed kernel package is compared against
+												its distribution's fixed version for{" "}
+												{debouncedKernelFilter}. Status is shown next to the
+												kernel (enable the Kernel column).
+											</p>
+										)}
+										{isCveFilter && cveSummary && (
+											<p className="mt-1 text-xs">
+												<span className="text-red-600 dark:text-red-400 font-medium">
+													{cveSummary.vulnerable} vulnerable
+												</span>
+												{" · "}
+												<span className="text-green-600 dark:text-green-400">
+													{cveSummary.patched} patched
+												</span>
+												{" · "}
+												<span className="text-secondary-500 dark:text-secondary-400">
+													{cveSummary.not_affected} not affected
+												</span>
+												{" · "}
+												<span className="text-amber-600 dark:text-amber-400">
+													{cveSummary.unknown} unknown
+												</span>
+											</p>
+										)}
+										{isCveFilter && cveKernelInfo?.ranges?.length > 0 && (
+											<div className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+												Upstream affected ranges (NVD):{" "}
+												{cveKernelInfo.ranges.map(formatKernelRange).join("; ")}
+												.
+											</div>
+										)}
+									</div>
 									<div className="flex items-end">
 										<button
 											type="button"
@@ -1677,6 +1896,7 @@ const Hosts = () => {
 												setStatusFilter("all");
 												setOsFilter("all");
 												setOsVersionFilter("all");
+												setKernelFilter("");
 												setGroupBy("none");
 												setHideStale(false);
 											}}
@@ -2030,6 +2250,17 @@ const Hosts = () => {
 																			>
 																				{column.label}
 																				{getSortIcon("os_version")}
+																			</button>
+																		) : column.id === "kernel_version" ? (
+																			<button
+																				type="button"
+																				onClick={() =>
+																					handleSort("kernel_version")
+																				}
+																				className="flex items-center gap-2 hover:text-secondary-700"
+																			>
+																				{column.label}
+																				{getSortIcon("kernel_version")}
 																			</button>
 																		) : column.id === "agent_version" ? (
 																			<button

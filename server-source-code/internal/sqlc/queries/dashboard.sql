@@ -43,6 +43,7 @@ ORDER BY count DESC, os_type, os_version;
 
 -- name: GetHostsWithCounts :many
 SELECT h.id, h.machine_id, h.friendly_name, h.hostname, h.ip, h.os_type, h.os_version,
+    h.kernel_version, h.installed_kernel_version,
     h.status, h.agent_version, h.auto_update, h.notes, h.api_id,
     h.needs_reboot, h.reboot_reason, h.system_uptime, h.docker_enabled, h.compliance_enabled, h.compliance_on_demand_only,
     h.last_update,
@@ -180,3 +181,21 @@ CROSS JOIN hosts_needing_updates hnu
 CROSS JOIN hosts_with_security hws
 CROSS JOIN package_counts pc;
 
+
+-- name: GetKernelPackagesForHosts :many
+-- Returns installed kernel-related packages for the given hosts so the CVE
+-- evaluator can compare each host's kernel package version against a distro's
+-- fixed version. Covers Debian/Ubuntu (linux, linux-image-*), RHEL/Fedora/
+-- CentOS (kernel, kernel-core) and Proxmox (pve-kernel-*, proxmox-kernel-*).
+SELECT hp.host_id, p.name, hp.current_version
+FROM host_packages hp
+JOIN packages p ON p.id = hp.package_id
+WHERE hp.host_id = ANY($1::text[])
+  AND (
+    p.name = 'linux'
+    OR p.name = 'kernel'
+    OR p.name = 'kernel-core'
+    OR p.name LIKE 'linux-image-%'
+    OR p.name LIKE 'pve-kernel-%'
+    OR p.name LIKE 'proxmox-kernel-%'
+  );
