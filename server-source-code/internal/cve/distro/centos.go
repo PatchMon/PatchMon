@@ -167,6 +167,17 @@ func (c *CentOS) indexMap(ctx context.Context) (map[string]map[string]Advisory, 
 	if c.index != nil && time.Now().Before(c.expires) {
 		return c.index, nil
 	}
+	// On a cold start, serve a fresh on-disk copy instantly (survives restarts).
+	if c.index == nil {
+		var idx map[string]map[string]Advisory
+		if loadDiskJSON(centosDiskFile, c.ttl, &idx) && len(idx) > 0 {
+			now := time.Now()
+			c.index = idx
+			c.expires = now.Add(c.ttl)
+			c.stat.success(now, len(idx), newestCVEKey(idx), true)
+			return c.index, nil
+		}
+	}
 	c.stat.attempt(time.Now())
 	idx, err := c.buildIndex(ctx)
 	if err != nil {
@@ -179,9 +190,13 @@ func (c *CentOS) indexMap(ctx context.Context) (map[string]map[string]Advisory, 
 	now := time.Now()
 	c.index = idx
 	c.expires = now.Add(c.ttl)
-	c.stat.success(now, len(idx), newestCVEKey(idx))
+	c.stat.success(now, len(idx), newestCVEKey(idx), false)
+	saveDiskJSON(centosDiskFile, idx)
 	return c.index, nil
 }
+
+// centosDiskFile is the on-disk cache name for the parsed CVE->major index.
+const centosDiskFile = "centos_alma_index.json"
 
 // buildIndex fetches each major's errata document and merges the kernel errata
 // into a single CVE->major->advisory index.
@@ -190,7 +205,8 @@ func (c *CentOS) buildIndex(ctx context.Context) (map[string]map[string]Advisory
 	for _, major := range c.majors {
 		url := fmt.Sprintf("%s/%s/errata.full.json", c.baseURL, major)
 		var file almaErrataFile
-		found, err := getJSON(ctx, url, nil, &file)
+		// ~25 MB per major — use the bulk client, not the per-CVE getJSON.
+		found, err := getJSONBulk(ctx, url, &file)
 		if err != nil {
 			return nil, err
 		}

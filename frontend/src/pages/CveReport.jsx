@@ -53,6 +53,22 @@ const timeAgo = (ts) => {
 	return `${Math.floor(h / 24)}d ago`;
 };
 
+// summarizeSourceError turns a raw fetch error into a short status reason,
+// flagging rate-limits (HTTP 429/403) and upstream 5xx explicitly so the status
+// column shows *why* the last attempt failed (full text stays in the tooltip).
+const summarizeSourceError = (err) => {
+	if (!err) return "failed";
+	if (/\b429\b|too many requests/i.test(err)) return "rate limited (429)";
+	if (/\b403\b|forbidden/i.test(err)) return "blocked (403)";
+	if (/\b50\d\b|bad gateway|service unavailable|gateway timeout/i.test(err))
+		return "upstream error (5xx)";
+	if (/timeout|deadline exceeded/i.test(err)) return "timeout";
+	if (/no such host|dial tcp|connection refused|lookup /i.test(err))
+		return "network error";
+	if (/not found/i.test(err)) return "not in NVD";
+	return "failed";
+};
+
 // CveDataSources shows the freshness of the CVE databases: last update attempt/
 // success, whether it succeeded, how many CVEs and the newest CVE known.
 const CveDataSources = () => {
@@ -109,10 +125,10 @@ const CveDataSources = () => {
 										</span>
 									) : s.error ? (
 										<span
-											className="text-red-600 dark:text-red-400"
+											className="text-red-600 dark:text-red-400 cursor-help underline decoration-dotted"
 											title={s.error}
 										>
-											failed
+											{summarizeSourceError(s.error)}
 										</span>
 									) : (
 										<span className="text-amber-600 dark:text-amber-400">

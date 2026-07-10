@@ -35,15 +35,10 @@ func NewFedora() *Fedora {
 
 func (f *Fedora) Distro() string { return "fedora" }
 
-// DataStatus reports how many CVEs this on-demand source has cached so far.
+// DataStatus reports how many CVEs this on-demand source has cached so far and
+// whether the last fetch attempt errored.
 func (f *Fedora) DataStatus() []DataEntry {
-	return []DataEntry{{
-		Source: "fedora-bodhi",
-		Kind:   "on-demand",
-		OK:     true,
-		Count:  f.cache.count(),
-		Newest: f.cache.newest(),
-	}}
+	return []DataEntry{f.cache.dataEntry("fedora-bodhi", "on-demand")}
 }
 
 func (f *Fedora) CompareVersions(a, b string) int { return CompareRPM(a, b) }

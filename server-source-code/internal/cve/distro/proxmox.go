@@ -48,17 +48,11 @@ func NewProxmox(ub *Ubuntu) *Proxmox {
 
 func (p *Proxmox) Distro() string { return "proxmox" }
 
-// DataStatus reports how many CVEs this on-demand source has cached so far.
-// Proxmox reuses Debian/Ubuntu kernel data, so its own cache only holds CVEs
-// that have actually been queried.
+// DataStatus reports how many CVEs this on-demand source has cached so far and
+// whether the last fetch attempt errored. Proxmox reuses Debian/Ubuntu kernel
+// data, so its own cache only holds CVEs that have actually been queried.
 func (p *Proxmox) DataStatus() []DataEntry {
-	return []DataEntry{{
-		Source: "proxmox",
-		Kind:   "on-demand",
-		OK:     true,
-		Count:  p.cache.count(),
-		Newest: p.cache.newest(),
-	}}
+	return []DataEntry{p.cache.dataEntry("proxmox", "on-demand")}
 }
 
 // CompareVersions uses dpkg semantics: Proxmox kernels are Debian/Ubuntu-based

@@ -29,12 +29,16 @@ func NewUbuntu() *Ubuntu {
 
 func (u *Ubuntu) Distro() string { return "ubuntu" }
 
-// DataStatus reports the freshness of the Ubuntu OVAL indexes.
+// DataStatus reports the freshness of the Ubuntu OVAL indexes (bulk, primary)
+// plus the ubuntu.com per-CVE JSON fallback (on-demand; this is the source that
+// gets Cloudflare rate-limited, so its last-attempt error is worth surfacing).
 func (u *Ubuntu) DataStatus() []DataEntry {
-	if u.oval == nil {
-		return nil
+	var out []DataEntry
+	if u.oval != nil {
+		out = append(out, u.oval.status()...)
 	}
-	return u.oval.status()
+	out = append(out, u.cache.dataEntry("ubuntu.com (per-CVE fallback)", "on-demand"))
+	return out
 }
 
 func (u *Ubuntu) CompareVersions(a, b string) int { return CompareDpkg(a, b) }

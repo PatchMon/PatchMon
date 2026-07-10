@@ -56,6 +56,13 @@ type advisoryCache struct {
 	inflight map[string]bool
 	ttl      time.Duration
 	negTTL   time.Duration
+
+	// Freshness of the most recent background fetch, surfaced in the CVE
+	// data-sources report so an operator can see whether the last attempt
+	// errored (e.g. a tracker rate-limit) rather than only a green "ok".
+	lastAttempt *time.Time
+	lastSuccess *time.Time
+	lastErr     string
 }
 
 type cachedAdvisory struct {
@@ -129,20 +136,23 @@ func (c *advisoryCache) put(key string, set *AdvisorySet, err error) {
 	c.items[key] = cachedAdvisory{err: err, expires: time.Now().Add(c.negTTL)}
 }
 
-// count returns how many CVEs have a cached good result (for on-demand sources'
-// status reporting).
-func (c *advisoryCache) count() int {
+// dataEntry builds the data-sources report row for this on-demand cache: how
+// many CVEs are cached, the newest, and — crucially — whether the last
+// background fetch attempt errored (e.g. a tracker rate-limit), so the status
+// column can show the reason instead of a bare "ok".
+func (c *advisoryCache) dataEntry(source, kind string) DataEntry {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return len(c.good)
-}
-
-// newest returns the highest CVE id among cached good results (for on-demand
-// sources' status reporting), or "" when the cache is empty.
-func (c *advisoryCache) newest() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return newestCVEKey(c.good)
+	return DataEntry{
+		Source:      source,
+		Kind:        kind,
+		LastAttempt: c.lastAttempt,
+		LastSuccess: c.lastSuccess,
+		OK:          c.lastErr == "",
+		Error:       c.lastErr,
+		Count:       len(c.good),
+		Newest:      newestCVEKey(c.good),
+	}
 }
 
 // lookup returns an existing good result (fresh in-memory, last-known-good, or
@@ -187,6 +197,8 @@ func (c *advisoryCache) do(key string, fetch func(context.Context) (*AdvisorySet
 	}
 	if !c.inflight[key] {
 		c.inflight[key] = true
+		now := time.Now()
+		c.lastAttempt = &now
 		go c.refresh(key, fetch)
 	}
 	if g := c.good[key]; g != nil {
@@ -217,6 +229,7 @@ func (c *advisoryCache) refresh(key string, fetch func(context.Context) (*Adviso
 	c.inflight[key] = false
 	if err != nil {
 		log.Printf("[cve/distro] refresh %s FAILED: %v", key, err)
+		c.lastErr = err.Error()
 		if g := c.good[key]; g != nil {
 			// Keep serving good; re-check after negTTL.
 			c.items[key] = cachedAdvisory{set: g, expires: time.Now().Add(c.negTTL)}
@@ -225,6 +238,9 @@ func (c *advisoryCache) refresh(key string, fetch func(context.Context) (*Adviso
 		c.items[key] = cachedAdvisory{err: err, expires: time.Now().Add(c.negTTL)}
 		return
 	}
+	succ := time.Now()
+	c.lastSuccess = &succ
+	c.lastErr = ""
 	n := 0
 	if set != nil {
 		n = len(set.ByRelease)
@@ -235,8 +251,80 @@ func (c *advisoryCache) refresh(key string, fetch func(context.Context) (*Adviso
 	c.saveDisk(key, set)
 }
 
-// httpClient is the shared client for live source lookups.
+// httpClient is the shared client for live per-CVE source lookups (short
+// timeout so a hung tracker fails fast).
 var httpClient = &http.Client{Timeout: httpTimeout}
+
+// bulkHTTPClient downloads the large per-distro data dumps (Debian tracker
+// ~80 MB, AlmaLinux errata ~25 MB each). These need far longer than the per-CVE
+// httpTimeout, so they use a dedicated client with a generous timeout; the
+// background warm context bounds the overall attempt.
+const bulkHTTPTimeout = 4 * time.Minute
+
+var bulkHTTPClient = &http.Client{Timeout: bulkHTTPTimeout}
+
+// getJSONBulk downloads and decodes a large JSON document with the bulk client.
+// found is false (nil error) on HTTP 404. Unlike getJSON it does not retry: the
+// documents are large and the caller refreshes them on a TTL.
+func getJSONBulk(ctx context.Context, url string, out any) (found bool, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "PatchMon-cve-distro/1.0")
+	resp, err := bulkHTTPClient.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("fetching %s (server may lack internet access): %w", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return false, fmt.Errorf("%s returned %d: %s", url, resp.StatusCode, body)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return false, fmt.Errorf("decoding %s: %w", url, err)
+	}
+	return true, nil
+}
+
+// loadDiskJSON reads a bulk source's cached index from CVE_CACHE_DIR into out if
+// the file exists and is younger than ttl. It lets Debian/CentOS (like Ubuntu
+// OVAL) survive a restart and repopulate the data-sources report instantly.
+func loadDiskJSON(name string, ttl time.Duration, out any) bool {
+	if diskCacheDir == "" {
+		return false
+	}
+	p := filepath.Join(diskCacheDir, name)
+	info, err := os.Stat(p)
+	if err != nil || time.Since(info.ModTime()) > ttl {
+		return false
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return false
+	}
+	return json.Unmarshal(b, out) == nil
+}
+
+// saveDiskJSON atomically writes v as JSON to a bulk-cache file in CVE_CACHE_DIR.
+func saveDiskJSON(name string, v any) {
+	if diskCacheDir == "" {
+		return
+	}
+	p := filepath.Join(diskCacheDir, name)
+	b, err := json.Marshal(v)
+	if err != nil {
+		return
+	}
+	tmp := fmt.Sprintf("%s.tmp.%d", p, os.Getpid())
+	if os.WriteFile(tmp, b, 0o644) == nil {
+		_ = os.Rename(tmp, p)
+	}
+}
 
 // getJSON fetches url and decodes JSON into out. found is false (with nil error)
 // on HTTP 404 so callers can represent "CVE absent from tracker" without an

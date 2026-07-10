@@ -124,6 +124,17 @@ func (d *Debian) linuxMap(ctx context.Context) (map[string]debianEntry, error) {
 	if d.linux != nil && time.Now().Before(d.expires) {
 		return d.linux, nil
 	}
+	// On a cold start, serve a fresh on-disk copy instantly (survives restarts).
+	if d.linux == nil {
+		var idx map[string]debianEntry
+		if loadDiskJSON(debianDiskFile, d.ttl, &idx) && len(idx) > 0 {
+			now := time.Now()
+			d.linux = idx
+			d.expires = now.Add(d.ttl)
+			d.stat.success(now, len(idx), newestCVEKey(idx), true)
+			return d.linux, nil
+		}
+	}
 	d.stat.attempt(time.Now())
 	linux, err := d.fetchLinuxMap(ctx)
 	if err != nil {
@@ -137,9 +148,13 @@ func (d *Debian) linuxMap(ctx context.Context) (map[string]debianEntry, error) {
 	now := time.Now()
 	d.linux = linux
 	d.expires = now.Add(d.ttl)
-	d.stat.success(now, len(linux), newestCVEKey(linux))
+	d.stat.success(now, len(linux), newestCVEKey(linux), false)
+	saveDiskJSON(debianDiskFile, linux)
 	return d.linux, nil
 }
+
+// debianDiskFile is the on-disk cache name for the parsed `linux` CVE map.
+const debianDiskFile = "debian_linux.json"
 
 // fetchLinuxMap streams the tracker dump and decodes only the `linux` object,
 // avoiding holding the whole multi-megabyte document.
@@ -150,7 +165,8 @@ func (d *Debian) fetchLinuxMap(ctx context.Context) (map[string]debianEntry, err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "PatchMon-cve-distro/1.0")
-	resp, err := httpClient.Do(req)
+	// The tracker dump is ~80 MB, well beyond the per-CVE httpTimeout.
+	resp, err := bulkHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetching Debian tracker (server may lack internet access): %w", err)
 	}

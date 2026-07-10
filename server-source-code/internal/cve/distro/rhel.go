@@ -54,15 +54,10 @@ func NewRHEL() *RHEL {
 
 func (r *RHEL) Distro() string { return "rhel" }
 
-// DataStatus reports how many CVEs this on-demand source has cached so far.
+// DataStatus reports how many CVEs this on-demand source has cached so far and
+// whether the last fetch attempt errored.
 func (r *RHEL) DataStatus() []DataEntry {
-	return []DataEntry{{
-		Source: "redhat-csaf-vex",
-		Kind:   "on-demand",
-		OK:     true,
-		Count:  r.cache.count(),
-		Newest: r.cache.newest(),
-	}}
+	return []DataEntry{r.cache.dataEntry("redhat-csaf-vex", "on-demand")}
 }
 
 func (r *RHEL) CompareVersions(a, b string) int { return CompareRPM(a, b) }

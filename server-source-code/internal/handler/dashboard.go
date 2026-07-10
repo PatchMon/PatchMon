@@ -337,14 +337,17 @@ func (h *DashboardHandler) CVEDataSources(w http.ResponseWriter, r *http.Request
 	// Append the NVD upstream source (in-memory cache; used to reconcile
 	// unknown distro verdicts and to enrich the CVE report).
 	if h.cve != nil {
-		count, newest, newestDate := h.cve.CacheStatus()
+		st := h.cve.Status()
 		sources = append(sources, distro.DataEntry{
-			Source:     "nvd (upstream kernel ranges)",
-			Kind:       "on-demand",
-			OK:         true,
-			Count:      count,
-			Newest:     newest,
-			NewestDate: newestDate,
+			Source:      "nvd (upstream kernel ranges)",
+			Kind:        "on-demand",
+			LastAttempt: st.LastAttempt,
+			LastSuccess: st.LastSuccess,
+			OK:          st.LastError == "",
+			Error:       st.LastError,
+			Count:       st.Count,
+			Newest:      st.Newest,
+			NewestDate:  st.NewestDate,
 		})
 	}
 
@@ -401,6 +404,9 @@ func (h *DashboardHandler) resolveKernelFilter(ctx context.Context, value string
 		res, err := h.cve.Lookup(ctx, value)
 		if err != nil {
 			return nil, http.StatusBadGateway, err.Error()
+		}
+		if res.Filter == nil {
+			return nil, http.StatusUnprocessableEntity, fmt.Sprintf("%s has no Linux kernel version ranges in NVD; filter by kernel version manually", value)
 		}
 		return res.Filter, 0, ""
 	}

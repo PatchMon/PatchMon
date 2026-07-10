@@ -75,6 +75,7 @@ type freshness struct {
 	err         string
 	count       int
 	newest      string
+	fromDisk    bool
 }
 
 // attempt stamps the start of a load. Caller must hold the source's lock.
@@ -88,13 +89,15 @@ func (f *freshness) fail(err error) {
 	}
 }
 
-// success records a completed load. Caller must hold the source's lock.
-func (f *freshness) success(now time.Time, count int, newest string) {
+// success records a completed load (fromDisk true when served from the on-disk
+// cache rather than a fresh network fetch). Caller must hold the source's lock.
+func (f *freshness) success(now time.Time, count int, newest string, fromDisk bool) {
 	f.lastSuccess = &now
 	f.ok = true
 	f.err = ""
 	f.count = count
 	f.newest = newest
+	f.fromDisk = fromDisk
 }
 
 // entry builds the DataEntry snapshot for this source. Caller must hold the
@@ -109,6 +112,7 @@ func (f *freshness) entry(source, kind string) DataEntry {
 		Error:       f.err,
 		Count:       f.count,
 		Newest:      f.newest,
+		FromDisk:    f.fromDisk,
 	}
 }
 

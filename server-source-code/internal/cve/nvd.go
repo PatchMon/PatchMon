@@ -70,6 +70,24 @@ type Service struct {
 
 	mu    sync.Mutex
 	cache map[string]cacheEntry
+
+	// Freshness of the most recent live NVD fetch, surfaced in the CVE
+	// data-sources report (last attempt/success and any error, e.g. a 403/429
+	// rate-limit when no NVD_API_KEY is configured).
+	lastAttempt *time.Time
+	lastSuccess *time.Time
+	lastErr     string
+}
+
+// CacheInfo is a freshness snapshot of the NVD in-memory cache for the
+// data-sources report.
+type CacheInfo struct {
+	Count       int
+	Newest      string
+	NewestDate  string
+	LastAttempt *time.Time
+	LastSuccess *time.Time
+	LastError   string
 }
 
 // NewService creates a CVE lookup service. If the NVD_API_KEY environment
@@ -144,6 +162,8 @@ func (s *Service) Lookup(ctx context.Context, cveID string) (*Result, error) {
 		s.mu.Unlock()
 		return e.result, e.err
 	}
+	now := time.Now()
+	s.lastAttempt = &now
 	s.mu.Unlock()
 
 	result, err := s.fetch(ctx, cveID)
@@ -152,6 +172,11 @@ func (s *Service) Lookup(ctx context.Context, cveID string) (*Result, error) {
 	ttl := successTTL
 	if err != nil {
 		ttl = negativeTTL
+		s.lastErr = err.Error()
+	} else {
+		succ := time.Now()
+		s.lastSuccess = &succ
+		s.lastErr = ""
 	}
 	s.cache[cveID] = cacheEntry{result: result, err: err, expires: time.Now().Add(ttl)}
 	s.mu.Unlock()
@@ -159,18 +184,24 @@ func (s *Service) Lookup(ctx context.Context, cveID string) (*Result, error) {
 	return result, err
 }
 
-// CacheStatus reports how many CVEs are currently held in the NVD in-memory
-// cache with a successful result, the newest such CVE id, and its published
-// date. It lets the data-sources report show NVD alongside the distro sources.
-func (s *Service) CacheStatus() (count int, newest, newestDate string) {
+// Status reports a freshness snapshot of the NVD in-memory cache for the
+// data-sources report: how many CVEs are held with a successful result, the
+// newest such CVE id and its published date, plus the last fetch attempt/
+// success and any error (e.g. a 403/429 rate-limit).
+func (s *Service) Status() CacheInfo {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	info := CacheInfo{
+		LastAttempt: s.lastAttempt,
+		LastSuccess: s.lastSuccess,
+		LastError:   s.lastErr,
+	}
 	var by, bn int
 	for id, e := range s.cache {
 		if e.err != nil || e.result == nil {
 			continue
 		}
-		count++
+		info.Count++
 		p := strings.Split(id, "-")
 		if len(p) != 3 {
 			continue
@@ -178,10 +209,10 @@ func (s *Service) CacheStatus() (count int, newest, newestDate string) {
 		y, _ := strconv.Atoi(p[1])
 		n, _ := strconv.Atoi(p[2])
 		if y > by || (y == by && n > bn) {
-			by, bn, newest, newestDate = y, n, id, e.result.Published
+			by, bn, info.Newest, info.NewestDate = y, n, id, e.result.Published
 		}
 	}
-	return count, newest, newestDate
+	return info
 }
 
 func (s *Service) fetch(ctx context.Context, cveID string) (*Result, error) {
@@ -269,11 +300,14 @@ func (s *Service) fetch(ctx context.Context, cveID string) (*Result, error) {
 		}
 	}
 
-	if len(res.Ranges) == 0 {
-		return nil, fmt.Errorf("CVE %s has no Linux kernel version ranges in NVD; filter by kernel version manually", cveID)
+	// Empty ranges are NOT an error: kernel-CNA CVEs and freshly-published
+	// entries frequently carry no NVD CPE configuration, yet still have a useful
+	// description/severity/labels for the CVE report. Only build a kernel filter
+	// when ranges exist; callers that require one (the Hosts ?cve= filter) check
+	// for a nil Filter and tell the user to filter by kernel version manually.
+	if len(res.Ranges) > 0 {
+		res.Filter = util.FromKernelRanges(res.CVEID, res.Ranges)
 	}
-
-	res.Filter = util.FromKernelRanges(res.CVEID, res.Ranges)
 	return res, nil
 }
 
