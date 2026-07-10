@@ -129,6 +129,22 @@ func (c *advisoryCache) put(key string, set *AdvisorySet, err error) {
 	c.items[key] = cachedAdvisory{err: err, expires: time.Now().Add(c.negTTL)}
 }
 
+// count returns how many CVEs have a cached good result (for on-demand sources'
+// status reporting).
+func (c *advisoryCache) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.good)
+}
+
+// newest returns the highest CVE id among cached good results (for on-demand
+// sources' status reporting), or "" when the cache is empty.
+func (c *advisoryCache) newest() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return newestCVEKey(c.good)
+}
+
 // lookup returns an existing good result (fresh in-memory, last-known-good, or
 // on-disk) WITHOUT triggering a fetch. It lets a caller prefer already-known
 // complete data before falling back to a cheaper bulk source.

@@ -39,10 +39,32 @@ type CentOS struct {
 	baseURL string
 	majors  []string
 
-	mu      sync.Mutex
-	index   map[string]map[string]Advisory // CVE id -> major -> advisory
-	expires time.Time
-	ttl     time.Duration
+	mu       sync.Mutex
+	index    map[string]map[string]Advisory // CVE id -> major -> advisory
+	expires  time.Time
+	ttl      time.Duration
+	inflight bool
+	stat     freshness
+}
+
+// DataStatus reports the freshness of the cached AlmaLinux errata index. If the
+// index is not loaded (or stale) it triggers a background rebuild so a
+// subsequent view shows populated data.
+func (c *CentOS) DataStatus() []DataEntry {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if (c.index == nil || !time.Now().Before(c.expires)) && !c.inflight {
+		c.inflight = true
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), backgroundFetchTimeout)
+			defer cancel()
+			_, _ = c.indexMap(ctx)
+			c.mu.Lock()
+			c.inflight = false
+			c.mu.Unlock()
+		}()
+	}
+	return []DataEntry{c.stat.entry("almalinux-errata (RHEL/CentOS proxy)", "errata")}
 }
 
 // NewCentOS creates a CentOS source backed by the live AlmaLinux errata API.
@@ -145,15 +167,19 @@ func (c *CentOS) indexMap(ctx context.Context) (map[string]map[string]Advisory, 
 	if c.index != nil && time.Now().Before(c.expires) {
 		return c.index, nil
 	}
+	c.stat.attempt(time.Now())
 	idx, err := c.buildIndex(ctx)
 	if err != nil {
+		c.stat.fail(err)
 		if c.index != nil {
 			return c.index, nil
 		}
 		return nil, err
 	}
+	now := time.Now()
 	c.index = idx
-	c.expires = time.Now().Add(c.ttl)
+	c.expires = now.Add(c.ttl)
+	c.stat.success(now, len(idx), newestCVEKey(idx))
 	return c.index, nil
 }
 

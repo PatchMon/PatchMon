@@ -54,6 +54,17 @@ func NewRHEL() *RHEL {
 
 func (r *RHEL) Distro() string { return "rhel" }
 
+// DataStatus reports how many CVEs this on-demand source has cached so far.
+func (r *RHEL) DataStatus() []DataEntry {
+	return []DataEntry{{
+		Source: "redhat-csaf-vex",
+		Kind:   "on-demand",
+		OK:     true,
+		Count:  r.cache.count(),
+		Newest: r.cache.newest(),
+	}}
+}
+
 func (r *RHEL) CompareVersions(a, b string) int { return CompareRPM(a, b) }
 
 // rhelOSVerRe pulls the leading major number out of a host os_version so

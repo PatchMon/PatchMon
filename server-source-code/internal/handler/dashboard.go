@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/cve"
@@ -330,8 +331,61 @@ func (h *DashboardHandler) CVEDataSources(w http.ResponseWriter, r *http.Request
 		Error(w, http.StatusServiceUnavailable, "Distro CVE evaluation is not available")
 		return
 	}
+	ctx := r.Context()
+	sources := h.distroEval.SourcesStatus()
+
+	// Append the NVD upstream source (in-memory cache; used to reconcile
+	// unknown distro verdicts and to enrich the CVE report).
+	if h.cve != nil {
+		count, newest, newestDate := h.cve.CacheStatus()
+		sources = append(sources, distro.DataEntry{
+			Source:     "nvd (upstream kernel ranges)",
+			Kind:       "on-demand",
+			OK:         true,
+			Count:      count,
+			Newest:     newest,
+			NewestDate: newestDate,
+		})
+	}
+
+	// Resolve the publication date of each source's newest CVE via NVD (cached).
+	// Distinct CVE ids are looked up concurrently within a short budget so a cold
+	// NVD cache does not stall the report.
+	if h.cve != nil {
+		want := map[string]struct{}{}
+		for i := range sources {
+			if sources[i].Newest != "" && sources[i].NewestDate == "" {
+				want[sources[i].Newest] = struct{}{}
+			}
+		}
+		if len(want) > 0 {
+			dctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			var mu sync.Mutex
+			dates := map[string]string{}
+			var wg sync.WaitGroup
+			for id := range want {
+				wg.Add(1)
+				go func(id string) {
+					defer wg.Done()
+					if res, err := h.cve.Lookup(dctx, id); err == nil && res != nil && res.Published != "" {
+						mu.Lock()
+						dates[id] = res.Published
+						mu.Unlock()
+					}
+				}(id)
+			}
+			wg.Wait()
+			for i := range sources {
+				if d, ok := dates[sources[i].Newest]; ok {
+					sources[i].NewestDate = d
+				}
+			}
+		}
+	}
+
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"sources":      h.distroEval.SourcesStatus(),
+		"sources":      sources,
 		"generated_at": time.Now().UTC().Format(time.RFC3339),
 	})
 }

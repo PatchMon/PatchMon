@@ -35,6 +35,17 @@ func NewFedora() *Fedora {
 
 func (f *Fedora) Distro() string { return "fedora" }
 
+// DataStatus reports how many CVEs this on-demand source has cached so far.
+func (f *Fedora) DataStatus() []DataEntry {
+	return []DataEntry{{
+		Source: "fedora-bodhi",
+		Kind:   "on-demand",
+		OK:     true,
+		Count:  f.cache.count(),
+		Newest: f.cache.newest(),
+	}}
+}
+
 func (f *Fedora) CompareVersions(a, b string) int { return CompareRPM(a, b) }
 
 // fedoraRelNameRe extracts the Fedora major from a Bodhi release name such as

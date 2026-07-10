@@ -38,12 +38,78 @@ type DataEntry struct {
 	Error       string     `json:"error,omitempty"`
 	Count       int        `json:"count"`
 	Newest      string     `json:"newest_cve,omitempty"`
+	NewestDate  string     `json:"newest_cve_date,omitempty"`
 	FromDisk    bool       `json:"from_disk"`
+}
+
+// newestCVEKey returns the highest CVE id (by year then number) among a map's
+// keys, used to report how fresh a bulk source's data is.
+func newestCVEKey[V any](m map[string]V) string {
+	best := ""
+	var by, bn int
+	for id := range m {
+		p := strings.Split(id, "-")
+		if len(p) != 3 {
+			continue
+		}
+		y, n := atoiSafe(p[1]), atoiSafe(p[2])
+		if y > by || (y == by && n > bn) {
+			by, bn, best = y, n, id
+		}
+	}
+	return best
 }
 
 // StatusReporter is an optional Source capability exposing data-freshness info.
 type StatusReporter interface {
 	DataStatus() []DataEntry
+}
+
+// freshness records the outcome of the most recent load of a bulk source
+// (Debian tracker, CentOS/AlmaLinux errata) so it can report DataStatus without
+// each source re-implementing the bookkeeping.
+type freshness struct {
+	lastAttempt *time.Time
+	lastSuccess *time.Time
+	ok          bool
+	err         string
+	count       int
+	newest      string
+}
+
+// attempt stamps the start of a load. Caller must hold the source's lock.
+func (f *freshness) attempt(now time.Time) { f.lastAttempt = &now }
+
+// fail records a load error. Caller must hold the source's lock.
+func (f *freshness) fail(err error) {
+	f.ok = false
+	if err != nil {
+		f.err = err.Error()
+	}
+}
+
+// success records a completed load. Caller must hold the source's lock.
+func (f *freshness) success(now time.Time, count int, newest string) {
+	f.lastSuccess = &now
+	f.ok = true
+	f.err = ""
+	f.count = count
+	f.newest = newest
+}
+
+// entry builds the DataEntry snapshot for this source. Caller must hold the
+// source's lock.
+func (f *freshness) entry(source, kind string) DataEntry {
+	return DataEntry{
+		Source:      source,
+		Kind:        kind,
+		LastAttempt: f.lastAttempt,
+		LastSuccess: f.lastSuccess,
+		OK:          f.ok,
+		Error:       f.err,
+		Count:       f.count,
+		Newest:      f.newest,
+	}
 }
 
 // SourcesStatus aggregates freshness across all sources that report it.

@@ -21,10 +21,12 @@ import (
 type Debian struct {
 	url string
 
-	mu      sync.Mutex
-	linux   map[string]debianEntry
-	expires time.Time
-	ttl     time.Duration
+	mu       sync.Mutex
+	linux    map[string]debianEntry
+	expires  time.Time
+	ttl      time.Duration
+	inflight bool
+	stat     freshness
 }
 
 // NewDebian creates a Debian source using the live security tracker.
@@ -33,6 +35,26 @@ func NewDebian() *Debian {
 }
 
 func (d *Debian) Distro() string { return "debian" }
+
+// DataStatus reports the freshness of the cached Debian `linux` CVE map. If the
+// map is not loaded (or stale) it triggers a background refresh so a subsequent
+// view shows populated data.
+func (d *Debian) DataStatus() []DataEntry {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if (d.linux == nil || !time.Now().Before(d.expires)) && !d.inflight {
+		d.inflight = true
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), backgroundFetchTimeout)
+			defer cancel()
+			_, _ = d.linuxMap(ctx)
+			d.mu.Lock()
+			d.inflight = false
+			d.mu.Unlock()
+		}()
+	}
+	return []DataEntry{d.stat.entry("debian-tracker (linux)", "tracker")}
+}
 
 func (d *Debian) CompareVersions(a, b string) int { return CompareDpkg(a, b) }
 
@@ -102,16 +124,20 @@ func (d *Debian) linuxMap(ctx context.Context) (map[string]debianEntry, error) {
 	if d.linux != nil && time.Now().Before(d.expires) {
 		return d.linux, nil
 	}
+	d.stat.attempt(time.Now())
 	linux, err := d.fetchLinuxMap(ctx)
 	if err != nil {
+		d.stat.fail(err)
 		// Serve stale data rather than failing if we have any.
 		if d.linux != nil {
 			return d.linux, nil
 		}
 		return nil, err
 	}
+	now := time.Now()
 	d.linux = linux
-	d.expires = time.Now().Add(d.ttl)
+	d.expires = now.Add(d.ttl)
+	d.stat.success(now, len(linux), newestCVEKey(linux))
 	return d.linux, nil
 }
 

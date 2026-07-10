@@ -110,22 +110,6 @@ func (o *ubuntuOVAL) status() []DataEntry {
 	return out
 }
 
-// newestCVE returns the highest CVE id (by year then number) in an index.
-func newestCVE(idx map[string]map[string]string) string {
-	best := ""
-	var by, bn int
-	for id := range idx {
-		p := strings.Split(id, "-")
-		if len(p) != 3 {
-			continue
-		}
-		y, n := atoiSafe(p[1]), atoiSafe(p[2])
-		if y > by || (y == by && n > bn) {
-			by, bn, best = y, n, id
-		}
-	}
-	return best
-}
 
 // advisorySet returns the OVAL-derived per-(codename/series) fixed versions for
 // a CVE. covered is true when at least one release has generic fix data for it;
@@ -170,7 +154,7 @@ func (o *ubuntuOVAL) ensureLoadLocked(codename string) {
 		st.OK = true
 		st.Error = ""
 		st.CVECount = len(idx)
-		st.NewestCVE = newestCVE(idx)
+		st.NewestCVE = newestCVEKey(idx)
 		st.FromDisk = true
 		return
 	}
@@ -199,7 +183,7 @@ func (o *ubuntuOVAL) load(codename string) {
 	st.OK = true
 	st.Error = ""
 	st.CVECount = len(idx)
-	st.NewestCVE = newestCVE(idx)
+	st.NewestCVE = newestCVEKey(idx)
 	st.FromDisk = false
 	o.saveDisk(codename, idx)
 	log.Printf("[cve/distro] ubuntu OVAL %s loaded: %d CVEs (newest %s)", codename, len(idx), st.NewestCVE)

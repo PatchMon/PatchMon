@@ -14,6 +14,12 @@ const CveDataSources = () => {
 	});
 	const sources = data?.sources || [];
 	const fmt = (t) => (t ? new Date(t).toLocaleString() : "—");
+	// Newest-CVE dates come from NVD as full timestamps; show just the date.
+	const fmtDate = (t) => {
+		if (!t) return "—";
+		const d = new Date(t);
+		return Number.isNaN(d.getTime()) ? t : d.toLocaleDateString();
+	};
 	return (
 		<details className="mb-6 border border-secondary-200 dark:border-secondary-700 rounded-lg">
 			<summary className="px-4 py-2 cursor-pointer text-sm font-medium text-secondary-700 dark:text-secondary-200 flex items-center gap-2">
@@ -30,13 +36,14 @@ const CveDataSources = () => {
 							<th className="px-4 py-2 text-left">Last attempt</th>
 							<th className="px-4 py-2 text-right">CVEs</th>
 							<th className="px-4 py-2 text-left">Newest CVE</th>
+							<th className="px-4 py-2 text-left">Newest CVE date</th>
 						</tr>
 					</thead>
 					<tbody className="divide-y divide-secondary-100 dark:divide-secondary-700">
 						{sources.length === 0 && (
 							<tr>
 								<td
-									colSpan={6}
+									colSpan={7}
 									className="px-4 py-3 text-secondary-500 dark:text-secondary-400"
 								>
 									No data sources loaded yet.
@@ -68,6 +75,7 @@ const CveDataSources = () => {
 								<td className="px-4 py-2">{fmt(s.last_attempt)}</td>
 								<td className="px-4 py-2 text-right">{s.count || 0}</td>
 								<td className="px-4 py-2 font-mono">{s.newest_cve || "—"}</td>
+								<td className="px-4 py-2">{fmtDate(s.newest_cve_date)}</td>
 							</tr>
 						))}
 					</tbody>

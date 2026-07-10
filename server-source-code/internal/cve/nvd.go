@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -156,6 +157,31 @@ func (s *Service) Lookup(ctx context.Context, cveID string) (*Result, error) {
 	s.mu.Unlock()
 
 	return result, err
+}
+
+// CacheStatus reports how many CVEs are currently held in the NVD in-memory
+// cache with a successful result, the newest such CVE id, and its published
+// date. It lets the data-sources report show NVD alongside the distro sources.
+func (s *Service) CacheStatus() (count int, newest, newestDate string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var by, bn int
+	for id, e := range s.cache {
+		if e.err != nil || e.result == nil {
+			continue
+		}
+		count++
+		p := strings.Split(id, "-")
+		if len(p) != 3 {
+			continue
+		}
+		y, _ := strconv.Atoi(p[1])
+		n, _ := strconv.Atoi(p[2])
+		if y > by || (y == by && n > bn) {
+			by, bn, newest, newestDate = y, n, id, e.result.Published
+		}
+	}
+	return count, newest, newestDate
 }
 
 func (s *Service) fetch(ctx context.Context, cveID string) (*Result, error) {
