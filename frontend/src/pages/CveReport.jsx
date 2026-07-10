@@ -1,8 +1,57 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Database, Search, ShieldCheck } from "lucide-react";
-import { useId, useState } from "react";
-import { Link } from "react-router-dom";
+import { AlertTriangle, Database, Search, ShieldCheck, X } from "lucide-react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { dashboardAPI } from "../utils/api";
+
+// Recent CVE-report queries are kept per-browser in localStorage so an operator
+// can re-run a previous set of CVEs; the current query is also mirrored into the
+// URL (?cves=…) so a report is bookmarkable and shareable.
+const RECENT_KEY = "patchmon.cveReport.recent";
+const RECENT_MAX = 10;
+const CVE_RE = /CVE-\d{4}-\d{4,}/gi;
+
+// parseCveIds extracts unique, upper-cased CVE ids from free-form text (any
+// separator), giving a canonical query form for storage, dedup and the URL.
+const parseCveIds = (text) => {
+	const seen = new Set();
+	const out = [];
+	for (const m of (text || "").match(CVE_RE) || []) {
+		const id = m.toUpperCase();
+		if (!seen.has(id)) {
+			seen.add(id);
+			out.push(id);
+		}
+	}
+	return out;
+};
+
+const loadRecent = () => {
+	try {
+		const arr = JSON.parse(localStorage.getItem(RECENT_KEY) || "[]");
+		return Array.isArray(arr) ? arr.filter((e) => Array.isArray(e?.ids)) : [];
+	} catch {
+		return [];
+	}
+};
+
+const saveRecent = (list) => {
+	try {
+		localStorage.setItem(RECENT_KEY, JSON.stringify(list));
+	} catch {
+		/* localStorage unavailable / over quota — recall is best-effort */
+	}
+};
+
+const timeAgo = (ts) => {
+	const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+	if (s < 60) return `${s}s ago`;
+	const m = Math.floor(s / 60);
+	if (m < 60) return `${m}m ago`;
+	const h = Math.floor(m / 60);
+	if (h < 24) return `${h}h ago`;
+	return `${Math.floor(h / 24)}d ago`;
+};
 
 // CveDataSources shows the freshness of the CVE databases: last update attempt/
 // success, whether it succeeded, how many CVEs and the newest CVE known.
@@ -90,16 +139,61 @@ const CveDataSources = () => {
 // older than the distro's fixed version, or affected with no fix yet).
 const CveReport = () => {
 	const inputId = useId();
-	const [input, setInput] = useState("");
+	const [searchParams, setSearchParams] = useSearchParams();
+	const [input, setInput] = useState(() => {
+		const q = searchParams.get("cves");
+		return q ? parseCveIds(q).join(", ") : "";
+	});
+	const [recent, setRecent] = useState(loadRecent);
 
 	const mutation = useMutation({
 		mutationFn: (cves) =>
 			dashboardAPI.getCVEReport(cves).then((res) => res.data),
 	});
+	const { mutate } = mutation;
 
-	const runReport = () => {
-		const cves = input.trim();
-		if (cves) mutation.mutate(cves);
+	// runReport parses the CVE ids, runs the report, mirrors the query into the
+	// URL (shareable) and records it in the per-browser recent list.
+	const runReport = useCallback(
+		(raw) => {
+			const ids = parseCveIds(raw ?? input);
+			if (ids.length === 0) return;
+			const canonical = ids.join(", ");
+			setInput(canonical);
+			mutate(canonical);
+			setSearchParams({ cves: ids.join(",") }, { replace: true });
+			setRecent((prev) => {
+				const key = ids.join(",");
+				const next = [
+					{ ids, at: Date.now() },
+					...prev.filter((e) => e.ids.join(",") !== key),
+				].slice(0, RECENT_MAX);
+				saveRecent(next);
+				return next;
+			});
+		},
+		[input, mutate, setSearchParams],
+	);
+
+	// Auto-run once when the page is opened with ?cves=… (shared link/bookmark).
+	const didAutoRun = useRef(false);
+	useEffect(() => {
+		if (didAutoRun.current) return;
+		didAutoRun.current = true;
+		const ids = parseCveIds(searchParams.get("cves") || "");
+		if (ids.length > 0) mutate(ids.join(", "));
+	}, [searchParams, mutate]);
+
+	const removeRecent = (key) =>
+		setRecent((prev) => {
+			const next = prev.filter((e) => e.ids.join(",") !== key);
+			saveRecent(next);
+			return next;
+		});
+
+	const clearRecent = () => {
+		setRecent([]);
+		saveRecent([]);
 	};
 
 	const results = mutation.data?.results || [];
@@ -137,7 +231,7 @@ const CveReport = () => {
 				<div className="mt-2 flex items-center gap-3">
 					<button
 						type="button"
-						onClick={runReport}
+						onClick={() => runReport()}
 						disabled={mutation.isPending || !input.trim()}
 						className="btn-primary inline-flex items-center gap-2 disabled:opacity-50"
 					>
@@ -151,6 +245,55 @@ const CveReport = () => {
 					)}
 				</div>
 			</div>
+
+			{recent.length > 0 && (
+				<div className="mb-6">
+					<div className="flex items-center justify-between mb-1">
+						<span className="text-xs font-medium uppercase text-secondary-500 dark:text-secondary-400">
+							Recent queries
+						</span>
+						<button
+							type="button"
+							onClick={clearRecent}
+							className="text-xs text-secondary-400 hover:text-red-500"
+						>
+							Clear all
+						</button>
+					</div>
+					<ul className="divide-y divide-secondary-100 dark:divide-secondary-700 border border-secondary-200 dark:border-secondary-700 rounded-lg">
+						{recent.map((e) => {
+							const key = e.ids.join(",");
+							return (
+								<li
+									key={key}
+									className="flex items-center gap-2 px-3 py-1.5 text-sm"
+								>
+									<button
+										type="button"
+										onClick={() => runReport(e.ids.join(", "))}
+										className="flex-1 text-left font-mono text-primary-600 dark:text-primary-400 hover:underline truncate"
+										title={e.ids.join(", ")}
+									>
+										{e.ids.join(", ")}
+									</button>
+									<span className="text-xs text-secondary-400 whitespace-nowrap">
+										{e.ids.length} CVE{e.ids.length === 1 ? "" : "s"} ·{" "}
+										{timeAgo(e.at)}
+									</span>
+									<button
+										type="button"
+										onClick={() => removeRecent(key)}
+										aria-label="Remove query"
+										className="text-secondary-400 hover:text-red-500"
+									>
+										<X className="h-4 w-4" />
+									</button>
+								</li>
+							);
+						})}
+					</ul>
+				</div>
+			)}
 
 			{mutation.isError && (
 				<div className="mb-4 text-sm text-red-600 dark:text-red-400">
