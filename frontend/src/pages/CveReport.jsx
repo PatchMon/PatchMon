@@ -86,14 +86,54 @@ const CveReport = () => {
 	);
 };
 
+const severityColor = (sev) => {
+	switch ((sev || "").toUpperCase()) {
+		case "CRITICAL":
+			return "bg-red-600 text-white";
+		case "HIGH":
+			return "bg-orange-500 text-white";
+		case "MEDIUM":
+			return "bg-amber-500 text-white";
+		case "LOW":
+			return "bg-secondary-400 text-white";
+		default:
+			return "bg-secondary-300 text-secondary-800";
+	}
+};
+
+const fmtRange = (r) => {
+	if (r.Exact) return `= ${r.Exact}`;
+	const p = [];
+	if (r.Lo) p.push(`${r.LoIncl ? "≥" : ">"} ${r.Lo}`);
+	if (r.Hi) p.push(`${r.HiIncl ? "≤" : "<"} ${r.Hi}`);
+	return p.join(", ") || "all";
+};
+
 const CveResultCard = ({ result }) => {
 	const c = result.counts || {};
 	const hosts = result.hosts || [];
+	const nvd = result.nvd || {};
 	return (
 		<div className="border border-secondary-200 dark:border-secondary-700 rounded-lg overflow-hidden">
 			<div className="px-4 py-3 bg-secondary-50 dark:bg-secondary-800 flex flex-wrap items-center justify-between gap-2">
-				<div className="font-mono font-semibold text-secondary-900 dark:text-white">
-					{result.cve_id}
+				<div className="flex items-center gap-2">
+					<a
+						href={`https://nvd.nist.gov/vuln/detail/${result.cve_id}`}
+						target="_blank"
+						rel="noreferrer"
+						className="font-mono font-semibold text-secondary-900 dark:text-white hover:underline"
+					>
+						{result.cve_id}
+					</a>
+					{nvd.cvss_severity && (
+						<span
+							className={`px-2 py-0.5 rounded text-xs font-medium ${severityColor(nvd.cvss_severity)}`}
+							title={nvd.cvss_vector || ""}
+						>
+							{nvd.cvss_severity}
+							{nvd.cvss_score ? ` ${nvd.cvss_score}` : ""}
+						</span>
+					)}
 				</div>
 				<div className="flex items-center gap-3 text-xs">
 					<span className="text-red-600 dark:text-red-400 font-medium">
@@ -110,6 +150,37 @@ const CveResultCard = ({ result }) => {
 					</span>
 				</div>
 			</div>
+
+			{(nvd.description || (nvd.ranges && nvd.ranges.length > 0)) && (
+				<div className="px-4 py-2 border-b border-secondary-100 dark:border-secondary-700 text-xs text-secondary-600 dark:text-secondary-300 space-y-1">
+					{nvd.description && <p>{nvd.description}</p>}
+					{nvd.ranges && nvd.ranges.length > 0 && (
+						<p>
+							<span className="font-medium">Upstream affected (NVD):</span>{" "}
+							{nvd.ranges.map(fmtRange).join("; ")}
+						</p>
+					)}
+					<p className="text-secondary-400">
+						{nvd.published ? `Published ${nvd.published.slice(0, 10)}` : ""}
+						{nvd.references && nvd.references.length > 0 && (
+							<>
+								{" · "}
+								{nvd.references.slice(0, 3).map((u, i) => (
+									<a
+										key={u}
+										href={u}
+										target="_blank"
+										rel="noreferrer"
+										className="text-primary-600 dark:text-primary-400 hover:underline"
+									>
+										ref{i + 1}{" "}
+									</a>
+								))}
+							</>
+						)}
+					</p>
+				</div>
+			)}
 
 			{hosts.length === 0 ? (
 				<div className="px-4 py-4 text-sm text-secondary-500 dark:text-secondary-400 flex items-center gap-2">

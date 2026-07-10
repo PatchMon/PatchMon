@@ -42,10 +42,16 @@ func IsCVEID(s string) bool {
 
 // Result is the outcome of a CVE lookup.
 type Result struct {
-	CVEID       string             `json:"cve_id"`
-	Description string             `json:"description"`
-	Ranges      []util.KernelRange `json:"ranges"`
-	Filter      *util.KernelFilter `json:"-"`
+	CVEID        string             `json:"cve_id"`
+	Description  string             `json:"description"`
+	CVSSScore    float64            `json:"cvss_score,omitempty"`
+	CVSSSeverity string             `json:"cvss_severity,omitempty"`
+	CVSSVector   string             `json:"cvss_vector,omitempty"`
+	Published    string             `json:"published,omitempty"`
+	LastModified string             `json:"last_modified,omitempty"`
+	References   []string           `json:"references,omitempty"`
+	Ranges       []util.KernelRange `json:"ranges"`
+	Filter       *util.KernelFilter `json:"-"`
 }
 
 type cacheEntry struct {
@@ -78,10 +84,19 @@ type nvdResponse struct {
 	Vulnerabilities []struct {
 		CVE struct {
 			ID           string `json:"id"`
+			Published    string `json:"published"`
+			LastModified string `json:"lastModified"`
 			Descriptions []struct {
 				Lang  string `json:"lang"`
 				Value string `json:"value"`
 			} `json:"descriptions"`
+			Metrics struct {
+				V31 []cvssMetric `json:"cvssMetricV31"`
+				V30 []cvssMetric `json:"cvssMetricV30"`
+			} `json:"metrics"`
+			References []struct {
+				URL string `json:"url"`
+			} `json:"references"`
 			Configurations []struct {
 				Nodes []struct {
 					CPEMatch []cpeMatch `json:"cpeMatch"`
@@ -89,6 +104,14 @@ type nvdResponse struct {
 			} `json:"configurations"`
 		} `json:"cve"`
 	} `json:"vulnerabilities"`
+}
+
+type cvssMetric struct {
+	CVSSData struct {
+		BaseScore    float64 `json:"baseScore"`
+		BaseSeverity string  `json:"baseSeverity"`
+		VectorString string  `json:"vectorString"`
+	} `json:"cvssData"`
 }
 
 type cpeMatch struct {
@@ -170,6 +193,23 @@ func (s *Service) fetch(ctx context.Context, cveID string) (*Result, error) {
 			res.Description = d.Value
 			break
 		}
+	}
+	res.Published = v.Published
+	res.LastModified = v.LastModified
+	metrics := v.Metrics.V31
+	if len(metrics) == 0 {
+		metrics = v.Metrics.V30
+	}
+	if len(metrics) > 0 {
+		res.CVSSScore = metrics[0].CVSSData.BaseScore
+		res.CVSSSeverity = metrics[0].CVSSData.BaseSeverity
+		res.CVSSVector = metrics[0].CVSSData.VectorString
+	}
+	for i, ref := range v.References {
+		if i >= 6 {
+			break
+		}
+		res.References = append(res.References, ref.URL)
 	}
 
 	for _, cfg := range v.Configurations {

@@ -211,8 +211,13 @@ func (u *Ubuntu) parse(data *ubuntuCVE, set *AdvisorySet) {
 				consider(key, DecisionFixed, st.Description)
 			case "not-affected", "dne":
 				consider(key, DecisionNotAffected, "")
-			case "needed", "needs-triage", "pending", "deferred", "active", "ignored":
+			case "needed", "needs-triage", "pending", "deferred", "active":
 				consider(key, DecisionAffected, "")
+			case "ignored":
+				// "ignored" (won't-fix: superseded/EOL/negligible/…) is NOT an
+				// assertion of vulnerability. Defer to the CVE's upstream version
+				// ranges (handled downstream) instead of assuming affected.
+				consider(key, DecisionUnknown, "")
 			}
 		}
 	}

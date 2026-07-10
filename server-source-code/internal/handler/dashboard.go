@@ -131,9 +131,11 @@ func (h *DashboardHandler) annotateCVEStatus(ctx context.Context, hosts []map[st
 			InstalledKernels: pkgs,
 		})
 		status := string(res.Status)
-		if res.Status == distro.StatusUnknown && h.kernelNewerThanCVE(ctx, cveID, uname) {
-			status = string(distro.StatusNotAffected)
-			hm["cve_note"] = "kernel newer than affected range (NVD)"
+		if res.Status == distro.StatusUnknown {
+			if v := h.nvdVerdict(ctx, cveID, uname); v != "" {
+				status = v
+				hm["cve_note"] = "resolved via NVD upstream ranges"
+			}
 		}
 		hm["cve_status"] = status
 		hm["cve_fixed_version"] = res.FixedVersion
@@ -145,21 +147,25 @@ func (h *DashboardHandler) annotateCVEStatus(ctx context.Context, hosts []map[st
 	return nil
 }
 
-// kernelNewerThanCVE reports whether the host's running kernel is provably
-// outside (newer than) all upstream affected ranges for the CVE per NVD. Used
-// only to downgrade a distro "unknown" to not_affected — e.g. an old CVE
-// (Dirty Pipe, fixed by 5.16.11) against a 6.8 kernel the distro tracker no
-// longer lists. It never upgrades to vulnerable, since a distro may have
-// backported a fix to a version that still looks in-range upstream.
-func (h *DashboardHandler) kernelNewerThanCVE(ctx context.Context, cveID, kernelVersion string) bool {
+// nvdVerdict resolves a host whose distribution has no verdict (unknown /
+// won't-fix "ignored") using the CVE's upstream NVD version ranges: "vulnerable"
+// if the running kernel falls in an affected range, "not_affected" if it sits
+// outside every range (below, above, or in a gap — those versions simply aren't
+// affected upstream), or "" when NVD has no data. Only applied to unknown hosts,
+// so it never overrides an authoritative distro verdict (a real backported fix
+// shows up as released/not-affected, not unknown).
+func (h *DashboardHandler) nvdVerdict(ctx context.Context, cveID, kernelVersion string) string {
 	if h.cve == nil || strings.TrimSpace(kernelVersion) == "" {
-		return false
+		return ""
 	}
 	res, err := h.cve.Lookup(ctx, cveID)
-	if err != nil || res == nil || len(res.Ranges) == 0 {
-		return false
+	if err != nil || res == nil || res.Filter == nil || len(res.Ranges) == 0 {
+		return ""
 	}
-	return util.AboveAllRanges(kernelVersion, res.Ranges)
+	if res.Filter.Matches(kernelVersion) {
+		return "vulnerable"
+	}
+	return "not_affected"
 }
 
 // asString reads a string or *string map value, returning "" for anything else.
@@ -264,8 +270,13 @@ func (h *DashboardHandler) CVEReport(w http.ResponseWriter, r *http.Request) {
 		for _, e := range entries {
 			res := h.distroEval.Evaluate(ctx, cveID, e.dh)
 			status := res.Status
-			if status == distro.StatusUnknown && h.kernelNewerThanCVE(ctx, cveID, e.dh.KernelVersion) {
-				status = distro.StatusNotAffected
+			if status == distro.StatusUnknown {
+				switch h.nvdVerdict(ctx, cveID, e.dh.KernelVersion) {
+				case "vulnerable":
+					status = distro.StatusVulnerable
+				case "not_affected":
+					status = distro.StatusNotAffected
+				}
 			}
 			counts[string(status)]++
 			if status == distro.StatusVulnerable {
@@ -283,11 +294,27 @@ func (h *DashboardHandler) CVEReport(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 		}
-		results = append(results, map[string]interface{}{
+		entry := map[string]interface{}{
 			"cve_id": cveID,
 			"counts": counts,
 			"hosts":  vulnHosts,
-		})
+		}
+		// Enrich with NVD metadata (cached) — severity/score/description/ranges.
+		if h.cve != nil {
+			if nv, err := h.cve.Lookup(ctx, cveID); err == nil && nv != nil {
+				entry["nvd"] = map[string]interface{}{
+					"description":   nv.Description,
+					"cvss_score":    nv.CVSSScore,
+					"cvss_severity": nv.CVSSSeverity,
+					"cvss_vector":   nv.CVSSVector,
+					"published":     nv.Published,
+					"last_modified": nv.LastModified,
+					"references":    nv.References,
+					"ranges":        nv.Ranges,
+				}
+			}
+		}
+		results = append(results, entry)
 	}
 
 	JSON(w, http.StatusOK, map[string]interface{}{"cves": cves, "results": results})
