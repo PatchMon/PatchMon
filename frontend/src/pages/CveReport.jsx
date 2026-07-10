@@ -176,13 +176,20 @@ const severityColor = (sev) => {
 	}
 };
 
-const fmtRange = (r) => {
-	if (r.Exact) return `= ${r.Exact}`;
-	const p = [];
-	if (r.Lo) p.push(`${r.LoIncl ? "≥" : ">"} ${r.Lo}`);
-	if (r.Hi) p.push(`${r.HiIncl ? "≤" : "<"} ${r.Hi}`);
-	return p.join(", ") || "all";
-};
+const rangeFrom = (r) =>
+	r.Exact ? `= ${r.Exact}` : r.Lo ? `${r.LoIncl ? "≥" : ">"} ${r.Lo}` : "(any)";
+const rangeTo = (r) =>
+	r.Exact ? "" : r.Hi ? `${r.HiIncl ? "≤" : "<"} ${r.Hi}` : "(open)";
+
+// sourceLinks builds the canonical per-CVE advisory URLs (deterministic from the
+// id — no network needed).
+const sourceLinks = (id) => [
+	{ name: "NVD", url: `https://nvd.nist.gov/vuln/detail/${id}` },
+	{ name: "MITRE", url: `https://www.cve.org/CVERecord?id=${id}` },
+	{ name: "Ubuntu", url: `https://ubuntu.com/security/${id}` },
+	{ name: "Debian", url: `https://security-tracker.debian.org/tracker/${id}` },
+	{ name: "Red Hat", url: `https://access.redhat.com/security/cve/${id}` },
+];
 
 const CveResultCard = ({ result }) => {
 	const c = result.counts || {};
@@ -226,36 +233,70 @@ const CveResultCard = ({ result }) => {
 				</div>
 			</div>
 
-			{(nvd.description || (nvd.ranges && nvd.ranges.length > 0)) && (
-				<div className="px-4 py-2 border-b border-secondary-100 dark:border-secondary-700 text-xs text-secondary-600 dark:text-secondary-300 space-y-1">
-					{nvd.description && <p>{nvd.description}</p>}
-					{nvd.ranges && nvd.ranges.length > 0 && (
-						<p>
-							<span className="font-medium">Upstream affected (NVD):</span>{" "}
-							{nvd.ranges.map(fmtRange).join("; ")}
-						</p>
+			<div className="px-4 py-2 border-b border-secondary-100 dark:border-secondary-700 text-xs text-secondary-600 dark:text-secondary-300 space-y-2">
+				{nvd.description && <p>{nvd.description}</p>}
+				<div className="flex flex-wrap gap-x-4 gap-y-1 text-secondary-400">
+					{nvd.published && (
+						<span>Published: {nvd.published.slice(0, 10)}</span>
 					)}
-					<p className="text-secondary-400">
-						{nvd.published ? `Published ${nvd.published.slice(0, 10)}` : ""}
-						{nvd.references && nvd.references.length > 0 && (
-							<>
-								{" · "}
-								{nvd.references.slice(0, 3).map((u, i) => (
-									<a
-										key={u}
-										href={u}
-										target="_blank"
-										rel="noreferrer"
-										className="text-primary-600 dark:text-primary-400 hover:underline"
-									>
-										ref{i + 1}{" "}
-									</a>
-								))}
-							</>
-						)}
-					</p>
+					{nvd.last_modified && (
+						<span>Updated: {nvd.last_modified.slice(0, 10)}</span>
+					)}
 				</div>
-			)}
+				{nvd.ranges && nvd.ranges.length > 0 && (
+					<div>
+						<div className="font-medium mb-1">
+							Upstream affected kernel ranges (NVD)
+						</div>
+						<table className="text-xs border border-secondary-200 dark:border-secondary-700">
+							<thead className="bg-secondary-50 dark:bg-secondary-700">
+								<tr>
+									<th className="px-3 py-1 text-left font-medium">From</th>
+									<th className="px-3 py-1 text-left font-medium">
+										Fixed / to
+									</th>
+								</tr>
+							</thead>
+							<tbody>
+								{nvd.ranges.map((r) => (
+									<tr
+										key={`${r.Lo}-${r.Hi}-${r.Exact}`}
+										className="border-t border-secondary-100 dark:border-secondary-700 font-mono"
+									>
+										<td className="px-3 py-1">{rangeFrom(r)}</td>
+										<td className="px-3 py-1">{rangeTo(r)}</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+					</div>
+				)}
+				<div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+					<span className="font-medium">Sources:</span>
+					{sourceLinks(result.cve_id).map((l) => (
+						<a
+							key={l.name}
+							href={l.url}
+							target="_blank"
+							rel="noreferrer"
+							className="text-primary-600 dark:text-primary-400 hover:underline"
+						>
+							{l.name}
+						</a>
+					))}
+					{(nvd.references || []).slice(0, 3).map((u, i) => (
+						<a
+							key={u}
+							href={u}
+							target="_blank"
+							rel="noreferrer"
+							className="text-secondary-500 dark:text-secondary-400 hover:underline"
+						>
+							ref{i + 1}
+						</a>
+					))}
+				</div>
+			</div>
 
 			{hosts.length === 0 ? (
 				<div className="px-4 py-4 text-sm text-secondary-500 dark:text-secondary-400 flex items-center gap-2">

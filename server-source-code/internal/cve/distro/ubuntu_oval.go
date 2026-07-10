@@ -81,10 +81,17 @@ func (o *ubuntuOVAL) stat(code string) *ovalStat {
 	return s
 }
 
-// status returns a freshness snapshot for every configured release.
+// status returns a freshness snapshot for every configured release. It also
+// warms any release that isn't loaded yet (from disk instantly, or a background
+// fetch) so viewing the report populates the indexes.
 func (o *ubuntuOVAL) status() []DataEntry {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	for _, code := range o.releases {
+		if idx, ok := o.idx[code]; !ok || len(idx) == 0 || !time.Now().Before(o.expires[code]) {
+			o.ensureLoadLocked(code)
+		}
+	}
 	out := make([]DataEntry, 0, len(o.releases))
 	for _, code := range o.releases {
 		s := o.stat(code)
