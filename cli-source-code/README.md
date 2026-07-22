@@ -5,8 +5,8 @@ The CLI reuses PatchMon's existing authenticated host and web SSH APIs.
 ## Build
 
 ```bash
-cd server-source-code
-make build-cli
+cd cli-source-code
+make build
 ```
 
 ## Use
