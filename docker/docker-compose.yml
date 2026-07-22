@@ -25,6 +25,12 @@ services:
     env_file: .env
     ports:
       - "3000:3000"
+      - "2222:2222"
+    volumes:
+      - ssh_recordings:/var/lib/patchmon/ssh-recordings
+      - ./secrets/patchmon_ssh_host_key:/run/secrets/patchmon_ssh_host_key:ro
+      - ./secrets/patchmon_ssh_ca_key:/run/secrets/patchmon_ssh_ca_key:ro
+      - ./secrets/patchmon_ssh_ca_passphrase:/run/secrets/patchmon_ssh_ca_passphrase:ro
     networks:
       - patchmon-internal
     depends_on:
@@ -108,6 +114,7 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  ssh_recordings:
 
 networks:
   patchmon-internal:

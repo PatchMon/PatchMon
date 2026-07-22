@@ -32,6 +32,7 @@ import (
 	"patchmon-agent/internal/logutil"
 	"patchmon-agent/internal/packages"
 	"patchmon-agent/internal/pkgversion"
+	"patchmon-agent/internal/remotepty"
 	"patchmon-agent/internal/system"
 	"patchmon-agent/internal/utils"
 	"patchmon-agent/pkg/models"
@@ -580,6 +581,22 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 				if wsConn != nil {
 					go handleSSHProxy(m, wsConn)
 				}
+			case "pty_open":
+				go handlePTYOpen(m)
+			case "pty_input":
+				handlePTYInput(m)
+			case "pty_resize":
+				handlePTYResize(m)
+			case "pty_signal":
+				handlePTYSignal(m)
+			case "pty_close":
+				handlePTYClose(m.ptyData, "client_closed")
+			case "ssh_tunnel_open":
+				go handleSSHTunnelOpen(m.ptyData)
+			case "ssh_tunnel_input":
+				handleSSHTunnelInput(m.ptyData, m.sshProxyData)
+			case "ssh_tunnel_close":
+				handleSSHTunnelClose(m.ptyData)
 			case "ssh_proxy_input":
 				globalWsConnMu.RLock()
 				wsConn := globalWsConn
@@ -1170,6 +1187,13 @@ type wsMsg struct {
 	packageNames []string
 	dryRun       bool
 	sshProxyData string // SSH input data
+	ptyUsername  string
+	ptyTerminal  string
+	ptySignal    string
+	ptySequence  uint64
+	ptyCols      int
+	ptyRows      int
+	ptyData      string
 	// RDP proxy fields
 	rdpProxySessionID string // Unique session ID for RDP proxy
 	rdpProxyHost      string // RDP target host (default localhost)
@@ -1470,6 +1494,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 		globalWsConn = nil
 		globalWsConnMu.Unlock()
 	}()
+	defer closeAllBastionSessions()
 
 	// Create a goroutine to send Docker events through WebSocket - with cancellation support
 	go func() {
@@ -1595,6 +1620,8 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 			Cols       int    `json:"cols"`        // Terminal columns
 			Rows       int    `json:"rows"`        // Terminal rows
 			Data       string `json:"data"`        // SSH input data
+			Signal     string `json:"signal"`
+			Sequence   uint64 `json:"sequence"`
 			// run_patch fields
 			PatchRunID   string   `json:"patch_run_id"`
 			PatchType    string   `json:"patch_type"`
@@ -1779,6 +1806,54 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 		case "apply_config":
 			logger.Info("apply_config received")
 			out <- wsMsg{kind: "apply_config", applyConfig: payload.Config}
+		case "pty_open":
+			if !cfgManager.IsIntegrationEnabled("ssh-bastion-enabled") {
+				sendBastionMessage("pty_error", payload.SessionID, map[string]interface{}{"message": "SSH bastion is not enabled in the local agent configuration"})
+				continue
+			}
+			if !validBastionSessionID(payload.SessionID) || !validLinuxUsername(payload.Username) || payload.Username == "root" {
+				sendBastionMessage("pty_error", payload.SessionID, map[string]interface{}{"message": "invalid session or Linux account"})
+				continue
+			}
+			out <- wsMsg{kind: "pty_open", ptyData: payload.SessionID, ptyUsername: payload.Username, ptyTerminal: payload.Terminal, ptyCols: payload.Cols, ptyRows: payload.Rows}
+		case "pty_input":
+			if !validBastionSessionID(payload.SessionID) || len(payload.Data) > 256*1024 {
+				continue
+			}
+			out <- wsMsg{kind: "pty_input", ptyData: payload.SessionID, sshProxyData: payload.Data, ptySequence: payload.Sequence}
+		case "pty_resize":
+			if !validBastionSessionID(payload.SessionID) {
+				continue
+			}
+			out <- wsMsg{kind: "pty_resize", ptyData: payload.SessionID, ptyCols: payload.Cols, ptyRows: payload.Rows}
+		case "pty_signal":
+			if !validBastionSessionID(payload.SessionID) {
+				continue
+			}
+			out <- wsMsg{kind: "pty_signal", ptyData: payload.SessionID, ptySignal: payload.Signal}
+		case "pty_close":
+			if validBastionSessionID(payload.SessionID) {
+				out <- wsMsg{kind: "pty_close", ptyData: payload.SessionID}
+			}
+		case "ssh_tunnel_open":
+			if !cfgManager.IsIntegrationEnabled("ssh-bastion-enabled") {
+				sendBastionMessage("ssh_tunnel_error", payload.SessionID, map[string]interface{}{"message": "SSH bastion is not enabled in the local agent configuration"})
+				continue
+			}
+			if !validBastionSessionID(payload.SessionID) || payload.Port != 22 {
+				sendBastionMessage("ssh_tunnel_error", payload.SessionID, map[string]interface{}{"message": "only the local SSH port 22 is allowed"})
+				continue
+			}
+			out <- wsMsg{kind: "ssh_tunnel_open", ptyData: payload.SessionID}
+		case "ssh_tunnel_input":
+			if !validBastionSessionID(payload.SessionID) || len(payload.Data) > 512*1024 {
+				continue
+			}
+			out <- wsMsg{kind: "ssh_tunnel_input", ptyData: payload.SessionID, sshProxyData: payload.Data}
+		case "ssh_tunnel_close":
+			if validBastionSessionID(payload.SessionID) {
+				out <- wsMsg{kind: "ssh_tunnel_close", ptyData: payload.SessionID}
+			}
 		case "set_compliance_on_demand_only":
 			// Legacy handler - convert to new format
 			logger.WithField("on_demand_only", payload.OnDemandOnly).Info("set_compliance_on_demand_only received (legacy)")
@@ -4167,4 +4242,229 @@ func handleRDPProxyDisconnect(m wsMsg, conn *websocket.Conn) {
 	}
 
 	sendRDPProxyClosed(conn, sessionID)
+}
+
+var (
+	bastionSessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{16,128}$`)
+	linuxUsernamePattern    = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+)
+
+func validBastionSessionID(value string) bool { return bastionSessionIDPattern.MatchString(value) }
+func validLinuxUsername(value string) bool    { return linuxUsernamePattern.MatchString(value) }
+
+func sendBastionMessage(kind, sessionID string, fields map[string]interface{}) {
+	msg := map[string]interface{}{"type": kind, "session_id": sessionID}
+	for key, value := range fields {
+		msg[key] = value
+	}
+	encoded, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+	globalWsConnMu.RLock()
+	conn := globalWsConn
+	globalWsConnMu.RUnlock()
+	if conn != nil {
+		_ = writeWebSocketTextMessage(conn, encoded)
+	}
+}
+
+type bastionPTYSession struct {
+	pty *remotepty.Session
+}
+
+var (
+	bastionPTYSessions   = make(map[string]*bastionPTYSession)
+	bastionPTYSessionsMu sync.RWMutex
+)
+
+func handlePTYOpen(m wsMsg) {
+	sessionID := m.ptyData
+	bastionPTYSessionsMu.Lock()
+	if _, exists := bastionPTYSessions[sessionID]; exists {
+		bastionPTYSessionsMu.Unlock()
+		sendBastionMessage("pty_error", sessionID, map[string]interface{}{"message": "session already exists"})
+		return
+	}
+	bastionPTYSessionsMu.Unlock()
+
+	session, err := remotepty.Start(m.ptyUsername, m.ptyTerminal, m.ptyCols, m.ptyRows)
+	if err != nil {
+		sendBastionMessage("pty_error", sessionID, map[string]interface{}{"message": err.Error()})
+		return
+	}
+	bastionPTYSessionsMu.Lock()
+	bastionPTYSessions[sessionID] = &bastionPTYSession{pty: session}
+	bastionPTYSessionsMu.Unlock()
+	sendBastionMessage("pty_opened", sessionID, nil)
+
+	go func() {
+		buffer := make([]byte, 32*1024)
+		for {
+			n, readErr := session.Output().Read(buffer)
+			if n > 0 {
+				sendBastionMessage("pty_output", sessionID, map[string]interface{}{"data": base64.StdEncoding.EncodeToString(buffer[:n])})
+			}
+			if readErr != nil {
+				break
+			}
+		}
+		handlePTYClose(sessionID, "process_exited")
+	}()
+	go func() {
+		err := session.Wait()
+		fields := map[string]interface{}{"reason": "process_exited"}
+		if err != nil {
+			fields["message"] = err.Error()
+		}
+		sendBastionMessage("pty_exited", sessionID, fields)
+		handlePTYClose(sessionID, "process_exited")
+	}()
+}
+
+func getPTYSession(sessionID string) *bastionPTYSession {
+	bastionPTYSessionsMu.RLock()
+	session := bastionPTYSessions[sessionID]
+	bastionPTYSessionsMu.RUnlock()
+	return session
+}
+
+func handlePTYInput(m wsMsg) {
+	session := getPTYSession(m.ptyData)
+	if session == nil {
+		return
+	}
+	decoded, err := base64.StdEncoding.DecodeString(m.sshProxyData)
+	if err != nil || len(decoded) > 256*1024 {
+		sendBastionMessage("pty_error", m.ptyData, map[string]interface{}{"message": "invalid PTY input"})
+		return
+	}
+	echo, err := session.pty.WriteInput(decoded)
+	if err != nil {
+		sendBastionMessage("pty_error", m.ptyData, map[string]interface{}{"message": err.Error()})
+		return
+	}
+	sendBastionMessage("pty_input_ack", m.ptyData, map[string]interface{}{"sequence": m.ptySequence, "echo": echo})
+}
+
+func handlePTYResize(m wsMsg) {
+	if session := getPTYSession(m.ptyData); session != nil {
+		if err := session.pty.Resize(m.ptyCols, m.ptyRows); err != nil {
+			sendBastionMessage("pty_error", m.ptyData, map[string]interface{}{"message": err.Error()})
+		}
+	}
+}
+
+func handlePTYSignal(m wsMsg) {
+	if session := getPTYSession(m.ptyData); session != nil {
+		if err := session.pty.Signal(m.ptySignal); err != nil {
+			sendBastionMessage("pty_error", m.ptyData, map[string]interface{}{"message": err.Error()})
+		}
+	}
+}
+
+func handlePTYClose(sessionID, reason string) {
+	bastionPTYSessionsMu.Lock()
+	session := bastionPTYSessions[sessionID]
+	delete(bastionPTYSessions, sessionID)
+	bastionPTYSessionsMu.Unlock()
+	if session == nil {
+		return
+	}
+	_ = session.pty.Close()
+	sendBastionMessage("pty_closed", sessionID, map[string]interface{}{"reason": reason})
+}
+
+type sshTunnelSession struct {
+	conn net.Conn
+	mu   sync.Mutex
+}
+
+var (
+	sshTunnelSessions   = make(map[string]*sshTunnelSession)
+	sshTunnelSessionsMu sync.RWMutex
+)
+
+func handleSSHTunnelOpen(sessionID string) {
+	sshTunnelSessionsMu.Lock()
+	if _, exists := sshTunnelSessions[sessionID]; exists {
+		sshTunnelSessionsMu.Unlock()
+		return
+	}
+	sshTunnelSessionsMu.Unlock()
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:22", 10*time.Second)
+	if err != nil {
+		sendBastionMessage("ssh_tunnel_error", sessionID, map[string]interface{}{"message": "local SSH service is unavailable"})
+		return
+	}
+	sshTunnelSessionsMu.Lock()
+	sshTunnelSessions[sessionID] = &sshTunnelSession{conn: conn}
+	sshTunnelSessionsMu.Unlock()
+	sendBastionMessage("ssh_tunnel_opened", sessionID, nil)
+	go func() {
+		buffer := make([]byte, 32*1024)
+		for {
+			n, readErr := conn.Read(buffer)
+			if n > 0 {
+				sendBastionMessage("ssh_tunnel_data", sessionID, map[string]interface{}{"data": base64.StdEncoding.EncodeToString(buffer[:n])})
+			}
+			if readErr != nil {
+				break
+			}
+		}
+		handleSSHTunnelClose(sessionID)
+	}()
+}
+
+func handleSSHTunnelInput(sessionID, encoded string) {
+	sshTunnelSessionsMu.RLock()
+	session := sshTunnelSessions[sessionID]
+	sshTunnelSessionsMu.RUnlock()
+	if session == nil {
+		return
+	}
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(data) > 512*1024 {
+		return
+	}
+	session.mu.Lock()
+	_, err = session.conn.Write(data)
+	session.mu.Unlock()
+	if err != nil {
+		handleSSHTunnelClose(sessionID)
+	}
+}
+
+func closeAllBastionSessions() {
+	bastionPTYSessionsMu.RLock()
+	ptyIDs := make([]string, 0, len(bastionPTYSessions))
+	for id := range bastionPTYSessions {
+		ptyIDs = append(ptyIDs, id)
+	}
+	bastionPTYSessionsMu.RUnlock()
+	for _, id := range ptyIDs {
+		handlePTYClose(id, "agent_disconnected")
+	}
+
+	sshTunnelSessionsMu.RLock()
+	tunnelIDs := make([]string, 0, len(sshTunnelSessions))
+	for id := range sshTunnelSessions {
+		tunnelIDs = append(tunnelIDs, id)
+	}
+	sshTunnelSessionsMu.RUnlock()
+	for _, id := range tunnelIDs {
+		handleSSHTunnelClose(id)
+	}
+}
+
+func handleSSHTunnelClose(sessionID string) {
+	sshTunnelSessionsMu.Lock()
+	session := sshTunnelSessions[sessionID]
+	delete(sshTunnelSessions, sessionID)
+	sshTunnelSessionsMu.Unlock()
+	if session == nil {
+		return
+	}
+	_ = session.conn.Close()
+	sendBastionMessage("ssh_tunnel_closed", sessionID, nil)
 }

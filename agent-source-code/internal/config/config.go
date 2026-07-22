@@ -62,6 +62,7 @@ var AvailableIntegrations = []string{
 	"docker",
 	"compliance",
 	"ssh-proxy-enabled",
+	"ssh-bastion-enabled",
 	"rdp-proxy-enabled",
 	// Future: "proxmox", "kubernetes", etc.
 }

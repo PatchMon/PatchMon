@@ -8,9 +8,12 @@ import (
 
 // Session holds a frontend WebSocket for an SSH proxy session.
 type Session struct {
-	FrontendWS *websocket.Conn
-	HostID     string
-	ApiID      string
+	FrontendWS      *websocket.Conn
+	HostID          string
+	ApiID           string
+	RecordOutput    func(string)
+	RecordResize    func(int, int)
+	FinishRecording func(string, string)
 }
 
 // Sessions maps proxy session IDs to frontend connections.

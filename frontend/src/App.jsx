@@ -69,6 +69,7 @@ const AiSettings = lazy(() => import("./pages/settings/AiSettings"));
 const DiscordSettings = lazy(() => import("./pages/settings/DiscordSettings"));
 const OidcSettings = lazy(() => import("./pages/settings/OidcSettings"));
 const Billing = lazy(() => import("./pages/Billing"));
+const SSHRecordings = lazy(() => import("./pages/SSHRecordings"));
 
 // Full-screen loading fallback (for initial app load / auth check)
 const LoadingFallback = () => (
@@ -181,6 +182,17 @@ function AppRoutes() {
 							</ProtectedRoute>
 						}
 					/>
+					<Route
+						path="/ssh-recordings"
+						element={
+							<ProtectedRoute requirePermission="can_view_session_recordings">
+								<ModuleGate module="ssh_terminal">
+									<SSHRecordings />
+								</ModuleGate>
+							</ProtectedRoute>
+						}
+					/>
+
 					<Route
 						path="/repositories"
 						element={

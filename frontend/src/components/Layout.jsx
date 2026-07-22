@@ -272,7 +272,11 @@ const Layout = ({ children }) => {
 		}
 
 		// Operations section
-		if (canViewHosts() || canViewReports()) {
+		if (
+			canViewHosts() ||
+			canViewReports() ||
+			hasPermission("can_view_session_recordings")
+		) {
 			const opsItems = [];
 
 			// Patching is a Plus-tier feature (module key: "patching"). Sub-tab
@@ -354,6 +358,19 @@ const Layout = ({ children }) => {
 			}
 
 			// Docker container monitoring is a Plus-tier feature (module key: "docker").
+			if (hasPermission("can_view_session_recordings")) {
+				opsItems.push({
+					name: "SSH Sessions",
+					beta: true,
+					href: "/ssh-recordings",
+					icon: Clock,
+					lockedModule: hasModule("ssh_terminal") ? null : "ssh_terminal",
+					lockedTier: hasModule("ssh_terminal")
+						? null
+						: getRequiredTier("ssh_terminal"),
+				});
+			}
+
 			if (canViewReports()) {
 				const dockerLocked = !hasModule("docker");
 				opsItems.push({

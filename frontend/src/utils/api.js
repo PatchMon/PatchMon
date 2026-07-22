@@ -619,6 +619,17 @@ export const oidcAPI = {
 	importFromEnv: () => api.post("/auth/oidc/settings/import-from-env"),
 };
 
+export const sshRecordingsAPI = {
+	list: (params = {}) => api.get("/ssh/recordings", { params }),
+	events: (id, q = "") =>
+		api.get(`/ssh/recordings/${id}/events`, { params: q ? { q } : {} }),
+	accounts: (hostId) => api.get(`/ssh/accounts/${hostId}`),
+	setAccount: (hostId, username, allowSudo = false) =>
+		api.put(`/ssh/accounts/${hostId}/${username}`, { allowSudo }),
+	deleteAccount: (hostId, username) =>
+		api.delete(`/ssh/accounts/${hostId}/${username}`),
+};
+
 // Alerts API
 export const alertsAPI = {
 	getAlerts: (params = {}) => {

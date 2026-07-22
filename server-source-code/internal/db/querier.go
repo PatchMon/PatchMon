@@ -93,6 +93,8 @@ type Querier interface {
 	ClearScheduledAt(ctx context.Context, id string) error
 	CountActiveAdmins(ctx context.Context) (int64, error)
 	CountActiveRepositories(ctx context.Context) (int32, error)
+	CountActiveSSHSessionForHost(ctx context.Context, hostID string) (int64, error)
+	CountActiveSSHSessionForUser(ctx context.Context, userID string) (int64, error)
 	CountAdmins(ctx context.Context) (int64, error)
 	CountComplianceResultsByScan(ctx context.Context, arg CountComplianceResultsByScanParams) (int64, error)
 	CountComplianceScansByHost(ctx context.Context, hostID string) (int64, error)
@@ -139,6 +141,8 @@ type Querier interface {
 	CreatePatchPolicyExclusion(ctx context.Context, arg CreatePatchPolicyExclusionParams) error
 	// patch_runs
 	CreatePatchRun(ctx context.Context, arg CreatePatchRunParams) error
+	CreateSSHRecordingAccessAudit(ctx context.Context, arg CreateSSHRecordingAccessAuditParams) (SshRecordingAccessAudit, error)
+	CreateSSHSession(ctx context.Context, arg CreateSSHSessionParams) (SshSession, error)
 	CreateScheduledReport(ctx context.Context, arg CreateScheduledReportParams) (ScheduledReport, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
 	CreateTrustedDevice(ctx context.Context, arg CreateTrustedDeviceParams) error
@@ -180,6 +184,7 @@ type Querier interface {
 	DeleteRepository(ctx context.Context, id string) error
 	DeleteRolePermissions(ctx context.Context, role string) error
 	DeleteRunningComplianceScansByHost(ctx context.Context, hostID string) error
+	DeleteSSHHostAccount(ctx context.Context, arg DeleteSSHHostAccountParams) error
 	DeleteScheduledReport(ctx context.Context, id string) error
 	DeleteUser(ctx context.Context, id string) error
 	DeleteVolume(ctx context.Context, id string) error
@@ -294,6 +299,8 @@ type Querier interface {
 	GetRepositoryForDelete(ctx context.Context, id string) (GetRepositoryForDeleteRow, error)
 	GetRolePermissions(ctx context.Context, role string) (RolePermission, error)
 	GetRuleAggregationsFromScans(ctx context.Context, arg GetRuleAggregationsFromScansParams) ([]GetRuleAggregationsFromScansRow, error)
+	GetSSHHostAccount(ctx context.Context, arg GetSSHHostAccountParams) (SshHostAccount, error)
+	GetSSHSession(ctx context.Context, id string) (SshSession, error)
 	GetScheduledReportByID(ctx context.Context, id string) (ScheduledReport, error)
 	GetSecurityCountByPackageIDs(ctx context.Context, arg GetSecurityCountByPackageIDsParams) ([]GetSecurityCountByPackageIDsRow, error)
 	GetSessionByID(ctx context.Context, arg GetSessionByIDParams) (UserSession, error)
@@ -350,6 +357,7 @@ type Querier interface {
 	ListContainers(ctx context.Context, arg ListContainersParams) ([]DockerContainer, error)
 	ListDashboardPreferencesByUserID(ctx context.Context, userID string) ([]DashboardPreference, error)
 	ListDockerHostsPaginated(ctx context.Context, arg ListDockerHostsPaginatedParams) ([]ListDockerHostsPaginatedRow, error)
+	ListExpiredSSHRecordings(ctx context.Context, arg ListExpiredSSHRecordingsParams) ([]SshSession, error)
 	ListHostGroups(ctx context.Context) ([]HostGroup, error)
 	ListHostGroupsWithHostCount(ctx context.Context) ([]ListHostGroupsWithHostCountRow, error)
 	ListHosts(ctx context.Context) ([]Host, error)
@@ -391,6 +399,8 @@ type Querier interface {
 	ListRecentPatchRuns(ctx context.Context, limit int32) ([]ListRecentPatchRunsRow, error)
 	ListRepositories(ctx context.Context, arg ListRepositoriesParams) ([]Repository, error)
 	ListRoles(ctx context.Context) ([]RolePermission, error)
+	ListSSHHostAccounts(ctx context.Context, hostID string) ([]SshHostAccount, error)
+	ListSSHSessionRecordings(ctx context.Context, arg ListSSHSessionRecordingsParams) ([]ListSSHSessionRecordingsRow, error)
 	ListScheduledReports(ctx context.Context) ([]ScheduledReport, error)
 	ListScheduledReportsDue(ctx context.Context, nextRunAt pgtype.Timestamp) ([]ScheduledReport, error)
 	ListSessionsByUserID(ctx context.Context, userID string) ([]UserSession, error)
@@ -401,6 +411,7 @@ type Querier interface {
 	ListUpdateHistoryByDateRange(ctx context.Context, arg ListUpdateHistoryByDateRangeParams) ([]UpdateHistory, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]User, error)
 	ListVolumes(ctx context.Context, arg ListVolumesParams) ([]DockerVolume, error)
+	MarkSSHRecordingDeleted(ctx context.Context, id string) error
 	MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) error
 	RevokeAllSessionsForUser(ctx context.Context, userID string) error
 	RevokeAllSessionsForUserExcept(ctx context.Context, arg RevokeAllSessionsForUserExceptParams) error
@@ -465,6 +476,7 @@ type Querier interface {
 	// a duplicate of the streamed progress.
 	UpdatePatchRunValidated(ctx context.Context, arg UpdatePatchRunValidatedParams) error
 	UpdateRepository(ctx context.Context, arg UpdateRepositoryParams) error
+	UpdateSSHSessionStatus(ctx context.Context, arg UpdateSSHSessionStatusParams) (SshSession, error)
 	UpdateScheduledReport(ctx context.Context, arg UpdateScheduledReportParams) (ScheduledReport, error)
 	UpdateScheduledReportRunTimes(ctx context.Context, arg UpdateScheduledReportRunTimesParams) error
 	UpdateSessionActivity(ctx context.Context, id string) error
@@ -509,6 +521,7 @@ type Querier interface {
 	// always-populated for a simpler caller contract.
 	UpsertRepository(ctx context.Context, arg UpsertRepositoryParams) (string, error)
 	UpsertRolePermissions(ctx context.Context, arg UpsertRolePermissionsParams) (RolePermission, error)
+	UpsertSSHHostAccount(ctx context.Context, arg UpsertSSHHostAccountParams) (SshHostAccount, error)
 }
 
 var _ Querier = (*Queries)(nil)

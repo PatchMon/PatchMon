@@ -1137,6 +1137,12 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 								</label>
 							</div>
 
+							<div className="rounded border border-amber-600/50 bg-amber-900/20 px-3 py-2 text-xs text-amber-200">
+								This interactive session is recorded. Terminal output may
+								contain secrets displayed by applications; password keystrokes
+								are not recorded.
+							</div>
+
 							{/* Credentials Row - Username, Password, Port, Connect */}
 							{sshConfig.authMethod === "password" && (
 								<div className="flex gap-3 items-end">
@@ -1570,6 +1576,12 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 									{error}
 								</div>
 							)}
+							<div className="rounded border border-amber-600/50 bg-amber-900/20 px-3 py-2 text-sm text-amber-200">
+								This interactive session is recorded. Terminal output may
+								contain secrets displayed by applications; password keystrokes
+								are not recorded.
+							</div>
+
 							<div className="grid grid-cols-2 gap-4">
 								<div>
 									<label className="block text-sm font-medium text-secondary-300 mb-1">
