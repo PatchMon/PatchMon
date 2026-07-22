@@ -1,6 +1,7 @@
-.PHONY: build build-migrate build-linux test test-coverage fmt fmt-check vet lint check clean run run-pprof profile-heap profile-allocs sqlc-generate migrate-up migrate-down migrate-version help
+.PHONY: build build-cli build-migrate build-linux test test-coverage fmt fmt-check vet lint check clean run run-pprof profile-heap profile-allocs sqlc-generate migrate-up migrate-down migrate-version help
 
 BINARY := patchmon-server
+CLI_BINARY := patchmon
 MIGRATE_BINARY := migrate
 BUILD_DIR := .
 # Output dir for multi-arch builds (e.g. ../backend for non-Docker use)
@@ -30,6 +31,10 @@ sqlc-generate:
 build:
 	@echo "Building $(BINARY)..."
 	@$(GO_CMD) build -buildvcs=false -o $(BINARY) ./cmd/server
+
+build-cli:
+	@echo "Building $(CLI_BINARY)..."
+	@$(GO_CMD) build -buildvcs=false -o $(CLI_BINARY) ./cmd/patchmon
 
 build-migrate:
 	@echo "Building $(MIGRATE_BINARY)..."
@@ -82,7 +87,7 @@ check: fmt-check vet lint test
 
 clean:
 	@echo "Cleaning build artifacts..."
-	@rm -f $(BINARY) $(MIGRATE_BINARY)
+	@rm -f $(BINARY) $(CLI_BINARY) $(MIGRATE_BINARY)
 	@rm -f $(BUILD_OUT_DIR)/$(BINARY)-linux-* $(BUILD_OUT_DIR)/$(MIGRATE_BINARY)-linux-* 2>/dev/null || true
 	@rm -f coverage.out coverage.html
 
@@ -120,6 +125,7 @@ help:
 	@echo "Available targets:"
 	@echo "  build          Build the application"
 	@echo "  build-migrate  Build the migrate CLI binary"
+	@echo "  build-cli      Build the PatchMon CLI"
 	@echo "  build-linux    Build server+migrate for linux amd64,386,arm64,arm (non-Docker)"
 	@echo "  test           Run tests"
 	@echo "  test-coverage  Run tests with coverage"
