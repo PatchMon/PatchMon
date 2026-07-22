@@ -118,6 +118,20 @@ type Config struct {
 	GuacdPath    string // Path to guacd binary, or empty for PATH
 	GuacdAddress string // Listen address for guacd, e.g. 127.0.0.1:4822
 
+	// SSH bastion and encrypted local session recordings.
+	SSHBastionEnabled         bool
+	SSHBastionAddress         string
+	SSHBastionHostKeyFile     string
+	SSHCAKeyFile              string
+	SSHCAKeyPassphraseFile    string
+	SSHPreviousCAPublicKeys   string
+	SSHRecordingDir           string
+	SSHRecordingKey           string
+	SSHRecordingRetentionDays int
+	SSHMaxSessionsPerUser     int
+	SSHMaxSessionsPerHost     int
+	SSHMaxMessageBytes        int64
+
 	// OIDC (OpenID Connect / SSO)
 	OidcEnabled          bool
 	OidcIssuerURL        string
@@ -287,6 +301,19 @@ func Load() (*Config, error) {
 
 		GuacdPath:    getEnv("GUACD_PATH", ""),
 		GuacdAddress: getEnv("GUACD_ADDRESS", "127.0.0.1:4822"),
+
+		SSHBastionEnabled:         getEnv("SSH_BASTION_ENABLED", "false") == "true",
+		SSHBastionAddress:         getEnv("SSH_BASTION_ADDRESS", ":2222"),
+		SSHBastionHostKeyFile:     getEnv("SSH_BASTION_HOST_KEY_FILE", "/run/secrets/patchmon_ssh_host_key"),
+		SSHCAKeyFile:              getEnv("SSH_CA_KEY_FILE", "/run/secrets/patchmon_ssh_ca_key"),
+		SSHCAKeyPassphraseFile:    getEnv("SSH_CA_KEY_PASSPHRASE_FILE", "/run/secrets/patchmon_ssh_ca_passphrase"),
+		SSHPreviousCAPublicKeys:   getEnv("SSH_PREVIOUS_CA_PUBLIC_KEYS", ""),
+		SSHRecordingDir:           getEnv("SSH_RECORDING_DIR", "/var/lib/patchmon/ssh-recordings"),
+		SSHRecordingKey:           getEnv("SSH_RECORDING_KEY", ""),
+		SSHRecordingRetentionDays: getEnvInt("SSH_RECORDING_RETENTION_DAYS", 90),
+		SSHMaxSessionsPerUser:     getEnvInt("SSH_MAX_SESSIONS_PER_USER", 5),
+		SSHMaxSessionsPerHost:     getEnvInt("SSH_MAX_SESSIONS_PER_HOST", 20),
+		SSHMaxMessageBytes:        int64(getEnvInt("SSH_MAX_MESSAGE_BYTES", 262144)),
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -319,6 +346,23 @@ func (c *Config) Validate() error {
 	if c.OidcEnabled {
 		if c.OidcIssuerURL == "" || c.OidcClientID == "" || c.OidcClientSecret == "" || c.OidcRedirectURI == "" {
 			return fmt.Errorf("OIDC is enabled but missing required config: OIDC_ISSUER_URL, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_REDIRECT_URI")
+		}
+	}
+	if c.SSHBastionEnabled {
+		if c.SSHBastionAddress == "" || c.SSHBastionHostKeyFile == "" || c.SSHCAKeyFile == "" || c.SSHCAKeyPassphraseFile == "" {
+			return fmt.Errorf("SSH bastion is enabled but host key, CA key, or listen address is missing")
+		}
+		if c.SSHRecordingKey == "" {
+			return fmt.Errorf("SSH_RECORDING_KEY is required when SSH bastion is enabled")
+		}
+		if c.SSHRecordingRetentionDays < 1 {
+			return fmt.Errorf("SSH_RECORDING_RETENTION_DAYS must be positive")
+		}
+		if c.SSHMaxSessionsPerUser < 1 || c.SSHMaxSessionsPerHost < 1 {
+			return fmt.Errorf("SSH session limits must be positive")
+		}
+		if c.SSHMaxMessageBytes < 4096 || c.SSHMaxMessageBytes > 16*1024*1024 {
+			return fmt.Errorf("SSH_MAX_MESSAGE_BYTES must be between 4096 and 16777216")
 		}
 	}
 	return nil

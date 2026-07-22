@@ -3,8 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,16 +16,15 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
-	"syscall"
 	"text/tabwriter"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/term"
 )
 
@@ -45,16 +48,25 @@ type loginResponse struct {
 	} `json:"user"`
 }
 type host struct {
-	ID              string  `json:"id"`
-	FriendlyName    string  `json:"friendly_name"`
-	Hostname        *string `json:"hostname"`
-	IP              *string `json:"ip"`
-	OSType          string  `json:"os_type"`
-	OSVersion       string  `json:"os_version"`
-	Status          string  `json:"status"`
-	EffectiveStatus string  `json:"effectiveStatus"`
-	LastUpdate      string  `json:"last_update"`
-	APIID           string  `json:"api_id"`
+	ID              string       `json:"id"`
+	FriendlyName    string       `json:"friendly_name"`
+	Hostname        *string      `json:"hostname"`
+	IP              *string      `json:"ip"`
+	OSType          string       `json:"os_type"`
+	OSVersion       string       `json:"os_version"`
+	Status          string       `json:"status"`
+	EffectiveStatus string       `json:"effectiveStatus"`
+	LastUpdate      string       `json:"last_update"`
+	APIID           string       `json:"api_id"`
+	Groups          []hostGroup  `json:"groups,omitempty"`
+	AllowedAccounts []sshAccount `json:"allowed_accounts,omitempty"`
+}
+type hostGroup struct {
+	Name string `json:"name"`
+}
+type sshAccount struct {
+	LinuxUsername string `json:"linux_username"`
+	AllowSudo     bool   `json:"allow_sudo"`
 }
 type apiClient struct {
 	cfg  config
@@ -81,6 +93,8 @@ func run(args []string) error {
 		return runInstances(args[1:])
 	case "ssh":
 		return runSSH(args[1:])
+	case "tunnel":
+		return runTunnel(args[1:])
 	case "help", "-h", "--help":
 		usage()
 		return nil
@@ -89,7 +103,7 @@ func run(args []string) error {
 	}
 }
 func usage() {
-	fmt.Fprintln(os.Stderr, "PatchMon CLI\n\nUsage:\n  patchmon login --server https://patchmon.example.com\n  patchmon instances list [--output table|json]\n  patchmon ssh [--identity PATH] [--port 22] [user@]instance\n  patchmon logout")
+	fmt.Fprintln(os.Stderr, "PatchMon CLI\n\nUsage:\n  patchmon login --server https://patchmon.example.com\n  patchmon instances list [--output table|json]\n  patchmon ssh user@instance\n  patchmon tunnel instance 22\n  patchmon logout")
 }
 func configPath() (string, error) {
 	d, err := os.UserConfigDir()
@@ -301,6 +315,11 @@ func (c *apiClient) hosts(ctx context.Context) ([]host, error) {
 	err := c.request(ctx, http.MethodGet, "/api/v1/dashboard/hosts", nil, &out, true)
 	return out, err
 }
+func (c *apiClient) sshAccounts(ctx context.Context, hostID string) ([]sshAccount, error) {
+	var out []sshAccount
+	err := c.request(ctx, http.MethodGet, "/api/v1/ssh/accounts/"+url.PathEscape(hostID), nil, &out, true)
+	return out, err
+}
 func runInstances(args []string) error {
 	if len(args) > 0 && args[0] == "list" {
 		args = args[1:]
@@ -314,9 +333,16 @@ func runInstances(args []string) error {
 	if err != nil {
 		return err
 	}
-	hosts, err := newAPIClient(cfg).hosts(context.Background())
+	client := newAPIClient(cfg)
+	hosts, err := client.hosts(context.Background())
 	if err != nil {
 		return err
+	}
+	for i := range hosts {
+		accounts, accountErr := client.sshAccounts(context.Background(), hosts[i].ID)
+		if accountErr == nil {
+			hosts[i].AllowedAccounts = accounts
+		}
 	}
 	sort.Slice(hosts, func(i, j int) bool { return displayName(hosts[i]) < displayName(hosts[j]) })
 	if *output == "json" {
@@ -328,15 +354,35 @@ func runInstances(args []string) error {
 		return errors.New("--output must be table or json")
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tHOSTNAME\tIP\tOS\tSTATUS\tLAST UPDATE")
+	fmt.Fprintln(w, "NAME\tHOSTNAME\tIP\tOS\tSTATUS\tGROUPS\tSSH ACCOUNTS\tLAST UPDATE")
 	for _, h := range hosts {
 		status := h.EffectiveStatus
 		if status == "" {
 			status = h.Status
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s %s\t%s\t%s\n", displayName(h), value(h.Hostname), value(h.IP), h.OSType, h.OSVersion, status, h.LastUpdate)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s %s\t%s\t%s\t%s\t%s\n", displayName(h), value(h.Hostname), value(h.IP), h.OSType, h.OSVersion, status, groupNames(h.Groups), accountNames(h.AllowedAccounts), h.LastUpdate)
 	}
 	return w.Flush()
+}
+func groupNames(groups []hostGroup) string {
+	if len(groups) == 0 {
+		return "-"
+	}
+	names := make([]string, 0, len(groups))
+	for _, group := range groups {
+		names = append(names, group.Name)
+	}
+	return strings.Join(names, ",")
+}
+func accountNames(accounts []sshAccount) string {
+	if len(accounts) == 0 {
+		return "-"
+	}
+	names := make([]string, 0, len(accounts))
+	for _, account := range accounts {
+		names = append(names, account.LinuxUsername)
+	}
+	return strings.Join(names, ",")
 }
 func displayName(h host) string {
 	if h.FriendlyName != "" {
@@ -370,23 +416,18 @@ func resolveHost(hosts []host, query string) (host, error) {
 }
 func runSSH(args []string) error {
 	fs := flag.NewFlagSet("ssh", flag.ContinueOnError)
-	identity := fs.String("identity", "", "SSH private key path")
-	port := fs.Int("port", 22, "SSH port on the instance")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return errors.New("usage: patchmon ssh [--identity PATH] [--port 22] [user@]instance")
+		return errors.New("usage: patchmon ssh user@instance")
 	}
-	if *port < 1 || *port > 65535 {
-		return errors.New("port must be between 1 and 65535")
+	user, target, ok := strings.Cut(fs.Arg(0), "@")
+	if !ok || user == "" || target == "" {
+		return errors.New("a Linux account is required: patchmon ssh user@instance")
 	}
-	user, target := "root", fs.Arg(0)
-	if before, after, ok := strings.Cut(target, "@"); ok {
-		if before == "" || after == "" {
-			return errors.New("invalid user@instance target")
-		}
-		user, target = before, after
+	if user == "root" {
+		return errors.New("root login is disabled by default")
 	}
 	cfg, err := loadConfig()
 	if err != nil {
@@ -397,47 +438,102 @@ func runSSH(args []string) error {
 	if err != nil {
 		return err
 	}
-	h, err := resolveHost(hosts, target)
+	host, err := resolveHost(hosts, target)
 	if err != nil {
 		return err
 	}
-	password, key, passphrase := "", "", ""
-	if *identity == "" {
-		password, err = readSecret("SSH password: ")
-		if err != nil {
-			return err
-		}
-	} else {
-		b, err := os.ReadFile(*identity)
-		if err != nil {
-			return fmt.Errorf("read private key: %w", err)
-		}
-		key = string(b)
-		for i := range b {
-			b[i] = 0
-		}
-		if strings.Contains(key, "ENCRYPTED") {
-			passphrase, err = readSecret("Private key passphrase: ")
-			if err != nil {
-				return err
-			}
-		}
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return fmt.Errorf("generate ephemeral SSH key: %w", err)
+	}
+	sshPublicKey, err := ssh.NewPublicKey(publicKey)
+	if err != nil {
+		return fmt.Errorf("encode ephemeral SSH key: %w", err)
+	}
+	privateDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		return fmt.Errorf("encode ephemeral private key: %w", err)
+	}
+	for i := range privateKey {
+		privateKey[i] = 0
+	}
+	var certificate struct {
+		Certificate string `json:"certificate"`
+		CAPublicKey string `json:"caPublicKey"`
+		BastionHost string `json:"bastionHost"`
+		BastionPort string `json:"bastionPort"`
+		ExpiresAt   string `json:"expiresAt"`
+		Recorded    bool   `json:"recorded"`
+	}
+	request := map[string]string{"hostId": host.ID, "linuxUsername": user, "publicKey": string(ssh.MarshalAuthorizedKey(sshPublicKey))}
+	if err := client.post(context.Background(), "/api/v1/auth/ssh-certificate", request, &certificate, true); err != nil {
+		return err
+	}
+	if certificate.Certificate == "" || certificate.BastionHost == "" || certificate.BastionPort == "" {
+		return errors.New("server returned an incomplete SSH certificate")
+	}
+	tempDir, err := os.MkdirTemp("", "patchmon-ssh-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tempDir)
+	keyPath := filepath.Join(tempDir, "id_ed25519")
+	certPath := filepath.Join(tempDir, "id_ed25519-cert.pub")
+	privatePEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER})
+	for i := range privateDER {
+		privateDER[i] = 0
+	}
+	if err := os.WriteFile(keyPath, privatePEM, 0600); err != nil {
+		return err
+	}
+	for i := range privatePEM {
+		privatePEM[i] = 0
+	}
+	if err := os.WriteFile(certPath, []byte(certificate.Certificate), 0600); err != nil {
+		return err
+	}
+	if certificate.Recorded {
+		fmt.Fprintf(os.Stderr, "PatchMon: this interactive session is recorded (certificate expires %s).\n", certificate.ExpiresAt)
+	}
+	command := exec.Command("ssh", "-p", certificate.BastionPort, "-i", keyPath, "-o", "CertificateFile="+certPath, "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=accept-new", user+"@"+certificate.BastionHost)
+	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("OpenSSH failed: %w", err)
+	}
+	return nil
+}
+
+func runTunnel(args []string) error {
+	fs := flag.NewFlagSet("tunnel", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() < 1 || fs.NArg() > 2 {
+		return errors.New("usage: patchmon tunnel instance 22")
+	}
+	if fs.NArg() == 2 && fs.Arg(1) != "22" {
+		return errors.New("the first tunnel version only permits SSH port 22")
+	}
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	client := newAPIClient(cfg)
+	hosts, err := client.hosts(context.Background())
+	if err != nil {
+		return err
+	}
+	host, err := resolveHost(hosts, fs.Arg(0))
+	if err != nil {
+		return err
 	}
 	var ticket struct {
 		Ticket string `json:"ticket"`
 	}
-	if err := client.post(context.Background(), "/api/v1/auth/ssh-ticket", map[string]string{"hostId": h.ID}, &ticket, true); err != nil {
+	if err := client.post(context.Background(), "/api/v1/auth/ssh-ticket", map[string]string{"hostId": host.ID}, &ticket, true); err != nil {
 		return err
 	}
-	if ticket.Ticket == "" {
-		return errors.New("server returned an empty SSH ticket")
-	}
-	err = runTerminal(cfg, h.ID, ticket.Ticket, user, password, key, passphrase, *port)
-	password, key, passphrase = "", "", ""
-	return err
-}
-func runTerminal(cfg config, hostID, ticket, user, password, key, passphrase string, port int) error {
-	wsURL, err := websocketURL(cfg.Server, hostID, ticket)
+	wsURL, err := websocketEndpointURL(cfg.Server, "ssh-tunnel", host.ID, ticket.Ticket)
 	if err != nil {
 		return err
 	}
@@ -445,100 +541,49 @@ func runTerminal(cfg config, hostID, ticket, user, password, key, passphrase str
 	if cfg.Insecure {
 		dialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
-	conn, resp, err := dialer.Dial(wsURL, http.Header{"User-Agent": []string{userAgent}})
+	conn, response, err := dialer.Dial(wsURL, http.Header{"User-Agent": []string{userAgent}})
 	if err != nil {
-		if resp != nil {
-			return fmt.Errorf("open SSH terminal: %s", resp.Status)
+		if response != nil {
+			return fmt.Errorf("open SSH tunnel: %s", response.Status)
 		}
-		return fmt.Errorf("open SSH terminal: %w", err)
+		return fmt.Errorf("open SSH tunnel: %w", err)
 	}
 	defer conn.Close()
-	fd := int(os.Stdin.Fd())
-	if !term.IsTerminal(fd) {
-		return errors.New("SSH requires an interactive terminal")
-	}
-	cols, rows, err := term.GetSize(fd)
-	if err != nil {
-		cols, rows = 80, 24
-	}
-	connect := map[string]interface{}{"type": "connect", "connection_mode": "proxy", "proxy_host": "localhost", "proxy_port": port, "username": user, "terminal": terminalName(), "cols": cols, "rows": rows}
-	if key != "" {
-		connect["privateKey"] = key
-		if passphrase != "" {
-			connect["passphrase"] = passphrase
-		}
-	} else {
-		connect["password"] = password
-	}
-	var mu sync.Mutex
-	write := func(v interface{}) error { mu.Lock(); defer mu.Unlock(); return conn.WriteJSON(v) }
-	if err := write(connect); err != nil {
-		return err
-	}
-	connect["password"], connect["privateKey"], connect["passphrase"] = "", "", ""
-	old, err := term.MakeRaw(fd)
-	if err != nil {
-		return fmt.Errorf("enable raw terminal: %w", err)
-	}
-	defer term.Restore(fd, old)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	resize := make(chan os.Signal, 1)
-	signal.Notify(resize, syscall.SIGWINCH)
-	defer signal.Stop(resize)
 	go func() {
+		buffer := make([]byte, 32*1024)
 		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-resize:
-				if c, r, e := term.GetSize(fd); e == nil {
-					_ = write(map[string]interface{}{"type": "resize", "cols": c, "rows": r})
+			n, readErr := os.Stdin.Read(buffer)
+			if n > 0 {
+				if err := conn.WriteMessage(websocket.BinaryMessage, buffer[:n]); err != nil {
+					return
 				}
 			}
-		}
-	}()
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			n, e := os.Stdin.Read(buf)
-			if n > 0 && write(map[string]interface{}{"type": "input", "data": string(buf[:n])}) != nil {
-				cancel()
-				return
-			}
-			if e != nil {
-				cancel()
+			if readErr != nil {
 				return
 			}
 		}
 	}()
 	for {
-		_, raw, err := conn.ReadMessage()
+		messageType, data, err := conn.ReadMessage()
 		if err != nil {
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				return nil
 			}
 			return err
 		}
-		var msg struct {
-			Type    string `json:"type"`
-			Data    string `json:"data"`
-			Message string `json:"message"`
-		}
-		if json.Unmarshal(raw, &msg) != nil {
+		if messageType != websocket.BinaryMessage {
 			continue
 		}
-		switch msg.Type {
-		case "data":
-			_, _ = os.Stdout.WriteString(msg.Data)
-		case "error":
-			return errors.New(msg.Message)
-		case "closed":
-			return nil
+		if _, err := os.Stdout.Write(data); err != nil {
+			return err
 		}
 	}
 }
 func websocketURL(server, hostID, ticket string) (string, error) {
+	return websocketEndpointURL(server, "ssh-terminal", hostID, ticket)
+}
+
+func websocketEndpointURL(server, endpoint, hostID, ticket string) (string, error) {
 	u, err := url.Parse(server)
 	if err != nil {
 		return "", err
@@ -548,7 +593,7 @@ func websocketURL(server, hostID, ticket string) (string, error) {
 	} else {
 		u.Scheme = "ws"
 	}
-	u.Path = strings.TrimRight(u.Path, "/") + "/api/v1/ssh-terminal/" + hostID
+	u.Path = strings.TrimRight(u.Path, "/") + "/api/v1/" + endpoint + "/" + hostID
 	q := u.Query()
 	q.Set("ticket", ticket)
 	u.RawQuery = q.Encode()

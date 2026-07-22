@@ -17,6 +17,9 @@ import (
 // OnSshProxyMessage is called when agent sends ssh_proxy_* messages.
 type OnSshProxyMessage func(apiID string, msg []byte)
 
+// OnSSHBastionMessage is called for multiplexed PTY and raw SSH tunnel messages.
+type OnSSHBastionMessage func(apiID string, msg []byte)
+
 // OnRDPProxyMessage is called when agent sends rdp_proxy_* messages.
 type OnRDPProxyMessage func(apiID string, msg []byte)
 
@@ -28,13 +31,14 @@ type OnAgentConnect func(ctx context.Context, apiID string)
 
 // AgentWSHandler handles WebSocket connections from agents.
 type AgentWSHandler struct {
-	hosts             *store.HostsStore
-	registry          *agentregistry.Registry
-	onSshProxyMessage OnSshProxyMessage
-	onRDPProxyMessage OnRDPProxyMessage
-	onDisconnect      OnAgentDisconnect
-	onConnect         OnAgentConnect
-	upgrader          websocket.Upgrader
+	hosts               *store.HostsStore
+	registry            *agentregistry.Registry
+	onSshProxyMessage   OnSshProxyMessage
+	onSSHBastionMessage OnSSHBastionMessage
+	onRDPProxyMessage   OnRDPProxyMessage
+	onDisconnect        OnAgentDisconnect
+	onConnect           OnAgentConnect
+	upgrader            websocket.Upgrader
 }
 
 // AgentWSHandlerOption configures AgentWSHandler.
@@ -58,6 +62,12 @@ func WithOnAgentConnect(f OnAgentConnect) AgentWSHandlerOption {
 func WithOnRDPProxyMessage(f OnRDPProxyMessage) AgentWSHandlerOption {
 	return func(h *AgentWSHandler) {
 		h.onRDPProxyMessage = f
+	}
+}
+
+func WithOnSSHBastionMessage(f OnSSHBastionMessage) AgentWSHandlerOption {
+	return func(h *AgentWSHandler) {
+		h.onSSHBastionMessage = f
 	}
 }
 
@@ -154,6 +164,19 @@ func (h *AgentWSHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 				switch msg.Type {
 				case "ssh_proxy_data", "ssh_proxy_connected", "ssh_proxy_error", "ssh_proxy_closed":
 					h.onSshProxyMessage(apiID, message)
+					continue
+				}
+			}
+		}
+		if h.onSSHBastionMessage != nil {
+			var msg struct {
+				Type string `json:"type"`
+			}
+			if err := json.Unmarshal(message, &msg); err == nil {
+				switch msg.Type {
+				case "pty_opened", "pty_output", "pty_input_ack", "pty_exited", "pty_error", "pty_closed",
+					"ssh_tunnel_opened", "ssh_tunnel_data", "ssh_tunnel_error", "ssh_tunnel_closed":
+					h.onSSHBastionMessage(apiID, message)
 					continue
 				}
 			}

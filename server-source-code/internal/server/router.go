@@ -23,6 +23,8 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/patchstream"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/rdpproxy"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/sessionrecording"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/sshbastion"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/sshproxy"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/swagger"
@@ -192,7 +194,61 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	sshProxySessions := sshproxy.NewSessions()
 	alertsStore := store.NewAlertsStore(dbProvider)
 	alertConfigStore := store.NewAlertConfigStore(dbProvider)
+	sshBastionBroker := sshbastion.NewBroker(registry)
+	sshAccessStore := store.NewSSHStore(dbProvider)
+	var sshCertificateHandler *handler.SSHCertificateHandler
+	var sshRecordingsHandler *handler.SSHRecordingsHandler
+	var sshRecordingStore *sessionrecording.Store
+	if cfg.SSHBastionEnabled {
+		authority, authorityErr := sshbastion.LoadAuthority(cfg.SSHCAKeyFile, cfg.SSHCAKeyPassphraseFile, strings.Split(cfg.SSHPreviousCAPublicKeys, "\n"))
+		recordingStore, recordingErr := sessionrecording.NewStore(cfg.SSHRecordingDir, cfg.SSHRecordingKey, sessionrecording.DefaultBlockSize)
+		sshRecordingStore = recordingStore
+		if authorityErr != nil || recordingErr != nil {
+			log.Error("SSH bastion initialization failed", "authority_error", authorityErr, "recording_error", recordingErr)
+		} else {
+			resolveSSHContext := func(tenant string) (context.Context, error) {
+				base := context.Background()
+				if tenant == "" {
+					return base, nil
+				}
+				if ctxRegistry == nil || poolCache == nil {
+					return nil, fmt.Errorf("tenant context is unavailable")
+				}
+				entry := ctxRegistry.GetByHost(tenant)
+				if entry == nil || !hostctx.HasModule(hostctx.WithEntry(base, entry), "ssh_terminal") {
+					return nil, fmt.Errorf("tenant is unavailable")
+				}
+				tenantDB, err := poolCache.GetOrCreate(base, tenant)
+				if err != nil || tenantDB == nil {
+					return nil, fmt.Errorf("tenant database is unavailable")
+				}
+				return hostctx.WithDB(hostctx.WithEntry(base, entry), tenantDB), nil
+			}
+			bastionServer, bastionErr := sshbastion.NewServer(
+				cfg.SSHBastionAddress, cfg.SSHBastionHostKeyFile, authority, sshBastionBroker,
+				hostsStore, usersStore, permissionsStore, sshAccessStore, recordingStore,
+				registry, resolveSSHContext, cfg.SSHMaxSessionsPerUser, cfg.SSHMaxSessionsPerHost, log,
+			)
+			if bastionErr != nil {
+				log.Error("SSH bastion initialization failed", "error", bastionErr)
+			} else {
+				sshCertificateHandler = handler.NewSSHCertificateHandler(authority, hostsStore, usersStore, permissionsStore, sshAccessStore, registry, cfg.SSHBastionAddress, cfg.SSHMaxSessionsPerUser, cfg.SSHMaxSessionsPerHost)
+				go func() {
+					if err := bastionServer.Start(ctx); err != nil {
+						log.Error("SSH bastion stopped", "error", err)
+					}
+				}()
+				sshRecordingsHandler = handler.NewSSHRecordingsHandler(sshAccessStore, recordingStore)
+				var tenantList func() []string
+				if ctxRegistry != nil {
+					tenantList = ctxRegistry.ListHosts
+				}
+				sshbastion.StartRetention(ctx, sshAccessStore, recordingStore, resolveSSHContext, tenantList, cfg.SSHRecordingRetentionDays, log)
+			}
+		}
+	}
 	var sshTerminalWSHandler *handler.SshTerminalWSHandler
+	var sshTunnelWSHandler *handler.SSHTunnelWSHandler
 	var rdpHandler *handler.RDPHandler
 	if rdb != nil && cfg.GuacdAddress != "" {
 		rdpTicketStore := store.NewRDPTicketStore(redisResolver, enc)
@@ -206,6 +262,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	agentOpts := []handler.AgentWSHandlerOption{
 		handler.WithOnAgentDisconnect(handler.NewAgentDisconnectHandler(dbProvider, notifyEmit, log)),
 		handler.WithOnAgentConnect(handler.NewAgentConnectHandler(dbProvider, queueClient, queueInspector, notifyEmit, log)),
+		handler.WithOnSSHBastionMessage(sshBastionBroker.HandleAgentMessage),
 	}
 	if rdpHandler != nil {
 		agentOpts = append(agentOpts, handler.WithOnRDPProxyMessage(rdpHandler.HandleRDPProxyMessage))
@@ -214,6 +271,12 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		sshTerminalWSHandler = handler.NewSshTerminalWSHandler(
 			sshTicketStore, hostsStore, usersStore, permissionsStore,
 			registry, sshProxySessions, log,
+		)
+		if sshRecordingStore != nil {
+			sshTerminalWSHandler.EnableRecording(sshAccessStore, sshRecordingStore)
+		}
+		sshTunnelWSHandler = handler.NewSSHTunnelWSHandler(
+			sshTicketStore, hostsStore, usersStore, permissionsStore, registry, sshBastionBroker, sshAccessStore, cfg.SSHMaxMessageBytes, log,
 		)
 		agentWsHandler = handler.NewAgentWSHandler(
 			hostsStore, registry, sshTerminalWSHandler.HandleAgentMessage,
@@ -316,6 +379,9 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		// Gated by the ssh_terminal module (Max tier) for multi-context deployments.
 		if sshTerminalWSHandler != nil {
 			r.With(hostctx.RequireModule("ssh_terminal")).Get("/ssh-terminal/{hostId}", sshTerminalWSHandler.ServeWS)
+		}
+		if sshTunnelWSHandler != nil {
+			r.With(hostctx.RequireModule("ssh_terminal")).Get("/ssh-tunnel/{hostId}", sshTunnelWSHandler.ServeWS)
 		}
 		// RDP WebSocket tunnel (ticket auth via query param).
 		// Gated by the rdp module (Max tier) for multi-context deployments.
@@ -448,6 +514,16 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			if sshTicketHandler != nil {
 				// Gated by ssh_terminal module (Max tier).
 				r.With(middleware.RequirePermission("can_use_remote_access", permissionsStore), hostctx.RequireModule("ssh_terminal")).Post("/auth/ssh-ticket", sshTicketHandler.ServeCreate)
+			}
+			if sshCertificateHandler != nil {
+				r.With(middleware.RequirePermission("can_use_remote_access", permissionsStore), hostctx.RequireModule("ssh_terminal")).Post("/auth/ssh-certificate", sshCertificateHandler.Issue)
+			}
+			if sshRecordingsHandler != nil {
+				r.With(middleware.RequirePermission("can_use_remote_access", permissionsStore), hostctx.RequireModule("ssh_terminal")).Get("/ssh/accounts/{hostId}", sshRecordingsHandler.ListAccounts)
+				r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore), hostctx.RequireModule("ssh_terminal")).Put("/ssh/accounts/{hostId}/{username}", sshRecordingsHandler.UpsertAccount)
+				r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore), hostctx.RequireModule("ssh_terminal")).Delete("/ssh/accounts/{hostId}/{username}", sshRecordingsHandler.DeleteAccount)
+				r.With(middleware.RequirePermission("can_view_session_recordings", permissionsStore), hostctx.RequireModule("ssh_terminal")).Get("/ssh/recordings", sshRecordingsHandler.List)
+				r.With(middleware.RequirePermission("can_view_session_recordings", permissionsStore), hostctx.RequireModule("ssh_terminal")).Get("/ssh/recordings/{id}/events", sshRecordingsHandler.Events)
 			}
 			if rdpEnabled {
 				// Gated by rdp module (Max tier).

@@ -499,30 +499,31 @@ type Repository struct {
 }
 
 type RolePermission struct {
-	ID                      string           `json:"id"`
-	Role                    string           `json:"role"`
-	CanViewDashboard        bool             `json:"can_view_dashboard"`
-	CanViewHosts            bool             `json:"can_view_hosts"`
-	CanManageHosts          bool             `json:"can_manage_hosts"`
-	CanViewPackages         bool             `json:"can_view_packages"`
-	CanManagePackages       bool             `json:"can_manage_packages"`
-	CanViewUsers            bool             `json:"can_view_users"`
-	CanManageUsers          bool             `json:"can_manage_users"`
-	CanManageSuperusers     bool             `json:"can_manage_superusers"`
-	CanViewReports          bool             `json:"can_view_reports"`
-	CanExportData           bool             `json:"can_export_data"`
-	CanManageSettings       bool             `json:"can_manage_settings"`
-	CanManageNotifications  bool             `json:"can_manage_notifications"`
-	CanViewNotificationLogs bool             `json:"can_view_notification_logs"`
-	CanManagePatching       bool             `json:"can_manage_patching"`
-	CanManageCompliance     bool             `json:"can_manage_compliance"`
-	CanManageDocker         bool             `json:"can_manage_docker"`
-	CanManageAlerts         bool             `json:"can_manage_alerts"`
-	CanManageAutomation     bool             `json:"can_manage_automation"`
-	CanUseRemoteAccess      bool             `json:"can_use_remote_access"`
-	CanManageBilling        bool             `json:"can_manage_billing"`
-	CreatedAt               pgtype.Timestamp `json:"created_at"`
-	UpdatedAt               pgtype.Timestamp `json:"updated_at"`
+	ID                       string           `json:"id"`
+	Role                     string           `json:"role"`
+	CanViewDashboard         bool             `json:"can_view_dashboard"`
+	CanViewHosts             bool             `json:"can_view_hosts"`
+	CanManageHosts           bool             `json:"can_manage_hosts"`
+	CanViewPackages          bool             `json:"can_view_packages"`
+	CanManagePackages        bool             `json:"can_manage_packages"`
+	CanViewUsers             bool             `json:"can_view_users"`
+	CanManageUsers           bool             `json:"can_manage_users"`
+	CanManageSuperusers      bool             `json:"can_manage_superusers"`
+	CanViewReports           bool             `json:"can_view_reports"`
+	CanExportData            bool             `json:"can_export_data"`
+	CanManageSettings        bool             `json:"can_manage_settings"`
+	CanManageNotifications   bool             `json:"can_manage_notifications"`
+	CanViewNotificationLogs  bool             `json:"can_view_notification_logs"`
+	CanManagePatching        bool             `json:"can_manage_patching"`
+	CanManageCompliance      bool             `json:"can_manage_compliance"`
+	CanManageDocker          bool             `json:"can_manage_docker"`
+	CanManageAlerts          bool             `json:"can_manage_alerts"`
+	CanManageAutomation      bool             `json:"can_manage_automation"`
+	CanUseRemoteAccess       bool             `json:"can_use_remote_access"`
+	CanManageBilling         bool             `json:"can_manage_billing"`
+	CanViewSessionRecordings bool             `json:"can_view_session_recordings"`
+	CreatedAt                pgtype.Timestamp `json:"created_at"`
+	UpdatedAt                pgtype.Timestamp `json:"updated_at"`
 }
 
 type ScheduledReport struct {
@@ -643,6 +644,44 @@ type Setting struct {
 	PasswordRateLimitWindowMs       *int32           `json:"password_rate_limit_window_ms"`
 	PasswordRateLimitMax            *int32           `json:"password_rate_limit_max"`
 	AuthBrowserSessionCookies       *bool            `json:"auth_browser_session_cookies"`
+}
+
+type SshHostAccount struct {
+	ID            string           `json:"id"`
+	HostID        string           `json:"host_id"`
+	LinuxUsername string           `json:"linux_username"`
+	AllowSudo     bool             `json:"allow_sudo"`
+	CreatedAt     pgtype.Timestamp `json:"created_at"`
+	UpdatedAt     pgtype.Timestamp `json:"updated_at"`
+}
+
+type SshRecordingAccessAudit struct {
+	ID        string           `json:"id"`
+	SessionID string           `json:"session_id"`
+	UserID    string           `json:"user_id"`
+	Action    string           `json:"action"`
+	ClientIp  *string          `json:"client_ip"`
+	CreatedAt pgtype.Timestamp `json:"created_at"`
+}
+
+type SshSession struct {
+	ID                 string           `json:"id"`
+	HostID             string           `json:"host_id"`
+	UserID             string           `json:"user_id"`
+	LinuxUsername      string           `json:"linux_username"`
+	Transport          string           `json:"transport"`
+	Status             string           `json:"status"`
+	ClientIp           *string          `json:"client_ip"`
+	UserAgent          *string          `json:"user_agent"`
+	StartedAt          pgtype.Timestamp `json:"started_at"`
+	EndedAt            pgtype.Timestamp `json:"ended_at"`
+	DurationMs         *int64           `json:"duration_ms"`
+	FailureReason      *string          `json:"failure_reason"`
+	Recorded           bool             `json:"recorded"`
+	EventCount         int64            `json:"event_count"`
+	RecordingBytes     int64            `json:"recording_bytes"`
+	RecordingDeletedAt pgtype.Timestamp `json:"recording_deleted_at"`
+	CreatedAt          pgtype.Timestamp `json:"created_at"`
 }
 
 type SystemStatistic struct {

@@ -3,6 +3,7 @@ module patchmon-agent
 go 1.26.2
 
 require (
+	github.com/creack/pty v1.1.24
 	github.com/go-resty/resty/v2 v2.17.2
 	github.com/gorilla/websocket v1.5.3
 	github.com/moby/moby/api v1.54.2

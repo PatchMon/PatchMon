@@ -29,30 +29,31 @@ func (h *PermissionsHandler) GetRoles(w http.ResponseWriter, r *http.Request) {
 	data := make([]map[string]interface{}, len(roles))
 	for i, p := range roles {
 		data[i] = map[string]interface{}{
-			"id":                         p.ID,
-			"role":                       p.Role,
-			"can_view_dashboard":         p.CanViewDashboard,
-			"can_view_hosts":             p.CanViewHosts,
-			"can_manage_hosts":           p.CanManageHosts,
-			"can_view_packages":          p.CanViewPackages,
-			"can_manage_packages":        p.CanManagePackages,
-			"can_view_users":             p.CanViewUsers,
-			"can_manage_users":           p.CanManageUsers,
-			"can_manage_superusers":      p.CanManageSuperusers,
-			"can_view_reports":           p.CanViewReports,
-			"can_export_data":            p.CanExportData,
-			"can_manage_settings":        p.CanManageSettings,
-			"can_manage_notifications":   p.CanManageNotifications,
-			"can_view_notification_logs": p.CanViewNotificationLogs,
-			"can_manage_patching":        p.CanManagePatching,
-			"can_manage_compliance":      p.CanManageCompliance,
-			"can_manage_docker":          p.CanManageDocker,
-			"can_manage_alerts":          p.CanManageAlerts,
-			"can_manage_automation":      p.CanManageAutomation,
-			"can_use_remote_access":      p.CanUseRemoteAccess,
-			"can_manage_billing":         p.CanManageBilling,
-			"created_at":                 p.CreatedAt,
-			"updated_at":                 p.UpdatedAt,
+			"id":                          p.ID,
+			"role":                        p.Role,
+			"can_view_dashboard":          p.CanViewDashboard,
+			"can_view_hosts":              p.CanViewHosts,
+			"can_manage_hosts":            p.CanManageHosts,
+			"can_view_packages":           p.CanViewPackages,
+			"can_manage_packages":         p.CanManagePackages,
+			"can_view_users":              p.CanViewUsers,
+			"can_manage_users":            p.CanManageUsers,
+			"can_manage_superusers":       p.CanManageSuperusers,
+			"can_view_reports":            p.CanViewReports,
+			"can_export_data":             p.CanExportData,
+			"can_manage_settings":         p.CanManageSettings,
+			"can_manage_notifications":    p.CanManageNotifications,
+			"can_view_notification_logs":  p.CanViewNotificationLogs,
+			"can_manage_patching":         p.CanManagePatching,
+			"can_manage_compliance":       p.CanManageCompliance,
+			"can_manage_docker":           p.CanManageDocker,
+			"can_manage_alerts":           p.CanManageAlerts,
+			"can_manage_automation":       p.CanManageAutomation,
+			"can_use_remote_access":       p.CanUseRemoteAccess,
+			"can_manage_billing":          p.CanManageBilling,
+			"can_view_session_recordings": p.CanViewSessionRecordings,
+			"created_at":                  p.CreatedAt,
+			"updated_at":                  p.UpdatedAt,
 		}
 	}
 	JSON(w, http.StatusOK, data)
@@ -88,26 +89,27 @@ func (h *PermissionsHandler) UpdateRole(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var req struct {
-		CanViewDashboard        *bool `json:"can_view_dashboard"`
-		CanViewHosts            *bool `json:"can_view_hosts"`
-		CanManageHosts          *bool `json:"can_manage_hosts"`
-		CanViewPackages         *bool `json:"can_view_packages"`
-		CanManagePackages       *bool `json:"can_manage_packages"`
-		CanViewUsers            *bool `json:"can_view_users"`
-		CanManageUsers          *bool `json:"can_manage_users"`
-		CanManageSuperusers     *bool `json:"can_manage_superusers"`
-		CanViewReports          *bool `json:"can_view_reports"`
-		CanExportData           *bool `json:"can_export_data"`
-		CanManageSettings       *bool `json:"can_manage_settings"`
-		CanManageNotifications  *bool `json:"can_manage_notifications"`
-		CanViewNotificationLogs *bool `json:"can_view_notification_logs"`
-		CanManagePatching       *bool `json:"can_manage_patching"`
-		CanManageCompliance     *bool `json:"can_manage_compliance"`
-		CanManageDocker         *bool `json:"can_manage_docker"`
-		CanManageAlerts         *bool `json:"can_manage_alerts"`
-		CanManageAutomation     *bool `json:"can_manage_automation"`
-		CanUseRemoteAccess      *bool `json:"can_use_remote_access"`
-		CanManageBilling        *bool `json:"can_manage_billing"`
+		CanViewDashboard         *bool `json:"can_view_dashboard"`
+		CanViewHosts             *bool `json:"can_view_hosts"`
+		CanManageHosts           *bool `json:"can_manage_hosts"`
+		CanViewPackages          *bool `json:"can_view_packages"`
+		CanManagePackages        *bool `json:"can_manage_packages"`
+		CanViewUsers             *bool `json:"can_view_users"`
+		CanManageUsers           *bool `json:"can_manage_users"`
+		CanManageSuperusers      *bool `json:"can_manage_superusers"`
+		CanViewReports           *bool `json:"can_view_reports"`
+		CanExportData            *bool `json:"can_export_data"`
+		CanManageSettings        *bool `json:"can_manage_settings"`
+		CanManageNotifications   *bool `json:"can_manage_notifications"`
+		CanViewNotificationLogs  *bool `json:"can_view_notification_logs"`
+		CanManagePatching        *bool `json:"can_manage_patching"`
+		CanManageCompliance      *bool `json:"can_manage_compliance"`
+		CanManageDocker          *bool `json:"can_manage_docker"`
+		CanManageAlerts          *bool `json:"can_manage_alerts"`
+		CanManageAutomation      *bool `json:"can_manage_automation"`
+		CanUseRemoteAccess       *bool `json:"can_use_remote_access"`
+		CanManageBilling         *bool `json:"can_manage_billing"`
+		CanViewSessionRecordings *bool `json:"can_view_session_recordings"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		Error(w, http.StatusBadRequest, "Invalid request body")
@@ -120,27 +122,28 @@ func (h *PermissionsHandler) UpdateRole(w http.ResponseWriter, r *http.Request) 
 		return false
 	}
 	p := &models.RolePermission{
-		Role:                    role,
-		CanViewDashboard:        boolVal(req.CanViewDashboard),
-		CanViewHosts:            boolVal(req.CanViewHosts),
-		CanManageHosts:          boolVal(req.CanManageHosts),
-		CanViewPackages:         boolVal(req.CanViewPackages),
-		CanManagePackages:       boolVal(req.CanManagePackages),
-		CanViewUsers:            boolVal(req.CanViewUsers),
-		CanManageUsers:          boolVal(req.CanManageUsers),
-		CanManageSuperusers:     boolVal(req.CanManageSuperusers),
-		CanViewReports:          boolVal(req.CanViewReports),
-		CanExportData:           boolVal(req.CanExportData),
-		CanManageSettings:       boolVal(req.CanManageSettings),
-		CanManageNotifications:  boolVal(req.CanManageNotifications),
-		CanViewNotificationLogs: boolVal(req.CanViewNotificationLogs),
-		CanManagePatching:       boolVal(req.CanManagePatching),
-		CanManageCompliance:     boolVal(req.CanManageCompliance),
-		CanManageDocker:         boolVal(req.CanManageDocker),
-		CanManageAlerts:         boolVal(req.CanManageAlerts),
-		CanManageAutomation:     boolVal(req.CanManageAutomation),
-		CanUseRemoteAccess:      boolVal(req.CanUseRemoteAccess),
-		CanManageBilling:        boolVal(req.CanManageBilling),
+		Role:                     role,
+		CanViewDashboard:         boolVal(req.CanViewDashboard),
+		CanViewHosts:             boolVal(req.CanViewHosts),
+		CanManageHosts:           boolVal(req.CanManageHosts),
+		CanViewPackages:          boolVal(req.CanViewPackages),
+		CanManagePackages:        boolVal(req.CanManagePackages),
+		CanViewUsers:             boolVal(req.CanViewUsers),
+		CanManageUsers:           boolVal(req.CanManageUsers),
+		CanManageSuperusers:      boolVal(req.CanManageSuperusers),
+		CanViewReports:           boolVal(req.CanViewReports),
+		CanExportData:            boolVal(req.CanExportData),
+		CanManageSettings:        boolVal(req.CanManageSettings),
+		CanManageNotifications:   boolVal(req.CanManageNotifications),
+		CanViewNotificationLogs:  boolVal(req.CanViewNotificationLogs),
+		CanManagePatching:        boolVal(req.CanManagePatching),
+		CanManageCompliance:      boolVal(req.CanManageCompliance),
+		CanManageDocker:          boolVal(req.CanManageDocker),
+		CanManageAlerts:          boolVal(req.CanManageAlerts),
+		CanManageAutomation:      boolVal(req.CanManageAutomation),
+		CanUseRemoteAccess:       boolVal(req.CanUseRemoteAccess),
+		CanManageBilling:         boolVal(req.CanManageBilling),
+		CanViewSessionRecordings: boolVal(req.CanViewSessionRecordings),
 	}
 	if err := h.permissions.UpsertRole(r.Context(), p); err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to update role permissions")
@@ -191,17 +194,18 @@ func roleToResponse(p *models.RolePermission) map[string]interface{} {
 		"can_manage_packages": p.CanManagePackages, "can_view_users": p.CanViewUsers,
 		"can_manage_users": p.CanManageUsers, "can_manage_superusers": p.CanManageSuperusers,
 		"can_view_reports": p.CanViewReports, "can_export_data": p.CanExportData,
-		"can_manage_settings":        p.CanManageSettings,
-		"can_manage_notifications":   p.CanManageNotifications,
-		"can_view_notification_logs": p.CanViewNotificationLogs,
-		"can_manage_patching":        p.CanManagePatching,
-		"can_manage_compliance":      p.CanManageCompliance,
-		"can_manage_docker":          p.CanManageDocker,
-		"can_manage_alerts":          p.CanManageAlerts,
-		"can_manage_automation":      p.CanManageAutomation,
-		"can_use_remote_access":      p.CanUseRemoteAccess,
-		"can_manage_billing":         p.CanManageBilling,
-		"created_at":                 p.CreatedAt, "updated_at": p.UpdatedAt,
+		"can_manage_settings":         p.CanManageSettings,
+		"can_manage_notifications":    p.CanManageNotifications,
+		"can_view_notification_logs":  p.CanViewNotificationLogs,
+		"can_manage_patching":         p.CanManagePatching,
+		"can_manage_compliance":       p.CanManageCompliance,
+		"can_manage_docker":           p.CanManageDocker,
+		"can_manage_alerts":           p.CanManageAlerts,
+		"can_manage_automation":       p.CanManageAutomation,
+		"can_use_remote_access":       p.CanUseRemoteAccess,
+		"can_manage_billing":          p.CanManageBilling,
+		"can_view_session_recordings": p.CanViewSessionRecordings,
+		"created_at":                  p.CreatedAt, "updated_at": p.UpdatedAt,
 	}
 }
 
@@ -223,26 +227,27 @@ func (h *PermissionsHandler) UserPermissions(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	JSON(w, http.StatusOK, map[string]bool{
-		"can_view_dashboard":         p.CanViewDashboard,
-		"can_view_hosts":             p.CanViewHosts,
-		"can_manage_hosts":           p.CanManageHosts,
-		"can_view_packages":          p.CanViewPackages,
-		"can_manage_packages":        p.CanManagePackages,
-		"can_view_users":             p.CanViewUsers,
-		"can_manage_users":           p.CanManageUsers,
-		"can_view_reports":           p.CanViewReports,
-		"can_export_data":            p.CanExportData,
-		"can_manage_settings":        p.CanManageSettings,
-		"can_manage_superusers":      p.CanManageSuperusers,
-		"can_manage_notifications":   p.CanManageNotifications,
-		"can_view_notification_logs": p.CanViewNotificationLogs,
-		"can_manage_patching":        p.CanManagePatching,
-		"can_manage_compliance":      p.CanManageCompliance,
-		"can_manage_docker":          p.CanManageDocker,
-		"can_manage_alerts":          p.CanManageAlerts,
-		"can_manage_automation":      p.CanManageAutomation,
-		"can_use_remote_access":      p.CanUseRemoteAccess,
-		"can_manage_billing":         p.CanManageBilling,
+		"can_view_dashboard":          p.CanViewDashboard,
+		"can_view_hosts":              p.CanViewHosts,
+		"can_manage_hosts":            p.CanManageHosts,
+		"can_view_packages":           p.CanViewPackages,
+		"can_manage_packages":         p.CanManagePackages,
+		"can_view_users":              p.CanViewUsers,
+		"can_manage_users":            p.CanManageUsers,
+		"can_view_reports":            p.CanViewReports,
+		"can_export_data":             p.CanExportData,
+		"can_manage_settings":         p.CanManageSettings,
+		"can_manage_superusers":       p.CanManageSuperusers,
+		"can_manage_notifications":    p.CanManageNotifications,
+		"can_view_notification_logs":  p.CanViewNotificationLogs,
+		"can_manage_patching":         p.CanManagePatching,
+		"can_manage_compliance":       p.CanManageCompliance,
+		"can_manage_docker":           p.CanManageDocker,
+		"can_manage_alerts":           p.CanManageAlerts,
+		"can_manage_automation":       p.CanManageAutomation,
+		"can_use_remote_access":       p.CanUseRemoteAccess,
+		"can_manage_billing":          p.CanManageBilling,
+		"can_view_session_recordings": p.CanViewSessionRecordings,
 	})
 }
 
@@ -256,6 +261,7 @@ func fullPermissions() map[string]bool {
 		"can_manage_patching": true, "can_manage_compliance": true,
 		"can_manage_docker": true, "can_manage_alerts": true,
 		"can_manage_automation": true, "can_use_remote_access": true,
-		"can_manage_billing": true,
+		"can_manage_billing":          true,
+		"can_view_session_recordings": true,
 	}
 }

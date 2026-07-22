@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -13,11 +14,16 @@ import (
 	"regexp"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/sessionrecording"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/sshbastion"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/sshproxy"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -51,6 +57,8 @@ type SshTerminalWSHandler struct {
 	permissions *store.PermissionsStore
 	registry    *agentregistry.Registry
 	proxySess   *sshproxy.Sessions
+	sshStore    *store.SSHStore
+	recordings  *sessionrecording.Store
 	upgrader    websocket.Upgrader
 	log         *slog.Logger
 }
@@ -81,6 +89,11 @@ func NewSshTerminalWSHandler(
 			},
 		},
 	}
+}
+
+func (h *SshTerminalWSHandler) EnableRecording(sshStore *store.SSHStore, recordings *sessionrecording.Store) {
+	h.sshStore = sshStore
+	h.recordings = recordings
 }
 
 // ServeWS handles GET /api/v1/ssh-terminal/:hostId?ticket=xxx
@@ -135,14 +148,14 @@ func (h *SshTerminalWSHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.log.Info("ssh-terminal connected", "user", user.Username, "host", host.FriendlyName, "host_id", hostID)
-	h.handleConnection(conn, host, user)
+	h.handleConnection(context.WithoutCancel(r.Context()), conn, host, user)
 }
 
 func (h *SshTerminalWSHandler) rejectUpgrade(w http.ResponseWriter, r *http.Request, code int, msg string) {
 	http.Error(w, msg, code)
 }
 
-func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *models.Host, user *models.User) {
+func (h *SshTerminalWSHandler) handleConnection(ctx context.Context, conn *websocket.Conn, host *models.Host, user *models.User) {
 	defer func() { _ = conn.Close() }()
 
 	var sshClient *ssh.Client
@@ -150,6 +163,59 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 	var sshStdin io.WriteCloser
 	var proxySessionID string
 	var mu sync.Mutex
+	var recordingMu sync.Mutex
+	var recordingWriter *sessionrecording.Writer
+	var recordingID string
+	var recordingStarted time.Time
+	var recordingEvents int64
+	var finishRecordingOnce sync.Once
+	recordEvent := func(event sessionrecording.Event) {
+		recordingMu.Lock()
+		defer recordingMu.Unlock()
+		if recordingWriter == nil {
+			return
+		}
+		event.OffsetMicros = time.Since(recordingStarted).Microseconds()
+		if recordingWriter.Append(ctx, event) == nil {
+			recordingEvents++
+		}
+	}
+	startRecording := func(linuxUsername string) error {
+		if h.sshStore == nil || h.recordings == nil {
+			return nil
+		}
+		recordingID = uuid.NewString()
+		recordingStarted = time.Now()
+		_, err := h.sshStore.CreateSession(ctx, store.CreateSSHSessionParams{
+			ID: recordingID, HostID: host.ID, UserID: user.ID, LinuxUsername: linuxUsername,
+			Transport: "web", Recorded: true,
+		})
+		if err != nil {
+			return err
+		}
+		writer, err := h.recordings.NewWriter(ctx, sshbastion.TenantStorageID(hostctx.TenantHostKey(ctx)), recordingID, recordingStarted)
+		if err != nil {
+			_, _ = h.sshStore.UpdateSession(ctx, recordingID, "failed", "recording initialization failed", 0, 0)
+			return err
+		}
+		recordingWriter = writer
+		recordEvent(sessionrecording.Event{Type: "marker", Data: "connected"})
+		_, _ = h.sshStore.UpdateSession(ctx, recordingID, "active", "", recordingEvents, 0)
+		return nil
+	}
+	finishRecording := func(status, reason string) {
+		finishRecordingOnce.Do(func() {
+			recordingMu.Lock()
+			if recordingWriter != nil {
+				_ = recordingWriter.Close()
+			}
+			events := recordingEvents
+			recordingMu.Unlock()
+			if recordingID != "" {
+				_, _ = h.sshStore.UpdateSession(ctx, recordingID, status, reason, events, 0)
+			}
+		})
+	}
 
 	send := func(msg interface{}) {
 		mu.Lock()
@@ -182,6 +248,7 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 			sshClient = nil
 		}
 		sshStdin = nil
+		finishRecording("disconnected", "web client disconnected")
 	}
 	defer cleanup()
 
@@ -220,6 +287,10 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 			mu.Unlock()
 			if hasConn {
 				send(map[string]string{"type": "error", "message": "Already connected"})
+				continue
+			}
+			if err := startRecording(orDefault(msg.Username, "root")); err != nil {
+				send(map[string]string{"type": "error", "message": "Failed to initialize session recording"})
 				continue
 			}
 
@@ -261,9 +332,12 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 				proxySessionID = hex.EncodeToString(b)
 				mu.Unlock()
 				h.proxySess.Set(proxySessionID, &sshproxy.Session{
-					FrontendWS: conn,
-					HostID:     host.ID,
-					ApiID:      host.ApiID,
+					FrontendWS:      conn,
+					HostID:          host.ID,
+					ApiID:           host.ApiID,
+					RecordOutput:    func(data string) { recordEvent(sessionrecording.Event{Type: "output", Data: data}) },
+					RecordResize:    func(cols, rows int) { recordEvent(sessionrecording.Event{Type: "resize", Cols: cols, Rows: rows}) },
+					FinishRecording: finishRecording,
 				})
 
 				req := map[string]interface{}{
@@ -418,6 +492,7 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 				for {
 					n, err := stdout.Read(buf)
 					if n > 0 {
+						recordEvent(sessionrecording.Event{Type: "output", Data: string(buf[:n])})
 						send(map[string]interface{}{"type": "data", "data": string(buf[:n])})
 					}
 					if err != nil {
@@ -430,6 +505,7 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 				for {
 					n, err := stderr.Read(buf)
 					if n > 0 {
+						recordEvent(sessionrecording.Event{Type: "output", Data: string(buf[:n])})
 						send(map[string]interface{}{"type": "error", "message": string(buf[:n])})
 					}
 					if err != nil {
@@ -439,6 +515,7 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 			}()
 			go func() {
 				_ = session.Wait()
+				finishRecording("completed", "")
 				send(map[string]string{"type": "closed"})
 			}()
 
@@ -468,6 +545,7 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 					"cols":       orInt(msg.Cols, 80),
 					"rows":       orInt(msg.Rows, 24),
 				})
+				recordEvent(sessionrecording.Event{Type: "resize", Cols: orInt(msg.Cols, 80), Rows: orInt(msg.Rows, 24)})
 			}
 			// Direct mode: ssh session doesn't support resize after start easily; skip
 
@@ -507,12 +585,21 @@ func (h *SshTerminalWSHandler) HandleAgentMessage(apiID string, raw []byte) {
 
 	switch msg.Type {
 	case "ssh_proxy_data":
+		if sess.RecordOutput != nil {
+			sess.RecordOutput(msg.Data)
+		}
 		_ = ws.WriteJSON(map[string]interface{}{"type": "data", "data": msg.Data})
 	case "ssh_proxy_connected":
 		_ = ws.WriteJSON(map[string]string{"type": "connected"})
 	case "ssh_proxy_error":
+		if sess.FinishRecording != nil {
+			sess.FinishRecording("failed", "agent SSH proxy failed")
+		}
 		_ = ws.WriteJSON(map[string]interface{}{"type": "error", "message": msg.Message})
 	case "ssh_proxy_closed":
+		if sess.FinishRecording != nil {
+			sess.FinishRecording("completed", "")
+		}
 		_ = ws.WriteJSON(map[string]string{"type": "closed"})
 		h.proxySess.Delete(msg.Session)
 	}
