@@ -153,7 +153,7 @@ Once the server is running:
 
 1. Log in to the UI and add a host under **Hosts**.
 2. PatchMon generates a one-line install command with a per-host API key.
-3. Paste the command on the target server (requires root/sudo) and the agent enrols itself.
+3. Paste the command on the target server (requires root/sudo) and the agent enrolls itself.
 
 Supported agent platforms: Linux (amd64, 386, arm64, arm), FreeBSD (amd64, 386, arm64, arm), Windows (amd64, 386, arm64).
 
