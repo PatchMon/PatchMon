@@ -64,12 +64,64 @@ func (s *HostsStore) ListPaginated(ctx context.Context, limit, offset int) ([]mo
 			CreatedAt:         pgTime(r.CreatedAt),
 			Notes:             r.Notes,
 			SystemUptime:      r.SystemUptime,
+			BootTime:          pgtime.PtrTz(r.BootTime),
 			NeedsReboot:       r.NeedsReboot,
 			DockerEnabled:     r.DockerEnabled,
 			ComplianceEnabled: r.ComplianceEnabled,
 		}
 	}
 	return out, nil
+}
+
+// HostOption is a lightweight host reference for filters and selectors.
+type HostOption struct {
+	ID           string  `json:"id"`
+	FriendlyName string  `json:"friendly_name"`
+	Hostname     *string `json:"hostname"`
+	OSType       string  `json:"os_type"`
+	Status       string  `json:"status"`
+}
+
+// ListOptions returns lightweight host records without package counts or groups.
+func (s *HostsStore) ListOptions(ctx context.Context, search string, limit, offset int) ([]HostOption, error) {
+	d := s.db.DB(ctx)
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	arg := db.ListHostOptionsParams{
+		RowLimit:  safeconv.ClampToInt32(limit),
+		RowOffset: safeconv.ClampToInt32(offset),
+	}
+	if search != "" {
+		arg.Search = &search
+	}
+	rows, err := d.Queries.ListHostOptions(ctx, arg)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]HostOption, len(rows))
+	for i, r := range rows {
+		out[i] = HostOption{
+			ID:           r.ID,
+			FriendlyName: r.FriendlyName,
+			Hostname:     r.Hostname,
+			OSType:       r.OsType,
+			Status:       r.Status,
+		}
+	}
+	return out, nil
+}
+
+// ListApiIDs returns all host API IDs for scoped registry summary counts.
+func (s *HostsStore) ListApiIDs(ctx context.Context) ([]string, error) {
+	d := s.db.DB(ctx)
+	return d.Queries.ListHostApiIDs(ctx)
 }
 
 // Count returns total host count.
@@ -122,6 +174,23 @@ func (s *HostsStore) GetByApiID(ctx context.Context, apiID string) (*models.Host
 		return nil, err
 	}
 	return dbHostToModel(h), nil
+}
+
+// ListExistingApiIDs returns requested api_ids that exist in this database context.
+func (s *HostsStore) ListExistingApiIDs(ctx context.Context, apiIDs []string) (map[string]struct{}, error) {
+	if len(apiIDs) == 0 {
+		return map[string]struct{}{}, nil
+	}
+	d := s.db.DB(ctx)
+	rows, err := d.Queries.ListExistingHostApiIDs(ctx, apiIDs)
+	if err != nil {
+		return nil, err
+	}
+	allowed := make(map[string]struct{}, len(rows))
+	for _, id := range rows {
+		allowed[id] = struct{}{}
+	}
+	return allowed, nil
 }
 
 // Create creates a new host.
@@ -214,19 +283,25 @@ func (s *HostsStore) UpdateHostDownAlerts(ctx context.Context, id string, enable
 	})
 }
 
-// UpdateDockerEnabled updates a host's docker_enabled setting.
+// UpdateDockerEnabled updates a host's docker_enabled setting. When the
+// operator transitions docker from disabled → enabled, docker_hash is also
+// cleared so the next agent ping is forced to ship a full docker payload.
+// Disabling, or re-flagging an already-enabled host, leaves the existing
+// hash alone.
 func (s *HostsStore) UpdateDockerEnabled(ctx context.Context, id string, enabled bool) error {
 	d := s.db.DB(ctx)
-	return d.Queries.UpdateHostDockerEnabled(ctx, db.UpdateHostDockerEnabledParams{
+	return d.Queries.ClearHostDockerHashOnEnable(ctx, db.ClearHostDockerHashOnEnableParams{
 		DockerEnabled: enabled,
 		ID:            id,
 	})
 }
 
-// UpdateComplianceEnabled updates a host's compliance_enabled setting.
+// UpdateComplianceEnabled updates a host's compliance_enabled setting. Clears
+// compliance_hash on disabled→enabled transitions for the same reason as
+// UpdateDockerEnabled — see that comment.
 func (s *HostsStore) UpdateComplianceEnabled(ctx context.Context, id string, enabled bool) error {
 	d := s.db.DB(ctx)
-	return d.Queries.UpdateHostComplianceEnabled(ctx, db.UpdateHostComplianceEnabledParams{
+	return d.Queries.ClearHostComplianceHashOnEnable(ctx, db.ClearHostComplianceHashOnEnableParams{
 		ComplianceEnabled: enabled,
 		ID:                id,
 	})
@@ -294,6 +369,130 @@ func (s *HostsStore) UpdateApiCredentials(ctx context.Context, id, apiID, apiKey
 func (s *HostsStore) UpdatePing(ctx context.Context, id string) error {
 	d := s.db.DB(ctx)
 	return d.Queries.UpdateHostPing(ctx, id)
+}
+
+// HostHashes is the per-section hash snapshot for one host. Pointers
+// distinguish "no stored hash yet" (nil — agent must send full content) from
+// "stored hash present and known".
+type HostHashes struct {
+	PackagesHash   *string
+	ReposHash      *string
+	InterfacesHash *string
+	HostnameHash   *string
+	DockerHash     *string
+	ComplianceHash *string
+}
+
+// HostCheckin is the minimal host snapshot loaded on the per-ping hot path.
+// Combines auth verification (api_key), display fields (friendlyName,
+// hostname), integration toggles, and the six per-section hashes into one
+// SELECT.
+type HostCheckin struct {
+	ID                string
+	ApiKey            string
+	FriendlyName      string
+	Hostname          *string
+	DockerEnabled     bool
+	ComplianceEnabled bool
+	Hashes            HostHashes
+}
+
+// GetCheckin returns the host snapshot used by ServePing's hash compare.
+// One SELECT against hosts indexed by api_id (unique).
+func (s *HostsStore) GetCheckin(ctx context.Context, apiID string) (*HostCheckin, error) {
+	d := s.db.DB(ctx)
+	row, err := d.Queries.GetHostCheckin(ctx, apiID)
+	if err != nil {
+		return nil, err
+	}
+	return &HostCheckin{
+		ID:                row.ID,
+		ApiKey:            row.ApiKey,
+		FriendlyName:      row.FriendlyName,
+		Hostname:          row.Hostname,
+		DockerEnabled:     row.DockerEnabled,
+		ComplianceEnabled: row.ComplianceEnabled,
+		Hashes: HostHashes{
+			PackagesHash:   row.PackagesHash,
+			ReposHash:      row.ReposHash,
+			InterfacesHash: row.InterfacesHash,
+			HostnameHash:   row.HostnameHash,
+			DockerHash:     row.DockerHash,
+			ComplianceHash: row.ComplianceHash,
+		},
+	}, nil
+}
+
+// HostMetricsParams are the volatile metrics the agent ships every check-in.
+// Pointer fields preserve "agent did not collect" semantics; pre-marshalled
+// JSON for disk_details / load_average matches the existing UpdateHostFromReport
+// convention.
+type HostMetricsParams struct {
+	CPUCores     *int32
+	CPUModel     *string
+	RAMInstalled *float64
+	SwapSize     *float64
+	DiskDetails  []byte
+	SystemUptime *string
+	// BootTime, when non-nil, is the host's boot instant (UTC). Written to
+	// hosts.boot_time via the COALESCE-guarded UpdateHostMetrics so a ping
+	// that omits it leaves the column untouched.
+	BootTime     *time.Time
+	LoadAverage  []byte
+	NeedsReboot  *bool
+	RebootReason *string
+	AgentVersion *string
+}
+
+// UpdateMetrics writes ping-side volatile metrics on the host row. Each
+// column is COALESCE-guarded by sqlc so a ping that omits a metric leaves
+// the previous value alone.
+func (s *HostsStore) UpdateMetrics(ctx context.Context, id string, m HostMetricsParams) error {
+	d := s.db.DB(ctx)
+	return d.Queries.UpdateHostMetrics(ctx, db.UpdateHostMetricsParams{
+		CpuCores:     m.CPUCores,
+		CpuModel:     m.CPUModel,
+		RamInstalled: m.RAMInstalled,
+		SwapSize:     m.SwapSize,
+		DiskDetails:  m.DiskDetails,
+		SystemUptime: m.SystemUptime,
+		BootTime:     pgtime.FromPtrTz(m.BootTime),
+		LoadAverage:  m.LoadAverage,
+		NeedsReboot:  m.NeedsReboot,
+		RebootReason: m.RebootReason,
+		AgentVersion: m.AgentVersion,
+		ID:           id,
+	})
+}
+
+// UpdateDockerHash sets docker_hash on the host. Called from the docker
+// ingestion handler after agent docker data has been written. Empty hash
+// (NULL semantics) is permitted — the next ping will then force a full
+// docker payload.
+func (s *HostsStore) UpdateDockerHash(ctx context.Context, id, hash string) error {
+	d := s.db.DB(ctx)
+	var arg *string
+	if hash != "" {
+		arg = &hash
+	}
+	return d.Queries.UpdateHostDockerHash(ctx, db.UpdateHostDockerHashParams{
+		DockerHash: arg,
+		ID:         id,
+	})
+}
+
+// UpdateComplianceHash sets compliance_hash on the host. Called from the
+// compliance ingestion handler after a scan has been persisted.
+func (s *HostsStore) UpdateComplianceHash(ctx context.Context, id, hash string) error {
+	d := s.db.DB(ctx)
+	var arg *string
+	if hash != "" {
+		arg = &hash
+	}
+	return d.Queries.UpdateHostComplianceHash(ctx, db.UpdateHostComplianceHashParams{
+		ComplianceHash: arg,
+		ID:             id,
+	})
 }
 
 // Delete deletes a host.

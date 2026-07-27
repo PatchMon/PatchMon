@@ -133,18 +133,42 @@ func main() {
 
 	queueSrv := queue.NewServer(queueOpts, registry, db, slog)
 	notifyEmit := notifications.NewEmitter(queueClient, rdb, slog)
+	// Re-resolve patch-run stall timeout per sweep so DB edits take effect on
+	// the next 10-min cron tick without requiring a server restart. Falls
+	// back to the env-loaded value if the DB read fails.
+	getPatchRunStallTimeoutMin := func() int {
+		s, err := settingsStore.GetFirst(context.Background())
+		if err != nil {
+			return cfg.PatchRunStallTimeoutMin
+		}
+		r := config.ResolveConfig(context.Background(), cfg, s)
+		return r.PatchRunStallTimeoutMin
+	}
+	// Same closure shape for the Agent Activity retention sweep — operators
+	// can edit AGENT_REPORTS_RETENTION_DAYS via Settings → Environment and
+	// the next daily sweep picks up the change.
+	getAgentReportsRetentionDays := func() int {
+		s, err := settingsStore.GetFirst(context.Background())
+		if err != nil {
+			return cfg.AgentReportsRetentionDays
+		}
+		r := config.ResolveConfig(context.Background(), cfg, s)
+		return r.AgentReportsRetentionDays
+	}
 	queueMux := queue.Mux(queue.MuxOpts{
-		Registry:      registry,
-		DB:            db,
-		RDB:           rdb,
-		RedisCache:    redisCache,
-		PoolCache:     poolCache,
-		QueueClient:   queueClient,
-		ServerVersion: cfg.Version,
-		SSGContentDir: cfg.SSGContentDir,
-		Log:           slog,
-		Emit:          notifyEmit,
-		Enc:           enc,
+		Registry:                     registry,
+		DB:                           db,
+		RDB:                          rdb,
+		RedisCache:                   redisCache,
+		PoolCache:                    poolCache,
+		QueueClient:                  queueClient,
+		ServerVersion:                cfg.Version,
+		SSGContentDir:                cfg.SSGContentDir,
+		Log:                          slog,
+		Emit:                         notifyEmit,
+		Enc:                          enc,
+		GetPatchRunStallTimeoutMin:   getPatchRunStallTimeoutMin,
+		GetAgentReportsRetentionDays: getAgentReportsRetentionDays,
 	})
 	go func() {
 		if err := queueSrv.Run(queueMux); err != nil {
@@ -178,6 +202,19 @@ func main() {
 			slog.Debug("startup ssg-update-check enqueue skipped", "error", err)
 		} else {
 			slog.Info("startup ssg-update-check enqueued")
+		}
+	}()
+
+	// Refresh the package stats matview shortly after startup so the
+	// Packages page reflects up-to-date counters after every deploy
+	// rather than waiting up to 2 minutes for the next scheduled run.
+	go func() {
+		time.Sleep(15 * time.Second)
+		t := asynq.NewTask(queue.TypePackageStatsRefresh, []byte("{}"))
+		if _, err := queueClient.Enqueue(t, asynq.Queue(queue.QueuePackageStatsRefresh)); err != nil {
+			slog.Debug("startup package-stats-refresh enqueue skipped", "error", err)
+		} else {
+			slog.Info("startup package-stats-refresh enqueued")
 		}
 	}()
 

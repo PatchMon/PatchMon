@@ -19,9 +19,19 @@ import (
 var ErrNotConnected = errors.New("agent not connected")
 
 // ConnectionInfo holds WebSocket connection status for an agent.
+//
+// LastConnectedAt is set when an agent first registers (or reconnects) and is
+// kept across disconnects so the UI can show "last seen via WS" details.
+//
+// DisconnectedAt is set when a tracked agent's connection drops; it is
+// cleared (set to nil) on reconnect. The handler exposes time.Since(*DisconnectedAt)
+// to the frontend as `disconnected_seconds_ago` so the WS pill can show how
+// long the agent has been gone independently of host-report freshness.
 type ConnectionInfo struct {
-	Connected bool `json:"connected"`
-	Secure    bool `json:"secure"`
+	Connected       bool       `json:"connected"`
+	Secure          bool       `json:"secure"`
+	LastConnectedAt *time.Time `json:"last_connected_at,omitempty"`
+	DisconnectedAt  *time.Time `json:"disconnected_at,omitempty"`
 }
 
 // agentConn bundles a WebSocket connection with a per-connection write mutex.
@@ -60,8 +70,14 @@ func New() *Registry {
 
 // Register adds or updates an agent as connected.
 func (r *Registry) Register(apiID string, secure bool) {
+	now := time.Now().UTC()
 	r.mu.Lock()
-	r.meta[apiID] = ConnectionInfo{Connected: true, Secure: secure}
+	r.meta[apiID] = ConnectionInfo{
+		Connected:       true,
+		Secure:          secure,
+		LastConnectedAt: &now,
+		DisconnectedAt:  nil,
+	}
 	r.podMap[apiID] = r.podID
 	r.mu.Unlock()
 	// Publish presence asynchronously (best-effort)
@@ -73,9 +89,19 @@ func (r *Registry) Register(apiID string, secure bool) {
 // SetConnection stores the agent WebSocket alongside a fresh per-agent write
 // mutex. Must be called once per upgraded connection.
 func (r *Registry) SetConnection(apiID string, conn *websocket.Conn) {
+	now := time.Now().UTC()
 	r.mu.Lock()
 	r.conns[apiID] = &agentConn{ws: conn}
 	r.podMap[apiID] = r.podID
+	// Mirror Register() so SetConnection alone is enough to flip the entry to
+	// "connected" with a fresh LastConnectedAt and a cleared DisconnectedAt.
+	// In practice both are called on upgrade, but keeping them coherent makes
+	// the timestamps reliable on hot paths and during distributed-mode races.
+	prev := r.meta[apiID]
+	prev.Connected = true
+	prev.LastConnectedAt = &now
+	prev.DisconnectedAt = nil
+	r.meta[apiID] = prev
 	r.mu.Unlock()
 	if r.rdb != nil {
 		go func() { _ = r.setPresence(apiID, true) }()
@@ -185,24 +211,95 @@ func (r *Registry) WithLock(apiID string, fn func(*websocket.Conn) error) error 
 	return fn(e.ws)
 }
 
-// Unregister removes an agent from the registry.
+// Unregister marks an agent as disconnected and removes its WS connection.
+// The meta entry is kept (with Connected=false and DisconnectedAt populated)
+// so callers can render "disconnected X seconds ago" without losing the
+// timestamp the moment the WS drops. Subsequent Register() calls reset it.
+//
+// Unregister is NOT identity-aware: it removes whatever connection is stored,
+// including one that a reconnect has just installed. Connection teardown paths
+// must use UnregisterConn instead.
 func (r *Registry) Unregister(apiID string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.meta, apiID)
-	delete(r.conns, apiID)
-	delete(r.podMap, apiID)
+	r.markDisconnectedLocked(apiID)
+	r.mu.Unlock()
 	if r.rdb != nil {
 		// best-effort notify other pods
 		_ = r.removePresence(apiID)
 	}
 }
 
-// Get returns connection info for an api_id.
+// UnregisterConn is the identity-aware teardown path: it only removes the
+// stored connection (and marks the agent disconnected) when the connection
+// currently registered for apiID is the very one being torn down. It reports
+// whether it took ownership of the teardown.
+//
+// This closes a fleet-wide race. Agent reconnect backoff starts at ~1s while
+// the disconnect callback does up to 5s of real database work, so the ordering
+// during e.g. a proxy restart is: conn A drops -> teardown starts -> agent
+// reconnects at ~1s and registers conn B -> the OLD teardown finishes and calls
+// Unregister(apiID), deleting conn B. The agent then holds a perfectly live
+// WebSocket while the registry insists it is disconnected: every server-to-agent
+// send fails with ErrNotConnected, the WS pill shows down, and patch-run stop
+// commands cannot be delivered — for the whole fleet at once.
+func (r *Registry) UnregisterConn(apiID string, conn *websocket.Conn) bool {
+	r.mu.Lock()
+	if e, ok := r.conns[apiID]; ok && conn != nil && e.ws != conn {
+		// A newer connection owns this slot; leave it completely alone.
+		r.mu.Unlock()
+		return false
+	}
+	r.markDisconnectedLocked(apiID)
+	r.mu.Unlock()
+	if r.rdb != nil {
+		_ = r.removePresence(apiID)
+	}
+	return true
+}
+
+// markDisconnectedLocked drops the stored connection and flips meta to
+// disconnected. Caller must hold r.mu.
+func (r *Registry) markDisconnectedLocked(apiID string) {
+	now := time.Now().UTC()
+	prev, hadMeta := r.meta[apiID]
+	delete(r.conns, apiID)
+	delete(r.podMap, apiID)
+	if hadMeta {
+		prev.Connected = false
+		// Only stamp DisconnectedAt the first time we see the drop; if
+		// teardown fires twice (e.g. close + readPump exit), don't bump
+		// the timestamp forward.
+		if prev.DisconnectedAt == nil {
+			prev.DisconnectedAt = &now
+		}
+		r.meta[apiID] = prev
+		return
+	}
+	// No prior entry — record the disconnect so callers still see a
+	// recent timestamp instead of nothing at all.
+	r.meta[apiID] = ConnectionInfo{
+		Connected:      false,
+		Secure:         false,
+		DisconnectedAt: &now,
+	}
+}
+
+// Get returns connection info for an api_id. Connected entries are returned
+// as-is; for disconnected agents the meta is preserved so the caller can
+// read DisconnectedAt and LastConnectedAt to render the WS pill, but the
+// `Secure` flag is masked to false. Reporting the stale Secure flag from a
+// past connection would mislabel the pill (e.g. agent previously connected
+// via WSS through a proxy, now reconnects via plain WS — during the brief
+// reconnect window the pill would falsely show "WSS"). Once the next
+// Register call lands the flag is overwritten with the current connection's
+// real value.
 func (r *Registry) Get(apiID string) ConnectionInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if info, ok := r.meta[apiID]; ok && info.Connected {
+	if info, ok := r.meta[apiID]; ok {
+		if !info.Connected {
+			info.Secure = false
+		}
 		return info
 	}
 	return ConnectionInfo{Connected: false, Secure: false}
@@ -277,8 +374,18 @@ func (r *Registry) snapshotPresence() error {
 			if s, ok := vals["secure"]; ok && (s == "1" || strings.EqualFold(s, "true")) {
 				secure = true
 			}
+			var lastConnected *time.Time
+			if ls, ok := vals["last_seen"]; ok && ls != "" {
+				if t, err := time.Parse(time.RFC3339, ls); err == nil {
+					lastConnected = &t
+				}
+			}
 			r.mu.Lock()
-			r.meta[apiID] = ConnectionInfo{Connected: true, Secure: secure}
+			r.meta[apiID] = ConnectionInfo{
+				Connected:       true,
+				Secure:          secure,
+				LastConnectedAt: lastConnected,
+			}
 			if pod != "" {
 				r.podMap[apiID] = pod
 			}
@@ -309,12 +416,30 @@ func (r *Registry) handlePubSubMessage(channel string, payload []byte) {
 		r.mu.Lock()
 		switch ev.Type {
 		case "connect":
-			r.meta[ev.APIID] = ConnectionInfo{Connected: true, Secure: ev.Secure}
+			now := time.Now().UTC()
+			if t, err := time.Parse(time.RFC3339, ev.TS); err == nil {
+				now = t
+			}
+			r.meta[ev.APIID] = ConnectionInfo{
+				Connected:       true,
+				Secure:          ev.Secure,
+				LastConnectedAt: &now,
+				DisconnectedAt:  nil,
+			}
 			r.podMap[ev.APIID] = ev.Pod
 		case "disconnect":
 			// mark disconnected unless we have a local connection
 			if _, ok := r.conns[ev.APIID]; !ok {
-				delete(r.meta, ev.APIID)
+				now := time.Now().UTC()
+				if t, err := time.Parse(time.RFC3339, ev.TS); err == nil {
+					now = t
+				}
+				prev := r.meta[ev.APIID]
+				prev.Connected = false
+				if prev.DisconnectedAt == nil {
+					prev.DisconnectedAt = &now
+				}
+				r.meta[ev.APIID] = prev
 				delete(r.podMap, ev.APIID)
 			}
 		default:
@@ -413,13 +538,20 @@ func (r *Registry) GetConnectedApiIDs() []string {
 	return ids
 }
 
-// GetBulk returns connection info for multiple api_ids.
+// GetBulk returns connection info for multiple api_ids. Disconnected entries
+// retain their DisconnectedAt / LastConnectedAt timestamps so the WS-status
+// handler can compute `disconnected_seconds_ago` for the host-status pills,
+// but the `Secure` flag is masked to false on disconnect — see the comment
+// on Get for the rationale.
 func (r *Registry) GetBulk(apiIDs []string) map[string]ConnectionInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	result := make(map[string]ConnectionInfo, len(apiIDs))
 	for _, id := range apiIDs {
-		if info, ok := r.meta[id]; ok && info.Connected {
+		if info, ok := r.meta[id]; ok {
+			if !info.Connected {
+				info.Secure = false
+			}
 			result[id] = info
 		} else {
 			result[id] = ConnectionInfo{Connected: false, Secure: false}

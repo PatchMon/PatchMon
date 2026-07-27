@@ -1,0 +1,226 @@
+{
+	"_comment": "Cross-impl parity fixtures. Both server's internal/handler and agent's internal/hashing tests load this file. Expected hashes are filled in after the FIRST test run on the server side; the agent side then asserts the SAME hashes. If a struct field, sort key, or NFC rule changes, regenerate by clearing the expected_*_hash strings and rerunning go test.",
+	"packages": {
+		"input": [
+			{
+				"name": "openssl",
+				"description": "Cryptographic library",
+				"category": "main",
+				"currentVersion": "3.0.2",
+				"availableVersion": "3.0.13",
+				"needsUpdate": true,
+				"isSecurityUpdate": true,
+				"sourceRepository": "ubuntu jammy/main",
+				"wuaGuid": "",
+				"wuaKb": "",
+				"wuaSeverity": "",
+				"wuaCategories": null,
+				"wuaSupportUrl": "",
+				"wuaRevisionNumber": 0
+			},
+			{
+				"name": "curl",
+				"description": "HTTP client",
+				"category": "main",
+				"currentVersion": "7.81.0",
+				"availableVersion": "",
+				"needsUpdate": false,
+				"isSecurityUpdate": false,
+				"sourceRepository": "",
+				"wuaGuid": "",
+				"wuaKb": "",
+				"wuaSeverity": "",
+				"wuaCategories": null,
+				"wuaSupportUrl": "",
+				"wuaRevisionNumber": 0
+			},
+			{
+				"name": "openssl",
+				"description": "duplicate, last wins",
+				"category": "main",
+				"currentVersion": "3.0.2",
+				"availableVersion": "3.0.13",
+				"needsUpdate": true,
+				"isSecurityUpdate": true,
+				"sourceRepository": "ubuntu jammy/main",
+				"wuaGuid": "",
+				"wuaKb": "",
+				"wuaSeverity": "",
+				"wuaCategories": null,
+				"wuaSupportUrl": "",
+				"wuaRevisionNumber": 0
+			}
+		],
+		"expected_hash": "ec33fa245cd913536f65bbc97803523d9893e00d10017fe85d740ba4679192e5"
+	},
+	"repos": {
+		"input": [
+			{
+				"name": "ubuntu",
+				"url": "http://archive.ubuntu.com/ubuntu",
+				"distribution": "jammy",
+				"components": "main restricted",
+				"repoType": "deb",
+				"isEnabled": true,
+				"isSecure": false
+			},
+			{
+				"name": "ubuntu-security",
+				"url": "http://security.ubuntu.com/ubuntu",
+				"distribution": "jammy-security",
+				"components": "main",
+				"repoType": "deb",
+				"isEnabled": true,
+				"isSecure": true
+			}
+		],
+		"expected_hash": "8bc17ba7e502a7344c8b526c7db9793237ce08255cd7ef74d2d7eea634024c5e"
+	},
+	"interfaces": {
+		"input": [
+			{
+				"name": "eth0",
+				"type": "ethernet",
+				"macAddress": "AA:BB:CC:DD:EE:FF",
+				"addresses": [
+					{
+						"address": "10.0.0.5",
+						"family": "inet",
+						"netmask": "/24",
+						"gateway": "10.0.0.1"
+					},
+					{
+						"address": "fe80::1",
+						"family": "inet6",
+						"netmask": "/64",
+						"gateway": ""
+					}
+				]
+			},
+			{
+				"name": "lo",
+				"type": "loopback",
+				"macAddress": "",
+				"addresses": [
+					{
+						"address": "127.0.0.1",
+						"family": "inet",
+						"netmask": "/8",
+						"gateway": ""
+					}
+				]
+			}
+		],
+		"expected_hash": "ee26bae719bad28e1693ca00211fb2b6414431ae7a614c83120b8acd20888481"
+	},
+	"hostname": {
+		"input": "host01.example.com",
+		"expected_hash": "53554747ce60798e79ea261d11aed46b499afe42156abec92d72348ae151dbbb"
+	},
+	"hostname_nfd": {
+		"_comment": "Same logical hostname as 'cafe.host' written using a precomposed é (NFC). Other half of the test uses combining char (NFD). Hashes must be equal.",
+		"input_nfc": "café.host",
+		"input_nfd": "café.host",
+		"expected_hash": "e93b36970fb6236ea6b7a3cca75ac0834a3da67653d0c82506ec9bbacf2412d7"
+	},
+	"docker": {
+		"_comment": "Snake-case fields match the agent's outbound docker payload (pkg/models/integrations.go). Server's DockerWireXxx types use the same JSON tags so this fixture decodes identically on both sides.",
+		"input": {
+			"containers": [
+				{
+					"container_id": "c2",
+					"name": "web",
+					"image_repository": "nginx",
+					"image_tag": "1.25",
+					"image_id": "sha256:img2",
+					"status": "running",
+					"state": "Up 2 hours"
+				},
+				{
+					"container_id": "c1",
+					"name": "redis",
+					"image_repository": "redis",
+					"image_tag": "7",
+					"image_id": "sha256:img1",
+					"status": "running",
+					"state": "Up 5 minutes"
+				}
+			],
+			"images": [
+				{
+					"repository": "nginx",
+					"tag": "1.25",
+					"image_id": "sha256:img2",
+					"digest": "sha256:abc",
+					"size_bytes": 12345678
+				}
+			],
+			"volumes": [
+				{
+					"volume_id": "vol1",
+					"name": "data",
+					"driver": "local",
+					"scope": "local"
+				}
+			],
+			"networks": [
+				{
+					"network_id": "net1",
+					"name": "bridge",
+					"driver": "bridge",
+					"scope": "local"
+				}
+			],
+			"updates": []
+		},
+		"expected_hash": "8fd8bc9bc047aaeab2e561f0181fb2d3e36b36a1a7bb1040d80d5ae8b3634234"
+	},
+	"compliance": {
+		"_comment": "Snake-case multi-word fields match the agent's compliance payload (pkg/models/compliance.go). rule_ref is intentionally snake-case (the legacy backend contract).",
+		"input": {
+			"scans": [
+				{
+					"profile_name": "CIS Ubuntu 22.04 Level 1",
+					"profile_type": "openscap",
+					"status": "completed",
+					"score": 92.4567,
+					"total_rules": 100,
+					"passed": 90,
+					"failed": 5,
+					"warnings": 3,
+					"skipped": 1,
+					"not_applicable": 1,
+					"remediation_applied": false,
+					"remediation_count": 0,
+					"results": [
+						{
+							"rule_ref": "xccdf_org.ssgproject.content_rule_audit_rules_login_events",
+							"status": "pass",
+							"severity": "medium",
+							"section": "4.1",
+							"title": "Audit login events",
+							"description": "",
+							"finding": "",
+							"actual": "",
+							"expected": "",
+							"remediation": ""
+						},
+						{
+							"rule_ref": "xccdf_org.ssgproject.content_rule_no_empty_passwords",
+							"status": "fail",
+							"severity": "high",
+							"section": "5.4",
+							"title": "No empty passwords",
+							"description": "",
+							"finding": "Found 1 user",
+							"actual": "1",
+							"expected": "0",
+							"remediation": "Set password for user"
+						}
+					]
+				}
+			]
+		},
+		"expected_hash": "9be00dc9600c0e16fb5e8cd11e28d5da069e7c95a59e16b6729c82dd9224fb05"
+	}
+}

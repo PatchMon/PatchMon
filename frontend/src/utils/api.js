@@ -74,10 +74,17 @@ api.interceptors.response.use(
 // Dashboard API
 export const dashboardAPI = {
 	getStats: () => api.get("/dashboard/stats"),
+	getNavigationStats: () => api.get("/dashboard/navigation-stats"),
 	getHosts: (params = {}) => {
 		const queryString = new URLSearchParams(params).toString();
 		return api.get(`/dashboard/hosts${queryString ? `?${queryString}` : ""}`);
 	},
+	getHostOptions: (params = {}) => api.get("/hosts/options", { params }),
+	// Cheap host counts for the sidebar / navbar widgets — runs as a single
+	// COUNT query against `hosts`, returns sub-millisecond. Lets the
+	// sidebar drop its full-list fetch.
+	getHostCounts: () => api.get("/dashboard/host-counts"),
+	getHostFilterOptions: () => api.get("/dashboard/host-filter-options"),
 	getPackages: () => api.get("/dashboard/packages"),
 	getHostDetail: (hostId, params = {}) => {
 		const queryString = new URLSearchParams(params).toString();
@@ -89,7 +96,24 @@ export const dashboardAPI = {
 		const url = `/dashboard/hosts/${hostId}/queue${queryString ? `?${queryString}` : ""}`;
 		return api.get(url);
 	},
+	getHostActivity: (hostId, params = {}) => {
+		// Drop empty values so we don't end up with `?type=&status=` noise on the wire.
+		const filtered = Object.entries(params).reduce((acc, [key, value]) => {
+			if (value === undefined || value === null || value === "") return acc;
+			if (Array.isArray(value)) {
+				if (value.length === 0) return acc;
+				acc[key] = value.join(",");
+				return acc;
+			}
+			acc[key] = value;
+			return acc;
+		}, {});
+		const queryString = new URLSearchParams(filtered).toString();
+		const url = `/dashboard/hosts/${hostId}/activity${queryString ? `?${queryString}` : ""}`;
+		return api.get(url);
+	},
 	getHostWsStatus: (hostId) => api.get(`/dashboard/hosts/${hostId}/ws-status`),
+	getWsStatusSummary: () => api.get("/ws/status/summary"),
 	getWsStatusByApiId: (apiId) => api.get(`/ws/status/${apiId}`),
 	getPackageTrends: (params = {}) => {
 		const queryString = new URLSearchParams(params).toString();
@@ -586,6 +610,51 @@ export const formatRelativeTime = (date) => {
 	return "just now";
 };
 
+/**
+ * Format live uptime computed from a boot timestamp.
+ *
+ * Renders strings matching the agent's existing uptime format:
+ *   - ">= 1 day"       -> "X days, Y hours, Z minutes"
+ *   - ">= 1 hour"      -> "Y hours, Z minutes"
+ *   - "< 1 hour"       -> "Z minutes"
+ *   - "< 1 minute"     -> "0 minutes"
+ *
+ * Returns "" when bootTimeIso is null/undefined/empty/unparseable so the
+ * caller can fall back to the stored host.system_uptime string.
+ *
+ * Pure function: takes nowMs as an argument (defaults to Date.now()) so the
+ * caller can pass an externally-tracked tick value and useMemo can actually
+ * memoize.
+ *
+ * @param {string|null|undefined} bootTimeIso - ISO 8601 / RFC 3339 timestamp
+ * @param {number} [nowMs=Date.now()] - Reference "now" in ms since epoch
+ * @returns {string}
+ */
+export const formatLiveUptime = (bootTimeIso, nowMs = Date.now()) => {
+	if (!bootTimeIso) return "";
+	const bootMs = Date.parse(bootTimeIso);
+	if (Number.isNaN(bootMs)) return "";
+
+	// Clamp to 0 if the boot time is in the future (clock skew).
+	const diffMs = Math.max(0, nowMs - bootMs);
+	const totalMinutes = Math.floor(diffMs / 60000);
+	const days = Math.floor(totalMinutes / 1440);
+	const hours = Math.floor((totalMinutes % 1440) / 60);
+	const minutes = totalMinutes % 60;
+
+	if (days > 0) {
+		return `${days} day${days === 1 ? "" : "s"}, ${hours} hour${
+			hours === 1 ? "" : "s"
+		}, ${minutes} minute${minutes === 1 ? "" : "s"}`;
+	}
+	if (hours > 0) {
+		return `${hours} hour${hours === 1 ? "" : "s"}, ${minutes} minute${
+			minutes === 1 ? "" : "s"
+		}`;
+	}
+	return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+};
+
 // Search API
 export const searchAPI = {
 	global: (query, config = {}) =>
@@ -665,6 +734,7 @@ export const notificationsAPI = {
 	listDeliveryLog: (params = {}) =>
 		api.get("/notifications/delivery-log", { params }),
 	test: (data) => api.post("/notifications/test", data),
+	testSMTP: (id) => api.post(`/notifications/destinations/${id}/test-smtp`, {}),
 	listScheduledReports: () => api.get("/notifications/scheduled-reports"),
 	createScheduledReport: (data) =>
 		api.post("/notifications/scheduled-reports", data),

@@ -59,6 +59,25 @@ func (h *HostsHandler) List(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, hosts)
 }
 
+// Options handles GET /hosts/options.
+func (h *HostsHandler) Options(w http.ResponseWriter, r *http.Request) {
+	search := r.URL.Query().Get("search")
+	if len(search) > 200 {
+		search = search[:200]
+	}
+	limit := parseIntQuery(r, "limit", 100)
+	offset := parseIntQuery(r, "offset", 0)
+	if limit > 5000 {
+		limit = 5000
+	}
+	options, err := h.hosts.ListOptions(r.Context(), search, limit, offset)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to load host options")
+		return
+	}
+	JSON(w, http.StatusOK, options)
+}
+
 // AdminList handles GET /hosts/admin/list.
 func (h *HostsHandler) AdminList(w http.ResponseWriter, r *http.Request) {
 	returnAll := r.URL.Query().Get("all") == "true"
@@ -412,7 +431,7 @@ func (h *HostsHandler) UpdateHostDownAlerts(w http.ResponseWriter, r *http.Reque
 		hostResp["friendlyName"] = host.FriendlyName
 	}
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"message": "Host down alerts " + statusMsg + " successfully",
+		"message": "Host agent down alerts " + statusMsg + " successfully",
 		"host":    hostResp,
 	})
 }
@@ -1233,7 +1252,7 @@ func hostToResponse(h *models.Host, groups []models.HostGroup) map[string]interf
 		"os_type": h.OSType, "os_version": h.OSVersion, "architecture": h.Architecture,
 		"last_update": h.LastUpdate, "status": h.Status, "api_id": h.ApiID, "agent_version": h.AgentVersion,
 		"auto_update": h.AutoUpdate, "created_at": h.CreatedAt, "notes": h.Notes,
-		"system_uptime": h.SystemUptime, "needs_reboot": h.NeedsReboot,
+		"system_uptime": h.SystemUptime, "boot_time": h.BootTime, "needs_reboot": h.NeedsReboot,
 		"docker_enabled": h.DockerEnabled, "compliance_enabled": h.ComplianceEnabled,
 		"package_manager": h.PackageManager, "primary_interface": h.PrimaryInterface,
 		"awaiting_post_patch_report_run_id": h.AwaitingPostPatchReportRunID,

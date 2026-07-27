@@ -9,6 +9,7 @@ import (
 
 	"log/slog"
 
+	"github.com/PatchMon/PatchMon/server-source-code/internal/clientip"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
@@ -561,23 +562,15 @@ func buildDeviceLabel(ua string) string {
 	return browser + " on " + os
 }
 
+// clientIP returns the IP used for login lockout and session audit records.
+//
+// When TRUST_PROXY is on, the RealIP middleware has already resolved
+// X-Forwarded-For into RemoteAddr; when it is off, RemoteAddr is the raw peer.
+// Either way RemoteAddr is the correct source, and reading the header here
+// would reintroduce lockout evasion via a client-supplied leftmost entry.
 func (h *AuthHandler) clientIP(r *http.Request) string {
-	if h.resolved != nil && !h.resolved.TrustProxy {
-		host, _, _ := strings.Cut(r.RemoteAddr, ":")
-		if host != "" {
-			return host
-		}
-		return r.RemoteAddr
-	}
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if idx := strings.Index(xff, ","); idx != -1 {
-			return strings.TrimSpace(xff[:idx])
-		}
-		return strings.TrimSpace(xff)
-	}
-	host, _, _ := strings.Cut(r.RemoteAddr, ":")
-	if host != "" {
-		return host
+	if ip := clientip.FromRequest(r); ip != "" {
+		return ip
 	}
 	return r.RemoteAddr
 }

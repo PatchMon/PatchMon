@@ -119,11 +119,22 @@ func (h *AgentWSHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		h.onConnect(connCtx, apiID)
 	}
 	defer func() {
+		// Registry teardown FIRST, and identity-aware. onDisconnect does up to
+		// 5s of real database work while agent reconnect backoff starts at ~1s,
+		// so doing the registry update afterwards let a stale teardown delete
+		// the connection a reconnect had already installed. UnregisterConn
+		// returns false when a newer connection owns the slot — in that case
+		// the agent is demonstrably live and the disconnect side effects
+		// (host_down alert, marking patch runs agent_disconnected) must not run.
+		ownsTeardown := h.registry.UnregisterConn(apiID, conn)
+		_ = conn.Close()
+		if !ownsTeardown {
+			slog.Debug("agent ws teardown superseded by reconnect", "api_id", apiID)
+			return
+		}
 		if h.onDisconnect != nil {
 			h.onDisconnect(connCtx, apiID)
 		}
-		h.registry.Unregister(apiID)
-		_ = conn.Close()
 	}()
 
 	slog.Info("agent ws connected", "api_id", apiID)

@@ -56,6 +56,14 @@ const (
 	QueuePatchRunCleanup         = "patch-run-cleanup"
 	TypeMetricsSend              = "metrics-send"
 	QueueMetricsSend             = "metrics-send"
+	TypeAgentReportsCleanup      = "agent-reports-cleanup"
+	QueueAgentReportsCleanup     = "agent-reports-cleanup"
+	// TypePackageStatsRefresh runs `REFRESH MATERIALIZED VIEW CONCURRENTLY
+	// mv_package_stats` so the Packages list page can render its per-package
+	// counters via a sub-millisecond hash join instead of aggregating
+	// host_packages on every request.
+	TypePackageStatsRefresh  = "package-stats-refresh"
+	QueuePackageStatsRefresh = "package-stats-refresh"
 )
 
 // RunScanPayload is the payload for run_scan job.
@@ -299,6 +307,17 @@ func NewPatchRunCleanupTask(host string) (*asynq.Task, error) {
 		return nil, err
 	}
 	return asynq.NewTask(TypePatchRunCleanup, payload, asynq.Queue(QueuePatchRunCleanup), asynq.MaxRetry(2), asynq.Retention(AutomationRetention)), nil
+}
+
+// NewAgentReportsCleanupTask creates an agent-reports-cleanup task. Mirrors
+// the patch-run-cleanup pattern: the schedule fires the empty-payload variant
+// (sweeps all contexts), automation page can fire a per-context variant.
+func NewAgentReportsCleanupTask(host string) (*asynq.Task, error) {
+	payload, err := json.Marshal(AutomationPayload{Host: host})
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TypeAgentReportsCleanup, payload, asynq.Queue(QueueAgentReportsCleanup), asynq.MaxRetry(2), asynq.Retention(AutomationRetention)), nil
 }
 
 // NewSSGUpdateCheckTask creates an ssg-update-check task (manual trigger from automation page).

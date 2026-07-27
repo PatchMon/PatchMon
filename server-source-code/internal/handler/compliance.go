@@ -38,10 +38,13 @@ type ComplianceHandler struct {
 	integrationStatus *store.IntegrationStatusStore
 	ssgContentDir     string
 	notify            *notifications.Emitter
+	reports           *store.ReportStore
 }
 
 // NewComplianceHandler creates a new compliance handler.
-func NewComplianceHandler(complianceStore *store.ComplianceStore, hostsStore *store.HostsStore, registry *agentregistry.Registry, queueClient *asynq.Client, queueInspector *asynq.Inspector, integrationStatus *store.IntegrationStatusStore, ssgContentDir string, notify *notifications.Emitter) *ComplianceHandler {
+// reports is optional; when non-nil ReceiveScans records an Agent Activity
+// row per inbound compliance payload.
+func NewComplianceHandler(complianceStore *store.ComplianceStore, hostsStore *store.HostsStore, registry *agentregistry.Registry, queueClient *asynq.Client, queueInspector *asynq.Inspector, integrationStatus *store.IntegrationStatusStore, ssgContentDir string, notify *notifications.Emitter, reports *store.ReportStore) *ComplianceHandler {
 	return &ComplianceHandler{
 		complianceStore:   complianceStore,
 		hostsStore:        hostsStore,
@@ -51,6 +54,7 @@ func NewComplianceHandler(complianceStore *store.ComplianceStore, hostsStore *st
 		integrationStatus: integrationStatus,
 		ssgContentDir:     ssgContentDir,
 		notify:            notify,
+		reports:           reports,
 	}
 }
 
@@ -121,6 +125,9 @@ type complianceScanPayload struct {
 	Hostname     string               `json:"hostname"`
 	MachineID    string               `json:"machine_id"`
 	AgentVersion string               `json:"agent_version"`
+	// ComplianceHash is the agent's canonical hash of the scan payload.
+	// Optional — when present, server validates it before persisting.
+	ComplianceHash string `json:"compliance_hash,omitempty"`
 	// Legacy flat format
 	ProfileName   string                 `json:"profile_name"`
 	ProfileType   string                 `json:"profile_type"`
@@ -138,6 +145,77 @@ type complianceScanPayload struct {
 	Error         string                 `json:"error"`
 }
 
+// canonicalComplianceHashFromPayload computes the canonical compliance hash
+// over the agent's scan payload. Mirrors the agent's ComplianceHash so a
+// drift here is detectable at the handler boundary.
+func canonicalComplianceHashFromPayload(scans []complianceScanItem) (string, error) {
+	in := ComplianceHashInput{
+		Scans: make([]ComplianceWireScan, 0, len(scans)),
+	}
+	for _, s := range scans {
+		results := make([]ComplianceWireResult, 0, len(s.Results))
+		for _, r := range s.Results {
+			ruleRef := r.RuleRef
+			if ruleRef == "" {
+				ruleRef = r.RuleID
+			}
+			if ruleRef == "" {
+				ruleRef = r.ID
+			}
+			results = append(results, ComplianceWireResult{
+				RuleRef:     ruleRef,
+				Status:      r.Status,
+				Severity:    r.Severity,
+				Section:     r.Section,
+				Title:       r.Title,
+				Description: r.Description,
+				Finding:     r.Finding,
+				Actual:      r.Actual,
+				Expected:    r.Expected,
+				Remediation: r.Remediation,
+			})
+		}
+		score := 0.0
+		if s.Score != nil {
+			score = *s.Score
+		}
+		ws := ComplianceWireScan{
+			ProfileName: s.ProfileName,
+			ProfileType: s.ProfileType,
+			Status:      s.Status,
+			Score:       score,
+			// Field ORDER in ComplianceScanHashRow (the struct that is actually
+			// canonically encoded) is what the hash depends on, and it already
+			// mirrors the agent: remediation flags sit between the counters and
+			// Results. Here we only have to make sure the values are carried
+			// across from the decoded payload rather than left at zero.
+			RemediationApplied: s.RemediationApplied,
+			RemediationCount:   s.RemediationCount,
+			Results:            results,
+		}
+		if s.TotalRules != nil {
+			ws.TotalRules = *s.TotalRules
+		}
+		if s.Passed != nil {
+			ws.Passed = *s.Passed
+		}
+		if s.Failed != nil {
+			ws.Failed = *s.Failed
+		}
+		if s.Warnings != nil {
+			ws.Warnings = *s.Warnings
+		}
+		if s.Skipped != nil {
+			ws.Skipped = *s.Skipped
+		}
+		if s.NotApplicable != nil {
+			ws.NotApplicable = *s.NotApplicable
+		}
+		in.Scans = append(in.Scans, ws)
+	}
+	return CanonicalComplianceHash(in)
+}
+
 type complianceScanItem struct {
 	ProfileName   string                 `json:"profile_name"`
 	ProfileType   string                 `json:"profile_type"`
@@ -152,7 +230,15 @@ type complianceScanItem struct {
 	Warnings      *int                   `json:"warnings"`
 	Skipped       *int                   `json:"skipped"`
 	NotApplicable *int                   `json:"not_applicable"`
-	Error         string                 `json:"error"`
+	// RemediationApplied / RemediationCount are part of the agent's canonical
+	// compliance hash (agent-source-code/internal/hashing/canonical.go), so
+	// they MUST be decoded here: without them the server recomputes the hash
+	// with zero values, every remediated scan fails the hash gate with a 400,
+	// compliance_hash never advances, and the agent re-runs a full OpenSCAP
+	// scan on every single check-in for the rest of that host's life.
+	RemediationApplied bool   `json:"remediation_applied"`
+	RemediationCount   int    `json:"remediation_count"`
+	Error              string `json:"error"`
 }
 
 type complianceResultItem struct {
@@ -172,6 +258,7 @@ type complianceResultItem struct {
 
 // ReceiveScans handles POST /api/v1/compliance/scans (agent endpoint, API key auth).
 func (h *ComplianceHandler) ReceiveScans(w http.ResponseWriter, r *http.Request) {
+	scanStart := time.Now()
 	apiID := r.Header.Get("X-API-ID")
 	apiKey := r.Header.Get("X-API-KEY")
 	if apiID == "" || apiKey == "" {
@@ -275,6 +362,21 @@ func (h *ComplianceHandler) ReceiveScans(w http.ResponseWriter, r *http.Request)
 		})
 	}
 
+	// Verify the agent's canonical compliance hash if it shipped one. The
+	// hash covers ALL scans in the payload, not per-scan. Recompute over
+	// the wire-shape payload (not the store-shape) so we hash exactly what
+	// the agent hashed.
+	computedHash, hashErr := canonicalComplianceHashFromPayload(scansToProcess)
+	if hashErr != nil {
+		slog.Error("failed to compute canonical compliance hash", "error", hashErr, "host_id", host.ID)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to validate compliance payload"})
+		return
+	}
+	if payload.ComplianceHash != "" && computedHash != payload.ComplianceHash {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "compliance hash mismatch"})
+		return
+	}
+
 	openscapEnabled := host.ComplianceOpenscapEnabled
 	dockerBenchEnabled := host.ComplianceDockerBenchEnabled
 
@@ -283,6 +385,13 @@ func (h *ComplianceHandler) ReceiveScans(w http.ResponseWriter, r *http.Request)
 		slog.Error("compliance submit scan failed", "error", err, "host_id", host.ID)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to save scan results"})
 		return
+	}
+
+	// Persist the canonical hash so the next ping can hash-gate the
+	// compliance section. Best-effort: log on failure, do not fail the
+	// request — scan landed successfully.
+	if err := h.hostsStore.UpdateComplianceHash(r.Context(), host.ID, computedHash); err != nil {
+		slog.Error("failed to persist compliance hash", "error", err, "host_id", host.ID)
 	}
 
 	// Build response
@@ -400,6 +509,30 @@ func (h *ComplianceHandler) ReceiveScans(w http.ResponseWriter, r *http.Request)
 					},
 				})
 			}
+		}
+	}
+
+	// Record one Agent Activity row for the compliance scan submission. Like
+	// docker, the compliance section is always "Updated" here — the agent
+	// only POSTs scans when the server's last ping flagged compliance as
+	// stale (or the agent ran a scheduled scan).
+	if h.reports != nil {
+		procSec := time.Since(scanStart).Seconds()
+		var payloadKb *float64
+		if r.ContentLength > 0 {
+			v := float64(r.ContentLength) / 1024.0
+			payloadKb = &v
+		}
+		if err := h.reports.InsertActivityRow(r.Context(), store.AgentActivityInsert{
+			HostID:            host.ID,
+			ReportType:        "compliance",
+			SectionsSent:      []string{"compliance"},
+			SectionsUnchanged: []string{},
+			PayloadSizeKb:     payloadKb,
+			ServerProcessing:  &procSec,
+			Status:            "success",
+		}); err != nil {
+			slog.Warn("compliance: failed to record agent activity row", "host_id", host.ID, "error", err)
 		}
 	}
 

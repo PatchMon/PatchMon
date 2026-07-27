@@ -2,10 +2,18 @@
 SELECT * FROM hosts ORDER BY friendly_name;
 
 -- name: ListHostsPaginated :many
-SELECT id, friendly_name, hostname, ip, os_type, os_version, architecture, last_update, status, api_id, agent_version, auto_update, created_at, notes, system_uptime, needs_reboot, docker_enabled, compliance_enabled
+SELECT id, friendly_name, hostname, ip, os_type, os_version, architecture, last_update, status, api_id, agent_version, auto_update, created_at, notes, system_uptime, boot_time, needs_reboot, docker_enabled, compliance_enabled
 FROM hosts
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2;
+
+-- name: ListHostOptions :many
+SELECT id, friendly_name, hostname, os_type, status
+FROM hosts
+WHERE (sqlc.narg('search')::text IS NULL OR friendly_name ILIKE '%' || sqlc.narg('search') || '%' OR hostname ILIKE '%' || sqlc.narg('search') || '%')
+ORDER BY friendly_name ASC, hostname ASC NULLS LAST, id ASC
+LIMIT sqlc.arg('row_limit')::int
+OFFSET sqlc.arg('row_offset')::int;
 
 -- name: CountHosts :one
 SELECT COUNT(*) FROM hosts WHERE status = 'active';
@@ -21,6 +29,12 @@ DELETE FROM hosts WHERE id = ANY($1::text[]);
 
 -- name: GetHostByApiID :one
 SELECT * FROM hosts WHERE api_id = $1;
+
+-- name: ListExistingHostApiIDs :many
+SELECT api_id FROM hosts WHERE api_id = ANY($1::text[]);
+
+-- name: ListHostApiIDs :many
+SELECT api_id FROM hosts ORDER BY friendly_name ASC;
 
 -- name: CreateHost :exec
 INSERT INTO hosts (
@@ -77,6 +91,59 @@ UPDATE hosts SET needs_reboot = $2, reboot_reason = $3, updated_at = NOW() WHERE
 
 -- name: UpdateHostPing :exec
 UPDATE hosts SET last_update = NOW(), updated_at = NOW(), status = 'active' WHERE id = $1;
+
+-- name: GetHostCheckin :one
+-- Single-row read used on the per-ping hot path. Returns the host's identity
+-- and the six per-section hashes the server compares against incoming agent
+-- hashes.
+SELECT
+    id, api_key, friendly_name, hostname, docker_enabled, compliance_enabled,
+    packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash
+FROM hosts
+WHERE api_id = $1;
+
+-- name: UpdateHostMetrics :exec
+-- Ping-side write of volatile metrics. Each column is COALESCE-guarded so a
+-- ping that omits a metric leaves the previous value intact.
+UPDATE hosts SET
+    last_update    = NOW(),
+    updated_at     = NOW(),
+    status         = CASE WHEN status = 'pending' THEN 'active' ELSE status END,
+    cpu_cores      = COALESCE(sqlc.narg('cpu_cores')::int, cpu_cores),
+    cpu_model      = COALESCE(sqlc.narg('cpu_model')::text, cpu_model),
+    ram_installed  = COALESCE(sqlc.narg('ram_installed')::double precision, ram_installed),
+    swap_size      = COALESCE(sqlc.narg('swap_size')::double precision, swap_size),
+    disk_details   = COALESCE(sqlc.narg('disk_details')::jsonb, disk_details),
+    system_uptime  = COALESCE(sqlc.narg('system_uptime')::text, system_uptime),
+    boot_time      = COALESCE(sqlc.narg('boot_time')::timestamptz, boot_time),
+    load_average   = COALESCE(sqlc.narg('load_average')::jsonb, load_average),
+    needs_reboot   = COALESCE(sqlc.narg('needs_reboot')::boolean, needs_reboot),
+    reboot_reason  = sqlc.narg('reboot_reason'),
+    agent_version  = COALESCE(sqlc.narg('agent_version')::text, agent_version)
+WHERE id = sqlc.arg('id');
+
+-- name: UpdateHostDockerHash :exec
+UPDATE hosts SET docker_hash = $1, updated_at = NOW() WHERE id = $2;
+
+-- name: UpdateHostComplianceHash :exec
+UPDATE hosts SET compliance_hash = $1, updated_at = NOW() WHERE id = $2;
+
+-- name: ClearHostDockerHashOnEnable :exec
+-- Force a fresh docker payload on next check-in by NULLing the hash whenever
+-- the operator re-enables docker. If the agent was already streaming docker
+-- data (docker_enabled stays true) the hash is left alone.
+UPDATE hosts
+SET docker_hash = CASE WHEN $1 = true AND docker_enabled = false THEN NULL ELSE docker_hash END,
+    docker_enabled = $1,
+    updated_at = NOW()
+WHERE id = $2;
+
+-- name: ClearHostComplianceHashOnEnable :exec
+UPDATE hosts
+SET compliance_hash = CASE WHEN $1 = true AND compliance_enabled = false THEN NULL ELSE compliance_hash END,
+    compliance_enabled = $1,
+    updated_at = NOW()
+WHERE id = $2;
 
 -- name: DeleteHost :exec
 DELETE FROM hosts WHERE id = $1;
