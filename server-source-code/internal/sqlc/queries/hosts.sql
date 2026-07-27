@@ -2,7 +2,7 @@
 SELECT * FROM hosts ORDER BY friendly_name;
 
 -- name: ListHostsPaginated :many
-SELECT id, friendly_name, hostname, ip, os_type, os_version, architecture, last_update, status, api_id, agent_version, auto_update, created_at, notes, system_uptime, needs_reboot, docker_enabled, compliance_enabled
+SELECT id, friendly_name, hostname, ip, os_type, os_version, architecture, last_update, status, api_id, agent_version, auto_update, created_at, notes, system_uptime, boot_time, needs_reboot, docker_enabled, compliance_enabled
 FROM hosts
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2;
@@ -115,6 +115,7 @@ UPDATE hosts SET
     swap_size      = COALESCE(sqlc.narg('swap_size')::double precision, swap_size),
     disk_details   = COALESCE(sqlc.narg('disk_details')::jsonb, disk_details),
     system_uptime  = COALESCE(sqlc.narg('system_uptime')::text, system_uptime),
+    boot_time      = COALESCE(sqlc.narg('boot_time')::timestamptz, boot_time),
     load_average   = COALESCE(sqlc.narg('load_average')::jsonb, load_average),
     needs_reboot   = COALESCE(sqlc.narg('needs_reboot')::boolean, needs_reboot),
     reboot_reason  = sqlc.narg('reboot_reason'),

@@ -13,127 +13,24 @@ JOIN host_packages hp ON hp.package_id = p.id AND hp.needs_update = true
 JOIN hosts h ON h.id = hp.host_id
 ORDER BY p.name;
 
--- name: ListPackages :many
-WITH filtered_packages AS (
-    SELECT p.id, p.name, p.description, p.category, p.latest_version, p.created_at
-    FROM packages p
-    WHERE (sqlc.narg('search')::text IS NULL OR p.name ILIKE '%' || sqlc.narg('search') || '%' OR p.description ILIKE '%' || sqlc.narg('search') || '%')
-    AND (sqlc.narg('category')::text IS NULL OR p.category = sqlc.narg('category'))
-    AND (
-        sqlc.narg('is_security_update')::text IS DISTINCT FROM 'false'
-        OR NOT EXISTS (
-            SELECT 1 FROM host_packages hp_security
-            WHERE hp_security.package_id = p.id
-            AND hp_security.needs_update = true
-            AND hp_security.is_security_update = true
-        )
-    )
-    AND (
-        sqlc.narg('host_id')::text IS NULL
-        AND sqlc.narg('needs_update')::text IS NULL
-        AND sqlc.narg('is_security_update')::text IS NULL
-        AND sqlc.narg('repository_id')::text IS NULL
-        OR EXISTS (
-            SELECT 1 FROM host_packages hp
-            WHERE hp.package_id = p.id
-            AND (sqlc.narg('host_id')::text IS NULL OR hp.host_id = sqlc.narg('host_id'))
-            AND (sqlc.narg('needs_update')::text IS NULL OR (sqlc.narg('needs_update') = 'true' AND hp.needs_update = true))
-            AND (
-                sqlc.narg('is_security_update')::text IS NULL
-                OR (sqlc.narg('is_security_update') = 'true' AND hp.needs_update = true AND hp.is_security_update = true)
-                OR (sqlc.narg('is_security_update') = 'false' AND hp.needs_update = true AND hp.is_security_update = false)
-            )
-            AND (sqlc.narg('repository_id')::text IS NULL OR hp.source_repository_id = sqlc.narg('repository_id'))
-        )
-    )
-),
--- Per-package counts come from mv_package_stats (a materialised view of
--- per-package install / update / security counters refreshed every couple
--- of minutes by the asynq scheduler — see TypePackageStatsRefresh).
+-- ListPackages and CountPackages are intentionally NOT defined here.
+-- They live as raw SQL builders in internal/store/packages_list_sql.go.
 --
--- Why a matview rather than a fresh aggregate per request:
---   * Global GROUP BY over the full host_packages table (~1.3 M rows at
---     1k-host scale) needs ~140 MB work_mem to avoid disk spill and
---     still takes ~10 s for the aggregation.
---   * LEFT JOIN LATERAL with a per-package COUNT lookup is fast per
---     call but with ~2.3 M `packages` rows the outer driver costs
---     ~30 s before LIMIT can fire.
---   * mv_package_stats stores the counters keyed by package_id and is
---     joined here as a single indexed hash join. Sub-millisecond lookup
---     for the small page we LIMIT to. Trade-off: counters are stale by
---     up to the refresh interval (2 min) — acceptable on an admin page.
-enriched_packages AS (
-    SELECT fp.id,
-           fp.name,
-           fp.description,
-           fp.category,
-           fp.latest_version,
-           fp.created_at,
-           COALESCE(s.total_installs, 0)::int AS total_installs,
-           COALESCE(s.updates_needed, 0)::int AS updates_needed,
-           COALESCE(s.security_updates, 0)::int AS security_updates,
-           CASE
-               WHEN COALESCE(s.security_updates, 0) > 0 THEN 0
-               WHEN COALESCE(s.updates_needed, 0) > 0 THEN 1
-               ELSE 2
-           END AS status_rank
-    FROM filtered_packages fp
-    LEFT JOIN mv_package_stats s ON s.package_id = fp.id
-)
--- Return the per-package counters from mv_package_stats alongside the
--- core fields so the store can render the page response without firing
--- additional aggregate round-trips. These are global counts (i.e.
--- "this package is installed on N hosts across the fleet"), not
--- host-filtered — that matches the existing UX where the per-row
--- "Installed On" badge always shows the package's full footprint even
--- when a host filter is active in the table above.
-SELECT id, name, description, category, latest_version, created_at,
-       total_installs, updates_needed, security_updates
-FROM enriched_packages
-ORDER BY
-    CASE WHEN sqlc.arg('sort_key')::text = 'name'          AND sqlc.arg('sort_dir')::text = 'asc'  THEN name END ASC,
-    CASE WHEN sqlc.arg('sort_key')::text = 'name'          AND sqlc.arg('sort_dir')::text = 'desc' THEN name END DESC,
-    CASE WHEN sqlc.arg('sort_key')::text = 'latestVersion' AND sqlc.arg('sort_dir')::text = 'asc'  THEN latest_version END ASC NULLS LAST,
-    CASE WHEN sqlc.arg('sort_key')::text = 'latestVersion' AND sqlc.arg('sort_dir')::text = 'desc' THEN latest_version END DESC NULLS LAST,
-    CASE WHEN sqlc.arg('sort_key')::text = 'packageHosts'  AND sqlc.arg('sort_dir')::text = 'asc'  THEN total_installs END ASC,
-    CASE WHEN sqlc.arg('sort_key')::text = 'packageHosts'  AND sqlc.arg('sort_dir')::text = 'desc' THEN total_installs END DESC,
-    CASE WHEN sqlc.arg('sort_key')::text = 'status'        AND sqlc.arg('sort_dir')::text = 'asc'  THEN status_rank END ASC,
-    CASE WHEN sqlc.arg('sort_key')::text = 'status'        AND sqlc.arg('sort_dir')::text = 'desc' THEN status_rank END DESC,
-    name ASC,
-    id ASC
-LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
-
--- name: CountPackages :one
-SELECT COUNT(*)::int FROM packages p
-WHERE (sqlc.narg('search')::text IS NULL OR p.name ILIKE '%' || sqlc.narg('search') || '%' OR p.description ILIKE '%' || sqlc.narg('search') || '%')
-AND (sqlc.narg('category')::text IS NULL OR p.category = sqlc.narg('category'))
-AND (
-    sqlc.narg('is_security_update')::text IS DISTINCT FROM 'false'
-    OR NOT EXISTS (
-        SELECT 1 FROM host_packages hp_security
-        WHERE hp_security.package_id = p.id
-        AND hp_security.needs_update = true
-        AND hp_security.is_security_update = true
-    )
-)
-AND (
-    sqlc.narg('host_id')::text IS NULL
-    AND sqlc.narg('needs_update')::text IS NULL
-    AND sqlc.narg('is_security_update')::text IS NULL
-    AND sqlc.narg('repository_id')::text IS NULL
-    OR EXISTS (
-        SELECT 1 FROM host_packages hp
-        WHERE hp.package_id = p.id
-        AND (sqlc.narg('host_id')::text IS NULL OR hp.host_id = sqlc.narg('host_id'))
-        AND (sqlc.narg('needs_update')::text IS NULL OR (sqlc.narg('needs_update') = 'true' AND hp.needs_update = true))
-        AND (
-            sqlc.narg('is_security_update')::text IS NULL
-            OR (sqlc.narg('is_security_update') = 'true' AND hp.needs_update = true AND hp.is_security_update = true)
-            OR (sqlc.narg('is_security_update') = 'false' AND hp.needs_update = true AND hp.is_security_update = false)
-        )
-        AND (sqlc.narg('repository_id')::text IS NULL OR hp.source_repository_id = sqlc.narg('repository_id'))
-    )
-);
+-- Why hand-rolled rather than sqlc:
+--   1. ORDER BY needs a CASE-WHEN-per-sort-key dance to stay parameterised,
+--      which forces a full sort over the entire filtered CTE before LIMIT
+--      can fire — defeats any index-ordered scan + LIMIT pushdown.
+--      Building "ORDER BY <whitelisted column> <dir>" in Go lets the
+--      planner drive output from the existing btree on packages(name)
+--      (and similar) for typical queries, killing the parallel-sort path
+--      that blows Docker's default /dev/shm.
+--   2. The host_packages EXISTS / NOT EXISTS branches are only relevant
+--      when the corresponding filter param is set; emitting them
+--      conditionally in Go produces a much tighter predicate that the
+--      planner can prune cheaply.
+-- Per-package counters still come from mv_package_stats (refreshed every
+-- ~2 min by an asynq scheduler — see TypePackageStatsRefresh) so we avoid
+-- per-request aggregation over host_packages.
 
 -- (Removed) GetHostPackageStatsByPackageIDs / GetUpdatesCountByPackageIDs /
 -- GetSecurityCountByPackageIDs — superseded by mv_package_stats. The

@@ -24,6 +24,7 @@ UPDATE hosts SET
     installed_kernel_version = COALESCE(sqlc.narg('installed_kernel_version')::text, installed_kernel_version),
     selinux_status = COALESCE(sqlc.narg('selinux_status')::text, selinux_status),
     system_uptime = COALESCE(sqlc.narg('system_uptime')::text, system_uptime),
+    boot_time = COALESCE(sqlc.narg('boot_time')::timestamptz, boot_time),
     load_average = COALESCE(sqlc.narg('load_average')::jsonb, load_average),
     needs_reboot = COALESCE(sqlc.narg('needs_reboot')::boolean, needs_reboot),
     reboot_reason = sqlc.narg('reboot_reason'),

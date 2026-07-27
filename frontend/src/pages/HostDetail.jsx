@@ -26,7 +26,6 @@ import {
 	Package,
 	Play,
 	RefreshCw,
-	RotateCcw,
 	Send,
 	Server,
 	Shield,
@@ -46,6 +45,7 @@ import {
 	useParams,
 	useSearchParams,
 } from "react-router-dom";
+import HostStatusPills from "../components/HostStatusPills";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import { PackageListDisplay } from "../components/PackageListDisplay";
@@ -58,12 +58,13 @@ import UpgradeRequiredContent from "../components/UpgradeRequiredContent";
 import { getRequiredTier } from "../constants/tiers";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
+import { useTick } from "../hooks/useTick";
 import {
 	adminHostsAPI,
 	alertsAPI,
 	dashboardAPI,
 	formatDate,
-	formatRelativeTime,
+	formatLiveUptime,
 	hostGroupsAPI,
 	repositoryAPI,
 	settingsAPI,
@@ -148,6 +149,10 @@ const HostDetail = () => {
 
 	// State for auto-update confirmation dialog
 	const [autoUpdateDialog, setAutoUpdateDialog] = useState(false);
+
+	// 60s tick used to recompute live uptime from host.boot_time. Returning
+	// Date.now() lets formatLiveUptime stay pure while the interval re-renders.
+	const tickNow = useTick(60000);
 
 	// State for Apply pending config modal
 	const [showApplyConfigModal, setShowApplyConfigModal] = useState(false);
@@ -891,7 +896,9 @@ const HostDetail = () => {
 		enabled: !!hostId && activeTab === "patching",
 	});
 
-	// Fetch global alert config for host_down
+	// Fetch global alert config for host_down. The metadata.threshold (seconds)
+	// drives both the host-down alert evaluator and the WS pill amber→red flip
+	// in HostStatusPills. Defaults to 30s when no config exists.
 	const { data: hostDownAlertConfig } = useQuery({
 		queryKey: ["alert-config", "host_down"],
 		queryFn: () =>
@@ -899,6 +906,19 @@ const HostDetail = () => {
 		staleTime: 5 * 60 * 1000, // 5 minutes
 		refetchOnWindowFocus: false,
 	});
+	const hostDownThresholdSeconds = (() => {
+		const raw = hostDownAlertConfig?.metadata?.threshold;
+		const parsed = Number.parseInt(raw, 10);
+		return Number.isFinite(parsed) && parsed > 0 ? parsed : 30;
+	})();
+
+	// update_interval drives the Reporting pill threshold (×1 = green→amber,
+	// ×2 = amber→red). Default 60 matches the backend default.
+	const updateIntervalMinutes = (() => {
+		const raw = settings?.update_interval;
+		const parsed = Number.parseInt(raw, 10);
+		return Number.isFinite(parsed) && parsed > 0 ? parsed : 60;
+	})();
 
 	// Mutation to update host down alerts setting
 	const toggleHostDownAlertsMutation = useMutation({
@@ -907,7 +927,7 @@ const HostDetail = () => {
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["host", hostId] });
 			setUpdateMessage({
-				text: "Host down alerts setting updated successfully",
+				text: "Host agent down alerts setting updated successfully",
 				jobId: "",
 			});
 			safeSetTimeout(() => {
@@ -1244,25 +1264,19 @@ const HostDetail = () => {
 		);
 	}
 
-	const getStatusColor = (isStale, needsUpdate) => {
-		if (isStale) return "text-danger-600";
-		if (needsUpdate) return "text-warning-600";
-		return "text-success-600";
+	// Build a host object for HostStatusPills that exposes the count fields it
+	// expects (the host-detail endpoint nests them under `stats`).
+	const hostForPills = {
+		...host,
+		updatesCount: host.stats?.outdated_packages || 0,
+		securityUpdatesCount: host.stats?.security_updates || 0,
 	};
 
-	const getStatusIcon = (isStale, needsUpdate) => {
-		if (isStale) return <AlertTriangle className="h-5 w-5" />;
-		if (needsUpdate) return <Clock className="h-5 w-5" />;
-		return <CheckCircle className="h-5 w-5" />;
-	};
-
-	const getStatusText = (isStale, needsUpdate) => {
-		if (isStale) return "Stale";
-		if (needsUpdate) return "Needs Updates";
-		return "Up to Date";
-	};
-
-	const isStale = Date.now() - new Date(host.last_update) > 24 * 60 * 60 * 1000;
+	// Prefer live uptime computed from host.boot_time (ticks every 60s); fall
+	// back to the agent-formatted host.system_uptime string for older agents
+	// that haven't reported boot_time yet.
+	const liveUptime = formatLiveUptime(host.boot_time, tickNow);
+	const displayUptime = liveUptime || host.system_uptime || null;
 
 	return (
 		<div className="min-h-screen flex flex-col">
@@ -1276,46 +1290,17 @@ const HostDetail = () => {
 						<ArrowLeft className="h-5 w-5" />
 					</Link>
 					<div className="flex flex-col gap-2">
-						{/* Title row with friendly name, badge, and status */}
+						{/* Title row with friendly name + tri-state status pills */}
 						<div className="flex items-center gap-3 flex-wrap">
 							<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
 								{host.friendly_name}
 							</h1>
-							{wsStatus && (
-								<span
-									className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold uppercase ${
-										wsStatus.connected
-											? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 animate-pulse"
-											: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
-									}`}
-									title={
-										wsStatus.connected
-											? `Agent connected via ${wsStatus.secure ? "WSS (secure)" : "WS"}`
-											: "Agent not connected"
-									}
-								>
-									{wsStatus.connected
-										? wsStatus.secure
-											? "WSS"
-											: "WS"
-										: "Offline"}
-								</span>
-							)}
-							<div
-								className={`flex items-center gap-2 px-2 py-1 rounded text-xs font-medium ${getStatusColor(isStale, host.stats.outdated_packages > 0)}`}
-							>
-								{getStatusIcon(isStale, host.stats.outdated_packages > 0)}
-								{getStatusText(isStale, host.stats.outdated_packages > 0)}
-							</div>
-							{host.needs_reboot && (
-								<span
-									className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
-									title={host.reboot_reason || "Reboot required"}
-								>
-									<RotateCcw className="h-3 w-3" />
-									Reboot Required
-								</span>
-							)}
+							<HostStatusPills
+								host={hostForPills}
+								wsStatus={wsStatus}
+								hostDownThresholdSeconds={hostDownThresholdSeconds}
+								updateIntervalMinutes={updateIntervalMinutes}
+							/>
 							{host.awaiting_post_patch_report_run_id && (
 								<Link
 									to={`/patching/runs/${host.awaiting_post_patch_report_run_id}`}
@@ -1328,22 +1313,15 @@ const HostDetail = () => {
 							)}
 						</div>
 						{/* Info row with uptime and last updated */}
-						<div className="flex items-center gap-4 text-sm text-secondary-600 dark:text-white">
-							{host.system_uptime && (
+						{displayUptime && (
+							<div className="flex items-center gap-4 text-sm text-secondary-600 dark:text-white">
 								<div className="flex items-center gap-1">
 									<Clock className="h-3.5 w-3.5" />
 									<span className="text-xs font-medium">Uptime:</span>
-									<span className="text-xs">{host.system_uptime}</span>
+									<span className="text-xs">{displayUptime}</span>
 								</div>
-							)}
-							<div className="flex items-center gap-1">
-								<Clock className="h-3.5 w-3.5" />
-								<span className="text-xs font-medium">Last updated:</span>
-								<span className="text-xs">
-									{formatRelativeTime(host.last_update)}
-								</span>
 							</div>
-						</div>
+						)}
 					</div>
 				</div>
 				<div className="flex items-center gap-2 flex-wrap w-full md:w-auto">
@@ -1980,7 +1958,8 @@ const HostDetail = () => {
 							)}
 
 							{/* Resource Information */}
-							{(host.system_uptime ||
+							{(host.boot_time ||
+								host.system_uptime ||
 								host.cpu_model ||
 								host.cpu_cores ||
 								host.ram_installed ||
@@ -1998,13 +1977,13 @@ const HostDetail = () => {
 										Resource Information
 									</h4>
 									<div className="space-y-3">
-										{host.system_uptime && (
+										{displayUptime && (
 											<div>
 												<p className="text-xs text-secondary-500 dark:text-white">
 													System Uptime
 												</p>
 												<p className="font-medium text-secondary-900 dark:text-white text-sm">
-													{host.system_uptime}
+													{displayUptime}
 												</p>
 											</div>
 										)}
@@ -2141,6 +2120,7 @@ const HostDetail = () => {
 							{!host.kernel_version &&
 								!host.selinux_status &&
 								!host.architecture &&
+								!host.boot_time &&
 								!host.system_uptime &&
 								!host.cpu_model &&
 								!host.cpu_cores &&
@@ -3115,7 +3095,8 @@ const HostDetail = () => {
 								)}
 
 								{/* Resource Information */}
-								{(host.system_uptime ||
+								{(host.boot_time ||
+									host.system_uptime ||
 									host.cpu_model ||
 									host.cpu_cores ||
 									host.ram_installed ||
@@ -3136,7 +3117,7 @@ const HostDetail = () => {
 										{/* System Overview */}
 										<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
 											{/* System Uptime */}
-											{host.system_uptime && (
+											{displayUptime && (
 												<div className="bg-secondary-50 dark:bg-secondary-700 p-4 rounded-lg">
 													<div className="flex items-center gap-2 mb-2">
 														<Clock className="h-4 w-4 text-primary-600 dark:text-primary-400" />
@@ -3145,7 +3126,7 @@ const HostDetail = () => {
 														</p>
 													</div>
 													<p className="font-medium text-secondary-900 dark:text-white text-sm">
-														{host.system_uptime}
+														{displayUptime}
 													</p>
 												</div>
 											)}
@@ -3303,6 +3284,7 @@ const HostDetail = () => {
 								{!host.kernel_version &&
 									!host.selinux_status &&
 									!host.architecture &&
+									!host.boot_time &&
 									!host.system_uptime &&
 									!host.cpu_model &&
 									!host.cpu_cores &&
@@ -5621,7 +5603,7 @@ const HostDetail = () => {
 									<div className="flex items-center gap-3 mb-3">
 										<AlertTriangle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
 										<h4 className="text-sm font-medium text-secondary-900 dark:text-white">
-											Host Down Alerts
+											Host Agent Down Alerts
 										</h4>
 									</div>
 									<p className="text-xs text-secondary-600 dark:text-white mb-4">

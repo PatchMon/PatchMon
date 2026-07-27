@@ -64,6 +64,7 @@ func (s *HostsStore) ListPaginated(ctx context.Context, limit, offset int) ([]mo
 			CreatedAt:         pgTime(r.CreatedAt),
 			Notes:             r.Notes,
 			SystemUptime:      r.SystemUptime,
+			BootTime:          pgtime.PtrTz(r.BootTime),
 			NeedsReboot:       r.NeedsReboot,
 			DockerEnabled:     r.DockerEnabled,
 			ComplianceEnabled: r.ComplianceEnabled,
@@ -433,6 +434,10 @@ type HostMetricsParams struct {
 	SwapSize     *float64
 	DiskDetails  []byte
 	SystemUptime *string
+	// BootTime, when non-nil, is the host's boot instant (UTC). Written to
+	// hosts.boot_time via the COALESCE-guarded UpdateHostMetrics so a ping
+	// that omits it leaves the column untouched.
+	BootTime     *time.Time
 	LoadAverage  []byte
 	NeedsReboot  *bool
 	RebootReason *string
@@ -451,6 +456,7 @@ func (s *HostsStore) UpdateMetrics(ctx context.Context, id string, m HostMetrics
 		SwapSize:     m.SwapSize,
 		DiskDetails:  m.DiskDetails,
 		SystemUptime: m.SystemUptime,
+		BootTime:     pgtime.FromPtrTz(m.BootTime),
 		LoadAverage:  m.LoadAverage,
 		NeedsReboot:  m.NeedsReboot,
 		RebootReason: m.RebootReason,

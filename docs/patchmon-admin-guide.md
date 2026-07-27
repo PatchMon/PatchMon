@@ -642,8 +642,11 @@ The top of the page has four main areas:
 
 - **Friendly name** (large heading), editable inline.
 - **Hostname** and **IP** underneath, both editable inline (clicking shows a text field; Enter to save, Esc to cancel).
-- **Status chips**: Active / Pending / Inactive / Error, and a coloured WebSocket badge (**WSS** green for secure, **WS** amber for plaintext, **Offline** red).
-- **Reboot required** chip when the agent has detected pending-reboot flags (e.g. `/var/run/reboot-required`, kernel updates).
+- **Status pills** (four independent indicators, each with a hover tooltip explaining what it means):
+  - **WS** — WebSocket control channel state. Green when connected, amber while disconnected within the configured grace window, red once the grace window elapses. The grace window is the `host_down` alert threshold (default 30 seconds, see [Per-alert-type configuration](#per-alert-type-configuration)).
+  - **Reporting** — agent report freshness. Green when the agent has reported within its update interval, amber when overdue but the WebSocket is still connected (agent is alive, just hasn't pushed yet), red ("Stale") when overdue *and* the WebSocket is also disconnected.
+  - **Reboot pending** — only shown when the host has flagged a pending reboot (e.g. `/var/run/reboot-required`, kernel updates).
+  - **Updates** — green "Up to date", amber "Updates pending" (non-security only), red "Security patches required" when one or more security updates are available.
 - **Uptime** and **Last updated** relative timestamps.
 
 If there's a pending patch run awaiting a fresh post-patch report, you'll see an **Awaiting inventory report** chip that links to the run.
@@ -793,10 +796,10 @@ The **Refresh Status** button at the top right of the tab asks the agent to repo
 
 Host-scoped overrides for alerting. The tab is hidden when global alerts are disabled in **Settings**.
 
-Primary feature: **Host Down Alerts** with three states:
+Primary feature: **Host Agent Down Alerts** with three states:
 
 - **Inherit from global settings** (default).
-- **Enabled**: always create alerts when this host goes offline, regardless of global defaults.
+- **Enabled**: always create alerts when this host's agent goes down, regardless of global defaults.
 - **Disabled**: never create alerts for this host even if the global setting is on.
 
 Use the Disabled override for hosts that are expected to be intermittent (dev laptops, ephemeral CI runners) so they don't spam your alert channels.
@@ -3308,8 +3311,8 @@ The following alert types fire from the server code in 2.0. Each can be individu
 
 | Type | Category | Fired when |
 |------|----------|-----------|
-| `host_down` | host | A host has not reported within 3× its `update_interval`, or its agent WebSocket disconnects |
-| `host_recovered` | host | A previously-down host starts reporting again or its WebSocket reconnects |
+| `host_down` | host | The host's agent WebSocket has been disconnected for longer than the `host_down` threshold (default 30 seconds, configurable in **Reporting → Alert Lifecycle**), or the host has not reported within that threshold during a periodic check. Displayed as **Host Agent Down**. |
+| `host_recovered` | host | A previously-down host's agent reconnects or its agent starts reporting again. Displayed as **Host Agent Recovered**. |
 | `host_enrolled` | host | A new host is successfully enrolled |
 | `host_deleted` | host | A host is removed from the inventory |
 | `host_security_updates_exceeded` | security | A host has more security updates than the configured threshold |
@@ -3439,7 +3442,7 @@ Each row exposes:
 | **Severity** | Default severity applied to new alerts of this type. |
 | **Alert delay** | Seconds to wait before delivering the outbound notification. If a cancelling counterpart event (e.g. `host_recovered` for `host_down`) fires within the delay window, the notification is suppressed. Useful for flappy hosts. |
 | **Frequency** | For periodic checks only (`host_down`, `host_security_updates_exceeded`, `host_pending_updates_exceeded`). Minutes between checks. |
-| **Threshold** | For threshold alerts only (`host_security_updates_exceeded`, `host_pending_updates_exceeded`). Numeric threshold above which an alert fires. |
+| **Threshold** | For threshold alerts. Numeric threshold above which an alert fires. Units depend on the alert type: `host_security_updates_exceeded` and `host_pending_updates_exceeded` use a *count* (number of pending updates); `host_down` uses *seconds* (how long the agent's WebSocket can be disconnected before the alert fires). The `host_down` row shows a `sec` suffix to make this explicit; default is 30 seconds. |
 | **Auto-assign** | Toggle plus user picker: any new alert of this type is assigned to the chosen user automatically. |
 | **Retention** | Days to keep alerts of this type before cleanup. Empty = never auto-clean. |
 | **Auto-resolve** | Days after which active alerts auto-resolve if no one touches them. |
@@ -3471,7 +3474,7 @@ Admins and superadmins bypass these checks. Regular users without `can_manage_al
 - [Notification Destinations](#notification-destinations)
 - [Notification Routes and Delivery Log](#notification-routes-and-delivery-log)
 - [Scheduled Reports](#scheduled-reports)
-- Host Down and Host Recovered Alerts
+- Host Agent Down and Host Agent Recovered Alerts
 
 ---
 

@@ -242,6 +242,7 @@ func (d *Detector) GetSystemInfo() models.SystemInfo {
 		KernelVersion: d.GetKernelVersion(),
 		SELinuxStatus: d.getSELinuxStatus(),
 		SystemUptime:  d.getSystemUptime(ctx),
+		BootTime:      d.getBootTime(ctx),
 		LoadAverage:   d.getLoadAverage(ctx),
 	}
 
@@ -393,6 +394,25 @@ func (d *Detector) getSystemUptime(ctx context.Context) string {
 		return fmt.Sprintf("%d hours, %d minutes", hours, minutes)
 	}
 	return fmt.Sprintf("%d minutes", minutes)
+}
+
+// getBootTime returns the host's boot instant (UTC) using gopsutil's
+// host.Info().BootTime (Unix seconds since epoch). Returns nil on any
+// collection error so the server's COALESCE preserves the previous value
+// instead of clobbering it with a sentinel. Companion to getSystemUptime,
+// which keeps shipping its pre-formatted string for back-compat with
+// pre-boot_time servers.
+func (d *Detector) getBootTime(ctx context.Context) *time.Time {
+	info, err := host.InfoWithContext(ctx)
+	if err != nil {
+		d.logger.WithError(err).Warn("Failed to get boot time")
+		return nil
+	}
+	if info.BootTime == 0 {
+		return nil
+	}
+	t := time.Unix(int64(info.BootTime), 0).UTC()
+	return &t
 }
 
 // getLoadAverage gets system load average

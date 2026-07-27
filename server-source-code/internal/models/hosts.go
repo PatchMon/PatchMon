@@ -33,6 +33,7 @@ type Host struct {
 	SelinuxStatus                *string    `db:"selinux_status"`
 	SwapSize                     *float64   `db:"swap_size"`
 	SystemUptime                 *string    `db:"system_uptime"`
+	BootTime                     *time.Time `db:"boot_time"`
 	Notes                        *string    `db:"notes"`
 	NeedsReboot                  *bool      `db:"needs_reboot"`
 	RebootReason                 *string    `db:"reboot_reason"`

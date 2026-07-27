@@ -1,30 +1,16 @@
 import { ArrowDown, ArrowUp } from "lucide-react";
 
-// Reports (agent -> server, inbound). Each gets its own light/dark palette to
-// keep visual signal high without relying on the arrow alone.
-const REPORT_STYLE = {
-	ping: {
-		label: "PING",
-		classes:
-			"bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-secondary-100",
-	},
-	full: {
-		label: "FULL",
-		classes: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-	},
-	partial: {
-		label: "PARTIAL",
-		classes: "bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-200",
-	},
-	docker: {
-		label: "DOCKER",
-		classes: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200",
-	},
-	compliance: {
-		label: "COMPLIANCE",
-		classes:
-			"bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
-	},
+// Direction is conveyed by the arrow icon (up = inbound, down = outbound),
+// not by colour. Pills use a single neutral palette to reduce table noise.
+const NEUTRAL_PILL_CLASSES =
+	"bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-secondary-100";
+
+const REPORT_LABELS = {
+	ping: "PING",
+	full: "FULL",
+	partial: "PARTIAL",
+	docker: "DOCKER",
+	compliance: "COMPLIANCE",
 };
 
 // Jobs (server -> agent, outbound). Single amber/orange palette so the
@@ -89,7 +75,7 @@ const ActivityTypeBadge = ({ kind, type, jobName }) => {
 		const label = formatJobLabel(jobName || type);
 		return (
 			<span
-				className={`${baseChip} bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200`}
+				className={`${baseChip} ${NEUTRAL_PILL_CLASSES}`}
 				title={`Outbound: server queued ${label} for the agent`}
 			>
 				<ArrowDown className="h-3 w-3 flex-shrink-0" />
@@ -99,19 +85,16 @@ const ActivityTypeBadge = ({ kind, type, jobName }) => {
 	}
 
 	const reportKey = (type || "").toString().toLowerCase();
-	const meta = REPORT_STYLE[reportKey] || {
-		label: (type || "REPORT").toString().toUpperCase(),
-		classes:
-			"bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-secondary-100",
-	};
+	const label =
+		REPORT_LABELS[reportKey] || (type || "REPORT").toString().toUpperCase();
 
 	return (
 		<span
-			className={`${baseChip} ${meta.classes}`}
-			title={`Inbound: agent sent a ${meta.label.toLowerCase()} report to the server`}
+			className={`${baseChip} ${NEUTRAL_PILL_CLASSES}`}
+			title={`Inbound: agent sent a ${label.toLowerCase()} report to the server`}
 		>
 			<ArrowUp className="h-3 w-3 flex-shrink-0" />
-			<span>{meta.label}</span>
+			<span>{label}</span>
 		</span>
 	);
 };

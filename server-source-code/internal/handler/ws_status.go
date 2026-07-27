@@ -2,13 +2,49 @@ package handler
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/go-chi/chi/v5"
 )
+
+// wsStatusResponse is the per-host wire shape returned by the ws-status
+// endpoint. Existing fields (`connected`, `secure`) stay byte-identical for
+// back-compat; `disconnected_seconds_ago` is a new optional field used by the
+// host-status pill redesign so the WS pill can render "disconnected Xs ago"
+// without conflating WS state with host-report freshness.
+//
+// `disconnected_seconds_ago` is `nil` (JSON null) when the agent is currently
+// connected OR when the registry has no recorded disconnect timestamp (e.g.
+// the agent has never connected since this server started).
+type wsStatusResponse struct {
+	Connected              bool `json:"connected"`
+	Secure                 bool `json:"secure"`
+	DisconnectedSecondsAgo *int `json:"disconnected_seconds_ago"`
+}
+
+// toWSStatusResponse converts a raw ConnectionInfo into the wire shape.
+func toWSStatusResponse(info agentregistry.ConnectionInfo) wsStatusResponse {
+	resp := wsStatusResponse{Connected: info.Connected, Secure: info.Secure}
+	if !info.Connected && info.DisconnectedAt != nil {
+		secs := time.Since(*info.DisconnectedAt).Seconds()
+		if secs < 0 {
+			secs = 0
+		}
+		// Cap at a sane upper bound so a clock-skew event can't produce
+		// astronomically large numbers in the JSON payload.
+		if secs > math.MaxInt32 {
+			secs = math.MaxInt32
+		}
+		v := int(secs)
+		resp.DisconnectedSecondsAgo = &v
+	}
+	return resp
+}
 
 const (
 	maxWSStatusAPIIDs      = 1000
@@ -55,11 +91,15 @@ func (h *WSStatusHandler) ServeStatusBulk(w http.ResponseWriter, r *http.Request
 	if statusMap == nil {
 		return
 	}
+	wireMap := make(map[string]wsStatusResponse, len(statusMap))
+	for id, info := range statusMap {
+		wireMap[id] = toWSStatusResponse(info)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"data":    statusMap,
+		"data":    wireMap,
 	})
 }
 
@@ -75,7 +115,7 @@ func (h *WSStatusHandler) ServeStatusSingle(w http.ResponseWriter, r *http.Reque
 	if statusMap == nil {
 		return
 	}
-	info := statusMap[apiID]
+	info := toWSStatusResponse(statusMap[apiID])
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{

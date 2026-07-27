@@ -87,6 +87,10 @@ type Config struct {
 	// Server
 	EnableHSTS bool
 	TrustProxy bool
+	// TrustedProxyRanges lists CIDRs (or bare IPs) of reverse proxies in front of
+	// PatchMon. Env-only: exposing this in the settings UI would let an admin
+	// widen it to 0.0.0.0/0 and restore X-Forwarded-For spoofing.
+	TrustedProxyRanges []string
 	// Rate limits (env -> DB -> default)
 	RateLimitWindowMs         int
 	RateLimitMax              int
@@ -272,7 +276,12 @@ func Load() (*Config, error) {
 		// reach the audit log, and rate limiting keys on the proxy's IP.
 		// Set TRUST_PROXY=false explicitly only when PatchMon is exposed
 		// directly to the internet without a reverse proxy.
-		TrustProxy:                  getEnv("TRUST_PROXY", "true") != "false",
+		TrustProxy: getEnv("TRUST_PROXY", "true") != "false",
+		// Comma-separated CIDRs or bare IPs of the reverse proxies in front of
+		// PatchMon. Empty is the correct value for a single proxy (the default
+		// Docker deployment); set it when proxies are chained, e.g. Cloudflare
+		// in front of Nginx Proxy Manager.
+		TrustedProxyRanges:          splitAndTrim(getEnv("TRUSTED_PROXY_RANGES", "")),
 		RateLimitWindowMs:           getEnvInt("RATE_LIMIT_WINDOW_MS", 900000),
 		RateLimitMax:                getEnvInt("RATE_LIMIT_MAX", 5000),
 		AuthRateLimitWindowMs:       getEnvInt("AUTH_RATE_LIMIT_WINDOW_MS", 600000),
@@ -365,6 +374,22 @@ func getEnv(key, defaultVal string) string {
 		return v
 	}
 	return defaultVal
+}
+
+// splitAndTrim splits a comma-separated env value, trimming whitespace and
+// dropping empty entries. Returns nil for an empty value.
+func splitAndTrim(v string) []string {
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 // getEnvEnv returns APP_ENV if set, else NODE_ENV (for backward compatibility), else "production".

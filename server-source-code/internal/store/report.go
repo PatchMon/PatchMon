@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
@@ -107,19 +108,23 @@ type ReportPayload struct {
 	InstalledKernelVersion string             `json:"installedKernelVersion"`
 	SELinuxStatus          string             `json:"selinuxStatus"`
 	SystemUptime           string             `json:"systemUptime"`
-	LoadAverage            []float64          `json:"loadAverage"`
-	CPUModel               string             `json:"cpuModel"`
-	CPUCores               int                `json:"cpuCores"`
-	RAMInstalled           float64            `json:"ramInstalled"`
-	SwapSize               float64            `json:"swapSize"`
-	DiskDetails            json.RawMessage    `json:"diskDetails"`
-	GatewayIP              string             `json:"gatewayIp"`
-	DNSServers             []string           `json:"dnsServers"`
-	NetworkInterfaces      json.RawMessage    `json:"networkInterfaces"`
-	ExecutionTime          float64            `json:"executionTime"`
-	NeedsReboot            bool               `json:"needsReboot"`
-	RebootReason           string             `json:"rebootReason"`
-	PackageManager         string             `json:"packageManager"`
+	// BootTime, when present, is the host's boot instant (UTC) as collected
+	// by the agent. Persists to hosts.boot_time so the frontend can compute
+	// live uptime. Agents pre-dating this field will omit it.
+	BootTime          *time.Time      `json:"bootTime,omitempty"`
+	LoadAverage       []float64       `json:"loadAverage"`
+	CPUModel          string          `json:"cpuModel"`
+	CPUCores          int             `json:"cpuCores"`
+	RAMInstalled      float64         `json:"ramInstalled"`
+	SwapSize          float64         `json:"swapSize"`
+	DiskDetails       json.RawMessage `json:"diskDetails"`
+	GatewayIP         string          `json:"gatewayIp"`
+	DNSServers        []string        `json:"dnsServers"`
+	NetworkInterfaces json.RawMessage `json:"networkInterfaces"`
+	ExecutionTime     float64         `json:"executionTime"`
+	NeedsReboot       bool            `json:"needsReboot"`
+	RebootReason      string          `json:"rebootReason"`
+	PackageManager    string          `json:"packageManager"`
 	// Sections, when non-nil, restricts which top-level blocks the server
 	// processes. Empty / absent means "full report" for backwards compatibility
 	// with old agents.
@@ -464,6 +469,9 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 	}
 	if payload.SystemUptime != "" {
 		params.SystemUptime = &payload.SystemUptime
+	}
+	if payload.BootTime != nil {
+		params.BootTime = pgtime.FromPtrTz(payload.BootTime)
 	}
 	if len(loadAverage) > 0 {
 		params.LoadAverage = loadAverage

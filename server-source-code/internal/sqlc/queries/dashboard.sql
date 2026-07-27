@@ -71,7 +71,7 @@ ORDER BY count DESC, os_type, os_version;
 WITH base_hosts AS (
     SELECT h.id, h.machine_id, h.friendly_name, h.hostname, h.ip, h.os_type, h.os_version,
         h.status, h.agent_version, h.auto_update, h.notes, h.api_id,
-        h.needs_reboot, h.reboot_reason, h.system_uptime, h.docker_enabled, h.compliance_enabled, h.compliance_on_demand_only,
+        h.needs_reboot, h.reboot_reason, h.system_uptime, h.boot_time, h.docker_enabled, h.compliance_enabled, h.compliance_on_demand_only,
         h.last_update,
         h.compliance_scanner_status->'scanner_info'->>'ssg_version' as ssg_version,
         COALESCE((
@@ -114,7 +114,18 @@ enriched_hosts AS (
                WHEN bh.status = 'active' AND bh.last_update < sqlc.arg('stale_threshold')::timestamp THEN 'inactive'
                ELSE bh.status
            END AS effective_status,
-           ((CASE WHEN bh.docker_enabled THEN 1 ELSE 0 END) + (CASE WHEN bh.compliance_enabled THEN 1 ELSE 0 END))::int AS integrations_count
+           ((CASE WHEN bh.docker_enabled THEN 1 ELSE 0 END) + (CASE WHEN bh.compliance_enabled THEN 1 ELSE 0 END))::int AS integrations_count,
+           CASE
+               WHEN bh.last_update IS NULL THEN 'stale'
+               WHEN bh.last_update >= sqlc.arg('overdue_threshold')::timestamp THEN 'reporting'
+               WHEN bh.last_update >= sqlc.arg('stale_threshold')::timestamp THEN 'overdue'
+               ELSE 'stale'
+           END AS reporting_state,
+           CASE
+               WHEN COALESCE(hp.security_count, 0) > 0 THEN 'security_required'
+               WHEN COALESCE(hp.updates_count, 0) > 0 THEN 'updates_pending'
+               ELSE 'up_to_date'
+           END AS update_state
     FROM base_hosts bh
     LEFT JOIN hp_counts hp ON hp.host_id = bh.id
 ),
@@ -134,8 +145,9 @@ filtered_hosts AS (
 )
 SELECT id, machine_id, friendly_name, hostname, ip, os_type, os_version,
     status, agent_version, auto_update, notes, api_id,
-    needs_reboot, reboot_reason, system_uptime, docker_enabled, compliance_enabled, compliance_on_demand_only,
-    last_update, ssg_version, updates_count, security_updates_count, total_packages_count
+    needs_reboot, reboot_reason, system_uptime, boot_time, docker_enabled, compliance_enabled, compliance_on_demand_only,
+    last_update, ssg_version, updates_count, security_updates_count, total_packages_count,
+    reporting_state, update_state
 FROM filtered_hosts
 ORDER BY
     CASE WHEN sqlc.arg('sort_key')::text = 'friendly_name'      AND sqlc.arg('sort_dir')::text = 'asc'  THEN friendly_name END ASC,
@@ -160,8 +172,12 @@ ORDER BY
     CASE WHEN sqlc.arg('sort_key')::text = 'security_updates'   AND sqlc.arg('sort_dir')::text = 'desc' THEN security_updates_count END DESC,
     CASE WHEN sqlc.arg('sort_key')::text = 'needs_reboot'       AND sqlc.arg('sort_dir')::text = 'asc'  THEN needs_reboot END ASC,
     CASE WHEN sqlc.arg('sort_key')::text = 'needs_reboot'       AND sqlc.arg('sort_dir')::text = 'desc' THEN needs_reboot END DESC,
-    CASE WHEN sqlc.arg('sort_key')::text = 'uptime'             AND sqlc.arg('sort_dir')::text = 'asc'  THEN system_uptime END ASC NULLS LAST,
-    CASE WHEN sqlc.arg('sort_key')::text = 'uptime'             AND sqlc.arg('sort_dir')::text = 'desc' THEN system_uptime END DESC NULLS LAST,
+    -- 'uptime' sorts by boot_time with the direction inverted: longest uptime
+    -- means earliest boot_time, so a "longest first" (desc) request maps to
+    -- ORDER BY boot_time ASC. NULLS LAST keeps unreported hosts at the bottom
+    -- regardless of direction.
+    CASE WHEN sqlc.arg('sort_key')::text = 'uptime'             AND sqlc.arg('sort_dir')::text = 'asc'  THEN boot_time END DESC NULLS LAST,
+    CASE WHEN sqlc.arg('sort_key')::text = 'uptime'             AND sqlc.arg('sort_dir')::text = 'desc' THEN boot_time END ASC  NULLS LAST,
     CASE WHEN sqlc.arg('sort_key')::text = 'last_update'        AND sqlc.arg('sort_dir')::text = 'asc'  THEN last_update END ASC NULLS LAST,
     CASE WHEN sqlc.arg('sort_key')::text = 'last_update'        AND sqlc.arg('sort_dir')::text = 'desc' THEN last_update END DESC NULLS LAST,
     CASE WHEN sqlc.arg('sort_key')::text = 'ssg_version'        AND sqlc.arg('sort_dir')::text = 'asc'  THEN ssg_version END ASC NULLS LAST,
@@ -183,7 +199,7 @@ OFFSET sqlc.arg('row_offset')::int;
 WITH base_hosts AS (
     SELECT h.id, h.machine_id, h.friendly_name, h.hostname, h.ip, h.os_type, h.os_version,
         h.status, h.agent_version, h.auto_update, h.notes, h.api_id,
-        h.needs_reboot, h.reboot_reason, h.system_uptime, h.docker_enabled, h.compliance_enabled, h.compliance_on_demand_only,
+        h.needs_reboot, h.reboot_reason, h.system_uptime, h.boot_time, h.docker_enabled, h.compliance_enabled, h.compliance_on_demand_only,
         h.last_update,
         h.compliance_scanner_status->'scanner_info'->>'ssg_version' as ssg_version,
         COALESCE((
@@ -197,7 +213,13 @@ WITH base_hosts AS (
             WHEN h.status = 'active' AND h.last_update < sqlc.arg('stale_threshold')::timestamp THEN 'inactive'
             ELSE h.status
         END AS effective_status,
-        ((CASE WHEN h.docker_enabled THEN 1 ELSE 0 END) + (CASE WHEN h.compliance_enabled THEN 1 ELSE 0 END))::int AS integrations_count
+        ((CASE WHEN h.docker_enabled THEN 1 ELSE 0 END) + (CASE WHEN h.compliance_enabled THEN 1 ELSE 0 END))::int AS integrations_count,
+        CASE
+            WHEN h.last_update IS NULL THEN 'stale'
+            WHEN h.last_update >= sqlc.arg('overdue_threshold')::timestamp THEN 'reporting'
+            WHEN h.last_update >= sqlc.arg('stale_threshold')::timestamp THEN 'overdue'
+            ELSE 'stale'
+        END AS reporting_state
     FROM hosts h
     WHERE (sqlc.narg('search')::text IS NULL OR h.friendly_name ILIKE '%' || sqlc.narg('search') || '%' OR h.hostname ILIKE '%' || sqlc.narg('search') || '%' OR h.ip ILIKE '%' || sqlc.narg('search') || '%' OR h.os_type ILIKE '%' || sqlc.narg('search') || '%' OR h.notes ILIKE '%' || sqlc.narg('search') || '%')
     AND (
@@ -253,8 +275,10 @@ ordered_page AS (
         CASE WHEN sqlc.arg('sort_key')::text = 'status'           AND sqlc.arg('sort_dir')::text = 'desc' THEN effective_status END DESC,
         CASE WHEN sqlc.arg('sort_key')::text = 'needs_reboot'     AND sqlc.arg('sort_dir')::text = 'asc'  THEN needs_reboot END ASC,
         CASE WHEN sqlc.arg('sort_key')::text = 'needs_reboot'     AND sqlc.arg('sort_dir')::text = 'desc' THEN needs_reboot END DESC,
-        CASE WHEN sqlc.arg('sort_key')::text = 'uptime'           AND sqlc.arg('sort_dir')::text = 'asc'  THEN system_uptime END ASC NULLS LAST,
-        CASE WHEN sqlc.arg('sort_key')::text = 'uptime'           AND sqlc.arg('sort_dir')::text = 'desc' THEN system_uptime END DESC NULLS LAST,
+        -- See note above on the GetHostsWithCounts ORDER BY: 'uptime' sorts by
+        -- boot_time with direction inverted (longest uptime = earliest boot).
+        CASE WHEN sqlc.arg('sort_key')::text = 'uptime'           AND sqlc.arg('sort_dir')::text = 'asc'  THEN boot_time END DESC NULLS LAST,
+        CASE WHEN sqlc.arg('sort_key')::text = 'uptime'           AND sqlc.arg('sort_dir')::text = 'desc' THEN boot_time END ASC  NULLS LAST,
         CASE WHEN sqlc.arg('sort_key')::text = 'last_update'      AND sqlc.arg('sort_dir')::text = 'asc'  THEN last_update END ASC NULLS LAST,
         CASE WHEN sqlc.arg('sort_key')::text = 'last_update'      AND sqlc.arg('sort_dir')::text = 'desc' THEN last_update END DESC NULLS LAST,
         CASE WHEN sqlc.arg('sort_key')::text = 'ssg_version'      AND sqlc.arg('sort_dir')::text = 'asc'  THEN ssg_version END ASC NULLS LAST,
@@ -279,11 +303,17 @@ page_counts AS (
 )
 SELECT op.id, op.machine_id, op.friendly_name, op.hostname, op.ip, op.os_type, op.os_version,
     op.status, op.agent_version, op.auto_update, op.notes, op.api_id,
-    op.needs_reboot, op.reboot_reason, op.system_uptime, op.docker_enabled, op.compliance_enabled, op.compliance_on_demand_only,
+    op.needs_reboot, op.reboot_reason, op.system_uptime, op.boot_time, op.docker_enabled, op.compliance_enabled, op.compliance_on_demand_only,
     op.last_update, op.ssg_version,
     COALESCE(pc.updates_count, 0)::int AS updates_count,
     COALESCE(pc.security_count, 0)::int AS security_updates_count,
-    COALESCE(pc.total_count, 0)::int AS total_packages_count
+    COALESCE(pc.total_count, 0)::int AS total_packages_count,
+    op.reporting_state,
+    CASE
+        WHEN COALESCE(pc.security_count, 0) > 0 THEN 'security_required'
+        WHEN COALESCE(pc.updates_count, 0) > 0 THEN 'updates_pending'
+        ELSE 'up_to_date'
+    END AS update_state
 FROM ordered_page op
 LEFT JOIN page_counts pc ON pc.host_id = op.id
 ORDER BY
@@ -305,8 +335,9 @@ ORDER BY
     CASE WHEN sqlc.arg('sort_key')::text = 'status'           AND sqlc.arg('sort_dir')::text = 'desc' THEN op.effective_status END DESC,
     CASE WHEN sqlc.arg('sort_key')::text = 'needs_reboot'     AND sqlc.arg('sort_dir')::text = 'asc'  THEN op.needs_reboot END ASC,
     CASE WHEN sqlc.arg('sort_key')::text = 'needs_reboot'     AND sqlc.arg('sort_dir')::text = 'desc' THEN op.needs_reboot END DESC,
-    CASE WHEN sqlc.arg('sort_key')::text = 'uptime'           AND sqlc.arg('sort_dir')::text = 'asc'  THEN op.system_uptime END ASC NULLS LAST,
-    CASE WHEN sqlc.arg('sort_key')::text = 'uptime'           AND sqlc.arg('sort_dir')::text = 'desc' THEN op.system_uptime END DESC NULLS LAST,
+    -- Inverted direction: longest uptime = earliest boot_time.
+    CASE WHEN sqlc.arg('sort_key')::text = 'uptime'           AND sqlc.arg('sort_dir')::text = 'asc'  THEN op.boot_time END DESC NULLS LAST,
+    CASE WHEN sqlc.arg('sort_key')::text = 'uptime'           AND sqlc.arg('sort_dir')::text = 'desc' THEN op.boot_time END ASC  NULLS LAST,
     CASE WHEN sqlc.arg('sort_key')::text = 'last_update'      AND sqlc.arg('sort_dir')::text = 'asc'  THEN op.last_update END ASC NULLS LAST,
     CASE WHEN sqlc.arg('sort_key')::text = 'last_update'      AND sqlc.arg('sort_dir')::text = 'desc' THEN op.last_update END DESC NULLS LAST,
     CASE WHEN sqlc.arg('sort_key')::text = 'ssg_version'      AND sqlc.arg('sort_dir')::text = 'asc'  THEN op.ssg_version END ASC NULLS LAST,

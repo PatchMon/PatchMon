@@ -151,7 +151,7 @@ func (q *Queries) DeleteHostsByIDs(ctx context.Context, dollar_1 []string) error
 }
 
 const getHostByApiID = `-- name: GetHostByApiID :one
-SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id, packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash, last_full_report_at FROM hosts WHERE api_id = $1
+SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, boot_time, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id, packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash, last_full_report_at FROM hosts WHERE api_id = $1
 `
 
 func (q *Queries) GetHostByApiID(ctx context.Context, apiID string) (Host, error) {
@@ -187,6 +187,7 @@ func (q *Queries) GetHostByApiID(ctx context.Context, apiID string) (Host, error
 		&i.SelinuxStatus,
 		&i.SwapSize,
 		&i.SystemUptime,
+		&i.BootTime,
 		&i.Notes,
 		&i.NeedsReboot,
 		&i.RebootReason,
@@ -215,7 +216,7 @@ func (q *Queries) GetHostByApiID(ctx context.Context, apiID string) (Host, error
 }
 
 const getHostByID = `-- name: GetHostByID :one
-SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id, packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash, last_full_report_at FROM hosts WHERE id = $1
+SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, boot_time, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id, packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash, last_full_report_at FROM hosts WHERE id = $1
 `
 
 func (q *Queries) GetHostByID(ctx context.Context, id string) (Host, error) {
@@ -251,6 +252,7 @@ func (q *Queries) GetHostByID(ctx context.Context, id string) (Host, error) {
 		&i.SelinuxStatus,
 		&i.SwapSize,
 		&i.SystemUptime,
+		&i.BootTime,
 		&i.Notes,
 		&i.NeedsReboot,
 		&i.RebootReason,
@@ -325,7 +327,7 @@ func (q *Queries) GetHostCheckin(ctx context.Context, apiID string) (GetHostChec
 }
 
 const getHostsByIDs = `-- name: GetHostsByIDs :many
-SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id, packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash, last_full_report_at FROM hosts WHERE id = ANY($1::text[])
+SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, boot_time, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id, packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash, last_full_report_at FROM hosts WHERE id = ANY($1::text[])
 `
 
 func (q *Queries) GetHostsByIDs(ctx context.Context, dollar_1 []string) ([]Host, error) {
@@ -367,6 +369,7 @@ func (q *Queries) GetHostsByIDs(ctx context.Context, dollar_1 []string) ([]Host,
 			&i.SelinuxStatus,
 			&i.SwapSize,
 			&i.SystemUptime,
+			&i.BootTime,
 			&i.Notes,
 			&i.NeedsReboot,
 			&i.RebootReason,
@@ -499,7 +502,7 @@ func (q *Queries) ListHostOptions(ctx context.Context, arg ListHostOptionsParams
 }
 
 const listHosts = `-- name: ListHosts :many
-SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id, packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash, last_full_report_at FROM hosts ORDER BY friendly_name
+SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, boot_time, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id, packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash, last_full_report_at FROM hosts ORDER BY friendly_name
 `
 
 func (q *Queries) ListHosts(ctx context.Context) ([]Host, error) {
@@ -541,6 +544,7 @@ func (q *Queries) ListHosts(ctx context.Context) ([]Host, error) {
 			&i.SelinuxStatus,
 			&i.SwapSize,
 			&i.SystemUptime,
+			&i.BootTime,
 			&i.Notes,
 			&i.NeedsReboot,
 			&i.RebootReason,
@@ -617,7 +621,7 @@ func (q *Queries) ListHostsForComplianceDashboard(ctx context.Context) ([]ListHo
 }
 
 const listHostsPaginated = `-- name: ListHostsPaginated :many
-SELECT id, friendly_name, hostname, ip, os_type, os_version, architecture, last_update, status, api_id, agent_version, auto_update, created_at, notes, system_uptime, needs_reboot, docker_enabled, compliance_enabled
+SELECT id, friendly_name, hostname, ip, os_type, os_version, architecture, last_update, status, api_id, agent_version, auto_update, created_at, notes, system_uptime, boot_time, needs_reboot, docker_enabled, compliance_enabled
 FROM hosts
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2
@@ -629,24 +633,25 @@ type ListHostsPaginatedParams struct {
 }
 
 type ListHostsPaginatedRow struct {
-	ID                string           `json:"id"`
-	FriendlyName      string           `json:"friendly_name"`
-	Hostname          *string          `json:"hostname"`
-	Ip                *string          `json:"ip"`
-	OsType            string           `json:"os_type"`
-	OsVersion         string           `json:"os_version"`
-	Architecture      *string          `json:"architecture"`
-	LastUpdate        pgtype.Timestamp `json:"last_update"`
-	Status            string           `json:"status"`
-	ApiID             string           `json:"api_id"`
-	AgentVersion      *string          `json:"agent_version"`
-	AutoUpdate        bool             `json:"auto_update"`
-	CreatedAt         pgtype.Timestamp `json:"created_at"`
-	Notes             *string          `json:"notes"`
-	SystemUptime      *string          `json:"system_uptime"`
-	NeedsReboot       *bool            `json:"needs_reboot"`
-	DockerEnabled     bool             `json:"docker_enabled"`
-	ComplianceEnabled bool             `json:"compliance_enabled"`
+	ID                string             `json:"id"`
+	FriendlyName      string             `json:"friendly_name"`
+	Hostname          *string            `json:"hostname"`
+	Ip                *string            `json:"ip"`
+	OsType            string             `json:"os_type"`
+	OsVersion         string             `json:"os_version"`
+	Architecture      *string            `json:"architecture"`
+	LastUpdate        pgtype.Timestamp   `json:"last_update"`
+	Status            string             `json:"status"`
+	ApiID             string             `json:"api_id"`
+	AgentVersion      *string            `json:"agent_version"`
+	AutoUpdate        bool               `json:"auto_update"`
+	CreatedAt         pgtype.Timestamp   `json:"created_at"`
+	Notes             *string            `json:"notes"`
+	SystemUptime      *string            `json:"system_uptime"`
+	BootTime          pgtype.Timestamptz `json:"boot_time"`
+	NeedsReboot       *bool              `json:"needs_reboot"`
+	DockerEnabled     bool               `json:"docker_enabled"`
+	ComplianceEnabled bool               `json:"compliance_enabled"`
 }
 
 func (q *Queries) ListHostsPaginated(ctx context.Context, arg ListHostsPaginatedParams) ([]ListHostsPaginatedRow, error) {
@@ -674,6 +679,7 @@ func (q *Queries) ListHostsPaginated(ctx context.Context, arg ListHostsPaginated
 			&i.CreatedAt,
 			&i.Notes,
 			&i.SystemUptime,
+			&i.BootTime,
 			&i.NeedsReboot,
 			&i.DockerEnabled,
 			&i.ComplianceEnabled,
@@ -900,25 +906,27 @@ UPDATE hosts SET
     swap_size      = COALESCE($4::double precision, swap_size),
     disk_details   = COALESCE($5::jsonb, disk_details),
     system_uptime  = COALESCE($6::text, system_uptime),
-    load_average   = COALESCE($7::jsonb, load_average),
-    needs_reboot   = COALESCE($8::boolean, needs_reboot),
-    reboot_reason  = $9,
-    agent_version  = COALESCE($10::text, agent_version)
-WHERE id = $11
+    boot_time      = COALESCE($7::timestamptz, boot_time),
+    load_average   = COALESCE($8::jsonb, load_average),
+    needs_reboot   = COALESCE($9::boolean, needs_reboot),
+    reboot_reason  = $10,
+    agent_version  = COALESCE($11::text, agent_version)
+WHERE id = $12
 `
 
 type UpdateHostMetricsParams struct {
-	CpuCores     *int32   `json:"cpu_cores"`
-	CpuModel     *string  `json:"cpu_model"`
-	RamInstalled *float64 `json:"ram_installed"`
-	SwapSize     *float64 `json:"swap_size"`
-	DiskDetails  []byte   `json:"disk_details"`
-	SystemUptime *string  `json:"system_uptime"`
-	LoadAverage  []byte   `json:"load_average"`
-	NeedsReboot  *bool    `json:"needs_reboot"`
-	RebootReason *string  `json:"reboot_reason"`
-	AgentVersion *string  `json:"agent_version"`
-	ID           string   `json:"id"`
+	CpuCores     *int32             `json:"cpu_cores"`
+	CpuModel     *string            `json:"cpu_model"`
+	RamInstalled *float64           `json:"ram_installed"`
+	SwapSize     *float64           `json:"swap_size"`
+	DiskDetails  []byte             `json:"disk_details"`
+	SystemUptime *string            `json:"system_uptime"`
+	BootTime     pgtype.Timestamptz `json:"boot_time"`
+	LoadAverage  []byte             `json:"load_average"`
+	NeedsReboot  *bool              `json:"needs_reboot"`
+	RebootReason *string            `json:"reboot_reason"`
+	AgentVersion *string            `json:"agent_version"`
+	ID           string             `json:"id"`
 }
 
 // Ping-side write of volatile metrics. Each column is COALESCE-guarded so a
@@ -931,6 +939,7 @@ func (q *Queries) UpdateHostMetrics(ctx context.Context, arg UpdateHostMetricsPa
 		arg.SwapSize,
 		arg.DiskDetails,
 		arg.SystemUptime,
+		arg.BootTime,
 		arg.LoadAverage,
 		arg.NeedsReboot,
 		arg.RebootReason,

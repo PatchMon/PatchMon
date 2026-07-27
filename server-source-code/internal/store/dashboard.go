@@ -248,6 +248,7 @@ type HostWithCounts struct {
 	ApiID                string
 	NeedsReboot          *bool
 	SystemUptime         *string
+	BootTime             *time.Time
 	DockerEnabled        bool
 	ComplianceEnabled    bool
 	ComplianceOnDemand   bool
@@ -273,6 +274,7 @@ type dashboardHostRow struct {
 	NeedsReboot            *bool
 	RebootReason           *string
 	SystemUptime           *string
+	BootTime               pgtype.Timestamptz
 	DockerEnabled          bool
 	ComplianceEnabled      bool
 	ComplianceOnDemandOnly bool
@@ -281,6 +283,12 @@ type dashboardHostRow struct {
 	UpdatesCount           int32
 	SecurityUpdatesCount   int32
 	TotalPackagesCount     int32
+	// ReportingState is one of "reporting", "overdue", "stale" — derived from
+	// last_update vs the configured update interval. Independent of WS status.
+	ReportingState string
+	// UpdateState is one of "up_to_date", "updates_pending", "security_required"
+	// — derived from per-host package counts.
+	UpdateState string
 }
 
 // HostsListParams holds optional filters for GetHostsWithCounts.
@@ -385,15 +393,20 @@ func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsLis
 		order = "desc"
 	}
 
+	updateIntervalMinutes := UpdateIntervalMinutes(ctx, s)
+	now := time.Now()
+	staleThreshold := pgtime.From(now.Add(-time.Duration(updateIntervalMinutes*2) * time.Minute))
+	overdueThreshold := pgtime.From(now.Add(-time.Duration(updateIntervalMinutes) * time.Minute))
 	arg := db.GetHostsWithCountsParams{
-		SelectedIds:    params.SelectedIDs,
-		StaleThreshold: pgtime.From(time.Now().Add(-time.Duration(UpdateIntervalMinutes(ctx, s)*2) * time.Minute)),
-		RebootOnly:     params.RebootOnly,
-		HideStale:      params.HideStale,
-		SortKey:        sortKey,
-		SortDir:        order,
-		RowLimit:       safeconv.ClampToInt32(limit),
-		RowOffset:      safeconv.ClampToInt32(offset),
+		SelectedIds:      params.SelectedIDs,
+		StaleThreshold:   staleThreshold,
+		OverdueThreshold: overdueThreshold,
+		RebootOnly:       params.RebootOnly,
+		HideStale:        params.HideStale,
+		SortKey:          sortKey,
+		SortDir:          order,
+		RowLimit:         safeconv.ClampToInt32(limit),
+		RowOffset:        safeconv.ClampToInt32(offset),
 	}
 	countArg := db.CountHostsForListParams{
 		SelectedIds:    params.SelectedIDs,
@@ -426,20 +439,21 @@ func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsLis
 		countArg.Filter = &params.Filter
 	}
 	pageArg := db.GetHostsWithPageCountsParams{
-		SelectedIds:    arg.SelectedIds,
-		StaleThreshold: arg.StaleThreshold,
-		RebootOnly:     arg.RebootOnly,
-		HideStale:      arg.HideStale,
-		SortKey:        arg.SortKey,
-		SortDir:        arg.SortDir,
-		RowLimit:       arg.RowLimit,
-		RowOffset:      arg.RowOffset,
-		Search:         arg.Search,
-		Group:          arg.Group,
-		Status:         arg.Status,
-		Os:             arg.Os,
-		OsVersion:      arg.OsVersion,
-		Filter:         arg.Filter,
+		SelectedIds:      arg.SelectedIds,
+		StaleThreshold:   arg.StaleThreshold,
+		OverdueThreshold: arg.OverdueThreshold,
+		RebootOnly:       arg.RebootOnly,
+		HideStale:        arg.HideStale,
+		SortKey:          arg.SortKey,
+		SortDir:          arg.SortDir,
+		RowLimit:         arg.RowLimit,
+		RowOffset:        arg.RowOffset,
+		Search:           arg.Search,
+		Group:            arg.Group,
+		Status:           arg.Status,
+		Os:               arg.Os,
+		OsVersion:        arg.OsVersion,
+		Filter:           arg.Filter,
 	}
 
 	var (
@@ -461,10 +475,12 @@ func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsLis
 					IP: r.Ip, OSType: r.OsType, OSVersion: r.OsVersion, Status: r.Status,
 					AgentVersion: r.AgentVersion, AutoUpdate: r.AutoUpdate, Notes: r.Notes, ApiID: r.ApiID,
 					NeedsReboot: r.NeedsReboot, RebootReason: r.RebootReason, SystemUptime: r.SystemUptime,
+					BootTime:      r.BootTime,
 					DockerEnabled: r.DockerEnabled, ComplianceEnabled: r.ComplianceEnabled,
 					ComplianceOnDemandOnly: r.ComplianceOnDemandOnly, LastUpdate: r.LastUpdate,
 					SsgVersion: r.SsgVersion, UpdatesCount: r.UpdatesCount,
 					SecurityUpdatesCount: r.SecurityUpdatesCount, TotalPackagesCount: r.TotalPackagesCount,
+					ReportingState: r.ReportingState, UpdateState: r.UpdateState,
 				}
 			}
 		} else {
@@ -479,10 +495,12 @@ func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsLis
 					IP: r.Ip, OSType: r.OsType, OSVersion: r.OsVersion, Status: r.Status,
 					AgentVersion: r.AgentVersion, AutoUpdate: r.AutoUpdate, Notes: r.Notes, ApiID: r.ApiID,
 					NeedsReboot: r.NeedsReboot, RebootReason: r.RebootReason, SystemUptime: r.SystemUptime,
+					BootTime:      r.BootTime,
 					DockerEnabled: r.DockerEnabled, ComplianceEnabled: r.ComplianceEnabled,
 					ComplianceOnDemandOnly: r.ComplianceOnDemandOnly, LastUpdate: r.LastUpdate,
 					SsgVersion: r.SsgVersion, UpdatesCount: r.UpdatesCount,
 					SecurityUpdatesCount: r.SecurityUpdatesCount, TotalPackagesCount: r.TotalPackagesCount,
+					ReportingState: r.ReportingState, UpdateState: r.UpdateState,
 				}
 			}
 		}
@@ -509,9 +527,8 @@ func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsLis
 		return nil, err
 	}
 
-	updateIntervalMinutes := UpdateIntervalMinutes(ctx, s)
 	thresholdMinutes := updateIntervalMinutes * 2
-	thresholdTime := time.Now().Add(-time.Duration(thresholdMinutes) * time.Minute)
+	thresholdTime := now.Add(-time.Duration(thresholdMinutes) * time.Minute)
 
 	result := make([]map[string]interface{}, len(rows))
 	for i, h := range rows {
@@ -540,7 +557,11 @@ func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsLis
 			"ip": h.IP, "os_type": h.OSType, "os_version": h.OSVersion,
 			"status": h.Status, "agent_version": h.AgentVersion, "auto_update": h.AutoUpdate,
 			"notes": h.Notes, "api_id": h.ApiID, "needs_reboot": h.NeedsReboot, "reboot_reason": h.RebootReason,
-			"system_uptime":  h.SystemUptime,
+			"system_uptime": h.SystemUptime,
+			// boot_time is the host's boot instant (UTC ISO 8601). When non-null
+			// the frontend should compute live uptime as now() - boot_time and
+			// fall back to system_uptime only for older agents that left it null.
+			"boot_time":      pgtime.PtrTz(h.BootTime),
 			"docker_enabled": h.DockerEnabled, "compliance_enabled": h.ComplianceEnabled,
 			"compliance_on_demand_only": h.ComplianceOnDemandOnly,
 			"last_update":               lastUpdateStr, "isStale": isStale, "effectiveStatus": effectiveStatus,
@@ -548,6 +569,10 @@ func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsLis
 			"ssg_version":            h.SsgVersion,
 			"updatesCount":           h.UpdatesCount, "securityUpdatesCount": h.SecurityUpdatesCount,
 			"totalPackagesCount": h.TotalPackagesCount,
+			// New independent host-status pills (additive, see backend/host-status redesign).
+			// Existing isStale / effectiveStatus / updatesCount remain byte-identical for back-compat.
+			"reportingState": h.ReportingState,
+			"updateState":    h.UpdateState,
 		}
 	}
 	return &HostsListResult{
@@ -695,7 +720,7 @@ func (s *DashboardStore) GetHostDetail(ctx context.Context, hostID string, histo
 		"os_type": host.OSType, "os_version": host.OSVersion, "architecture": host.Architecture,
 		"last_update": host.LastUpdate, "status": host.Status, "api_id": host.ApiID,
 		"agent_version": host.AgentVersion, "auto_update": host.AutoUpdate, "notes": host.Notes,
-		"system_uptime": host.SystemUptime, "needs_reboot": host.NeedsReboot,
+		"system_uptime": host.SystemUptime, "boot_time": host.BootTime, "needs_reboot": host.NeedsReboot,
 		"reboot_reason":  host.RebootReason,
 		"docker_enabled": host.DockerEnabled, "compliance_enabled": host.ComplianceEnabled,
 		"compliance_on_demand_only": host.ComplianceOnDemandOnly,

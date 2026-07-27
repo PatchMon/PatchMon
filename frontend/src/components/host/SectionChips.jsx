@@ -49,8 +49,10 @@ const Chip = ({ name, variant }) => {
 
 	const baseClasses =
 		"inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap";
+	// Neutral palette across both states; the line-through + opacity convey
+	// "skipped" without needing a different colour.
 	const updatedClasses =
-		"bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200";
+		"bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-secondary-100";
 	const skippedClasses =
 		"bg-secondary-100 text-secondary-500 dark:bg-secondary-700 dark:text-secondary-300 line-through opacity-80";
 

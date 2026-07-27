@@ -110,17 +110,24 @@ const ExpandableText = ({ text, expanded, onToggle, tone = "neutral" }) => {
 		tone === "error"
 			? "text-danger-600 dark:text-danger-400"
 			: "text-secondary-600 dark:text-secondary-200";
+	const str = text.toString();
+	// If the text fits within the truncate window there's nothing to expand —
+	// render as plain text rather than a button so we don't show a misleading
+	// "Click to expand" affordance for short messages like "Agent not connected".
+	if (str.length <= 80) {
+		return <span className={`text-xs ${toneClasses} break-words`}>{str}</span>;
+	}
 	return (
 		<button
 			type="button"
 			onClick={onToggle}
 			className={`text-left text-xs ${toneClasses} hover:underline focus:outline-none focus:ring-2 focus:ring-primary-500 rounded`}
-			title={expanded ? "Collapse" : "Click to expand"}
+			title={expanded ? "Click to collapse" : "Click to expand"}
 		>
 			{expanded ? (
-				<span className="break-words whitespace-pre-wrap">{text}</span>
+				<span className="break-words whitespace-pre-wrap">{str}</span>
 			) : (
-				<span className="break-words">{truncate(text, 80)}</span>
+				<span className="break-words">{truncate(str, 80)}</span>
 			)}
 		</button>
 	);

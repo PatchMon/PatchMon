@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 // PingHashes carries the agent's per-section content hashes on a check-in.
 // All fields are 64-char lowercase hex (SHA-256). Empty string == "agent has
 // nothing to hash" and the server treats that the same as a mismatch (will
@@ -24,6 +26,11 @@ type PingMetrics struct {
 	SwapSize     *float64   `json:"swapSize,omitempty"`
 	DiskDetails  []DiskInfo `json:"diskDetails,omitempty"`
 	SystemUptime *string    `json:"systemUptime,omitempty"`
+	// BootTime is the host's boot instant (UTC). Lets the frontend compute
+	// live uptime as now() - boot_time and tick locally without waiting for
+	// the next agent report. Pre-this-change agents omit this field; the
+	// server falls back to the legacy SystemUptime string for those hosts.
+	BootTime     *time.Time `json:"bootTime,omitempty"`
 	LoadAverage  []float64  `json:"loadAverage,omitempty"`
 	NeedsReboot  *bool      `json:"needsReboot,omitempty"`
 	RebootReason *string    `json:"rebootReason,omitempty"`

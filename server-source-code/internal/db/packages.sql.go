@@ -32,62 +32,6 @@ func (q *Queries) CountHostsForPackage(ctx context.Context, arg CountHostsForPac
 	return column_1, err
 }
 
-const countPackages = `-- name: CountPackages :one
-SELECT COUNT(*)::int FROM packages p
-WHERE ($1::text IS NULL OR p.name ILIKE '%' || $1 || '%' OR p.description ILIKE '%' || $1 || '%')
-AND ($2::text IS NULL OR p.category = $2)
-AND (
-    $3::text IS DISTINCT FROM 'false'
-    OR NOT EXISTS (
-        SELECT 1 FROM host_packages hp_security
-        WHERE hp_security.package_id = p.id
-        AND hp_security.needs_update = true
-        AND hp_security.is_security_update = true
-    )
-)
-AND (
-    $4::text IS NULL
-    AND $5::text IS NULL
-    AND $3::text IS NULL
-    AND $6::text IS NULL
-    OR EXISTS (
-        SELECT 1 FROM host_packages hp
-        WHERE hp.package_id = p.id
-        AND ($4::text IS NULL OR hp.host_id = $4)
-        AND ($5::text IS NULL OR ($5 = 'true' AND hp.needs_update = true))
-        AND (
-            $3::text IS NULL
-            OR ($3 = 'true' AND hp.needs_update = true AND hp.is_security_update = true)
-            OR ($3 = 'false' AND hp.needs_update = true AND hp.is_security_update = false)
-        )
-        AND ($6::text IS NULL OR hp.source_repository_id = $6)
-    )
-)
-`
-
-type CountPackagesParams struct {
-	Search           *string `json:"search"`
-	Category         *string `json:"category"`
-	IsSecurityUpdate *string `json:"is_security_update"`
-	HostID           *string `json:"host_id"`
-	NeedsUpdate      *string `json:"needs_update"`
-	RepositoryID     *string `json:"repository_id"`
-}
-
-func (q *Queries) CountPackages(ctx context.Context, arg CountPackagesParams) (int32, error) {
-	row := q.db.QueryRow(ctx, countPackages,
-		arg.Search,
-		arg.Category,
-		arg.IsSecurityUpdate,
-		arg.HostID,
-		arg.NeedsUpdate,
-		arg.RepositoryID,
-	)
-	var column_1 int32
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const deletePackagesByIDs = `-- name: DeletePackagesByIDs :exec
 DELETE FROM packages WHERE id = ANY($1::text[])
 `
@@ -165,6 +109,7 @@ func (q *Queries) GetHostPackageStatsByHostIDs(ctx context.Context, dollar_1 []s
 
 const getHostPackagesWithHostsByPackageID = `-- name: GetHostPackagesWithHostsByPackageID :many
 
+
 SELECT hp.id, hp.host_id, hp.package_id, hp.current_version, hp.available_version,
     hp.needs_update, hp.is_security_update, hp.last_checked,
     hp.source_repository_id,
@@ -200,6 +145,25 @@ type GetHostPackagesWithHostsByPackageIDRow struct {
 	HostNeedsReboot    *bool            `json:"host_needs_reboot"`
 }
 
+// ListPackages and CountPackages are intentionally NOT defined here.
+// They live as raw SQL builders in internal/store/packages_list_sql.go.
+//
+// Why hand-rolled rather than sqlc:
+//  1. ORDER BY needs a CASE-WHEN-per-sort-key dance to stay parameterised,
+//     which forces a full sort over the entire filtered CTE before LIMIT
+//     can fire — defeats any index-ordered scan + LIMIT pushdown.
+//     Building "ORDER BY <whitelisted column> <dir>" in Go lets the
+//     planner drive output from the existing btree on packages(name)
+//     (and similar) for typical queries, killing the parallel-sort path
+//     that blows Docker's default /dev/shm.
+//  2. The host_packages EXISTS / NOT EXISTS branches are only relevant
+//     when the corresponding filter param is set; emitting them
+//     conditionally in Go produces a much tighter predicate that the
+//     planner can prune cheaply.
+//
+// Per-package counters still come from mv_package_stats (refreshed every
+// ~2 min by an asynq scheduler — see TypePackageStatsRefresh) so we avoid
+// per-request aggregation over host_packages.
 // (Removed) GetHostPackageStatsByPackageIDs / GetUpdatesCountByPackageIDs /
 // GetSecurityCountByPackageIDs — superseded by mv_package_stats. The
 // per-package counters returned to the Packages list page now come from
@@ -577,164 +541,6 @@ func (q *Queries) ListOrphanedPackages(ctx context.Context) ([]ListOrphanedPacka
 			&i.Description,
 			&i.Category,
 			&i.LatestVersion,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listPackages = `-- name: ListPackages :many
-WITH filtered_packages AS (
-    SELECT p.id, p.name, p.description, p.category, p.latest_version, p.created_at
-    FROM packages p
-    WHERE ($5::text IS NULL OR p.name ILIKE '%' || $5 || '%' OR p.description ILIKE '%' || $5 || '%')
-    AND ($6::text IS NULL OR p.category = $6)
-    AND (
-        $7::text IS DISTINCT FROM 'false'
-        OR NOT EXISTS (
-            SELECT 1 FROM host_packages hp_security
-            WHERE hp_security.package_id = p.id
-            AND hp_security.needs_update = true
-            AND hp_security.is_security_update = true
-        )
-    )
-    AND (
-        $8::text IS NULL
-        AND $9::text IS NULL
-        AND $7::text IS NULL
-        AND $10::text IS NULL
-        OR EXISTS (
-            SELECT 1 FROM host_packages hp
-            WHERE hp.package_id = p.id
-            AND ($8::text IS NULL OR hp.host_id = $8)
-            AND ($9::text IS NULL OR ($9 = 'true' AND hp.needs_update = true))
-            AND (
-                $7::text IS NULL
-                OR ($7 = 'true' AND hp.needs_update = true AND hp.is_security_update = true)
-                OR ($7 = 'false' AND hp.needs_update = true AND hp.is_security_update = false)
-            )
-            AND ($10::text IS NULL OR hp.source_repository_id = $10)
-        )
-    )
-),
-enriched_packages AS (
-    SELECT fp.id,
-           fp.name,
-           fp.description,
-           fp.category,
-           fp.latest_version,
-           fp.created_at,
-           COALESCE(s.total_installs, 0)::int AS total_installs,
-           COALESCE(s.updates_needed, 0)::int AS updates_needed,
-           COALESCE(s.security_updates, 0)::int AS security_updates,
-           CASE
-               WHEN COALESCE(s.security_updates, 0) > 0 THEN 0
-               WHEN COALESCE(s.updates_needed, 0) > 0 THEN 1
-               ELSE 2
-           END AS status_rank
-    FROM filtered_packages fp
-    LEFT JOIN mv_package_stats s ON s.package_id = fp.id
-)
-SELECT id, name, description, category, latest_version, created_at,
-       total_installs, updates_needed, security_updates
-FROM enriched_packages
-ORDER BY
-    CASE WHEN $1::text = 'name'          AND $2::text = 'asc'  THEN name END ASC,
-    CASE WHEN $1::text = 'name'          AND $2::text = 'desc' THEN name END DESC,
-    CASE WHEN $1::text = 'latestVersion' AND $2::text = 'asc'  THEN latest_version END ASC NULLS LAST,
-    CASE WHEN $1::text = 'latestVersion' AND $2::text = 'desc' THEN latest_version END DESC NULLS LAST,
-    CASE WHEN $1::text = 'packageHosts'  AND $2::text = 'asc'  THEN total_installs END ASC,
-    CASE WHEN $1::text = 'packageHosts'  AND $2::text = 'desc' THEN total_installs END DESC,
-    CASE WHEN $1::text = 'status'        AND $2::text = 'asc'  THEN status_rank END ASC,
-    CASE WHEN $1::text = 'status'        AND $2::text = 'desc' THEN status_rank END DESC,
-    name ASC,
-    id ASC
-LIMIT $4 OFFSET $3
-`
-
-type ListPackagesParams struct {
-	SortKey          string  `json:"sort_key"`
-	SortDir          string  `json:"sort_dir"`
-	Offset           int32   `json:"offset"`
-	Limit            int32   `json:"limit"`
-	Search           *string `json:"search"`
-	Category         *string `json:"category"`
-	IsSecurityUpdate *string `json:"is_security_update"`
-	HostID           *string `json:"host_id"`
-	NeedsUpdate      *string `json:"needs_update"`
-	RepositoryID     *string `json:"repository_id"`
-}
-
-type ListPackagesRow struct {
-	ID              string           `json:"id"`
-	Name            string           `json:"name"`
-	Description     *string          `json:"description"`
-	Category        *string          `json:"category"`
-	LatestVersion   *string          `json:"latest_version"`
-	CreatedAt       pgtype.Timestamp `json:"created_at"`
-	TotalInstalls   int32            `json:"total_installs"`
-	UpdatesNeeded   int32            `json:"updates_needed"`
-	SecurityUpdates int32            `json:"security_updates"`
-}
-
-// Per-package counts come from mv_package_stats (a materialised view of
-// per-package install / update / security counters refreshed every couple
-// of minutes by the asynq scheduler — see TypePackageStatsRefresh).
-//
-// Why a matview rather than a fresh aggregate per request:
-//   - Global GROUP BY over the full host_packages table (~1.3 M rows at
-//     1k-host scale) needs ~140 MB work_mem to avoid disk spill and
-//     still takes ~10 s for the aggregation.
-//   - LEFT JOIN LATERAL with a per-package COUNT lookup is fast per
-//     call but with ~2.3 M `packages` rows the outer driver costs
-//     ~30 s before LIMIT can fire.
-//   - mv_package_stats stores the counters keyed by package_id and is
-//     joined here as a single indexed hash join. Sub-millisecond lookup
-//     for the small page we LIMIT to. Trade-off: counters are stale by
-//     up to the refresh interval (2 min) — acceptable on an admin page.
-//
-// Return the per-package counters from mv_package_stats alongside the
-// core fields so the store can render the page response without firing
-// additional aggregate round-trips. These are global counts (i.e.
-// "this package is installed on N hosts across the fleet"), not
-// host-filtered — that matches the existing UX where the per-row
-// "Installed On" badge always shows the package's full footprint even
-// when a host filter is active in the table above.
-func (q *Queries) ListPackages(ctx context.Context, arg ListPackagesParams) ([]ListPackagesRow, error) {
-	rows, err := q.db.Query(ctx, listPackages,
-		arg.SortKey,
-		arg.SortDir,
-		arg.Offset,
-		arg.Limit,
-		arg.Search,
-		arg.Category,
-		arg.IsSecurityUpdate,
-		arg.HostID,
-		arg.NeedsUpdate,
-		arg.RepositoryID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListPackagesRow
-	for rows.Next() {
-		var i ListPackagesRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Name,
-			&i.Description,
-			&i.Category,
-			&i.LatestVersion,
-			&i.CreatedAt,
-			&i.TotalInstalls,
-			&i.UpdatesNeeded,
-			&i.SecurityUpdates,
 		); err != nil {
 			return nil, err
 		}

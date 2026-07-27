@@ -38,12 +38,17 @@ import {
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import AddHostWizard from "../components/AddHostWizard";
+import HostStatusPills from "../components/HostStatusPills";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import InlineToggle from "../components/InlineToggle";
+import Tooltip from "../components/ui/Tooltip";
+import { useTick } from "../hooks/useTick";
 import {
 	adminHostsAPI,
+	alertsAPI,
 	dashboardAPI,
+	formatLiveUptime,
 	formatRelativeTime,
 	hostGroupsAPI,
 	settingsAPI,
@@ -80,6 +85,45 @@ const normalisePageSize = (value) => {
 	return HOSTS_PAGE_SIZE_OPTIONS.includes(parsed)
 		? parsed
 		: HOSTS_DEFAULT_PAGE_SIZE;
+};
+
+// Compute reporting state purely from `last_update` and the configured agent
+// update_interval. Mirrors the legacy effectiveStatus / isStale boundary
+// (×2 of update_interval) but adds the intermediate "overdue" amber state
+// between ×1 and ×2. Does NOT depend on `host.status` (active/pending/error),
+// unlike the SQL `isStale` flag which only flips for `status='active'` — so
+// a pending host that's gone silent for 19 hours reads correctly as stale.
+//
+// Keep this aligned with HostStatusPills.jsx `deriveReportingStateByTime`.
+const deriveReportingStateByTime = (lastUpdateIso, updateIntervalMinutes) => {
+	if (!lastUpdateIso) return "stale";
+	const lastUpdateMs = new Date(lastUpdateIso).getTime();
+	if (!Number.isFinite(lastUpdateMs)) return "stale";
+	const interval = Number.isFinite(updateIntervalMinutes)
+		? Math.max(1, updateIntervalMinutes)
+		: 60;
+	const elapsedMin = Math.max(0, (Date.now() - lastUpdateMs) / 60000);
+	if (elapsedMin <= interval) return "reporting";
+	if (elapsedMin <= interval * 2) return "overdue";
+	return "stale";
+};
+
+// `wsConnectedOrUnknown` should be true when either the agent's WS is
+// known-connected OR the WS status hasn't loaded yet — this prevents a
+// brief "Stale" flicker on healthy hosts during the wsStatusMap query
+// loading window. Only an explicit `connected: false` from the API
+// downgrades the pill to red in the overdue range.
+const deriveReportingState = (
+	host,
+	wsConnectedOrUnknown,
+	updateIntervalMinutes,
+) => {
+	const timeState = deriveReportingStateByTime(
+		host?.last_update,
+		updateIntervalMinutes,
+	);
+	if (timeState === "reporting") return "reporting";
+	return wsConnectedOrUnknown ? "overdue" : "stale";
 };
 
 const fetchWsStatusBatches = async (apiIds) => {
@@ -124,6 +168,10 @@ const Hosts = () => {
 	});
 	const [searchParams, setSearchParams] = useSearchParams();
 	const navigate = useNavigate();
+
+	// Single 60s tick for the whole table — every row's "Uptime" cell reads
+	// from this so we don't spawn N intervals on N rows.
+	const tickNow = useTick(60000);
 
 	// Table state
 	const [searchTerm, setSearchTerm] = useState("");
@@ -170,15 +218,15 @@ const Hosts = () => {
 			// We'll filter hosts with updates > 0 in the filtering logic
 		} else if (filter === "inactive") {
 			setShowFilters(true);
-			setStatusFilter("inactive");
+			setStatusFilter("stale");
 			// We'll filter hosts with inactive status in the filtering logic
 		} else if (filter === "upToDate") {
 			setShowFilters(true);
-			setStatusFilter("active");
+			setStatusFilter("reporting");
 			// We'll filter hosts that are up to date in the filtering logic
 		} else if (filter === "stale") {
 			setShowFilters(true);
-			setStatusFilter("all");
+			setStatusFilter("stale");
 			// We'll filter hosts that are stale in the filtering logic
 		} else if (filter === "selected") {
 			setShowFilters(true);
@@ -249,7 +297,7 @@ const Hosts = () => {
 			},
 			{ id: "ws_status", label: "Connection", visible: true, order: 9 },
 			{ id: "integrations", label: "Integrations", visible: true, order: 10 },
-			{ id: "status", label: "Status", visible: true, order: 11 },
+			{ id: "status", label: "Reporting", visible: true, order: 11 },
 			{ id: "needs_reboot", label: "Reboot", visible: true, order: 12 },
 			{ id: "uptime", label: "Uptime", visible: true, order: 13 },
 			{ id: "updates", label: "Updates", visible: true, order: 14 },
@@ -354,19 +402,25 @@ const Hosts = () => {
 
 	// Build backend filter params. Offline connection status is shown as a
 	// fleet summary, not as a paginated table filter, because live WS state
-	// is not stored in the database.
+	// is not stored in the database. Legacy `?filter=offline` deep links
+	// (e.g. from the dashboard "Offline / Stale Hosts" card) get rewritten
+	// to `?filter=stale`, which is the closest semantic match.
 	const urlFilter = searchParams.get("filter") || "";
 	useEffect(() => {
 		if (urlFilter !== "offline") return;
 		const next = new URLSearchParams(searchParams);
-		next.delete("filter");
+		next.set("filter", "stale");
 		navigate(`/hosts?${next.toString()}`, { replace: true });
 	}, [urlFilter, searchParams, navigate]);
 	const hostsQueryParams = useMemo(() => {
 		const params = {};
 		if (debouncedSearch) params.search = debouncedSearch;
 		if (groupFilter && groupFilter !== "all") params.group = groupFilter;
-		if (statusFilter && statusFilter !== "all") params.status = statusFilter;
+		// statusFilter values are now reporting/overdue/stale (derived from the
+		// new tri-state pills). The backend `status` query param expects the raw
+		// host.status enum (active/inactive/...), which has different semantics —
+		// so we apply this filter client-side against the reportingState field
+		// returned by the backend, and never forward it as a server-side filter.
 		if (osFilter && osFilter !== "all") params.os = osFilter;
 		if (osVersionFilter && osVersionFilter !== "all")
 			params.osVersion = osVersionFilter;
@@ -385,7 +439,6 @@ const Hosts = () => {
 	}, [
 		debouncedSearch,
 		groupFilter,
-		statusFilter,
 		osFilter,
 		osVersionFilter,
 		urlFilter,
@@ -514,6 +567,30 @@ const Hosts = () => {
 		staleTime: 10000,
 		refetchOnWindowFocus: false,
 	});
+
+	// host_down alert config drives the WS pill amber→red threshold (seconds).
+	// Falls back to 30s when no config is available.
+	const { data: hostDownAlertConfig } = useQuery({
+		queryKey: ["alert-config", "host_down"],
+		queryFn: () =>
+			alertsAPI.getAlertConfigByType("host_down").then((res) => res.data.data),
+		staleTime: 5 * 60 * 1000,
+		refetchOnWindowFocus: false,
+	});
+	const hostDownThresholdSeconds = useMemo(() => {
+		const raw = hostDownAlertConfig?.metadata?.threshold;
+		const parsed = Number.parseInt(raw, 10);
+		return Number.isFinite(parsed) && parsed > 0 ? parsed : 30;
+	}, [hostDownAlertConfig]);
+
+	// update_interval drives the Reporting pill threshold (×1 = green→amber,
+	// ×2 = amber→red). Default 60 matches the backend default and applies
+	// when settings haven't loaded or the public endpoint omits the field.
+	const updateIntervalMinutes = useMemo(() => {
+		const raw = settings?.update_interval;
+		const parsed = Number.parseInt(raw, 10);
+		return Number.isFinite(parsed) && parsed > 0 ? parsed : 60;
+	}, [settings]);
 
 	// State for auto-update confirmation dialog
 	const [autoUpdateDialog, setAutoUpdateDialog] = useState({
@@ -799,7 +876,7 @@ const Hosts = () => {
 		if (!hostsPage.legacy) return hosts;
 
 		const filtered = hosts.filter((host) => {
-			// Search, group, status, os are filtered by backend - trust the result
+			// Search, group, os are filtered by backend - trust the result.
 			// URL filter for hosts needing updates, inactive hosts, up-to-date hosts, stale hosts, reboot required, or selected hosts.
 			const filter = searchParams.get("filter");
 			const rebootParam = searchParams.get("reboot");
@@ -895,6 +972,18 @@ const Hosts = () => {
 					bValue = b.needs_reboot ? 1 : 0;
 					break;
 				case "uptime": {
+					// Prefer boot_time (TIMESTAMPTZ) when present — matches the
+					// server-side dashboard.sql sort and the live uptime shown in
+					// the row. Falls back to parsing the legacy system_uptime
+					// TEXT only when boot_time is null (e.g. agent hasn't been
+					// upgraded yet to emit boot_time).
+					const bootMinutes = (bootTimeIso) => {
+						if (!bootTimeIso) return null;
+						const ms = Date.parse(bootTimeIso);
+						if (!Number.isFinite(ms)) return null;
+						const minutes = Math.max(0, (Date.now() - ms) / 60000);
+						return minutes;
+					};
 					// Parse uptime strings like "X days, Y hours, Z minutes" into total minutes for numeric sorting
 					const parseUptimeToMinutes = (uptimeStr) => {
 						// Handle null, undefined, empty string, or "Unknown"
@@ -920,8 +1009,12 @@ const Hosts = () => {
 						// If no matches found, return -1 to sort to the end
 						return total > 0 ? total : -1;
 					};
-					aValue = parseUptimeToMinutes(a.system_uptime);
-					bValue = parseUptimeToMinutes(b.system_uptime);
+					const aBoot = bootMinutes(a.boot_time);
+					const bBoot = bootMinutes(b.boot_time);
+					aValue =
+						aBoot !== null ? aBoot : parseUptimeToMinutes(a.system_uptime);
+					bValue =
+						bBoot !== null ? bBoot : parseUptimeToMinutes(b.system_uptime);
 					break;
 				}
 				case "last_update":
@@ -968,7 +1061,33 @@ const Hosts = () => {
 		selectedHostIdsSetForFilter,
 	]);
 
-	const filteredHosts = filteredAndSortedHosts;
+	// Apply the new tri-state Status filter (reporting / overdue / stale) on
+	// top of the backend / legacy-mode filter result. Cross-couples each host's
+	// reportingState with the live WS map so the dropdown matches what the user
+	// sees in the Reporting pill. Done here rather than in the predicate above
+	// so the pill colours and the filter logic stay in lock-step.
+	const filteredHosts = useMemo(() => {
+		if (!statusFilter || statusFilter === "all") return filteredAndSortedHosts;
+		return filteredAndSortedHosts.filter((host) => {
+			// Treat missing WS data as "assume connected" so the dropdown
+			// matches the pill, which uses the same convention.
+			const wsEntry = wsStatusMap[host.api_id];
+			const wsConnectedOrUnknown =
+				wsEntry === undefined || wsEntry?.connected === true;
+			return (
+				deriveReportingState(
+					host,
+					wsConnectedOrUnknown,
+					updateIntervalMinutes,
+				) === statusFilter
+			);
+		});
+	}, [
+		filteredAndSortedHosts,
+		statusFilter,
+		wsStatusMap,
+		updateIntervalMinutes,
+	]);
 
 	// Get unique OS types from hosts for dynamic dropdown
 	const uniqueOsTypes = useMemo(() => {
@@ -1271,36 +1390,58 @@ const Hosts = () => {
 				const wsStatus = wsStatusMap[host.api_id];
 				if (!wsStatus) {
 					return (
-						<span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400">
-							<div className="w-2 h-2 bg-gray-400 rounded-full mr-1.5"></div>
+						<span className="badge badge-secondary">
+							<span className="w-2 h-2 bg-secondary-400 rounded-full mr-1.5" />
 							Unknown
 						</span>
 					);
 				}
+				const seconds = wsStatus.disconnected_seconds_ago;
+				// When duration is unknown (server cold-start with the agent
+				// already disconnected, so the registry never recorded a
+				// DisconnectedAt), treat it as past-threshold rather than
+				// within-grace. Otherwise the pill is stuck on amber forever.
+				const withinGrace =
+					typeof seconds === "number" && seconds <= hostDownThresholdSeconds;
+				let badgeClass;
+				let label;
+				let tooltipText;
+				if (wsStatus.connected) {
+					badgeClass =
+						"badge bg-success-100 text-success-800 dark:bg-success-900/40 dark:text-success-200";
+					label = wsStatus.secure ? "WSS" : "WS";
+					tooltipText = `WebSocket connected${
+						wsStatus.secure ? " (secure)" : ""
+					}. Real-time control channel is active.`;
+				} else if (withinGrace) {
+					badgeClass =
+						"badge bg-warning-100 text-warning-800 dark:bg-warning-900/40 dark:text-warning-200";
+					// `secure` is preserved by registry.Unregister across disconnects,
+					// so the protocol label stays meaningful even when offline.
+					label = wsStatus.secure ? "WSS" : "WS";
+					tooltipText = `WebSocket disconnected (${Math.round(seconds)}s). Within the ${hostDownThresholdSeconds}s grace window — agent may be reconnecting.`;
+				} else {
+					badgeClass =
+						"badge bg-danger-100 text-danger-800 dark:bg-danger-900/40 dark:text-danger-200";
+					label = wsStatus.secure ? "WSS" : "WS";
+					tooltipText =
+						typeof seconds === "number"
+							? `WebSocket has been disconnected for ${Math.round(seconds)}s (threshold: ${hostDownThresholdSeconds}s).`
+							: `WebSocket disconnected — duration unknown (likely past the ${hostDownThresholdSeconds}s threshold). The server may have restarted while the agent was already offline.`;
+				}
 				return (
-					<span
-						className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${
-							wsStatus.connected
-								? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
-								: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
-						}`}
-						title={
-							wsStatus.connected
-								? `Agent connected via ${wsStatus.secure ? "WSS (secure)" : "WS (insecure)"}`
-								: "Agent not connected"
-						}
-					>
-						{wsStatus.connected && (
-							<div className="w-2 h-2 rounded-full mr-1.5 bg-green-500 animate-pulse"></div>
-						)}
-						<span>
-							{wsStatus.connected
-								? wsStatus.secure
-									? "WSS"
-									: "WS"
-								: "Offline"}
-						</span>
-					</span>
+					<Tooltip content={tooltipText}>
+						<button
+							type="button"
+							className={`${badgeClass} cursor-help focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1`}
+							onClick={(e) => e.preventDefault()}
+						>
+							{wsStatus.connected && (
+								<span className="w-2 h-2 rounded-full mr-1.5 bg-success-500 animate-pulse" />
+							)}
+							<span>{label}</span>
+						</button>
+					</Tooltip>
 				);
 			}
 			case "integrations":
@@ -1329,38 +1470,80 @@ const Hosts = () => {
 						)}
 					</div>
 				);
-			case "status":
-				return (
-					<div className="text-sm text-secondary-900 dark:text-white">
-						{(host.effectiveStatus || host.status).charAt(0).toUpperCase() +
-							(host.effectiveStatus || host.status).slice(1)}
-					</div>
+			case "status": {
+				// Treat missing WS data as "assume connected" so a healthy
+				// host doesn't flicker through "Stale" before wsStatusMap
+				// loads. Aligned with HostStatusPills' wsConnectedOrUnknown.
+				const wsEntry = wsStatusMap[host.api_id];
+				const wsConnectedOrUnknown =
+					wsEntry === undefined || wsEntry?.connected === true;
+				const reportingState = deriveReportingState(
+					host,
+					wsConnectedOrUnknown,
+					updateIntervalMinutes,
 				);
+				const lastUpdateRel = formatRelativeTime(host.last_update);
+				let badgeClass;
+				let label;
+				let tooltipText;
+				if (reportingState === "reporting") {
+					badgeClass =
+						"badge bg-success-100 text-success-800 dark:bg-success-900/40 dark:text-success-200";
+					label = "Reporting";
+					tooltipText = `Agent reported recently. Last update: ${lastUpdateRel}.`;
+				} else if (reportingState === "overdue") {
+					badgeClass =
+						"badge bg-warning-100 text-warning-800 dark:bg-warning-900/40 dark:text-warning-200";
+					label = "Overdue";
+					tooltipText = `Agent has not pushed a report yet but the WebSocket is still connected — likely transient. Last update: ${lastUpdateRel}.`;
+				} else {
+					badgeClass =
+						"badge bg-danger-100 text-danger-800 dark:bg-danger-900/40 dark:text-danger-200";
+					label = "Stale";
+					tooltipText = `Agent has not reported and the WebSocket is disconnected. Last update: ${lastUpdateRel}.`;
+				}
+				return (
+					<Tooltip content={tooltipText}>
+						<button
+							type="button"
+							className={`${badgeClass} cursor-help focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1`}
+							onClick={(e) => e.preventDefault()}
+						>
+							{label}
+						</button>
+					</Tooltip>
+				);
+			}
 			case "needs_reboot":
 				return (
 					<div className="flex justify-center">
 						{host.needs_reboot ? (
-							<span
-								className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
-								title={host.reboot_reason || "Reboot required"}
-							>
-								<RotateCcw className="h-3 w-3" />
-								Required
-							</span>
+							<Tooltip content={host.reboot_reason || "Reboot required"}>
+								<button
+									type="button"
+									className="badge bg-warning-100 text-warning-800 dark:bg-warning-900/40 dark:text-warning-200 gap-1 cursor-help focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1"
+									onClick={(e) => e.preventDefault()}
+								>
+									<RotateCcw className="h-3 w-3" />
+									Required
+								</button>
+							</Tooltip>
 						) : (
-							<span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+							<span className="badge bg-success-100 text-success-800 dark:bg-success-900/40 dark:text-success-200 gap-1">
 								<CheckCircle className="h-3 w-3" />
 								No
 							</span>
 						)}
 					</div>
 				);
-			case "uptime":
+			case "uptime": {
+				const live = formatLiveUptime(host.boot_time, tickNow);
 				return (
 					<div className="text-sm text-secondary-900 dark:text-white">
-						{host.system_uptime || "N/A"}
+						{live || host.system_uptime || "N/A"}
 					</div>
 				);
+			}
 			case "updates":
 				return (
 					<button
@@ -1781,7 +1964,7 @@ const Hosts = () => {
 											htmlFor={statusFilterId}
 											className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-1"
 										>
-											Status
+											Reporting
 										</label>
 										<select
 											id={statusFilterId}
@@ -1789,11 +1972,10 @@ const Hosts = () => {
 											onChange={(e) => setStatusFilter(e.target.value)}
 											className="w-full border border-secondary-300 dark:border-secondary-600 rounded-lg px-3 py-2.5 sm:py-2 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white min-h-[44px]"
 										>
-											<option value="all">All Status</option>
-											<option value="active">Active</option>
-											<option value="pending">Pending</option>
-											<option value="inactive">Inactive</option>
-											<option value="error">Error</option>
+											<option value="all">All</option>
+											<option value="reporting">Reporting</option>
+											<option value="overdue">Overdue</option>
+											<option value="stale">Stale</option>
 										</select>
 									</div>
 									<div>
@@ -1990,8 +2172,8 @@ const Hosts = () => {
 																	)}
 																</div>
 
-																{/* OS, Status and connection info */}
-																<div className="flex items-center justify-between gap-2">
+																{/* OS + status pills */}
+																<div className="flex items-center justify-between gap-2 flex-wrap">
 																	{visibleColumns.some(
 																		(col) => col.id === "os",
 																	) && (
@@ -2005,63 +2187,18 @@ const Hosts = () => {
 																			</span>
 																		</div>
 																	)}
-																	<div className="flex flex-wrap items-center gap-2">
-																		{visibleColumns.some(
-																			(col) => col.id === "status",
-																		) && (
-																			<span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-white">
-																				{(host.effectiveStatus || host.status)
-																					.charAt(0)
-																					.toUpperCase() +
-																					(
-																						host.effectiveStatus || host.status
-																					).slice(1)}
-																			</span>
-																		)}
-																		{visibleColumns.some(
-																			(col) => col.id === "ws_status",
-																		) &&
-																			wsStatus && (
-																				<span
-																					className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${
-																						wsStatus.connected
-																							? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
-																							: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
-																					}`}
-																				>
-																					{wsStatus.connected && (
-																						<div className="w-2 h-2 rounded-full mr-1.5 bg-green-500 animate-pulse"></div>
-																					)}
-																					<span>
-																						{wsStatus.connected
-																							? wsStatus.secure
-																								? "WSS"
-																								: "WS"
-																							: "Offline"}
-																					</span>
-																				</span>
-																			)}
-																	</div>
+																	<HostStatusPills
+																		host={host}
+																		wsStatus={wsStatus}
+																		hostDownThresholdSeconds={
+																			hostDownThresholdSeconds
+																		}
+																		updateIntervalMinutes={
+																			updateIntervalMinutes
+																		}
+																		compact
+																	/>
 																</div>
-
-																{/* Reboot Required */}
-																{visibleColumns.some(
-																	(col) => col.id === "needs_reboot",
-																) &&
-																	host.needs_reboot && (
-																		<div>
-																			<span
-																				className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
-																				title={
-																					host.reboot_reason ||
-																					"Reboot required"
-																				}
-																			>
-																				<RotateCcw className="h-3 w-3" />
-																				Reboot Required
-																			</span>
-																		</div>
-																	)}
 
 																{/* Group info */}
 																<div className="flex flex-wrap items-center gap-3 text-sm">
@@ -2113,7 +2250,7 @@ const Hosts = () => {
 																					`/packages?host=${host.id}&filter=security-updates`,
 																				)
 																			}
-																			className="text-sm text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 font-medium min-h-[44px] flex items-center"
+																			className="text-sm text-danger-600 hover:text-danger-700 dark:text-danger-400 dark:hover:text-danger-300 font-medium min-h-[44px] flex items-center"
 																		>
 																			{host.securityUpdatesCount || 0} Security
 																		</button>

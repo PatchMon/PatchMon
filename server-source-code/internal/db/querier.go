@@ -129,7 +129,6 @@ type Querier interface {
 	CountImages(ctx context.Context, arg CountImagesParams) (int32, error)
 	CountNetworks(ctx context.Context, arg CountNetworksParams) (int32, error)
 	CountNetworksByHostID(ctx context.Context, hostID string) (int32, error)
-	CountPackages(ctx context.Context, arg CountPackagesParams) (int32, error)
 	CountPatchRuns(ctx context.Context, arg CountPatchRunsParams) (int64, error)
 	CountPatchRunsTotal(ctx context.Context) (int64, error)
 	CountRepositories(ctx context.Context) (int32, error)
@@ -276,6 +275,24 @@ type Querier interface {
 	GetHostPackageStats(ctx context.Context, hostID string) (GetHostPackageStatsRow, error)
 	GetHostPackageStatsByHostIDs(ctx context.Context, dollar_1 []string) ([]GetHostPackageStatsByHostIDsRow, error)
 	GetHostPackagesForScopedApi(ctx context.Context, hostID string) ([]GetHostPackagesForScopedApiRow, error)
+	// ListPackages and CountPackages are intentionally NOT defined here.
+	// They live as raw SQL builders in internal/store/packages_list_sql.go.
+	//
+	// Why hand-rolled rather than sqlc:
+	//   1. ORDER BY needs a CASE-WHEN-per-sort-key dance to stay parameterised,
+	//      which forces a full sort over the entire filtered CTE before LIMIT
+	//      can fire — defeats any index-ordered scan + LIMIT pushdown.
+	//      Building "ORDER BY <whitelisted column> <dir>" in Go lets the
+	//      planner drive output from the existing btree on packages(name)
+	//      (and similar) for typical queries, killing the parallel-sort path
+	//      that blows Docker's default /dev/shm.
+	//   2. The host_packages EXISTS / NOT EXISTS branches are only relevant
+	//      when the corresponding filter param is set; emitting them
+	//      conditionally in Go produces a much tighter predicate that the
+	//      planner can prune cheaply.
+	// Per-package counters still come from mv_package_stats (refreshed every
+	// ~2 min by an asynq scheduler — see TypePackageStatsRefresh) so we avoid
+	// per-request aggregation over host_packages.
 	// (Removed) GetHostPackageStatsByPackageIDs / GetUpdatesCountByPackageIDs /
 	// GetSecurityCountByPackageIDs — superseded by mv_package_stats. The
 	// per-package counters returned to the Packages list page now come from
@@ -424,29 +441,6 @@ type Querier interface {
 	ListOrphanedImages(ctx context.Context) ([]ListOrphanedImagesRow, error)
 	ListOrphanedPackages(ctx context.Context) ([]ListOrphanedPackagesRow, error)
 	ListOrphanedRepositories(ctx context.Context) ([]ListOrphanedRepositoriesRow, error)
-	// Per-package counts come from mv_package_stats (a materialised view of
-	// per-package install / update / security counters refreshed every couple
-	// of minutes by the asynq scheduler — see TypePackageStatsRefresh).
-	//
-	// Why a matview rather than a fresh aggregate per request:
-	//   * Global GROUP BY over the full host_packages table (~1.3 M rows at
-	//     1k-host scale) needs ~140 MB work_mem to avoid disk spill and
-	//     still takes ~10 s for the aggregation.
-	//   * LEFT JOIN LATERAL with a per-package COUNT lookup is fast per
-	//     call but with ~2.3 M `packages` rows the outer driver costs
-	//     ~30 s before LIMIT can fire.
-	//   * mv_package_stats stores the counters keyed by package_id and is
-	//     joined here as a single indexed hash join. Sub-millisecond lookup
-	//     for the small page we LIMIT to. Trade-off: counters are stale by
-	//     up to the refresh interval (2 min) — acceptable on an admin page.
-	// Return the per-package counters from mv_package_stats alongside the
-	// core fields so the store can render the page response without firing
-	// additional aggregate round-trips. These are global counts (i.e.
-	// "this package is installed on N hosts across the fleet"), not
-	// host-filtered — that matches the existing UX where the per-row
-	// "Installed On" badge always shows the package's full footprint even
-	// when a host filter is active in the table above.
-	ListPackages(ctx context.Context, arg ListPackagesParams) ([]ListPackagesRow, error)
 	// patch_policies
 	ListPatchPolicies(ctx context.Context) ([]PatchPolicy, error)
 	ListPatchPolicyAssignments(ctx context.Context, arg ListPatchPolicyAssignmentsParams) ([]PatchPolicyAssignment, error)

@@ -183,6 +183,33 @@ func nocMetaStr(m map[string]interface{}, key string) string {
 	return fmt.Sprint(v)
 }
 
+// nocFormatHostDownThreshold renders the host_down alert threshold for human
+// readers. Prefers `threshold_seconds` (added with the four-pill UI redesign,
+// alert_config metadata.threshold semantics moved to seconds with a 30s
+// default); falls back to legacy `threshold_minutes` for backwards-compat
+// metadata. Returns an empty string when neither is set.
+func nocFormatHostDownThreshold(m map[string]interface{}) string {
+	if secs := nocMetaStr(m, "threshold_seconds"); secs != "" && secs != "0" {
+		// nocMetaStr returns the JSON value via fmt.Sprint, so a JSON number
+		// becomes "30" or "30.0". Cheap parse, ignore failures.
+		var n int
+		if _, err := fmt.Sscanf(secs, "%d", &n); err == nil && n > 0 {
+			if n < 60 {
+				return fmt.Sprintf("%d seconds", n)
+			}
+			minutes := n / 60
+			if minutes == 1 {
+				return "1 minute"
+			}
+			return fmt.Sprintf("%d minutes", minutes)
+		}
+	}
+	if mins := nocMetaStr(m, "threshold_minutes"); mins != "" && mins != "0" {
+		return mins + " minutes"
+	}
+	return ""
+}
+
 // nocMetaStrSlice extracts a []string from metadata (stored as []interface{} after JSON round-trip).
 func nocMetaStrSlice(m map[string]interface{}, key string) []string {
 	v, ok := m[key]
@@ -306,8 +333,8 @@ func buildNOCFields(p notifications.NotificationDeliverPayload) []map[string]int
 		if lastUpdate := nocMetaStr(m, "last_update"); lastUpdate != "" {
 			addField("Last Seen", lastUpdate, true)
 		}
-		if threshold := nocMetaStr(m, "threshold_minutes"); threshold != "" && threshold != "0" {
-			addField("Threshold", threshold+" minutes", true)
+		if threshold := nocFormatHostDownThreshold(m); threshold != "" {
+			addField("Threshold", threshold, true)
 		}
 		if reason := nocMetaStr(m, "disconnect_reason"); reason != "" {
 			addField("Disconnect", reason, true)
@@ -315,7 +342,7 @@ func buildNOCFields(p notifications.NotificationDeliverPayload) []map[string]int
 
 	case p.EventType == "host_recovered":
 		addField("Host", nocMetaStr(m, "host_name"), true)
-		addField("Status", "🟢 RECOVERED", true)
+		addField("Status", "🟢 AGENT RECOVERED", true)
 
 	case p.EventType == "server_update" || p.EventType == "agent_update":
 		addField("Current Version", nocMetaStr(m, "current_version"), true)
@@ -448,14 +475,14 @@ func buildSlackNOCFields(p notifications.NotificationDeliverPayload) string {
 		addLine("Host", nocMetaStr(m, "host_name"))
 		addLine("Severity", severityEmoji(p.Severity)+" "+strings.ToUpper(p.Severity))
 		addLine("Last Seen", nocMetaStr(m, "last_update"))
-		if t := nocMetaStr(m, "threshold_minutes"); t != "" && t != "0" {
-			addLine("Threshold", t+" minutes")
+		if t := nocFormatHostDownThreshold(m); t != "" {
+			addLine("Threshold", t)
 		}
 		addLine("Disconnect", nocMetaStr(m, "disconnect_reason"))
 
 	case p.EventType == "host_recovered":
 		addLine("Host", nocMetaStr(m, "host_name"))
-		addLine("Status", "🟢 RECOVERED")
+		addLine("Status", "🟢 AGENT RECOVERED")
 
 	case p.EventType == "server_update" || p.EventType == "agent_update":
 		addLine("Current Version", nocMetaStr(m, "current_version"))
@@ -724,7 +751,9 @@ func buildEmailHTML(p notifications.NotificationDeliverPayload) string {
 	case p.EventType == "host_down":
 		addRow("Host", nocMetaStr(m, "host_name"))
 		addRow("Last Seen", nocMetaStr(m, "last_update"))
-		addRow("Threshold", nocMetaStr(m, "threshold_minutes")+" minutes")
+		if t := nocFormatHostDownThreshold(m); t != "" {
+			addRow("Threshold", t)
+		}
 
 	case p.EventType == "host_recovered":
 		addRow("Host", nocMetaStr(m, "host_name"))
@@ -893,13 +922,13 @@ func buildNtfyMessage(p notifications.NotificationDeliverPayload) string {
 		addLine("Host", nocMetaStr(m, "host_name"))
 		addLine("Severity", strings.ToUpper(p.Severity))
 		addLine("Last seen", nocMetaStr(m, "last_update"))
-		if t := nocMetaStr(m, "threshold_minutes"); t != "" && t != "0" {
-			addLine("Threshold", t+" minutes")
+		if t := nocFormatHostDownThreshold(m); t != "" {
+			addLine("Threshold", t)
 		}
 		addLine("Disconnect", nocMetaStr(m, "disconnect_reason"))
 	case p.EventType == "host_recovered":
 		addLine("Host", nocMetaStr(m, "host_name"))
-		addLine("Status", "RECOVERED")
+		addLine("Status", "AGENT RECOVERED")
 	case p.EventType == "server_update" || p.EventType == "agent_update":
 		addLine("Current version", nocMetaStr(m, "current_version"))
 		addLine("Available version", nocMetaStr(m, "latest_version"))

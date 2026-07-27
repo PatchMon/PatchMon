@@ -227,6 +227,7 @@ CREATE TABLE IF NOT EXISTS hosts (
     selinux_status TEXT,
     swap_size DOUBLE PRECISION,
     system_uptime TEXT,
+    boot_time TIMESTAMPTZ,
     notes TEXT,
     needs_reboot BOOLEAN DEFAULT false,
     reboot_reason TEXT,

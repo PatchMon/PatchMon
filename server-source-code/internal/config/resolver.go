@@ -15,13 +15,16 @@ import (
 // ResolvedConfig holds the effective configuration after merging env, DB, and defaults.
 // Env takes priority over DB, which takes priority over code defaults.
 type ResolvedConfig struct {
-	CORSOrigin                  string
-	EnableLogging               bool
-	LogLevel                    string
-	MaxLoginAttempts            int
-	LockoutDurationMin          int
-	EnableHSTS                  bool
-	TrustProxy                  bool
+	CORSOrigin         string
+	EnableLogging      bool
+	LogLevel           string
+	MaxLoginAttempts   int
+	LockoutDurationMin int
+	EnableHSTS         bool
+	TrustProxy         bool
+	// TrustedProxyRanges is env-only (no DB override): allowing it to be edited from
+	// the settings UI would let an admin widen it and restore XFF spoofing.
+	TrustedProxyRanges          []string
 	RateLimitWindowMs           int
 	RateLimitMax                int
 	AuthRateLimitWindowMs       int
@@ -66,6 +69,7 @@ func ResolveConfig(ctx context.Context, cfg *Config, settings *models.Settings) 
 	out.LockoutDurationMin = resolveInt("LOCKOUT_DURATION_MINUTES", settings.LockoutDurationMinutes, cfg.LockoutDurationMin)
 	out.EnableHSTS = resolveBool("ENABLE_HSTS", settings.EnableHSTS, cfg.EnableHSTS)
 	out.TrustProxy = resolveBool("TRUST_PROXY", settings.TrustProxy, cfg.TrustProxy)
+	out.TrustedProxyRanges = cfg.TrustedProxyRanges
 	out.RateLimitWindowMs = resolveInt("RATE_LIMIT_WINDOW_MS", settings.RateLimitWindowMs, cfg.RateLimitWindowMs)
 	out.RateLimitMax = resolveInt("RATE_LIMIT_MAX", settings.RateLimitMax, cfg.RateLimitMax)
 	out.AuthRateLimitWindowMs = resolveInt("AUTH_RATE_LIMIT_WINDOW_MS", settings.AuthRateLimitWindowMs, cfg.AuthRateLimitWindowMs)
@@ -114,6 +118,7 @@ func resolveFromEnvAndDefaults(cfg *Config) *ResolvedConfig {
 		LockoutDurationMin:          cfg.LockoutDurationMin,
 		EnableHSTS:                  cfg.EnableHSTS,
 		TrustProxy:                  cfg.TrustProxy,
+		TrustedProxyRanges:          cfg.TrustedProxyRanges,
 		RateLimitWindowMs:           cfg.RateLimitWindowMs,
 		RateLimitMax:                cfg.RateLimitMax,
 		AuthRateLimitWindowMs:       cfg.AuthRateLimitWindowMs,

@@ -4,9 +4,9 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
+	"github.com/PatchMon/PatchMon/server-source-code/internal/clientip"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 )
@@ -174,16 +174,14 @@ func RateLimitAgentByAPIID(rdb *hostctx.RedisResolver, resolved *config.Resolved
 	}
 }
 
+// rateLimitClientIP returns the client IP to key the rate-limit bucket on.
+//
+// It deliberately does NOT read X-Forwarded-For itself. The RealIP middleware
+// has already resolved it into RemoteAddr; parsing the header here would take
+// the client-supplied leftmost entry and let callers rotate buckets at will.
 func rateLimitClientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if idx := strings.Index(xff, ","); idx != -1 {
-			return strings.TrimSpace(xff[:idx])
-		}
-		return strings.TrimSpace(xff)
-	}
-	host, _, _ := strings.Cut(r.RemoteAddr, ":")
-	if host != "" {
-		return host
+	if ip := clientip.FromRequest(r); ip != "" {
+		return ip
 	}
 	return r.RemoteAddr
 }

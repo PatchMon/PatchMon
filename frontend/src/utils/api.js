@@ -610,6 +610,51 @@ export const formatRelativeTime = (date) => {
 	return "just now";
 };
 
+/**
+ * Format live uptime computed from a boot timestamp.
+ *
+ * Renders strings matching the agent's existing uptime format:
+ *   - ">= 1 day"       -> "X days, Y hours, Z minutes"
+ *   - ">= 1 hour"      -> "Y hours, Z minutes"
+ *   - "< 1 hour"       -> "Z minutes"
+ *   - "< 1 minute"     -> "0 minutes"
+ *
+ * Returns "" when bootTimeIso is null/undefined/empty/unparseable so the
+ * caller can fall back to the stored host.system_uptime string.
+ *
+ * Pure function: takes nowMs as an argument (defaults to Date.now()) so the
+ * caller can pass an externally-tracked tick value and useMemo can actually
+ * memoize.
+ *
+ * @param {string|null|undefined} bootTimeIso - ISO 8601 / RFC 3339 timestamp
+ * @param {number} [nowMs=Date.now()] - Reference "now" in ms since epoch
+ * @returns {string}
+ */
+export const formatLiveUptime = (bootTimeIso, nowMs = Date.now()) => {
+	if (!bootTimeIso) return "";
+	const bootMs = Date.parse(bootTimeIso);
+	if (Number.isNaN(bootMs)) return "";
+
+	// Clamp to 0 if the boot time is in the future (clock skew).
+	const diffMs = Math.max(0, nowMs - bootMs);
+	const totalMinutes = Math.floor(diffMs / 60000);
+	const days = Math.floor(totalMinutes / 1440);
+	const hours = Math.floor((totalMinutes % 1440) / 60);
+	const minutes = totalMinutes % 60;
+
+	if (days > 0) {
+		return `${days} day${days === 1 ? "" : "s"}, ${hours} hour${
+			hours === 1 ? "" : "s"
+		}, ${minutes} minute${minutes === 1 ? "" : "s"}`;
+	}
+	if (hours > 0) {
+		return `${hours} hour${hours === 1 ? "" : "s"}, ${minutes} minute${
+			minutes === 1 ? "" : "s"
+		}`;
+	}
+	return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+};
+
 // Search API
 export const searchAPI = {
 	global: (query, config = {}) =>

@@ -103,66 +103,42 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 	}
 	offset := (p.Page - 1) * p.Limit
 
-	listArg := db.ListPackagesParams{
-		SortKey: sortKey,
-		SortDir: sortDir,
-		Limit:   safeconv.ClampToInt32(p.Limit),
-		Offset:  safeconv.ClampToInt32(offset),
-	}
+	filters := packagesListFilters{}
 	if p.Search != "" {
-		listArg.Search = &p.Search
+		filters.Search = &p.Search
 	}
 	if p.Category != "" {
-		listArg.Category = &p.Category
+		filters.Category = &p.Category
 	}
 	if p.Host != "" {
-		listArg.HostID = &p.Host
+		filters.HostID = &p.Host
 	}
 	if p.NeedsUpdate == "true" {
-		listArg.NeedsUpdate = &p.NeedsUpdate
+		filters.NeedsUpdate = &p.NeedsUpdate
 	}
 	if p.IsSecurityUpdate != "" {
-		listArg.IsSecurityUpdate = &p.IsSecurityUpdate
+		filters.IsSecurityUpdate = &p.IsSecurityUpdate
 	}
 	if p.Repository != "" {
-		listArg.RepositoryID = &p.Repository
+		filters.RepositoryID = &p.Repository
 	}
 
-	countArg := db.CountPackagesParams{}
-	if p.Search != "" {
-		countArg.Search = &p.Search
-	}
-	if p.Category != "" {
-		countArg.Category = &p.Category
-	}
-	if p.Host != "" {
-		countArg.HostID = &p.Host
-	}
-	if p.NeedsUpdate == "true" {
-		countArg.NeedsUpdate = &p.NeedsUpdate
-	}
-	if p.IsSecurityUpdate != "" {
-		countArg.IsSecurityUpdate = &p.IsSecurityUpdate
-	}
-	if p.Repository != "" {
-		countArg.RepositoryID = &p.Repository
-	}
-
-	// CountPackages + ListPackages run in one transaction. The host_packages
-	// per-package counters returned by ListPackages come from
-	// mv_package_stats (refreshed every 2 minutes by the asynq scheduler);
-	// the work_mem bump is retained for CountPackages, which still has to
-	// touch host_packages directly for filter predicates such as
-	// is_security_update='false' / repository_id.
+	// CountPackages + ListPackages run in one transaction. Both queries
+	// are now built dynamically (see packages_list_sql.go) so the WHERE
+	// predicate reflects only the active filters and the ORDER BY column
+	// is whitelisted into the SQL — no more CASE-WHEN sort that defeats
+	// LIMIT pushdown. The work_mem bump is retained because CountPackages
+	// still has to touch host_packages directly for the EXISTS / NOT
+	// EXISTS branches when those filters are active.
 	var total int32
-	var pkgs []db.ListPackagesRow
-	if werr := withWorkMemTx(ctx, s.db, func(q *db.Queries) error {
+	var pkgs []listPackagesRow
+	if werr := withWorkMemTxRaw(ctx, s.db, func(_ *db.Queries, tx pgx.Tx) error {
 		var err error
-		total, err = q.CountPackages(ctx, countArg)
+		total, err = runCountPackages(ctx, tx, filters)
 		if err != nil {
 			return err
 		}
-		pkgs, err = q.ListPackages(ctx, listArg)
+		pkgs, err = runListPackages(ctx, tx, filters, sortKey, sortDir, safeconv.ClampToInt32(p.Limit), safeconv.ClampToInt32(offset))
 		return err
 	}); werr != nil {
 		return nil, 0, werr

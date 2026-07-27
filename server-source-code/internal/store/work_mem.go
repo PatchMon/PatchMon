@@ -6,6 +6,7 @@ import (
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/jackc/pgx/v5"
 )
 
 // withWorkMemTx opens a short-lived transaction, raises Postgres `work_mem`
@@ -41,6 +42,35 @@ func withWorkMemTx(ctx context.Context, p database.DBProvider, fn func(q *db.Que
 	}
 
 	if err := fn(d.Queries.WithTx(tx)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// withWorkMemTxRaw is the same as withWorkMemTx but also hands the
+// underlying pgx.Tx to the callback, for callers that need to run raw
+// (non-sqlc) SQL alongside generated queries — e.g. the dynamic
+// ORDER-BY-by-whitelist path used by the Packages list page. The two
+// arguments share the same transaction so the work_mem GUC applies to
+// both.
+func withWorkMemTxRaw(ctx context.Context, p database.DBProvider, fn func(q *db.Queries, tx pgx.Tx) error) error {
+	d := p.DB(ctx)
+	tx, err := d.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, "SET LOCAL work_mem = '32MB'"); err != nil {
+		slog.Warn("store: SET LOCAL work_mem failed, retrying without bump", "error", err)
+		_ = tx.Rollback(ctx)
+		tx, err = d.Begin(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := fn(d.Queries.WithTx(tx), tx); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 // Package represents a software package
 type Package struct {
 	Name             string `json:"name"`
@@ -32,10 +34,15 @@ type Repository struct {
 
 // SystemInfo represents system information
 type SystemInfo struct {
-	KernelVersion string    `json:"kernelVersion"`
-	SELinuxStatus string    `json:"selinuxStatus"`
-	SystemUptime  string    `json:"systemUptime"`
-	LoadAverage   []float64 `json:"loadAverage"`
+	KernelVersion string `json:"kernelVersion"`
+	SELinuxStatus string `json:"selinuxStatus"`
+	SystemUptime  string `json:"systemUptime"`
+	// BootTime is the host's boot instant (UTC). Shipped alongside the
+	// pre-formatted SystemUptime so newer servers can compute live uptime
+	// from now() - boot_time without waiting for the next agent report.
+	// Nil when collection failed; the SystemUptime fallback still works.
+	BootTime    *time.Time `json:"bootTime,omitempty"`
+	LoadAverage []float64  `json:"loadAverage"`
 }
 
 // HardwareInfo represents hardware information
@@ -83,32 +90,36 @@ type NetworkAddress struct {
 
 // ReportPayload represents the data sent to the server
 type ReportPayload struct {
-	Packages               []Package          `json:"packages"`
-	Repositories           []Repository       `json:"repositories"`
-	OSType                 string             `json:"osType"`
-	OSVersion              string             `json:"osVersion"`
-	Hostname               string             `json:"hostname"`
-	IP                     string             `json:"ip"`
-	Architecture           string             `json:"architecture"`
-	AgentVersion           string             `json:"agentVersion"`
-	MachineID              string             `json:"machineId"`
-	KernelVersion          string             `json:"kernelVersion"`
-	InstalledKernelVersion string             `json:"installedKernelVersion,omitempty"`
-	SELinuxStatus          string             `json:"selinuxStatus"`
-	SystemUptime           string             `json:"systemUptime"`
-	LoadAverage            []float64          `json:"loadAverage"`
-	CPUModel               string             `json:"cpuModel"`
-	CPUCores               int                `json:"cpuCores"`
-	RAMInstalled           float64            `json:"ramInstalled"`
-	SwapSize               float64            `json:"swapSize"`
-	DiskDetails            []DiskInfo         `json:"diskDetails"`
-	GatewayIP              string             `json:"gatewayIp"`
-	DNSServers             []string           `json:"dnsServers"`
-	NetworkInterfaces      []NetworkInterface `json:"networkInterfaces"`
-	ExecutionTime          float64            `json:"executionTime"` // Collection time in seconds
-	NeedsReboot            bool               `json:"needsReboot"`
-	RebootReason           string             `json:"rebootReason,omitempty"`
-	PackageManager         string             `json:"packageManager,omitempty"`
+	Packages               []Package    `json:"packages"`
+	Repositories           []Repository `json:"repositories"`
+	OSType                 string       `json:"osType"`
+	OSVersion              string       `json:"osVersion"`
+	Hostname               string       `json:"hostname"`
+	IP                     string       `json:"ip"`
+	Architecture           string       `json:"architecture"`
+	AgentVersion           string       `json:"agentVersion"`
+	MachineID              string       `json:"machineId"`
+	KernelVersion          string       `json:"kernelVersion"`
+	InstalledKernelVersion string       `json:"installedKernelVersion,omitempty"`
+	SELinuxStatus          string       `json:"selinuxStatus"`
+	SystemUptime           string       `json:"systemUptime"`
+	// BootTime mirrors SystemInfo.BootTime — the host boot instant (UTC).
+	// Newer servers persist this so the UI can render live uptime; older
+	// servers ignore the field, leaving SystemUptime as the source.
+	BootTime          *time.Time         `json:"bootTime,omitempty"`
+	LoadAverage       []float64          `json:"loadAverage"`
+	CPUModel          string             `json:"cpuModel"`
+	CPUCores          int                `json:"cpuCores"`
+	RAMInstalled      float64            `json:"ramInstalled"`
+	SwapSize          float64            `json:"swapSize"`
+	DiskDetails       []DiskInfo         `json:"diskDetails"`
+	GatewayIP         string             `json:"gatewayIp"`
+	DNSServers        []string           `json:"dnsServers"`
+	NetworkInterfaces []NetworkInterface `json:"networkInterfaces"`
+	ExecutionTime     float64            `json:"executionTime"` // Collection time in seconds
+	NeedsReboot       bool               `json:"needsReboot"`
+	RebootReason      string             `json:"rebootReason,omitempty"`
+	PackageManager    string             `json:"packageManager,omitempty"`
 	// Sections, when set, restricts which top-level blocks the server
 	// processes. Empty/absent means "full report" for backwards compatibility.
 	Sections []string `json:"sections,omitempty"`
@@ -152,6 +163,10 @@ type PingMetrics struct {
 	SwapSize     *float64   `json:"swapSize,omitempty"`
 	DiskDetails  []DiskInfo `json:"diskDetails,omitempty"`
 	SystemUptime *string    `json:"systemUptime,omitempty"`
+	// BootTime, when non-nil, is the host's boot instant (UTC). Lets the
+	// server / UI compute live uptime as now() - boot_time and avoids the
+	// stale-pre-formatted-string drift between reports.
+	BootTime     *time.Time `json:"bootTime,omitempty"`
 	LoadAverage  []float64  `json:"loadAverage,omitempty"`
 	NeedsReboot  *bool      `json:"needsReboot,omitempty"`
 	RebootReason *string    `json:"rebootReason,omitempty"`

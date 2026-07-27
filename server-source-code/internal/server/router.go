@@ -14,6 +14,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/ai"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/auth/oidc"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/clientip"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
@@ -28,7 +29,6 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/swagger"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/go-chi/chi/v5"
-	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/hibiken/asynq"
 	redisclient "github.com/redis/go-redis/v9"
 	httpSwagger "github.com/swaggo/http-swagger"
@@ -68,9 +68,20 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	}
 	r.Use(middleware.CORS(resolved.CORSOrigin, corsOriginResolver(ctxRegistry)))
 	if resolved.TrustProxy {
-		r.Use(chimw.RealIP)
+		// Resolve the client IP from X-Forwarded-For before anything that keys
+		// on it (rate limiting, API auth, login lockout, audit logging). Must
+		// not use chi's RealIP: it takes the leftmost entry, which is whatever
+		// the client sent, so callers could pick their own rate-limit bucket.
+		trustedProxies, invalid := clientip.ParseTrustedProxies(resolved.TrustedProxyRanges)
+		if len(invalid) > 0 && log != nil {
+			// slog quotes string values, so a malformed entry cannot break the
+			// log line. These come from the operator's env, not from requests.
+			log.Warn("ignoring invalid TRUSTED_PROXY_RANGES entries",
+				"entries", strings.Join(invalid, ", "))
+		}
+		r.Use(middleware.RealIP(trustedProxies))
 	}
-	// Note: chimw.Timeout is NOT applied globally because it conflicts with
+	// Note: chi's Timeout middleware is NOT applied globally because it conflicts with
 	// WebSocket/SSE routes (hijacked connections). It writes a 503 to a
 	// hijacked ResponseWriter causing "WriteHeader on hijacked connection".
 	// Instead, timeout is applied per-group below, skipping WS routes.
@@ -286,7 +297,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		}
 		// Note: /api/v1/internal/migrate-tenant is intentionally registered
 		// at the router root (above) rather than inside this /api/v1 group,
-		// because the group's 30s chimw.Timeout would defeat the handler's
+		// because the group's 30s Timeout middleware would defeat the handler's
 		// 10-minute migration bound.
 		// OpenAPI spec (public, for Swagger UI and tooling)
 		r.Get("/openapi.json", swagger.ServeSpec)

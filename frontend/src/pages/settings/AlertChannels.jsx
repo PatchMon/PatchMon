@@ -13,11 +13,12 @@ import {
 	Plus,
 	RefreshCw,
 	Send,
+	Slack,
 	Trash2,
 	X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { SiDiscord, SiNtfy, SiSlack } from "react-icons/si";
+import { SiDiscord, SiNtfy } from "react-icons/si";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { useToast } from "../../contexts/ToastContext";
@@ -32,8 +33,8 @@ import {
 
 const EVENT_TYPES = [
 	{ value: "*", label: "All events" },
-	{ value: "host_down", label: "Host down" },
-	{ value: "host_recovered", label: "Host recovered / up" },
+	{ value: "host_down", label: "Host Agent Down" },
+	{ value: "host_recovered", label: "Host Agent Recovered" },
 	{ value: "host_enrolled", label: "Host enrolled" },
 	{ value: "host_deleted", label: "Host deleted" },
 	{ value: "server_update", label: "Server update" },
@@ -93,7 +94,7 @@ const CHANNEL_TYPES = [
 		label: "Webhook",
 		description: "Generic, Discord, or Slack",
 		icon: Globe,
-		brandIcons: { discord: SiDiscord, slack: SiSlack },
+		brandIcons: { discord: SiDiscord, slack: Slack },
 	},
 	{
 		value: "email",

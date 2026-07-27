@@ -35,19 +35,24 @@ CMD ["go", "run", "./cmd/server"]
 # Frontend builder stage for production
 FROM dhi.io/node:22-debian13-dev AS frontend-builder
 
+WORKDIR /app
+
+# Install from the committed lockfile so the image resolves exactly the versions
+# the host and CI resolve. The previous "rm package-lock.json && npm install
+# --force" left the image free to pick any version matching the semver ranges,
+# which silently broke the build when react-icons 5.7.0 dropped SiSlack.
+#
+# frontend is an npm workspace member and the lockfile lives at the repo root,
+# so both manifests must be present before npm ci can run.
+COPY package.json package-lock.json ./
+COPY frontend/package.json ./frontend/
+
+RUN npm ci --workspace=patchmon-frontend --include=dev --ignore-scripts --no-audit \
+    && npm cache clean --force
+
+COPY frontend/ ./frontend/
+
 WORKDIR /app/frontend
-
-COPY frontend/package*.json ./
-
-RUN echo "=== Starting npm install ===" &&\
-    npm cache clean --force &&\
-    rm -rf node_modules ~/.npm /root/.npm package-lock.json &&\
-    echo "=== npm install ===" &&\
-    npm install --ignore-scripts --legacy-peer-deps --no-audit --force &&\
-    echo "=== npm install completed ===" &&\
-    npm cache clean --force
-
-COPY frontend/ ./
 
 RUN npm run build
 

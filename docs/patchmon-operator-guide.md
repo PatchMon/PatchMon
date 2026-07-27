@@ -1547,6 +1547,7 @@ General HTTP server and network settings.
 | `CORS_ORIGIN` | `http://localhost:3000` | No | Allowed CORS origin(s). Must match the exact URL you use to access PatchMon in your browser (protocol, hostname, and port; no path, no trailing slash). To allow multiple origins, separate them with a comma and no spaces (e.g. `https://patchmon.example.com,https://patchmon.internal.lan`). |
 | `ENABLE_HSTS` | `false` | No | When `true`, the server adds an `HTTP Strict Transport Security` header to responses. Enable this only when PatchMon is served over HTTPS. |
 | `TRUST_PROXY` | `true` | No | When `true`, the server trusts `X-Forwarded-For` / `X-Forwarded-Proto` and related headers from a reverse proxy (Traefik, Caddy, nginx, NPM, etc.). Required for accurate client IP detection, correct rate limiting, and OIDC's HTTPS check when TLS is terminated at the proxy. Default is `true` because the officially supported deployment is Docker behind a reverse proxy; set to `false` explicitly only if PatchMon is exposed directly to the internet without a proxy. |
+| `TRUSTED_PROXY_RANGES` | (empty) | No | Comma-separated CIDRs or bare IPs of the reverse proxies in front of PatchMon, for example `10.0.0.0/8,172.16.0.0/12`. Used together with `TRUST_PROXY` to work out the real client IP from `X-Forwarded-For`, which drives rate limiting, login lockout, and audit logging. Leave it empty when there is a single reverse proxy, which is the usual setup: PatchMon then uses the address your proxy appended to the header, which a client cannot forge. Set it only when proxies are chained (for example Cloudflare in front of Nginx Proxy Manager), listing the intermediate hops so the original client IP is resolved rather than your CDN's egress address. Configured via environment only, and shown read-only in the settings UI, because widening it would allow clients to spoof their own IP. |
 
 **Production example:**
 
@@ -4111,9 +4112,9 @@ sudo patchmon-agent config show
 sudo patchmon-agent report
 ```
 
-#### Agent Shows "Offline" in PatchMon
+#### Agent's WS Pill is Red in PatchMon
 
-The agent's WebSocket connection is down.
+The agent's WebSocket connection is down and has been disconnected for longer than the `host_down` threshold (default 30 seconds). Note: this pill alone does **not** mean the host is offline — check the **Reporting** pill too. If Reporting is green, the host is alive and pushing reports, but the real-time control channel is unavailable.
 
 ```bash
 # Check if the service is running
@@ -5469,7 +5470,7 @@ You can also set `CORS_ORIGIN` in **Settings → Server → CORS_ORIGIN** via th
 
 #### Symptoms
 
-- Agents check in via HTTP reports (host turns "Active") but show **Offline** in the Hosts list.
+- Agents check in via HTTP reports (the **Reporting** pill is green) but the **WS** pill is red in the Hosts list.
 - Agent log shows repeated `websocket: bad handshake` or reconnection loops.
 - The "Waiting for Connection" screen after enrolment gets past **Waiting** to **Connected** slowly or never.
 
@@ -5842,7 +5843,8 @@ The `diagnostics` output includes system info, configuration status, network rea
 | Symptom | Likely cause | Jump to |
 |---------|--------------|---------|
 | Host shows **Pending** in the UI, never flips to Active | Agent not running, or first report never delivered | [Host shows Pending](#host-shows-pending) |
-| Host shows **Offline** in the UI | WebSocket is down (service crashed or network dropped) | [Host shows Offline](#host-shows-offline) |
+| Host's **WS** pill is red in the UI | WebSocket is down past the `host_down` threshold (service crashed or network dropped) | [Host WS pill is red](#host-ws-pill-is-red) |
+| Host's **Reporting** pill is red ("Stale") | Agent hasn't pushed reports *and* WebSocket is disconnected — host may be down or unreachable | [Host Reporting pill is Stale](#host-reporting-pill-is-stale) |
 | Agent **won't start** | Bad `config.yml`, bad credentials, port/permission issue | [Agent won't start](#agent-wont-start) |
 | Agent **can't reach server**: DNS failure | DNS resolution broken on host | [Cannot reach server: DNS](#cannot-reach-server--dns) |
 | Agent **can't reach server**: TLS / cert | CA not trusted or certificate invalid | [Cannot reach server: TLS](#cannot-reach-server--tls) |
@@ -5874,9 +5876,9 @@ sudo patchmon-agent report      # force an immediate report
 
 **Full details:** [Managing the PatchMon Agent: Agent Shows "Pending" in PatchMon](#agent-shows-pending-in-patchmon).
 
-### Host Shows Offline
+### Host WS Pill is Red
 
-The host sent at least one report in the past, but its WebSocket is currently disconnected.
+The host sent at least one report in the past, but its WebSocket has been disconnected for longer than the `host_down` threshold (default 30 seconds, configurable in **Reporting → Alert Lifecycle**). The host may still be alive — check the **Reporting** pill: if it's green, the agent is pushing HTTP reports normally and only the real-time control channel is unavailable.
 
 **Quick checks:**
 
@@ -5890,9 +5892,34 @@ sudo journalctl -u patchmon-agent -n 50 --no-pager
 - **Service stopped or crashed**: `sudo systemctl restart patchmon-agent` and watch the logs for the underlying error.
 - **Reverse proxy not forwarding WebSocket upgrade headers**: see [Server Troubleshooting: Agent Can't Connect Over WebSocket](#server-troubleshooting).
 - **NAT / load balancer timing out idle connections**: raise the proxy's idle timeout to at least 65 s. The agent sends WebSocket pings every 30 s.
-- **Temporary network blip**: the agent auto-reconnects with exponential backoff. Wait 60 s and re-check.
+- **Temporary network blip**: the agent auto-reconnects with exponential backoff. Wait 60 s and re-check. The WS pill goes amber for the grace window, then red.
 
-**Full details:** [Managing the PatchMon Agent: Agent Shows "Offline" in PatchMon](#agent-shows-offline-in-patchmon).
+**Full details:** [Managing the PatchMon Agent: Agent's WS Pill is Red in PatchMon](#agents-ws-pill-is-red-in-patchmon).
+
+### Host Reporting Pill is Stale
+
+The agent hasn't pushed an HTTP report within its update interval **and** the WebSocket is also disconnected. This is the strongest indicator that the host is genuinely unreachable (as opposed to just losing the real-time channel).
+
+**Quick checks:**
+
+```bash
+# From the affected host (if you can reach it):
+sudo systemctl status patchmon-agent
+sudo patchmon-agent ping
+sudo patchmon-agent report       # force an immediate report
+
+# From another host:
+ping <host-ip>
+ssh <host>                       # confirm host is alive
+```
+
+**Common causes:**
+
+- **Host is genuinely down** (powered off, kernel panic, hardware fault). Check console / hypervisor.
+- **Network partition** between the host and the PatchMon server. Verify outbound HTTPS to the server URL still works.
+- **Agent service stopped without WebSocket disconnect notice** (e.g. host was suspended). `sudo systemctl restart patchmon-agent` once it's reachable.
+
+If the host *is* online but only the **Reporting** pill is red while WS is also red, run `sudo patchmon-agent report` to push a fresh report and the pill should flip back to green.
 
 ### Agent Won't Start
 

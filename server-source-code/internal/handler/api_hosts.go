@@ -45,6 +45,37 @@ func formatTimestamp(t pgtype.Timestamp) string {
 	return ""
 }
 
+// computeReportingState mirrors the SQL CASE used by GetHostsWithCounts:
+// "reporting" if last_update >= overdueCutoff, "overdue" if older but
+// >= staleCutoff, otherwise "stale". Independent of WS connection state so
+// the four-pill UI redesign can render reporting freshness on its own.
+func computeReportingState(lastUpdate time.Time, overdueCutoff, staleCutoff time.Time) string {
+	if lastUpdate.IsZero() {
+		return "stale"
+	}
+	if !lastUpdate.Before(overdueCutoff) {
+		return "reporting"
+	}
+	if !lastUpdate.Before(staleCutoff) {
+		return "overdue"
+	}
+	return "stale"
+}
+
+// computeUpdateState mirrors the SQL CASE used by GetHostsWithCounts:
+// "security_required" when any security update is pending, "updates_pending"
+// for non-security updates, otherwise "up_to_date".
+func computeUpdateState(updatesCount, securityUpdatesCount int) string {
+	switch {
+	case securityUpdatesCount > 0:
+		return "security_required"
+	case updatesCount > 0:
+		return "updates_pending"
+	default:
+		return "up_to_date"
+	}
+}
+
 // resolveHostGroupParam returns group IDs from comma-separated names or UUIDs.
 func (h *ApiHostsHandler) resolveHostGroupParam(ctx context.Context, hostgroup string) ([]string, []string) {
 	if hostgroup == "" {
@@ -102,6 +133,17 @@ func (h *ApiHostsHandler) ListHosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Pre-compute reporting-state thresholds once. The host-status pill
+	// redesign exposes `reporting_state` independently of WS state so consumers
+	// can show "reporting / overdue / stale" without parsing timestamps.
+	updateIntervalMinutes := h.dashboard.UpdateIntervalMinutesOrDefault(ctx)
+	if updateIntervalMinutes <= 0 {
+		updateIntervalMinutes = 60
+	}
+	now := time.Now()
+	overdueCutoff := now.Add(-time.Duration(updateIntervalMinutes) * time.Minute)
+	staleCutoff := now.Add(-time.Duration(updateIntervalMinutes*2) * time.Minute)
+
 	out := make([]map[string]interface{}, len(hosts))
 	for i, host := range hosts {
 		groups := groupsMap[host.ID]
@@ -137,6 +179,10 @@ func (h *ApiHostsHandler) ListHosts(w http.ResponseWriter, r *http.Request) {
 			item["updates_count"] = st.Outdated
 			item["security_updates_count"] = st.Security
 			item["total_packages"] = st.Total
+			// New host-status pill fields. Additive — existing fields remain
+			// byte-identical for back-compat.
+			item["reporting_state"] = computeReportingState(host.LastUpdate, overdueCutoff, staleCutoff)
+			item["update_state"] = computeUpdateState(st.Outdated, st.Security)
 		}
 		out[i] = item
 	}
@@ -327,6 +373,7 @@ func (h *ApiHostsHandler) GetHostSystem(w http.ResponseWriter, r *http.Request) 
 		"installed_kernel_version": installedKernel,
 		"selinux_status":           selinux,
 		"system_uptime":            uptime,
+		"boot_time":                host.BootTime,
 		"cpu_model":                cpuModel,
 		"cpu_cores":                cpuCores,
 		"ram_installed":            ram,

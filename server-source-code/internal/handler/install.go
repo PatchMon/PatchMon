@@ -514,6 +514,9 @@ func buildMetricsParams(req *models.PingRequest) store.HostMetricsParams {
 	if m.SystemUptime != nil && *m.SystemUptime != "" {
 		mp.SystemUptime = m.SystemUptime
 	}
+	if m.BootTime != nil {
+		mp.BootTime = m.BootTime
+	}
 	if m.NeedsReboot != nil {
 		mp.NeedsReboot = m.NeedsReboot
 	}

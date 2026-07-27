@@ -13,6 +13,11 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 )
 
+// defaultHostDownThresholdSeconds is the fallback used when the host_down
+// alert_config row has no metadata.threshold value. Mirrors the seed in
+// migration 000042.
+const defaultHostDownThresholdSeconds = 30
+
 // ProcessHostStatusMonitor runs the periodic host-down check: finds stale hosts and creates/resolves alerts.
 // Called by the host-status-monitor queue job.
 func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost string, emit *notifications.Emitter, log *slog.Logger) (int, error) {
@@ -28,16 +33,13 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 		return 0, nil
 	}
 
-	settings, err := d.Queries.GetFirstSettings(ctx)
-	if err != nil {
-		return 0, err
+	// Threshold semantics: seconds. parseThreshold reads alert_config.metadata.threshold
+	// (a JSONB number); migration 000042 seeds the default of 30 seconds.
+	thresholdSeconds := parseThreshold(cfg, defaultHostDownThresholdSeconds)
+	if thresholdSeconds <= 0 {
+		thresholdSeconds = defaultHostDownThresholdSeconds
 	}
-	updateInterval := int(settings.UpdateInterval)
-	if updateInterval <= 0 {
-		updateInterval = 60
-	}
-	thresholdMinutes := updateInterval * 3
-	threshold := time.Now().Add(-time.Duration(thresholdMinutes) * time.Minute)
+	threshold := time.Now().Add(-time.Duration(thresholdSeconds) * time.Second)
 
 	hostRows, err := d.Queries.ListHosts(ctx)
 	if err != nil {
@@ -86,14 +88,22 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 			}
 			hostName := hostDisplayName(host)
 			severity := DefaultSeverity(cfg.DefaultSeverity, "warning")
-			title := "Host " + hostName + " is offline"
+			// User-facing rename: "Host agent down" replaces the older "Host
+			// down" / "is offline" wording so the alert clearly refers to the
+			// PatchMon agent's reporting channel rather than the host itself.
+			title := "Host agent down: " + hostName
+			// Keep `threshold_minutes` in the metadata for any external
+			// integrations that already key on it; add `threshold_seconds` so
+			// new consumers see the configured value at full precision.
+			thresholdMinutesRounded := (thresholdSeconds + 59) / 60
 			meta := map[string]interface{}{
 				"host_id":           host.ID,
 				"host_name":         hostName,
 				"last_update":       lastUpdate.Time,
-				"threshold_minutes": thresholdMinutes,
+				"threshold_seconds": thresholdSeconds,
+				"threshold_minutes": thresholdMinutesRounded,
 			}
-			msg := fmt.Sprintf("Host \"%s\" has not reported in %d minutes. Last update: %s", hostName, thresholdMinutes, lastUpdate.Time.Format(time.RFC3339))
+			msg := fmt.Sprintf("Host \"%s\" has not reported in %s. Last update: %s", hostName, formatHostDownThreshold(thresholdSeconds), lastUpdate.Time.Format(time.RFC3339))
 
 			// Emit event — notification routing decides which destinations receive it
 			// (including internal alerts if that destination is enabled).
@@ -120,9 +130,12 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 			if emit != nil && hadAlert {
 				hn := hostDisplayName(host)
 				emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
-					Type:          "host_recovered",
-					Severity:      ResolveSeverity(ctx, d, "host_recovered", "informational"),
-					Title:         "Host back online",
+					Type:     "host_recovered",
+					Severity: ResolveSeverity(ctx, d, "host_recovered", "informational"),
+					// User-facing rename: "Host agent recovered" replaces
+					// "Host back online" — the alert tracks the agent
+					// reporting channel, not host availability per se.
+					Title:         "Host agent recovered: " + hn,
 					Message:       fmt.Sprintf("Host %s is reporting again.", hn),
 					ReferenceType: "host",
 					ReferenceID:   host.ID,
@@ -180,14 +193,26 @@ func OnDisconnect(ctx context.Context, d *database.DB, apiID string, tenantHost 
 	if host.LastUpdate.Valid {
 		lastUpdate = host.LastUpdate.Time
 	}
+	// On WS-disconnect we don't actually wait for the configured threshold —
+	// the alert fires immediately because the agent is unreachable. Surface
+	// the configured threshold in metadata so notifications can render it,
+	// and keep `threshold_minutes: 0` for back-compat with consumers that
+	// branch on "0 means immediate".
+	thresholdSeconds := parseThreshold(cfg, defaultHostDownThresholdSeconds)
+	if thresholdSeconds <= 0 {
+		thresholdSeconds = defaultHostDownThresholdSeconds
+	}
 	meta := map[string]interface{}{
 		"host_id":           host.ID,
 		"host_name":         hostName,
 		"last_update":       lastUpdate,
+		"threshold_seconds": thresholdSeconds,
 		"threshold_minutes": 0,
 		"disconnect_reason": "websocket",
 	}
-	title := "Host " + hostName + " disconnected"
+	// User-facing rename: WS disconnect maps to the same "Host agent down"
+	// alert wording so the four-pill UI legend stays consistent.
+	title := "Host agent down: " + hostName
 	msg := fmt.Sprintf("Host \"%s\" WebSocket connection lost. Last update: %s", hostName, lastUpdate.Format(time.RFC3339))
 
 	// Emit event — notification routing decides which destinations receive it
@@ -249,7 +274,7 @@ func OnConnect(ctx context.Context, d *database.DB, apiID string, tenantHost str
 			emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
 				Type:          "host_recovered",
 				Severity:      ResolveSeverity(ctx, d, "host_recovered", "informational"),
-				Title:         "Host reconnected",
+				Title:         "Host agent recovered: " + hn,
 				Message:       fmt.Sprintf("Host %s WebSocket reconnected.", hn),
 				ReferenceType: "host",
 				ReferenceID:   host.ID,
@@ -263,7 +288,7 @@ func OnConnect(ctx context.Context, d *database.DB, apiID string, tenantHost str
 				emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
 					Type:          "host_recovered",
 					Severity:      ResolveSeverity(ctx, d, "host_recovered", "informational"),
-					Title:         "Host connected",
+					Title:         "Host agent connected: " + hn,
 					Message:       fmt.Sprintf("Host %s is online.", hn),
 					ReferenceType: "host",
 					ReferenceID:   host.ID,
@@ -272,6 +297,19 @@ func OnConnect(ctx context.Context, d *database.DB, apiID string, tenantHost str
 			}
 		}
 	}
+}
+
+// formatHostDownThreshold renders the threshold in operator-friendly units:
+// seconds for sub-minute thresholds, minutes for >=60s.
+func formatHostDownThreshold(seconds int) string {
+	if seconds < 60 {
+		return fmt.Sprintf("%d seconds", seconds)
+	}
+	minutes := seconds / 60
+	if minutes == 1 {
+		return "1 minute"
+	}
+	return fmt.Sprintf("%d minutes", minutes)
 }
 
 func hostDisplayName(host db.Host) string {

@@ -478,6 +478,7 @@ func dbHostToModel(h db.Host) *models.Host {
 		SelinuxStatus:                h.SelinuxStatus,
 		SwapSize:                     h.SwapSize,
 		SystemUptime:                 h.SystemUptime,
+		BootTime:                     pgtime.PtrTz(h.BootTime),
 		Notes:                        h.Notes,
 		NeedsReboot:                  h.NeedsReboot,
 		RebootReason:                 h.RebootReason,
