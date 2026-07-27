@@ -163,6 +163,22 @@ func Send(ctx context.Context, cfg Config, msg Message) error {
 	if dataErr != nil {
 		return newSendError(StageSend, dataErr)
 	}
+	// CodeQL flags this write as go/email-injection because untrusted values
+	// reach it. Both halves of that rule are already guarded, and the guards
+	// live too many frames upstream for its dataflow to see:
+	//
+	//   Headers — validate() runs mail.ParseAddress over cfg.From and msg.To,
+	//   which rejects CR/LF, and renderMessage strips CR/LF from Subject and
+	//   FromName. net/smtp's Mail and Rcpt reject CRLF independently.
+	//
+	//   Body — every value interpolated into msg.HTMLBody is escaped at the
+	//   point of construction via notifications.TemplateEscape (see
+	//   notifications/report_render.go and queue/notification_worker.go's
+	//   buildEmailHTML). That helper escapes quotes as well as & < >, so it is
+	//   safe in the attribute contexts those builders use.
+	//
+	// Anything that adds a new email body builder MUST escape through the same
+	// helper, or this write becomes a genuine injection point.
 	rendered := renderMessage(cfg, msg)
 	if _, writeErr := w.Write(rendered); writeErr != nil {
 		_ = w.Close()

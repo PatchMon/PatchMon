@@ -549,7 +549,14 @@ func (h *DashboardHandler) HostActivity(w http.ResponseWriter, r *http.Request) 
 		direction = ""
 	}
 
-	items := make([]activityItem, 0, limit)
+	// Capacity is derived from what the queue actually returned, NOT from the
+	// caller's `limit`. Two reasons: pre-sizing to `limit` over-allocates
+	// whenever fewer rows exist, and sizing an allocation from a request
+	// parameter is the shape CodeQL's go/uncontrolled-allocation-size flags.
+	// `limit` is already clamped to 1..500 above, so the old line was bounded
+	// and not actually exploitable, but sizing from real data is both more
+	// accurate and unambiguously safe.
+	items := make([]activityItem, 0, len(liveJobs))
 	liveByJobID := make(map[string]queue.HostJobRow, len(liveJobs))
 	for _, j := range liveJobs {
 		if j.JobID != "" {

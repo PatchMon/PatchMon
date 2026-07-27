@@ -5,15 +5,20 @@
 -- 5. mv_package_stats (drops the unique index too).
 DROP MATERIALIZED VIEW IF EXISTS mv_package_stats;
 
--- 4. host_packages perf indexes.
+-- 4. host_packages perf indexes. Recreate the v1.5.0 init index that the up
+-- migration dropped as superseded, so a rollback lands back on the pre-2.0.3
+-- index set exactly.
 DROP INDEX IF EXISTS idx_host_packages_needs_update_security_package;
 DROP INDEX IF EXISTS idx_host_packages_needs_update_package;
 DROP INDEX IF EXISTS idx_host_packages_needs_update_host_cover;
 DROP INDEX IF EXISTS idx_host_packages_needs_update_security;
+CREATE INDEX IF NOT EXISTS idx_host_packages_needs_update
+    ON host_packages (host_id) WHERE needs_update = true;
 
--- 3. Agent Activity feed.
-DROP INDEX IF EXISTS idx_update_history_timestamp_for_retention;
+-- 3. Agent Activity feed. Same rationale: restore init's idx_update_history_host_id.
 DROP INDEX IF EXISTS idx_update_history_host_id_timestamp;
+CREATE INDEX IF NOT EXISTS idx_update_history_host_id
+    ON update_history (host_id);
 ALTER TABLE update_history
     DROP COLUMN IF EXISTS agent_execution_ms,
     DROP COLUMN IF EXISTS sections_unchanged,

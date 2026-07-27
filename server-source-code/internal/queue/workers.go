@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/alerts"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
@@ -22,6 +24,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/hibiken/asynq"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -84,13 +87,17 @@ func forEachDB(ctx context.Context, defaultDB *database.DB, poolCache *hostctx.P
 type HostStatusMonitorHandler struct {
 	defaultDB *database.DB
 	poolCache *hostctx.PoolCache
-	emit      *notifications.Emitter
-	log       *slog.Logger
+	// registry supplies live WebSocket state so the sweep can tell a genuinely
+	// unreachable agent from one that is simply between hourly HTTP check-ins.
+	// Without it every host looks stale on every sweep.
+	registry *agentregistry.Registry
+	emit     *notifications.Emitter
+	log      *slog.Logger
 }
 
 // NewHostStatusMonitorHandler creates a host status monitor handler.
-func NewHostStatusMonitorHandler(defaultDB *database.DB, poolCache *hostctx.PoolCache, emit *notifications.Emitter, log *slog.Logger) *HostStatusMonitorHandler {
-	return &HostStatusMonitorHandler{defaultDB: defaultDB, poolCache: poolCache, emit: emit, log: log}
+func NewHostStatusMonitorHandler(defaultDB *database.DB, poolCache *hostctx.PoolCache, registry *agentregistry.Registry, emit *notifications.Emitter, log *slog.Logger) *HostStatusMonitorHandler {
+	return &HostStatusMonitorHandler{defaultDB: defaultDB, poolCache: poolCache, registry: registry, emit: emit, log: log}
 }
 
 // ProcessTask implements asynq.Handler.
@@ -100,7 +107,7 @@ func (h *HostStatusMonitorHandler) ProcessTask(ctx context.Context, t *asynq.Tas
 	// Payload has host: single-host or manual trigger with host
 	if len(payload) > 0 {
 		db := resolveDBFromPayload(ctx, payload, h.defaultDB, h.poolCache)
-		alertsCreated, err := alerts.ProcessHostStatusMonitor(ctx, db, tenantHostFromPayload(payload), h.emit, h.log)
+		alertsCreated, err := alerts.ProcessHostStatusMonitor(ctx, db, tenantHostFromPayload(payload), h.registry, h.emit, h.log)
 		if err != nil {
 			return err
 		}
@@ -110,7 +117,7 @@ func (h *HostStatusMonitorHandler) ProcessTask(ctx context.Context, t *asynq.Tas
 
 	// Empty payload: single-host (PoolCache nil) or multi-host fan-out
 	if h.poolCache == nil {
-		alertsCreated, err := alerts.ProcessHostStatusMonitor(ctx, h.defaultDB, "", h.emit, h.log)
+		alertsCreated, err := alerts.ProcessHostStatusMonitor(ctx, h.defaultDB, "", h.registry, h.emit, h.log)
 		if err != nil {
 			return err
 		}
@@ -120,7 +127,7 @@ func (h *HostStatusMonitorHandler) ProcessTask(ctx context.Context, t *asynq.Tas
 
 	// Multi-host: process defaultDB first, then all registry hosts in parallel
 	var totalCreated atomic.Int64
-	if n, err := alerts.ProcessHostStatusMonitor(ctx, h.defaultDB, "", h.emit, h.log); err == nil {
+	if n, err := alerts.ProcessHostStatusMonitor(ctx, h.defaultDB, "", h.registry, h.emit, h.log); err == nil {
 		totalCreated.Add(int64(n))
 	}
 
@@ -143,7 +150,7 @@ func (h *HostStatusMonitorHandler) ProcessTask(ctx context.Context, t *asynq.Tas
 			if err != nil || db == nil {
 				return
 			}
-			if n, err := alerts.ProcessHostStatusMonitor(ctx, db, host, h.emit, h.log); err == nil {
+			if n, err := alerts.ProcessHostStatusMonitor(ctx, db, host, h.registry, h.emit, h.log); err == nil {
 				totalCreated.Add(int64(n))
 			}
 		}()
@@ -578,10 +585,13 @@ func (h *PatchRunCleanupHandler) resolveStallTimeoutMin() int {
 }
 
 func (h *PatchRunCleanupHandler) cleanupDB(ctx context.Context, d *database.DB, stallMin int) (int64, error) {
+	// Inactivity window, not total runtime: the query matches on updated_at,
+	// which every streamed progress chunk bumps. A run that is still producing
+	// output is never swept, however long it takes.
 	pgThreshold := pgtime.From(time.Now().Add(-time.Duration(stallMin) * time.Minute))
-	msg := fmt.Sprintf("Marked as timed_out after running for more than %d minutes", stallMin)
+	msg := fmt.Sprintf("Marked as timed_out after %d minutes with no progress from the agent", stallMin)
 	return d.Queries.MarkPatchRunsTimedOut(ctx, db.MarkPatchRunsTimedOutParams{
-		StartedAt:    pgThreshold,
+		StaleBefore:  pgThreshold,
 		ErrorMessage: &msg,
 	})
 }
@@ -650,8 +660,41 @@ func (h *AgentReportsCleanupHandler) resolveRetentionDays() int {
 	return v
 }
 
+// agentReportsDeleteBatchSize bounds one DELETE statement in the retention
+// sweep. Steady state is well under this, but the first sweep after upgrading
+// an existing install has to clear the whole pre-2.0.3 update_history backlog
+// (never pruned before), which can be millions of rows on a multi-year deploy.
+// Batching keeps each transaction short instead of holding one open for the
+// entire backlog.
+const agentReportsDeleteBatchSize = 10000
+
+// agentReportsMaxBatches caps a single sweep so a pathologically large backlog
+// cannot pin the worker indefinitely. Anything left over is picked up by the
+// next nightly run; at 10k rows per batch this still clears 10M rows per sweep.
+const agentReportsMaxBatches = 1000
+
 func (h *AgentReportsCleanupHandler) cleanupDB(ctx context.Context, d *database.DB, retentionDays int) (int64, error) {
-	return d.Queries.DeleteOldUpdateHistory(ctx, int32(retentionDays))
+	var total int64
+	for i := 0; i < agentReportsMaxBatches; i++ {
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+		n, err := d.Queries.DeleteOldUpdateHistoryBatch(ctx, db.DeleteOldUpdateHistoryBatchParams{
+			RetentionDays: int32(retentionDays),
+			BatchLimit:    agentReportsDeleteBatchSize,
+		})
+		if err != nil {
+			return total, err
+		}
+		total += n
+		if n < agentReportsDeleteBatchSize {
+			// Fewer rows than the batch size means the backlog is drained.
+			return total, nil
+		}
+	}
+	h.log.Warn("agent reports cleanup: batch cap reached, remaining backlog deferred to next sweep",
+		"deleted", total, "retention_days", retentionDays)
+	return total, nil
 }
 
 // PackageStatsRefreshHandler refreshes mv_package_stats so the Packages
@@ -688,14 +731,41 @@ func (h *PackageStatsRefreshHandler) ProcessTask(ctx context.Context, t *asynq.T
 
 // refresh is a thin wrapper so the per-host loop and the explicit-payload
 // path share a single execution path. The CONCURRENTLY variant requires
-// the unique index defined in migration 000047 (mv_package_stats_pkey).
+// the unique index defined in migration 000041 (mv_package_stats_pkey).
+//
+// CONCURRENTLY also requires the matview to be POPULATED. A schema-only or
+// partial pg_restore leaves it unpopulated, and every refresh then fails with
+// SQLSTATE 55000 forever: the Packages page 500s, this worker errors every two
+// minutes, and nothing ever self-heals. On exactly that error we fall back to a
+// plain (blocking) REFRESH, which is the only statement that can populate the
+// view. Subsequent runs go back to CONCURRENTLY.
 func (h *PackageStatsRefreshHandler) refresh(ctx context.Context, d *database.DB, host string) error {
 	start := time.Now()
-	if _, err := d.Exec(ctx, "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_package_stats"); err != nil {
-		return err
+	_, err := d.Exec(ctx, "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_package_stats")
+	if err != nil {
+		if !isMatviewNotPopulated(err) {
+			return err
+		}
+		h.log.Warn("package stats refresh: matview unpopulated, falling back to non-concurrent refresh", "host", host, "error", err)
+		if _, fallbackErr := d.Exec(ctx, "REFRESH MATERIALIZED VIEW mv_package_stats"); fallbackErr != nil {
+			return fallbackErr
+		}
+		h.log.Info("package stats refresh: matview repopulated", "host", host, "duration_ms", time.Since(start).Milliseconds())
+		return nil
 	}
 	h.log.Debug("package stats refreshed", "host", host, "duration_ms", time.Since(start).Milliseconds())
 	return nil
+}
+
+// isMatviewNotPopulated reports whether err is Postgres' "CONCURRENTLY cannot
+// be used when the materialized view is not populated" refusal
+// (object_not_in_prerequisite_state, SQLSTATE 55000).
+func isMatviewNotPopulated(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "55000"
+	}
+	return false
 }
 
 // AlertCleanupHandler handles alert-cleanup jobs.

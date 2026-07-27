@@ -476,9 +476,17 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 	if len(loadAverage) > 0 {
 		params.LoadAverage = loadAverage
 	}
-	params.NeedsReboot = &payload.NeedsReboot
-	if payload.RebootReason != "" {
-		params.RebootReason = &payload.RebootReason
+	// needs_reboot / reboot_reason ride on a legacy FULL report only. A
+	// hash-gated partial never carries them (sendPartialReport omits both), so
+	// setting them unconditionally meant every partial overwrote the correct
+	// values the ping had just written with `false` / NULL. The Reboot pill and
+	// reboot alerts then flapped for a whole update_interval after every
+	// package change. For partials, the ping metrics path is the sole writer.
+	if len(payload.Sections) == 0 {
+		params.NeedsReboot = &payload.NeedsReboot
+		if payload.RebootReason != "" {
+			params.RebootReason = &payload.RebootReason
+		}
 	}
 	if sections.Packages && payload.PackageManager != "" {
 		params.PackageManager = &payload.PackageManager
@@ -547,11 +555,27 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 	reposByURLDistComp := make(map[string]string) // "url|dist|comp" -> repo ID
 	reposByComponent := make(map[string]string)   // components -> repo ID
 
-	if sections.Repos && len(payload.Repositories) > 0 {
+	// A repos section EXPLICITLY claimed in the payload's `sections` list is
+	// authoritative even when the array is empty. An empty list is legitimate
+	// (unsupported package manager, dnf parse soft-fail, or simply a host with
+	// no configured repositories), and the handler now accepts it rather than
+	// 400ing the whole bundled update. It has to actually converge on the empty
+	// set: the stored repos_hash will be the hash of the empty list, so leaving
+	// the old host_repositories rows in place would mean "in sync" per the hash
+	// gate and permanently stale in reality.
+	//
+	// Scoped deliberately to the explicit-sections (hash-gated) path. A LEGACY
+	// full report carries no `sections` list, and for those the long-standing
+	// behaviour is to leave repositories untouched when the array is empty; that
+	// is preserved here rather than changed as a side effect of this fix.
+	reposClaimed := sections.Repos && len(payload.Sections) > 0
+	if reposClaimed || (sections.Repos && len(payload.Repositories) > 0) {
 		if err := q.DeleteHostRepositoriesByHostID(ctx, hostID); err != nil {
 			return nil, fmt.Errorf("DeleteHostRepositoriesByHostID: %w", err)
 		}
+	}
 
+	if sections.Repos && len(payload.Repositories) > 0 {
 		// Deduplicate by url|distribution|components.
 		uniqueRepos := make(map[string]ReportRepository)
 		for _, r := range payload.Repositories {

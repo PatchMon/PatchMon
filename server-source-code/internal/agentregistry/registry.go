@@ -215,34 +215,72 @@ func (r *Registry) WithLock(apiID string, fn func(*websocket.Conn) error) error 
 // The meta entry is kept (with Connected=false and DisconnectedAt populated)
 // so callers can render "disconnected X seconds ago" without losing the
 // timestamp the moment the WS drops. Subsequent Register() calls reset it.
+//
+// Unregister is NOT identity-aware: it removes whatever connection is stored,
+// including one that a reconnect has just installed. Connection teardown paths
+// must use UnregisterConn instead.
 func (r *Registry) Unregister(apiID string) {
-	now := time.Now().UTC()
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.markDisconnectedLocked(apiID)
+	r.mu.Unlock()
+	if r.rdb != nil {
+		// best-effort notify other pods
+		_ = r.removePresence(apiID)
+	}
+}
+
+// UnregisterConn is the identity-aware teardown path: it only removes the
+// stored connection (and marks the agent disconnected) when the connection
+// currently registered for apiID is the very one being torn down. It reports
+// whether it took ownership of the teardown.
+//
+// This closes a fleet-wide race. Agent reconnect backoff starts at ~1s while
+// the disconnect callback does up to 5s of real database work, so the ordering
+// during e.g. a proxy restart is: conn A drops -> teardown starts -> agent
+// reconnects at ~1s and registers conn B -> the OLD teardown finishes and calls
+// Unregister(apiID), deleting conn B. The agent then holds a perfectly live
+// WebSocket while the registry insists it is disconnected: every server-to-agent
+// send fails with ErrNotConnected, the WS pill shows down, and patch-run stop
+// commands cannot be delivered — for the whole fleet at once.
+func (r *Registry) UnregisterConn(apiID string, conn *websocket.Conn) bool {
+	r.mu.Lock()
+	if e, ok := r.conns[apiID]; ok && conn != nil && e.ws != conn {
+		// A newer connection owns this slot; leave it completely alone.
+		r.mu.Unlock()
+		return false
+	}
+	r.markDisconnectedLocked(apiID)
+	r.mu.Unlock()
+	if r.rdb != nil {
+		_ = r.removePresence(apiID)
+	}
+	return true
+}
+
+// markDisconnectedLocked drops the stored connection and flips meta to
+// disconnected. Caller must hold r.mu.
+func (r *Registry) markDisconnectedLocked(apiID string) {
+	now := time.Now().UTC()
 	prev, hadMeta := r.meta[apiID]
 	delete(r.conns, apiID)
 	delete(r.podMap, apiID)
 	if hadMeta {
 		prev.Connected = false
 		// Only stamp DisconnectedAt the first time we see the drop; if
-		// Unregister fires twice (e.g. close + readPump exit), don't bump
+		// teardown fires twice (e.g. close + readPump exit), don't bump
 		// the timestamp forward.
 		if prev.DisconnectedAt == nil {
 			prev.DisconnectedAt = &now
 		}
 		r.meta[apiID] = prev
-	} else {
-		// No prior entry — record the disconnect so callers still see a
-		// recent timestamp instead of nothing at all.
-		r.meta[apiID] = ConnectionInfo{
-			Connected:      false,
-			Secure:         false,
-			DisconnectedAt: &now,
-		}
+		return
 	}
-	if r.rdb != nil {
-		// best-effort notify other pods
-		_ = r.removePresence(apiID)
+	// No prior entry — record the disconnect so callers still see a
+	// recent timestamp instead of nothing at all.
+	r.meta[apiID] = ConnectionInfo{
+		Connected:      false,
+		Secure:         false,
+		DisconnectedAt: &now,
 	}
 }
 

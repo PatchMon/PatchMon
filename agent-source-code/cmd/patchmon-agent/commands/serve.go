@@ -285,6 +285,10 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 	// Track whether offset period has passed
 	offsetPassed := false
 
+	// Counts periodic ticks that actually ran a check-in, so every
+	// forcedFullReportInterval-th one can force a full report.
+	var tickCount uint64
+
 	// Track current interval for offset recalculation on updates
 	currentInterval := intervalMinutes
 
@@ -312,8 +316,13 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 			// then sends a partial /hosts/update only for sections the
 			// server reports stale. In steady state this collapses each
 			// hourly cycle from ~2 MB to ~1 KB.
+			//
+			// Every forcedFullReportInterval ticks the agent sends a full
+			// report regardless of the hash compare, so a desynchronised
+			// hash cannot leave a host silently stale indefinitely.
 			if offsetPassed {
-				if err := runCheckIn(ctx); err != nil {
+				tickCount++
+				if err := runCheckIn(ctx, shouldForceFullReport(tickCount)); err != nil {
 					logger.WithError(err).Warn("periodic check-in failed")
 				}
 			}

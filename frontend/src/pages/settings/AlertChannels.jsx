@@ -151,7 +151,7 @@ const TLS_MODE_HELP = {
 		"Connect in plaintext on the submission port, then upgrade to TLS via the STARTTLS command. Typical port: 587.",
 	tls: "Open a TLS connection from the start (sometimes called SMTPS). Typical port: 465.",
 	none: "Send mail in plaintext. Credentials will be rejected by the server. Use only for local relays you trust.",
-	auto: "Pick STARTTLS, implicit TLS, or plaintext automatically based on the port and what the server advertises.",
+	auto: "Try STARTTLS first, then fall back to implicit TLS on the same host and port. Mail is never sent in plaintext in this mode; if neither works, sending fails.",
 };
 
 const TLS_MODE_DEFAULT_PORTS = {
@@ -162,7 +162,7 @@ const TLS_MODE_DEFAULT_PORTS = {
 
 const KNOWN_SMTP_PORTS = new Set([25, 465, 587, 2525]);
 
-const hydrateTLSMode = (cfg) => {
+export const hydrateTLSMode = (cfg) => {
 	if (!cfg || typeof cfg !== "object") return "starttls";
 	if (
 		typeof cfg.tls_mode === "string" &&

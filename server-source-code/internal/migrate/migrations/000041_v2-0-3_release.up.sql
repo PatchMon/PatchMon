@@ -99,17 +99,35 @@ ALTER TABLE update_history
 CREATE INDEX IF NOT EXISTS idx_update_history_host_id_timestamp
     ON update_history (host_id, timestamp DESC);
 
--- Index for the retention sweep (DELETE WHERE timestamp < threshold).
-CREATE INDEX IF NOT EXISTS idx_update_history_timestamp_for_retention
-    ON update_history (timestamp);
+-- The retention sweep (DELETE WHERE timestamp < threshold) deliberately does
+-- NOT get its own index: idx_update_history_timestamp on (timestamp) already
+-- exists from the v1.5.0 init migration and serves that predicate exactly.
+-- update_history is now written on EVERY ping, so a duplicate index here would
+-- be pure write amplification on the hottest write path in the system.
+--
+-- idx_update_history_host_id (host_id) from init is now redundant by
+-- left-prefix: every lookup it served is covered by the composite
+-- (host_id, timestamp DESC) index created above. Dropping it removes one more
+-- index maintenance cost per ping insert.
+DROP INDEX IF EXISTS idx_update_history_host_id;
+
+-- An earlier revision of THIS migration (v2.0.3 was never published, so this
+-- only ever reached development and preview databases) created
+-- idx_update_history_timestamp_for_retention (timestamp), which is an exact
+-- duplicate of idx_update_history_timestamp from 000001. It is no longer
+-- created above, but a database that ran that earlier revision still carries
+-- it, and would keep paying for it on every ping insert. Drop it explicitly so
+-- those databases converge on the same index set as a fresh install.
+DROP INDEX IF EXISTS idx_update_history_timestamp_for_retention;
 
 -- ---------------------------------------------------------------------------
 -- 4. host_packages perf indexes (was: 000045 + 000046)
 -- ---------------------------------------------------------------------------
 -- These four partial / covering indexes target distinct query shapes:
 --   * security count per host: idx_host_packages_needs_update_security
---     — narrowest predicate, smallest index, ideal for the security-only
---     count subquery in GetHostsWithCounts.
+--     — narrowest predicate, smallest index, used by GetHomepageStats'
+--     hosts_with_security CTE (COUNT(DISTINCT host_id) joined against
+--     active_hosts) and the security branch of GetDashboardStats.
 --   * needs-update count per host with is_security_update on hand:
 --     idx_host_packages_needs_update_host_cover — covering index for
 --     the broader needs-update + per-row security check pattern.
@@ -121,11 +139,23 @@ CREATE INDEX IF NOT EXISTS idx_update_history_timestamp_for_retention
 --     package_id-keyed companion to the security partial index.
 --
 -- CREATE INDEX (without CONCURRENTLY) holds an ACCESS EXCLUSIVE lock for
--- the duration of the build. At ~40k matching rows on a 1.3M-row table
--- this completes in a few hundred ms — acceptable since the migration
--- runs once at startup. If a future deployment has tens of millions of
--- security-flagged rows, a separate ops procedure can drop and recreate
--- with CONCURRENTLY out-of-band.
+-- the duration of the build. Note that a PARTIAL index build still scans
+-- every heap row — the WHERE clause only shrinks what gets sorted and
+-- written, not what gets read. So each of these costs a full pass over
+-- host_packages (~1.3M rows at 1k-host scale), and this migration also
+-- populates mv_package_stats (scan + aggregate) while 000043 builds a GIN
+-- trigram index, which is slow to build by nature.
+--
+-- Realistic first-boot cost on an existing install of that size is a few
+-- seconds to ~20s on NVMe, and can reach minutes on slow LXC or spinning
+-- disk. The server does not serve during migrations, so operators upgrading
+-- a large install should expect a startup pause; this is called out in the
+-- 2.0.3 release notes. A crash mid-build leaves the dirty flag set and
+-- needs the documented schema_migrations recovery.
+--
+-- If a future deployment has tens of millions of security-flagged rows, a
+-- separate ops procedure can drop and recreate with CONCURRENTLY
+-- out-of-band.
 
 CREATE INDEX IF NOT EXISTS idx_host_packages_needs_update_security
     ON host_packages (host_id)
@@ -143,6 +173,15 @@ CREATE INDEX IF NOT EXISTS idx_host_packages_needs_update_package
 CREATE INDEX IF NOT EXISTS idx_host_packages_needs_update_security_package
     ON host_packages (package_id)
     WHERE needs_update = true AND is_security_update = true;
+
+-- idx_host_packages_needs_update (host_id) WHERE needs_update = true, from the
+-- v1.5.0 init migration, is strictly superseded by
+-- idx_host_packages_needs_update_host_cover above: same key column, same
+-- partial predicate, plus is_security_update as an INCLUDE payload. Keeping
+-- both costs an extra index write for every host_packages row on every full
+-- report (the whole per-host set is deleted and reinserted each time) and buys
+-- nothing the planner cannot get from the covering index.
+DROP INDEX IF EXISTS idx_host_packages_needs_update;
 
 -- ---------------------------------------------------------------------------
 -- 5. mv_package_stats materialised view (was: 000047_package_stats_mat_view)

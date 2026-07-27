@@ -346,9 +346,13 @@ CREATE TABLE IF NOT EXISTS update_history (
     sections_unchanged TEXT[] NOT NULL DEFAULT '{}',
     agent_execution_ms INTEGER
 );
+-- The composite index serves the per-host Agent Activity feed. The retention
+-- sweep uses idx_update_history_timestamp (created by the v1.5.0 init
+-- migration) — do not add a second (timestamp) index here, update_history is
+-- written on every ping and duplicate indexes cost write throughput.
 CREATE INDEX IF NOT EXISTS idx_update_history_host_id_timestamp
     ON update_history (host_id, timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_update_history_timestamp_for_retention
+CREATE INDEX IF NOT EXISTS idx_update_history_timestamp
     ON update_history (timestamp);
 
 -- system_statistics

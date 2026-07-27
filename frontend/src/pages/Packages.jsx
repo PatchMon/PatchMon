@@ -347,6 +347,15 @@ const Packages = () => {
 		sortDirection,
 	]);
 
+	// Clamp the page once totals are known. Deleting the last rows on the final
+	// page otherwise leaves "Page 5 of 3" over an empty table until the next
+	// filter change.
+	useEffect(() => {
+		if (!packagesResponse) return;
+		if (currentPage <= totalPages) return;
+		setCurrentPage(totalPages);
+	}, [packagesResponse, currentPage, totalPages]);
+
 	// Function to handle page size change and save to localStorage
 	const handlePageSizeChange = (newPageSize) => {
 		setPageSize(newPageSize);

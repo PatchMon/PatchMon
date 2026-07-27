@@ -1,5 +1,6 @@
-import { Activity, Package, RotateCcw, Wifi } from "lucide-react";
+import { Activity, Package, RotateCcw, Wifi, WifiOff } from "lucide-react";
 import { formatRelativeTime } from "../utils/api";
+import { deriveReportingStateByTime } from "../utils/hostStatus";
 import Tooltip from "./ui/Tooltip";
 
 /**
@@ -21,14 +22,18 @@ import Tooltip from "./ui/Tooltip";
  *   compact                    — boolean
  */
 const PILL_BASE =
-	"inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap";
+	"inline-flex items-center justify-center gap-1 px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap";
+// Interactive pills must hit the 44px WCAG tap target below the `md` breakpoint,
+// which is exactly where the mobile card layout is shown. From `md` up the
+// desktop table takes over and the pills return to their compact density.
+const PILL_TAP_TARGET = "min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0";
 const PILL_VARIANTS = {
 	success:
-		"bg-success-100 text-success-800 dark:bg-success-900/40 dark:text-success-200",
+		"bg-success-100 text-success-800 dark:bg-success-900 dark:text-success-200",
 	warning:
-		"bg-warning-100 text-warning-800 dark:bg-warning-900/40 dark:text-warning-200",
+		"bg-warning-100 text-warning-800 dark:bg-warning-900 dark:text-warning-200",
 	danger:
-		"bg-danger-100 text-danger-800 dark:bg-danger-900/40 dark:text-danger-200",
+		"bg-danger-100 text-danger-800 dark:bg-danger-900 dark:text-danger-200",
 	neutral:
 		"bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-secondary-200",
 };
@@ -54,7 +59,7 @@ const Pill = ({ variant = "neutral", icon: Icon, label, srLabel, tooltip }) => {
 	const trigger = (
 		<button
 			type="button"
-			className={`${PILL_BASE} ${PILL_VARIANTS[variant] || PILL_VARIANTS.neutral} cursor-help focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1`}
+			className={`${PILL_BASE} ${PILL_TAP_TARGET} ${PILL_VARIANTS[variant] || PILL_VARIANTS.neutral} cursor-help focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1`}
 			aria-label={srLabel || label}
 			onClick={(e) => e.preventDefault()}
 		>
@@ -73,29 +78,6 @@ const formatSecondsAgo = (seconds) => {
 	if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
 	if (seconds < 86400) return `${Math.round(seconds / 3600)}h`;
 	return `${Math.round(seconds / 86400)}d`;
-};
-
-// Compute reporting state purely from `last_update` and the configured agent
-// update interval. Mirrors the legacy effectiveStatus / isStale boundary
-// (×2 of update_interval) so the pill always agrees with the existing
-// "Active / Inactive" UI — but adds the intermediate "overdue" amber state
-// between ×1 and ×2 of the interval.
-//
-// Crucially this does NOT depend on `host.status` (active/pending/error),
-// unlike the SQL `isStale` flag which only flips for `status='active'`. A
-// pending host that hasn't reported in 19 hours should still read as stale,
-// not as "Reporting".
-const deriveReportingStateByTime = (lastUpdateIso, updateIntervalMinutes) => {
-	if (!lastUpdateIso) return "stale";
-	const lastUpdateMs = new Date(lastUpdateIso).getTime();
-	if (!Number.isFinite(lastUpdateMs)) return "stale";
-	const interval = Number.isFinite(updateIntervalMinutes)
-		? Math.max(1, updateIntervalMinutes)
-		: 60;
-	const elapsedMin = Math.max(0, (Date.now() - lastUpdateMs) / 60000);
-	if (elapsedMin <= interval) return "reporting";
-	if (elapsedMin <= interval * 2) return "overdue";
-	return "stale";
 };
 
 const HostStatusPills = ({
@@ -124,11 +106,9 @@ const HostStatusPills = ({
 		// The backend preserves `secure` across disconnects (registry.Unregister
 		// only flips Connected, never Secure), so the protocol label is
 		// meaningful regardless of connection state. Using `secure` always
-		// keeps the label honest — colour conveys reachability, label conveys
-		// protocol. Hardcoding "WS" on disconnect would falsely imply insecure
-		// for hosts that actually connect via WSS.
-		const fullLabel = secure ? "WSS" : "WS";
-		const compactLabel = compact ? null : fullLabel;
+		// keeps the label honest. Hardcoding "WS" on disconnect would falsely
+		// imply insecure for hosts that actually connect via WSS.
+		const protocol = secure ? "WSS" : "WS";
 
 		if (connected) {
 			wsPill = (
@@ -136,7 +116,7 @@ const HostStatusPills = ({
 					key="ws"
 					variant="success"
 					icon={Wifi}
-					label={compactLabel}
+					label={compact ? null : protocol}
 					srLabel="WebSocket connected"
 					tooltip={`WebSocket connected${secure ? " (secure)" : ""}. Real-time control channel is active.`}
 				/>
@@ -153,19 +133,31 @@ const HostStatusPills = ({
 			const variant = withinGrace ? "warning" : "danger";
 			let tooltip;
 			if (withinGrace) {
-				tooltip = `WebSocket disconnected (${formatSecondsAgo(seconds)}). Within the ${threshold}s grace window — agent may be reconnecting.`;
+				tooltip = `WebSocket disconnected (${formatSecondsAgo(seconds)}). Within the ${threshold}s grace window, the agent may be reconnecting.`;
 			} else if (seconds !== null) {
 				tooltip = `WebSocket disconnected for ${formatSecondsAgo(seconds)} (threshold: ${threshold}s).`;
 			} else {
-				tooltip = `WebSocket disconnected — duration unknown (likely past the ${threshold}s threshold). The server may have restarted while the agent was already offline.`;
+				tooltip = `WebSocket disconnected, duration unknown (likely past the ${threshold}s threshold). The server may have restarted while the agent was already offline.`;
 			}
+			// Disconnected state must not be conveyed by colour alone (WCAG
+			// 1.4.1). The struck-through WifiOff glyph carries it in compact
+			// mode, where there is no room for text, and the label spells the
+			// state out everywhere else.
 			wsPill = (
 				<Pill
 					key="ws"
 					variant={variant}
-					icon={Wifi}
-					label={compactLabel}
-					srLabel="WebSocket disconnected"
+					icon={WifiOff}
+					label={
+						compact
+							? null
+							: `${protocol} ${withinGrace ? "reconnecting" : "offline"}`
+					}
+					srLabel={
+						withinGrace
+							? "WebSocket disconnected, within grace window"
+							: "WebSocket disconnected"
+					}
 					tooltip={tooltip}
 				/>
 			);
@@ -197,7 +189,7 @@ const HostStatusPills = ({
 		if (wsConnectedOrUnknown) {
 			reportingVariant = "warning";
 			reportingLabel = "Overdue";
-			reportingTooltip = `Agent has not pushed a report yet but the WebSocket is still connected — likely transient. Last update: ${lastUpdateRel}.`;
+			reportingTooltip = `Agent has not pushed a report yet but the WebSocket is still connected, so this is likely transient. Last update: ${lastUpdateRel}.`;
 		} else {
 			reportingVariant = "danger";
 			reportingLabel = "Stale";

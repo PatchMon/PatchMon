@@ -30,13 +30,22 @@ func withWorkMemTx(ctx context.Context, p database.DBProvider, fn func(q *db.Que
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	// Nil-guarded: the retry path below reassigns tx, and if that second
+	// d.Begin also fails we return with tx == nil. Calling Rollback on a nil
+	// pgx.Tx interface panics, so a transient pool exhaustion would take the
+	// process down rather than surfacing an error.
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
 
 	if _, err := tx.Exec(ctx, "SET LOCAL work_mem = '32MB'"); err != nil {
 		slog.Warn("store: SET LOCAL work_mem failed, retrying without bump", "error", err)
 		_ = tx.Rollback(ctx)
 		tx, err = d.Begin(ctx)
 		if err != nil {
+			tx = nil
 			return err
 		}
 	}
@@ -59,13 +68,22 @@ func withWorkMemTxRaw(ctx context.Context, p database.DBProvider, fn func(q *db.
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	// Nil-guarded: the retry path below reassigns tx, and if that second
+	// d.Begin also fails we return with tx == nil. Calling Rollback on a nil
+	// pgx.Tx interface panics, so a transient pool exhaustion would take the
+	// process down rather than surfacing an error.
+	defer func() {
+		if tx != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
 
 	if _, err := tx.Exec(ctx, "SET LOCAL work_mem = '32MB'"); err != nil {
 		slog.Warn("store: SET LOCAL work_mem failed, retrying without bump", "error", err)
 		_ = tx.Rollback(ctx)
 		tx, err = d.Begin(ctx)
 		if err != nil {
+			tx = nil
 			return err
 		}
 	}

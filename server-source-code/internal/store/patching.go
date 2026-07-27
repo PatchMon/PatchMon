@@ -369,10 +369,31 @@ func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, osType, stage, ou
 			return err
 		}
 		if rows == 0 {
-			// Status guard blocked the update — another path already terminated
-			// this run. Don't write packages_affected to a terminal row that
-			// would otherwise have stale shell_output.
-			return nil
+			// The status guard blocked the transition. On the COMMON path this
+			// is not a conflict at all: StopRun marks the row cancelled in the
+			// database first and only then signals the agent, so by the time the
+			// agent honours patch_run_stop and posts its cancelled-stage report
+			// the row is already status='cancelled'. Rejecting it outright threw
+			// away both the agent's authoritative captured output and the
+			// packages-actually-applied parse — the entire point of reporting a
+			// cancelled run.
+			//
+			// Retry as a fields-only update scoped to status='cancelled'. It
+			// changes no status, so the protection that stops a late 'completed'
+			// from overwriting a cancelled run is untouched.
+			outRows, outErr := d.Queries.UpdatePatchRunCancelledOutput(ctx, db.UpdatePatchRunCancelledOutputParams{
+				ID:           id,
+				ShellOutput:  output,
+				ErrorMessage: errPtr,
+			})
+			if outErr != nil {
+				return outErr
+			}
+			if outRows == 0 {
+				// Genuinely a different terminal state (completed / failed /
+				// timed_out). Leave it alone.
+				return nil
+			}
 		}
 		// Record packages that were actually applied before the stop so the
 		// UI can still show partial state on a cancelled run.

@@ -221,7 +221,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	patchRunsStore := store.NewPatchRunsStore(dbProvider)
 	var agentWsHandler *handler.AgentWSHandler
 	agentOpts := []handler.AgentWSHandlerOption{
-		handler.WithOnAgentDisconnect(handler.NewAgentDisconnectHandler(dbProvider, hostsStore, patchRunsStore, notifyEmit, log)),
+		handler.WithOnAgentDisconnect(handler.NewAgentDisconnectHandler(dbProvider, hostsStore, patchRunsStore, registry, notifyEmit, log)),
 		handler.WithOnAgentConnect(handler.NewAgentConnectHandler(dbProvider, queueClient, queueInspector, notifyEmit, log)),
 	}
 	if rdpHandler != nil {

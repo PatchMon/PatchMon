@@ -113,7 +113,7 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	mux.Handle(TypeDockerInventoryRefresh, wrap(TypeDockerInventoryRefresh, NewDockerInventoryRefreshHandler(registry, db, log)))
 	mux.Handle(TypeUpdateAgent, wrap(TypeUpdateAgent, NewUpdateAgentHandler(registry, db, log)))
 	dbResolver := &hostctx.DBResolver{Default: db}
-	mux.Handle(TypeHostStatusMonitor, wrap(TypeHostStatusMonitor, NewHostStatusMonitorHandler(db, opts.PoolCache, opts.Emit, log)))
+	mux.Handle(TypeHostStatusMonitor, wrap(TypeHostStatusMonitor, NewHostStatusMonitorHandler(db, opts.PoolCache, registry, opts.Emit, log)))
 	mux.Handle(TypeUpdateThresholdMonitor, wrap(TypeUpdateThresholdMonitor, NewUpdateThresholdMonitorHandler(db, opts.PoolCache, opts.Emit, log)))
 	mux.Handle(notifications.TypeNotificationDeliver, wrap(notifications.TypeNotificationDeliver, NewNotificationDeliverHandler(db, opts.PoolCache, opts.Enc, opts.RDB, log)))
 	mux.Handle(TypeScheduledReportsDispatch, wrap(TypeScheduledReportsDispatch, NewScheduledReportsDispatchHandler(db, opts.PoolCache, opts.QueueClient, log)))
@@ -143,6 +143,19 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	mux.Handle(TypeMetricsSend, wrap(TypeMetricsSend, NewMetricsSendHandler(db, opts.PoolCache, opts.ServerVersion, log)))
 	return mux
 }
+
+// packageStatsRefreshUniqueWindow is the asynq uniqueness TTL for the
+// scheduled mv_package_stats refresh.
+//
+// It must be LONGER than the 2-minute cron interval, not shorter. asynq
+// releases the uniqueness lock as soon as the task finishes, so a healthy
+// refresh (sub-second to a couple of seconds) never suppresses the next tick
+// regardless of TTL. The TTL only matters in the case it exists to bound: a
+// refresh still running when the next tick fires. With a TTL under the cron
+// interval the lock would already have expired by then and the tick would
+// enqueue anyway, which is precisely the pile-up this is meant to prevent.
+// 3 minutes gives a comfortable margin over the 2-minute schedule.
+const packageStatsRefreshUniqueWindow = 3 * time.Minute
 
 // minutesToCron converts an interval in minutes to a cron expression.
 // For intervals that divide evenly into 60, it uses */N syntax.
@@ -255,8 +268,18 @@ func NewScheduler(opts asynq.RedisClientOpt, db *database.DB, log *slog.Logger) 
 	// on screen = this interval. REFRESH CONCURRENTLY produces brief
 	// row-level locks rather than a full table lock so this does not
 	// block readers.
+	//
+	// asynq.Unique bounds the queue: on a large install a refresh can take
+	// longer than the 2-minute cron interval, and without a uniqueness window
+	// every tick would enqueue another one behind the running job until the
+	// queue (and the DB) is saturated with redundant refreshes. See
+	// packageStatsRefreshUniqueWindow for why the window deliberately exceeds
+	// the cron interval rather than sitting under it.
 	packageStatsRefreshTask := asynq.NewTask(TypePackageStatsRefresh, nil)
-	if _, err := scheduler.Register("*/2 * * * *", packageStatsRefreshTask, asynq.Queue(QueuePackageStatsRefresh), asynq.Retention(AutomationRetention)); err != nil {
+	if _, err := scheduler.Register("*/2 * * * *", packageStatsRefreshTask,
+		asynq.Queue(QueuePackageStatsRefresh),
+		asynq.Unique(packageStatsRefreshUniqueWindow),
+		asynq.Retention(AutomationRetention)); err != nil {
 		return nil, err
 	}
 

@@ -158,9 +158,11 @@ const Repositories = () => {
 		queryFn: () => repositoryAPI.getStats().then((res) => res.data),
 	});
 
-	// Fetch host information when filtering by host
+	// Fetch host information when filtering by host. The fetch is
+	// filter-independent, so the key must be too: keying it on `hostFilter`
+	// re-pulled 5000 rows for every distinct filter value.
 	const { data: hosts } = useQuery({
-		queryKey: ["hostOptions", hostFilter],
+		queryKey: ["hostOptions"],
 		queryFn: () =>
 			dashboardAPI.getHostOptions({ limit: 5000 }).then((res) => res.data),
 		staleTime: 5 * 60 * 1000,
@@ -280,6 +282,15 @@ const Repositories = () => {
 		sortField,
 		sortDirection,
 	]);
+
+	// Clamp the page once totals are known. Deleting the last rows on the final
+	// page otherwise leaves "Page 5 of 3" over an empty table until the next
+	// filter change.
+	useEffect(() => {
+		if (!repositoriesResponse) return;
+		if (currentPage <= totalPages) return;
+		setCurrentPage(totalPages);
+	}, [repositoriesResponse, currentPage, totalPages]);
 
 	const handlePageSizeChange = (nextPageSize) => {
 		setPageSize(nextPageSize);

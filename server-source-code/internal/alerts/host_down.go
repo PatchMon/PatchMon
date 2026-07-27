@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
@@ -18,9 +19,28 @@ import (
 // migration 000042.
 const defaultHostDownThresholdSeconds = 30
 
+// defaultUpdateIntervalMinutes is the fallback report cadence used when the
+// settings row is unreadable or unset.
+const defaultUpdateIntervalMinutes = 60
+
+// reportCadenceStaleMultiplier is how many missed report cycles a host with no
+// WebSocket history has to accumulate before the periodic sweep calls it down.
+// Matches the pre-2.0.3 behaviour (update_interval * 3).
+const reportCadenceStaleMultiplier = 3
+
 // ProcessHostStatusMonitor runs the periodic host-down check: finds stale hosts and creates/resolves alerts.
 // Called by the host-status-monitor queue job.
-func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost string, emit *notifications.Emitter, log *slog.Logger) (int, error) {
+//
+// Staleness is decided from live WebSocket state, not from hosts.last_update.
+// last_update only moves on the agent's HTTP check-in, which runs on
+// update_interval (default 60 MINUTES) — the 30-second host_down threshold is
+// a WebSocket-disconnect duration and is meaningless against report cadence.
+// Judging every host against it flagged essentially the whole fleet on every
+// sweep and produced endless down/recovered flapping.
+//
+// reg may be nil (test fixtures, or a deployment with no registry wired); in
+// that case every host falls back to the report-cadence rule below.
+func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost string, reg *agentregistry.Registry, emit *notifications.Emitter, log *slog.Logger) (int, error) {
 	enabled, err := IsAlertsEnabled(ctx, d)
 	if err != nil || !enabled {
 		log.Debug("host_down: alerts disabled")
@@ -33,13 +53,25 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 		return 0, nil
 	}
 
-	// Threshold semantics: seconds. parseThreshold reads alert_config.metadata.threshold
+	// Threshold semantics: seconds, and it applies ONLY to the WebSocket
+	// disconnect duration. parseThreshold reads alert_config.metadata.threshold
 	// (a JSONB number); migration 000042 seeds the default of 30 seconds.
 	thresholdSeconds := parseThreshold(cfg, defaultHostDownThresholdSeconds)
 	if thresholdSeconds <= 0 {
 		thresholdSeconds = defaultHostDownThresholdSeconds
 	}
-	threshold := time.Now().Add(-time.Duration(thresholdSeconds) * time.Second)
+	wsThreshold := time.Duration(thresholdSeconds) * time.Second
+
+	// Fallback threshold for hosts the registry has never seen a WebSocket for
+	// (agent too old to hold a WS, or one that has never connected since this
+	// process started). Those can only be judged on report cadence.
+	updateIntervalMin := defaultUpdateIntervalMinutes
+	if settings, sErr := d.Queries.GetFirstSettings(ctx); sErr != nil {
+		log.Debug("host_down: settings read failed, using default update interval", "error", sErr)
+	} else if settings.UpdateInterval > 0 {
+		updateIntervalMin = int(settings.UpdateInterval)
+	}
+	reportCadenceThreshold := time.Now().Add(-time.Duration(updateIntervalMin*reportCadenceStaleMultiplier) * time.Minute)
 
 	hostRows, err := d.Queries.ListHosts(ctx)
 	if err != nil {
@@ -63,12 +95,14 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 	alertsStore := store.NewAlertsStore(d)
 	alertsCreated := 0
 
+	now := time.Now()
 	for _, host := range hostRows {
 		lastUpdate := host.LastUpdate
 		if !lastUpdate.Valid {
 			continue
 		}
-		isStale := lastUpdate.Time.Before(threshold)
+		decision := hostDownState(reg, host.ApiID, now, wsThreshold, lastUpdate.Time, reportCadenceThreshold, updateIntervalMin)
+		isStale := decision.down
 		hostDownEnabled := host.HostDownAlertsEnabled
 
 		shouldCreate := false
@@ -94,16 +128,25 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 			title := "Host agent down: " + hostName
 			// Keep `threshold_minutes` in the metadata for any external
 			// integrations that already key on it; add `threshold_seconds` so
-			// new consumers see the configured value at full precision.
-			thresholdMinutesRounded := (thresholdSeconds + 59) / 60
+			// new consumers see the configured value at full precision. Both
+			// report the threshold that ACTUALLY fired for this host, which is
+			// the WebSocket disconnect window for tracked agents and the
+			// report-cadence window for agents with no WebSocket history.
+			thresholdMinutesRounded := (decision.thresholdSeconds + 59) / 60
 			meta := map[string]interface{}{
 				"host_id":           host.ID,
 				"host_name":         hostName,
 				"last_update":       lastUpdate.Time,
-				"threshold_seconds": thresholdSeconds,
+				"threshold_seconds": decision.thresholdSeconds,
 				"threshold_minutes": thresholdMinutesRounded,
+				"detection":         decision.detection,
 			}
-			msg := fmt.Sprintf("Host \"%s\" has not reported in %s. Last update: %s", hostName, formatHostDownThreshold(thresholdSeconds), lastUpdate.Time.Format(time.RFC3339))
+			var msg string
+			if decision.detection == detectionWebsocket {
+				msg = fmt.Sprintf("Host \"%s\" has had no WebSocket connection for %s. Last update: %s", hostName, formatHostDownThreshold(decision.thresholdSeconds), lastUpdate.Time.Format(time.RFC3339))
+			} else {
+				msg = fmt.Sprintf("Host \"%s\" has not reported in %s. Last update: %s", hostName, formatHostDownThreshold(decision.thresholdSeconds), lastUpdate.Time.Format(time.RFC3339))
+			}
 
 			// Emit event — notification routing decides which destinations receive it
 			// (including internal alerts if that destination is enabled).
@@ -296,6 +339,68 @@ func OnConnect(ctx context.Context, d *database.DB, apiID string, tenantHost str
 				})
 			}
 		}
+	}
+}
+
+// Detection rules recorded on host_down alert metadata so operators (and
+// downstream integrations) can tell which staleness rule fired.
+const (
+	detectionWebsocket     = "websocket"
+	detectionReportCadence = "report_cadence"
+)
+
+// hostDownDecision is the outcome of the per-host staleness evaluation.
+// thresholdSeconds is the window that was actually applied, so alert metadata
+// and the operator-facing message quote a number that matches the rule used.
+type hostDownDecision struct {
+	down             bool
+	detection        string
+	thresholdSeconds int
+}
+
+// hostDownState decides whether a host counts as "agent down" for the periodic
+// sweep.
+//
+// A live WebSocket is the strongest possible evidence the agent is alive, so it
+// always wins. For an agent the registry has seen and then lost, the configured
+// host_down threshold applies to the disconnect duration — that is the only
+// signal the sub-minute default was ever meaningful for. For an agent the
+// registry has no record of at all (never connected since this process
+// started, or an agent build with no WebSocket), the only available signal is
+// report cadence, so we fall back to the pre-2.0.3 rule of
+// update_interval * 3 rather than the WebSocket threshold.
+func hostDownState(
+	reg *agentregistry.Registry,
+	apiID string,
+	now time.Time,
+	wsThreshold time.Duration,
+	lastUpdate time.Time,
+	reportCadenceThreshold time.Time,
+	updateIntervalMin int,
+) hostDownDecision {
+	cadence := hostDownDecision{
+		down:             lastUpdate.Before(reportCadenceThreshold),
+		detection:        detectionReportCadence,
+		thresholdSeconds: updateIntervalMin * reportCadenceStaleMultiplier * 60,
+	}
+	if reg == nil {
+		return cadence
+	}
+
+	info := reg.Get(apiID)
+	switch {
+	case info.Connected:
+		// Live WebSocket: the agent is demonstrably reachable right now.
+		return hostDownDecision{down: false, detection: detectionWebsocket, thresholdSeconds: int(wsThreshold.Seconds())}
+	case info.DisconnectedAt != nil:
+		return hostDownDecision{
+			down:             now.Sub(*info.DisconnectedAt) > wsThreshold,
+			detection:        detectionWebsocket,
+			thresholdSeconds: int(wsThreshold.Seconds()),
+		}
+	default:
+		// No WebSocket information at all for this agent.
+		return cadence
 	}
 }
 

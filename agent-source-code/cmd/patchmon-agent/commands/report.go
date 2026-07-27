@@ -284,10 +284,20 @@ func sendReport(outputJSON bool) error {
 		return nil
 	}
 
+	return deliverReport(context.Background(), payload)
+}
+
+// deliverReport ships a full /hosts/update payload and runs the post-report
+// housekeeping: server-initiated auto-update, the proactive version check,
+// and the integration data upload.
+//
+// Split out of sendReport so the hash-gated check-in can fall back to a full
+// report using data it has already collected, instead of paying for a second
+// full collection pass (packages alone dominate the tick cost).
+func deliverReport(ctx context.Context, payload *models.ReportPayload) error {
 	// Send report
 	logger.Info("Sending report to PatchMon server...")
 	httpClient := client.New(cfgManager, logger)
-	ctx := context.Background()
 	response, err := httpClient.SendUpdate(ctx, payload)
 	if err != nil {
 		return fmt.Errorf("failed to send report: %w", err)
@@ -530,15 +540,52 @@ func sendComplianceData(httpClient *client.Client, integrationData *models.Integ
 	}).Info("Compliance data sent successfully")
 }
 
+// forcedFullReportInterval is how many periodic ticks may pass before the
+// agent sends a full report regardless of what the hash compare said.
+//
+// Hash-gating fails silently by design: if a stored server-side hash ever
+// matched content that is no longer current (a canonicalisation change, a
+// half-applied partial, a restored database), the host would look healthy in
+// the UI whilst its inventory rotted, with nothing to alert on. A forced full
+// report bounds that worst case. 24 ticks is one day at the default 60-minute
+// check-in interval, and costs one full report per host per day against the
+// pre-2.0.3 rate of one per tick, so it keeps essentially all of the
+// bandwidth saving.
+const forcedFullReportInterval = 24
+
+// shouldForceFullReport reports whether the given tick must send a full report
+// regardless of the hash compare. Ticks are numbered from 1 and count only
+// those that actually ran a check-in.
+func shouldForceFullReport(tick uint64) bool {
+	return tick%forcedFullReportInterval == 0
+}
+
+// serverSupportsHashGate reports whether a ping response came from a server
+// that implements hash-gated check-in (v2.0.3+).
+//
+// This check is load-bearing: a pre-2.0.3 server ignores the ping body
+// entirely and answers 200 with neither hashGate nor requestFull. Without the
+// explicit marker the agent would read that as "steady state, nothing
+// changed" and never send a /hosts/update again, while the ping kept bumping
+// last_update — a host that looks healthy in the UI whilst its packages,
+// repos and interfaces go stale forever.
+func serverSupportsHashGate(resp *models.PingResponse) bool {
+	return resp != nil && resp.HashGate
+}
+
 // runCheckIn is the per-tick hash-gated check-in. It runs all collectors,
 // computes per-section hashes, pings the server, and on a non-empty
 // requestFull response fires a partial /hosts/update for just the stale
 // sections. Docker and compliance staleness routes through their existing
 // dedicated endpoints — runCheckIn never bundles those into /hosts/update.
 //
+// forceFull skips the hash compare and sends a full report for this tick.
+// The caller uses it to bound worst-case staleness (see
+// forcedFullReportInterval).
+//
 // On any failure runCheckIn falls back to legacy full-report behaviour so a
-// hashing bug or a transient ping failure cannot dark out the agent.
-func runCheckIn(ctx context.Context) error {
+// hashing bug, an old server, or a rejected partial cannot dark out the agent.
+func runCheckIn(ctx context.Context, forceFull bool) error {
 	logger.Debug("Starting hash-gated check-in")
 	if err := cfgManager.LoadCredentials(); err != nil {
 		return err
@@ -558,9 +605,14 @@ func runCheckIn(ctx context.Context) error {
 		// updated. The next ping with empty hashes will force a full anyway,
 		// but doing it inline avoids an extra network round-trip.
 		logger.WithError(hashErr).Warn("hash computation failed; falling back to full report")
-		return sendReport(false)
+		return deliverReport(ctx, payload)
 	}
 	payload.Hashes = hashes
+
+	if forceFull {
+		logger.WithField("every_n_ticks", forcedFullReportInterval).Info("Sending periodic forced full report")
+		return deliverReport(ctx, payload)
+	}
 
 	// Docker / compliance hashes are computed from cached integration data
 	// (the agent does not re-collect docker or run a scan just to hash). If
@@ -605,6 +657,14 @@ func runCheckIn(ctx context.Context) error {
 		return fmt.Errorf("check-in ping failed: %w", err)
 	}
 
+	if !serverSupportsHashGate(resp) {
+		// Pre-2.0.3 server. An empty requestFull from it means "unknown",
+		// not "nothing changed", so ship the full report we already
+		// collected — same content the pre-2.0.3 agent sent every tick.
+		logger.Info("Server does not advertise hash-gated check-in (pre-2.0.3), sending full report")
+		return deliverReport(ctx, payload)
+	}
+
 	logger.WithFields(logrus.Fields{
 		"requestFull": resp.RequestFull,
 	}).Debug("Check-in completed")
@@ -632,7 +692,18 @@ func runCheckIn(ctx context.Context) error {
 
 	if len(mainSections) > 0 {
 		if err := sendPartialReport(ctx, httpClient, payload, mainSections); err != nil {
-			logger.WithError(err).Warn("partial report failed; will retry on next tick")
+			// A rejected partial delivers nothing at all, and the server's
+			// stored hashes stay stale, so the next tick would build the
+			// same rejected payload — a permanent loop. Retry the tick as a
+			// full report instead: it uses the legacy (sections-free) shape,
+			// so a partial-specific rejection cannot repeat.
+			logger.WithError(err).Warn("partial report failed; falling back to a full report for this tick")
+			if fullErr := deliverReport(ctx, payload); fullErr != nil {
+				return fmt.Errorf("partial report failed (%v); full report fallback failed: %w", err, fullErr)
+			}
+			// deliverReport already uploaded docker inventory via
+			// sendIntegrationData; don't send it twice.
+			sendDockerNow = false
 		}
 	}
 

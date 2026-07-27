@@ -292,7 +292,15 @@ UPDATE hosts SET
     boot_time = COALESCE($20::timestamptz, boot_time),
     load_average = COALESCE($21::jsonb, load_average),
     needs_reboot = COALESCE($22::boolean, needs_reboot),
-    reboot_reason = $23,
+    -- reboot_reason is only rewritten when this report also carries
+    -- needs_reboot. A hash-gated partial report never carries either (the ping
+    -- metrics path owns both fields), and reboot_reason has no COALESCE guard
+    -- of its own, so without this CASE a partial would NULL out a reason the
+    -- ping had just written correctly.
+    reboot_reason = CASE
+        WHEN $22::boolean IS NULL THEN reboot_reason
+        ELSE $23::text
+    END,
     package_manager = COALESCE($24::text, package_manager),
     packages_hash = COALESCE($25::text, packages_hash),
     repos_hash = COALESCE($26::text, repos_hash),

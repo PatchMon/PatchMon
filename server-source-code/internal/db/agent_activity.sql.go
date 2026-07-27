@@ -74,15 +74,32 @@ func (q *Queries) CountAgentActivity(ctx context.Context, arg CountAgentActivity
 	return column_1, err
 }
 
-const deleteOldUpdateHistory = `-- name: DeleteOldUpdateHistory :execrows
+const deleteOldUpdateHistoryBatch = `-- name: DeleteOldUpdateHistoryBatch :execrows
 DELETE FROM update_history
-WHERE timestamp < (NOW() - ($1::int * INTERVAL '1 day'))
+WHERE id IN (
+    SELECT id FROM update_history
+    WHERE timestamp < (NOW() - ($1::int * INTERVAL '1 day'))
+    LIMIT $2::int
+)
 `
 
-// Retention sweep target. Returns the number of rows deleted so the worker
-// can log the volume.
-func (q *Queries) DeleteOldUpdateHistory(ctx context.Context, retentionDays int32) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteOldUpdateHistory, retentionDays)
+type DeleteOldUpdateHistoryBatchParams struct {
+	RetentionDays int32 `json:"retention_days"`
+	BatchLimit    int32 `json:"batch_limit"`
+}
+
+// Retention sweep target, deliberately batched. Steady state deletes a day's
+// worth of rows, but the FIRST sweep after upgrading an existing install has
+// to clear the entire pre-2.0.3 update_history backlog, which was never pruned
+// before — millions of rows on a multi-year install. An unbounded single-
+// statement DELETE would hold one transaction (and its locks / WAL / dead
+// tuples) open for the whole thing. The worker calls this in a loop until it
+// returns 0, so each transaction stays small and interruptible.
+//
+// Returns the number of rows deleted so the worker can both log the volume and
+// decide whether to keep looping.
+func (q *Queries) DeleteOldUpdateHistoryBatch(ctx context.Context, arg DeleteOldUpdateHistoryBatchParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOldUpdateHistoryBatch, arg.RetentionDays, arg.BatchLimit)
 	if err != nil {
 		return 0, err
 	}

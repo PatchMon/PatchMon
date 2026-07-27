@@ -53,29 +53,49 @@ UPDATE patch_runs SET shell_output = shell_output || $2, updated_at = NOW() WHER
 
 -- name: UpdatePatchRunCompleted :exec
 -- REPLACE (not append) - agent streams progress chunks then sends final full output.
--- agent_disconnected is intentionally NOT in the guard so a recovering agent
--- that posts a late "completed" can still unwedge the row.
+-- agent_disconnected and timed_out are intentionally NOT in the guard: both are
+-- server-side "we gave up waiting" markers, so a recovering agent posting a late
+-- genuine "completed" must be able to unwedge the row and deliver the real output.
 UPDATE patch_runs SET status = 'completed', shell_output = $2, completed_at = NOW(), updated_at = NOW()
 WHERE id = $1
-  AND status NOT IN ('cancelled','timed_out','completed','failed','validated','dry_run_completed');
+  AND status NOT IN ('cancelled','completed','failed','validated','dry_run_completed');
 
 -- name: UpdatePatchRunFailed :exec
 -- REPLACE (not append) - agent streams progress chunks then sends final full output.
--- agent_disconnected is intentionally NOT in the guard so a recovering agent
--- that posts a late "failed" can still unwedge the row.
+-- agent_disconnected and timed_out are intentionally NOT in the guard so a
+-- recovering agent that posts a late "failed" can still unwedge the row.
 UPDATE patch_runs SET status = 'failed', shell_output = $2, error_message = $3, completed_at = NOW(), updated_at = NOW()
 WHERE id = $1
-  AND status NOT IN ('cancelled','timed_out','completed','failed','validated','dry_run_completed');
+  AND status NOT IN ('cancelled','completed','failed','validated','dry_run_completed');
 
 -- name: UpdatePatchRunCancelled :execrows
 -- Terminal cancelled state set by the agent's late "cancelled" stage report.
 -- Replaces shell_output with the full captured output so rollback/cleanup text is preserved.
 -- :execrows so the handler can detect concurrent termination (rows=0) cleanly.
--- agent_disconnected is intentionally NOT in the guard so a recovering agent
--- that posts a late "cancelled" can still unwedge the row.
+-- agent_disconnected and timed_out are intentionally NOT in the guard so a
+-- recovering agent that posts a late "cancelled" can still unwedge the row.
+-- 'cancelled' STAYS in the guard: a DB-first user cancel already owns the row,
+-- and the fields-only UpdatePatchRunCancelledOutput below is the path that
+-- lets the agent's authoritative output land on it without a status change.
 UPDATE patch_runs SET status = 'cancelled', shell_output = $2, error_message = $3, completed_at = NOW(), updated_at = NOW()
 WHERE id = $1
-  AND status NOT IN ('cancelled','timed_out','completed','failed','validated','dry_run_completed');
+  AND status NOT IN ('cancelled','completed','failed','validated','dry_run_completed');
+
+-- name: UpdatePatchRunCancelledOutput :execrows
+-- Fields-only follow-up for the DB-first user-cancel path
+-- (MarkPatchRunCancelledByUser sets status='cancelled' immediately, so the
+-- agent's subsequent "cancelled" stage report is blocked by the status guard
+-- on UpdatePatchRunCancelled). This id-scoped update writes ONLY the agent's
+-- authoritative captured output; it never changes status, so a 'completed'
+-- report can still not overwrite a cancelled run. error_message is preserved
+-- when already set (the user-initiated reason is the more informative one)
+-- and filled in from the agent only when the column is still NULL.
+UPDATE patch_runs
+SET shell_output = $2,
+    error_message = COALESCE(error_message, $3),
+    updated_at = NOW()
+WHERE id = $1
+  AND status = 'cancelled';
 
 -- name: MarkPatchRunCancelledByUser :execrows
 -- User-initiated cancel from StopRun. Deliberately does NOT touch shell_output
@@ -329,10 +349,17 @@ VALUES ($1, $2, $3, NOW(), NOW());
 DELETE FROM patch_policy_exclusions WHERE patch_policy_id = $1 AND host_id = $2;
 
 -- name: MarkPatchRunsTimedOut :execrows
+-- Stall sweep. The predicate is deliberately "no activity since", NOT "started
+-- before": every progress chunk the agent streams bumps updated_at (see
+-- UpdatePatchRunProgress), so a long-but-healthy run (dist-upgrade on slow
+-- disk routinely exceeds 30 minutes) keeps refreshing its own liveness while a
+-- genuinely wedged run does not. Using elapsed-since-start here would mark
+-- every long run timed_out while it was still working and discard the real
+-- outcome the agent later reports.
 UPDATE patch_runs
-SET status = 'timed_out', error_message = $2, completed_at = NOW(), updated_at = NOW()
+SET status = 'timed_out', error_message = sqlc.narg('error_message'), completed_at = NOW(), updated_at = NOW()
 WHERE status = 'running'
-  AND COALESCE(started_at, created_at) < $1;
+  AND updated_at < sqlc.arg('stale_before');
 
 -- name: MarkPatchRunsAgentDisconnected :execrows
 UPDATE patch_runs

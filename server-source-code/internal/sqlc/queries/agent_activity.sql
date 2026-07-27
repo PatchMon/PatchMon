@@ -112,8 +112,20 @@ ORDER BY occurred_at DESC
 LIMIT sqlc.arg('row_limit')::int
 OFFSET sqlc.arg('row_offset')::int;
 
--- name: DeleteOldUpdateHistory :execrows
--- Retention sweep target. Returns the number of rows deleted so the worker
--- can log the volume.
+-- name: DeleteOldUpdateHistoryBatch :execrows
+-- Retention sweep target, deliberately batched. Steady state deletes a day's
+-- worth of rows, but the FIRST sweep after upgrading an existing install has
+-- to clear the entire pre-2.0.3 update_history backlog, which was never pruned
+-- before — millions of rows on a multi-year install. An unbounded single-
+-- statement DELETE would hold one transaction (and its locks / WAL / dead
+-- tuples) open for the whole thing. The worker calls this in a loop until it
+-- returns 0, so each transaction stays small and interruptible.
+--
+-- Returns the number of rows deleted so the worker can both log the volume and
+-- decide whether to keep looping.
 DELETE FROM update_history
-WHERE timestamp < (NOW() - (sqlc.arg('retention_days')::int * INTERVAL '1 day'));
+WHERE id IN (
+    SELECT id FROM update_history
+    WHERE timestamp < (NOW() - (sqlc.arg('retention_days')::int * INTERVAL '1 day'))
+    LIMIT sqlc.arg('batch_limit')::int
+);

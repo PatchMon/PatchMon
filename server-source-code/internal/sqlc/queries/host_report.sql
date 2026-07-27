@@ -27,7 +27,15 @@ UPDATE hosts SET
     boot_time = COALESCE(sqlc.narg('boot_time')::timestamptz, boot_time),
     load_average = COALESCE(sqlc.narg('load_average')::jsonb, load_average),
     needs_reboot = COALESCE(sqlc.narg('needs_reboot')::boolean, needs_reboot),
-    reboot_reason = sqlc.narg('reboot_reason'),
+    -- reboot_reason is only rewritten when this report also carries
+    -- needs_reboot. A hash-gated partial report never carries either (the ping
+    -- metrics path owns both fields), and reboot_reason has no COALESCE guard
+    -- of its own, so without this CASE a partial would NULL out a reason the
+    -- ping had just written correctly.
+    reboot_reason = CASE
+        WHEN sqlc.narg('needs_reboot')::boolean IS NULL THEN reboot_reason
+        ELSE sqlc.narg('reboot_reason')::text
+    END,
     package_manager = COALESCE(sqlc.narg('package_manager')::text, package_manager),
     packages_hash = COALESCE(sqlc.narg('packages_hash')::text, packages_hash),
     repos_hash = COALESCE(sqlc.narg('repos_hash')::text, repos_hash),

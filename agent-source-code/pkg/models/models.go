@@ -204,10 +204,16 @@ type PingResponse struct {
 	AgentStartup  bool               `json:"agentStartup,omitempty"`
 	Integrations  map[string]bool    `json:"integrations,omitempty"` // Server-side integration enable states
 	CrontabUpdate *CrontabUpdateInfo `json:"crontabUpdate,omitempty"`
+	// HashGate is the server's capability marker for hash-gated check-in
+	// (v2.0.3+). Pre-2.0.3 servers ignore the ping body entirely and answer
+	// 200 without this field, which is otherwise indistinguishable from
+	// "nothing changed" — see serverSupportsHashGate. The exact "hashGate"
+	// JSON key is a client/server contract; do not rename it.
+	HashGate bool `json:"hashGate,omitempty"`
 	// RequestFull lists the section identifiers (subset of the closed
 	// SectionXxx constants) whose stored server-side hash differs from
 	// what the agent shipped. Empty array == nothing changed, agent stays
-	// quiet.
+	// quiet. Only meaningful when HashGate is true.
 	RequestFull []string `json:"requestFull,omitempty"`
 }
 

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
 	AlertTriangle,
 	ChevronLeft,
@@ -122,7 +122,7 @@ const ChipMultiSelect = ({ label, options, values, onChange }) => {
 							type="button"
 							key={opt.value}
 							onClick={() => toggle(opt.value)}
-							className={`px-2.5 py-1 rounded border text-xs font-medium transition-colors ${
+							className={`inline-flex items-center px-2.5 py-1 rounded border text-xs font-medium transition-colors min-h-[44px] sm:min-h-0 ${
 								active
 									? "bg-primary-100 border-primary-300 text-primary-800 dark:bg-primary-900 dark:border-primary-700 dark:text-primary-200"
 									: "bg-white border-secondary-300 text-secondary-600 hover:border-primary-400 dark:bg-secondary-800 dark:border-secondary-600 dark:text-secondary-200"
@@ -223,12 +223,16 @@ const AgentActivityTab = ({ hostId }) => {
 
 	const [showFilters, setShowFilters] = useState(false);
 
+	// The query key carries the time-range KEYWORD, never a resolved timestamp:
+	// a timestamp in the key would mint a new key on every render. The absolute
+	// `since` bound is resolved inside queryFn instead, so the 30s auto-refresh
+	// keeps "Last 24 hours" anchored to now rather than to when the tab opened.
 	const queryParams = useMemo(
 		() => ({
 			direction,
 			type: typeFilter,
 			status: statusFilter,
-			since: timeRange === "all" ? "" : sinceFromRange(timeRange),
+			timeRange,
 			search: urlSearch,
 			limit: PAGE_SIZE,
 			offset: (page - 1) * PAGE_SIZE,
@@ -244,12 +248,19 @@ const AgentActivityTab = ({ hostId }) => {
 		refetch,
 	} = useQuery({
 		queryKey: ["host-activity", hostId, queryParams],
-		queryFn: () =>
-			dashboardAPI.getHostActivity(hostId, queryParams).then((res) => res.data),
+		queryFn: () => {
+			const { timeRange: range, ...rest } = queryParams;
+			return dashboardAPI
+				.getHostActivity(hostId, {
+					...rest,
+					since: range === "all" ? "" : sinceFromRange(range),
+				})
+				.then((res) => res.data);
+		},
 		enabled: !!hostId,
 		staleTime: 30 * 1000,
 		refetchInterval: 30 * 1000,
-		keepPreviousData: true,
+		placeholderData: keepPreviousData,
 	});
 
 	// HostActivity returns the body at the top level (no {success, data}

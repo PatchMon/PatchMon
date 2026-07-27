@@ -190,9 +190,17 @@ type Querier interface {
 	DeleteNetwork(ctx context.Context, id string) error
 	DeleteNotificationDestination(ctx context.Context, id string) error
 	DeleteNotificationRoute(ctx context.Context, id string) error
-	// Retention sweep target. Returns the number of rows deleted so the worker
-	// can log the volume.
-	DeleteOldUpdateHistory(ctx context.Context, retentionDays int32) (int64, error)
+	// Retention sweep target, deliberately batched. Steady state deletes a day's
+	// worth of rows, but the FIRST sweep after upgrading an existing install has
+	// to clear the entire pre-2.0.3 update_history backlog, which was never pruned
+	// before — millions of rows on a multi-year install. An unbounded single-
+	// statement DELETE would hold one transaction (and its locks / WAL / dead
+	// tuples) open for the whole thing. The worker calls this in a loop until it
+	// returns 0, so each transaction stays small and interruptible.
+	//
+	// Returns the number of rows deleted so the worker can both log the volume and
+	// decide whether to keep looping.
+	DeleteOldUpdateHistoryBatch(ctx context.Context, arg DeleteOldUpdateHistoryBatchParams) (int64, error)
 	DeleteOldestTfaRememberSession(ctx context.Context, userID string) error
 	DeletePackagesByIDs(ctx context.Context, dollar_1 []string) error
 	DeletePatchPolicy(ctx context.Context, id string) error
@@ -478,6 +486,13 @@ type Querier interface {
 	// Same status guard as UpdatePatchRunCancelled.
 	MarkPatchRunCancelledByUser(ctx context.Context, arg MarkPatchRunCancelledByUserParams) (int64, error)
 	MarkPatchRunsAgentDisconnected(ctx context.Context, arg MarkPatchRunsAgentDisconnectedParams) (int64, error)
+	// Stall sweep. The predicate is deliberately "no activity since", NOT "started
+	// before": every progress chunk the agent streams bumps updated_at (see
+	// UpdatePatchRunProgress), so a long-but-healthy run (dist-upgrade on slow
+	// disk routinely exceeds 30 minutes) keeps refreshing its own liveness while a
+	// genuinely wedged run does not. Using elapsed-since-start here would mark
+	// every long run timed_out while it was still working and discard the real
+	// outcome the agent later reports.
 	MarkPatchRunsTimedOut(ctx context.Context, arg MarkPatchRunsTimedOutParams) (int64, error)
 	MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) error
 	RevokeAllSessionsForUser(ctx context.Context, userID string) error
@@ -533,16 +548,29 @@ type Querier interface {
 	// Terminal cancelled state set by the agent's late "cancelled" stage report.
 	// Replaces shell_output with the full captured output so rollback/cleanup text is preserved.
 	// :execrows so the handler can detect concurrent termination (rows=0) cleanly.
-	// agent_disconnected is intentionally NOT in the guard so a recovering agent
-	// that posts a late "cancelled" can still unwedge the row.
+	// agent_disconnected and timed_out are intentionally NOT in the guard so a
+	// recovering agent that posts a late "cancelled" can still unwedge the row.
+	// 'cancelled' STAYS in the guard: a DB-first user cancel already owns the row,
+	// and the fields-only UpdatePatchRunCancelledOutput below is the path that
+	// lets the agent's authoritative output land on it without a status change.
 	UpdatePatchRunCancelled(ctx context.Context, arg UpdatePatchRunCancelledParams) (int64, error)
+	// Fields-only follow-up for the DB-first user-cancel path
+	// (MarkPatchRunCancelledByUser sets status='cancelled' immediately, so the
+	// agent's subsequent "cancelled" stage report is blocked by the status guard
+	// on UpdatePatchRunCancelled). This id-scoped update writes ONLY the agent's
+	// authoritative captured output; it never changes status, so a 'completed'
+	// report can still not overwrite a cancelled run. error_message is preserved
+	// when already set (the user-initiated reason is the more informative one)
+	// and filled in from the agent only when the column is still NULL.
+	UpdatePatchRunCancelledOutput(ctx context.Context, arg UpdatePatchRunCancelledOutputParams) (int64, error)
 	// REPLACE (not append) - agent streams progress chunks then sends final full output.
-	// agent_disconnected is intentionally NOT in the guard so a recovering agent
-	// that posts a late "completed" can still unwedge the row.
+	// agent_disconnected and timed_out are intentionally NOT in the guard: both are
+	// server-side "we gave up waiting" markers, so a recovering agent posting a late
+	// genuine "completed" must be able to unwedge the row and deliver the real output.
 	UpdatePatchRunCompleted(ctx context.Context, arg UpdatePatchRunCompletedParams) error
 	// REPLACE (not append) - agent streams progress chunks then sends final full output.
-	// agent_disconnected is intentionally NOT in the guard so a recovering agent
-	// that posts a late "failed" can still unwedge the row.
+	// agent_disconnected and timed_out are intentionally NOT in the guard so a
+	// recovering agent that posts a late "failed" can still unwedge the row.
 	UpdatePatchRunFailed(ctx context.Context, arg UpdatePatchRunFailedParams) error
 	UpdatePatchRunPackagesAffected(ctx context.Context, arg UpdatePatchRunPackagesAffectedParams) error
 	UpdatePatchRunProgress(ctx context.Context, arg UpdatePatchRunProgressParams) error

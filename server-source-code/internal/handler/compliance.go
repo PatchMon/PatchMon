@@ -184,7 +184,14 @@ func canonicalComplianceHashFromPayload(scans []complianceScanItem) (string, err
 			ProfileType: s.ProfileType,
 			Status:      s.Status,
 			Score:       score,
-			Results:     results,
+			// Field ORDER in ComplianceScanHashRow (the struct that is actually
+			// canonically encoded) is what the hash depends on, and it already
+			// mirrors the agent: remediation flags sit between the counters and
+			// Results. Here we only have to make sure the values are carried
+			// across from the decoded payload rather than left at zero.
+			RemediationApplied: s.RemediationApplied,
+			RemediationCount:   s.RemediationCount,
+			Results:            results,
 		}
 		if s.TotalRules != nil {
 			ws.TotalRules = *s.TotalRules
@@ -223,7 +230,15 @@ type complianceScanItem struct {
 	Warnings      *int                   `json:"warnings"`
 	Skipped       *int                   `json:"skipped"`
 	NotApplicable *int                   `json:"not_applicable"`
-	Error         string                 `json:"error"`
+	// RemediationApplied / RemediationCount are part of the agent's canonical
+	// compliance hash (agent-source-code/internal/hashing/canonical.go), so
+	// they MUST be decoded here: without them the server recomputes the hash
+	// with zero values, every remediated scan fails the hash gate with a 400,
+	// compliance_hash never advances, and the agent re-runs a full OpenSCAP
+	// scan on every single check-in for the rest of that host's life.
+	RemediationApplied bool   `json:"remediation_applied"`
+	RemediationCount   int    `json:"remediation_count"`
+	Error              string `json:"error"`
 }
 
 type complianceResultItem struct {
