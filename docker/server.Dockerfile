@@ -32,8 +32,22 @@ ENV AGENTS_DIR=/app/agents
 ENV PORT=3000
 CMD ["go", "run", "./cmd/server"]
 
-# Frontend builder stage for production
-FROM dhi.io/node:22-debian13-dev AS frontend-builder
+# Frontend builder stage for production.
+#
+# Pinned to $BUILDPLATFORM. The output is static JS/CSS/HTML (see the COPY of
+# /app/frontend/dist below), which is architecture-independent, so there is
+# nothing to gain from building it once per target platform — and a great deal
+# to lose. Without this pin BuildKit instantiates this stage for every
+# --platform in the build, so the linux/arm64 variant runs Node and npm under
+# QEMU user-mode emulation on an amd64 runner. That crashed `npm ci` with
+# "qemu: uncaught target signal 4 (Illegal instruction)" and exit code 132,
+# while the native amd64 variant of the same step succeeded in seconds.
+#
+# Pinning also roughly halves this stage's wall-clock cost, since the install
+# and the Vite build no longer run twice. The consumer of dist is the `builder`
+# stage, which is itself $BUILDPLATFORM-pinned, so nothing downstream needs a
+# target-architecture copy of these files.
+FROM --platform=$BUILDPLATFORM dhi.io/node:22-debian13-dev AS frontend-builder
 
 WORKDIR /app
 
@@ -78,7 +92,12 @@ RUN go mod download && \
 # SSG content stage — download ComplianceAsCode datastream files at build time.
 # Pass --build-arg SSG_VERSION=0.1.80 to pin a specific version; otherwise
 # the latest GitHub release is resolved automatically.
-FROM alpine:3.23 AS ssg-content
+#
+# Pinned to $BUILDPLATFORM for the same reason as frontend-builder: the payload
+# is ssg-*-ds.xml datastream files, which are architecture-independent. Left
+# unpinned, this stage downloaded and unpacked the same ~30s archive once per
+# target platform, and did the unpacking under QEMU for the non-native one.
+FROM --platform=$BUILDPLATFORM alpine:3.23 AS ssg-content
 ARG SSG_VERSION=""
 # Use shell variable VER to avoid Docker ARG substitution in the wget URL.
 # Docker substitutes ${SSG_VERSION} at parse time; when empty, the URL would be
