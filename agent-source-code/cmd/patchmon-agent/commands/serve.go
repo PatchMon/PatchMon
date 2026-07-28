@@ -1202,8 +1202,15 @@ var (
 	validProfileIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_.\-]+$`)
 	// Rule IDs: same as profile IDs (e.g., xccdf_org.ssgproject.content_rule_audit_rules_...)
 	validRuleIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_.\-]+$`)
-	// APT package names: alphanumeric, dots, plus, minus, underscores (no path/command injection)
-	validAptPackagePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+-_]*$`)
+	// APT package names: alphanumeric, dots, plus, minus, underscores (no path/command injection).
+	//
+	// The hyphen MUST stay escaped (or last) in the character class. Written as
+	// `[a-zA-Z0-9.+-_]` the "+-_" is parsed as a RANGE from '+' (0x2B) to '_'
+	// (0x5F), which silently admits / \ ; : , < > = @ [ ] ^ and every digit
+	// separator in between. That let "tmp/evil.deb" pass validation, and apt
+	// treats any argument containing a slash as a path to a local .deb file
+	// resolved against the process CWD.
+	validAptPackagePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._+\-]*$`)
 	// Docker image names: alphanumeric, slashes, colons, dots, hyphens, underscores (e.g., ubuntu:22.04, myregistry.io/app:v1)
 	validDockerImagePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.\-/:@]*$`)
 	// Docker container names: alphanumeric, underscores, hyphens (e.g., my-container, container_1)
