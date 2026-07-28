@@ -130,7 +130,7 @@ func (s *Server) handleConnection(parent context.Context, raw net.Conn) {
 	go ssh.DiscardRequests(requests)
 	for channel := range channels {
 		if channel.ChannelType() != "session" {
-			_ = channel.Reject(ssh.Prohibited, "only recorded interactive sessions are allowed; use patchmon tunnel for automation")
+			_ = channel.Reject(ssh.Prohibited, "only recorded interactive sessions are allowed; use patchmon ssh-tunnel for automation")
 			continue
 		}
 		accepted, reqs, err := channel.Accept()

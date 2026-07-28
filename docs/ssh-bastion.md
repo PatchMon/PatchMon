@@ -3,7 +3,7 @@
 PatchMon exposes two separate paths over the agent's existing outbound WebSocket:
 
 - `patchmon ssh user@host` opens an interactive PTY terminated by PatchMon. The session is recorded.
-- `patchmon tunnel host 22` relays raw TCP for OpenSSH, Ansible and SCP/SFTP. Tunnel payloads are never recorded or inspected.
+- `patchmon ssh-tunnel host` relays raw SSH traffic for OpenSSH, Ansible and SCP/SFTP. Tunnel payloads are never recorded or inspected.
 
 Linux hosts do not expose TCP/22 to PatchMon. Enable the capability explicitly on each agent:
 
@@ -34,7 +34,7 @@ Object storage is intentionally not part of this first version. The recording st
 patchmon login --server https://patchmon.example.com
 patchmon instances list
 patchmon ssh deploy@pve01
-patchmon tunnel pve01 22
+patchmon ssh-tunnel pve01
 ```
 
 The SSH command creates an ephemeral local key, requests a five-minute certificate scoped to the PatchMon user, tenant, host and Linux account, shows the recording warning, then launches OpenSSH. PatchMon never stores a target host password or private key.
@@ -43,7 +43,7 @@ The tunnel command speaks raw SSH on stdin/stdout and is suitable as an OpenSSH 
 
 ```sshconfig
 Host patchmon-*
-    ProxyCommand patchmon tunnel %h 22
+    ProxyCommand patchmon ssh-tunnel %h
 ```
 
 Ansible can use the same `ProxyCommand` through `ansible_ssh_common_args`. Only tunnel metadata is audited; SSH, SCP/SFTP and Ansible content stays end-to-end encrypted.

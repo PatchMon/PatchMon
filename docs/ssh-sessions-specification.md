@@ -41,8 +41,8 @@ The CLI displays the recording warning and the OpenSSH local escape instruction:
 ### 2.2 Unrecorded raw tunnel
 
 ```console
-patchmon tunnel host 22
-ssh -o 'ProxyCommand=patchmon tunnel host 22' user@host
+patchmon ssh-tunnel host
+ssh -o 'ProxyCommand=patchmon ssh-tunnel host' user@host
 ```
 
 The tunnel relays raw TCP for OpenSSH, Ansible, SCP/SFTP, and automation:

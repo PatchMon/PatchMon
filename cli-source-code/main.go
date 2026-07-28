@@ -93,8 +93,8 @@ func run(args []string) error {
 		return runInstances(args[1:])
 	case "ssh":
 		return runSSH(args[1:])
-	case "tunnel":
-		return runTunnel(args[1:])
+	case "ssh-tunnel":
+		return runSSHTunnel(args[1:])
 	case "help", "-h", "--help":
 		usage()
 		return nil
@@ -103,7 +103,7 @@ func run(args []string) error {
 	}
 }
 func usage() {
-	fmt.Fprintln(os.Stderr, "PatchMon CLI\n\nUsage:\n  patchmon login --server https://patchmon.example.com\n  patchmon instances list [--output table|json]\n  patchmon ssh user@instance\n  patchmon tunnel instance 22\n  patchmon logout")
+	fmt.Fprintln(os.Stderr, "PatchMon CLI\n\nUsage:\n  patchmon login --server https://patchmon.example.com\n  patchmon instances list [--output table|json]\n  patchmon ssh user@instance\n  patchmon ssh-tunnel instance\n  patchmon logout")
 }
 func configPath() (string, error) {
 	d, err := os.UserConfigDir()
@@ -503,16 +503,13 @@ func runSSH(args []string) error {
 	return nil
 }
 
-func runTunnel(args []string) error {
-	fs := flag.NewFlagSet("tunnel", flag.ContinueOnError)
+func runSSHTunnel(args []string) error {
+	fs := flag.NewFlagSet("ssh-tunnel", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() < 1 || fs.NArg() > 2 {
-		return errors.New("usage: patchmon tunnel instance 22")
-	}
-	if fs.NArg() == 2 && fs.Arg(1) != "22" {
-		return errors.New("the first tunnel version only permits SSH port 22")
+	if fs.NArg() != 1 {
+		return errors.New("usage: patchmon ssh-tunnel instance")
 	}
 	cfg, err := loadConfig()
 	if err != nil {
