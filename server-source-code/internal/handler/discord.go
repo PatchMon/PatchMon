@@ -190,8 +190,18 @@ func (h *DiscordHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		redirectTo("/login?error=Invalid+authentication+response")
 		return
 	}
-	cookieState, _ := r.Cookie("discord_state")
-	if cookieState != nil && cookieState.Value != state {
+	// A MISSING cookie must be rejected too, not only a mismatching one. The
+	// server-side GetAndDelete below makes the state single-use but does not
+	// bind it to the victim's browser, so accepting a nil cookie allowed a
+	// login-CSRF: the attacker starts a Discord login, captures code+state from
+	// their own callback redirect without following it, and sends the victim a
+	// link to the callback. The victim has no discord_state cookie, the check
+	// passed, and they were silently signed in as the attacker's account, with
+	// everything they subsequently entered landing in it.
+	//
+	// This is the same fix already applied to the OIDC handler.
+	cookieState, err := r.Cookie("discord_state")
+	if err != nil || cookieState == nil || cookieState.Value != state {
 		redirectTo("/login?error=Invalid+authentication+response")
 		return
 	}
@@ -254,6 +264,37 @@ func (h *DiscordHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	// Mode: Login
 	user, _ := h.users.GetByDiscordIDOrEmail(r.Context(), discordUser.ID, discordUser.Email)
 	s, _ := h.settings.GetFirst(r.Context())
+
+	// GetByDiscordIDOrEmail matches on discord_id OR email, so a row can come
+	// back purely because Discord asserted an email address. Discord is a
+	// public IdP where anyone can register with any address, so an unverified
+	// address proves nothing.
+	//
+	// discordUser.Verified previously gated only the auto-link write further
+	// down; the login itself proceeded regardless, so registering a Discord
+	// account with an existing user's email and clicking "Login with Discord"
+	// handed over that account.
+	matchedByDiscordID := user != nil && user.DiscordID != nil && *user.DiscordID == discordUser.ID
+	if !matchedByDiscordID {
+		if !discordUser.Verified || discordUser.Email == "" {
+			if h.log != nil {
+				h.log.Warn("discord login rejected: unverified email",
+					"discord_id", discordUser.ID)
+			}
+			redirectTo("/login?error=Email+not+verified+at+identity+provider")
+			return
+		}
+		// An email match must not override an account already bound to a
+		// different Discord identity.
+		if user != nil && user.DiscordID != nil {
+			if h.log != nil {
+				h.log.Error("discord login rejected: account is linked to a different discord id",
+					"discord_id", discordUser.ID)
+			}
+			redirectTo("/login?error=Account+linking+failed")
+			return
+		}
+	}
 
 	// Auto-create user if signup enabled
 	if user == nil && s != nil && s.SignupEnabled {
