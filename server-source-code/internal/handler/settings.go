@@ -2,8 +2,10 @@ package handler
 
 import (
 	"encoding/base64"
+	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -670,7 +672,10 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	oldComplianceScanInterval := s.ComplianceScanInterval
 	oldPackageCacheRefreshMode := s.PackageCacheRefreshMode
 	oldPackageCacheRefreshMaxAge := s.PackageCacheRefreshMaxAge
-	applySettingsUpdate(s, req, h.enc)
+	if err := applySettingsUpdate(s, req, h.enc); err != nil {
+		Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	if err := h.settings.Update(r.Context(), s); err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to update settings")
@@ -790,26 +795,100 @@ func constructServerURL(protocol, host string, port int) string {
 	return proto + "://" + host + ":" + strconv.Itoa(port)
 }
 
-func applySettingsUpdate(s *models.Settings, req map[string]interface{}, enc *util.Encryption) {
+// serverURLSafeChars restricts a server URL to the characters a real one needs.
+//
+// This value is written verbatim into a double-quoted shell assignment in the
+// generated installer and auto-enrolment scripts:
+//
+//	export PATCHMON_URL="<value>"
+//
+// and those scripts are documented to be piped into sh as root on every managed
+// host. A double quote, backslash, backtick or $ escapes that assignment, so a
+// settings write turns into root code execution across the fleet. Restricting
+// the character set is the reliable guard; url.Parse alone accepts plenty of
+// strings that are hostile in a shell.
+var serverURLSafeChars = regexp.MustCompile(`^[A-Za-z0-9._:/\[\]-]+$`)
+
+// serverHostSafeChars covers hostnames, IPv4 literals, and bracketed IPv6.
+var serverHostSafeChars = regexp.MustCompile(`^[A-Za-z0-9._:\[\]-]+$`)
+
+// validateServerURL rejects a server URL that is malformed or unsafe to embed
+// in the generated shell scripts.
+func validateServerURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	if len(raw) > 2048 {
+		return errors.New("server URL is too long")
+	}
+	if !serverURLSafeChars.MatchString(raw) {
+		return errors.New("server URL contains disallowed characters")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return errors.New("server URL is not a valid URL")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return errors.New("server URL must use http or https")
+	}
+	if u.Host == "" {
+		return errors.New("server URL must include a host")
+	}
+	return nil
+}
+
+// validateServerURLParts checks the protocol/host/port trio, which feeds
+// constructServerURL and therefore reaches the same shell scripts.
+func validateServerURLParts(protocol, host string, port int, hasProtocol, hasHost, hasPort bool) error {
+	if hasProtocol {
+		switch strings.ToLower(protocol) {
+		case "http", "https":
+		default:
+			return errors.New("server protocol must be http or https")
+		}
+	}
+	if hasHost {
+		if host == "" || len(host) > 253 || !serverHostSafeChars.MatchString(host) {
+			return errors.New("server host is not a valid hostname")
+		}
+	}
+	if hasPort && (port < 1 || port > 65535) {
+		return errors.New("server port must be between 1 and 65535")
+	}
+	return nil
+}
+
+func applySettingsUpdate(s *models.Settings, req map[string]interface{}, enc *util.Encryption) error {
 	urlVal, hasExplicitURL := getReqString(req, "server_url", "serverUrl")
+	protoVal, hasProtocolVal := getReqString(req, "server_protocol", "serverProtocol")
+	hostVal, hasHostVal := getReqString(req, "server_host", "serverHost")
+	portVal, hasPortVal := getReqFloat64(req, "server_port", "serverPort")
+
+	// Validate before mutating so a rejected request leaves settings untouched.
+	if hasExplicitURL {
+		if err := validateServerURL(urlVal); err != nil {
+			return err
+		}
+	}
+	if err := validateServerURLParts(protoVal, hostVal, int(portVal), hasProtocolVal, hasHostVal, hasPortVal); err != nil {
+		return err
+	}
+
 	if hasExplicitURL {
 		s.ServerURL = urlVal
 	}
-	if v, ok := getReqString(req, "server_protocol", "serverProtocol"); ok {
-		s.ServerProtocol = v
+	if hasProtocolVal {
+		s.ServerProtocol = protoVal
 	}
-	if v, ok := getReqString(req, "server_host", "serverHost"); ok {
-		s.ServerHost = v
+	if hasHostVal {
+		s.ServerHost = hostVal
 	}
-	if v, ok := getReqFloat64(req, "server_port", "serverPort"); ok {
-		s.ServerPort = int(v)
+	if hasPortVal {
+		s.ServerPort = int(portVal)
 	}
 	// Derive server_url from protocol/host/port when any of those were updated (matches Node backend behavior).
 	// Only derive when server_url was not explicitly sent (explicit URL takes precedence).
-	_, hasProtocol := getReqString(req, "server_protocol", "serverProtocol")
-	_, hasHost := getReqString(req, "server_host", "serverHost")
-	_, hasPort := getReqFloat64(req, "server_port", "serverPort")
-	if !hasExplicitURL && (hasProtocol || hasHost || hasPort) {
+	if !hasExplicitURL && (hasProtocolVal || hasHostVal || hasPortVal) {
 		s.ServerURL = constructServerURL(s.ServerProtocol, s.ServerHost, s.ServerPort)
 	}
 	if v, ok := getReqFloat64(req, "update_interval", "updateInterval"); ok {
@@ -924,6 +1003,7 @@ func applySettingsUpdate(s *models.Settings, req map[string]interface{}, enc *ut
 			s.AiAPIKey = &v
 		}
 	}
+	return nil
 }
 
 // logoUploadReq is the request body for POST /settings/logos/upload.
