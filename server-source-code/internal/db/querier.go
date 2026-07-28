@@ -620,6 +620,16 @@ type Querier interface {
 	//
 	// DO UPDATE (rather than DO NOTHING) so the row is always returned; type is
 	// only overwritten when a non-empty value is supplied.
+	// The conflict branch deliberately does NOT touch type. An existing profile
+	// keeps the type it was created with, and the submitted type is ignored, which
+	// is exactly what the SELECT-then-INSERT it replaced did.
+	//
+	// Overwriting it here would be a behaviour change with teeth: callers default
+	// an empty submitted type to "openscap" before calling, so a Docker Bench
+	// profile scanned by an agent that omits ProfileType would be rewritten to
+	// "openscap". That flips which toggle gates it in SubmitScan
+	// (openscapEnabled vs dockerBenchEnabled) and corrupts the stored row for
+	// every future scan.
 	UpsertComplianceProfile(ctx context.Context, arg UpsertComplianceProfileParams) (ComplianceProfile, error)
 	// Single-statement get-or-create. Replaces a SELECT-then-INSERT, which was a
 	// TOCTOU race: compliance_rules is keyed on profile_id (not host), so every
