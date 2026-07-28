@@ -119,7 +119,18 @@ const Patching = () => {
 	});
 
 	const { data: runsData } = useQuery({
-		queryKey: ["patching-runs", runsFilterStatus, runsFilterType, runsPage],
+		// runsLimit belongs in the key: the queryFn uses it for both limit and
+		// offset. Without it, changing "Rows per page" while already on page 1
+		// left the key unchanged (setRunsPage(1) is a no-op there), so the
+		// cached result was served while the footer range recomputed from the
+		// new limit and reported a row count the table was not showing.
+		queryKey: [
+			"patching-runs",
+			runsFilterStatus,
+			runsFilterType,
+			runsPage,
+			runsLimit,
+		],
 		queryFn: () =>
 			patchingAPI.getRuns({
 				...(runsFilterStatus ? { status: runsFilterStatus } : {}),

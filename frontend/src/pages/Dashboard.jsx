@@ -370,10 +370,15 @@ const Dashboard = () => {
 	};
 
 	// Helper function to format the update interval threshold
+	// The server serialises this field as update_interval. Reading the camelCase
+	// name meant the guard below always fired, so the card always claimed 24
+	// hours regardless of the configured interval, wrong by up to 48x. Every
+	// other consumer in the app (Hosts, HostDetail, Settings, AgentUpdatesTab)
+	// reads the snake_case name.
 	const formatUpdateIntervalThreshold = () => {
-		if (!settings?.updateInterval) return "24 hours";
+		if (!settings?.update_interval) return "24 hours";
 
-		const intervalMinutes = settings.updateInterval;
+		const intervalMinutes = settings.update_interval;
 		const thresholdMinutes = intervalMinutes * 2; // 2x the update interval
 
 		if (thresholdMinutes < 60) {
@@ -1274,8 +1279,8 @@ const Dashboard = () => {
 											{stats.cards.offlineHosts > 1 ? "s" : ""}
 										</h3>
 										<p className="text-sm text-warning-700 mt-1">
-											These hosts haven't reported in{" "}
-											{formatUpdateIntervalThreshold() * 3}+ minutes.
+											These hosts haven't reported in over{" "}
+											{formatUpdateIntervalThreshold()}.
 										</p>
 									</>
 								) : (

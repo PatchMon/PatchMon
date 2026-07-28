@@ -448,11 +448,22 @@ const Settings = () => {
 		return nearest;
 	};
 
+	// updateInterval is deliberately NOT normalised here. normalizeInterval
+	// clamps to 5..1440, rounds to a multiple of 5 below 60, and snaps to one of
+	// [60,120,180,360,720,1440] at or above 60. Running that on every keystroke
+	// rewrote the controlled input mid-typing: clearing the field and typing
+	// "200" went 2 -> 5, then 0 -> 50, then 0 -> 500 -> 360, so the field
+	// settled on 360 and values like 200, 240, 480 and 90 were unreachable by
+	// typing at all. Only the preset buttons worked.
+	//
+	// Normalisation now happens on blur and again on save. The range slider
+	// still normalises on change, which is correct: its value is always a valid
+	// number and snapping is the intended stepped behaviour.
 	const handleInputChange = (field, value) => {
 		setFormData((prev) => {
 			const newData = {
 				...prev,
-				[field]: field === "updateInterval" ? normalizeInterval(value) : value,
+				[field]: value,
 			};
 			return newData;
 		});
@@ -462,11 +473,22 @@ const Settings = () => {
 		}
 	};
 
+	// Snap the typed interval to an allowed value once the user leaves the field.
+	const handleIntervalBlur = () => {
+		setFormData((prev) => ({
+			...prev,
+			updateInterval: normalizeInterval(prev.updateInterval),
+		}));
+	};
+
 	const handleSubmit = (e) => {
 		e.preventDefault();
 
 		// Only include sshKeyPath if the toggle is enabled
-		const dataToSubmit = { ...formData };
+		const dataToSubmit = {
+			...formData,
+			updateInterval: normalizeInterval(formData.updateInterval),
+		};
 		if (!dataToSubmit.useCustomSshKey) {
 			dataToSubmit.sshKeyPath = "";
 		}
@@ -511,7 +533,10 @@ const Settings = () => {
 	const handleSave = () => {
 		if (validateForm()) {
 			// Prepare data for submission
-			const dataToSubmit = { ...formData };
+			const dataToSubmit = {
+				...formData,
+				updateInterval: normalizeInterval(formData.updateInterval),
+			};
 			if (!dataToSubmit.useCustomSshKey) {
 				dataToSubmit.sshKeyPath = "";
 			}
@@ -962,17 +987,10 @@ const Settings = () => {
 										max="1440"
 										step="5"
 										value={formData.updateInterval}
-										onChange={(e) => {
-											const val = parseInt(e.target.value, 10);
-											if (!Number.isNaN(val)) {
-												handleInputChange(
-													"updateInterval",
-													Math.min(1440, Math.max(5, val)),
-												);
-											} else {
-												handleInputChange("updateInterval", 60);
-											}
-										}}
+										onChange={(e) =>
+											handleInputChange("updateInterval", e.target.value)
+										}
+										onBlur={handleIntervalBlur}
 										className={`w-28 border rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white ${
 											errors.updateInterval
 												? "border-red-300 dark:border-red-500"

@@ -421,6 +421,7 @@ const CreateHostGroupModal = ({ onClose, onSubmit, isLoading }) => {
 							/>
 							<input
 								type="text"
+								name="color"
 								value={formData.color}
 								onChange={handleChange}
 								className="flex-1 px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white placeholder-secondary-500 dark:placeholder-secondary-400"
@@ -534,6 +535,7 @@ const EditHostGroupModal = ({ group, onClose, onSubmit, isLoading }) => {
 							/>
 							<input
 								type="text"
+								name="color"
 								value={formData.color}
 								onChange={handleChange}
 								className="flex-1 px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white placeholder-secondary-500 dark:placeholder-secondary-400"

@@ -855,7 +855,7 @@ const Docker = () => {
 							</div>
 						) : (
 							<StacksView
-								containers={containersData?.containers || []}
+								containers={filteredContainers}
 								getStatusBadge={getStatusBadge}
 							/>
 						))}
