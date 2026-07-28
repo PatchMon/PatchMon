@@ -93,6 +93,14 @@ func TestUpdateHostMetrics_RebootReasonIsPairedWithNeedsReboot(t *testing.T) {
 	if !strings.Contains(stmt, "WHEN sqlc.narg('needs_reboot')::boolean IS NULL THEN reboot_reason") {
 		t.Error("the reboot_reason CASE must preserve the existing value when needs_reboot is absent")
 	}
+	// The arm that actually covers the reported failure. install.go sets
+	// needs_reboot and reboot_reason independently, so a ping can assert the
+	// flag with no reason; without this arm that fell through to the ELSE and
+	// blanked a stored reason, which is the bug the CASE exists to prevent.
+	if !strings.Contains(stmt, "IS TRUE") || !strings.Contains(stmt, "IS NULL THEN reboot_reason") {
+		t.Error("the reboot_reason CASE must also preserve the stored value when needs_reboot " +
+			"is asserted WITHOUT a reason, not only when needs_reboot is absent")
+	}
 
 	// Every other optional metric stays COALESCE-guarded.
 	for _, col := range []string{

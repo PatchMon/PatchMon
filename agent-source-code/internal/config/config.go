@@ -465,6 +465,20 @@ func (m *Manager) SetUpdateInterval(interval int) error {
 	return m.saveConfigLocked()
 }
 
+// SetPatchmonServer sets the server URL and saves it to the config file.
+//
+// Added because it was the one config field with no setter, so callers mutated
+// it through GetConfig() with no lock held. That was already untidy; it became
+// a genuine lost-update risk once LoadConfig started swapping in a fresh struct
+// rather than mutating in place, since an interleaved load would discard the
+// write and the following SaveConfig would persist the old value.
+func (m *Manager) SetPatchmonServer(serverURL string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.config.PatchmonServer = serverURL
+	return m.saveConfigLocked()
+}
+
 // SetReportOffset sets the report offset (in seconds) and saves it to config file
 func (m *Manager) SetReportOffset(offsetSeconds int) error {
 	m.mu.Lock()

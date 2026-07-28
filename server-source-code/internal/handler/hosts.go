@@ -290,7 +290,6 @@ func (h *HostsHandler) UpdateGroups(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// UpdateFriendlyName handles PATCH /hosts/:hostId/friendly-name.
 // requireHost loads the host and writes a 404 when it does not exist,
 // reporting whether the caller may continue.
 //
@@ -319,6 +318,7 @@ func (h *HostsHandler) reloadHost(r *http.Request, hostID string, fallback *mode
 	return fallback
 }
 
+// UpdateFriendlyName handles PATCH /hosts/:hostId/friendly-name.
 func (h *HostsHandler) UpdateFriendlyName(w http.ResponseWriter, r *http.Request) {
 	hostID := chi.URLParam(r, "hostId")
 	var req struct {

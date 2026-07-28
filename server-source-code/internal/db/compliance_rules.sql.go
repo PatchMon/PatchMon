@@ -194,9 +194,19 @@ func (q *Queries) UpdateComplianceRule(ctx context.Context, arg UpdateCompliance
 
 const upsertComplianceRule = `-- name: UpsertComplianceRule :one
 INSERT INTO compliance_rules (id, profile_id, rule_ref, title, description, rationale, severity, section, remediation)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+VALUES (
+    $1,
+    $2,
+    $3,
+    COALESCE($4::text, $3),
+    $5::text,
+    $6::text,
+    $7::text,
+    $8::text,
+    $9::text
+)
 ON CONFLICT (profile_id, rule_ref) DO UPDATE SET
-    title = COALESCE(EXCLUDED.title, compliance_rules.title),
+    title = COALESCE($4::text, compliance_rules.title),
     description = COALESCE(EXCLUDED.description, compliance_rules.description),
     severity = COALESCE(EXCLUDED.severity, compliance_rules.severity),
     section = COALESCE(EXCLUDED.section, compliance_rules.section),
@@ -208,7 +218,7 @@ type UpsertComplianceRuleParams struct {
 	ID          string  `json:"id"`
 	ProfileID   string  `json:"profile_id"`
 	RuleRef     string  `json:"rule_ref"`
-	Title       string  `json:"title"`
+	Title       *string `json:"title"`
 	Description *string `json:"description"`
 	Rationale   *string `json:"rationale"`
 	Severity    *string `json:"severity"`
@@ -225,6 +235,14 @@ type UpsertComplianceRuleParams struct {
 // The metadata columns use COALESCE so a submission that omits a field does not
 // blank a value an earlier scan supplied, matching the previous update-if-better
 // behaviour.
+//
+// title is handled differently from the other metadata columns. It is TEXT NOT
+// NULL, so the INSERT must always supply something and falls back to the
+// rule_ref. That default cannot be applied via EXCLUDED in the conflict branch,
+// because EXCLUDED is the row AFTER the VALUES expression has run and would
+// therefore already hold the fallback. The conflict branch reads the raw
+// parameter instead, so a submission that omits the title keeps the stored one
+// rather than overwriting a real title with the rule_ref.
 func (q *Queries) UpsertComplianceRule(ctx context.Context, arg UpsertComplianceRuleParams) (string, error) {
 	row := q.db.QueryRow(ctx, upsertComplianceRule,
 		arg.ID,

@@ -285,7 +285,7 @@ const Users = () => {
 					user={resetPasswordUser}
 					isOpen={!!resetPasswordUser}
 					onClose={() => setResetPasswordUser(null)}
-					onPasswordReset={resetPasswordMutation.mutate}
+					onPasswordReset={resetPasswordMutation.mutateAsync}
 					isLoading={resetPasswordMutation.isPending}
 				/>
 			)}

@@ -909,17 +909,24 @@ UPDATE hosts SET
     boot_time      = COALESCE($7::timestamptz, boot_time),
     load_average   = COALESCE($8::jsonb, load_average),
     needs_reboot   = COALESCE($9::boolean, needs_reboot),
-    -- reboot_reason is only rewritten when this ping also carries needs_reboot,
-    -- mirroring UpdateHostFromReport. A bare COALESCE would be wrong here
-    -- because it would make the reason unclearable once set; pairing it with
-    -- needs_reboot lets a genuine "no longer needs reboot" ping clear both.
+    -- reboot_reason is preserved unless this ping gives a reason to change it.
     --
-    -- Without the CASE, a ping that reports needs_reboot without a reason (an
-    -- older agent build, or a collector that failed to read
-    -- /var/run/reboot-required.pkgs) NULLs a reason a previous ping wrote
-    -- correctly, leaving the Reboot pill set with a permanently empty reason.
+    -- A bare COALESCE would be wrong: it would make the reason unclearable once
+    -- set. Pairing it with needs_reboot lets a genuine "no longer needs reboot"
+    -- ping clear both together.
+    --
+    -- The second WHEN arm matters and was missing at first. install.go sets
+    -- needs_reboot and reboot_reason independently, so a ping can carry
+    -- needs_reboot=true with no reason -- an older agent build, or a collector
+    -- that failed to read /var/run/reboot-required.pkgs. Keyed only on
+    -- needs_reboot being present, that fell through to the ELSE and NULLed a
+    -- reason an earlier ping had written correctly, leaving the Reboot pill set
+    -- with a permanently empty explanation: exactly the bug the CASE was added
+    -- to prevent.
     reboot_reason  = CASE
         WHEN $9::boolean IS NULL THEN reboot_reason
+        WHEN $9::boolean IS TRUE
+             AND $10::text IS NULL THEN reboot_reason
         ELSE $10::text
     END,
     agent_version  = COALESCE($11::text, agent_version)

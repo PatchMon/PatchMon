@@ -644,6 +644,14 @@ type Querier interface {
 	// The metadata columns use COALESCE so a submission that omits a field does not
 	// blank a value an earlier scan supplied, matching the previous update-if-better
 	// behaviour.
+	//
+	// title is handled differently from the other metadata columns. It is TEXT NOT
+	// NULL, so the INSERT must always supply something and falls back to the
+	// rule_ref. That default cannot be applied via EXCLUDED in the conflict branch,
+	// because EXCLUDED is the row AFTER the VALUES expression has run and would
+	// therefore already hold the fallback. The conflict branch reads the raw
+	// parameter instead, so a submission that omits the title keeps the stored one
+	// rather than overwriting a real title with the rule_ref.
 	UpsertComplianceRule(ctx context.Context, arg UpsertComplianceRuleParams) (string, error)
 	UpsertDashboardLayout(ctx context.Context, arg UpsertDashboardLayoutParams) error
 	UpsertDockerContainer(ctx context.Context, arg UpsertDockerContainerParams) error

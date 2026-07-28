@@ -366,10 +366,17 @@ func (s *ComplianceStore) SubmitScan(ctx context.Context, hostID string, opensca
 				// "row not found", so the follow-up INSERT reported a
 				// misleading error.
 				ruleID, err := q.UpsertComplianceRule(ctx, db.UpsertComplianceRuleParams{
-					ID:          uuid.New().String(),
-					ProfileID:   profile.ID,
-					RuleRef:     ruleRef,
-					Title:       orEmpty(r.Title, ruleRef, "Unknown"),
+					ID:        uuid.New().String(),
+					ProfileID: profile.ID,
+					RuleRef:   ruleRef,
+					// nil when the scan omits a title, so the conflict branch
+					// keeps the stored one. orEmpty is applied by the query's
+					// INSERT arm instead (it falls back to rule_ref), which is
+					// what satisfies the NOT NULL column for a brand new rule.
+					// Passing a never-empty value here defeated the COALESCE and
+					// overwrote real titles with the rule_ref whenever a later
+					// scan omitted them.
+					Title:       complianceStrPtr(r.Title),
 					Description: complianceStrPtr(r.Description),
 					Rationale:   nil,
 					Severity:    complianceStrPtr(r.Severity),
@@ -419,16 +426,6 @@ func complianceStrPtr(s string) *string {
 		return nil
 	}
 	return &s
-}
-
-func orEmpty(a, b, c string) string {
-	if a != "" {
-		return a
-	}
-	if b != "" {
-		return b
-	}
-	return c
 }
 
 // ListScansByHost returns paginated scans for a host.

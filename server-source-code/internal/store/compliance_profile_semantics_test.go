@@ -95,11 +95,57 @@ func TestUpsertComplianceRule_PreservesMetadataOnConflict(t *testing.T) {
 	}
 	// Every updated metadata column must be COALESCE-guarded so an omitted
 	// field does not blank a stored one.
-	for _, col := range []string{"title", "description", "severity", "section", "remediation"} {
+	for _, col := range []string{"description", "severity", "section", "remediation"} {
 		needle := col + " = COALESCE(EXCLUDED." + col
 		if !strings.Contains(stmt, needle) {
 			t.Errorf("column %q must be COALESCE-guarded in the conflict branch so a "+
 				"submission omitting it does not blank an earlier value", col)
 		}
+	}
+
+	// title is the exception, and asserting on the SQL alone is not enough --
+	// that is how the original defect survived review. The column is TEXT NOT
+	// NULL, so the INSERT arm has to supply a fallback; if the conflict branch
+	// read EXCLUDED.title it would see that fallback rather than what the caller
+	// passed, and a scan omitting the title would overwrite a real one with the
+	// rule_ref. It must read the raw parameter instead.
+	if !strings.Contains(stmt, "title = COALESCE(sqlc.narg('title')") {
+		t.Error("the title conflict branch must read the raw parameter, not EXCLUDED.title, " +
+			"which is the post-VALUES row and therefore already holds the rule_ref fallback")
+	}
+}
+
+// TestUpsertComplianceRule_CallSitePassesNullableTitle closes the gap that let
+// the previous defect through: the SQL said COALESCE, but the Go call site
+// passed a value that could never be nil, so the guard could never fire.
+//
+// Asserting on the query text alone is not sufficient for a nullable-guard
+// property; the caller has to actually be able to produce the null.
+func TestUpsertComplianceRule_CallSitePassesNullableTitle(t *testing.T) {
+	t.Parallel()
+
+	src, err := os.ReadFile("compliance.go")
+	if err != nil {
+		t.Fatalf("reading source: %v", err)
+	}
+	body := string(src)
+
+	start := strings.Index(body, "UpsertComplianceRuleParams{")
+	if start < 0 {
+		t.Fatal("UpsertComplianceRuleParams call site not found")
+	}
+	call := body[start:]
+	if end := strings.Index(call, "})"); end > 0 {
+		call = call[:end]
+	}
+
+	if strings.Contains(call, "Title:       orEmpty(") || strings.Contains(call, "Title: orEmpty(") {
+		t.Error("Title must not be passed through orEmpty: it never returns empty, so the " +
+			"COALESCE in the conflict branch can never take the stored value and a scan " +
+			"omitting the title overwrites a real one with the rule_ref")
+	}
+	if !strings.Contains(call, "complianceStrPtr(r.Title)") {
+		t.Error("Title must be passed as a nullable via complianceStrPtr so an omitted " +
+			"title reaches the query as NULL")
 	}
 }

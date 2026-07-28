@@ -37,8 +37,13 @@ UPDATE hosts SET
     -- metrics path owns both fields), and reboot_reason has no COALESCE guard
     -- of its own, so without this CASE a partial would NULL out a reason the
     -- ping had just written correctly.
+    -- Second arm mirrors UpdateHostMetrics: a report asserting needs_reboot
+    -- without a reason must not blank a reason already stored, while a report
+    -- clearing needs_reboot still clears both.
     reboot_reason = CASE
         WHEN sqlc.narg('needs_reboot')::boolean IS NULL THEN reboot_reason
+        WHEN sqlc.narg('needs_reboot')::boolean IS TRUE
+             AND sqlc.narg('reboot_reason')::text IS NULL THEN reboot_reason
         ELSE sqlc.narg('reboot_reason')::text
     END,
     package_manager = COALESCE(sqlc.narg('package_manager')::text, package_manager),

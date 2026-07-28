@@ -151,3 +151,85 @@ func namesOf(pkgs []models.Package) []string {
 	sort.Strings(out)
 	return out
 }
+
+// TestMultilibDoesNotProduceDuplicateNames is the regression guard for the
+// defect arch-stripping introduced.
+//
+// dnf lists glibc.i686 and glibc.x86_64 as separate upgradable entries on a
+// multilib host (32-bit compat libs: Steam, Wine, vendor installers, Oracle and
+// SAP prerequisites). Once the arch is stripped both become "glibc", and
+// CombinePackageData appended each one, so the report payload carried two rows
+// with the same name.
+//
+// That is not cosmetic. Server-side, BulkUpsertPackages is a single
+// INSERT ... ON CONFLICT (name) DO UPDATE fed from jsonb_to_recordset, and
+// Postgres raises "21000: ON CONFLICT DO UPDATE command cannot affect row a
+// second time", aborting the transaction. Every report from that host would
+// 500 and the host would go not-reporting.
+func TestMultilibDoesNotProduceDuplicateNames(t *testing.T) {
+	t.Parallel()
+
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+	m := NewDNFManager(logger)
+
+	installed := m.parseInstalledPackages(`Installed Packages
+bash.x86_64                       5.1.8-6.el9                     @baseos
+glibc.x86_64                      2.34-100.el9                    @baseos
+glibc.i686                        2.34-100.el9                    @baseos`)
+
+	upgradable := m.parseUpgradablePackages(`glibc.x86_64                      2.34-125.el9                    baseos
+glibc.i686                        2.34-125.el9                    baseos`,
+		"dnf", installed, map[string]bool{})
+
+	combined := CombinePackageData(installed, upgradable)
+
+	counts := make(map[string]int, len(combined))
+	for _, p := range combined {
+		counts[p.Name]++
+	}
+	for name, n := range counts {
+		if n != 1 {
+			t.Errorf("package %q appears %d times in the report payload; "+
+				"duplicate names abort the server's bulk upsert with Postgres 21000", name, n)
+		}
+	}
+
+	// The pending update must survive de-duplication.
+	var glibc *models.Package
+	for i := range combined {
+		if combined[i].Name == "glibc" {
+			glibc = &combined[i]
+		}
+	}
+	if glibc == nil {
+		t.Fatalf("glibc missing from the combined set: %v", namesOf(combined))
+	}
+	if !glibc.NeedsUpdate {
+		t.Error("de-duplication must keep the pending update, not drop it")
+	}
+}
+
+// TestMultilibKeepsTheSecurityFlaggedEntry: where one arch is a security update
+// and the other is not, the host's security count must not be silently reduced.
+func TestMultilibKeepsTheSecurityFlaggedEntry(t *testing.T) {
+	t.Parallel()
+
+	installed := map[string]models.Package{
+		"glibc": {Name: "glibc", CurrentVersion: "2.34-100.el9"},
+	}
+	// Plain entry first, so the retained one must be replaced by the later
+	// security-flagged one.
+	upgradable := []models.Package{
+		{Name: "glibc", CurrentVersion: "2.34-100.el9", AvailableVersion: "2.34-125.el9", NeedsUpdate: true},
+		{Name: "glibc", CurrentVersion: "2.34-100.el9", AvailableVersion: "2.34-125.el9", NeedsUpdate: true, IsSecurityUpdate: true},
+	}
+
+	combined := CombinePackageData(installed, upgradable)
+	if len(combined) != 1 {
+		t.Fatalf("expected exactly one glibc row, got %d: %v", len(combined), namesOf(combined))
+	}
+	if !combined[0].IsSecurityUpdate {
+		t.Error("the security-flagged entry must win, otherwise the security count under-reports")
+	}
+}
