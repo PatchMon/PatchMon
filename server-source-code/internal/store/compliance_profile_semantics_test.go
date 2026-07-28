@@ -6,19 +6,7 @@ import (
 	"testing"
 )
 
-// UpsertComplianceProfile replaced a SELECT-then-INSERT. The replacement must
-// preserve one specific behaviour: an existing profile keeps the type it was
-// created with, and the submitted type is ignored.
-//
-// This matters because callers default an empty submitted type to "openscap"
-// before calling. If the conflict branch wrote EXCLUDED.type, a Docker Bench
-// profile scanned by an agent that omits ProfileType would be rewritten to
-// "openscap", which flips which toggle gates it in SubmitScan
-// (openscapEnabled vs dockerBenchEnabled) and corrupts the stored row for
-// every subsequent scan.
-//
-// There is no database available in unit tests, so this asserts on the query
-// text, which is the thing that actually encodes the semantic.
+// UpsertComplianceProfile replaced a SELECT-then-INSERT.
 func TestUpsertComplianceProfile_DoesNotOverwriteStoredType(t *testing.T) {
 	t.Parallel()
 
@@ -115,12 +103,9 @@ func TestUpsertComplianceRule_PreservesMetadataOnConflict(t *testing.T) {
 	}
 }
 
-// TestUpsertComplianceRule_CallSitePassesNullableTitle closes the gap that let
-// the previous defect through: the SQL said COALESCE, but the Go call site
-// passed a value that could never be nil, so the guard could never fire.
-//
-// Asserting on the query text alone is not sufficient for a nullable-guard
-// property; the caller has to actually be able to produce the null.
+// TestUpsertComplianceRule_CallSitePassesNullableTitle closes the gap that
+// let the previous defect through: the SQL said COALESCE, but the Go call
+// site passed a value that could never be nil, so the guard could never fire.
 func TestUpsertComplianceRule_CallSitePassesNullableTitle(t *testing.T) {
 	t.Parallel()
 

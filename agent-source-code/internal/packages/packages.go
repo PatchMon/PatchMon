@@ -162,20 +162,9 @@ func CombinePackageData(installedPackages map[string]models.Package, upgradableP
 	packages := make([]models.Package, 0)
 	upgradableMap := make(map[string]bool)
 
-	// First, add upgradable packages, merging in description and repo from installed if available.
-	//
-	// Deduplicate by name. Package names are not unique per report on a multilib
-	// host: dnf lists glibc.i686 and glibc.x86_64 as separate upgradable
-	// entries, and arch-stripping collapses both to "glibc". Two rows with the
-	// same name break the server outright rather than merely looking untidy --
-	// BulkUpsertPackages is a single INSERT ... ON CONFLICT (name) DO UPDATE fed
-	// from jsonb_to_recordset, and Postgres raises
-	// "21000: ON CONFLICT DO UPDATE command cannot affect row a second time",
-	// aborting the transaction. Every report from that host would 500 and the
-	// host would go not-reporting.
-	//
-	// Where both arches are pending, keep the more significant entry: a security
-	// update outranks a plain one, so the host's security count stays honest.
+	// Deduplicated by name: a multilib host lists glibc.i686 and glibc.x86_64
+	// separately and arch-stripping collapses both, which aborts the server's
+	// bulk upsert. A security update outranks a plain one.
 	upgradableIdx := make(map[string]int, len(upgradablePackages))
 	for _, pkg := range upgradablePackages {
 		if installed, ok := installedPackages[pkg.Name]; ok {
@@ -187,7 +176,6 @@ func CombinePackageData(installedPackages map[string]models.Package, upgradableP
 			}
 		}
 		if i, seen := upgradableIdx[pkg.Name]; seen {
-			// Upgrade the retained entry only if this one carries more weight.
 			if pkg.IsSecurityUpdate && !packages[i].IsSecurityUpdate {
 				packages[i] = pkg
 			}

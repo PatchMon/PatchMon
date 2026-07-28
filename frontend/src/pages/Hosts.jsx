@@ -2091,13 +2091,8 @@ const Hosts = () => {
 												setOsVersionFilter("all");
 												setGroupBy("none");
 												setHideStale(false);
-												// The URL-driven filters are forwarded to the backend as
-												// params.filter / params.reboot / params.selected and are
-												// NOT represented by any of the local state above. Leaving
-												// them set meant arriving from a dashboard card (e.g.
-												// /hosts?filter=needsUpdates) and clicking Clear Filters
-												// showed every control reading "All" while the table stayed
-												// filtered, with nothing on screen explaining why.
+												// These are forwarded to the backend and are not held in
+												// any of the local state above.
 												const next = new URLSearchParams(searchParams);
 												next.delete("filter");
 												next.delete("reboot");

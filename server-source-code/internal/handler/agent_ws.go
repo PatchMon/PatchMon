@@ -81,10 +81,7 @@ func NewAgentWSHandler(hosts *store.HostsStore, registry *agentregistry.Registry
 	return h
 }
 
-// Agent WebSocket heartbeat timings. The server pings on agentWSPingPeriod and
-// requires some inbound frame (pong, ping, or data) within agentWSPongWait, so
-// a silently dead agent is detected in at most agentWSPongWait rather than
-// never. Mirrors the agent's own settings in serve.go.
+// Mirrors the agent's own settings in serve.go.
 const (
 	agentWSPongWait   = 90 * time.Second
 	agentWSPingPeriod = 30 * time.Second
@@ -152,41 +149,22 @@ func (h *AgentWSHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	// Configure connection
 	conn.SetReadLimit(512 * 1024) // 512KB max message
 
-	// Heartbeat.
-	//
-	// A pong handler was registered here before, but the server never sent a
-	// ping, so it never received a pong, so SetReadDeadline was never called
-	// at all and ReadMessage blocked forever. An agent that died silently --
-	// SIGSTOPped, deadlocked, OOM-frozen, or sitting behind a middlebox that
-	// keeps the TCP session alive so no FIN ever arrives -- stayed "connected"
-	// indefinitely. Consequences, all permanent:
-	//
-	//   - the goroutine, the *websocket.Conn and the registry entry leaked,
-	//     one set per dead agent;
-	//   - registry.Get(apiID).Connected stayed true, so alerts.hostDownState
-	//     reported down=false on every sweep and host_down never fired for
-	//     exactly the failure class it exists to catch;
-	//   - queue workers saw IsConnected==true and WriteMessage succeeded into
-	//     the socket buffer, so job_history was marked completed for commands
-	//     the agent never received.
-	//
-	// Cadence mirrors the agent side (ping every 30s, 90s deadline).
+	// The deadline must be armed here: a pong handler alone never fires, since
+	// the server has to ping first. Cadence mirrors the agent side.
 	_ = conn.SetReadDeadline(time.Now().Add(agentWSPongWait))
 	conn.SetPongHandler(func(string) error {
 		return conn.SetReadDeadline(time.Now().Add(agentWSPongWait))
 	})
-	// The agent pings us on its own 30s ticker; that is liveness too. Chain to
-	// gorilla's default handler so the pong reply still goes out.
+	// Chain to the default handler so the pong reply still goes out.
 	defaultPingHandler := conn.PingHandler()
 	conn.SetPingHandler(func(appData string) error {
 		_ = conn.SetReadDeadline(time.Now().Add(agentWSPongWait))
 		return defaultPingHandler(appData)
 	})
 
-	// Ping loop. WriteControl is the one write method gorilla documents as safe
-	// to call concurrently with other writes, so this deliberately bypasses the
-	// registry's per-agent write mutex rather than contending with queue
-	// workers for it. Registered after the teardown defer so it stops first.
+	// WriteControl is the one write method gorilla documents as concurrency-safe,
+	// so this need not take the registry write mutex. Registered after the
+	// teardown defer so it stops first.
 	pingStop := make(chan struct{})
 	defer close(pingStop)
 	go func() {
@@ -213,7 +191,6 @@ func (h *AgentWSHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 			}
 			break
 		}
-		// Inbound traffic is liveness in its own right.
 		_ = conn.SetReadDeadline(time.Now().Add(agentWSPongWait))
 
 		// Forward SSH proxy messages to SSH terminal handler

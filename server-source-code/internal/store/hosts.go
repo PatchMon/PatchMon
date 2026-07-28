@@ -444,12 +444,8 @@ type HostMetricsParams struct {
 	AgentVersion *string
 }
 
-// UpdateMetrics writes ping-side volatile metrics on the host row. Each column
-// is guarded so a ping that omits a metric leaves the previous value alone:
-// plain metrics are COALESCE-guarded, and RebootReason is only written when
-// NeedsReboot is supplied AND either a reason came with it or the flag is being
-// cleared. A ping reporting the flag without a reason therefore cannot blank a
-// reason an earlier ping recorded.
+// UpdateMetrics writes ping-side volatile metrics. Every column is guarded so a
+// ping that omits a metric leaves the stored value alone.
 func (s *HostsStore) UpdateMetrics(ctx context.Context, id string, m HostMetricsParams) error {
 	d := s.db.DB(ctx)
 	return d.Queries.UpdateHostMetrics(ctx, db.UpdateHostMetricsParams{
@@ -545,25 +541,17 @@ func (s *HostsStore) GetHostGroupsForHosts(ctx context.Context, hostIDs []string
 	return out, nil
 }
 
-// SetHostGroups replaces host group memberships for a host.
-//
-// Delete-then-insert must be atomic. Run on the pool with no transaction, a
-// failing insert returned with the delete already committed, so the host
-// silently ended up in FEWER groups than it started with and any patch policy
-// assigned by group stopped applying to it. The UI reported the failure but the
-// membership loss was invisible.
-//
-// Reachable without any concurrency: a request body carrying the same group id
-// twice (nothing de-duplicates it) hit the UNIQUE(host_id, host_group_id)
-// constraint on the second insert, and a stale group id hit the foreign key.
+// SetHostGroups replaces host group memberships for a host. The delete and the
+// inserts must be atomic: a failed insert would otherwise leave the host with
+// fewer groups than it started with.
 func (s *HostsStore) SetHostGroups(ctx context.Context, hostID string, groupIDs []string) error {
 	d := s.db.DB(ctx)
 	tx, err := d.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	// Uncancellable rollback context so a cancelled request cannot return the
-	// connection to the pool in an aborted state (25P02 on the next caller).
+	// Uncancellable so a cancelled request cannot return an aborted connection
+	// to the pool.
 	defer func() {
 		rollbackCtx := context.WithoutCancel(ctx)
 		_ = tx.Rollback(rollbackCtx)
@@ -585,11 +573,8 @@ func (s *HostsStore) SetHostGroups(ctx context.Context, hostID string, groupIDs 
 	return tx.Commit(ctx)
 }
 
-// SetHostGroupsBulk updates group memberships for multiple hosts.
-//
-// Each host is its own transaction, so a failure part-way leaves earlier hosts
-// updated and later ones untouched, but never leaves any single host with its
-// memberships deleted and not replaced.
+// SetHostGroupsBulk updates group memberships for multiple hosts, one
+// transaction per host.
 func (s *HostsStore) SetHostGroupsBulk(ctx context.Context, hostIDs, groupIDs []string) error {
 	for _, hid := range hostIDs {
 		if err := s.SetHostGroups(ctx, hid, groupIDs); err != nil {

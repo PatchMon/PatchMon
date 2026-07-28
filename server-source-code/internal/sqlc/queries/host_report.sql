@@ -17,11 +17,6 @@ UPDATE hosts SET
     ram_installed = COALESCE(sqlc.narg('ram_installed')::double precision, ram_installed),
     swap_size = COALESCE(sqlc.narg('swap_size')::double precision, swap_size),
     disk_details = COALESCE(sqlc.narg('disk_details')::jsonb, disk_details),
-    -- COALESCE-guarded like every other optional column here. Without it a
-    -- hash-gated partial report (which carries no network section) sends SQL
-    -- NULL and wipes the stored gateway. Partial reports are the steady state
-    -- under hash-gated check-in, so gateway_ip was non-null only in the window
-    -- between a full report and the next partial.
     gateway_ip = COALESCE(sqlc.narg('gateway_ip')::text, gateway_ip),
     dns_servers = COALESCE(sqlc.narg('dns_servers')::jsonb, dns_servers),
     network_interfaces = COALESCE(sqlc.narg('network_interfaces')::jsonb, network_interfaces),
@@ -37,9 +32,8 @@ UPDATE hosts SET
     -- metrics path owns both fields), and reboot_reason has no COALESCE guard
     -- of its own, so without this CASE a partial would NULL out a reason the
     -- ping had just written correctly.
-    -- Second arm mirrors UpdateHostMetrics: a report asserting needs_reboot
-    -- without a reason must not blank a reason already stored, while a report
-    -- clearing needs_reboot still clears both.
+    -- Second arm: a report asserting needs_reboot without a reason must not
+    -- blank a stored one; clearing the flag still clears both.
     reboot_reason = CASE
         WHEN sqlc.narg('needs_reboot')::boolean IS NULL THEN reboot_reason
         WHEN sqlc.narg('needs_reboot')::boolean IS TRUE

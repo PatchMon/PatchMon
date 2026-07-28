@@ -448,17 +448,9 @@ const Settings = () => {
 		return nearest;
 	};
 
-	// updateInterval is deliberately NOT normalised here. normalizeInterval
-	// clamps to 5..1440, rounds to a multiple of 5 below 60, and snaps to one of
-	// [60,120,180,360,720,1440] at or above 60. Running that on every keystroke
-	// rewrote the controlled input mid-typing: clearing the field and typing
-	// "200" went 2 -> 5, then 0 -> 50, then 0 -> 500 -> 360, so the field
-	// settled on 360 and values like 200, 240, 480 and 90 were unreachable by
-	// typing at all. Only the preset buttons worked.
-	//
-	// Normalisation now happens on blur and again on save. The range slider
-	// still normalises on change, which is correct: its value is always a valid
-	// number and snapping is the intended stepped behaviour.
+	// updateInterval is normalised on blur and on save, not here: snapping on
+	// every keystroke rewrites the controlled input mid-typing and makes most
+	// values unreachable. The slider still snaps on change, which is correct.
 	const handleInputChange = (field, value) => {
 		setFormData((prev) => {
 			const newData = {
@@ -473,7 +465,6 @@ const Settings = () => {
 		}
 	};
 
-	// Snap the typed interval to an allowed value once the user leaves the field.
 	const handleIntervalBlur = () => {
 		setFormData((prev) => ({
 			...prev,

@@ -9,15 +9,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// TestConnWriter_ConcurrentWrites reproduces the shape of the original defect:
-// two unrelated goroutines writing the same frontend connection. In proxy mode
-// those are the SSH terminal handler's goroutine and the agent WebSocket read
-// loop (via HandleAgentMessage), which used a bare conn.WriteJSON with no lock
-// while the handler serialised on a mutex local to its own closure.
-//
-// Run under -race this fails against a bare *websocket.Conn and passes through
-// ConnWriter. gorilla also panics with "concurrent write to websocket
-// connection" when it detects the collision directly.
+// TestConnWriter_ConcurrentWrites reproduces the shape of the original
+// defect: two unrelated goroutines writing the same frontend connection.
 func TestConnWriter_ConcurrentWrites(t *testing.T) {
 	t.Parallel()
 
@@ -85,8 +78,8 @@ func TestConnWriter_ConcurrentWrites(t *testing.T) {
 	wg.Wait()
 }
 
-// TestConnWriter_NilSafety covers the paths the handler relies on: a nil writer
-// (no proxy session registered) and a released connection.
+// TestConnWriter_NilSafety covers the paths the handler relies on: a nil
+// writer (no proxy session registered) and a released connection.
 func TestConnWriter_NilSafety(t *testing.T) {
 	t.Parallel()
 
@@ -102,8 +95,8 @@ func TestConnWriter_NilSafety(t *testing.T) {
 }
 
 // TestSessionCarriesWriter documents the invariant that makes the fix work:
-// the session stores the serialising writer, not a bare connection, so there is
-// no way for a caller to obtain the raw conn and write it unlocked.
+// the session stores the serialising writer, not a bare connection, so there
+// is no way for a caller to obtain the raw conn and write it unlocked.
 func TestSessionCarriesWriter(t *testing.T) {
 	t.Parallel()
 

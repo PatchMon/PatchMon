@@ -109,10 +109,6 @@ func configureCreds(apiID, apiKey, serverURL string) error {
 		return fmt.Errorf("invalid server URL format. Must start with http:// or https://")
 	}
 
-	// Set server URL in config. Goes through the setter rather than mutating the
-	// struct returned by GetConfig(): that write held no lock, and LoadConfig
-	// now swaps in a fresh struct, so an interleaved load would discard it and
-	// the following save would persist the old value.
 	if err := cfgManager.SetPatchmonServer(serverURL); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}

@@ -799,19 +799,8 @@ type packageUpsertRow struct {
 // by Name; this function only assembles the JSON.
 func buildPackageUpsertPayload(packages []ReportPackage) ([]byte, error) {
 	rows := make([]packageUpsertRow, 0, len(packages))
-	// Defensive de-duplication by name.
-	//
-	// BulkUpsertPackages is a single INSERT ... ON CONFLICT (name) DO UPDATE fed
-	// from jsonb_to_recordset. Postgres refuses to let one command update the
-	// same row twice: two rows sharing a name raise
-	// "21000: ON CONFLICT DO UPDATE command cannot affect row a second time"
-	// and abort the whole transaction, so the host's report 500s and it goes
-	// not-reporting.
-	//
-	// The agent is expected to send distinct names, but this is agent-supplied
-	// data and the server should not be crashable by it. A multilib RHEL host
-	// (glibc.i686 alongside glibc.x86_64, both arch-stripped) is one way to
-	// produce a collision; an older or third-party agent build is another.
+	// Duplicate names abort the whole upsert with Postgres 21000. The agent
+	// should not send them, but the ingest must not be crashable by agent data.
 	seen := make(map[string]struct{}, len(packages))
 	for i := range packages {
 		p := &packages[i]
@@ -880,11 +869,8 @@ func buildHostPackagesPayload(
 	reposByName, reposByURLDistComp, reposByComponent map[string]string,
 ) ([]byte, error) {
 	rows := make([]hostPackageRow, 0, len(packages))
-	// Same de-duplication as buildPackageUpsertPayload, for the same reason.
-	// BulkInsertHostPackages deliberately carries no ON CONFLICT, so two rows
-	// resolving to the same package_id violate UNIQUE(host_id, package_id) and
-	// abort the transaction. Kept in step with the upsert payload so the two
-	// halves of the report always describe the same set of packages.
+	// As above: no ON CONFLICT here, so duplicates violate
+	// UNIQUE(host_id, package_id). Kept in step with the upsert payload.
 	seen := make(map[string]struct{}, len(packages))
 	for i := range packages {
 		p := &packages[i]

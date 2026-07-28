@@ -107,12 +107,8 @@ func (m *APTManager) GetPackages() ([]models.Package, error) {
 
 	wg.Wait()
 
-	// A failed collection must not be reported as a successful one. Returning
-	// an empty upgradable list here would render the host as fully patched on
-	// the dashboard, with no alert, because the report itself succeeded. That
-	// is the most dangerous outcome available to a patch monitoring agent, so
-	// fail the whole report instead: the host then shows as not reporting and
-	// the existing host_down path surfaces it.
+	// An empty result reads as "fully patched" with no alert, because the report
+	// itself succeeded. Fail the whole report instead.
 	if installedErr != nil {
 		return nil, installedErr
 	}

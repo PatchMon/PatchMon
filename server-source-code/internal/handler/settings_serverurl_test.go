@@ -9,12 +9,6 @@ import (
 
 // TestValidateServerURL_RejectsShellInjection is the regression guard for the
 // settings-to-root-code-execution path.
-//
-// server_url was persisted with no validation and then embedded verbatim in a
-// double-quoted shell assignment in the generated installer and auto-enrolment
-// scripts (export PATCHMON_URL="<value>"), which are documented to be piped
-// into sh as root on every new host. A can_manage_settings user could therefore
-// turn a settings write into fleet-wide root code execution.
 func TestValidateServerURL_RejectsShellInjection(t *testing.T) {
 	t.Parallel()
 
@@ -145,8 +139,8 @@ func TestValidateServerURLParts(t *testing.T) {
 }
 
 // TestConstructServerURL_OutputStaysSafe closes the loop: whatever the
-// validated parts are, the derived URL must itself pass validation, since that
-// is the value the scripts embed.
+// validated parts are, the derived URL must itself pass validation, since
+// that is the value the scripts embed.
 func TestConstructServerURL_OutputStaysSafe(t *testing.T) {
 	t.Parallel()
 
@@ -170,7 +164,7 @@ func TestConstructServerURL_OutputStaysSafe(t *testing.T) {
 }
 
 // TestValidateServerURL_BoundsPort keeps validateServerURL consistent with
-// validateServerURLParts. url.Parse does not range-check the port unless asked.
+// validateServerURLParts.
 func TestValidateServerURL_BoundsPort(t *testing.T) {
 	t.Parallel()
 
@@ -196,13 +190,6 @@ func TestValidateServerURL_BoundsPort(t *testing.T) {
 
 // TestDerivedServerURLIsValidated is the regression guard for the composition
 // bypass found in review.
-//
-// validateServerURLParts only inspects the fields present in the current
-// request, but constructServerURL builds the URL from a MIX of new and stored
-// values. A request supplying only server_port therefore composed itself with a
-// stored server_host that the validator never saw. This asserts the derived
-// value is itself validated, using a stored host that could only have been
-// written before that validation existed.
 func TestDerivedServerURLIsValidated(t *testing.T) {
 	t.Parallel()
 

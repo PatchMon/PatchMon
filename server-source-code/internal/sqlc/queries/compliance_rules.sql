@@ -21,23 +21,11 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING id, profile_id, rule_ref, title, description, rationale, severity, section, remediation;
 
 -- name: UpsertComplianceRule :one
--- Single-statement get-or-create. Replaces a SELECT-then-INSERT, which was a
--- TOCTOU race: compliance_rules is keyed on profile_id (not host), so every
--- host scanning the same profile contends on the same rows. Two hosts
--- submitting the same profile in the same second both found nothing and both
--- inserted; the loser got 23505 and its ENTIRE scan submission rolled back.
+-- Metadata columns are COALESCE-guarded so a submission omitting a field does
+-- not blank a stored value.
 --
--- The metadata columns use COALESCE so a submission that omits a field does not
--- blank a value an earlier scan supplied, matching the previous update-if-better
--- behaviour.
---
--- title is handled differently from the other metadata columns. It is TEXT NOT
--- NULL, so the INSERT must always supply something and falls back to the
--- rule_ref. That default cannot be applied via EXCLUDED in the conflict branch,
--- because EXCLUDED is the row AFTER the VALUES expression has run and would
--- therefore already hold the fallback. The conflict branch reads the raw
--- parameter instead, so a submission that omits the title keeps the stored one
--- rather than overwriting a real title with the rule_ref.
+-- title reads the raw parameter, not EXCLUDED: the column is NOT NULL so the
+-- INSERT arm supplies a rule_ref fallback, which EXCLUDED would already hold.
 INSERT INTO compliance_rules (id, profile_id, rule_ref, title, description, rationale, severity, section, remediation)
 VALUES (
     sqlc.arg('id'),

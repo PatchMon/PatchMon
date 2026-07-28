@@ -228,18 +228,11 @@ func (h *OidcHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?error=Authentication+failed", http.StatusFound)
 		return
 	}
-	// GetByOidcSubOrEmail matches on "oidc_sub = $1 OR LOWER(email) = LOWER($2)",
-	// so a row can come back purely because the IdP asserted an email address.
-	// Establish which it was before trusting anything.
+	// The lookup matches on oidc_sub OR email; establish which before trusting it.
 	matchedBySub := user != nil && user.OidcSub != nil && *user.OidcSub == userInfo.Sub
 
-	// An email-based match, or auto-creating an account, means the IdP's email
-	// claim is what decides who this is, so that claim has to be verified.
-	// Where an IdP lets a user set or change their email without verifying it
-	// (self-service profiles in Authentik or Keycloak, an open-registration
-	// realm, a social login upstream), an attacker can set theirs to an
-	// existing user's address and be handed that account. On a fresh instance
-	// it is worse: the first auto-created user is promoted to superadmin.
+	// An email match, or auto-create, means the email claim decides who this is,
+	// so it has to be verified.
 	if !matchedBySub && !userInfo.EmailVerified {
 		if h.log != nil {
 			h.log.Warn("oidc login rejected: unverified email claim",
@@ -266,14 +259,8 @@ func (h *OidcHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?error=Account+disabled", http.StatusFound)
 		return
 	}
-	// Reached only via an email match (the sub match is handled above). The
-	// email is verified by this point.
 	if !matchedBySub {
-		// An email match must never override an established identity binding.
-		// Previously this whole branch was skipped when the row already carried
-		// an oidc_sub, so the incoming subject was never compared with the
-		// stored one and any IdP identity with a matching email logged in as
-		// that account.
+		// An email match must not override an established identity binding.
 		if user.OidcSub != nil {
 			if h.log != nil {
 				h.log.Error("oidc login rejected: account is linked to a different subject",
@@ -713,14 +700,8 @@ func extractHost(u string) string {
 	return parsed.Hostname()
 }
 
-// resolvedSnapshot returns the current resolved OIDC config under the read
-// lock.
-//
-// reinitOidcClient replaces h.resolved on a settings save, and sets it to nil
-// when OIDC is disabled, while callback requests read it on the request path.
-// Reading the field directly was a data race, and a torn read that saw nil made
-// the accessors below silently fall back to the h.cfg env values, giving
-// different auto-create and role-mapping behaviour for that login.
+// reinitOidcClient replaces h.resolved on a settings save while callbacks read
+// it, so the accessors below must not touch the field directly.
 func (h *OidcHandler) resolvedSnapshot() *config.ResolvedOidcConfig {
 	h.clientMu.RLock()
 	defer h.clientMu.RUnlock()
@@ -902,11 +883,8 @@ func (h *OidcHandler) createOidcUser(ctx context.Context, info *oidc.UserInfo) *
 	}
 	// If no admin/superadmin exists yet, promote the first auto-created user to superadmin.
 	//
-	// The error must be checked: CountAdmins returns (0, err) on a transient
-	// database failure, and discarding it fails OPEN, promoting an ordinary
-	// auto-created user to superadmin on an instance that already has admins.
-	// The first-run admin setup path gets this right (it tests err != nil ||
-	// count > 0); this one did not.
+	// Must check the error: (0, err) on a transient failure would fail open and
+	// promote an ordinary user to superadmin.
 	adminCount, adminCountErr := h.users.CountAdmins(ctx)
 	if adminCountErr != nil {
 		if h.log != nil {

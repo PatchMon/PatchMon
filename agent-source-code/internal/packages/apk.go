@@ -40,8 +40,7 @@ func (m *APKManager) GetPackages() ([]models.Package, error) {
 	defer cancelInstalled()
 	installedOutput, err := installedCmd.Output()
 	if err != nil {
-		// See the note in apt.go: an empty inventory on failure reads as
-		// "fully patched" in the UI. Fail the report instead.
+		// See apt.go: an empty inventory reads as "fully patched".
 		return nil, commandError("apk list --installed", err)
 	}
 	m.logger.Debug("Parsing installed packages...")
@@ -99,8 +98,7 @@ func (m *APKManager) enrichWithRepoAttribution(packages []models.Package) {
 		batch := names[start:end]
 
 		args := append([]string{"policy"}, batch...)
-		// Scoped so the context is released at the end of each iteration
-		// rather than accumulating one deferred cancel per batch.
+		// Scoped so each batch releases its context.
 		output, err := func() ([]byte, error) {
 			cmd, cancel := boundedCommand(collectorTimeout, "apk", args...)
 			defer cancel()

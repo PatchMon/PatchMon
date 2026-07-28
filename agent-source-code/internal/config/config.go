@@ -69,16 +69,9 @@ var AvailableIntegrations = []string{
 
 // Manager handles configuration management
 type Manager struct {
-	// mu guards config, credentials and configFile.
-	//
-	// Without it, LoadConfig (which replaces config.Integrations) ran
-	// concurrently with IsIntegrationEnabled / GetComplianceMode /
-	// GetPackageCacheRefreshMode from the main service loop, the compliance
-	// scheduler, the initial-report goroutine and the post-patch-report
-	// goroutine. A concurrent map read and map write is an unrecoverable Go
-	// runtime fatal error -- no recover() catches it -- so the agent process
-	// died mid-report and systemd restarted it straight back into the same
-	// window.
+	// Guards config, credentials and configFile. LoadConfig replaces
+	// config.Integrations while the service loop and schedulers read it, and a
+	// concurrent map read/write is an unrecoverable runtime fatal.
 	mu          sync.RWMutex
 	config      *models.Config
 	credentials *models.Credentials
@@ -119,11 +112,8 @@ func (m *Manager) GetConfigFile() string {
 }
 
 // GetConfig returns the current configuration
-// GetConfig returns the current configuration.
-//
-// The returned pointer is a snapshot: LoadConfig swaps in a freshly built
-// struct rather than mutating this one in place, so a caller holding it never
-// observes a torn read.
+// The returned pointer is a snapshot: LoadConfig swaps in a fresh struct rather
+// than mutating this one.
 func (m *Manager) GetConfig() *models.Config {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -148,10 +138,8 @@ func (m *Manager) LoadConfig() error {
 		return nil
 	}
 
-	// Manager-scoped viper rather than the package-level singleton.
-	// getLatestBinaryFromServer builds a second Manager and calls LoadConfig on
-	// it, so using the global instance meant two Managers racing on one viper's
-	// internal maps regardless of this Manager's own lock.
+	// Manager-scoped, not the package singleton: a second Manager exists in
+	// getLatestBinaryFromServer and would race on the global viper's maps.
 	v := viper.New()
 	v.SetConfigFile(m.configFile)
 	v.SetConfigType("yaml")
@@ -160,10 +148,8 @@ func (m *Manager) LoadConfig() error {
 		return fmt.Errorf("error reading config file: %w", err)
 	}
 
-	// Unmarshal into a fresh struct and swap it in, rather than mutating the
-	// live one under readers holding a GetConfig() pointer. Integrations is
-	// cleared first so the decoded file is authoritative rather than merging
-	// into the previous map.
+	// Swapped in rather than mutated, so readers holding a GetConfig() pointer
+	// keep a stable snapshot. Integrations cleared so the file is authoritative.
 	loaded := *m.config
 	loaded.Integrations = nil
 	if err := v.Unmarshal(&loaded); err != nil {
@@ -405,7 +391,7 @@ func (m *Manager) SaveConfig() error {
 	return m.saveConfigLocked()
 }
 
-// saveConfigLocked writes the config file. Caller must hold the write lock.
+// Caller must hold the write lock.
 func (m *Manager) saveConfigLocked() error {
 	if err := m.setupDirectories(); err != nil {
 		return err
@@ -465,13 +451,7 @@ func (m *Manager) SetUpdateInterval(interval int) error {
 	return m.saveConfigLocked()
 }
 
-// SetPatchmonServer sets the server URL and saves it to the config file.
-//
-// Added because it was the one config field with no setter, so callers mutated
-// it through GetConfig() with no lock held. That was already untidy; it became
-// a genuine lost-update risk once LoadConfig started swapping in a fresh struct
-// rather than mutating in place, since an interleaved load would discard the
-// write and the following SaveConfig would persist the old value.
+// SetPatchmonServer sets the server URL and saves it.
 func (m *Manager) SetPatchmonServer(serverURL string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -604,8 +584,7 @@ func (m *Manager) GetComplianceMode() ComplianceMode {
 	return m.getComplianceModeLocked()
 }
 
-// getComplianceModeLocked is GetComplianceMode without locking. Caller must
-// hold at least a read lock.
+// Caller must hold at least a read lock.
 func (m *Manager) getComplianceModeLocked() ComplianceMode {
 	if m.config.Integrations == nil {
 		return ComplianceOnDemand
@@ -665,8 +644,7 @@ func (m *Manager) SetComplianceMode(mode ComplianceMode) error {
 	return m.setComplianceModeLocked(mode)
 }
 
-// setComplianceModeLocked is SetComplianceMode without locking. Caller must
-// hold the write lock.
+// Caller must hold the write lock.
 func (m *Manager) setComplianceModeLocked(mode ComplianceMode) error {
 	if m.config.Integrations == nil {
 		m.config.Integrations = make(map[string]interface{})

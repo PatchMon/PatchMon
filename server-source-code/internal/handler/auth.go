@@ -304,11 +304,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if user.TfaEnabled {
 		td := h.hasValidDeviceTrust(r, user.ID)
 		if td == nil {
-			// Issue a single-use ticket proving the password was just verified.
-			// VerifyTfa refuses to issue a session without one, which is what
-			// makes the password an actual factor: previously that endpoint
-			// took a bare username plus a TOTP code and handed back a full
-			// session, so possession of one 6-digit code was sufficient.
+			// Single-use proof the password was verified; VerifyTfa requires it.
 			if h.pendingLogin == nil {
 				if h.log != nil {
 					h.log.Error("auth: pending-login store not configured, cannot start TFA")
@@ -346,8 +342,7 @@ type VerifyTfaRequest struct {
 	Username   string `json:"username"`
 	Token      string `json:"token"`
 	RememberMe bool   `json:"remember_me"` // frontend sends snake_case
-	// TfaTicket is the single-use ticket handed out by Login once the password
-	// has been verified. It is the proof of the first factor.
+	// Single-use proof of the first factor, issued by Login.
 	TfaTicket string `json:"tfa_ticket"`
 }
 
@@ -368,14 +363,8 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Proof of the first factor. The ticket is single-use and is consumed here
-	// regardless of whether the code turns out to be correct, so a captured
-	// ticket cannot be replayed to brute-force codes; a failed attempt sends
-	// the user back through the password step.
-	//
-	// The user is taken from the ticket, never from the request body: deriving
-	// it from a client-supplied username would let the holder of a ticket for
-	// their own account verify against somebody else's.
+	// Consumed whether or not the code is correct, so a captured ticket cannot
+	// be replayed. The user comes from the ticket, never from the request body.
 	if h.pendingLogin == nil {
 		if h.log != nil {
 			h.log.Error("auth: pending-login store not configured, refusing TFA verification")
@@ -805,24 +794,14 @@ func clearAuthCookies(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: "refresh_token", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: secure})
 }
 
-// Token type claim values. Access tokens authenticate requests; refresh tokens
-// are stored against the session row and are NOT accepted as bearer
-// credentials. Without this distinction the two were byte-identical in every
-// respect that mattered, so a refresh token presented as a bearer authenticated
-// normally.
+// Refresh tokens are stored against the session row, never accepted as bearer.
 const (
 	tokenTypeAccess  = "access"
 	tokenTypeRefresh = "refresh"
 )
 
-// createAccessToken mints a request-authenticating token bound to a session.
-//
-// sessionID is mandatory. The middleware's entire session-validity block --
-// existence, revocation, and inactivity -- is gated on the sessionId claim
-// being present, so a token minted without one is exempt from logout,
-// revoke-all, password-change revocation, role-change revocation and account
-// deactivation for its whole lifetime. Refusing to mint one keeps that from
-// happening by construction rather than by remembering to pass an argument.
+// sessionID is mandatory: the middleware gates its whole session-validity
+// block on the claim being present, so a token without one is unrevocable.
 func (h *AuthHandler) createAccessToken(userID, role, sessionID string, expSec int64) (string, error) {
 	if sessionID == "" {
 		return "", errors.New("refusing to mint a session-less access token")
@@ -830,19 +809,11 @@ func (h *AuthHandler) createAccessToken(userID, role, sessionID string, expSec i
 	return h.createToken(userID, role, expSec, sessionID, tokenTypeAccess)
 }
 
-// createRefreshToken mints the long-lived value stored against the session row.
-// It carries no sessionId and is rejected by the auth middleware.
 func (h *AuthHandler) createRefreshToken(userID, role string, expSec int64) (string, error) {
 	return h.createToken(userID, role, expSec, "", tokenTypeRefresh)
 }
 
-// issueSessionTokens creates a session row for a user and mints the token pair
-// bound to it. Used by the first-run admin setup and the signup path, both of
-// which log the new user straight in.
-//
-// Previously both minted their access token with an empty sessionID, which made
-// those tokens exempt from every revocation path for their full lifetime, the
-// same defect as the refresh tokens.
+// Used by first-run admin setup and signup, which log the new user straight in.
 func (h *AuthHandler) issueSessionTokens(r *http.Request, u *models.User, expiresIn, refreshExpSec int64) (accessToken, refreshToken string, err error) {
 	refreshToken, err = h.createRefreshToken(u.ID, u.Role, refreshExpSec)
 	if err != nil {

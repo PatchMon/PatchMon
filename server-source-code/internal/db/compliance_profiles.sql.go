@@ -167,23 +167,9 @@ type UpsertComplianceProfileParams struct {
 	Description *string `json:"description"`
 }
 
-// Single-statement get-or-create against the UNIQUE(name) constraint. The
-// previous SELECT-then-INSERT was both a TOCTOU race and, when called from
-// inside SubmitScan's transaction, a second pool checkout while the first
-// connection was pinned.
-//
-// DO UPDATE (rather than DO NOTHING) so the row is always returned; type is
-// only overwritten when a non-empty value is supplied.
-// The conflict branch deliberately does NOT touch type. An existing profile
-// keeps the type it was created with, and the submitted type is ignored, which
-// is exactly what the SELECT-then-INSERT it replaced did.
-//
-// Overwriting it here would be a behaviour change with teeth: callers default
-// an empty submitted type to "openscap" before calling, so a Docker Bench
-// profile scanned by an agent that omits ProfileType would be rewritten to
-// "openscap". That flips which toggle gates it in SubmitScan
-// (openscapEnabled vs dockerBenchEnabled) and corrupts the stored row for
-// every future scan.
+// DO UPDATE rather than DO NOTHING so the row is always returned on conflict.
+// Deliberately does not touch type: an existing profile keeps the type it was
+// created with. Overwriting it flips which scanner toggle gates it in SubmitScan.
 func (q *Queries) UpsertComplianceProfile(ctx context.Context, arg UpsertComplianceProfileParams) (ComplianceProfile, error) {
 	row := q.db.QueryRow(ctx, upsertComplianceProfile,
 		arg.ID,

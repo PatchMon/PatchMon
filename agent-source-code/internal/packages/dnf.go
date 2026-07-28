@@ -25,12 +25,8 @@ func NewDNFManager(logger *logrus.Logger) *DNFManager {
 	}
 }
 
-// rpmArchSuffixes are the architecture tokens dnf/yum append to package names
-// in "name.arch" form. Only these are stripped when normalising a name.
-//
-// Splitting on a dot unconditionally is wrong: plenty of real RPM names contain
-// dots (python3.11, python3.12), and strings.Split(name, ".")[0] turns
-// "python3.11.x86_64" into "python3", silently merging two distinct packages.
+// Only these are stripped. Splitting on a dot unconditionally would mangle
+// real names that contain one, e.g. python3.11.
 var rpmArchSuffixes = map[string]bool{
 	"x86_64":  true,
 	"i686":    true,
@@ -47,13 +43,8 @@ var rpmArchSuffixes = map[string]bool{
 	"src":     true,
 }
 
-// stripRPMArchSuffix removes a trailing ".<arch>" when <arch> is a recognised
-// RPM architecture token, and leaves every other name untouched.
-//
-// Both the installed and the upgradable parser must agree on this, because
-// CombinePackageData keys its upgradable set on Package.Name. When the two
-// disagreed, every upgradable package was emitted twice: once arch-qualified
-// and flagged NeedsUpdate, and once bare and flagged up to date.
+// Both parsers must agree: CombinePackageData keys its upgradable set on
+// Package.Name.
 func stripRPMArchSuffix(name string) string {
 	idx := strings.LastIndex(name, ".")
 	if idx <= 0 {
@@ -105,9 +96,7 @@ func (m *DNFManager) GetPackages() ([]models.Package, error) {
 	listCmd.Env = append(os.Environ(), "LANG=C")
 	installedOutput, err := listCmd.Output()
 	if err != nil {
-		// Do not fall back to an empty inventory: that renders the host as
-		// having no packages and nothing pending, which reads as "fully
-		// patched" on the dashboard. Fail the report instead.
+		// An empty inventory reads as "fully patched" in the UI. Fail instead.
 		return nil, commandError(packageManager+" list installed", err)
 	}
 	m.logger.WithField("outputSize", len(installedOutput)).Debug("Received output from list installed command")
@@ -126,23 +115,12 @@ func (m *DNFManager) GetPackages() ([]models.Package, error) {
 
 	// Get upgradable packages
 	m.logger.Debug("Getting upgradable packages...")
-	// check-update contacts the configured repositories, so it gets the longer
-	// budget. This is the command that hangs indefinitely behind an operator's
-	// own dnf holding the RPM lock.
 	checkCmd, cancelCheck := boundedCommand(networkCollectorTimeout, packageManager, "check-update")
 	defer cancelCheck()
 	checkOutput, checkErr := checkCmd.Output()
 	if checkErr != nil {
-		// check-update signals its result through the exit code:
-		//   0   - no updates available
-		//   100 - updates are available (stdout carries the list)
-		//   1   - a real failure (unreachable mirror, GPG error, expired
-		//         subscription entitlement, no enabled repositories)
-		//
-		// Only 100 is a success for us. Previously the error was discarded
-		// entirely, so an exit-1 failure produced empty stdout and fell through
-		// to "No updates available" at Debug level, reporting a host with
-		// pending security updates as fully patched.
+		// check-update exit codes: 0 none, 100 updates available, anything
+		// else a real failure.
 		if !isExitCode(checkErr, 100) {
 			return nil, commandError(packageManager+" check-update", checkErr)
 		}
@@ -259,11 +237,8 @@ func (m *DNFManager) enrichWithRepoAttribution(packages []models.Package) {
 func (m *DNFManager) getSecurityPackages(packageManager string) map[string]bool {
 	securityPackages := make(map[string]bool)
 
-	// runUpdateInfo runs one updateinfo variant and releases its context before
-	// returning. Deliberately not `defer cancel()` at function scope: the two
-	// variants below would then share one deferred call bound to the FIRST
-	// cancel func (defer captures the value at defer time), leaving the second
-	// command's context to run to its own timeout.
+	// Scoped so each variant releases its own context: a function-level defer
+	// would bind to the first cancel func only.
 	runUpdateInfo := func(subcommand string) ([]byte, error) {
 		cmd, cancel := boundedCommand(networkCollectorTimeout, packageManager, "updateinfo", "list", subcommand)
 		defer cancel()
@@ -377,21 +352,16 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 			continue
 		}
 
-		// Normalise to the same shape parseInstalledPackages emits, so the two
-		// halves of CombinePackageData agree and an upgradable package is not
-		// also emitted as a separate "up to date" row under its bare name.
 		packageName := stripRPMArchSuffix(fields[0])
 		availableVersion := fields[1]
 
 		// Get current version from installed packages map (already collected).
-		// Both sides are arch-stripped now, so this is the ordinary path.
 		var currentVersion string
 		if p, ok := installedPackages[packageName]; ok {
 			currentVersion = p.CurrentVersion
 		}
 
-		// Defensive fallback: tolerate an installed map that still holds
-		// arch-qualified keys (e.g. supplied by a caller or an older cache).
+		// Tolerate an installed map that still holds arch-qualified keys.
 		if currentVersion == "" {
 			for installedName, p := range installedPackages {
 				if stripRPMArchSuffix(installedName) == packageName {

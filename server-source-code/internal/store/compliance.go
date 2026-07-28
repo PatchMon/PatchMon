@@ -88,17 +88,13 @@ func (s *ComplianceStore) ListProfiles(ctx context.Context) ([]models.Compliance
 }
 
 // GetOrCreateProfile returns a profile by name, creating it if it doesn't exist.
-// Callers inside an open transaction must NOT use this: it resolves its own
-// pool connection. Use q.UpsertComplianceProfile on the transaction's queries
-// instead, as SubmitScan does.
+// Must not be called inside an open transaction: it resolves its own pool
+// connection. Use q.UpsertComplianceProfile on the transaction instead.
 func (s *ComplianceStore) GetOrCreateProfile(ctx context.Context, name, profileType string) (*models.ComplianceProfile, error) {
 	d := s.db.DB(ctx)
 	if profileType == "" {
 		profileType = "openscap"
 	}
-	// Single statement rather than SELECT-then-INSERT: two workers resolving
-	// the same profile name concurrently both found nothing and both inserted,
-	// and the loser failed on the UNIQUE(name) constraint.
 	created, err := d.Queries.UpsertComplianceProfile(ctx, db.UpsertComplianceProfileParams{
 		ID:          uuid.New().String(),
 		Name:        name,
@@ -183,17 +179,9 @@ func (s *ComplianceStore) SubmitScan(ctx context.Context, hostID string, opensca
 		if scanData.ProfileName == "" {
 			continue
 		}
-		// Resolve the profile on the TRANSACTION's queries, not the pool.
-		//
-		// GetOrCreateProfile does d := s.db.DB(ctx), which checks out a second,
-		// independent pool connection while this transaction already pins one.
-		// With DB_CONNECTION_LIMIT concurrent submissions (default 30) every
-		// connection was held by a transaction that then needed a 31st, so all
-		// of them blocked in pgxpool.Acquire until DBConnectTimeout and every
-		// other request in the server blocked behind them.
-		//
-		// Using the upsert also means a profile created here is part of this
-		// transaction, so it no longer survives a later rollback.
+		// On the transaction's queries, not the pool: GetOrCreateProfile would
+		// check out a second connection while this one is pinned, which
+		// deadlocks the pool at DB_CONNECTION_LIMIT concurrent submissions.
 		profileType := scanData.ProfileType
 		if profileType == "" {
 			profileType = "openscap"
@@ -214,8 +202,7 @@ func (s *ComplianceStore) SubmitScan(ctx context.Context, hostID string, opensca
 			Name: profileRow.Name,
 			Type: profileRow.Type,
 		}
-		// Prefer the stored type: an existing profile keeps its own type unless
-		// this submission supplied a non-empty one (see UpsertComplianceProfile).
+		// An existing profile keeps its stored type.
 		if profile.Type != "" {
 			profileType = profile.Type
 		}
@@ -340,17 +327,8 @@ func (s *ComplianceStore) SubmitScan(ctx context.Context, hostID string, opensca
 			if err := q.DeleteComplianceResultsByScan(ctx, scan.ID); err != nil {
 				return nil, err
 			}
-			// Iterate in sorted-key order so concurrent scans of the same
-			// profile take row locks on compliance_rules in the same order.
-			// Plain map iteration is randomised in Go, so two hosts submitting
-			// the same profile acquired the same locks in different orders and
-			// Postgres aborted one with 40P01 deadlock_detected, discarding
-			// that host's entire scan submission. This mirrors what the report
-			// path already does for packages and repositories.
-			//
-			// The probability is not small: OpenSCAP profiles carry 1000-2000
-			// rules and compliance_rules is keyed on profile_id, not host, so
-			// every host scanning a given profile contends on the same rows.
+			// Sorted so concurrent scans of the same profile take row locks in
+			// the same order. Map iteration is randomised and would deadlock.
 			ruleRefs := make([]string, 0, len(deduped))
 			for ref := range deduped {
 				ruleRefs = append(ruleRefs, ref)
@@ -359,23 +337,12 @@ func (s *ComplianceStore) SubmitScan(ctx context.Context, hostID string, opensca
 
 			for _, ruleRef := range ruleRefs {
 				r := deduped[ruleRef]
-				// Single-statement upsert. The previous SELECT-then-INSERT was
-				// a TOCTOU race that failed the whole submission with 23505,
-				// and it treated ANY error from the SELECT (including a
-				// connection failure or an already-aborted transaction) as
-				// "row not found", so the follow-up INSERT reported a
-				// misleading error.
 				ruleID, err := q.UpsertComplianceRule(ctx, db.UpsertComplianceRuleParams{
 					ID:        uuid.New().String(),
 					ProfileID: profile.ID,
 					RuleRef:   ruleRef,
-					// nil when the scan omits a title, so the conflict branch
-					// keeps the stored one. orEmpty is applied by the query's
-					// INSERT arm instead (it falls back to rule_ref), which is
-					// what satisfies the NOT NULL column for a brand new rule.
-					// Passing a never-empty value here defeated the COALESCE and
-					// overwrote real titles with the rule_ref whenever a later
-					// scan omitted them.
+					// nil when omitted, so the conflict branch keeps the stored
+					// title; the query's INSERT arm supplies the NOT NULL default.
 					Title:       complianceStrPtr(r.Title),
 					Description: complianceStrPtr(r.Description),
 					Rationale:   nil,

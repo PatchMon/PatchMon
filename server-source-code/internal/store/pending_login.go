@@ -18,17 +18,11 @@ var ErrInvalidPendingLogin = errors.New("invalid or expired login ticket")
 
 const (
 	pendingLoginPrefix = "auth:pending_tfa:"
-	// Long enough to read a code out of an authenticator app or find a backup
-	// code, short enough that a leaked ticket is not a lasting credential.
-	pendingLoginTTL = 5 * time.Minute
+	pendingLoginTTL    = 5 * time.Minute
 )
 
-// PendingLoginStore holds short-lived, single-use tickets proving that the
-// first authentication factor has already been satisfied.
-//
-// Without one, POST /auth/verify-tfa is reachable directly: it took only a
-// username and a TOTP code and issued a full session, so for any TFA-enabled
-// account the password stopped being a factor at all.
+// PendingLoginStore holds short-lived, single-use tickets proving the first
+// authentication factor has been satisfied.
 type PendingLoginStore struct {
 	rdb *hostctx.RedisResolver
 }
@@ -38,16 +32,13 @@ func NewPendingLoginStore(rdb *hostctx.RedisResolver) *PendingLoginStore {
 	return &PendingLoginStore{rdb: rdb}
 }
 
-// pendingLoginData is what the ticket resolves to. The user is pinned at issue
-// time so the second factor cannot be verified against a different account than
-// the one whose password was checked.
+// The user is pinned at issue time so the second factor cannot be verified
+// against a different account.
 type pendingLoginData struct {
 	UserID    string `json:"userId"`
 	CreatedAt int64  `json:"createdAt"`
 }
 
-// Create issues a ticket for a user who has just passed password verification
-// and now needs to complete TFA.
 func (s *PendingLoginStore) Create(ctx context.Context, userID string) (string, error) {
 	rdb := s.rdb.RDB(ctx)
 	if rdb == nil {
@@ -75,11 +66,8 @@ func (s *PendingLoginStore) Create(ctx context.Context, userID string) (string, 
 	return ticket, nil
 }
 
-// Consume validates a ticket and returns the user it was issued for.
-//
-// The ticket is deleted before the caller acts on it, so a single ticket can
-// only ever drive one TFA verification attempt regardless of the outcome. That
-// keeps a captured ticket from being replayed to brute-force TOTP codes.
+// GETDEL, so one ticket drives exactly one verification attempt whatever the
+// outcome; a captured ticket cannot be replayed against TOTP codes.
 func (s *PendingLoginStore) Consume(ctx context.Context, ticket string) (string, error) {
 	if ticket == "" {
 		return "", ErrInvalidPendingLogin

@@ -8,27 +8,19 @@ import (
 
 // ConnWriter serialises writes to a frontend WebSocket connection.
 //
-// gorilla/websocket permits only one concurrent writer; concurrent WriteJSON
-// calls corrupt the frame stream and race on the connection's internal write
-// state. In proxy mode the frontend connection is written from two unrelated
-// goroutines: the SSH terminal handler's own goroutine, and the agent
-// WebSocket read loop via HandleAgentMessage. A mutex local to the handler
-// closure cannot cover the second, so the lock lives here, on the object both
-// sides share.
-//
-// This mirrors what agentregistry does for the agent side of the same problem.
+// gorilla permits one concurrent writer. In proxy mode the conn is written by
+// the handler goroutine and by the agent read loop, so the lock lives on the
+// object both share rather than in a handler closure.
 type ConnWriter struct {
 	mu   sync.Mutex
 	conn *websocket.Conn
 }
 
-// NewConnWriter wraps a connection so every writer goes through one mutex.
 func NewConnWriter(conn *websocket.Conn) *ConnWriter {
 	return &ConnWriter{conn: conn}
 }
 
-// WriteJSON writes v under the connection's write mutex. Safe to call from any
-// goroutine, and a no-op on a nil writer or a released connection.
+// Safe from any goroutine; no-op on a nil writer.
 func (w *ConnWriter) WriteJSON(v interface{}) error {
 	if w == nil {
 		return nil
@@ -43,10 +35,7 @@ func (w *ConnWriter) WriteJSON(v interface{}) error {
 
 // Session holds a frontend WebSocket for an SSH proxy session.
 type Session struct {
-	// Frontend is the serialising writer for the browser connection. It is a
-	// ConnWriter rather than a bare *websocket.Conn precisely so that the
-	// handler goroutine and the agent read-loop goroutine cannot write
-	// concurrently.
+	// ConnWriter, not a bare *websocket.Conn, so callers cannot write unlocked.
 	Frontend *ConnWriter
 	HostID   string
 	ApiID    string

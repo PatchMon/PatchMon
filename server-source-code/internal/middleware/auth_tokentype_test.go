@@ -52,15 +52,6 @@ func serveWithAuth(t *testing.T, token string) (status int, reached bool) {
 
 // TestAuth_RejectsRefreshTokenAsBearer is the regression guard for the
 // revocation bypass.
-//
-// Refresh tokens were minted with the same claim set and signing key as access
-// tokens, differing only in carrying no sessionId. extractToken accepts any JWT
-// from the Authorization header, and the session-validity block is gated on
-// sessionId being present, so a refresh token presented as a bearer
-// authenticated normally AND skipped the session lookup entirely. It therefore
-// survived logout, revoke-session, revoke-all, password change, role change and
-// account deactivation for its full 7 to 30 day lifetime. Nothing consumes it
-// as a credential: there is no /auth/refresh route.
 func TestAuth_RejectsRefreshTokenAsBearer(t *testing.T) {
 	t.Parallel()
 
@@ -78,8 +69,7 @@ func TestAuth_RejectsRefreshTokenAsBearer(t *testing.T) {
 }
 
 // TestAuth_RejectsTokenWithoutTypeClaim covers tokens minted before the typ
-// claim existed. They are indistinguishable from refresh tokens, so they are
-// rejected and the user re-authenticates once.
+// claim existed.
 func TestAuth_RejectsTokenWithoutTypeClaim(t *testing.T) {
 	t.Parallel()
 

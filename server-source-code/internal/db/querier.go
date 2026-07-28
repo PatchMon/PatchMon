@@ -399,10 +399,8 @@ type Querier interface {
 	IncrementAutoEnrollmentHostsCreated(ctx context.Context, id string) error
 	InsertAlertHistory(ctx context.Context, arg InsertAlertHistoryParams) (AlertHistory, error)
 	InsertDashboardPreference(ctx context.Context, arg InsertDashboardPreferenceParams) error
-	// ON CONFLICT because host_group_memberships carries UNIQUE(host_id,
-	// host_group_id) and callers may pass the same group id twice (nothing
-	// de-duplicates the request body). Without it a duplicated id raised 23505
-	// mid-loop, after the delete had already removed every membership.
+	// ON CONFLICT: callers may pass the same group id twice, and the delete has
+	// already run by then.
 	InsertHostGroupMembership(ctx context.Context, arg InsertHostGroupMembershipParams) error
 	InsertHostRepository(ctx context.Context, arg InsertHostRepositoryParams) error
 	InsertJobHistory(ctx context.Context, arg InsertJobHistoryParams) error
@@ -541,9 +539,8 @@ type Querier interface {
 	// Host report/update flow (agent sends package and system info)
 	UpdateHostFromReport(ctx context.Context, arg UpdateHostFromReportParams) error
 	UpdateHostGroup(ctx context.Context, arg UpdateHostGroupParams) error
-	// Ping-side write of volatile metrics. Each column is guarded so a ping that
-	// omits a metric leaves the previous value intact: plain metrics use COALESCE,
-	// and reboot_reason is tied to needs_reboot via a CASE (see below).
+	// Ping-side write of volatile metrics. Every column is guarded so a ping that
+	// omits a metric leaves the stored value intact.
 	UpdateHostMetrics(ctx context.Context, arg UpdateHostMetricsParams) error
 	UpdateHostNotes(ctx context.Context, arg UpdateHostNotesParams) error
 	// Records the outcome of a Windows Update installation for a specific host+GUID combination.
@@ -617,41 +614,15 @@ type Querier interface {
 	UpdateUserOidcProfile(ctx context.Context, arg UpdateUserOidcProfileParams) error
 	UpdateUserPreferences(ctx context.Context, arg UpdateUserPreferencesParams) error
 	UpsertAlertConfig(ctx context.Context, arg UpsertAlertConfigParams) (AlertConfig, error)
-	// Single-statement get-or-create against the UNIQUE(name) constraint. The
-	// previous SELECT-then-INSERT was both a TOCTOU race and, when called from
-	// inside SubmitScan's transaction, a second pool checkout while the first
-	// connection was pinned.
-	//
-	// DO UPDATE (rather than DO NOTHING) so the row is always returned; type is
-	// only overwritten when a non-empty value is supplied.
-	// The conflict branch deliberately does NOT touch type. An existing profile
-	// keeps the type it was created with, and the submitted type is ignored, which
-	// is exactly what the SELECT-then-INSERT it replaced did.
-	//
-	// Overwriting it here would be a behaviour change with teeth: callers default
-	// an empty submitted type to "openscap" before calling, so a Docker Bench
-	// profile scanned by an agent that omits ProfileType would be rewritten to
-	// "openscap". That flips which toggle gates it in SubmitScan
-	// (openscapEnabled vs dockerBenchEnabled) and corrupts the stored row for
-	// every future scan.
+	// DO UPDATE rather than DO NOTHING so the row is always returned on conflict.
+	// Deliberately does not touch type: an existing profile keeps the type it was
+	// created with. Overwriting it flips which scanner toggle gates it in SubmitScan.
 	UpsertComplianceProfile(ctx context.Context, arg UpsertComplianceProfileParams) (ComplianceProfile, error)
-	// Single-statement get-or-create. Replaces a SELECT-then-INSERT, which was a
-	// TOCTOU race: compliance_rules is keyed on profile_id (not host), so every
-	// host scanning the same profile contends on the same rows. Two hosts
-	// submitting the same profile in the same second both found nothing and both
-	// inserted; the loser got 23505 and its ENTIRE scan submission rolled back.
+	// Metadata columns are COALESCE-guarded so a submission omitting a field does
+	// not blank a stored value.
 	//
-	// The metadata columns use COALESCE so a submission that omits a field does not
-	// blank a value an earlier scan supplied, matching the previous update-if-better
-	// behaviour.
-	//
-	// title is handled differently from the other metadata columns. It is TEXT NOT
-	// NULL, so the INSERT must always supply something and falls back to the
-	// rule_ref. That default cannot be applied via EXCLUDED in the conflict branch,
-	// because EXCLUDED is the row AFTER the VALUES expression has run and would
-	// therefore already hold the fallback. The conflict branch reads the raw
-	// parameter instead, so a submission that omits the title keeps the stored one
-	// rather than overwriting a real title with the rule_ref.
+	// title reads the raw parameter, not EXCLUDED: the column is NOT NULL so the
+	// INSERT arm supplies a rule_ref fallback, which EXCLUDED would already hold.
 	UpsertComplianceRule(ctx context.Context, arg UpsertComplianceRuleParams) (string, error)
 	UpsertDashboardLayout(ctx context.Context, arg UpsertDashboardLayoutParams) error
 	UpsertDockerContainer(ctx context.Context, arg UpsertDockerContainerParams) error

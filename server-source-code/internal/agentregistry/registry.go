@@ -511,22 +511,10 @@ func (r *Registry) removePresence(apiID string) error {
 	return nil
 }
 
-// publishForward routes a frame to the pod that owns apiID's WebSocket.
-//
-// The local pod is subscribed to its own agent:pod:<podID> channel, so
-// forwarding to ourselves is delivered straight back into handlePubSubMessage,
-// which calls SendMessage, which finds no local conn and calls publishForward
-// again. That is an unbounded publish loop: handlePubSubMessage runs inline in
-// the pubsub consumer's select loop, so the goroutine never returns and
-// presence handling freezes for the whole fleet while Redis is hammered.
-//
-// podMap can legitimately name the local pod with no live conn:
-//   - snapshotPresence() repopulates it from surviving agent:meta:* keys after
-//     a restart (podID defaults to os.Hostname(), stable across restarts), and
-//   - Register() sets podMap before SetConnection() stores the socket.
-//
-// In both cases the honest answer is "no live connection here", so bail out
-// with ErrNotConnected rather than publishing to ourselves.
+// Publishing to our own channel would be delivered back into
+// handlePubSubMessage and re-published, an unbounded loop that wedges the
+// pubsub consumer. podMap names the local pod with no conn after
+// snapshotPresence, and briefly during Register.
 func (r *Registry) publishForward(apiID string, messageType int, data []byte) error {
 	r.mu.RLock()
 	pod := r.podMap[apiID]

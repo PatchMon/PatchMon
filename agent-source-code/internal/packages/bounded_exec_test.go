@@ -9,14 +9,6 @@ import (
 
 // TestBoundedCommand_KillsAHangingProcess is the regression guard for the
 // wedged-agent defect.
-//
-// Every package-manager invocation used exec.Command with no deadline, and
-// collectReportData joins its collectors with an untimed wg.Wait() that
-// runCheckIn calls synchronously from the service loop's select. So one blocked
-// package manager -- an operator's own "dnf upgrade" holding the RPM lock, or
-// "freebsd-update fetch" against a firewalled mirror -- stopped the agent
-// reporting AND stopped it handling report_now, run_patch, patch_run_stop and
-// update_agent, with no self-recovery.
 func TestBoundedCommand_KillsAHangingProcess(t *testing.T) {
 	t.Parallel()
 
@@ -52,8 +44,8 @@ func TestBoundedCommand_AllowsNormalCompletion(t *testing.T) {
 }
 
 // TestBoundedCommand_PreservesExitCodeAndStderr confirms the deadline wrapper
-// does not break the exit-code and stderr handling the collectors rely on,
-// in particular dnf check-update's exit 100.
+// does not break the exit-code and stderr handling the collectors rely on, in
+// particular dnf check-update's exit 100.
 func TestBoundedCommand_PreservesExitCodeAndStderr(t *testing.T) {
 	t.Parallel()
 
@@ -74,8 +66,8 @@ func TestBoundedCommand_PreservesExitCodeAndStderr(t *testing.T) {
 	}
 }
 
-// TestBoundedCommand_WaitDelaySet ensures a child that ignores cancellation, or
-// leaves a grandchild holding the stdout pipe, is still killed.
+// TestBoundedCommand_WaitDelaySet ensures a child that ignores cancellation,
+// or leaves a grandchild holding the stdout pipe, is still killed.
 func TestBoundedCommand_WaitDelaySet(t *testing.T) {
 	t.Parallel()
 

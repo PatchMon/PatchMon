@@ -23,11 +23,6 @@ func newPendingLoginStore(t *testing.T) (*PendingLoginStore, *miniredis.Miniredi
 
 // TestPendingLogin_TicketIsSingleUse is the property the entire TFA fix rests
 // on, and the one thing the handler tests could not cover without a Redis.
-//
-// The ticket is consumed with GETDEL before the TOTP code is checked, so it is
-// spent whether or not the code was right. That is what stops a captured ticket
-// being replayed to brute-force codes: an attacker gets exactly one guess per
-// password authentication, not unlimited guesses per ticket.
 func TestPendingLogin_TicketIsSingleUse(t *testing.T) {
 	t.Parallel()
 	s, _ := newPendingLoginStore(t)
@@ -85,8 +80,8 @@ func TestPendingLogin_ResolvesTheIssuedUser(t *testing.T) {
 	}
 }
 
-// TestPendingLogin_TicketExpires bounds the window in which a leaked ticket is
-// worth anything.
+// TestPendingLogin_TicketExpires bounds the window in which a leaked ticket
+// is worth anything.
 func TestPendingLogin_TicketExpires(t *testing.T) {
 	t.Parallel()
 	s, mr := newPendingLoginStore(t)
@@ -114,7 +109,8 @@ func TestPendingLogin_TicketExpires(t *testing.T) {
 	}
 }
 
-// TestPendingLogin_RejectsUnknownTickets covers the shapes an attacker supplies.
+// TestPendingLogin_RejectsUnknownTickets covers the shapes an attacker
+// supplies.
 func TestPendingLogin_RejectsUnknownTickets(t *testing.T) {
 	t.Parallel()
 	s, _ := newPendingLoginStore(t)
@@ -132,15 +128,8 @@ func TestPendingLogin_RejectsUnknownTickets(t *testing.T) {
 	}
 }
 
-// TestPendingLogin_ConcurrentConsumeYieldsExactlyOneWinner is a smoke test, NOT
-// a proof of atomicity.
-//
-// It was written to prove the GETDEL is atomic, but it passes against a
-// read-then-delete implementation too: miniredis serialises commands and the
-// racing goroutines do not reliably interleave in the vulnerable window. It is
-// kept because "exactly one winner" is still worth asserting, but the real
-// guarantee is structural and is covered by
-// TestPendingLogin_ConsumeUsesASingleAtomicCommand below.
+// TestPendingLogin_ConcurrentConsumeYieldsExactlyOneWinner is a smoke test,
+// NOT a proof of atomicity.
 func TestPendingLogin_ConcurrentConsumeYieldsExactlyOneWinner(t *testing.T) {
 	t.Parallel()
 	s, _ := newPendingLoginStore(t)
@@ -198,16 +187,6 @@ func TestPendingLogin_TicketsAreHighEntropy(t *testing.T) {
 
 // TestPendingLogin_ConsumeUsesASingleAtomicCommand pins the property that
 // actually makes the ticket single-use under concurrency.
-//
-// GETDEL is one Redis command, so the read and the delete cannot be separated
-// by another client. A read-then-delete pair would let two requests arriving
-// together both read the ticket before either deleted it, and both would then
-// be allowed a TOTP guess -- reinstating exactly the replay the single-use
-// design exists to prevent.
-//
-// This is asserted against the source rather than by racing goroutines because
-// a behavioural test cannot reliably distinguish the two implementations: the
-// window is small and an in-memory Redis serialises commands anyway.
 func TestPendingLogin_ConsumeUsesASingleAtomicCommand(t *testing.T) {
 	t.Parallel()
 

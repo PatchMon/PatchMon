@@ -46,16 +46,6 @@ func newTestManager(t *testing.T) *Manager {
 }
 
 // TestManager_ConcurrentLoadAndRead reproduces the crash shape.
-//
-// config.Manager had no mutex. LoadConfig drove viper and then replaced
-// config.Integrations, while IsIntegrationEnabled, GetComplianceMode and
-// GetPackageCacheRefreshMode read that same map from the main service loop, the
-// compliance scheduler, the initial-report goroutine and the post-patch-report
-// goroutine. A concurrent map read and map write is an unrecoverable Go runtime
-// fatal error: no recover() catches it, so the agent died mid-report and
-// systemd restarted it straight back into the same window on every start.
-//
-// Run under -race this fails without the mutex.
 func TestManager_ConcurrentLoadAndRead(t *testing.T) {
 	t.Parallel()
 
@@ -184,10 +174,10 @@ func TestManager_ConcurrentSettersAndReaders(t *testing.T) {
 	wg.Wait()
 }
 
-// TestLoadConfig_SwapsRatherThanMutates documents why GetConfig can hand out a
-// pointer safely: LoadConfig builds a new struct and swaps it in, so a caller
-// holding an earlier pointer keeps a stable snapshot instead of watching the
-// map be rebuilt underneath it.
+// TestLoadConfig_SwapsRatherThanMutates documents why GetConfig can hand out
+// a pointer safely: LoadConfig builds a new struct and swaps it in, so a
+// caller holding an earlier pointer keeps a stable snapshot instead of
+// watching the map be rebuilt underneath it.
 func TestLoadConfig_SwapsRatherThanMutates(t *testing.T) {
 	t.Parallel()
 

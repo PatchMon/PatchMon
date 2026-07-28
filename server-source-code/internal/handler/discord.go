@@ -190,16 +190,9 @@ func (h *DiscordHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		redirectTo("/login?error=Invalid+authentication+response")
 		return
 	}
-	// A MISSING cookie must be rejected too, not only a mismatching one. The
-	// server-side GetAndDelete below makes the state single-use but does not
-	// bind it to the victim's browser, so accepting a nil cookie allowed a
-	// login-CSRF: the attacker starts a Discord login, captures code+state from
-	// their own callback redirect without following it, and sends the victim a
-	// link to the callback. The victim has no discord_state cookie, the check
-	// passed, and they were silently signed in as the attacker's account, with
-	// everything they subsequently entered landing in it.
-	//
-	// This is the same fix already applied to the OIDC handler.
+	// A missing cookie must be rejected too: the server-side state is single-use
+	// but is not bound to the victim's browser, so accepting nil allows a
+	// login CSRF.
 	cookieState, err := r.Cookie("discord_state")
 	if err != nil || cookieState == nil || cookieState.Value != state {
 		redirectTo("/login?error=Invalid+authentication+response")
@@ -265,15 +258,9 @@ func (h *DiscordHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	user, _ := h.users.GetByDiscordIDOrEmail(r.Context(), discordUser.ID, discordUser.Email)
 	s, _ := h.settings.GetFirst(r.Context())
 
-	// GetByDiscordIDOrEmail matches on discord_id OR email, so a row can come
-	// back purely because Discord asserted an email address. Discord is a
-	// public IdP where anyone can register with any address, so an unverified
-	// address proves nothing.
-	//
-	// discordUser.Verified previously gated only the auto-link write further
-	// down; the login itself proceeded regardless, so registering a Discord
-	// account with an existing user's email and clicking "Login with Discord"
-	// handed over that account.
+	// The lookup matches on discord_id OR email, so a row can come back purely
+	// because Discord asserted an address. Discord is a public IdP: an
+	// unverified address proves nothing.
 	matchedByDiscordID := user != nil && user.DiscordID != nil && *user.DiscordID == discordUser.ID
 	if !matchedByDiscordID {
 		if !discordUser.Verified || discordUser.Email == "" {
@@ -284,8 +271,6 @@ func (h *DiscordHandler) Callback(w http.ResponseWriter, r *http.Request) {
 			redirectTo("/login?error=Unable+to+sign+in+with+this+account")
 			return
 		}
-		// An email match must not override an account already bound to a
-		// different Discord identity.
 		if user != nil && user.DiscordID != nil {
 			if h.log != nil {
 				h.log.Error("discord login rejected: account is linked to a different discord id",
@@ -352,28 +337,9 @@ func (h *DiscordHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		AutoSubscribeIfHosted(h.cfg != nil && h.cfg.AdminMode, h.users, h.log, user)
 	}
 
-	// Auto-link by email, but never onto an account that already holds another
-	// credential.
-	//
-	// A verified email at a PUBLIC identity provider proves only that someone
-	// can receive mail at that address. Adopting an existing local account on
-	// that basis handed the account to whoever controlled the mailbox: the
-	// attacker registers a Discord account with the victim's address, verifies
-	// it, and this branch writes their discord_id onto the victim's row and
-	// issues a session. The victim's password and their TOTP were both bypassed
-	// because neither is consulted on this path, and the link persisted, so the
-	// access was durable rather than one-shot.
-	//
-	// It is not gated by SignupEnabled either: that gates auto-CREATE above,
-	// not auto-LINK, so disabling self-registration did not help.
-	//
-	// PatchMon has no self-service password reset (the only reset is
-	// admin-initiated), so mailbox control is not otherwise a route into an
-	// account. Enabling Discord login must not silently create one.
-	//
-	// An account with a password or TFA already has an owner who never asked
-	// for this. Those users link Discord from Settings instead, through the
-	// authenticated Link flow, which proves control of both sides.
+	// Never adopt an account that already holds a credential: mailbox control
+	// would otherwise be enough to take it over, and PatchMon has no
+	// self-service password reset. Those users link from Settings instead.
 	if user != nil && user.DiscordID == nil && discordUser.Verified && discordUser.Email != "" {
 		hasOtherCredential := user.TfaEnabled || user.PasswordHash != nil
 		if hasOtherCredential {

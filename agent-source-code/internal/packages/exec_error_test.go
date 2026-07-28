@@ -7,11 +7,7 @@ import (
 	"testing"
 )
 
-// TestIsExitCode guards the dnf/yum check-update contract. Exit 100 means
-// "updates are available" and is a success; treating it as a failure would make
-// every host with pending updates fail its report, and treating exit 1 as a
-// success is the original bug (a host with no reachable repositories was
-// reported as fully patched).
+// TestIsExitCode guards the dnf/yum check-update contract.
 func TestIsExitCode(t *testing.T) {
 	t.Parallel()
 
@@ -37,9 +33,7 @@ func TestIsExitCode(t *testing.T) {
 }
 
 // TestCommandError_IncludesStderr covers the diagnostic that was previously
-// lost. Output() captures stderr into ExitError.Stderr, but the bare error
-// string is only ever "exit status N", so an operator saw nothing explaining
-// why a host reported zero updates.
+// lost.
 func TestCommandError_IncludesStderr(t *testing.T) {
 	t.Parallel()
 
@@ -99,14 +93,8 @@ func TestCommandError_NoStderr(t *testing.T) {
 	}
 }
 
-// TestCommandError_RedactsRepositoryCredentials keeps secrets out of the agent
-// log.
-//
-// Package managers print failing repository URLs to stderr, and private repos
-// (RHEL Satellite, vendor-hosted, most internal mirrors) routinely embed
-// credentials in the baseurl. Folding stderr into the error puts them in the
-// log at error level, and logutil.Sanitize does not redact -- it only escapes
-// control characters.
+// TestCommandError_RedactsRepositoryCredentials keeps secrets out of the
+// agent log.
 func TestCommandError_RedactsRepositoryCredentials(t *testing.T) {
 	t.Parallel()
 

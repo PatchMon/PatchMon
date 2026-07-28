@@ -15,13 +15,8 @@ import {
 import { useState } from "react";
 import { formatDate } from "../../utils/api";
 
-// API functions - use httpOnly cookies for auth.
-//
-// These bypass the shared axios client in utils/api.js, which rejects on
-// non-2xx. Raw fetch does NOT: it resolves for a 401, 403 or 500 just as
-// happily as for a 200. Without the res.ok check below, a failed toggle,
-// regenerate or send-now still ran useMutation's onSuccess, invalidated the
-// queries and reported success while nothing had changed server-side.
+// These bypass the shared axios client, which rejects on non-2xx. Raw fetch
+// resolves for a 401 or 500, so onSuccess would run for a failed request.
 const parseJSONResponse = async (res) => {
 	if (!res.ok) {
 		let message = `Request failed (${res.status})`;

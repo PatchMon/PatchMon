@@ -52,13 +52,6 @@ func TestStripRPMArchSuffix(t *testing.T) {
 }
 
 // TestDNFNoDuplicateRowsAfterCombine is the end-to-end regression guard.
-//
-// parseUpgradablePackages used to emit fields[0] verbatim ("bash.x86_64") while
-// parseInstalledPackages stripped the arch ("bash"). CombinePackageData keys its
-// upgradable set on Package.Name, so the bare installed name never matched and
-// was appended as a second row claiming the package was up to date. Every
-// upgradable package on every RHEL-family host was therefore reported twice,
-// inflating counts and making patch_package targeting ambiguous.
 func TestDNFNoDuplicateRowsAfterCombine(t *testing.T) {
 	t.Parallel()
 
@@ -154,18 +147,6 @@ func namesOf(pkgs []models.Package) []string {
 
 // TestMultilibDoesNotProduceDuplicateNames is the regression guard for the
 // defect arch-stripping introduced.
-//
-// dnf lists glibc.i686 and glibc.x86_64 as separate upgradable entries on a
-// multilib host (32-bit compat libs: Steam, Wine, vendor installers, Oracle and
-// SAP prerequisites). Once the arch is stripped both become "glibc", and
-// CombinePackageData appended each one, so the report payload carried two rows
-// with the same name.
-//
-// That is not cosmetic. Server-side, BulkUpsertPackages is a single
-// INSERT ... ON CONFLICT (name) DO UPDATE fed from jsonb_to_recordset, and
-// Postgres raises "21000: ON CONFLICT DO UPDATE command cannot affect row a
-// second time", aborting the transaction. Every report from that host would
-// 500 and the host would go not-reporting.
 func TestMultilibDoesNotProduceDuplicateNames(t *testing.T) {
 	t.Parallel()
 
@@ -210,8 +191,9 @@ glibc.i686                        2.34-125.el9                    baseos`,
 	}
 }
 
-// TestMultilibKeepsTheSecurityFlaggedEntry: where one arch is a security update
-// and the other is not, the host's security count must not be silently reduced.
+// TestMultilibKeepsTheSecurityFlaggedEntry: where one arch is a security
+// update and the other is not, the host's security count must not be silently
+// reduced.
 func TestMultilibKeepsTheSecurityFlaggedEntry(t *testing.T) {
 	t.Parallel()
 

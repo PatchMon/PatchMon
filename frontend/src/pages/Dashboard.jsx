@@ -370,11 +370,7 @@ const Dashboard = () => {
 	};
 
 	// Helper function to format the update interval threshold
-	// The server serialises this field as update_interval. Reading the camelCase
-	// name meant the guard below always fired, so the card always claimed 24
-	// hours regardless of the configured interval, wrong by up to 48x. Every
-	// other consumer in the app (Hosts, HostDetail, Settings, AgentUpdatesTab)
-	// reads the snake_case name.
+	// The server serialises this as update_interval, not updateInterval.
 	const formatUpdateIntervalThreshold = () => {
 		if (!settings?.update_interval) return "24 hours";
 

@@ -13,8 +13,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// tokenTypeAccess is the only "typ" claim value accepted as a request
-// credential. Kept in sync with the handler package, which mints the tokens.
+// Kept in sync with the handler package, which mints the tokens.
 const tokenTypeAccess = "access"
 
 const UserIDKey contextKey = "user_id"
@@ -57,19 +56,8 @@ func AuthWithSessionCheck(cfg *config.Config, sessionsStore *store.SessionsStore
 				return
 			}
 
-			// Only access tokens authenticate requests.
-			//
-			// Refresh tokens were minted with the same claim set and the same
-			// signing key, differing only in that they carried no sessionId --
-			// which meant they skipped the entire session-validity block below.
-			// Presented as a bearer they authenticated normally and were exempt
-			// from logout, revoke-all, password-change and role-change
-			// revocation, and account deactivation, for their full 7 to 30 day
-			// lifetime. Nothing consumes them as a credential, so reject them.
-			//
-			// A missing typ claim is also rejected: tokens issued before this
-			// claim existed cannot be told apart from refresh tokens, so they
-			// are treated as untrusted and the user re-authenticates once.
+			// A missing typ is rejected too: pre-existing tokens are
+			// indistinguishable from refresh tokens.
 			if typ, _ := claims["typ"].(string); typ != tokenTypeAccess {
 				if log != nil {
 					log.Debug("auth rejected non-access token", "path", r.URL.Path, "typ", typ)
@@ -89,20 +77,9 @@ func AuthWithSessionCheck(cfg *config.Config, sessionsStore *store.SessionsStore
 				return
 			}
 
-			// Session existence and revocation check.
-			//
-			// This is deliberately NOT gated on the inactivity timeout. The two
-			// were previously one condition, so setting
-			// SESSION_INACTIVITY_TIMEOUT_MINUTES=0 -- the natural way to express
-			// "no idle timeout" -- skipped the session lookup entirely and
-			// silently disabled logout, revoke-session, revoke-all,
-			// password-change revocation, role-change revocation and account
-			// deactivation until the JWT expired. The UI reported success
-			// throughout.
-			//
-			// Every access token now carries a sessionId, so this lookup is the
-			// mechanism that makes revocation work at all; it must not be
-			// switchable off by an unrelated setting.
+			// Deliberately not gated on the inactivity timeout: this lookup is
+			// what makes revocation work, and must not be switchable off by
+			// setting SESSION_INACTIVITY_TIMEOUT_MINUTES=0.
 			if sessionID != "" && sessionsStore != nil {
 				sess, err := sessionsStore.GetByID(r.Context(), sessionID, userID)
 				if err != nil || sess == nil {
@@ -110,7 +87,7 @@ func AuthWithSessionCheck(cfg *config.Config, sessionsStore *store.SessionsStore
 					return
 				}
 
-				// The inactivity comparison, separately, is opt-in via the setting.
+				// The inactivity comparison itself is opt-in.
 				if resolved != nil && resolved.SessionInactivityTimeoutMin > 0 {
 					inactive := time.Since(sess.LastActivity) > time.Duration(resolved.SessionInactivityTimeoutMin)*time.Minute
 					if inactive {
@@ -160,8 +137,7 @@ func OptionalAuth(cfg *config.Config) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			// Same rule as Auth: only access tokens establish identity, so a
-			// refresh token cannot populate the user context here either.
+			// Same rule as Auth.
 			if typ, _ := claims["typ"].(string); typ != tokenTypeAccess {
 				next.ServeHTTP(w, r)
 				return

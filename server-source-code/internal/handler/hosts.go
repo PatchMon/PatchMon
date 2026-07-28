@@ -290,15 +290,8 @@ func (h *HostsHandler) UpdateGroups(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// requireHost loads the host and writes a 404 when it does not exist,
-// reporting whether the caller may continue.
-//
-// HostsStore.GetByID returns (nil, nil) for "no such row", so a caller that
-// only tests err goes on to dereference a nil host. The underlying update
-// statements are sqlc :exec and report no error for zero rows affected, so
-// without this check an unknown id produced a no-op write followed by a nil
-// dereference (converted to a 500 by the Recovery middleware) rather than the
-// 404 it should be.
+// GetByID returns (nil, nil) for "no such row", and the updates are :exec, so
+// an unknown id otherwise means a no-op write then a nil dereference.
 func (h *HostsHandler) requireHost(w http.ResponseWriter, r *http.Request, hostID string) (*models.Host, bool) {
 	host, err := h.hosts.GetByID(r.Context(), hostID)
 	if err != nil || host == nil {
@@ -308,9 +301,7 @@ func (h *HostsHandler) requireHost(w http.ResponseWriter, r *http.Request, hostI
 	return host, true
 }
 
-// reloadHost re-reads the host after a write so the response reflects it,
-// falling back to the pre-write row if the host was deleted concurrently.
-// The returned value is never nil.
+// Never returns nil; falls back to the pre-write row.
 func (h *HostsHandler) reloadHost(r *http.Request, hostID string, fallback *models.Host) *models.Host {
 	if updated, err := h.hosts.GetByID(r.Context(), hostID); err == nil && updated != nil {
 		return updated
@@ -770,9 +761,8 @@ func (h *HostsHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify all exist. GetByID returns (nil, nil) for "no such row", so the
-	// nil check is what actually enforces this; testing err alone let unknown
-	// ids through and reported a successful delete for them.
+	// The nil check is what enforces this: GetByID returns (nil, nil) for
+	// "no such row".
 	for _, id := range req.HostIds {
 		existing, err := h.hosts.GetByID(r.Context(), id)
 		if err != nil || existing == nil {

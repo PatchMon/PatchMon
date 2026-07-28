@@ -103,9 +103,8 @@ FROM hosts
 WHERE api_id = $1;
 
 -- name: UpdateHostMetrics :exec
--- Ping-side write of volatile metrics. Each column is guarded so a ping that
--- omits a metric leaves the previous value intact: plain metrics use COALESCE,
--- and reboot_reason is tied to needs_reboot via a CASE (see below).
+-- Ping-side write of volatile metrics. Every column is guarded so a ping that
+-- omits a metric leaves the stored value intact.
 UPDATE hosts SET
     last_update    = NOW(),
     updated_at     = NOW(),
@@ -119,20 +118,9 @@ UPDATE hosts SET
     boot_time      = COALESCE(sqlc.narg('boot_time')::timestamptz, boot_time),
     load_average   = COALESCE(sqlc.narg('load_average')::jsonb, load_average),
     needs_reboot   = COALESCE(sqlc.narg('needs_reboot')::boolean, needs_reboot),
-    -- reboot_reason is preserved unless this ping gives a reason to change it.
-    --
-    -- A bare COALESCE would be wrong: it would make the reason unclearable once
-    -- set. Pairing it with needs_reboot lets a genuine "no longer needs reboot"
-    -- ping clear both together.
-    --
-    -- The second WHEN arm matters and was missing at first. install.go sets
-    -- needs_reboot and reboot_reason independently, so a ping can carry
-    -- needs_reboot=true with no reason -- an older agent build, or a collector
-    -- that failed to read /var/run/reboot-required.pkgs. Keyed only on
-    -- needs_reboot being present, that fell through to the ELSE and NULLed a
-    -- reason an earlier ping had written correctly, leaving the Reboot pill set
-    -- with a permanently empty explanation: exactly the bug the CASE was added
-    -- to prevent.
+    -- Not a plain COALESCE: that would make the reason unclearable. Tied to
+    -- needs_reboot so clearing the flag clears both, while a ping asserting the
+    -- flag without a reason leaves the stored one alone.
     reboot_reason  = CASE
         WHEN sqlc.narg('needs_reboot')::boolean IS NULL THEN reboot_reason
         WHEN sqlc.narg('needs_reboot')::boolean IS TRUE

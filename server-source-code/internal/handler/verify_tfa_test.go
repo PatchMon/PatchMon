@@ -33,16 +33,6 @@ func postVerifyTfa(t *testing.T, h *AuthHandler, body string) *httptest.Response
 
 // TestVerifyTfa_RequiresFirstFactorTicket is the regression guard for the
 // authentication bypass.
-//
-// VerifyTfa used to accept {username, token} and call completeLogin directly.
-// There was no password check, no pending-login state carried over from Login,
-// and no server-side marker behind Login's {"requiresTfa": true} response, so
-// the endpoint was callable without ever touching /auth/login. For any
-// TFA-enabled account, possession of one 6-digit TOTP code (or one backup code)
-// was sufficient to obtain a full session plus a 30-day device-trust cookie.
-//
-// A session must now be unreachable without a valid single-use ticket, which is
-// only issued after the password has been verified.
 func TestVerifyTfa_RequiresFirstFactorTicket(t *testing.T) {
 	t.Parallel()
 
@@ -129,8 +119,8 @@ func TestVerifyTfa_FailsClosedWithoutStore(t *testing.T) {
 	}
 }
 
-// TestPendingLoginStore_ConsumeRejectsEmptyTicket documents the store contract
-// the handler relies on.
+// TestPendingLoginStore_ConsumeRejectsEmptyTicket documents the store
+// contract the handler relies on.
 func TestPendingLoginStore_ConsumeRejectsEmptyTicket(t *testing.T) {
 	t.Parallel()
 
@@ -143,7 +133,8 @@ func TestPendingLoginStore_ConsumeRejectsEmptyTicket(t *testing.T) {
 	}
 }
 
-// ensure the JSON shape Login promises stays in sync with what VerifyTfa reads.
+// ensure the JSON shape Login promises stays in sync with what VerifyTfa
+// reads.
 func TestVerifyTfaRequest_TicketFieldName(t *testing.T) {
 	t.Parallel()
 

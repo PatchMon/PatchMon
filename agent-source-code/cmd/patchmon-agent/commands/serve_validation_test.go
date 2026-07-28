@@ -2,20 +2,8 @@ package commands
 
 import "testing"
 
-// TestValidAptPackagePattern_RejectsRangeArtefacts is the regression guard for
-// the character-class range bug.
-//
-// The pattern was `^[a-zA-Z0-9][a-zA-Z0-9.+-_]*$`. The intended literal set
-// ". + - _" was parsed by the regexp engine as a RANGE from '+' (0x2B) to '_'
-// (0x5F), which admits every character in between: / \ ; : , < > = ? @ and the
-// whole uppercase block plus [ ] ^.
-//
-// That is not shell injection (nothing is passed through a shell on Unix), it
-// is an argument-semantics hole: apt and dnf both treat an argument containing
-// a slash as a path to a local package file, resolved against the process CWD
-// ("/" under systemd). A run_patch carrying "tmp/evil.deb" therefore became
-// "apt-get install -y tmp/evil.deb" as root, giving any local user able to
-// write to /tmp a remotely-triggered root install primitive.
+// TestValidAptPackagePattern_RejectsRangeArtefacts is the regression guard
+// for the character-class range bug.
 func TestValidAptPackagePattern_RejectsRangeArtefacts(t *testing.T) {
 	t.Parallel()
 

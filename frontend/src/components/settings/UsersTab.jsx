@@ -108,11 +108,8 @@ const UsersTab = () => {
 	});
 
 	// Update user mutation
-	// mutateAsync (not mutate) is handed to the modal below: the modal awaits it
-	// and shows success on resolve. mutate() returns undefined and swallows
-	// rejections, so the await resolved regardless of the HTTP result and a
-	// rejected update reported "User updated successfully!" while the row was
-	// unchanged. onError is kept as a backstop so a failure can never be silent.
+	// The modal awaits this, so it must be mutateAsync: mutate() swallows
+	// rejections and the await would resolve on failure.
 	const updateUserMutation = useMutation({
 		mutationFn: ({ id, data }) => adminUsersAPI.update(id, data),
 		onSuccess: () => {

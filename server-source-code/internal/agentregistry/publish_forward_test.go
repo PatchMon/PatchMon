@@ -25,14 +25,8 @@ func newUnreachableRedis() *redisclient.Client {
 	})
 }
 
-// TestPublishForward_SelfPodReturnsNotConnected is the direct regression guard
-// for the unbounded self-publish loop.
-//
-// The pod subscribes to its own agent:pod:<podID> channel, so publishing a
-// forward addressed to ourselves is delivered back into handlePubSubMessage,
-// which calls SendMessage, which calls publishForward again. Because
-// handlePubSubMessage runs inline in the pubsub consumer's select loop, that
-// loop never returns and presence handling freezes fleet-wide.
+// TestPublishForward_SelfPodReturnsNotConnected is the direct regression
+// guard for the unbounded self-publish loop.
 func TestPublishForward_SelfPodReturnsNotConnected(t *testing.T) {
 	t.Parallel()
 	r := New()
@@ -47,8 +41,8 @@ func TestPublishForward_SelfPodReturnsNotConnected(t *testing.T) {
 	}
 }
 
-// TestPublishForward_RemotePodStillForwards guards against over-correcting:
-// a genuinely remote pod must still be published to.
+// TestPublishForward_RemotePodStillForwards guards against over-correcting: a
+// genuinely remote pod must still be published to.
 func TestPublishForward_RemotePodStillForwards(t *testing.T) {
 	t.Parallel()
 	r := New()
@@ -113,11 +107,6 @@ func newRecordingRedis(t *testing.T) (*redisclient.Client, func(channel string) 
 }
 
 // TestSendMessage_SelfPodPublishesNothing is the behavioural guard.
-//
-// The state reproduced here is what snapshotPresence() leaves after a restart:
-// meta says connected and podMap names THIS pod, but conns is empty because the
-// agent has not reconnected. Publishing to our own channel is what created the
-// unbounded loop, so the assertion is that nothing is published at all.
 func TestSendMessage_SelfPodPublishesNothing(t *testing.T) {
 	t.Parallel()
 	client, countFor := newRecordingRedis(t)
@@ -150,8 +139,8 @@ func TestSendMessage_SelfPodPublishesNothing(t *testing.T) {
 	}
 }
 
-// TestSendMessage_RemotePodStillPublishes is the other half: the guard must not
-// suppress a genuinely remote agent.
+// TestSendMessage_RemotePodStillPublishes is the other half: the guard must
+// not suppress a genuinely remote agent.
 func TestSendMessage_RemotePodStillPublishes(t *testing.T) {
 	t.Parallel()
 	client, countFor := newRecordingRedis(t)
@@ -181,9 +170,8 @@ func TestSendMessage_RemotePodStillPublishes(t *testing.T) {
 
 // TestSendMessage_RegisterBeforeSetConnectionWindow covers the ordinary
 // registration window: Register() writes podMap before SetConnection() stores
-// the socket, so podMap naming the local pod with no conn is a normal state on
-// a healthy connect, not only after a restart. It must not publish, and it must
-// not be mistaken for a delivery.
+// the socket, so podMap naming the local pod with no conn is a normal state
+// on a healthy connect, not only after a restart.
 func TestSendMessage_RegisterBeforeSetConnectionWindow(t *testing.T) {
 	t.Parallel()
 	client, countFor := newRecordingRedis(t)
