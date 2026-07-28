@@ -137,8 +137,8 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 				const status = wsResult.data;
 				if (status?.connected && connectionStage === "waiting") {
 					setConnectionStage("connected");
-					queryClient.invalidateQueries(["host", createdHost.id]);
-					queryClient.invalidateQueries(["hosts"]);
+					queryClient.invalidateQueries({ queryKey: ["host", createdHost.id] });
+					queryClient.invalidateQueries({ queryKey: ["hosts"] });
 				}
 				if (
 					status?.connected &&
@@ -205,8 +205,8 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 				state: { fromWizard: true, apiKey: plaintextApiKey },
 			});
 			setTimeout(() => {
-				queryClient.invalidateQueries(["host", createdHost.id]);
-				queryClient.invalidateQueries(["hosts"]);
+				queryClient.invalidateQueries({ queryKey: ["host", createdHost.id] });
+				queryClient.invalidateQueries({ queryKey: ["hosts"] });
 			}, 2000);
 		}, 300);
 	}, [

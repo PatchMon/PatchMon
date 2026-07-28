@@ -61,7 +61,7 @@ const SettingsMetrics = () => {
 		mutationFn: (enabled) =>
 			metricsAPI.updateSettings({ metrics_enabled: enabled }),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["metrics-settings"]);
+			queryClient.invalidateQueries({ queryKey: ["metrics-settings"] });
 		},
 	});
 
@@ -69,7 +69,7 @@ const SettingsMetrics = () => {
 	const regenerateIdMutation = useMutation({
 		mutationFn: () => metricsAPI.regenerateId(),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["metrics-settings"]);
+			queryClient.invalidateQueries({ queryKey: ["metrics-settings"] });
 		},
 	});
 
@@ -77,7 +77,7 @@ const SettingsMetrics = () => {
 	const sendNowMutation = useMutation({
 		mutationFn: () => metricsAPI.sendNow(),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["metrics-settings"]);
+			queryClient.invalidateQueries({ queryKey: ["metrics-settings"] });
 		},
 	});
 

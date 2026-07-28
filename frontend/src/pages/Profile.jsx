@@ -1077,7 +1077,7 @@ const TfaTab = () => {
 	const disableMutation = useMutation({
 		mutationFn: (data) => tfaAPI.disable(data).then((res) => res.data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["tfaStatus"]);
+			queryClient.invalidateQueries({ queryKey: ["tfaStatus"] });
 			setSetupStep("status");
 			setMessage({
 				type: "success",
@@ -1515,7 +1515,7 @@ const TfaTab = () => {
 								type="button"
 								onClick={() => {
 									setSetupStep("status");
-									queryClient.invalidateQueries(["tfaStatus"]);
+									queryClient.invalidateQueries({ queryKey: ["tfaStatus"] });
 								}}
 								className="btn-primary w-full sm:w-auto"
 							>

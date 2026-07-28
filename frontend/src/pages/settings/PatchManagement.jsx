@@ -56,7 +56,7 @@ const PatchManagement = () => {
 	const createMutation = useMutation({
 		mutationFn: (data) => patchingAPI.createPolicy(data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["patching-policies"]);
+			queryClient.invalidateQueries({ queryKey: ["patching-policies"] });
 			setShowModal(false);
 			setForm({
 				name: "",
@@ -73,7 +73,7 @@ const PatchManagement = () => {
 	const updateMutation = useMutation({
 		mutationFn: ({ id, data }) => patchingAPI.updatePolicy(id, data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["patching-policies"]);
+			queryClient.invalidateQueries({ queryKey: ["patching-policies"] });
 			setShowModal(false);
 			setEditingPolicy(null);
 			toast.success("Policy updated");
@@ -84,7 +84,7 @@ const PatchManagement = () => {
 	const deleteMutation = useMutation({
 		mutationFn: (id) => patchingAPI.deletePolicy(id),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["patching-policies"]);
+			queryClient.invalidateQueries({ queryKey: ["patching-policies"] });
 			toast.success("Policy deleted");
 		},
 		onError: (err) => toast.error(err.response?.data?.error || err.message),
@@ -228,7 +228,9 @@ const PatchManagement = () => {
 										hosts={hosts}
 										hostGroups={hostGroups}
 										onUpdate={() =>
-											queryClient.invalidateQueries(["patching-policies"])
+											queryClient.invalidateQueries({
+												queryKey: ["patching-policies"],
+											})
 										}
 									/>
 								)}
@@ -390,8 +392,10 @@ function PolicyAssignments({ policy, hosts, hostGroups, onUpdate }) {
 		mutationFn: () =>
 			patchingAPI.addPolicyAssignment(policy.id, addTargetType, addTargetId),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["patching-policies"]);
-			queryClient.invalidateQueries(["patching-policy", policy.id]);
+			queryClient.invalidateQueries({ queryKey: ["patching-policies"] });
+			queryClient.invalidateQueries({
+				queryKey: ["patching-policy", policy.id],
+			});
 			setAddTargetId("");
 			onUpdate?.();
 			toast.success("Assignment added");
@@ -403,8 +407,10 @@ function PolicyAssignments({ policy, hosts, hostGroups, onUpdate }) {
 		mutationFn: (assignmentId) =>
 			patchingAPI.removePolicyAssignment(policy.id, assignmentId),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["patching-policies"]);
-			queryClient.invalidateQueries(["patching-policy", policy.id]);
+			queryClient.invalidateQueries({ queryKey: ["patching-policies"] });
+			queryClient.invalidateQueries({
+				queryKey: ["patching-policy", policy.id],
+			});
 			onUpdate?.();
 			toast.success("Assignment removed");
 		},
@@ -415,7 +421,9 @@ function PolicyAssignments({ policy, hosts, hostGroups, onUpdate }) {
 		mutationFn: () =>
 			patchingAPI.addPolicyExclusion(policy.id, addExclusionHostId),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["patching-policy", policy.id]);
+			queryClient.invalidateQueries({
+				queryKey: ["patching-policy", policy.id],
+			});
 			setAddExclusionHostId("");
 			onUpdate?.();
 			toast.success("Exclusion added");
@@ -427,7 +435,9 @@ function PolicyAssignments({ policy, hosts, hostGroups, onUpdate }) {
 		mutationFn: (hostId) =>
 			patchingAPI.removePolicyExclusion(policy.id, hostId),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["patching-policy", policy.id]);
+			queryClient.invalidateQueries({
+				queryKey: ["patching-policy", policy.id],
+			});
 			onUpdate?.();
 			toast.success("Exclusion removed");
 		},

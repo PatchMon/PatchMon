@@ -44,7 +44,7 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 				apiId: response.data.apiId,
 				apiKey: response.data.apiKey,
 			});
-			queryClient.invalidateQueries(["host", host.id]);
+			queryClient.invalidateQueries({ queryKey: ["host", host.id] });
 		} catch (error) {
 			console.error("Failed to regenerate credentials:", error);
 		} finally {

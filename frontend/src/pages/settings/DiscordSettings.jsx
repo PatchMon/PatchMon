@@ -46,7 +46,7 @@ const DiscordSettings = () => {
 	const updateMutation = useMutation({
 		mutationFn: (data) => discordAPI.updateSettings(data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["discordSettings"]);
+			queryClient.invalidateQueries({ queryKey: ["discordSettings"] });
 			setSecretInput("");
 		},
 	});

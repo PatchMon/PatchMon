@@ -252,8 +252,8 @@ const Settings = () => {
 				}));
 				queryClient.setQueryData(["settings"], data.settings);
 			}
-			queryClient.invalidateQueries(["settings"]);
-			queryClient.invalidateQueries(["serverUrl"]);
+			queryClient.invalidateQueries({ queryKey: ["settings"] });
+			queryClient.invalidateQueries({ queryKey: ["serverUrl"] });
 			setIsDirty(false);
 			setErrors({});
 		},
@@ -318,8 +318,8 @@ const Settings = () => {
 			queryClient.setQueryData(["settings"], updateCache);
 			// Also update ["settings", "public"] so LogoProvider (favicon) updates immediately
 			queryClient.setQueryData(["settings", "public"], updateCache);
-			queryClient.invalidateQueries(["settings"]);
-			queryClient.invalidateQueries(["serverUrl"]);
+			queryClient.invalidateQueries({ queryKey: ["settings"] });
+			queryClient.invalidateQueries({ queryKey: ["serverUrl"] });
 			setLogoUploadState((prev) => ({
 				...prev,
 				[variables.logoType]: { uploading: false, error: null },

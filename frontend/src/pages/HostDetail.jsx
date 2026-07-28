@@ -405,7 +405,7 @@ const HostDetail = () => {
 	const deleteHostMutation = useMutation({
 		mutationFn: (hostId) => adminHostsAPI.delete(hostId),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["hosts"]);
+			queryClient.invalidateQueries({ queryKey: ["hosts"] });
 			navigate("/hosts");
 		},
 	});
@@ -417,8 +417,8 @@ const HostDetail = () => {
 				.toggleAutoUpdate(hostId, auto_update)
 				.then((res) => res.data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["host", hostId]);
-			queryClient.invalidateQueries(["hosts"]);
+			queryClient.invalidateQueries({ queryKey: ["host", hostId] });
+			queryClient.invalidateQueries({ queryKey: ["hosts"] });
 		},
 	});
 
@@ -427,8 +427,8 @@ const HostDetail = () => {
 		mutationFn: () =>
 			settingsAPI.update({ autoUpdate: true }).then((res) => res.data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["settings"]);
-			queryClient.invalidateQueries(["serverUrl"]);
+			queryClient.invalidateQueries({ queryKey: ["settings"] });
+			queryClient.invalidateQueries({ queryKey: ["serverUrl"] });
 		},
 	});
 
@@ -472,8 +472,8 @@ const HostDetail = () => {
 		mutationFn: () =>
 			adminHostsAPI.forceAgentUpdate(hostId).then((res) => res.data),
 		onSuccess: (data) => {
-			queryClient.invalidateQueries(["host", hostId]);
-			queryClient.invalidateQueries(["hosts"]);
+			queryClient.invalidateQueries({ queryKey: ["host", hostId] });
+			queryClient.invalidateQueries({ queryKey: ["hosts"] });
 			// Show success message with job ID
 			if (data?.jobId) {
 				setUpdateMessage({
@@ -505,8 +505,8 @@ const HostDetail = () => {
 	// run detail when the single run is immediate, and show a toast otherwise.
 	const handlePatchWizardSuccess = (mode, info) => {
 		setShowPatchConfirmModal(false);
-		queryClient.invalidateQueries(["patching-dashboard"]);
-		queryClient.invalidateQueries(["patching-runs"]);
+		queryClient.invalidateQueries({ queryKey: ["patching-dashboard"] });
+		queryClient.invalidateQueries({ queryKey: ["patching-runs"] });
 		const runs = info?.runs || [];
 		if (mode === "approval") {
 			// "Submit for approval": the runs are now sitting pending in
@@ -534,8 +534,8 @@ const HostDetail = () => {
 	const fetchReportMutation = useMutation({
 		mutationFn: () => adminHostsAPI.fetchReport(hostId).then((res) => res.data),
 		onSuccess: (data) => {
-			queryClient.invalidateQueries(["host", hostId]);
-			queryClient.invalidateQueries(["hosts"]);
+			queryClient.invalidateQueries({ queryKey: ["host", hostId] });
+			queryClient.invalidateQueries({ queryKey: ["hosts"] });
 			// Show success message with job ID
 			if (data?.jobId) {
 				setReportMessage({
@@ -567,7 +567,9 @@ const HostDetail = () => {
 			// Refetch integrations data after a short delay to allow agent to respond
 			safeSetTimeout(() => {
 				refetchIntegrations();
-				queryClient.invalidateQueries(["compliance-setup-status", hostId]);
+				queryClient.invalidateQueries({
+					queryKey: ["compliance-setup-status", hostId],
+				});
 			}, 2000);
 			safeSetTimeout(
 				() => setIntegrationRefreshMessage({ text: "", isError: false }),
@@ -599,7 +601,7 @@ const HostDetail = () => {
 			// Refetch Docker data after a short delay to allow agent to respond
 			safeSetTimeout(() => {
 				refetchDocker();
-				queryClient.invalidateQueries(["docker", "host", hostId]);
+				queryClient.invalidateQueries({ queryKey: ["docker", "host", hostId] });
 			}, 3000);
 			safeSetTimeout(
 				() => setDockerRefreshMessage({ text: "", isError: false }),
@@ -624,7 +626,7 @@ const HostDetail = () => {
 				.updateFriendlyName(hostId, friendlyName)
 				.then((res) => res.data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["host", hostId]);
+			queryClient.invalidateQueries({ queryKey: ["host", hostId] });
 		},
 	});
 
@@ -634,8 +636,8 @@ const HostDetail = () => {
 				.updateConnection(hostId, connectionInfo)
 				.then((res) => res.data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["host", hostId]);
-			queryClient.invalidateQueries(["hosts"]);
+			queryClient.invalidateQueries({ queryKey: ["host", hostId] });
+			queryClient.invalidateQueries({ queryKey: ["hosts"] });
 		},
 	});
 
@@ -645,8 +647,8 @@ const HostDetail = () => {
 				.setPrimaryInterface(hostId, interfaceName)
 				.then((res) => res.data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["host", hostId]);
-			queryClient.invalidateQueries(["hosts"]);
+			queryClient.invalidateQueries({ queryKey: ["host", hostId] });
+			queryClient.invalidateQueries({ queryKey: ["hosts"] });
 		},
 	});
 
@@ -654,8 +656,8 @@ const HostDetail = () => {
 		mutationFn: ({ hostId, groupIds }) =>
 			adminHostsAPI.updateGroups(hostId, groupIds).then((res) => res.data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["host", hostId]);
-			queryClient.invalidateQueries(["hosts"]);
+			queryClient.invalidateQueries({ queryKey: ["host", hostId] });
+			queryClient.invalidateQueries({ queryKey: ["hosts"] });
 		},
 	});
 
@@ -663,8 +665,8 @@ const HostDetail = () => {
 		mutationFn: ({ hostId, notes }) =>
 			adminHostsAPI.updateNotes(hostId, notes).then((res) => res.data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["host", hostId]);
-			queryClient.invalidateQueries(["hosts"]);
+			queryClient.invalidateQueries({ queryKey: ["host", hostId] });
+			queryClient.invalidateQueries({ queryKey: ["hosts"] });
 			setNotesMessage({ text: "Notes saved successfully!", type: "success" });
 			// Clear message after 3 seconds
 			safeSetTimeout(() => setNotesMessage({ text: "", type: "" }), 3000);
@@ -995,7 +997,9 @@ const HostDetail = () => {
 				return updatedData;
 			});
 			// Also invalidate to ensure we get fresh data
-			queryClient.invalidateQueries(["host-integrations", hostId]);
+			queryClient.invalidateQueries({
+				queryKey: ["host-integrations", hostId],
+			});
 			// If compliance was just enabled/disabled, poll for setup status
 			if (data.data.integration === "compliance" && data.data.enabled) {
 				// Poll multiple times to catch status updates (installation takes ~4-10s)
@@ -1021,7 +1025,9 @@ const HostDetail = () => {
 		mutationFn: () =>
 			adminHostsAPI.applyPendingConfig(hostId).then((res) => res.data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["host-integrations", hostId]);
+			queryClient.invalidateQueries({
+				queryKey: ["host-integrations", hostId],
+			});
 			refetchIntegrations();
 			toast.success(
 				"Configuration applied. Agent will update config.yml and restart.",
@@ -1063,7 +1069,9 @@ const HostDetail = () => {
 				};
 			});
 			// Also invalidate to ensure we get fresh data
-			queryClient.invalidateQueries(["host-integrations", hostId]);
+			queryClient.invalidateQueries({
+				queryKey: ["host-integrations", hostId],
+			});
 			// If compliance was just enabled, poll for setup status
 			if (data.data.mode === "enabled" || data.data.mode === "on-demand") {
 				const pollTimes = [500, 2000, 4000, 6000, 8000, 10000, 15000];
@@ -1164,7 +1172,9 @@ const HostDetail = () => {
 				};
 			});
 			// Also invalidate to ensure we get fresh data
-			queryClient.invalidateQueries(["host-integrations", hostId]);
+			queryClient.invalidateQueries({
+				queryKey: ["host-integrations", hostId],
+			});
 		},
 		onError: (error) => {
 			// On error, refetch to get the actual state

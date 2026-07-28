@@ -28,7 +28,7 @@ const SettingsHostGroups = () => {
 	const createMutation = useMutation({
 		mutationFn: (data) => hostGroupsAPI.create(data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["hostGroups"]);
+			queryClient.invalidateQueries({ queryKey: ["hostGroups"] });
 			setShowCreateModal(false);
 		},
 		onError: (error) => {
@@ -40,7 +40,7 @@ const SettingsHostGroups = () => {
 	const updateMutation = useMutation({
 		mutationFn: ({ id, data }) => hostGroupsAPI.update(id, data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["hostGroups"]);
+			queryClient.invalidateQueries({ queryKey: ["hostGroups"] });
 			setShowEditModal(false);
 			setSelectedGroup(null);
 		},
@@ -53,7 +53,7 @@ const SettingsHostGroups = () => {
 	const deleteMutation = useMutation({
 		mutationFn: (id) => hostGroupsAPI.delete(id),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["hostGroups"]);
+			queryClient.invalidateQueries({ queryKey: ["hostGroups"] });
 			setShowDeleteModal(false);
 			setGroupToDelete(null);
 		},

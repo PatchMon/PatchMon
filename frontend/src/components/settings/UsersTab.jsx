@@ -103,7 +103,7 @@ const UsersTab = () => {
 	const deleteUserMutation = useMutation({
 		mutationFn: adminUsersAPI.delete,
 		onSuccess: () => {
-			queryClient.invalidateQueries(["users"]);
+			queryClient.invalidateQueries({ queryKey: ["users"] });
 		},
 	});
 
@@ -111,7 +111,7 @@ const UsersTab = () => {
 	const updateUserMutation = useMutation({
 		mutationFn: ({ id, data }) => adminUsersAPI.update(id, data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["users"]);
+			queryClient.invalidateQueries({ queryKey: ["users"] });
 			setEditingUser(null);
 		},
 	});
@@ -121,7 +121,7 @@ const UsersTab = () => {
 		mutationFn: ({ userId, newPassword }) =>
 			adminUsersAPI.resetPassword(userId, newPassword),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["users"]);
+			queryClient.invalidateQueries({ queryKey: ["users"] });
 			setResetPasswordUser(null);
 		},
 	});
@@ -132,7 +132,7 @@ const UsersTab = () => {
 			return settingsAPI.update(data).then((res) => res.data);
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries(["settings"]);
+			queryClient.invalidateQueries({ queryKey: ["settings"] });
 			setIsSignupDirty(false);
 		},
 	});
@@ -167,7 +167,7 @@ const UsersTab = () => {
 	};
 
 	const handleUserCreated = () => {
-		queryClient.invalidateQueries(["users"]);
+		queryClient.invalidateQueries({ queryKey: ["users"] });
 		setShowAddModal(false);
 	};
 
