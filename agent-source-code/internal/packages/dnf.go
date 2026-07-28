@@ -2,6 +2,7 @@ package packages
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"os/exec"
 	"slices"
@@ -93,11 +94,13 @@ func (m *DNFManager) GetPackages() ([]models.Package, error) {
 	// while dnf uses flag syntax: "dnf list --installed"
 	m.logger.Debug("Getting installed packages...")
 	var listCmd *exec.Cmd
+	var cancelList context.CancelFunc
 	if packageManager == "yum" {
-		listCmd = exec.Command(packageManager, "list", "installed")
+		listCmd, cancelList = boundedCommand(collectorTimeout, packageManager, "list", "installed")
 	} else {
-		listCmd = exec.Command(packageManager, "list", "--installed")
+		listCmd, cancelList = boundedCommand(collectorTimeout, packageManager, "list", "--installed")
 	}
+	defer cancelList()
 	// OPTIMIZATION: Set minimal environment to reduce overhead
 	listCmd.Env = append(os.Environ(), "LANG=C")
 	installedOutput, err := listCmd.Output()
@@ -123,7 +126,11 @@ func (m *DNFManager) GetPackages() ([]models.Package, error) {
 
 	// Get upgradable packages
 	m.logger.Debug("Getting upgradable packages...")
-	checkCmd := exec.Command(packageManager, "check-update")
+	// check-update contacts the configured repositories, so it gets the longer
+	// budget. This is the command that hangs indefinitely behind an operator's
+	// own dnf holding the RPM lock.
+	checkCmd, cancelCheck := boundedCommand(networkCollectorTimeout, packageManager, "check-update")
+	defer cancelCheck()
 	checkOutput, checkErr := checkCmd.Output()
 	if checkErr != nil {
 		// check-update signals its result through the exit code:
@@ -181,17 +188,19 @@ func (m *DNFManager) enrichWithRepoAttribution(packages []models.Package) {
 	packageManager := m.detectPackageManager()
 
 	var cmd *exec.Cmd
+	var cancel context.CancelFunc
 	if packageManager == "dnf" {
-		cmd = exec.Command("dnf", "repoquery", "--installed", "--cacheonly", "--qf", "%{name}\t%{from_repo}")
+		cmd, cancel = boundedCommand(collectorTimeout, "dnf", "repoquery", "--installed", "--cacheonly", "--qf", "%{name}\t%{from_repo}")
 	} else {
 		// yum: try repoquery from yum-utils
 		if _, err := exec.LookPath("repoquery"); err == nil {
-			cmd = exec.Command("repoquery", "--installed", "--qf", "%{name}\t%{ui_from_repo}")
+			cmd, cancel = boundedCommand(collectorTimeout, "repoquery", "--installed", "--qf", "%{name}\t%{ui_from_repo}")
 		} else {
 			// Try yum repoquery (available on some systems)
-			cmd = exec.Command("yum", "repoquery", "--installed", "--qf", "%{name}\t%{ui_from_repo}")
+			cmd, cancel = boundedCommand(collectorTimeout, "yum", "repoquery", "--installed", "--qf", "%{name}\t%{ui_from_repo}")
 		}
 	}
+	defer cancel()
 	cmd.Env = append(os.Environ(), "LANG=C")
 
 	output, err := cmd.Output()
@@ -250,13 +259,22 @@ func (m *DNFManager) enrichWithRepoAttribution(packages []models.Package) {
 func (m *DNFManager) getSecurityPackages(packageManager string) map[string]bool {
 	securityPackages := make(map[string]bool)
 
+	// runUpdateInfo runs one updateinfo variant and releases its context before
+	// returning. Deliberately not `defer cancel()` at function scope: the two
+	// variants below would then share one deferred call bound to the FIRST
+	// cancel func (defer captures the value at defer time), leaving the second
+	// command's context to run to its own timeout.
+	runUpdateInfo := func(subcommand string) ([]byte, error) {
+		cmd, cancel := boundedCommand(networkCollectorTimeout, packageManager, "updateinfo", "list", subcommand)
+		defer cancel()
+		return cmd.Output()
+	}
+
 	// Try dnf updateinfo list security (works for dnf)
-	updateInfoCmd := exec.Command(packageManager, "updateinfo", "list", "security")
-	updateInfoOutput, err := updateInfoCmd.Output()
+	updateInfoOutput, err := runUpdateInfo("security")
 	if err != nil {
 		// Fall back to "sec" if "security" doesn't work
-		updateInfoCmd = exec.Command(packageManager, "updateinfo", "list", "sec")
-		updateInfoOutput, err = updateInfoCmd.Output()
+		updateInfoOutput, err = runUpdateInfo("sec")
 	}
 
 	if err != nil {
@@ -387,12 +405,16 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 		if currentVersion == "" {
 			// yum (CentOS 7 / legacy) requires positional argument; dnf accepts --installed flag
 			var getCurrentCmd *exec.Cmd
+			var cancelCurrent context.CancelFunc
 			if packageManager == "yum" {
-				getCurrentCmd = exec.Command(packageManager, "list", "installed", packageName)
+				getCurrentCmd, cancelCurrent = boundedCommand(collectorTimeout, packageManager, "list", "installed", packageName)
 			} else {
-				getCurrentCmd = exec.Command(packageManager, "list", "--installed", packageName)
+				getCurrentCmd, cancelCurrent = boundedCommand(collectorTimeout, packageManager, "list", "--installed", packageName)
 			}
 			getCurrentOutput, err := getCurrentCmd.Output()
+			// Released immediately rather than deferred: this runs once per
+			// upgradable package, so a deferred cancel would accumulate.
+			cancelCurrent()
 			if err == nil {
 				for _, currentLine := range strings.Split(string(getCurrentOutput), "\n") {
 					if strings.Contains(currentLine, packageName) && !strings.Contains(currentLine, "Installed") && !strings.Contains(currentLine, "Available") {

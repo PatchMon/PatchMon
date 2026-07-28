@@ -4,7 +4,6 @@ package packages
 import (
 	"bufio"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 
@@ -29,14 +28,16 @@ func NewAPKManager(logger *logrus.Logger) *APKManager {
 func (m *APKManager) GetPackages() ([]models.Package, error) {
 	// Update package index
 	m.logger.Debug("Updating package index...")
-	updateCmd := exec.Command("apk", "update", "-q")
+	updateCmd, cancel := boundedCommand(networkCollectorTimeout, "apk", "update", "-q")
+	defer cancel()
 	if err := updateCmd.Run(); err != nil {
 		m.logger.WithError(err).Warn("Failed to update package index")
 	}
 
 	// Get installed packages
 	m.logger.Debug("Getting installed packages...")
-	installedCmd := exec.Command("apk", "list", "--installed")
+	installedCmd, cancelInstalled := boundedCommand(collectorTimeout, "apk", "list", "--installed")
+	defer cancelInstalled()
 	installedOutput, err := installedCmd.Output()
 	if err != nil {
 		// See the note in apt.go: an empty inventory on failure reads as
@@ -49,7 +50,8 @@ func (m *APKManager) GetPackages() ([]models.Package, error) {
 
 	// Get upgradable packages (must run after apk update)
 	m.logger.Debug("Getting upgradable packages...")
-	upgradableCmd := exec.Command("apk", "-u", "list")
+	upgradableCmd, cancelUpgradable := boundedCommand(collectorTimeout, "apk", "-u", "list")
+	defer cancelUpgradable()
 	upgradableOutput, err := upgradableCmd.Output()
 	if err != nil {
 		return nil, commandError("apk -u list", err)
@@ -97,9 +99,14 @@ func (m *APKManager) enrichWithRepoAttribution(packages []models.Package) {
 		batch := names[start:end]
 
 		args := append([]string{"policy"}, batch...)
-		cmd := exec.Command("apk", args...)
-		cmd.Env = append(os.Environ(), "LANG=C")
-		output, err := cmd.Output()
+		// Scoped so the context is released at the end of each iteration
+		// rather than accumulating one deferred cancel per batch.
+		output, err := func() ([]byte, error) {
+			cmd, cancel := boundedCommand(collectorTimeout, "apk", args...)
+			defer cancel()
+			cmd.Env = append(os.Environ(), "LANG=C")
+			return cmd.Output()
+		}()
 		if err != nil {
 			m.logger.WithError(err).Warn("apk policy failed, skipping repo attribution for batch")
 			continue
