@@ -36,7 +36,7 @@ func (m *DNFManager) detectPackageManager() string {
 }
 
 // GetPackages gets package information for RHEL-based systems
-func (m *DNFManager) GetPackages() []models.Package {
+func (m *DNFManager) GetPackages() ([]models.Package, error) {
 	// Determine package manager
 	packageManager := m.detectPackageManager()
 
@@ -61,19 +61,19 @@ func (m *DNFManager) GetPackages() []models.Package {
 	// OPTIMIZATION: Set minimal environment to reduce overhead
 	listCmd.Env = append(os.Environ(), "LANG=C")
 	installedOutput, err := listCmd.Output()
-	var installedPackages map[string]models.Package
 	if err != nil {
-		m.logger.WithError(err).Warn("Failed to get installed packages")
-		installedPackages = make(map[string]models.Package)
-	} else {
-		m.logger.WithField("outputSize", len(installedOutput)).Debug("Received output from list installed command")
-		m.logger.Debug("Parsing installed packages...")
-		installedPackages = m.parseInstalledPackages(string(installedOutput))
-		m.logger.WithField("count", len(installedPackages)).Info("Found installed packages")
+		// Do not fall back to an empty inventory: that renders the host as
+		// having no packages and nothing pending, which reads as "fully
+		// patched" on the dashboard. Fail the report instead.
+		return nil, commandError(packageManager+" list installed", err)
+	}
+	m.logger.WithField("outputSize", len(installedOutput)).Debug("Received output from list installed command")
+	m.logger.Debug("Parsing installed packages...")
+	installedPackages := m.parseInstalledPackages(string(installedOutput))
+	m.logger.WithField("count", len(installedPackages)).Info("Found installed packages")
 
-		if len(installedPackages) == 0 {
-			m.logger.Warn("No installed packages found - this may indicate a parsing issue")
-		}
+	if len(installedPackages) == 0 {
+		m.logger.Warn("No installed packages found - this may indicate a parsing issue")
 	}
 
 	// Get security updates first to identify which packages are security updates
@@ -84,7 +84,22 @@ func (m *DNFManager) GetPackages() []models.Package {
 	// Get upgradable packages
 	m.logger.Debug("Getting upgradable packages...")
 	checkCmd := exec.Command(packageManager, "check-update")
-	checkOutput, _ := checkCmd.Output() // This command returns exit code 100 when updates are available
+	checkOutput, checkErr := checkCmd.Output()
+	if checkErr != nil {
+		// check-update signals its result through the exit code:
+		//   0   - no updates available
+		//   100 - updates are available (stdout carries the list)
+		//   1   - a real failure (unreachable mirror, GPG error, expired
+		//         subscription entitlement, no enabled repositories)
+		//
+		// Only 100 is a success for us. Previously the error was discarded
+		// entirely, so an exit-1 failure produced empty stdout and fell through
+		// to "No updates available" at Debug level, reporting a host with
+		// pending security updates as fully patched.
+		if !isExitCode(checkErr, 100) {
+			return nil, commandError(packageManager+" check-update", checkErr)
+		}
+	}
 
 	var upgradablePackages []models.Package
 	if len(checkOutput) > 0 {
@@ -113,7 +128,7 @@ func (m *DNFManager) GetPackages() []models.Package {
 		m.logger.Error("WARNING: Returning 0 packages - this will show as empty in PatchMon UI")
 	}
 
-	return packages
+	return packages, nil
 }
 
 // enrichWithRepoAttribution populates SourceRepository for each package by running

@@ -59,11 +59,11 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 	case "windows":
 		return m.winManager.GetPackages(), nil
 	case "apt":
-		return m.aptManager.GetPackages(), nil
+		return m.aptManager.GetPackages()
 	case "dnf", "yum":
-		return m.dnfManager.GetPackages(), nil
+		return m.dnfManager.GetPackages()
 	case "apk":
-		return m.apkManager.GetPackages(), nil
+		return m.apkManager.GetPackages()
 	case "pacman":
 		return m.pacmanManager.GetPackages()
 	case "pkg":

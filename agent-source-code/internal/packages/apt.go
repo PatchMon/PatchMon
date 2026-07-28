@@ -44,7 +44,7 @@ func (m *APTManager) detectPackageManager() string {
 }
 
 // GetPackages gets package information for APT-based systems
-func (m *APTManager) GetPackages() []models.Package {
+func (m *APTManager) GetPackages() ([]models.Package, error) {
 	// Determine package manager
 	packageManager := m.detectPackageManager()
 
@@ -67,6 +67,8 @@ func (m *APTManager) GetPackages() []models.Package {
 	var (
 		installedPackages  map[string]models.Package
 		upgradablePackages []models.Package
+		installedErr       error
+		upgradableErr      error
 	)
 
 	var wg sync.WaitGroup
@@ -79,8 +81,7 @@ func (m *APTManager) GetPackages() []models.Package {
 		installedCmd.Env = append(os.Environ(), "LANG=C")
 		out, err := installedCmd.Output()
 		if err != nil {
-			m.logger.WithError(err).Warn("Failed to get installed packages")
-			installedPackages = make(map[string]models.Package)
+			installedErr = commandError("dpkg-query", err)
 			return
 		}
 		installedPackages = m.parseInstalledPackages(string(out))
@@ -94,8 +95,7 @@ func (m *APTManager) GetPackages() []models.Package {
 		upgradeCmd.Env = append(os.Environ(), "LANG=C")
 		out, err := upgradeCmd.Output()
 		if err != nil {
-			m.logger.WithError(err).Warn("Failed to get upgrade simulation")
-			upgradablePackages = []models.Package{}
+			upgradableErr = commandError(packageManager+" upgrade simulation", err)
 			return
 		}
 		upgradablePackages = m.parseAPTUpgrade(string(out))
@@ -104,13 +104,26 @@ func (m *APTManager) GetPackages() []models.Package {
 
 	wg.Wait()
 
+	// A failed collection must not be reported as a successful one. Returning
+	// an empty upgradable list here would render the host as fully patched on
+	// the dashboard, with no alert, because the report itself succeeded. That
+	// is the most dangerous outcome available to a patch monitoring agent, so
+	// fail the whole report instead: the host then shows as not reporting and
+	// the existing host_down path surfaces it.
+	if installedErr != nil {
+		return nil, installedErr
+	}
+	if upgradableErr != nil {
+		return nil, upgradableErr
+	}
+
 	// Merge and deduplicate packages (pass full installed packages to preserve descriptions)
 	packages := CombinePackageData(installedPackages, upgradablePackages)
 
 	// Enrich packages with repository attribution
 	m.enrichWithRepoAttribution(packages)
 
-	return packages
+	return packages, nil
 }
 
 // enrichWithRepoAttribution populates SourceRepository for each package by running

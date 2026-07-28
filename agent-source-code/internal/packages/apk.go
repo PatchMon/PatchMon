@@ -26,7 +26,7 @@ func NewAPKManager(logger *logrus.Logger) *APKManager {
 }
 
 // GetPackages gets package information for APK-based systems
-func (m *APKManager) GetPackages() []models.Package {
+func (m *APKManager) GetPackages() ([]models.Package, error) {
 	// Update package index
 	m.logger.Debug("Updating package index...")
 	updateCmd := exec.Command("apk", "update", "-q")
@@ -38,29 +38,25 @@ func (m *APKManager) GetPackages() []models.Package {
 	m.logger.Debug("Getting installed packages...")
 	installedCmd := exec.Command("apk", "list", "--installed")
 	installedOutput, err := installedCmd.Output()
-	var installedPackages map[string]models.Package
 	if err != nil {
-		m.logger.WithError(err).Warn("Failed to get installed packages")
-		installedPackages = make(map[string]models.Package)
-	} else {
-		m.logger.Debug("Parsing installed packages...")
-		installedPackages = m.parseInstalledPackages(string(installedOutput))
-		m.logger.WithField("count", len(installedPackages)).Debug("Found installed packages")
+		// See the note in apt.go: an empty inventory on failure reads as
+		// "fully patched" in the UI. Fail the report instead.
+		return nil, commandError("apk list --installed", err)
 	}
+	m.logger.Debug("Parsing installed packages...")
+	installedPackages := m.parseInstalledPackages(string(installedOutput))
+	m.logger.WithField("count", len(installedPackages)).Debug("Found installed packages")
 
 	// Get upgradable packages (must run after apk update)
 	m.logger.Debug("Getting upgradable packages...")
 	upgradableCmd := exec.Command("apk", "-u", "list")
 	upgradableOutput, err := upgradableCmd.Output()
-	var upgradablePackages []models.Package
 	if err != nil {
-		m.logger.WithError(err).Warn("Failed to get upgradable packages")
-		upgradablePackages = []models.Package{}
-	} else {
-		m.logger.Debug("Parsing apk upgradable packages output...")
-		upgradablePackages = m.parseUpgradablePackages(string(upgradableOutput), installedPackages)
-		m.logger.WithField("count", len(upgradablePackages)).Debug("Found upgradable packages")
+		return nil, commandError("apk -u list", err)
 	}
+	m.logger.Debug("Parsing apk upgradable packages output...")
+	upgradablePackages := m.parseUpgradablePackages(string(upgradableOutput), installedPackages)
+	m.logger.WithField("count", len(upgradablePackages)).Debug("Found upgradable packages")
 
 	// Merge and deduplicate packages (pass full installed packages to preserve descriptions)
 	packages := CombinePackageData(installedPackages, upgradablePackages)
@@ -70,7 +66,7 @@ func (m *APKManager) GetPackages() []models.Package {
 
 	m.logger.WithField("total", len(packages)).Debug("Total packages collected")
 
-	return packages
+	return packages, nil
 }
 
 // enrichWithRepoAttribution populates SourceRepository for each package by running
