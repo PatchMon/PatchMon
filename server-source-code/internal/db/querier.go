@@ -494,7 +494,11 @@ type Querier interface {
 	// every long run timed_out while it was still working and discard the real
 	// outcome the agent later reports.
 	MarkPatchRunsTimedOut(ctx context.Context, arg MarkPatchRunsTimedOutParams) (int64, error)
-	MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) error
+	// Declared :execrows, not :exec, because the status guard IS the concurrency
+	// control. Two approvals racing both pass the handler's Go-side status check;
+	// only one of them updates a row here, and the loser must be told so rather
+	// than going on to create a second patch run and enqueue a second task.
+	MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) (int64, error)
 	RevokeAllSessionsForUser(ctx context.Context, userID string) error
 	RevokeAllSessionsForUserExcept(ctx context.Context, arg RevokeAllSessionsForUserExceptParams) error
 	RevokeAllTrustedDevicesForUser(ctx context.Context, userID string) error

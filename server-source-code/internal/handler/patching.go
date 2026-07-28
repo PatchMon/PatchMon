@@ -659,9 +659,20 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. Mark the validation run as "approved" (terminal - preserved with its output).
-	if err := h.patchRuns.MarkValidationApproved(r.Context(), validationID, approvedBy); err != nil {
+	//
+	// This is the serialisation point. The Go-side status check above is racy:
+	// two concurrent approvals (a double-click, a retried fetch, two approvers)
+	// both read "validated" and both pass it. Only one of them moves a row
+	// here. Without checking that, both went on to create distinct run rows and
+	// enqueue distinct tasks, and the agent applied the same upgrade twice.
+	applied, err := h.patchRuns.MarkValidationApproved(r.Context(), validationID, approvedBy)
+	if err != nil {
 		h.log.Error("patching: mark validation approved error", "error", err)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to approve validation run"})
+		return
+	}
+	if !applied {
+		JSON(w, http.StatusConflict, map[string]string{"error": "This run has already been approved or is no longer awaiting approval"})
 		return
 	}
 
@@ -686,6 +697,13 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := h.queueClient.Enqueue(task, enqueueOpts...); err != nil {
 		h.log.Error("patching: enqueue approve error", "error", err)
+		// The run row is already committed. Without this it would sit in
+		// queued/scheduled forever with no task behind it, showing in the UI as
+		// a patch that is about to happen and never does.
+		if _, cancelErr := h.patchRuns.Cancel(r.Context(), newRunID, "Failed to queue patch run"); cancelErr != nil {
+			h.log.Error("patching: failed to cancel orphaned run after enqueue error",
+				"run_id", newRunID, "error", cancelErr)
+		}
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to queue approved patch"})
 		return
 	}

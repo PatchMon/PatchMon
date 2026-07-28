@@ -1748,7 +1748,7 @@ func (q *Queries) MarkPatchRunsTimedOut(ctx context.Context, arg MarkPatchRunsTi
 	return result.RowsAffected(), nil
 }
 
-const markValidationApproved = `-- name: MarkValidationApproved :exec
+const markValidationApproved = `-- name: MarkValidationApproved :execrows
 UPDATE patch_runs SET status = 'approved', approved_by_user_id = $2, updated_at = NOW() WHERE id = $1 AND status IN ('validated', 'pending_validation', 'pending_approval')
 `
 
@@ -1757,9 +1757,16 @@ type MarkValidationApprovedParams struct {
 	ApprovedByUserID *string `json:"approved_by_user_id"`
 }
 
-func (q *Queries) MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) error {
-	_, err := q.db.Exec(ctx, markValidationApproved, arg.ID, arg.ApprovedByUserID)
-	return err
+// Declared :execrows, not :exec, because the status guard IS the concurrency
+// control. Two approvals racing both pass the handler's Go-side status check;
+// only one of them updates a row here, and the loser must be told so rather
+// than going on to create a second patch run and enqueue a second task.
+func (q *Queries) MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markValidationApproved, arg.ID, arg.ApprovedByUserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setPatchRunPolicySnapshot = `-- name: SetPatchRunPolicySnapshot :exec
