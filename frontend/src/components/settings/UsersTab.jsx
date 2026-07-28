@@ -108,11 +108,19 @@ const UsersTab = () => {
 	});
 
 	// Update user mutation
+	// mutateAsync (not mutate) is handed to the modal below: the modal awaits it
+	// and shows success on resolve. mutate() returns undefined and swallows
+	// rejections, so the await resolved regardless of the HTTP result and a
+	// rejected update reported "User updated successfully!" while the row was
+	// unchanged. onError is kept as a backstop so a failure can never be silent.
 	const updateUserMutation = useMutation({
 		mutationFn: ({ id, data }) => adminUsersAPI.update(id, data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["users"] });
 			setEditingUser(null);
+		},
+		onError: (error) => {
+			console.error("Failed to update user:", error);
 		},
 	});
 
@@ -123,6 +131,9 @@ const UsersTab = () => {
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["users"] });
 			setResetPasswordUser(null);
+		},
+		onError: (error) => {
+			console.error("Failed to reset password:", error);
 		},
 	});
 
@@ -562,7 +573,7 @@ const UsersTab = () => {
 					user={editingUser}
 					isOpen={!!editingUser}
 					onClose={() => setEditingUser(null)}
-					onUpdateUser={updateUserMutation.mutate}
+					onUpdateUser={updateUserMutation.mutateAsync}
 					isLoading={updateUserMutation.isPending}
 					roles={roles}
 				/>
@@ -574,7 +585,7 @@ const UsersTab = () => {
 					user={resetPasswordUser}
 					isOpen={!!resetPasswordUser}
 					onClose={() => setResetPasswordUser(null)}
-					onPasswordReset={resetPasswordMutation.mutate}
+					onPasswordReset={resetPasswordMutation.mutateAsync}
 					isLoading={resetPasswordMutation.isPending}
 				/>
 			)}

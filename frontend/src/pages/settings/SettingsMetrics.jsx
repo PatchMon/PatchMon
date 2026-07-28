@@ -15,12 +15,34 @@ import {
 import { useState } from "react";
 import { formatDate } from "../../utils/api";
 
-// API functions - use httpOnly cookies for auth
+// API functions - use httpOnly cookies for auth.
+//
+// These bypass the shared axios client in utils/api.js, which rejects on
+// non-2xx. Raw fetch does NOT: it resolves for a 401, 403 or 500 just as
+// happily as for a 200. Without the res.ok check below, a failed toggle,
+// regenerate or send-now still ran useMutation's onSuccess, invalidated the
+// queries and reported success while nothing had changed server-side.
+const parseJSONResponse = async (res) => {
+	if (!res.ok) {
+		let message = `Request failed (${res.status})`;
+		try {
+			const body = await res.json();
+			if (body?.error) {
+				message = body.error;
+			}
+		} catch {
+			// Non-JSON error body; keep the status-based message.
+		}
+		throw new Error(message);
+	}
+	return res.json();
+};
+
 const metricsAPI = {
 	getSettings: () =>
 		fetch("/api/v1/metrics", {
 			credentials: "include",
-		}).then((res) => res.json()),
+		}).then(parseJSONResponse),
 	updateSettings: (data) =>
 		fetch("/api/v1/metrics", {
 			method: "PUT",
@@ -29,17 +51,17 @@ const metricsAPI = {
 			},
 			credentials: "include",
 			body: JSON.stringify(data),
-		}).then((res) => res.json()),
+		}).then(parseJSONResponse),
 	regenerateId: () =>
 		fetch("/api/v1/metrics/regenerate-id", {
 			method: "POST",
 			credentials: "include",
-		}).then((res) => res.json()),
+		}).then(parseJSONResponse),
 	sendNow: () =>
 		fetch("/api/v1/metrics/send-now", {
 			method: "POST",
 			credentials: "include",
-		}).then((res) => res.json()),
+		}).then(parseJSONResponse),
 };
 
 const SettingsMetrics = () => {
