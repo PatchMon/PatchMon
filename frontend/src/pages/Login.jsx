@@ -408,6 +408,24 @@ const Login = () => {
 			}
 			// Clear the token input for security (preserve remember_me preference)
 			setTfaData((prev) => ({ ...prev, token: "" }));
+
+			// The single-use ticket is consumed server-side by the GETDEL in
+			// PendingLoginStore.Consume on the FIRST attempt, whether or not the
+			// code was right. That is deliberate (it stops a captured ticket
+			// being replayed to brute-force codes), but it means a second
+			// attempt on this screen can only ever fail with "Login session
+			// expired". Leaving the user here with a spent ticket looks like a
+			// broken login, so send them back through the password step.
+			//
+			// Only when the server actually answered: a CORS or network failure
+			// means the request never arrived, so the ticket is still good and
+			// the user can retry the code.
+			if (err.response) {
+				setRequiresTfa(false);
+				setTfaTicket("");
+				setTfaData({ token: "", remember_me: false });
+				setError("Your sign-in attempt expired. Please sign in again.");
+			}
 		} finally {
 			setIsLoading(false);
 		}

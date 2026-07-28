@@ -309,6 +309,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			// makes the password an actual factor: previously that endpoint
 			// took a bare username plus a TOTP code and handed back a full
 			// session, so possession of one 6-digit code was sufficient.
+			if h.pendingLogin == nil {
+				if h.log != nil {
+					h.log.Error("auth: pending-login store not configured, cannot start TFA")
+				}
+				Error(w, http.StatusInternalServerError, "Unable to start two-factor verification")
+				return
+			}
 			ticket, err := h.pendingLogin.Create(r.Context(), user.ID)
 			if err != nil {
 				if h.log != nil {

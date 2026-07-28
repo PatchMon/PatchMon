@@ -89,21 +89,39 @@ func AuthWithSessionCheck(cfg *config.Config, sessionsStore *store.SessionsStore
 				return
 			}
 
-			// Session inactivity check: when sessionID present, validate and update last_activity
-			if sessionID != "" && sessionsStore != nil && resolved != nil && resolved.SessionInactivityTimeoutMin > 0 {
+			// Session existence and revocation check.
+			//
+			// This is deliberately NOT gated on the inactivity timeout. The two
+			// were previously one condition, so setting
+			// SESSION_INACTIVITY_TIMEOUT_MINUTES=0 -- the natural way to express
+			// "no idle timeout" -- skipped the session lookup entirely and
+			// silently disabled logout, revoke-session, revoke-all,
+			// password-change revocation, role-change revocation and account
+			// deactivation until the JWT expired. The UI reported success
+			// throughout.
+			//
+			// Every access token now carries a sessionId, so this lookup is the
+			// mechanism that makes revocation work at all; it must not be
+			// switchable off by an unrelated setting.
+			if sessionID != "" && sessionsStore != nil {
 				sess, err := sessionsStore.GetByID(r.Context(), sessionID, userID)
 				if err != nil || sess == nil {
 					http.Error(w, `{"error":"Session expired"}`, http.StatusUnauthorized)
 					return
 				}
-				inactive := time.Since(sess.LastActivity) > time.Duration(resolved.SessionInactivityTimeoutMin)*time.Minute
-				if inactive {
-					if err := sessionsStore.RevokeByID(r.Context(), sessionID, userID); err != nil {
-						slog.Error("auth: failed to revoke inactive session", "session_id", sessionID, "error", err)
+
+				// The inactivity comparison, separately, is opt-in via the setting.
+				if resolved != nil && resolved.SessionInactivityTimeoutMin > 0 {
+					inactive := time.Since(sess.LastActivity) > time.Duration(resolved.SessionInactivityTimeoutMin)*time.Minute
+					if inactive {
+						if err := sessionsStore.RevokeByID(r.Context(), sessionID, userID); err != nil {
+							slog.Error("auth: failed to revoke inactive session", "session_id", sessionID, "error", err)
+						}
+						http.Error(w, `{"error":"Session expired due to inactivity"}`, http.StatusUnauthorized)
+						return
 					}
-					http.Error(w, `{"error":"Session expired due to inactivity"}`, http.StatusUnauthorized)
-					return
 				}
+
 				if err := sessionsStore.UpdateActivity(r.Context(), sessionID); err != nil {
 					slog.Error("auth: failed to update session activity", "session_id", sessionID, "error", err)
 				}

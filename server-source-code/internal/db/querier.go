@@ -384,6 +384,10 @@ type Querier interface {
 	GetUserByEmail(ctx context.Context, lower string) (User, error)
 	GetUserByID(ctx context.Context, id string) (User, error)
 	GetUserByOidcSub(ctx context.Context, oidcSub *string) (User, error)
+	// The "$2 != ''" guard mirrors GetUserByDiscordIDOrEmail. Without it an IdP
+	// asserting an empty email participates in the email branch, which is junk
+	// input rather than a takeover (the oidc_sub cross-check blocks a second such
+	// login) but should not reach account matching at all.
 	GetUserByOidcSubOrEmail(ctx context.Context, arg GetUserByOidcSubOrEmailParams) (User, error)
 	GetUserByUsername(ctx context.Context, lower string) (User, error)
 	GetUserByUsernameOrEmail(ctx context.Context, lower string) (User, error)
