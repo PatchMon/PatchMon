@@ -320,7 +320,13 @@ export const AuthProvider = ({ children }) => {
 			if (response.ok) {
 				// Check if TFA is required
 				if (data.requiresTfa) {
-					return { success: true, requiresTfa: true };
+					// tfaTicket proves the password was just verified; the
+					// verify-tfa endpoint refuses to issue a session without it.
+					return {
+						success: true,
+						requiresTfa: true,
+						tfaTicket: data.tfaTicket,
+					};
 				}
 
 				// Regular successful login

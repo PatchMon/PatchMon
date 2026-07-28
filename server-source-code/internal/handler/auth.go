@@ -35,6 +35,7 @@ type AuthHandler struct {
 	settings               *store.SettingsStore
 	tfaLockout             *store.TfaLockoutStore
 	loginLockout           *store.LoginLockoutStore
+	pendingLogin           *store.PendingLoginStore
 	releaseNotesAcceptance *store.ReleaseNotesAcceptanceStore
 	db                     database.DBProvider
 	notify                 *notifications.Emitter
@@ -53,8 +54,8 @@ func (h *AuthHandler) WithPermissions(p *store.PermissionsStore) *AuthHandler {
 }
 
 // NewAuthHandler creates a new auth handler.
-func NewAuthHandler(cfg *config.Config, resolved *config.ResolvedConfig, users *store.UsersStore, sessions *store.SessionsStore, trustedDevices *store.TrustedDevicesStore, settings *store.SettingsStore, tfaLockout *store.TfaLockoutStore, loginLockout *store.LoginLockoutStore, releaseNotesAcceptance *store.ReleaseNotesAcceptanceStore, db database.DBProvider, notify *notifications.Emitter, log *slog.Logger) *AuthHandler {
-	return &AuthHandler{cfg: cfg, resolved: resolved, users: users, sessions: sessions, trustedDevices: trustedDevices, settings: settings, tfaLockout: tfaLockout, loginLockout: loginLockout, releaseNotesAcceptance: releaseNotesAcceptance, db: db, notify: notify, log: log}
+func NewAuthHandler(cfg *config.Config, resolved *config.ResolvedConfig, users *store.UsersStore, sessions *store.SessionsStore, trustedDevices *store.TrustedDevicesStore, settings *store.SettingsStore, tfaLockout *store.TfaLockoutStore, loginLockout *store.LoginLockoutStore, pendingLogin *store.PendingLoginStore, releaseNotesAcceptance *store.ReleaseNotesAcceptanceStore, db database.DBProvider, notify *notifications.Emitter, log *slog.Logger) *AuthHandler {
+	return &AuthHandler{cfg: cfg, resolved: resolved, users: users, sessions: sessions, trustedDevices: trustedDevices, settings: settings, tfaLockout: tfaLockout, loginLockout: loginLockout, pendingLogin: pendingLogin, releaseNotesAcceptance: releaseNotesAcceptance, db: db, notify: notify, log: log}
 }
 
 // DeviceTrustCookieName is the HttpOnly cookie carrying the raw trust token.
@@ -302,10 +303,24 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if user.TfaEnabled {
 		td := h.hasValidDeviceTrust(r, user.ID)
 		if td == nil {
+			// Issue a single-use ticket proving the password was just verified.
+			// VerifyTfa refuses to issue a session without one, which is what
+			// makes the password an actual factor: previously that endpoint
+			// took a bare username plus a TOTP code and handed back a full
+			// session, so possession of one 6-digit code was sufficient.
+			ticket, err := h.pendingLogin.Create(r.Context(), user.ID)
+			if err != nil {
+				if h.log != nil {
+					h.log.Error("auth: failed to issue pending-login ticket", "user_id", user.ID, "error", err)
+				}
+				Error(w, http.StatusInternalServerError, "Unable to start two-factor verification")
+				return
+			}
 			JSON(w, http.StatusOK, map[string]interface{}{
 				"message":     "TFA verification required",
 				"requiresTfa": true,
 				"username":    user.Username,
+				"tfaTicket":   ticket,
 			})
 			return
 		}
@@ -323,6 +338,9 @@ type VerifyTfaRequest struct {
 	Username   string `json:"username"`
 	Token      string `json:"token"`
 	RememberMe bool   `json:"remember_me"` // frontend sends snake_case
+	// TfaTicket is the single-use ticket handed out by Login once the password
+	// has been verified. It is the proof of the first factor.
+	TfaTicket string `json:"tfa_ticket"`
 }
 
 // VerifyTfa handles POST /auth/verify-tfa.
@@ -333,8 +351,8 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Token = strings.ToUpper(strings.TrimSpace(req.Token))
-	if req.Username == "" || len(req.Token) != 6 {
-		Error(w, http.StatusBadRequest, "Username and 6-character token required")
+	if len(req.Token) != 6 {
+		Error(w, http.StatusBadRequest, "6-character token required")
 		return
 	}
 	if !util.TokenRegex.MatchString(req.Token) {
@@ -342,7 +360,28 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.users.GetByUsernameOrEmail(r.Context(), req.Username)
+	// Proof of the first factor. The ticket is single-use and is consumed here
+	// regardless of whether the code turns out to be correct, so a captured
+	// ticket cannot be replayed to brute-force codes; a failed attempt sends
+	// the user back through the password step.
+	//
+	// The user is taken from the ticket, never from the request body: deriving
+	// it from a client-supplied username would let the holder of a ticket for
+	// their own account verify against somebody else's.
+	if h.pendingLogin == nil {
+		if h.log != nil {
+			h.log.Error("auth: pending-login store not configured, refusing TFA verification")
+		}
+		Error(w, http.StatusInternalServerError, "Two-factor verification unavailable")
+		return
+	}
+	userID, err := h.pendingLogin.Consume(r.Context(), req.TfaTicket)
+	if err != nil {
+		Error(w, http.StatusUnauthorized, "Login session expired, please sign in again")
+		return
+	}
+
+	user, err := h.users.GetByID(r.Context(), userID)
 	if err != nil || user == nil || !user.IsActive || !user.TfaEnabled || user.TfaSecret == nil {
 		Error(w, http.StatusUnauthorized, "Invalid credentials or TFA not enabled")
 		return
