@@ -713,30 +713,44 @@ func extractHost(u string) string {
 	return parsed.Hostname()
 }
 
+// resolvedSnapshot returns the current resolved OIDC config under the read
+// lock.
+//
+// reinitOidcClient replaces h.resolved on a settings save, and sets it to nil
+// when OIDC is disabled, while callback requests read it on the request path.
+// Reading the field directly was a data race, and a torn read that saw nil made
+// the accessors below silently fall back to the h.cfg env values, giving
+// different auto-create and role-mapping behaviour for that login.
+func (h *OidcHandler) resolvedSnapshot() *config.ResolvedOidcConfig {
+	h.clientMu.RLock()
+	defer h.clientMu.RUnlock()
+	return h.resolved
+}
+
 func (h *OidcHandler) oidcIssuerURL() string {
-	if h.resolved != nil {
-		return h.resolved.IssuerURL
+	if r := h.resolvedSnapshot(); r != nil {
+		return r.IssuerURL
 	}
 	return h.cfg.OidcIssuerURL
 }
 
 func (h *OidcHandler) oidcClientID() string {
-	if h.resolved != nil {
-		return h.resolved.ClientID
+	if r := h.resolvedSnapshot(); r != nil {
+		return r.ClientID
 	}
 	return h.cfg.OidcClientID
 }
 
 func (h *OidcHandler) oidcAutoCreateUsers() bool {
-	if h.resolved != nil {
-		return h.resolved.AutoCreateUsers
+	if r := h.resolvedSnapshot(); r != nil {
+		return r.AutoCreateUsers
 	}
 	return h.cfg.OidcAutoCreateUsers
 }
 
 func (h *OidcHandler) oidcSyncRoles() bool {
-	if h.resolved != nil {
-		return h.resolved.SyncRoles
+	if r := h.resolvedSnapshot(); r != nil {
+		return r.SyncRoles
 	}
 	return h.cfg.OidcSyncRoles
 }
@@ -744,15 +758,15 @@ func (h *OidcHandler) oidcSyncRoles() bool {
 // oidcSuperadminGroup returns the effective OIDC superadmin group mapping.
 // Empty string means no group is configured (superadmin cannot be granted via OIDC).
 func (h *OidcHandler) oidcSuperadminGroup() string {
-	if h.resolved != nil {
-		return strings.TrimSpace(h.resolved.SuperadminGroup)
+	if r := h.resolvedSnapshot(); r != nil {
+		return strings.TrimSpace(r.SuperadminGroup)
 	}
 	return strings.TrimSpace(h.cfg.OidcSuperadminGroup)
 }
 
 func (h *OidcHandler) mapGroupsToRole(groups []string) string {
-	if h.resolved != nil {
-		return mapGroupsToRoleFromResolved(groups, h.resolved)
+	if r := h.resolvedSnapshot(); r != nil {
+		return mapGroupsToRoleFromResolved(groups, r)
 	}
 	return mapGroupsToRoleFromConfig(groups, h.cfg)
 }
