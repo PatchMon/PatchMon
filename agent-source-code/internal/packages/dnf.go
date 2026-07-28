@@ -24,6 +24,46 @@ func NewDNFManager(logger *logrus.Logger) *DNFManager {
 	}
 }
 
+// rpmArchSuffixes are the architecture tokens dnf/yum append to package names
+// in "name.arch" form. Only these are stripped when normalising a name.
+//
+// Splitting on a dot unconditionally is wrong: plenty of real RPM names contain
+// dots (python3.11, python3.12), and strings.Split(name, ".")[0] turns
+// "python3.11.x86_64" into "python3", silently merging two distinct packages.
+var rpmArchSuffixes = map[string]bool{
+	"x86_64":  true,
+	"i686":    true,
+	"i586":    true,
+	"i386":    true,
+	"noarch":  true,
+	"aarch64": true,
+	"arm64":   true,
+	"armv7hl": true,
+	"ppc64le": true,
+	"ppc64":   true,
+	"s390x":   true,
+	"riscv64": true,
+	"src":     true,
+}
+
+// stripRPMArchSuffix removes a trailing ".<arch>" when <arch> is a recognised
+// RPM architecture token, and leaves every other name untouched.
+//
+// Both the installed and the upgradable parser must agree on this, because
+// CombinePackageData keys its upgradable set on Package.Name. When the two
+// disagreed, every upgradable package was emitted twice: once arch-qualified
+// and flagged NeedsUpdate, and once bare and flagged up to date.
+func stripRPMArchSuffix(name string) string {
+	idx := strings.LastIndex(name, ".")
+	if idx <= 0 {
+		return name
+	}
+	if rpmArchSuffixes[name[idx+1:]] {
+		return name[:idx]
+	}
+	return name
+}
+
 // detectPackageManager detects whether to use dnf or yum
 func (m *DNFManager) detectPackageManager() string {
 	// Prefer dnf over yum for modern RHEL-based systems
@@ -195,8 +235,7 @@ func (m *DNFManager) enrichWithRepoAttribution(packages []models.Package) {
 			continue
 		}
 		// Strip arch suffix (e.g. "glibc.x86_64" -> "glibc")
-		if idx := strings.LastIndex(name, "."); idx > 0 {
-			baseName := name[:idx]
+		if baseName := stripRPMArchSuffix(name); baseName != name {
 			if repo, ok := repoByName[baseName]; ok {
 				packages[i].SourceRepository = repo
 				attributed++
@@ -280,15 +319,7 @@ func (m *DNFManager) getSecurityPackages(packageManager string) map[string]bool 
 // - package-name.arch (from check-update)
 func (m *DNFManager) extractBasePackageName(packageString string) string {
 	// Remove architecture suffix first (e.g., .x86_64, .noarch)
-	baseName := packageString
-	if idx := strings.LastIndex(packageString, "."); idx > 0 {
-		archSuffix := packageString[idx+1:]
-		// Check if it's a known architecture
-		if archSuffix == "x86_64" || archSuffix == "i686" || archSuffix == "i386" ||
-			archSuffix == "noarch" || archSuffix == "aarch64" || archSuffix == "arm64" {
-			baseName = packageString[:idx]
-		}
-	}
+	baseName := stripRPMArchSuffix(packageString)
 
 	// If the base name contains a version pattern (starts with a digit after a dash),
 	// extract just the package name part
@@ -328,52 +359,26 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 			continue
 		}
 
-		packageName := fields[0]
+		// Normalise to the same shape parseInstalledPackages emits, so the two
+		// halves of CombinePackageData agree and an upgradable package is not
+		// also emitted as a separate "up to date" row under its bare name.
+		packageName := stripRPMArchSuffix(fields[0])
 		availableVersion := fields[1]
 
-		// Get current version from installed packages map (already collected)
-		// Try exact match first
+		// Get current version from installed packages map (already collected).
+		// Both sides are arch-stripped now, so this is the ordinary path.
 		var currentVersion string
 		if p, ok := installedPackages[packageName]; ok {
 			currentVersion = p.CurrentVersion
 		}
 
-		// If not found, try to find by base name (handles architecture suffixes)
-		// e.g., if packageName is "package" but installed has "package.x86_64"
-		// or if packageName is "package.x86_64" but installed has "package"
+		// Defensive fallback: tolerate an installed map that still holds
+		// arch-qualified keys (e.g. supplied by a caller or an older cache).
 		if currentVersion == "" {
-			// Try to find by removing architecture suffix from packageName (if present)
-			basePackageName := packageName
-			if idx := strings.LastIndex(packageName, "."); idx > 0 {
-				archSuffix := packageName[idx+1:]
-				if archSuffix == "x86_64" || archSuffix == "i686" || archSuffix == "i386" ||
-					archSuffix == "noarch" || archSuffix == "aarch64" || archSuffix == "arm64" {
-					basePackageName = packageName[:idx]
-					if p, ok := installedPackages[basePackageName]; ok {
-						currentVersion = p.CurrentVersion
-					}
-				}
-			}
-
-			// If still not found, search through installed packages for matching base name
-			if currentVersion == "" {
-				for installedName, p := range installedPackages {
-					// Remove architecture suffix if present (e.g., .x86_64, .noarch, .i686)
-					baseName := installedName
-					if idx := strings.LastIndex(installedName, "."); idx > 0 {
-						// Check if the part after the last dot looks like an architecture
-						archSuffix := installedName[idx+1:]
-						if archSuffix == "x86_64" || archSuffix == "i686" || archSuffix == "i386" ||
-							archSuffix == "noarch" || archSuffix == "aarch64" || archSuffix == "arm64" {
-							baseName = installedName[:idx]
-						}
-					}
-
-					// Compare base names (handles both cases: package vs package.x86_64)
-					if baseName == basePackageName || baseName == packageName {
-						currentVersion = p.CurrentVersion
-						break
-					}
+			for installedName, p := range installedPackages {
+				if stripRPMArchSuffix(installedName) == packageName {
+					currentVersion = p.CurrentVersion
+					break
 				}
 			}
 		}
@@ -450,7 +455,7 @@ func (m *DNFManager) parseInstalledPackages(output string) map[string]models.Pac
 
 		// Normal single-line format: "name.arch  version  repo"
 		if len(parts) >= 3 {
-			packageName := strings.Split(parts[0], ".")[0] // strip arch suffix
+			packageName := stripRPMArchSuffix(parts[0])
 			version := parts[1]
 			installedPackages[packageName] = models.Package{
 				Name:           packageName,
@@ -466,7 +471,7 @@ func (m *DNFManager) parseInstalledPackages(output string) map[string]models.Pac
 		// and the trimmed text has no spaces (single token).
 		if len(parts) == 1 && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
 			// Looks like a bare package name line - remember it
-			pendingName = strings.Split(parts[0], ".")[0]
+			pendingName = stripRPMArchSuffix(parts[0])
 			continue
 		}
 
