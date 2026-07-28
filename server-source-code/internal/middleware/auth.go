@@ -13,6 +13,10 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// tokenTypeAccess is the only "typ" claim value accepted as a request
+// credential. Kept in sync with the handler package, which mints the tokens.
+const tokenTypeAccess = "access"
+
 const UserIDKey contextKey = "user_id"
 const UserRoleKey contextKey = "user_role"
 const SessionIDKey contextKey = "session_id"
@@ -44,10 +48,31 @@ func AuthWithSessionCheck(cfg *config.Config, sessionsStore *store.SessionsStore
 			claims := jwt.MapClaims{}
 			t, err := jwt.ParseWithClaims(token, &claims, func(_ *jwt.Token) (interface{}, error) {
 				return []byte(cfg.JWTSecret), nil
-			})
+			}, jwt.WithValidMethods([]string{"HS256"}))
 			if err != nil || !t.Valid {
 				if log != nil {
 					log.Debug("auth token invalid", "path", r.URL.Path, "error", err, "valid", t != nil && t.Valid)
+				}
+				http.Error(w, `{"error":"Invalid token"}`, http.StatusUnauthorized)
+				return
+			}
+
+			// Only access tokens authenticate requests.
+			//
+			// Refresh tokens were minted with the same claim set and the same
+			// signing key, differing only in that they carried no sessionId --
+			// which meant they skipped the entire session-validity block below.
+			// Presented as a bearer they authenticated normally and were exempt
+			// from logout, revoke-all, password-change and role-change
+			// revocation, and account deactivation, for their full 7 to 30 day
+			// lifetime. Nothing consumes them as a credential, so reject them.
+			//
+			// A missing typ claim is also rejected: tokens issued before this
+			// claim existed cannot be told apart from refresh tokens, so they
+			// are treated as untrusted and the user re-authenticates once.
+			if typ, _ := claims["typ"].(string); typ != tokenTypeAccess {
+				if log != nil {
+					log.Debug("auth rejected non-access token", "path", r.URL.Path, "typ", typ)
 				}
 				http.Error(w, `{"error":"Invalid token"}`, http.StatusUnauthorized)
 				return
@@ -112,8 +137,14 @@ func OptionalAuth(cfg *config.Config) func(http.Handler) http.Handler {
 			claims := jwt.MapClaims{}
 			t, err := jwt.ParseWithClaims(token, &claims, func(_ *jwt.Token) (interface{}, error) {
 				return []byte(cfg.JWTSecret), nil
-			})
+			}, jwt.WithValidMethods([]string{"HS256"}))
 			if err != nil || !t.Valid {
+				next.ServeHTTP(w, r)
+				return
+			}
+			// Same rule as Auth: only access tokens establish identity, so a
+			// refresh token cannot populate the user context here either.
+			if typ, _ := claims["typ"].(string); typ != tokenTypeAccess {
 				next.ServeHTTP(w, r)
 				return
 			}

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -488,7 +489,7 @@ func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, user
 	if rememberMe {
 		refreshExpSec = 30 * 24 * 3600
 	}
-	refreshToken, _ := h.createToken(user.ID, user.Role, refreshExpSec, "")
+	refreshToken, _ := h.createRefreshToken(user.ID, user.Role, refreshExpSec)
 
 	// Always create/reuse a session so it shows in the active sessions list.
 	// Session reuse is keyed on X-Device-ID (stable across IP/UA changes).
@@ -538,7 +539,7 @@ func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, user
 		}
 	}
 
-	accessToken, err := h.createToken(user.ID, user.Role, expiresIn, sessionID)
+	accessToken, err := h.createAccessToken(user.ID, user.Role, sessionID, expiresIn)
 	if err != nil {
 		if h.log != nil {
 			h.log.Error("auth token creation failed", "user_id", user.ID, "error", err)
@@ -678,7 +679,7 @@ func parseTfaRememberDuration(s string) time.Duration {
 func (h *AuthHandler) CompleteOidcLogin(w http.ResponseWriter, r *http.Request, user *models.User) {
 	expiresIn := h.getJwtExpiresInSeconds()
 	refreshExpSec := int64(7 * 24 * 3600)
-	refreshToken, _ := h.createToken(user.ID, user.Role, refreshExpSec, "")
+	refreshToken, _ := h.createRefreshToken(user.ID, user.Role, refreshExpSec)
 	var sessionID string
 	fingerprint := util.GenerateDeviceFingerprint(r)
 	deviceID := r.Header.Get("X-Device-ID")
@@ -690,7 +691,7 @@ func (h *AuthHandler) CompleteOidcLogin(w http.ResponseWriter, r *http.Request, 
 	} else if sess != nil {
 		sessionID = sess.ID
 	}
-	accessToken, err := h.createToken(user.ID, user.Role, expiresIn, sessionID)
+	accessToken, err := h.createAccessToken(user.ID, user.Role, sessionID, expiresIn)
 	if err != nil {
 		if h.log != nil {
 			h.log.Error("oidc token creation failed", "user_id", user.ID, "error", err)
@@ -734,7 +735,7 @@ func (h *AuthHandler) CompleteOidcLogin(w http.ResponseWriter, r *http.Request, 
 func (h *AuthHandler) CompleteDiscordLogin(w http.ResponseWriter, r *http.Request, user *models.User) {
 	expiresIn := h.getJwtExpiresInSeconds()
 	refreshExpSec := int64(7 * 24 * 3600)
-	refreshToken, _ := h.createToken(user.ID, user.Role, refreshExpSec, "")
+	refreshToken, _ := h.createRefreshToken(user.ID, user.Role, refreshExpSec)
 	var sessionID string
 	fingerprint := util.GenerateDeviceFingerprint(r)
 	deviceID := r.Header.Get("X-Device-ID")
@@ -746,7 +747,7 @@ func (h *AuthHandler) CompleteDiscordLogin(w http.ResponseWriter, r *http.Reques
 	} else if sess != nil {
 		sessionID = sess.ID
 	}
-	accessToken, err := h.createToken(user.ID, user.Role, expiresIn, sessionID)
+	accessToken, err := h.createAccessToken(user.ID, user.Role, sessionID, expiresIn)
 	if err != nil {
 		if h.log != nil {
 			h.log.Error("discord token creation failed", "user_id", user.ID, "error", err)
@@ -797,10 +798,73 @@ func clearAuthCookies(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: "refresh_token", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: secure})
 }
 
-func (h *AuthHandler) createToken(userID, role string, expSec int64, sessionID string) (string, error) {
+// Token type claim values. Access tokens authenticate requests; refresh tokens
+// are stored against the session row and are NOT accepted as bearer
+// credentials. Without this distinction the two were byte-identical in every
+// respect that mattered, so a refresh token presented as a bearer authenticated
+// normally.
+const (
+	tokenTypeAccess  = "access"
+	tokenTypeRefresh = "refresh"
+)
+
+// createAccessToken mints a request-authenticating token bound to a session.
+//
+// sessionID is mandatory. The middleware's entire session-validity block --
+// existence, revocation, and inactivity -- is gated on the sessionId claim
+// being present, so a token minted without one is exempt from logout,
+// revoke-all, password-change revocation, role-change revocation and account
+// deactivation for its whole lifetime. Refusing to mint one keeps that from
+// happening by construction rather than by remembering to pass an argument.
+func (h *AuthHandler) createAccessToken(userID, role, sessionID string, expSec int64) (string, error) {
+	if sessionID == "" {
+		return "", errors.New("refusing to mint a session-less access token")
+	}
+	return h.createToken(userID, role, expSec, sessionID, tokenTypeAccess)
+}
+
+// createRefreshToken mints the long-lived value stored against the session row.
+// It carries no sessionId and is rejected by the auth middleware.
+func (h *AuthHandler) createRefreshToken(userID, role string, expSec int64) (string, error) {
+	return h.createToken(userID, role, expSec, "", tokenTypeRefresh)
+}
+
+// issueSessionTokens creates a session row for a user and mints the token pair
+// bound to it. Used by the first-run admin setup and the signup path, both of
+// which log the new user straight in.
+//
+// Previously both minted their access token with an empty sessionID, which made
+// those tokens exempt from every revocation path for their full lifetime, the
+// same defect as the refresh tokens.
+func (h *AuthHandler) issueSessionTokens(r *http.Request, u *models.User, expiresIn, refreshExpSec int64) (accessToken, refreshToken string, err error) {
+	refreshToken, err = h.createRefreshToken(u.ID, u.Role, refreshExpSec)
+	if err != nil {
+		return "", "", err
+	}
+	sess, err := h.sessions.CreateOrReuseSession(
+		r.Context(), u.ID, refreshToken, "",
+		h.clientIP(r), r.UserAgent(),
+		util.GenerateDeviceFingerprint(r), r.Header.Get("X-Device-ID"),
+		time.Now().Add(time.Duration(refreshExpSec)*time.Second), false, nil,
+	)
+	if err != nil {
+		return "", "", err
+	}
+	if sess == nil {
+		return "", "", errors.New("session creation returned no session")
+	}
+	accessToken, err = h.createAccessToken(u.ID, u.Role, sess.ID, expiresIn)
+	if err != nil {
+		return "", "", err
+	}
+	return accessToken, refreshToken, nil
+}
+
+func (h *AuthHandler) createToken(userID, role string, expSec int64, sessionID, tokenType string) (string, error) {
 	claims := jwt.MapClaims{
 		"sub":  userID,
 		"role": role,
+		"typ":  tokenType,
 		"exp":  time.Now().Add(time.Duration(expSec) * time.Second).Unix(),
 		"iat":  time.Now().Unix(),
 	}
@@ -1385,8 +1449,14 @@ func (h *AuthHandler) SetupAdmin(w http.ResponseWriter, r *http.Request) {
 	AutoSubscribeIfHosted(h.cfg != nil && h.cfg.AdminMode, h.users, h.log, u)
 
 	expiresIn := int64(3600)
-	accessToken, _ := h.createToken(u.ID, u.Role, expiresIn, "")
-	refreshToken, _ := h.createToken(u.ID, u.Role, 7*24*3600, "")
+	accessToken, refreshToken, err := h.issueSessionTokens(r, u, expiresIn, 7*24*3600)
+	if err != nil {
+		if h.log != nil {
+			h.log.Error("admin setup session creation failed", "user_id", u.ID, "error", err)
+		}
+		Error(w, http.StatusInternalServerError, "Failed to create session")
+		return
+	}
 	expiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second).Format(time.RFC3339)
 
 	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, false, h.cfg.Env, false, h.authBrowserSessionCookies())
@@ -1471,7 +1541,14 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	}
 	AutoSubscribeIfHosted(h.cfg != nil && h.cfg.AdminMode, h.users, h.log, u)
 
-	accessToken, _ := h.createToken(u.ID, u.Role, 3600, "")
+	accessToken, _, err := h.issueSessionTokens(r, u, 3600, 7*24*3600)
+	if err != nil {
+		if h.log != nil {
+			h.log.Error("signup session creation failed", "user_id", u.ID, "error", err)
+		}
+		Error(w, http.StatusInternalServerError, "Failed to create session")
+		return
+	}
 
 	JSON(w, http.StatusCreated, map[string]interface{}{
 		"message": "Account created successfully",
