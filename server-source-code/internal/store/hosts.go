@@ -545,13 +545,35 @@ func (s *HostsStore) GetHostGroupsForHosts(ctx context.Context, hostIDs []string
 }
 
 // SetHostGroups replaces host group memberships for a host.
+//
+// Delete-then-insert must be atomic. Run on the pool with no transaction, a
+// failing insert returned with the delete already committed, so the host
+// silently ended up in FEWER groups than it started with and any patch policy
+// assigned by group stopped applying to it. The UI reported the failure but the
+// membership loss was invisible.
+//
+// Reachable without any concurrency: a request body carrying the same group id
+// twice (nothing de-duplicates it) hit the UNIQUE(host_id, host_group_id)
+// constraint on the second insert, and a stale group id hit the foreign key.
 func (s *HostsStore) SetHostGroups(ctx context.Context, hostID string, groupIDs []string) error {
 	d := s.db.DB(ctx)
-	if err := d.Queries.DeleteHostGroupMemberships(ctx, hostID); err != nil {
+	tx, err := d.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	// Uncancellable rollback context so a cancelled request cannot return the
+	// connection to the pool in an aborted state (25P02 on the next caller).
+	defer func() {
+		rollbackCtx := context.WithoutCancel(ctx)
+		_ = tx.Rollback(rollbackCtx)
+	}()
+
+	q := d.Queries.WithTx(tx)
+	if err := q.DeleteHostGroupMemberships(ctx, hostID); err != nil {
 		return err
 	}
 	for _, gid := range groupIDs {
-		if err := d.Queries.InsertHostGroupMembership(ctx, db.InsertHostGroupMembershipParams{
+		if err := q.InsertHostGroupMembership(ctx, db.InsertHostGroupMembershipParams{
 			ID:          uuid.New().String(),
 			HostID:      hostID,
 			HostGroupID: gid,
@@ -559,10 +581,14 @@ func (s *HostsStore) SetHostGroups(ctx context.Context, hostID string, groupIDs 
 			return err
 		}
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 // SetHostGroupsBulk updates group memberships for multiple hosts.
+//
+// Each host is its own transaction, so a failure part-way leaves earlier hosts
+// updated and later ones untouched, but never leaves any single host with its
+// memberships deleted and not replaced.
 func (s *HostsStore) SetHostGroupsBulk(ctx context.Context, hostIDs, groupIDs []string) error {
 	for _, hid := range hostIDs {
 		if err := s.SetHostGroups(ctx, hid, groupIDs); err != nil {

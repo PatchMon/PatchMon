@@ -395,6 +395,10 @@ type Querier interface {
 	IncrementAutoEnrollmentHostsCreated(ctx context.Context, id string) error
 	InsertAlertHistory(ctx context.Context, arg InsertAlertHistoryParams) (AlertHistory, error)
 	InsertDashboardPreference(ctx context.Context, arg InsertDashboardPreferenceParams) error
+	// ON CONFLICT because host_group_memberships carries UNIQUE(host_id,
+	// host_group_id) and callers may pass the same group id twice (nothing
+	// de-duplicates the request body). Without it a duplicated id raised 23505
+	// mid-loop, after the delete had already removed every membership.
 	InsertHostGroupMembership(ctx context.Context, arg InsertHostGroupMembershipParams) error
 	InsertHostRepository(ctx context.Context, arg InsertHostRepositoryParams) error
 	InsertJobHistory(ctx context.Context, arg InsertJobHistoryParams) error
@@ -609,6 +613,24 @@ type Querier interface {
 	UpdateUserOidcProfile(ctx context.Context, arg UpdateUserOidcProfileParams) error
 	UpdateUserPreferences(ctx context.Context, arg UpdateUserPreferencesParams) error
 	UpsertAlertConfig(ctx context.Context, arg UpsertAlertConfigParams) (AlertConfig, error)
+	// Single-statement get-or-create against the UNIQUE(name) constraint. The
+	// previous SELECT-then-INSERT was both a TOCTOU race and, when called from
+	// inside SubmitScan's transaction, a second pool checkout while the first
+	// connection was pinned.
+	//
+	// DO UPDATE (rather than DO NOTHING) so the row is always returned; type is
+	// only overwritten when a non-empty value is supplied.
+	UpsertComplianceProfile(ctx context.Context, arg UpsertComplianceProfileParams) (ComplianceProfile, error)
+	// Single-statement get-or-create. Replaces a SELECT-then-INSERT, which was a
+	// TOCTOU race: compliance_rules is keyed on profile_id (not host), so every
+	// host scanning the same profile contends on the same rows. Two hosts
+	// submitting the same profile in the same second both found nothing and both
+	// inserted; the loser got 23505 and its ENTIRE scan submission rolled back.
+	//
+	// The metadata columns use COALESCE so a submission that omits a field does not
+	// blank a value an earlier scan supplied, matching the previous update-if-better
+	// behaviour.
+	UpsertComplianceRule(ctx context.Context, arg UpsertComplianceRuleParams) (string, error)
 	UpsertDashboardLayout(ctx context.Context, arg UpsertDashboardLayoutParams) error
 	UpsertDockerContainer(ctx context.Context, arg UpsertDockerContainerParams) error
 	UpsertDockerImage(ctx context.Context, arg UpsertDockerImageParams) (string, error)

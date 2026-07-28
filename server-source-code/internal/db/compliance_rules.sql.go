@@ -191,3 +191,53 @@ func (q *Queries) UpdateComplianceRule(ctx context.Context, arg UpdateCompliance
 	)
 	return err
 }
+
+const upsertComplianceRule = `-- name: UpsertComplianceRule :one
+INSERT INTO compliance_rules (id, profile_id, rule_ref, title, description, rationale, severity, section, remediation)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+ON CONFLICT (profile_id, rule_ref) DO UPDATE SET
+    title = COALESCE(EXCLUDED.title, compliance_rules.title),
+    description = COALESCE(EXCLUDED.description, compliance_rules.description),
+    severity = COALESCE(EXCLUDED.severity, compliance_rules.severity),
+    section = COALESCE(EXCLUDED.section, compliance_rules.section),
+    remediation = COALESCE(EXCLUDED.remediation, compliance_rules.remediation)
+RETURNING id
+`
+
+type UpsertComplianceRuleParams struct {
+	ID          string  `json:"id"`
+	ProfileID   string  `json:"profile_id"`
+	RuleRef     string  `json:"rule_ref"`
+	Title       string  `json:"title"`
+	Description *string `json:"description"`
+	Rationale   *string `json:"rationale"`
+	Severity    *string `json:"severity"`
+	Section     *string `json:"section"`
+	Remediation *string `json:"remediation"`
+}
+
+// Single-statement get-or-create. Replaces a SELECT-then-INSERT, which was a
+// TOCTOU race: compliance_rules is keyed on profile_id (not host), so every
+// host scanning the same profile contends on the same rows. Two hosts
+// submitting the same profile in the same second both found nothing and both
+// inserted; the loser got 23505 and its ENTIRE scan submission rolled back.
+//
+// The metadata columns use COALESCE so a submission that omits a field does not
+// blank a value an earlier scan supplied, matching the previous update-if-better
+// behaviour.
+func (q *Queries) UpsertComplianceRule(ctx context.Context, arg UpsertComplianceRuleParams) (string, error) {
+	row := q.db.QueryRow(ctx, upsertComplianceRule,
+		arg.ID,
+		arg.ProfileID,
+		arg.RuleRef,
+		arg.Title,
+		arg.Description,
+		arg.Rationale,
+		arg.Severity,
+		arg.Section,
+		arg.Remediation,
+	)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}

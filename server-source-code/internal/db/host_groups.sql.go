@@ -186,6 +186,7 @@ func (q *Queries) HostInHostGroup(ctx context.Context, arg HostInHostGroupParams
 
 const insertHostGroupMembership = `-- name: InsertHostGroupMembership :exec
 INSERT INTO host_group_memberships (id, host_id, host_group_id) VALUES ($1, $2, $3)
+ON CONFLICT (host_id, host_group_id) DO NOTHING
 `
 
 type InsertHostGroupMembershipParams struct {
@@ -194,6 +195,10 @@ type InsertHostGroupMembershipParams struct {
 	HostGroupID string `json:"host_group_id"`
 }
 
+// ON CONFLICT because host_group_memberships carries UNIQUE(host_id,
+// host_group_id) and callers may pass the same group id twice (nothing
+// de-duplicates the request body). Without it a duplicated id raised 23505
+// mid-loop, after the delete had already removed every membership.
 func (q *Queries) InsertHostGroupMembership(ctx context.Context, arg InsertHostGroupMembershipParams) error {
 	_, err := q.db.Exec(ctx, insertHostGroupMembership, arg.ID, arg.HostID, arg.HostGroupID)
 	return err
