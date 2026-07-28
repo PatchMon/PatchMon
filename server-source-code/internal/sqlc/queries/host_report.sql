@@ -17,7 +17,12 @@ UPDATE hosts SET
     ram_installed = COALESCE(sqlc.narg('ram_installed')::double precision, ram_installed),
     swap_size = COALESCE(sqlc.narg('swap_size')::double precision, swap_size),
     disk_details = COALESCE(sqlc.narg('disk_details')::jsonb, disk_details),
-    gateway_ip = sqlc.narg('gateway_ip'),
+    -- COALESCE-guarded like every other optional column here. Without it a
+    -- hash-gated partial report (which carries no network section) sends SQL
+    -- NULL and wipes the stored gateway. Partial reports are the steady state
+    -- under hash-gated check-in, so gateway_ip was non-null only in the window
+    -- between a full report and the next partial.
+    gateway_ip = COALESCE(sqlc.narg('gateway_ip')::text, gateway_ip),
     dns_servers = COALESCE(sqlc.narg('dns_servers')::jsonb, dns_servers),
     network_interfaces = COALESCE(sqlc.narg('network_interfaces')::jsonb, network_interfaces),
     kernel_version = COALESCE(sqlc.narg('kernel_version')::text, kernel_version),

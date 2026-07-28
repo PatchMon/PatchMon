@@ -444,9 +444,11 @@ type HostMetricsParams struct {
 	AgentVersion *string
 }
 
-// UpdateMetrics writes ping-side volatile metrics on the host row. Each
-// column is COALESCE-guarded by sqlc so a ping that omits a metric leaves
-// the previous value alone.
+// UpdateMetrics writes ping-side volatile metrics on the host row. Each column
+// is guarded so a ping that omits a metric leaves the previous value alone:
+// plain metrics are COALESCE-guarded, and RebootReason is only written when
+// NeedsReboot is also supplied, so a ping that reports the flag without a
+// reason cannot blank a reason an earlier ping recorded.
 func (s *HostsStore) UpdateMetrics(ctx context.Context, id string, m HostMetricsParams) error {
 	d := s.db.DB(ctx)
 	return d.Queries.UpdateHostMetrics(ctx, db.UpdateHostMetricsParams{

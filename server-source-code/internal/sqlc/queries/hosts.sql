@@ -103,8 +103,9 @@ FROM hosts
 WHERE api_id = $1;
 
 -- name: UpdateHostMetrics :exec
--- Ping-side write of volatile metrics. Each column is COALESCE-guarded so a
--- ping that omits a metric leaves the previous value intact.
+-- Ping-side write of volatile metrics. Each column is guarded so a ping that
+-- omits a metric leaves the previous value intact: plain metrics use COALESCE,
+-- and reboot_reason is tied to needs_reboot via a CASE (see below).
 UPDATE hosts SET
     last_update    = NOW(),
     updated_at     = NOW(),
@@ -118,7 +119,19 @@ UPDATE hosts SET
     boot_time      = COALESCE(sqlc.narg('boot_time')::timestamptz, boot_time),
     load_average   = COALESCE(sqlc.narg('load_average')::jsonb, load_average),
     needs_reboot   = COALESCE(sqlc.narg('needs_reboot')::boolean, needs_reboot),
-    reboot_reason  = sqlc.narg('reboot_reason'),
+    -- reboot_reason is only rewritten when this ping also carries needs_reboot,
+    -- mirroring UpdateHostFromReport. A bare COALESCE would be wrong here
+    -- because it would make the reason unclearable once set; pairing it with
+    -- needs_reboot lets a genuine "no longer needs reboot" ping clear both.
+    --
+    -- Without the CASE, a ping that reports needs_reboot without a reason (an
+    -- older agent build, or a collector that failed to read
+    -- /var/run/reboot-required.pkgs) NULLs a reason a previous ping wrote
+    -- correctly, leaving the Reboot pill set with a permanently empty reason.
+    reboot_reason  = CASE
+        WHEN sqlc.narg('needs_reboot')::boolean IS NULL THEN reboot_reason
+        ELSE sqlc.narg('reboot_reason')::text
+    END,
     agent_version  = COALESCE(sqlc.narg('agent_version')::text, agent_version)
 WHERE id = sqlc.arg('id');
 

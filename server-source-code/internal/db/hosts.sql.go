@@ -909,7 +909,19 @@ UPDATE hosts SET
     boot_time      = COALESCE($7::timestamptz, boot_time),
     load_average   = COALESCE($8::jsonb, load_average),
     needs_reboot   = COALESCE($9::boolean, needs_reboot),
-    reboot_reason  = $10,
+    -- reboot_reason is only rewritten when this ping also carries needs_reboot,
+    -- mirroring UpdateHostFromReport. A bare COALESCE would be wrong here
+    -- because it would make the reason unclearable once set; pairing it with
+    -- needs_reboot lets a genuine "no longer needs reboot" ping clear both.
+    --
+    -- Without the CASE, a ping that reports needs_reboot without a reason (an
+    -- older agent build, or a collector that failed to read
+    -- /var/run/reboot-required.pkgs) NULLs a reason a previous ping wrote
+    -- correctly, leaving the Reboot pill set with a permanently empty reason.
+    reboot_reason  = CASE
+        WHEN $9::boolean IS NULL THEN reboot_reason
+        ELSE $10::text
+    END,
     agent_version  = COALESCE($11::text, agent_version)
 WHERE id = $12
 `
@@ -929,8 +941,9 @@ type UpdateHostMetricsParams struct {
 	ID           string             `json:"id"`
 }
 
-// Ping-side write of volatile metrics. Each column is COALESCE-guarded so a
-// ping that omits a metric leaves the previous value intact.
+// Ping-side write of volatile metrics. Each column is guarded so a ping that
+// omits a metric leaves the previous value intact: plain metrics use COALESCE,
+// and reboot_reason is tied to needs_reboot via a CASE (see below).
 func (q *Queries) UpdateHostMetrics(ctx context.Context, arg UpdateHostMetricsParams) error {
 	_, err := q.db.Exec(ctx, updateHostMetrics,
 		arg.CpuCores,

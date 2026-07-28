@@ -529,8 +529,9 @@ type Querier interface {
 	// Host report/update flow (agent sends package and system info)
 	UpdateHostFromReport(ctx context.Context, arg UpdateHostFromReportParams) error
 	UpdateHostGroup(ctx context.Context, arg UpdateHostGroupParams) error
-	// Ping-side write of volatile metrics. Each column is COALESCE-guarded so a
-	// ping that omits a metric leaves the previous value intact.
+	// Ping-side write of volatile metrics. Each column is guarded so a ping that
+	// omits a metric leaves the previous value intact: plain metrics use COALESCE,
+	// and reboot_reason is tied to needs_reboot via a CASE (see below).
 	UpdateHostMetrics(ctx context.Context, arg UpdateHostMetricsParams) error
 	UpdateHostNotes(ctx context.Context, arg UpdateHostNotesParams) error
 	// Records the outcome of a Windows Update installation for a specific host+GUID combination.

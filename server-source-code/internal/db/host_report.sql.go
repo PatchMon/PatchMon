@@ -282,7 +282,12 @@ UPDATE hosts SET
     ram_installed = COALESCE($10::double precision, ram_installed),
     swap_size = COALESCE($11::double precision, swap_size),
     disk_details = COALESCE($12::jsonb, disk_details),
-    gateway_ip = $13,
+    -- COALESCE-guarded like every other optional column here. Without it a
+    -- hash-gated partial report (which carries no network section) sends SQL
+    -- NULL and wipes the stored gateway. Partial reports are the steady state
+    -- under hash-gated check-in, so gateway_ip was non-null only in the window
+    -- between a full report and the next partial.
+    gateway_ip = COALESCE($13::text, gateway_ip),
     dns_servers = COALESCE($14::jsonb, dns_servers),
     network_interfaces = COALESCE($15::jsonb, network_interfaces),
     kernel_version = COALESCE($16::text, kernel_version),
