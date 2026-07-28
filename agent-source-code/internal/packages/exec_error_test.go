@@ -98,3 +98,65 @@ func TestCommandError_NoStderr(t *testing.T) {
 		t.Errorf("expected the exec error in %q", got)
 	}
 }
+
+// TestCommandError_RedactsRepositoryCredentials keeps secrets out of the agent
+// log.
+//
+// Package managers print failing repository URLs to stderr, and private repos
+// (RHEL Satellite, vendor-hosted, most internal mirrors) routinely embed
+// credentials in the baseurl. Folding stderr into the error puts them in the
+// log at error level, and logutil.Sanitize does not redact -- it only escapes
+// control characters.
+func TestCommandError_RedactsRepositoryCredentials(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name        string
+		stderr      string
+		mustNotHave []string
+		mustHave    string
+	}{
+		{
+			name:        "https basic auth",
+			stderr:      "Failed to download metadata for repo 'internal': https://svc-patching:s3cr3t-token@repo.example.com/rhel9/os",
+			mustNotHave: []string{"s3cr3t-token", "svc-patching"},
+			mustHave:    "repo.example.com",
+		},
+		{
+			name:        "token only",
+			stderr:      "curl error on https://abcdef1234567890@satellite.example.com/pulp/repos/x",
+			mustNotHave: []string{"abcdef1234567890"},
+			mustHave:    "satellite.example.com",
+		},
+		{
+			name:        "no credentials is left alone",
+			stderr:      "Failed to download metadata for repo 'baseos': https://mirror.example.com/rhel9/os",
+			mustNotHave: []string{"[redacted]"},
+			mustHave:    "mirror.example.com",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := exec.Command("sh", "-c", "printf '%s' "+shellQuote(tc.stderr)+" >&2; exit 1").Output()
+			if err == nil {
+				t.Fatal("expected the command to fail")
+			}
+			got := commandError("dnf check-update", err).Error()
+
+			for _, secret := range tc.mustNotHave {
+				if strings.Contains(got, secret) {
+					t.Errorf("error must not carry %q: %s", secret, got)
+				}
+			}
+			if !strings.Contains(got, tc.mustHave) {
+				t.Errorf("error should retain the host for diagnosis, got: %s", got)
+			}
+		})
+	}
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
