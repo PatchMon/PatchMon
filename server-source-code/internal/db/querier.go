@@ -89,11 +89,29 @@ type Querier interface {
 	// Re-parsing the JSON here is cheap (kilobytes, in-memory) and avoids a
 	// per-row round-trip — the alternative was a SELECT loop in Go.
 	BulkUpsertPackages(ctx context.Context, payload []byte) ([]BulkUpsertPackagesRow, error)
-	CancelStalledPatchRuns(ctx context.Context, arg CancelStalledPatchRunsParams) (int64, error)
+	ClearHostComplianceHashOnEnable(ctx context.Context, arg ClearHostComplianceHashOnEnableParams) error
+	// Force a fresh docker payload on next check-in by NULLing the hash whenever
+	// the operator re-enables docker. If the agent was already streaming docker
+	// data (docker_enabled stays true) the hash is left alone.
+	ClearHostDockerHashOnEnable(ctx context.Context, arg ClearHostDockerHashOnEnableParams) error
 	ClearScheduledAt(ctx context.Context, id string) error
 	CountActiveAdmins(ctx context.Context) (int64, error)
 	CountActiveRepositories(ctx context.Context) (int32, error)
 	CountAdmins(ctx context.Context) (int64, error)
+	// Agent Activity feed. Returns the merged time-ordered stream of agent comm
+	// rows for a given host: inbound reports (update_history) AND outbound jobs
+	// (job_history). The two source tables have different shapes; this query
+	// normalises them to one column set and discriminates via the `kind` column
+	// ('report' or 'job'). Caller passes the host_id, optional direction / type /
+	// status filters, optional search string (ILIKE on error_message and job
+	// output), optional time-range / limit / offset for pagination.
+	//
+	// CountAgentActivity returns the filtered total separately so stale/deep-linked
+	// pages beyond the end can still report the real total.
+	//
+	// The since_ts arg uses sqlc.narg (nullable) on both branches; pgx encodes
+	// pgtype.Timestamp{Valid:false} as SQL NULL, which the IS NULL guard catches.
+	CountAgentActivity(ctx context.Context, arg CountAgentActivityParams) (int32, error)
 	CountComplianceResultsByScan(ctx context.Context, arg CountComplianceResultsByScanParams) (int64, error)
 	CountComplianceScansByHost(ctx context.Context, hostID string) (int64, error)
 	CountComplianceScansHistory(ctx context.Context, arg CountComplianceScansHistoryParams) (int64, error)
@@ -103,14 +121,18 @@ type Querier interface {
 	CountDockerHosts(ctx context.Context) (int32, error)
 	CountEnabledHostRepositories(ctx context.Context) (int32, error)
 	CountHosts(ctx context.Context) (int64, error)
+	// Total count matching the same filter set as GetHostsWithCounts. Used by
+	// the paginated UI so it can render "Showing X-Y of Z" and a correct page
+	// count.
+	CountHostsForList(ctx context.Context, arg CountHostsForListParams) (int32, error)
 	CountHostsForPackage(ctx context.Context, arg CountHostsForPackageParams) (int32, error)
 	CountImages(ctx context.Context, arg CountImagesParams) (int32, error)
 	CountNetworks(ctx context.Context, arg CountNetworksParams) (int32, error)
 	CountNetworksByHostID(ctx context.Context, hostID string) (int32, error)
-	CountPackages(ctx context.Context, arg CountPackagesParams) (int32, error)
 	CountPatchRuns(ctx context.Context, arg CountPatchRunsParams) (int64, error)
 	CountPatchRunsTotal(ctx context.Context) (int64, error)
 	CountRepositories(ctx context.Context) (int32, error)
+	CountRepositoriesForList(ctx context.Context, arg CountRepositoriesForListParams) (int32, error)
 	CountSecureRepositories(ctx context.Context) (int32, error)
 	CountSuperadmins(ctx context.Context) (int64, error)
 	CountTfaRememberSessionsByUser(ctx context.Context, userID string) (int64, error)
@@ -168,6 +190,17 @@ type Querier interface {
 	DeleteNetwork(ctx context.Context, id string) error
 	DeleteNotificationDestination(ctx context.Context, id string) error
 	DeleteNotificationRoute(ctx context.Context, id string) error
+	// Retention sweep target, deliberately batched. Steady state deletes a day's
+	// worth of rows, but the FIRST sweep after upgrading an existing install has
+	// to clear the entire pre-2.0.3 update_history backlog, which was never pruned
+	// before — millions of rows on a multi-year install. An unbounded single-
+	// statement DELETE would hold one transaction (and its locks / WAL / dead
+	// tuples) open for the whole thing. The worker calls this in a loop until it
+	// returns 0, so each transaction stays small and interruptible.
+	//
+	// Returns the number of rows deleted so the worker can both log the volume and
+	// decide whether to keep looping.
+	DeleteOldUpdateHistoryBatch(ctx context.Context, arg DeleteOldUpdateHistoryBatchParams) (int64, error)
 	DeleteOldestTfaRememberSession(ctx context.Context, userID string) error
 	DeletePackagesByIDs(ctx context.Context, dollar_1 []string) error
 	DeletePatchPolicy(ctx context.Context, id string) error
@@ -232,6 +265,14 @@ type Querier interface {
 	GetHomepageStats(ctx context.Context, since pgtype.Timestamp) (GetHomepageStatsRow, error)
 	GetHostByApiID(ctx context.Context, apiID string) (Host, error)
 	GetHostByID(ctx context.Context, id string) (Host, error)
+	// Single-row read used on the per-ping hot path. Returns the host's identity
+	// and the six per-section hashes the server compares against incoming agent
+	// hashes.
+	GetHostCheckin(ctx context.Context, apiID string) (GetHostCheckinRow, error)
+	// Cheap host-only counts for the sidebar / navbar widgets. Replaces the
+	// old pattern of fetching the entire host list and computing counts in
+	// the browser. $1 = stale threshold, $2 = down threshold (timestamps).
+	GetHostCounts(ctx context.Context, arg GetHostCountsParams) (GetHostCountsRow, error)
 	GetHostCountsForRepos(ctx context.Context, dollar_1 []string) ([]GetHostCountsForReposRow, error)
 	GetHostDockerStats(ctx context.Context, hostID string) (GetHostDockerStatsRow, error)
 	GetHostGroupByID(ctx context.Context, id string) (HostGroup, error)
@@ -241,8 +282,30 @@ type Querier interface {
 	GetHostIDsByGroupIDs(ctx context.Context, dollar_1 []string) ([]string, error)
 	GetHostPackageStats(ctx context.Context, hostID string) (GetHostPackageStatsRow, error)
 	GetHostPackageStatsByHostIDs(ctx context.Context, dollar_1 []string) ([]GetHostPackageStatsByHostIDsRow, error)
-	GetHostPackageStatsByPackageIDs(ctx context.Context, arg GetHostPackageStatsByPackageIDsParams) ([]GetHostPackageStatsByPackageIDsRow, error)
 	GetHostPackagesForScopedApi(ctx context.Context, hostID string) ([]GetHostPackagesForScopedApiRow, error)
+	// ListPackages and CountPackages are intentionally NOT defined here.
+	// They live as raw SQL builders in internal/store/packages_list_sql.go.
+	//
+	// Why hand-rolled rather than sqlc:
+	//   1. ORDER BY needs a CASE-WHEN-per-sort-key dance to stay parameterised,
+	//      which forces a full sort over the entire filtered CTE before LIMIT
+	//      can fire — defeats any index-ordered scan + LIMIT pushdown.
+	//      Building "ORDER BY <whitelisted column> <dir>" in Go lets the
+	//      planner drive output from the existing btree on packages(name)
+	//      (and similar) for typical queries, killing the parallel-sort path
+	//      that blows Docker's default /dev/shm.
+	//   2. The host_packages EXISTS / NOT EXISTS branches are only relevant
+	//      when the corresponding filter param is set; emitting them
+	//      conditionally in Go produces a much tighter predicate that the
+	//      planner can prune cheaply.
+	// Per-package counters still come from mv_package_stats (refreshed every
+	// ~2 min by an asynq scheduler — see TypePackageStatsRefresh) so we avoid
+	// per-request aggregation over host_packages.
+	// (Removed) GetHostPackageStatsByPackageIDs / GetUpdatesCountByPackageIDs /
+	// GetSecurityCountByPackageIDs — superseded by mv_package_stats. The
+	// per-package counters returned to the Packages list page now come from
+	// ListPackages itself (which joins the matview), so the previous
+	// per-id aggregate round-trips are no longer needed.
 	GetHostPackagesWithHostsByPackageID(ctx context.Context, packageID string) ([]GetHostPackagesWithHostsByPackageIDRow, error)
 	GetHostPackagesWithPackages(ctx context.Context, hostID string) ([]GetHostPackagesWithPackagesRow, error)
 	GetHostRefsForPackageIDs(ctx context.Context, arg GetHostRefsForPackageIDsParams) ([]GetHostRefsForPackageIDsRow, error)
@@ -255,7 +318,15 @@ type Querier interface {
 	GetHostWindowsUpdates(ctx context.Context, hostID string) ([]GetHostWindowsUpdatesRow, error)
 	GetHostsByIDs(ctx context.Context, dollar_1 []string) ([]Host, error)
 	GetHostsForPackageTrends(ctx context.Context) ([]GetHostsForPackageTrendsRow, error)
+	// Paginated host list for the Hosts UI. Filtering and ordering happen
+	// over the full matching set, then LIMIT/OFFSET selects the current page.
+	// That keeps header sorting correct across all hosts, not just the page
+	// already loaded in the browser.
 	GetHostsWithCounts(ctx context.Context, arg GetHostsWithCountsParams) ([]GetHostsWithCountsRow, error)
+	// Fast path for host-column sorting: order/page hosts first, then aggregate
+	// package counts only for the visible page. Package-count sorting uses
+	// GetHostsWithCounts so the sort still applies across the full filtered set.
+	GetHostsWithPageCounts(ctx context.Context, arg GetHostsWithPageCountsParams) ([]GetHostsWithPageCountsRow, error)
 	// Images
 	GetImageByID(ctx context.Context, id string) (DockerImage, error)
 	GetImageIDByRepositoryTagImageID(ctx context.Context, arg GetImageIDByRepositoryTagImageIDParams) (string, error)
@@ -268,6 +339,7 @@ type Querier interface {
 	GetLatestComplianceScanByHost(ctx context.Context, hostID string) (GetLatestComplianceScanByHostRow, error)
 	GetLatestComplianceScanByHostAndType(ctx context.Context, arg GetLatestComplianceScanByHostAndTypeParams) (GetLatestComplianceScanByHostAndTypeRow, error)
 	GetLatestSystemStatistics(ctx context.Context) (GetLatestSystemStatisticsRow, error)
+	GetNavigationStats(ctx context.Context) (GetNavigationStatsRow, error)
 	// Networks
 	GetNetworkByID(ctx context.Context, id string) (DockerNetwork, error)
 	GetNetworksByHostID(ctx context.Context, hostID string) ([]DockerNetwork, error)
@@ -290,12 +362,12 @@ type Querier interface {
 	GetRecentComplianceScans(ctx context.Context) ([]GetRecentComplianceScansRow, error)
 	GetRecentHosts(ctx context.Context, limit int32) ([]GetRecentHostsRow, error)
 	GetRecentUsers(ctx context.Context, limit int32) ([]GetRecentUsersRow, error)
+	GetRepoCountsForRepos(ctx context.Context, dollar_1 []string) ([]GetRepoCountsForReposRow, error)
 	GetRepositoryByID(ctx context.Context, id string) (Repository, error)
 	GetRepositoryForDelete(ctx context.Context, id string) (GetRepositoryForDeleteRow, error)
 	GetRolePermissions(ctx context.Context, role string) (RolePermission, error)
 	GetRuleAggregationsFromScans(ctx context.Context, arg GetRuleAggregationsFromScansParams) ([]GetRuleAggregationsFromScansRow, error)
 	GetScheduledReportByID(ctx context.Context, id string) (ScheduledReport, error)
-	GetSecurityCountByPackageIDs(ctx context.Context, arg GetSecurityCountByPackageIDsParams) ([]GetSecurityCountByPackageIDsRow, error)
 	GetSessionByID(ctx context.Context, arg GetSessionByIDParams) (UserSession, error)
 	GetSessionByRefreshToken(ctx context.Context, refreshToken string) (UserSession, error)
 	GetSourceReposByPackageIDs(ctx context.Context, arg GetSourceReposByPackageIDsParams) ([]GetSourceReposByPackageIDsRow, error)
@@ -304,10 +376,9 @@ type Querier interface {
 	GetTopFailingRulesFromScans(ctx context.Context, dollar_1 []string) ([]GetTopFailingRulesFromScansRow, error)
 	GetTopWarningRulesFromScans(ctx context.Context, dollar_1 []string) ([]GetTopWarningRulesFromScansRow, error)
 	GetUpdateCountsByImageIDs(ctx context.Context, dollar_1 []string) ([]GetUpdateCountsByImageIDsRow, error)
-	GetUpdateHistory(ctx context.Context, arg GetUpdateHistoryParams) ([]UpdateHistory, error)
+	GetUpdateHistory(ctx context.Context, arg GetUpdateHistoryParams) ([]GetUpdateHistoryRow, error)
 	GetUpdateHistoryDaily(ctx context.Context, arg GetUpdateHistoryDailyParams) ([]GetUpdateHistoryDailyRow, error)
 	GetUpdateTrends(ctx context.Context, timestamp pgtype.Timestamp) ([]GetUpdateTrendsRow, error)
-	GetUpdatesCountByPackageIDs(ctx context.Context, arg GetUpdatesCountByPackageIDsParams) ([]GetUpdatesCountByPackageIDsRow, error)
 	GetUserByDiscordID(ctx context.Context, discordID *string) (User, error)
 	GetUserByDiscordIDOrEmail(ctx context.Context, arg GetUserByDiscordIDOrEmailParams) (User, error)
 	GetUserByEmail(ctx context.Context, lower string) (User, error)
@@ -331,11 +402,18 @@ type Querier interface {
 	InsertReleaseNotesAcceptance(ctx context.Context, arg InsertReleaseNotesAcceptanceParams) (string, error)
 	InsertScheduledReportRun(ctx context.Context, arg InsertScheduledReportRunParams) (ScheduledReportRun, error)
 	InsertSystemStatistics(ctx context.Context, arg InsertSystemStatisticsParams) error
+	// Persists a single agent activity row for the per-host Agent Activity feed.
+	// report_type discriminates 'full' / 'partial' / 'ping' / 'docker' / 'compliance'.
+	// sections_sent / sections_unchanged drive the "Updated / Skipped" chip pair in
+	// the UI (legacy rows pre-000043 stay at the column defaults so the UI shows
+	// "—" for them). agent_execution_ms is the agent-side data-collection time
+	// shipped on the wire; nullable for older agents.
 	InsertUpdateHistory(ctx context.Context, arg InsertUpdateHistoryParams) error
 	ListActiveAlertsByType(ctx context.Context, type_ string) ([]ListActiveAlertsByTypeRow, error)
 	ListActiveComplianceScans(ctx context.Context) ([]ListActiveComplianceScansRow, error)
 	ListActivePatchRuns(ctx context.Context) ([]ListActivePatchRunsRow, error)
 	ListActiveUsers(ctx context.Context) ([]User, error)
+	ListAgentActivity(ctx context.Context, arg ListAgentActivityParams) ([]ListAgentActivityRow, error)
 	ListAlertActions(ctx context.Context) ([]AlertAction, error)
 	ListAlertConfig(ctx context.Context) ([]ListAlertConfigRow, error)
 	ListAlertHistoryByAlertID(ctx context.Context, alertID string) ([]ListAlertHistoryByAlertIDRow, error)
@@ -350,8 +428,11 @@ type Querier interface {
 	ListContainers(ctx context.Context, arg ListContainersParams) ([]DockerContainer, error)
 	ListDashboardPreferencesByUserID(ctx context.Context, userID string) ([]DashboardPreference, error)
 	ListDockerHostsPaginated(ctx context.Context, arg ListDockerHostsPaginatedParams) ([]ListDockerHostsPaginatedRow, error)
+	ListExistingHostApiIDs(ctx context.Context, dollar_1 []string) ([]string, error)
+	ListHostApiIDs(ctx context.Context) ([]string, error)
 	ListHostGroups(ctx context.Context) ([]HostGroup, error)
 	ListHostGroupsWithHostCount(ctx context.Context) ([]ListHostGroupsWithHostCountRow, error)
+	ListHostOptions(ctx context.Context, arg ListHostOptionsParams) ([]ListHostOptionsRow, error)
 	ListHosts(ctx context.Context) ([]Host, error)
 	ListHostsForComplianceDashboard(ctx context.Context) ([]ListHostsForComplianceDashboardRow, error)
 	ListHostsForPackage(ctx context.Context, arg ListHostsForPackageParams) ([]ListHostsForPackageRow, error)
@@ -368,7 +449,6 @@ type Querier interface {
 	ListOrphanedImages(ctx context.Context) ([]ListOrphanedImagesRow, error)
 	ListOrphanedPackages(ctx context.Context) ([]ListOrphanedPackagesRow, error)
 	ListOrphanedRepositories(ctx context.Context) ([]ListOrphanedRepositoriesRow, error)
-	ListPackages(ctx context.Context, arg ListPackagesParams) ([]ListPackagesRow, error)
 	// patch_policies
 	ListPatchPolicies(ctx context.Context) ([]PatchPolicy, error)
 	ListPatchPolicyAssignments(ctx context.Context, arg ListPatchPolicyAssignmentsParams) ([]PatchPolicyAssignment, error)
@@ -389,7 +469,7 @@ type Querier interface {
 	ListPatchRunsOrderByStatus(ctx context.Context, arg ListPatchRunsOrderByStatusParams) ([]ListPatchRunsOrderByStatusRow, error)
 	ListPatchRunsOrderByStatusDesc(ctx context.Context, arg ListPatchRunsOrderByStatusDescParams) ([]ListPatchRunsOrderByStatusDescRow, error)
 	ListRecentPatchRuns(ctx context.Context, limit int32) ([]ListRecentPatchRunsRow, error)
-	ListRepositories(ctx context.Context, arg ListRepositoriesParams) ([]Repository, error)
+	ListRepositories(ctx context.Context, arg ListRepositoriesParams) ([]ListRepositoriesRow, error)
 	ListRoles(ctx context.Context) ([]RolePermission, error)
 	ListScheduledReports(ctx context.Context) ([]ScheduledReport, error)
 	ListScheduledReportsDue(ctx context.Context, nextRunAt pgtype.Timestamp) ([]ScheduledReport, error)
@@ -398,9 +478,22 @@ type Querier interface {
 	ListStalledComplianceScansWithDetails(ctx context.Context, startedAt pgtype.Timestamp) ([]ListStalledComplianceScansWithDetailsRow, error)
 	ListSystemStatisticsByDateRange(ctx context.Context, arg ListSystemStatisticsByDateRangeParams) ([]SystemStatistic, error)
 	ListTrustedDevicesForUser(ctx context.Context, userID string) ([]UserTrustedDevice, error)
-	ListUpdateHistoryByDateRange(ctx context.Context, arg ListUpdateHistoryByDateRangeParams) ([]UpdateHistory, error)
+	ListUpdateHistoryByDateRange(ctx context.Context, arg ListUpdateHistoryByDateRangeParams) ([]ListUpdateHistoryByDateRangeRow, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]User, error)
 	ListVolumes(ctx context.Context, arg ListVolumesParams) ([]DockerVolume, error)
+	// User-initiated cancel from StopRun. Deliberately does NOT touch shell_output
+	// so progress chunks the agent appended between our read and write are preserved.
+	// Same status guard as UpdatePatchRunCancelled.
+	MarkPatchRunCancelledByUser(ctx context.Context, arg MarkPatchRunCancelledByUserParams) (int64, error)
+	MarkPatchRunsAgentDisconnected(ctx context.Context, arg MarkPatchRunsAgentDisconnectedParams) (int64, error)
+	// Stall sweep. The predicate is deliberately "no activity since", NOT "started
+	// before": every progress chunk the agent streams bumps updated_at (see
+	// UpdatePatchRunProgress), so a long-but-healthy run (dist-upgrade on slow
+	// disk routinely exceeds 30 minutes) keeps refreshing its own liveness while a
+	// genuinely wedged run does not. Using elapsed-since-start here would mark
+	// every long run timed_out while it was still working and discard the real
+	// outcome the agent later reports.
+	MarkPatchRunsTimedOut(ctx context.Context, arg MarkPatchRunsTimedOutParams) (int64, error)
 	MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) error
 	RevokeAllSessionsForUser(ctx context.Context, userID string) error
 	RevokeAllSessionsForUserExcept(ctx context.Context, arg RevokeAllSessionsForUserExceptParams) error
@@ -424,16 +517,21 @@ type Querier interface {
 	UpdateHostAutoUpdate(ctx context.Context, arg UpdateHostAutoUpdateParams) error
 	UpdateHostComplianceDefaultProfile(ctx context.Context, arg UpdateHostComplianceDefaultProfileParams) error
 	UpdateHostComplianceEnabled(ctx context.Context, arg UpdateHostComplianceEnabledParams) error
+	UpdateHostComplianceHash(ctx context.Context, arg UpdateHostComplianceHashParams) error
 	UpdateHostComplianceMode(ctx context.Context, arg UpdateHostComplianceModeParams) error
 	UpdateHostComplianceScannerStatus(ctx context.Context, arg UpdateHostComplianceScannerStatusParams) error
 	UpdateHostComplianceScanners(ctx context.Context, arg UpdateHostComplianceScannersParams) error
 	UpdateHostConnection(ctx context.Context, arg UpdateHostConnectionParams) error
 	UpdateHostDockerEnabled(ctx context.Context, arg UpdateHostDockerEnabledParams) error
+	UpdateHostDockerHash(ctx context.Context, arg UpdateHostDockerHashParams) error
 	UpdateHostDownAlerts(ctx context.Context, arg UpdateHostDownAlertsParams) error
 	UpdateHostFriendlyName(ctx context.Context, arg UpdateHostFriendlyNameParams) error
 	// Host report/update flow (agent sends package and system info)
 	UpdateHostFromReport(ctx context.Context, arg UpdateHostFromReportParams) error
 	UpdateHostGroup(ctx context.Context, arg UpdateHostGroupParams) error
+	// Ping-side write of volatile metrics. Each column is COALESCE-guarded so a
+	// ping that omits a metric leaves the previous value intact.
+	UpdateHostMetrics(ctx context.Context, arg UpdateHostMetricsParams) error
 	UpdateHostNotes(ctx context.Context, arg UpdateHostNotesParams) error
 	// Records the outcome of a Windows Update installation for a specific host+GUID combination.
 	UpdateHostPackageWUAInstallResult(ctx context.Context, arg UpdateHostPackageWUAInstallResultParams) error
@@ -447,17 +545,40 @@ type Querier interface {
 	UpdateNotificationRoute(ctx context.Context, arg UpdateNotificationRouteParams) (NotificationRoute, error)
 	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error
 	UpdatePatchPolicy(ctx context.Context, arg UpdatePatchPolicyParams) error
-	// Terminal cancelled state when a running patch is stopped via patch_run_stop.
+	// Terminal cancelled state set by the agent's late "cancelled" stage report.
 	// Replaces shell_output with the full captured output so rollback/cleanup text is preserved.
-	UpdatePatchRunCancelled(ctx context.Context, arg UpdatePatchRunCancelledParams) error
+	// :execrows so the handler can detect concurrent termination (rows=0) cleanly.
+	// agent_disconnected and timed_out are intentionally NOT in the guard so a
+	// recovering agent that posts a late "cancelled" can still unwedge the row.
+	// 'cancelled' STAYS in the guard: a DB-first user cancel already owns the row,
+	// and the fields-only UpdatePatchRunCancelledOutput below is the path that
+	// lets the agent's authoritative output land on it without a status change.
+	UpdatePatchRunCancelled(ctx context.Context, arg UpdatePatchRunCancelledParams) (int64, error)
+	// Fields-only follow-up for the DB-first user-cancel path
+	// (MarkPatchRunCancelledByUser sets status='cancelled' immediately, so the
+	// agent's subsequent "cancelled" stage report is blocked by the status guard
+	// on UpdatePatchRunCancelled). This id-scoped update writes ONLY the agent's
+	// authoritative captured output; it never changes status, so a 'completed'
+	// report can still not overwrite a cancelled run. error_message is preserved
+	// when already set (the user-initiated reason is the more informative one)
+	// and filled in from the agent only when the column is still NULL.
+	UpdatePatchRunCancelledOutput(ctx context.Context, arg UpdatePatchRunCancelledOutputParams) (int64, error)
 	// REPLACE (not append) - agent streams progress chunks then sends final full output.
+	// agent_disconnected and timed_out are intentionally NOT in the guard: both are
+	// server-side "we gave up waiting" markers, so a recovering agent posting a late
+	// genuine "completed" must be able to unwedge the row and deliver the real output.
 	UpdatePatchRunCompleted(ctx context.Context, arg UpdatePatchRunCompletedParams) error
 	// REPLACE (not append) - agent streams progress chunks then sends final full output.
+	// agent_disconnected and timed_out are intentionally NOT in the guard so a
+	// recovering agent that posts a late "failed" can still unwedge the row.
 	UpdatePatchRunFailed(ctx context.Context, arg UpdatePatchRunFailedParams) error
 	UpdatePatchRunPackagesAffected(ctx context.Context, arg UpdatePatchRunPackagesAffectedParams) error
 	UpdatePatchRunProgress(ctx context.Context, arg UpdatePatchRunProgressParams) error
 	UpdatePatchRunScheduledAt(ctx context.Context, arg UpdatePatchRunScheduledAtParams) error
 	// Clear dry-run output fields so real-run output starts fresh.
+	// Status guard prevents an in-flight agent message from clobbering an
+	// already-terminated run (cancelled/timed_out/etc.). agent_disconnected is
+	// intentionally NOT in the guard so a recovering agent can unwedge the row.
 	UpdatePatchRunStarted(ctx context.Context, id string) error
 	UpdatePatchRunStatus(ctx context.Context, arg UpdatePatchRunStatusParams) error
 	// Agent streams progress chunks during the run, then sends the final authoritative

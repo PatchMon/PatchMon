@@ -2,12 +2,53 @@
 SELECT * FROM repositories WHERE id = $1;
 
 -- name: ListRepositories :many
-SELECT * FROM repositories r
+WITH filtered_repositories AS (
+    SELECT r.*
+    FROM repositories r
+    WHERE (sqlc.narg('host_id')::text IS NULL OR EXISTS (SELECT 1 FROM host_repositories hr WHERE hr.repository_id = r.id AND hr.host_id = sqlc.narg('host_id')))
+    AND (sqlc.narg('search')::text IS NULL OR r.name ILIKE '%' || sqlc.narg('search') || '%' OR r.url ILIKE '%' || sqlc.narg('search') || '%' OR r.distribution ILIKE '%' || sqlc.narg('search') || '%' OR COALESCE(r.description, '') ILIKE '%' || sqlc.narg('search') || '%')
+    AND (sqlc.narg('status')::text IS NULL OR (sqlc.narg('status') = 'active' AND r.is_active = true) OR (sqlc.narg('status') = 'inactive' AND r.is_active = false))
+    AND (sqlc.narg('type')::text IS NULL OR (sqlc.narg('type') = 'secure' AND r.is_secure = true) OR (sqlc.narg('type') = 'insecure' AND r.is_secure = false))
+),
+repo_counts AS (
+    SELECT hr.repository_id, COUNT(*)::int AS host_count
+    FROM host_repositories hr
+    JOIN filtered_repositories fr ON fr.id = hr.repository_id
+    GROUP BY hr.repository_id
+),
+enriched_repositories AS (
+    SELECT fr.*, COALESCE(rc.host_count, 0)::int AS host_count
+    FROM filtered_repositories fr
+    LEFT JOIN repo_counts rc ON rc.repository_id = fr.id
+)
+SELECT id, name, url, distribution, components, repo_type, is_active, is_secure, priority, description, created_at, updated_at
+FROM enriched_repositories
+ORDER BY
+    CASE WHEN sqlc.arg('sort_key')::text = 'name'         AND sqlc.arg('sort_dir')::text = 'asc'  THEN name END ASC,
+    CASE WHEN sqlc.arg('sort_key')::text = 'name'         AND sqlc.arg('sort_dir')::text = 'desc' THEN name END DESC,
+    CASE WHEN sqlc.arg('sort_key')::text = 'url'          AND sqlc.arg('sort_dir')::text = 'asc'  THEN url END ASC,
+    CASE WHEN sqlc.arg('sort_key')::text = 'url'          AND sqlc.arg('sort_dir')::text = 'desc' THEN url END DESC,
+    CASE WHEN sqlc.arg('sort_key')::text = 'distribution' AND sqlc.arg('sort_dir')::text = 'asc'  THEN distribution END ASC,
+    CASE WHEN sqlc.arg('sort_key')::text = 'distribution' AND sqlc.arg('sort_dir')::text = 'desc' THEN distribution END DESC,
+    CASE WHEN sqlc.arg('sort_key')::text = 'security'     AND sqlc.arg('sort_dir')::text = 'asc'  THEN is_secure END ASC,
+    CASE WHEN sqlc.arg('sort_key')::text = 'security'     AND sqlc.arg('sort_dir')::text = 'desc' THEN is_secure END DESC,
+    CASE WHEN sqlc.arg('sort_key')::text = 'status'       AND sqlc.arg('sort_dir')::text = 'asc'  THEN is_active END DESC,
+    CASE WHEN sqlc.arg('sort_key')::text = 'status'       AND sqlc.arg('sort_dir')::text = 'desc' THEN is_active END ASC,
+    CASE WHEN sqlc.arg('sort_key')::text = 'hostCount'    AND sqlc.arg('sort_dir')::text = 'asc'  THEN host_count END ASC,
+    CASE WHEN sqlc.arg('sort_key')::text = 'hostCount'    AND sqlc.arg('sort_dir')::text = 'desc' THEN host_count END DESC,
+    name ASC,
+    url ASC,
+    id ASC
+LIMIT sqlc.arg('row_limit')::int
+OFFSET sqlc.arg('row_offset')::int;
+
+-- name: CountRepositoriesForList :one
+SELECT COUNT(*)::int
+FROM repositories r
 WHERE (sqlc.narg('host_id')::text IS NULL OR EXISTS (SELECT 1 FROM host_repositories hr WHERE hr.repository_id = r.id AND hr.host_id = sqlc.narg('host_id')))
 AND (sqlc.narg('search')::text IS NULL OR r.name ILIKE '%' || sqlc.narg('search') || '%' OR r.url ILIKE '%' || sqlc.narg('search') || '%' OR r.distribution ILIKE '%' || sqlc.narg('search') || '%' OR COALESCE(r.description, '') ILIKE '%' || sqlc.narg('search') || '%')
 AND (sqlc.narg('status')::text IS NULL OR (sqlc.narg('status') = 'active' AND r.is_active = true) OR (sqlc.narg('status') = 'inactive' AND r.is_active = false))
-AND (sqlc.narg('type')::text IS NULL OR (sqlc.narg('type') = 'secure' AND r.is_secure = true) OR (sqlc.narg('type') = 'insecure' AND r.is_secure = false))
-ORDER BY r.name ASC, r.url ASC;
+AND (sqlc.narg('type')::text IS NULL OR (sqlc.narg('type') = 'secure' AND r.is_secure = true) OR (sqlc.narg('type') = 'insecure' AND r.is_secure = false));
 
 -- name: GetHostCountsForRepos :many
 SELECT hr.repository_id, h.id, h.friendly_name, h.status, hr.is_enabled, hr.last_checked
@@ -15,6 +56,16 @@ FROM host_repositories hr
 JOIN hosts h ON h.id = hr.host_id
 WHERE hr.repository_id = ANY($1::text[])
 ORDER BY hr.repository_id, h.friendly_name;
+
+-- name: GetRepoCountsForRepos :many
+SELECT hr.repository_id,
+    COUNT(*)::int AS host_count,
+    COUNT(*) FILTER (WHERE hr.is_enabled)::int AS enabled_host_count,
+    COUNT(*) FILTER (WHERE h.status = 'active')::int AS active_host_count
+FROM host_repositories hr
+JOIN hosts h ON h.id = hr.host_id
+WHERE hr.repository_id = ANY($1::text[])
+GROUP BY hr.repository_id;
 
 -- name: GetHostRepositoriesByHostID :many
 SELECT hr.id, hr.host_id, hr.repository_id, hr.is_enabled, hr.last_checked,

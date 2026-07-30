@@ -24,10 +24,24 @@ UPDATE hosts SET
     installed_kernel_version = COALESCE(sqlc.narg('installed_kernel_version')::text, installed_kernel_version),
     selinux_status = COALESCE(sqlc.narg('selinux_status')::text, selinux_status),
     system_uptime = COALESCE(sqlc.narg('system_uptime')::text, system_uptime),
+    boot_time = COALESCE(sqlc.narg('boot_time')::timestamptz, boot_time),
     load_average = COALESCE(sqlc.narg('load_average')::jsonb, load_average),
     needs_reboot = COALESCE(sqlc.narg('needs_reboot')::boolean, needs_reboot),
-    reboot_reason = sqlc.narg('reboot_reason'),
+    -- reboot_reason is only rewritten when this report also carries
+    -- needs_reboot. A hash-gated partial report never carries either (the ping
+    -- metrics path owns both fields), and reboot_reason has no COALESCE guard
+    -- of its own, so without this CASE a partial would NULL out a reason the
+    -- ping had just written correctly.
+    reboot_reason = CASE
+        WHEN sqlc.narg('needs_reboot')::boolean IS NULL THEN reboot_reason
+        ELSE sqlc.narg('reboot_reason')::text
+    END,
     package_manager = COALESCE(sqlc.narg('package_manager')::text, package_manager),
+    packages_hash = COALESCE(sqlc.narg('packages_hash')::text, packages_hash),
+    repos_hash = COALESCE(sqlc.narg('repos_hash')::text, repos_hash),
+    interfaces_hash = COALESCE(sqlc.narg('interfaces_hash')::text, interfaces_hash),
+    hostname_hash = COALESCE(sqlc.narg('hostname_hash')::text, hostname_hash),
+    last_full_report_at = COALESCE(sqlc.narg('last_full_report_at')::timestamp, last_full_report_at),
     awaiting_post_patch_report_run_id = NULL
 WHERE id = sqlc.arg('id');
 
@@ -175,5 +189,19 @@ FROM jsonb_to_recordset(sqlc.arg('payload')::jsonb)
 ORDER BY package_id;
 
 -- name: InsertUpdateHistory :exec
-INSERT INTO update_history (id, host_id, packages_count, security_count, total_packages, payload_size_kb, execution_time, timestamp, status, error_message)
-VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9);
+-- Persists a single agent activity row for the per-host Agent Activity feed.
+-- report_type discriminates 'full' / 'partial' / 'ping' / 'docker' / 'compliance'.
+-- sections_sent / sections_unchanged drive the "Updated / Skipped" chip pair in
+-- the UI (legacy rows pre-000043 stay at the column defaults so the UI shows
+-- "—" for them). agent_execution_ms is the agent-side data-collection time
+-- shipped on the wire; nullable for older agents.
+INSERT INTO update_history (
+    id, host_id, packages_count, security_count, total_packages,
+    payload_size_kb, execution_time, timestamp, status, error_message,
+    report_type, sections_sent, sections_unchanged, agent_execution_ms
+)
+VALUES (
+    $1, $2, $3, $4, $5,
+    $6, $7, NOW(), $8, $9,
+    $10, $11, $12, $13
+);

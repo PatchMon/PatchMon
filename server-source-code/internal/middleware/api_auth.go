@@ -11,6 +11,7 @@ import (
 
 	"log/slog"
 
+	"github.com/PatchMon/PatchMon/server-source-code/internal/clientip"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"golang.org/x/crypto/bcrypt"
@@ -153,24 +154,14 @@ func GetApiToken(ctx context.Context) *db.AutoEnrollmentToken {
 	return t
 }
 
-// clientIPFromRequest returns the client IP, respecting X-Forwarded-For when present.
+// clientIPFromRequest returns the client IP resolved by the RealIP middleware.
+//
+// It must not read X-Forwarded-For directly: the leftmost entry is
+// client-supplied, so IP allowlists built on it could be bypassed by sending
+// the header.
 func clientIPFromRequest(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.Index(xff, ","); i > 0 {
-			xff = strings.TrimSpace(xff[:i])
-		} else {
-			xff = strings.TrimSpace(xff)
-		}
-		if xff != "" {
-			if host, _, err := net.SplitHostPort(xff); err == nil {
-				return host
-			}
-			return xff
-		}
-	}
-	host, _, _ := net.SplitHostPort(r.RemoteAddr)
-	if host != "" {
-		return host
+	if ip := clientip.FromRequest(r); ip != "" {
+		return ip
 	}
 	return r.RemoteAddr
 }

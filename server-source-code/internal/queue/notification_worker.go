@@ -5,17 +5,14 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
-	"net/smtp"
 	"net/url"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -23,6 +20,7 @@ import (
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/mailer"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/google/uuid"
@@ -185,6 +183,33 @@ func nocMetaStr(m map[string]interface{}, key string) string {
 	return fmt.Sprint(v)
 }
 
+// nocFormatHostDownThreshold renders the host_down alert threshold for human
+// readers. Prefers `threshold_seconds` (added with the four-pill UI redesign,
+// alert_config metadata.threshold semantics moved to seconds with a 30s
+// default); falls back to legacy `threshold_minutes` for backwards-compat
+// metadata. Returns an empty string when neither is set.
+func nocFormatHostDownThreshold(m map[string]interface{}) string {
+	if secs := nocMetaStr(m, "threshold_seconds"); secs != "" && secs != "0" {
+		// nocMetaStr returns the JSON value via fmt.Sprint, so a JSON number
+		// becomes "30" or "30.0". Cheap parse, ignore failures.
+		var n int
+		if _, err := fmt.Sscanf(secs, "%d", &n); err == nil && n > 0 {
+			if n < 60 {
+				return fmt.Sprintf("%d seconds", n)
+			}
+			minutes := n / 60
+			if minutes == 1 {
+				return "1 minute"
+			}
+			return fmt.Sprintf("%d minutes", minutes)
+		}
+	}
+	if mins := nocMetaStr(m, "threshold_minutes"); mins != "" && mins != "0" {
+		return mins + " minutes"
+	}
+	return ""
+}
+
 // nocMetaStrSlice extracts a []string from metadata (stored as []interface{} after JSON round-trip).
 func nocMetaStrSlice(m map[string]interface{}, key string) []string {
 	v, ok := m[key]
@@ -308,8 +333,8 @@ func buildNOCFields(p notifications.NotificationDeliverPayload) []map[string]int
 		if lastUpdate := nocMetaStr(m, "last_update"); lastUpdate != "" {
 			addField("Last Seen", lastUpdate, true)
 		}
-		if threshold := nocMetaStr(m, "threshold_minutes"); threshold != "" && threshold != "0" {
-			addField("Threshold", threshold+" minutes", true)
+		if threshold := nocFormatHostDownThreshold(m); threshold != "" {
+			addField("Threshold", threshold, true)
 		}
 		if reason := nocMetaStr(m, "disconnect_reason"); reason != "" {
 			addField("Disconnect", reason, true)
@@ -317,7 +342,7 @@ func buildNOCFields(p notifications.NotificationDeliverPayload) []map[string]int
 
 	case p.EventType == "host_recovered":
 		addField("Host", nocMetaStr(m, "host_name"), true)
-		addField("Status", "🟢 RECOVERED", true)
+		addField("Status", "🟢 AGENT RECOVERED", true)
 
 	case p.EventType == "server_update" || p.EventType == "agent_update":
 		addField("Current Version", nocMetaStr(m, "current_version"), true)
@@ -450,14 +475,14 @@ func buildSlackNOCFields(p notifications.NotificationDeliverPayload) string {
 		addLine("Host", nocMetaStr(m, "host_name"))
 		addLine("Severity", severityEmoji(p.Severity)+" "+strings.ToUpper(p.Severity))
 		addLine("Last Seen", nocMetaStr(m, "last_update"))
-		if t := nocMetaStr(m, "threshold_minutes"); t != "" && t != "0" {
-			addLine("Threshold", t+" minutes")
+		if t := nocFormatHostDownThreshold(m); t != "" {
+			addLine("Threshold", t)
 		}
 		addLine("Disconnect", nocMetaStr(m, "disconnect_reason"))
 
 	case p.EventType == "host_recovered":
 		addLine("Host", nocMetaStr(m, "host_name"))
-		addLine("Status", "🟢 RECOVERED")
+		addLine("Status", "🟢 AGENT RECOVERED")
 
 	case p.EventType == "server_update" || p.EventType == "agent_update":
 		addLine("Current Version", nocMetaStr(m, "current_version"))
@@ -601,8 +626,13 @@ type emailConfig struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	From     string `json:"from"`
+	FromName string `json:"from_name"`
 	To       string `json:"to"`
-	UseTLS   bool   `json:"use_tls"`
+	// UseTLS is the legacy boolean preserved for backward compatibility on rows
+	// written before TLSMode existed. New code should set TLSMode and let
+	// mailer.ResolveMode pick the effective policy.
+	UseTLS  bool   `json:"use_tls"`
+	TLSMode string `json:"tls_mode"`
 }
 
 func (h *NotificationDeliverHandler) sendWebhook(ctx context.Context, plain string, p notifications.NotificationDeliverPayload) error {
@@ -721,7 +751,9 @@ func buildEmailHTML(p notifications.NotificationDeliverPayload) string {
 	case p.EventType == "host_down":
 		addRow("Host", nocMetaStr(m, "host_name"))
 		addRow("Last Seen", nocMetaStr(m, "last_update"))
-		addRow("Threshold", nocMetaStr(m, "threshold_minutes")+" minutes")
+		if t := nocFormatHostDownThreshold(m); t != "" {
+			addRow("Threshold", t)
+		}
 
 	case p.EventType == "host_recovered":
 		addRow("Host", nocMetaStr(m, "host_name"))
@@ -756,83 +788,31 @@ func (h *NotificationDeliverHandler) sendEmail(ctx context.Context, plain string
 		cfg.SMTPPort = 587
 	}
 	subject := fmt.Sprintf("[%s] %s", strings.ToUpper(p.Severity), p.Title)
-	// Sanitize subject to prevent SMTP header injection via \r\n in host names / alert titles.
-	subject = strings.NewReplacer("\r", "", "\n", "").Replace(subject)
-	html := buildEmailHTML(p)
-	msg := []byte(fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n%s",
-		cfg.From, cfg.To, subject, html))
-	addr := cfg.SMTPHost + ":" + strconv.Itoa(cfg.SMTPPort)
-	var auth smtp.Auth
-	if cfg.Username != "" {
-		auth = smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.SMTPHost)
-	}
-	tlsCfg := &tls.Config{ServerName: cfg.SMTPHost, MinVersion: tls.VersionTLS12}
+	htmlBody := buildEmailHTML(p)
 
-	// Plain TCP first, then:
-	// - use_tls=true and server offers STARTTLS: upgrade with STARTTLS (typical 587)
-	// - use_tls=true and no STARTTLS: retry with implicit TLS (e.g. wrong host/port 465 on 25/587)
-	// - use_tls=false: never call StartTLS even if the server advertises it (e.g. local relay)
-	c, conn, err := func() (*smtp.Client, net.Conn, error) {
-		plainConn, dialErr := net.DialTimeout("tcp", addr, 30*time.Second)
-		if dialErr != nil {
-			return nil, nil, dialErr
+	mode := mailer.ResolveMode(cfg.TLSMode, &cfg.UseTLS, cfg.SMTPPort)
+	mc := mailer.Config{
+		Host:     cfg.SMTPHost,
+		Port:     cfg.SMTPPort,
+		Username: cfg.Username,
+		Password: cfg.Password,
+		From:     cfg.From,
+		FromName: cfg.FromName,
+		TLSMode:  mode,
+	}
+	if err := mailer.Send(ctx, mc, mailer.Message{To: cfg.To, Subject: subject, HTMLBody: htmlBody}); err != nil {
+		var se *mailer.SendError
+		if errors.As(err, &se) && h.log != nil {
+			h.log.Warn("smtp send failed",
+				"stage", string(se.Stage),
+				"host", cfg.SMTPHost,
+				"port", cfg.SMTPPort,
+				"tls_mode", string(mode),
+				"error", se.Err)
 		}
-		client, clientErr := smtp.NewClient(plainConn, cfg.SMTPHost)
-		if clientErr != nil {
-			_ = plainConn.Close()
-			return nil, nil, clientErr
-		}
-		startTLS, _ := client.Extension("STARTTLS")
-		if startTLS && cfg.UseTLS {
-			if tlsErr := client.StartTLS(tlsCfg); tlsErr != nil {
-				_ = client.Close()
-				return nil, nil, tlsErr
-			}
-			return client, plainConn, nil
-		}
-		if cfg.UseTLS && !startTLS {
-			_ = client.Close()
-			tlsConn, tlsErr := tls.DialWithDialer(&net.Dialer{Timeout: 30 * time.Second}, "tcp", addr, tlsCfg)
-			if tlsErr != nil {
-				return nil, nil, tlsErr
-			}
-			client, clientErr = smtp.NewClient(tlsConn, cfg.SMTPHost)
-			if clientErr != nil {
-				_ = tlsConn.Close()
-				return nil, nil, clientErr
-			}
-			return client, tlsConn, nil
-		}
-		return client, plainConn, nil
-	}()
-	if err != nil {
 		return err
 	}
-	defer func() { _ = conn.Close() }()
-	defer func() { _ = c.Close() }()
-
-	if auth != nil {
-		if ok, _ := c.Extension("AUTH"); ok {
-			if err := c.Auth(auth); err != nil {
-				return err
-			}
-		}
-	}
-	if err := c.Mail(cfg.From); err != nil {
-		return err
-	}
-	if err := c.Rcpt(cfg.To); err != nil {
-		return err
-	}
-	w, err := c.Data()
-	if err != nil {
-		return err
-	}
-	_, err = w.Write(msg)
-	if err != nil {
-		return err
-	}
-	return w.Close()
+	return nil
 }
 
 // ntfyConfig holds the configuration for an ntfy destination.
@@ -942,13 +922,13 @@ func buildNtfyMessage(p notifications.NotificationDeliverPayload) string {
 		addLine("Host", nocMetaStr(m, "host_name"))
 		addLine("Severity", strings.ToUpper(p.Severity))
 		addLine("Last seen", nocMetaStr(m, "last_update"))
-		if t := nocMetaStr(m, "threshold_minutes"); t != "" && t != "0" {
-			addLine("Threshold", t+" minutes")
+		if t := nocFormatHostDownThreshold(m); t != "" {
+			addLine("Threshold", t)
 		}
 		addLine("Disconnect", nocMetaStr(m, "disconnect_reason"))
 	case p.EventType == "host_recovered":
 		addLine("Host", nocMetaStr(m, "host_name"))
-		addLine("Status", "RECOVERED")
+		addLine("Status", "AGENT RECOVERED")
 	case p.EventType == "server_update" || p.EventType == "agent_update":
 		addLine("Current version", nocMetaStr(m, "current_version"))
 		addLine("Available version", nocMetaStr(m, "latest_version"))

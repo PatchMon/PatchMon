@@ -201,8 +201,21 @@ jobs:
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
           tags: ${{ steps.meta-harbor.outputs.tags }}
           labels: ${{ steps.meta-harbor.outputs.labels }}
+          # Reads the shared cache but deliberately never writes it.
+          #
+          # On pull_request_target the Actions runtime token is read-only
+          # ("Actions runtime token ACs: refs/heads/main: read"), so a gha cache
+          # export fails the whole step with "failed to reserve cache" — after
+          # the image has already been built and pushed, which made the job look
+          # like a build failure when it was not.
+          #
+          # On main and tags the GHCR step above already exports to this exact
+          # scope from an identical build, so exporting again here would just
+          # repeat ~50s of "preparing build cache for export" for no benefit.
+          #
+          # Either way PR builds still get fast cache HITS from main via
+          # cache-from; they simply do not write back.
           cache-from: type=gha,scope=server
-          cache-to: type=gha,mode=max,scope=server
           provenance: false
           # Force gzip on all layers (including base image layers from dhi.io/alpine-base
           # which ship as zstd). Without force-compression, mixed zstd/gzip manifests

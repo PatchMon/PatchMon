@@ -10,14 +10,9 @@ import { useMemo, useRef } from "react";
 import { Bar } from "react-chartjs-2";
 import { Link, useNavigate } from "react-router-dom";
 import { useTheme } from "../../../contexts/ThemeContext";
+import { formatAlertType } from "../../../utils/alertLabels";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip);
-
-const TYPE_LABELS = {
-	host_down: "Host Down",
-	server_update: "Server Update",
-	agent_update: "Agent Update",
-};
 
 const TYPE_COLORS = {
 	host_down: "#ef4444",
@@ -39,9 +34,7 @@ const AlertsByType = ({ alerts }) => {
 
 		// Sort by count descending
 		const sorted = Object.entries(type_map).sort((a, b) => b[1] - a[1]);
-		const _labels = sorted.map(
-			([type]) => TYPE_LABELS[type] || type.replace(/_/g, " "),
-		);
+		const _labels = sorted.map(([type]) => formatAlertType(type));
 		const _counts = sorted.map(([, count]) => count);
 		const _colors = sorted.map(([type]) => TYPE_COLORS[type] || "#6b7280");
 		const _keys = sorted.map(([type]) => type);

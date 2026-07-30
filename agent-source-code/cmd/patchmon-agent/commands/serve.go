@@ -232,7 +232,10 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 
 	// Send startup ping to notify server that agent has started
 	logger.Info("🚀 Agent starting up, notifying server...")
-	if _, err := httpClient.Ping(ctx); err != nil {
+	// Startup ping uses nil request body — no hashes available yet (collectors
+	// haven't run), and metrics will ride on the first tick's check-in.
+	// Server treats this empty-body ping as a legacy heartbeat.
+	if _, err := httpClient.Ping(ctx, nil); err != nil {
 		logger.WithError(err).Warn("startup ping failed, will retry")
 	} else {
 		logger.Info("✅ Startup notification sent to server")
@@ -282,6 +285,10 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 	// Track whether offset period has passed
 	offsetPassed := false
 
+	// Counts periodic ticks that actually ran a check-in, so every
+	// forcedFullReportInterval-th one can force a full report.
+	var tickCount uint64
+
 	// Track current interval for offset recalculation on updates
 	currentInterval := intervalMinutes
 
@@ -302,10 +309,21 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 			offsetPassed = true
 			logger.Debug("Offset period completed, periodic reports will now start")
 		case <-ticker.C:
-			// Only process ticker events after offset has passed
+			// Only process ticker events after offset has passed.
+			//
+			// Periodic ticks use hash-gated check-in: the agent ships
+			// per-section content hashes + volatile metrics on /hosts/ping,
+			// then sends a partial /hosts/update only for sections the
+			// server reports stale. In steady state this collapses each
+			// hourly cycle from ~2 MB to ~1 KB.
+			//
+			// Every forcedFullReportInterval ticks the agent sends a full
+			// report regardless of the hash compare, so a desynchronised
+			// hash cannot leave a host silently stale indefinitely.
 			if offsetPassed {
-				if err := sendReport(false); err != nil {
-					logger.WithError(err).Warn("periodic report failed")
+				tickCount++
+				if err := runCheckIn(ctx, shouldForceFullReport(tickCount)); err != nil {
+					logger.WithError(err).Warn("periodic check-in failed")
 				}
 			}
 		case m := <-messages:

@@ -36,6 +36,8 @@ const TERMINAL_STATUSES = new Set([
 	"cancelled",
 	"validated",
 	"dry_run_completed",
+	"timed_out",
+	"agent_disconnected",
 ]);
 
 // PostPatchReportPill renders one of two pills next to the run status:
@@ -174,8 +176,14 @@ const RunDetail = () => {
 	const handleConfirmStop = async () => {
 		setStopError(null);
 		try {
-			await stopRunMutation.mutateAsync(id);
+			const result = await stopRunMutation.mutateAsync(id);
 			setStopConfirmOpen(false);
+			const cancelledVia = result?.cancelled_via;
+			if (cancelledVia === "db_only") {
+				toast.success("Run cancelled (agent was offline)");
+			} else {
+				toast.success("Run cancelled");
+			}
 		} catch (err) {
 			const msg =
 				err?.response?.data?.error ||

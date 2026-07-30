@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/google/uuid"
 )
 
@@ -106,19 +108,46 @@ type ReportPayload struct {
 	InstalledKernelVersion string             `json:"installedKernelVersion"`
 	SELinuxStatus          string             `json:"selinuxStatus"`
 	SystemUptime           string             `json:"systemUptime"`
-	LoadAverage            []float64          `json:"loadAverage"`
-	CPUModel               string             `json:"cpuModel"`
-	CPUCores               int                `json:"cpuCores"`
-	RAMInstalled           float64            `json:"ramInstalled"`
-	SwapSize               float64            `json:"swapSize"`
-	DiskDetails            json.RawMessage    `json:"diskDetails"`
-	GatewayIP              string             `json:"gatewayIp"`
-	DNSServers             []string           `json:"dnsServers"`
-	NetworkInterfaces      json.RawMessage    `json:"networkInterfaces"`
-	ExecutionTime          float64            `json:"executionTime"`
-	NeedsReboot            bool               `json:"needsReboot"`
-	RebootReason           string             `json:"rebootReason"`
-	PackageManager         string             `json:"packageManager"`
+	// BootTime, when present, is the host's boot instant (UTC) as collected
+	// by the agent. Persists to hosts.boot_time so the frontend can compute
+	// live uptime. Agents pre-dating this field will omit it.
+	BootTime          *time.Time      `json:"bootTime,omitempty"`
+	LoadAverage       []float64       `json:"loadAverage"`
+	CPUModel          string          `json:"cpuModel"`
+	CPUCores          int             `json:"cpuCores"`
+	RAMInstalled      float64         `json:"ramInstalled"`
+	SwapSize          float64         `json:"swapSize"`
+	DiskDetails       json.RawMessage `json:"diskDetails"`
+	GatewayIP         string          `json:"gatewayIp"`
+	DNSServers        []string        `json:"dnsServers"`
+	NetworkInterfaces json.RawMessage `json:"networkInterfaces"`
+	ExecutionTime     float64         `json:"executionTime"`
+	NeedsReboot       bool            `json:"needsReboot"`
+	RebootReason      string          `json:"rebootReason"`
+	PackageManager    string          `json:"packageManager"`
+	// Sections, when non-nil, restricts which top-level blocks the server
+	// processes. Empty / absent means "full report" for backwards compatibility
+	// with old agents.
+	Sections []string `json:"sections,omitempty"`
+	// Hashes carries the agent-computed canonical hashes for the sections it
+	// included. Server validates them against its own canonicalisation and
+	// stores them on the host row so the next ping can be hash-gated.
+	Hashes ReportHashes `json:"hashes,omitempty"`
+	// AgentExecutionMs is the agent-side data-collection wall-clock time in
+	// milliseconds. Optional (older agents may omit it); when present it is
+	// stored on the matching update_history row so the Agent Activity UI can
+	// show "agent took N ms" alongside the server-processing duration.
+	AgentExecutionMs *int `json:"agentExecutionMs,omitempty"`
+}
+
+// ReportHashes is the four "main report" canonical hashes the agent ships
+// alongside a (possibly partial) /hosts/update payload. Docker and compliance
+// hashes flow through their own endpoints — see the dedicated handlers.
+type ReportHashes struct {
+	PackagesHash   string `json:"packagesHash,omitempty"`
+	ReposHash      string `json:"reposHash,omitempty"`
+	InterfacesHash string `json:"interfacesHash,omitempty"`
+	HostnameHash   string `json:"hostnameHash,omitempty"`
 }
 
 // ProcessReportResult is the result of processing a host report.
@@ -126,6 +155,138 @@ type ProcessReportResult struct {
 	PackagesProcessed int
 	UpdatesAvailable  int
 	SecurityUpdates   int
+}
+
+// AgentActivityInsert is the thin set of fields the synchronous "side-channel"
+// handlers (ping, docker integration, compliance scan) write to update_history
+// for the Agent Activity feed. The full /hosts/update path goes through
+// ProcessReport directly and uses its own InsertUpdateHistory call inside the
+// transaction.
+type AgentActivityInsert struct {
+	HostID            string
+	ReportType        string // "ping" | "docker" | "compliance"
+	SectionsSent      []string
+	SectionsUnchanged []string
+	PayloadSizeKb     *float64
+	ServerProcessing  *float64 // store unit is seconds (matches execution_time legacy)
+	AgentExecutionMs  *int
+	Status            string  // "success" | "error"
+	ErrorMessage      *string // optional human-readable failure reason
+}
+
+// InsertActivityRow inserts a single non-/hosts/update agent comm row into
+// update_history. Used by the ping handler, docker integration handler, and
+// compliance handler so the Agent Activity feed shows every cycle (not just
+// full/partial reports). Failure here is intentionally non-fatal at the call
+// site — the activity row is a UI nicety, not part of the core data path.
+func (s *ReportStore) InsertActivityRow(ctx context.Context, in AgentActivityInsert) error {
+	d := s.db.DB(ctx)
+	sectionsSent := in.SectionsSent
+	if sectionsSent == nil {
+		sectionsSent = []string{}
+	}
+	sectionsUnchanged := in.SectionsUnchanged
+	if sectionsUnchanged == nil {
+		sectionsUnchanged = []string{}
+	}
+	var agentExec *int32
+	if in.AgentExecutionMs != nil {
+		v := int32(*in.AgentExecutionMs)
+		agentExec = &v
+	}
+	return d.Queries.InsertUpdateHistory(ctx, db.InsertUpdateHistoryParams{
+		ID:                uuid.New().String(),
+		HostID:            in.HostID,
+		PackagesCount:     0,
+		SecurityCount:     0,
+		TotalPackages:     nil,
+		PayloadSizeKb:     in.PayloadSizeKb,
+		ExecutionTime:     in.ServerProcessing,
+		Status:            in.Status,
+		ErrorMessage:      in.ErrorMessage,
+		ReportType:        in.ReportType,
+		SectionsSent:      sectionsSent,
+		SectionsUnchanged: sectionsUnchanged,
+		AgentExecutionMs:  agentExec,
+	})
+}
+
+// ReportSections selects which top-level blocks ProcessReport will write.
+// Empty (zero value) means "everything" — used by old agents whose payloads
+// have no Sections discriminator.
+type ReportSections struct {
+	Packages   bool
+	Repos      bool
+	Interfaces bool
+	Hostname   bool
+}
+
+// FullReport is the all-true ReportSections used for backwards-compatible
+// full-payload reports.
+func FullReport() ReportSections {
+	return ReportSections{
+		Packages:   true,
+		Repos:      true,
+		Interfaces: true,
+		Hostname:   true,
+	}
+}
+
+// SectionsFromList parses a section-name list (closed set per
+// models.AllSections) into a ReportSections struct. Unknown names are
+// silently ignored — caller should pre-validate against AllSections.
+func SectionsFromList(names []string) ReportSections {
+	var s ReportSections
+	for _, n := range names {
+		switch n {
+		case "packages":
+			s.Packages = true
+		case "repos":
+			s.Repos = true
+		case "interfaces":
+			s.Interfaces = true
+		case "hostname":
+			s.Hostname = true
+		}
+	}
+	return s
+}
+
+// mainSectionsFromSections returns the section identifiers (closed set) the
+// agent shipped fresh data for. Used to populate update_history.sections_sent
+// for the Agent Activity feed.
+func mainSectionsFromSections(s ReportSections) []string {
+	out := []string{}
+	if s.Packages {
+		out = append(out, "packages")
+	}
+	if s.Repos {
+		out = append(out, "repos")
+	}
+	if s.Interfaces {
+		out = append(out, "interfaces")
+	}
+	if s.Hostname {
+		out = append(out, "hostname")
+	}
+	return out
+}
+
+// mainSectionsUnchanged returns the main-report section identifiers NOT in
+// `sent`. Drives the "Skipped" chip rendering in the Agent Activity UI.
+func mainSectionsUnchanged(sent []string) []string {
+	all := []string{"packages", "repos", "interfaces", "hostname"}
+	in := make(map[string]struct{}, len(sent))
+	for _, s := range sent {
+		in[s] = struct{}{}
+	}
+	out := make([]string, 0, len(all))
+	for _, s := range all {
+		if _, ok := in[s]; !ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // sortReportInputs sorts payload.Packages and payload.Repositories in-place
@@ -159,8 +320,17 @@ func sortReportInputs(payload *ReportPayload) {
 	})
 }
 
-// ProcessReport processes an agent report: updates host, replaces packages, records history.
-func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload *ReportPayload) (*ProcessReportResult, error) {
+// ProcessReport processes an agent report: updates host, replaces packages,
+// records history. The sections argument restricts which top-level blocks
+// the function actually writes — useful for hash-gated partial reports.
+// Pass FullReport() for the legacy full-report behaviour.
+//
+// hashes carries the agent-supplied canonical hashes for sections it
+// included; the handler is responsible for validating these against its own
+// canonicalisation BEFORE calling ProcessReport. Hashes for sections not in
+// `sections` are written as nil (preserving the existing column value via
+// COALESCE in the UpdateHostFromReport SQL).
+func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload *ReportPayload, sections ReportSections, hashes ReportHashes) (*ProcessReportResult, error) {
 	d := s.db.DB(ctx)
 	securityCount := 0
 	updatesCount := 0
@@ -238,12 +408,13 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 	if payload.OSVersion != "" {
 		params.OsVersion = &payload.OSVersion
 	}
-	if payload.Hostname != "" {
+	if sections.Hostname && payload.Hostname != "" {
 		params.Hostname = &payload.Hostname
 	}
 	// If host has a primary interface set, derive IP from that interface in the report's network_interfaces.
-	// Otherwise use payload.IP as before.
-	if payload.IP != "" || len(networkInterfaces) > 0 {
+	// Otherwise use payload.IP as before. Only runs when interfaces section is
+	// being written; partial reports without interfaces leave hosts.ip alone.
+	if sections.Interfaces && (payload.IP != "" || len(networkInterfaces) > 0) {
 		derivedIP := ""
 		host, err := d.Queries.GetHostByID(ctx, hostID)
 		if err == nil && host.PrimaryInterface != nil && *host.PrimaryInterface != "" && len(networkInterfaces) > 0 {
@@ -281,10 +452,10 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 	if payload.GatewayIP != "" {
 		params.GatewayIp = &payload.GatewayIP
 	}
-	if len(dnsServers) > 0 {
+	if sections.Interfaces && len(dnsServers) > 0 {
 		params.DnsServers = dnsServers
 	}
-	if len(networkInterfaces) > 0 {
+	if sections.Interfaces && len(networkInterfaces) > 0 {
 		params.NetworkInterfaces = networkInterfaces
 	}
 	if payload.KernelVersion != "" {
@@ -299,15 +470,53 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 	if payload.SystemUptime != "" {
 		params.SystemUptime = &payload.SystemUptime
 	}
+	if payload.BootTime != nil {
+		params.BootTime = pgtime.FromPtrTz(payload.BootTime)
+	}
 	if len(loadAverage) > 0 {
 		params.LoadAverage = loadAverage
 	}
-	params.NeedsReboot = &payload.NeedsReboot
-	if payload.RebootReason != "" {
-		params.RebootReason = &payload.RebootReason
+	// needs_reboot / reboot_reason ride on a legacy FULL report only. A
+	// hash-gated partial never carries them (sendPartialReport omits both), so
+	// setting them unconditionally meant every partial overwrote the correct
+	// values the ping had just written with `false` / NULL. The Reboot pill and
+	// reboot alerts then flapped for a whole update_interval after every
+	// package change. For partials, the ping metrics path is the sole writer.
+	if len(payload.Sections) == 0 {
+		params.NeedsReboot = &payload.NeedsReboot
+		if payload.RebootReason != "" {
+			params.RebootReason = &payload.RebootReason
+		}
 	}
-	if payload.PackageManager != "" {
+	if sections.Packages && payload.PackageManager != "" {
 		params.PackageManager = &payload.PackageManager
+	}
+
+	// Hash columns: only set the ones for sections we're actually writing.
+	// COALESCE on the SQL side preserves the existing value for sections not
+	// in this report, so a partial report never clobbers a sibling section's
+	// hash.
+	if sections.Packages && hashes.PackagesHash != "" {
+		h := hashes.PackagesHash
+		params.PackagesHash = &h
+	}
+	if sections.Repos && hashes.ReposHash != "" {
+		h := hashes.ReposHash
+		params.ReposHash = &h
+	}
+	if sections.Interfaces && hashes.InterfacesHash != "" {
+		h := hashes.InterfacesHash
+		params.InterfacesHash = &h
+	}
+	if sections.Hostname && hashes.HostnameHash != "" {
+		h := hashes.HostnameHash
+		params.HostnameHash = &h
+	}
+	// Stamp last_full_report_at whenever any section is being written. Used
+	// by the operator UI / staleness alerts to surface hosts whose last
+	// content delivery is too old.
+	if sections.Packages || sections.Repos || sections.Interfaces || sections.Hostname {
+		params.LastFullReportAt = pgtime.Now()
 	}
 
 	tx, err := d.BeginLong(ctx)
@@ -327,8 +536,13 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 		return nil, fmt.Errorf("UpdateHostFromReport: %w", err)
 	}
 
-	if err := q.DeleteHostPackagesByHostID(ctx, hostID); err != nil {
-		return nil, fmt.Errorf("DeleteHostPackagesByHostID: %w", err)
+	// Packages section: replace host_packages only when the agent claimed the
+	// packages section. Without this guard a partial report (e.g. interfaces
+	// only) would wipe the package list and reinsert nothing.
+	if sections.Packages {
+		if err := q.DeleteHostPackagesByHostID(ctx, hostID); err != nil {
+			return nil, fmt.Errorf("DeleteHostPackagesByHostID: %w", err)
+		}
 	}
 
 	payloadSizeKb := 0.0
@@ -341,11 +555,27 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 	reposByURLDistComp := make(map[string]string) // "url|dist|comp" -> repo ID
 	reposByComponent := make(map[string]string)   // components -> repo ID
 
-	if len(payload.Repositories) > 0 {
+	// A repos section EXPLICITLY claimed in the payload's `sections` list is
+	// authoritative even when the array is empty. An empty list is legitimate
+	// (unsupported package manager, dnf parse soft-fail, or simply a host with
+	// no configured repositories), and the handler now accepts it rather than
+	// 400ing the whole bundled update. It has to actually converge on the empty
+	// set: the stored repos_hash will be the hash of the empty list, so leaving
+	// the old host_repositories rows in place would mean "in sync" per the hash
+	// gate and permanently stale in reality.
+	//
+	// Scoped deliberately to the explicit-sections (hash-gated) path. A LEGACY
+	// full report carries no `sections` list, and for those the long-standing
+	// behaviour is to leave repositories untouched when the array is empty; that
+	// is preserved here rather than changed as a side effect of this fix.
+	reposClaimed := sections.Repos && len(payload.Sections) > 0
+	if reposClaimed || (sections.Repos && len(payload.Repositories) > 0) {
 		if err := q.DeleteHostRepositoriesByHostID(ctx, hostID); err != nil {
 			return nil, fmt.Errorf("DeleteHostRepositoriesByHostID: %w", err)
 		}
+	}
 
+	if sections.Repos && len(payload.Repositories) > 0 {
 		// Deduplicate by url|distribution|components.
 		uniqueRepos := make(map[string]ReportRepository)
 		for _, r := range payload.Repositories {
@@ -430,7 +660,7 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 	//   2. BulkInsertHostPackages: one INSERT...SELECT into `host_packages`.
 	//      DeleteHostPackagesByHostID has already cleared this host's rows,
 	//      so no ON CONFLICT path is needed.
-	if len(payload.Packages) > 0 {
+	if sections.Packages && len(payload.Packages) > 0 {
 		pkgPayload, err := buildPackageUpsertPayload(payload.Packages)
 		if err != nil {
 			return nil, fmt.Errorf("build package upsert payload: %w", err)
@@ -464,21 +694,41 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 
 	totalPkg := int32(len(payload.Packages))
 	execTime := payload.ExecutionTime
+	// Discriminate full vs partial for the Agent Activity feed: a payload
+	// without a Sections list is a legacy/full report, anything that arrived
+	// with a Sections list is treated as a partial even if every section is
+	// claimed (the agent voluntarily told us it's a /hosts/update follow-up
+	// to a hash-gated ping).
+	reportType := "full"
+	if len(payload.Sections) > 0 {
+		reportType = "partial"
+	}
+	sectionsSent := mainSectionsFromSections(sections)
+	sectionsUnchanged := mainSectionsUnchanged(sectionsSent)
+	var agentExecMs *int32
+	if payload.AgentExecutionMs != nil {
+		v := int32(*payload.AgentExecutionMs)
+		agentExecMs = &v
+	}
 	// Retry safety: if WithRetry re-runs ProcessReport after a 40P01/40001,
 	// the BeginLong transaction is rolled back so this update_history row
 	// never commits. Each attempt allocates a fresh id and Postgres NOW()
 	// gives a fresh timestamp — exactly one history row will land per
 	// successful commit. That re-allocation per attempt is intentional.
 	if err := q.InsertUpdateHistory(ctx, db.InsertUpdateHistoryParams{
-		ID:            uuid.New().String(),
-		HostID:        hostID,
-		PackagesCount: int32(updatesCount),
-		SecurityCount: int32(securityCount),
-		TotalPackages: &totalPkg,
-		PayloadSizeKb: &payloadSizeKb,
-		ExecutionTime: &execTime,
-		Status:        "success",
-		ErrorMessage:  nil,
+		ID:                uuid.New().String(),
+		HostID:            hostID,
+		PackagesCount:     int32(updatesCount),
+		SecurityCount:     int32(securityCount),
+		TotalPackages:     &totalPkg,
+		PayloadSizeKb:     &payloadSizeKb,
+		ExecutionTime:     &execTime,
+		Status:            "success",
+		ErrorMessage:      nil,
+		ReportType:        reportType,
+		SectionsSent:      sectionsSent,
+		SectionsUnchanged: sectionsUnchanged,
+		AgentExecutionMs:  agentExecMs,
 	}); err != nil {
 		return nil, fmt.Errorf("InsertUpdateHistory: %w", err)
 	}

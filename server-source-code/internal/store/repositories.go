@@ -7,6 +7,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -26,12 +27,47 @@ type RepoListParams struct {
 	Search string
 	Status string
 	Type   string
+	Limit  int
+	Offset int
+	Sort   string
+	Order  string
+	Legacy bool
 }
 
-// List returns all repositories with host counts and host details.
-func (s *RepositoriesStore) List(ctx context.Context, params RepoListParams) ([]RepositoryWithHosts, error) {
+// RepositoryListResult is a paginated repository list response.
+type RepositoryListResult struct {
+	Items  []RepositoryWithHosts `json:"items"`
+	Total  int                   `json:"total"`
+	Limit  int                   `json:"limit"`
+	Offset int                   `json:"offset"`
+}
+
+// List returns repositories with aggregate host counts.
+func (s *RepositoriesStore) List(ctx context.Context, params RepoListParams) (*RepositoryListResult, error) {
 	d := s.db.DB(ctx)
-	arg := db.ListRepositoriesParams{}
+	if params.Limit <= 0 {
+		params.Limit = 50
+	}
+	if params.Legacy && params.Limit > 5000 {
+		params.Limit = 5000
+	}
+	if !params.Legacy && params.Limit > 500 {
+		params.Limit = 500
+	}
+	if params.Offset < 0 {
+		params.Offset = 0
+	}
+	sortKey := repoListSortKey(params.Sort)
+	sortDir := "asc"
+	if params.Order == "desc" {
+		sortDir = "desc"
+	}
+	arg := db.ListRepositoriesParams{
+		SortKey:   sortKey,
+		SortDir:   sortDir,
+		RowLimit:  safeconv.ClampToInt32(params.Limit),
+		RowOffset: safeconv.ClampToInt32(params.Offset),
+	}
 	if params.HostID != "" {
 		arg.HostID = &params.HostID
 	}
@@ -45,12 +81,30 @@ func (s *RepositoriesStore) List(ctx context.Context, params RepoListParams) ([]
 		arg.Type = &params.Type
 	}
 
+	countArg := db.CountRepositoriesForListParams{}
+	if params.HostID != "" {
+		countArg.HostID = &params.HostID
+	}
+	if params.Search != "" {
+		countArg.Search = &params.Search
+	}
+	if params.Status != "" {
+		countArg.Status = &params.Status
+	}
+	if params.Type != "" {
+		countArg.Type = &params.Type
+	}
+	total, err := d.Queries.CountRepositoriesForList(ctx, countArg)
+	if err != nil {
+		return nil, err
+	}
+
 	repos, err := d.Queries.ListRepositories(ctx, arg)
 	if err != nil {
 		return nil, err
 	}
 	if len(repos) == 0 {
-		return []RepositoryWithHosts{}, nil
+		return &RepositoryListResult{Items: []RepositoryWithHosts{}, Total: int(total), Limit: params.Limit, Offset: params.Offset}, nil
 	}
 
 	ids := make([]string, len(repos))
@@ -58,49 +112,69 @@ func (s *RepositoriesStore) List(ctx context.Context, params RepoListParams) ([]
 		ids[i] = repos[i].ID
 	}
 
-	hostRows, err := d.Queries.GetHostCountsForRepos(ctx, ids)
+	countRows, err := d.Queries.GetRepoCountsForRepos(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
 
-	hostsByRepo := make(map[string][]HostRepoHost)
-	for _, r := range hostRows {
-		h := HostRepoHost{
-			ID:           r.ID,
-			FriendlyName: r.FriendlyName,
-			Status:       r.Status,
-			IsEnabled:    r.IsEnabled,
+	type repoCounts struct {
+		host    int
+		enabled int
+		active  int
+	}
+	countsByRepo := make(map[string]repoCounts, len(countRows))
+	for _, r := range countRows {
+		countsByRepo[r.RepositoryID] = repoCounts{
+			host:    int(r.HostCount),
+			enabled: int(r.EnabledHostCount),
+			active:  int(r.ActiveHostCount),
 		}
-		if r.LastChecked.Valid {
-			t := r.LastChecked.Time.Format("2006-01-02T15:04:05Z07:00")
-			h.LastChecked = &t
-		}
-		hostsByRepo[r.RepositoryID] = append(hostsByRepo[r.RepositoryID], h)
 	}
 
 	out := make([]RepositoryWithHosts, len(repos))
 	for i := range repos {
 		rid := repos[i].ID
-		hosts := hostsByRepo[rid]
-		hostCount := len(hosts)
-		enabledCount, activeCount := 0, 0
-		for _, h := range hosts {
-			if h.IsEnabled {
-				enabledCount++
-			}
-			if h.Status == "active" {
-				activeCount++
-			}
-		}
+		counts := countsByRepo[rid]
 		out[i] = RepositoryWithHosts{
-			Repository:       dbRepositoryToModel(repos[i]),
-			HostCount:        hostCount,
-			EnabledHostCount: enabledCount,
-			ActiveHostCount:  activeCount,
-			Hosts:            hosts,
+			Repository:       dbListRepositoryToModel(repos[i]),
+			HostCount:        counts.host,
+			EnabledHostCount: counts.enabled,
+			ActiveHostCount:  counts.active,
+			Hosts:            []HostRepoHost{},
 		}
 	}
-	return out, nil
+	return &RepositoryListResult{Items: out, Total: int(total), Limit: params.Limit, Offset: params.Offset}, nil
+}
+
+func repoListSortKey(sort string) string {
+	switch sort {
+	case "name", "url", "distribution", "security", "status", "hostCount":
+		return sort
+	default:
+		return "name"
+	}
+}
+
+func dbListRepositoryToModel(r db.ListRepositoriesRow) models.Repository {
+	prio := (*int)(nil)
+	if r.Priority != nil {
+		p := int(*r.Priority)
+		prio = &p
+	}
+	return models.Repository{
+		ID:           r.ID,
+		Name:         r.Name,
+		URL:          r.Url,
+		Distribution: r.Distribution,
+		Components:   r.Components,
+		RepoType:     r.RepoType,
+		IsActive:     r.IsActive,
+		IsSecure:     r.IsSecure,
+		Priority:     prio,
+		Description:  r.Description,
+		CreatedAt:    pgTime(r.CreatedAt),
+		UpdatedAt:    pgTime(r.UpdatedAt),
+	}
 }
 
 // RepositoryWithHosts extends Repository with host counts and host list.

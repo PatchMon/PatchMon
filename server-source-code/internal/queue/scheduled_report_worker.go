@@ -5,21 +5,19 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
-	"net/smtp"
-	"strconv"
 	"strings"
 	"time"
 
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/mailer"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
@@ -227,7 +225,7 @@ func (h *ScheduledReportRunHandler) ProcessTask(ctx context.Context, t *asynq.Ta
 		case "webhook":
 			err = sendScheduledWebhook(ctx, plain, subject, htmlBody, csvBody)
 		case "email":
-			err = sendScheduledEmail(plain, subject, htmlBody, csvBody)
+			err = sendScheduledEmail(ctx, h.log, plain, subject, htmlBody, csvBody)
 		case "ntfy":
 			err = sendScheduledNtfy(ctx, plain, subject, htmlBody, csvBody)
 		default:
@@ -359,11 +357,16 @@ type scheduledEmailConfig struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	From     string `json:"from"`
+	FromName string `json:"from_name"`
 	To       string `json:"to"`
-	UseTLS   bool   `json:"use_tls"`
+	// UseTLS is the legacy boolean preserved for backward compatibility on rows
+	// written before TLSMode existed. New code should set TLSMode and let
+	// mailer.ResolveMode pick the effective policy.
+	UseTLS  bool   `json:"use_tls"`
+	TLSMode string `json:"tls_mode"`
 }
 
-func sendScheduledEmail(plain, subject, html, csv string) error {
+func sendScheduledEmail(ctx context.Context, log *slog.Logger, plain, subject, html, _csv string) error {
 	var cfg scheduledEmailConfig
 	if err := json.Unmarshal([]byte(plain), &cfg); err != nil {
 		return err
@@ -374,80 +377,30 @@ func sendScheduledEmail(plain, subject, html, csv string) error {
 	if cfg.SMTPPort == 0 {
 		cfg.SMTPPort = 587
 	}
-	// Sanitize subject to prevent SMTP header injection.
-	subject = strings.NewReplacer("\r", "", "\n", "").Replace(subject)
-	msg := []byte(fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n%s",
-		cfg.From, cfg.To, subject, html))
-	addr := cfg.SMTPHost + ":" + strconv.Itoa(cfg.SMTPPort)
-	var auth smtp.Auth
-	if cfg.Username != "" {
-		auth = smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.SMTPHost)
-	}
-	tlsCfg := &tls.Config{ServerName: cfg.SMTPHost, MinVersion: tls.VersionTLS12}
 
-	// use_tls controls STARTTLS: when false, do not upgrade even if the server advertises it
-	// (matches notification email delivery; see sendEmail in notification_worker.go).
-	c, conn, err := func() (*smtp.Client, net.Conn, error) {
-		plainConn, dialErr := net.DialTimeout("tcp", addr, 30*time.Second)
-		if dialErr != nil {
-			return nil, nil, dialErr
+	mode := mailer.ResolveMode(cfg.TLSMode, &cfg.UseTLS, cfg.SMTPPort)
+	mc := mailer.Config{
+		Host:     cfg.SMTPHost,
+		Port:     cfg.SMTPPort,
+		Username: cfg.Username,
+		Password: cfg.Password,
+		From:     cfg.From,
+		FromName: cfg.FromName,
+		TLSMode:  mode,
+	}
+	if err := mailer.Send(ctx, mc, mailer.Message{To: cfg.To, Subject: subject, HTMLBody: html}); err != nil {
+		var se *mailer.SendError
+		if errors.As(err, &se) && log != nil {
+			log.Warn("scheduled report smtp send failed",
+				"stage", string(se.Stage),
+				"host", cfg.SMTPHost,
+				"port", cfg.SMTPPort,
+				"tls_mode", string(mode),
+				"error", se.Err)
 		}
-		client, clientErr := smtp.NewClient(plainConn, cfg.SMTPHost)
-		if clientErr != nil {
-			_ = plainConn.Close()
-			return nil, nil, clientErr
-		}
-		startTLS, _ := client.Extension("STARTTLS")
-		if startTLS && cfg.UseTLS {
-			if tlsErr := client.StartTLS(tlsCfg); tlsErr != nil {
-				_ = client.Close()
-				return nil, nil, tlsErr
-			}
-			return client, plainConn, nil
-		}
-		if cfg.UseTLS && !startTLS {
-			_ = client.Close()
-			tlsConn, tlsErr := tls.DialWithDialer(&net.Dialer{Timeout: 30 * time.Second}, "tcp", addr, tlsCfg)
-			if tlsErr != nil {
-				return nil, nil, tlsErr
-			}
-			client, clientErr = smtp.NewClient(tlsConn, cfg.SMTPHost)
-			if clientErr != nil {
-				_ = tlsConn.Close()
-				return nil, nil, clientErr
-			}
-			return client, tlsConn, nil
-		}
-		return client, plainConn, nil
-	}()
-	if err != nil {
 		return err
 	}
-	defer func() { _ = conn.Close() }()
-	defer func() { _ = c.Close() }()
-
-	if auth != nil {
-		if ok, _ := c.Extension("AUTH"); ok {
-			if err := c.Auth(auth); err != nil {
-				return err
-			}
-		}
-	}
-	if err := c.Mail(cfg.From); err != nil {
-		return err
-	}
-	if err := c.Rcpt(cfg.To); err != nil {
-		return err
-	}
-	w, err := c.Data()
-	if err != nil {
-		return err
-	}
-	_, err = w.Write(msg)
-	if err != nil {
-		return err
-	}
-	return w.Close()
+	return nil
 }
 
 func sendScheduledNtfy(ctx context.Context, plain, subject, html, csv string) error {

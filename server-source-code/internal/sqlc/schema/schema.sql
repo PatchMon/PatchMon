@@ -96,6 +96,8 @@ CREATE TABLE IF NOT EXISTS settings (
     max_login_attempts INTEGER,
     lockout_duration_minutes INTEGER,
     session_inactivity_timeout_minutes INTEGER,
+    patch_run_stall_timeout_minutes INTEGER,
+    agent_reports_retention_days INTEGER,
     tfa_max_remember_sessions INTEGER,
     password_min_length INTEGER,
     password_require_uppercase BOOLEAN,
@@ -225,6 +227,7 @@ CREATE TABLE IF NOT EXISTS hosts (
     selinux_status TEXT,
     swap_size DOUBLE PRECISION,
     system_uptime TEXT,
+    boot_time TIMESTAMPTZ,
     notes TEXT,
     needs_reboot BOOLEAN DEFAULT false,
     reboot_reason TEXT,
@@ -240,7 +243,14 @@ CREATE TABLE IF NOT EXISTS hosts (
     expected_platform TEXT,
     package_manager TEXT,
     primary_interface TEXT,
-    awaiting_post_patch_report_run_id TEXT REFERENCES patch_runs(id) ON DELETE SET NULL
+    awaiting_post_patch_report_run_id TEXT REFERENCES patch_runs(id) ON DELETE SET NULL,
+    packages_hash TEXT,
+    repos_hash TEXT,
+    interfaces_hash TEXT,
+    hostname_hash TEXT,
+    docker_hash TEXT,
+    compliance_hash TEXT,
+    last_full_report_at TIMESTAMP(3)
 );
 
 -- dashboard_preferences
@@ -330,8 +340,20 @@ CREATE TABLE IF NOT EXISTS update_history (
     execution_time DOUBLE PRECISION,
     timestamp TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     status TEXT NOT NULL DEFAULT 'success',
-    error_message TEXT
+    error_message TEXT,
+    report_type TEXT NOT NULL DEFAULT 'full',
+    sections_sent TEXT[] NOT NULL DEFAULT '{}',
+    sections_unchanged TEXT[] NOT NULL DEFAULT '{}',
+    agent_execution_ms INTEGER
 );
+-- The composite index serves the per-host Agent Activity feed. The retention
+-- sweep uses idx_update_history_timestamp (created by the v1.5.0 init
+-- migration) — do not add a second (timestamp) index here, update_history is
+-- written on every ping and duplicate indexes cost write throughput.
+CREATE INDEX IF NOT EXISTS idx_update_history_host_id_timestamp
+    ON update_history (host_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_update_history_timestamp
+    ON update_history (timestamp);
 
 -- system_statistics
 CREATE TABLE IF NOT EXISTS system_statistics (
@@ -786,3 +808,19 @@ CREATE TABLE IF NOT EXISTS scheduled_report_runs (
     summary_hash TEXT,
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- mv_package_stats — materialised view of per-package install / update /
+-- security counters. Refreshed CONCURRENTLY by the asynq scheduler every
+-- couple of minutes (see TypePackageStatsRefresh). Declared here so sqlc
+-- can resolve column references in queries that join against it; the
+-- authoritative definition lives in
+-- migrations/000047_v2-0-4_package_stats_mat_view.up.sql.
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_package_stats AS
+SELECT
+    hp.package_id,
+    COUNT(*)::int                                                                  AS total_installs,
+    COUNT(*) FILTER (WHERE hp.needs_update)::int                                   AS updates_needed,
+    COUNT(*) FILTER (WHERE hp.needs_update AND hp.is_security_update)::int         AS security_updates
+FROM host_packages hp
+GROUP BY hp.package_id;
+CREATE UNIQUE INDEX IF NOT EXISTS mv_package_stats_pkey ON mv_package_stats (package_id);

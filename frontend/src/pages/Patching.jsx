@@ -564,6 +564,8 @@ const STATUS_OPTIONS = [
 	{ value: "completed", label: "Completed" },
 	{ value: "failed", label: "Failed" },
 	{ value: "cancelled", label: "Cancelled" },
+	{ value: "timed_out", label: "Timed out" },
+	{ value: "agent_disconnected", label: "Agent disconnected" },
 ];
 
 const TYPE_OPTIONS = [

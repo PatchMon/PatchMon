@@ -14,6 +14,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/ai"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/auth/oidc"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/clientip"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
@@ -28,7 +29,6 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/swagger"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/go-chi/chi/v5"
-	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/hibiken/asynq"
 	redisclient "github.com/redis/go-redis/v9"
 	httpSwagger "github.com/swaggo/http-swagger"
@@ -68,9 +68,20 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	}
 	r.Use(middleware.CORS(resolved.CORSOrigin, corsOriginResolver(ctxRegistry)))
 	if resolved.TrustProxy {
-		r.Use(chimw.RealIP)
+		// Resolve the client IP from X-Forwarded-For before anything that keys
+		// on it (rate limiting, API auth, login lockout, audit logging). Must
+		// not use chi's RealIP: it takes the leftmost entry, which is whatever
+		// the client sent, so callers could pick their own rate-limit bucket.
+		trustedProxies, invalid := clientip.ParseTrustedProxies(resolved.TrustedProxyRanges)
+		if len(invalid) > 0 && log != nil {
+			// slog quotes string values, so a malformed entry cannot break the
+			// log line. These come from the operator's env, not from requests.
+			log.Warn("ignoring invalid TRUSTED_PROXY_RANGES entries",
+				"entries", strings.Join(invalid, ", "))
+		}
+		r.Use(middleware.RealIP(trustedProxies))
 	}
-	// Note: chimw.Timeout is NOT applied globally because it conflicts with
+	// Note: chi's Timeout middleware is NOT applied globally because it conflicts with
 	// WebSocket/SSE routes (hijacked connections). It writes a 503 to a
 	// hijacked ResponseWriter causing "WriteHeader on hijacked connection".
 	// Instead, timeout is applied per-group below, skipping WS routes.
@@ -162,20 +173,23 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	repositoriesHandler := handler.NewRepositoriesHandler(store.NewRepositoriesStore(dbProvider))
 	dockerStore := store.NewDockerStore(dbProvider)
 	dashboardStore := store.NewDashboardStore(dbProvider)
+	agentActivityStore := store.NewAgentActivityStore(dbProvider)
 	dashboardHandler := handler.NewDashboardHandler(
 		dashboardStore,
 		hostsStore,
 		store.NewPackagesStore(dbProvider),
 		usersStore,
 		dockerStore,
+		agentActivityStore,
 		queueInspector,
 	)
 	hostGroupsHandler := handler.NewHostGroupsHandler(hostGroupsStore, hostsStore)
 	dashboardPrefsHandler := handler.NewDashboardPreferencesHandler(dashboardPrefsStore)
 	dockerHandler := handler.NewDockerHandler(dockerStore)
-	integrationsHandler := handler.NewIntegrationsHandler(hostsStore, store.NewDockerStore(dbProvider), integrationStatusStore, dbProvider, notifyEmit)
+	reportStore := store.NewReportStore(dbProvider)
+	integrationsHandler := handler.NewIntegrationsHandler(hostsStore, store.NewDockerStore(dbProvider), integrationStatusStore, dbProvider, notifyEmit, reportStore)
 	complianceStore := store.NewComplianceStore(dbProvider)
-	complianceHandler := handler.NewComplianceHandler(complianceStore, hostsStore, registry, queueClient, queueInspector, integrationStatusStore, cfg.SSGContentDir, notifyEmit)
+	complianceHandler := handler.NewComplianceHandler(complianceStore, hostsStore, registry, queueClient, queueInspector, integrationStatusStore, cfg.SSGContentDir, notifyEmit, reportStore)
 	autoEnrollmentStore := store.NewAutoEnrollmentStore(dbProvider)
 	autoEnrollmentHandler := handler.NewAutoEnrollmentHandler(autoEnrollmentStore, hostGroupsStore, hostsStore, settingsStore, log, cfg)
 
@@ -187,7 +201,6 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	if rdb != nil {
 		sshTicketStore = store.NewSshTicketStore(redisResolver)
 	}
-	reportStore := store.NewReportStore(dbProvider)
 	installHandler := handler.NewInstallHandler(hostsStore, settingsStore, bootstrapStore, reportStore)
 	sshProxySessions := sshproxy.NewSessions()
 	alertsStore := store.NewAlertsStore(dbProvider)
@@ -202,9 +215,13 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			registry, cfg.GuacdAddress, resolved.CORSOrigin, corsOriginResolver(ctxRegistry), log, dbProvider, notifyEmit,
 		)
 	}
+	// Patch run store is needed by the agent-disconnect handler (to mark
+	// in-flight runs as agent_disconnected) so it must be constructed before
+	// the AgentWSHandler is wired up.
+	patchRunsStore := store.NewPatchRunsStore(dbProvider)
 	var agentWsHandler *handler.AgentWSHandler
 	agentOpts := []handler.AgentWSHandlerOption{
-		handler.WithOnAgentDisconnect(handler.NewAgentDisconnectHandler(dbProvider, notifyEmit, log)),
+		handler.WithOnAgentDisconnect(handler.NewAgentDisconnectHandler(dbProvider, hostsStore, patchRunsStore, registry, notifyEmit, log)),
 		handler.WithOnAgentConnect(handler.NewAgentConnectHandler(dbProvider, queueClient, queueInspector, notifyEmit, log)),
 	}
 	if rdpHandler != nil {
@@ -225,7 +242,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			agentOpts...,
 		)
 	}
-	wsStatusHandler := handler.NewWSStatusHandler(registry)
+	wsStatusHandler := handler.NewWSStatusHandler(registry, hostsStore)
 	var sshTicketHandler *handler.SshTicketHandler
 	if sshTicketStore != nil {
 		sshTicketHandler = handler.NewSshTicketHandler(sshTicketStore, hostsStore, dbProvider, notifyEmit)
@@ -239,7 +256,6 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	automationHandler := handler.NewAutomationHandler(queueInspector, queueClient, registry, settingsStore, alertConfigStore)
 	apiHostsHandler := handler.NewApiHostsHandler(hostsStore, hostGroupsStore, dbProvider, dashboardStore, queueInspector)
 
-	patchRunsStore := store.NewPatchRunsStore(dbProvider)
 	patchPoliciesStore := store.NewPatchPoliciesStore(dbProvider)
 	patchAssignmentsStore := store.NewPatchPolicyAssignmentsStore(dbProvider)
 	patchExclusionsStore := store.NewPatchPolicyExclusionsStore(dbProvider)
@@ -281,7 +297,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		}
 		// Note: /api/v1/internal/migrate-tenant is intentionally registered
 		// at the router root (above) rather than inside this /api/v1 group,
-		// because the group's 30s chimw.Timeout would defeat the handler's
+		// because the group's 30s Timeout middleware would defeat the handler's
 		// 10-minute migration bound.
 		// OpenAPI spec (public, for Swagger UI and tooling)
 		r.Get("/openapi.json", swagger.ServeSpec)
@@ -291,7 +307,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		r.Get("/hosts/remove", installHandler.ServeRemove)
 		r.Get("/hosts/agent/version", installHandler.ServeAgentVersion)
 		r.Get("/hosts/agent/download", installHandler.ServeAgentDownload)
-		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAgent)).Post("/hosts/ping", installHandler.ServePing)
+		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAgent), middleware.BodyLimit(resolved.AgentPingBodyLimitBytes)).Post("/hosts/ping", installHandler.ServePing)
 		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAgent), middleware.BodyLimit(resolved.AgentUpdateBodyLimitBytes)).Post("/hosts/update", installHandler.ServeUpdate)
 		r.Post("/hosts/bootstrap/exchange", installHandler.BootstrapExchange)
 		r.Get("/hosts/integrations", integrationsHandler.AgentGetIntegrationStatus)
@@ -501,9 +517,11 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/agent/download", agentVersionHandler.ServeAgentDownload)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Post("/agent/version/check", agentVersionHandler.CheckForUpdates)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Post("/agent/version/refresh", agentVersionHandler.RefreshCurrentVersion)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/ws/status/summary", wsStatusHandler.ServeSummary)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/ws/status", wsStatusHandler.ServeStatusBulk)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/ws/status/{apiId}", wsStatusHandler.ServeStatusSingle)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/hosts", hostsHandler.List)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/hosts/options", hostsHandler.Options)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Get("/hosts/admin/list", hostsHandler.AdminList)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/hosts/{hostId}/integrations", hostsHandler.GetIntegrations)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/hosts/{hostId}/integrations/{integrationName}/status", hostsHandler.GetIntegrationStatus)
@@ -546,9 +564,13 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Put("/repositories/{repositoryId}", repositoriesHandler.Update)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Delete("/repositories/{repositoryId}", repositoriesHandler.Delete)
 			r.With(middleware.RequirePermission("can_view_dashboard", permissionsStore)).Get("/dashboard/stats", dashboardHandler.Stats)
+			r.With(middleware.RequirePermission("can_view_dashboard", permissionsStore)).Get("/dashboard/navigation-stats", dashboardHandler.NavigationStats)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/host-filter-options", dashboardHandler.HostFilterOptions)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/hosts", dashboardHandler.Hosts)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/host-counts", dashboardHandler.HostCounts)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/hosts/{hostId}", dashboardHandler.HostDetail)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/hosts/{hostId}/queue", dashboardHandler.HostQueue)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/dashboard/hosts/{hostId}/activity", dashboardHandler.HostActivity)
 			r.With(middleware.RequirePermission("can_view_packages", permissionsStore)).Get("/dashboard/packages", dashboardHandler.Packages)
 			r.With(middleware.RequirePermission("can_view_packages", permissionsStore)).Get("/dashboard/package-trends", dashboardHandler.PackageTrends)
 			r.With(middleware.RequirePermission("can_view_users", permissionsStore)).Get("/dashboard/recent-users", dashboardHandler.RecentUsers)
@@ -645,6 +667,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Get("/notifications/destinations", notificationsHandler.ListDestinations)
 			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Post("/notifications/destinations", notificationsHandler.CreateDestination)
 			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Get("/notifications/destinations/{id}/config", notificationsHandler.GetDestinationConfig)
+			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Post("/notifications/destinations/{id}/test-smtp", notificationsHandler.TestSMTP)
 			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Put("/notifications/destinations/{id}", notificationsHandler.UpdateDestination)
 			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Delete("/notifications/destinations/{id}", notificationsHandler.DeleteDestination)
 			r.With(middleware.RequirePermission("can_manage_notifications", permissionsStore)).Get("/notifications/routes", notificationsHandler.ListRoutes)

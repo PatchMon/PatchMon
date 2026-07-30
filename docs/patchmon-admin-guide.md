@@ -268,7 +268,7 @@ Groups are the primary way to organise hosts for patching policies, alert routin
 
 Controls how and when PatchMon agents talk to the server and update themselves:
 
-- **Update interval**: how often agents send a full report (default: 60 minutes); hosts with the WebSocket channel open pick up interval changes live.
+- **Update interval**: how often agents perform a check-in (default: 60 minutes); hosts with the WebSocket channel open pick up interval changes live. From v2.0.3 each tick is a hash-gated check-in: the agent ships content hashes per section, and the server only requests full content for sections whose hash has changed. Steady-state cycles are a few KB instead of a few MB.
 - **Auto-update behaviour**: global on/off for automatic agent binary updates. Per-host overrides live on the host detail page.
 - **Signup enabled**: whether the first-time setup wizard still serves the initial-admin endpoint.
 
@@ -643,8 +643,11 @@ The top of the page has four main areas:
 
 - **Friendly name** (large heading), editable inline.
 - **Hostname** and **IP** underneath, both editable inline (clicking shows a text field; Enter to save, Esc to cancel).
-- **Status chips**: Active / Pending / Inactive / Error, and a coloured WebSocket badge (**WSS** green for secure, **WS** amber for plaintext, **Offline** red).
-- **Reboot required** chip when the agent has detected pending-reboot flags (e.g. `/var/run/reboot-required`, kernel updates).
+- **Status pills** (four independent indicators, each with a hover tooltip explaining what it means):
+  - **WS** — WebSocket control channel state. Green when connected, amber while disconnected within the configured grace window, red once the grace window elapses. The grace window is the `host_down` alert threshold (default 30 seconds, see [Per-alert-type configuration](#per-alert-type-configuration)).
+  - **Reporting** — agent report freshness. Green when the agent has reported within its update interval, amber when overdue but the WebSocket is still connected (agent is alive, just hasn't pushed yet), red ("Stale") when overdue *and* the WebSocket is also disconnected.
+  - **Reboot pending** — only shown when the host has flagged a pending reboot (e.g. `/var/run/reboot-required`, kernel updates).
+  - **Updates** — green "Up to date", amber "Updates pending" (non-security only), red "Security patches required" when one or more security updates are available.
 - **Uptime** and **Last updated** relative timestamps.
 
 If there's a pending patch run awaiting a fresh post-patch report, you'll see an **Awaiting inventory report** chip that links to the run.
@@ -682,8 +685,7 @@ The tab strip is context-aware. Some tabs only appear under certain conditions:
 | **Host Info** | Yes | Default landing tab. |
 | **Network** | Yes | |
 | **System** | Yes | |
-| **Package Reports** | Yes | Historical inventory snapshots. |
-| **Agent Queue** | Yes | Background jobs for this host. |
+| **Agent Activity** | Yes | Unified timeline of agent comm cycles (ping, full report, partial report, Docker, compliance) and outbound queue jobs. Replaces the separate Package Reports and Agent Queue tabs from earlier releases. |
 | **Notes** | Yes | Free-text notes. |
 | **Integrations** | Yes | Per-host Docker / Compliance toggles. |
 | **Reporting** | Conditional | Hidden when global alerts are off. |
@@ -737,27 +739,26 @@ Hardware and OS specifics collected on each report:
 
 This tab is read-only. All values come from the agent report.
 
-### Package Reports
+### Agent Activity
 
-Paginated history of package inventory snapshots the agent has sent. Useful for:
+Unified timeline of every agent comm cycle for this host. Each row is one of:
 
-- Auditing when a package was installed, removed, or upgraded.
-- Comparing two reports to understand what a patch run changed.
-- Proving a package state at a given date to an auditor.
+- **Ping**: hash-gated check-in (every cycle, even when nothing changed).
+- **Full / Partial**: `/hosts/update` with the full inventory or just the sections the server flagged as stale.
+- **Docker / Compliance**: integration-specific submissions.
+- **Job**: outbound queue jobs the server sent to the agent (fetch report, patch run, integration setup, etc.).
 
-Each row shows the report timestamp, total packages, outdated count, security count, and a link to expand the full per-package diff.
+The four queue stat cards (Waiting / Active / Delayed / Failed) sit above the table and reflect in-flight server-to-agent jobs. The auto-refresh interval is 30 seconds.
 
-### Agent Queue
+Each report row also shows section chips: green "Updated" chips for sections the agent shipped fresh data for this cycle, and muted "Skipped" chips for sections the server already had a matching hash for. Use this tab to:
 
-Live view of the background jobs queued for this host (fetch report, patch commands, compliance scans, integration config syncs, agent updates, etc.). The tab auto-refreshes every 30 seconds. You see:
+- Confirm a host is actively checking in (look for recent `Ping` rows).
+- Audit when a package, repo, network interface, or hostname change last propagated.
+- Trace a "my Fetch Report click didn't do anything" complaint by following the job row through `Waiting → Active → Completed` (or `Failed` with the error message).
 
-- **Waiting**: queued but not yet picked up.
-- **Active**: currently running.
-- **Delayed**: scheduled for later.
-- **Failed**: error state with the last error message.
-- **Job History**: recently completed jobs with timestamps and outcome.
+Retention is governed by the `AGENT_REPORTS_RETENTION_DAYS` environment variable (default 30 days, range 7..365). The daily cleanup sweep at 02:00 deletes anything older. See the operator guide for tuning details.
 
-Use this tab to trace a "my Fetch Report click didn't do anything" complaint.
+> Earlier releases split this view across two tabs (Package Reports and Agent Queue). Bookmarks against the old `?tab=history` and `?tab=queue` query params redirect to `?tab=activity`.
 
 ### Notes
 
@@ -796,10 +797,10 @@ The **Refresh Status** button at the top right of the tab asks the agent to repo
 
 Host-scoped overrides for alerting. The tab is hidden when global alerts are disabled in **Settings**.
 
-Primary feature: **Host Down Alerts** with three states:
+Primary feature: **Host Agent Down Alerts** with three states:
 
 - **Inherit from global settings** (default).
-- **Enabled**: always create alerts when this host goes offline, regardless of global defaults.
+- **Enabled**: always create alerts when this host's agent goes down, regardless of global defaults.
 - **Disabled**: never create alerts for this host even if the global setting is on.
 
 Use the Disabled override for hosts that are expected to be intermittent (dev laptops, ephemeral CI runners) so they don't spam your alert channels.
@@ -875,7 +876,7 @@ Quick reference for the most-asked "how do I…" questions:
 | Trigger an immediate report | Page header → **Fetch Report** |
 | Force the agent to self-update | **Host Info** tab → **Update Now** |
 | Open a shell in the browser | **Terminal** tab |
-| See what the agent is doing right now | **Agent Queue** tab |
+| See what the agent is doing right now | **Agent Activity** tab |
 | Change which host groups the host is in | **Host Info** tab → **Host Groups** field (or the Hosts table inline edit) |
 | Turn Docker monitoring on / off | **Integrations** tab → **Docker** toggle, then **Apply** in header |
 | Run CIS scans | **Integrations** tab → **Compliance** selector → **Enabled** or **On-Demand** |
@@ -886,7 +887,7 @@ Quick reference for the most-asked "how do I…" questions:
 
 ### Mobile Layout
 
-On smaller screens, the tab strip is replaced with stacked cards (**Host Information**, **Network**, **System**, **Package Reports**, and so on). The action buttons collapse into an icon row. Some dense sections (for example the Integrations mode selector) show a **Manage in Integrations tab** shortcut.
+On smaller screens, the tab strip is replaced with stacked cards (**Host Information**, **Network**, **System**, **Agent Activity**, and so on). The action buttons collapse into an icon row. Some dense sections (for example the Integrations mode selector) show a **Manage in Integrations tab** shortcut.
 
 All data shown on mobile is the same as on desktop; only the layout changes.
 
@@ -1435,7 +1436,9 @@ The server moves a run through these statuses, visible as badges in the Runs & H
 | `completed` | The run finished successfully. The persisted `shell_output` is now authoritative. |
 | `dry_run_completed` | A dry-run finished successfully (terminal state for dry-runs that aren't turned into a real run). |
 | `failed` | The run finished with a non-zero exit status or the host reported an error. |
-| `cancelled` | The run was stopped by an operator (via **Stop Run**) or deleted before execution. |
+| `cancelled` | The run was stopped by an operator clicking **Stop Run** (or deleted before execution). The cancel is applied authoritatively in the database first; if the agent is connected the server also sends a courtesy `patch_run_stop` so the running subprocess is interrupted. With this ordering, an offline or unresponsive agent can't leave the row stuck in `running`. |
+| `timed_out` | The periodic patch-run cleanup found this run still in `running` state past the configured stall timeout (`PATCH_RUN_STALL_TIMEOUT_MIN`, default 30 minutes) and marked it as timed out. The cleanup sweep runs every 10 minutes. |
+| `agent_disconnected` | The agent's WebSocket dropped while this run was `running`. The server marks every in-flight run for that host as `agent_disconnected` so the row doesn't sit at `running` indefinitely. If the agent reconnects and posts a late `completed` / `failed` / `cancelled` for the same run, the server will update the row to that final state. |
 
 #### 2. Patch Policy
 
@@ -3309,8 +3312,8 @@ The following alert types fire from the server code in 2.0. Each can be individu
 
 | Type | Category | Fired when |
 |------|----------|-----------|
-| `host_down` | host | A host has not reported within 3× its `update_interval`, or its agent WebSocket disconnects |
-| `host_recovered` | host | A previously-down host starts reporting again or its WebSocket reconnects |
+| `host_down` | host | The host's agent WebSocket has been disconnected for longer than the `host_down` threshold (default 30 seconds, configurable in **Reporting → Alert Lifecycle**), or the host has not reported within that threshold during a periodic check. Displayed as **Host Agent Down**. |
+| `host_recovered` | host | A previously-down host's agent reconnects or its agent starts reporting again. Displayed as **Host Agent Recovered**. |
 | `host_enrolled` | host | A new host is successfully enrolled |
 | `host_deleted` | host | A host is removed from the inventory |
 | `host_security_updates_exceeded` | security | A host has more security updates than the configured threshold |
@@ -3440,7 +3443,7 @@ Each row exposes:
 | **Severity** | Default severity applied to new alerts of this type. |
 | **Alert delay** | Seconds to wait before delivering the outbound notification. If a cancelling counterpart event (e.g. `host_recovered` for `host_down`) fires within the delay window, the notification is suppressed. Useful for flappy hosts. |
 | **Frequency** | For periodic checks only (`host_down`, `host_security_updates_exceeded`, `host_pending_updates_exceeded`). Minutes between checks. |
-| **Threshold** | For threshold alerts only (`host_security_updates_exceeded`, `host_pending_updates_exceeded`). Numeric threshold above which an alert fires. |
+| **Threshold** | For threshold alerts. Numeric threshold above which an alert fires. Units depend on the alert type: `host_security_updates_exceeded` and `host_pending_updates_exceeded` use a *count* (number of pending updates); `host_down` uses *seconds* (how long the agent's WebSocket can be disconnected before the alert fires). The `host_down` row shows a `sec` suffix to make this explicit; default is 30 seconds. |
 | **Auto-assign** | Toggle plus user picker: any new alert of this type is assigned to the chosen user automatically. |
 | **Retention** | Days to keep alerts of this type before cleanup. Empty = never auto-clean. |
 | **Auto-resolve** | Days after which active alerts auto-resolve if no one touches them. |
@@ -3472,7 +3475,7 @@ Admins and superadmins bypass these checks. Regular users without `can_manage_al
 - [Notification Destinations](#notification-destinations)
 - [Notification Routes and Delivery Log](#notification-routes-and-delivery-log)
 - [Scheduled Reports](#scheduled-reports)
-- Host Down and Host Recovered Alerts
+- Host Agent Down and Host Agent Recovered Alerts
 
 ---
 
@@ -3534,7 +3537,27 @@ Pick this for **generic JSON webhooks, Discord, or Slack**. Discord and Slack UR
 | **Password** | No | SMTP auth password. Stored encrypted. |
 | **From** | Yes | Envelope + header `From` address, e.g. `patchmon@example.com`. Must be accepted by the relay. |
 | **To** | Yes | Comma-separated list of recipients. |
-| **Use TLS** | No | On by default. STARTTLS on port 587, implicit TLS on 465. Disable only for on-prem relays without TLS. |
+| **TLS mode** | Yes | Choose how the SMTP transport secures the connection. See **TLS modes** below. Defaults to **STARTTLS** for new destinations. |
+
+##### TLS modes
+
+PatchMon offers four TLS modes on every email destination. Pick the one your relay actually supports rather than leaving it on **Auto**, so a misconfigured server fails closed instead of silently downgrading to plaintext.
+
+- **STARTTLS (recommended).** PatchMon connects in plaintext on the SMTP port (typically 587) and then requires the server to advertise `STARTTLS`. The connection is upgraded to TLS before any credentials or message body are sent. If the server does not advertise `STARTTLS`, PatchMon refuses to send and reports the failure. This is the right choice for the vast majority of modern relays (Microsoft 365, Google Workspace, SendGrid, Postmark, Mailgun, Amazon SES on port 587, and most on-prem mail servers).
+- **Implicit TLS / SSL.** PatchMon opens a TLS connection from the very first byte, with no plaintext handshake. The default port for this mode is 465. Use it when your relay only accepts TLS on a dedicated port and does not support `STARTTLS`. Some legacy or appliance-based servers only offer this mode.
+- **None (insecure).** Cleartext SMTP, no TLS at any stage. PatchMon refuses to send if a username or password is set on the destination, because it would otherwise leak credentials onto the wire. Use only for trusted internal relays on a private network where TLS is genuinely unavailable.
+- **Auto.** Legacy opportunistic mode kept for backward compatibility. PatchMon tries `STARTTLS` first and falls back to implicit TLS on the same host and port if `STARTTLS` is not advertised. Existing destinations that were saved before the explicit modes were added load as **Auto** so they keep working unchanged. Open the destination, pick **STARTTLS** or **Implicit TLS / SSL** explicitly once you have confirmed which one your relay supports, and save. New destinations should not be configured as **Auto**.
+
+> Port and mode are independent. The port field is just the TCP port to connect to; the TLS mode controls how the connection is secured. The defaults (587 for STARTTLS, 465 for implicit TLS) match the conventional ports, but you can override the port if your relay listens elsewhere.
+
+##### Send test email
+
+Saved email destinations have a **Send test email** button next to the standard **Test** action. Unlike **Test**, which enqueues a synthetic notification through the worker, **Send test email** performs a synchronous live SMTP probe directly from the API request and reports the result inline:
+
+- On success the toast confirms delivery and the recipients should receive a short test message.
+- On failure PatchMon reports which stage of the SMTP exchange failed: `validate` (the configuration is rejected before any network activity, for example a missing host or a username set with TLS mode **None**), `dial` (the TCP connection or implicit TLS handshake could not be established), `starttls` (the server did not advertise `STARTTLS` in the chosen mode), `auth` (the relay rejected the credentials), or `send` (the relay accepted the session but rejected the recipients or message). The toast includes the underlying error message returned by the relay.
+
+This is the fastest way to diagnose a TLS or auth misconfiguration without trawling through server logs. The probe respects the same `can_manage_notifications` permission as editing the destination.
 
 #### ntfy
 
