@@ -6,6 +6,20 @@ body:
   - type: markdown
     attributes:
       value: |
+        ## ⚠️ Feature requests belong on our feedback portal
+
+        **Please raise this at [feedback.patchmon.net](https://feedback.patchmon.net) instead.**
+
+        That is where feature requests are tracked, voted on and prioritised. Raising it
+        there means other users can upvote it, you can follow its progress, and you will be
+        notified when it ships.
+
+        If you continue here, nothing is lost — your request will be **imported to the
+        feedback portal automatically**, you will get a comment with the direct link, and
+        this issue will be closed. Please follow it on the portal from that point.
+
+        ---
+
         Thanks for suggesting a feature! Please describe your idea in detail.
 
   - type: dropdown
