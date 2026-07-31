@@ -8,6 +8,7 @@ This guide covers everything you need to know to get set up, make a change and g
 
 ## Table of Contents
 
+- [Where to Raise Things](#where-to-raise-things)
 - [Code of Conduct](#code-of-conduct)
 - [Ways to Contribute](#ways-to-contribute)
 - [Getting Started](#getting-started)
@@ -20,6 +21,47 @@ This guide covers everything you need to know to get set up, make a change and g
 - [Documentation](#documentation)
 - [Security Issues](#security-issues)
 - [Getting Help](#getting-help)
+
+---
+
+## Where to Raise Things
+
+Different kinds of contribution live in different places. This keeps the issue
+tracker a true reflection of the project's stability, and keeps feature demand
+somewhere it can be voted on and prioritised.
+
+| What you have | Where it goes |
+|---|---|
+| 🐛 A bug or crash | **GitHub Issues** — use the Bug Report template |
+| 💡 A feature idea | **[feedback.patchmon.net](https://feedback.patchmon.net)** — vote, comment, follow progress |
+| ❓ A question or "how do I…?" | **[GitHub Discussions](https://github.com/PatchMon/PatchMon/discussions)** |
+| 📚 A documentation fix | **A pull request** against this repository |
+| 🔒 A security vulnerability | **[Private advisory](https://github.com/PatchMon/PatchMon/security/advisories/new)** — see [SECURITY.md](SECURITY.md) |
+| 💬 General chat | **[Discord](https://patchmon.net/discord)** |
+
+If you raise a feature request as a GitHub issue anyway, nothing is lost — it is
+imported to the feedback portal automatically, you get a comment with the direct
+link, and the issue is closed. Follow it on the portal from there.
+
+### Before you write code for a new feature
+
+**Please get the request accepted before you build it.**
+
+Feature requests on the feedback portal go through review before they reach the
+roadmap. A request that has not been accepted may be declined or deferred — and
+we would much rather tell you that before you spend a weekend on it than after.
+
+If you open a feature PR without an accepted request, we will label it
+`needs-accepted-request` and link the feedback post. **We will not close it.**
+Once the request is accepted, the PR gets reviewed normally.
+
+Bug fixes and documentation improvements do not need this — just open the PR.
+
+### Our current focus: stability
+
+We are prioritising stability over new features for the next few release cycles.
+Feature PRs raised during this period may be labelled `deferred-stability-phase`
+and revisited later. That is a scheduling decision, not a rejection.
 
 ---
 
@@ -39,7 +81,7 @@ Be respectful, constructive and patient. We want PatchMon to be a welcoming proj
 You don't have to write code to contribute. Valued contributions include:
 
 - **Bug reports** - open an issue with reproduction steps, expected vs actual behaviour, and environment details.
-- **Feature requests** - describe the problem first, then the proposed solution. Discussions welcome on [Discord](https://patchmon.net/discord) before opening an issue.
+- **Feature requests** - raise them at [feedback.patchmon.net](https://feedback.patchmon.net), where they can be voted on and prioritised. Describe the problem first, then the proposed solution.
 - **Documentation** - fix typos, clarify steps, add missing detail.
 - **Code** - bug fixes, new features, refactors, test coverage.
 - **Community support** - answer questions on Discord, help new users.

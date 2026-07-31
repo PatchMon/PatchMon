@@ -1,1 +1,21 @@
 blank_issues_enabled: false
+contact_links:
+  - name: 💡 Request a feature
+    url: https://feedback.patchmon.net
+    about: Feature requests live on our feedback portal, where you can vote on ideas and see what we have committed to building. Please raise them there rather than here.
+
+  - name: ❓ Ask a question / How do I...?
+    url: https://github.com/PatchMon/PatchMon/discussions
+    about: Setup help, configuration questions and how-tos belong in Discussions, where answers stay searchable for the next person.
+
+  - name: 📚 Documentation
+    url: https://patchmon.net/docs
+    about: Installation guides, configuration reference and troubleshooting.
+
+  - name: 💬 Community chat
+    url: https://discord.gg/patchmon
+    about: Join the community on Discord for general discussion and development chat.
+
+  - name: 🔒 Report a security vulnerability
+    url: https://github.com/PatchMon/PatchMon/security/advisories/new
+    about: Please report security issues privately. Do not open a public issue.
