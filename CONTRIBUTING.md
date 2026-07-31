@@ -39,9 +39,13 @@ somewhere it can be voted on and prioritised.
 | 🔒 A security vulnerability | **[Private advisory](https://github.com/PatchMon/PatchMon/security/advisories/new)** — see [SECURITY.md](SECURITY.md) |
 | 💬 General chat | **[Discord](https://patchmon.net/discord)** |
 
-If you raise a feature request as a GitHub issue anyway, nothing is lost — it is
-imported to the feedback portal automatically, you get a comment with the direct
-link, and the issue is closed. Follow it on the portal from there.
+Bug Report is the only issue template, so anything else you pick from the "New
+issue" screen takes you straight to the right place before you start writing.
+
+If something feature-shaped does land in the issue tracker, a maintainer will
+label it `enhancement`. That moves it to the feedback portal automatically, adds
+a comment with the direct link, and closes the issue — so nothing you wrote is
+lost. Follow it on the portal from there.
 
 ### Before you write code for a new feature
 
