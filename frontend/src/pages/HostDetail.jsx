@@ -26,7 +26,6 @@ import {
 	Package,
 	Play,
 	RefreshCw,
-	RotateCcw,
 	Send,
 	Server,
 	Shield,
@@ -39,7 +38,14 @@ import {
 	X,
 } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import {
+	Link,
+	useLocation,
+	useNavigate,
+	useParams,
+	useSearchParams,
+} from "react-router-dom";
+import HostStatusPills from "../components/HostStatusPills";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import { PackageListDisplay } from "../components/PackageListDisplay";
@@ -52,12 +58,13 @@ import UpgradeRequiredContent from "../components/UpgradeRequiredContent";
 import { getRequiredTier } from "../constants/tiers";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
+import { useTick } from "../hooks/useTick";
 import {
 	adminHostsAPI,
 	alertsAPI,
 	dashboardAPI,
 	formatDate,
-	formatRelativeTime,
+	formatLiveUptime,
 	hostGroupsAPI,
 	repositoryAPI,
 	settingsAPI,
@@ -65,7 +72,7 @@ import {
 import { complianceAPI } from "../utils/complianceApi";
 import { OSIcon } from "../utils/osIcons.jsx";
 import { patchingAPI } from "../utils/patchingApi";
-import AgentQueueTab from "./hostdetail/AgentQueueTab";
+import AgentActivityTab from "./hostdetail/AgentActivityTab";
 import CredentialsModal from "./hostdetail/CredentialsModal";
 import DeleteConfirmationModal from "./hostdetail/DeleteConfirmationModal";
 import PatchingRunOutput from "./hostdetail/PatchingRunOutput";
@@ -94,6 +101,7 @@ const HostDetail = () => {
 	const { hostId } = useParams();
 	const navigate = useNavigate();
 	const location = useLocation();
+	const [searchParams, setSearchParams] = useSearchParams();
 	const queryClient = useQueryClient();
 	const toast = useToast();
 	const { canManageHosts, hasModule } = useAuth();
@@ -111,8 +119,14 @@ const HostDetail = () => {
 	const [patchingRunsPageSize, setPatchingRunsPageSize] = useState(25);
 	const [patchingRunsStatusFilter, setPatchingRunsStatusFilter] = useState("");
 	const [patchingExpandedRunId, setPatchingExpandedRunId] = useState(null);
-	const [historyPage, setHistoryPage] = useState(0);
-	const [historyLimit] = useState(10);
+	// historyPage / historyLimit feed the host detail query's update_history
+	// pagination. Since the inline Package Reports card and the standalone
+	// history tab were both removed in v2.0.3 (merged into Agent Activity), the
+	// page never advances — but the limit/offset still serves the same purpose
+	// of capping the embedded update_history payload returned by the host
+	// detail endpoint.
+	const historyPage = 0;
+	const historyLimit = 10;
 	const [notes, setNotes] = useState("");
 	const [notesMessage, setNotesMessage] = useState({ text: "", type: "" });
 	const [updateMessage, setUpdateMessage] = useState({ text: "", jobId: "" });
@@ -125,8 +139,6 @@ const HostDetail = () => {
 		text: "",
 		isError: false,
 	});
-	const [showAllReports, setShowAllReports] = useState(false);
-
 	// Compliance install job (Host Detail Compliance tab): progress and cancel
 	const [complianceInstallJob, setComplianceInstallJob] = useState(null);
 	const [complianceScanFeedback, setComplianceScanFeedback] = useState(null);
@@ -137,6 +149,10 @@ const HostDetail = () => {
 
 	// State for auto-update confirmation dialog
 	const [autoUpdateDialog, setAutoUpdateDialog] = useState(false);
+
+	// 60s tick used to recompute live uptime from host.boot_time. Returning
+	// Date.now() lets formatLiveUptime stay pure while the interval re-renders.
+	const tickNow = useTick(60000);
 
 	// State for Apply pending config modal
 	const [showApplyConfigModal, setShowApplyConfigModal] = useState(false);
@@ -269,34 +285,94 @@ const HostDetail = () => {
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
 
-	// Tab change handler
+	// Tab change handler. Mirror "activity" into ?tab= so the new merged tab is
+	// shareable. Other tabs continue to use location-state navigation only — we
+	// don't want to churn the URL across the dozen pre-existing tabs.
 	const handleTabChange = (tabName) => {
 		setActiveTab(tabName);
+		if (tabName === "activity") {
+			setSearchParams(
+				(prev) => {
+					const next = new URLSearchParams(prev);
+					next.set("tab", "activity");
+					return next;
+				},
+				{ replace: true },
+			);
+		} else if (searchParams.get("tab")) {
+			// Leaving the activity tab — drop the legacy/active tab param so
+			// downstream filter params aren't carried over to other tabs.
+			setSearchParams(
+				(prev) => {
+					const next = new URLSearchParams(prev);
+					next.delete("tab");
+					for (const key of [
+						"direction",
+						"type",
+						"status",
+						"since",
+						"q",
+						"page",
+					]) {
+						next.delete(key);
+					}
+					return next;
+				},
+				{ replace: true },
+			);
+		}
 	};
 
 	// Open requested tab when navigating with state (e.g. from Compliance page link)
 	useEffect(() => {
 		const requestedTab = location.state?.tab;
-		if (
-			requestedTab &&
-			[
-				"host",
-				"network",
-				"system",
-				"history",
-				"queue",
-				"notes",
-				"integrations",
-				"reporting",
-				"docker",
-				"compliance",
-				"terminal",
-				"rdp",
-			].includes(requestedTab)
-		) {
+		const allowed = [
+			"host",
+			"network",
+			"system",
+			"activity",
+			"notes",
+			"integrations",
+			"reporting",
+			"docker",
+			"compliance",
+			"terminal",
+			"rdp",
+		];
+		if (!requestedTab) return;
+		// Legacy redirects: the old "Package Reports" and "Agent Queue" tabs were
+		// merged into a single "Agent Activity" tab in v2.0.3. Bookmarks shared
+		// in tickets / Slack should still land on something useful.
+		if (requestedTab === "history" || requestedTab === "queue") {
+			setActiveTab("activity");
+			return;
+		}
+		if (allowed.includes(requestedTab)) {
 			setActiveTab(requestedTab);
 		}
 	}, [location.state?.tab]);
+
+	// URL-driven tab redirects: handle ?tab=history and ?tab=queue arriving via
+	// direct links (not just from in-app navigation state). Rewrite the param so
+	// the URL reflects the canonical tab id.
+	useEffect(() => {
+		const urlTab = searchParams.get("tab");
+		if (urlTab === "history" || urlTab === "queue") {
+			setActiveTab("activity");
+			setSearchParams(
+				(prev) => {
+					const next = new URLSearchParams(prev);
+					next.set("tab", "activity");
+					return next;
+				},
+				{ replace: true },
+			);
+			return;
+		}
+		if (urlTab === "activity") {
+			setActiveTab("activity");
+		}
+	}, [searchParams, setSearchParams]);
 
 	// Auto-show credentials modal for new/pending hosts (skip if just arrived from Add Host wizard)
 	useEffect(() => {
@@ -820,7 +896,9 @@ const HostDetail = () => {
 		enabled: !!hostId && activeTab === "patching",
 	});
 
-	// Fetch global alert config for host_down
+	// Fetch global alert config for host_down. The metadata.threshold (seconds)
+	// drives both the host-down alert evaluator and the WS pill amber→red flip
+	// in HostStatusPills. Defaults to 30s when no config exists.
 	const { data: hostDownAlertConfig } = useQuery({
 		queryKey: ["alert-config", "host_down"],
 		queryFn: () =>
@@ -828,6 +906,19 @@ const HostDetail = () => {
 		staleTime: 5 * 60 * 1000, // 5 minutes
 		refetchOnWindowFocus: false,
 	});
+	const hostDownThresholdSeconds = (() => {
+		const raw = hostDownAlertConfig?.metadata?.threshold;
+		const parsed = Number.parseInt(raw, 10);
+		return Number.isFinite(parsed) && parsed > 0 ? parsed : 30;
+	})();
+
+	// update_interval drives the Reporting pill threshold (×1 = green→amber,
+	// ×2 = amber→red). Default 60 matches the backend default.
+	const updateIntervalMinutes = (() => {
+		const raw = settings?.update_interval;
+		const parsed = Number.parseInt(raw, 10);
+		return Number.isFinite(parsed) && parsed > 0 ? parsed : 60;
+	})();
 
 	// Mutation to update host down alerts setting
 	const toggleHostDownAlertsMutation = useMutation({
@@ -836,7 +927,7 @@ const HostDetail = () => {
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["host", hostId] });
 			setUpdateMessage({
-				text: "Host down alerts setting updated successfully",
+				text: "Host agent down alerts setting updated successfully",
 				jobId: "",
 			});
 			safeSetTimeout(() => {
@@ -1173,25 +1264,19 @@ const HostDetail = () => {
 		);
 	}
 
-	const getStatusColor = (isStale, needsUpdate) => {
-		if (isStale) return "text-danger-600";
-		if (needsUpdate) return "text-warning-600";
-		return "text-success-600";
+	// Build a host object for HostStatusPills that exposes the count fields it
+	// expects (the host-detail endpoint nests them under `stats`).
+	const hostForPills = {
+		...host,
+		updatesCount: host.stats?.outdated_packages || 0,
+		securityUpdatesCount: host.stats?.security_updates || 0,
 	};
 
-	const getStatusIcon = (isStale, needsUpdate) => {
-		if (isStale) return <AlertTriangle className="h-5 w-5" />;
-		if (needsUpdate) return <Clock className="h-5 w-5" />;
-		return <CheckCircle className="h-5 w-5" />;
-	};
-
-	const getStatusText = (isStale, needsUpdate) => {
-		if (isStale) return "Stale";
-		if (needsUpdate) return "Needs Updates";
-		return "Up to Date";
-	};
-
-	const isStale = Date.now() - new Date(host.last_update) > 24 * 60 * 60 * 1000;
+	// Prefer live uptime computed from host.boot_time (ticks every 60s); fall
+	// back to the agent-formatted host.system_uptime string for older agents
+	// that haven't reported boot_time yet.
+	const liveUptime = formatLiveUptime(host.boot_time, tickNow);
+	const displayUptime = liveUptime || host.system_uptime || null;
 
 	return (
 		<div className="min-h-screen flex flex-col">
@@ -1205,46 +1290,17 @@ const HostDetail = () => {
 						<ArrowLeft className="h-5 w-5" />
 					</Link>
 					<div className="flex flex-col gap-2">
-						{/* Title row with friendly name, badge, and status */}
+						{/* Title row with friendly name + tri-state status pills */}
 						<div className="flex items-center gap-3 flex-wrap">
 							<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
 								{host.friendly_name}
 							</h1>
-							{wsStatus && (
-								<span
-									className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold uppercase ${
-										wsStatus.connected
-											? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 animate-pulse"
-											: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
-									}`}
-									title={
-										wsStatus.connected
-											? `Agent connected via ${wsStatus.secure ? "WSS (secure)" : "WS"}`
-											: "Agent not connected"
-									}
-								>
-									{wsStatus.connected
-										? wsStatus.secure
-											? "WSS"
-											: "WS"
-										: "Offline"}
-								</span>
-							)}
-							<div
-								className={`flex items-center gap-2 px-2 py-1 rounded text-xs font-medium ${getStatusColor(isStale, host.stats.outdated_packages > 0)}`}
-							>
-								{getStatusIcon(isStale, host.stats.outdated_packages > 0)}
-								{getStatusText(isStale, host.stats.outdated_packages > 0)}
-							</div>
-							{host.needs_reboot && (
-								<span
-									className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
-									title={host.reboot_reason || "Reboot required"}
-								>
-									<RotateCcw className="h-3 w-3" />
-									Reboot Required
-								</span>
-							)}
+							<HostStatusPills
+								host={hostForPills}
+								wsStatus={wsStatus}
+								hostDownThresholdSeconds={hostDownThresholdSeconds}
+								updateIntervalMinutes={updateIntervalMinutes}
+							/>
 							{host.awaiting_post_patch_report_run_id && (
 								<Link
 									to={`/patching/runs/${host.awaiting_post_patch_report_run_id}`}
@@ -1257,22 +1313,15 @@ const HostDetail = () => {
 							)}
 						</div>
 						{/* Info row with uptime and last updated */}
-						<div className="flex items-center gap-4 text-sm text-secondary-600 dark:text-white">
-							{host.system_uptime && (
+						{displayUptime && (
+							<div className="flex items-center gap-4 text-sm text-secondary-600 dark:text-white">
 								<div className="flex items-center gap-1">
 									<Clock className="h-3.5 w-3.5" />
 									<span className="text-xs font-medium">Uptime:</span>
-									<span className="text-xs">{host.system_uptime}</span>
+									<span className="text-xs">{displayUptime}</span>
 								</div>
-							)}
-							<div className="flex items-center gap-1">
-								<Clock className="h-3.5 w-3.5" />
-								<span className="text-xs font-medium">Last updated:</span>
-								<span className="text-xs">
-									{formatRelativeTime(host.last_update)}
-								</span>
 							</div>
-						</div>
+						)}
 					</div>
 				</div>
 				<div className="flex items-center gap-2 flex-wrap w-full md:w-auto">
@@ -1909,7 +1958,8 @@ const HostDetail = () => {
 							)}
 
 							{/* Resource Information */}
-							{(host.system_uptime ||
+							{(host.boot_time ||
+								host.system_uptime ||
 								host.cpu_model ||
 								host.cpu_cores ||
 								host.ram_installed ||
@@ -1927,13 +1977,13 @@ const HostDetail = () => {
 										Resource Information
 									</h4>
 									<div className="space-y-3">
-										{host.system_uptime && (
+										{displayUptime && (
 											<div>
 												<p className="text-xs text-secondary-500 dark:text-white">
 													System Uptime
 												</p>
 												<p className="font-medium text-secondary-900 dark:text-white text-sm">
-													{host.system_uptime}
+													{displayUptime}
 												</p>
 											</div>
 										)}
@@ -2070,6 +2120,7 @@ const HostDetail = () => {
 							{!host.kernel_version &&
 								!host.selinux_status &&
 								!host.architecture &&
+								!host.boot_time &&
 								!host.system_uptime &&
 								!host.cpu_model &&
 								!host.cpu_cores &&
@@ -2092,113 +2143,8 @@ const HostDetail = () => {
 						</div>
 					</div>
 
-					{/* Package Reports Card */}
-					<div className="card p-4">
-						<h3 className="text-lg font-semibold text-secondary-900 dark:text-white mb-4 flex items-center gap-2">
-							<Calendar className="h-5 w-5 text-primary-600" />
-							Package Reports
-						</h3>
-						<div className="space-y-4">
-							{host.update_history?.length > 0 ? (
-								<>
-									<div className="space-y-3">
-										{(showAllReports
-											? host.update_history
-											: host.update_history.slice(0, 1)
-										).map((update) => (
-											<div
-												key={update.id}
-												className="p-3 bg-secondary-50 dark:bg-secondary-700 rounded-lg space-y-2"
-											>
-												<div className="flex items-start justify-between gap-3">
-													<div className="flex items-center gap-1.5">
-														<div
-															className={`w-1.5 h-1.5 rounded-full ${update.status === "success" ? "bg-success-500" : "bg-danger-500"}`}
-														/>
-														<span
-															className={`text-sm font-medium ${
-																update.status === "success"
-																	? "text-success-700 dark:text-success-300"
-																	: "text-danger-700 dark:text-danger-300"
-															}`}
-														>
-															{update.status === "success"
-																? "Success"
-																: "Failed"}
-														</span>
-													</div>
-													<div className="text-xs text-secondary-500 dark:text-white">
-														{formatDate(update.timestamp)}
-													</div>
-												</div>
-
-												<div className="flex flex-wrap items-center gap-3 text-sm pt-2 border-t border-secondary-200 dark:border-secondary-600">
-													<div className="flex items-center gap-2">
-														<Package className="h-4 w-4 text-secondary-400" />
-														<span className="text-secondary-700 dark:text-white">
-															Total: {update.total_packages || "-"}
-														</span>
-													</div>
-													<div className="flex items-center gap-2">
-														<span className="text-secondary-700 dark:text-white">
-															Outdated: {update.packages_count || "-"}
-														</span>
-													</div>
-													{update.security_count > 0 && (
-														<div className="flex items-center gap-1">
-															<Shield className="h-4 w-4 text-danger-600" />
-															<span className="text-danger-600 font-medium">
-																{update.security_count} Security
-															</span>
-														</div>
-													)}
-												</div>
-
-												<div className="flex flex-wrap items-center gap-4 text-xs text-secondary-500 dark:text-white pt-2 border-t border-secondary-200 dark:border-secondary-600">
-													{update.payload_size_kb && (
-														<div>
-															Payload: {update.payload_size_kb.toFixed(2)} KB
-														</div>
-													)}
-													{update.execution_time && (
-														<div>
-															Exec Time: {update.execution_time.toFixed(2)}s
-														</div>
-													)}
-												</div>
-											</div>
-										))}
-									</div>
-									{host.update_history.length > 1 && (
-										<button
-											type="button"
-											onClick={() => setShowAllReports(!showAllReports)}
-											className="w-full btn-outline flex items-center justify-center gap-2 py-2 text-sm"
-										>
-											{showAllReports ? (
-												<>
-													Show Less
-													<X className="h-4 w-4" />
-												</>
-											) : (
-												<>
-													Show More ({host.update_history.length - 1} more)
-													<Calendar className="h-4 w-4" />
-												</>
-											)}
-										</button>
-									)}
-								</>
-							) : (
-								<div className="text-center py-8">
-									<Calendar className="h-8 w-8 text-secondary-400 mx-auto mb-2" />
-									<p className="text-sm text-secondary-500 dark:text-white">
-										No update history available
-									</p>
-								</div>
-							)}
-						</div>
-					</div>
+					{/* Package Reports + Agent Queue inline cards removed in v2.0.3.
+					    Both surfaces are now consolidated into the Agent Activity tab. */}
 
 					{/* Notes Card */}
 					<div className="card p-4">
@@ -2263,15 +2209,6 @@ const HostDetail = () => {
 								</div>
 							</div>
 						</div>
-					</div>
-
-					{/* Agent Queue Card */}
-					<div className="card p-4">
-						<h3 className="text-lg font-semibold text-secondary-900 dark:text-white mb-4 flex items-center gap-2">
-							<Server className="h-5 w-5 text-primary-600" />
-							Agent Queue
-						</h3>
-						<AgentQueueTab hostId={hostId} />
 					</div>
 
 					{/* Integrations Card */}
@@ -2527,25 +2464,14 @@ const HostDetail = () => {
 						</button>
 						<button
 							type="button"
-							onClick={() => handleTabChange("history")}
+							onClick={() => handleTabChange("activity")}
 							className={`px-4 py-2 text-sm font-medium ${
-								activeTab === "history"
+								activeTab === "activity"
 									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
 									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
 							}`}
 						>
-							Package Reports
-						</button>
-						<button
-							type="button"
-							onClick={() => handleTabChange("queue")}
-							className={`px-4 py-2 text-sm font-medium ${
-								activeTab === "queue"
-									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
-							}`}
-						>
-							Agent Queue
+							Agent Activity
 						</button>
 						<button
 							type="button"
@@ -3169,7 +3095,8 @@ const HostDetail = () => {
 								)}
 
 								{/* Resource Information */}
-								{(host.system_uptime ||
+								{(host.boot_time ||
+									host.system_uptime ||
 									host.cpu_model ||
 									host.cpu_cores ||
 									host.ram_installed ||
@@ -3190,7 +3117,7 @@ const HostDetail = () => {
 										{/* System Overview */}
 										<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
 											{/* System Uptime */}
-											{host.system_uptime && (
+											{displayUptime && (
 												<div className="bg-secondary-50 dark:bg-secondary-700 p-4 rounded-lg">
 													<div className="flex items-center gap-2 mb-2">
 														<Clock className="h-4 w-4 text-primary-600 dark:text-primary-400" />
@@ -3199,7 +3126,7 @@ const HostDetail = () => {
 														</p>
 													</div>
 													<p className="font-medium text-secondary-900 dark:text-white text-sm">
-														{host.system_uptime}
+														{displayUptime}
 													</p>
 												</div>
 											)}
@@ -3357,6 +3284,7 @@ const HostDetail = () => {
 								{!host.kernel_version &&
 									!host.selinux_status &&
 									!host.architecture &&
+									!host.boot_time &&
 									!host.system_uptime &&
 									!host.cpu_model &&
 									!host.cpu_cores &&
@@ -3398,240 +3326,8 @@ const HostDetail = () => {
 								</div>
 							)}
 
-						{/* Update History */}
-						{activeTab === "history" && (
-							<div className="space-y-4">
-								{host.update_history?.length > 0 ? (
-									<>
-										{/* Mobile Card Layout */}
-										<div className="md:hidden space-y-3">
-											{host.update_history.map((update) => (
-												<div
-													key={update.id}
-													className="p-3 bg-secondary-50 dark:bg-secondary-700 rounded-lg space-y-2"
-												>
-													<div className="flex items-start justify-between gap-3">
-														<div className="flex items-center gap-1.5">
-															<div
-																className={`w-1.5 h-1.5 rounded-full ${update.status === "success" ? "bg-success-500" : "bg-danger-500"}`}
-															/>
-															<span
-																className={`text-sm font-medium ${
-																	update.status === "success"
-																		? "text-success-700 dark:text-success-300"
-																		: "text-danger-700 dark:text-danger-300"
-																}`}
-															>
-																{update.status === "success"
-																	? "Success"
-																	: "Failed"}
-															</span>
-														</div>
-														<div className="text-xs text-secondary-500 dark:text-white">
-															{formatDate(update.timestamp)}
-														</div>
-													</div>
-
-													<div className="flex flex-wrap items-center gap-3 text-sm pt-2 border-t border-secondary-200 dark:border-secondary-600">
-														<div className="flex items-center gap-2">
-															<Package className="h-4 w-4 text-secondary-400" />
-															<span className="text-secondary-700 dark:text-white">
-																Total: {update.total_packages || "-"}
-															</span>
-														</div>
-														<div className="flex items-center gap-2">
-															<span className="text-secondary-700 dark:text-white">
-																Outdated: {update.packages_count || "-"}
-															</span>
-														</div>
-														{update.security_count > 0 && (
-															<div className="flex items-center gap-1">
-																<Shield className="h-4 w-4 text-danger-600" />
-																<span className="text-danger-600 font-medium">
-																	{update.security_count} Security
-																</span>
-															</div>
-														)}
-													</div>
-
-													<div className="flex flex-wrap items-center gap-4 text-xs text-secondary-500 dark:text-white pt-2 border-t border-secondary-200 dark:border-secondary-600">
-														{update.payload_size_kb && (
-															<div>
-																Payload: {update.payload_size_kb.toFixed(2)} KB
-															</div>
-														)}
-														{update.execution_time && (
-															<div>
-																Exec Time: {update.execution_time.toFixed(2)}s
-															</div>
-														)}
-													</div>
-												</div>
-											))}
-										</div>
-
-										{/* Desktop Table Layout */}
-										<div className="hidden md:block overflow-x-auto">
-											<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
-												<thead className="bg-secondary-50 dark:bg-secondary-700">
-													<tr>
-														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-															Status
-														</th>
-														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-															Date
-														</th>
-														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-															Total Packages
-														</th>
-														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-															Outdated Packages
-														</th>
-														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-															Security
-														</th>
-														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-															Payload (KB)
-														</th>
-														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-															Exec Time (s)
-														</th>
-													</tr>
-												</thead>
-												<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
-													{host.update_history.map((update) => (
-														<tr
-															key={update.id}
-															className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
-														>
-															<td className="px-4 py-2 whitespace-nowrap">
-																<div className="flex items-center gap-1.5">
-																	<div
-																		className={`w-1.5 h-1.5 rounded-full ${update.status === "success" ? "bg-success-500" : "bg-danger-500"}`}
-																	/>
-																	<span
-																		className={`text-xs font-medium ${
-																			update.status === "success"
-																				? "text-success-700 dark:text-success-300"
-																				: "text-danger-700 dark:text-danger-300"
-																		}`}
-																	>
-																		{update.status === "success"
-																			? "Success"
-																			: "Failed"}
-																	</span>
-																</div>
-															</td>
-															<td className="px-4 py-2 whitespace-nowrap text-xs text-secondary-900 dark:text-white">
-																{formatDate(update.timestamp)}
-															</td>
-															<td className="px-4 py-2 whitespace-nowrap text-xs text-secondary-900 dark:text-white">
-																{update.total_packages || "-"}
-															</td>
-															<td className="px-4 py-2 whitespace-nowrap text-xs text-secondary-900 dark:text-white">
-																{update.packages_count}
-															</td>
-															<td className="px-4 py-2 whitespace-nowrap">
-																{update.security_count > 0 ? (
-																	<div className="flex items-center gap-1">
-																		<Shield className="h-3 w-3 text-danger-600" />
-																		<span className="text-xs text-danger-600 font-medium">
-																			{update.security_count}
-																		</span>
-																	</div>
-																) : (
-																	<span className="text-xs text-secondary-500 dark:text-white">
-																		-
-																	</span>
-																)}
-															</td>
-															<td className="px-4 py-2 whitespace-nowrap text-xs text-secondary-900 dark:text-white">
-																{update.payload_size_kb
-																	? `${update.payload_size_kb.toFixed(2)}`
-																	: "-"}
-															</td>
-															<td className="px-4 py-2 whitespace-nowrap text-xs text-secondary-900 dark:text-white">
-																{update.execution_time
-																	? `${update.execution_time.toFixed(2)}`
-																	: "-"}
-															</td>
-														</tr>
-													))}
-												</tbody>
-											</table>
-										</div>
-
-										{/* Pagination Controls */}
-										{host.pagination &&
-											host.pagination.total > historyLimit && (
-												<div className="flex items-center justify-between px-4 py-3 border-t border-secondary-200 dark:border-secondary-600 bg-secondary-50 dark:bg-secondary-700">
-													<div className="flex items-center gap-2 text-sm text-secondary-600 dark:text-white">
-														<span>
-															Showing {historyPage * historyLimit + 1} to{" "}
-															{Math.min(
-																(historyPage + 1) * historyLimit,
-																host.pagination.total,
-															)}{" "}
-															of {host.pagination.total} entries
-														</span>
-													</div>
-													<div className="flex items-center gap-2">
-														<button
-															type="button"
-															onClick={() => setHistoryPage(0)}
-															disabled={historyPage === 0}
-															className="px-3 py-1 text-xs font-medium text-secondary-600 dark:text-white hover:text-secondary-800 dark:hover:text-secondary-100 disabled:opacity-50 disabled:cursor-not-allowed"
-														>
-															First
-														</button>
-														<button
-															type="button"
-															onClick={() => setHistoryPage(historyPage - 1)}
-															disabled={historyPage === 0}
-															className="px-3 py-1 text-xs font-medium text-secondary-600 dark:text-white hover:text-secondary-800 dark:hover:text-secondary-100 disabled:opacity-50 disabled:cursor-not-allowed"
-														>
-															Previous
-														</button>
-														<span className="px-3 py-1 text-xs font-medium text-secondary-900 dark:text-white">
-															Page {historyPage + 1} of{" "}
-															{Math.ceil(host.pagination.total / historyLimit)}
-														</span>
-														<button
-															type="button"
-															onClick={() => setHistoryPage(historyPage + 1)}
-															disabled={!host.pagination.hasMore}
-															className="px-3 py-1 text-xs font-medium text-secondary-600 dark:text-white hover:text-secondary-800 dark:hover:text-secondary-100 disabled:opacity-50 disabled:cursor-not-allowed"
-														>
-															Next
-														</button>
-														<button
-															type="button"
-															onClick={() =>
-																setHistoryPage(
-																	Math.ceil(
-																		host.pagination.total / historyLimit,
-																	) - 1,
-																)
-															}
-															disabled={!host.pagination.hasMore}
-															className="px-3 py-1 text-xs font-medium text-secondary-600 dark:text-white hover:text-secondary-800 dark:hover:text-secondary-100 disabled:opacity-50 disabled:cursor-not-allowed"
-														>
-															Last
-														</button>
-													</div>
-												</div>
-											)}
-									</>
-								) : (
-									<div className="text-center py-8">
-										<Calendar className="h-8 w-8 text-secondary-400 mx-auto mb-2" />
-										<p className="text-sm text-secondary-500 dark:text-white">
-											No update history available
-										</p>
-									</div>
-								)}
-							</div>
-						)}
+						{/* Agent Activity (merged Package Reports + Agent Queue) */}
+						{activeTab === "activity" && <AgentActivityTab hostId={hostId} />}
 
 						{/* Terminal - Always mounted and open to preserve connection, hidden when not active.
 						    Gated by the ssh_terminal module (Max tier). When the module
@@ -3738,9 +3434,6 @@ const HostDetail = () => {
 								</div>
 							</div>
 						)}
-
-						{/* Agent Queue */}
-						{activeTab === "queue" && <AgentQueueTab hostId={hostId} />}
 
 						{/* Integrations */}
 						{activeTab === "integrations" && (
@@ -5072,6 +4765,10 @@ const HostDetail = () => {
 										<option value="completed">Completed</option>
 										<option value="failed">Failed</option>
 										<option value="cancelled">Cancelled</option>
+										<option value="timed_out">Timed out</option>
+										<option value="agent_disconnected">
+											Agent disconnected
+										</option>
 									</select>
 								</div>
 								{(patchingRunsData?.runs?.length === 0 ||
@@ -5906,7 +5603,7 @@ const HostDetail = () => {
 									<div className="flex items-center gap-3 mb-3">
 										<AlertTriangle className="h-5 w-5 text-primary-600 dark:text-primary-400" />
 										<h4 className="text-sm font-medium text-secondary-900 dark:text-white">
-											Host Down Alerts
+											Host Agent Down Alerts
 										</h4>
 									</div>
 									<p className="text-xs text-secondary-600 dark:text-white mb-4">

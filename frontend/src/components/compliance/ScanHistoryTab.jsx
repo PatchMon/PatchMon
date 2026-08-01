@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
 import {
 	CheckCircle,
@@ -74,7 +74,7 @@ const ScanHistoryTab = ({ scanned_hosts }) => {
 			return complianceAPI.getScanHistory(params);
 		},
 		staleTime: 30 * 1000,
-		keepPreviousData: true,
+		placeholderData: keepPreviousData,
 	});
 
 	const scans = data?.scans || [];

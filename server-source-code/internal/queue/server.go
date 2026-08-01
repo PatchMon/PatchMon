@@ -63,6 +63,8 @@ func NewServer(opts asynq.RedisClientOpt, registry *agentregistry.Registry, db *
 			QueueVersionUpdateCheck:          1,
 			QueueComplianceScanCleanup:       1,
 			QueuePatchRunCleanup:             1,
+			QueueAgentReportsCleanup:         1,
+			QueuePackageStatsRefresh:         1,
 			QueueSSGUpdateCheck:              1,
 			QueueUpdateThresholdMonitor:      1,
 			QueueCompliance:                  2,
@@ -89,6 +91,15 @@ type MuxOpts struct {
 	Log           *slog.Logger
 	Emit          *notifications.Emitter
 	Enc           *util.Encryption
+	// GetPatchRunStallTimeoutMin returns the current effective stall timeout
+	// (env -> DB -> default) at sweep time. Lets operators tune via Settings →
+	// Environment without restarting. If nil, the worker falls back to 30.
+	GetPatchRunStallTimeoutMin func() int
+	// GetAgentReportsRetentionDays returns the current effective retention
+	// window for update_history rows (env -> DB -> default) at sweep time.
+	// Same restart-free pattern as GetPatchRunStallTimeoutMin. If nil, the
+	// worker falls back to 30.
+	GetAgentReportsRetentionDays func() int
 }
 
 // Mux returns a ServeMux with all handlers registered.
@@ -102,7 +113,7 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	mux.Handle(TypeDockerInventoryRefresh, wrap(TypeDockerInventoryRefresh, NewDockerInventoryRefreshHandler(registry, db, log)))
 	mux.Handle(TypeUpdateAgent, wrap(TypeUpdateAgent, NewUpdateAgentHandler(registry, db, log)))
 	dbResolver := &hostctx.DBResolver{Default: db}
-	mux.Handle(TypeHostStatusMonitor, wrap(TypeHostStatusMonitor, NewHostStatusMonitorHandler(db, opts.PoolCache, opts.Emit, log)))
+	mux.Handle(TypeHostStatusMonitor, wrap(TypeHostStatusMonitor, NewHostStatusMonitorHandler(db, opts.PoolCache, registry, opts.Emit, log)))
 	mux.Handle(TypeUpdateThresholdMonitor, wrap(TypeUpdateThresholdMonitor, NewUpdateThresholdMonitorHandler(db, opts.PoolCache, opts.Emit, log)))
 	mux.Handle(notifications.TypeNotificationDeliver, wrap(notifications.TypeNotificationDeliver, NewNotificationDeliverHandler(db, opts.PoolCache, opts.Enc, opts.RDB, log)))
 	mux.Handle(TypeScheduledReportsDispatch, wrap(TypeScheduledReportsDispatch, NewScheduledReportsDispatchHandler(db, opts.PoolCache, opts.QueueClient, log)))
@@ -115,7 +126,9 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	mux.Handle(TypeSystemStatistics, wrap(TypeSystemStatistics, NewSystemStatisticsHandler(db, opts.PoolCache, log)))
 	mux.Handle(TypeVersionUpdateCheck, wrap(TypeVersionUpdateCheck, NewVersionUpdateCheckHandler(db, opts.PoolCache, opts.ServerVersion, opts.Emit, log)))
 	mux.Handle(TypeComplianceScanCleanup, wrap(TypeComplianceScanCleanup, NewComplianceScanCleanupHandler(db, opts.PoolCache, log)))
-	mux.Handle(TypePatchRunCleanup, wrap(TypePatchRunCleanup, NewPatchRunCleanupHandler(db, opts.PoolCache, log)))
+	mux.Handle(TypePatchRunCleanup, wrap(TypePatchRunCleanup, NewPatchRunCleanupHandler(db, opts.PoolCache, log, opts.GetPatchRunStallTimeoutMin)))
+	mux.Handle(TypeAgentReportsCleanup, wrap(TypeAgentReportsCleanup, NewAgentReportsCleanupHandler(db, opts.PoolCache, log, opts.GetAgentReportsRetentionDays)))
+	mux.Handle(TypePackageStatsRefresh, wrap(TypePackageStatsRefresh, NewPackageStatsRefreshHandler(db, opts.PoolCache, log)))
 	mux.Handle(TypeSSGUpdateCheck, wrap(TypeSSGUpdateCheck, NewSSGUpdateCheckHandler(registry, db, opts.PoolCache, opts.QueueClient, opts.SSGContentDir, log)))
 	mux.Handle(TypeSSGUpgrade, wrap(TypeSSGUpgrade, NewSSGUpgradeHandler(registry, db, opts.PoolCache, log)))
 	complianceStore := store.NewComplianceStore(db)
@@ -130,6 +143,19 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	mux.Handle(TypeMetricsSend, wrap(TypeMetricsSend, NewMetricsSendHandler(db, opts.PoolCache, opts.ServerVersion, log)))
 	return mux
 }
+
+// packageStatsRefreshUniqueWindow is the asynq uniqueness TTL for the
+// scheduled mv_package_stats refresh.
+//
+// It must be LONGER than the 2-minute cron interval, not shorter. asynq
+// releases the uniqueness lock as soon as the task finishes, so a healthy
+// refresh (sub-second to a couple of seconds) never suppresses the next tick
+// regardless of TTL. The TTL only matters in the case it exists to bound: a
+// refresh still running when the next tick fires. With a TTL under the cron
+// interval the lock would already have expired by then and the tick would
+// enqueue anyway, which is precisely the pile-up this is meant to prevent.
+// 3 minutes gives a comfortable margin over the 2-minute schedule.
+const packageStatsRefreshUniqueWindow = 3 * time.Minute
 
 // minutesToCron converts an interval in minutes to a cron expression.
 // For intervals that divide evenly into 60, it uses */N syntax.
@@ -225,7 +251,35 @@ func NewScheduler(opts asynq.RedisClientOpt, db *database.DB, log *slog.Logger) 
 	}
 
 	patchRunCleanupTask := asynq.NewTask(TypePatchRunCleanup, nil)
-	if _, err := scheduler.Register("30 0 * * *", patchRunCleanupTask, asynq.Queue(QueuePatchRunCleanup), asynq.Retention(AutomationRetention)); err != nil {
+	if _, err := scheduler.Register("*/10 * * * *", patchRunCleanupTask, asynq.Queue(QueuePatchRunCleanup), asynq.Retention(AutomationRetention)); err != nil {
+		return nil, err
+	}
+
+	// Agent Activity (update_history) retention sweep. Daily at 02:00 — co-located
+	// with orphan-repo cleanup so all the "delete old rows" sweeps fire in one
+	// quiet window.
+	agentReportsCleanupTask := asynq.NewTask(TypeAgentReportsCleanup, nil)
+	if _, err := scheduler.Register("0 2 * * *", agentReportsCleanupTask, asynq.Queue(QueueAgentReportsCleanup), asynq.Retention(AutomationRetention)); err != nil {
+		return nil, err
+	}
+
+	// Package stats matview refresh. Every 2 minutes — drives the
+	// Packages list page's per-package counters. Worst-case staleness
+	// on screen = this interval. REFRESH CONCURRENTLY produces brief
+	// row-level locks rather than a full table lock so this does not
+	// block readers.
+	//
+	// asynq.Unique bounds the queue: on a large install a refresh can take
+	// longer than the 2-minute cron interval, and without a uniqueness window
+	// every tick would enqueue another one behind the running job until the
+	// queue (and the DB) is saturated with redundant refreshes. See
+	// packageStatsRefreshUniqueWindow for why the window deliberately exceeds
+	// the cron interval rather than sitting under it.
+	packageStatsRefreshTask := asynq.NewTask(TypePackageStatsRefresh, nil)
+	if _, err := scheduler.Register("*/2 * * * *", packageStatsRefreshTask,
+		asynq.Queue(QueuePackageStatsRefresh),
+		asynq.Unique(packageStatsRefreshUniqueWindow),
+		asynq.Retention(AutomationRetention)); err != nil {
 		return nil, err
 	}
 

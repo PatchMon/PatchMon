@@ -105,6 +105,8 @@ func dbSettingToModel(s db.Setting) models.Settings {
 		MaxLoginAttempts:                pgInt32ToIntPtr(s.MaxLoginAttempts),
 		LockoutDurationMinutes:          pgInt32ToIntPtr(s.LockoutDurationMinutes),
 		SessionInactivityTimeoutMinutes: pgInt32ToIntPtr(s.SessionInactivityTimeoutMinutes),
+		PatchRunStallTimeoutMinutes:     pgInt32ToIntPtr(s.PatchRunStallTimeoutMinutes),
+		AgentReportsRetentionDays:       pgInt32ToIntPtr(s.AgentReportsRetentionDays),
 		TfaMaxRememberSessions:          pgInt32ToIntPtr(s.TfaMaxRememberSessions),
 		PasswordMinLength:               pgInt32ToIntPtr(s.PasswordMinLength),
 		PasswordRequireUppercase:        s.PasswordRequireUppercase,
@@ -478,6 +480,7 @@ func dbHostToModel(h db.Host) *models.Host {
 		SelinuxStatus:                h.SelinuxStatus,
 		SwapSize:                     h.SwapSize,
 		SystemUptime:                 h.SystemUptime,
+		BootTime:                     pgtime.PtrTz(h.BootTime),
 		Notes:                        h.Notes,
 		NeedsReboot:                  h.NeedsReboot,
 		RebootReason:                 h.RebootReason,
@@ -494,6 +497,13 @@ func dbHostToModel(h db.Host) *models.Host {
 		PackageManager:               h.PackageManager,
 		PrimaryInterface:             h.PrimaryInterface,
 		AwaitingPostPatchReportRunID: h.AwaitingPostPatchReportRunID,
+		PackagesHash:                 h.PackagesHash,
+		ReposHash:                    h.ReposHash,
+		InterfacesHash:               h.InterfacesHash,
+		HostnameHash:                 h.HostnameHash,
+		DockerHash:                   h.DockerHash,
+		ComplianceHash:               h.ComplianceHash,
+		LastFullReportAt:             pgTimePtr(h.LastFullReportAt),
 	}
 }
 

@@ -32,6 +32,8 @@ type ListParams struct {
 	IsSecurityUpdate string
 	Host             string
 	Repository       string
+	Sort             string
+	Order            string
 }
 
 // PackageRepoRef is a source repository reference for a package.
@@ -88,65 +90,58 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 	if p.Limit <= 0 {
 		p.Limit = 50
 	}
-	if p.Limit > 10000 {
-		p.Limit = 10000
+	if p.Limit > 500 {
+		p.Limit = 500
 	}
 	if p.Page <= 0 {
 		p.Page = 1
 	}
+	sortKey := packageListSortKey(p.Sort)
+	sortDir := "asc"
+	if p.Order == "desc" {
+		sortDir = "desc"
+	}
 	offset := (p.Page - 1) * p.Limit
 
-	listArg := db.ListPackagesParams{
-		Limit:  safeconv.ClampToInt32(p.Limit),
-		Offset: safeconv.ClampToInt32(offset),
-	}
+	filters := packagesListFilters{}
 	if p.Search != "" {
-		listArg.Search = &p.Search
+		filters.Search = &p.Search
 	}
 	if p.Category != "" {
-		listArg.Category = &p.Category
+		filters.Category = &p.Category
 	}
 	if p.Host != "" {
-		listArg.HostID = &p.Host
+		filters.HostID = &p.Host
 	}
 	if p.NeedsUpdate == "true" {
-		listArg.NeedsUpdate = &p.NeedsUpdate
+		filters.NeedsUpdate = &p.NeedsUpdate
 	}
-	if p.IsSecurityUpdate == "true" {
-		listArg.IsSecurityUpdate = &p.IsSecurityUpdate
-	}
-	if p.Repository != "" {
-		listArg.RepositoryID = &p.Repository
-	}
-
-	countArg := db.CountPackagesParams{}
-	if p.Search != "" {
-		countArg.Search = &p.Search
-	}
-	if p.Category != "" {
-		countArg.Category = &p.Category
-	}
-	if p.Host != "" {
-		countArg.HostID = &p.Host
-	}
-	if p.NeedsUpdate == "true" {
-		countArg.NeedsUpdate = &p.NeedsUpdate
-	}
-	if p.IsSecurityUpdate == "true" {
-		countArg.IsSecurityUpdate = &p.IsSecurityUpdate
+	if p.IsSecurityUpdate != "" {
+		filters.IsSecurityUpdate = &p.IsSecurityUpdate
 	}
 	if p.Repository != "" {
-		countArg.RepositoryID = &p.Repository
+		filters.RepositoryID = &p.Repository
 	}
 
-	total, err := d.Queries.CountPackages(ctx, countArg)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	pkgs, err := d.Queries.ListPackages(ctx, listArg)
-	if err != nil {
-		return nil, 0, err
+	// CountPackages + ListPackages run in one transaction. Both queries
+	// are now built dynamically (see packages_list_sql.go) so the WHERE
+	// predicate reflects only the active filters and the ORDER BY column
+	// is whitelisted into the SQL — no more CASE-WHEN sort that defeats
+	// LIMIT pushdown. The work_mem bump is retained because CountPackages
+	// still has to touch host_packages directly for the EXISTS / NOT
+	// EXISTS branches when those filters are active.
+	var total int32
+	var pkgs []listPackagesRow
+	if werr := withWorkMemTxRaw(ctx, s.db, func(_ *db.Queries, tx pgx.Tx) error {
+		var err error
+		total, err = runCountPackages(ctx, tx, filters)
+		if err != nil {
+			return err
+		}
+		pkgs, err = runListPackages(ctx, tx, filters, sortKey, sortDir, safeconv.ClampToInt32(p.Limit), safeconv.ClampToInt32(offset))
+		return err
+	}); werr != nil {
+		return nil, 0, werr
 	}
 
 	if len(pkgs) == 0 {
@@ -158,30 +153,28 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 		ids[i] = p.ID
 	}
 
-	// Per-package stats (total installs, updates needed, security updates) are
-	// intentionally computed globally across all hosts, even when the row-level
-	// host filter is active. The host filter restricts *which* packages appear
-	// in the list, but the "Installed On" count and update counts should reflect
-	// the true footprint of each package - otherwise the counts always collapse
-	// to 1 under a host filter and look misleading in the UI.
-	statsArg := db.GetHostPackageStatsByPackageIDsParams{Column1: ids}
-	updatesArg := db.GetUpdatesCountByPackageIDsParams{Column1: ids}
-	securityArg := db.GetSecurityCountByPackageIDsParams{Column1: ids}
+	// Per-row enrichment that the matview can't supply: the list of hosts
+	// the package is installed on (with version + needsUpdate flags) and
+	// the source repositories. These are bounded by the page size (≤500
+	// package IDs) and use the existing idx_host_packages_package_id
+	// covering index, so they stay sub-millisecond.
 	hostRefsArg := db.GetHostRefsForPackageIDsParams{Column1: ids}
 	if p.Host != "" {
 		hostRefsArg.HostID = &p.Host
 	}
-
-	totalRows, _ := d.Queries.GetHostPackageStatsByPackageIDs(ctx, statsArg)
-	updatesRows, _ := d.Queries.GetUpdatesCountByPackageIDs(ctx, updatesArg)
-	securityRows, _ := d.Queries.GetSecurityCountByPackageIDs(ctx, securityArg)
-	hostRefs, _ := d.Queries.GetHostRefsForPackageIDs(ctx, hostRefsArg)
+	hostRefs, err := d.Queries.GetHostRefsForPackageIDs(ctx, hostRefsArg)
+	if err != nil {
+		return nil, 0, err
+	}
 
 	sourceRepoArg := db.GetSourceReposByPackageIDsParams{Column1: ids}
 	if p.Host != "" {
 		sourceRepoArg.HostID = &p.Host
 	}
-	sourceRepoRows, _ := d.Queries.GetSourceReposByPackageIDs(ctx, sourceRepoArg)
+	sourceRepoRows, err := d.Queries.GetSourceReposByPackageIDs(ctx, sourceRepoArg)
+	if err != nil {
+		return nil, 0, err
+	}
 	reposByPkg := make(map[string][]PackageRepoRef)
 	for _, r := range sourceRepoRows {
 		ref := PackageRepoRef{
@@ -191,19 +184,6 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 			RepoType: r.RepoType,
 		}
 		reposByPkg[r.PackageID] = append(reposByPkg[r.PackageID], ref)
-	}
-
-	totalMap := make(map[string]int)
-	for _, r := range totalRows {
-		totalMap[r.PackageID] = int(r.Cnt)
-	}
-	updatesMap := make(map[string]int)
-	for _, r := range updatesRows {
-		updatesMap[r.PackageID] = int(r.Cnt)
-	}
-	securityMap := make(map[string]int)
-	for _, r := range securityRows {
-		securityMap[r.PackageID] = int(r.Cnt)
 	}
 
 	hostsByPkg := make(map[string][]PackageHostRef)
@@ -218,16 +198,16 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 			IsSecurityUpdate: r.IsSecurityUpdate,
 		}
 		hostsByPkg[r.PackageID] = append(hostsByPkg[r.PackageID], ref)
-		if len(hostsByPkg[r.PackageID]) >= 10 {
-			hostsByPkg[r.PackageID] = hostsByPkg[r.PackageID][:10]
-		}
 	}
 
 	out := make([]PackageWithStats, len(pkgs))
 	for i, p := range pkgs {
-		totalInstalls := totalMap[p.ID]
-		updatesNeeded := updatesMap[p.ID]
-		securityUpdates := securityMap[p.ID]
+		// Counters are global per-package as documented above (host filter
+		// in the table doesn't change the per-row footprint badge), and
+		// come straight from mv_package_stats via ListPackages.
+		totalInstalls := int(p.TotalInstalls)
+		updatesNeeded := int(p.UpdatesNeeded)
+		securityUpdates := int(p.SecurityUpdates)
 		out[i] = PackageWithStats{
 			ID:                p.ID,
 			Name:              p.Name,
@@ -246,6 +226,15 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 		}
 	}
 	return out, int(total), nil
+}
+
+func packageListSortKey(sort string) string {
+	switch sort {
+	case "name", "latestVersion", "packageHosts", "status":
+		return sort
+	default:
+		return "name"
+	}
 }
 
 // GetByID returns a package by ID with host_packages, stats, and distributions.

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
 	ArrowDown,
 	ArrowUp,
@@ -93,7 +93,7 @@ const ScanResultsTab = ({
 			}),
 		staleTime: 60 * 1000,
 		refetchOnWindowFocus: false,
-		keepPreviousData: true,
+		placeholderData: keepPreviousData,
 	});
 
 	const sorted_rules = data?.rules || [];

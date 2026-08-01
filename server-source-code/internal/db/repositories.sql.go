@@ -44,6 +44,34 @@ func (q *Queries) CountRepositories(ctx context.Context) (int32, error) {
 	return column_1, err
 }
 
+const countRepositoriesForList = `-- name: CountRepositoriesForList :one
+SELECT COUNT(*)::int
+FROM repositories r
+WHERE ($1::text IS NULL OR EXISTS (SELECT 1 FROM host_repositories hr WHERE hr.repository_id = r.id AND hr.host_id = $1))
+AND ($2::text IS NULL OR r.name ILIKE '%' || $2 || '%' OR r.url ILIKE '%' || $2 || '%' OR r.distribution ILIKE '%' || $2 || '%' OR COALESCE(r.description, '') ILIKE '%' || $2 || '%')
+AND ($3::text IS NULL OR ($3 = 'active' AND r.is_active = true) OR ($3 = 'inactive' AND r.is_active = false))
+AND ($4::text IS NULL OR ($4 = 'secure' AND r.is_secure = true) OR ($4 = 'insecure' AND r.is_secure = false))
+`
+
+type CountRepositoriesForListParams struct {
+	HostID *string `json:"host_id"`
+	Search *string `json:"search"`
+	Status *string `json:"status"`
+	Type   *string `json:"type"`
+}
+
+func (q *Queries) CountRepositoriesForList(ctx context.Context, arg CountRepositoriesForListParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countRepositoriesForList,
+		arg.HostID,
+		arg.Search,
+		arg.Status,
+		arg.Type,
+	)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countSecureRepositories = `-- name: CountSecureRepositories :one
 SELECT COUNT(*)::int FROM repositories WHERE is_secure = true
 `
@@ -299,6 +327,49 @@ func (q *Queries) GetHostRepositoryCountByHostIDs(ctx context.Context, dollar_1 
 	return items, nil
 }
 
+const getRepoCountsForRepos = `-- name: GetRepoCountsForRepos :many
+SELECT hr.repository_id,
+    COUNT(*)::int AS host_count,
+    COUNT(*) FILTER (WHERE hr.is_enabled)::int AS enabled_host_count,
+    COUNT(*) FILTER (WHERE h.status = 'active')::int AS active_host_count
+FROM host_repositories hr
+JOIN hosts h ON h.id = hr.host_id
+WHERE hr.repository_id = ANY($1::text[])
+GROUP BY hr.repository_id
+`
+
+type GetRepoCountsForReposRow struct {
+	RepositoryID     string `json:"repository_id"`
+	HostCount        int32  `json:"host_count"`
+	EnabledHostCount int32  `json:"enabled_host_count"`
+	ActiveHostCount  int32  `json:"active_host_count"`
+}
+
+func (q *Queries) GetRepoCountsForRepos(ctx context.Context, dollar_1 []string) ([]GetRepoCountsForReposRow, error) {
+	rows, err := q.db.Query(ctx, getRepoCountsForRepos, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetRepoCountsForReposRow
+	for rows.Next() {
+		var i GetRepoCountsForReposRow
+		if err := rows.Scan(
+			&i.RepositoryID,
+			&i.HostCount,
+			&i.EnabledHostCount,
+			&i.ActiveHostCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getRepositoryByID = `-- name: GetRepositoryByID :one
 SELECT id, name, url, distribution, components, repo_type, is_active, is_secure, priority, description, created_at, updated_at FROM repositories WHERE id = $1
 `
@@ -405,23 +476,79 @@ func (q *Queries) ListOrphanedRepositories(ctx context.Context) ([]ListOrphanedR
 }
 
 const listRepositories = `-- name: ListRepositories :many
-SELECT id, name, url, distribution, components, repo_type, is_active, is_secure, priority, description, created_at, updated_at FROM repositories r
-WHERE ($1::text IS NULL OR EXISTS (SELECT 1 FROM host_repositories hr WHERE hr.repository_id = r.id AND hr.host_id = $1))
-AND ($2::text IS NULL OR r.name ILIKE '%' || $2 || '%' OR r.url ILIKE '%' || $2 || '%' OR r.distribution ILIKE '%' || $2 || '%' OR COALESCE(r.description, '') ILIKE '%' || $2 || '%')
-AND ($3::text IS NULL OR ($3 = 'active' AND r.is_active = true) OR ($3 = 'inactive' AND r.is_active = false))
-AND ($4::text IS NULL OR ($4 = 'secure' AND r.is_secure = true) OR ($4 = 'insecure' AND r.is_secure = false))
-ORDER BY r.name ASC, r.url ASC
+WITH filtered_repositories AS (
+    SELECT r.id, r.name, r.url, r.distribution, r.components, r.repo_type, r.is_active, r.is_secure, r.priority, r.description, r.created_at, r.updated_at
+    FROM repositories r
+    WHERE ($5::text IS NULL OR EXISTS (SELECT 1 FROM host_repositories hr WHERE hr.repository_id = r.id AND hr.host_id = $5))
+    AND ($6::text IS NULL OR r.name ILIKE '%' || $6 || '%' OR r.url ILIKE '%' || $6 || '%' OR r.distribution ILIKE '%' || $6 || '%' OR COALESCE(r.description, '') ILIKE '%' || $6 || '%')
+    AND ($7::text IS NULL OR ($7 = 'active' AND r.is_active = true) OR ($7 = 'inactive' AND r.is_active = false))
+    AND ($8::text IS NULL OR ($8 = 'secure' AND r.is_secure = true) OR ($8 = 'insecure' AND r.is_secure = false))
+),
+repo_counts AS (
+    SELECT hr.repository_id, COUNT(*)::int AS host_count
+    FROM host_repositories hr
+    JOIN filtered_repositories fr ON fr.id = hr.repository_id
+    GROUP BY hr.repository_id
+),
+enriched_repositories AS (
+    SELECT fr.id, fr.name, fr.url, fr.distribution, fr.components, fr.repo_type, fr.is_active, fr.is_secure, fr.priority, fr.description, fr.created_at, fr.updated_at, COALESCE(rc.host_count, 0)::int AS host_count
+    FROM filtered_repositories fr
+    LEFT JOIN repo_counts rc ON rc.repository_id = fr.id
+)
+SELECT id, name, url, distribution, components, repo_type, is_active, is_secure, priority, description, created_at, updated_at
+FROM enriched_repositories
+ORDER BY
+    CASE WHEN $1::text = 'name'         AND $2::text = 'asc'  THEN name END ASC,
+    CASE WHEN $1::text = 'name'         AND $2::text = 'desc' THEN name END DESC,
+    CASE WHEN $1::text = 'url'          AND $2::text = 'asc'  THEN url END ASC,
+    CASE WHEN $1::text = 'url'          AND $2::text = 'desc' THEN url END DESC,
+    CASE WHEN $1::text = 'distribution' AND $2::text = 'asc'  THEN distribution END ASC,
+    CASE WHEN $1::text = 'distribution' AND $2::text = 'desc' THEN distribution END DESC,
+    CASE WHEN $1::text = 'security'     AND $2::text = 'asc'  THEN is_secure END ASC,
+    CASE WHEN $1::text = 'security'     AND $2::text = 'desc' THEN is_secure END DESC,
+    CASE WHEN $1::text = 'status'       AND $2::text = 'asc'  THEN is_active END DESC,
+    CASE WHEN $1::text = 'status'       AND $2::text = 'desc' THEN is_active END ASC,
+    CASE WHEN $1::text = 'hostCount'    AND $2::text = 'asc'  THEN host_count END ASC,
+    CASE WHEN $1::text = 'hostCount'    AND $2::text = 'desc' THEN host_count END DESC,
+    name ASC,
+    url ASC,
+    id ASC
+LIMIT $4::int
+OFFSET $3::int
 `
 
 type ListRepositoriesParams struct {
-	HostID *string `json:"host_id"`
-	Search *string `json:"search"`
-	Status *string `json:"status"`
-	Type   *string `json:"type"`
+	SortKey   string  `json:"sort_key"`
+	SortDir   string  `json:"sort_dir"`
+	RowOffset int32   `json:"row_offset"`
+	RowLimit  int32   `json:"row_limit"`
+	HostID    *string `json:"host_id"`
+	Search    *string `json:"search"`
+	Status    *string `json:"status"`
+	Type      *string `json:"type"`
 }
 
-func (q *Queries) ListRepositories(ctx context.Context, arg ListRepositoriesParams) ([]Repository, error) {
+type ListRepositoriesRow struct {
+	ID           string           `json:"id"`
+	Name         string           `json:"name"`
+	Url          string           `json:"url"`
+	Distribution string           `json:"distribution"`
+	Components   string           `json:"components"`
+	RepoType     string           `json:"repo_type"`
+	IsActive     bool             `json:"is_active"`
+	IsSecure     bool             `json:"is_secure"`
+	Priority     *int32           `json:"priority"`
+	Description  *string          `json:"description"`
+	CreatedAt    pgtype.Timestamp `json:"created_at"`
+	UpdatedAt    pgtype.Timestamp `json:"updated_at"`
+}
+
+func (q *Queries) ListRepositories(ctx context.Context, arg ListRepositoriesParams) ([]ListRepositoriesRow, error) {
 	rows, err := q.db.Query(ctx, listRepositories,
+		arg.SortKey,
+		arg.SortDir,
+		arg.RowOffset,
+		arg.RowLimit,
 		arg.HostID,
 		arg.Search,
 		arg.Status,
@@ -431,9 +558,9 @@ func (q *Queries) ListRepositories(ctx context.Context, arg ListRepositoriesPara
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Repository
+	var items []ListRepositoriesRow
 	for rows.Next() {
-		var i Repository
+		var i ListRepositoriesRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,

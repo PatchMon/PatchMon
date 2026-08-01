@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"strconv"
@@ -12,7 +13,7 @@ import (
 )
 
 // DefaultVersion is the default server version. Bump this when releasing; config_test.go uses it.
-const DefaultVersion = "2.0.2"
+const DefaultVersion = "2.0.3"
 
 // Config holds application configuration loaded from environment.
 // Uses same variable names as PatchMon/server for compatibility.
@@ -56,6 +57,15 @@ type Config struct {
 	EnablePprof         bool
 	MemstatsIntervalSec int
 
+	// Patching: minutes a patch run can stay in "running" before the periodic
+	// cleanup marks it as timed_out. Default 30, minimum 5.
+	PatchRunStallTimeoutMin int
+
+	// AgentReportsRetentionDays controls how long Agent Activity rows
+	// (update_history) are kept before the daily cleanup sweep deletes them.
+	// Default 30, minimum 7, maximum 365.
+	AgentReportsRetentionDays int
+
 	// Redis (for bootstrap tokens, asynq job queues, TFA lockout, etc.)
 	RedisHost           string
 	RedisPort           int
@@ -77,6 +87,10 @@ type Config struct {
 	// Server
 	EnableHSTS bool
 	TrustProxy bool
+	// TrustedProxyRanges lists CIDRs (or bare IPs) of reverse proxies in front of
+	// PatchMon. Env-only: exposing this in the settings UI would let an admin
+	// widen it to 0.0.0.0/0 and restore X-Forwarded-For spoofing.
+	TrustedProxyRanges []string
 	// Rate limits (env -> DB -> default)
 	RateLimitWindowMs         int
 	RateLimitMax              int
@@ -95,6 +109,10 @@ type Config struct {
 	// Body limits (bytes)
 	JSONBodyLimitBytes        int64
 	AgentUpdateBodyLimitBytes int64
+	// AgentPingBodyLimitBytes caps /hosts/ping bodies. Worst case is ~3-4 KB
+	// of hashes + metrics; 8 KiB gives headroom without letting an attacker
+	// abuse the cheap ping endpoint as a payload sink.
+	AgentPingBodyLimitBytes int64
 	// Redis (env only)
 	RedisTLSCA string
 	// Timezone
@@ -203,8 +221,10 @@ func Load() (*Config, error) {
 		EnableLogging: getEnv("ENABLE_LOGGING", "") == "true",
 		LogLevel:      getEnv("LOG_LEVEL", "info"),
 
-		EnablePprof:         getEnv("ENABLE_PPROF", "") == "true",
-		MemstatsIntervalSec: getEnvInt("MEMSTATS_INTERVAL_SEC", 60),
+		EnablePprof:               getEnv("ENABLE_PPROF", "") == "true",
+		MemstatsIntervalSec:       getEnvInt("MEMSTATS_INTERVAL_SEC", 60),
+		PatchRunStallTimeoutMin:   getEnvInt("PATCH_RUN_STALL_TIMEOUT_MIN", 30),
+		AgentReportsRetentionDays: getEnvInt("AGENT_REPORTS_RETENTION_DAYS", 30),
 
 		RedisHost:           getEnv("REDIS_HOST", "localhost"),
 		RedisPort:           getEnvInt("REDIS_PORT", 6379),
@@ -256,7 +276,12 @@ func Load() (*Config, error) {
 		// reach the audit log, and rate limiting keys on the proxy's IP.
 		// Set TRUST_PROXY=false explicitly only when PatchMon is exposed
 		// directly to the internet without a reverse proxy.
-		TrustProxy:                  getEnv("TRUST_PROXY", "true") != "false",
+		TrustProxy: getEnv("TRUST_PROXY", "true") != "false",
+		// Comma-separated CIDRs or bare IPs of the reverse proxies in front of
+		// PatchMon. Empty is the correct value for a single proxy (the default
+		// Docker deployment); set it when proxies are chained, e.g. Cloudflare
+		// in front of Nginx Proxy Manager.
+		TrustedProxyRanges:          splitAndTrim(getEnv("TRUSTED_PROXY_RANGES", "")),
 		RateLimitWindowMs:           getEnvInt("RATE_LIMIT_WINDOW_MS", 900000),
 		RateLimitMax:                getEnvInt("RATE_LIMIT_MAX", 5000),
 		AuthRateLimitWindowMs:       getEnvInt("AUTH_RATE_LIMIT_WINDOW_MS", 600000),
@@ -272,6 +297,7 @@ func Load() (*Config, error) {
 		PasswordRequireSpecial:      getEnv("PASSWORD_REQUIRE_SPECIAL", "true") != "false",
 		JSONBodyLimitBytes:          getEnvBytes("JSON_BODY_LIMIT", 5),
 		AgentUpdateBodyLimitBytes:   getEnvBytes("AGENT_UPDATE_BODY_LIMIT", 5),
+		AgentPingBodyLimitBytes:     getEnvBytesKBDefault("AGENT_PING_BODY_LIMIT", 8),
 		RedisTLSCA:                  getEnv("REDIS_TLS_CA", ""),
 		Timezone:                    getEnv("TZ", getEnv("TIMEZONE", "UTC")),
 		DefaultUserRole:             getEnv("DEFAULT_USER_ROLE", "user"),
@@ -287,6 +313,25 @@ func Load() (*Config, error) {
 
 		GuacdPath:    getEnv("GUACD_PATH", ""),
 		GuacdAddress: getEnv("GUACD_ADDRESS", "127.0.0.1:4822"),
+	}
+
+	// Clamp pathologically aggressive timeouts: a sub-5 minute window will
+	// kill runs that are still legitimately starting on slow hosts.
+	if cfg.PatchRunStallTimeoutMin < 5 {
+		slog.Warn("PATCH_RUN_STALL_TIMEOUT_MIN below minimum, clamping to 5", "value", cfg.PatchRunStallTimeoutMin)
+		cfg.PatchRunStallTimeoutMin = 5
+	}
+
+	// AGENT_REPORTS_RETENTION_DAYS: floor 7 (a week of history protects most
+	// forensic use cases), ceiling 365 (one year keeps update_history bounded
+	// on busy fleets without blowing past Postgres practical sizes).
+	if cfg.AgentReportsRetentionDays < 7 {
+		slog.Warn("AGENT_REPORTS_RETENTION_DAYS below minimum, clamping to 7", "value", cfg.AgentReportsRetentionDays)
+		cfg.AgentReportsRetentionDays = 7
+	}
+	if cfg.AgentReportsRetentionDays > 365 {
+		slog.Warn("AGENT_REPORTS_RETENTION_DAYS above maximum, clamping to 365", "value", cfg.AgentReportsRetentionDays)
+		cfg.AgentReportsRetentionDays = 365
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -331,6 +376,22 @@ func getEnv(key, defaultVal string) string {
 	return defaultVal
 }
 
+// splitAndTrim splits a comma-separated env value, trimming whitespace and
+// dropping empty entries. Returns nil for an empty value.
+func splitAndTrim(v string) []string {
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
 // getEnvEnv returns APP_ENV if set, else NODE_ENV (for backward compatibility), else "production".
 func getEnvEnv() string {
 	return getEnv("APP_ENV", getEnv("NODE_ENV", "production"))
@@ -372,6 +433,34 @@ func getEnvBytes(key string, defaultMB int) int64 {
 	v, err := strconv.ParseInt(s, 10, 64)
 	if err != nil || v < 1 {
 		return int64(defaultMB) * 1024 * 1024
+	}
+	return v * mult
+}
+
+// getEnvBytesKBDefault parses size strings like getEnvBytes but defaults to
+// `defaultKB` kibibytes (not megabytes) when env is empty or unparseable.
+// Kept separate from getEnvBytes so the existing MB-default sites don't
+// silently shrink to KB if a future caller forgets which helper they're
+// invoking.
+func getEnvBytesKBDefault(key string, defaultKB int) int64 {
+	s := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	if s == "" {
+		return int64(defaultKB) * 1024
+	}
+	var mult int64 = 1024
+	if strings.HasSuffix(s, "kb") {
+		s = strings.TrimSuffix(s, "kb")
+	} else if strings.HasSuffix(s, "mb") {
+		mult = 1024 * 1024
+		s = strings.TrimSuffix(s, "mb")
+	} else if strings.HasSuffix(s, "b") {
+		mult = 1
+		s = strings.TrimSuffix(s, "b")
+	}
+	s = strings.TrimSpace(s)
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || v < 1 {
+		return int64(defaultKB) * 1024
 	}
 	return v * mult
 }

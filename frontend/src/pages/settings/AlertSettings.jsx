@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useToast } from "../../contexts/ToastContext";
+import { formatAlertType } from "../../utils/alertLabels";
 import {
 	adminUsersAPI,
 	alertsAPI,
@@ -57,7 +58,16 @@ const INPUT_SM =
 const THRESHOLD_ALERT_TYPES = [
 	"host_security_updates_exceeded",
 	"host_pending_updates_exceeded",
+	"host_down",
 ];
+
+// Alert types whose threshold is expressed in seconds (rather than count).
+const SECONDS_THRESHOLD_ALERT_TYPES = ["host_down"];
+
+const getThresholdPlaceholder = (alertType) => {
+	if (alertType === "host_down") return "30";
+	return "-";
+};
 
 const PERIODIC_ALERT_TYPES = [
 	"host_down",
@@ -105,9 +115,6 @@ const configsEqual = (a, b) => {
 	}
 	return true;
 };
-
-const formatAlertType = (type) =>
-	type.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
 
 const CATEGORY_ORDER = [
 	"host",
@@ -554,31 +561,50 @@ const AlertSettings = () => {
 																) ? (
 																	<span className="text-secondary-400">-</span>
 																) : (
-																	<input
-																		type="number"
-																		min={0}
-																		className={INPUT_SM}
-																		value={getThreshold(c)}
-																		placeholder="-"
-																		onChange={(e) => {
-																			const val = e.target.value
-																				? Number.parseInt(e.target.value, 10)
-																				: null;
-																			const prev =
-																				typeof c.metadata === "string"
-																					? JSON.parse(c.metadata || "{}")
-																					: c.metadata || {};
-																			handleFieldChange(
+																	<div className="flex items-center gap-1">
+																		<input
+																			type="number"
+																			min={0}
+																			className={INPUT_SM}
+																			value={getThreshold(c)}
+																			placeholder={getThresholdPlaceholder(
 																				c.alert_type,
-																				"metadata",
-																				{
+																			)}
+																			onChange={(e) => {
+																				const val = e.target.value
+																					? Number.parseInt(e.target.value, 10)
+																					: null;
+																				const prev =
+																					typeof c.metadata === "string"
+																						? JSON.parse(c.metadata || "{}")
+																						: c.metadata || {};
+																				const next = {
 																					...prev,
 																					threshold: val,
-																				},
-																			);
-																		}}
-																		disabled={dis}
-																	/>
+																				};
+																				if (
+																					SECONDS_THRESHOLD_ALERT_TYPES.includes(
+																						c.alert_type,
+																					)
+																				) {
+																					next.threshold_unit = "seconds";
+																				}
+																				handleFieldChange(
+																					c.alert_type,
+																					"metadata",
+																					next,
+																				);
+																			}}
+																			disabled={dis}
+																		/>
+																		{SECONDS_THRESHOLD_ALERT_TYPES.includes(
+																			c.alert_type,
+																		) && (
+																			<span className="text-xs text-secondary-400">
+																				sec
+																			</span>
+																		)}
+																	</div>
 																)}
 															</td>
 															<td className={TD}>

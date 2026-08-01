@@ -369,8 +369,8 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 				upgradePkgs = append(upgradePkgs, "ssg-debian")
 			}
 			upgradeCmd := exec.CommandContext(ctx, "apt-get", append([]string{"install", "--only-upgrade", "-y", "-qq",
-			    "-o", "Dpkg::Options::=--force-confdef",
-    			"-o", "Dpkg::Options::=--force-confold"}, upgradePkgs...)...)
+				"-o", "Dpkg::Options::=--force-confdef",
+				"-o", "Dpkg::Options::=--force-confold"}, upgradePkgs...)...)
 			upgradeCmd.Env = nonInteractiveEnv
 			upgradeOutput, upgradeErr := upgradeCmd.CombinedOutput()
 			if upgradeErr != nil {

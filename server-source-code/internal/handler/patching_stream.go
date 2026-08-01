@@ -138,9 +138,10 @@ func (h *PatchingHandler) ServeRunStream(w http.ResponseWriter, r *http.Request)
 }
 
 // StopRun handles POST /patching/runs/{id}/stop.
-// It looks up the run's agent via the agent WebSocket registry and sends a
-// patch_run_stop command. The agent is responsible for sending SIGINT to the
-// subprocess and eventually reporting a terminal "cancelled" stage.
+// Authoritative DB-side cancel: marks the run cancelled in the database first
+// and only then sends a courtesy patch_run_stop to the agent (when connected)
+// so the subprocess can be SIGINT'd. With this ordering, an offline / stale /
+// crashed agent can't leave the row stuck in "running" forever.
 func (h *PatchingHandler) StopRun(w http.ResponseWriter, r *http.Request) {
 	patchRunID := chi.URLParam(r, "id")
 	if !isValidPatchUUID(patchRunID) {
@@ -168,30 +169,46 @@ func (h *PatchingHandler) StopRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.registry.IsConnected(host.ApiID) {
-		JSON(w, http.StatusConflict, map[string]string{"error": "Agent is not currently connected"})
-		return
-	}
-
-	msg, err := json.Marshal(map[string]any{
-		"type":         "patch_run_stop",
-		"patch_run_id": patchRunID,
-	})
+	// Apply DB-side cancellation first. The Cancel store method's underlying
+	// query has a status guard, so a zero-row result means another path
+	// (sweeper, agent disconnect handler, late agent message) already
+	// terminated this run since we read it above.
+	rows, err := h.patchRuns.Cancel(r.Context(), patchRunID, "Cancelled by user")
 	if err != nil {
-		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to encode stop message"})
+		h.log.Error("patching: failed to mark run cancelled", "patch_run_id", patchRunID, "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to cancel run"})
 		return
 	}
-	// Serialised write with a bounded deadline that is reset automatically
-	// so we don't poison subsequent writers on this shared agent connection.
-	sendErr := h.registry.SendMessageWithTimeout(host.ApiID, websocket.TextMessage, msg, patchStreamWriteTimeout)
-	if sendErr != nil {
-		h.log.Warn("patching: failed to send patch_run_stop to agent", "api_id", host.ApiID, "patch_run_id", patchRunID, "error", sendErr)
-		JSON(w, http.StatusBadGateway, map[string]string{"error": "Failed to reach agent"})
+	if rows == 0 {
+		JSON(w, http.StatusConflict, map[string]string{"error": "Run already finished"})
 		return
 	}
 
-	h.log.Info("patching: patch_run_stop sent", "patch_run_id", patchRunID, "api_id", host.ApiID)
-	JSON(w, http.StatusAccepted, map[string]bool{"ok": true})
+	cancelledVia := "db_only"
+	if h.registry.IsConnected(host.ApiID) {
+		msg, mErr := json.Marshal(map[string]any{
+			"type":         "patch_run_stop",
+			"patch_run_id": patchRunID,
+		})
+		if mErr != nil {
+			// We've already marked the row cancelled in the DB; the courtesy
+			// signal failure shouldn't fail the request.
+			h.log.Warn("patching: failed to encode patch_run_stop", "patch_run_id", patchRunID, "error", mErr)
+		} else {
+			// Serialised write with a bounded deadline that is reset automatically
+			// so we don't poison subsequent writers on this shared agent connection.
+			if sendErr := h.registry.SendMessageWithTimeout(host.ApiID, websocket.TextMessage, msg, patchStreamWriteTimeout); sendErr != nil {
+				h.log.Warn("patching: failed to send patch_run_stop to agent (cancel still applied DB-side)", "api_id", host.ApiID, "patch_run_id", patchRunID, "error", sendErr)
+			} else {
+				cancelledVia = "agent_signal"
+				h.log.Info("patching: patch_run_stop sent", "patch_run_id", patchRunID, "api_id", host.ApiID)
+			}
+		}
+	} else {
+		h.log.Info("patching: cancel applied DB-only, agent not connected", "patch_run_id", patchRunID, "api_id", host.ApiID)
+	}
+
+	JSON(w, http.StatusOK, map[string]any{"ok": true, "cancelled_via": cancelledVia})
 }
 
 // writeJSONWithDeadline marshals v and writes it as a single text frame under
@@ -204,7 +221,7 @@ func writeJSONWithDeadline(conn *websocket.Conn, v any) error {
 // isTerminalPatchStatus reports whether a run has already reached a final state.
 func isTerminalPatchStatus(status string) bool {
 	switch status {
-	case "completed", "failed", "cancelled", "validated", "dry_run_completed":
+	case "completed", "failed", "cancelled", "timed_out", "agent_disconnected", "validated", "dry_run_completed":
 		return true
 	default:
 		return false

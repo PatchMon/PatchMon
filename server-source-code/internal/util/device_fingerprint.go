@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/PatchMon/PatchMon/server-source-code/internal/clientip"
 )
 
 // GenerateDeviceFingerprint produces a fingerprint from request data.
@@ -27,14 +29,12 @@ func GenerateDeviceFingerprint(r *http.Request) string {
 var ipv4SubnetRe = regexp.MustCompile(`(\d+\.\d+\.\d+)\.\d+`)
 
 func extractIPSubnet(r *http.Request) string {
-	ip := r.RemoteAddr
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// First IP in X-Forwarded-For is the client
-		if idx := strings.Index(xff, ","); idx != -1 {
-			ip = strings.TrimSpace(xff[:idx])
-		} else {
-			ip = strings.TrimSpace(xff)
-		}
+	// Use the address resolved by the RealIP middleware rather than reading
+	// X-Forwarded-For here: the leftmost entry is client-supplied, so a caller
+	// could steer their own fingerprint by sending the header.
+	ip := clientip.FromRequest(r)
+	if ip == "" {
+		ip = r.RemoteAddr
 	}
 	// Strip port if present
 	if idx := strings.LastIndex(ip, ":"); idx != -1 {

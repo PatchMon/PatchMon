@@ -7,6 +7,8 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const bulkInsertHostPackages = `-- name: BulkInsertHostPackages :exec
@@ -209,22 +211,40 @@ func (q *Queries) GetPackageByName(ctx context.Context, name string) (Package, e
 }
 
 const insertUpdateHistory = `-- name: InsertUpdateHistory :exec
-INSERT INTO update_history (id, host_id, packages_count, security_count, total_packages, payload_size_kb, execution_time, timestamp, status, error_message)
-VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9)
+INSERT INTO update_history (
+    id, host_id, packages_count, security_count, total_packages,
+    payload_size_kb, execution_time, timestamp, status, error_message,
+    report_type, sections_sent, sections_unchanged, agent_execution_ms
+)
+VALUES (
+    $1, $2, $3, $4, $5,
+    $6, $7, NOW(), $8, $9,
+    $10, $11, $12, $13
+)
 `
 
 type InsertUpdateHistoryParams struct {
-	ID            string   `json:"id"`
-	HostID        string   `json:"host_id"`
-	PackagesCount int32    `json:"packages_count"`
-	SecurityCount int32    `json:"security_count"`
-	TotalPackages *int32   `json:"total_packages"`
-	PayloadSizeKb *float64 `json:"payload_size_kb"`
-	ExecutionTime *float64 `json:"execution_time"`
-	Status        string   `json:"status"`
-	ErrorMessage  *string  `json:"error_message"`
+	ID                string   `json:"id"`
+	HostID            string   `json:"host_id"`
+	PackagesCount     int32    `json:"packages_count"`
+	SecurityCount     int32    `json:"security_count"`
+	TotalPackages     *int32   `json:"total_packages"`
+	PayloadSizeKb     *float64 `json:"payload_size_kb"`
+	ExecutionTime     *float64 `json:"execution_time"`
+	Status            string   `json:"status"`
+	ErrorMessage      *string  `json:"error_message"`
+	ReportType        string   `json:"report_type"`
+	SectionsSent      []string `json:"sections_sent"`
+	SectionsUnchanged []string `json:"sections_unchanged"`
+	AgentExecutionMs  *int32   `json:"agent_execution_ms"`
 }
 
+// Persists a single agent activity row for the per-host Agent Activity feed.
+// report_type discriminates 'full' / 'partial' / 'ping' / 'docker' / 'compliance'.
+// sections_sent / sections_unchanged drive the "Updated / Skipped" chip pair in
+// the UI (legacy rows pre-000043 stay at the column defaults so the UI shows
+// "—" for them). agent_execution_ms is the agent-side data-collection time
+// shipped on the wire; nullable for older agents.
 func (q *Queries) InsertUpdateHistory(ctx context.Context, arg InsertUpdateHistoryParams) error {
 	_, err := q.db.Exec(ctx, insertUpdateHistory,
 		arg.ID,
@@ -236,6 +256,10 @@ func (q *Queries) InsertUpdateHistory(ctx context.Context, arg InsertUpdateHisto
 		arg.ExecutionTime,
 		arg.Status,
 		arg.ErrorMessage,
+		arg.ReportType,
+		arg.SectionsSent,
+		arg.SectionsUnchanged,
+		arg.AgentExecutionMs,
 	)
 	return err
 }
@@ -265,39 +289,59 @@ UPDATE hosts SET
     installed_kernel_version = COALESCE($17::text, installed_kernel_version),
     selinux_status = COALESCE($18::text, selinux_status),
     system_uptime = COALESCE($19::text, system_uptime),
-    load_average = COALESCE($20::jsonb, load_average),
-    needs_reboot = COALESCE($21::boolean, needs_reboot),
-    reboot_reason = $22,
-    package_manager = COALESCE($23::text, package_manager),
+    boot_time = COALESCE($20::timestamptz, boot_time),
+    load_average = COALESCE($21::jsonb, load_average),
+    needs_reboot = COALESCE($22::boolean, needs_reboot),
+    -- reboot_reason is only rewritten when this report also carries
+    -- needs_reboot. A hash-gated partial report never carries either (the ping
+    -- metrics path owns both fields), and reboot_reason has no COALESCE guard
+    -- of its own, so without this CASE a partial would NULL out a reason the
+    -- ping had just written correctly.
+    reboot_reason = CASE
+        WHEN $22::boolean IS NULL THEN reboot_reason
+        ELSE $23::text
+    END,
+    package_manager = COALESCE($24::text, package_manager),
+    packages_hash = COALESCE($25::text, packages_hash),
+    repos_hash = COALESCE($26::text, repos_hash),
+    interfaces_hash = COALESCE($27::text, interfaces_hash),
+    hostname_hash = COALESCE($28::text, hostname_hash),
+    last_full_report_at = COALESCE($29::timestamp, last_full_report_at),
     awaiting_post_patch_report_run_id = NULL
-WHERE id = $24
+WHERE id = $30
 `
 
 type UpdateHostFromReportParams struct {
-	MachineID              *string  `json:"machine_id"`
-	OsType                 *string  `json:"os_type"`
-	OsVersion              *string  `json:"os_version"`
-	Hostname               *string  `json:"hostname"`
-	Ip                     *string  `json:"ip"`
-	Architecture           *string  `json:"architecture"`
-	AgentVersion           *string  `json:"agent_version"`
-	CpuModel               *string  `json:"cpu_model"`
-	CpuCores               *int32   `json:"cpu_cores"`
-	RamInstalled           *float64 `json:"ram_installed"`
-	SwapSize               *float64 `json:"swap_size"`
-	DiskDetails            []byte   `json:"disk_details"`
-	GatewayIp              *string  `json:"gateway_ip"`
-	DnsServers             []byte   `json:"dns_servers"`
-	NetworkInterfaces      []byte   `json:"network_interfaces"`
-	KernelVersion          *string  `json:"kernel_version"`
-	InstalledKernelVersion *string  `json:"installed_kernel_version"`
-	SelinuxStatus          *string  `json:"selinux_status"`
-	SystemUptime           *string  `json:"system_uptime"`
-	LoadAverage            []byte   `json:"load_average"`
-	NeedsReboot            *bool    `json:"needs_reboot"`
-	RebootReason           *string  `json:"reboot_reason"`
-	PackageManager         *string  `json:"package_manager"`
-	ID                     string   `json:"id"`
+	MachineID              *string            `json:"machine_id"`
+	OsType                 *string            `json:"os_type"`
+	OsVersion              *string            `json:"os_version"`
+	Hostname               *string            `json:"hostname"`
+	Ip                     *string            `json:"ip"`
+	Architecture           *string            `json:"architecture"`
+	AgentVersion           *string            `json:"agent_version"`
+	CpuModel               *string            `json:"cpu_model"`
+	CpuCores               *int32             `json:"cpu_cores"`
+	RamInstalled           *float64           `json:"ram_installed"`
+	SwapSize               *float64           `json:"swap_size"`
+	DiskDetails            []byte             `json:"disk_details"`
+	GatewayIp              *string            `json:"gateway_ip"`
+	DnsServers             []byte             `json:"dns_servers"`
+	NetworkInterfaces      []byte             `json:"network_interfaces"`
+	KernelVersion          *string            `json:"kernel_version"`
+	InstalledKernelVersion *string            `json:"installed_kernel_version"`
+	SelinuxStatus          *string            `json:"selinux_status"`
+	SystemUptime           *string            `json:"system_uptime"`
+	BootTime               pgtype.Timestamptz `json:"boot_time"`
+	LoadAverage            []byte             `json:"load_average"`
+	NeedsReboot            *bool              `json:"needs_reboot"`
+	RebootReason           *string            `json:"reboot_reason"`
+	PackageManager         *string            `json:"package_manager"`
+	PackagesHash           *string            `json:"packages_hash"`
+	ReposHash              *string            `json:"repos_hash"`
+	InterfacesHash         *string            `json:"interfaces_hash"`
+	HostnameHash           *string            `json:"hostname_hash"`
+	LastFullReportAt       pgtype.Timestamp   `json:"last_full_report_at"`
+	ID                     string             `json:"id"`
 }
 
 // Host report/update flow (agent sends package and system info)
@@ -322,10 +366,16 @@ func (q *Queries) UpdateHostFromReport(ctx context.Context, arg UpdateHostFromRe
 		arg.InstalledKernelVersion,
 		arg.SelinuxStatus,
 		arg.SystemUptime,
+		arg.BootTime,
 		arg.LoadAverage,
 		arg.NeedsReboot,
 		arg.RebootReason,
 		arg.PackageManager,
+		arg.PackagesHash,
+		arg.ReposHash,
+		arg.InterfacesHash,
+		arg.HostnameHash,
+		arg.LastFullReportAt,
 		arg.ID,
 	)
 	return err

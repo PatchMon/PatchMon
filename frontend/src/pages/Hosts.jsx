@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	keepPreviousData,
+	useMutation,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import {
 	AlertTriangle,
 	ArrowDown,
@@ -7,6 +12,8 @@ import {
 	CheckCircle,
 	CheckSquare,
 	ChevronDown,
+	ChevronLeft,
+	ChevronRight,
 	Clock,
 	Columns,
 	Container,
@@ -26,23 +33,87 @@ import {
 	Square,
 	Trash2,
 	Wifi,
+	WifiOff,
 	X,
 } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import AddHostWizard from "../components/AddHostWizard";
+import HostStatusPills from "../components/HostStatusPills";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import InlineToggle from "../components/InlineToggle";
+import Tooltip from "../components/ui/Tooltip";
+import { useTick } from "../hooks/useTick";
 import {
 	adminHostsAPI,
+	alertsAPI,
 	dashboardAPI,
+	formatLiveUptime,
 	formatRelativeTime,
 	hostGroupsAPI,
 	settingsAPI,
 	userPreferencesAPI,
 } from "../utils/api";
+import { deriveReportingState } from "../utils/hostStatus";
 import { getOSDisplayName, OSIcon } from "../utils/osIcons.jsx";
+
+const HOSTS_PAGE_SIZE_OPTIONS = [25, 50, 100, 200, 500];
+const HOSTS_DEFAULT_PAGE_SIZE = 50;
+const HOSTS_PAGE_SIZE_STORAGE_KEY = "hosts-page-size";
+const WS_STATUS_BATCH_SIZE = 200;
+
+// The Reporting filter depends on live WebSocket state the server does not
+// hold, so it has to run client-side. To keep the row count, the range text
+// and the page controls honest we fetch an unpaginated slab, filter it, then
+// paginate the filtered result ourselves. The cap bounds that fetch; when the
+// fleet exceeds it the UI says so rather than quietly showing a partial list.
+const REPORTING_FILTER_FETCH_LIMIT = 1000;
+
+const HOSTS_SORT_FIELDS = {
+	agent_version: "agent_version",
+	friendlyName: "friendly_name",
+	group: "group",
+	hostname: "hostname",
+	integrations: "integrations",
+	ip: "ip",
+	last_update: "last_update",
+	needs_reboot: "needs_reboot",
+	notes: "notes",
+	os: "os_type",
+	os_version: "os_version",
+	security_updates: "security_updates",
+	ssg_version: "ssg_version",
+	status: "status",
+	updates: "updates",
+	uptime: "uptime",
+};
+
+export const normalisePageSize = (value) => {
+	const parsed = Number.parseInt(value, 10);
+	return HOSTS_PAGE_SIZE_OPTIONS.includes(parsed)
+		? parsed
+		: HOSTS_DEFAULT_PAGE_SIZE;
+};
+
+const fetchWsStatusBatches = async (apiIds) => {
+	const merged = {};
+	for (let i = 0; i < apiIds.length; i += WS_STATUS_BATCH_SIZE) {
+		const batch = apiIds.slice(i, i + WS_STATUS_BATCH_SIZE);
+		const query = new URLSearchParams({ apiIds: batch.join(",") }).toString();
+		const response = await fetch(`/api/v1/ws/status?${query}`, {
+			credentials: "include",
+		});
+		if (!response.ok) {
+			throw new Error("Failed to fetch WebSocket status");
+		}
+		const result = await response.json();
+		if (result.data) {
+			Object.assign(merged, result.data);
+		}
+	}
+	return merged;
+};
 
 const Hosts = () => {
 	const hostGroupFilterId = useId();
@@ -51,14 +122,26 @@ const Hosts = () => {
 	const osVersionFilterId = useId();
 	const [showAddModal, setShowAddModal] = useState(false);
 	const [selectedHosts, setSelectedHosts] = useState([]);
+	// O(1) `.has()` lookup for the per-row "is this host selected?" check
+	// inside the table's row map. Without this, `selectedHosts.includes(id)`
+	// for every row × every selection is O(n²) — at 1k hosts that's a
+	// million comparisons per render.
+	const selectedHostsSet = useMemo(
+		() => new Set(selectedHosts),
+		[selectedHosts],
+	);
 	const [showBulkAssignModal, setShowBulkAssignModal] = useState(false);
 	const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
 	const [bulkFetchReportMessage, setBulkFetchReportMessage] = useState({
 		text: "",
 		type: "success", // "success" or "error"
 	});
-	const [searchParams] = useSearchParams();
+	const [searchParams, setSearchParams] = useSearchParams();
 	const navigate = useNavigate();
+
+	// Single 60s tick for the whole table — every row's "Uptime" cell reads
+	// from this so we don't spawn N intervals on N rows.
+	const tickNow = useTick(60000);
 
 	// Table state
 	const [searchTerm, setSearchTerm] = useState("");
@@ -72,6 +155,12 @@ const Hosts = () => {
 	const [groupBy, setGroupBy] = useState("none");
 	const [showColumnSettings, setShowColumnSettings] = useState(false);
 	const [hideStale, setHideStale] = useState(false);
+	const page = Math.max(1, Number.parseInt(searchParams.get("page"), 10) || 1);
+	const pageSize = normalisePageSize(
+		searchParams.get("pageSize") ||
+			localStorage.getItem(HOSTS_PAGE_SIZE_STORAGE_KEY),
+	);
+	const offset = (page - 1) * pageSize;
 
 	// Debounce search for backend (avoid refetch on every keystroke)
 	const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -86,59 +175,74 @@ const Hosts = () => {
 		};
 	}, [searchTerm]);
 
-	// Handle URL filter parameters
+	// Deep-link params are applied only when their VALUE changes, never on every
+	// searchParams write. Paging rewrites `page` on the same URL, and without
+	// this guard that write would re-impose `?filter=stale` over a Reporting
+	// dropdown the user had just changed, then bounce them back to page 1 via
+	// the pagination-reset signature. First run has no previous snapshot, so
+	// deep links still apply in full on arrival.
+	const appliedUrlParamsRef = useRef(null);
 	useEffect(() => {
-		const filter = searchParams.get("filter");
-		const showFiltersParam = searchParams.get("showFilters");
-		const osFilterParam = searchParams.get("osFilter");
-		const groupParam = searchParams.get("group");
+		const current = {
+			filter: searchParams.get("filter") || "",
+			showFilters: searchParams.get("showFilters") || "",
+			osFilter: searchParams.get("osFilter") || "",
+			osVersionFilter: searchParams.get("osVersionFilter") || "",
+			group: searchParams.get("group") || "",
+			action: searchParams.get("action") || "",
+			selected: searchParams.get("selected") || "",
+		};
+		const previous = appliedUrlParamsRef.current;
+		appliedUrlParamsRef.current = current;
+		const changed = (key) =>
+			previous === null || previous[key] !== current[key];
 
-		if (filter === "needsUpdates") {
-			setShowFilters(true);
-			setStatusFilter("all");
-			// We'll filter hosts with updates > 0 in the filtering logic
-		} else if (filter === "inactive") {
-			setShowFilters(true);
-			setStatusFilter("inactive");
-			// We'll filter hosts with inactive status in the filtering logic
-		} else if (filter === "upToDate") {
-			setShowFilters(true);
-			setStatusFilter("active");
-			// We'll filter hosts that are up to date in the filtering logic
-		} else if (filter === "stale") {
-			setShowFilters(true);
-			setStatusFilter("all");
-			// We'll filter hosts that are stale in the filtering logic
-		} else if (filter === "selected") {
-			setShowFilters(true);
-			setStatusFilter("all");
-			// We'll filter hosts by selected hosts in the filtering logic
-		} else if (showFiltersParam === "true") {
+		if (changed("filter")) {
+			switch (current.filter) {
+				case "needsUpdates":
+				case "selected":
+					// Row-level predicate is applied in the filtering logic below.
+					setShowFilters(true);
+					setStatusFilter("all");
+					break;
+				case "inactive":
+				case "stale":
+					setShowFilters(true);
+					setStatusFilter("stale");
+					break;
+				case "upToDate":
+					setShowFilters(true);
+					setStatusFilter("reporting");
+					break;
+				default:
+					break;
+			}
+		}
+
+		if (changed("showFilters") && current.showFilters === "true") {
 			setShowFilters(true);
 		}
 
-		// Handle OS filter parameter
-		if (osFilterParam) {
+		// OS filter parameter
+		if (changed("osFilter") && current.osFilter) {
 			setShowFilters(true);
-			setOsFilter(osFilterParam);
+			setOsFilter(current.osFilter);
 		}
 
-		// Handle OS version filter parameter (from dashboard OS distribution chart click)
-		const osVersionFilterParam = searchParams.get("osVersionFilter");
-		if (osVersionFilterParam) {
+		// OS version filter parameter (from dashboard OS distribution chart click)
+		if (changed("osVersionFilter") && current.osVersionFilter) {
 			setShowFilters(true);
-			setOsVersionFilter(osVersionFilterParam);
+			setOsVersionFilter(current.osVersionFilter);
 		}
 
-		// Handle group filter parameter
-		if (groupParam) {
+		// Group filter parameter
+		if (changed("group") && current.group) {
 			setShowFilters(true);
-			setGroupFilter(groupParam);
+			setGroupFilter(current.group);
 		}
 
-		// Handle add host action from navigation
-		const action = searchParams.get("action");
-		if (action === "add") {
+		// Add host action from navigation
+		if (changed("action") && current.action === "add") {
 			setShowAddModal(true);
 			// Remove the action parameter from URL without triggering a page reload
 			const newSearchParams = new URLSearchParams(searchParams);
@@ -151,11 +255,13 @@ const Hosts = () => {
 			);
 		}
 
-		// Handle selected hosts from packages page (filter=selected)
-		const selected = searchParams.get("selected");
-		if (selected && filter === "selected") {
-			const hostIds = selected.split(",").filter(Boolean);
-			setSelectedHosts(hostIds);
+		// Selected hosts from packages page (filter=selected)
+		if (
+			(changed("selected") || changed("filter")) &&
+			current.selected &&
+			current.filter === "selected"
+		) {
+			setSelectedHosts(current.selected.split(",").filter(Boolean));
 		}
 	}, [searchParams, navigate]);
 
@@ -178,7 +284,7 @@ const Hosts = () => {
 			},
 			{ id: "ws_status", label: "Connection", visible: true, order: 9 },
 			{ id: "integrations", label: "Integrations", visible: true, order: 10 },
-			{ id: "status", label: "Status", visible: true, order: 11 },
+			{ id: "status", label: "Reporting", visible: true, order: 11 },
 			{ id: "needs_reboot", label: "Reboot", visible: true, order: 12 },
 			{ id: "uptime", label: "Uptime", visible: true, order: 13 },
 			{ id: "updates", label: "Updates", visible: true, order: 14 },
@@ -281,20 +387,72 @@ const Hosts = () => {
 		queryClient,
 	]);
 
-	// Build backend filter params (search, group, status, os, osVersion)
+	// Build backend filter params. Offline connection status is shown as a
+	// fleet summary, not as a paginated table filter, because live WS state
+	// is not stored in the database. Legacy `?filter=offline` deep links
+	// (e.g. from the dashboard "Offline / Stale Hosts" card) get rewritten
+	// to `?filter=stale`, which is the closest semantic match.
+	const urlFilter = searchParams.get("filter") || "";
+	useEffect(() => {
+		if (urlFilter !== "offline") return;
+		const next = new URLSearchParams(searchParams);
+		next.set("filter", "stale");
+		navigate(`/hosts?${next.toString()}`, { replace: true });
+	}, [urlFilter, searchParams, navigate]);
+	// The Reporting filter (reporting / overdue / stale) is derived from live
+	// WebSocket state that the server does not hold at query time, so it has to
+	// run client-side. While it is active we ask the server for one bounded slab
+	// rather than a page, then filter and paginate that slab locally, so the
+	// count, the range text and the page controls always agree with the rows on
+	// screen.
+	const reportingFilterActive = Boolean(statusFilter && statusFilter !== "all");
+
 	const hostsQueryParams = useMemo(() => {
 		const params = {};
 		if (debouncedSearch) params.search = debouncedSearch;
 		if (groupFilter && groupFilter !== "all") params.group = groupFilter;
-		if (statusFilter && statusFilter !== "all") params.status = statusFilter;
+		// statusFilter values are now reporting/overdue/stale (derived from the
+		// new tri-state pills). The backend `status` query param expects the raw
+		// host.status enum (active/inactive/...), which has different semantics,
+		// so we apply this filter client-side against the reportingState field
+		// returned by the backend, and never forward it as a server-side filter.
 		if (osFilter && osFilter !== "all") params.os = osFilter;
 		if (osVersionFilter && osVersionFilter !== "all")
 			params.osVersion = osVersionFilter;
+		if (urlFilter) params.filter = urlFilter;
+		if (urlFilter === "selected") {
+			const selected = searchParams.get("selected");
+			if (selected) params.selected = selected;
+		}
+		if (searchParams.get("reboot") === "true") params.reboot = "true";
+		if (hideStale) params.hideStale = "true";
+		if (reportingFilterActive) {
+			params.limit = REPORTING_FILTER_FETCH_LIMIT;
+			params.offset = 0;
+		} else {
+			params.limit = pageSize;
+			params.offset = offset;
+		}
+		params.sort = HOSTS_SORT_FIELDS[sortField] || "last_update";
+		params.order = sortDirection;
 		return params;
-	}, [debouncedSearch, groupFilter, statusFilter, osFilter, osVersionFilter]);
+	}, [
+		debouncedSearch,
+		groupFilter,
+		osFilter,
+		osVersionFilter,
+		urlFilter,
+		searchParams,
+		hideStale,
+		reportingFilterActive,
+		pageSize,
+		offset,
+		sortField,
+		sortDirection,
+	]);
 
 	const {
-		data: hosts,
+		data: hostsResponse,
 		isLoading,
 		error,
 		refetch,
@@ -303,9 +461,58 @@ const Hosts = () => {
 		queryKey: ["hosts", hostsQueryParams],
 		queryFn: () =>
 			dashboardAPI.getHosts(hostsQueryParams).then((res) => res.data),
+		placeholderData: keepPreviousData,
 		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
+
+	const hostsPage = useMemo(() => {
+		if (Array.isArray(hostsResponse)) {
+			return {
+				items: hostsResponse,
+				total: hostsResponse.length,
+				limit: hostsResponse.length || pageSize,
+				offset: 0,
+				legacy: true,
+			};
+		}
+		return {
+			items: hostsResponse?.items || [],
+			total: hostsResponse?.total || 0,
+			limit: hostsResponse?.limit || pageSize,
+			offset: hostsResponse?.offset || offset,
+			legacy: false,
+		};
+	}, [hostsResponse, offset, pageSize]);
+
+	const hosts = hostsPage.items;
+	const serverTotalHosts = hostsPage.total;
+
+	const paginationResetSignature = JSON.stringify({
+		search: debouncedSearch,
+		group: groupFilter,
+		status: statusFilter,
+		os: osFilter,
+		osVersion: osVersionFilter,
+		filter: urlFilter,
+		selected: searchParams.get("selected") || "",
+		reboot: searchParams.get("reboot") || "",
+		hideStale,
+		sortField,
+		sortDirection,
+		pageSize,
+	});
+	const previousPaginationResetSignature = useRef(paginationResetSignature);
+	useEffect(() => {
+		if (previousPaginationResetSignature.current === paginationResetSignature) {
+			return;
+		}
+		previousPaginationResetSignature.current = paginationResetSignature;
+		if (page === 1) return;
+		const next = new URLSearchParams(searchParams);
+		next.set("page", "1");
+		setSearchParams(next, { replace: true });
+	}, [page, paginationResetSignature, searchParams, setSearchParams]);
 
 	const { data: hostGroups } = useQuery({
 		queryKey: ["hostGroups"],
@@ -337,6 +544,52 @@ const Hosts = () => {
 		},
 	});
 
+	const { data: hostFilterOptions } = useQuery({
+		queryKey: ["hostFilterOptions"],
+		queryFn: () => dashboardAPI.getHostFilterOptions().then((res) => res.data),
+		staleTime: 5 * 60 * 1000,
+		refetchOnWindowFocus: false,
+	});
+
+	const { data: hostCounts } = useQuery({
+		queryKey: ["hostCounts"],
+		queryFn: () => dashboardAPI.getHostCounts().then((res) => res.data),
+		staleTime: 5 * 60 * 1000,
+		refetchOnWindowFocus: false,
+	});
+
+	const { data: wsStatusSummary } = useQuery({
+		queryKey: ["wsStatusSummary"],
+		queryFn: () => dashboardAPI.getWsStatusSummary().then((res) => res.data),
+		refetchInterval: 10000,
+		staleTime: 10000,
+		refetchOnWindowFocus: false,
+	});
+
+	// host_down alert config drives the WS pill amber→red threshold (seconds).
+	// Falls back to 30s when no config is available.
+	const { data: hostDownAlertConfig } = useQuery({
+		queryKey: ["alert-config", "host_down"],
+		queryFn: () =>
+			alertsAPI.getAlertConfigByType("host_down").then((res) => res.data.data),
+		staleTime: 5 * 60 * 1000,
+		refetchOnWindowFocus: false,
+	});
+	const hostDownThresholdSeconds = useMemo(() => {
+		const raw = hostDownAlertConfig?.metadata?.threshold;
+		const parsed = Number.parseInt(raw, 10);
+		return Number.isFinite(parsed) && parsed > 0 ? parsed : 30;
+	}, [hostDownAlertConfig]);
+
+	// update_interval drives the Reporting pill threshold (×1 = green→amber,
+	// ×2 = amber→red). Default 60 matches the backend default and applies
+	// when settings haven't loaded or the public endpoint omits the field.
+	const updateIntervalMinutes = useMemo(() => {
+		const raw = settings?.update_interval;
+		const parsed = Number.parseInt(raw, 10);
+		return Number.isFinite(parsed) && parsed > 0 ? parsed : 60;
+	}, [settings]);
+
 	// State for auto-update confirmation dialog
 	const [autoUpdateDialog, setAutoUpdateDialog] = useState({
 		show: false,
@@ -344,14 +597,14 @@ const Hosts = () => {
 		hostName: null,
 	});
 
-	// Track WebSocket status for all hosts
+	// Track WebSocket status for the currently loaded page.
 	const [wsStatusMap, setWsStatusMap] = useState({});
 
-	// Fetch initial WebSocket status for all hosts
+	// Fetch initial WebSocket status for the current page.
 	useEffect(() => {
 		if (!hosts || hosts.length === 0) return;
+		let cancelled = false;
 
-		// Fetch initial WebSocket status for all hosts
 		const fetchInitialStatus = async () => {
 			const apiIds = hosts
 				.filter((host) => host.api_id)
@@ -360,15 +613,9 @@ const Hosts = () => {
 			if (apiIds.length === 0) return;
 
 			try {
-				const response = await fetch(
-					`/api/v1/ws/status?apiIds=${apiIds.join(",")}`,
-					{
-						credentials: "include",
-					},
-				);
-				if (response.ok) {
-					const result = await response.json();
-					setWsStatusMap(result.data);
+				const statusMap = await fetchWsStatusBatches(apiIds);
+				if (!cancelled) {
+					setWsStatusMap(statusMap);
 				}
 			} catch (_error) {
 				// Silently handle errors
@@ -376,11 +623,15 @@ const Hosts = () => {
 		};
 
 		fetchInitialStatus();
+		return () => {
+			cancelled = true;
+		};
 	}, [hosts]);
 
-	// Subscribe to WebSocket status changes for all hosts via polling (lightweight alternative to SSE)
+	// Subscribe to WebSocket status changes for the current page via polling.
 	useEffect(() => {
 		if (!hosts || hosts.length === 0) return;
+		let cancelled = false;
 
 		// Use polling instead of SSE to avoid connection pool issues
 		// Poll every 10 seconds instead of 19 persistent connections
@@ -391,13 +642,10 @@ const Hosts = () => {
 
 			if (apiIds.length === 0) return;
 
-			fetch(`/api/v1/ws/status?apiIds=${apiIds.join(",")}`, {
-				credentials: "include",
-			})
-				.then((response) => response.json())
-				.then((result) => {
-					if (result.success && result.data) {
-						setWsStatusMap(result.data);
+			fetchWsStatusBatches(apiIds)
+				.then((statusMap) => {
+					if (!cancelled) {
+						setWsStatusMap(statusMap);
 					}
 				})
 				.catch(() => {
@@ -407,6 +655,7 @@ const Hosts = () => {
 
 		// Cleanup function
 		return () => {
+			cancelled = true;
 			clearInterval(pollInterval);
 		};
 	}, [hosts]);
@@ -414,23 +663,8 @@ const Hosts = () => {
 	const bulkUpdateGroupMutation = useMutation({
 		mutationFn: ({ hostIds, groupIds }) =>
 			adminHostsAPI.bulkUpdateGroups(hostIds, groupIds),
-		onSuccess: (data) => {
-			// Update the cache with the new host data
-			if (data?.hosts) {
-				queryClient.setQueryData(["hosts"], (oldData) => {
-					if (!oldData) return oldData;
-					return oldData.map((host) => {
-						const updatedHost = data.hosts.find((h) => h.id === host.id);
-						if (updatedHost) {
-							return updatedHost;
-						}
-						return host;
-					});
-				});
-			}
-
-			// Also invalidate to ensure consistency
-			queryClient.invalidateQueries(["hosts"]);
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["hosts"] });
 			setSelectedHosts([]);
 			setShowBulkAssignModal(false);
 		},
@@ -442,23 +676,15 @@ const Hosts = () => {
 				.updateFriendlyName(hostId, friendlyName)
 				.then((res) => res.data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["hosts"]);
+			queryClient.invalidateQueries({ queryKey: ["hosts"] });
 		},
 	});
 
 	const updateHostGroupsMutation = useMutation({
 		mutationFn: ({ hostId, groupIds }) =>
 			adminHostsAPI.updateGroups(hostId, groupIds).then((res) => res.data),
-		onSuccess: (data) => {
-			// Update the cache with the new host data
-			queryClient.setQueryData(["hosts"], (oldData) => {
-				if (!oldData) return oldData;
-				return oldData.map((host) =>
-					host.id === data.host.id ? data.host : host,
-				);
-			});
-			// Also invalidate to ensure consistency
-			queryClient.invalidateQueries(["hosts"]);
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["hosts"] });
 		},
 	});
 
@@ -468,7 +694,7 @@ const Hosts = () => {
 				.toggleAutoUpdate(hostId, autoUpdate)
 				.then((res) => res.data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["hosts"]);
+			queryClient.invalidateQueries({ queryKey: ["hosts"] });
 		},
 	});
 
@@ -477,8 +703,8 @@ const Hosts = () => {
 		mutationFn: () =>
 			settingsAPI.update({ autoUpdate: true }).then((res) => res.data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["settings"]);
-			queryClient.invalidateQueries(["serverUrl"]);
+			queryClient.invalidateQueries({ queryKey: ["settings"] });
+			queryClient.invalidateQueries({ queryKey: ["serverUrl"] });
 		},
 	});
 
@@ -536,7 +762,7 @@ const Hosts = () => {
 	const bulkDeleteMutation = useMutation({
 		mutationFn: (hostIds) => adminHostsAPI.deleteBulk(hostIds),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["hosts"]);
+			queryClient.invalidateQueries({ queryKey: ["hosts"] });
 			setSelectedHosts([]);
 			setShowBulkDeleteModal(false);
 		},
@@ -546,7 +772,7 @@ const Hosts = () => {
 		mutationFn: (hostIds) =>
 			adminHostsAPI.fetchReportBulk(hostIds).then((res) => res.data),
 		onSuccess: (data) => {
-			queryClient.invalidateQueries(["hosts"]);
+			queryClient.invalidateQueries({ queryKey: ["hosts"] });
 			// Show success message
 			if (data?.successCount !== undefined) {
 				const message = `Report fetch queued for ${data.successCount} of ${data.totalRequested} host${data.totalRequested !== 1 ? "s" : ""}`;
@@ -633,14 +859,23 @@ const Hosts = () => {
 		}
 		return null;
 	}, [searchParams, selectedHosts]);
+	const selectedHostIdsSetForFilter = useMemo(
+		() => (selectedHostIdsForFilter ? new Set(selectedHostIdsForFilter) : null),
+		[selectedHostIdsForFilter],
+	);
 
-	// Table filtering and sorting logic
+	// Table filtering and sorting logic.
+	//
+	// `wsStatusMap` is intentionally NOT a dep of this memo — it changes
+	// every 10 s (status poll) and should only update the visible connection
+	// badges, not force a table re-sort.
 	const filteredAndSortedHosts = useMemo(() => {
 		if (!hosts || !Array.isArray(hosts)) return [];
+		if (!hostsPage.legacy) return hosts;
 
 		const filtered = hosts.filter((host) => {
-			// Search, group, status, os are filtered by backend - trust the result
-			// URL filter for hosts needing updates, inactive hosts, up-to-date hosts, stale hosts, offline hosts, reboot required, or selected hosts
+			// Search, group, os are filtered by backend - trust the result.
+			// URL filter for hosts needing updates, inactive hosts, up-to-date hosts, stale hosts, reboot required, or selected hosts.
 			const filter = searchParams.get("filter");
 			const rebootParam = searchParams.get("reboot");
 			const selectedIds =
@@ -652,12 +887,10 @@ const Hosts = () => {
 					(host.effectiveStatus || host.status) === "inactive") &&
 				(filter !== "upToDate" || (!host.isStale && host.updatesCount === 0)) &&
 				(filter !== "stale" || host.isStale) &&
-				(filter !== "offline" ||
-					wsStatusMap[host.api_id]?.connected !== true) &&
 				(filter !== "selected" ||
 					(selectedIds &&
 						selectedIds.length > 0 &&
-						selectedIds.includes(host.id))) &&
+						selectedHostIdsSetForFilter?.has(host.id))) &&
 				(!rebootParam || host.needs_reboot === true);
 
 			// Hide stale filter
@@ -737,6 +970,18 @@ const Hosts = () => {
 					bValue = b.needs_reboot ? 1 : 0;
 					break;
 				case "uptime": {
+					// Prefer boot_time (TIMESTAMPTZ) when present — matches the
+					// server-side dashboard.sql sort and the live uptime shown in
+					// the row. Falls back to parsing the legacy system_uptime
+					// TEXT only when boot_time is null (e.g. agent hasn't been
+					// upgraded yet to emit boot_time).
+					const bootMinutes = (bootTimeIso) => {
+						if (!bootTimeIso) return null;
+						const ms = Date.parse(bootTimeIso);
+						if (!Number.isFinite(ms)) return null;
+						const minutes = Math.max(0, (Date.now() - ms) / 60000);
+						return minutes;
+					};
 					// Parse uptime strings like "X days, Y hours, Z minutes" into total minutes for numeric sorting
 					const parseUptimeToMinutes = (uptimeStr) => {
 						// Handle null, undefined, empty string, or "Unknown"
@@ -762,8 +1007,12 @@ const Hosts = () => {
 						// If no matches found, return -1 to sort to the end
 						return total > 0 ? total : -1;
 					};
-					aValue = parseUptimeToMinutes(a.system_uptime);
-					bValue = parseUptimeToMinutes(b.system_uptime);
+					const aBoot = bootMinutes(a.boot_time);
+					const bBoot = bootMinutes(b.boot_time);
+					aValue =
+						aBoot !== null ? aBoot : parseUptimeToMinutes(a.system_uptime);
+					bValue =
+						bBoot !== null ? bBoot : parseUptimeToMinutes(b.system_uptime);
 					break;
 				}
 				case "last_update":
@@ -801,16 +1050,90 @@ const Hosts = () => {
 		return filtered;
 	}, [
 		hosts,
+		hostsPage.legacy,
 		sortField,
 		sortDirection,
 		searchParams,
 		hideStale,
-		wsStatusMap,
 		selectedHostIdsForFilter,
+		selectedHostIdsSetForFilter,
 	]);
+
+	// Apply the new tri-state Status filter (reporting / overdue / stale) on
+	// top of the backend / legacy-mode filter result. Cross-couples each host's
+	// reportingState with the live WS map so the dropdown matches what the user
+	// sees in the Reporting pill. Done here rather than in the predicate above
+	// so the pill colours and the filter logic stay in lock-step.
+	const filteredHosts = useMemo(() => {
+		if (!statusFilter || statusFilter === "all") return filteredAndSortedHosts;
+		return filteredAndSortedHosts.filter((host) => {
+			// Treat missing WS data as "assume connected" so the dropdown
+			// matches the pill, which uses the same convention.
+			const wsEntry = wsStatusMap[host.api_id];
+			const wsConnectedOrUnknown =
+				wsEntry === undefined || wsEntry?.connected === true;
+			return (
+				deriveReportingState(
+					host,
+					wsConnectedOrUnknown,
+					updateIntervalMinutes,
+				) === statusFilter
+			);
+		});
+	}, [
+		filteredAndSortedHosts,
+		statusFilter,
+		wsStatusMap,
+		updateIntervalMinutes,
+	]);
+
+	// Pagination is derived AFTER the Reporting filter so the footer count, the
+	// range text and the page controls describe the rows actually rendered. With
+	// no Reporting filter the server already returned exactly one page and this
+	// is a pass-through.
+	const totalHosts = reportingFilterActive
+		? filteredHosts.length
+		: serverTotalHosts;
+	const totalPages = Math.max(1, Math.ceil(totalHosts / pageSize));
+	const visibleHosts = useMemo(() => {
+		if (!reportingFilterActive) return filteredHosts;
+		const start = (page - 1) * pageSize;
+		return filteredHosts.slice(start, start + pageSize);
+	}, [filteredHosts, reportingFilterActive, page, pageSize]);
+	const pageStart =
+		visibleHosts.length === 0
+			? 0
+			: (reportingFilterActive ? (page - 1) * pageSize : hostsPage.offset) + 1;
+	const pageEnd = pageStart === 0 ? 0 : pageStart + visibleHosts.length - 1;
+
+	// The client-side slab is bounded, so say so rather than silently hiding
+	// matches that fell outside it.
+	const reportingFilterTruncated =
+		reportingFilterActive && serverTotalHosts > REPORTING_FILTER_FETCH_LIMIT;
+
+	// Clamp out-of-range deep links (`?page=999`) and pages that empty out after
+	// a delete, but only once the totals are known so a legitimate deep link is
+	// not stamped down to page 1 during the first fetch.
+	useEffect(() => {
+		if (!hostsResponse) return;
+		if (page <= totalPages) return;
+		const next = new URLSearchParams(searchParams);
+		if (totalPages <= 1) {
+			next.delete("page");
+		} else {
+			next.set("page", String(totalPages));
+		}
+		setSearchParams(next, { replace: true });
+	}, [hostsResponse, page, totalPages, searchParams, setSearchParams]);
 
 	// Get unique OS types from hosts for dynamic dropdown
 	const uniqueOsTypes = useMemo(() => {
+		const distribution = hostFilterOptions?.osDistribution;
+		if (Array.isArray(distribution) && distribution.length > 0) {
+			return Array.from(
+				new Set(distribution.map((item) => item.os_type).filter(Boolean)),
+			).sort();
+		}
 		if (!hosts) return [];
 		const osTypes = new Set();
 		hosts.forEach((host) => {
@@ -819,10 +1142,27 @@ const Hosts = () => {
 			}
 		});
 		return Array.from(osTypes).sort();
-	}, [hosts]);
+	}, [hostFilterOptions, hosts]);
 
 	// Get unique OS versions for the selected OS type (for OS version filter dropdown)
 	const uniqueOsVersionsForFilter = useMemo(() => {
+		const distribution = hostFilterOptions?.osDistribution;
+		if (
+			Array.isArray(distribution) &&
+			distribution.length > 0 &&
+			osFilter &&
+			osFilter !== "all"
+		) {
+			const filterLower = osFilter.toLowerCase();
+			return Array.from(
+				new Set(
+					distribution
+						.filter((item) => item.os_type?.toLowerCase() === filterLower)
+						.map((item) => item.os_version)
+						.filter(Boolean),
+				),
+			).sort();
+		}
 		if (!hosts || !osFilter || osFilter === "all") return [];
 		const versions = new Set();
 		const filterLower = osFilter.toLowerCase();
@@ -836,16 +1176,16 @@ const Hosts = () => {
 			}
 		});
 		return Array.from(versions).sort();
-	}, [hosts, osFilter]);
+	}, [hostFilterOptions, hosts, osFilter]);
 
 	// Group hosts by selected field
 	const groupedHosts = useMemo(() => {
 		if (groupBy === "none") {
-			return { "All Hosts": filteredAndSortedHosts };
+			return { "All Hosts": visibleHosts };
 		}
 
 		const groups = {};
-		filteredAndSortedHosts.forEach((host) => {
+		visibleHosts.forEach((host) => {
 			if (groupBy === "group") {
 				// Handle multiple groups per host
 				const memberships = host.host_group_memberships || [];
@@ -889,7 +1229,7 @@ const Hosts = () => {
 		});
 
 		return groups;
-	}, [filteredAndSortedHosts, groupBy]);
+	}, [visibleHosts, groupBy]);
 
 	const handleSort = (field) => {
 		if (sortField === field) {
@@ -907,6 +1247,20 @@ const Hosts = () => {
 		) : (
 			<ArrowDown className="h-4 w-4" />
 		);
+	};
+
+	const setPageParam = (nextPage) => {
+		const next = new URLSearchParams(searchParams);
+		next.set("page", String(Math.min(Math.max(nextPage, 1), totalPages)));
+		setSearchParams(next);
+	};
+
+	const setPageSizeParam = (nextPageSize) => {
+		localStorage.setItem(HOSTS_PAGE_SIZE_STORAGE_KEY, String(nextPageSize));
+		const next = new URLSearchParams(searchParams);
+		next.set("pageSize", String(nextPageSize));
+		next.set("page", "1");
+		setSearchParams(next);
 	};
 
 	// Column management functions (persist to server so config is shared across browsers)
@@ -965,7 +1319,7 @@ const Hosts = () => {
 						onClick={() => handleSelectHost(host.id)}
 						className="flex items-center gap-2 hover:text-secondary-700"
 					>
-						{selectedHosts.includes(host.id) ? (
+						{selectedHostsSet.has(host.id) ? (
 							<CheckSquare className="h-4 w-4 text-primary-600" />
 						) : (
 							<Square className="h-4 w-4 text-secondary-400" />
@@ -1073,36 +1427,68 @@ const Hosts = () => {
 				const wsStatus = wsStatusMap[host.api_id];
 				if (!wsStatus) {
 					return (
-						<span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400">
-							<div className="w-2 h-2 bg-gray-400 rounded-full mr-1.5"></div>
+						<span className="badge badge-secondary">
+							<span className="w-2 h-2 bg-secondary-400 rounded-full mr-1.5" />
 							Unknown
 						</span>
 					);
 				}
+				const seconds = wsStatus.disconnected_seconds_ago;
+				// When duration is unknown (server cold-start with the agent
+				// already disconnected, so the registry never recorded a
+				// DisconnectedAt), treat it as past-threshold rather than
+				// within-grace. Otherwise the pill is stuck on amber forever.
+				const withinGrace =
+					typeof seconds === "number" && seconds <= hostDownThresholdSeconds;
+				// `secure` is preserved by registry.Unregister across disconnects,
+				// so the protocol label stays meaningful even when offline.
+				const protocol = wsStatus.secure ? "WSS" : "WS";
+				let badgeClass;
+				let label;
+				let ariaLabel;
+				let tooltipText;
+				// Connection state must not be carried by colour alone (WCAG
+				// 1.4.1): the icon and the label both change with the state.
+				let StateIcon;
+				if (wsStatus.connected) {
+					badgeClass =
+						"badge bg-success-100 text-success-800 dark:bg-success-900 dark:text-success-200";
+					label = protocol;
+					ariaLabel = "WebSocket connected";
+					StateIcon = Wifi;
+					tooltipText = `WebSocket connected${
+						wsStatus.secure ? " (secure)" : ""
+					}. Real-time control channel is active.`;
+				} else if (withinGrace) {
+					badgeClass =
+						"badge bg-warning-100 text-warning-800 dark:bg-warning-900 dark:text-warning-200";
+					label = `${protocol} reconnecting`;
+					ariaLabel = "WebSocket disconnected, within grace window";
+					StateIcon = WifiOff;
+					tooltipText = `WebSocket disconnected (${Math.round(seconds)}s). Within the ${hostDownThresholdSeconds}s grace window, the agent may be reconnecting.`;
+				} else {
+					badgeClass =
+						"badge bg-danger-100 text-danger-800 dark:bg-danger-900 dark:text-danger-200";
+					label = `${protocol} offline`;
+					ariaLabel = "WebSocket disconnected";
+					StateIcon = WifiOff;
+					tooltipText =
+						typeof seconds === "number"
+							? `WebSocket has been disconnected for ${Math.round(seconds)}s (threshold: ${hostDownThresholdSeconds}s).`
+							: `WebSocket disconnected, duration unknown (likely past the ${hostDownThresholdSeconds}s threshold). The server may have restarted while the agent was already offline.`;
+				}
 				return (
-					<span
-						className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${
-							wsStatus.connected
-								? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
-								: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
-						}`}
-						title={
-							wsStatus.connected
-								? `Agent connected via ${wsStatus.secure ? "WSS (secure)" : "WS (insecure)"}`
-								: "Agent not connected"
-						}
-					>
-						{wsStatus.connected && (
-							<div className="w-2 h-2 rounded-full mr-1.5 bg-green-500 animate-pulse"></div>
-						)}
-						<span>
-							{wsStatus.connected
-								? wsStatus.secure
-									? "WSS"
-									: "WS"
-								: "Offline"}
-						</span>
-					</span>
+					<Tooltip content={tooltipText}>
+						<button
+							type="button"
+							aria-label={ariaLabel}
+							className={`${badgeClass} gap-1 cursor-help focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1`}
+							onClick={(e) => e.preventDefault()}
+						>
+							<StateIcon className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
+							<span>{label}</span>
+						</button>
+					</Tooltip>
 				);
 			}
 			case "integrations":
@@ -1131,38 +1517,80 @@ const Hosts = () => {
 						)}
 					</div>
 				);
-			case "status":
-				return (
-					<div className="text-sm text-secondary-900 dark:text-white">
-						{(host.effectiveStatus || host.status).charAt(0).toUpperCase() +
-							(host.effectiveStatus || host.status).slice(1)}
-					</div>
+			case "status": {
+				// Treat missing WS data as "assume connected" so a healthy
+				// host doesn't flicker through "Stale" before wsStatusMap
+				// loads. Aligned with HostStatusPills' wsConnectedOrUnknown.
+				const wsEntry = wsStatusMap[host.api_id];
+				const wsConnectedOrUnknown =
+					wsEntry === undefined || wsEntry?.connected === true;
+				const reportingState = deriveReportingState(
+					host,
+					wsConnectedOrUnknown,
+					updateIntervalMinutes,
 				);
+				const lastUpdateRel = formatRelativeTime(host.last_update);
+				let badgeClass;
+				let label;
+				let tooltipText;
+				if (reportingState === "reporting") {
+					badgeClass =
+						"badge bg-success-100 text-success-800 dark:bg-success-900 dark:text-success-200";
+					label = "Reporting";
+					tooltipText = `Agent reported recently. Last update: ${lastUpdateRel}.`;
+				} else if (reportingState === "overdue") {
+					badgeClass =
+						"badge bg-warning-100 text-warning-800 dark:bg-warning-900 dark:text-warning-200";
+					label = "Overdue";
+					tooltipText = `Agent has not pushed a report yet but the WebSocket is still connected, so this is likely transient. Last update: ${lastUpdateRel}.`;
+				} else {
+					badgeClass =
+						"badge bg-danger-100 text-danger-800 dark:bg-danger-900 dark:text-danger-200";
+					label = "Stale";
+					tooltipText = `Agent has not reported and the WebSocket is disconnected. Last update: ${lastUpdateRel}.`;
+				}
+				return (
+					<Tooltip content={tooltipText}>
+						<button
+							type="button"
+							className={`${badgeClass} cursor-help focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1`}
+							onClick={(e) => e.preventDefault()}
+						>
+							{label}
+						</button>
+					</Tooltip>
+				);
+			}
 			case "needs_reboot":
 				return (
 					<div className="flex justify-center">
 						{host.needs_reboot ? (
-							<span
-								className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
-								title={host.reboot_reason || "Reboot required"}
-							>
-								<RotateCcw className="h-3 w-3" />
-								Required
-							</span>
+							<Tooltip content={host.reboot_reason || "Reboot required"}>
+								<button
+									type="button"
+									className="badge bg-warning-100 text-warning-800 dark:bg-warning-900 dark:text-warning-200 gap-1 cursor-help focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1"
+									onClick={(e) => e.preventDefault()}
+								>
+									<RotateCcw className="h-3 w-3" />
+									Required
+								</button>
+							</Tooltip>
 						) : (
-							<span className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+							<span className="badge bg-success-100 text-success-800 dark:bg-success-900 dark:text-success-200 gap-1">
 								<CheckCircle className="h-3 w-3" />
 								No
 							</span>
 						)}
 					</div>
 				);
-			case "uptime":
+			case "uptime": {
+				const live = formatLiveUptime(host.boot_time, tickNow);
 				return (
 					<div className="text-sm text-secondary-900 dark:text-white">
-						{host.system_uptime || "N/A"}
+						{live || host.system_uptime || "N/A"}
 					</div>
 				);
+			}
 			case "updates":
 				return (
 					<button
@@ -1255,18 +1683,7 @@ const Hosts = () => {
 		navigate(`/hosts?${newSearchParams.toString()}`, { replace: true });
 	};
 
-	const handleConnectionStatusClick = () => {
-		// Filter to show offline hosts (not connected via WebSocket)
-		setStatusFilter("all");
-		setShowFilters(true);
-		// Clear conflicting filters and set offline filter
-		const newSearchParams = new URLSearchParams(window.location.search);
-		newSearchParams.set("filter", "offline");
-		newSearchParams.delete("reboot"); // Clear reboot filter when switching to offline
-		navigate(`/hosts?${newSearchParams.toString()}`, { replace: true });
-	};
-
-	if (isLoading) {
+	if (isLoading && !hostsResponse) {
 		return (
 			<div className="flex items-center justify-center h-64">
 				<RefreshCw className="h-8 w-8 animate-spin text-primary-600" />
@@ -1348,7 +1765,7 @@ const Hosts = () => {
 								Total Hosts
 							</p>
 							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
-								{hosts?.length || 0}
+								{hostCounts?.total ?? totalHosts}
 							</p>
 						</div>
 					</div>
@@ -1365,7 +1782,8 @@ const Hosts = () => {
 								Needs Updates
 							</p>
 							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
-								{hosts?.filter((h) => h.updatesCount > 0).length || 0}
+								{hostCounts?.needsUpdates ??
+									hosts.filter((h) => h.updatesCount > 0).length}
 							</p>
 						</div>
 					</div>
@@ -1387,16 +1805,13 @@ const Hosts = () => {
 								Needs Reboots
 							</p>
 							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
-								{hosts?.filter((h) => h.needs_reboot === true).length || 0}
+								{hostCounts?.needsReboot ??
+									hosts.filter((h) => h.needs_reboot === true).length}
 							</p>
 						</div>
 					</div>
 				</button>
-				<button
-					type="button"
-					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full"
-					onClick={handleConnectionStatusClick}
-				>
+				<div className="card p-4 text-left w-full">
 					<div className="flex items-center">
 						<Wifi className="h-5 w-5 text-primary-600 mr-2" />
 						<div className="flex-1">
@@ -1404,14 +1819,12 @@ const Hosts = () => {
 								Connection Status
 							</p>
 							{(() => {
-								const connectedCount =
-									hosts?.filter(
-										(h) => wsStatusMap[h.api_id]?.connected === true,
-									).length || 0;
-								const offlineCount =
-									hosts?.filter(
-										(h) => wsStatusMap[h.api_id]?.connected !== true,
-									).length || 0;
+								const totalForStatus = hostCounts?.total ?? 0;
+								const connectedCount = wsStatusSummary?.connected ?? 0;
+								const offlineCount = Math.max(
+									totalForStatus - connectedCount,
+									0,
+								);
 								return (
 									<div className="flex gap-4">
 										<div className="flex items-center gap-1">
@@ -1437,7 +1850,7 @@ const Hosts = () => {
 							})()}
 						</div>
 					</div>
-				</button>
+				</div>
 			</div>
 
 			{/* Hosts List */}
@@ -1598,7 +2011,7 @@ const Hosts = () => {
 											htmlFor={statusFilterId}
 											className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-1"
 										>
-											Status
+											Reporting
 										</label>
 										<select
 											id={statusFilterId}
@@ -1606,11 +2019,10 @@ const Hosts = () => {
 											onChange={(e) => setStatusFilter(e.target.value)}
 											className="w-full border border-secondary-300 dark:border-secondary-600 rounded-lg px-3 py-2.5 sm:py-2 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white min-h-[44px]"
 										>
-											<option value="all">All Status</option>
-											<option value="active">Active</option>
-											<option value="pending">Pending</option>
-											<option value="inactive">Inactive</option>
-											<option value="error">Error</option>
+											<option value="all">All</option>
+											<option value="reporting">Reporting</option>
+											<option value="overdue">Overdue</option>
+											<option value="stale">Stale</option>
 										</select>
 									</div>
 									<div>
@@ -1690,6 +2102,19 @@ const Hosts = () => {
 						)}
 					</div>
 
+					{reportingFilterTruncated && (
+						<div className="mb-4 flex items-start gap-2 rounded-md border border-warning-200 dark:border-warning-700 bg-warning-50 dark:bg-warning-900 p-3">
+							<AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5 text-warning-600 dark:text-warning-300" />
+							<p className="text-sm text-warning-800 dark:text-warning-200">
+								The Reporting filter is applied to the first{" "}
+								{REPORTING_FILTER_FETCH_LIMIT.toLocaleString()} hosts only, out
+								of {serverTotalHosts.toLocaleString()} matching your other
+								filters. Narrow the search, group or OS filters to cover every
+								host.
+							</p>
+						</div>
+					)}
+
 					<div className="flex-1 md:overflow-hidden">
 						{!hosts || hosts.length === 0 ? (
 							<div className="text-center py-8">
@@ -1700,7 +2125,7 @@ const Hosts = () => {
 									credentials
 								</p>
 							</div>
-						) : filteredAndSortedHosts.length === 0 ? (
+						) : visibleHosts.length === 0 ? (
 							<div className="text-center py-8">
 								<Search className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
 								<p className="text-secondary-500">
@@ -1731,7 +2156,7 @@ const Hosts = () => {
 														const isInactive =
 															(host.effectiveStatus || host.status) ===
 															"inactive";
-														const isSelected = selectedHosts.includes(host.id);
+														const isSelected = selectedHostsSet.has(host.id);
 														const wsStatus = wsStatusMap[host.api_id];
 														const groupIds =
 															host.host_group_memberships?.map(
@@ -1807,8 +2232,8 @@ const Hosts = () => {
 																	)}
 																</div>
 
-																{/* OS, Status and connection info */}
-																<div className="flex items-center justify-between gap-2">
+																{/* OS + status pills */}
+																<div className="flex items-center justify-between gap-2 flex-wrap">
 																	{visibleColumns.some(
 																		(col) => col.id === "os",
 																	) && (
@@ -1822,63 +2247,18 @@ const Hosts = () => {
 																			</span>
 																		</div>
 																	)}
-																	<div className="flex flex-wrap items-center gap-2">
-																		{visibleColumns.some(
-																			(col) => col.id === "status",
-																		) && (
-																			<span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-white">
-																				{(host.effectiveStatus || host.status)
-																					.charAt(0)
-																					.toUpperCase() +
-																					(
-																						host.effectiveStatus || host.status
-																					).slice(1)}
-																			</span>
-																		)}
-																		{visibleColumns.some(
-																			(col) => col.id === "ws_status",
-																		) &&
-																			wsStatus && (
-																				<span
-																					className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium ${
-																						wsStatus.connected
-																							? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
-																							: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
-																					}`}
-																				>
-																					{wsStatus.connected && (
-																						<div className="w-2 h-2 rounded-full mr-1.5 bg-green-500 animate-pulse"></div>
-																					)}
-																					<span>
-																						{wsStatus.connected
-																							? wsStatus.secure
-																								? "WSS"
-																								: "WS"
-																							: "Offline"}
-																					</span>
-																				</span>
-																			)}
-																	</div>
+																	<HostStatusPills
+																		host={host}
+																		wsStatus={wsStatus}
+																		hostDownThresholdSeconds={
+																			hostDownThresholdSeconds
+																		}
+																		updateIntervalMinutes={
+																			updateIntervalMinutes
+																		}
+																		compact
+																	/>
 																</div>
-
-																{/* Reboot Required */}
-																{visibleColumns.some(
-																	(col) => col.id === "needs_reboot",
-																) &&
-																	host.needs_reboot && (
-																		<div>
-																			<span
-																				className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
-																				title={
-																					host.reboot_reason ||
-																					"Reboot required"
-																				}
-																			>
-																				<RotateCcw className="h-3 w-3" />
-																				Reboot Required
-																			</span>
-																		</div>
-																	)}
 
 																{/* Group info */}
 																<div className="flex flex-wrap items-center gap-3 text-sm">
@@ -1930,7 +2310,7 @@ const Hosts = () => {
 																					`/packages?host=${host.id}&filter=security-updates`,
 																				)
 																			}
-																			className="text-sm text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300 font-medium min-h-[44px] flex items-center"
+																			className="text-sm text-danger-600 hover:text-danger-700 dark:text-danger-400 dark:hover:text-danger-300 font-medium min-h-[44px] flex items-center"
 																		>
 																			{host.securityUpdatesCount || 0} Security
 																		</button>
@@ -1968,7 +2348,7 @@ const Hosts = () => {
 																				className="flex items-center gap-2 hover:text-secondary-700"
 																			>
 																				{groupHosts.every((host) =>
-																					selectedHosts.includes(host.id),
+																					selectedHostsSet.has(host.id),
 																				) ? (
 																					<CheckSquare className="h-4 w-4" />
 																				) : (
@@ -2134,7 +2514,7 @@ const Hosts = () => {
 																const isInactive =
 																	(host.effectiveStatus || host.status) ===
 																	"inactive";
-																const isSelected = selectedHosts.includes(
+																const isSelected = selectedHostsSet.has(
 																	host.id,
 																);
 
@@ -2171,6 +2551,56 @@ const Hosts = () => {
 							</div>
 						)}
 					</div>
+					{!hostsPage.legacy && (
+						<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4 pt-4 border-t border-secondary-200 dark:border-secondary-600">
+							<div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+								<div className="flex items-center gap-2">
+									<span className="text-sm text-secondary-700 dark:text-white">
+										Rows per page:
+									</span>
+									<select
+										value={pageSize}
+										onChange={(e) =>
+											setPageSizeParam(Number.parseInt(e.target.value, 10))
+										}
+										className="text-sm border border-secondary-300 dark:border-secondary-600 rounded px-2 py-1 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white min-h-[36px]"
+									>
+										{HOSTS_PAGE_SIZE_OPTIONS.map((size) => (
+											<option key={size} value={size}>
+												{size}
+											</option>
+										))}
+									</select>
+								</div>
+								<span className="text-sm text-secondary-700 dark:text-white">
+									{pageStart}-{pageEnd} of {totalHosts}
+								</span>
+							</div>
+							<div className="flex items-center gap-2">
+								<button
+									type="button"
+									onClick={() => setPageParam(page - 1)}
+									disabled={page <= 1}
+									className="p-2 rounded border border-secondary-300 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+									aria-label="Previous hosts page"
+								>
+									<ChevronLeft className="h-4 w-4" />
+								</button>
+								<span className="text-sm text-secondary-700 dark:text-white">
+									Page {page} of {totalPages}
+								</span>
+								<button
+									type="button"
+									onClick={() => setPageParam(page + 1)}
+									disabled={page >= totalPages}
+									className="p-2 rounded border border-secondary-300 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+									aria-label="Next hosts page"
+								>
+									<ChevronRight className="h-4 w-4" />
+								</button>
+							</div>
+						</div>
+					)}
 				</div>
 			</div>
 
@@ -2178,7 +2608,7 @@ const Hosts = () => {
 			<AddHostWizard
 				isOpen={showAddModal}
 				onClose={() => setShowAddModal(false)}
-				onSuccess={() => queryClient.invalidateQueries(["hosts"])}
+				onSuccess={() => queryClient.invalidateQueries({ queryKey: ["hosts"] })}
 			/>
 
 			{/* Bulk Assign Modal */}

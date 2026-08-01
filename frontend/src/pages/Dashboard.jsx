@@ -272,7 +272,10 @@ const Dashboard = () => {
 	};
 
 	const handleOfflineHostsClick = () => {
-		navigate("/hosts?filter=offline");
+		// "Offline" was a conflated label in the legacy UI; the new vocabulary
+		// is "stale" (overdue + WS down). The Hosts page also legacy-redirects
+		// `?filter=offline` to `?filter=stale` for any old bookmarks.
+		navigate("/hosts?filter=stale");
 	};
 
 	// New navigation handlers for top cards
@@ -1267,8 +1270,8 @@ const Dashboard = () => {
 								{stats.cards.offlineHosts > 0 ? (
 									<>
 										<h3 className="text-sm font-medium text-warning-800">
-											{stats.cards.offlineHosts} host
-											{stats.cards.offlineHosts > 1 ? "s" : ""} offline/stale
+											{stats.cards.offlineHosts} stale host
+											{stats.cards.offlineHosts > 1 ? "s" : ""}
 										</h3>
 										<p className="text-sm text-warning-700 mt-1">
 											These hosts haven't reported in{" "}
@@ -1278,10 +1281,10 @@ const Dashboard = () => {
 								) : (
 									<>
 										<h3 className="text-sm font-medium text-success-800">
-											All hosts are online
+											All hosts are reporting
 										</h3>
 										<p className="text-sm text-success-700 mt-1">
-											No hosts are offline or stale.
+											No hosts are stale.
 										</p>
 									</>
 								)}
@@ -1697,9 +1700,9 @@ const Dashboard = () => {
 								</div>
 								<div
 									className="text-xs text-secondary-500 dark:text-white/70 truncate"
-									title="Online"
+									title="Reporting"
 								>
-									Online
+									Reporting
 								</div>
 								<div className="text-[10px] sm:text-xs text-secondary-400 dark:text-white/60 truncate">
 									{onlineHosts}/{stats.cards.totalHosts}

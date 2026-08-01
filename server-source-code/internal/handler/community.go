@@ -23,7 +23,7 @@ type CommunityLinksResponse struct {
 // Default community links and stats. Override via env or config if needed.
 var defaultCommunityLinks = []CommunityLink{
 	{ID: "discord", URL: "https://patchmon.net/discord", Label: "Discord", Stat: "600", StatLabel: "members"},
-	{ID: "github", URL: "https://github.com/PatchMon/PatchMon", Label: "GitHub", Stat: "2.5K", StatLabel: "stars"},
+	{ID: "github", URL: "https://github.com/PatchMon/PatchMon", Label: "GitHub", Stat: "2.7K", StatLabel: "stars"},
 	{ID: "github_issues", URL: "https://github.com/PatchMon/PatchMon/issues", Label: "GitHub Issues"},
 	{ID: "email", URL: "mailto:support@patchmon.net", Label: "Email", Stat: "support@patchmon.net"},
 	{ID: "linkedin", URL: "https://linkedin.com/company/patchmon", Label: "LinkedIn", Stat: "400"},
