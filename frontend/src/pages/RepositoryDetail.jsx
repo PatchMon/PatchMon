@@ -192,7 +192,7 @@ const RepositoryDetail = () => {
 			name: repository.name,
 			description: repository.description || "",
 			is_active: repository.is_active,
-			priority: repository.priority || "",
+			priority: repository.priority ?? "",
 		});
 		setEditMode(true);
 	};
@@ -544,7 +544,7 @@ const RepositoryDetail = () => {
 										)}
 									</div>
 								</div>
-								{repository.priority && (
+								{repository.priority != null && (
 									<div>
 										<span className="text-sm font-medium text-secondary-500 dark:text-white">
 											Priority

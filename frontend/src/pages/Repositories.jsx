@@ -33,6 +33,16 @@ const REPOSITORIES_PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
 const REPOSITORIES_DEFAULT_PAGE_SIZE = 50;
 const REPOSITORIES_PAGE_SIZE_STORAGE_KEY = "repositories-page-size";
 
+// Mirrors the backend sort whitelist in store/repositories.go (repoListSortKey).
+const SORTABLE_COLUMN_IDS = new Set([
+	"name",
+	"url",
+	"distribution",
+	"security",
+	"status",
+	"hostCount",
+]);
+
 const Repositories = () => {
 	const queryClient = useQueryClient();
 	const navigate = useNavigate();
@@ -401,7 +411,16 @@ const Repositories = () => {
 
 			{/* Summary Stats */}
 			<div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6 flex-shrink-0">
-				<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
+				<button
+					type="button"
+					onClick={() => {
+						setFilterType("all");
+						setFilterStatus("all");
+						setSearchTerm("");
+					}}
+					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full min-h-[44px]"
+					title="Click to clear all repository filters"
+				>
 					<div className="flex items-center">
 						<Database className="h-5 w-5 text-primary-600 mr-2" />
 						<div>
@@ -413,9 +432,18 @@ const Repositories = () => {
 							</p>
 						</div>
 					</div>
-				</div>
+				</button>
 
-				<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
+				<button
+					type="button"
+					onClick={() => {
+						setFilterStatus("active");
+						setFilterType("all");
+						setSearchTerm("");
+					}}
+					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full min-h-[44px]"
+					title="Click to filter active repositories only"
+				>
 					<div className="flex items-center">
 						<Server className="h-5 w-5 text-success-600 mr-2" />
 						<div>
@@ -427,9 +455,18 @@ const Repositories = () => {
 							</p>
 						</div>
 					</div>
-				</div>
+				</button>
 
-				<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
+				<button
+					type="button"
+					onClick={() => {
+						setFilterType("secure");
+						setFilterStatus("all");
+						setSearchTerm("");
+					}}
+					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full min-h-[44px]"
+					title="Click to filter HTTPS repositories only"
+				>
 					<div className="flex items-center">
 						<Shield className="h-5 w-5 text-warning-600 mr-2" />
 						<div>
@@ -441,9 +478,9 @@ const Repositories = () => {
 							</p>
 						</div>
 					</div>
-				</div>
+				</button>
 
-				<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
+				<div className="card p-4">
 					<div className="flex items-center">
 						<ShieldCheck className="h-5 w-5 text-danger-600 mr-2" />
 						<div>
@@ -702,14 +739,20 @@ const Repositories = () => {
 														key={column.id}
 														className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 													>
-														<button
-															type="button"
-															onClick={() => handleSort(column.id)}
-															className="flex items-center justify-start gap-1 hover:text-secondary-700 dark:hover:text-secondary-200 transition-colors"
-														>
-															{column.label}
-															{getSortIcon(column.id)}
-														</button>
+														{SORTABLE_COLUMN_IDS.has(column.id) ? (
+															<button
+																type="button"
+																onClick={() => handleSort(column.id)}
+																className="flex items-center justify-start gap-1 hover:text-secondary-700 dark:hover:text-secondary-200 transition-colors"
+															>
+																{column.label}
+																{getSortIcon(column.id)}
+															</button>
+														) : (
+															<span className="flex items-center justify-start">
+																{column.label}
+															</span>
+														)}
 													</th>
 												))}
 											</tr>
