@@ -726,6 +726,7 @@ const Docker = () => {
 									setActiveTab(tab.id);
 									setSearchTerm("");
 									setUpdatesFilter("all"); // Reset updates filter when switching tabs
+									setStatusFilter("all");
 									setSortField(
 										tab.id === "containers"
 											? "status"
