@@ -34,6 +34,16 @@ import { dashboardAPI, packagesAPI } from "../utils/api";
 
 const PACKAGES_PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
 
+// Mirrors the server-side sort whitelist (packageListSortKey /
+// packagesListSortColumn). Columns outside this set render without a sort
+// control because the backend would silently fall back to name.
+const PACKAGES_SORTABLE_COLUMNS = new Set([
+	"name",
+	"packageHosts",
+	"status",
+	"latestVersion",
+]);
+
 function formatRepoName(name) {
 	if (!name) return "\u2014";
 	if (name.startsWith("deb-src-")) return name.slice(8);
@@ -369,6 +379,7 @@ const Packages = () => {
 
 	// Sorting functions
 	const handleSort = (field) => {
+		if (!PACKAGES_SORTABLE_COLUMNS.has(field)) return;
 		if (sortField === field) {
 			setSortDirection(sortDirection === "asc" ? "desc" : "asc");
 		} else {
@@ -1083,14 +1094,20 @@ const Packages = () => {
 														key={column.id}
 														className="px-4 py-2 text-center text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 													>
-														<button
-															type="button"
-															onClick={() => handleSort(column.id)}
-															className="flex items-center gap-1 hover:text-secondary-700 dark:hover:text-secondary-200 transition-colors"
-														>
-															{column.label}
-															{getSortIcon(column.id)}
-														</button>
+														{PACKAGES_SORTABLE_COLUMNS.has(column.id) ? (
+															<button
+																type="button"
+																onClick={() => handleSort(column.id)}
+																className="flex items-center gap-1 hover:text-secondary-700 dark:hover:text-secondary-200 transition-colors"
+															>
+																{column.label}
+																{getSortIcon(column.id)}
+															</button>
+														) : (
+															<span className="flex items-center gap-1">
+																{column.label}
+															</span>
+														)}
 													</th>
 												))}
 											</tr>
