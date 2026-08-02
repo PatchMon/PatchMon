@@ -180,6 +180,39 @@ make build          # Build native binary
 make build-all      # Build all platforms
 ```
 
+### Building the Docker image
+
+```bash
+./docker/build.sh                    # builds patchmon-server:local
+./docker/build.sh --tag mytag        # custom image tag
+./docker/build.sh --version 2.0.1    # pin the version it reports
+```
+
+Use this rather than calling `docker build` directly. The git tag is the only
+place a version is declared: no source file contains one, so the version has to
+be passed into the image as a build arg, and `.dockerignore` excludes `.git` so
+the Dockerfile cannot work it out for itself. `docker/build.sh` derives it from
+`git describe --tags --abbrev=0` and passes it through, along with building the
+agent binaries the image bundles.
+
+If you would rather drive `docker build` yourself:
+
+```bash
+docker build -f docker/server.Dockerfile \
+  --build-arg VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')" \
+  -t patchmon-server:local .
+```
+
+Only bare `MAJOR.MINOR.PATCH` is accepted. The server parses versions as
+dot-separated integers and discards parse errors, so anything with a suffix
+(`2.0.2-60-gabc1234`, `dev`) silently reads as `2.0.0` and makes the instance
+think an update is available. The build rejects those rather than letting it
+through. Omitting `VERSION` entirely builds an image reporting `0.0.0`, which is
+a deliberate signal that the version was never injected.
+
+A shallow clone or a fork without tags has nothing to describe from. Run
+`git fetch --tags`, or pass `--version` explicitly.
+
 ---
 
 ## Running Tests & Linters

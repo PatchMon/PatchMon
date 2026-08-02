@@ -12,8 +12,18 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// DefaultVersion is the default server version. Bump this when releasing; config_test.go uses it.
-const DefaultVersion = "2.0.3"
+// DefaultVersion is the server version reported by the API and used to look up
+// release notes. It is a var rather than a const so builds can override it at
+// link time:
+//
+//	-ldflags "-X github.com/PatchMon/PatchMon/server-source-code/internal/config.DefaultVersion=2.0.4"
+//
+// The value below is a deliberate non-version. The git tag is the single
+// source of truth for the version, and every supported build path (make,
+// docker/build.sh, CI) derives it from there and injects it. Seeing 0.0.0 in
+// the UI means a build path skipped the injection rather than that the version
+// is merely stale.
+var DefaultVersion = "0.0.0"
 
 // Config holds application configuration loaded from environment.
 // Uses same variable names as PatchMon/server for compatibility.
@@ -209,7 +219,7 @@ func Load() (*Config, error) {
 
 		Port:    getEnvInt("PORT", 3000),
 		Env:     getEnvEnv(),
-		Version: DefaultVersion,
+		Version: strings.TrimPrefix(DefaultVersion, "v"),
 
 		JWTSecret:                 getEnv("JWT_SECRET", ""),
 		JWTExpiresIn:              getEnv("JWT_EXPIRES_IN", "1h"),

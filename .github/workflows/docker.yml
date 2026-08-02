@@ -41,6 +41,15 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.ref }}
+          # Branch and PR builds resolve their version with `git describe`.
+          fetch-tags: true
+
+      - name: Resolve version
+        id: ctx
+        uses: ./.github/actions/release-context
+        with:
+          token: ${{ github.token }}
+          fetch-notes: 'false'
 
       - name: Set up Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
@@ -51,9 +60,9 @@ jobs:
         working-directory: agent-source-code
         env:
           CGO_ENABLED: 0
+          VERSION: ${{ steps.ctx.outputs.version }}
         run: |
           mkdir -p ../agents-prebuilt
-          VERSION=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
           for target in "linux/amd64" "linux/arm64" "linux/386" "linux/arm" \
                         "freebsd/amd64" "freebsd/arm64" "freebsd/386" "freebsd/arm" \
                         "windows/amd64" "windows/arm64"; do
@@ -90,6 +99,17 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.ref }}
+          # Branch and PR builds resolve their version with `git describe`.
+          fetch-tags: true
+
+      # Resolves the version and, on a release tag, writes the release notes
+      # from the GitHub release into release_notes_data/ so //go:embed compiles
+      # them into the image. Nothing is committed.
+      - name: Resolve version and inject release notes
+        id: ctx
+        uses: ./.github/actions/release-context
+        with:
+          token: ${{ github.token }}
 
       - name: Download agent binaries
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -172,7 +192,7 @@ jobs:
           file: docker/server.Dockerfile
           platforms: linux/amd64,linux/arm64
           build-args: |
-            VERSION=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+            VERSION=${{ steps.ctx.outputs.version }}
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -197,7 +217,7 @@ jobs:
           file: docker/server.Dockerfile
           platforms: linux/amd64,linux/arm64
           build-args: |
-            VERSION=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+            VERSION=${{ steps.ctx.outputs.version }}
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
           tags: ${{ steps.meta-harbor.outputs.tags }}
           labels: ${{ steps.meta-harbor.outputs.labels }}

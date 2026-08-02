@@ -384,7 +384,7 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 
 					{/* Footer: What's New */}
 					{stepKey === "whatsNew" && (
-						<div className="bg-secondary-50 dark:bg-secondary-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+						<div className="bg-secondary-50 dark:bg-secondary-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse sm:items-center sm:justify-between">
 							<button
 								type="button"
 								onClick={handleNext}
@@ -393,6 +393,15 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 								Next
 								<ArrowRight className="h-4 w-4" />
 							</button>
+							<a
+								href="https://feedback.patchmon.net/changelog"
+								target="_blank"
+								rel="noopener noreferrer"
+								className="mt-3 sm:mt-0 sm:mr-auto w-full sm:w-auto inline-flex justify-center items-center gap-1.5 text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors min-h-[44px]"
+							>
+								Full changelog
+								<ExternalLink className="h-4 w-4" />
+							</a>
 						</div>
 					)}
 

@@ -1,0 +1,110 @@
+name: Release context
+description: >
+  Resolve the app version from the git tag and, on a release build, pull the
+  release notes out of the GitHub release into the source tree so they get
+  compiled into the binary.
+
+inputs:
+  token:
+    description: Token used for the GitHub API
+    required: true
+  tag:
+    description: >
+      Release tag. Defaults to the triggering tag or release. Leave blank for
+      branch and PR builds.
+    required: false
+    default: ''
+  fetch-notes:
+    description: >
+      Set to false for jobs that do not build the server binary, e.g. the agent
+      matrix. They still need the version but not the notes.
+    required: false
+    default: 'true'
+
+outputs:
+  version:
+    description: MAJOR.MINOR.PATCH, always valid, never with a suffix
+    value: ${{ steps.resolve.outputs.version }}
+  is-release:
+    description: '"true" when building a vX.Y.Z release tag'
+    value: ${{ steps.resolve.outputs.is-release }}
+
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        INPUT_TAG: ${{ inputs.tag }}
+        REF_TYPE: ${{ github.ref_type }}
+        REF_NAME: ${{ github.ref_name }}
+        RELEASE_TAG: ${{ github.event.release.tag_name }}
+        FETCH_NOTES: ${{ inputs.fetch-notes }}
+      run: |
+        set -euo pipefail
+
+        # Tag names reach the shell through env, never ${{ }} interpolation.
+        TAG="$INPUT_TAG"
+        if [ -z "$TAG" ] && [ "$REF_TYPE" = "tag" ]; then TAG="$REF_NAME"; fi
+        if [ -z "$TAG" ]; then TAG="$RELEASE_TAG"; fi
+
+        IS_RELEASE=false
+        if printf '%s' "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+          IS_RELEASE=true
+          VERSION="${TAG#v}"
+        else
+          # Branch or PR build. Report the last released version: it is what
+          # this tree is a descendant of, and it keeps the update checker
+          # honest. --abbrev=0 gives the bare tag, because the server parses
+          # versions as dot-separated ints and silently treats any suffix as 0,
+          # so v2.0.2-60-gABC would report as 2.0.0.
+          VERSION="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
+          if [ -z "$VERSION" ]; then
+            # actions/checkout is shallow by default and fetches no tags.
+            git fetch --tags --quiet --depth=1 origin 2>/dev/null || true
+            VERSION="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
+          fi
+        fi
+
+        if ! printf '%s' "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+          echo "::error::Could not resolve a MAJOR.MINOR.PATCH version (tag='$TAG', resolved='$VERSION'). Add fetch-tags: true to actions/checkout."
+          exit 1
+        fi
+
+        {
+          echo "version=$VERSION"
+          echo "is-release=$IS_RELEASE"
+        } >> "$GITHUB_OUTPUT"
+        echo "Version: $VERSION (release: $IS_RELEASE)"
+
+        if [ "$IS_RELEASE" != "true" ] || [ "$FETCH_NOTES" != "true" ]; then
+          exit 0
+        fi
+
+        # The GitHub release is the source of truth for release notes. Pull the
+        # body into the tree so //go:embed compiles it into the binary; the
+        # in-app "What's New" modal then works with no network access. Nothing
+        # is committed: this file exists only in the build.
+        NOTES="server-source-code/internal/handler/release_notes_data/RELEASE_NOTES_${VERSION}.md"
+
+        # Publishing the release is what creates the tag, so the release should
+        # already exist when this runs. Retry briefly against propagation lag.
+        body=""
+        for attempt in 1 2 3 4 5; do
+          if body="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.body' 2>/dev/null)"; then
+            [ -n "${body//[[:space:]]/}" ] && break
+          fi
+          echo "Release $TAG not readable yet (attempt $attempt), waiting..."
+          sleep 5
+          body=""
+        done
+
+        if [ -z "${body//[[:space:]]/}" ]; then
+          echo "::error::No release notes found for $TAG. Draft the release with its notes and publish it; do not push the tag by hand."
+          exit 1
+        fi
+
+        # GitHub stores release bodies with CRLF.
+        printf '%s\n' "$body" | tr -d '\r' > "$NOTES"
+        echo "Wrote $(wc -c < "$NOTES") bytes to $NOTES"

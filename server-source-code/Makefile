@@ -5,7 +5,19 @@ MIGRATE_BINARY := migrate
 BUILD_DIR := .
 # Output dir for multi-arch builds (e.g. ../backend for non-Docker use)
 BUILD_OUT_DIR ?= $(BUILD_DIR)
-LDFLAGS := -ldflags "-s -w"
+# The git tag is the single source of truth for the version; nothing in the
+# repo declares it. `--abbrev=0` yields the bare nearest tag (e.g. v2.0.2)
+# rather than v2.0.2-60-gABC: util.CompareVersions parses dot-separated ints
+# and silently treats any suffix as 0, so "2.0.2-60-gABC" would compare as
+# 2.0.0 and make every dev instance think an update is available.
+#
+# Override to test the update path deliberately:  make run VERSION=2.0.1
+VERSION ?= $(patsubst v%,%,$(shell git describe --tags --abbrev=0 2>/dev/null))
+VERSION_PKG := github.com/PatchMon/PatchMon/server-source-code/internal/config
+VERSION_X := $(if $(strip $(VERSION)),-X $(VERSION_PKG).DefaultVersion=$(strip $(VERSION)))
+LDFLAGS := -ldflags "-s -w $(VERSION_X)"
+# Dev builds keep symbols for debugging, so they take the version flag alone.
+DEV_LDFLAGS := $(if $(VERSION_X),-ldflags "$(VERSION_X)")
 BUILD_FLAGS := -buildvcs=false
 GO_CMD ?= $(shell command -v go 2>/dev/null || echo go)
 GOLANGCI_LINT_CMD ?= $(shell command -v golangci-lint 2>/dev/null || echo golangci-lint)
@@ -29,7 +41,7 @@ sqlc-generate:
 
 build:
 	@echo "Building $(BINARY)..."
-	@$(GO_CMD) build -buildvcs=false -o $(BINARY) ./cmd/server
+	@$(GO_CMD) build -buildvcs=false $(DEV_LDFLAGS) -o $(BINARY) ./cmd/server
 
 build-migrate:
 	@echo "Building $(MIGRATE_BINARY)..."
