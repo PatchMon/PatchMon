@@ -384,6 +384,10 @@ type Querier interface {
 	GetUserByEmail(ctx context.Context, lower string) (User, error)
 	GetUserByID(ctx context.Context, id string) (User, error)
 	GetUserByOidcSub(ctx context.Context, oidcSub *string) (User, error)
+	// The "$2 != ''" guard mirrors GetUserByDiscordIDOrEmail. Without it an IdP
+	// asserting an empty email participates in the email branch, which is junk
+	// input rather than a takeover (the oidc_sub cross-check blocks a second such
+	// login) but should not reach account matching at all.
 	GetUserByOidcSubOrEmail(ctx context.Context, arg GetUserByOidcSubOrEmailParams) (User, error)
 	GetUserByUsername(ctx context.Context, lower string) (User, error)
 	GetUserByUsernameOrEmail(ctx context.Context, lower string) (User, error)
@@ -395,6 +399,8 @@ type Querier interface {
 	IncrementAutoEnrollmentHostsCreated(ctx context.Context, id string) error
 	InsertAlertHistory(ctx context.Context, arg InsertAlertHistoryParams) (AlertHistory, error)
 	InsertDashboardPreference(ctx context.Context, arg InsertDashboardPreferenceParams) error
+	// ON CONFLICT: callers may pass the same group id twice, and the delete has
+	// already run by then.
 	InsertHostGroupMembership(ctx context.Context, arg InsertHostGroupMembershipParams) error
 	InsertHostRepository(ctx context.Context, arg InsertHostRepositoryParams) error
 	InsertJobHistory(ctx context.Context, arg InsertJobHistoryParams) error
@@ -494,7 +500,11 @@ type Querier interface {
 	// every long run timed_out while it was still working and discard the real
 	// outcome the agent later reports.
 	MarkPatchRunsTimedOut(ctx context.Context, arg MarkPatchRunsTimedOutParams) (int64, error)
-	MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) error
+	// Declared :execrows, not :exec, because the status guard IS the concurrency
+	// control. Two approvals racing both pass the handler's Go-side status check;
+	// only one of them updates a row here, and the loser must be told so rather
+	// than going on to create a second patch run and enqueue a second task.
+	MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) (int64, error)
 	RevokeAllSessionsForUser(ctx context.Context, userID string) error
 	RevokeAllSessionsForUserExcept(ctx context.Context, arg RevokeAllSessionsForUserExceptParams) error
 	RevokeAllTrustedDevicesForUser(ctx context.Context, userID string) error
@@ -529,8 +539,8 @@ type Querier interface {
 	// Host report/update flow (agent sends package and system info)
 	UpdateHostFromReport(ctx context.Context, arg UpdateHostFromReportParams) error
 	UpdateHostGroup(ctx context.Context, arg UpdateHostGroupParams) error
-	// Ping-side write of volatile metrics. Each column is COALESCE-guarded so a
-	// ping that omits a metric leaves the previous value intact.
+	// Ping-side write of volatile metrics. Every column is guarded so a ping that
+	// omits a metric leaves the stored value intact.
 	UpdateHostMetrics(ctx context.Context, arg UpdateHostMetricsParams) error
 	UpdateHostNotes(ctx context.Context, arg UpdateHostNotesParams) error
 	// Records the outcome of a Windows Update installation for a specific host+GUID combination.
@@ -604,6 +614,16 @@ type Querier interface {
 	UpdateUserOidcProfile(ctx context.Context, arg UpdateUserOidcProfileParams) error
 	UpdateUserPreferences(ctx context.Context, arg UpdateUserPreferencesParams) error
 	UpsertAlertConfig(ctx context.Context, arg UpsertAlertConfigParams) (AlertConfig, error)
+	// DO UPDATE rather than DO NOTHING so the row is always returned on conflict.
+	// Deliberately does not touch type: an existing profile keeps the type it was
+	// created with. Overwriting it flips which scanner toggle gates it in SubmitScan.
+	UpsertComplianceProfile(ctx context.Context, arg UpsertComplianceProfileParams) (ComplianceProfile, error)
+	// Metadata columns are COALESCE-guarded so a submission omitting a field does
+	// not blank a stored value.
+	//
+	// title reads the raw parameter, not EXCLUDED: the column is NOT NULL so the
+	// INSERT arm supplies a rule_ref fallback, which EXCLUDED would already hold.
+	UpsertComplianceRule(ctx context.Context, arg UpsertComplianceRuleParams) (string, error)
 	UpsertDashboardLayout(ctx context.Context, arg UpsertDashboardLayoutParams) error
 	UpsertDockerContainer(ctx context.Context, arg UpsertDockerContainerParams) error
 	UpsertDockerImage(ctx context.Context, arg UpsertDockerImageParams) (string, error)

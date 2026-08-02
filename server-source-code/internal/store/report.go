@@ -799,8 +799,15 @@ type packageUpsertRow struct {
 // by Name; this function only assembles the JSON.
 func buildPackageUpsertPayload(packages []ReportPackage) ([]byte, error) {
 	rows := make([]packageUpsertRow, 0, len(packages))
+	// Duplicate names abort the whole upsert with Postgres 21000. The agent
+	// should not send them, but the ingest must not be crashable by agent data.
+	seen := make(map[string]struct{}, len(packages))
 	for i := range packages {
 		p := &packages[i]
+		if _, dup := seen[p.Name]; dup {
+			continue
+		}
+		seen[p.Name] = struct{}{}
 		row := packageUpsertRow{
 			ID:   uuid.New().String(),
 			Name: p.Name,
@@ -862,8 +869,15 @@ func buildHostPackagesPayload(
 	reposByName, reposByURLDistComp, reposByComponent map[string]string,
 ) ([]byte, error) {
 	rows := make([]hostPackageRow, 0, len(packages))
+	// As above: no ON CONFLICT here, so duplicates violate
+	// UNIQUE(host_id, package_id). Kept in step with the upsert payload.
+	seen := make(map[string]struct{}, len(packages))
 	for i := range packages {
 		p := &packages[i]
+		if _, dup := seen[p.Name]; dup {
+			continue
+		}
+		seen[p.Name] = struct{}{}
 		pkgID, ok := nameToID[p.Name]
 		if !ok {
 			return nil, fmt.Errorf("no upserted ID for package %q", p.Name)

@@ -17,7 +17,7 @@ UPDATE hosts SET
     ram_installed = COALESCE(sqlc.narg('ram_installed')::double precision, ram_installed),
     swap_size = COALESCE(sqlc.narg('swap_size')::double precision, swap_size),
     disk_details = COALESCE(sqlc.narg('disk_details')::jsonb, disk_details),
-    gateway_ip = sqlc.narg('gateway_ip'),
+    gateway_ip = COALESCE(sqlc.narg('gateway_ip')::text, gateway_ip),
     dns_servers = COALESCE(sqlc.narg('dns_servers')::jsonb, dns_servers),
     network_interfaces = COALESCE(sqlc.narg('network_interfaces')::jsonb, network_interfaces),
     kernel_version = COALESCE(sqlc.narg('kernel_version')::text, kernel_version),
@@ -32,8 +32,12 @@ UPDATE hosts SET
     -- metrics path owns both fields), and reboot_reason has no COALESCE guard
     -- of its own, so without this CASE a partial would NULL out a reason the
     -- ping had just written correctly.
+    -- Second arm: a report asserting needs_reboot without a reason must not
+    -- blank a stored one; clearing the flag still clears both.
     reboot_reason = CASE
         WHEN sqlc.narg('needs_reboot')::boolean IS NULL THEN reboot_reason
+        WHEN sqlc.narg('needs_reboot')::boolean IS TRUE
+             AND sqlc.narg('reboot_reason')::text IS NULL THEN reboot_reason
         ELSE sqlc.narg('reboot_reason')::text
     END,
     package_manager = COALESCE(sqlc.narg('package_manager')::text, package_manager),

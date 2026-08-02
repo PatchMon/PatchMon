@@ -444,9 +444,8 @@ type HostMetricsParams struct {
 	AgentVersion *string
 }
 
-// UpdateMetrics writes ping-side volatile metrics on the host row. Each
-// column is COALESCE-guarded by sqlc so a ping that omits a metric leaves
-// the previous value alone.
+// UpdateMetrics writes ping-side volatile metrics. Every column is guarded so a
+// ping that omits a metric leaves the stored value alone.
 func (s *HostsStore) UpdateMetrics(ctx context.Context, id string, m HostMetricsParams) error {
 	d := s.db.DB(ctx)
 	return d.Queries.UpdateHostMetrics(ctx, db.UpdateHostMetricsParams{
@@ -542,14 +541,28 @@ func (s *HostsStore) GetHostGroupsForHosts(ctx context.Context, hostIDs []string
 	return out, nil
 }
 
-// SetHostGroups replaces host group memberships for a host.
+// SetHostGroups replaces host group memberships for a host. The delete and the
+// inserts must be atomic: a failed insert would otherwise leave the host with
+// fewer groups than it started with.
 func (s *HostsStore) SetHostGroups(ctx context.Context, hostID string, groupIDs []string) error {
 	d := s.db.DB(ctx)
-	if err := d.Queries.DeleteHostGroupMemberships(ctx, hostID); err != nil {
+	tx, err := d.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	// Uncancellable so a cancelled request cannot return an aborted connection
+	// to the pool.
+	defer func() {
+		rollbackCtx := context.WithoutCancel(ctx)
+		_ = tx.Rollback(rollbackCtx)
+	}()
+
+	q := d.Queries.WithTx(tx)
+	if err := q.DeleteHostGroupMemberships(ctx, hostID); err != nil {
 		return err
 	}
 	for _, gid := range groupIDs {
-		if err := d.Queries.InsertHostGroupMembership(ctx, db.InsertHostGroupMembershipParams{
+		if err := q.InsertHostGroupMembership(ctx, db.InsertHostGroupMembershipParams{
 			ID:          uuid.New().String(),
 			HostID:      hostID,
 			HostGroupID: gid,
@@ -557,10 +570,11 @@ func (s *HostsStore) SetHostGroups(ctx context.Context, hostID string, groupIDs 
 			return err
 		}
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
-// SetHostGroupsBulk updates group memberships for multiple hosts.
+// SetHostGroupsBulk updates group memberships for multiple hosts, one
+// transaction per host.
 func (s *HostsStore) SetHostGroupsBulk(ctx context.Context, hostIDs, groupIDs []string) error {
 	for _, hid := range hostIDs {
 		if err := s.SetHostGroups(ctx, hid, groupIDs); err != nil {

@@ -43,7 +43,7 @@ const Users = () => {
 	const deleteUserMutation = useMutation({
 		mutationFn: adminUsersAPI.delete,
 		onSuccess: () => {
-			queryClient.invalidateQueries(["users"]);
+			queryClient.invalidateQueries({ queryKey: ["users"] });
 		},
 	});
 
@@ -52,7 +52,7 @@ const Users = () => {
 		mutationFn: ({ userId, newPassword }) =>
 			adminUsersAPI.resetPassword(userId, newPassword),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["users"]);
+			queryClient.invalidateQueries({ queryKey: ["users"] });
 			setResetPasswordUser(null);
 		},
 	});
@@ -72,7 +72,7 @@ const Users = () => {
 	};
 
 	const handleUserCreated = () => {
-		queryClient.invalidateQueries(["users"]);
+		queryClient.invalidateQueries({ queryKey: ["users"] });
 		setShowAddModal(false);
 	};
 
@@ -272,7 +272,7 @@ const Users = () => {
 					isOpen={!!editingUser}
 					onClose={() => setEditingUser(null)}
 					onUserUpdated={() => {
-						queryClient.invalidateQueries(["users"]);
+						queryClient.invalidateQueries({ queryKey: ["users"] });
 						setEditingUser(null);
 					}}
 					roles={roles}
@@ -285,7 +285,7 @@ const Users = () => {
 					user={resetPasswordUser}
 					isOpen={!!resetPasswordUser}
 					onClose={() => setResetPasswordUser(null)}
-					onPasswordReset={resetPasswordMutation.mutate}
+					onPasswordReset={resetPasswordMutation.mutateAsync}
 					isLoading={resetPasswordMutation.isPending}
 				/>
 			)}

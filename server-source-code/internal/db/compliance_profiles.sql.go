@@ -149,3 +149,46 @@ func (q *Queries) ListComplianceProfiles(ctx context.Context) ([]ComplianceProfi
 	}
 	return items, nil
 }
+
+const upsertComplianceProfile = `-- name: UpsertComplianceProfile :one
+INSERT INTO compliance_profiles (id, name, type, os_family, version, description, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+ON CONFLICT (name) DO UPDATE SET
+    updated_at = NOW()
+RETURNING id, name, type, os_family, version, description, created_at, updated_at
+`
+
+type UpsertComplianceProfileParams struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Type        string  `json:"type"`
+	OsFamily    *string `json:"os_family"`
+	Version     *string `json:"version"`
+	Description *string `json:"description"`
+}
+
+// DO UPDATE rather than DO NOTHING so the row is always returned on conflict.
+// Deliberately does not touch type: an existing profile keeps the type it was
+// created with. Overwriting it flips which scanner toggle gates it in SubmitScan.
+func (q *Queries) UpsertComplianceProfile(ctx context.Context, arg UpsertComplianceProfileParams) (ComplianceProfile, error) {
+	row := q.db.QueryRow(ctx, upsertComplianceProfile,
+		arg.ID,
+		arg.Name,
+		arg.Type,
+		arg.OsFamily,
+		arg.Version,
+		arg.Description,
+	)
+	var i ComplianceProfile
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Type,
+		&i.OsFamily,
+		&i.Version,
+		&i.Description,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

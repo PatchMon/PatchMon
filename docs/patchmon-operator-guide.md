@@ -2868,6 +2868,8 @@ The installer will:
 
 On a clean host with a working network, the whole process takes 10–30 seconds.
 
+> **openSUSE and SLES:** the installer detects `zypper` and completes successfully, but package inventory on SUSE-family hosts is **coming soon**. The agent has no zypper backend yet, so step 8 fails with `unsupported package manager: unknown` and the host stays on "Waiting for initial system report" rather than becoming active. A successful install on these systems does not mean the host is being monitored. Follow and vote for zypper support at [feedback.patchmon.net](https://feedback.patchmon.net/b/feature-requests/posts/post_01kyza53c0fzst214afbr1qn9a).
+
 #### Step 6: Watch the "Waiting for Connection" Screen
 
 The wizard now shows the connection progress. It polls `/api/v1/ws/status/{apiId}` every 2 seconds and transitions through four states:

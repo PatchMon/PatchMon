@@ -446,12 +446,21 @@ func (s *PatchRunsStore) MarkRunsAgentDisconnected(ctx context.Context, hostID, 
 
 // MarkValidationApproved marks a validation run as approved (terminal state).
 // The actual patch run is created separately via CreateRun with ValidationRunID set.
-func (s *PatchRunsStore) MarkValidationApproved(ctx context.Context, id string, approvedByUserID *string) error {
+//
+// Returns false when no row moved, which means another approval got there
+// first (or the run left an approvable status). Callers must treat that as a
+// conflict and stop: the status guard in the SQL is the only thing serialising
+// concurrent approvals.
+func (s *PatchRunsStore) MarkValidationApproved(ctx context.Context, id string, approvedByUserID *string) (bool, error) {
 	d := s.db.DB(ctx)
-	return d.Queries.MarkValidationApproved(ctx, db.MarkValidationApprovedParams{
+	n, err := d.Queries.MarkValidationApproved(ctx, db.MarkValidationApprovedParams{
 		ID:               id,
 		ApprovedByUserID: approvedByUserID,
 	})
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // SetPolicySnapshot stores the effective policy snapshot on a run (called at trigger/approve time).

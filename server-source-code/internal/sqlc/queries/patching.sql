@@ -9,7 +9,11 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, N
 -- a duplicate of the streamed progress.
 UPDATE patch_runs SET status = 'validated', shell_output = $2, packages_affected = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1;
 
--- name: MarkValidationApproved :exec
+-- name: MarkValidationApproved :execrows
+-- Declared :execrows, not :exec, because the status guard IS the concurrency
+-- control. Two approvals racing both pass the handler's Go-side status check;
+-- only one of them updates a row here, and the loser must be told so rather
+-- than going on to create a second patch run and enqueue a second task.
 UPDATE patch_runs SET status = 'approved', approved_by_user_id = $2, updated_at = NOW() WHERE id = $1 AND status IN ('validated', 'pending_validation', 'pending_approval');
 
 -- name: SetPatchRunPolicySnapshot :exec

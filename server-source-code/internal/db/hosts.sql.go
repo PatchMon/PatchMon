@@ -909,7 +909,15 @@ UPDATE hosts SET
     boot_time      = COALESCE($7::timestamptz, boot_time),
     load_average   = COALESCE($8::jsonb, load_average),
     needs_reboot   = COALESCE($9::boolean, needs_reboot),
-    reboot_reason  = $10,
+    -- Not a plain COALESCE: that would make the reason unclearable. Tied to
+    -- needs_reboot so clearing the flag clears both, while a ping asserting the
+    -- flag without a reason leaves the stored one alone.
+    reboot_reason  = CASE
+        WHEN $9::boolean IS NULL THEN reboot_reason
+        WHEN $9::boolean IS TRUE
+             AND $10::text IS NULL THEN reboot_reason
+        ELSE $10::text
+    END,
     agent_version  = COALESCE($11::text, agent_version)
 WHERE id = $12
 `
@@ -929,8 +937,8 @@ type UpdateHostMetricsParams struct {
 	ID           string             `json:"id"`
 }
 
-// Ping-side write of volatile metrics. Each column is COALESCE-guarded so a
-// ping that omits a metric leaves the previous value intact.
+// Ping-side write of volatile metrics. Every column is guarded so a ping that
+// omits a metric leaves the stored value intact.
 func (q *Queries) UpdateHostMetrics(ctx context.Context, arg UpdateHostMetricsParams) error {
 	_, err := q.db.Exec(ctx, updateHostMetrics,
 		arg.CpuCores,

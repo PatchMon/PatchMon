@@ -67,8 +67,8 @@ const WaitingForConnection = ({
 					if (status?.connected && connectionStage === "waiting") {
 						setConnectionStage("connected");
 						// Invalidate queries to start fetching host data
-						queryClient.invalidateQueries(["host", host.id]);
-						queryClient.invalidateQueries(["hosts"]);
+						queryClient.invalidateQueries({ queryKey: ["host", host.id] });
+						queryClient.invalidateQueries({ queryKey: ["hosts"] });
 					}
 
 					// Stage 2: If connected, check if initial report has been received
@@ -149,8 +149,8 @@ const WaitingForConnection = ({
 				navigate(`/hosts/${host.id}`, { replace: true });
 				// Refresh after 2 seconds to show all data
 				setTimeout(() => {
-					queryClient.invalidateQueries(["host", host.id]);
-					queryClient.invalidateQueries(["hosts"]);
+					queryClient.invalidateQueries({ queryKey: ["host", host.id] });
+					queryClient.invalidateQueries({ queryKey: ["hosts"] });
 				}, 2000);
 			}, 300);
 		}

@@ -172,8 +172,8 @@ const RepositoryDetail = () => {
 	const updateRepositoryMutation = useMutation({
 		mutationFn: (data) => repositoryAPI.update(repositoryId, data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["repository", repositoryId]);
-			queryClient.invalidateQueries(["repositories"]);
+			queryClient.invalidateQueries({ queryKey: ["repository", repositoryId] });
+			queryClient.invalidateQueries({ queryKey: ["repositories"] });
 			setEditMode(false);
 		},
 	});
@@ -182,7 +182,7 @@ const RepositoryDetail = () => {
 	const deleteRepositoryMutation = useMutation({
 		mutationFn: () => repositoryAPI.delete(repositoryId),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["repositories"]);
+			queryClient.invalidateQueries({ queryKey: ["repositories"] });
 			navigate("/repositories");
 		},
 	});

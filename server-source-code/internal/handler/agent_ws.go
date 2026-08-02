@@ -81,6 +81,13 @@ func NewAgentWSHandler(hosts *store.HostsStore, registry *agentregistry.Registry
 	return h
 }
 
+// Mirrors the agent's own settings in serve.go.
+const (
+	agentWSPongWait   = 90 * time.Second
+	agentWSPingPeriod = 30 * time.Second
+	agentWSWriteWait  = 10 * time.Second
+)
+
 // ServeWS handles GET /api/v1/agents/ws - upgrades to WebSocket with API key auth.
 func (h *AgentWSHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	apiID := r.Header.Get("X-API-ID")
@@ -141,10 +148,39 @@ func (h *AgentWSHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 
 	// Configure connection
 	conn.SetReadLimit(512 * 1024) // 512KB max message
+
+	// The deadline must be armed here: a pong handler alone never fires, since
+	// the server has to ping first. Cadence mirrors the agent side.
+	_ = conn.SetReadDeadline(time.Now().Add(agentWSPongWait))
 	conn.SetPongHandler(func(string) error {
-		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		return nil
+		return conn.SetReadDeadline(time.Now().Add(agentWSPongWait))
 	})
+	// Chain to the default handler so the pong reply still goes out.
+	defaultPingHandler := conn.PingHandler()
+	conn.SetPingHandler(func(appData string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(agentWSPongWait))
+		return defaultPingHandler(appData)
+	})
+
+	// WriteControl is the one write method gorilla documents as concurrency-safe,
+	// so this need not take the registry write mutex. Registered after the
+	// teardown defer so it stops first.
+	pingStop := make(chan struct{})
+	defer close(pingStop)
+	go func() {
+		t := time.NewTicker(agentWSPingPeriod)
+		defer t.Stop()
+		for {
+			select {
+			case <-pingStop:
+				return
+			case <-t.C:
+				if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(agentWSWriteWait)); err != nil {
+					return
+				}
+			}
+		}
+	}()
 
 	// Read loop - process messages from agent
 	for {
@@ -155,6 +191,7 @@ func (h *AgentWSHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 			}
 			break
 		}
+		_ = conn.SetReadDeadline(time.Now().Add(agentWSPongWait))
 
 		// Forward SSH proxy messages to SSH terminal handler
 		if h.onSshProxyMessage != nil {

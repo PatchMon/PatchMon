@@ -3,6 +3,7 @@ module github.com/PatchMon/PatchMon/server-source-code
 go 1.26.5
 
 require (
+	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/go-chi/chi/v5 v5.3.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -48,6 +49,7 @@ require (
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/swaggo/files v1.0.1 // indirect
 	github.com/swaggo/swag v1.16.6 // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/otel/metric v1.39.0 // indirect
 	go.opentelemetry.io/otel/trace v1.39.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect

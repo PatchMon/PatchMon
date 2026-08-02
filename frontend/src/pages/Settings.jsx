@@ -252,8 +252,8 @@ const Settings = () => {
 				}));
 				queryClient.setQueryData(["settings"], data.settings);
 			}
-			queryClient.invalidateQueries(["settings"]);
-			queryClient.invalidateQueries(["serverUrl"]);
+			queryClient.invalidateQueries({ queryKey: ["settings"] });
+			queryClient.invalidateQueries({ queryKey: ["serverUrl"] });
 			setIsDirty(false);
 			setErrors({});
 		},
@@ -318,8 +318,8 @@ const Settings = () => {
 			queryClient.setQueryData(["settings"], updateCache);
 			// Also update ["settings", "public"] so LogoProvider (favicon) updates immediately
 			queryClient.setQueryData(["settings", "public"], updateCache);
-			queryClient.invalidateQueries(["settings"]);
-			queryClient.invalidateQueries(["serverUrl"]);
+			queryClient.invalidateQueries({ queryKey: ["settings"] });
+			queryClient.invalidateQueries({ queryKey: ["serverUrl"] });
 			setLogoUploadState((prev) => ({
 				...prev,
 				[variables.logoType]: { uploading: false, error: null },
@@ -448,11 +448,14 @@ const Settings = () => {
 		return nearest;
 	};
 
+	// updateInterval is normalised on blur and on save, not here: snapping on
+	// every keystroke rewrites the controlled input mid-typing and makes most
+	// values unreachable. The slider still snaps on change, which is correct.
 	const handleInputChange = (field, value) => {
 		setFormData((prev) => {
 			const newData = {
 				...prev,
-				[field]: field === "updateInterval" ? normalizeInterval(value) : value,
+				[field]: value,
 			};
 			return newData;
 		});
@@ -462,11 +465,21 @@ const Settings = () => {
 		}
 	};
 
+	const handleIntervalBlur = () => {
+		setFormData((prev) => ({
+			...prev,
+			updateInterval: normalizeInterval(prev.updateInterval),
+		}));
+	};
+
 	const handleSubmit = (e) => {
 		e.preventDefault();
 
 		// Only include sshKeyPath if the toggle is enabled
-		const dataToSubmit = { ...formData };
+		const dataToSubmit = {
+			...formData,
+			updateInterval: normalizeInterval(formData.updateInterval),
+		};
 		if (!dataToSubmit.useCustomSshKey) {
 			dataToSubmit.sshKeyPath = "";
 		}
@@ -511,7 +524,10 @@ const Settings = () => {
 	const handleSave = () => {
 		if (validateForm()) {
 			// Prepare data for submission
-			const dataToSubmit = { ...formData };
+			const dataToSubmit = {
+				...formData,
+				updateInterval: normalizeInterval(formData.updateInterval),
+			};
 			if (!dataToSubmit.useCustomSshKey) {
 				dataToSubmit.sshKeyPath = "";
 			}
@@ -962,17 +978,10 @@ const Settings = () => {
 										max="1440"
 										step="5"
 										value={formData.updateInterval}
-										onChange={(e) => {
-											const val = parseInt(e.target.value, 10);
-											if (!Number.isNaN(val)) {
-												handleInputChange(
-													"updateInterval",
-													Math.min(1440, Math.max(5, val)),
-												);
-											} else {
-												handleInputChange("updateInterval", 60);
-											}
-										}}
+										onChange={(e) =>
+											handleInputChange("updateInterval", e.target.value)
+										}
+										onBlur={handleIntervalBlur}
 										className={`w-28 border rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white ${
 											errors.updateInterval
 												? "border-red-300 dark:border-red-500"

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 
 	"patchmon-agent/pkg/models"
 
@@ -68,6 +69,10 @@ var AvailableIntegrations = []string{
 
 // Manager handles configuration management
 type Manager struct {
+	// Guards config, credentials and configFile. LoadConfig replaces
+	// config.Integrations while the service loop and schedulers read it, and a
+	// concurrent map read/write is an unrecoverable runtime fatal.
+	mu          sync.RWMutex
 	config      *models.Config
 	credentials *models.Credentials
 	configFile  string
@@ -94,42 +99,63 @@ func New() *Manager {
 
 // SetConfigFile sets the path to the config file (called from CLI flag)
 func (m *Manager) SetConfigFile(path string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.configFile = path
 }
 
 // GetConfigFile returns the path to the config file
 func (m *Manager) GetConfigFile() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.configFile
 }
 
 // GetConfig returns the current configuration
+// The returned pointer is a snapshot: LoadConfig swaps in a fresh struct rather
+// than mutating this one.
 func (m *Manager) GetConfig() *models.Config {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.config
 }
 
 // GetCredentials returns the current credentials
 func (m *Manager) GetCredentials() *models.Credentials {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.credentials
 }
 
 // LoadConfig loads configuration from file
 func (m *Manager) LoadConfig() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	// Check if config file exists
 	if _, err := os.Stat(m.configFile); errors.Is(err, fs.ErrNotExist) {
 		// Use defaults if config file doesn't exist
 		return nil
 	}
 
-	viper.SetConfigFile(m.configFile)
-	viper.SetConfigType("yaml")
+	// Manager-scoped, not the package singleton: a second Manager exists in
+	// getLatestBinaryFromServer and would race on the global viper's maps.
+	v := viper.New()
+	v.SetConfigFile(m.configFile)
+	v.SetConfigType("yaml")
 
-	if err := viper.ReadInConfig(); err != nil {
+	if err := v.ReadInConfig(); err != nil {
 		return fmt.Errorf("error reading config file: %w", err)
 	}
 
-	if err := viper.Unmarshal(m.config); err != nil {
+	// Swapped in rather than mutated, so readers holding a GetConfig() pointer
+	// keep a stable snapshot. Integrations cleared so the file is authoritative.
+	loaded := *m.config
+	loaded.Integrations = nil
+	if err := v.Unmarshal(&loaded); err != nil {
 		return fmt.Errorf("error unmarshaling config: %w", err)
 	}
+	m.config = &loaded
 
 	// Handle backward compatibility: set defaults for fields that may not exist in older configs
 	// If UpdateInterval is 0 or not set, use default of 60 minutes
@@ -177,10 +203,10 @@ func (m *Manager) LoadConfig() error {
 	}
 
 	// Ensure compliance is a nested object for YAML output
-	m.ensureComplianceNested()
+	m.ensureComplianceNestedLocked()
 
 	// Persist normalized config so new defaults (e.g. scan_interval) appear on disk
-	if err := m.SaveConfig(); err != nil {
+	if err := m.saveConfigLocked(); err != nil {
 		// Non-fatal: config is correct in memory even if save fails
 		_ = err
 	}
@@ -193,7 +219,7 @@ func (m *Manager) LoadConfig() error {
 
 // ensureComplianceNested ensures integrations.compliance is a nested map with enabled, openscap_enabled, docker_bench_enabled.
 // Migrates flat keys into the nested structure for cleaner YAML output.
-func (m *Manager) ensureComplianceNested() {
+func (m *Manager) ensureComplianceNestedLocked() {
 	if m.config.Integrations == nil {
 		m.config.Integrations = make(map[string]interface{})
 	}
@@ -256,6 +282,8 @@ func (m *Manager) ensureComplianceNested() {
 
 // LoadCredentials loads API credentials from file
 func (m *Manager) LoadCredentials() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if _, err := os.Stat(m.config.CredentialsFile); errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("credentials file not found at %s", m.config.CredentialsFile)
 	}
@@ -283,6 +311,8 @@ func (m *Manager) LoadCredentials() error {
 
 // SaveCredentials saves API credentials to file using atomic write to prevent TOCTOU race
 func (m *Manager) SaveCredentials(apiID, apiKey string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if err := m.setupDirectories(); err != nil {
 		return err
 	}
@@ -356,6 +386,13 @@ func (m *Manager) SaveCredentials(apiID, apiKey string) error {
 
 // SaveConfig saves configuration to file
 func (m *Manager) SaveConfig() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.saveConfigLocked()
+}
+
+// Caller must hold the write lock.
+func (m *Manager) saveConfigLocked() error {
 	if err := m.setupDirectories(); err != nil {
 		return err
 	}
@@ -376,7 +413,7 @@ func (m *Manager) SaveConfig() error {
 	if m.config.Integrations == nil {
 		m.config.Integrations = make(map[string]interface{})
 	}
-	m.ensureComplianceNested()
+	m.ensureComplianceNestedLocked()
 	for _, integrationName := range AvailableIntegrations {
 		if _, exists := m.config.Integrations[integrationName]; !exists {
 			switch integrationName {
@@ -405,24 +442,38 @@ func (m *Manager) SaveConfig() error {
 
 // SetUpdateInterval sets the update interval and saves it to config file
 func (m *Manager) SetUpdateInterval(interval int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if interval <= 0 {
 		return fmt.Errorf("invalid update interval: %d (must be > 0)", interval)
 	}
 	m.config.UpdateInterval = interval
-	return m.SaveConfig()
+	return m.saveConfigLocked()
+}
+
+// SetPatchmonServer sets the server URL and saves it.
+func (m *Manager) SetPatchmonServer(serverURL string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.config.PatchmonServer = serverURL
+	return m.saveConfigLocked()
 }
 
 // SetReportOffset sets the report offset (in seconds) and saves it to config file
 func (m *Manager) SetReportOffset(offsetSeconds int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if offsetSeconds < 0 {
 		return fmt.Errorf("invalid report offset: %d (must be >= 0)", offsetSeconds)
 	}
 	m.config.ReportOffset = offsetSeconds
-	return m.SaveConfig()
+	return m.saveConfigLocked()
 }
 
 // SetPackageCacheRefresh sets the package cache refresh mode and max age, and saves to config file
 func (m *Manager) SetPackageCacheRefresh(mode string, maxAge int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if mode != "always" && mode != "if_stale" && mode != "never" {
 		return fmt.Errorf("invalid package cache refresh mode: %s", mode)
 	}
@@ -431,11 +482,13 @@ func (m *Manager) SetPackageCacheRefresh(mode string, maxAge int) error {
 	}
 	m.config.PackageCacheRefreshMode = mode
 	m.config.PackageCacheRefreshMaxAge = maxAge
-	return m.SaveConfig()
+	return m.saveConfigLocked()
 }
 
 // GetPackageCacheRefreshMode returns the package cache refresh mode, defaulting to "always"
 func (m *Manager) GetPackageCacheRefreshMode() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m.config.PackageCacheRefreshMode == "" {
 		return "always"
 	}
@@ -444,6 +497,8 @@ func (m *Manager) GetPackageCacheRefreshMode() string {
 
 // GetPackageCacheRefreshMaxAge returns the max age in minutes for stale cache checks, defaulting to 60
 func (m *Manager) GetPackageCacheRefreshMaxAge() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m.config.PackageCacheRefreshMaxAge <= 0 {
 		return 60
 	}
@@ -454,6 +509,8 @@ func (m *Manager) GetPackageCacheRefreshMaxAge() int {
 // Returns false if not specified (default behavior - integrations are disabled by default)
 // For compliance, returns true if enabled (true) or on-demand ("on-demand"), false if disabled
 func (m *Manager) IsIntegrationEnabled(name string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m.config.Integrations == nil {
 		return false
 	}
@@ -464,7 +521,7 @@ func (m *Manager) IsIntegrationEnabled(name string) bool {
 
 	// Special handling for compliance (can be false, "on-demand", or true; may be nested)
 	if name == "compliance" {
-		enabledVal := m.getComplianceVal("enabled")
+		enabledVal := m.getComplianceValLocked("enabled")
 		if enabledVal == nil {
 			return false
 		}
@@ -488,11 +545,13 @@ func (m *Manager) IsIntegrationEnabled(name string) bool {
 // SetIntegrationEnabled sets the enabled status for an integration
 // For compliance, use SetComplianceMode() instead for three-state control
 func (m *Manager) SetIntegrationEnabled(name string, enabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.config.Integrations == nil {
 		m.config.Integrations = make(map[string]interface{})
 	}
 	if name == "compliance" {
-		m.ensureComplianceNested()
+		m.ensureComplianceNestedLocked()
 		nested := m.config.Integrations["compliance"].(map[string]interface{})
 		if enabled {
 			nested["enabled"] = true
@@ -502,7 +561,7 @@ func (m *Manager) SetIntegrationEnabled(name string, enabled bool) error {
 	} else {
 		m.config.Integrations[name] = enabled
 	}
-	return m.SaveConfig()
+	return m.saveConfigLocked()
 }
 
 // ComplianceMode represents the three possible states for compliance integration
@@ -520,10 +579,17 @@ const (
 // GetComplianceMode returns the current compliance mode
 // Returns: "disabled" (false), "on-demand" ("on-demand"), or "enabled" (true)
 func (m *Manager) GetComplianceMode() ComplianceMode {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.getComplianceModeLocked()
+}
+
+// Caller must hold at least a read lock.
+func (m *Manager) getComplianceModeLocked() ComplianceMode {
 	if m.config.Integrations == nil {
 		return ComplianceOnDemand
 	}
-	val := m.getComplianceVal("enabled")
+	val := m.getComplianceValLocked("enabled")
 	if val == nil {
 		return ComplianceOnDemand
 	}
@@ -550,7 +616,7 @@ func (m *Manager) GetComplianceMode() ComplianceMode {
 }
 
 // getComplianceVal returns a value from the compliance nested map, or from flat keys for backward compat.
-func (m *Manager) getComplianceVal(key string) interface{} {
+func (m *Manager) getComplianceValLocked(key string) interface{} {
 	if v, ok := m.config.Integrations["compliance"]; ok {
 		if nm, ok := v.(map[string]interface{}); ok {
 			if val, exists := nm[key]; exists {
@@ -573,10 +639,17 @@ func (m *Manager) getComplianceVal(key string) interface{} {
 // SetComplianceMode sets the compliance integration mode
 // mode can be: "disabled" (false), "on-demand" ("on-demand"), or "enabled" (true)
 func (m *Manager) SetComplianceMode(mode ComplianceMode) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.setComplianceModeLocked(mode)
+}
+
+// Caller must hold the write lock.
+func (m *Manager) setComplianceModeLocked(mode ComplianceMode) error {
 	if m.config.Integrations == nil {
 		m.config.Integrations = make(map[string]interface{})
 	}
-	m.ensureComplianceNested()
+	m.ensureComplianceNestedLocked()
 	nested := m.config.Integrations["compliance"].(map[string]interface{})
 	switch mode {
 	case ComplianceDisabled:
@@ -588,31 +661,37 @@ func (m *Manager) SetComplianceMode(mode ComplianceMode) error {
 	default:
 		return fmt.Errorf("invalid compliance mode: %s (must be disabled, on-demand, or enabled)", mode)
 	}
-	return m.SaveConfig()
+	return m.saveConfigLocked()
 }
 
 // IsComplianceOnDemandOnly returns true if compliance is in on-demand mode
 // This is a convenience method for backward compatibility
 func (m *Manager) IsComplianceOnDemandOnly() bool {
-	return m.GetComplianceMode() == ComplianceOnDemand
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.getComplianceModeLocked() == ComplianceOnDemand
 }
 
 // SetComplianceOnDemandOnly sets compliance to on-demand mode (for backward compatibility)
 // Use SetComplianceMode() for full three-state control
 func (m *Manager) SetComplianceOnDemandOnly(onDemandOnly bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if onDemandOnly {
-		return m.SetComplianceMode(ComplianceOnDemand)
+		return m.setComplianceModeLocked(ComplianceOnDemand)
 	}
 	// If setting to false, default to enabled (auto-scans)
-	return m.SetComplianceMode(ComplianceEnabled)
+	return m.setComplianceModeLocked(ComplianceEnabled)
 }
 
 // GetComplianceOpenscapEnabled returns whether OpenSCAP scans are enabled for scheduled compliance scans.
 func (m *Manager) GetComplianceOpenscapEnabled() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m.config.Integrations == nil {
 		return true
 	}
-	val := m.getComplianceVal("openscap_enabled")
+	val := m.getComplianceValLocked("openscap_enabled")
 	if val == nil {
 		return true
 	}
@@ -624,10 +703,12 @@ func (m *Manager) GetComplianceOpenscapEnabled() bool {
 
 // GetComplianceDockerBenchEnabled returns whether Docker Bench scans are enabled for scheduled compliance scans.
 func (m *Manager) GetComplianceDockerBenchEnabled() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m.config.Integrations == nil {
 		return false
 	}
-	val := m.getComplianceVal("docker_bench_enabled")
+	val := m.getComplianceValLocked("docker_bench_enabled")
 	if val == nil {
 		return false
 	}
@@ -639,22 +720,26 @@ func (m *Manager) GetComplianceDockerBenchEnabled() bool {
 
 // SetComplianceScanners sets the OpenSCAP and Docker Bench scanner toggles for scheduled scans.
 func (m *Manager) SetComplianceScanners(openscapEnabled, dockerBenchEnabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.config.Integrations == nil {
 		m.config.Integrations = make(map[string]interface{})
 	}
-	m.ensureComplianceNested()
+	m.ensureComplianceNestedLocked()
 	nested := m.config.Integrations["compliance"].(map[string]interface{})
 	nested["openscap_enabled"] = openscapEnabled
 	nested["docker_bench_enabled"] = dockerBenchEnabled
-	return m.SaveConfig()
+	return m.saveConfigLocked()
 }
 
 // GetComplianceScanInterval returns the compliance scan interval in minutes (default 1440, min 60, max 10080).
 func (m *Manager) GetComplianceScanInterval() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m.config.Integrations == nil {
 		return 1440
 	}
-	val := m.getComplianceVal("scan_interval")
+	val := m.getComplianceValLocked("scan_interval")
 	if val == nil {
 		return 1440
 	}
@@ -678,16 +763,18 @@ func (m *Manager) GetComplianceScanInterval() int {
 
 // SetComplianceScanInterval sets the compliance scan interval and saves it to config file.
 func (m *Manager) SetComplianceScanInterval(minutes int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if minutes < 60 || minutes > 10080 {
 		return fmt.Errorf("invalid compliance scan interval: %d (must be between 60 and 10080 minutes)", minutes)
 	}
 	if m.config.Integrations == nil {
 		m.config.Integrations = make(map[string]interface{})
 	}
-	m.ensureComplianceNested()
+	m.ensureComplianceNestedLocked()
 	nested := m.config.Integrations["compliance"].(map[string]interface{})
 	nested["scan_interval"] = minutes
-	return m.SaveConfig()
+	return m.saveConfigLocked()
 }
 
 // setupDirectories creates necessary directories

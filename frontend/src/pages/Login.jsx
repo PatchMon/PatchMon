@@ -41,6 +41,8 @@ const Login = () => {
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState("");
 	const [requiresTfa, setRequiresTfa] = useState(false);
+	// Single-use proof that the password step already succeeded.
+	const [tfaTicket, setTfaTicket] = useState("");
 	const [tfaUsername, setTfaUsername] = useState("");
 	const [signupEnabled, setSignupEnabled] = useState(false);
 	// null = not yet loaded; don't fetch GitHub until we know the setting
@@ -288,6 +290,7 @@ const Login = () => {
 			if (result.requiresTfa) {
 				setRequiresTfa(true);
 				setTfaUsername(formData.username);
+				setTfaTicket(result.tfaTicket || "");
 				setError("");
 			} else if (result.success) {
 				navigate("/");
@@ -373,6 +376,7 @@ const Login = () => {
 				tfaUsername,
 				tfaData.token,
 				tfaData.remember_me,
+				tfaTicket,
 			);
 
 			if (response.data?.token) {
@@ -404,6 +408,16 @@ const Login = () => {
 			}
 			// Clear the token input for security (preserve remember_me preference)
 			setTfaData((prev) => ({ ...prev, token: "" }));
+
+			// The ticket is spent on the first attempt whatever the outcome, so a
+			// retry here can only fail. Only reset when the server answered: a
+			// network failure means the ticket is still good.
+			if (err.response) {
+				setRequiresTfa(false);
+				setTfaTicket("");
+				setTfaData({ token: "", remember_me: false });
+				setError("Your sign-in attempt expired. Please sign in again.");
+			}
 		} finally {
 			setIsLoading(false);
 		}

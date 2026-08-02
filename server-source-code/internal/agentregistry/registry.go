@@ -511,12 +511,20 @@ func (r *Registry) removePresence(apiID string) error {
 	return nil
 }
 
+// Publishing to our own channel would be delivered back into
+// handlePubSubMessage and re-published, an unbounded loop that wedges the
+// pubsub consumer. podMap names the local pod with no conn after
+// snapshotPresence, and briefly during Register.
 func (r *Registry) publishForward(apiID string, messageType int, data []byte) error {
 	r.mu.RLock()
 	pod := r.podMap[apiID]
+	self := r.podID
 	r.mu.RUnlock()
 	if pod == "" {
 		return fmt.Errorf("no remote pod for apiID")
+	}
+	if pod == self {
+		return ErrNotConnected
 	}
 	b64 := base64.StdEncoding.EncodeToString(data)
 	fwd := map[string]any{"api_id": apiID, "message_type": messageType, "data": b64}

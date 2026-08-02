@@ -282,7 +282,7 @@ UPDATE hosts SET
     ram_installed = COALESCE($10::double precision, ram_installed),
     swap_size = COALESCE($11::double precision, swap_size),
     disk_details = COALESCE($12::jsonb, disk_details),
-    gateway_ip = $13,
+    gateway_ip = COALESCE($13::text, gateway_ip),
     dns_servers = COALESCE($14::jsonb, dns_servers),
     network_interfaces = COALESCE($15::jsonb, network_interfaces),
     kernel_version = COALESCE($16::text, kernel_version),
@@ -297,8 +297,12 @@ UPDATE hosts SET
     -- metrics path owns both fields), and reboot_reason has no COALESCE guard
     -- of its own, so without this CASE a partial would NULL out a reason the
     -- ping had just written correctly.
+    -- Second arm: a report asserting needs_reboot without a reason must not
+    -- blank a stored one; clearing the flag still clears both.
     reboot_reason = CASE
         WHEN $22::boolean IS NULL THEN reboot_reason
+        WHEN $22::boolean IS TRUE
+             AND $23::text IS NULL THEN reboot_reason
         ELSE $23::text
     END,
     package_manager = COALESCE($24::text, package_manager),

@@ -2091,6 +2091,13 @@ const Hosts = () => {
 												setOsVersionFilter("all");
 												setGroupBy("none");
 												setHideStale(false);
+												// These are forwarded to the backend and are not held in
+												// any of the local state above.
+												const next = new URLSearchParams(searchParams);
+												next.delete("filter");
+												next.delete("reboot");
+												next.delete("selected");
+												setSearchParams(next, { replace: true });
 											}}
 											className="btn-outline w-full min-h-[44px]"
 										>

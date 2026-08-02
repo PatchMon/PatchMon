@@ -119,7 +119,15 @@ const Patching = () => {
 	});
 
 	const { data: runsData } = useQuery({
-		queryKey: ["patching-runs", runsFilterStatus, runsFilterType, runsPage],
+		// runsLimit is in the key because the queryFn uses it; without it,
+		// changing page size on page 1 serves the cached result.
+		queryKey: [
+			"patching-runs",
+			runsFilterStatus,
+			runsFilterType,
+			runsPage,
+			runsLimit,
+		],
 		queryFn: () =>
 			patchingAPI.getRuns({
 				...(runsFilterStatus ? { status: runsFilterStatus } : {}),

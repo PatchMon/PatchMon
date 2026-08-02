@@ -165,8 +165,8 @@ const Docker = () => {
 			return response.data;
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries(["docker", "containers"]);
-			queryClient.invalidateQueries(["docker", "dashboard"]);
+			queryClient.invalidateQueries({ queryKey: ["docker", "containers"] });
+			queryClient.invalidateQueries({ queryKey: ["docker", "dashboard"] });
 			setDeleteContainerModal(null);
 		},
 		onError: (error) => {
@@ -183,8 +183,8 @@ const Docker = () => {
 			return response.data;
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries(["docker", "images"]);
-			queryClient.invalidateQueries(["docker", "dashboard"]);
+			queryClient.invalidateQueries({ queryKey: ["docker", "images"] });
+			queryClient.invalidateQueries({ queryKey: ["docker", "dashboard"] });
 			setDeleteImageModal(null);
 		},
 		onError: (error) => {
@@ -201,8 +201,8 @@ const Docker = () => {
 			return response.data;
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries(["docker", "volumes"]);
-			queryClient.invalidateQueries(["docker", "dashboard"]);
+			queryClient.invalidateQueries({ queryKey: ["docker", "volumes"] });
+			queryClient.invalidateQueries({ queryKey: ["docker", "dashboard"] });
 			setDeleteVolumeModal(null);
 		},
 		onError: (error) => {
@@ -219,8 +219,8 @@ const Docker = () => {
 			return response.data;
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries(["docker", "networks"]);
-			queryClient.invalidateQueries(["docker", "dashboard"]);
+			queryClient.invalidateQueries({ queryKey: ["docker", "networks"] });
+			queryClient.invalidateQueries({ queryKey: ["docker", "dashboard"] });
 			setDeleteNetworkModal(null);
 		},
 		onError: (error) => {
@@ -855,7 +855,7 @@ const Docker = () => {
 							</div>
 						) : (
 							<StacksView
-								containers={containersData?.containers || []}
+								containers={filteredContainers}
 								getStatusBadge={getStatusBadge}
 							/>
 						))}

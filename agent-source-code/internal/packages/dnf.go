@@ -2,6 +2,7 @@ package packages
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"os/exec"
 	"slices"
@@ -24,6 +25,37 @@ func NewDNFManager(logger *logrus.Logger) *DNFManager {
 	}
 }
 
+// Only these are stripped. Splitting on a dot unconditionally would mangle
+// real names that contain one, e.g. python3.11.
+var rpmArchSuffixes = map[string]bool{
+	"x86_64":  true,
+	"i686":    true,
+	"i586":    true,
+	"i386":    true,
+	"noarch":  true,
+	"aarch64": true,
+	"arm64":   true,
+	"armv7hl": true,
+	"ppc64le": true,
+	"ppc64":   true,
+	"s390x":   true,
+	"riscv64": true,
+	"src":     true,
+}
+
+// Both parsers must agree: CombinePackageData keys its upgradable set on
+// Package.Name.
+func stripRPMArchSuffix(name string) string {
+	idx := strings.LastIndex(name, ".")
+	if idx <= 0 {
+		return name
+	}
+	if rpmArchSuffixes[name[idx+1:]] {
+		return name[:idx]
+	}
+	return name
+}
+
 // detectPackageManager detects whether to use dnf or yum
 func (m *DNFManager) detectPackageManager() string {
 	// Prefer dnf over yum for modern RHEL-based systems
@@ -36,7 +68,7 @@ func (m *DNFManager) detectPackageManager() string {
 }
 
 // GetPackages gets package information for RHEL-based systems
-func (m *DNFManager) GetPackages() []models.Package {
+func (m *DNFManager) GetPackages() ([]models.Package, error) {
 	// Determine package manager
 	packageManager := m.detectPackageManager()
 
@@ -53,27 +85,27 @@ func (m *DNFManager) GetPackages() []models.Package {
 	// while dnf uses flag syntax: "dnf list --installed"
 	m.logger.Debug("Getting installed packages...")
 	var listCmd *exec.Cmd
+	var cancelList context.CancelFunc
 	if packageManager == "yum" {
-		listCmd = exec.Command(packageManager, "list", "installed")
+		listCmd, cancelList = boundedCommand(collectorTimeout, packageManager, "list", "installed")
 	} else {
-		listCmd = exec.Command(packageManager, "list", "--installed")
+		listCmd, cancelList = boundedCommand(collectorTimeout, packageManager, "list", "--installed")
 	}
+	defer cancelList()
 	// OPTIMIZATION: Set minimal environment to reduce overhead
 	listCmd.Env = append(os.Environ(), "LANG=C")
 	installedOutput, err := listCmd.Output()
-	var installedPackages map[string]models.Package
 	if err != nil {
-		m.logger.WithError(err).Warn("Failed to get installed packages")
-		installedPackages = make(map[string]models.Package)
-	} else {
-		m.logger.WithField("outputSize", len(installedOutput)).Debug("Received output from list installed command")
-		m.logger.Debug("Parsing installed packages...")
-		installedPackages = m.parseInstalledPackages(string(installedOutput))
-		m.logger.WithField("count", len(installedPackages)).Info("Found installed packages")
+		// An empty inventory reads as "fully patched" in the UI. Fail instead.
+		return nil, commandError(packageManager+" list installed", err)
+	}
+	m.logger.WithField("outputSize", len(installedOutput)).Debug("Received output from list installed command")
+	m.logger.Debug("Parsing installed packages...")
+	installedPackages := m.parseInstalledPackages(string(installedOutput))
+	m.logger.WithField("count", len(installedPackages)).Info("Found installed packages")
 
-		if len(installedPackages) == 0 {
-			m.logger.Warn("No installed packages found - this may indicate a parsing issue")
-		}
+	if len(installedPackages) == 0 {
+		m.logger.Warn("No installed packages found - this may indicate a parsing issue")
 	}
 
 	// Get security updates first to identify which packages are security updates
@@ -83,8 +115,16 @@ func (m *DNFManager) GetPackages() []models.Package {
 
 	// Get upgradable packages
 	m.logger.Debug("Getting upgradable packages...")
-	checkCmd := exec.Command(packageManager, "check-update")
-	checkOutput, _ := checkCmd.Output() // This command returns exit code 100 when updates are available
+	checkCmd, cancelCheck := boundedCommand(networkCollectorTimeout, packageManager, "check-update")
+	defer cancelCheck()
+	checkOutput, checkErr := checkCmd.Output()
+	if checkErr != nil {
+		// check-update exit codes: 0 none, 100 updates available, anything
+		// else a real failure.
+		if !isExitCode(checkErr, 100) {
+			return nil, commandError(packageManager+" check-update", checkErr)
+		}
+	}
 
 	var upgradablePackages []models.Package
 	if len(checkOutput) > 0 {
@@ -113,7 +153,7 @@ func (m *DNFManager) GetPackages() []models.Package {
 		m.logger.Error("WARNING: Returning 0 packages - this will show as empty in PatchMon UI")
 	}
 
-	return packages
+	return packages, nil
 }
 
 // enrichWithRepoAttribution populates SourceRepository for each package by running
@@ -126,17 +166,19 @@ func (m *DNFManager) enrichWithRepoAttribution(packages []models.Package) {
 	packageManager := m.detectPackageManager()
 
 	var cmd *exec.Cmd
+	var cancel context.CancelFunc
 	if packageManager == "dnf" {
-		cmd = exec.Command("dnf", "repoquery", "--installed", "--cacheonly", "--qf", "%{name}\t%{from_repo}")
+		cmd, cancel = boundedCommand(collectorTimeout, "dnf", "repoquery", "--installed", "--cacheonly", "--qf", "%{name}\t%{from_repo}")
 	} else {
 		// yum: try repoquery from yum-utils
 		if _, err := exec.LookPath("repoquery"); err == nil {
-			cmd = exec.Command("repoquery", "--installed", "--qf", "%{name}\t%{ui_from_repo}")
+			cmd, cancel = boundedCommand(collectorTimeout, "repoquery", "--installed", "--qf", "%{name}\t%{ui_from_repo}")
 		} else {
 			// Try yum repoquery (available on some systems)
-			cmd = exec.Command("yum", "repoquery", "--installed", "--qf", "%{name}\t%{ui_from_repo}")
+			cmd, cancel = boundedCommand(collectorTimeout, "yum", "repoquery", "--installed", "--qf", "%{name}\t%{ui_from_repo}")
 		}
 	}
+	defer cancel()
 	cmd.Env = append(os.Environ(), "LANG=C")
 
 	output, err := cmd.Output()
@@ -180,8 +222,7 @@ func (m *DNFManager) enrichWithRepoAttribution(packages []models.Package) {
 			continue
 		}
 		// Strip arch suffix (e.g. "glibc.x86_64" -> "glibc")
-		if idx := strings.LastIndex(name, "."); idx > 0 {
-			baseName := name[:idx]
+		if baseName := stripRPMArchSuffix(name); baseName != name {
 			if repo, ok := repoByName[baseName]; ok {
 				packages[i].SourceRepository = repo
 				attributed++
@@ -196,13 +237,19 @@ func (m *DNFManager) enrichWithRepoAttribution(packages []models.Package) {
 func (m *DNFManager) getSecurityPackages(packageManager string) map[string]bool {
 	securityPackages := make(map[string]bool)
 
+	// Scoped so each variant releases its own context: a function-level defer
+	// would bind to the first cancel func only.
+	runUpdateInfo := func(subcommand string) ([]byte, error) {
+		cmd, cancel := boundedCommand(networkCollectorTimeout, packageManager, "updateinfo", "list", subcommand)
+		defer cancel()
+		return cmd.Output()
+	}
+
 	// Try dnf updateinfo list security (works for dnf)
-	updateInfoCmd := exec.Command(packageManager, "updateinfo", "list", "security")
-	updateInfoOutput, err := updateInfoCmd.Output()
+	updateInfoOutput, err := runUpdateInfo("security")
 	if err != nil {
 		// Fall back to "sec" if "security" doesn't work
-		updateInfoCmd = exec.Command(packageManager, "updateinfo", "list", "sec")
-		updateInfoOutput, err = updateInfoCmd.Output()
+		updateInfoOutput, err = runUpdateInfo("sec")
 	}
 
 	if err != nil {
@@ -265,15 +312,7 @@ func (m *DNFManager) getSecurityPackages(packageManager string) map[string]bool 
 // - package-name.arch (from check-update)
 func (m *DNFManager) extractBasePackageName(packageString string) string {
 	// Remove architecture suffix first (e.g., .x86_64, .noarch)
-	baseName := packageString
-	if idx := strings.LastIndex(packageString, "."); idx > 0 {
-		archSuffix := packageString[idx+1:]
-		// Check if it's a known architecture
-		if archSuffix == "x86_64" || archSuffix == "i686" || archSuffix == "i386" ||
-			archSuffix == "noarch" || archSuffix == "aarch64" || archSuffix == "arm64" {
-			baseName = packageString[:idx]
-		}
-	}
+	baseName := stripRPMArchSuffix(packageString)
 
 	// If the base name contains a version pattern (starts with a digit after a dash),
 	// extract just the package name part
@@ -313,52 +352,21 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 			continue
 		}
 
-		packageName := fields[0]
+		packageName := stripRPMArchSuffix(fields[0])
 		availableVersion := fields[1]
 
-		// Get current version from installed packages map (already collected)
-		// Try exact match first
+		// Get current version from installed packages map (already collected).
 		var currentVersion string
 		if p, ok := installedPackages[packageName]; ok {
 			currentVersion = p.CurrentVersion
 		}
 
-		// If not found, try to find by base name (handles architecture suffixes)
-		// e.g., if packageName is "package" but installed has "package.x86_64"
-		// or if packageName is "package.x86_64" but installed has "package"
+		// Tolerate an installed map that still holds arch-qualified keys.
 		if currentVersion == "" {
-			// Try to find by removing architecture suffix from packageName (if present)
-			basePackageName := packageName
-			if idx := strings.LastIndex(packageName, "."); idx > 0 {
-				archSuffix := packageName[idx+1:]
-				if archSuffix == "x86_64" || archSuffix == "i686" || archSuffix == "i386" ||
-					archSuffix == "noarch" || archSuffix == "aarch64" || archSuffix == "arm64" {
-					basePackageName = packageName[:idx]
-					if p, ok := installedPackages[basePackageName]; ok {
-						currentVersion = p.CurrentVersion
-					}
-				}
-			}
-
-			// If still not found, search through installed packages for matching base name
-			if currentVersion == "" {
-				for installedName, p := range installedPackages {
-					// Remove architecture suffix if present (e.g., .x86_64, .noarch, .i686)
-					baseName := installedName
-					if idx := strings.LastIndex(installedName, "."); idx > 0 {
-						// Check if the part after the last dot looks like an architecture
-						archSuffix := installedName[idx+1:]
-						if archSuffix == "x86_64" || archSuffix == "i686" || archSuffix == "i386" ||
-							archSuffix == "noarch" || archSuffix == "aarch64" || archSuffix == "arm64" {
-							baseName = installedName[:idx]
-						}
-					}
-
-					// Compare base names (handles both cases: package vs package.x86_64)
-					if baseName == basePackageName || baseName == packageName {
-						currentVersion = p.CurrentVersion
-						break
-					}
+			for installedName, p := range installedPackages {
+				if stripRPMArchSuffix(installedName) == packageName {
+					currentVersion = p.CurrentVersion
+					break
 				}
 			}
 		}
@@ -367,12 +375,16 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 		if currentVersion == "" {
 			// yum (CentOS 7 / legacy) requires positional argument; dnf accepts --installed flag
 			var getCurrentCmd *exec.Cmd
+			var cancelCurrent context.CancelFunc
 			if packageManager == "yum" {
-				getCurrentCmd = exec.Command(packageManager, "list", "installed", packageName)
+				getCurrentCmd, cancelCurrent = boundedCommand(collectorTimeout, packageManager, "list", "installed", packageName)
 			} else {
-				getCurrentCmd = exec.Command(packageManager, "list", "--installed", packageName)
+				getCurrentCmd, cancelCurrent = boundedCommand(collectorTimeout, packageManager, "list", "--installed", packageName)
 			}
 			getCurrentOutput, err := getCurrentCmd.Output()
+			// Released immediately rather than deferred: this runs once per
+			// upgradable package, so a deferred cancel would accumulate.
+			cancelCurrent()
 			if err == nil {
 				for _, currentLine := range strings.Split(string(getCurrentOutput), "\n") {
 					if strings.Contains(currentLine, packageName) && !strings.Contains(currentLine, "Installed") && !strings.Contains(currentLine, "Available") {
@@ -435,7 +447,7 @@ func (m *DNFManager) parseInstalledPackages(output string) map[string]models.Pac
 
 		// Normal single-line format: "name.arch  version  repo"
 		if len(parts) >= 3 {
-			packageName := strings.Split(parts[0], ".")[0] // strip arch suffix
+			packageName := stripRPMArchSuffix(parts[0])
 			version := parts[1]
 			installedPackages[packageName] = models.Package{
 				Name:           packageName,
@@ -451,7 +463,7 @@ func (m *DNFManager) parseInstalledPackages(output string) map[string]models.Pac
 		// and the trimmed text has no spaces (single token).
 		if len(parts) == 1 && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
 			// Looks like a bare package name line - remember it
-			pendingName = strings.Split(parts[0], ".")[0]
+			pendingName = stripRPMArchSuffix(parts[0])
 			continue
 		}
 

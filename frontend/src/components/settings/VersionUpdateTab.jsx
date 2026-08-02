@@ -25,7 +25,7 @@ const VersionUpdateTab = () => {
 			return settingsAPI.update(data).then((res) => res.data);
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries(["settings"]);
+			queryClient.invalidateQueries({ queryKey: ["settings"] });
 		},
 		onError: (error) => {
 			console.error("Failed to update settings:", error);

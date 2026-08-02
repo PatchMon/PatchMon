@@ -2,7 +2,6 @@ package packages
 
 import (
 	"encoding/json"
-	"os/exec"
 	"regexp"
 	"runtime"
 	"strings"
@@ -218,7 +217,8 @@ foreach ($path in $paths) {
 if ($result.Count -gt 5000) { $result = $result[0..4999] }
 $result | ConvertTo-Json -Compress -Depth 3
 `
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
 		m.logger.WithError(err).Warn("Registry Uninstall query failed")
@@ -323,7 +323,8 @@ if (-not $wingetPath) {
 $out = & $wingetPath list --accept-source-agreements --disable-interactivity 2>&1
 if ($out) { $out | Out-String }
 `
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
 		m.logger.WithError(err).Debug("winget list failed")
@@ -534,7 +535,8 @@ if (-not $wingetPath) { exit 0 }
 $out = & $wingetPath list --upgrade-available --accept-source-agreements --disable-interactivity 2>&1
 if ($out) { $out | Out-String }
 `
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
 		m.logger.WithError(err).Debug("winget list --upgrade-available failed")
@@ -584,7 +586,8 @@ $server = (Get-ItemProperty -Path $wuKey -Name WUServer -ErrorAction SilentlyCon
 $useWU = (Get-ItemProperty -Path "$wuKey\AU" -Name UseWUServer -ErrorAction SilentlyContinue).UseWUServer
 if ($server -and $useWU -eq 1) { "WSUS_ACTIVE" } else { "WSUS_INACTIVE" }
 `
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
 		m.logger.WithError(err).Debug("Failed to check WSUS status")
@@ -715,7 +718,8 @@ if ($comFailed) {
 
 $result | ConvertTo-Json -Compress -Depth 4
 `
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
 		m.logger.WithError(err).Warn("Failed to query Windows updates")

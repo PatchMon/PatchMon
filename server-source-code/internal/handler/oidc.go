@@ -228,6 +228,20 @@ func (h *OidcHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?error=Authentication+failed", http.StatusFound)
 		return
 	}
+	// The lookup matches on oidc_sub OR email; establish which before trusting it.
+	matchedBySub := user != nil && user.OidcSub != nil && *user.OidcSub == userInfo.Sub
+
+	// An email match, or auto-create, means the email claim decides who this is,
+	// so it has to be verified.
+	if !matchedBySub && !userInfo.EmailVerified {
+		if h.log != nil {
+			h.log.Warn("oidc login rejected: unverified email claim",
+				"email", userInfo.Email, "sub", userInfo.Sub)
+		}
+		http.Redirect(w, r, "/login?error=Unable+to+sign+in+with+this+account", http.StatusFound)
+		return
+	}
+
 	if user == nil && h.oidcAutoCreateUsers() {
 		user = h.createOidcUser(r.Context(), userInfo)
 	}
@@ -235,7 +249,7 @@ func (h *OidcHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		if h.log != nil {
 			h.log.Error("oidc user not found and auto-create disabled", "email", userInfo.Email)
 		}
-		http.Redirect(w, r, "/login?error=User+not+found", http.StatusFound)
+		http.Redirect(w, r, "/login?error=Unable+to+sign+in+with+this+account", http.StatusFound)
 		return
 	}
 	if !user.IsActive {
@@ -245,26 +259,29 @@ func (h *OidcHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?error=Account+disabled", http.StatusFound)
 		return
 	}
-	if user.OidcSub == nil && user.OidcProvider == nil {
-		if !userInfo.EmailVerified {
+	if !matchedBySub {
+		// An email match must not override an established identity binding.
+		if user.OidcSub != nil {
 			if h.log != nil {
-				h.log.Warn("oidc skip link unverified email", "email", userInfo.Email)
+				h.log.Error("oidc login rejected: account is linked to a different subject",
+					"email", userInfo.Email, "sub", userInfo.Sub)
 			}
-		} else {
-			existing, _ := h.users.GetByOidcSub(r.Context(), userInfo.Sub)
-			if existing != nil && existing.ID != user.ID {
-				if h.log != nil {
-					h.log.Error("oidc sub already linked", "email", existing.Email)
-				}
-				http.Redirect(w, r, "/login?error=Account+linking+failed", http.StatusFound)
-				return
-			}
-			issuerHost := extractHost(h.oidcIssuerURL())
-			_ = h.users.UpdateOidcLink(r.Context(), user.ID, userInfo.Sub, issuerHost, strPtr(userInfo.Picture))
-			user.OidcSub = &userInfo.Sub
-			user.OidcProvider = &issuerHost
-			user.AvatarURL = strPtr(userInfo.Picture)
+			http.Redirect(w, r, "/login?error=Unable+to+sign+in+with+this+account", http.StatusFound)
+			return
 		}
+		existing, _ := h.users.GetByOidcSub(r.Context(), userInfo.Sub)
+		if existing != nil && existing.ID != user.ID {
+			if h.log != nil {
+				h.log.Error("oidc sub already linked", "email", existing.Email)
+			}
+			http.Redirect(w, r, "/login?error=Unable+to+sign+in+with+this+account", http.StatusFound)
+			return
+		}
+		issuerHost := extractHost(h.oidcIssuerURL())
+		_ = h.users.UpdateOidcLink(r.Context(), user.ID, userInfo.Sub, issuerHost, strPtr(userInfo.Picture))
+		user.OidcSub = &userInfo.Sub
+		user.OidcProvider = &issuerHost
+		user.AvatarURL = strPtr(userInfo.Picture)
 	}
 	effectiveRole := user.Role // preserve existing role by default
 	if h.oidcSyncRoles() {
@@ -683,30 +700,38 @@ func extractHost(u string) string {
 	return parsed.Hostname()
 }
 
+// reinitOidcClient replaces h.resolved on a settings save while callbacks read
+// it, so the accessors below must not touch the field directly.
+func (h *OidcHandler) resolvedSnapshot() *config.ResolvedOidcConfig {
+	h.clientMu.RLock()
+	defer h.clientMu.RUnlock()
+	return h.resolved
+}
+
 func (h *OidcHandler) oidcIssuerURL() string {
-	if h.resolved != nil {
-		return h.resolved.IssuerURL
+	if r := h.resolvedSnapshot(); r != nil {
+		return r.IssuerURL
 	}
 	return h.cfg.OidcIssuerURL
 }
 
 func (h *OidcHandler) oidcClientID() string {
-	if h.resolved != nil {
-		return h.resolved.ClientID
+	if r := h.resolvedSnapshot(); r != nil {
+		return r.ClientID
 	}
 	return h.cfg.OidcClientID
 }
 
 func (h *OidcHandler) oidcAutoCreateUsers() bool {
-	if h.resolved != nil {
-		return h.resolved.AutoCreateUsers
+	if r := h.resolvedSnapshot(); r != nil {
+		return r.AutoCreateUsers
 	}
 	return h.cfg.OidcAutoCreateUsers
 }
 
 func (h *OidcHandler) oidcSyncRoles() bool {
-	if h.resolved != nil {
-		return h.resolved.SyncRoles
+	if r := h.resolvedSnapshot(); r != nil {
+		return r.SyncRoles
 	}
 	return h.cfg.OidcSyncRoles
 }
@@ -714,15 +739,15 @@ func (h *OidcHandler) oidcSyncRoles() bool {
 // oidcSuperadminGroup returns the effective OIDC superadmin group mapping.
 // Empty string means no group is configured (superadmin cannot be granted via OIDC).
 func (h *OidcHandler) oidcSuperadminGroup() string {
-	if h.resolved != nil {
-		return strings.TrimSpace(h.resolved.SuperadminGroup)
+	if r := h.resolvedSnapshot(); r != nil {
+		return strings.TrimSpace(r.SuperadminGroup)
 	}
 	return strings.TrimSpace(h.cfg.OidcSuperadminGroup)
 }
 
 func (h *OidcHandler) mapGroupsToRole(groups []string) string {
-	if h.resolved != nil {
-		return mapGroupsToRoleFromResolved(groups, h.resolved)
+	if r := h.resolvedSnapshot(); r != nil {
+		return mapGroupsToRoleFromResolved(groups, r)
 	}
 	return mapGroupsToRoleFromConfig(groups, h.cfg)
 }
@@ -857,7 +882,17 @@ func (h *OidcHandler) createOidcUser(ctx context.Context, info *oidc.UserInfo) *
 		h.log.Warn("oidc no groups in token for new user", "email", info.Email, "hint", "Create a Scope Mapping in Authentik to add 'groups' claim")
 	}
 	// If no admin/superadmin exists yet, promote the first auto-created user to superadmin.
-	adminCount, _ := h.users.CountAdmins(ctx)
+	//
+	// Must check the error: (0, err) on a transient failure would fail open and
+	// promote an ordinary user to superadmin.
+	adminCount, adminCountErr := h.users.CountAdmins(ctx)
+	if adminCountErr != nil {
+		if h.log != nil {
+			h.log.Error("oidc: cannot determine admin count, refusing to auto-create",
+				"error", adminCountErr, "email", info.Email)
+		}
+		return nil
+	}
 	if adminCount == 0 {
 		role = "superadmin"
 		if h.log != nil {

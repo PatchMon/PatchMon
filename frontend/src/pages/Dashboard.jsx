@@ -370,10 +370,11 @@ const Dashboard = () => {
 	};
 
 	// Helper function to format the update interval threshold
+	// The server serialises this as update_interval, not updateInterval.
 	const formatUpdateIntervalThreshold = () => {
-		if (!settings?.updateInterval) return "24 hours";
+		if (!settings?.update_interval) return "24 hours";
 
-		const intervalMinutes = settings.updateInterval;
+		const intervalMinutes = settings.update_interval;
 		const thresholdMinutes = intervalMinutes * 2; // 2x the update interval
 
 		if (thresholdMinutes < 60) {
@@ -1274,8 +1275,8 @@ const Dashboard = () => {
 											{stats.cards.offlineHosts > 1 ? "s" : ""}
 										</h3>
 										<p className="text-sm text-warning-700 mt-1">
-											These hosts haven't reported in{" "}
-											{formatUpdateIntervalThreshold() * 3}+ minutes.
+											These hosts haven't reported in over{" "}
+											{formatUpdateIntervalThreshold()}.
 										</p>
 									</>
 								) : (

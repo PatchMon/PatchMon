@@ -215,7 +215,7 @@ const Compliance = () => {
 		for (const prevId of prevActiveScanIds.current) {
 			if (!currentIds.has(prevId)) {
 				// A scan completed - refresh dashboard data
-				queryClient.invalidateQueries(["compliance-dashboard"]);
+				queryClient.invalidateQueries({ queryKey: ["compliance-dashboard"] });
 				toast.success("Compliance scan completed");
 				break; // Only show one notification per batch
 			}
@@ -283,7 +283,7 @@ const Compliance = () => {
 			complianceAPI.triggerBulkScan(data.hostIds, data.options),
 		onSuccess: (response) => {
 			setBulkScanResult(response.data);
-			queryClient.invalidateQueries(["compliance-active-scans"]);
+			queryClient.invalidateQueries({ queryKey: ["compliance-active-scans"] });
 			const { success, failed } = response.data.summary || {};
 
 			// Track triggered hosts as pending scans for immediate UI feedback
@@ -323,7 +323,7 @@ const Compliance = () => {
 		mutationFn: ({ hostId }) =>
 			complianceAPI.triggerScan(hostId, { profile_type: "all" }),
 		onSuccess: (_, { hostId, hostName }) => {
-			queryClient.invalidateQueries(["compliance-active-scans"]);
+			queryClient.invalidateQueries({ queryKey: ["compliance-active-scans"] });
 			setPendingScans((prev) => [
 				...prev,
 				{
@@ -348,7 +348,7 @@ const Compliance = () => {
 		mutationFn: ({ hostId }) => complianceAPI.cancelScan(hostId),
 		onSuccess: (_, { hostName }) => {
 			toast.success(`Cancel request sent for ${hostName || "host"}`);
-			queryClient.invalidateQueries(["compliance-active-scans"]);
+			queryClient.invalidateQueries({ queryKey: ["compliance-active-scans"] });
 		},
 		onError: (error, { hostName }) => {
 			const errorMsg = error.response?.data?.error || error.message;

@@ -103,16 +103,21 @@ const UsersTab = () => {
 	const deleteUserMutation = useMutation({
 		mutationFn: adminUsersAPI.delete,
 		onSuccess: () => {
-			queryClient.invalidateQueries(["users"]);
+			queryClient.invalidateQueries({ queryKey: ["users"] });
 		},
 	});
 
 	// Update user mutation
+	// The modal awaits this, so it must be mutateAsync: mutate() swallows
+	// rejections and the await would resolve on failure.
 	const updateUserMutation = useMutation({
 		mutationFn: ({ id, data }) => adminUsersAPI.update(id, data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["users"]);
+			queryClient.invalidateQueries({ queryKey: ["users"] });
 			setEditingUser(null);
+		},
+		onError: (error) => {
+			console.error("Failed to update user:", error);
 		},
 	});
 
@@ -121,8 +126,11 @@ const UsersTab = () => {
 		mutationFn: ({ userId, newPassword }) =>
 			adminUsersAPI.resetPassword(userId, newPassword),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["users"]);
+			queryClient.invalidateQueries({ queryKey: ["users"] });
 			setResetPasswordUser(null);
+		},
+		onError: (error) => {
+			console.error("Failed to reset password:", error);
 		},
 	});
 
@@ -132,7 +140,7 @@ const UsersTab = () => {
 			return settingsAPI.update(data).then((res) => res.data);
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries(["settings"]);
+			queryClient.invalidateQueries({ queryKey: ["settings"] });
 			setIsSignupDirty(false);
 		},
 	});
@@ -167,7 +175,7 @@ const UsersTab = () => {
 	};
 
 	const handleUserCreated = () => {
-		queryClient.invalidateQueries(["users"]);
+		queryClient.invalidateQueries({ queryKey: ["users"] });
 		setShowAddModal(false);
 	};
 
@@ -562,7 +570,7 @@ const UsersTab = () => {
 					user={editingUser}
 					isOpen={!!editingUser}
 					onClose={() => setEditingUser(null)}
-					onUpdateUser={updateUserMutation.mutate}
+					onUpdateUser={updateUserMutation.mutateAsync}
 					isLoading={updateUserMutation.isPending}
 					roles={roles}
 				/>
@@ -574,7 +582,7 @@ const UsersTab = () => {
 					user={resetPasswordUser}
 					isOpen={!!resetPasswordUser}
 					onClose={() => setResetPasswordUser(null)}
-					onPasswordReset={resetPasswordMutation.mutate}
+					onPasswordReset={resetPasswordMutation.mutateAsync}
 					isLoading={resetPasswordMutation.isPending}
 				/>
 			)}

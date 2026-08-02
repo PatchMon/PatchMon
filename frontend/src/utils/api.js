@@ -559,8 +559,13 @@ export const rdpAPI = {
 export const authAPI = {
 	login: (username, password) =>
 		api.post("/auth/login", { username, password }),
-	verifyTfa: (username, token, remember_me = false) =>
-		api.post("/auth/verify-tfa", { username, token, remember_me }),
+	verifyTfa: (username, token, remember_me = false, tfa_ticket = "") =>
+		api.post("/auth/verify-tfa", {
+			username,
+			token,
+			remember_me,
+			tfa_ticket,
+		}),
 	signup: (username, email, password, firstName, lastName) =>
 		api.post("/auth/signup", {
 			username,

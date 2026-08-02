@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
@@ -87,26 +88,14 @@ func (s *ComplianceStore) ListProfiles(ctx context.Context) ([]models.Compliance
 }
 
 // GetOrCreateProfile returns a profile by name, creating it if it doesn't exist.
+// Must not be called inside an open transaction: it resolves its own pool
+// connection. Use q.UpsertComplianceProfile on the transaction instead.
 func (s *ComplianceStore) GetOrCreateProfile(ctx context.Context, name, profileType string) (*models.ComplianceProfile, error) {
 	d := s.db.DB(ctx)
-	prof, err := d.Queries.GetComplianceProfileByName(ctx, name)
-	if err == nil {
-		return &models.ComplianceProfile{
-			ID:          prof.ID,
-			Name:        prof.Name,
-			Type:        prof.Type,
-			OSFamily:    prof.OsFamily,
-			Version:     prof.Version,
-			Description: prof.Description,
-			CreatedAt:   pgTime(prof.CreatedAt),
-			UpdatedAt:   pgTime(prof.UpdatedAt),
-		}, nil
-	}
-	// Create new profile
 	if profileType == "" {
 		profileType = "openscap"
 	}
-	created, err := d.Queries.CreateComplianceProfile(ctx, db.CreateComplianceProfileParams{
+	created, err := d.Queries.UpsertComplianceProfile(ctx, db.UpsertComplianceProfileParams{
 		ID:          uuid.New().String(),
 		Name:        name,
 		Type:        profileType,
@@ -190,16 +179,32 @@ func (s *ComplianceStore) SubmitScan(ctx context.Context, hostID string, opensca
 		if scanData.ProfileName == "" {
 			continue
 		}
-		profile, err := s.GetOrCreateProfile(ctx, scanData.ProfileName, scanData.ProfileType)
-		if err != nil {
-			return nil, err
-		}
-		profileType := profile.Type
-		if profileType == "" {
-			profileType = scanData.ProfileType
-		}
+		// On the transaction's queries, not the pool: GetOrCreateProfile would
+		// check out a second connection while this one is pinned, which
+		// deadlocks the pool at DB_CONNECTION_LIMIT concurrent submissions.
+		profileType := scanData.ProfileType
 		if profileType == "" {
 			profileType = "openscap"
+		}
+		profileRow, err := q.UpsertComplianceProfile(ctx, db.UpsertComplianceProfileParams{
+			ID:          uuid.New().String(),
+			Name:        scanData.ProfileName,
+			Type:        profileType,
+			OsFamily:    nil,
+			Version:     nil,
+			Description: nil,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("upsert compliance profile %q: %w", scanData.ProfileName, err)
+		}
+		profile := &models.ComplianceProfile{
+			ID:   profileRow.ID,
+			Name: profileRow.Name,
+			Type: profileRow.Type,
+		}
+		// An existing profile keeps its stored type.
+		if profile.Type != "" {
+			profileType = profile.Type
 		}
 		// Filter by scanner toggles
 		if (profileType == "openscap" && !openscapEnabled) || (profileType == "docker-bench" && !dockerBenchEnabled) {
@@ -322,41 +327,31 @@ func (s *ComplianceStore) SubmitScan(ctx context.Context, hostID string, opensca
 			if err := q.DeleteComplianceResultsByScan(ctx, scan.ID); err != nil {
 				return nil, err
 			}
-			for _, r := range deduped {
-				ruleRef := r.RuleRef
-				// Get or create rule
-				rule, err := q.GetComplianceRuleByProfileAndRef(ctx, db.GetComplianceRuleByProfileAndRefParams{
+			// Sorted so concurrent scans of the same profile take row locks in
+			// the same order. Map iteration is randomised and would deadlock.
+			ruleRefs := make([]string, 0, len(deduped))
+			for ref := range deduped {
+				ruleRefs = append(ruleRefs, ref)
+			}
+			slices.Sort(ruleRefs)
+
+			for _, ruleRef := range ruleRefs {
+				r := deduped[ruleRef]
+				ruleID, err := q.UpsertComplianceRule(ctx, db.UpsertComplianceRuleParams{
+					ID:        uuid.New().String(),
 					ProfileID: profile.ID,
 					RuleRef:   ruleRef,
+					// nil when omitted, so the conflict branch keeps the stored
+					// title; the query's INSERT arm supplies the NOT NULL default.
+					Title:       complianceStrPtr(r.Title),
+					Description: complianceStrPtr(r.Description),
+					Rationale:   nil,
+					Severity:    complianceStrPtr(r.Severity),
+					Section:     complianceStrPtr(r.Section),
+					Remediation: complianceStrPtr(r.Remediation),
 				})
-				var ruleID string
 				if err != nil {
-					ruleID = uuid.New().String()
-					_, err = q.CreateComplianceRule(ctx, db.CreateComplianceRuleParams{
-						ID:          ruleID,
-						ProfileID:   profile.ID,
-						RuleRef:     ruleRef,
-						Title:       orEmpty(r.Title, ruleRef, "Unknown"),
-						Description: complianceStrPtr(r.Description),
-						Rationale:   nil,
-						Severity:    complianceStrPtr(r.Severity),
-						Section:     complianceStrPtr(r.Section),
-						Remediation: complianceStrPtr(r.Remediation),
-					})
-					if err != nil {
-						return nil, err
-					}
-				} else {
-					ruleID = rule.ID
-					// Update rule if we have better metadata
-					_ = q.UpdateComplianceRule(ctx, db.UpdateComplianceRuleParams{
-						ID:          ruleID,
-						Title:       complianceStrPtr(r.Title),
-						Description: complianceStrPtr(r.Description),
-						Severity:    complianceStrPtr(r.Severity),
-						Section:     complianceStrPtr(r.Section),
-						Remediation: complianceStrPtr(r.Remediation),
-					})
+					return nil, fmt.Errorf("upsert compliance rule %q: %w", ruleRef, err)
 				}
 				statusVal := normalizeResultStatus(r.Status)
 				if statusVal == "" {
@@ -398,16 +393,6 @@ func complianceStrPtr(s string) *string {
 		return nil
 	}
 	return &s
-}
-
-func orEmpty(a, b, c string) string {
-	if a != "" {
-		return a
-	}
-	if b != "" {
-		return b
-	}
-	return c
 }
 
 // ListScansByHost returns paginated scans for a host.

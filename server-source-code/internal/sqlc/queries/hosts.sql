@@ -103,8 +103,8 @@ FROM hosts
 WHERE api_id = $1;
 
 -- name: UpdateHostMetrics :exec
--- Ping-side write of volatile metrics. Each column is COALESCE-guarded so a
--- ping that omits a metric leaves the previous value intact.
+-- Ping-side write of volatile metrics. Every column is guarded so a ping that
+-- omits a metric leaves the stored value intact.
 UPDATE hosts SET
     last_update    = NOW(),
     updated_at     = NOW(),
@@ -118,7 +118,15 @@ UPDATE hosts SET
     boot_time      = COALESCE(sqlc.narg('boot_time')::timestamptz, boot_time),
     load_average   = COALESCE(sqlc.narg('load_average')::jsonb, load_average),
     needs_reboot   = COALESCE(sqlc.narg('needs_reboot')::boolean, needs_reboot),
-    reboot_reason  = sqlc.narg('reboot_reason'),
+    -- Not a plain COALESCE: that would make the reason unclearable. Tied to
+    -- needs_reboot so clearing the flag clears both, while a ping asserting the
+    -- flag without a reason leaves the stored one alone.
+    reboot_reason  = CASE
+        WHEN sqlc.narg('needs_reboot')::boolean IS NULL THEN reboot_reason
+        WHEN sqlc.narg('needs_reboot')::boolean IS TRUE
+             AND sqlc.narg('reboot_reason')::text IS NULL THEN reboot_reason
+        ELSE sqlc.narg('reboot_reason')::text
+    END,
     agent_version  = COALESCE(sqlc.narg('agent_version')::text, agent_version)
 WHERE id = sqlc.arg('id');
 

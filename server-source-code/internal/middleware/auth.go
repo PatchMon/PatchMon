@@ -13,6 +13,9 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// Kept in sync with the handler package, which mints the tokens.
+const tokenTypeAccess = "access"
+
 const UserIDKey contextKey = "user_id"
 const UserRoleKey contextKey = "user_role"
 const SessionIDKey contextKey = "session_id"
@@ -44,10 +47,20 @@ func AuthWithSessionCheck(cfg *config.Config, sessionsStore *store.SessionsStore
 			claims := jwt.MapClaims{}
 			t, err := jwt.ParseWithClaims(token, &claims, func(_ *jwt.Token) (interface{}, error) {
 				return []byte(cfg.JWTSecret), nil
-			})
+			}, jwt.WithValidMethods([]string{"HS256"}))
 			if err != nil || !t.Valid {
 				if log != nil {
 					log.Debug("auth token invalid", "path", r.URL.Path, "error", err, "valid", t != nil && t.Valid)
+				}
+				http.Error(w, `{"error":"Invalid token"}`, http.StatusUnauthorized)
+				return
+			}
+
+			// A missing typ is rejected too: pre-existing tokens are
+			// indistinguishable from refresh tokens.
+			if typ, _ := claims["typ"].(string); typ != tokenTypeAccess {
+				if log != nil {
+					log.Debug("auth rejected non-access token", "path", r.URL.Path, "typ", typ)
 				}
 				http.Error(w, `{"error":"Invalid token"}`, http.StatusUnauthorized)
 				return
@@ -64,21 +77,28 @@ func AuthWithSessionCheck(cfg *config.Config, sessionsStore *store.SessionsStore
 				return
 			}
 
-			// Session inactivity check: when sessionID present, validate and update last_activity
-			if sessionID != "" && sessionsStore != nil && resolved != nil && resolved.SessionInactivityTimeoutMin > 0 {
+			// Deliberately not gated on the inactivity timeout: this lookup is
+			// what makes revocation work, and must not be switchable off by
+			// setting SESSION_INACTIVITY_TIMEOUT_MINUTES=0.
+			if sessionID != "" && sessionsStore != nil {
 				sess, err := sessionsStore.GetByID(r.Context(), sessionID, userID)
 				if err != nil || sess == nil {
 					http.Error(w, `{"error":"Session expired"}`, http.StatusUnauthorized)
 					return
 				}
-				inactive := time.Since(sess.LastActivity) > time.Duration(resolved.SessionInactivityTimeoutMin)*time.Minute
-				if inactive {
-					if err := sessionsStore.RevokeByID(r.Context(), sessionID, userID); err != nil {
-						slog.Error("auth: failed to revoke inactive session", "session_id", sessionID, "error", err)
+
+				// The inactivity comparison itself is opt-in.
+				if resolved != nil && resolved.SessionInactivityTimeoutMin > 0 {
+					inactive := time.Since(sess.LastActivity) > time.Duration(resolved.SessionInactivityTimeoutMin)*time.Minute
+					if inactive {
+						if err := sessionsStore.RevokeByID(r.Context(), sessionID, userID); err != nil {
+							slog.Error("auth: failed to revoke inactive session", "session_id", sessionID, "error", err)
+						}
+						http.Error(w, `{"error":"Session expired due to inactivity"}`, http.StatusUnauthorized)
+						return
 					}
-					http.Error(w, `{"error":"Session expired due to inactivity"}`, http.StatusUnauthorized)
-					return
 				}
+
 				if err := sessionsStore.UpdateActivity(r.Context(), sessionID); err != nil {
 					slog.Error("auth: failed to update session activity", "session_id", sessionID, "error", err)
 				}
@@ -112,8 +132,13 @@ func OptionalAuth(cfg *config.Config) func(http.Handler) http.Handler {
 			claims := jwt.MapClaims{}
 			t, err := jwt.ParseWithClaims(token, &claims, func(_ *jwt.Token) (interface{}, error) {
 				return []byte(cfg.JWTSecret), nil
-			})
+			}, jwt.WithValidMethods([]string{"HS256"}))
 			if err != nil || !t.Valid {
+				next.ServeHTTP(w, r)
+				return
+			}
+			// Same rule as Auth.
+			if typ, _ := claims["typ"].(string); typ != tokenTypeAccess {
 				next.ServeHTTP(w, r)
 				return
 			}
