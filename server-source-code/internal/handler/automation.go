@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/go-chi/chi/v5"
@@ -349,7 +350,9 @@ func (h *AutomationHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 			info, err = h.queueClient.Enqueue(t)
 		}
 	case "agent-collection":
-		apiIds := h.registry.GetConnectedApiIDs()
+		// Scoped to the caller's context: an unscoped fan-out would trigger a
+		// collection across every other context's agents on this process.
+		apiIds := h.registry.GetConnectedApiIDs(hostctx.TenantHostKey(r.Context()))
 		if len(apiIds) == 0 {
 			JSON(w, http.StatusOK, map[string]interface{}{
 				"success": true,

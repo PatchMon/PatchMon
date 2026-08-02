@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/go-chi/chi/v5"
 )
@@ -125,21 +126,17 @@ func (h *WSStatusHandler) ServeStatusSingle(w http.ResponseWriter, r *http.Reque
 }
 
 // ServeSummary handles GET /api/v1/ws/status/summary.
+//
+// The registry is process-global, so its connected set spans every context this
+// process serves and the count must be scoped to the caller. That scoping comes
+// from the agent's own context label, recorded at registration, so the answer is
+// served entirely from memory. The sidebar polls this every 10 seconds on every
+// page for every signed-in user, and a multi-context region carries hundreds of
+// contexts, so keeping the database out of this path is what makes the poll
+// affordable at that fan-out.
 func (h *WSStatusHandler) ServeSummary(w http.ResponseWriter, r *http.Request) {
-	apiIDs, err := h.hosts.ListApiIDs(r.Context())
-	if err != nil {
-		Error(w, http.StatusInternalServerError, "failed to load host status summary")
-		return
-	}
-	statuses := h.registry.GetBulk(apiIDs)
-	connected := 0
-	for _, status := range statuses {
-		if status.Connected {
-			connected++
-		}
-	}
 	JSON(w, http.StatusOK, map[string]int{
-		"connected": connected,
+		"connected": h.registry.CountConnected(hostctx.TenantHostKey(r.Context())),
 	})
 }
 

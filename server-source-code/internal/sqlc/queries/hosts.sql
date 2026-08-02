@@ -33,9 +33,6 @@ SELECT * FROM hosts WHERE api_id = $1;
 -- name: ListExistingHostApiIDs :many
 SELECT api_id FROM hosts WHERE api_id = ANY($1::text[]);
 
--- name: ListHostApiIDs :many
-SELECT api_id FROM hosts ORDER BY friendly_name ASC;
-
 -- name: CreateHost :exec
 INSERT INTO hosts (
     id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status,

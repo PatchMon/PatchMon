@@ -428,30 +428,6 @@ func (q *Queries) ListExistingHostApiIDs(ctx context.Context, dollar_1 []string)
 	return items, nil
 }
 
-const listHostApiIDs = `-- name: ListHostApiIDs :many
-SELECT api_id FROM hosts ORDER BY friendly_name ASC
-`
-
-func (q *Queries) ListHostApiIDs(ctx context.Context) ([]string, error) {
-	rows, err := q.db.Query(ctx, listHostApiIDs)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var api_id string
-		if err := rows.Scan(&api_id); err != nil {
-			return nil, err
-		}
-		items = append(items, api_id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listHostOptions = `-- name: ListHostOptions :many
 SELECT id, friendly_name, hostname, os_type, status
 FROM hosts

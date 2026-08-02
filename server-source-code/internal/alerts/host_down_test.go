@@ -23,7 +23,7 @@ func TestHostDownState_LiveWebsocketIsNeverDown(t *testing.T) {
 	t.Parallel()
 
 	reg := agentregistry.New()
-	reg.Register("api-1", true)
+	reg.Register("api-1", true, "")
 
 	now := time.Now()
 	// last_update an hour old: entirely normal one minute before the next
@@ -61,7 +61,7 @@ func TestHostDownState_DisconnectedWebsocketUsesThreshold(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			reg := agentregistry.New()
-			reg.Register("api-1", false)
+			reg.Register("api-1", false, "")
 			reg.Unregister("api-1") // stamps DisconnectedAt ~= base
 
 			// Advance "now" instead of sleeping.
@@ -149,7 +149,7 @@ func TestHostDownState_ReconnectClearsDownState(t *testing.T) {
 
 	reg := agentregistry.New()
 	base := time.Now()
-	reg.Register("api-1", false)
+	reg.Register("api-1", false, "")
 	reg.Unregister("api-1")
 
 	now := base.Add(10 * time.Minute)
@@ -159,7 +159,7 @@ func TestHostDownState_ReconnectClearsDownState(t *testing.T) {
 		t.Fatalf("precondition failed: expected down after a 10-minute disconnect, got %+v", got)
 	}
 
-	reg.Register("api-1", false)
+	reg.Register("api-1", false, "")
 	if got := hostDownState(reg, "api-1", now, 30*time.Second, base, cadenceThreshold, 60); got.down {
 		t.Fatalf("expected up after reconnect, got %+v", got)
 	}

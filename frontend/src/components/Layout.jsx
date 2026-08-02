@@ -48,6 +48,49 @@ import ReleaseNotesModal from "./ReleaseNotesModal";
 import TierBadge from "./TierBadge";
 import UpgradeNotificationIcon from "./UpgradeNotificationIcon";
 
+// Sidebar counter next to the "Hosts" nav item. Renders green connected /
+// red offline once WS status has loaded, and falls back to a neutral total
+// while it is still in flight so the badge never disappears between paints.
+const HostsNavBadge = ({ total, connected }) => {
+	if (!(total > 0)) return null;
+
+	if (connected === undefined || connected === null) {
+		return (
+			<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700 dark:bg-secondary-600 dark:text-secondary-200">
+				{total}
+			</span>
+		);
+	}
+
+	// `total` is cached for longer than `connected`, so a host added or removed
+	// between refetches can transiently make the two disagree. Clamping both
+	// ends keeps the pair summing to the total rather than rendering a
+	// connected count larger than the fleet.
+	const online = Math.min(connected, total);
+	const offline = total - online;
+
+	return (
+		<span className="ml-2 flex items-center gap-1">
+			{online > 0 && (
+				<span
+					className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+					title={`${online} host${online === 1 ? "" : "s"} connected`}
+				>
+					{online}
+				</span>
+			)}
+			{offline > 0 && (
+				<span
+					className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
+					title={`${offline} host${offline === 1 ? "" : "s"} offline`}
+				>
+					{offline}
+				</span>
+			)}
+		</span>
+	);
+};
+
 const Layout = ({ children }) => {
 	// When used as a layout route, render Outlet; otherwise render children (backwards compat)
 	const content = children ?? <Outlet />;
@@ -131,6 +174,22 @@ const Layout = ({ children }) => {
 		refetchOnWindowFocus: false,
 	});
 
+	// Live WebSocket connection count for the Hosts sidebar badge. Shares its
+	// query key with the Hosts page "Connection Status" card so TanStack Query
+	// dedupes them into a single request when both are mounted. The server counts
+	// agents labelled with this deployment context straight out of its in-memory
+	// registry, so the figure is scoped rather than a raw process-wide count and
+	// costs no database work per poll. Paused in background tabs
+	// (refetchIntervalInBackground defaults off).
+	const { data: wsStatusSummary } = useQuery({
+		queryKey: ["wsStatusSummary"],
+		queryFn: () => dashboardAPI.getWsStatusSummary().then((res) => res.data),
+		enabled: canViewHostsAllowed,
+		refetchInterval: 10000,
+		staleTime: 10000,
+		refetchOnWindowFocus: true,
+	});
+
 	// Fetch alert stats for Reporting badge (only if user can view reports and alerts are enabled)
 	const { data: alertStats } = useQuery({
 		queryKey: ["alert-stats", "sidebar"],
@@ -139,6 +198,12 @@ const Layout = ({ children }) => {
 		refetchInterval: 30000, // Refresh every 30 seconds to reduce API load
 		staleTime: 0, // Always consider stale
 	});
+
+	// Single source for the Hosts badge total across all four nav render sites.
+	// `stats` is gated on can_view_dashboard, so hostCounts has to lead here or
+	// hosts-only users lose the badge entirely.
+	const hostsBadgeTotal = hostCounts?.total ?? stats?.cards?.totalHosts ?? 0;
+	const hostsConnected = wsStatusSummary?.connected;
 
 	// Check for new release notes when user or version changes.
 	// Wait until public settings have loaded so ReleaseNotesModal can snapshot
@@ -705,13 +770,12 @@ const Layout = ({ children }) => {
 																	<subItem.icon className="mr-3 h-5 w-5" />
 																	<span className="flex items-center gap-2 flex-1">
 																		{subItem.name}
-																		{subItem.name === "Hosts" &&
-																			stats?.cards?.totalHosts !==
-																				undefined && (
-																				<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-200">
-																					{stats.cards.totalHosts}
-																				</span>
-																			)}
+																		{subItem.name === "Hosts" && (
+																			<HostsNavBadge
+																				total={hostsBadgeTotal}
+																				connected={hostsConnected}
+																			/>
+																		)}
 																	</span>
 																	<button
 																		type="button"
@@ -762,13 +826,12 @@ const Layout = ({ children }) => {
 																		<subItem.icon className="mr-3 h-5 w-5" />
 																		<span className="flex items-center gap-2 flex-1">
 																			{subItem.name}
-																			{subItem.name === "Hosts" &&
-																				stats?.cards?.totalHosts !==
-																					undefined && (
-																					<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-200">
-																						{stats.cards.totalHosts}
-																					</span>
-																				)}
+																			{subItem.name === "Hosts" && (
+																				<HostsNavBadge
+																					total={hostsBadgeTotal}
+																					connected={hostsConnected}
+																				/>
+																			)}
 																			{subItem.name === "Reporting" &&
 																				alertStats && (
 																					<div className="ml-2 flex items-center gap-0.5">
@@ -1153,17 +1216,12 @@ const Layout = ({ children }) => {
 																			{!sidebarCollapsed && (
 																				<span className="truncate flex items-center gap-2 flex-1">
 																					{subItem.name}
-																					{subItem.name === "Hosts" &&
-																						(hostCounts?.total ||
-																							stats?.cards?.totalHosts) > 0 && (
-																							<div className="ml-2 flex items-center gap-1">
-																								<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700 dark:bg-secondary-600 dark:text-secondary-200">
-																									{hostCounts?.total ??
-																										stats?.cards?.totalHosts ??
-																										0}
-																								</span>
-																							</div>
-																						)}
+																					{subItem.name === "Hosts" && (
+																						<HostsNavBadge
+																							total={hostsBadgeTotal}
+																							connected={hostsConnected}
+																						/>
+																					)}
 																					{/* {subItem.name === "Packages" &&
 																				stats?.cards?.totalOutdatedPackages !==
 																					undefined && (
@@ -1247,13 +1305,12 @@ const Layout = ({ children }) => {
 																			{!sidebarCollapsed && (
 																				<span className="truncate flex items-center gap-2 flex-1">
 																					{subItem.name}
-																					{subItem.name === "Hosts" &&
-																						stats?.cards?.totalHosts !==
-																							undefined && (
-																							<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700">
-																								{stats.cards.totalHosts}
-																							</span>
-																						)}
+																					{subItem.name === "Hosts" && (
+																						<HostsNavBadge
+																							total={hostsBadgeTotal}
+																							connected={hostsConnected}
+																						/>
+																					)}
 																					{subItem.name === "Reporting" &&
 																						alertStats && (
 																							<div className="ml-2 flex items-center gap-0.5">
