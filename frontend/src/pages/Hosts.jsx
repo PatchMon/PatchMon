@@ -1664,17 +1664,23 @@ const Hosts = () => {
 		}
 	};
 
-	// Stats card click handlers
-	const handleTotalHostsClick = () => {
-		// Clear all filters to show all hosts
+	// Every filter held in component state. Route changes within /hosts do not
+	// remount, so any of these left set stays applied to the query even when the
+	// URL looks clean. Keep this in step with `paginationResetSignature`.
+	const resetLocalFilters = () => {
 		setSearchTerm("");
 		setGroupFilter("all");
 		setStatusFilter("all");
 		setOsFilter("all");
+		setOsVersionFilter("all");
 		setGroupBy("none");
 		setHideStale(false);
+	};
+
+	// Stats card click handlers
+	const handleTotalHostsClick = () => {
+		resetLocalFilters();
 		setShowFilters(false);
-		// Clear URL parameters to ensure no filters are applied
 		navigate("/hosts", { replace: true });
 	};
 
@@ -1798,9 +1804,9 @@ const Hosts = () => {
 					type="button"
 					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full"
 					onClick={() => {
+						resetLocalFilters();
 						const newSearchParams = new URLSearchParams();
 						newSearchParams.set("reboot", "true");
-						// Clear filter parameter when setting reboot filter
 						navigate(`/hosts?${newSearchParams.toString()}`, { replace: true });
 					}}
 				>
@@ -2090,13 +2096,7 @@ const Hosts = () => {
 										<button
 											type="button"
 											onClick={() => {
-												setSearchTerm("");
-												setGroupFilter("all");
-												setStatusFilter("all");
-												setOsFilter("all");
-												setOsVersionFilter("all");
-												setGroupBy("none");
-												setHideStale(false);
+												resetLocalFilters();
 												// These are forwarded to the backend and are not held in
 												// any of the local state above.
 												const next = new URLSearchParams(searchParams);
