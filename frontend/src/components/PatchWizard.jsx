@@ -1,4 +1,4 @@
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import {
 	AlertTriangle,
 	ArrowLeft,
@@ -22,6 +22,7 @@ import {
 	Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useToast } from "../contexts/ToastContext";
 import { formatDate, packagesAPI } from "../utils/api";
 import { patchingAPI, pollDryRunUntilDone } from "../utils/patchingApi";
 
@@ -69,7 +70,12 @@ async function runWithConcurrency(items, limit, worker) {
  * so e.g. a single-host Patch-all shows only Timing and Submit.
  *
  * Props:
- *   isOpen, onClose, onSuccess - standard modal contract.
+ *   isOpen, onClose, onSuccess - standard modal contract. onSuccess fires
+ *                      once per session with every run that was actually
+ *                      created: onSuccess(mode, { runs }). After a partial
+ *                      failure the wizard stays open and defers that call
+ *                      until the user retries or closes, so the caller never
+ *                      sees a run twice and never misses one.
  *   mode               "trigger" | "approve" (default "trigger")
  *   patchType          "patch_all" | "patch_package" (default "patch_package")
  *   packageNames       string[] | null - required for patch_package
@@ -108,6 +114,8 @@ export default function PatchWizard({
 	packagesByHost,
 	patchTypeByHost,
 }) {
+	const queryClient = useQueryClient();
+	const { warning: toastWarning } = useToast();
 	const isApprove = mode === "approve";
 	const isPatchAll = patchType === "patch_all";
 	// "Packages are fixed" means the Select Packages step has no useful
@@ -302,6 +310,9 @@ export default function PatchWizard({
 		setExpandedDepsByHost({});
 		setPolicyOverrides({});
 		setApprovalDecision("approve_now");
+		setSubmitResultByHost({});
+		setSubmitMode(null);
+		hasReported.current = false;
 	}, [sessionKey, clampedInitialStep]);
 
 	// Pre-select everything we can — but only *once* per session. When hosts
@@ -345,6 +356,71 @@ export default function PatchWizard({
 	const [policyOverrides, setPolicyOverrides] = useState({});
 	// Per-host: which hosts have dependencies expanded in the Submit step
 	const [expandedDepsByHost, setExpandedDepsByHost] = useState({});
+	// Per-host outcome of the submit attempts:
+	//   hostId -> { status: "success" | "failed", runId, immediate, error }
+	// A host that already produced a run is never submitted again, so a retry
+	// after a partial failure cannot duplicate runs or hit the backend status
+	// guard on an already-approved validation.
+	const [submitResultByHost, setSubmitResultByHost] = useState({});
+	const [submitMode, setSubmitMode] = useState(null);
+	const hasReported = useRef(false);
+
+	const submittedRuns = useMemo(
+		() =>
+			Object.entries(submitResultByHost)
+				.filter(([, r]) => r?.status === "success" && r.runId)
+				.map(([hostId, r]) => ({
+					hostId,
+					runId: r.runId,
+					immediate: !!r.immediate,
+				})),
+		[submitResultByHost],
+	);
+
+	const succeededHostIds = useMemo(
+		() =>
+			Array.from(selectedHostIds).filter(
+				(id) => submitResultByHost[id]?.status === "success",
+			),
+		[selectedHostIds, submitResultByHost],
+	);
+	const failedHostIds = useMemo(
+		() =>
+			Array.from(selectedHostIds).filter(
+				(id) => submitResultByHost[id]?.status === "failed",
+			),
+		[selectedHostIds, submitResultByHost],
+	);
+
+	// Report every run that really exists on the backend, then close. Used by
+	// the clean-submit path and by every close path after a partial failure so
+	// successful runs are never orphaned.
+	const finishAndClose = useCallback(
+		(resultMap, modeOverride) => {
+			if (!hasReported.current) {
+				hasReported.current = true;
+				const runs = Object.entries(resultMap)
+					.filter(([, r]) => r?.status === "success" && r.runId)
+					.map(([hostId, r]) => ({
+						hostId,
+						runId: r.runId,
+						immediate: !!r.immediate,
+					}));
+				const reported = modeOverride || submitMode;
+				onSuccess?.(reported === "approval" ? "approval" : "patch", { runs });
+			}
+			onClose?.();
+		},
+		[onSuccess, onClose, submitMode],
+	);
+
+	const handleClose = useCallback(() => {
+		if (submittedRuns.length > 0) {
+			finishAndClose(submitResultByHost);
+			return;
+		}
+		onClose?.();
+	}, [submittedRuns, submitResultByHost, finishAndClose, onClose]);
 
 	const currentStepId = steps[step]?.id;
 	// Find the current interactive step's index within allSteps so the
@@ -424,11 +500,11 @@ export default function PatchWizard({
 			if (e.key !== "Escape") return;
 			if (isPatching || isValidating) return;
 			e.stopPropagation();
-			onClose?.();
+			handleClose();
 		};
 		window.addEventListener("keydown", onKeyDown);
 		return () => window.removeEventListener("keydown", onKeyDown);
-	}, [isOpen, isPatching, isValidating, onClose]);
+	}, [isOpen, isPatching, isValidating, handleClose]);
 
 	// --- Navigation helpers ----------------------------------------------
 	// goNext/goBack walk the step list, skipping past steps that are
@@ -610,8 +686,6 @@ export default function PatchWizard({
 			setError("Select at least one host");
 			return;
 		}
-		setError(null);
-		setIsPatching(true);
 		// "Submit for approval" is available in any fresh-trigger flow. The
 		// wizard either reuses an existing pending_validation / validated run
 		// (if the user ran validation in step 3) or asks the backend to
@@ -626,136 +700,162 @@ export default function PatchWizard({
 				(v.status === "validated" || v.status === "pending_validation")
 			);
 		};
-		if (userChoseSubmit) {
-			try {
-				const submittedRuns = [];
-				for (const hostId of ids) {
-					// Reuse an existing pending validation run when we have
-					// one — otherwise we'd leave two pending rows on the same
-					// host (one from validation, one from pending_approval).
-					if (hostHasPendingRun(hostId)) {
-						submittedRuns.push({
-							hostId,
-							runId: validationByHost[hostId].patch_run_id,
-							immediate: false,
-						});
-						continue;
-					}
-					// Fresh pending run. patch_all has no package list;
-					// patch_package needs the same package set that would
-					// have been sent on a normal trigger — scoped to the
-					// packages this specific host actually has outdated.
-					const response = await patchingAPI.trigger(
-						hostId,
-						patchType,
-						null,
-						isPatchAll ? null : packagesForHost(hostId),
-						{ pending_approval: true },
-					);
-					if (response?.patch_run_id) {
-						submittedRuns.push({
-							hostId,
-							runId: response.patch_run_id,
-							immediate: false,
-						});
-					}
-				}
-				onSuccess?.("approval", { runs: submittedRuns });
-				onClose();
-			} catch (err) {
-				console.error("Submit for approval failed", err);
-				setError(
-					err?.response?.data?.error ||
-						err?.message ||
-						"Failed to submit for approval",
-				);
-			} finally {
-				setIsPatching(false);
-			}
+
+		// Only hosts without a run of their own are submitted, so retrying a
+		// partial failure never fires a second request at a host we already
+		// patched.
+		const pendingIds = ids.filter(
+			(id) => submitResultByHost[id]?.status !== "success",
+		);
+		if (pendingIds.length === 0) {
+			finishAndClose(submitResultByHost);
 			return;
 		}
-		try {
-			// Collect every run we triggered so the caller can decide whether
-			// to deep-link into the live terminal for an immediate run. We
-			// only populate these for "immediate" runs because for delayed
-			// runs there's nothing to watch live yet.
-			const triggeredRuns = [];
-			for (const hostId of ids) {
-				const override = policyOverrides[hostId];
-				// The backend currently only recognises "immediate" as a valid
-				// schedule_override; any other value (including "default" or
-				// a policy ID) is silently ignored. Only send the override
-				// on the wire when it actually does something — sending
-				// "default" was a no-op but looked like an instruction.
-				const overrideBody =
-					override === "immediate" ? { schedule_override: "immediate" } : {};
 
-				let response;
-				if (isApprove) {
-					// Approve mode: the caller provided an existing validation
-					// run for this host. Approving creates a linked execution
-					// run on the backend.
-					const existingRunId = approveRunIdByHost[hostId];
-					if (!existingRunId) continue;
-					response = await patchingAPI.approveRun(existingRunId, overrideBody);
-				} else if (isPatchAll) {
-					response = await patchingAPI.trigger(
-						hostId,
-						"patch_all",
-						null,
-						null,
+		// One host, one request. Throws on failure so the caller records the
+		// host as failed and carries on with the rest of the batch.
+		const submitHost = async (hostId) => {
+			if (userChoseSubmit) {
+				// Reuse an existing pending validation run when we have one —
+				// otherwise we'd leave two pending rows on the same host (one
+				// from validation, one from pending_approval).
+				if (hostHasPendingRun(hostId)) {
+					return {
+						runId: validationByHost[hostId].patch_run_id,
+						immediate: false,
+					};
+				}
+				// Fresh pending run. patch_all has no package list;
+				// patch_package needs the same package set that would have
+				// been sent on a normal trigger — scoped to the packages this
+				// specific host actually has outdated.
+				const response = await patchingAPI.trigger(
+					hostId,
+					patchType,
+					null,
+					isPatchAll ? null : packagesForHost(hostId),
+					{ pending_approval: true },
+				);
+				if (!response?.patch_run_id) {
+					throw new Error("The server did not return a run for this host");
+				}
+				return { runId: response.patch_run_id, immediate: false };
+			}
+
+			const override = policyOverrides[hostId];
+			// The backend currently only recognises "immediate" as a valid
+			// schedule_override; any other value (including "default" or a
+			// policy ID) is silently ignored. Only send the override on the
+			// wire when it actually does something — sending "default" was a
+			// no-op but looked like an instruction.
+			const overrideBody =
+				override === "immediate" ? { schedule_override: "immediate" } : {};
+
+			let response;
+			if (isApprove) {
+				// Approve mode: the caller provided an existing validation run
+				// for this host. Approving creates a linked execution run on
+				// the backend.
+				const existingRunId = approveRunIdByHost[hostId];
+				if (!existingRunId) {
+					throw new Error("No validation run on file for this host");
+				}
+				response = await patchingAPI.approveRun(existingRunId, overrideBody);
+			} else if (isPatchAll) {
+				response = await patchingAPI.trigger(
+					hostId,
+					"patch_all",
+					null,
+					null,
+					overrideBody,
+				);
+			} else {
+				// Trigger mode, package patch. If a validation run exists from
+				// Step 2 we approve it (this marks the validation as
+				// "approved" and links a new execution run). Otherwise we fire
+				// a fresh trigger.
+				const validation = validationByHost[hostId];
+				const validationRunId = validation?.patch_run_id;
+				if (
+					validationRunId &&
+					(validation.status === "validated" ||
+						validation.status === "pending_validation")
+				) {
+					response = await patchingAPI.approveRun(
+						validationRunId,
 						overrideBody,
 					);
 				} else {
-					// Trigger mode, package patch. If a validation run exists
-					// from Step 2 we approve it (this marks the validation as
-					// "approved" and links a new execution run). Otherwise we
-					// fire a fresh trigger.
-					const validation = validationByHost[hostId];
-					const validationRunId = validation?.patch_run_id;
-					if (
-						validationRunId &&
-						(validation.status === "validated" ||
-							validation.status === "pending_validation")
-					) {
-						response = await patchingAPI.approveRun(
-							validationRunId,
-							overrideBody,
-						);
-					} else {
-						response = await patchingAPI.trigger(
-							hostId,
-							"patch_package",
-							null,
-							packagesForHost(hostId),
-							overrideBody,
-						);
-					}
+					response = await patchingAPI.trigger(
+						hostId,
+						"patch_package",
+						null,
+						packagesForHost(hostId),
+						overrideBody,
+					);
 				}
-
-				const runId = response?.patch_run_id;
-				if (!runId) continue;
-
-				// Derive "immediate" from the server's run_at: the backend is
-				// the source of truth for when the run will fire, regardless
-				// of policy/override negotiation on the frontend. If the
-				// response carries run_at within ~5s of now we treat it as
-				// immediate; otherwise it's scheduled.
-				const runAtMs = response?.run_at
-					? Date.parse(response.run_at)
-					: Number.NaN;
-				const now = Date.now();
-				const immediate = Number.isFinite(runAtMs)
-					? runAtMs - now <= 5000
-					: override === "immediate";
-				triggeredRuns.push({ hostId, runId, immediate });
 			}
-			onSuccess?.("patch", { runs: triggeredRuns });
-			onClose();
-		} catch (err) {
-			setError(err.response?.data?.error || err.message);
-		} finally {
-			setIsPatching(false);
+
+			if (!response?.patch_run_id) {
+				throw new Error("The server did not return a run for this host");
+			}
+
+			// Derive "immediate" from the server's run_at: the backend is the
+			// source of truth for when the run will fire, regardless of
+			// policy/override negotiation on the frontend. If the response
+			// carries run_at within ~5s of now we treat it as immediate;
+			// otherwise it's scheduled.
+			const runAtMs = response.run_at
+				? Date.parse(response.run_at)
+				: Number.NaN;
+			const immediate = Number.isFinite(runAtMs)
+				? runAtMs - Date.now() <= 5000
+				: override === "immediate";
+			return { runId: response.patch_run_id, immediate };
+		};
+
+		setError(null);
+		setSubmitMode(userChoseSubmit ? "approval" : "patch");
+		setIsPatching(true);
+
+		const attempt = {};
+		for (const hostId of pendingIds) {
+			try {
+				const result = await submitHost(hostId);
+				attempt[hostId] = { status: "success", ...result };
+			} catch (err) {
+				attempt[hostId] = {
+					status: "failed",
+					error: err?.response?.data?.error || err?.message || "Request failed",
+				};
+			}
+		}
+
+		const merged = { ...submitResultByHost, ...attempt };
+		setSubmitResultByHost(merged);
+		setIsPatching(false);
+
+		// Runs created before the failure are real, so refresh the shared
+		// patching views regardless of how the rest of the batch went.
+		const createdCount = Object.values(attempt).filter(
+			(r) => r.status === "success",
+		).length;
+		if (createdCount > 0) {
+			queryClient.invalidateQueries({ queryKey: ["patching-runs"] });
+			queryClient.invalidateQueries({ queryKey: ["patching-dashboard"] });
+		}
+
+		const failedCount = ids.filter(
+			(id) => merged[id]?.status === "failed",
+		).length;
+		if (failedCount === 0) {
+			finishAndClose(merged, userChoseSubmit ? "approval" : "patch");
+			return;
+		}
+		if (createdCount > 0) {
+			toastWarning(
+				`${createdCount} host${createdCount !== 1 ? "s" : ""} submitted, ${failedCount} failed. Review the wizard to retry.`,
+			);
 		}
 	};
 
@@ -849,9 +949,17 @@ export default function PatchWizard({
 					} on ${singleLockedHostLabel}`
 				: "Patch packages on hosts";
 
+	// Verb used across the outcome UI so approval and patch flows read right.
+	const submitVerb = submitMode === "approval" ? "submitted" : "queued";
+
 	// Submit-step button label varies with mode + approval decision.
 	const confirmButtonLabel = () => {
 		if (isPatching) return "Working…";
+		if (failedHostIds.length > 0) {
+			return `Retry ${failedHostIds.length} failed host${
+				failedHostIds.length !== 1 ? "s" : ""
+			}`;
+		}
 		const n = selectedHostIds.size;
 		if (isApprove) {
 			return n === 1 ? "Approve & patch" : `Approve & patch ${n} runs`;
@@ -873,7 +981,7 @@ export default function PatchWizard({
 		<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
 			<button
 				type="button"
-				onClick={() => !isPatching && !isValidating && onClose()}
+				onClick={() => !isPatching && !isValidating && handleClose()}
 				className="fixed inset-0 cursor-default"
 				aria-label="Close modal"
 			/>
@@ -891,7 +999,7 @@ export default function PatchWizard({
 						</h3>
 						<button
 							type="button"
-							onClick={() => !isPatching && !isValidating && onClose()}
+							onClick={() => !isPatching && !isValidating && handleClose()}
 							className="p-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-700 text-secondary-400 hover:text-secondary-600"
 						>
 							<X className="h-5 w-5" />
@@ -1653,6 +1761,36 @@ export default function PatchWizard({
 					{/* Submit step: final per-host summary + fire button. */}
 					{currentStepId === "submit" && (
 						<div className="space-y-4">
+							{/* Partial-failure outcome. Successful runs already exist on
+							    the backend, so we say so explicitly rather than showing a
+							    single error banner that implies nothing happened. */}
+							{failedHostIds.length > 0 && (
+								<div className="flex items-start gap-2 p-3 rounded-lg bg-danger-50 dark:bg-danger-900/30 border border-danger-200 dark:border-danger-700">
+									<AlertTriangle className="h-4 w-4 text-danger-600 dark:text-danger-400 mt-0.5 shrink-0" />
+									<div className="text-sm text-danger-700 dark:text-danger-300">
+										<p>
+											<strong>
+												{failedHostIds.length} host
+												{failedHostIds.length !== 1 ? "s" : ""}
+											</strong>{" "}
+											could not be {submitVerb}.
+											{succeededHostIds.length > 0 &&
+												` ${succeededHostIds.length} host${
+													succeededHostIds.length !== 1 ? "s were" : " was"
+												} ${submitVerb} successfully and now appear${
+													succeededHostIds.length !== 1 ? "" : "s"
+												} in Runs & History.`}
+										</p>
+										<p className="mt-1 text-xs">
+											Retrying only re-submits the failed hosts.
+											{succeededHostIds.length > 0
+												? " Choose Done to keep the successful runs and close."
+												: ""}
+										</p>
+									</div>
+								</div>
+							)}
+
 							{/* Approve mode has no dry-run in the wizard, so the summary
 							    band and the extra-deps callout are only meaningful for
 							    trigger flows that passed through Validate. */}
@@ -1726,6 +1864,7 @@ export default function PatchWizard({
 							{/* One table per selected host */}
 							{selectedHostArr.map((host) => {
 								const v = validationByHost[host.id];
+								const submitResult = submitResultByHost[host.id];
 								const preview = previewByHost[host.id];
 								// Per-host package list and patch type. Bulk-approve
 								// callers pass packagesByHost; multi-host trigger flows
@@ -1805,6 +1944,18 @@ export default function PatchWizard({
 											{v?.status === "timeout" && (
 												<span className="text-xs px-2 py-0.5 rounded bg-secondary-100 text-secondary-600 dark:bg-secondary-600 dark:text-secondary-300">
 													Host offline
+												</span>
+											)}
+											{submitResult?.status === "success" && (
+												<span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+													<Check className="h-3 w-3" />
+													{submitMode === "approval" ? "Submitted" : "Queued"}
+												</span>
+											)}
+											{submitResult?.status === "failed" && (
+												<span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded bg-danger-100 text-danger-800 dark:bg-danger-900 dark:text-danger-200">
+													<AlertTriangle className="h-3 w-3" />
+													Failed
 												</span>
 											)}
 										</div>
@@ -1939,12 +2090,19 @@ export default function PatchWizard({
 												</div>
 											</div>
 										</div>
+										{submitResult?.status === "failed" && (
+											<div className="border-t border-danger-200 dark:border-danger-700 bg-danger-50 dark:bg-danger-900/30 px-4 py-2">
+												<p className="text-xs text-danger-700 dark:text-danger-300">
+													{submitResult.error}
+												</p>
+											</div>
+										)}
 									</div>
 								);
 							})}
 
 							{error && (
-								<p className="text-sm text-red-600 dark:text-red-400">
+								<p className="text-sm text-danger-600 dark:text-danger-400">
 									{error}
 								</p>
 							)}
@@ -1968,11 +2126,11 @@ export default function PatchWizard({
 						)}
 						<button
 							type="button"
-							onClick={onClose}
+							onClick={handleClose}
 							disabled={isPatching || isValidating}
 							className="btn-outline"
 						>
-							Cancel
+							{submittedRuns.length > 0 ? "Done" : "Cancel"}
 						</button>
 					</div>
 
@@ -2077,7 +2235,9 @@ export default function PatchWizard({
 									</>
 								) : (
 									<>
-										{isApprove ? (
+										{failedHostIds.length > 0 ? (
+											<RefreshCw className="h-4 w-4" />
+										) : isApprove ? (
 											<Check className="h-4 w-4" />
 										) : approvalDecision === "submit" ? (
 											<Send className="h-4 w-4" />
