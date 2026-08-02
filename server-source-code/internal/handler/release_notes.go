@@ -11,8 +11,9 @@ import (
 
 // Every RELEASE_NOTES_<semver>.md in release_notes_data is embedded at build
 // time, so the "What's New" modal works without network access. The files are
-// generated from the GitHub draft release by .github/workflows/release.yml;
-// shipping a release adds one file and needs no Go change.
+// written into the tree during CI by .github/actions/release-context, which
+// reads the body of the published GitHub release, and are never committed.
+// Shipping a release adds one file and needs no Go change.
 //
 //go:embed release_notes_data/*.md
 var releaseNotesFS embed.FS
