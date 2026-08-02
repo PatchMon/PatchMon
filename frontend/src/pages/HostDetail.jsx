@@ -4797,27 +4797,7 @@ const HostDetail = () => {
 												<thead className="bg-secondary-50 dark:bg-secondary-700">
 													<tr>
 														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-															<button
-																type="button"
-																onClick={() => {
-																	setPatchingRunsSortField("created_at");
-																	setPatchingRunsSortDir((d) =>
-																		d === "asc" ? "desc" : "asc",
-																	);
-																}}
-																className="flex items-center gap-1 hover:text-secondary-700 dark:hover:text-secondary-200"
-															>
-																Type
-																{patchingRunsSortField === "created_at" ? (
-																	patchingRunsSortDir === "asc" ? (
-																		<ArrowUp className="h-4 w-4" />
-																	) : (
-																		<ArrowDown className="h-4 w-4" />
-																	)
-																) : (
-																	<ArrowUpDown className="h-4 w-4" />
-																)}
-															</button>
+															Type
 														</th>
 														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 															<button
