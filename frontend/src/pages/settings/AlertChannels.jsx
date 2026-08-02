@@ -1423,15 +1423,19 @@ export const NotificationPanel = ({ panel }) => {
 		queryFn: () => hostGroupsAPI.list().then((r) => r.data ?? []),
 		enabled: canManage && canListHostGroups,
 	});
-	const { data: hostsList = [] } = useQuery({
+	const { data: hostsData } = useQuery({
 		queryKey: ["hosts-list"],
-		queryFn: () => adminHostsAPI.list().then((r) => r.data ?? []),
+		queryFn: () => adminHostsAPI.list().then((r) => r.data),
 		enabled: canManage && canListHostGroups,
 	});
 
 	const hostGroupOptions = useMemo(
 		() => (Array.isArray(hostGroups) ? hostGroups : []),
 		[hostGroups],
+	);
+	const hostOptions = useMemo(
+		() => (Array.isArray(hostsData?.data) ? hostsData.data : []),
+		[hostsData],
 	);
 	const destNameMap = useMemo(() => {
 		const m = {};
@@ -2143,7 +2147,7 @@ export const NotificationPanel = ({ panel }) => {
 				editingRoute={routeModal.editing}
 				destinations={destinations}
 				hostGroups={hostGroupOptions}
-				hosts={Array.isArray(hostsList) ? hostsList : []}
+				hosts={hostOptions}
 				isPending={createRoute.isPending || updateRoute.isPending}
 			/>
 			<ReportModal
