@@ -911,8 +911,8 @@ const Hosts = () => {
 
 			switch (sortField) {
 				case "friendlyName":
-					aValue = a.friendly_name.toLowerCase();
-					bValue = b.friendly_name.toLowerCase();
+					aValue = a.friendly_name?.toLowerCase() || "zzz_no_name";
+					bValue = b.friendly_name?.toLowerCase() || "zzz_no_name";
 					break;
 				case "hostname":
 					aValue = a.hostname?.toLowerCase() || "zzz_no_hostname";
