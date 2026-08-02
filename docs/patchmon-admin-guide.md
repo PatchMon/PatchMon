@@ -1483,6 +1483,7 @@ The agent chooses the patching back-end by detecting the host's package manager.
 | `pacman` | Arch Linux, Manjaro | Yes |
 | `pkg` | FreeBSD 13+ (plus `freebsd-update` for the base system on `patch_all`) | Yes |
 | `apk` | Alpine Linux | **No.** The agent reports `apk` inventory but rejects patch runs with `package manager "apk" not supported for patching (apt, dnf, yum, pkg, pacman required)`. Alpine hosts are visible in PatchMon and get compliance scans, but patch runs on them fail on the agent side. |
+| `zypper` | openSUSE Leap, openSUSE Tumbleweed, SLES | **No, and no inventory either. Coming soon.** The installer detects zypper and completes, and the agent detects the OS correctly, but the agent has no zypper backend. Package collection therefore fails with `unsupported package manager: unknown` and the host never completes its first report, so it sits at "Waiting for initial system report". Follow and vote for zypper support at [feedback.patchmon.net](https://feedback.patchmon.net/b/feature-requests/posts/post_01kyza53c0fzst214afbr1qn9a). |
 | Windows Update Agent (WUA) + WinGet | Windows 10/11, Server 2019/2022/2025 | Yes (separate path) |
 
 > **Note:** The 2.0 release notes describe Linux patching generally. If you need to patch Alpine hosts, track the package manager roadmap or use your existing Alpine tooling until `apk` support lands.
@@ -2679,6 +2680,8 @@ The per-host **default profile** setting (Host Detail → Integrations → Compl
 | OpenSUSE | CIS Level 1 Server, CIS Level 2 Server |
 
 Any host OS not listed has no SSG datastream available and OpenSCAP scans will be skipped on it. The scanner is still "available" in the integrations metadata if `oscap` is installed; it just has nothing to evaluate.
+
+> **SLES and OpenSUSE:** the datastreams above ship with the server and the agent already maps SUSE-family hosts to the right profiles, but these rows are not usable yet in practice. SUSE hosts cannot complete enrolment because the agent has no zypper backend (see the package manager table earlier in this guide), so they never reach the point of running a scan. These profiles become available once zypper support lands.
 
 **Default per-host state:** OpenSCAP is **enabled by default** on every host that has compliance turned on. This is controlled by the `compliance_openscap_enabled` host flag, defaulted to `true` in 1.4.2 and preserved on upgrade.
 

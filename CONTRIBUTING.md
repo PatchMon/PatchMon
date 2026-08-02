@@ -42,6 +42,15 @@ somewhere it can be voted on and prioritised.
 Bug Report is the only issue template, so anything else you pick from the "New
 issue" screen takes you straight to the right place before you start writing.
 
+Each of these is explained in more depth in the help centre on the feedback
+portal:
+
+- [How the Feedback Portal works](https://feedback.patchmon.net/hc/how-we-work/how-the-feedback-portal-works) — boards, roadmaps and where everything goes
+- [Where to report a bug](https://feedback.patchmon.net/hc/how-we-work/where-to-report-a-bug) — what to include and why bugs stay on GitHub
+- [How a feature request gets built](https://feedback.patchmon.net/hc/how-we-work/how-a-feature-request-gets-built) — the statuses, the review queue and how votes are used
+- [Asking a question or how-to](https://feedback.patchmon.net/hc/how-we-work/asking-a-question) — Discussions vs bug vs feature request
+- [Contributing code](https://feedback.patchmon.net/hc/how-we-work/contributing-code) — the short version of this document
+
 If something feature-shaped does land in the issue tracker, a maintainer will
 label it `enhancement`. That moves it to the feedback portal automatically, adds
 a comment with the direct link, and closes the issue — so nothing you wrote is
@@ -356,6 +365,7 @@ We will acknowledge within 2 business days and work with you on a coordinated di
 
 - **Discord:** [patchmon.net/discord](https://patchmon.net/discord) - fastest way to reach the team and community.
 - **GitHub Discussions:** for longer-form questions.
+- **Help centre:** [feedback.patchmon.net/hc](https://feedback.patchmon.net/hc) - how feedback, issues, roadmaps and pull requests fit together.
 - **Email:** support@patchmon.net - for professional, enterprise or security enquiries.
 
 ---
