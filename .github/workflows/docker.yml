@@ -41,8 +41,11 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.ref }}
-          # Branch and PR builds resolve their version with `git describe`.
-          fetch-tags: true
+          # Branch and PR builds resolve their version with `git describe`,
+          # which walks history to find the nearest tag. fetch-tags alone is not
+          # enough: it fetches the tag refs, but a shallow clone has no ancestry
+          # to walk, so describe fails with "No tags can describe".
+          fetch-depth: 0
 
       - name: Resolve version
         id: ctx
@@ -99,8 +102,11 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.ref }}
-          # Branch and PR builds resolve their version with `git describe`.
-          fetch-tags: true
+          # Branch and PR builds resolve their version with `git describe`,
+          # which walks history to find the nearest tag. fetch-tags alone is not
+          # enough: it fetches the tag refs, but a shallow clone has no ancestry
+          # to walk, so describe fails with "No tags can describe".
+          fetch-depth: 0
 
       # Resolves the version and, on a release tag, writes the release notes
       # from the GitHub release into release_notes_data/ so //go:embed compiles

@@ -210,8 +210,31 @@ think an update is available. The build rejects those rather than letting it
 through. Omitting `VERSION` entirely builds an image reporting `0.0.0`, which is
 a deliberate signal that the version was never injected.
 
-A shallow clone or a fork without tags has nothing to describe from. Run
-`git fetch --tags`, or pass `--version` explicitly.
+The version is worked out with `git describe`, which walks back through history
+to find the nearest tag. A shallow clone (`git clone --depth 1`) has no history
+to walk, and fetching tags alone does not fix that. Run
+`git fetch --unshallow --tags`, or pass `--version` explicitly.
+
+### Your pull request should not contain
+
+- **A version bump.** Nothing in this repository declares a version. Both
+  `config.DefaultVersion` and `pkgversion.Version` are `0.0.0` placeholders that
+  every build path overwrites from the git tag. Editing them by hand is always
+  the wrong fix.
+- **Release notes.** Release notes are written in the body of the GitHub
+  release. CI reads them back at build time and compiles them in. Any
+  `RELEASE_NOTES_*.md` you add will be ignored and overwritten.
+
+### Further reading
+
+Longer explanations of the build mechanics live in the help centre:
+
+- [Building PatchMon locally](https://feedback.patchmon.net/hc/developing-patchmon/building-patchmon-locally)
+- [How versioning works](https://feedback.patchmon.net/hc/developing-patchmon/how-versioning-works)
+- [How a release happens](https://feedback.patchmon.net/hc/developing-patchmon/how-a-release-happens)
+
+This file stays the authority on the exact commands, because it lives with the
+code and moves when the build does. The articles explain the why.
 
 ---
 
