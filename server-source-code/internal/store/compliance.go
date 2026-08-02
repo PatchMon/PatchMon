@@ -463,7 +463,7 @@ func (s *ComplianceStore) GetFirstProfileByType(ctx context.Context, profileType
 }
 
 // ListScansHistory returns paginated scan history with optional filters.
-func (s *ComplianceStore) ListScansHistory(ctx context.Context, limit, offset int32, status, hostID, profileType *string) ([]db.ListComplianceScansHistoryRow, int64, error) {
+func (s *ComplianceStore) ListScansHistory(ctx context.Context, limit, offset int32, status, hostID, profileType, search *string) ([]db.ListComplianceScansHistoryRow, int64, error) {
 	d := s.db.DB(ctx)
 	params := db.ListComplianceScansHistoryParams{
 		Limit:       limit,
@@ -471,13 +471,14 @@ func (s *ComplianceStore) ListScansHistory(ctx context.Context, limit, offset in
 		Status:      status,
 		HostID:      hostID,
 		ProfileType: profileType,
+		Search:      search,
 	}
 	rows, err := d.Queries.ListComplianceScansHistory(ctx, params)
 	if err != nil {
 		return nil, 0, err
 	}
 	total, err := d.Queries.CountComplianceScansHistory(ctx, db.CountComplianceScansHistoryParams{
-		Status: status, HostID: hostID, ProfileType: profileType,
+		Status: status, HostID: hostID, ProfileType: profileType, Search: search,
 	})
 	if err != nil {
 		return nil, 0, err

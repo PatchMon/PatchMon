@@ -651,8 +651,9 @@ func (h *ComplianceHandler) GetScanHistory(w http.ResponseWriter, r *http.Reques
 	status := strParam(r, "status")
 	profileType := strParam(r, "profile_type")
 	hostID := strParam(r, "host_id")
+	search := strParam(r, "search")
 
-	scans, total, err := h.complianceStore.ListScansHistory(r.Context(), int32(limit), int32(offset), status, hostID, profileType)
+	scans, total, err := h.complianceStore.ListScansHistory(r.Context(), int32(limit), int32(offset), status, hostID, profileType, search)
 	if err != nil {
 		slog.Error("compliance scan history failed", "error", err)
 		Error(w, http.StatusInternalServerError, "Failed to fetch scan history")
