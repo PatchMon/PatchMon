@@ -206,6 +206,12 @@ const Hosts = () => {
 					setStatusFilter("all");
 					break;
 				case "inactive":
+					// Server-side filter only. The tri-state Reporting filter also
+					// consults live WS state, so it would drop silent-but-connected
+					// rows that the errored-hosts card counted.
+					setShowFilters(true);
+					setStatusFilter("all");
+					break;
 				case "stale":
 					setShowFilters(true);
 					setStatusFilter("stale");
