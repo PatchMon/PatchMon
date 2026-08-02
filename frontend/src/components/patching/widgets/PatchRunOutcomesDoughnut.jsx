@@ -53,7 +53,7 @@ const PatchRunOutcomesDoughnut = ({ data }) => {
 	const options = {
 		...base_options,
 		onClick: (_event, elements) => {
-			if (elements.length > 0) {
+			if (elements.length > 0 && has_data) {
 				const status = STATUS_LINKS[elements[0].index];
 				if (status) {
 					navigate(`/patching?tab=runs&status=${status}`);
@@ -62,7 +62,7 @@ const PatchRunOutcomesDoughnut = ({ data }) => {
 		},
 		onHover: (event, elements) => {
 			event.native.target.style.cursor =
-				elements.length > 0 ? "pointer" : "default";
+				has_data && elements.length > 0 ? "pointer" : "default";
 		},
 	};
 
