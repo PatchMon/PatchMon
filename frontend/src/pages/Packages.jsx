@@ -553,10 +553,8 @@ const Packages = () => {
 	// Calculate total packages installed
 	const totalPackagesCount = totalPackages;
 
-	// Calculate total installations across all hosts
-	const totalInstallationsCount =
-		packages?.reduce((sum, pkg) => sum + (pkg.stats?.totalInstalls || 0), 0) ||
-		0;
+	// Backend aggregate across the whole filtered set, not just this page
+	const totalInstallationsCount = packagesResponse?.totalInstalls ?? 0;
 
 	// Derive outdated count from packages data (same source as table, includes all OSes e.g. Windows).
 	// When filtered by security-updates, we only have security packages in the list, so use dashboard for total outdated.

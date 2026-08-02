@@ -251,10 +251,17 @@ WHERE `)
 
 // countPackagesSQL builds the matching COUNT query. Exactly the same
 // WHERE predicate as listPackagesSQL so totals stay consistent with the
-// page rows.
+// page rows. The SUM aggregates mv_package_stats.total_installs over the
+// whole filtered set (not the current page) for the Installations card.
+// mv_package_stats has a UNIQUE index on package_id, so the LEFT JOIN
+// cannot fan out the COUNT.
 func countPackagesSQL(filters packagesListFilters) (string, []any) {
 	where, args := packagesListWhereSQL(filters, "p")
-	return "SELECT COUNT(*)::int FROM packages p WHERE " + where, args
+	return `SELECT COUNT(*)::int,
+       COALESCE(SUM(COALESCE(s.total_installs, 0)), 0)::bigint
+FROM packages p
+LEFT JOIN mv_package_stats s ON s.package_id = p.id
+WHERE ` + where, args
 }
 
 // runListPackages executes the dynamic SELECT inside the supplied
@@ -298,12 +305,15 @@ func runListPackages(ctx context.Context, tx pgx.Tx, filters packagesListFilters
 	return out, nil
 }
 
-// runCountPackages executes the matching COUNT inside the supplied tx.
-func runCountPackages(ctx context.Context, tx pgx.Tx, filters packagesListFilters) (int32, error) {
+// runCountPackages executes the matching COUNT inside the supplied tx and
+// returns the matching package count plus the total installs across all of
+// them.
+func runCountPackages(ctx context.Context, tx pgx.Tx, filters packagesListFilters) (int32, int64, error) {
 	sqlText, args := countPackagesSQL(filters)
 	var total int32
-	if err := tx.QueryRow(ctx, sqlText, args...).Scan(&total); err != nil {
-		return 0, err
+	var totalInstalls int64
+	if err := tx.QueryRow(ctx, sqlText, args...).Scan(&total, &totalInstalls); err != nil {
+		return 0, 0, err
 	}
-	return total, nil
+	return total, totalInstalls, nil
 }
