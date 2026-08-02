@@ -1,4 +1,8 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	keepPreviousData,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import {
 	AlertTriangle,
 	ArrowLeft,
@@ -17,7 +21,7 @@ import {
 	Square,
 	Wrench,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import PatchWizard from "../components/PatchWizard";
 import { useAuth } from "../contexts/AuthContext";
@@ -56,6 +60,19 @@ const PackageDetail = () => {
 	// shows "Queuing…" / is disabled. Mutation.isPending alone is shared across
 	// every row and would disable the whole table on a single click.
 	const [patchingHostId, setPatchingHostId] = useState(null);
+
+	// Debounce search for backend (avoid refetch on every keystroke)
+	const [debouncedSearch, setDebouncedSearch] = useState("");
+	const searchDebounceRef = useRef(null);
+	useEffect(() => {
+		if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+		searchDebounceRef.current = setTimeout(() => {
+			setDebouncedSearch(searchTerm.trim());
+		}, 400);
+		return () => {
+			if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+		};
+	}, [searchTerm]);
 
 	// Shared post-submit handler for both per-host and multi-host wizards.
 	// The wizard owns the server call; we only deal with UX after.
@@ -116,7 +133,7 @@ const PackageDetail = () => {
 		queryKey: [
 			"package-hosts",
 			decodedPackageId,
-			searchTerm,
+			debouncedSearch,
 			currentPage,
 			pageSize,
 			onlyPending,
@@ -124,12 +141,13 @@ const PackageDetail = () => {
 		queryFn: () =>
 			packagesAPI
 				.getHosts(decodedPackageId, {
-					search: searchTerm,
+					search: debouncedSearch,
 					page: currentPage,
 					limit: pageSize,
 					...(onlyPending ? { needsUpdate: true } : {}),
 				})
 				.then((res) => res.data),
+		placeholderData: keepPreviousData,
 		staleTime: 5 * 60 * 1000,
 		refetchOnWindowFocus: false,
 		enabled: !!decodedPackageId,
@@ -157,11 +175,17 @@ const PackageDetail = () => {
 		selectedHostIds.has(h.hostId),
 	);
 
+	// Reset to first page when the search changes
+	// biome-ignore lint/correctness/useExhaustiveDependencies: intentionally reset when the debounced search changes
+	useEffect(() => {
+		setCurrentPage(1);
+	}, [debouncedSearch]);
+
 	// Reset selection when filter / search / page changes - the visible set changed
 	// biome-ignore lint/correctness/useExhaustiveDependencies: intentionally reset when these change
 	useEffect(() => {
 		setSelectedHostIds(new Set());
-	}, [searchTerm, currentPage, pageSize, onlyPending, decodedPackageId]);
+	}, [debouncedSearch, currentPage, pageSize, onlyPending, decodedPackageId]);
 
 	const toggleHost = (hostId) => {
 		setSelectedHostIds((prev) => {
@@ -432,10 +456,7 @@ const PackageDetail = () => {
 									type="text"
 									placeholder="Search hosts..."
 									value={searchTerm}
-									onChange={(e) => {
-										setSearchTerm(e.target.value);
-										setCurrentPage(1);
-									}}
+									onChange={(e) => setSearchTerm(e.target.value)}
 									className="w-full pl-10 pr-4 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white placeholder-secondary-500 dark:placeholder-secondary-400 text-sm sm:text-base"
 								/>
 							</div>
@@ -491,7 +512,7 @@ const PackageDetail = () => {
 								<div className="text-center py-8">
 									<Server className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
 									<p className="text-secondary-500 dark:text-white">
-										{searchTerm
+										{debouncedSearch
 											? "No hosts match your search"
 											: onlyPending
 												? "All hosts are up to date for this package"
