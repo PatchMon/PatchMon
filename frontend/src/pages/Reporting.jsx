@@ -46,6 +46,23 @@ import { AlertSettings } from "./settings/AlertSettings";
 // System-only actions that should not appear in user-facing menus
 const SYSTEM_ONLY_ACTIONS = new Set(["created", "updated"]);
 
+// Assignment filter values that are not a specific user id
+const ASSIGNMENT_PRESETS = new Set([
+	"all",
+	"assignedToMe",
+	"assigned",
+	"unassigned",
+]);
+
+const isResponderAssignment = (value) =>
+	Boolean(value) && !ASSIGNMENT_PRESETS.has(value);
+
+const userDisplayName = (user) =>
+	`${user.first_name || ""} ${user.last_name || ""}`.trim() ||
+	user.username ||
+	user.email ||
+	"Unknown user";
+
 const VALID_TABS = new Set([
 	"overview",
 	"alerts",
@@ -96,14 +113,10 @@ const Reporting = () => {
 		if (tab && VALID_TABS.has(tab)) {
 			setActiveTab(tab);
 		}
-		const severity = params.get("severity");
-		if (severity) setSeverityFilter(severity);
-		const status = params.get("status");
-		if (status) setStatusFilter(status);
-		const type = params.get("type");
-		if (type) setTypeFilter(type);
-		const assignment = params.get("assignment");
-		if (assignment) setAssignmentFilter(assignment);
+		setSeverityFilter(params.get("severity") || "all");
+		setStatusFilter(params.get("status") || "all");
+		setTypeFilter(params.get("type") || "all");
+		setAssignmentFilter(params.get("assignment") || "all");
 	}, [location.search]);
 
 	const tabs = [
@@ -134,15 +147,16 @@ const Reporting = () => {
 	});
 
 	// Fetch alerts for the alerts table tab (respects assignment filter)
+	const assignedToMeOnly = assignmentFilter === "assignedToMe";
 	const {
 		data: alertsData,
 		isLoading: alertsLoading,
 		error: alertsError,
 	} = useQuery({
-		queryKey: ["alerts", "filtered", assignmentFilter],
+		queryKey: ["alerts", "filtered", assignedToMeOnly],
 		queryFn: async () => {
 			const params = {};
-			if (assignmentFilter === "assignedToMe") {
+			if (assignedToMeOnly) {
 				params.assignedToMe = "true";
 			}
 			const response = await alertsAPI.getAlerts(params);
@@ -461,6 +475,10 @@ const Reporting = () => {
 			filtered = filtered.filter((alert) => alert.assigned_to_user_id !== null);
 		} else if (assignmentFilter === "unassigned") {
 			filtered = filtered.filter((alert) => alert.assigned_to_user_id === null);
+		} else if (isResponderAssignment(assignmentFilter)) {
+			filtered = filtered.filter(
+				(alert) => alert.assigned_to_user_id === assignmentFilter,
+			);
 		}
 
 		// Sort
@@ -513,6 +531,12 @@ const Reporting = () => {
 		);
 		return Array.from(types).sort();
 	}, [alerts]);
+
+	const assignmentUsers = usersData || [];
+	const responderFilterActive = isResponderAssignment(assignmentFilter);
+	const responderInUserList = assignmentUsers.some(
+		(u) => u.id === assignmentFilter,
+	);
 
 	// Handle sort
 	const handleSort = (field) => {
@@ -904,6 +928,20 @@ const Reporting = () => {
 									<option value="assignedToMe">Assigned to me</option>
 									<option value="assigned">Assigned</option>
 									<option value="unassigned">Unassigned</option>
+									{assignmentUsers.length > 0 && (
+										<optgroup label="Assigned to responder">
+											{assignmentUsers.map((u) => (
+												<option key={u.id} value={u.id}>
+													{userDisplayName(u)}
+												</option>
+											))}
+										</optgroup>
+									)}
+									{responderFilterActive && !responderInUserList && (
+										<option value={assignmentFilter}>
+											{usersData ? "Unknown user" : "Loading users"}
+										</option>
+									)}
 								</select>
 							</div>
 						</div>
@@ -968,7 +1006,9 @@ const Reporting = () => {
 								<p className="mt-1 text-sm text-secondary-500">
 									{searchTerm ||
 									severityFilter !== "all" ||
-									typeFilter !== "all"
+									typeFilter !== "all" ||
+									statusFilter !== "all" ||
+									assignmentFilter !== "all"
 										? "Try adjusting your search filters"
 										: "No active alerts"}
 								</p>
