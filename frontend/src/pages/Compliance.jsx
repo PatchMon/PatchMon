@@ -121,7 +121,7 @@ const Compliance = () => {
 	const { isDark } = useTheme();
 	const toast = useToast();
 	const location = useLocation();
-	const [searchParams] = useSearchParams();
+	const [searchParams, setSearchParams] = useSearchParams();
 	const [activeTab, setActiveTab] = useState(() => {
 		const urlTab = searchParams.get("tab");
 		if (urlTab && COMPLIANCE_TABS.some((t) => t.id === urlTab)) return urlTab;
@@ -390,10 +390,20 @@ const Compliance = () => {
 	} = dashboard || {};
 
 	const allHostsTableRows = hosts_with_latest_scan || [];
-	const hostsTableRows =
+	// Rows only expose which scanners a host has enabled, not the profile type of
+	// its latest scan, so the profile type filter matches on scanner enablement.
+	const matchesProfileType = (row) => {
+		if (profileTypeFilter === "openscap") return row.compliance_enabled;
+		if (profileTypeFilter === "docker-bench") return row.docker_enabled;
+		return true;
+	};
+	const hostsTableRows = (
 		tableFilter === "never-scanned"
 			? allHostsTableRows.filter((row) => row.last_scan_date == null)
-			: allHostsTableRows.filter((row) => row.compliance_enabled);
+			: allHostsTableRows.filter(
+					(row) => row.compliance_enabled || row.docker_enabled,
+				)
+	).filter(matchesProfileType);
 
 	// Combine real active scans with pending scans for display
 	const realActiveScans = activeScansData?.activeScans || [];
@@ -462,6 +472,13 @@ const Compliance = () => {
 		if (profileTypeFilter === "openscap") return "OpenSCAP";
 		if (profileTypeFilter === "docker-bench") return "Docker Bench";
 		return "All Scans";
+	};
+
+	const clearProfileTypeFilter = () => {
+		setProfileTypeFilter("all");
+		const params = new URLSearchParams(searchParams);
+		params.delete("profile_type");
+		setSearchParams(params, { replace: true });
 	};
 
 	const allHosts = hostsData?.hosts || [];
@@ -629,6 +646,21 @@ const Compliance = () => {
 								Showing never-scanned hosts only. Click the Never scanned card
 								again to clear.
 							</p>
+						)}
+						{profileTypeFilter !== "all" && (
+							<div className="flex flex-wrap items-center gap-2 mb-4">
+								<p className="text-sm text-primary-600 dark:text-primary-400">
+									Showing hosts with {getFilterDisplayName()} scanning enabled.
+								</p>
+								<button
+									type="button"
+									onClick={clearProfileTypeFilter}
+									className="inline-flex items-center gap-1 min-h-[44px] px-2 text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300"
+								>
+									<X className="h-3.5 w-3.5" />
+									Clear filter
+								</button>
+							</div>
 						)}
 						<div className="overflow-x-auto">
 							<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
