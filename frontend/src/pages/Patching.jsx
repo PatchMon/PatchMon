@@ -545,11 +545,11 @@ const Patching = () => {
 					lockPackages
 					presetHosts={approveWizardRuns.map((r) => r.host)}
 					validationRunIds={approveWizardRuns.map((r) => r.runId)}
-					packagesByHost={Object.fromEntries(
-						approveWizardRuns.map((r) => [r.host.id, r.packageNames]),
+					packagesByRun={Object.fromEntries(
+						approveWizardRuns.map((r) => [r.runId, r.packageNames]),
 					)}
-					patchTypeByHost={Object.fromEntries(
-						approveWizardRuns.map((r) => [r.host.id, r.patchType]),
+					patchTypeByRun={Object.fromEntries(
+						approveWizardRuns.map((r) => [r.runId, r.patchType]),
 					)}
 					onSuccess={handleApproveWizardSuccess}
 				/>
