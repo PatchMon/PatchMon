@@ -43,10 +43,14 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# `--abbrev=0` gives the bare nearest tag (v2.0.2), not v2.0.2-60-gABC. The
-# server parses versions as dot-separated integers and silently treats any
-# suffix as 0, so a describe with a suffix would report 2.0.0 and make the
-# instance think an update is available.
+# `--abbrev=0` gives the bare nearest tag (v2.0.2), not v2.0.2-60-gABC. A
+# suffix is read as a pre-release, so v2.0.2-60-gABC sorts just below 2.0.2 and
+# the instance would believe it is behind the current release, offering an
+# update that can never satisfy it.
+#
+# Local builds always produce a bare release version. The only deliberate
+# pre-release is the one CI mints for edge images, in
+# .github/actions/release-context.
 if [ -z "$VERSION" ]; then
   VERSION="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
 fi
@@ -61,7 +65,8 @@ if [ -z "$VERSION" ]; then
 fi
 
 if ! printf '%s' "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-  die "version '$VERSION' is not MAJOR.MINOR.PATCH. Anything else is parsed as 0."
+  die "version '$VERSION' is not MAJOR.MINOR.PATCH. Local builds must pass a bare
+  release version; edge pre-releases like 2.0.3-rc.61 are minted by CI only."
 fi
 
 echo "==> Version: $VERSION"
