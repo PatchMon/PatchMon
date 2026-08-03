@@ -1,6 +1,10 @@
 name: Release Binaries
 
-# Fires when a GitHub release is published (draft → published, or direct publish).
+# Fires when you publish a release in the GitHub UI. Publishing is what creates
+# the tag, so this and docker.yml (on the tag push) run in parallel off the same
+# action. Both pull the release notes out of the release body and compile them
+# into the binaries they build.
+#
 # NOTE: the `tags:` filter is not a valid key under `on.release` in GitHub Actions
 # and was silently ignored. If you want to restrict by tag pattern, add
 # `if: startsWith(github.event.release.tag_name, 'v')` to each job.
@@ -10,6 +14,9 @@ on:
 
 permissions:
   contents: write
+
+env:
+  TAG_NAME: ${{ github.event.release.tag_name }}
 
 jobs:
   agent:
@@ -43,6 +50,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
+      - name: Resolve version
+        id: ctx
+        uses: ./.github/actions/release-context
+        with:
+          token: ${{ github.token }}
+          tag: ${{ env.TAG_NAME }}
+          fetch-notes: 'false'
+
       - name: Set up Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
@@ -59,13 +74,12 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           GOARM: ${{ (matrix.goos == 'linux' || matrix.goos == 'freebsd') && matrix.goarch == 'arm' && '6' || '' }}
           CGO_ENABLED: 0
+          # Already v-stripped; diagnostics.go prints "v%s" and would otherwise
+          # emit "vv2.0.0".
+          VERSION: ${{ steps.ctx.outputs.version }}
         run: |
           OUTPUT_BASE="patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}"
           OUTPUT_NAME="${OUTPUT_BASE}${{ matrix.goos == 'windows' && '.exe' || '' }}"
-          # Strip leading "v" so "v2.0.0" becomes "2.0.0" — diagnostics.go prints
-          # "v%s" and would otherwise emit "vv2.0.0".
-          VERSION="${{ github.event.release.tag_name }}"
-          VERSION="${VERSION#v}"
           go build -buildvcs=false \
             -ldflags="-s -w -X patchmon-agent/internal/pkgversion.Version=${VERSION}" \
             -o "${OUTPUT_NAME}" ./cmd/patchmon-agent
@@ -162,7 +176,7 @@ jobs:
       - name: Upload agent binary to release
         uses: softprops/action-gh-release@b25b93d384199fc0fc8c2e126b2d937a0cbeb2ae
         with:
-          tag_name: ${{ github.event.release.tag_name }}
+          tag_name: ${{ env.TAG_NAME }}
           files: agent-source-code/patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
 
       - name: Build summary
@@ -193,17 +207,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
+      # Resolves the version and writes the release notes from the GitHub
+      # release into release_notes_data/ so //go:embed compiles them into the
+      # binary. Nothing is committed.
+      - name: Resolve version and inject release notes
+        id: ctx
+        uses: ./.github/actions/release-context
+        with:
+          token: ${{ github.token }}
+          tag: ${{ env.TAG_NAME }}
+
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: "package.json"
           cache: "npm"
 
+      # The UI reads its version from /api/v1/version/current, not from a Vite
+      # build-time variable, so nothing is injected here.
       - name: Build frontend for embed
-        env:
-          # Inject the release tag into the Vite build so the UI reports the
-          # correct version, overriding the placeholder in frontend/env.example.
-          VITE_APP_VERSION: ${{ github.event.release.tag_name }}
         run: |
           npm ci
           npm run build --workspace=frontend
@@ -226,12 +248,9 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           GOARM: ${{ matrix.goarch == 'arm' && '6' || '' }}
           CGO_ENABLED: 0
+          VERSION: ${{ steps.ctx.outputs.version }}
         run: |
           OUTPUT_NAME="patchmon-server-${{ matrix.goos }}-${{ matrix.goarch }}"
-          # Strip leading "v" so a "v2.0.0" tag becomes "2.0.0" (matches semver
-          # in config.go and what the UI expects for version comparisons).
-          VERSION="${{ github.event.release.tag_name }}"
-          VERSION="${VERSION#v}"
           go build -buildvcs=false \
             -ldflags="-s -w -X 'github.com/PatchMon/PatchMon/server-source-code/internal/config.DefaultVersion=${VERSION}'" \
             -o "${OUTPUT_NAME}" ./cmd/server
@@ -240,5 +259,35 @@ jobs:
       - name: Upload patchmon-server to release
         uses: softprops/action-gh-release@b25b93d384199fc0fc8c2e126b2d937a0cbeb2ae
         with:
-          tag_name: ${{ github.event.release.tag_name }}
+          tag_name: ${{ env.TAG_NAME }}
           files: patchmon-server-${{ matrix.goos }}-${{ matrix.goarch }}
+
+  changelog:
+    name: Draft the feedback portal changelog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Resolve version and fetch release notes
+        id: ctx
+        uses: ./.github/actions/release-context
+        with:
+          token: ${{ github.token }}
+          tag: ${{ env.TAG_NAME }}
+
+      # Creates the entry as a draft so the notes can be proofread on the portal
+      # before they go public. Idempotent: entries are matched by the exact
+      # title "Version X.Y.Z" and updated in place, so a rerun is safe.
+      - name: Push notes to the Quackback changelog
+        env:
+          QUACKBACK_API_KEY: ${{ secrets.QUACKBACK_API_KEY }}
+          VERSION: ${{ steps.ctx.outputs.version }}
+        run: |
+          if [ -z "${QUACKBACK_API_KEY}" ]; then
+            echo "::warning::QUACKBACK_API_KEY is not set — skipping the feedback portal changelog."
+            exit 0
+          fi
+          chmod +x .github/scripts/publish-changelog.sh
+          .github/scripts/publish-changelog.sh "$VERSION" \
+            "server-source-code/internal/handler/release_notes_data/RELEASE_NOTES_${VERSION}.md"
