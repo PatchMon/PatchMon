@@ -52,9 +52,13 @@ portal:
 - [Contributing code](https://feedback.patchmon.net/hc/how-we-work/contributing-code) — the short version of this document
 
 If something feature-shaped does land in the issue tracker, a maintainer will
-label it `enhancement`. That moves it to the feedback portal automatically, adds
-a comment with the direct link, and closes the issue — so nothing you wrote is
-lost. Follow it on the portal from there.
+label it `enhancement`, move it to the feedback portal, add a comment with the
+direct link, and close the issue, so nothing you wrote is lost. Follow it on the
+portal from there.
+
+The portal and this repository are linked by hand rather than by an integration,
+so comments do not sync between them. Once a request has moved, the portal post
+is where the discussion continues.
 
 ### Before you write code for a new feature
 
@@ -232,6 +236,7 @@ Longer explanations of the build mechanics live in the help centre:
 - [Building PatchMon locally](https://feedback.patchmon.net/hc/developing-patchmon/building-patchmon-locally)
 - [How versioning works](https://feedback.patchmon.net/hc/developing-patchmon/how-versioning-works)
 - [How a release happens](https://feedback.patchmon.net/hc/developing-patchmon/how-a-release-happens)
+- [What happens when you open a pull request](https://feedback.patchmon.net/hc/developing-patchmon/what-happens-when-you-open-a-pull-request)
 
 This file stays the authority on the exact commands, because it lives with the
 code and moves when the build does. The articles explain the why.
