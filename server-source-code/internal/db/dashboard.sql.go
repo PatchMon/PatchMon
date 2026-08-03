@@ -109,7 +109,10 @@ const getDashboardStats = `-- name: GetDashboardStats :one
 WITH host_counts AS (
     SELECT
         COUNT(*)::int AS total_hosts,
-        COUNT(*) FILTER (WHERE status = 'active' AND last_update < $1)::int AS errored_hosts,
+        -- Must match the effective_status = 'inactive' predicate the
+        -- filter=inactive host list uses, otherwise the count and the list it
+        -- links to disagree.
+        COUNT(*) FILTER (WHERE (status = 'active' AND last_update < $1) OR status = 'inactive')::int AS errored_hosts,
         COUNT(*) FILTER (WHERE status = 'active' AND last_update < $2)::int AS offline_hosts,
         COUNT(*) FILTER (WHERE needs_reboot = true)::int AS hosts_needing_reboot
     FROM hosts
