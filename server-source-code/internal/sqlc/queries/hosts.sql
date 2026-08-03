@@ -154,7 +154,8 @@ WHERE id = $2;
 DELETE FROM hosts WHERE id = $1;
 
 -- name: ListHostsForComplianceDashboard :many
-SELECT id, hostname, friendly_name, compliance_enabled, compliance_on_demand_only, docker_enabled
+SELECT id, hostname, friendly_name, compliance_enabled, compliance_on_demand_only, docker_enabled,
+       compliance_openscap_enabled, compliance_docker_bench_enabled
 FROM hosts;
 
 -- name: CountUnscannedHosts :one

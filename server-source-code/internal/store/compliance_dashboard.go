@@ -84,6 +84,10 @@ type ComplianceDashboardHost struct {
 	ComplianceMode    string     `json:"compliance_mode"`
 	ComplianceEnabled bool       `json:"compliance_enabled"`
 	DockerEnabled     bool       `json:"docker_enabled"`
+	// Per-scanner flags. docker_enabled is the Docker integration, not Docker
+	// Bench scanning, so the benchmark filter needs these to be accurate.
+	OpenscapEnabled    bool `json:"compliance_openscap_enabled"`
+	DockerBenchEnabled bool `json:"compliance_docker_bench_enabled"`
 }
 
 type ComplianceDashboardWorstHost struct {
@@ -312,19 +316,21 @@ func (s *ComplianceStore) GetDashboard(ctx context.Context) (*ComplianceDashboar
 			}
 		}
 		hostsWithLatestScan = append(hostsWithLatestScan, ComplianceDashboardHost{
-			HostID:            h.ID,
-			Hostname:          h.Hostname,
-			FriendlyName:      h.FriendlyName,
-			LastScanDate:      lastScan,
-			LastActivityTitle: &profileName,
-			Passed:            &passed,
-			Failed:            &failed,
-			Skipped:           &skipped,
-			Score:             scan.Score,
-			ScannerStatus:     scannerStatus,
-			ComplianceMode:    complianceMode,
-			ComplianceEnabled: h.ComplianceEnabled,
-			DockerEnabled:     h.DockerEnabled,
+			HostID:             h.ID,
+			Hostname:           h.Hostname,
+			FriendlyName:       h.FriendlyName,
+			LastScanDate:       lastScan,
+			LastActivityTitle:  &profileName,
+			Passed:             &passed,
+			Failed:             &failed,
+			Skipped:            &skipped,
+			Score:              scan.Score,
+			ScannerStatus:      scannerStatus,
+			ComplianceMode:     complianceMode,
+			ComplianceEnabled:  h.ComplianceEnabled,
+			DockerEnabled:      h.DockerEnabled,
+			OpenscapEnabled:    h.ComplianceOpenscapEnabled,
+			DockerBenchEnabled: h.ComplianceDockerBenchEnabled,
 		})
 	}
 

@@ -556,17 +556,20 @@ func (q *Queries) ListHosts(ctx context.Context) ([]Host, error) {
 }
 
 const listHostsForComplianceDashboard = `-- name: ListHostsForComplianceDashboard :many
-SELECT id, hostname, friendly_name, compliance_enabled, compliance_on_demand_only, docker_enabled
+SELECT id, hostname, friendly_name, compliance_enabled, compliance_on_demand_only, docker_enabled,
+       compliance_openscap_enabled, compliance_docker_bench_enabled
 FROM hosts
 `
 
 type ListHostsForComplianceDashboardRow struct {
-	ID                     string  `json:"id"`
-	Hostname               *string `json:"hostname"`
-	FriendlyName           string  `json:"friendly_name"`
-	ComplianceEnabled      bool    `json:"compliance_enabled"`
-	ComplianceOnDemandOnly bool    `json:"compliance_on_demand_only"`
-	DockerEnabled          bool    `json:"docker_enabled"`
+	ID                           string  `json:"id"`
+	Hostname                     *string `json:"hostname"`
+	FriendlyName                 string  `json:"friendly_name"`
+	ComplianceEnabled            bool    `json:"compliance_enabled"`
+	ComplianceOnDemandOnly       bool    `json:"compliance_on_demand_only"`
+	DockerEnabled                bool    `json:"docker_enabled"`
+	ComplianceOpenscapEnabled    bool    `json:"compliance_openscap_enabled"`
+	ComplianceDockerBenchEnabled bool    `json:"compliance_docker_bench_enabled"`
 }
 
 func (q *Queries) ListHostsForComplianceDashboard(ctx context.Context) ([]ListHostsForComplianceDashboardRow, error) {
@@ -585,6 +588,8 @@ func (q *Queries) ListHostsForComplianceDashboard(ctx context.Context) ([]ListHo
 			&i.ComplianceEnabled,
 			&i.ComplianceOnDemandOnly,
 			&i.DockerEnabled,
+			&i.ComplianceOpenscapEnabled,
+			&i.ComplianceDockerBenchEnabled,
 		); err != nil {
 			return nil, err
 		}

@@ -390,18 +390,23 @@ const Compliance = () => {
 	} = dashboard || {};
 
 	const allHostsTableRows = hosts_with_latest_scan || [];
-	// Rows only expose which scanners a host has enabled, not the profile type of
-	// its latest scan, so the profile type filter matches on scanner enablement.
+	// Rows expose which scanners a host has enabled, not the profile type of its
+	// latest scan, so the filter matches on scanner enablement. Note
+	// docker_enabled is the Docker integration and is not the same thing as
+	// Docker Bench scanning.
 	const matchesProfileType = (row) => {
-		if (profileTypeFilter === "openscap") return row.compliance_enabled;
-		if (profileTypeFilter === "docker-bench") return row.docker_enabled;
+		if (profileTypeFilter === "openscap")
+			return row.compliance_openscap_enabled;
+		if (profileTypeFilter === "docker-bench")
+			return row.compliance_docker_bench_enabled;
 		return true;
 	};
 	const hostsTableRows = (
 		tableFilter === "never-scanned"
 			? allHostsTableRows.filter((row) => row.last_scan_date == null)
 			: allHostsTableRows.filter(
-					(row) => row.compliance_enabled || row.docker_enabled,
+					(row) =>
+						row.compliance_enabled || row.compliance_docker_bench_enabled,
 				)
 	).filter(matchesProfileType);
 
