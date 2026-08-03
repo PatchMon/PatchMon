@@ -22,7 +22,7 @@ func TestUnregisterConn_OwnConnectionTearsDown(t *testing.T) {
 	r := New()
 	connA := newFakeConn()
 
-	r.Register("api-1", true)
+	r.Register("api-1", true, "")
 	r.SetConnection("api-1", connA)
 
 	if !r.UnregisterConn("api-1", connA) {
@@ -58,11 +58,11 @@ func TestUnregisterConn_DoesNotClobberReconnect(t *testing.T) {
 	connB := newFakeConn()
 
 	// Original connection.
-	r.Register("api-1", true)
+	r.Register("api-1", true, "")
 	r.SetConnection("api-1", connA)
 
 	// Agent reconnects before the old teardown lands.
-	r.Register("api-1", true)
+	r.Register("api-1", true, "")
 	r.SetConnection("api-1", connB)
 
 	if r.UnregisterConn("api-1", connA) {
@@ -118,7 +118,7 @@ func TestUnregisterConn_NoStoredConnection(t *testing.T) {
 func TestUnregisterConn_NilConnFallsBackToUnconditional(t *testing.T) {
 	t.Parallel()
 	r := New()
-	r.Register("api-1", false)
+	r.Register("api-1", false, "")
 	r.SetConnection("api-1", newFakeConn())
 
 	if !r.UnregisterConn("api-1", nil) {
@@ -136,7 +136,7 @@ func TestUnregisterConn_DoubleCallDoesNotBumpDisconnectedAt(t *testing.T) {
 	t.Parallel()
 	r := New()
 	conn := newFakeConn()
-	r.Register("api-1", false)
+	r.Register("api-1", false, "")
 	r.SetConnection("api-1", conn)
 
 	r.UnregisterConn("api-1", conn)

@@ -50,6 +50,7 @@ import { useSettings } from "../contexts/SettingsContext";
 import { useToast } from "../contexts/ToastContext";
 import { adminHostsAPI, formatDate, hostGroupsAPI } from "../utils/api";
 import { patchingAPI } from "../utils/patchingApi";
+import { hasExtraDependencies } from "../utils/patchRun";
 
 const PATCHING_TABS = [
 	{ id: "overview", label: "Overview", icon: LayoutDashboard },
@@ -544,11 +545,11 @@ const Patching = () => {
 					lockPackages
 					presetHosts={approveWizardRuns.map((r) => r.host)}
 					validationRunIds={approveWizardRuns.map((r) => r.runId)}
-					packagesByHost={Object.fromEntries(
-						approveWizardRuns.map((r) => [r.host.id, r.packageNames]),
+					packagesByRun={Object.fromEntries(
+						approveWizardRuns.map((r) => [r.runId, r.packageNames]),
 					)}
-					patchTypeByHost={Object.fromEntries(
-						approveWizardRuns.map((r) => [r.host.id, r.patchType]),
+					patchTypeByRun={Object.fromEntries(
+						approveWizardRuns.map((r) => [r.runId, r.patchType]),
 					)}
 					onSuccess={handleApproveWizardSuccess}
 				/>
@@ -939,10 +940,7 @@ function RunsTab({
 								const isApprovable = approvableStatuses.has(run.status);
 								const isSelectedForDelete = selectedRunIds.has(run.id);
 								const isSelectedForApprove = selectedApproveIds.has(run.id);
-								const hasExtraDeps =
-									run.status === "validated" &&
-									run.packages_affected?.length >
-										(run.package_names?.length || 1);
+								const hasExtraDeps = hasExtraDependencies(run);
 								const hostLabel =
 									run.hosts?.friendly_name ||
 									run.hosts?.hostname ||
@@ -1157,10 +1155,7 @@ function RunsTab({
 										const isSelectedForApprove = selectedApproveIds.has(run.id);
 										const isSelected =
 											isSelectedForDelete || isSelectedForApprove;
-										const hasExtraDeps =
-											run.status === "validated" &&
-											run.packages_affected?.length >
-												(run.package_names?.length || 1);
+										const hasExtraDeps = hasExtraDependencies(run);
 										const hostLabel =
 											run.hosts?.friendly_name ||
 											run.hosts?.hostname ||

@@ -428,30 +428,6 @@ func (q *Queries) ListExistingHostApiIDs(ctx context.Context, dollar_1 []string)
 	return items, nil
 }
 
-const listHostApiIDs = `-- name: ListHostApiIDs :many
-SELECT api_id FROM hosts ORDER BY friendly_name ASC
-`
-
-func (q *Queries) ListHostApiIDs(ctx context.Context) ([]string, error) {
-	rows, err := q.db.Query(ctx, listHostApiIDs)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var api_id string
-		if err := rows.Scan(&api_id); err != nil {
-			return nil, err
-		}
-		items = append(items, api_id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listHostOptions = `-- name: ListHostOptions :many
 SELECT id, friendly_name, hostname, os_type, status
 FROM hosts
@@ -580,17 +556,20 @@ func (q *Queries) ListHosts(ctx context.Context) ([]Host, error) {
 }
 
 const listHostsForComplianceDashboard = `-- name: ListHostsForComplianceDashboard :many
-SELECT id, hostname, friendly_name, compliance_enabled, compliance_on_demand_only, docker_enabled
+SELECT id, hostname, friendly_name, compliance_enabled, compliance_on_demand_only, docker_enabled,
+       compliance_openscap_enabled, compliance_docker_bench_enabled
 FROM hosts
 `
 
 type ListHostsForComplianceDashboardRow struct {
-	ID                     string  `json:"id"`
-	Hostname               *string `json:"hostname"`
-	FriendlyName           string  `json:"friendly_name"`
-	ComplianceEnabled      bool    `json:"compliance_enabled"`
-	ComplianceOnDemandOnly bool    `json:"compliance_on_demand_only"`
-	DockerEnabled          bool    `json:"docker_enabled"`
+	ID                           string  `json:"id"`
+	Hostname                     *string `json:"hostname"`
+	FriendlyName                 string  `json:"friendly_name"`
+	ComplianceEnabled            bool    `json:"compliance_enabled"`
+	ComplianceOnDemandOnly       bool    `json:"compliance_on_demand_only"`
+	DockerEnabled                bool    `json:"docker_enabled"`
+	ComplianceOpenscapEnabled    bool    `json:"compliance_openscap_enabled"`
+	ComplianceDockerBenchEnabled bool    `json:"compliance_docker_bench_enabled"`
 }
 
 func (q *Queries) ListHostsForComplianceDashboard(ctx context.Context) ([]ListHostsForComplianceDashboardRow, error) {
@@ -609,6 +588,8 @@ func (q *Queries) ListHostsForComplianceDashboard(ctx context.Context) ([]ListHo
 			&i.ComplianceEnabled,
 			&i.ComplianceOnDemandOnly,
 			&i.DockerEnabled,
+			&i.ComplianceOpenscapEnabled,
+			&i.ComplianceDockerBenchEnabled,
 		); err != nil {
 			return nil, err
 		}

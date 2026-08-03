@@ -14,6 +14,7 @@ import (
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
@@ -694,7 +695,10 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			"package_cache_refresh_max_age": s.PackageCacheRefreshMaxAge,
 		}
 		pushed := 0
-		for _, apiID := range h.registry.GetConnectedApiIDs() {
+		// Scoped to the caller's context: the registry pools every context this
+		// process serves, so an unscoped fan-out would push one context's
+		// settings onto every other context's agents.
+		for _, apiID := range h.registry.GetConnectedApiIDs(hostctx.TenantHostKey(r.Context())) {
 			if err := h.registry.SendJSON(apiID, msg); err != nil {
 				slog.Warn("failed to push settings_update to agent", "api_id", apiID, "error", err)
 			} else {

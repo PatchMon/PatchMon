@@ -84,8 +84,10 @@ type PackageStats struct {
 	SecurityUpdates int `json:"securityUpdates"`
 }
 
-// List returns packages with stats, supporting filters.
-func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithStats, int, error) {
+// List returns packages with stats, supporting filters. The third return
+// value is the total installs across the whole filtered set, not just the
+// returned page.
+func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithStats, int, int64, error) {
 	d := s.db.DB(ctx)
 	if p.Limit <= 0 {
 		p.Limit = 50
@@ -131,21 +133,22 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 	// still has to touch host_packages directly for the EXISTS / NOT
 	// EXISTS branches when those filters are active.
 	var total int32
+	var totalInstalls int64
 	var pkgs []listPackagesRow
 	if werr := withWorkMemTxRaw(ctx, s.db, func(_ *db.Queries, tx pgx.Tx) error {
 		var err error
-		total, err = runCountPackages(ctx, tx, filters)
+		total, totalInstalls, err = runCountPackages(ctx, tx, filters)
 		if err != nil {
 			return err
 		}
 		pkgs, err = runListPackages(ctx, tx, filters, sortKey, sortDir, safeconv.ClampToInt32(p.Limit), safeconv.ClampToInt32(offset))
 		return err
 	}); werr != nil {
-		return nil, 0, werr
+		return nil, 0, 0, werr
 	}
 
 	if len(pkgs) == 0 {
-		return []PackageWithStats{}, int(total), nil
+		return []PackageWithStats{}, int(total), totalInstalls, nil
 	}
 
 	ids := make([]string, len(pkgs))
@@ -164,7 +167,7 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 	}
 	hostRefs, err := d.Queries.GetHostRefsForPackageIDs(ctx, hostRefsArg)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 
 	sourceRepoArg := db.GetSourceReposByPackageIDsParams{Column1: ids}
@@ -173,7 +176,7 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 	}
 	sourceRepoRows, err := d.Queries.GetSourceReposByPackageIDs(ctx, sourceRepoArg)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	reposByPkg := make(map[string][]PackageRepoRef)
 	for _, r := range sourceRepoRows {
@@ -225,7 +228,7 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 			SourceRepos: orEmptyRepos(reposByPkg[p.ID]),
 		}
 	}
-	return out, int(total), nil
+	return out, int(total), totalInstalls, nil
 }
 
 func packageListSortKey(sort string) string {

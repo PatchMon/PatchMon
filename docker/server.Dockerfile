@@ -61,7 +61,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY frontend/package.json ./frontend/
 
-RUN npm ci --workspace=patchmon-frontend --include=dev --ignore-scripts --no-audit \
+RUN npm ci --workspace=frontend --include=dev --ignore-scripts --no-audit \
     && npm cache clean --force
 
 COPY frontend/ ./frontend/
@@ -86,8 +86,27 @@ WORKDIR /app/server
 
 ARG TARGETOS
 ARG TARGETARCH
+# The git tag is the single source of truth for the version, and .dockerignore
+# excludes .git, so the version must be passed in. Use docker/build.sh, which
+# works it out from `git describe`, or pass it yourself:
+#   --build-arg VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')"
+#
+# Only MAJOR.MINOR.PATCH is accepted. The server parses versions as
+# dot-separated integers and silently treats any suffix as 0, so a value like
+# "2.0.2-60-gABC" or "dev" would report as 2.0.0 and make the instance believe
+# an update is available.
+ARG VERSION=""
 RUN go mod download && \
-    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -buildvcs=false -ldflags="-s -w" -o /app/patchmon-server ./cmd/server
+    VER="${VERSION#v}"; \
+    LDFLAGS="-s -w"; \
+    if [ -z "$VER" ]; then \
+      echo "WARNING: no VERSION build arg; this image will report 0.0.0. Use docker/build.sh." >&2; \
+    elif printf '%s' "$VER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then \
+      LDFLAGS="$LDFLAGS -X github.com/PatchMon/PatchMon/server-source-code/internal/config.DefaultVersion=$VER"; \
+    else \
+      echo "ERROR: VERSION='$VER' is not MAJOR.MINOR.PATCH" >&2; exit 1; \
+    fi; \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -buildvcs=false -ldflags="$LDFLAGS" -o /app/patchmon-server ./cmd/server
 
 # SSG content stage — download ComplianceAsCode datastream files at build time.
 # Pass --build-arg SSG_VERSION=0.1.80 to pin a specific version; otherwise

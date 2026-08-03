@@ -47,6 +47,7 @@ const ScanResultsTab = ({
 	useEffect(() => {
 		if (initialFilters && initialFilters !== applied_filters_ref.current) {
 			applied_filters_ref.current = initialFilters;
+			set_severity_filter(initialFilters.severity || "");
 			set_status_filter(initialFilters.status || "");
 			set_host_filter(initialFilters.host_id || "");
 			setPage(0);

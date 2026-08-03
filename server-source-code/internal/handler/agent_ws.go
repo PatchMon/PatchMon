@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/gorilla/websocket"
@@ -120,7 +121,9 @@ func (h *AgentWSHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 
 	// Detect secure (wss) from TLS or X-Forwarded-Proto
 	secure := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
-	h.registry.Register(apiID, secure)
+	// Label the connection with the context that owns it, so registry lookups
+	// can be scoped without a database round-trip. Empty in single-context mode.
+	h.registry.Register(apiID, secure, hostctx.TenantHostKey(connCtx))
 	h.registry.SetConnection(apiID, conn)
 	if h.onConnect != nil {
 		h.onConnect(connCtx, apiID)

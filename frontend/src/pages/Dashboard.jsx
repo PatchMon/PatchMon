@@ -106,6 +106,12 @@ ChartJS.register(
 	Title,
 );
 
+// Hosts-page filter shared by the errored-hosts card and the "Errored" segment
+// of the update-status chart. The server-side `inactive` filter resolves to the
+// same "active host, silent past 2x the update interval" set the card counts,
+// so the count and the resulting list always agree.
+const ERRORED_HOSTS_FILTER = "inactive";
+
 // Drag-to-resize handle on the right edge of a card in edit mode
 const CARD_RESIZE_PIXELS_PER_COLUMN = 40;
 
@@ -268,7 +274,7 @@ const Dashboard = () => {
 	};
 
 	const handleErroredHostsClick = () => {
-		navigate("/hosts?filter=inactive");
+		navigate(`/hosts?filter=${ERRORED_HOSTS_FILTER}`);
 	};
 
 	const handleOfflineHostsClick = () => {
@@ -343,6 +349,8 @@ const Dashboard = () => {
 				filter = "needsUpdates";
 			} else if (statusName.toLowerCase().includes("up to date")) {
 				filter = "upToDate";
+			} else if (statusName.toLowerCase().includes("errored")) {
+				filter = ERRORED_HOSTS_FILTER;
 			} else if (statusName.toLowerCase().includes("stale")) {
 				filter = "stale";
 			}

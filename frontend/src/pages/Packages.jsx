@@ -34,6 +34,16 @@ import { dashboardAPI, packagesAPI } from "../utils/api";
 
 const PACKAGES_PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
 
+// Mirrors the server-side sort whitelist (packageListSortKey /
+// packagesListSortColumn). Columns outside this set render without a sort
+// control because the backend would silently fall back to name.
+const PACKAGES_SORTABLE_COLUMNS = new Set([
+	"name",
+	"packageHosts",
+	"status",
+	"latestVersion",
+]);
+
 function formatRepoName(name) {
 	if (!name) return "\u2014";
 	if (name.startsWith("deb-src-")) return name.slice(8);
@@ -276,7 +286,7 @@ const Packages = () => {
 		queryClient.invalidateQueries({ queryKey: ["patching-runs"] });
 		const runs = info?.runs || [];
 		const immediate = runs.filter((r) => r.immediate);
-		if (immediate.length === 1) {
+		if (!info?.deferred && immediate.length === 1) {
 			navigate(`/patching/runs/${immediate[0].runId}`);
 			return;
 		}
@@ -369,6 +379,7 @@ const Packages = () => {
 
 	// Sorting functions
 	const handleSort = (field) => {
+		if (!PACKAGES_SORTABLE_COLUMNS.has(field)) return;
 		if (sortField === field) {
 			setSortDirection(sortDirection === "asc" ? "desc" : "asc");
 		} else {
@@ -553,10 +564,8 @@ const Packages = () => {
 	// Calculate total packages installed
 	const totalPackagesCount = totalPackages;
 
-	// Calculate total installations across all hosts
-	const totalInstallationsCount =
-		packages?.reduce((sum, pkg) => sum + (pkg.stats?.totalInstalls || 0), 0) ||
-		0;
+	// Backend aggregate across the whole filtered set, not just this page
+	const totalInstallationsCount = packagesResponse?.totalInstalls ?? 0;
 
 	// Derive outdated count from packages data (same source as table, includes all OSes e.g. Windows).
 	// When filtered by security-updates, we only have security packages in the list, so use dashboard for total outdated.
@@ -1085,14 +1094,20 @@ const Packages = () => {
 														key={column.id}
 														className="px-4 py-2 text-center text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 													>
-														<button
-															type="button"
-															onClick={() => handleSort(column.id)}
-															className="flex items-center gap-1 hover:text-secondary-700 dark:hover:text-secondary-200 transition-colors"
-														>
-															{column.label}
-															{getSortIcon(column.id)}
-														</button>
+														{PACKAGES_SORTABLE_COLUMNS.has(column.id) ? (
+															<button
+																type="button"
+																onClick={() => handleSort(column.id)}
+																className="flex items-center gap-1 hover:text-secondary-700 dark:hover:text-secondary-200 transition-colors"
+															>
+																{column.label}
+																{getSortIcon(column.id)}
+															</button>
+														) : (
+															<span className="flex items-center gap-1">
+																{column.label}
+															</span>
+														)}
 													</th>
 												))}
 											</tr>
@@ -1282,9 +1297,10 @@ const Packages = () => {
 									? "Submitted 1 run for approval"
 									: `Submitted ${runs.length} runs for approval`,
 							);
-							navigate("/patching?tab=runs");
+							if (!info?.deferred) navigate("/patching?tab=runs");
 							return;
 						}
+						if (info?.deferred) return;
 						const immediate = runs.filter((r) => r.immediate);
 						if (mode === "patch" && immediate.length === 1) {
 							navigate(`/patching/runs/${immediate[0].runId}`);

@@ -179,7 +179,7 @@ func TestSendMessage_RegisterBeforeSetConnectionWindow(t *testing.T) {
 	r := New()
 	r.distCtx = context.Background()
 	r.podID = "pod-a"
-	r.Register("api-1", true) // sets meta + podMap; conns still empty
+	r.Register("api-1", true, "") // sets meta + podMap; conns still empty
 	r.rdb = client
 
 	ownChannel := "agent:pod:pod-a"

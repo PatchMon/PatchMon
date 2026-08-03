@@ -241,7 +241,8 @@ const Docker = () => {
 				(c) =>
 					(c.name || "").toLowerCase().includes(term) ||
 					(c.image_name || "").toLowerCase().includes(term) ||
-					c.host?.friendly_name?.toLowerCase().includes(term),
+					c.host?.friendly_name?.toLowerCase().includes(term) ||
+					c.host?.hostname?.toLowerCase().includes(term),
 			);
 		}
 
@@ -383,7 +384,8 @@ const Docker = () => {
 			filtered = filtered.filter(
 				(v) =>
 					(v.name || "").toLowerCase().includes(term) ||
-					v.hosts?.friendly_name?.toLowerCase().includes(term),
+					v.hosts?.friendly_name?.toLowerCase().includes(term) ||
+					v.hosts?.hostname?.toLowerCase().includes(term),
 			);
 		}
 
@@ -435,7 +437,8 @@ const Docker = () => {
 			filtered = filtered.filter(
 				(n) =>
 					(n.name || "").toLowerCase().includes(term) ||
-					n.hosts?.friendly_name?.toLowerCase().includes(term),
+					n.hosts?.friendly_name?.toLowerCase().includes(term) ||
+					n.hosts?.hostname?.toLowerCase().includes(term),
 			);
 		}
 
@@ -726,6 +729,7 @@ const Docker = () => {
 									setActiveTab(tab.id);
 									setSearchTerm("");
 									setUpdatesFilter("all"); // Reset updates filter when switching tabs
+									setStatusFilter("all");
 									setSortField(
 										tab.id === "containers"
 											? "status"
@@ -2484,7 +2488,8 @@ function StacksView({ containers, getStatusBadge }) {
 																	</td>
 																	<td className="px-4 py-2 whitespace-nowrap">
 																		<span className="text-sm text-secondary-500 dark:text-secondary-400 font-mono">
-																			{container.image}
+																			{container.image_name}:
+																			{container.image_tag}
 																		</span>
 																	</td>
 																	<td />

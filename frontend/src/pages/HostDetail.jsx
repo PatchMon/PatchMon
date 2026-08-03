@@ -4633,119 +4633,6 @@ const HostDetail = () => {
 												)}
 											</div>
 										)}
-
-										{/* Ports Sub-tab */}
-										{dockerSubTab === "ports" && (
-											<div className="space-y-2">
-												{(() => {
-													// Collect all ports from all containers
-													const allPorts = [];
-													dockerData.containers?.forEach((container) => {
-														if (container.ports && container.ports.length > 0) {
-															container.ports.forEach((port) => {
-																allPorts.push({
-																	containerName: container.name,
-																	containerId: container.id,
-																	containerState: container.state,
-																	publicPort: port.PublicPort,
-																	privatePort: port.PrivatePort,
-																	type: port.Type || "tcp",
-																	ip: port.IP || "0.0.0.0",
-																});
-															});
-														}
-													});
-
-													if (allPorts.length === 0) {
-														return (
-															<p className="text-secondary-500 dark:text-white text-center py-4">
-																No ports found
-															</p>
-														);
-													}
-
-													return (
-														<div className="overflow-x-auto">
-															<table className="w-full text-sm">
-																<thead>
-																	<tr className="text-left text-xs text-secondary-500 dark:text-white border-b border-secondary-200 dark:border-secondary-600">
-																		<th className="pb-2 font-medium">
-																			Container
-																		</th>
-																		<th className="pb-2 font-medium">
-																			Public Port
-																		</th>
-																		<th className="pb-2 font-medium">
-																			Private Port
-																		</th>
-																		<th className="pb-2 font-medium">Type</th>
-																		<th className="pb-2 font-medium">IP</th>
-																		<th className="pb-2 font-medium">Status</th>
-																	</tr>
-																</thead>
-																<tbody className="divide-y divide-secondary-100 dark:divide-secondary-700">
-																	{allPorts.map((port) => (
-																		<tr
-																			key={`${port.containerId}-${port.privatePort}-${port.publicPort || "none"}-${port.type || "tcp"}`}
-																			className="hover:bg-secondary-50 dark:hover:bg-secondary-700/50"
-																		>
-																			<td className="py-2 font-medium text-secondary-900 dark:text-white">
-																				{port.containerName}
-																			</td>
-																			<td className="py-2">
-																				{port.publicPort ? (
-																					<span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 rounded text-xs font-mono">
-																						{port.publicPort}
-																					</span>
-																				) : (
-																					<span className="text-secondary-400">
-																						-
-																					</span>
-																				)}
-																			</td>
-																			<td className="py-2">
-																				<span className="px-2 py-0.5 bg-secondary-100 dark:bg-secondary-600 text-secondary-700 dark:text-white rounded text-xs font-mono">
-																					{port.privatePort}
-																				</span>
-																			</td>
-																			<td className="py-2 text-xs text-secondary-500 dark:text-white uppercase">
-																				{port.type}
-																			</td>
-																			<td className="py-2 text-xs font-mono text-secondary-500 dark:text-white">
-																				{port.ip}
-																			</td>
-																			<td className="py-2">
-																				<span
-																					className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium ${
-																						port.containerState === "running"
-																							? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
-																							: port.containerState === "exited"
-																								? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
-																								: "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400"
-																					}`}
-																				>
-																					<span
-																						className={`w-1.5 h-1.5 rounded-full ${
-																							port.containerState === "running"
-																								? "bg-green-500"
-																								: port.containerState ===
-																										"exited"
-																									? "bg-red-500"
-																									: "bg-yellow-500"
-																						}`}
-																					/>
-																					{port.containerState}
-																				</span>
-																			</td>
-																		</tr>
-																	))}
-																</tbody>
-															</table>
-														</div>
-													);
-												})()}
-											</div>
-										)}
 									</>
 								)}
 							</div>
@@ -4797,27 +4684,7 @@ const HostDetail = () => {
 												<thead className="bg-secondary-50 dark:bg-secondary-700">
 													<tr>
 														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-															<button
-																type="button"
-																onClick={() => {
-																	setPatchingRunsSortField("created_at");
-																	setPatchingRunsSortDir((d) =>
-																		d === "asc" ? "desc" : "asc",
-																	);
-																}}
-																className="flex items-center gap-1 hover:text-secondary-700 dark:hover:text-secondary-200"
-															>
-																Type
-																{patchingRunsSortField === "created_at" ? (
-																	patchingRunsSortDir === "asc" ? (
-																		<ArrowUp className="h-4 w-4" />
-																	) : (
-																		<ArrowDown className="h-4 w-4" />
-																	)
-																) : (
-																	<ArrowUpDown className="h-4 w-4" />
-																)}
-															</button>
+															Type
 														</th>
 														<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 															<button

@@ -23,7 +23,7 @@ func TestRegister_SetsConnectedAndSecure(t *testing.T) {
 			t.Parallel()
 			r := New()
 			before := time.Now().UTC()
-			r.Register("api-1", tc.secure)
+			r.Register("api-1", tc.secure, "")
 			after := time.Now().UTC()
 
 			info := r.Get("api-1")
@@ -54,7 +54,7 @@ func TestRegister_SetsConnectedAndSecure(t *testing.T) {
 func TestGet_DisconnectedMasksSecure(t *testing.T) {
 	t.Parallel()
 	r := New()
-	r.Register("api-1", true) // simulate prior WSS session
+	r.Register("api-1", true, "") // simulate prior WSS session
 	r.Unregister("api-1")
 
 	info := r.Get("api-1")
@@ -93,7 +93,7 @@ func TestRegister_Reconnect_OverwritesSecureAndClearsDisconnect(t *testing.T) {
 	t.Parallel()
 	r := New()
 
-	r.Register("api-1", true)
+	r.Register("api-1", true, "")
 	r.Unregister("api-1")
 
 	// Confirm the disconnected snapshot before the reconnect.
@@ -103,7 +103,7 @@ func TestRegister_Reconnect_OverwritesSecureAndClearsDisconnect(t *testing.T) {
 	}
 
 	// Reconnect via plain WS (secure=false) — the new value must win.
-	r.Register("api-1", false)
+	r.Register("api-1", false, "")
 	after := r.Get("api-1")
 
 	if !after.Connected {
@@ -122,7 +122,7 @@ func TestRegister_Reconnect_OverwritesSecureAndClearsDisconnect(t *testing.T) {
 func TestUnregister_StampsDisconnectedAt(t *testing.T) {
 	t.Parallel()
 	r := New()
-	r.Register("api-1", false)
+	r.Register("api-1", false, "")
 
 	before := time.Now().UTC()
 	r.Unregister("api-1")
@@ -146,7 +146,7 @@ func TestUnregister_StampsDisconnectedAt(t *testing.T) {
 func TestUnregister_DoubleCallDoesNotBumpDisconnectedAt(t *testing.T) {
 	t.Parallel()
 	r := New()
-	r.Register("api-1", false)
+	r.Register("api-1", false, "")
 
 	r.Unregister("api-1")
 	first := r.Get("api-1").DisconnectedAt
@@ -198,14 +198,14 @@ func TestGetBulk_AppliesSameMaskAsGet(t *testing.T) {
 	r := New()
 
 	// Connected via WSS.
-	r.Register("connected-secure", true)
+	r.Register("connected-secure", true, "")
 	// Connected via plain WS.
-	r.Register("connected-insecure", false)
+	r.Register("connected-insecure", false, "")
 	// Previously WSS, now disconnected — the regression case.
-	r.Register("disconnected-was-secure", true)
+	r.Register("disconnected-was-secure", true, "")
 	r.Unregister("disconnected-was-secure")
 	// Previously plain WS, now disconnected.
-	r.Register("disconnected-was-insecure", false)
+	r.Register("disconnected-was-insecure", false, "")
 	r.Unregister("disconnected-was-insecure")
 
 	bulk := r.GetBulk([]string{
@@ -242,7 +242,7 @@ func TestGetBulk_AppliesSameMaskAsGet(t *testing.T) {
 func TestGetBulk_PreservesUnderlyingMetaMap(t *testing.T) {
 	t.Parallel()
 	r := New()
-	r.Register("api-1", true)
+	r.Register("api-1", true, "")
 
 	bulk := r.GetBulk([]string{"api-1"})
 	mutated := bulk["api-1"]
@@ -266,7 +266,7 @@ func TestIsConnected(t *testing.T) {
 		t.Fatalf("expected IsConnected=false for unknown apiID")
 	}
 
-	r.Register("api-1", false)
+	r.Register("api-1", false, "")
 	if !r.IsConnected("api-1") {
 		t.Fatalf("expected IsConnected=true after Register")
 	}
@@ -274,5 +274,47 @@ func TestIsConnected(t *testing.T) {
 	r.Unregister("api-1")
 	if r.IsConnected("api-1") {
 		t.Fatalf("expected IsConnected=false after Unregister, got true — stale meta leaked through")
+	}
+}
+
+// TestGetConnectedApiIDs_ExcludesDisconnectedEntries guards the WS status
+// summary endpoint, which counts what this returns after intersecting it with
+// the caller's database. Unregister deliberately leaves meta in place so
+// DisconnectedAt survives for the status pills, so anything derived from
+// len(r.meta) would include every agent that has ever connected and the
+// sidebar badge would never show a host as offline.
+func TestGetConnectedApiIDs_ExcludesDisconnectedEntries(t *testing.T) {
+	t.Parallel()
+	r := New()
+
+	if got := r.GetConnectedApiIDs(""); len(got) != 0 {
+		t.Fatalf("empty registry: want none, got %v", got)
+	}
+
+	r.Register("api-1", true, "")
+	r.Register("api-2", false, "")
+	r.Register("api-3", true, "")
+	r.Unregister("api-3")
+
+	got := r.GetConnectedApiIDs("")
+	if len(got) != 2 {
+		t.Fatalf("want 2 connected, got %d (%v)", len(got), got)
+	}
+	for _, id := range got {
+		if id == "api-3" {
+			t.Fatalf("disconnected api-3 leaked into connected set: %v", got)
+		}
+	}
+
+	r.Register("api-3", true, "")
+	if got := r.GetConnectedApiIDs(""); len(got) != 3 {
+		t.Fatalf("after reconnect: want 3, got %d (%v)", len(got), got)
+	}
+
+	r.Unregister("api-1")
+	r.Unregister("api-2")
+	r.Unregister("api-3")
+	if got := r.GetConnectedApiIDs(""); len(got) != 0 {
+		t.Fatalf("all disconnected: want none, got %v", got)
 	}
 }

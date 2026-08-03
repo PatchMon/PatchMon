@@ -118,12 +118,6 @@ func (s *HostsStore) ListOptions(ctx context.Context, search string, limit, offs
 	return out, nil
 }
 
-// ListApiIDs returns all host API IDs for scoped registry summary counts.
-func (s *HostsStore) ListApiIDs(ctx context.Context) ([]string, error) {
-	d := s.db.DB(ctx)
-	return d.Queries.ListHostApiIDs(ctx)
-}
-
 // Count returns total host count.
 func (s *HostsStore) Count(ctx context.Context) (int, error) {
 	d := s.db.DB(ctx)

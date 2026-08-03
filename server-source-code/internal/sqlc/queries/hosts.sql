@@ -33,9 +33,6 @@ SELECT * FROM hosts WHERE api_id = $1;
 -- name: ListExistingHostApiIDs :many
 SELECT api_id FROM hosts WHERE api_id = ANY($1::text[]);
 
--- name: ListHostApiIDs :many
-SELECT api_id FROM hosts ORDER BY friendly_name ASC;
-
 -- name: CreateHost :exec
 INSERT INTO hosts (
     id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status,
@@ -157,7 +154,8 @@ WHERE id = $2;
 DELETE FROM hosts WHERE id = $1;
 
 -- name: ListHostsForComplianceDashboard :many
-SELECT id, hostname, friendly_name, compliance_enabled, compliance_on_demand_only, docker_enabled
+SELECT id, hostname, friendly_name, compliance_enabled, compliance_on_demand_only, docker_enabled,
+       compliance_openscap_enabled, compliance_docker_bench_enabled
 FROM hosts;
 
 -- name: CountUnscannedHosts :one

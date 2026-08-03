@@ -52,9 +52,13 @@ portal:
 - [Contributing code](https://feedback.patchmon.net/hc/how-we-work/contributing-code) — the short version of this document
 
 If something feature-shaped does land in the issue tracker, a maintainer will
-label it `enhancement`. That moves it to the feedback portal automatically, adds
-a comment with the direct link, and closes the issue — so nothing you wrote is
-lost. Follow it on the portal from there.
+label it `enhancement`, move it to the feedback portal, add a comment with the
+direct link, and close the issue, so nothing you wrote is lost. Follow it on the
+portal from there.
+
+The portal and this repository are linked by hand rather than by an integration,
+so comments do not sync between them. Once a request has moved, the portal post
+is where the discussion continues.
 
 ### Before you write code for a new feature
 
@@ -179,6 +183,63 @@ cd agent-source-code
 make build          # Build native binary
 make build-all      # Build all platforms
 ```
+
+### Building the Docker image
+
+```bash
+./docker/build.sh                    # builds patchmon-server:local
+./docker/build.sh --tag mytag        # custom image tag
+./docker/build.sh --version 2.0.1    # pin the version it reports
+```
+
+Use this rather than calling `docker build` directly. The git tag is the only
+place a version is declared: no source file contains one, so the version has to
+be passed into the image as a build arg, and `.dockerignore` excludes `.git` so
+the Dockerfile cannot work it out for itself. `docker/build.sh` derives it from
+`git describe --tags --abbrev=0` and passes it through, along with building the
+agent binaries the image bundles.
+
+If you would rather drive `docker build` yourself:
+
+```bash
+docker build -f docker/server.Dockerfile \
+  --build-arg VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')" \
+  -t patchmon-server:local .
+```
+
+Only bare `MAJOR.MINOR.PATCH` is accepted. The server parses versions as
+dot-separated integers and discards parse errors, so anything with a suffix
+(`2.0.2-60-gabc1234`, `dev`) silently reads as `2.0.0` and makes the instance
+think an update is available. The build rejects those rather than letting it
+through. Omitting `VERSION` entirely builds an image reporting `0.0.0`, which is
+a deliberate signal that the version was never injected.
+
+The version is worked out with `git describe`, which walks back through history
+to find the nearest tag. A shallow clone (`git clone --depth 1`) has no history
+to walk, and fetching tags alone does not fix that. Run
+`git fetch --unshallow --tags`, or pass `--version` explicitly.
+
+### Your pull request should not contain
+
+- **A version bump.** Nothing in this repository declares a version. Both
+  `config.DefaultVersion` and `pkgversion.Version` are `0.0.0` placeholders that
+  every build path overwrites from the git tag. Editing them by hand is always
+  the wrong fix.
+- **Release notes.** Release notes are written in the body of the GitHub
+  release. CI reads them back at build time and compiles them in. Any
+  `RELEASE_NOTES_*.md` you add will be ignored and overwritten.
+
+### Further reading
+
+Longer explanations of the build mechanics live in the help centre:
+
+- [Building PatchMon locally](https://feedback.patchmon.net/hc/developing-patchmon/building-patchmon-locally)
+- [How versioning works](https://feedback.patchmon.net/hc/developing-patchmon/how-versioning-works)
+- [How a release happens](https://feedback.patchmon.net/hc/developing-patchmon/how-a-release-happens)
+- [What happens when you open a pull request](https://feedback.patchmon.net/hc/developing-patchmon/what-happens-when-you-open-a-pull-request)
+
+This file stays the authority on the exact commands, because it lives with the
+code and moves when the build does. The articles explain the why.
 
 ---
 
