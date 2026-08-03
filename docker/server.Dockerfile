@@ -61,7 +61,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY frontend/package.json ./frontend/
 
-RUN npm ci --workspace=patchmon-frontend --include=dev --ignore-scripts --no-audit \
+RUN npm ci --workspace=frontend --include=dev --ignore-scripts --no-audit \
     && npm cache clean --force
 
 COPY frontend/ ./frontend/

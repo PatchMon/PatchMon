@@ -86,7 +86,7 @@ cp -f "${agent_bins[@]}" agents-prebuilt/
 echo "==> Staged ${#agent_bins[@]} agent binaries"
 
 echo "==> Building frontend for embed"
-npm ci --workspace=patchmon-frontend --include=dev
+npm ci --workspace=frontend --include=dev
 npm run build --workspace=frontend
 mkdir -p server-source-code/cmd/server/static/frontend
 cp -r frontend/dist server-source-code/cmd/server/static/frontend/
