@@ -15,6 +15,7 @@ import DiscordIcon from "../components/DiscordIcon";
 import { useAuth } from "../contexts/AuthContext";
 import { authAPI, getGlobalTimezone, isCorsError } from "../utils/api";
 import { resolveLogoPath } from "../utils/logoPaths";
+import { compareVersions, isUpdateAvailable } from "../utils/version";
 
 const Login = () => {
 	const usernameId = useId();
@@ -504,28 +505,16 @@ const Login = () => {
 										<div className="flex items-center gap-3">
 											<div className="flex items-center gap-2">
 												{(() => {
-													// Normalise versions for comparison (strip leading "v")
-													const strip = (v) =>
-														v ? v.replace(/^v/i, "").trim() : "";
-													// Compare two semver strings. Returns positive if a > b, negative if a < b, 0 if equal.
-													const semverCmp = (a, b) => {
-														const pa = a.split(".").map(Number);
-														const pb = b.split(".").map(Number);
-														const len = Math.max(pa.length, pb.length);
-														for (let i = 0; i < len; i++) {
-															const diff = (pa[i] || 0) - (pb[i] || 0);
-															if (diff !== 0) return diff;
-														}
-														return 0;
-													};
-													const installed = strip(currentVersion);
-													const latest = strip(latestRelease.version);
-													// Only show "Update Available" when latest is strictly newer than installed
-													const isUpdateAvailable =
-														installed &&
-														latest &&
-														semverCmp(latest, installed) > 0;
-													if (isUpdateAvailable) {
+													// Only show "Update Available" when latest is strictly newer
+													// than installed. Shared with the server's comparison so an
+													// edge build (2.0.3-rc.61) correctly reads as older than the
+													// 2.0.3 release rather than equal to it.
+													if (
+														isUpdateAvailable(
+															currentVersion,
+															latestRelease.version,
+														)
+													) {
 														return (
 															<>
 																<div className="w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
@@ -535,7 +524,14 @@ const Login = () => {
 															</>
 														);
 													}
-													if (installed && latest && installed === latest) {
+													if (
+														currentVersion &&
+														latestRelease.version &&
+														compareVersions(
+															currentVersion,
+															latestRelease.version,
+														) === 0
+													) {
 														return (
 															<>
 																<div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />

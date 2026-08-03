@@ -18,7 +18,12 @@ import (
 
 const (
 	agentDNSDomain = "agent.vcheck.patchmon.net"
-	agentVersionRe = `(?i)(?:PatchMon Agent v|patchmon-agent v|version )?([0-9]+\.[0-9]+\.[0-9]+)`
+	// The pre-release group is required, not cosmetic: edge agents are stamped
+	// 2.0.3-rc.61, and capturing only the numeric core would report them as
+	// "2.0.3" here while the agent itself reports the full string. The two would
+	// never match, so every check would look like a pending update and the agent
+	// would re-download itself forever.
+	agentVersionRe = `(?i)(?:PatchMon Agent v|patchmon-agent v|version )?([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)`
 )
 
 // AgentVersionHandler handles agent version routes.

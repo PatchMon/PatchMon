@@ -114,10 +114,10 @@ RUN go mod download && \
     LDFLAGS="-s -w"; \
     if [ -z "$VER" ]; then \
       echo "WARNING: no VERSION build arg; this image will report 0.0.0. Use docker/build.sh." >&2; \
-    elif printf '%s' "$VER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then \
+    elif printf '%s' "$VER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then \
       LDFLAGS="$LDFLAGS -X github.com/PatchMon/PatchMon/server-source-code/internal/config.DefaultVersion=$VER"; \
     else \
-      echo "ERROR: VERSION='$VER' is not MAJOR.MINOR.PATCH" >&2; exit 1; \
+      echo "ERROR: VERSION='$VER' is not MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-PRERELEASE" >&2; exit 1; \
     fi; \
     SOCIAL_PKG="github.com/PatchMon/PatchMon/server-source-code/internal/social"; \
     for pair in "GitHubStars:$GITHUB_STARS" "DiscordMembers:$DISCORD_MEMBERS" \
