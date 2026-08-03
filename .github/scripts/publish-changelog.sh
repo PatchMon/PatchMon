@@ -2,22 +2,6 @@
 # =============================================================================
 # Push a release's notes to the Quackback changelog at feedback.patchmon.net.
 #
-# Entries are created as drafts (publishedAt omitted) so the notes can be
-# proofread on the portal before they go public.
-#
-# Idempotent: entries are matched by exact title ("Version X.Y.Z"). A rerun for
-# the same version updates the existing entry rather than creating a duplicate,
-# so re-tagging or replaying a failed job is safe.
-#
-# Usage:
-#   QUACKBACK_API_KEY=qb_xxx ./publish-changelog.sh <version> <notes-file>
-#
-# Environment:
-#   QUACKBACK_API_KEY  required, from the portal under
-#                      Settings > Developers > API keys
-#   QUACKBACK_API_URL  optional, defaults to the production portal
-# =============================================================================
-
 set -euo pipefail
 
 API_URL="${QUACKBACK_API_URL:-https://feedback.patchmon.net/api/v1}"
