@@ -16,7 +16,6 @@ body:
         - ""
         - Docker
         - Proxmox-community script
-        - setup.sh native install script
         - Other
     validations:
       required: true
