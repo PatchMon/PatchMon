@@ -44,7 +44,10 @@ runs:
       run: |
         set -euo pipefail
 
-        # Tag names reach the shell through env, never ${{ }} interpolation.
+        # Tag names reach the shell through env, never template interpolation.
+        # Do not write the interpolation braces here either: Actions evaluates
+        # them inside run blocks regardless of the shell comment, and an empty
+        # pair fails the manifest with "An expression was expected".
         TAG="$INPUT_TAG"
         if [ -z "$TAG" ] && [ "$REF_TYPE" = "tag" ]; then TAG="$REF_NAME"; fi
         if [ -z "$TAG" ]; then TAG="$RELEASE_TAG"; fi
