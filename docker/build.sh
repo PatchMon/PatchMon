@@ -91,7 +91,12 @@ cp -f "${agent_bins[@]}" agents-prebuilt/
 echo "==> Staged ${#agent_bins[@]} agent binaries"
 
 echo "==> Building frontend for embed"
-npm ci --workspace=frontend --include=dev
+# --include-workspace-root is load-bearing. `npm ci` wipes node_modules and then
+# reinstalls only what it is told to, so without it the root devDependencies are
+# dropped, taking lefthook and biome with them. The visible symptom is a
+# pre-commit hook that stops running and reports "Can't find lefthook in PATH",
+# silently, on every commit after a local image build.
+npm ci --workspace=frontend --include=dev --include-workspace-root
 npm run build --workspace=frontend
 mkdir -p server-source-code/cmd/server/static/frontend
 cp -r frontend/dist server-source-code/cmd/server/static/frontend/
