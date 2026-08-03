@@ -421,7 +421,14 @@ const Layout = ({ children }) => {
 				});
 			}
 
-			const sidebarLinkIds = ["roadmap", "docs", "email", "website", "billing"];
+			const sidebarLinkIds = [
+				"roadmap",
+				"github_issues",
+				"docs",
+				"email",
+				"website",
+				"billing",
+			];
 			const linkChildren = communityLinks
 				.filter((l) => sidebarLinkIds.includes(l.id))
 				.map((l) => ({

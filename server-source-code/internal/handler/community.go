@@ -24,14 +24,17 @@ type CommunityLinksResponse struct {
 // Default community links and stats. The counts below are the last known good
 // values and are only used when the build injected nothing; see internal/social.
 var defaultCommunityLinks = []CommunityLink{
-	{ID: "discord", URL: "https://patchmon.net/discord", Label: "Discord", Stat: "600", StatLabel: "members"},
-	{ID: "github", URL: "https://github.com/PatchMon/PatchMon", Label: "GitHub", Stat: "2.7K", StatLabel: "stars"},
-	{ID: "github_issues", URL: "https://github.com/PatchMon/PatchMon/issues", Label: "GitHub Issues"},
+	{ID: "discord", URL: "https://patchmon.net/discord", Label: "Discord", Stat: "811", StatLabel: "members"},
+	{ID: "github", URL: "https://github.com/PatchMon/PatchMon", Label: "GitHub", Stat: "3.2K", StatLabel: "stars"},
 	{ID: "email", URL: "mailto:support@patchmon.net", Label: "Email", Stat: "support@patchmon.net"},
-	{ID: "linkedin", URL: "https://linkedin.com/company/patchmon", Label: "LinkedIn", Stat: "400"},
-	{ID: "youtube", URL: "https://www.youtube.com/@PatchMonTV", Label: "YouTube", Stat: "130"},
+	{ID: "linkedin", URL: "https://linkedin.com/company/patchmon", Label: "LinkedIn", Stat: "803"},
+	{ID: "youtube", URL: "https://www.youtube.com/@PatchMonTV", Label: "YouTube", Stat: "194"},
 	{ID: "buymeacoffee", URL: "https://buymeacoffee.com/iby___", Label: "Buy Me a Coffee"},
-	{ID: "roadmap", URL: "https://github.com/orgs/PatchMon/projects/2/views/1", Label: "Roadmap"},
+	// Feature requests and bugs are tracked in two separate places: the feedback
+	// portal owns the feature roadmap, GitHub Issues owns bugs. Bugs never enter
+	// the portal, so these must not be collapsed back into one link.
+	{ID: "roadmap", URL: "https://feedback.patchmon.net/roadmap", Label: "Feature Roadmap"},
+	{ID: "github_issues", URL: "https://github.com/PatchMon/PatchMon/issues", Label: "Report a Bug"},
 	{ID: "docs", URL: "https://patchmon.net/docs", Label: "Documentation"},
 	{ID: "website", URL: "https://patchmon.net", Label: "Website"},
 }

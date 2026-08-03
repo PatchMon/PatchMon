@@ -86,7 +86,8 @@ PatchMon uses a lightweight agent model:
 - Proxmox LXC Auto-Enrollment Guide
 - PatchMon Environment Variables Reference
 - [Metrics and Telemetry](#metrics-and-telemetry)
-- [Roadmap & Issues](https://github.com/orgs/PatchMon/projects/2)
+- [Feature Roadmap](https://feedback.patchmon.net/roadmap) (request and vote on features)
+- [Report a Bug](https://github.com/PatchMon/PatchMon/issues) (bugs are tracked in GitHub, not the feedback portal)
 - [YouTube](https://www.youtube.com/@patchmonTV)
 - [Discord Community](https://patchmon.net/discord)
 - [GitHub Repository](https://github.com/PatchMon/PatchMon)
