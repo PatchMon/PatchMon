@@ -80,10 +80,13 @@ async function runWithConcurrency(items, limit, worker) {
  * Props:
  *   isOpen, onClose, onSuccess - standard modal contract. onSuccess fires
  *                      once per session with every run that was actually
- *                      created: onSuccess(mode, { runs }). After a partial
- *                      failure the wizard stays open and defers that call
- *                      until the user retries or closes, so the caller never
- *                      sees a run twice and never misses one.
+ *                      created: onSuccess(mode, { runs, deferred }). After a
+ *                      partial failure the wizard stays open and defers that
+ *                      call until the user retries or closes, so the caller
+ *                      never sees a run twice and never misses one.
+ *                      `deferred` is true when the report was flushed on
+ *                      close. Do not navigate away on it: the user asked to
+ *                      close the wizard, not to be taken elsewhere.
  *   mode               "trigger" | "approve" (default "trigger")
  *   patchType          "patch_all" | "patch_package" (default "patch_package")
  *   packageNames       string[] | null - required for patch_package
@@ -416,7 +419,7 @@ export default function PatchWizard({
 	// the clean-submit path and by every close path after a partial failure so
 	// successful runs are never orphaned.
 	const finishAndClose = useCallback(
-		(resultMap, modeOverride) => {
+		(resultMap, modeOverride, deferred = true) => {
 			if (!hasReported.current) {
 				hasReported.current = true;
 				const runs = Object.values(resultMap)
@@ -427,7 +430,10 @@ export default function PatchWizard({
 						immediate: !!r.immediate,
 					}));
 				const reported = modeOverride || submitMode;
-				onSuccess?.(reported === "approval" ? "approval" : "patch", { runs });
+				onSuccess?.(reported === "approval" ? "approval" : "patch", {
+					runs,
+					deferred,
+				});
 			}
 			onClose?.();
 		},
@@ -883,7 +889,7 @@ export default function PatchWizard({
 			(t) => merged[t.id]?.status === "failed",
 		).length;
 		if (failedCount === 0) {
-			finishAndClose(merged, nextSubmitMode);
+			finishAndClose(merged, nextSubmitMode, false);
 			return;
 		}
 		if (createdCount > 0) {

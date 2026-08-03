@@ -99,7 +99,7 @@ const PackageDetail = () => {
 			return;
 		}
 		const immediate = runs.filter((r) => r.immediate);
-		if (mode === "patch" && immediate.length === 1) {
+		if (mode === "patch" && !info?.deferred && immediate.length === 1) {
 			navigate(`/patching/runs/${immediate[0].runId}`);
 			return;
 		}
@@ -986,6 +986,7 @@ const PackageDetail = () => {
 					restrictHostIds={selectedHostIds}
 					onSuccess={(mode, info) => {
 						handlePatchWizardSuccess(mode, info);
+						if (info?.deferred) return;
 						if (
 							!(mode === "patch" && (info?.runs || []).some((r) => r.immediate))
 						) {

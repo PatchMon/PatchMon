@@ -4,7 +4,8 @@
  * Three invariants are pinned here:
  *   1. A host that already produced a run is never submitted again.
  *   2. onSuccess fires exactly once per session, with every run that was
- *      actually created, whichever way the wizard is closed.
+ *      actually created, whichever way the wizard is closed, and flags whether
+ *      the report was deferred to a close or came straight off a clean submit.
  *   3. Approve mode keys everything by run, so two pending runs on one host
  *      are both approved and both reported against that host.
  */
@@ -150,8 +151,25 @@ describe("PatchWizard partial-failure handling", () => {
 				{ hostId: "h2", runId: "run-h2", immediate: false },
 				{ hostId: "h3", runId: "run-h3", immediate: false },
 			],
+			deferred: false,
 		});
 		expect(onClose).toHaveBeenCalledTimes(1);
+	});
+
+	it("reports a clean submit as not deferred", async () => {
+		patchingAPI.trigger.mockImplementation(async (hostId) => ({
+			patch_run_id: `run-${hostId}`,
+		}));
+
+		const { onSuccess } = renderWizard(HOSTS.slice(0, 1));
+
+		await clickAndSettle(confirmButton());
+		await waitFor(() => expect(onSuccess).toHaveBeenCalledTimes(1));
+
+		expect(onSuccess).toHaveBeenCalledWith("patch", {
+			runs: [{ hostId: "h1", runId: "run-h1", immediate: false }],
+			deferred: false,
+		});
 	});
 
 	it("issues no further requests when every host has already succeeded", async () => {
@@ -188,6 +206,8 @@ describe("PatchWizard partial-failure handling", () => {
 			return handles;
 		};
 
+		// deferred: true is what stops the caller deep-linking the user into a
+		// run when all they did was close the wizard.
 		const expectReportedOnce = (onSuccess) => {
 			expect(onSuccess).toHaveBeenCalledTimes(1);
 			expect(onSuccess).toHaveBeenCalledWith("patch", {
@@ -195,6 +215,7 @@ describe("PatchWizard partial-failure handling", () => {
 					{ hostId: "h1", runId: "run-h1", immediate: false },
 					{ hostId: "h3", runId: "run-h3", immediate: false },
 				],
+				deferred: true,
 			});
 		};
 
@@ -343,6 +364,7 @@ describe("PatchWizard approve mode", () => {
 				{ hostId: "h1", runId: "run-r1", immediate: false },
 				{ hostId: "h1", runId: "run-r2", immediate: false },
 			],
+			deferred: false,
 		});
 		expect(onClose).toHaveBeenCalledTimes(1);
 	});
@@ -366,6 +388,7 @@ describe("PatchWizard approve mode", () => {
 				{ hostId: "h1", runId: "run-r2", immediate: false },
 				{ hostId: "h2", runId: "run-r3", immediate: false },
 			],
+			deferred: false,
 		});
 	});
 });

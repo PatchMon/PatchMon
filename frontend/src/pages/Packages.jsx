@@ -286,7 +286,7 @@ const Packages = () => {
 		queryClient.invalidateQueries({ queryKey: ["patching-runs"] });
 		const runs = info?.runs || [];
 		const immediate = runs.filter((r) => r.immediate);
-		if (immediate.length === 1) {
+		if (!info?.deferred && immediate.length === 1) {
 			navigate(`/patching/runs/${immediate[0].runId}`);
 			return;
 		}
@@ -1297,9 +1297,10 @@ const Packages = () => {
 									? "Submitted 1 run for approval"
 									: `Submitted ${runs.length} runs for approval`,
 							);
-							navigate("/patching?tab=runs");
+							if (!info?.deferred) navigate("/patching?tab=runs");
 							return;
 						}
+						if (info?.deferred) return;
 						const immediate = runs.filter((r) => r.immediate);
 						if (mode === "patch" && immediate.length === 1) {
 							navigate(`/patching/runs/${immediate[0].runId}`);
