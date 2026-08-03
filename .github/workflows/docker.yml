@@ -117,6 +117,30 @@ jobs:
         with:
           token: ${{ github.token }}
 
+      - name: Fetch community counts
+        id: social
+        # Bakes the current GitHub/Discord/YouTube/LinkedIn counts into the
+        # binary so the nav, login footer and setup wizard are accurate as of
+        # the release. patchmon.net/socialstats is public and unauthenticated,
+        # so this works on forks with no secrets configured.
+        #
+        # Never fails the build: an unreachable endpoint leaves the outputs
+        # empty and the server keeps its compiled-in defaults, while a
+        # deliberate 0 from the endpoint hides that number instead.
+        continue-on-error: true
+        run: |
+          for platform in github discord youtube linkedin; do
+            count="$(curl -fsS --max-time 10 --retry 2 --retry-delay 2 \
+              "https://patchmon.net/socialstats/${platform}" 2>/dev/null || true)"
+            count="$(printf '%s' "$count" | tr -dc '0-9')"
+            if [ -z "$count" ]; then
+              echo "::notice::no count for ${platform}; keeping compiled-in default"
+            else
+              echo "${platform}=${count}" >> "$GITHUB_OUTPUT"
+              echo "${platform}: ${count}"
+            fi
+          done
+
       - name: Download agent binaries
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
@@ -199,6 +223,10 @@ jobs:
           platforms: linux/amd64,linux/arm64
           build-args: |
             VERSION=${{ steps.ctx.outputs.version }}
+            GITHUB_STARS=${{ steps.social.outputs.github }}
+            DISCORD_MEMBERS=${{ steps.social.outputs.discord }}
+            YOUTUBE_SUBSCRIBERS=${{ steps.social.outputs.youtube }}
+            LINKEDIN_FOLLOWERS=${{ steps.social.outputs.linkedin }}
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -224,6 +252,10 @@ jobs:
           platforms: linux/amd64,linux/arm64
           build-args: |
             VERSION=${{ steps.ctx.outputs.version }}
+            GITHUB_STARS=${{ steps.social.outputs.github }}
+            DISCORD_MEMBERS=${{ steps.social.outputs.discord }}
+            YOUTUBE_SUBSCRIBERS=${{ steps.social.outputs.youtube }}
+            LINKEDIN_FOLLOWERS=${{ steps.social.outputs.linkedin }}
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
           tags: ${{ steps.meta-harbor.outputs.tags }}
           labels: ${{ steps.meta-harbor.outputs.labels }}

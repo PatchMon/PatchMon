@@ -96,6 +96,19 @@ ARG TARGETARCH
 # "2.0.2-60-gABC" or "dev" would report as 2.0.0 and make the instance believe
 # an update is available.
 ARG VERSION=""
+# Community counts for the nav, login footer and setup wizard, read from
+# https://patchmon.net/socialstats/<platform> by the caller and passed in the
+# same way as VERSION. The build never fetches them itself, so it stays
+# hermetic and works with no network beyond the module proxy.
+#
+# Each is an integer. Omitted means "keep the compiled-in default"; 0 means the
+# endpoint could not determine the count and the number should be hidden.
+# Anything non-numeric is dropped rather than failing the build, because a bad
+# social count is never a reason to block a release.
+ARG GITHUB_STARS=""
+ARG DISCORD_MEMBERS=""
+ARG YOUTUBE_SUBSCRIBERS=""
+ARG LINKEDIN_FOLLOWERS=""
 RUN go mod download && \
     VER="${VERSION#v}"; \
     LDFLAGS="-s -w"; \
@@ -106,6 +119,17 @@ RUN go mod download && \
     else \
       echo "ERROR: VERSION='$VER' is not MAJOR.MINOR.PATCH" >&2; exit 1; \
     fi; \
+    SOCIAL_PKG="github.com/PatchMon/PatchMon/server-source-code/internal/social"; \
+    for pair in "GitHubStars:$GITHUB_STARS" "DiscordMembers:$DISCORD_MEMBERS" \
+                "YouTubeSubscribers:$YOUTUBE_SUBSCRIBERS" "LinkedInFollowers:$LINKEDIN_FOLLOWERS"; do \
+      name="${pair%%:*}"; value="${pair#*:}"; \
+      if [ -z "$value" ]; then continue; fi; \
+      if printf '%s' "$value" | grep -qE '^[0-9]+$'; then \
+        LDFLAGS="$LDFLAGS -X $SOCIAL_PKG.$name=$value"; \
+      else \
+        echo "WARNING: ignoring non-numeric social count $name='$value'" >&2; \
+      fi; \
+    done; \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -buildvcs=false -ldflags="$LDFLAGS" -o /app/patchmon-server ./cmd/server
 
 # SSG content stage — download ComplianceAsCode datastream files at build time.
