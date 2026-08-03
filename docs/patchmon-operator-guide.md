@@ -1412,7 +1412,7 @@ This step is hidden if the server's login-settings response includes `show_newsl
 
 ### Step 5: Get in Touch
 
-The final screen lists community and support links: Discord, GitHub, documentation, and the public roadmap. Click **Access Dashboard** to finish setup.
+The final screen lists community and support links: Discord, GitHub, documentation, the feature roadmap, and bug reporting. Feature requests go to the feedback portal; bugs go to GitHub Issues. Click **Access Dashboard** to finish setup.
 
 #### What happens when you finish
 

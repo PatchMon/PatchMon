@@ -15,9 +15,25 @@ BUILD_OUT_DIR ?= $(BUILD_DIR)
 VERSION ?= $(patsubst v%,%,$(shell git describe --tags --abbrev=0 2>/dev/null))
 VERSION_PKG := github.com/PatchMon/PatchMon/server-source-code/internal/config
 VERSION_X := $(if $(strip $(VERSION)),-X $(VERSION_PKG).DefaultVersion=$(strip $(VERSION)))
-LDFLAGS := -ldflags "-s -w $(VERSION_X)"
-# Dev builds keep symbols for debugging, so they take the version flag alone.
-DEV_LDFLAGS := $(if $(VERSION_X),-ldflags "$(VERSION_X)")
+
+# Community counts shown in the nav, login footer and setup wizard. The build
+# pipeline reads them from https://patchmon.net/socialstats/<platform> and
+# passes them in; see internal/social. Deliberately not fetched here, so
+# `make build` never touches the network. Empty values are normal and make the
+# handler fall back to its compiled-in defaults.
+SOCIAL_PKG := github.com/PatchMon/PatchMon/server-source-code/internal/social
+GITHUB_STARS ?=
+DISCORD_MEMBERS ?=
+YOUTUBE_SUBSCRIBERS ?=
+LINKEDIN_FOLLOWERS ?=
+SOCIAL_X := $(if $(strip $(GITHUB_STARS)),-X $(SOCIAL_PKG).GitHubStars=$(strip $(GITHUB_STARS))) \
+	$(if $(strip $(DISCORD_MEMBERS)),-X $(SOCIAL_PKG).DiscordMembers=$(strip $(DISCORD_MEMBERS))) \
+	$(if $(strip $(YOUTUBE_SUBSCRIBERS)),-X $(SOCIAL_PKG).YouTubeSubscribers=$(strip $(YOUTUBE_SUBSCRIBERS))) \
+	$(if $(strip $(LINKEDIN_FOLLOWERS)),-X $(SOCIAL_PKG).LinkedInFollowers=$(strip $(LINKEDIN_FOLLOWERS)))
+
+LDFLAGS := -ldflags "-s -w $(VERSION_X) $(SOCIAL_X)"
+# Dev builds keep symbols for debugging, so they take the injected flags alone.
+DEV_LDFLAGS := $(if $(strip $(VERSION_X)$(SOCIAL_X)),-ldflags "$(VERSION_X) $(SOCIAL_X)")
 BUILD_FLAGS := -buildvcs=false
 GO_CMD ?= $(shell command -v go 2>/dev/null || echo go)
 GOLANGCI_LINT_CMD ?= $(shell command -v golangci-lint 2>/dev/null || echo golangci-lint)

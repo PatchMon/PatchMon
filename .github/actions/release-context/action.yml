@@ -23,7 +23,10 @@ inputs:
 
 outputs:
   version:
-    description: MAJOR.MINOR.PATCH, always valid, never with a suffix
+    description: >
+      MAJOR.MINOR.PATCH on a release tag. On branch and PR builds, the next
+      patch as a pre-release (2.0.3-rc.61) so edge sorts above the last release
+      and below the next one.
     value: ${{ steps.resolve.outputs.version }}
   is-release:
     description: '"true" when building a vX.Y.Z release tag'
@@ -57,24 +60,54 @@ runs:
           IS_RELEASE=true
           VERSION="${TAG#v}"
         else
-          # Branch or PR build. Report the last released version: it is what
-          # this tree is a descendant of, and it keeps the update checker
-          # honest. --abbrev=0 gives the bare tag, because the server parses
-          # versions as dot-separated ints and silently treats any suffix as 0,
-          # so v2.0.2-60-gABC would report as 2.0.0.
-          VERSION="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
-          if [ -z "$VERSION" ]; then
+          # Branch or PR build. Report the NEXT patch version as a pre-release:
+          # last tag v2.0.2 plus 61 commits becomes 2.0.3-rc.61.
+          #
+          # Why not just the last tag: an :edge image built from main contains
+          # post-2.0.2 code, so reporting "2.0.2" understates it and edge agents
+          # never move. Why not a bare "2.0.3": it would collide with the real
+          # release, and because the agent's update gate is a string comparison,
+          # edge hosts would keep running mid-cycle binaries after 2.0.3 shipped.
+          #
+          # A pre-release sorts strictly between the two (2.0.2 < 2.0.3-rc.61 <
+          # 2.0.3), so edge instances converge onto the release on their own.
+          # util.CompareVersions and frontend/src/utils/version.js both implement
+          # that ordering; do not reintroduce a bare suffix without them.
+          #
+          # The counter is commit distance, not github.run_number, so rebuilding
+          # the same commit yields the same version. It resets at each tag, which
+          # is safe because the core bumps at the same moment.
+          BASE_TAG="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
+          if [ -z "$BASE_TAG" ]; then
             # describe walks history to find the nearest tag, so it needs both
             # the tags and the ancestry. Fetching tags into a shallow clone is
             # not enough; unshallow first.
             git fetch --unshallow --tags --quiet origin 2>/dev/null \
               || git fetch --tags --quiet origin 2>/dev/null || true
-            VERSION="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
+            BASE_TAG="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
+          fi
+
+          if printf '%s' "$BASE_TAG" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            MAJOR="${BASE_TAG%%.*}"
+            REST="${BASE_TAG#*.}"
+            MINOR="${REST%%.*}"
+            PATCH="${REST#*.}"
+            DISTANCE="$(git rev-list --count "v${BASE_TAG}..HEAD" 2>/dev/null || echo 0)"
+            # Zero distance means we are sitting on the tagged commit without a
+            # tag ref build (e.g. a re-run of main at release time). rc.0 would
+            # be misleading, so fall back to the tag itself.
+            if [ "$DISTANCE" -eq 0 ]; then
+              VERSION="$BASE_TAG"
+            else
+              VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))-rc.${DISTANCE}"
+            fi
+          else
+            VERSION=""
           fi
         fi
 
-        if ! printf '%s' "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-          echo "::error::Could not resolve a MAJOR.MINOR.PATCH version (tag='$TAG', resolved='$VERSION')."
+        if ! printf '%s' "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+          echo "::error::Could not resolve a version (tag='$TAG', resolved='$VERSION')."
           echo "::error::Set 'fetch-depth: 0' on actions/checkout. 'fetch-tags: true' is not sufficient: it fetches the tag refs but leaves the clone shallow, so git describe has no ancestry to walk."
           exit 1
         fi
