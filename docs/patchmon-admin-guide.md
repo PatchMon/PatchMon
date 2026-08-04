@@ -672,7 +672,7 @@ Four clickable cards:
 - **Security Updates** → **Packages** filtered to this host with only security updates.
 - **Repos** → opens **Repositories** filtered to this host.
 
-Use these as quick jump-offs to the fleet-wide pages with the host pre-selected.
+Use these as quick jump-offs, with the host pre-selected. The **Packages** page you land on stays scoped to that host: its heading names the host, its own summary cards count only that host, and a **Clear filter** button widens it back out to the whole fleet.
 
 ### The Tab Strip
 
@@ -1086,17 +1086,31 @@ The Dashboard's **Outdated Packages** card and the Host Detail cards use these q
 
 ### Summary Cards
 
-Five cards at the top of the page summarise what you're looking at:
+The heading tells you what the cards are counting, and the cards always match it.
+
+Arriving without a host filter, the heading reads **Packages on all Hosts** and five cards summarise your whole fleet:
 
 | Card | Meaning | Click behaviour |
 |------|---------|-----------------|
-| **Packages** | Unique package names currently in the list | – |
+| **Packages** | Unique package names across the fleet | – |
 | **Installations** | Sum of per-host installs across all listed packages | – |
 | **Outdated Packages** | Packages with at least one host needing an update | Filters to **Packages Needing Updates** |
 | **Security Packages** | Packages with at least one host needing a security update | Filters to **Security Updates Only** |
 | **Outdated Hosts** | Distinct hosts that appear in the "needs update" side of those packages | Jumps to **Hosts** filtered to hosts needing updates |
 
-The **Packages** and **Installations** figures reflect the current filter set; the **Outdated Hosts** card jumps you out to the Hosts page rather than filtering in-place.
+Arriving with a host filter, for example by clicking **Outdated Packages** on a Host Detail page, the heading reads **Packages for <host> Host** and carries a **Clear filter** button that returns you to the fleet view. Three cards are shown, and every figure counts that host alone:
+
+| Card | Meaning | Click behaviour |
+|------|---------|-----------------|
+| **Packages** | Packages installed on this host | – |
+| **Outdated Packages** | Packages on this host needing an update | Filters to this host's packages needing updates |
+| **Security Packages** | Packages on this host needing a security update | Filters to this host's security updates |
+
+**Installations** and **Outdated Hosts** are hidden when a host filter is active. Both are fleet measures: on a single host each package is installed exactly once, so Installations would only restate Packages, and Outdated Hosts is not a per-host figure at all.
+
+The **Outdated Packages** and **Security Packages** cards keep whatever host filter is active, so clicking them narrows the list rather than resetting your scope. The **Outdated Hosts** card jumps you out to the Hosts page rather than filtering in-place.
+
+> **Note:** the fleet-wide figures come from a periodic statistics snapshot rather than a live query, so shortly after an agent reports they can trail the table by a few minutes. The host-scoped figures are read live and always agree with the list beneath them.
 
 ### The Filter Toolbar
 
@@ -1184,7 +1198,7 @@ Both flows route you into the Patching chapter. See the patch-run pages there fo
 
 ### The Outdated Packages Dashboard Card
 
-The Dashboard shows a **Outdated Packages** card near the top of the Cards layout (the actual position depends on your personal dashboard customisation). The number shown is the fleet-wide count of packages with at least one host needing an update, which is the same figure as the **Outdated Packages** card on the Packages page.
+The Dashboard shows a **Outdated Packages** card near the top of the Cards layout (the actual position depends on your personal dashboard customisation). The number shown is the fleet-wide count of packages with at least one host needing an update, which is the same figure as the **Outdated Packages** card on the Packages page when that page is not filtered to a single host.
 
 Clicking the Dashboard card navigates to `/packages?filter=outdated`, which:
 

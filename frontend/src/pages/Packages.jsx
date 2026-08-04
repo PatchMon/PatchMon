@@ -80,7 +80,7 @@ const Packages = () => {
 		}
 		return 25; // Default fallback
 	});
-	const [searchParams] = useSearchParams();
+	const [searchParams, setSearchParams] = useSearchParams();
 
 	// Debounce search for backend (avoid refetch on every keystroke)
 	const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -330,6 +330,35 @@ const Packages = () => {
 		hosts?.find((h) => h.id === hostFilter)?.friendly_name ||
 		hosts?.find((h) => h.id === hostFilter)?.hostname;
 
+	// Whether the page is scoped to a single host. Drives both the heading and
+	// which figures the summary cards are allowed to show: mixing one host's
+	// table with fleet-wide cards is what made the numbers unreadable.
+	const isHostScoped = Boolean(hostFilter && hostFilter !== "all");
+
+	// Host-scoped card figures. The fleet numbers come from a periodic
+	// system_statistics snapshot and are never host-aware, so a single host
+	// needs its own live counts.
+	const { data: scopedHost } = useQuery({
+		queryKey: ["packagesHostStats", hostFilter],
+		queryFn: () =>
+			dashboardAPI
+				.getHostDetail(hostFilter, { limit: 1 })
+				.then((res) => res.data),
+		enabled: isHostScoped,
+		staleTime: 60 * 1000,
+		refetchOnWindowFocus: false,
+	});
+
+	const clearHostFilter = () => {
+		setHostFilter("all");
+		setUpdateStatusFilter("all-packages");
+		setCategoryFilter("all");
+		const next = new URLSearchParams(searchParams);
+		next.delete("host");
+		next.delete("filter");
+		setSearchParams(next, { replace: true });
+	};
+
 	const isWindowsHostFilter =
 		hostFilter &&
 		hostFilter !== "all" &&
@@ -561,24 +590,30 @@ const Packages = () => {
 		}
 	};
 
-	// Calculate total packages installed
-	const totalPackagesCount = totalPackages;
+	// Card figures follow the heading: every number on screen describes the same
+	// scope. Host-scoped values are live per-host counts; fleet values come from
+	// the dashboard's system_statistics snapshot.
+	//
+	// Note these deliberately ignore the update-status filter. The cards are the
+	// fixed summary you navigate with, the table is the filtered view; making the
+	// summary move as you click through it is how "12" and "19" ended up side by
+	// side meaning different things.
+	const totalPackagesCount = isHostScoped
+		? (scopedHost?.stats?.total_packages ?? 0)
+		: totalPackages;
 
-	// Backend aggregate across the whole filtered set, not just this page
+	// Backend aggregate across the whole filtered set, not just this page. Only
+	// meaningful fleet-wide: on one host every package is installed exactly once,
+	// so the card would just restate Packages.
 	const totalInstallationsCount = packagesResponse?.totalInstalls ?? 0;
 
-	// Derive outdated count from packages data (same source as table, includes all OSes e.g. Windows).
-	// When filtered by security-updates, we only have security packages in the list, so use dashboard for total outdated.
-	const outdatedPackagesCount =
-		dashboardStats?.cards?.totalOutdatedPackages ??
-		packages?.filter((p) => (p.stats?.updatesNeeded || 0) > 0).length ??
-		0;
+	const outdatedPackagesCount = isHostScoped
+		? (scopedHost?.stats?.outdated_packages ?? 0)
+		: (dashboardStats?.cards?.totalOutdatedPackages ?? 0);
 
-	// Derive security count from packages when we have all or security-filtered data.
-	const securityUpdatesCount =
-		dashboardStats?.cards?.securityUpdates ??
-		packages?.filter((p) => (p.stats?.securityUpdates || 0) > 0).length ??
-		0;
+	const securityUpdatesCount = isHostScoped
+		? (scopedHost?.stats?.security_updates ?? 0)
+		: (dashboardStats?.cards?.securityUpdates ?? 0);
 
 	if (isLoading) {
 		return (
@@ -620,11 +655,28 @@ const Packages = () => {
 			{/* Page Header */}
 			<div className="flex items-center justify-between mb-6">
 				<div>
-					<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
-						Packages
-					</h1>
+					<div className="flex flex-wrap items-center gap-2 sm:gap-3">
+						<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
+							{isHostScoped
+								? `Packages for ${patchModalHostName || "this"} Host`
+								: "Packages on all Hosts"}
+						</h1>
+						{isHostScoped && (
+							<button
+								type="button"
+								onClick={clearHostFilter}
+								className="btn-outline flex items-center gap-1.5 px-3 py-1.5 min-h-[44px] sm:min-h-0 text-xs sm:text-sm"
+								title="Show packages across every host"
+							>
+								<X className="h-3.5 w-3.5" />
+								Clear filter
+							</button>
+						)}
+					</div>
 					<p className="text-sm text-secondary-600 dark:text-white mt-1">
-						Manage package updates and security patches
+						{isHostScoped
+							? "Every figure below counts this host only"
+							: "Manage package updates and security patches"}
 					</p>
 				</div>
 				<div className="flex items-center gap-3">
@@ -687,8 +739,14 @@ const Packages = () => {
 				</div>
 			</div>
 
-			{/* Summary Stats */}
-			<div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4 mb-6">
+			{/* Summary Stats. Host-scoped drops Installations (one host installs
+			    each package once, so it duplicates Packages) and Outdated Hosts
+			    (a single host is not a fleet figure). */}
+			<div
+				className={`grid grid-cols-2 gap-3 sm:gap-4 mb-6 ${
+					isHostScoped ? "sm:grid-cols-3" : "sm:grid-cols-4 lg:grid-cols-5"
+				}`}
+			>
 				<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
 					<div className="flex items-center">
 						<Package className="h-5 w-5 text-primary-600 mr-2" />
@@ -703,30 +761,35 @@ const Packages = () => {
 					</div>
 				</div>
 
-				<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
-					<div className="flex items-center">
-						<Package className="h-5 w-5 text-blue-600 mr-2" />
-						<div>
-							<p className="text-sm text-secondary-500 dark:text-white">
-								Installations
-							</p>
-							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
-								{totalInstallationsCount}
-							</p>
+				{!isHostScoped && (
+					<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
+						<div className="flex items-center">
+							<Package className="h-5 w-5 text-blue-600 mr-2" />
+							<div>
+								<p className="text-sm text-secondary-500 dark:text-white">
+									Installations
+								</p>
+								<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+									{totalInstallationsCount}
+								</p>
+							</div>
 						</div>
 					</div>
-				</div>
+				)}
 
 				<button
 					type="button"
 					onClick={() => {
 						setUpdateStatusFilter("needs-updates");
 						setCategoryFilter("all");
-						setHostFilter("all");
 						setSearchTerm("");
 					}}
 					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full"
-					title="Click to filter packages that need updates"
+					title={
+						isHostScoped
+							? "Click to filter this host's packages that need updates"
+							: "Click to filter packages that need updates"
+					}
 				>
 					<div className="flex items-center">
 						<Package className="h-5 w-5 text-warning-600 mr-2" />
@@ -746,11 +809,14 @@ const Packages = () => {
 					onClick={() => {
 						setUpdateStatusFilter("security-updates");
 						setCategoryFilter("all");
-						setHostFilter("all");
 						setSearchTerm("");
 					}}
 					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full"
-					title="Click to filter packages with security updates"
+					title={
+						isHostScoped
+							? "Click to filter this host's packages with security updates"
+							: "Click to filter packages with security updates"
+					}
 				>
 					<div className="flex items-center">
 						<Shield className="h-5 w-5 text-danger-600 mr-2" />
@@ -765,24 +831,26 @@ const Packages = () => {
 					</div>
 				</button>
 
-				<button
-					type="button"
-					onClick={() => navigate("/hosts?filter=needsUpdates")}
-					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full"
-					title="Click to view hosts that need updates"
-				>
-					<div className="flex items-center">
-						<Server className="h-5 w-5 text-warning-600 mr-2" />
-						<div>
-							<p className="text-sm text-secondary-500 dark:text-white">
-								Outdated Hosts
-							</p>
-							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
-								{dashboardStats?.cards?.hostsNeedingUpdates ?? 0}
-							</p>
+				{!isHostScoped && (
+					<button
+						type="button"
+						onClick={() => navigate("/hosts?filter=needsUpdates")}
+						className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full"
+						title="Click to view hosts that need updates"
+					>
+						<div className="flex items-center">
+							<Server className="h-5 w-5 text-warning-600 mr-2" />
+							<div>
+								<p className="text-sm text-secondary-500 dark:text-white">
+									Outdated Hosts
+								</p>
+								<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+									{dashboardStats?.cards?.hostsNeedingUpdates ?? 0}
+								</p>
+							</div>
 						</div>
-					</div>
-				</button>
+					</button>
+				)}
 			</div>
 
 			{/* Packages List */}
