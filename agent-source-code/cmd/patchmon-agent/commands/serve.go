@@ -764,23 +764,38 @@ func runInstallScanner() error {
 	sendStatus("installing", "Installing OpenSCAP packages...", nil)
 
 	if err := openscapScanner.EnsureInstalled(); err != nil {
-		logger.WithError(err).Warn("EnsureInstalled failed")
+		// Missing content is not a reason to stop. Step 3b below downloads the
+		// datastream for this OS from the server, which is the only place
+		// Ubuntu 24.04 content comes from: the archive's ssg-debderived ships
+		// 16.04 through 22.04 and nothing newer, and apt reports success for it
+		// whenever dpkg already has it registered even if the files are absent.
+		// Aborting here skipped the one step that fixes the reported problem.
+		if !errors.Is(err, compliance.ErrContentMissing) {
+			logger.WithError(err).Warn("EnsureInstalled failed")
+			events[len(events)-1] = models.InstallEvent{
+				Step:      "install_openscap",
+				Status:    "failed",
+				Message:   fmt.Sprintf("OpenSCAP installation failed: %s", err.Error()),
+				Timestamp: events[len(events)-1].Timestamp,
+			}
+			addEvent("complete", "failed", "Installation failed")
+			sendStatus("error", err.Error(), openscapScanner.GetScannerDetails())
+			return err
+		}
+		logger.WithError(err).Info("No SCAP content from packages; continuing to server sync")
 		events[len(events)-1] = models.InstallEvent{
 			Step:      "install_openscap",
-			Status:    "failed",
-			Message:   fmt.Sprintf("OpenSCAP installation failed: %s", err.Error()),
+			Status:    "done",
+			Message:   "OpenSCAP installed. No usable content from packages, syncing from server",
 			Timestamp: events[len(events)-1].Timestamp,
 		}
-		addEvent("complete", "failed", "Installation failed")
-		sendStatus("error", err.Error(), openscapScanner.GetScannerDetails())
-		return err
-	}
-
-	events[len(events)-1] = models.InstallEvent{
-		Step:      "install_openscap",
-		Status:    "done",
-		Message:   "OpenSCAP packages installed successfully",
-		Timestamp: events[len(events)-1].Timestamp,
+	} else {
+		events[len(events)-1] = models.InstallEvent{
+			Step:      "install_openscap",
+			Status:    "done",
+			Message:   "OpenSCAP packages installed successfully",
+			Timestamp: events[len(events)-1].Timestamp,
+		}
 	}
 
 	// Step 3: Verify installation and SSG content
@@ -830,6 +845,19 @@ func runInstallScanner() error {
 			Message:   syncMsg,
 			Timestamp: events[len(events)-1].Timestamp,
 		}
+	}
+
+	// The server sync is the last chance to obtain content, so this is where a
+	// content-only failure becomes terminal. Reporting success with no
+	// datastream would leave the host claiming a working scanner that cannot
+	// scan anything.
+	if !openscapScanner.IsAvailable() {
+		err := fmt.Errorf("no SCAP content available for %s %s after package install and server sync",
+			openscapScanner.GetOSInfo().Name, openscapScanner.GetOSInfo().Version)
+		logger.WithError(err).Warn("Scanner install finished without usable content")
+		addEvent("complete", "failed", err.Error())
+		sendStatus("error", err.Error(), openscapScanner.GetScannerDetails())
+		return err
 	}
 
 	// Step 4: Docker Bench (if docker enabled)

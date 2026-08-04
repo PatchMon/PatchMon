@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,6 +27,12 @@ const (
 	scapContentDir = "/usr/share/xml/scap/ssg/content"
 	osReleasePath  = "/etc/os-release"
 )
+
+// ErrContentMissing reports that the oscap binary is installed and working but
+// no SCAP datastream for this OS is on disk. It is recoverable: the PatchMon
+// server holds the authoritative content, so callers should continue to the
+// server sync instead of failing the install.
+var ErrContentMissing = errors.New("openscap is installed but no SCAP content is present for this OS")
 
 // Profile mappings for different OS families
 var profileMappings = map[string]map[string]string{
@@ -453,6 +460,16 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 	// Re-check availability after installation
 	s.checkAvailability()
 	if !s.available {
+		// Distinguish "scanner works, content absent" from a genuinely broken
+		// install. The former is recoverable and common: apt reports success
+		// for ssg-base and ssg-debderived whenever dpkg already has them
+		// registered, even if the files are gone from disk, and neither ships
+		// Ubuntu 24.04 content in the first place. The PatchMon server serves
+		// the correct datastream, so callers should carry on to the server
+		// sync rather than abandoning the install.
+		if _, lookErr := exec.LookPath(oscapBinary); lookErr == nil && s.getContentFile() == "" {
+			return ErrContentMissing
+		}
 		return fmt.Errorf("OpenSCAP installed but still not available - content files may be missing")
 	}
 
