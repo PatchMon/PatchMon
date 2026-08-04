@@ -3014,6 +3014,8 @@ Compliance scanning on a host needs OpenSCAP (`oscap` binary) installed and the 
 
 Install can be cancelled mid-flight from the same UI via `POST /api/v1/compliance/install-scanner/{hostId}/cancel`.
 
+If the status panel shows **Partial Installation**, some scanners are present and others are not. A common case is a host running Docker, where Docker Bench is ready but OpenSCAP is missing, so scans return Docker Bench results only and the scanner panel reports "No SCAP content found". The same button appears in that state, labelled **Retry install**, and installs whatever is missing.
+
 #### Upgrading SSG content on a host
 
 When the server is upgraded to a newer PatchMon version with newer bundled SSG content, existing hosts may still have older content cached locally. To force an upgrade:
@@ -3099,13 +3101,12 @@ The Never scanned card is clickable, it toggles a filter on the **Hosts** tab to
 
 #### Six charts
 
-The Overview tab grid has six charts:
+The Overview tab grid has five charts:
 
 - **Failures by Severity**: stacked doughnut of critical / high / medium / low failed rules across the fleet. Clicking a slice deep-links into the Scan Results tab filtered to that severity.
 - **OpenSCAP Distribution**: split of pass / fail rules across OpenSCAP scans.
 - **Compliance Profiles**: pie of scans by profile type (OpenSCAP vs Docker Bench). Clicking drills into the matching filter.
 - **Last Scan Age**: distribution of when hosts were last scanned (today / this week / this month / older).
-- **Compliance Trend**: placeholder today; reserved for the trends view.
 - **Host Compliance Status**: bar chart of hosts by Compliant / Warning / Critical / Never Scanned.
 
 All charts refetch every 2 minutes (or every 30 seconds when there's at least one active scan) so the dashboard stays useful for an operator who leaves the page open during a rollout.
@@ -3252,7 +3253,7 @@ Auto-remediation was introduced in 1.4.0 ("Optional auto-remediation of failed r
 
 ### Trends Over Time
 
-`GET /api/v1/compliance/trends/{hostId}?days=30` returns the host's scan history as a time series: `completed_at`, `score`, `profile_name`, `profile_type` for each scan in the window. The UI uses this to render the **Compliance Trend** panel on the Overview tab (currently a placeholder waiting for rendering updates) and to show trend lines on Compliance Host Detail.
+`GET /api/v1/compliance/trends/{hostId}?days=30` returns the host's scan history as a time series: `completed_at`, `score`, `profile_name`, `profile_type` for each scan in the window. The UI uses this to show trend lines on Compliance Host Detail.
 
 The API supports `days` between 1 and 365. Typical use is the default 30 days for day-to-day monitoring, or 365 when writing an annual compliance report.
 

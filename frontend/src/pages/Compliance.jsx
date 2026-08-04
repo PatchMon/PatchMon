@@ -39,7 +39,6 @@ import ScanHistoryTab from "../components/compliance/ScanHistoryTab";
 import ScanResultsTab from "../components/compliance/ScanResultsTab";
 import {
 	ComplianceProfilesPie,
-	ComplianceTrendLinePlaceholder,
 	FailuresBySeverityDoughnut,
 	HostComplianceStatusBar,
 	LastScanAgeBar,
@@ -1139,7 +1138,7 @@ const Compliance = () => {
 			{/* ==================== OVERVIEW TAB ==================== */}
 			{activeTab === "overview" && (
 				<>
-					{/* Compliance dashboard widgets - same 6 cards as main Dashboard */}
+					{/* Compliance dashboard widgets, mirroring the main Dashboard */}
 					<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6">
 						<FailuresBySeverityDoughnut
 							data={dashboard}
@@ -1160,7 +1159,6 @@ const Compliance = () => {
 							data={dashboard}
 							onTabChange={(tab) => setActiveTab(tab)}
 						/>
-						<ComplianceTrendLinePlaceholder />
 						<HostComplianceStatusBar
 							data={dashboard}
 							onTabChange={(tab) => setActiveTab(tab)}
