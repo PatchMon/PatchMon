@@ -1524,7 +1524,7 @@ The end-to-end flow for a single `patch_all` run is:
 3. The browser calls `POST /patching/trigger` with `patch_type=patch_all`. Because `patch_all` cannot be dry-run, the run starts in `pending_approval` if you ticked "Submit for approval", or goes straight to `queued` otherwise.
 4. The server inserts a `patch_runs` row, snapshots the effective policy onto it, and enqueues a `run_patch` task on the `patching` asynq queue. If the policy introduces a delay, asynq schedules the task for the future and the run status shows `scheduled`.
 5. When the task dequeues, the server sends a `run_patch` WebSocket message to the agent connected for that host.
-6. The agent flips the run to `running`, calls `apt-get upgrade -y` (or the equivalent for the OS), and streams stdout/stderr back over `POST /patching/runs/{id}/output` in short chunks.
+6. The agent flips the run to `running`, calls `apt-get --with-new-pkgs upgrade -y` (or the equivalent for the OS), and streams stdout/stderr back over `POST /patching/runs/{id}/output` in short chunks. On Debian and Ubuntu, `--with-new-pkgs` lets the upgrade install packages it does not already have, which is what a kernel ABI bump needs. Without it apt holds those upgrades back and they would keep reappearing as outdated after every run.
 7. The server fans each chunk out to any browsers subscribed to `GET /patching/runs/{id}/stream`, and persists the combined output to the database.
 8. On success the agent sends a final `completed` stage with the authoritative shell output. The server marks the run `completed`, emits a `patch_run_completed` notification, and flags the host as "awaiting post-patch report" so the next inventory sync can update the package status.
 9. The Run Detail page swaps the green **Live** pill for a subtle **Awaiting inventory report** pill, then for **New report received** once the agent sends its next scheduled inventory report and the system knows the on-host packages reflect reality.
@@ -1599,7 +1599,7 @@ What happens next on the server:
 - If the policy introduces a delay, the task is scheduled for the future and the run is shown as `scheduled` in Runs & History. Otherwise it goes straight to `queued`.
 - The browser deep-links into the **Run Detail** page so you can watch the live terminal.
 
-> **Note:** `patch_all` cannot be dry-run. The agent's bulk-upgrade path (`apt-get upgrade`, `dnf upgrade`, `pkg upgrade`, `pacman -Syu`) does not support a reliable simulation mode. If you want a dry-run, patch specific packages instead.
+> **Note:** `patch_all` cannot be dry-run. The agent's bulk-upgrade path (`apt-get --with-new-pkgs upgrade`, `dnf upgrade`, `pkg upgrade`, `pacman -Syu`) does not support a reliable simulation mode. If you want a dry-run, patch specific packages instead.
 
 ---
 
