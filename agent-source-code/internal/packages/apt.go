@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -376,6 +376,18 @@ func (m *APTManager) isCacheStale(maxAgeMinutes int) bool {
 	return true
 }
 
+// aptInstRe matches one "Inst" line of an apt/apt-get upgrade simulation:
+//
+//	Inst linux-generic [6.8.0-136.136] (6.8.0-137.137 Ubuntu:24.04/noble-updates [amd64]) []
+//	Inst linux-image-6.8.0-137-generic (6.8.0-137.137 Ubuntu:24.04/noble-updates [amd64])
+//
+// The [current] group is optional and its position is what identifies it. apt
+// omits it for packages being pulled in fresh (a new kernel ABI, say), and the
+// trailing architecture field is bracketed too, so scanning for "the first
+// [...] field" picks up [amd64] on those lines and reports it as the installed
+// version. Some lines also end in a bare [], which a scan happily absorbs.
+var aptInstRe = regexp.MustCompile(`^Inst\s+(\S+)\s+(?:\[([^\]]*)\]\s+)?\(([^\s)]+)`)
+
 // parseAPTUpgrade parses apt/apt-get upgrade simulation output
 func (m *APTManager) parseAPTUpgrade(output string) []models.Package {
 	var packages []models.Package
@@ -389,57 +401,28 @@ func (m *APTManager) parseAPTUpgrade(output string) []models.Package {
 			continue
 		}
 
-		// Parse the line: Inst package [current_version] (new_version source)
-		fields := slices.Collect(strings.FieldsSeq(line))
-		if len(fields) < 4 {
-			m.logger.WithField("line", line).Debug("Skipping 'Inst' line due to insufficient fields")
+		match := aptInstRe.FindStringSubmatch(line)
+		if match == nil {
+			m.logger.WithField("line", line).Debug("Skipping unparseable 'Inst' line")
+			continue
+		}
+		packageName, currentVersion, availableVersion := match[1], match[2], match[3]
+
+		// No current version means apt is installing this package rather than
+		// upgrading it, so there is nothing on the host to be out of date.
+		// Reporting it would inflate the outdated count past what
+		// `apt list --upgradable` shows.
+		if currentVersion == "" || availableVersion == "" {
 			continue
 		}
 
-		packageName := fields[1]
-
-		// Extract current version (in brackets)
-		var currentVersion string
-		for i, field := range fields {
-			if strings.HasPrefix(field, "[") && strings.HasSuffix(field, "]") {
-				currentVersion = strings.Trim(field, "[]")
-				break
-			} else if after, found := strings.CutPrefix(field, "["); found {
-				// Multi-word version, continue until we find the closing bracket
-				versionParts := []string{after}
-				for j := i + 1; j < len(fields); j++ {
-					if strings.HasSuffix(fields[j], "]") {
-						versionParts = append(versionParts, strings.TrimSuffix(fields[j], "]"))
-						break
-					}
-					versionParts = append(versionParts, fields[j])
-				}
-				currentVersion = strings.Join(versionParts, " ")
-				break
-			}
-		}
-
-		// Extract available version (in parentheses)
-		var availableVersion string
-		for _, field := range fields {
-			if after, found := strings.CutPrefix(field, "("); found {
-				availableVersion = after
-				break
-			}
-		}
-
-		// Check if it's a security update
-		isSecurityUpdate := strings.Contains(strings.ToLower(line), "security")
-
-		if packageName != "" && currentVersion != "" && availableVersion != "" {
-			packages = append(packages, models.Package{
-				Name:             packageName,
-				CurrentVersion:   currentVersion,
-				AvailableVersion: availableVersion,
-				NeedsUpdate:      true,
-				IsSecurityUpdate: isSecurityUpdate,
-			})
-		}
+		packages = append(packages, models.Package{
+			Name:             packageName,
+			CurrentVersion:   currentVersion,
+			AvailableVersion: availableVersion,
+			NeedsUpdate:      true,
+			IsSecurityUpdate: strings.Contains(strings.ToLower(line), "security"),
+		})
 	}
 
 	return packages

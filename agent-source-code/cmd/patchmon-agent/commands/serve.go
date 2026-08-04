@@ -2351,12 +2351,20 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		if patchType == "patch_all" {
 			switch pkgManager {
 			case "apt":
+				// --with-new-pkgs makes apt-get match what the collector
+				// measures. Collection runs /usr/bin/apt (see
+				// internal/packages/apt.go), whose upgrade allows new packages;
+				// bare `apt-get upgrade` does not, and keeps back anything
+				// needing one. A kernel ABI bump needs new packages, so without
+				// this flag PatchMon reports the meta-packages as outdated,
+				// applies the patch, installs nothing, and reports them as
+				// outdated again forever.
 				if dryRun {
-					if err, abort := runStep(false, "apt-get -s upgrade", "apt-get -s upgrade failed: %w", "apt-get", "-s", "upgrade"); abort {
+					if err, abort := runStep(false, "apt-get -s upgrade", "apt-get -s upgrade failed: %w", "apt-get", "-s", "--with-new-pkgs", "upgrade"); abort {
 						stepErr = err
 					}
 				} else {
-					if err, abort := runStep(false, "apt-get upgrade", "apt-get upgrade failed: %w", "apt-get", "upgrade", "-y"); abort {
+					if err, abort := runStep(false, "apt-get upgrade", "apt-get upgrade failed: %w", "apt-get", "--with-new-pkgs", "upgrade", "-y"); abort {
 						stepErr = err
 					}
 				}

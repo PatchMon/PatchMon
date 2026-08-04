@@ -11,7 +11,13 @@ import (
 	"time"
 )
 
-const agentVersionRe = `(?i)(?:PatchMon Agent v|patchmon-agent v|version )?([0-9]+\.[0-9]+\.[0-9]+)`
+// AgentVersionRe parses a version out of an agent binary's own output. The
+// pre-release group is required, not cosmetic: edge agents are stamped
+// 2.0.3-rc.61, and capturing only the numeric core reports them as "2.0.3"
+// here while the agent itself reports the full string. The server then
+// advertises a latestVersion that always outranks what the agent has, so every
+// check looks like a pending update and the agent re-downloads itself forever.
+const AgentVersionRe = `(?i)(?:PatchMon Agent v|patchmon-agent v|version )?([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)`
 
 // GetAgentsDir returns the agents binary directory from env (AGENT_BINARIES_DIR, AGENTS_DIR) or "agents".
 func GetAgentsDir() string {
@@ -59,7 +65,7 @@ func GetCurrentAgentVersionFromBinary(ctx context.Context, agentsDir string) str
 		return ""
 	}
 
-	versionRe := regexp.MustCompile(agentVersionRe)
+	versionRe := regexp.MustCompile(AgentVersionRe)
 	versionCommands := []string{"--version", "version", "--help"}
 
 	for _, cmd := range versionCommands {
@@ -80,7 +86,7 @@ func GetCurrentAgentVersionFromBinary(ctx context.Context, agentsDir string) str
 // Tries executing the binary if it matches server platform (linux/linux, freebsd/freebsd), else uses "strings".
 // Callers must pass binaryPath validated with SafePathUnderBase(baseDir, binaryName) to prevent command injection.
 func GetVersionFromBinaryPath(ctx context.Context, binaryPath string) string {
-	versionRe := regexp.MustCompile(agentVersionRe)
+	versionRe := regexp.MustCompile(AgentVersionRe)
 	serverOS := runtime.GOOS
 	binaryOS := "linux"
 	if strings.Contains(binaryPath, "freebsd") {
