@@ -433,8 +433,66 @@ func (m *Manager) saveConfigLocked() error {
 
 	configViper.Set("integrations", m.config.Integrations)
 
-	if err := configViper.WriteConfigAs(m.configFile); err != nil {
+	return writeConfigAtomically(configViper, m.configFile)
+}
+
+// writeConfigAtomically stages the config to a sibling temp file and renames it
+// over the target.
+//
+// Viper writes in place, truncating before it writes, so anyone reading the
+// file during that window sees a partial YAML document. LoadConfig ends by
+// calling saveConfigLocked, and each Manager holds its own lock, so two
+// Managers over the same path race: sendIntegrationData and
+// runScheduledComplianceScan both reload config on their own goroutines, and
+// getLatestBinaryFromServer constructs a second Manager. The observable
+// failure is a "could not find expected ':'" unmarshal error on a file that is
+// perfectly well-formed by the time you look at it.
+//
+// Rename is atomic on POSIX, so a reader sees either the whole old config or
+// the whole new one. The fsync before it means a crash mid-write cannot leave
+// the live config truncated either, which would stop the agent starting.
+func writeConfigAtomically(v *viper.Viper, path string) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".config-*.yml")
+	if err != nil {
+		return fmt.Errorf("error creating temp config file: %w", err)
+	}
+	tmpName := tmp.Name()
+	// Removing after a successful rename is a no-op; this only matters on the
+	// error paths below.
+	defer func() { _ = os.Remove(tmpName) }()
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("error closing temp config file: %w", err)
+	}
+
+	// The temp file becomes the config file, so it has to carry the config
+	// file's mode rather than CreateTemp's. config.yml is installed 0600.
+	mode := os.FileMode(0o600)
+	if info, statErr := os.Stat(path); statErr == nil {
+		mode = info.Mode().Perm()
+	}
+	if err := os.Chmod(tmpName, mode); err != nil {
+		return fmt.Errorf("error setting temp config permissions: %w", err)
+	}
+
+	if err := v.WriteConfigAs(tmpName); err != nil {
 		return fmt.Errorf("error writing config file: %w", err)
+	}
+
+	f, err := os.OpenFile(tmpName, os.O_RDWR, mode)
+	if err != nil {
+		return fmt.Errorf("error reopening temp config file: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("error syncing temp config file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("error closing temp config file: %w", err)
+	}
+
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("error replacing config file: %w", err)
 	}
 
 	return nil
