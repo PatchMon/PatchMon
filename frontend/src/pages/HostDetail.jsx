@@ -5167,9 +5167,12 @@ const HostDetail = () => {
 														<RefreshCw className="h-4 w-4" />
 														Refresh status
 													</button>
+													{/* "partial" means some scanner failed to install, which is
+													    precisely when this button is needed. Excluding it here left
+													    any host with Docker permanently stuck: OpenSCAP missing plus
+													    Docker Bench ready resolves to "partial", and the only way to
+													    install OpenSCAP was hidden by that same status. */}
 													{complianceSetupStatus?.status?.status !== "ready" &&
-														complianceSetupStatus?.status?.status !==
-															"partial" &&
 														wsStatus?.connected &&
 														(complianceInstallJob?.status !== "active" &&
 														complianceInstallJob?.status !== "waiting" ? (
@@ -5185,7 +5188,10 @@ const HostDetail = () => {
 															>
 																{installComplianceScannerMutation.isPending
 																	? "Starting…"
-																	: "Install scanner"}
+																	: complianceSetupStatus?.status?.status ===
+																			"partial"
+																		? "Retry install"
+																		: "Install scanner"}
 															</button>
 														) : (
 															<button
