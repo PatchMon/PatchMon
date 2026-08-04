@@ -484,8 +484,28 @@ func (h *IntegrationsHandler) ReceiveIntegrationStatus(w http.ResponseWriter, r 
 	if statusData["components"] == nil {
 		statusData["components"] = map[string]interface{}{}
 	}
-	if statusData["install_events"] == nil {
+
+	// Two agent callers write this blob. runInstallScanner reports per-step
+	// install progress and carries install_events; reportIntegrationStatus
+	// reports overall availability and never sets the field, which omitempty
+	// then drops from the payload. Because this handler replaces the stored
+	// value wholesale, the second caller used to erase the first caller's
+	// progress. The compliance panel polls request-status while an install
+	// runs, which triggers exactly that caller, so watching the progress bar
+	// was what wiped it: every step stayed on "Waiting..." to the end.
+	//
+	// A nil slice means the key was absent from the JSON, so keep what is
+	// already stored. An explicitly empty array still clears, which is how a
+	// caller signals "no events".
+	if payload.InstallEvents == nil {
 		statusData["install_events"] = []interface{}{}
+		if h.integrationStatus != nil {
+			if prev, err := h.integrationStatus.Get(r.Context(), apiID, payload.Integration); err == nil && prev != nil {
+				if prevEvents, ok := prev["install_events"]; ok && prevEvents != nil {
+					statusData["install_events"] = prevEvents
+				}
+			}
+		}
 	}
 
 	if h.integrationStatus != nil {
