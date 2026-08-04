@@ -47,7 +47,7 @@ app.use(
 	cors({
 		origin:
 			process.env.CORS_ORIGIN ||
-			(process.env.NODE_ENV === "production" ? false : "*"),
+			(process.env.NODE_ENV === "production" ? false : "http://localhost:3000"),
 		credentials: true,
 	}),
 );
