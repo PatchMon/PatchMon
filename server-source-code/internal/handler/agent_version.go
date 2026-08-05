@@ -138,18 +138,14 @@ func (h *AgentVersionHandler) GetVersionInfo(w http.ResponseWriter, r *http.Requ
 	}
 
 	resp := map[string]interface{}{
-		"currentVersion":  h.currentVersion,
-		"latestVersion":   latestVersion,
-		"upstreamVersion": h.upstreamVersion,
-		"hasUpdate":       hasUpdate,
-		"updateStatus":    updateStatus,
-		"lastChecked":     h.lastChecked,
-		"supportedArchitectures": []string{
-			"linux-amd64", "linux-arm64", "linux-386", "linux-arm",
-			"freebsd-amd64", "freebsd-arm64", "freebsd-386", "freebsd-arm",
-			"windows-amd64", "windows-arm64",
-		},
-		"status": "ready",
+		"currentVersion":         h.currentVersion,
+		"latestVersion":          latestVersion,
+		"upstreamVersion":        h.upstreamVersion,
+		"hasUpdate":              hasUpdate,
+		"updateStatus":           updateStatus,
+		"lastChecked":            h.lastChecked,
+		"supportedArchitectures": util.SupportedAgentTargets(),
+		"status":                 "ready",
 	}
 	if latestVersion == "" {
 		resp["status"] = "no-version"
@@ -191,25 +187,13 @@ func (h *AgentVersionHandler) ServeAgentDownload(w http.ResponseWriter, r *http.
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid os. Must be one of: linux, freebsd, windows"})
 		return
 	}
-	validArchLinux := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
-	validArchFreebsd := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
-	validArchWindows := map[string]bool{"amd64": true, "arm64": true}
-	var validArch map[string]bool
-	switch osParam {
-	case "freebsd":
-		validArch = validArchFreebsd
-	case "windows":
-		validArch = validArchWindows
-	default:
-		validArch = validArchLinux
-	}
-	if !validArch[architecture] {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid architecture for " + osParam})
+	binaryName, supported := util.AgentBinaryName(osParam, architecture)
+	if !supported {
+		JSON(w, http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("Invalid architecture for %s. Must be one of: %s",
+				osParam, strings.Join(util.SupportedAgentArches(osParam), ", ")),
+		})
 		return
-	}
-	binaryName := fmt.Sprintf("patchmon-agent-%s-%s", osParam, architecture)
-	if osParam == "windows" {
-		binaryName = binaryName + ".exe"
 	}
 	binaryPath, err := util.SafePathUnderBase(h.agentsDir, binaryName)
 	if err != nil {

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -46,6 +48,90 @@ func TestAgentVersionRe_CapturesPreRelease(t *testing.T) {
 				t.Errorf("parsed %q from %q, want %q", m[1], tt.output, tt.want)
 			}
 		})
+	}
+}
+
+// Request values must only ever be a lookup key, never part of the path that
+// gets opened, so no traversal attempt can reach a file operation.
+func TestAgentBinaryName(t *testing.T) {
+	tests := []struct {
+		osParam string
+		arch    string
+		want    string
+	}{
+		{"linux", "amd64", "patchmon-agent-linux-amd64"},
+		{"linux", "arm64", "patchmon-agent-linux-arm64"},
+		{"linux", "arm", "patchmon-agent-linux-arm"},
+		{"linux", "386", "patchmon-agent-linux-386"},
+		{"freebsd", "arm64", "patchmon-agent-freebsd-arm64"},
+		{"windows", "amd64", "patchmon-agent-windows-amd64.exe"},
+		{"windows", "arm64", "patchmon-agent-windows-arm64.exe"},
+		{"windows", "386", ""},
+		{"darwin", "amd64", ""},
+		{"linux", "../../etc/passwd", ""},
+		{"linux", "amd64/../../../etc/passwd", ""},
+		{"../../etc", "passwd", ""},
+		{"linux", "", ""},
+		{"", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.osParam+"/"+tt.arch, func(t *testing.T) {
+			got, ok := AgentBinaryName(tt.osParam, tt.arch)
+			if tt.want == "" {
+				if ok || got != "" {
+					t.Errorf("AgentBinaryName(%q, %q) = %q, %v; want unsupported", tt.osParam, tt.arch, got, ok)
+				}
+				return
+			}
+			if !ok || got != tt.want {
+				t.Errorf("AgentBinaryName(%q, %q) = %q, %v; want %q, true", tt.osParam, tt.arch, got, ok, tt.want)
+			}
+		})
+	}
+}
+
+func TestSupportedAgentArches(t *testing.T) {
+	tests := []struct {
+		osParam string
+		want    []string
+	}{
+		{"linux", []string{"386", "amd64", "arm", "arm64"}},
+		{"freebsd", []string{"386", "amd64", "arm", "arm64"}},
+		{"windows", []string{"amd64", "arm64"}},
+		{"darwin", []string{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.osParam, func(t *testing.T) {
+			got := SupportedAgentArches(tt.osParam)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("SupportedAgentArches(%q) = %v, want %v", tt.osParam, got, tt.want)
+			}
+		})
+	}
+}
+
+// The frontend splits each entry on the hyphen to build a download request, so
+// every target must resolve back to a binary the server can actually serve.
+func TestSupportedAgentTargets(t *testing.T) {
+	targets := SupportedAgentTargets()
+	if len(targets) != len(agentBinaryNames) {
+		t.Fatalf("got %d targets, want %d", len(targets), len(agentBinaryNames))
+	}
+	if !slices.IsSorted(targets) {
+		t.Errorf("targets are not sorted: %v", targets)
+	}
+
+	for _, target := range targets {
+		osParam, arch, found := strings.Cut(target, "-")
+		if !found {
+			t.Errorf("target %q has no hyphen for the frontend to split on", target)
+			continue
+		}
+		if _, ok := AgentBinaryName(osParam, arch); !ok {
+			t.Errorf("target %q does not resolve to a servable binary", target)
+		}
 	}
 }
 

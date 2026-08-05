@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,53 @@ var (
 // agentBinaryCacheTTL bounds how long a cached result can outlive an in-place
 // replacement that preserved both mtime and size.
 const agentBinaryCacheTTL = 60 * time.Second
+
+// agentBinaryNames maps a supported os/arch pair to the binary's name on disk.
+// Request values are only ever used as a lookup key here, never interpolated
+// into a path, so nothing derived from a request can reach a file operation.
+var agentBinaryNames = map[string]string{
+	"linux/amd64":   "patchmon-agent-linux-amd64",
+	"linux/386":     "patchmon-agent-linux-386",
+	"linux/arm64":   "patchmon-agent-linux-arm64",
+	"linux/arm":     "patchmon-agent-linux-arm",
+	"freebsd/amd64": "patchmon-agent-freebsd-amd64",
+	"freebsd/386":   "patchmon-agent-freebsd-386",
+	"freebsd/arm64": "patchmon-agent-freebsd-arm64",
+	"freebsd/arm":   "patchmon-agent-freebsd-arm",
+	"windows/amd64": "patchmon-agent-windows-amd64.exe",
+	"windows/arm64": "patchmon-agent-windows-arm64.exe",
+}
+
+// AgentBinaryName returns the on-disk binary name for an os/arch pair, and
+// whether that pair is supported. The returned name is a constant.
+func AgentBinaryName(osParam, arch string) (string, bool) {
+	name, ok := agentBinaryNames[osParam+"/"+arch]
+	return name, ok
+}
+
+// SupportedAgentTargets lists every os-arch pair the server can serve, sorted.
+// The frontend splits these on the hyphen to build a download request.
+func SupportedAgentTargets() []string {
+	targets := make([]string, 0, len(agentBinaryNames))
+	for key := range agentBinaryNames {
+		targets = append(targets, strings.ReplaceAll(key, "/", "-"))
+	}
+	slices.Sort(targets)
+	return targets
+}
+
+// SupportedAgentArches lists the architectures available for an OS, sorted.
+func SupportedAgentArches(osParam string) []string {
+	prefix := osParam + "/"
+	arches := make([]string, 0, len(agentBinaryNames))
+	for key := range agentBinaryNames {
+		if strings.HasPrefix(key, prefix) {
+			arches = append(arches, strings.TrimPrefix(key, prefix))
+		}
+	}
+	slices.Sort(arches)
+	return arches
+}
 
 // AgentBinaryInfo is the derived metadata for one agent binary on disk.
 type AgentBinaryInfo struct {
