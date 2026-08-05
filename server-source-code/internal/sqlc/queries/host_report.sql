@@ -83,17 +83,28 @@ FROM packages WHERE name = $1;
 --
 -- The DO UPDATE WHERE clause skips no-op updates: when the agent reports the
 -- same description/category/latest_version that's already stored, no row
--- update happens, no dead tuple is created, and no FOR NO KEY UPDATE row
--- lock is taken. Steady-state production workloads with mostly-stable package
--- catalogues see ~95% of upsert calls become no-ops, drastically reducing
--- WAL volume, vacuum pressure, AND the lock-conflict surface that produced
--- the deadlocks.
+-- update happens and no dead tuple is created. Steady-state production
+-- workloads with mostly-stable package catalogues see ~95% of upsert calls
+-- become no-ops, drastically reducing WAL volume and vacuum pressure.
+--
+-- It does NOT avoid the row lock: the ON CONFLICT arbiter takes its
+-- FOR NO KEY UPDATE lock on the conflicting tuple BEFORE evaluating this
+-- WHERE, and holds it to end of transaction whether or not the update
+-- fires. Deadlock freedom comes from the sorted lock acquisition above, not
+-- from this clause.
 --
 -- The UNION ALL fallback returns (id, name) for input rows that did NOT fire
--- DO UPDATE (i.e. the values are unchanged), so the caller's name → id map
--- is complete regardless of whether each row was newly inserted, updated, or
--- left unchanged. This is required: BulkInsertHostPackages depends on
--- knowing the package_id for every input package.
+-- DO UPDATE (i.e. the values are unchanged), covering the single-threaded
+-- case where every input name resolves to an id.
+--
+-- It is NOT complete under concurrency. The ON CONFLICT arbiter re-reads the
+-- conflicting row outside the statement snapshot, so it can see a row another
+-- transaction committed after this statement began; if that row's values are
+-- identical the skip-no-op WHERE suppresses RETURNING, while the fallback
+-- SELECT still reads `packages` at the (older) statement snapshot and cannot
+-- see the row either. That name is then absent from the result. The caller
+-- MUST detect missing names and resolve them with GetPackageIDsByNames, which
+-- runs as a separate statement and therefore takes a fresh snapshot.
 --
 -- The DO UPDATE intentionally touches only NON-KEY columns
 -- (description / category / latest_version / updated_at). The row lock taken
@@ -129,6 +140,19 @@ FROM packages p
 JOIN jsonb_to_recordset(sqlc.arg('payload')::jsonb)
     AS i(name text) USING (name)
 WHERE NOT EXISTS (SELECT 1 FROM upserted u WHERE u.name = i.name);
+
+-- name: GetPackageIDsByNames :many
+-- Off-fast-path resolver for names BulkUpsertPackages could not return (see
+-- the concurrency note there). Issued as its own statement so it reads at a
+-- fresh snapshot and observes rows committed by concurrent reports. Takes no
+-- row locks. The caller only runs this when a name is actually missing.
+--
+-- REQUIRES READ COMMITTED. Only under READ COMMITTED does a new statement take
+-- a new snapshot; at REPEATABLE READ or SERIALIZABLE this reuses the
+-- transaction snapshot, resolves nothing, and the race it exists to close
+-- silently returns. The pool sets no TxOptions, so the server default applies
+-- — do not raise it without revisiting this.
+SELECT id, name FROM packages WHERE name = ANY(sqlc.arg('names')::text[]);
 
 -- name: BulkInsertHostPackages :exec
 -- Bulk insert N host_packages rows in a single statement. Replaces the legacy

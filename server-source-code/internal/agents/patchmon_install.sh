@@ -647,7 +647,8 @@ curl $CURL_FLAGS \
 chmod +x /usr/local/bin/patchmon-agent
 
 # Get the agent version from the binary
-AGENT_VERSION=$(/usr/local/bin/patchmon-agent version 2>/dev/null || echo "Unknown")
+AGENT_VERSION=$(/usr/local/bin/patchmon-agent --version 2>/dev/null | awk '{print $NF}')
+[ -n "$AGENT_VERSION" ] || AGENT_VERSION="Unknown"
 info "Agent version: $AGENT_VERSION"
 
 # Handle existing log files and create log directory

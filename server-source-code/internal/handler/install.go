@@ -3,8 +3,6 @@ package handler
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -947,33 +945,15 @@ func (h *InstallHandler) ServeAgentVersion(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	validArchLinux := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
-	validArchFreebsd := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
-	validArchWindows := map[string]bool{"amd64": true, "arm64": true}
-	var validArch map[string]bool
-	var archList string
-	switch osParam {
-	case "freebsd":
-		validArch = validArchFreebsd
-		archList = "amd64, 386, arm64, arm"
-	case "windows":
-		validArch = validArchWindows
-		archList = "amd64, 386"
-	default:
-		validArch = validArchLinux
-		archList = "amd64, 386, arm64, arm"
-	}
-	if !validArch[architecture] {
+	binaryName, supported := util.AgentBinaryName(osParam, architecture)
+	if !supported {
 		JSON(w, http.StatusBadRequest, map[string]string{
-			"error": fmt.Sprintf("Invalid architecture for %s. Must be one of: %s", osParam, archList),
+			"error": fmt.Sprintf("Invalid architecture for %s. Must be one of: %s",
+				osParam, strings.Join(util.SupportedAgentArches(osParam), ", ")),
 		})
 		return
 	}
 
-	binaryName := fmt.Sprintf("patchmon-agent-%s-%s", osParam, architecture)
-	if osParam == "windows" {
-		binaryName = binaryName + ".exe"
-	}
 	binDir := util.GetAgentsDir()
 	binaryPath, err := util.SafePathUnderBase(binDir, binaryName)
 	if err != nil {
@@ -1013,7 +993,11 @@ func (h *InstallHandler) ServeAgentVersion(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	serverVersion := util.GetVersionFromBinaryPath(r.Context(), binaryPath)
+	binaryInfo, err := util.GetAgentBinaryInfo(r.Context(), binaryPath)
+	if err != nil {
+		slog.Error("failed to read agent binary", "path", binaryPath, "error", err)
+	}
+	serverVersion := binaryInfo.Version
 	if serverVersion == "" {
 		agentVersion := r.URL.Query().Get("currentVersion")
 		if agentVersion == "" {
@@ -1044,12 +1028,6 @@ func (h *InstallHandler) ServeAgentVersion(w http.ResponseWriter, r *http.Reques
 		hasUpdate = false
 	}
 
-	var binaryHash string
-	if data, err := os.ReadFile(binaryPath); err == nil {
-		sum := sha256.Sum256(data)
-		binaryHash = hex.EncodeToString(sum[:])
-	}
-
 	downloadURL := fmt.Sprintf("/api/v1/hosts/agent/download?arch=%s&os=%s", architecture, osParam)
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"currentVersion":           agentVersion,
@@ -1062,7 +1040,7 @@ func (h *InstallHandler) ServeAgentVersion(w http.ResponseWriter, r *http.Reques
 		"minServerVersion":         nil,
 		"architecture":             architecture,
 		"agentType":                "go",
-		"hash":                     binaryHash,
+		"hash":                     binaryInfo.Hash,
 	})
 }
 
@@ -1131,32 +1109,13 @@ func (h *InstallHandler) ServeAgentDownload(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	validArchLinux := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
-	validArchFreebsd := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
-	validArchWindows := map[string]bool{"amd64": true, "arm64": true}
-	var validArch map[string]bool
-	var archList string
-	switch osParam {
-	case "freebsd":
-		validArch = validArchFreebsd
-		archList = "amd64, 386, arm64, arm"
-	case "windows":
-		validArch = validArchWindows
-		archList = "amd64, 386"
-	default:
-		validArch = validArchLinux
-		archList = "amd64, 386, arm64, arm"
-	}
-	if !validArch[architecture] {
+	binaryName, supported := util.AgentBinaryName(osParam, architecture)
+	if !supported {
 		JSON(w, http.StatusBadRequest, map[string]string{
-			"error": fmt.Sprintf("Invalid architecture for %s. Must be one of: %s", osParam, archList),
+			"error": fmt.Sprintf("Invalid architecture for %s. Must be one of: %s",
+				osParam, strings.Join(util.SupportedAgentArches(osParam), ", ")),
 		})
 		return
-	}
-
-	binaryName := fmt.Sprintf("patchmon-agent-%s-%s", osParam, architecture)
-	if osParam == "windows" {
-		binaryName = binaryName + ".exe"
 	}
 
 	// Resolve binary directory: AGENT_BINARIES_DIR, then AGENTS_DIR, then "agents" in cwd

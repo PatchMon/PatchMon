@@ -12,8 +12,14 @@ AGENTS_DOCKER=../docker/compose_dev_data/agents
 # dot-separated ints and silently treats any suffix as 0.
 #
 # Override to test the update path deliberately:  make build VERSION=2.0.1
+#
+# A build with no -X at all is worse than a wrong version: the server reads the
+# version out of the binary's build info, and a binary that declares none is
+# refused outright, so those agents can never update. Fall back to a marker
+# version rather than shipping one that is silently unstamped.
 VERSION ?= $(patsubst v%,%,$(shell git describe --tags --abbrev=0 2>/dev/null))
-VERSION_X = $(if $(strip $(VERSION)),-X patchmon-agent/internal/pkgversion.Version=$(strip $(VERSION)))
+VERSION_RESOLVED = $(if $(strip $(VERSION)),$(strip $(VERSION)),0.0.0-dev)
+VERSION_X = -X patchmon-agent/internal/pkgversion.Version=$(VERSION_RESOLVED)
 # Strip debug info; inject the version resolved above.
 LDFLAGS=-ldflags "-s -w $(VERSION_X)"
 # Disable VCS stamping
