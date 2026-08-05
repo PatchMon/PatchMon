@@ -3400,19 +3400,19 @@ Downloads the latest agent binary from the PatchMon server and performs an in-pl
 
 ---
 
-#### `version`: Print Version
+#### `--version`: Print Version
 
 ```bash
-patchmon-agent version
-# or
 patchmon-agent --version
 ```
 
 Prints the agent version:
 
 ```
-PatchMon Agent v1.5.0
+patchmon-agent version 2.0.2
 ```
+
+There is no `version` subcommand. `patchmon-agent version` returns `Error: unknown command "version"`.
 
 This does not require root access.
 
@@ -4203,7 +4203,7 @@ sudo journalctl -u patchmon-agent --since "30 minutes ago" --no-pager
 
 ```bash
 # Check current version
-patchmon-agent version
+patchmon-agent --version
 
 # Check if update is available
 sudo patchmon-agent check-version
@@ -6039,7 +6039,7 @@ The agent log contains `update failed`, `hash mismatch`, `binary verification fa
 **Diagnose:**
 
 ```bash
-sudo patchmon-agent version
+sudo patchmon-agent --version
 sudo patchmon-agent check-version
 ls -la /etc/patchmon/.last_update_timestamp
 ls -la /usr/local/bin/patchmon-agent.backup.*
@@ -6186,7 +6186,7 @@ sudo journalctl -u patchmon-agent --since "1 hour ago" --no-pager \
 sudo tail -n 200 /etc/patchmon/logs/patchmon-agent.log \
   > /tmp/patchmon-log.txt 2>&1
 sudo patchmon-agent config show > /tmp/patchmon-config.txt 2>&1
-sudo patchmon-agent version >> /tmp/patchmon-config.txt
+sudo patchmon-agent --version >> /tmp/patchmon-config.txt
 uname -a >> /tmp/patchmon-config.txt
 ```
 

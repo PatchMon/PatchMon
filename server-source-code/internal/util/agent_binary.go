@@ -2,22 +2,53 @@ package util
 
 import (
 	"context"
+	"crypto/sha256"
+	"debug/buildinfo"
+	"encoding/hex"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
-// AgentVersionRe parses a version out of an agent binary's own output. The
-// pre-release group is required, not cosmetic: edge agents are stamped
-// 2.0.3-rc.61, and capturing only the numeric core reports them as "2.0.3"
-// here while the agent itself reports the full string. The server then
-// advertises a latestVersion that always outranks what the agent has, so every
-// check looks like a pending update and the agent re-downloads itself forever.
+// AgentVersionRe parses a version out of an agent binary's own output. Dropping
+// the pre-release group makes the server advertise 2.0.3 to an agent reporting
+// 2.0.3-rc.61, which then re-downloads itself on every check.
 const AgentVersionRe = `(?i)(?:PatchMon Agent v|patchmon-agent v|version )?([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)`
+
+var (
+	agentVersionRe = regexp.MustCompile(AgentVersionRe)
+	// The -X value every build path stamps in, as recorded in the binary's build info.
+	ldflagsVersionRe = regexp.MustCompile(`pkgversion\.Version=v?([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)`)
+	moduleVersionRe  = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$`)
+)
+
+// agentBinaryCacheTTL bounds how long a cached result can outlive an in-place
+// replacement that preserved both mtime and size.
+const agentBinaryCacheTTL = 60 * time.Second
+
+// AgentBinaryInfo is the derived metadata for one agent binary on disk.
+type AgentBinaryInfo struct {
+	Version string
+	Hash    string // hex-encoded SHA-256 of the binary
+}
+
+type agentBinaryCacheEntry struct {
+	info    AgentBinaryInfo
+	modTime time.Time
+	size    int64
+	readAt  time.Time
+}
+
+// agentBinaryCache keys derived metadata by path. ServeAgentVersion is called by
+// every agent on every report, and each call otherwise re-hashes ~11MB.
+var agentBinaryCache sync.Map
 
 // GetAgentsDir returns the agents binary directory from env (AGENT_BINARIES_DIR, AGENTS_DIR) or "agents".
 func GetAgentsDir() string {
@@ -44,81 +75,147 @@ func getServerGoArch() string {
 	return runtime.GOARCH
 }
 
-// GetCurrentAgentVersionFromBinary finds the Linux agent binary for server arch, executes it, and returns the version.
-// Returns empty string if binary not found or version cannot be parsed.
+// GetCurrentAgentVersionFromBinary finds the Linux agent binary for server arch and returns its version.
+// Returns empty string if the binary is missing or its version cannot be determined.
 func GetCurrentAgentVersionFromBinary(ctx context.Context, agentsDir string) string {
-	serverGoArch := getServerGoArch()
-	possiblePaths := []string{
-		filepath.Join(agentsDir, "patchmon-agent-linux-"+serverGoArch),
-		filepath.Join(agentsDir, "patchmon-agent-linux-amd64"),
-		filepath.Join(agentsDir, "patchmon-agent"),
+	candidates := []string{
+		"patchmon-agent-linux-" + getServerGoArch(),
+		"patchmon-agent-linux-amd64",
+		"patchmon-agent",
 	}
 
-	var agentPath string
-	for _, p := range possiblePaths {
-		if _, err := os.Stat(p); err == nil {
-			agentPath = p
-			break
-		}
-	}
-	if agentPath == "" {
-		return ""
-	}
-
-	versionRe := regexp.MustCompile(AgentVersionRe)
-	versionCommands := []string{"--version", "version", "--help"}
-
-	for _, cmd := range versionCommands {
-		runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		out, err := exec.CommandContext(runCtx, agentPath, cmd).CombinedOutput()
-		cancel()
+	for _, name := range candidates {
+		path, err := SafePathUnderBase(agentsDir, name)
 		if err != nil {
 			continue
 		}
-		if m := versionRe.FindStringSubmatch(string(out)); len(m) >= 2 {
-			return m[1]
+		if _, err := os.Stat(path); err != nil {
+			continue
 		}
+		return GetVersionFromBinaryPath(ctx, path)
 	}
 	return ""
 }
 
-// GetVersionFromBinaryPath gets version from a binary at the given path.
-// Tries executing the binary if it matches server platform (linux/linux, freebsd/freebsd), else uses "strings".
-// Callers must pass binaryPath validated with SafePathUnderBase(baseDir, binaryName) to prevent command injection.
+// GetVersionFromBinaryPath returns the version of the agent binary at the given path,
+// or "" if it cannot be determined. Callers must pass binaryPath validated with
+// SafePathUnderBase(baseDir, binaryName) to prevent command injection.
 func GetVersionFromBinaryPath(ctx context.Context, binaryPath string) string {
-	versionRe := regexp.MustCompile(AgentVersionRe)
-	serverOS := runtime.GOOS
-	binaryOS := "linux"
-	if strings.Contains(binaryPath, "freebsd") {
-		binaryOS = "freebsd"
-	} else if strings.Contains(binaryPath, "windows") || strings.HasSuffix(binaryPath, ".exe") {
-		binaryOS = "windows"
-	}
-
-	// Try exec if same platform (Windows .exe cannot be executed on Linux)
-	if (serverOS == "linux" && binaryOS == "linux") || (serverOS == "freebsd" && binaryOS == "freebsd") {
-		for _, cmd := range []string{"--version", "version", "--help"} {
-			runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			out, err := exec.CommandContext(runCtx, binaryPath, cmd).CombinedOutput()
-			cancel()
-			if err != nil {
-				continue
-			}
-			if m := versionRe.FindStringSubmatch(string(out)); len(m) >= 2 {
-				return m[1]
-			}
-		}
-	}
-
-	// Fallback: use "strings" command (cross-platform)
-	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	out, err := exec.CommandContext(runCtx, "strings", binaryPath).CombinedOutput()
-	cancel()
+	info, err := GetAgentBinaryInfo(ctx, binaryPath)
 	if err != nil {
 		return ""
 	}
-	if m := versionRe.FindStringSubmatch(string(out)); len(m) >= 2 {
-		return m[1]
+	return info.Version
+}
+
+// GetAgentBinaryInfo returns the version and SHA-256 of the agent binary at the
+// given path, cached until the file changes or the TTL lapses. An undeterminable
+// version comes back empty rather than guessed: a wrong version here silently
+// disables agent auto-update for every host on that platform.
+// Callers must pass binaryPath validated with SafePathUnderBase(baseDir, binaryName).
+func GetAgentBinaryInfo(ctx context.Context, binaryPath string) (AgentBinaryInfo, error) {
+	// One handle for both the hash and the build info, so a binary replaced
+	// mid-read cannot produce a version and hash from different files.
+	f, err := os.Open(binaryPath)
+	if err != nil {
+		return AgentBinaryInfo{}, err
+	}
+	defer func() { _ = f.Close() }()
+
+	stat, err := f.Stat()
+	if err != nil {
+		return AgentBinaryInfo{}, err
+	}
+	if !stat.Mode().IsRegular() {
+		return AgentBinaryInfo{}, fmt.Errorf("not a regular file: %s", binaryPath)
+	}
+
+	if cached, ok := agentBinaryCache.Load(binaryPath); ok {
+		if entry, ok := cached.(agentBinaryCacheEntry); ok &&
+			entry.modTime.Equal(stat.ModTime()) &&
+			entry.size == stat.Size() &&
+			time.Since(entry.readAt) < agentBinaryCacheTTL {
+			return entry.info, nil
+		}
+	}
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, f); err != nil {
+		return AgentBinaryInfo{}, err
+	}
+
+	version := versionFromBuildInfo(f)
+	if version == "" {
+		version = versionFromExec(ctx, binaryPath)
+	}
+
+	info := AgentBinaryInfo{Version: version, Hash: hex.EncodeToString(hash.Sum(nil))}
+	agentBinaryCache.Store(binaryPath, agentBinaryCacheEntry{
+		info:    info,
+		modTime: stat.ModTime(),
+		size:    stat.Size(),
+		readAt:  time.Now(),
+	})
+
+	return info, nil
+}
+
+// versionFromBuildInfo reads the version from the binary's embedded Go build
+// info, which works across GOOS/GOARCH without executing anything. The recover
+// guards the debug/elf, debug/pe and debug/macho parsers underneath, since one
+// caller is a background queue worker rather than an HTTP handler.
+func versionFromBuildInfo(r io.ReaderAt) (version string) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			version = ""
+		}
+	}()
+
+	bi, err := buildinfo.Read(r)
+	if err != nil {
+		return ""
+	}
+	for _, setting := range bi.Settings {
+		if setting.Key != "-ldflags" {
+			continue
+		}
+		if m := ldflagsVersionRe.FindStringSubmatch(setting.Value); len(m) >= 2 {
+			return m[1]
+		}
+	}
+	// Tagged module builds carry the version without any -X flag.
+	if v := strings.TrimPrefix(bi.Main.Version, "v"); moduleVersionRe.MatchString(v) {
+		return v
+	}
+	return ""
+}
+
+// versionFromExec runs the binary to ask it, which is only possible when the
+// binary matches the server platform. Fallback for builds with no usable build info.
+func versionFromExec(ctx context.Context, binaryPath string) string {
+	name := filepath.Base(binaryPath)
+	binaryOS := "linux"
+	switch {
+	case strings.Contains(name, "freebsd"):
+		binaryOS = "freebsd"
+	case strings.Contains(name, "windows"), strings.HasSuffix(name, ".exe"):
+		binaryOS = "windows"
+	}
+	if runtime.GOOS != binaryOS {
+		return ""
+	}
+
+	// There is no "version" subcommand, only cobra's --version flag.
+	for _, arg := range []string{"--version", "--help"} {
+		runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		out, err := exec.CommandContext(runCtx, binaryPath, arg).CombinedOutput()
+		cancel()
+		if err != nil {
+			continue
+		}
+		if m := agentVersionRe.FindStringSubmatch(string(out)); len(m) >= 2 {
+			return m[1]
+		}
 	}
 	return ""
 }
