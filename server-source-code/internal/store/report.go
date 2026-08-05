@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // ExtractIPFromInterface extracts the first inet (IPv4) address from the named interface in networkInterfaces JSON.
@@ -605,7 +607,7 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 			// producing duplicate (url, distribution, components) rows — and
 			// also cost an extra network round-trip per repository.
 			desc := repoData.RepoType + " repository for " + repoData.Distribution
-			repoID, err := q.UpsertRepository(ctx, db.UpsertRepositoryParams{
+			repoID, err := upsertRepositoryResolvingID(ctx, q, db.UpsertRepositoryParams{
 				ID:           uuid.New().String(),
 				Name:         repoData.Name,
 				Url:          repoData.URL,
@@ -672,15 +674,28 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 		// Map name -> package ID for host_packages assembly. With the
 		// no-op-skip WHERE on BulkUpsertPackages, RETURNING only emits rows
 		// that actually fired DO UPDATE; the UNION ALL fallback returns
-		// (id, name) for rows whose values were unchanged. Either way we
-		// get exactly one (id, name) pair per distinct input name.
+		// (id, name) for rows whose values were unchanged.
 		// payload.Packages is deduped above so len(upserted) == len(packages).
 		nameToID := make(map[string]string, len(upserted))
 		for _, row := range upserted {
 			nameToID[row.Name] = row.ID
 		}
+		// Neither half of that statement can see a row a concurrent report
+		// committed after the statement's snapshot was taken, so a brand new
+		// package name reported by two hosts at once can come back missing.
+		// A separate statement reads at a fresh snapshot and resolves it.
+		// Off the fast path: only runs when something is actually missing.
+		if missing := missingPackageNames(payload.Packages, nameToID); len(missing) > 0 {
+			resolved, err := q.GetPackageIDsByNames(ctx, missing)
+			if err != nil {
+				return nil, fmt.Errorf("GetPackageIDsByNames: %w", err)
+			}
+			for _, row := range resolved {
+				nameToID[row.Name] = row.ID
+			}
+		}
 		// buildHostPackagesPayload below is the real correctness check: it
-		// errors if any payload.Packages name is missing from nameToID.
+		// errors if any payload.Packages name is still missing from nameToID.
 
 		hpPayload, err := buildHostPackagesPayload(hostID, payload.Packages, nameToID,
 			reposByName, reposByURLDistComp, reposByComponent)
@@ -742,6 +757,107 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 		UpdatesAvailable:  updatesCount,
 		SecurityUpdates:   securityCount,
 	}, nil
+}
+
+// upsertRepositoryResolvingID returns the canonical id for a reported
+// repository, running UpsertRepository only when the row is absent or a column
+// it would write actually differs.
+//
+// The read-first step is what keeps concurrent reports off each other. One
+// repository row is shared by every host on a distro, and ON CONFLICT locks
+// the conflicting tuple FOR NO KEY UPDATE before it evaluates the DO UPDATE
+// WHERE — so even a no-op upsert holds that lock for the rest of the report
+// transaction, which is where the host_packages delete and bulk insert happen.
+// A plain read takes no lock.
+//
+// The trailing lookup covers the other direction: when the upsert did run and
+// its skip-no-op WHERE suppressed RETURNING, because a concurrent report
+// committed the same values after this statement's snapshot was taken. It has
+// to be a separate statement to read at a fresh snapshot.
+func upsertRepositoryResolvingID(ctx context.Context, q *db.Queries, params db.UpsertRepositoryParams) (string, error) {
+	key := db.GetRepositoryByURLDistComponentsParams{
+		Url:          params.Url,
+		Distribution: params.Distribution,
+		Components:   params.Components,
+	}
+
+	// Trade-off of the lock-free fast path: an unchanged report never touches
+	// the repositories row, so nothing holds it for the rest of the
+	// transaction. The daily CleanupOrphaned worker deletes repositories with
+	// no host_repositories rows, so it can in principle remove this row between
+	// the read below and the host_repositories insert, surfacing as an FK
+	// violation. That needs a repository to be fleet-wide orphaned at the
+	// instant a report attaches to it; the old unconditional upsert blocked it
+	// by holding the row lock, at the cost of serialising the whole fleet.
+	existing, err := q.GetRepositoryByURLDistComponents(ctx, key)
+	switch {
+	case err == nil:
+		if repositoryRowMatches(existing, params) {
+			return existing.ID, nil
+		}
+	case !errors.Is(err, pgx.ErrNoRows):
+		return "", fmt.Errorf("pre-check: %w", err)
+	}
+
+	repoID, err := q.UpsertRepository(ctx, params)
+	if err == nil {
+		return repoID, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", err
+	}
+
+	existing, err = q.GetRepositoryByURLDistComponents(ctx, key)
+	if err != nil {
+		return "", fmt.Errorf("resolve unchanged repository: %w", err)
+	}
+	return existing.ID, nil
+}
+
+// repositoryRowMatches reports whether every column UpsertRepository's DO
+// UPDATE would write already holds the reported value, applying the same
+// COALESCE semantics as the SET clause (a nil reported description leaves the
+// stored one alone, so it is not a difference).
+func repositoryRowMatches(row db.GetRepositoryByURLDistComponentsRow, params db.UpsertRepositoryParams) bool {
+	if row.Name != params.Name ||
+		row.RepoType != params.RepoType ||
+		row.IsActive != params.IsActive ||
+		row.IsSecure != params.IsSecure {
+		return false
+	}
+	if !equalPtr(row.Priority, params.Priority) {
+		return false
+	}
+	return params.Description == nil || equalPtr(row.Description, params.Description)
+}
+
+func equalPtr[T comparable](a, b *T) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+// missingPackageNames returns the distinct names in packages that have no
+// entry in nameToID, in input order. Allocates nothing when none are missing.
+func missingPackageNames(packages []ReportPackage, nameToID map[string]string) []string {
+	var missing []string
+	var seen map[string]struct{}
+	for i := range packages {
+		name := packages[i].Name
+		if _, ok := nameToID[name]; ok {
+			continue
+		}
+		if seen == nil {
+			seen = make(map[string]struct{})
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		missing = append(missing, name)
+	}
+	return missing
 }
 
 // resolveSourceRepoID matches an agent's sourceRepository string to a repository ID

@@ -66,17 +66,28 @@ type Querier interface {
 	//
 	// The DO UPDATE WHERE clause skips no-op updates: when the agent reports the
 	// same description/category/latest_version that's already stored, no row
-	// update happens, no dead tuple is created, and no FOR NO KEY UPDATE row
-	// lock is taken. Steady-state production workloads with mostly-stable package
-	// catalogues see ~95% of upsert calls become no-ops, drastically reducing
-	// WAL volume, vacuum pressure, AND the lock-conflict surface that produced
-	// the deadlocks.
+	// update happens and no dead tuple is created. Steady-state production
+	// workloads with mostly-stable package catalogues see ~95% of upsert calls
+	// become no-ops, drastically reducing WAL volume and vacuum pressure.
+	//
+	// It does NOT avoid the row lock: the ON CONFLICT arbiter takes its
+	// FOR NO KEY UPDATE lock on the conflicting tuple BEFORE evaluating this
+	// WHERE, and holds it to end of transaction whether or not the update
+	// fires. Deadlock freedom comes from the sorted lock acquisition above, not
+	// from this clause.
 	//
 	// The UNION ALL fallback returns (id, name) for input rows that did NOT fire
-	// DO UPDATE (i.e. the values are unchanged), so the caller's name → id map
-	// is complete regardless of whether each row was newly inserted, updated, or
-	// left unchanged. This is required: BulkInsertHostPackages depends on
-	// knowing the package_id for every input package.
+	// DO UPDATE (i.e. the values are unchanged), covering the single-threaded
+	// case where every input name resolves to an id.
+	//
+	// It is NOT complete under concurrency. The ON CONFLICT arbiter re-reads the
+	// conflicting row outside the statement snapshot, so it can see a row another
+	// transaction committed after this statement began; if that row's values are
+	// identical the skip-no-op WHERE suppresses RETURNING, while the fallback
+	// SELECT still reads `packages` at the (older) statement snapshot and cannot
+	// see the row either. That name is then absent from the result. The caller
+	// MUST detect missing names and resolve them with GetPackageIDsByNames, which
+	// runs as a separate statement and therefore takes a fresh snapshot.
 	//
 	// The DO UPDATE intentionally touches only NON-KEY columns
 	// (description / category / latest_version / updated_at). The row lock taken
@@ -349,6 +360,17 @@ type Querier interface {
 	GetOSDistributionByTypeAndVersion(ctx context.Context) ([]GetOSDistributionByTypeAndVersionRow, error)
 	GetPackageByID(ctx context.Context, id string) (Package, error)
 	GetPackageByName(ctx context.Context, name string) (Package, error)
+	// Off-fast-path resolver for names BulkUpsertPackages could not return (see
+	// the concurrency note there). Issued as its own statement so it reads at a
+	// fresh snapshot and observes rows committed by concurrent reports. Takes no
+	// row locks. The caller only runs this when a name is actually missing.
+	//
+	// REQUIRES READ COMMITTED. Only under READ COMMITTED does a new statement take
+	// a new snapshot; at REPEATABLE READ or SERIALIZABLE this reuses the
+	// transaction snapshot, resolves nothing, and the race it exists to close
+	// silently returns. The pool sets no TxOptions, so the server default applies
+	// — do not raise it without revisiting this.
+	GetPackageIDsByNames(ctx context.Context, names []string) ([]GetPackageIDsByNamesRow, error)
 	GetPatchPolicyAssignmentByID(ctx context.Context, id string) (PatchPolicyAssignment, error)
 	GetPatchPolicyByGroupAssignment(ctx context.Context, targetID string) (PatchPolicy, error)
 	GetPatchPolicyByID(ctx context.Context, id string) (PatchPolicy, error)
@@ -364,6 +386,20 @@ type Querier interface {
 	GetRecentUsers(ctx context.Context, limit int32) ([]GetRecentUsersRow, error)
 	GetRepoCountsForRepos(ctx context.Context, dollar_1 []string) ([]GetRepoCountsForReposRow, error)
 	GetRepositoryByID(ctx context.Context, id string) (Repository, error)
+	// Lock-free read on the (url, distribution, components) unique key. Serves
+	// two purposes for the report path, both described on UpsertRepository:
+	//   1. The pre-check that lets an unchanged report skip the upsert entirely,
+	//      so it never takes the hot-row lock. Hence the projection is exactly
+	//      the columns UpsertRepository's DO UPDATE would set.
+	//   2. Resolving the id when that upsert skipped its no-op DO UPDATE and
+	//      returned nothing. As a separate statement it reads at a fresh
+	//      snapshot and sees rows committed by concurrent reports.
+	//
+	// Use (2) REQUIRES READ COMMITTED: only there does a new statement take a new
+	// snapshot. At REPEATABLE READ or SERIALIZABLE it would reuse the transaction
+	// snapshot and resolve nothing. The pool sets no TxOptions, so the server
+	// default applies — do not raise it without revisiting this.
+	GetRepositoryByURLDistComponents(ctx context.Context, arg GetRepositoryByURLDistComponentsParams) (GetRepositoryByURLDistComponentsRow, error)
 	GetRepositoryForDelete(ctx context.Context, id string) (GetRepositoryForDeleteRow, error)
 	GetRolePermissions(ctx context.Context, role string) (RolePermission, error)
 	GetRuleAggregationsFromScans(ctx context.Context, arg GetRuleAggregationsFromScansParams) ([]GetRuleAggregationsFromScansRow, error)
@@ -640,13 +676,33 @@ type Querier interface {
 	// KEY UPDATE — safe vs concurrent FK FOR KEY SHARE locks held by
 	// host_packages inserts pointing at this row.
 	//
-	// Returns the canonical id whether the row was newly inserted, updated, or
-	// (in the no-op case where every column matches) updated to identical
-	// values. There is no skip-no-op WHERE here because reports rarely repeat
-	// identical repository metadata across runs and the row count per host is
-	// small (typically 1-10) — the WAL/lock cost of unconditional UPDATE is
-	// negligible compared with packages, and avoiding the WHERE keeps RETURNING
-	// always-populated for a simpler caller contract.
+	// Repository rows are shared across the whole fleet: every host on a distro
+	// reports the same (url, distribution, components). Running this statement on
+	// every report takes a FOR NO KEY UPDATE lock on ONE hot row and holds it
+	// until the report transaction commits — which is after that transaction's
+	// full host_packages delete and bulk insert. Contention scales with fleet
+	// concurrency, not with the handful of repository rows per host, so at 64
+	// concurrent reports they serialise behind the hot row until statement_timeout.
+	//
+	// The skip-no-op WHERE below does NOT prevent that lock. PostgreSQL's
+	// ON CONFLICT arbiter locks the conflicting tuple BEFORE it evaluates the
+	// DO UPDATE WHERE, so a skipped no-op still holds the row lock to end of
+	// transaction (verified: holder reports INSERT 0 0 while a concurrent
+	// FOR NO KEY UPDATE on the same row blocks). The WHERE earns its keep by
+	// avoiding the heap write, dead tuple and WAL when two reports race on the
+	// same genuine change — not by avoiding locks.
+	//
+	// Avoiding the lock is therefore the CALLER's job: upsertRepositoryResolvingID
+	// reads the row first (a plain SELECT takes no lock) and only reaches this
+	// statement when the row is absent or a column it would set actually differs.
+	// Do not "simplify" the caller back to calling this unconditionally.
+	//
+	// Consequence of the WHERE: RETURNING is NOT always populated. A skipped
+	// no-op returns zero rows and this is a :one query, so the caller gets
+	// pgx.ErrNoRows and MUST resolve the id via GetRepositoryByURLDistComponents.
+	// Do NOT "fix" this with a same-statement fallback SELECT — both halves would
+	// read at the same statement snapshot and miss rows a concurrent transaction
+	// committed after the statement began.
 	UpsertRepository(ctx context.Context, arg UpsertRepositoryParams) (string, error)
 	UpsertRolePermissions(ctx context.Context, arg UpsertRolePermissionsParams) (RolePermission, error)
 }

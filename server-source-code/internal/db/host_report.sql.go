@@ -139,17 +139,28 @@ type BulkUpsertPackagesRow struct {
 //
 // The DO UPDATE WHERE clause skips no-op updates: when the agent reports the
 // same description/category/latest_version that's already stored, no row
-// update happens, no dead tuple is created, and no FOR NO KEY UPDATE row
-// lock is taken. Steady-state production workloads with mostly-stable package
-// catalogues see ~95% of upsert calls become no-ops, drastically reducing
-// WAL volume, vacuum pressure, AND the lock-conflict surface that produced
-// the deadlocks.
+// update happens and no dead tuple is created. Steady-state production
+// workloads with mostly-stable package catalogues see ~95% of upsert calls
+// become no-ops, drastically reducing WAL volume and vacuum pressure.
+//
+// It does NOT avoid the row lock: the ON CONFLICT arbiter takes its
+// FOR NO KEY UPDATE lock on the conflicting tuple BEFORE evaluating this
+// WHERE, and holds it to end of transaction whether or not the update
+// fires. Deadlock freedom comes from the sorted lock acquisition above, not
+// from this clause.
 //
 // The UNION ALL fallback returns (id, name) for input rows that did NOT fire
-// DO UPDATE (i.e. the values are unchanged), so the caller's name → id map
-// is complete regardless of whether each row was newly inserted, updated, or
-// left unchanged. This is required: BulkInsertHostPackages depends on
-// knowing the package_id for every input package.
+// DO UPDATE (i.e. the values are unchanged), covering the single-threaded
+// case where every input name resolves to an id.
+//
+// It is NOT complete under concurrency. The ON CONFLICT arbiter re-reads the
+// conflicting row outside the statement snapshot, so it can see a row another
+// transaction committed after this statement began; if that row's values are
+// identical the skip-no-op WHERE suppresses RETURNING, while the fallback
+// SELECT still reads `packages` at the (older) statement snapshot and cannot
+// see the row either. That name is then absent from the result. The caller
+// MUST detect missing names and resolve them with GetPackageIDsByNames, which
+// runs as a separate statement and therefore takes a fresh snapshot.
 //
 // The DO UPDATE intentionally touches only NON-KEY columns
 // (description / category / latest_version / updated_at). The row lock taken
@@ -208,6 +219,45 @@ func (q *Queries) GetPackageByName(ctx context.Context, name string) (Package, e
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getPackageIDsByNames = `-- name: GetPackageIDsByNames :many
+SELECT id, name FROM packages WHERE name = ANY($1::text[])
+`
+
+type GetPackageIDsByNamesRow struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// Off-fast-path resolver for names BulkUpsertPackages could not return (see
+// the concurrency note there). Issued as its own statement so it reads at a
+// fresh snapshot and observes rows committed by concurrent reports. Takes no
+// row locks. The caller only runs this when a name is actually missing.
+//
+// REQUIRES READ COMMITTED. Only under READ COMMITTED does a new statement take
+// a new snapshot; at REPEATABLE READ or SERIALIZABLE this reuses the
+// transaction snapshot, resolves nothing, and the race it exists to close
+// silently returns. The pool sets no TxOptions, so the server default applies
+// — do not raise it without revisiting this.
+func (q *Queries) GetPackageIDsByNames(ctx context.Context, names []string) ([]GetPackageIDsByNamesRow, error) {
+	rows, err := q.db.Query(ctx, getPackageIDsByNames, names)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetPackageIDsByNamesRow
+	for rows.Next() {
+		var i GetPackageIDsByNamesRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const insertUpdateHistory = `-- name: InsertUpdateHistory :exec
