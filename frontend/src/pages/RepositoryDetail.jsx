@@ -114,7 +114,7 @@ const RepositoryDetail = () => {
 	const getPackageStatusBadge = (stats) => {
 		if ((stats?.securityUpdates || 0) > 0) {
 			return (
-				<span className="badge-danger flex items-center gap-1">
+				<span className="badge-danger flex items-center gap-1 w-fit">
 					<Shield className="h-3 w-3" />
 					Security Update
 				</span>

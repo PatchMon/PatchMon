@@ -644,10 +644,10 @@ const Repositories = () => {
 														(col) => col.id === "status",
 													) && (
 														<span
-															className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium flex-shrink-0 ${
+															className={`flex-shrink-0 ${
 																repo.is_active
-																	? "bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300"
-																	: "bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-300"
+																	? "badge-success"
+																	: "badge-danger"
 															}`}
 														>
 															{repo.is_active ? "Active" : "Inactive"}
@@ -900,13 +900,7 @@ const Repositories = () => {
 			}
 			case "status":
 				return (
-					<span
-						className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium ${
-							repo.is_active
-								? "bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300"
-								: "bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-300"
-						}`}
-					>
+					<span className={repo.is_active ? "badge-success" : "badge-danger"}>
 						{repo.is_active ? "Active" : "Inactive"}
 					</span>
 				);
