@@ -298,7 +298,7 @@ Auto-enrolment tokens and per-integration API credentials:
 **Path:** `/settings/ai-terminal`
 **Requires:** `ai` module (Max tier)
 
-Configure the AI provider used by the in-browser SSH terminal's assist feature. Supported providers: OpenAI, Anthropic, Google Gemini, OpenRouter. Credentials are encrypted at rest using `AI_ENCRYPTION_KEY` (see Environment Variables Reference). The page includes a "Test connection" button so you can confirm the key works before saving.
+Configure the AI provider used by the in-browser SSH terminal's assist feature. Supported providers: OpenAI, Anthropic, Google Gemini, OpenRouter, OrcaRouter. Credentials are encrypted at rest using `AI_ENCRYPTION_KEY` (see Environment Variables Reference). The page includes a "Test connection" button so you can confirm the key works before saving.
 
 ---
 
@@ -4270,17 +4270,18 @@ Server logs include `rdp-ticket` and `rdp session opened` lines with the session
 
 The **AI Terminal Assistant** is an optional chat panel inside PatchMon's [Web SSH Terminal](#web-ssh-terminal). Operators open it alongside the terminal to ask questions about what they are seeing ("why did `apt` fail?", "how do I restart this service?", "explain this stack trace") and get answers from an LLM of their choice. The assistant can also turn code snippets in its replies into paste-to-terminal actions, so you stay inside a single window.
 
-The assistant uses PatchMon as a proxy to a supported third-party AI provider (OpenRouter, Anthropic, OpenAI, or Google Gemini). The provider, model, and API key are configured once at the system level; individual operators don't have to set anything up.
+The assistant uses PatchMon as a proxy to a supported third-party AI provider (OpenRouter, OrcaRouter, Anthropic, OpenAI, or Google Gemini). The provider, model, and API key are configured once at the system level; individual operators don't have to set anything up.
 
 Web SSH shipped in 1.4.0, and the AI assistant in the same release.
 
 ### Supported providers
 
-Four providers are supported in 2.0, each with a curated list of models:
+Five providers are supported in 2.0, each with a curated list of models:
 
 | Provider | Default model | Additional models |
 |----------|---------------|-------------------|
 | **OpenRouter** | `anthropic/claude-3.5-sonnet` | Claude 3 Haiku, GPT-4o, GPT-4o Mini, Gemini Pro 1.5, Llama 3.1 70B |
+| **OrcaRouter** | `openai/gpt-4o-mini` | GPT-4.1, Claude Sonnet 4.5, Gemini 3.5 Flash, Auto (adaptive router) |
 | **Anthropic** | `claude-sonnet-4-20250514` | Claude 3.5 Sonnet, Claude 3.5 Haiku |
 | **OpenAI** | `gpt-4o-mini` | GPT-4o, GPT-4 Turbo |
 | **Google Gemini** | `gemini-1.5-flash` | Gemini 1.5 Pro, Gemini 2.0 Flash (experimental) |
@@ -4315,6 +4316,7 @@ Each provider issues its own key:
 | Provider | Get your key from |
 |----------|-------------------|
 | OpenRouter | [openrouter.ai/keys](https://openrouter.ai/keys) |
+| OrcaRouter | [www.orcarouter.ai/console](https://www.orcarouter.ai/console) |
 | Anthropic | [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) |
 | OpenAI | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
 | Gemini | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
