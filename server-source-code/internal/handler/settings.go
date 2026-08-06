@@ -986,7 +986,7 @@ func applySettingsUpdate(s *models.Settings, req map[string]interface{}, enc *ut
 		s.AiEnabled = v
 	}
 	if v, ok := getReqString(req, "ai_provider", "aiProvider"); ok {
-		if v == "openrouter" || v == "anthropic" || v == "openai" || v == "gemini" {
+		if v == "openrouter" || v == "orcarouter" || v == "anthropic" || v == "openai" || v == "gemini" {
 			s.AiProvider = v
 		}
 	}

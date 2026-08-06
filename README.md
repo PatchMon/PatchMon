@@ -102,7 +102,7 @@ The core of PatchMon - orchestrate updates across your fleet with validation, ap
 | Capability | What It Does |
 |---|---|
 | **Web SSH Terminal** | Browser-based SSH to any host directly from the UI. Direct or proxy mode (route through the agent, no SSH port exposure). |
-| **AI Terminal Assistant** | Built-in AI chat panel inside the SSH terminal for command suggestions, error diagnosis and context-aware help. Works with OpenRouter, Anthropic, OpenAI or Google Gemini. |
+| **AI Terminal Assistant** | Built-in AI chat panel inside the SSH terminal for command suggestions, error diagnosis and context-aware help. Works with OpenRouter, OrcaRouter, Anthropic, OpenAI or Google Gemini. |
 | **Branding & Theming** | Upload custom logos and favicon, choose colour themes and toggle light / dark mode per user. |
 
 ![AI Terminal Assistant Screenshot](https://raw.githubusercontent.com/PatchMon/PatchMon/main/ai-remote-ssh.png)

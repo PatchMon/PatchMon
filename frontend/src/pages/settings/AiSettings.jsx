@@ -194,6 +194,8 @@ const AiSettings = () => {
 						<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 							{settings?.ai_provider === "openrouter" &&
 								"Access multiple AI models through a single API"}
+							{settings?.ai_provider === "orcarouter" &&
+								"Model routing gateway with adaptive routing across 180+ models"}
 							{settings?.ai_provider === "anthropic" &&
 								"Direct access to Anthropic Claude models"}
 							{settings?.ai_provider === "openai" &&
@@ -294,6 +296,16 @@ const AiSettings = () => {
 									className="text-primary-600 hover:underline"
 								>
 									openrouter.ai/keys
+								</a>
+							)}
+							{settings?.ai_provider === "orcarouter" && (
+								<a
+									href="https://www.orcarouter.ai/console"
+									target="_blank"
+									rel="noopener noreferrer"
+									className="text-primary-600 hover:underline"
+								>
+									www.orcarouter.ai/console
 								</a>
 							)}
 							{settings?.ai_provider === "anthropic" && (
