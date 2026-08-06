@@ -3,6 +3,8 @@ package handler
 import (
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
@@ -27,21 +29,122 @@ func successData(w http.ResponseWriter, data interface{}) {
 	JSON(w, http.StatusOK, map[string]interface{}{"success": true, "data": data})
 }
 
+// alertListSeverities and alertListStatuses whitelist the values the Alerts
+// page can filter on. Anything else is ignored rather than 400ing, so a stale
+// bookmarked URL still renders a list.
+var alertListSeverities = map[string]bool{
+	"informational": true,
+	"warning":       true,
+	"error":         true,
+	"critical":      true,
+}
+
+var alertListStatuses = map[string]bool{
+	"open":          true,
+	"acknowledged":  true,
+	"investigating": true,
+	"escalated":     true,
+	"silenced":      true,
+	"done":          true,
+	"resolved":      true,
+}
+
 // List handles GET /alerts.
+//
+// Sending `page` or `limit` opts into server-side pagination: the response
+// gains a `pagination` object and only that page of rows is returned. Without
+// either the full list comes back as before, which the dashboard and overview
+// widgets rely on to aggregate across every alert.
 func (h *AlertsHandler) List(w http.ResponseWriter, r *http.Request) {
-	var assignedTo *string
-	if r.URL.Query().Get("assignedToMe") == "true" {
+	q := r.URL.Query()
+
+	params := store.AlertListParams{
+		SortBy:    q.Get("sortBy"),
+		SortOrder: q.Get("sortOrder"),
+	}
+
+	if alertType := q.Get("type"); alertType != "" && alertType != "all" {
+		params.Type = alertType
+	}
+	if search := q.Get("search"); search != "" {
+		if len(search) > 200 {
+			search = search[:200]
+		}
+		params.Search = search
+	}
+	if sev := strings.ToLower(q.Get("severity")); alertListSeverities[sev] {
+		params.Severity = sev
+	}
+	if status := strings.ToLower(q.Get("status")); alertListStatuses[status] {
+		params.Status = status
+	}
+
+	// assignedToMe resolves against the caller, so it wins over an explicit
+	// assignment value. The frontend only ever sends one of the two.
+	if q.Get("assignedToMe") == "true" {
 		userID, _ := r.Context().Value(middleware.UserIDKey).(string)
 		if userID != "" {
-			assignedTo = &userID
+			params.Assignment = userID
 		}
+	} else if assignment := q.Get("assignment"); assignment != "" && assignment != "all" {
+		params.Assignment = assignment
 	}
-	alerts, err := h.alerts.List(r.Context(), assignedTo)
+
+	pageParam, limitParam := q.Get("page"), q.Get("limit")
+	paginated := pageParam != "" || limitParam != ""
+	if paginated {
+		page, _ := strconv.Atoi(pageParam)
+		if page <= 0 {
+			page = 1
+		}
+		limit, _ := strconv.Atoi(limitParam)
+		if limit <= 0 {
+			limit = 50
+		}
+		if limit > 500 {
+			limit = 500
+		}
+		params.Limit = limit
+		params.Page = clampPageForLimit(page, limit)
+	}
+
+	alerts, total, err := h.alerts.ListFiltered(r.Context(), params)
 	if err != nil {
+		slog.Error("alerts: list failed", "error", err)
 		Error(w, http.StatusInternalServerError, "Failed to fetch alerts")
 		return
 	}
-	successData(w, alerts)
+
+	if !paginated {
+		successData(w, alerts)
+		return
+	}
+
+	pages := (total + params.Limit - 1) / params.Limit
+	if pages < 1 {
+		pages = 1
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"data":    alerts,
+		"pagination": map[string]interface{}{
+			"page":  params.Page,
+			"limit": params.Limit,
+			"total": total,
+			"pages": pages,
+		},
+	})
+}
+
+// ListTypes handles GET /alerts/types. The paginated list can no longer
+// derive the type filter options from the rows it holds.
+func (h *AlertsHandler) ListTypes(w http.ResponseWriter, r *http.Request) {
+	types, err := h.alerts.DistinctTypes(r.Context())
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to fetch alert types")
+		return
+	}
+	successData(w, types)
 }
 
 // GetStats handles GET /alerts/stats.
