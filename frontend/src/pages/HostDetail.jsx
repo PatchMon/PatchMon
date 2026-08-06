@@ -37,7 +37,13 @@ import {
 	Wrench,
 	X,
 } from "lucide-react";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import {
 	Link,
 	useLocation,
@@ -86,6 +92,17 @@ const format_memory_gib = (value) => {
 	const num = Number(value);
 	if (Number.isNaN(num)) return null;
 	return `${num.toFixed(2)} GiB`;
+};
+
+/**
+ * Sentence explaining that disabling compliance leaves the scanning tools on
+ * the host. Only shown when the agent has reported them as present.
+ */
+const compliance_tools_retained_text = (tools) => {
+	const list = tools.join(" and ");
+	return tools.length > 1
+		? `${list} remain installed on this host. Disabling only stops scanning, so remove them manually if you want them gone.`
+		: `${list} remains installed on this host. Disabling only stops scanning, so remove it manually if you want it gone.`;
 };
 
 // Ordered steps for compliance scanner installation (match agent step ids)
@@ -730,8 +747,27 @@ const HostDetail = () => {
 				return false; // Stop polling when done
 			},
 			refetchOnWindowFocus: false,
-			enabled: !!hostId && !!integrationsData?.data?.integrations?.compliance,
+			// Also fetched while compliance is disabled, so the page can tell
+			// whether the scanning tools are still installed on the host.
+			enabled: !!hostId && hasModule("compliance"),
 		});
+
+	// Compliance tools the agent has reported as present on this host.
+	const installedComplianceTools = useMemo(() => {
+		const scannerInfo = complianceSetupStatus?.status?.scanner_info;
+		const components = complianceSetupStatus?.status?.components;
+		const tools = [];
+		if (scannerInfo?.openscap_available || components?.openscap === "ready") {
+			tools.push("OpenSCAP");
+		}
+		if (
+			scannerInfo?.docker_bench_available ||
+			components?.["docker-bench"] === "ready"
+		) {
+			tools.push("Docker Bench");
+		}
+		return tools;
+	}, [complianceSetupStatus]);
 
 	// On entering Compliance tab: check for install job and request fresh scanner status from agent
 	useEffect(() => {
@@ -1078,6 +1114,17 @@ const HostDetail = () => {
 				pollTimes.forEach((delay) => {
 					safeSetTimeout(() => refetchComplianceStatus(), delay);
 				});
+			}
+			if (
+				data.data.mode === "disabled" &&
+				installedComplianceTools.length > 0
+			) {
+				toast.warning(
+					`Compliance scanning disabled. ${compliance_tools_retained_text(
+						installedComplianceTools,
+					)}`,
+					10000,
+				);
 			}
 		},
 		onError: (error) => {
@@ -3599,245 +3646,245 @@ const HostDetail = () => {
 															remediation recommendations.
 														</p>
 
-														{/* Setup Status Display - hide when status is "disabled" */}
-														{((complianceSetupStatus?.status?.status &&
+														{/* Setup Status Display - hide when compliance is off or status is "disabled" */}
+														{integrationsData?.data?.integrations?.compliance &&
 															complianceSetupStatus?.status?.status !==
-																"disabled") ||
-															(!complianceSetupStatus?.status?.status &&
-																integrationsData?.data?.integrations
-																	?.compliance)) && (
-															<div className="mt-3 p-3 rounded-lg border bg-secondary-100 dark:bg-secondary-800 border-secondary-300 dark:border-secondary-600">
-																{/* Installing State */}
-																{complianceSetupStatus?.status?.status ===
-																	"installing" && (
-																	<div className="space-y-2">
-																		<div className="flex items-center gap-2">
-																			<Loader2 className="h-4 w-4 animate-spin text-primary-600 dark:text-primary-400" />
-																			<span className="text-sm font-medium text-primary-700 dark:text-primary-300">
-																				Installing Compliance Tools
-																			</span>
-																		</div>
-																		{complianceSetupStatus.status.install_events
-																			?.length > 0 ? (
-																			<ul className="space-y-1 mt-1">
-																				{complianceSetupStatus.status.install_events.map(
-																					(evt) => (
-																						<li
-																							key={`${evt.message ?? ""}-${evt.status}-${evt.component ?? ""}`}
-																							className="flex items-center gap-2 text-xs"
-																						>
-																							{evt.status === "done" && (
-																								<CheckCircle2 className="h-3.5 w-3.5 text-green-500 dark:text-green-400 flex-shrink-0" />
-																							)}
-																							{evt.status === "in_progress" && (
-																								<Loader2 className="h-3.5 w-3.5 text-blue-500 dark:text-blue-400 animate-spin flex-shrink-0" />
-																							)}
-																							{evt.status === "failed" && (
-																								<AlertCircle className="h-3.5 w-3.5 text-red-500 dark:text-red-400 flex-shrink-0" />
-																							)}
-																							{evt.status === "skipped" && (
-																								<SkipForward className="h-3.5 w-3.5 text-secondary-400 flex-shrink-0" />
-																							)}
-																							<span
-																								className={
-																									evt.status === "done"
-																										? "text-green-700 dark:text-green-400"
-																										: evt.status ===
-																												"in_progress"
-																											? "text-blue-700 dark:text-blue-400"
-																											: evt.status === "failed"
-																												? "text-red-700 dark:text-red-400"
-																												: "text-secondary-500 dark:text-white"
-																								}
-																							>
-																								{evt.message}
-																							</span>
-																						</li>
-																					),
-																				)}
-																			</ul>
-																		) : (
-																			<>
-																				<div className="w-full bg-secondary-200 dark:bg-secondary-700 rounded-full h-1.5">
-																					<div
-																						className="bg-primary-600 h-1.5 rounded-full animate-pulse"
-																						style={{ width: "60%" }}
-																					/>
-																				</div>
-																				<p className="text-xs text-secondary-600 dark:text-white">
-																					{complianceSetupStatus.status
-																						.message ||
-																						"Installing OpenSCAP packages and security content..."}
-																				</p>
-																			</>
-																		)}
-																	</div>
-																)}
-
-																{/* Removing State */}
-																{complianceSetupStatus?.status?.status ===
-																	"removing" && (
-																	<div className="space-y-2">
-																		<div className="flex items-center gap-2">
-																			<RefreshCw className="h-4 w-4 animate-spin text-warning-600 dark:text-warning-400" />
-																			<span className="text-sm font-medium text-warning-700 dark:text-warning-300">
-																				Removing Compliance Tools
-																			</span>
-																		</div>
-																		<div className="w-full bg-secondary-200 dark:bg-secondary-700 rounded-full h-1.5">
-																			<div
-																				className="bg-warning-500 h-1.5 rounded-full animate-pulse"
-																				style={{ width: "40%" }}
-																			/>
-																		</div>
-																		<p className="text-xs text-secondary-600 dark:text-white">
-																			{complianceSetupStatus.status.message ||
-																				"Removing OpenSCAP packages..."}
-																		</p>
-																	</div>
-																)}
-
-																{/* Ready State */}
-																{complianceSetupStatus?.status?.status ===
-																	"ready" && (
-																	<div className="flex items-center gap-2">
-																		<CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
-																		<span className="text-sm font-medium text-green-700 dark:text-green-300">
-																			Compliance Tools Ready
-																		</span>
-																		{complianceSetupStatus.status
-																			.components && (
-																			<div className="flex gap-1 ml-2">
-																				{Object.entries(
-																					complianceSetupStatus.status
-																						.components,
-																				)
-																					.filter(
-																						([, status]) =>
-																							status !== "unavailable",
-																					)
-																					.map(([name, _status]) => (
-																						<span
-																							key={name}
-																							className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
-																						>
-																							<CheckCircle2 className="h-3 w-3" />
-																							{name}
-																						</span>
-																					))}
-																			</div>
-																		)}
-																	</div>
-																)}
-
-																{/* Partial State */}
-																{complianceSetupStatus?.status?.status ===
-																	"partial" && (
-																	<div className="space-y-2">
-																		<div className="flex items-center gap-2">
-																			<AlertTriangle className="h-4 w-4 text-warning-600 dark:text-warning-400" />
-																			<span className="text-sm font-medium text-warning-700 dark:text-warning-300">
-																				Partial Installation
-																			</span>
-																		</div>
-																		<p className="text-xs text-secondary-600 dark:text-white">
-																			{complianceSetupStatus.status.message ||
-																				"Some components failed to install. Install OpenSCAP (and optionally Docker) on this host. See the Compliance Installation guide in the documentation."}
-																		</p>
-																		{complianceSetupStatus.status
-																			.components && (
-																			<div className="flex flex-wrap gap-2">
-																				{Object.entries(
-																					complianceSetupStatus.status
-																						.components,
-																				)
-																					.filter(
-																						([, status]) =>
-																							status !== "unavailable",
-																					)
-																					.map(([name, status]) => (
-																						<span
-																							key={name}
-																							className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
-																								status === "ready"
-																									? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
-																									: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
-																							}`}
-																						>
-																							{status === "ready" ? (
-																								<CheckCircle2 className="h-3 w-3" />
-																							) : (
-																								<AlertCircle className="h-3 w-3" />
-																							)}
-																							{name}
-																						</span>
-																					))}
-																			</div>
-																		)}
-																	</div>
-																)}
-
-																{/* Error State */}
-																{complianceSetupStatus?.status?.status ===
-																	"error" && (
-																	<div className="space-y-2">
-																		<div className="flex items-center gap-2">
-																			<AlertCircle className="h-4 w-4 text-danger-600 dark:text-danger-400" />
-																			<span className="text-sm font-medium text-danger-700 dark:text-danger-300">
-																				Installation Failed
-																			</span>
-																		</div>
-																		<p className="text-xs text-danger-600 dark:text-danger-400">
-																			{complianceSetupStatus?.status?.message ||
-																				"Setup failed - check agent logs"}
-																		</p>
-																	</div>
-																)}
-
-																{/* Not ready / missing components: show actionable message */}
-																{complianceSetupStatus?.status?.status &&
-																	![
-																		"ready",
-																		"installing",
-																		"removing",
-																		"partial",
-																		"error",
-																		"disabled",
-																	].includes(
-																		complianceSetupStatus?.status?.status,
-																	) && (
+																"disabled" && (
+																<div className="mt-3 p-3 rounded-lg border bg-secondary-100 dark:bg-secondary-800 border-secondary-300 dark:border-secondary-600">
+																	{/* Installing State */}
+																	{complianceSetupStatus?.status?.status ===
+																		"installing" && (
 																		<div className="space-y-2">
-																			<p className="text-sm text-secondary-700 dark:text-white">
-																				Install OpenSCAP (and optionally Docker
-																				for Docker Bench) on this host. Verify
-																				with{" "}
-																				<code className="text-xs bg-secondary-200 dark:bg-secondary-700 px-1 rounded">
-																					oscap --version
-																				</code>{" "}
-																				and that SCAP content is present.
-																			</p>
-																			<p className="text-xs text-secondary-500 dark:text-white">
-																				See the Compliance{" "}
-																				<strong>Getting started</strong> or{" "}
-																				<strong>Installation</strong> guide in
-																				the documentation.
+																			<div className="flex items-center gap-2">
+																				<Loader2 className="h-4 w-4 animate-spin text-primary-600 dark:text-primary-400" />
+																				<span className="text-sm font-medium text-primary-700 dark:text-primary-300">
+																					Installing Compliance Tools
+																				</span>
+																			</div>
+																			{complianceSetupStatus.status
+																				.install_events?.length > 0 ? (
+																				<ul className="space-y-1 mt-1">
+																					{complianceSetupStatus.status.install_events.map(
+																						(evt) => (
+																							<li
+																								key={`${evt.message ?? ""}-${evt.status}-${evt.component ?? ""}`}
+																								className="flex items-center gap-2 text-xs"
+																							>
+																								{evt.status === "done" && (
+																									<CheckCircle2 className="h-3.5 w-3.5 text-green-500 dark:text-green-400 flex-shrink-0" />
+																								)}
+																								{evt.status ===
+																									"in_progress" && (
+																									<Loader2 className="h-3.5 w-3.5 text-blue-500 dark:text-blue-400 animate-spin flex-shrink-0" />
+																								)}
+																								{evt.status === "failed" && (
+																									<AlertCircle className="h-3.5 w-3.5 text-red-500 dark:text-red-400 flex-shrink-0" />
+																								)}
+																								{evt.status === "skipped" && (
+																									<SkipForward className="h-3.5 w-3.5 text-secondary-400 flex-shrink-0" />
+																								)}
+																								<span
+																									className={
+																										evt.status === "done"
+																											? "text-green-700 dark:text-green-400"
+																											: evt.status ===
+																													"in_progress"
+																												? "text-blue-700 dark:text-blue-400"
+																												: evt.status ===
+																														"failed"
+																													? "text-red-700 dark:text-red-400"
+																													: "text-secondary-500 dark:text-white"
+																									}
+																								>
+																									{evt.message}
+																								</span>
+																							</li>
+																						),
+																					)}
+																				</ul>
+																			) : (
+																				<>
+																					<div className="w-full bg-secondary-200 dark:bg-secondary-700 rounded-full h-1.5">
+																						<div
+																							className="bg-primary-600 h-1.5 rounded-full animate-pulse"
+																							style={{ width: "60%" }}
+																						/>
+																					</div>
+																					<p className="text-xs text-secondary-600 dark:text-white">
+																						{complianceSetupStatus.status
+																							.message ||
+																							"Installing OpenSCAP packages and security content..."}
+																					</p>
+																				</>
+																			)}
+																		</div>
+																	)}
+
+																	{/* Removing State */}
+																	{complianceSetupStatus?.status?.status ===
+																		"removing" && (
+																		<div className="space-y-2">
+																			<div className="flex items-center gap-2">
+																				<RefreshCw className="h-4 w-4 animate-spin text-warning-600 dark:text-warning-400" />
+																				<span className="text-sm font-medium text-warning-700 dark:text-warning-300">
+																					Removing Compliance Tools
+																				</span>
+																			</div>
+																			<div className="w-full bg-secondary-200 dark:bg-secondary-700 rounded-full h-1.5">
+																				<div
+																					className="bg-warning-500 h-1.5 rounded-full animate-pulse"
+																					style={{ width: "40%" }}
+																				/>
+																			</div>
+																			<p className="text-xs text-secondary-600 dark:text-white">
+																				{complianceSetupStatus.status.message ||
+																					"Removing OpenSCAP packages..."}
 																			</p>
 																		</div>
 																	)}
 
-																{/* Fallback: Compliance enabled but no status in cache - assume ready */}
-																{!complianceSetupStatus?.status?.status &&
-																	integrationsData?.data?.integrations
-																		?.compliance && (
+																	{/* Ready State */}
+																	{complianceSetupStatus?.status?.status ===
+																		"ready" && (
 																		<div className="flex items-center gap-2">
 																			<CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
 																			<span className="text-sm font-medium text-green-700 dark:text-green-300">
 																				Compliance Tools Ready
 																			</span>
+																			{complianceSetupStatus.status
+																				.components && (
+																				<div className="flex gap-1 ml-2">
+																					{Object.entries(
+																						complianceSetupStatus.status
+																							.components,
+																					)
+																						.filter(
+																							([, status]) =>
+																								status !== "unavailable",
+																						)
+																						.map(([name, _status]) => (
+																							<span
+																								key={name}
+																								className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
+																							>
+																								<CheckCircle2 className="h-3 w-3" />
+																								{name}
+																							</span>
+																						))}
+																				</div>
+																			)}
 																		</div>
 																	)}
-															</div>
-														)}
+
+																	{/* Partial State */}
+																	{complianceSetupStatus?.status?.status ===
+																		"partial" && (
+																		<div className="space-y-2">
+																			<div className="flex items-center gap-2">
+																				<AlertTriangle className="h-4 w-4 text-warning-600 dark:text-warning-400" />
+																				<span className="text-sm font-medium text-warning-700 dark:text-warning-300">
+																					Partial Installation
+																				</span>
+																			</div>
+																			<p className="text-xs text-secondary-600 dark:text-white">
+																				{complianceSetupStatus.status.message ||
+																					"Some components failed to install. Install OpenSCAP (and optionally Docker) on this host. See the Compliance Installation guide in the documentation."}
+																			</p>
+																			{complianceSetupStatus.status
+																				.components && (
+																				<div className="flex flex-wrap gap-2">
+																					{Object.entries(
+																						complianceSetupStatus.status
+																							.components,
+																					)
+																						.filter(
+																							([, status]) =>
+																								status !== "unavailable",
+																						)
+																						.map(([name, status]) => (
+																							<span
+																								key={name}
+																								className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
+																									status === "ready"
+																										? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
+																										: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
+																								}`}
+																							>
+																								{status === "ready" ? (
+																									<CheckCircle2 className="h-3 w-3" />
+																								) : (
+																									<AlertCircle className="h-3 w-3" />
+																								)}
+																								{name}
+																							</span>
+																						))}
+																				</div>
+																			)}
+																		</div>
+																	)}
+
+																	{/* Error State */}
+																	{complianceSetupStatus?.status?.status ===
+																		"error" && (
+																		<div className="space-y-2">
+																			<div className="flex items-center gap-2">
+																				<AlertCircle className="h-4 w-4 text-danger-600 dark:text-danger-400" />
+																				<span className="text-sm font-medium text-danger-700 dark:text-danger-300">
+																					Installation Failed
+																				</span>
+																			</div>
+																			<p className="text-xs text-danger-600 dark:text-danger-400">
+																				{complianceSetupStatus?.status
+																					?.message ||
+																					"Setup failed - check agent logs"}
+																			</p>
+																		</div>
+																	)}
+
+																	{/* Not ready / missing components: show actionable message */}
+																	{complianceSetupStatus?.status?.status &&
+																		![
+																			"ready",
+																			"installing",
+																			"removing",
+																			"partial",
+																			"error",
+																			"disabled",
+																		].includes(
+																			complianceSetupStatus?.status?.status,
+																		) && (
+																			<div className="space-y-2">
+																				<p className="text-sm text-secondary-700 dark:text-white">
+																					Install OpenSCAP (and optionally
+																					Docker for Docker Bench) on this host.
+																					Verify with{" "}
+																					<code className="text-xs bg-secondary-200 dark:bg-secondary-700 px-1 rounded">
+																						oscap --version
+																					</code>{" "}
+																					and that SCAP content is present.
+																				</p>
+																				<p className="text-xs text-secondary-500 dark:text-white">
+																					See the Compliance{" "}
+																					<strong>Getting started</strong> or{" "}
+																					<strong>Installation</strong> guide in
+																					the documentation.
+																				</p>
+																			</div>
+																		)}
+
+																	{/* Fallback: Compliance enabled but no status in cache - assume ready */}
+																	{!complianceSetupStatus?.status?.status &&
+																		integrationsData?.data?.integrations
+																			?.compliance && (
+																			<div className="flex items-center gap-2">
+																				<CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
+																				<span className="text-sm font-medium text-green-700 dark:text-green-300">
+																					Compliance Tools Ready
+																				</span>
+																			</div>
+																		)}
+																</div>
+															)}
 													</div>
 													<div className="flex-shrink-0">
 														{/* Three-state compliance mode selector - small inline */}
@@ -3969,10 +4016,23 @@ const HostDetail = () => {
 															"Compliance scanning is enabled with automatic scheduled scans during regular reports.",
 													};
 													return (
-														<p className="text-xs text-secondary-500 dark:text-white mt-2">
-															{modeDescriptions[currentMode] ||
-																modeDescriptions.disabled}
-														</p>
+														<>
+															<p className="text-xs text-secondary-500 dark:text-white mt-2">
+																{modeDescriptions[currentMode] ||
+																	modeDescriptions.disabled}
+															</p>
+															{currentMode === "disabled" &&
+																installedComplianceTools.length > 0 && (
+																	<div className="mt-3 flex items-start gap-2 rounded-lg border border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 p-3">
+																		<AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0 text-warning-600 dark:text-warning-400" />
+																		<p className="text-xs text-warning-800 dark:text-warning-200">
+																			{compliance_tools_retained_text(
+																				installedComplianceTools,
+																			)}
+																		</p>
+																	</div>
+																)}
+														</>
 													);
 												})()}
 
@@ -5460,6 +5520,16 @@ const HostDetail = () => {
 											Compliance is not enabled for this host. Enable it in the
 											Integrations tab.
 										</p>
+										{installedComplianceTools.length > 0 && (
+											<div className="mb-3 flex items-start gap-2 rounded-lg border border-warning-300 dark:border-warning-600 bg-warning-50 dark:bg-warning-900/20 p-3">
+												<AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0 text-warning-600 dark:text-warning-400" />
+												<p className="text-xs text-warning-800 dark:text-warning-200">
+													{compliance_tools_retained_text(
+														installedComplianceTools,
+													)}
+												</p>
+											</div>
+										)}
 										<Link
 											to={`/compliance/hosts/${hostId}`}
 											className="btn-primary inline-flex items-center gap-2"

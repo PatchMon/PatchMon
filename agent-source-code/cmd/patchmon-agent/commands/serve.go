@@ -3,10 +3,8 @@ package commands
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -404,25 +402,6 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 						logger.Info("run_patch completed successfully")
 					}
 				}(m)
-			case "update_notification":
-				logger.WithField("version", m.version).Info("Update notification received from server")
-				if m.force {
-					logger.Info("Force update requested, updating agent now")
-					if err := updateAgent(); err != nil {
-						logger.WithError(err).Warn("forced update failed")
-					}
-				} else {
-					logger.Info("Update available, run 'patchmon-agent update-agent' to update")
-				}
-			case "integration_toggle":
-				if err := toggleIntegration(m.integrationName, m.integrationEnabled); err != nil {
-					logger.WithError(err).Warn("integration_toggle failed")
-				} else {
-					logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
-						"integration": m.integrationName,
-						"enabled":     m.integrationEnabled,
-					})).Info("Integration toggled successfully, service will restart")
-				}
 			case "compliance_scan":
 				logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 					"profile_type":       m.profileType,
@@ -550,45 +529,11 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 						logger.Info("Docker image CVE scan completed successfully")
 					}
 				}(m)
-			case "set_compliance_mode":
-				logger.WithField("mode", logutil.Sanitize(m.complianceMode)).Info("Setting compliance mode...")
-				// Convert string mode to ComplianceMode type
-				var mode config.ComplianceMode
-				switch m.complianceMode {
-				case "disabled":
-					mode = config.ComplianceDisabled
-				case "on-demand":
-					mode = config.ComplianceOnDemand
-				case "enabled":
-					mode = config.ComplianceEnabled
-				default:
-					logger.WithField("mode", logutil.Sanitize(m.complianceMode)).Warn("Invalid compliance mode, ignoring")
-					continue
-				}
-				if err := cfgManager.SetComplianceMode(mode); err != nil {
-					logger.WithError(err).Warn("Failed to set compliance mode")
-				} else {
-					logger.WithField("mode", logutil.Sanitize(m.complianceMode)).Info("Compliance mode updated in config.yml")
-				}
 			case "apply_config":
 				if err := applyConfig(m.applyConfig); err != nil {
 					logger.WithError(err).Warn("apply_config failed")
 				} else {
 					logger.Info("apply_config completed, service will restart")
-				}
-			case "set_compliance_on_demand_only":
-				// Legacy handler - convert to mode and use new handler
-				logger.WithField("on_demand_only", m.complianceOnDemandOnly).Info("Setting compliance on-demand only mode (legacy)...")
-				var mode config.ComplianceMode
-				if m.complianceOnDemandOnly {
-					mode = config.ComplianceOnDemand
-				} else {
-					mode = config.ComplianceEnabled
-				}
-				if err := cfgManager.SetComplianceMode(mode); err != nil {
-					logger.WithError(err).Warn("Failed to set compliance mode")
-				} else {
-					logger.WithField("mode", string(mode)).Info("Compliance mode updated in config.yml (from legacy on-demand-only)")
 				}
 			case "ssh_proxy":
 				logger.WithField("session_id", logutil.Sanitize(m.sshProxySessionID)).Info("Handling SSH proxy connection request")
@@ -1183,9 +1128,6 @@ type wsMsg struct {
 	packageCacheRefreshMode   string
 	packageCacheRefreshMaxAge int
 	version                   string
-	force                     bool
-	integrationName           string
-	integrationEnabled        bool
 	profileType               string                 // For compliance_scan: openscap, docker-bench, all
 	profileID                 string                 // For compliance_scan: specific XCCDF profile ID
 	enableRemediation         bool                   // For compliance_scan: enable auto-remediation
@@ -1196,8 +1138,6 @@ type wsMsg struct {
 	imageName                 string                 // For docker_image_scan: Docker image to scan
 	containerName             string                 // For docker_image_scan: Docker container to scan
 	scanAllImages             bool                   // For docker_image_scan: scan all images on system
-	complianceOnDemandOnly    bool                   // For set_compliance_on_demand_only (legacy)
-	complianceMode            string                 // For set_compliance_mode: "disabled", "on-demand", or "enabled"
 	applyConfig               map[string]interface{} // For apply_config: full config to apply
 	// SSH proxy fields
 	sshProxySessionID  string // Unique session ID for SSH proxy
@@ -1614,10 +1554,6 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 			PackageCacheRefreshMode   string                 `json:"package_cache_refresh_mode"`
 			PackageCacheRefreshMaxAge int                    `json:"package_cache_refresh_max_age"`
 			Version                   string                 `json:"version"`
-			Force                     bool                   `json:"force"`
-			Message                   string                 `json:"message"`
-			Integration               string                 `json:"integration"`
-			Enabled                   bool                   `json:"enabled"`
 			ProfileType               string                 `json:"profile_type"`           // For compliance_scan
 			ProfileID                 string                 `json:"profile_id"`             // For compliance_scan: specific XCCDF profile ID
 			EnableRemediation         bool                   `json:"enable_remediation"`     // For compliance_scan
@@ -1628,8 +1564,6 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 			ImageName                 string                 `json:"image_name"`             // For docker_image_scan: Docker image to scan
 			ContainerName             string                 `json:"container_name"`         // For docker_image_scan: container to scan
 			ScanAllImages             bool                   `json:"scan_all_images"`        // For docker_image_scan: scan all images
-			OnDemandOnly              bool                   `json:"on_demand_only"`         // For set_compliance_on_demand_only (legacy)
-			Mode                      string                 `json:"mode"`                   // For set_compliance_mode: "disabled", "on-demand", or "enabled"
 			Config                    map[string]interface{} `json:"config"`                 // For apply_config: full config to apply
 			// SSH proxy fields
 			SessionID  string `json:"session_id"`  // SSH proxy session ID
@@ -1721,27 +1655,6 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 				packageNames: packageNames,
 				dryRun:       payload.DryRun,
 			}
-		case "update_notification":
-			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
-				"version": payload.Version,
-				"force":   payload.Force,
-				"message": payload.Message,
-			})).Info("update_notification received")
-			out <- wsMsg{
-				kind:    "update_notification",
-				version: payload.Version,
-				force:   payload.Force,
-			}
-		case "integration_toggle":
-			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
-				"integration": payload.Integration,
-				"enabled":     payload.Enabled,
-			})).Info("integration_toggle received")
-			out <- wsMsg{
-				kind:               "integration_toggle",
-				integrationName:    payload.Integration,
-				integrationEnabled: payload.Enabled,
-			}
 		case "compliance_scan":
 			// Validate profile ID to prevent command injection
 			if err := validateProfileID(payload.ProfileID); err != nil {
@@ -1812,32 +1725,9 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 				containerName: payload.ContainerName,
 				scanAllImages: payload.ScanAllImages,
 			}
-		case "set_compliance_mode":
-			logger.WithField("mode", logutil.Sanitize(payload.Mode)).Info("set_compliance_mode received")
-			// Validate mode
-			validModes := map[string]bool{"disabled": true, "on-demand": true, "enabled": true}
-			if !validModes[payload.Mode] {
-				logger.WithField("mode", logutil.Sanitize(payload.Mode)).Warn("Invalid compliance mode, ignoring")
-				continue
-			}
-			out <- wsMsg{
-				kind:           "set_compliance_mode",
-				complianceMode: payload.Mode,
-			}
 		case "apply_config":
 			logger.Info("apply_config received")
 			out <- wsMsg{kind: "apply_config", applyConfig: payload.Config}
-		case "set_compliance_on_demand_only":
-			// Legacy handler - convert to new format
-			logger.WithField("on_demand_only", payload.OnDemandOnly).Info("set_compliance_on_demand_only received (legacy)")
-			mode := "enabled"
-			if payload.OnDemandOnly {
-				mode = "on-demand"
-			}
-			out <- wsMsg{
-				kind:           "set_compliance_mode",
-				complianceMode: mode,
-			}
 		case "ssh_proxy":
 			// Validate SSH proxy is enabled in config
 			if !cfgManager.IsIntegrationEnabled("ssh-proxy-enabled") {
@@ -2794,591 +2684,6 @@ func applyConfig(cfg map[string]interface{}) error {
 
 	logger.Info("Config updated, restarting patchmon-agent service...")
 	return restartService("", "")
-}
-
-// toggleIntegration toggles an integration on or off and restarts the service
-func toggleIntegration(integrationName string, enabled bool) error {
-	logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
-		"integration": integrationName,
-		"enabled":     enabled,
-	})).Info("Toggling integration")
-
-	// Handle compliance tools installation/removal
-	if integrationName == "compliance" {
-		// Create HTTP client for sending status updates
-		httpClient := client.New(cfgManager, logger)
-		ctx := context.Background()
-
-		components := make(map[string]string)
-		var overallStatus string
-		var statusMessage string
-
-		if enabled {
-			logger.Info("Compliance enabled - installing required tools...")
-			overallStatus = "installing"
-
-			events := make([]models.InstallEvent, 0, 8)
-			addEvent := func(step, status, message string) {
-				events = append(events, models.InstallEvent{
-					Step:      step,
-					Status:    status,
-					Message:   message,
-					Timestamp: time.Now().UTC().Format(time.RFC3339),
-				})
-			}
-			sendEvt := func(oStatus, msg string, si *models.ComplianceScannerDetails) {
-				_ = httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
-					Integration:   "compliance",
-					Enabled:       true,
-					Status:        oStatus,
-					Message:       msg,
-					Components:    components,
-					InstallEvents: events,
-					ScannerInfo:   si,
-				})
-			}
-
-			// Step: Detect OS
-			addEvent("detect_os", "in_progress", "Detecting operating system...")
-			sendEvt(overallStatus, "Detecting operating system...", nil)
-
-			openscapScanner := compliance.NewOpenSCAPScanner(logger)
-			osInfo := openscapScanner.GetOSInfo()
-			osDesc := fmt.Sprintf("%s %s (%s)", osInfo.Name, osInfo.Version, osInfo.Family)
-			if osInfo.Name == "" {
-				osDesc = "unknown OS"
-			}
-			events[len(events)-1] = models.InstallEvent{Step: "detect_os", Status: "done", Message: fmt.Sprintf("Detected %s", osDesc), Timestamp: events[len(events)-1].Timestamp}
-
-			// Step: Install OpenSCAP
-			addEvent("install_openscap", "in_progress", "Installing OpenSCAP packages...")
-			sendEvt(overallStatus, "Installing OpenSCAP packages...", nil)
-
-			if err := openscapScanner.EnsureInstalled(); err != nil {
-				logger.WithError(err).Warn("Failed to install OpenSCAP (will try again on next scan)")
-				components["openscap"] = "failed"
-				events[len(events)-1] = models.InstallEvent{Step: "install_openscap", Status: "failed", Message: fmt.Sprintf("OpenSCAP installation failed: %s", err.Error()), Timestamp: events[len(events)-1].Timestamp}
-			} else {
-				logger.Info("OpenSCAP installed successfully")
-				components["openscap"] = "ready"
-				events[len(events)-1] = models.InstallEvent{Step: "install_openscap", Status: "done", Message: "OpenSCAP packages installed successfully", Timestamp: events[len(events)-1].Timestamp}
-			}
-
-			// Step: Docker Bench
-			dockerIntegrationEnabled := cfgManager.IsIntegrationEnabled("docker")
-			if dockerIntegrationEnabled {
-				addEvent("docker_bench", "in_progress", "Pre-pulling Docker Bench image...")
-				sendEvt(overallStatus, "Pre-pulling Docker Bench image...", nil)
-
-				dockerBenchScanner := compliance.NewDockerBenchScanner(logger)
-				if dockerBenchScanner.IsAvailable() {
-					if err := dockerBenchScanner.EnsureInstalled(); err != nil {
-						logger.WithError(err).Warn("Failed to pre-pull Docker Bench image (will pull on first scan)")
-						components["docker-bench"] = "failed"
-						events[len(events)-1] = models.InstallEvent{Step: "docker_bench", Status: "failed", Message: fmt.Sprintf("Docker Bench image pull failed: %s", err.Error()), Timestamp: events[len(events)-1].Timestamp}
-					} else {
-						logger.Info("Docker Bench image pulled successfully")
-						components["docker-bench"] = "ready"
-						events[len(events)-1] = models.InstallEvent{Step: "docker_bench", Status: "done", Message: "Docker Bench image pulled successfully", Timestamp: events[len(events)-1].Timestamp}
-					}
-				} else {
-					components["docker-bench"] = "unavailable"
-					events[len(events)-1] = models.InstallEvent{Step: "docker_bench", Status: "skipped", Message: "Docker not available on this host", Timestamp: events[len(events)-1].Timestamp}
-				}
-
-				oscapDockerScanner := compliance.NewOscapDockerScanner(logger)
-				if !oscapDockerScanner.IsAvailable() {
-					if err := oscapDockerScanner.EnsureInstalled(); err != nil {
-						errMsg := err.Error()
-						if strings.Contains(errMsg, "not available") || strings.Contains(errMsg, "not supported") {
-							logger.WithError(err).Info("oscap-docker not available on this platform")
-							components["oscap-docker"] = "unavailable"
-						} else {
-							logger.WithError(err).Warn("Failed to install oscap-docker")
-							components["oscap-docker"] = "failed"
-						}
-					} else {
-						logger.Info("oscap-docker installed successfully")
-						components["oscap-docker"] = "ready"
-					}
-				} else {
-					components["oscap-docker"] = "ready"
-				}
-			} else {
-				logger.Debug("Docker integration not enabled, skipping Docker Bench and oscap-docker setup")
-				addEvent("docker_bench", "skipped", "Docker integration not enabled, skipping Docker Bench setup")
-			}
-
-			// Determine overall status
-			allReady := true
-			for _, status := range components {
-				if status == "failed" {
-					allReady = false
-					break
-				}
-			}
-			if allReady {
-				overallStatus = "ready"
-				statusMessage = "Compliance tools installed and ready"
-			} else {
-				overallStatus = "partial"
-				statusMessage = "Some compliance tools failed to install"
-			}
-			addEvent("complete", func() string {
-				if allReady {
-					return "done"
-				}
-				return "failed"
-			}(), statusMessage)
-
-			scannerDetails := openscapScanner.GetScannerDetails()
-			if dockerIntegrationEnabled {
-				dockerBenchScanner := compliance.NewDockerBenchScanner(logger)
-				scannerDetails.DockerBenchAvailable = dockerBenchScanner.IsAvailable()
-				if scannerDetails.DockerBenchAvailable {
-					scannerDetails.AvailableProfiles = append(scannerDetails.AvailableProfiles, models.ScanProfileInfo{
-						ID:          "docker-bench",
-						Name:        "Docker Bench for Security",
-						Description: "CIS Docker Benchmark security checks",
-						Type:        "docker-bench",
-					})
-				}
-
-				oscapDockerScanner := compliance.NewOscapDockerScanner(logger)
-				scannerDetails.OscapDockerAvailable = oscapDockerScanner.IsAvailable()
-				if oscapDockerScanner.IsAvailable() {
-					scannerDetails.AvailableProfiles = append(scannerDetails.AvailableProfiles, models.ScanProfileInfo{
-						ID:          "docker-image-cve",
-						Name:        "Docker Image CVE Scan",
-						Description: "Scan Docker images for known CVEs using OpenSCAP",
-						Type:        "oscap-docker",
-						Category:    "docker",
-					})
-				}
-			}
-
-			sendEvt(overallStatus, statusMessage, scannerDetails)
-			return nil
-		}
-
-		logger.Info("Compliance disabled - removing tools...")
-		overallStatus = "removing"
-
-		// Send initial "removing" status
-		if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
-			Integration: "compliance",
-			Enabled:     false,
-			Status:      overallStatus,
-			Message:     "Removing compliance tools...",
-		}); err != nil {
-			logger.WithError(err).Warn("Failed to send initial compliance removal status")
-		}
-
-		// Remove OpenSCAP packages
-		openscapScanner := compliance.NewOpenSCAPScanner(logger)
-		if err := openscapScanner.Cleanup(); err != nil {
-			logger.WithError(err).Warn("Failed to remove OpenSCAP packages")
-			components["openscap"] = "cleanup-failed"
-		} else {
-			logger.Info("OpenSCAP packages removed successfully")
-			components["openscap"] = "removed"
-		}
-
-		// Clean up Docker Bench images
-		dockerBenchScanner := compliance.NewDockerBenchScanner(logger)
-		if dockerBenchScanner.IsAvailable() {
-			if err := dockerBenchScanner.Cleanup(); err != nil {
-				logger.WithError(err).Debug("Failed to cleanup Docker Bench image")
-				components["docker-bench"] = "cleanup-failed"
-			} else {
-				components["docker-bench"] = "removed"
-			}
-		}
-
-		overallStatus = "disabled"
-		statusMessage = "Compliance disabled and tools removed"
-		logger.Info("Compliance cleanup complete")
-
-		// Send final status update for disable
-		if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
-			Integration: "compliance",
-			Enabled:     enabled,
-			Status:      overallStatus,
-			Message:     statusMessage,
-			Components:  components,
-		}); err != nil {
-			logger.WithError(err).Warn("Failed to send final compliance disable status")
-		}
-	}
-
-	// Handle Docker Bench and oscap-docker installation when Docker is enabled AND Compliance is already enabled
-	if integrationName == "docker" && enabled {
-		if cfgManager.IsIntegrationEnabled("compliance") {
-			logger.Info("Docker enabled with Compliance already active - setting up Docker scanning tools...")
-			httpClient := client.New(cfgManager, logger)
-			ctx := context.Background()
-
-			openscapScanner := compliance.NewOpenSCAPScanner(logger)
-			scannerDetails := openscapScanner.GetScannerDetails()
-
-			// Setup Docker Bench
-			dockerBenchScanner := compliance.NewDockerBenchScanner(logger)
-			if dockerBenchScanner.IsAvailable() {
-				if err := dockerBenchScanner.EnsureInstalled(); err != nil {
-					logger.WithError(err).Warn("Failed to pre-pull Docker Bench image (will pull on first scan)")
-				} else {
-					logger.Info("Docker Bench image pulled successfully")
-					scannerDetails.DockerBenchAvailable = true
-					scannerDetails.AvailableProfiles = append(scannerDetails.AvailableProfiles, models.ScanProfileInfo{
-						ID:          "docker-bench",
-						Name:        "Docker Bench for Security",
-						Description: "CIS Docker Benchmark security checks",
-						Type:        "docker-bench",
-					})
-				}
-			} else {
-				logger.Warn("Docker daemon not available - Docker Bench cannot be used")
-			}
-
-			// Setup oscap-docker for container image CVE scanning
-			oscapDockerScanner := compliance.NewOscapDockerScanner(logger)
-			if !oscapDockerScanner.IsAvailable() {
-				if err := oscapDockerScanner.EnsureInstalled(); err != nil {
-					logger.WithError(err).Warn("Failed to install oscap-docker (container CVE scanning won't be available)")
-				} else {
-					logger.Info("oscap-docker installed successfully")
-					scannerDetails.OscapDockerAvailable = true
-					scannerDetails.AvailableProfiles = append(scannerDetails.AvailableProfiles, models.ScanProfileInfo{
-						ID:          "docker-image-cve",
-						Name:        "Docker Image CVE Scan",
-						Description: "Scan Docker images for known CVEs using OpenSCAP",
-						Type:        "oscap-docker",
-						Category:    "docker",
-					})
-				}
-			} else {
-				logger.Info("oscap-docker already available")
-				scannerDetails.OscapDockerAvailable = true
-				scannerDetails.AvailableProfiles = append(scannerDetails.AvailableProfiles, models.ScanProfileInfo{
-					ID:          "docker-image-cve",
-					Name:        "Docker Image CVE Scan",
-					Description: "Scan Docker images for known CVEs using OpenSCAP",
-					Type:        "oscap-docker",
-					Category:    "docker",
-				})
-			}
-
-			// Send updated compliance status with Docker scanning tools
-			if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
-				Integration: "compliance",
-				Enabled:     true,
-				Status:      "ready",
-				Message:     "Docker scanning tools now available",
-				ScannerInfo: scannerDetails,
-			}); err != nil {
-				logger.WithError(err).Warn("Failed to send compliance status with Docker tools")
-			}
-		}
-	}
-
-	// Update config.yml
-	if err := cfgManager.SetIntegrationEnabled(integrationName, enabled); err != nil {
-		return fmt.Errorf("failed to update config: %w", err)
-	}
-
-	logger.Info("Config updated, restarting patchmon-agent service...")
-
-	// Restart the service to apply changes (supports systemd and OpenRC)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	if _, err := exec.LookPath("systemctl"); err == nil {
-		// Systemd is available
-		logger.Debug("Detected systemd, using systemctl restart")
-		cmd := exec.CommandContext(ctx, "systemctl", "restart", "patchmon-agent")
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			logger.WithError(err).Warn("Failed to restart service (this is not critical)")
-			return fmt.Errorf("failed to restart service: %w, output: %s", err, string(output))
-		}
-		logger.WithField("output", logutil.Sanitize(string(output))).Debug("Service restart command completed")
-		logger.Info("Service restarted successfully")
-		return nil
-	} else if runtime.GOOS == "freebsd" {
-		// FreeBSD / pfSense: use rc.d helper script (same approach as version_update.go)
-		logger.Debug("Detected FreeBSD, scheduling service restart via helper script")
-		if err := os.MkdirAll("/etc/patchmon", 0700); err != nil {
-			logger.WithError(err).Warn("Failed to create /etc/patchmon directory, will try anyway")
-		}
-		helperScript := `#!/bin/sh
-sleep 2
-# Prefer service, fallback to rc.d script (pfSense, minimal env)
-if [ -x /usr/sbin/service ]; then
-    /usr/sbin/service patchmon_agent restart 2>/dev/null || /usr/sbin/service patchmon_agent start 2>/dev/null
-else
-    /usr/local/etc/rc.d/patchmon_agent restart 2>/dev/null || /usr/local/etc/rc.d/patchmon_agent start 2>/dev/null
-fi
-rm -f "$0"
-`
-		randomBytes := make([]byte, 8)
-		if _, err := rand.Read(randomBytes); err != nil {
-			randomBytes = []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
-		}
-		helperPath := filepath.Join("/etc/patchmon", fmt.Sprintf("restart-%s.sh", hex.EncodeToString(randomBytes)))
-		dirInfo, err := os.Lstat("/etc/patchmon")
-		if err == nil && dirInfo.Mode()&os.ModeSymlink != 0 {
-			logger.Warn("Security: /etc/patchmon is a symlink, refusing to create helper script")
-			os.Exit(0)
-		}
-		file, err := os.OpenFile(helperPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0700)
-		if err != nil {
-			logger.WithError(err).Warn("Failed to create restart helper script, exiting to let daemon -r respawn")
-			os.Exit(0)
-		}
-		if _, err := file.WriteString(helperScript); err != nil {
-			_ = file.Close()
-			_ = os.Remove(helperPath)
-			os.Exit(0)
-		}
-		_ = file.Close()
-		fileInfo, err := os.Lstat(helperPath)
-		if err != nil || fileInfo.Mode()&os.ModeSymlink != 0 {
-			_ = os.Remove(helperPath)
-			os.Exit(0)
-		}
-		var cmd *exec.Cmd
-		if _, nohupErr := exec.LookPath("nohup"); nohupErr == nil {
-			cmd = exec.Command("nohup", helperPath)
-		} else {
-			cmd = exec.Command("/bin/sh", helperPath)
-		}
-		cmd.Stdout = nil
-		cmd.Stderr = nil
-		cmd.SysProcAttr = sysProcAttrForDetach()
-		if err := cmd.Start(); err != nil {
-			_ = os.Remove(helperPath)
-			logger.WithError(err).Warn("Failed to start restart helper, exiting to let daemon -r respawn")
-			os.Exit(0)
-		}
-		logger.Info("Scheduled service restart via helper script (FreeBSD), exiting now...")
-		time.Sleep(500 * time.Millisecond)
-		os.Exit(0)
-		return nil
-	} else if _, err := exec.LookPath("rc-service"); err == nil {
-		// OpenRC is available (Alpine Linux)
-		// Since we're running inside the service, we can't stop ourselves directly
-		// Instead, we'll create a helper script that runs after we exit
-		// Note: The OpenRC service file uses supervisor=supervise-daemon which will
-		// automatically restart the agent if the helper script approach fails.
-		logger.Debug("Detected OpenRC, scheduling service restart via helper script")
-
-		// SECURITY: Ensure /etc/patchmon directory exists with restrictive permissions
-		// Using 0700 to prevent other users from reading/writing to this directory
-		if err := os.MkdirAll("/etc/patchmon", 0700); err != nil {
-			logger.WithError(err).Warn("Failed to create /etc/patchmon directory, will try anyway")
-		}
-
-		// Create a helper script that will restart the service after we exit
-		// SECURITY: TOCTOU mitigation measures:
-		// 1) Use random suffix to prevent predictable paths
-		// 2) Use O_EXCL flag for atomic creation (fail if file exists)
-		// 3) 0700 permissions on dir and file (owner-only)
-		// 4) Script is deleted immediately after execution
-		// 5) Verify no symlink attacks before execution
-		helperScript := `#!/bin/sh
-# Wait a moment for the current process to exit
-sleep 2
-# Restart the service
-rc-service patchmon-agent restart 2>&1 || rc-service patchmon-agent start 2>&1
-# Clean up this script
-rm -f "$0"
-`
-		// Generate random suffix to prevent predictable path attacks
-		randomBytes := make([]byte, 8)
-		if _, err := rand.Read(randomBytes); err != nil {
-			logger.WithError(err).Warn("Failed to generate random suffix, using fallback")
-			randomBytes = []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
-		}
-		helperPath := filepath.Join("/etc/patchmon", fmt.Sprintf("restart-%s.sh", hex.EncodeToString(randomBytes)))
-
-		// SECURITY: Verify the directory is not a symlink (prevent symlink attacks)
-		dirInfo, err := os.Lstat("/etc/patchmon")
-		if err == nil && dirInfo.Mode()&os.ModeSymlink != 0 {
-			logger.Warn("Security: /etc/patchmon is a symlink, refusing to create helper script")
-			// supervise-daemon will restart the agent automatically
-			os.Exit(0)
-		}
-
-		// SECURITY: Use O_EXCL to atomically create file (fail if exists - prevents race conditions)
-		file, err := os.OpenFile(helperPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0700)
-		if err != nil {
-			logger.WithError(err).Warn("Failed to create restart helper script, supervise-daemon will handle restart")
-			// Fall through to exit approach - supervise-daemon will restart
-		} else {
-			// Write the script content to the file
-			if _, err := file.WriteString(helperScript); err != nil {
-				logger.WithError(err).Warn("Failed to write restart helper script")
-				if closeErr := file.Close(); closeErr != nil {
-					logger.WithError(closeErr).Warn("Failed to close file after write error")
-				}
-				if err := os.Remove(helperPath); err != nil {
-					logger.WithError(err).Warn("Failed to remove helper script after write error")
-				}
-				// Fall through to exit approach - supervise-daemon will restart
-			} else {
-				if err := file.Close(); err != nil {
-					logger.WithError(err).Warn("Failed to close restart helper script file")
-				}
-
-				// SECURITY: Verify the file we're about to execute is the one we created
-				// Check it's a regular file, not a symlink that was swapped in
-				fileInfo, err := os.Lstat(helperPath)
-				if err != nil || fileInfo.Mode()&os.ModeSymlink != 0 {
-					logger.Warn("Security: helper script may have been tampered with, refusing to execute")
-					if err := os.Remove(helperPath); err != nil {
-						logger.WithError(err).Warn("Failed to remove tampered helper script")
-					}
-					// supervise-daemon will restart the agent automatically
-					os.Exit(0)
-				}
-
-				// Execute the helper script in background (detached from current process)
-				// Try nohup first, fall back to direct /bin/sh with session detachment
-				var cmd *exec.Cmd
-				if _, nohupErr := exec.LookPath("nohup"); nohupErr == nil {
-					cmd = exec.Command("nohup", helperPath)
-				} else {
-					logger.Debug("nohup not available, using direct /bin/sh execution with session detachment")
-					cmd = exec.Command("/bin/sh", helperPath)
-				}
-				cmd.Stdout = nil
-				cmd.Stderr = nil
-				// Create a new session to fully detach the child process (Linux only)
-				cmd.SysProcAttr = sysProcAttrForDetach()
-				if err := cmd.Start(); err != nil {
-					logger.WithError(err).Warn("Failed to start restart helper script, supervise-daemon will handle restart")
-					// Clean up script
-					if removeErr := os.Remove(helperPath); removeErr != nil {
-						logger.WithError(removeErr).Debug("Failed to remove helper script")
-					}
-					// Fall through to exit approach - supervise-daemon will restart
-				} else {
-					logger.Info("Scheduled service restart via helper script, exiting now...")
-					// Give the helper script a moment to start
-					time.Sleep(500 * time.Millisecond)
-					// Exit gracefully - the helper script will restart the service
-					os.Exit(0)
-				}
-			}
-		}
-
-		// Fallback: If helper script approach failed, just exit
-		// OpenRC with supervisor=supervise-daemon will automatically restart the agent after respawn_delay
-		logger.Info("Exiting to allow OpenRC supervise-daemon to restart service with updated config...")
-		os.Exit(0)
-		// os.Exit never returns, but we need this for code flow
-		return nil
-	}
-
-	// Fallback: No known init system detected (crontab-based or bare process)
-	// We MUST create a helper script to restart the agent, because:
-	// - There is no service manager watching the process
-	// - The @reboot crontab entry only runs on boot, not on process exit
-	// - Simply sending pkill -HUP would kill the agent with nothing to restart it
-	logger.Warn("No known init system detected, creating restart helper script for safe restart...")
-
-	// SECURITY: Ensure /etc/patchmon directory exists with restrictive permissions
-	if err := os.MkdirAll("/etc/patchmon", 0700); err != nil {
-		logger.WithError(err).Warn("Failed to create /etc/patchmon directory")
-	}
-
-	helperScript := `#!/bin/sh
-# Wait a moment for the current process to exit
-sleep 3
-# Kill any remaining patchmon-agent processes
-pkill -f 'patchmon-agent serve' 2>/dev/null || true
-sleep 1
-# Start the new binary in the background
-/usr/local/bin/patchmon-agent serve </dev/null >/dev/null 2>&1 &
-# Clean up this script
-rm -f "$0"
-`
-	// Generate random suffix to prevent predictable path attacks
-	randomBytes := make([]byte, 8)
-	if _, err := rand.Read(randomBytes); err != nil {
-		logger.WithError(err).Warn("Failed to generate random suffix, using fallback")
-		randomBytes = []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
-	}
-	helperPath := filepath.Join("/etc/patchmon", fmt.Sprintf("restart-%s.sh", hex.EncodeToString(randomBytes)))
-
-	// SECURITY: Verify the directory is not a symlink
-	dirInfo, err := os.Lstat("/etc/patchmon")
-	if err == nil && dirInfo.Mode()&os.ModeSymlink != 0 {
-		logger.Warn("Security: /etc/patchmon is a symlink, refusing to create helper script")
-		logger.Error("Cannot safely restart agent - manual restart required: /usr/local/bin/patchmon-agent serve &")
-		return fmt.Errorf("no init system and /etc/patchmon is a symlink - cannot safely restart")
-	}
-
-	// SECURITY: Use O_EXCL to atomically create file
-	file, err := os.OpenFile(helperPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0700)
-	if err != nil {
-		logger.WithError(err).Error("Failed to create restart helper script")
-		logger.Error("Manual restart required: /usr/local/bin/patchmon-agent serve &")
-		return fmt.Errorf("no init system and failed to create helper script: %w", err)
-	}
-
-	if _, err := file.WriteString(helperScript); err != nil {
-		logger.WithError(err).Error("Failed to write restart helper script")
-		if closeErr := file.Close(); closeErr != nil {
-			logger.WithError(closeErr).Warn("Failed to close file after write error")
-		}
-		if removeErr := os.Remove(helperPath); removeErr != nil {
-			logger.WithError(removeErr).Warn("Failed to remove helper script after write error")
-		}
-		logger.Error("Manual restart required: /usr/local/bin/patchmon-agent serve &")
-		return fmt.Errorf("no init system and failed to write helper script: %w", err)
-	}
-
-	if err := file.Close(); err != nil {
-		logger.WithError(err).Warn("Failed to close restart helper script file")
-	}
-
-	// SECURITY: Verify the file we're about to execute is the one we created
-	fileInfo, err := os.Lstat(helperPath)
-	if err != nil || fileInfo.Mode()&os.ModeSymlink != 0 {
-		logger.Warn("Security: helper script may have been tampered with, refusing to execute")
-		if removeErr := os.Remove(helperPath); removeErr != nil {
-			logger.WithError(removeErr).Warn("Failed to remove tampered helper script")
-		}
-		logger.Error("Manual restart required: /usr/local/bin/patchmon-agent serve &")
-		return fmt.Errorf("no init system and helper script security check failed")
-	}
-
-	// Execute the helper script in background (detached from current process)
-	var cmd *exec.Cmd
-	if _, nohupErr := exec.LookPath("nohup"); nohupErr == nil {
-		cmd = exec.CommandContext(ctx, "nohup", "/bin/sh", helperPath)
-	} else {
-		logger.Debug("nohup not available, using direct /bin/sh execution with session detachment")
-		cmd = exec.CommandContext(ctx, "/bin/sh", helperPath)
-	}
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	cmd.SysProcAttr = sysProcAttrForDetach()
-
-	if err := cmd.Start(); err != nil {
-		logger.WithError(err).Error("Failed to start restart helper script")
-		if removeErr := os.Remove(helperPath); removeErr != nil {
-			logger.WithError(removeErr).Debug("Failed to remove helper script")
-		}
-		logger.Error("Manual restart required: /usr/local/bin/patchmon-agent serve &")
-		return fmt.Errorf("no init system and failed to start helper script: %w", err)
-	}
-
-	logger.Info("Scheduled agent restart via helper script (no init system), exiting now...")
-	time.Sleep(500 * time.Millisecond)
-	os.Exit(0)
-	return nil // Unreachable, but satisfies function signature
 }
 
 // sendComplianceProgress sends a progress update via the global channel
