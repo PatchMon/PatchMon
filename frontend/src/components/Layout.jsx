@@ -91,6 +91,35 @@ const HostsNavBadge = ({ total, connected }) => {
 	);
 };
 
+// Routes that hide the top bar page title and give the full remaining width to
+// the search box. Kept in one place so a new detail route can't pick up the
+// title on some pages and not others.
+const FULL_WIDTH_SEARCH_ROUTES = [
+	"/",
+	"/hosts",
+	"/repositories",
+	"/packages",
+	"/reporting",
+	"/automation",
+	"/compliance",
+	"/docker",
+	"/patching",
+];
+
+const FULL_WIDTH_SEARCH_PREFIXES = [
+	"/hosts/",
+	"/repositories/",
+	"/packages/",
+	"/compliance/",
+	"/docker/",
+	"/patching/",
+	"/settings/",
+];
+
+const usesFullWidthSearch = (pathname) =>
+	FULL_WIDTH_SEARCH_ROUTES.includes(pathname) ||
+	FULL_WIDTH_SEARCH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+
 const Layout = ({ children }) => {
 	// When used as a layout route, render Outlet; otherwise render children (backwards compat)
 	const content = children ?? <Outlet />;
@@ -1617,34 +1646,22 @@ const Layout = ({ children }) => {
 						<div className="h-6 w-px bg-secondary-200 dark:bg-secondary-600 lg:hidden" />
 
 						<div className="flex flex-1 gap-x-2 sm:gap-x-4 self-stretch lg:gap-x-6 min-w-0">
-							{/* Page title - hidden on dashboard, hosts, repositories, packages, automation, compliance, docker, settings, and host details to give more space to search */}
-							{![
-								"/",
-								"/hosts",
-								"/repositories",
-								"/packages",
-								"/reporting",
-								"/automation",
-								"/compliance",
-								"/docker",
-								"/patching",
-							].includes(location.pathname) &&
-								!location.pathname.startsWith("/hosts/") &&
-								!location.pathname.startsWith("/compliance/") &&
-								!location.pathname.startsWith("/docker/") &&
-								!location.pathname.startsWith("/packages/") &&
-								!location.pathname.startsWith("/patching/") &&
-								!location.pathname.startsWith("/settings/") && (
-									<div className="relative flex items-center flex-shrink-0">
-										<h2 className="text-base sm:text-lg font-semibold text-secondary-900 dark:text-secondary-100 whitespace-nowrap">
-											{getPageTitle()}
-										</h2>
-									</div>
-								)}
+							{/* Page title - hidden on the list and detail routes above to give more space to search */}
+							{!usesFullWidthSearch(location.pathname) && (
+								<div className="relative flex items-center flex-shrink-0">
+									<h2 className="text-base sm:text-lg font-semibold text-secondary-900 dark:text-secondary-100 whitespace-nowrap">
+										{getPageTitle()}
+									</h2>
+								</div>
+							)}
 
 							{/* Global Search Bar */}
 							<div
-								className={`flex items-center min-w-0 ${["/", "/hosts", "/repositories", "/packages", "/reporting", "/automation", "/compliance", "/docker", "/patching"].includes(location.pathname) || location.pathname.startsWith("/hosts/") || location.pathname.startsWith("/compliance/") || location.pathname.startsWith("/docker/") || location.pathname.startsWith("/packages/") || location.pathname.startsWith("/patching/") || location.pathname.startsWith("/settings/") ? "flex-1 max-w-none" : "flex-1 md:flex-none md:max-w-sm"}`}
+								className={`flex items-center min-w-0 ${
+									usesFullWidthSearch(location.pathname)
+										? "flex-1 max-w-none"
+										: "flex-1 md:flex-none md:max-w-sm"
+								}`}
 							>
 								<GlobalSearch />
 							</div>
