@@ -40,6 +40,7 @@ import TierBadge from "../components/TierBadge";
 import UpgradeRequiredContent from "../components/UpgradeRequiredContent";
 import { getRequiredTier } from "../constants/tiers";
 import { useAuth } from "../contexts/AuthContext";
+import { useConfirm } from "../contexts/ConfirmContext";
 import { useToast } from "../contexts/ToastContext";
 import {
 	adminUsersAPI,
@@ -97,6 +98,7 @@ const Reporting = () => {
 	const alertLifecycleLocked = !hasModule("alerts_advanced");
 	const queryClient = useQueryClient();
 	const toast = useToast();
+	const confirm = useConfirm();
 	const [searchParams] = useSearchParams();
 	const location = useLocation();
 
@@ -696,16 +698,20 @@ const Reporting = () => {
 	const handleDeleteSelected = async () => {
 		if (selectedAlerts.size === 0) return;
 
-		if (
-			window.confirm(
-				`Are you sure you want to delete ${selectedAlerts.size} alert(s)? This action cannot be undone.`,
-			)
-		) {
-			try {
-				await deleteAlertsMutation.mutateAsync(Array.from(selectedAlerts));
-			} catch (error) {
-				console.error("Failed to delete alerts:", error);
-			}
+		const count = selectedAlerts.size;
+		const confirmed = await confirm({
+			title: "Delete alerts",
+			message: `Are you sure you want to delete ${count} alert${count === 1 ? "" : "s"}?`,
+			confirmLabel: `Delete ${count} alert${count === 1 ? "" : "s"}`,
+		});
+		if (!confirmed) return;
+
+		try {
+			await deleteAlertsMutation.mutateAsync(Array.from(selectedAlerts));
+			toast.success(`${count} alert${count === 1 ? "" : "s"} deleted`);
+		} catch (error) {
+			console.error("Failed to delete alerts:", error);
+			toast.error(error.response?.data?.error || "Failed to delete alerts");
 		}
 	};
 

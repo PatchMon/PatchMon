@@ -267,8 +267,9 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 				document.body.appendChild(ta);
 				ta.focus();
 				ta.select();
-				document.execCommand("copy");
+				const successful = document.execCommand("copy");
 				document.body.removeChild(ta);
+				if (!successful) throw new Error("Copy command failed");
 			}
 			setStep(4);
 		} catch (_err) {

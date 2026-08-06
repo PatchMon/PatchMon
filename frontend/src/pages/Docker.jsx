@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
+import { useToast } from "../contexts/ToastContext";
 import api, { formatError } from "../utils/api";
 import { generateRegistryLink, getSourceDisplayName } from "../utils/docker";
 
@@ -33,6 +34,7 @@ const VALID_DOCKER_TABS = [
 
 const Docker = () => {
 	const queryClient = useQueryClient();
+	const toast = useToast();
 	const [searchParams] = useSearchParams();
 	const location = useLocation();
 	const [searchTerm, setSearchTerm] = useState("");
@@ -170,7 +172,7 @@ const Docker = () => {
 			setDeleteContainerModal(null);
 		},
 		onError: (error) => {
-			alert(
+			toast.error(
 				`Failed to delete container: ${error.response?.data?.error || error.message}`,
 			);
 		},
@@ -188,7 +190,7 @@ const Docker = () => {
 			setDeleteImageModal(null);
 		},
 		onError: (error) => {
-			alert(
+			toast.error(
 				`Failed to delete image: ${error.response?.data?.error || error.message}`,
 			);
 		},
@@ -206,7 +208,7 @@ const Docker = () => {
 			setDeleteVolumeModal(null);
 		},
 		onError: (error) => {
-			alert(
+			toast.error(
 				`Failed to delete volume: ${error.response?.data?.error || error.message}`,
 			);
 		},
@@ -224,7 +226,7 @@ const Docker = () => {
 			setDeleteNetworkModal(null);
 		},
 		onError: (error) => {
-			alert(
+			toast.error(
 				`Failed to delete network: ${error.response?.data?.error || error.message}`,
 			);
 		},

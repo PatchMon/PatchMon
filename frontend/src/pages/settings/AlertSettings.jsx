@@ -11,6 +11,7 @@ import {
 	X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useConfirm } from "../../contexts/ConfirmContext";
 import { useToast } from "../../contexts/ToastContext";
 import { formatAlertType } from "../../utils/alertLabels";
 import {
@@ -802,6 +803,7 @@ const AlertSettings = () => {
 
 const CleanupSection = () => {
 	const toast = useToast();
+	const confirm = useConfirm();
 	const [previewLoading, setPreviewLoading] = useState(false);
 	const [previewData, setPreviewData] = useState(null);
 
@@ -819,7 +821,13 @@ const CleanupSection = () => {
 	};
 
 	const handleCleanup = async () => {
-		if (!window.confirm("Delete these alerts? This cannot be undone.")) return;
+		const confirmed = await confirm({
+			title: "Delete alerts",
+			message: `Delete ${previewData.length} alert(s)?`,
+			confirmLabel: "Delete alerts",
+		});
+		if (!confirmed) return;
+
 		try {
 			const response = await alertsAPI.triggerCleanup();
 			const count =

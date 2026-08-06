@@ -1187,17 +1187,11 @@ const HostDetail = () => {
 	});
 
 	const handleDeleteHost = async () => {
-		if (
-			window.confirm(
-				`Are you sure you want to delete host "${host.friendly_name}"? This action cannot be undone.`,
-			)
-		) {
-			try {
-				await deleteHostMutation.mutateAsync(hostId);
-			} catch (error) {
-				console.error("Failed to delete host:", error);
-				alert("Failed to delete host");
-			}
+		try {
+			await deleteHostMutation.mutateAsync(hostId);
+		} catch (error) {
+			console.error("Failed to delete host:", error);
+			toast.error(error.response?.data?.error || "Failed to delete host");
 		}
 	};
 
