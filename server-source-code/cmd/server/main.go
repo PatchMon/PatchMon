@@ -86,6 +86,11 @@ func main() {
 	var poolCache *hostctx.PoolCache
 	var redisCache *hostctx.RedisCache
 	if cfg.RegistryDatabaseURL != "" {
+		// This process serves more than one context, so an unprefixed Redis key
+		// lands in a keyspace shared with other customers. Turn on the warning
+		// that catches it, before anything can be served.
+		hostctx.EnableMultiContextChecks()
+
 		// Poll interval is a failsafe - the primary path for registry updates is the
 		// immediate reload webhook (POST /api/v1/internal/reload-registry-map) triggered
 		// by the provisioner after every context create/update/delete.
