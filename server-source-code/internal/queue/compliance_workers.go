@@ -70,6 +70,13 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	// entry and hostctx.TenantKey silently returns an unprefixed Redis key.
 	// The HTTP side writes prefixed keys, so without this the two never meet:
 	// the scan-cancel flag set from the UI would never be seen here.
+	//
+	// Only Host is populated, which is all TenantKey needs. Nothing reachable
+	// from a worker reads the quota or module fields today (they are read only
+	// in internal/handler, from r.Context()). Be careful adding a call that
+	// does: a nil MaxUsers/MaxHosts skips the limit check and a nil Modules
+	// makes HasModule allow everything, so this entry would fail open. Populate
+	// it from the registry if that ever becomes reachable.
 	if p.Host != "" {
 		ctx = hostctx.WithEntry(ctx, &hostctx.Entry{Host: p.Host})
 	}
