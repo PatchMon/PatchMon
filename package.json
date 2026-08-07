@@ -32,13 +32,13 @@
 		"security": "npm run security:secrets && npm run security:codeql"
 	},
 	"overrides": {
-		"minimatch": "10.2.5",
+		"minimatch": "10.2.6",
 		"glob": "13.0.6",
 		"filelist": {
-			"minimatch": "10.2.5"
+			"minimatch": "10.2.6"
 		},
 		"test-exclude": {
-			"minimatch": "10.2.5"
+			"minimatch": "10.2.6"
 		},
 		"esbuild": "0.25.12"
 	},
@@ -46,7 +46,7 @@
 		"@biomejs/biome": "^2.4.3",
 		"concurrently": "^8.2.2",
 		"lefthook": "^1.13.4",
-		"minimatch": "10.2.5"
+		"minimatch": "10.2.6"
 	},
 	"engines": {
 		"node": ">=18.0.0"
