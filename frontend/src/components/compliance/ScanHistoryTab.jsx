@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
 import {
 	CheckCircle,
@@ -10,7 +10,7 @@ import {
 	Shield,
 	XCircle,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { complianceAPI } from "../../utils/complianceApi";
 
@@ -41,7 +41,7 @@ const PROFILE_TYPE_LABELS = {
 };
 
 const format_duration = (ms) => {
-	if (ms == null) return "—";
+	if (ms == null) return " -";
 	if (ms < 1000) return `${ms}ms`;
 	const seconds = ms / 1000;
 	if (seconds < 60) return `${seconds.toFixed(1)}s`;
@@ -56,7 +56,21 @@ const ScanHistoryTab = ({ scanned_hosts }) => {
 	const [type_filter, set_type_filter] = useState("");
 	const [host_filter, set_host_filter] = useState("");
 	const [search, set_search] = useState("");
+	const [debounced_search, set_debounced_search] = useState("");
+	const search_debounce_ref = useRef(null);
 	const limit = 25;
+
+	useEffect(() => {
+		if (search_debounce_ref.current) clearTimeout(search_debounce_ref.current);
+		search_debounce_ref.current = setTimeout(() => {
+			set_debounced_search(search.trim());
+			set_page(0);
+		}, 400);
+		return () => {
+			if (search_debounce_ref.current)
+				clearTimeout(search_debounce_ref.current);
+		};
+	}, [search]);
 
 	const { data, isLoading } = useQuery({
 		queryKey: [
@@ -65,28 +79,22 @@ const ScanHistoryTab = ({ scanned_hosts }) => {
 			status_filter,
 			type_filter,
 			host_filter,
+			debounced_search,
 		],
 		queryFn: () => {
 			const params = { limit, offset: page * limit };
 			if (status_filter) params.status = status_filter;
 			if (type_filter) params.profile_type = type_filter;
 			if (host_filter) params.host_id = host_filter;
+			if (debounced_search) params.search = debounced_search;
 			return complianceAPI.getScanHistory(params);
 		},
 		staleTime: 30 * 1000,
-		keepPreviousData: true,
+		placeholderData: keepPreviousData,
 	});
 
 	const scans = data?.scans || [];
 	const { total = 0, total_pages = 1 } = data?.pagination || {};
-
-	const filtered_scans = search.trim()
-		? scans.filter(
-				(s) =>
-					s.host_name.toLowerCase().includes(search.toLowerCase()) ||
-					s.profile_name.toLowerCase().includes(search.toLowerCase()),
-			)
-		: scans;
 
 	const host_options = scanned_hosts || [];
 
@@ -96,7 +104,7 @@ const ScanHistoryTab = ({ scanned_hosts }) => {
 			<div className="card p-4">
 				<div className="flex flex-wrap items-center gap-3">
 					<div className="relative flex-1 min-w-[200px] max-w-sm">
-						<Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary-400" />
+						<Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-white" />
 						<input
 							type="text"
 							placeholder="Search host or profile..."
@@ -169,7 +177,7 @@ const ScanHistoryTab = ({ scanned_hosts }) => {
 
 					<div className="ml-auto flex items-center gap-3">
 						{total > 0 && (
-							<span className="text-sm text-secondary-500 dark:text-secondary-400 whitespace-nowrap">
+							<span className="text-sm text-secondary-500 dark:text-white whitespace-nowrap">
 								{total} scan{total !== 1 ? "s" : ""} found
 							</span>
 						)}
@@ -188,16 +196,18 @@ const ScanHistoryTab = ({ scanned_hosts }) => {
 			<div className="card overflow-hidden">
 				{isLoading ? (
 					<div className="flex items-center justify-center py-16">
-						<RefreshCw className="h-6 w-6 animate-spin text-secondary-400" />
+						<RefreshCw className="h-6 w-6 animate-spin text-secondary-400 dark:text-white" />
 					</div>
-				) : filtered_scans.length === 0 ? (
-					<div className="text-center py-16 text-secondary-400 dark:text-secondary-500">
+				) : scans.length === 0 ? (
+					<div className="text-center py-16 text-secondary-400 dark:text-white">
 						<Shield className="h-10 w-10 mx-auto mb-3" />
-						<p className="font-medium text-secondary-700 dark:text-secondary-300">
+						<p className="font-medium text-secondary-700 dark:text-white">
 							No scan history found
 						</p>
 						<p className="text-sm mt-1">
-							Completed and failed scans will appear here.
+							{debounced_search
+								? "No scans match your search."
+								: "Completed and failed scans will appear here."}
 						</p>
 					</div>
 				) : (
@@ -205,36 +215,36 @@ const ScanHistoryTab = ({ scanned_hosts }) => {
 						<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
 							<thead className="bg-secondary-50 dark:bg-secondary-700">
 								<tr>
-									<th className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider whitespace-nowrap">
+									<th className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap">
 										Host
 									</th>
-									<th className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider whitespace-nowrap">
+									<th className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap">
 										Profile
 									</th>
-									<th className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider whitespace-nowrap">
+									<th className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap">
 										Status
 									</th>
-									<th className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider whitespace-nowrap">
+									<th className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap">
 										Outcome
 									</th>
-									<th className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider whitespace-nowrap">
+									<th className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap">
 										Duration
 									</th>
-									<th className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider whitespace-nowrap">
+									<th className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap">
 										Rules
 									</th>
-									<th className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider whitespace-nowrap">
+									<th className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap">
 										Started
 									</th>
 								</tr>
 							</thead>
 							<tbody className="divide-y divide-secondary-200 dark:divide-secondary-700">
-								{filtered_scans.map((scan) => {
+								{scans.map((scan) => {
 									const cfg =
 										STATUS_CONFIG[scan.status] || STATUS_CONFIG.completed;
 									const StatusIcon = cfg.icon;
 									const score_pct =
-										scan.score != null ? `${Math.round(scan.score)}%` : "—";
+										scan.score != null ? `${Math.round(scan.score)}%` : " -";
 
 									return (
 										<tr
@@ -262,7 +272,7 @@ const ScanHistoryTab = ({ scanned_hosts }) => {
 														{PROFILE_TYPE_LABELS[scan.profile_type] ||
 															scan.profile_type}
 													</span>
-													<span className="text-sm text-secondary-500 dark:text-secondary-400 truncate max-w-[180px]">
+													<span className="text-sm text-secondary-500 dark:text-white truncate max-w-[180px]">
 														{scan.profile_name}
 													</span>
 												</div>
@@ -295,7 +305,7 @@ const ScanHistoryTab = ({ scanned_hosts }) => {
 																{scan.warnings} warn
 															</span>
 														)}
-														<span className="text-secondary-400">
+														<span className="text-secondary-400 dark:text-white">
 															{score_pct}
 														</span>
 													</div>
@@ -307,13 +317,13 @@ const ScanHistoryTab = ({ scanned_hosts }) => {
 														{scan.error_message || "Scan failed"}
 													</span>
 												) : (
-													<span className="text-sm text-secondary-400">
+													<span className="text-sm text-secondary-400 dark:text-white">
 														In progress…
 													</span>
 												)}
 											</td>
 
-											<td className="px-3 sm:px-4 py-2 whitespace-nowrap text-sm text-secondary-500 dark:text-secondary-400">
+											<td className="px-3 sm:px-4 py-2 whitespace-nowrap text-sm text-secondary-500 dark:text-white">
 												<div className="flex items-center gap-1.5">
 													<Clock className="h-3.5 w-3.5" />
 													{scan.status === "running"
@@ -324,12 +334,12 @@ const ScanHistoryTab = ({ scanned_hosts }) => {
 												</div>
 											</td>
 
-											<td className="px-3 sm:px-4 py-2 whitespace-nowrap text-sm text-secondary-500 dark:text-secondary-400">
+											<td className="px-3 sm:px-4 py-2 whitespace-nowrap text-sm text-secondary-500 dark:text-white">
 												{scan.results_stored} / {scan.total_rules}
 											</td>
 
 											<td
-												className="px-3 sm:px-4 py-2 whitespace-nowrap text-sm text-secondary-500 dark:text-secondary-400"
+												className="px-3 sm:px-4 py-2 whitespace-nowrap text-sm text-secondary-500 dark:text-white"
 												title={
 													scan.started_at
 														? format(
@@ -343,7 +353,7 @@ const ScanHistoryTab = ({ scanned_hosts }) => {
 													? formatDistanceToNow(new Date(scan.started_at), {
 															addSuffix: true,
 														})
-													: "—"}
+													: " -"}
 											</td>
 										</tr>
 									);
@@ -378,7 +388,7 @@ const Pagination = ({ page, total_pages, set_page }) => (
 		>
 			<ChevronLeft className="h-4 w-4" />
 		</button>
-		<span className="text-sm text-secondary-600 dark:text-secondary-400 tabular-nums">
+		<span className="text-sm text-secondary-600 dark:text-white tabular-nums">
 			{page + 1} / {total_pages}
 		</span>
 		<button

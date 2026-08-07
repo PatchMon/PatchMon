@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="70" viewBox="0 0 40 70" shape-rendering="geometricPrecision" overflow="visible">
+  <path
+    d="M 20 0 L 40 35 L 20 70 L 0 35 Z"
+    fill="none"
+    stroke="rgba(100, 116, 139, 0.28)"
+    stroke-width="1"
+    stroke-linejoin="round"
+    stroke-linecap="round"
+  />
+  <path
+    d="M 0 35 L 40 35"
+    fill="none"
+    stroke="rgba(100, 116, 139, 0.28)"
+    stroke-width="1"
+    stroke-linecap="round"
+  />
+</svg>

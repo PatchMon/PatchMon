@@ -18,7 +18,6 @@ import {
 	SiMacos,
 	SiManjaro,
 	SiOpensuse,
-	SiOracle,
 	SiParrotsecurity,
 	SiPfsense,
 	SiPopos,
@@ -75,9 +74,9 @@ export const getOSIcon = (osType) => {
 	// Fedora
 	if (os.includes("fedora")) return SiFedora;
 
-	// Oracle Linux
+	// Oracle Linux (SiOracle removed from react-icons; fall back to generic Linux)
 	if (os === "ol" || os.includes("oraclelinux") || os.includes("oracle linux"))
-		return SiOracle;
+		return SiLinux;
 
 	// SUSE distributions
 	if (os.includes("opensuse")) return SiOpensuse;

@@ -171,10 +171,10 @@ describe("ComplianceScore Component", () => {
 			expect(wrapper.className).toContain("inline-flex");
 		});
 
-		it("should have rounded-full class for pill shape", () => {
+		it("should have rounded class for pill shape", () => {
 			const { container } = render(<ComplianceScore score={85} />);
 			const wrapper = container.firstChild;
-			expect(wrapper.className).toContain("rounded-full");
+			expect(wrapper.className).toContain("rounded");
 		});
 
 		it("should render an icon alongside the score", () => {

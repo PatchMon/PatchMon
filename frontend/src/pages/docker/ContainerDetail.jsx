@@ -74,7 +74,7 @@ const ContainerDetail = () => {
 		};
 		return (
 			<span
-				className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+				className={`inline-flex items-center px-3 py-1 rounded text-sm font-medium ${
 					statusClasses[status] ||
 					"bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200"
 				}`}
@@ -104,7 +104,7 @@ const ContainerDetail = () => {
 							</h1>
 							{getStatusBadge(container.status)}
 						</div>
-						<p className="mt-1 text-sm text-secondary-600 dark:text-secondary-400">
+						<p className="mt-1 text-sm text-secondary-600 dark:text-white">
 							Container ID: {container.container_id.substring(0, 12)}
 						</p>
 					</div>
@@ -214,7 +214,7 @@ const ContainerDetail = () => {
 					<div className="px-6 py-5">
 						<div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
 							<div>
-								<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+								<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 									Container ID
 								</dt>
 								<dd className="mt-1 text-sm text-secondary-900 dark:text-white font-mono break-all">
@@ -222,7 +222,7 @@ const ContainerDetail = () => {
 								</dd>
 							</div>
 							<div>
-								<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+								<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 									Image Tag
 								</dt>
 								<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -230,7 +230,7 @@ const ContainerDetail = () => {
 								</dd>
 							</div>
 							<div>
-								<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+								<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 									Created
 								</dt>
 								<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -239,7 +239,7 @@ const ContainerDetail = () => {
 							</div>
 							{container.started_at && (
 								<div>
-									<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+									<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 										Started
 									</dt>
 									<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -249,7 +249,7 @@ const ContainerDetail = () => {
 							)}
 							{container.ports && Object.keys(container.ports).length > 0 && (
 								<div className="sm:col-span-2">
-									<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+									<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 										Port Mappings
 									</dt>
 									<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -257,9 +257,9 @@ const ContainerDetail = () => {
 											{Object.entries(container.ports).map(([key, value]) => (
 												<span
 													key={key}
-													className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+													className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
 												>
-													{key} → {value}
+													{key} &gt; {value}
 												</span>
 											))}
 										</div>
@@ -281,7 +281,7 @@ const ContainerDetail = () => {
 						<div className="px-6 py-5">
 							<div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
 								<div>
-									<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+									<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 										Repository
 									</dt>
 									<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -295,7 +295,7 @@ const ContainerDetail = () => {
 									</dd>
 								</div>
 								<div>
-									<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+									<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 										Tag
 									</dt>
 									<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -303,7 +303,7 @@ const ContainerDetail = () => {
 									</dd>
 								</div>
 								<div>
-									<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+									<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 										Source
 									</dt>
 									<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -312,7 +312,7 @@ const ContainerDetail = () => {
 								</div>
 								{container.docker_images.size_bytes && (
 									<div>
-										<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+										<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 											Size
 										</dt>
 										<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -326,7 +326,7 @@ const ContainerDetail = () => {
 									</div>
 								)}
 								<div>
-									<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+									<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 										Image ID
 									</dt>
 									<dd className="mt-1 text-xs text-secondary-900 dark:text-white font-mono break-all">
@@ -334,7 +334,7 @@ const ContainerDetail = () => {
 									</dd>
 								</div>
 								<div>
-									<dt className="text-sm font-medium text-secondary-500 dark:text-secondary-400">
+									<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 										Created
 									</dt>
 									<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
@@ -371,7 +371,7 @@ const ContainerDetail = () => {
 											>
 												{similar.name}
 											</Link>
-											<p className="text-sm text-secondary-500 dark:text-secondary-400">
+											<p className="text-sm text-secondary-500 dark:text-white">
 												{similar.status}
 											</p>
 										</div>

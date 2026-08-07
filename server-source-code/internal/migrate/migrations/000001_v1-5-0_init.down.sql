@@ -1,0 +1,69 @@
+-- Drop tables in reverse dependency order (children before parents)
+-- WARNING: This removes ALL data. Use only for development or full teardown.
+-- Indexes are dropped automatically with their tables.
+
+DROP INDEX IF EXISTS idx_packages_name_trgm;
+DROP INDEX IF EXISTS idx_hosts_friendly_name_trgm;
+DROP INDEX IF EXISTS users_discord_id_key;
+DROP INDEX IF EXISTS users_oidc_sub_key;
+DROP INDEX IF EXISTS idx_users_email_lower;
+DROP INDEX IF EXISTS idx_users_username_lower;
+DROP INDEX IF EXISTS idx_system_statistics_timestamp;
+DROP INDEX IF EXISTS idx_update_history_timestamp;
+DROP INDEX IF EXISTS idx_update_history_host_id;
+DROP INDEX IF EXISTS idx_user_sessions_user_device;
+DROP INDEX IF EXISTS idx_user_sessions_expires_at;
+DROP INDEX IF EXISTS idx_user_sessions_user_id;
+DROP INDEX IF EXISTS idx_job_history_api_id;
+DROP INDEX IF EXISTS idx_compliance_scans_started_at;
+DROP INDEX IF EXISTS idx_compliance_scans_status;
+DROP INDEX IF EXISTS idx_compliance_scans_host_id;
+DROP INDEX IF EXISTS idx_docker_containers_image_id;
+DROP INDEX IF EXISTS idx_docker_containers_status;
+DROP INDEX IF EXISTS idx_docker_containers_host_id;
+DROP INDEX IF EXISTS idx_host_group_memberships_host_group_id;
+DROP INDEX IF EXISTS idx_host_group_memberships_host_id;
+DROP INDEX IF EXISTS idx_host_packages_needs_update;
+DROP INDEX IF EXISTS idx_host_packages_package_id;
+DROP INDEX IF EXISTS idx_host_packages_host_id;
+DROP INDEX IF EXISTS idx_hosts_needs_reboot;
+DROP INDEX IF EXISTS idx_hosts_last_update;
+DROP INDEX IF EXISTS idx_hosts_status;
+DROP INDEX IF EXISTS release_notes_acceptances_version_idx;
+DROP INDEX IF EXISTS release_notes_acceptances_user_id_idx;
+
+DROP TABLE IF EXISTS alert_config;
+DROP TABLE IF EXISTS alert_history;
+DROP TABLE IF EXISTS alerts;
+DROP TABLE IF EXISTS alert_actions;
+DROP TABLE IF EXISTS compliance_results;
+DROP TABLE IF EXISTS compliance_rules;
+DROP TABLE IF EXISTS compliance_scans;
+DROP TABLE IF EXISTS compliance_profiles;
+DROP TABLE IF EXISTS audit_logs;
+DROP TABLE IF EXISTS release_notes_acceptances;
+DROP TABLE IF EXISTS job_history;
+DROP TABLE IF EXISTS docker_networks;
+DROP TABLE IF EXISTS docker_volumes;
+DROP TABLE IF EXISTS docker_image_updates;
+DROP TABLE IF EXISTS docker_containers;
+DROP TABLE IF EXISTS docker_images;
+DROP TABLE IF EXISTS auto_enrollment_tokens;
+DROP TABLE IF EXISTS user_sessions;
+DROP TABLE IF EXISTS system_statistics;
+DROP TABLE IF EXISTS update_history;
+DROP TABLE IF EXISTS host_repositories;
+DROP TABLE IF EXISTS host_packages;
+DROP TABLE IF EXISTS host_group_memberships;
+DROP TABLE IF EXISTS host_pending_config;
+DROP TABLE IF EXISTS dashboard_layout;
+DROP TABLE IF EXISTS dashboard_preferences;
+DROP TABLE IF EXISTS hosts;
+DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS repositories;
+DROP TABLE IF EXISTS packages;
+DROP TABLE IF EXISTS host_groups;
+DROP TABLE IF EXISTS settings;
+DROP TABLE IF EXISTS role_permissions;
+
+DROP EXTENSION IF EXISTS pg_trgm;

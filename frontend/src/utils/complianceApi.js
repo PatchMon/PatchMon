@@ -53,6 +53,13 @@ export const complianceAPI = {
 	// Upgrade SSG content packages on the agent
 	upgradeSSG: (hostId) => api.post(`/compliance/upgrade-ssg/${hostId}`),
 
+	// Get SSG upgrade job status for progress polling
+	getSSGUpgradeJobStatus: (hostId) =>
+		api.get(`/compliance/ssg-upgrade-job/${hostId}`).then((res) => res.data),
+
+	// Get server SSG version info (version + available files)
+	getSSGInfo: () => api.get("/compliance/ssg-info").then((res) => res.data),
+
 	// Install scanner (OpenSCAP + SSG) on the agent via BullMQ job
 	installScanner: (hostId) => api.post(`/compliance/install-scanner/${hostId}`),
 
@@ -67,6 +74,12 @@ export const complianceAPI = {
 	// Set individual scanner enables (OpenSCAP, Docker Bench)
 	setScannerToggles: (hostId, settings) =>
 		api.post(`/hosts/${hostId}/integrations/compliance/scanners`, settings),
+
+	// Set the default compliance scan profile for a host
+	setDefaultProfile: (hostId, profileId) =>
+		api.post(`/hosts/${hostId}/integrations/compliance/default-profile`, {
+			profile_id: profileId,
+		}),
 
 	// Get host integrations data (includes scanner toggle states)
 	getHostIntegrations: (hostId) => api.get(`/hosts/${hostId}/integrations`),

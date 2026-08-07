@@ -1,4 +1,6 @@
+import { ChevronRight } from "lucide-react";
 import { Bar } from "react-chartjs-2";
+import { Link, useNavigate } from "react-router-dom";
 import { useTheme } from "../../../contexts/ThemeContext";
 import { getBarOptions } from "./chartOptions";
 
@@ -11,8 +13,9 @@ const PROFILE_COLORS = [
 	"#EF4444",
 ];
 
-const ComplianceProfilesPie = ({ data }) => {
+const ComplianceProfilesPie = ({ data, onTabChange }) => {
 	const { isDark } = useTheme();
+	const navigate = useNavigate();
 
 	const profile_distribution = data?.profile_distribution || [];
 	const labels = profile_distribution.map((p) => p.name || p.type || "Unknown");
@@ -29,30 +32,66 @@ const ComplianceProfilesPie = ({ data }) => {
 				label: "Hosts",
 				data: has_data ? values : [0],
 				backgroundColor: has_data ? colors : ["#374151"],
-				borderWidth: 1,
-				borderColor: isDark ? "#374151" : "#ffffff",
+				borderWidth: 0,
 				borderRadius: 4,
 				borderSkipped: false,
 			},
 		],
 	};
 
-	const options = getBarOptions(isDark, "y");
+	const base_options = getBarOptions(isDark, "y");
+	const options = {
+		...base_options,
+		plugins: { ...base_options.plugins },
+		scales: { ...base_options.scales },
+		onClick: (_event, elements) => {
+			if (elements.length > 0) {
+				if (onTabChange) {
+					onTabChange("scan-results");
+				} else {
+					navigate("/compliance?tab=scan-results");
+				}
+			}
+		},
+		onHover: (event, elements) => {
+			event.native.target.style.cursor =
+				elements.length > 0 ? "pointer" : "default";
+		},
+	};
 
 	return (
-		<div className="card p-4 sm:p-6 w-full">
-			<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
+		<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
+			<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4 flex-shrink-0">
 				Compliance Profiles in Use
 			</h3>
-			<div className="h-64">
+			<div className="h-56 flex-1 min-h-0">
 				{has_data ? (
 					<Bar data={chart_data} options={options} />
 				) : (
-					<div className="flex items-center justify-center h-full text-secondary-500 dark:text-secondary-400 text-sm">
+					<div className="flex items-center justify-center h-full text-secondary-500 dark:text-white text-sm">
 						No profile data yet
 					</div>
 				)}
 			</div>
+			{onTabChange ? (
+				<button
+					type="button"
+					onClick={() => onTabChange("scan-results")}
+					className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 hover:underline flex-shrink-0"
+				>
+					View scan results
+					<ChevronRight className="h-4 w-4" />
+				</button>
+			) : (
+				<Link
+					to="/compliance"
+					state={{ complianceTab: "scan-results" }}
+					className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 hover:underline flex-shrink-0"
+				>
+					View scan results
+					<ChevronRight className="h-4 w-4" />
+				</Link>
+			)}
 		</div>
 	);
 };

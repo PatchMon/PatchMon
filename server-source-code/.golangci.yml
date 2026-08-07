@@ -1,0 +1,11 @@
+version: "2"
+
+linters:
+  enable:
+    # Same as agent-source-code (revive disabled until package-comments/var-naming/exported addressed)
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell

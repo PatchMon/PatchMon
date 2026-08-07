@@ -41,22 +41,34 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.ref }}
+          # Branch and PR builds resolve their version with `git describe`,
+          # which walks history to find the nearest tag. fetch-tags alone is not
+          # enough: it fetches the tag refs, but a shallow clone has no ancestry
+          # to walk, so describe fails with "No tags can describe".
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: ctx
+        uses: ./.github/actions/release-context
+        with:
+          token: ${{ github.token }}
+          fetch-notes: 'false'
 
       - name: Set up Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
-          go-version: '1.26.1'
+          go-version-file: 'agent-source-code/go.mod'
 
       - name: Build all agent binaries
         working-directory: agent-source-code
         env:
           CGO_ENABLED: 0
+          VERSION: ${{ steps.ctx.outputs.version }}
         run: |
           mkdir -p ../agents-prebuilt
-          VERSION=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
           for target in "linux/amd64" "linux/arm64" "linux/386" "linux/arm" \
                         "freebsd/amd64" "freebsd/arm64" "freebsd/386" "freebsd/arm" \
-                        "windows/amd64" "windows/386"; do
+                        "windows/amd64" "windows/arm64"; do
             GOOS=${target%/*}
             GOARCH=${target#*/}
             export GOOS GOARCH
@@ -77,11 +89,57 @@ jobs:
     name: Build server image
     needs: build-agents
     runs-on: ubuntu-latest
+    # Hoist the Harbor-secret presence check to a job-level env var.
+    # GitHub Actions does not allow the `secrets` context in step-level `if:`
+    # expressions for some trigger types (you'll see
+    #   "Unrecognized named-value: 'secrets'"
+    # at workflow parse time). Evaluating the expression here converts it into
+    # a plain string "true"/"false" which step-level `if:` CAN read via env.
+    env:
+      HAS_HARBOR: ${{ secrets.HARBOR_USERNAME != '' && secrets.HARBOR_TOKEN != '' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.ref }}
+          # Branch and PR builds resolve their version with `git describe`,
+          # which walks history to find the nearest tag. fetch-tags alone is not
+          # enough: it fetches the tag refs, but a shallow clone has no ancestry
+          # to walk, so describe fails with "No tags can describe".
+          fetch-depth: 0
+
+      # Resolves the version and, on a release tag, writes the release notes
+      # from the GitHub release into release_notes_data/ so //go:embed compiles
+      # them into the image. Nothing is committed.
+      - name: Resolve version and inject release notes
+        id: ctx
+        uses: ./.github/actions/release-context
+        with:
+          token: ${{ github.token }}
+
+      - name: Fetch community counts
+        id: social
+        # Bakes the current GitHub/Discord/YouTube/LinkedIn counts into the
+        # binary so the nav, login footer and setup wizard are accurate as of
+        # the release. patchmon.net/socialstats is public and unauthenticated,
+        # so this works on forks with no secrets configured.
+        #
+        # Never fails the build: an unreachable endpoint leaves the outputs
+        # empty and the server keeps its compiled-in defaults, while a
+        # deliberate 0 from the endpoint hides that number instead.
+        continue-on-error: true
+        run: |
+          for platform in github discord youtube linkedin; do
+            count="$(curl -fsS --max-time 10 --retry 2 --retry-delay 2 \
+              "https://patchmon.net/socialstats/${platform}" 2>/dev/null || true)"
+            count="$(printf '%s' "$count" | tr -dc '0-9')"
+            if [ -z "$count" ]; then
+              echo "::notice::no count for ${platform}; keeping compiled-in default"
+            else
+              echo "${platform}=${count}" >> "$GITHUB_OUTPUT"
+              echo "${platform}: ${count}"
+            fi
+          done
 
       - name: Download agent binaries
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -98,6 +156,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log in to Harbor
+        # Skip when HARBOR_USERNAME/HARBOR_TOKEN aren't set (forks, test repos,
+        # contributor PRs from forks). The Harbor push step below also guards
+        # on the same env, so the workflow still succeeds — it just doesn't
+        # publish to Harbor.
+        if: env.HAS_HARBOR == 'true'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           registry: ${{ env.HARBOR_REGISTRY }}
@@ -117,55 +180,130 @@ jobs:
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}-server
+          # `latest=auto` tags release builds (semver pushes) as `:latest` but
+          # leaves branch/edge builds alone.
+          flavor: |
+            latest=auto
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             type=edge,branch=main
+            type=raw,value=edge,enable=${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+
+      - name: Extract metadata (tags, labels) for Harbor
+        id: meta-harbor
+        if: env.HAS_HARBOR == 'true'
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051
+        with:
+          # Release tag pushes publish to `cr.dev.patchmon.cloud/patchmon-server`.
+          # PR and edge builds publish to the `/pr/` staging namespace
+          # (`cr.dev.patchmon.cloud/pr/patchmon-server`) so production pulls
+          # never accidentally resolve to an in-flight build.
+          images: |
+            name=${{ env.HARBOR_REGISTRY }}/patchmon-server,enable=${{ github.ref_type == 'tag' }}
+            name=${{ env.HARBOR_REGISTRY }}/pr/patchmon-server,enable=${{ github.ref_type != 'tag' }}
+          flavor: |
+            latest=auto
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=edge,branch=main
+            type=raw,value=edge,enable=${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+            type=ref,event=pr,prefix=pr-
 
       - name: Build and push server image to GHCR (main/tags only)
         id: build
-        if: github.event_name != 'pull_request_target'
+        if: github.event_name != 'pull_request_target' && steps.meta.outputs.tags != ''
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
           file: docker/server.Dockerfile
           platforms: linux/amd64,linux/arm64
           build-args: |
-            VERSION=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+            VERSION=${{ steps.ctx.outputs.version }}
+            GITHUB_STARS=${{ steps.social.outputs.github }}
+            DISCORD_MEMBERS=${{ steps.social.outputs.discord }}
+            YOUTUBE_SUBSCRIBERS=${{ steps.social.outputs.youtube }}
+            LINKEDIN_FOLLOWERS=${{ steps.social.outputs.linkedin }}
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=server
           cache-to: type=gha,mode=max,scope=server
           provenance: false
+          # Force gzip on all layers (including base image layers from dhi.io/alpine-base
+          # which ship as zstd). Without force-compression, mixed zstd/gzip manifests
+          # break Podman <5.7 and Docker without the containerd image store.
+          # See: https://github.com/PatchMon/PatchMon/issues/679
+          outputs: type=image,compression=gzip,force-compression=true
 
-      - name: Build and push server image to Harbor (PRs and main)
+      - name: Build and push server image to Harbor (PRs, main, and tags)
         id: build-harbor
+        # Only run when Harbor credentials are set and metadata-action produced
+        # at least one tag. Forks / test repos simply skip this step; GHCR push
+        # above still happens.
+        if: env.HAS_HARBOR == 'true' && steps.meta-harbor.outputs.tags != ''
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
           file: docker/server.Dockerfile
           platforms: linux/amd64,linux/arm64
           build-args: |
-            VERSION=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+            VERSION=${{ steps.ctx.outputs.version }}
+            GITHUB_STARS=${{ steps.social.outputs.github }}
+            DISCORD_MEMBERS=${{ steps.social.outputs.discord }}
+            YOUTUBE_SUBSCRIBERS=${{ steps.social.outputs.youtube }}
+            LINKEDIN_FOLLOWERS=${{ steps.social.outputs.linkedin }}
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
-          tags: |
-            ${{ github.event_name == 'pull_request_target' && format('{0}/pr/patchmon-server:pr-{1}', env.HARBOR_REGISTRY, github.event.pull_request.number) || '' }}
-            ${{ github.event_name != 'pull_request_target' && format('{0}/patchmon-server:edge', env.HARBOR_REGISTRY) || '' }}
-            ${{ github.ref_type == 'tag' && format('{0}/patchmon-server:{1}', env.HARBOR_REGISTRY, github.ref_name) || '' }}
-            ${{ github.ref_type == 'tag' && format('{0}/patchmon-server:latest', env.HARBOR_REGISTRY) || '' }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta-harbor.outputs.tags }}
+          labels: ${{ steps.meta-harbor.outputs.labels }}
+          # Reads the shared cache but deliberately never writes it.
+          #
+          # On pull_request_target the Actions runtime token is read-only
+          # ("Actions runtime token ACs: refs/heads/main: read"), so a gha cache
+          # export fails the whole step with "failed to reserve cache" — after
+          # the image has already been built and pushed, which made the job look
+          # like a build failure when it was not.
+          #
+          # On main and tags the GHCR step above already exports to this exact
+          # scope from an identical build, so exporting again here would just
+          # repeat ~50s of "preparing build cache for export" for no benefit.
+          #
+          # Either way PR builds still get fast cache HITS from main via
+          # cache-from; they simply do not write back.
           cache-from: type=gha,scope=server
-          cache-to: type=gha,mode=max,scope=server
           provenance: false
+          # Force gzip on all layers (including base image layers from dhi.io/alpine-base
+          # which ship as zstd). Without force-compression, mixed zstd/gzip manifests
+          # break Podman <5.7 and Docker without the containerd image store.
+          # See: https://github.com/PatchMon/PatchMon/issues/679
+          outputs: type=image,compression=gzip,force-compression=true
 
+      # Locate a previous image comment by its marker so a re-push updates it
+      # instead of appending another one. `synchronize` is a trigger, so
+      # without this every push to the PR leaves a fresh near-identical comment.
+      - name: Find existing image comment
+        id: find-comment
+        if: github.event_name == 'pull_request_target' && steps.build-harbor.outcome == 'success' && steps.build-harbor.outputs.digest != ''
+        uses: peter-evans/find-comment@b30e6a3c0ed37e7c023ccd3f1db5c6c0b0c23aad
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: 'github-actions[bot]'
+          body-includes: '<!-- patchmon-docker-pr -->'
+
+      # comment-id empty (first run) creates against issue-number; set (re-push)
+      # updates that comment. edit-mode: replace, or the body is appended to and
+      # the comment grows a copy per push.
       - name: Comment on PR with image URL
-        if: github.event_name == 'pull_request_target' && steps.build-harbor.outputs.digest != ''
+        if: github.event_name == 'pull_request_target' && steps.build-harbor.outcome == 'success' && steps.build-harbor.outputs.digest != ''
         uses: peter-evans/create-or-update-comment@71345be0265236311c031f5c7866368bd1eff043
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.pull_request.number }}
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          edit-mode: replace
           body: |
             <!-- patchmon-docker-pr -->
             ## Docker image for testing
@@ -188,5 +326,6 @@ jobs:
             ```yaml
             services:
               patchmon-server:
-                image: ${{ env.HARBOR_REGISTRY }}/pr/patchmon-server@${{ steps.build.outputs.digest }}
-            ``
+                image: ${{ env.HARBOR_REGISTRY }}/pr/patchmon-server@${{ steps.build-harbor.outputs.digest }}
+            ```
+

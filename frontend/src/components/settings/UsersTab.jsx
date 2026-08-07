@@ -14,14 +14,27 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { useAuth } from "../../contexts/AuthContext";
-import { adminUsersAPI, permissionsAPI, settingsAPI } from "../../utils/api";
+import { useConfirm } from "../../contexts/ConfirmContext";
+import { useSettings } from "../../contexts/SettingsContext";
+import { useToast } from "../../contexts/ToastContext";
+import {
+	adminUsersAPI,
+	formatDateOnly,
+	permissionsAPI,
+	settingsAPI,
+} from "../../utils/api";
+import { isRenderableAvatarSrc } from "../../utils/avatar";
 
 const UsersTab = () => {
+	const confirm = useConfirm();
+	const toast = useToast();
 	const [showAddModal, setShowAddModal] = useState(false);
 	const [editingUser, setEditingUser] = useState(null);
 	const [resetPasswordUser, setResetPasswordUser] = useState(null);
 	const queryClient = useQueryClient();
 	const { user: currentUser } = useAuth();
+	const { settings: publicSettings } = useSettings();
+	const isAdminMode = publicSettings?.admin_mode;
 	const signupEnabledId = useId();
 	const defaultRoleId = useId();
 	const [signupFormData, setSignupFormData] = useState({
@@ -43,18 +56,19 @@ const UsersTab = () => {
 	});
 
 	const isOIDCEnabled = oidcConfig?.enabled || false;
+	const isOIDCSyncRoles = isOIDCEnabled && (oidcConfig?.syncRoles || false);
 
-	// Listen for the header button event to open add modal (only if OIDC is not enabled)
+	// Listen for the header button event to open add modal (only blocked when OIDC sync roles is active)
 	useEffect(() => {
 		const handleOpenAddModal = () => {
-			if (!isOIDCEnabled) {
+			if (!isOIDCSyncRoles) {
 				setShowAddModal(true);
 			}
 		};
 		window.addEventListener("openAddUserModal", handleOpenAddModal);
 		return () =>
 			window.removeEventListener("openAddUserModal", handleOpenAddModal);
-	}, [isOIDCEnabled]);
+	}, [isOIDCSyncRoles]);
 
 	// Fetch users
 	const {
@@ -93,16 +107,21 @@ const UsersTab = () => {
 	const deleteUserMutation = useMutation({
 		mutationFn: adminUsersAPI.delete,
 		onSuccess: () => {
-			queryClient.invalidateQueries(["users"]);
+			queryClient.invalidateQueries({ queryKey: ["users"] });
 		},
 	});
 
 	// Update user mutation
+	// The modal awaits this, so it must be mutateAsync: mutate() swallows
+	// rejections and the await would resolve on failure.
 	const updateUserMutation = useMutation({
 		mutationFn: ({ id, data }) => adminUsersAPI.update(id, data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["users"]);
+			queryClient.invalidateQueries({ queryKey: ["users"] });
 			setEditingUser(null);
+		},
+		onError: (error) => {
+			console.error("Failed to update user:", error);
 		},
 	});
 
@@ -111,8 +130,11 @@ const UsersTab = () => {
 		mutationFn: ({ userId, newPassword }) =>
 			adminUsersAPI.resetPassword(userId, newPassword),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["users"]);
+			queryClient.invalidateQueries({ queryKey: ["users"] });
 			setResetPasswordUser(null);
+		},
+		onError: (error) => {
+			console.error("Failed to reset password:", error);
 		},
 	});
 
@@ -122,7 +144,7 @@ const UsersTab = () => {
 			return settingsAPI.update(data).then((res) => res.data);
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries(["settings"]);
+			queryClient.invalidateQueries({ queryKey: ["settings"] });
 			setIsSignupDirty(false);
 		},
 	});
@@ -143,21 +165,24 @@ const UsersTab = () => {
 	};
 
 	const handleDeleteUser = async (userId, username) => {
-		if (
-			window.confirm(
-				`Are you sure you want to delete user "${username}"? This action cannot be undone.`,
-			)
-		) {
-			try {
-				await deleteUserMutation.mutateAsync(userId);
-			} catch (error) {
-				console.error("Failed to delete user:", error);
-			}
+		const confirmed = await confirm({
+			title: "Delete user",
+			message: `Are you sure you want to delete user "${username}"?`,
+			confirmLabel: "Delete user",
+		});
+		if (!confirmed) return;
+
+		try {
+			await deleteUserMutation.mutateAsync(userId);
+			toast.success(`User "${username}" deleted`);
+		} catch (error) {
+			console.error("Failed to delete user:", error);
+			toast.error(error.response?.data?.error || "Failed to delete user");
 		}
 	};
 
 	const handleUserCreated = () => {
-		queryClient.invalidateQueries(["users"]);
+		queryClient.invalidateQueries({ queryKey: ["users"] });
 		setShowAddModal(false);
 	};
 
@@ -211,7 +236,7 @@ const UsersTab = () => {
 									{/* User Name and Avatar */}
 									<div className="flex items-center gap-3">
 										<div className="flex-shrink-0 h-10 w-10">
-											{user.avatar_url ? (
+											{isRenderableAvatarSrc(user.avatar_url) ? (
 												<img
 													src={user.avatar_url}
 													alt={user.username}
@@ -283,20 +308,20 @@ const UsersTab = () => {
 									<div className="space-y-2 pt-2 border-t border-secondary-200 dark:border-secondary-600">
 										<div className="flex items-center gap-2 text-sm">
 											<Calendar className="h-4 w-4 text-secondary-400 flex-shrink-0" />
-											<span className="text-secondary-500 dark:text-secondary-400">
+											<span className="text-secondary-500 dark:text-white">
 												Created:&nbsp;
 											</span>
 											<span className="text-secondary-900 dark:text-white">
-												{new Date(user.created_at).toLocaleDateString()}
+												{formatDateOnly(user.created_at)}
 											</span>
 										</div>
 										<div className="text-sm">
-											<span className="text-secondary-500 dark:text-secondary-400">
+											<span className="text-secondary-500 dark:text-white">
 												Last Login:&nbsp;
 											</span>
 											<span className="text-secondary-900 dark:text-white">
 												{user.last_login
-													? new Date(user.last_login).toLocaleDateString()
+													? formatDateOnly(user.last_login)
 													: "Never"}
 											</span>
 										</div>
@@ -307,7 +332,7 @@ const UsersTab = () => {
 										<button
 											type="button"
 											onClick={() => handleEditUser(user)}
-											className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300 inline-flex items-center gap-1 text-sm"
+											className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300 inline-flex items-center gap-1 text-sm"
 											title="Edit user"
 										>
 											<Edit className="h-4 w-4" />
@@ -359,25 +384,25 @@ const UsersTab = () => {
 							<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
 								<thead className="bg-secondary-50 dark:bg-secondary-700">
 									<tr>
-										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											User
 										</th>
-										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Email
 										</th>
-										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Role
 										</th>
-										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Status
 										</th>
-										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Created
 										</th>
-										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Last Login
 										</th>
-										<th className="px-6 py-3 text-right text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider">
+										<th className="px-6 py-3 text-right text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Actions
 										</th>
 									</tr>
@@ -391,7 +416,7 @@ const UsersTab = () => {
 											<td className="px-6 py-4 whitespace-nowrap">
 												<div className="flex items-center">
 													<div className="flex-shrink-0 h-10 w-10">
-														{user.avatar_url ? (
+														{isRenderableAvatarSrc(user.avatar_url) ? (
 															<img
 																src={user.avatar_url}
 																alt={user.username}
@@ -418,7 +443,7 @@ const UsersTab = () => {
 												</div>
 											</td>
 											<td className="px-6 py-4 whitespace-nowrap">
-												<div className="flex items-center text-sm text-secondary-500 dark:text-secondary-300">
+												<div className="flex items-center text-sm text-secondary-500 dark:text-white">
 													<Mail className="h-4 w-4 mr-2" />
 													{user.email}
 												</div>
@@ -458,14 +483,14 @@ const UsersTab = () => {
 												)}
 											</td>
 											<td className="px-6 py-4 whitespace-nowrap">
-												<div className="flex items-center text-sm text-secondary-500 dark:text-secondary-300">
+												<div className="flex items-center text-sm text-secondary-500 dark:text-white">
 													<Calendar className="h-4 w-4 mr-2" />
-													{new Date(user.created_at).toLocaleDateString()}
+													{formatDateOnly(user.created_at)}
 												</div>
 											</td>
-											<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500 dark:text-secondary-300">
+											<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500 dark:text-white">
 												{user.last_login ? (
-													new Date(user.last_login).toLocaleDateString()
+													formatDateOnly(user.last_login)
 												) : (
 													<span className="text-secondary-400">Never</span>
 												)}
@@ -475,7 +500,7 @@ const UsersTab = () => {
 													<button
 														type="button"
 														onClick={() => handleEditUser(user)}
-														className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
+														className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
 														title="Edit user"
 													>
 														<Edit className="h-4 w-4" />
@@ -528,18 +553,16 @@ const UsersTab = () => {
 				) : (
 					<div className="p-12 text-center">
 						<User className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
-						<p className="text-secondary-500 dark:text-secondary-300">
-							No users found
-						</p>
-						<p className="text-sm text-secondary-400 dark:text-secondary-400 mt-2">
+						<p className="text-secondary-500 dark:text-white">No users found</p>
+						<p className="text-sm text-secondary-400 dark:text-white mt-2">
 							Click "Add User" to create the first user
 						</p>
 					</div>
 				)}
 			</div>
 
-			{/* Add User Modal - only show when OIDC is not enabled */}
-			{!isOIDCEnabled && (
+			{/* Add User Modal - only hidden when OIDC sync roles is active */}
+			{!isOIDCSyncRoles && (
 				<AddUserModal
 					isOpen={showAddModal}
 					onClose={() => setShowAddModal(false)}
@@ -554,7 +577,7 @@ const UsersTab = () => {
 					user={editingUser}
 					isOpen={!!editingUser}
 					onClose={() => setEditingUser(null)}
-					onUpdateUser={updateUserMutation.mutate}
+					onUpdateUser={updateUserMutation.mutateAsync}
 					isLoading={updateUserMutation.isPending}
 					roles={roles}
 				/>
@@ -566,13 +589,13 @@ const UsersTab = () => {
 					user={resetPasswordUser}
 					isOpen={!!resetPasswordUser}
 					onClose={() => setResetPasswordUser(null)}
-					onPasswordReset={resetPasswordMutation.mutate}
+					onPasswordReset={resetPasswordMutation.mutateAsync}
 					isLoading={resetPasswordMutation.isPending}
 				/>
 			)}
 
-			{/* OIDC Info Banner - show when OIDC is enabled */}
-			{isOIDCEnabled && (
+			{/* OIDC Info Banner - only show when OIDC sync roles is active */}
+			{isOIDCSyncRoles && (
 				<div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
 					<div className="flex">
 						<Info className="h-5 w-5 text-blue-500 dark:text-blue-400 flex-shrink-0" />
@@ -591,8 +614,8 @@ const UsersTab = () => {
 				</div>
 			)}
 
-			{/* User Registration Settings - only show when OIDC is not enabled */}
-			{!isOIDCEnabled && (
+			{/* User Registration Settings - hidden in managed/multi-context mode or when OIDC sync roles is active */}
+			{!isAdminMode && !isOIDCSyncRoles && (
 				<div className="bg-white dark:bg-secondary-800 shadow overflow-hidden sm:rounded-lg">
 					<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
@@ -651,13 +674,13 @@ const UsersTab = () => {
 											<option value="user">User</option>
 										)}
 									</select>
-									<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+									<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 										New users will be assigned this role when they register.
 									</p>
 								</div>
 							)}
 
-							<p className="mt-1 text-sm text-secondary-500 dark:text-secondary-400">
+							<p className="mt-1 text-sm text-secondary-500 dark:text-white">
 								When enabled, users can create their own accounts through the
 								signup page. When disabled, only administrators can create user
 								accounts.
@@ -903,7 +926,7 @@ const AddUserModal = ({ isOpen, onClose, onUserCreated, roles }) => {
 							onChange={handleInputChange}
 							className="block w-full border-secondary-300 dark:border-secondary-600 rounded-md shadow-sm focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
 						/>
-						<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+						<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 							Minimum 6 characters
 						</p>
 					</div>

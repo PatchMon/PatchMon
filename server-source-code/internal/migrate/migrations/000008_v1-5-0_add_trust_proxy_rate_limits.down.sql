@@ -1,0 +1,9 @@
+ALTER TABLE settings DROP COLUMN IF EXISTS trust_proxy;
+ALTER TABLE settings DROP COLUMN IF EXISTS rate_limit_window_ms;
+ALTER TABLE settings DROP COLUMN IF EXISTS rate_limit_max;
+ALTER TABLE settings DROP COLUMN IF EXISTS auth_rate_limit_window_ms;
+ALTER TABLE settings DROP COLUMN IF EXISTS auth_rate_limit_max;
+ALTER TABLE settings DROP COLUMN IF EXISTS agent_rate_limit_window_ms;
+ALTER TABLE settings DROP COLUMN IF EXISTS agent_rate_limit_max;
+ALTER TABLE settings DROP COLUMN IF EXISTS password_rate_limit_window_ms;
+ALTER TABLE settings DROP COLUMN IF EXISTS password_rate_limit_max;

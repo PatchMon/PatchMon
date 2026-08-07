@@ -1,12 +1,13 @@
 import { useEffect } from "react";
 import { useSettings } from "../contexts/SettingsContext";
+import { resolveLogoPath } from "../utils/logoPaths";
 
 const LogoProvider = ({ children }) => {
 	const { settings } = useSettings();
 
 	useEffect(() => {
-		// Use custom favicon or fallback to default
-		const faviconUrl = settings?.favicon || "/assets/favicon.svg";
+		// Use custom favicon or fallback to default (resolveLogoPath maps legacy defaults)
+		const faviconUrl = resolveLogoPath(settings?.favicon, "favicon");
 
 		// Encode the path to handle spaces and special characters
 		const encodeLogoPath = (path) => {
@@ -37,7 +38,7 @@ const LogoProvider = ({ children }) => {
 			link.href = faviconUrlWithCache;
 			document.head.appendChild(link);
 		}
-	}, [settings?.favicon, settings?.updated_at]);
+	}, [settings]);
 
 	return children;
 };

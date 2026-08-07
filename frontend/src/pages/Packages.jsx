@@ -1,9 +1,14 @@
-import { useQuery } from "@tanstack/react-query";
+import {
+	keepPreviousData,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import {
 	AlertTriangle,
 	ArrowDown,
 	ArrowUp,
 	ArrowUpDown,
+	CheckSquare,
 	ChevronLeft,
 	ChevronRight,
 	Columns,
@@ -16,35 +21,79 @@ import {
 	Search,
 	Server,
 	Shield,
+	Square,
+	Wrench,
 	X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import PatchWizard from "../components/PatchWizard";
+import { useAuth } from "../contexts/AuthContext";
+import { useToast } from "../contexts/ToastContext";
 import { dashboardAPI, packagesAPI } from "../utils/api";
 
+const PACKAGES_PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
+
+// Mirrors the server-side sort whitelist (packageListSortKey /
+// packagesListSortColumn). Columns outside this set render without a sort
+// control because the backend would silently fall back to name.
+const PACKAGES_SORTABLE_COLUMNS = new Set([
+	"name",
+	"packageHosts",
+	"status",
+	"latestVersion",
+]);
+
+function formatRepoName(name) {
+	if (!name) return "\u2014";
+	if (name.startsWith("deb-src-")) return name.slice(8);
+	if (name.startsWith("deb-")) return name.slice(4);
+	return name;
+}
+
 const Packages = () => {
+	const navigate = useNavigate();
+	const queryClient = useQueryClient();
+	const toast = useToast();
+	const { canManageHosts } = useAuth();
 	const [searchTerm, setSearchTerm] = useState("");
 	const [categoryFilter, setCategoryFilter] = useState("all");
 	const [updateStatusFilter, setUpdateStatusFilter] = useState("all-packages");
 	const [hostFilter, setHostFilter] = useState("all");
-	const [sortField, setSortField] = useState("name");
+	const [sortField, setSortField] = useState("status");
 	const [sortDirection, setSortDirection] = useState("asc");
 	const [showColumnSettings, setShowColumnSettings] = useState(false);
 	const [descriptionModal, setDescriptionModal] = useState(null); // { packageName, description }
+	const [showPatchConfirmModal, setShowPatchConfirmModal] = useState(false);
+	const [showPatchPackageMultiHostModal, setShowPatchPackageMultiHostModal] =
+		useState(false);
+	const [selectedPackages, setSelectedPackages] = useState([]); // package names (pkg.name)
 	const [currentPage, setCurrentPage] = useState(1);
 	const [pageSize, setPageSize] = useState(() => {
 		const saved = localStorage.getItem("packages-page-size");
 		if (saved) {
 			const parsedSize = parseInt(saved, 10);
 			// Validate that the saved page size is one of the allowed values
-			if ([25, 50, 100, 200].includes(parsedSize)) {
+			if (PACKAGES_PAGE_SIZE_OPTIONS.includes(parsedSize)) {
 				return parsedSize;
 			}
 		}
 		return 25; // Default fallback
 	});
-	const [searchParams] = useSearchParams();
-	const navigate = useNavigate();
+	const [searchParams, setSearchParams] = useSearchParams();
+
+	// Debounce search for backend (avoid refetch on every keystroke)
+	const [debouncedSearch, setDebouncedSearch] = useState("");
+	const searchDebounceRef = useRef(null);
+	useEffect(() => {
+		if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+		searchDebounceRef.current = setTimeout(() => {
+			setDebouncedSearch(searchTerm.trim());
+		}, 400);
+		return () => {
+			if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+		};
+	}, [searchTerm]);
 
 	// Handle host filter from URL parameter
 	useEffect(() => {
@@ -61,6 +110,7 @@ const Packages = () => {
 			{ id: "packageHosts", label: "Installed On", visible: true, order: 1 },
 			{ id: "status", label: "Status", visible: true, order: 2 },
 			{ id: "latestVersion", label: "Latest Version", visible: true, order: 3 },
+			{ id: "sourceRepos", label: "Source Repos", visible: true, order: 4 },
 		];
 
 		const saved = localStorage.getItem("packages-column-config");
@@ -88,27 +138,32 @@ const Packages = () => {
 	// Handle hosts click (view hosts where package is installed)
 	const handlePackageHostsClick = async (pkg) => {
 		try {
-			// Fetch all hosts for this package (packageHosts may only include hosts needing updates)
-			const response = await packagesAPI.getHosts(pkg.id, { limit: 1000 });
+			const totalHosts = pkg.packageHostsCount || pkg.stats?.totalInstalls || 0;
+			// If many hosts: package detail has paginated list. URL length limits ~2k chars.
+			const maxIdsForUrl = 50; // ~50 UUIDs fits in URL
+			if (totalHosts > maxIdsForUrl) {
+				navigate(`/packages/${encodeURIComponent(pkg.id)}`);
+				return;
+			}
+			const response = await packagesAPI.getHosts(pkg.id, {
+				limit: Math.max(totalHosts || 1, 1),
+			});
 			const hosts = response.data?.hosts || [];
-			const hostIds = hosts.map((host) => host.hostId).filter(Boolean);
+			const hostIds = hosts
+				.map((host) => host.hostId || host.host_id)
+				.filter(Boolean);
 
 			if (hostIds.length === 0) {
-				// No hosts found, navigate without filter
 				navigate("/hosts");
 				return;
 			}
 
-			// Create URL with selected hosts and filter
 			const params = new URLSearchParams();
 			params.set("selected", hostIds.join(","));
 			params.set("filter", "selected");
-
-			// Navigate to hosts page with selected hosts
 			navigate(`/hosts?${params.toString()}`);
 		} catch (error) {
 			console.error("Error fetching package hosts:", error);
-			// Fallback: navigate to hosts page without filter
 			navigate("/hosts");
 		}
 	};
@@ -117,17 +172,17 @@ const Packages = () => {
 	useEffect(() => {
 		const filter = searchParams.get("filter");
 		if (filter === "outdated") {
-			// For outdated packages, we want to show all packages that need updates
-			// This is the default behavior, so we don't need to change filters
 			setCategoryFilter("all");
 			setUpdateStatusFilter("needs-updates");
 		} else if (filter === "security" || filter === "security-updates") {
-			// For security updates, filter to show only security updates
 			setUpdateStatusFilter("security-updates");
 			setCategoryFilter("all");
 		} else if (filter === "regular") {
-			// For regular (non-security) updates
 			setUpdateStatusFilter("regular-updates");
+			setCategoryFilter("all");
+		} else {
+			// No filter in URL (fresh visit to /packages) - show all packages
+			setUpdateStatusFilter("all-packages");
 			setCategoryFilter("all");
 		}
 	}, [searchParams]);
@@ -139,20 +194,45 @@ const Packages = () => {
 		refetch,
 		isFetching,
 	} = useQuery({
-		queryKey: ["packages", hostFilter, updateStatusFilter],
+		queryKey: [
+			"packages",
+			hostFilter,
+			updateStatusFilter,
+			categoryFilter,
+			debouncedSearch,
+			currentPage,
+			pageSize,
+			sortField,
+			sortDirection,
+		],
 		queryFn: () => {
-			const params = { limit: 10000 }; // High limit to effectively get all packages
+			const params = {
+				page: currentPage,
+				limit: pageSize,
+				sort: sortField,
+				order: sortDirection,
+			};
 			if (hostFilter && hostFilter !== "all") {
 				params.host = hostFilter;
+			}
+			if (categoryFilter && categoryFilter !== "all") {
+				params.category = categoryFilter;
+			}
+			if (debouncedSearch) {
+				params.search = debouncedSearch;
 			}
 			// Pass update status filter to backend to pre-filter packages
 			if (updateStatusFilter === "needs-updates") {
 				params.needsUpdate = "true";
 			} else if (updateStatusFilter === "security-updates") {
 				params.isSecurityUpdate = "true";
+			} else if (updateStatusFilter === "regular-updates") {
+				params.needsUpdate = "true";
+				params.isSecurityUpdate = "false";
 			}
 			return packagesAPI.getAll(params).then((res) => res.data);
 		},
+		placeholderData: keepPreviousData,
 		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
@@ -165,13 +245,18 @@ const Packages = () => {
 			...pkg,
 			// Normalise field names to match the frontend expectations
 			packageHostsCount: pkg.packageHostsCount || pkg.stats?.totalInstalls || 0,
-			latestVersion: pkg.latest_version || pkg.latestVersion || "Unknown",
+			latestVersion: pkg.latest_version || pkg.latestVersion || "N/A",
 			isUpdatable: (pkg.stats?.updatesNeeded || 0) > 0,
 			isSecurityUpdate: (pkg.stats?.securityUpdates || 0) > 0,
 			// Ensure we have hosts array (for packages, this contains all hosts where the package is installed)
 			packageHosts: pkg.packageHosts || [],
 		}));
 	}, [packagesResponse]);
+	const packagePagination = packagesResponse?.pagination || {};
+	const totalPackages = packagePagination.total || 0;
+	const totalPages = Math.max(1, packagePagination.pages || 1);
+	const startIndex = totalPackages === 0 ? 0 : (currentPage - 1) * pageSize;
+	const endIndex = Math.min(startIndex + packages.length, totalPackages);
 
 	// Fetch dashboard stats for card counts (consistent with homepage)
 	const { data: dashboardStats, refetch: refetchDashboardStats } = useQuery({
@@ -181,132 +266,134 @@ const Packages = () => {
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
 
+	const { data: categories = [] } = useQuery({
+		queryKey: ["packageCategories"],
+		queryFn: () => packagesAPI.getCategories().then((res) => res.data),
+		staleTime: 5 * 60 * 1000,
+		refetchOnWindowFocus: false,
+	});
+
 	// Handle refresh - refetch all related data
 	const handleRefresh = async () => {
 		await Promise.all([refetch(), refetchDashboardStats()]);
 	};
 
-	// Fetch hosts data to get total packages count
+	// Post-submit UX for the Patch all wizard. The wizard now owns the server
+	// call; this handler only routes the user to the right place afterwards.
+	const handlePatchAllSuccess = (_mode, info) => {
+		setShowPatchConfirmModal(false);
+		queryClient.invalidateQueries({ queryKey: ["patching-dashboard"] });
+		queryClient.invalidateQueries({ queryKey: ["patching-runs"] });
+		const runs = info?.runs || [];
+		const immediate = runs.filter((r) => r.immediate);
+		if (!info?.deferred && immediate.length === 1) {
+			navigate(`/patching/runs/${immediate[0].runId}`);
+			return;
+		}
+		toast.success("Patch all queued. View progress in Patching.");
+	};
+
+	const handleSelectPackage = (packageName) => {
+		setSelectedPackages((prev) =>
+			prev.includes(packageName)
+				? prev.filter((n) => n !== packageName)
+				: [...prev, packageName],
+		);
+	};
+
+	const handleSelectAllOnPage = () => {
+		const namesOnPage = paginatedPackages.map((p) => p.name);
+		const allSelected = namesOnPage.every((n) => selectedPackages.includes(n));
+		if (allSelected) {
+			setSelectedPackages((prev) =>
+				prev.filter((n) => !namesOnPage.includes(n)),
+			);
+		} else {
+			setSelectedPackages((prev) => {
+				const added = new Set(prev);
+				for (const n of namesOnPage) added.add(n);
+				return [...added];
+			});
+		}
+	};
+
+	// Lightweight host options for the host filter and patch wizard labels.
 	const { data: hosts } = useQuery({
-		queryKey: ["hosts"],
-		queryFn: () => dashboardAPI.getHosts().then((res) => res.data),
+		queryKey: ["hostOptions", "packages"],
+		queryFn: () =>
+			dashboardAPI.getHostOptions({ limit: 5000 }).then((res) => res.data),
 		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
 
-	// Filter and sort packages
+	const patchModalHostName =
+		hosts?.find((h) => h.id === hostFilter)?.friendly_name ||
+		hosts?.find((h) => h.id === hostFilter)?.hostname;
+
+	// Whether the page is scoped to a single host. Drives both the heading and
+	// which figures the summary cards are allowed to show: mixing one host's
+	// table with fleet-wide cards is what made the numbers unreadable.
+	const isHostScoped = Boolean(hostFilter && hostFilter !== "all");
+
+	// Host-scoped card figures. The fleet numbers come from a periodic
+	// system_statistics snapshot and are never host-aware, so a single host
+	// needs its own live counts.
+	const { data: scopedHost } = useQuery({
+		queryKey: ["packagesHostStats", hostFilter],
+		queryFn: () =>
+			dashboardAPI
+				.getHostDetail(hostFilter, { limit: 1 })
+				.then((res) => res.data),
+		enabled: isHostScoped,
+		staleTime: 60 * 1000,
+		refetchOnWindowFocus: false,
+	});
+
+	const clearHostFilter = () => {
+		setHostFilter("all");
+		setUpdateStatusFilter("all-packages");
+		setCategoryFilter("all");
+		const next = new URLSearchParams(searchParams);
+		next.delete("host");
+		next.delete("filter");
+		setSearchParams(next, { replace: true });
+	};
+
+	const isWindowsHostFilter =
+		hostFilter &&
+		hostFilter !== "all" &&
+		(hosts?.find((h) => h.id === hostFilter)?.os_type || "")
+			.toLowerCase()
+			.includes("windows");
+
+	// Packages are filtered, sorted, and paginated by the backend.
 	const filteredAndSortedPackages = useMemo(() => {
-		if (!packages) return [];
-
-		// Filter packages
-		const filtered = packages.filter((pkg) => {
-			const matchesSearch =
-				pkg.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-				pkg.description?.toLowerCase().includes(searchTerm.toLowerCase());
-
-			const matchesCategory =
-				categoryFilter === "all" || pkg.category === categoryFilter;
-
-			const matchesUpdateStatus =
-				updateStatusFilter === "all-packages" ||
-				(updateStatusFilter === "needs-updates" &&
-					(pkg.stats?.updatesNeeded || 0) > 0) ||
-				(updateStatusFilter === "security-updates" &&
-					(pkg.stats?.securityUpdates || 0) > 0) ||
-				(updateStatusFilter === "regular-updates" &&
-					(pkg.stats?.updatesNeeded || 0) > 0 &&
-					(pkg.stats?.securityUpdates || 0) === 0);
-
-			const packageHosts = pkg.packageHosts || [];
-			const matchesHost =
-				hostFilter === "all" ||
-				packageHosts.some((host) => host.hostId === hostFilter);
-
-			return (
-				matchesSearch && matchesCategory && matchesUpdateStatus && matchesHost
-			);
-		});
-
-		// Sorting
-		filtered.sort((a, b) => {
-			let aValue, bValue;
-
-			switch (sortField) {
-				case "name":
-					aValue = a.name?.toLowerCase() || "";
-					bValue = b.name?.toLowerCase() || "";
-					break;
-				case "latestVersion":
-					aValue = a.latestVersion?.toLowerCase() || "";
-					bValue = b.latestVersion?.toLowerCase() || "";
-					break;
-				case "packageHosts":
-					aValue = a.packageHostsCount || a.packageHosts?.length || 0;
-					bValue = b.packageHostsCount || b.packageHosts?.length || 0;
-					break;
-				case "status": {
-					// Handle sorting for the three status states: Up to Date, Update Available, Security Update Available
-					const aNeedsUpdates = (a.stats?.updatesNeeded || 0) > 0;
-					const bNeedsUpdates = (b.stats?.updatesNeeded || 0) > 0;
-
-					// Define priority order: Security Update (0) > Regular Update (1) > Up to Date (2)
-					let aPriority, bPriority;
-
-					if (!aNeedsUpdates) {
-						aPriority = 2; // Up to Date
-					} else if (a.isSecurityUpdate) {
-						aPriority = 0; // Security Update
-					} else {
-						aPriority = 1; // Regular Update
-					}
-
-					if (!bNeedsUpdates) {
-						bPriority = 2; // Up to Date
-					} else if (b.isSecurityUpdate) {
-						bPriority = 0; // Security Update
-					} else {
-						bPriority = 1; // Regular Update
-					}
-
-					aValue = aPriority;
-					bValue = bPriority;
-					break;
-				}
-				default:
-					aValue = a.name?.toLowerCase() || "";
-					bValue = b.name?.toLowerCase() || "";
-			}
-
-			if (aValue < bValue) return sortDirection === "asc" ? -1 : 1;
-			if (aValue > bValue) return sortDirection === "asc" ? 1 : -1;
-			return 0;
-		});
-
-		return filtered;
-	}, [
-		packages,
-		searchTerm,
-		categoryFilter,
-		updateStatusFilter,
-		sortField,
-		sortDirection,
-		hostFilter,
-	]);
-
-	// Calculate pagination
-	const totalPages = Math.ceil(filteredAndSortedPackages.length / pageSize);
-	const startIndex = (currentPage - 1) * pageSize;
-	const endIndex = startIndex + pageSize;
-	const paginatedPackages = filteredAndSortedPackages.slice(
-		startIndex,
-		endIndex,
-	);
+		return packages || [];
+	}, [packages]);
+	const paginatedPackages = filteredAndSortedPackages;
 
 	// Reset to first page when filters or page size change
 	// biome-ignore lint/correctness/useExhaustiveDependencies: We want this effect to run when filter values or page size change to reset pagination
 	useEffect(() => {
 		setCurrentPage(1);
-	}, [searchTerm, categoryFilter, updateStatusFilter, hostFilter, pageSize]);
+	}, [
+		debouncedSearch,
+		categoryFilter,
+		updateStatusFilter,
+		hostFilter,
+		pageSize,
+		sortField,
+		sortDirection,
+	]);
+
+	// Clamp the page once totals are known. Deleting the last rows on the final
+	// page otherwise leaves "Page 5 of 3" over an empty table until the next
+	// filter change.
+	useEffect(() => {
+		if (!packagesResponse) return;
+		if (currentPage <= totalPages) return;
+		setCurrentPage(totalPages);
+	}, [packagesResponse, currentPage, totalPages]);
 
 	// Function to handle page size change and save to localStorage
 	const handlePageSizeChange = (newPageSize) => {
@@ -321,6 +408,7 @@ const Packages = () => {
 
 	// Sorting functions
 	const handleSort = (field) => {
+		if (!PACKAGES_SORTABLE_COLUMNS.has(field)) return;
 		if (sortField === field) {
 			setSortDirection(sortDirection === "asc" ? "desc" : "asc");
 		} else {
@@ -365,6 +453,7 @@ const Packages = () => {
 			{ id: "packageHosts", label: "Installed On", visible: true, order: 1 },
 			{ id: "status", label: "Status", visible: true, order: 2 },
 			{ id: "latestVersion", label: "Latest Version", visible: true, order: 3 },
+			{ id: "sourceRepos", label: "Source Repos", visible: true, order: 4 },
 		];
 		updateColumnConfig(defaultConfig);
 	};
@@ -386,7 +475,7 @@ const Packages = () => {
 									{pkg.name}
 								</div>
 								{pkg.category && (
-									<div className="text-xs text-secondary-400 dark:text-secondary-400">
+									<div className="text-xs text-secondary-400 dark:text-white">
 										Category: {pkg.category}
 									</div>
 								)}
@@ -451,7 +540,7 @@ const Packages = () => {
 					return <span className="badge-success">Up to Date</span>;
 				}
 
-				return pkg.isSecurityUpdate ? (
+				return (pkg.stats?.securityUpdates || 0) > 0 ? (
 					<span className="badge-danger">
 						<Shield className="h-3 w-3" />
 						Security Update Available
@@ -464,48 +553,67 @@ const Packages = () => {
 				return (
 					<div
 						className="text-sm text-secondary-900 dark:text-white max-w-xs truncate"
-						title={pkg.latestVersion || "Unknown"}
+						title={pkg.latestVersion || "N/A"}
 					>
-						{pkg.latestVersion || "Unknown"}
+						{pkg.latestVersion || "N/A"}
 					</div>
 				);
+			case "sourceRepos": {
+				const repos = pkg.sourceRepos || [];
+				if (repos.length === 0)
+					return (
+						<span className="text-xs text-secondary-400 dark:text-secondary-500">
+							&mdash;
+						</span>
+					);
+				return (
+					<div className="flex flex-wrap gap-1">
+						{repos.slice(0, 3).map((repo) => (
+							<span
+								key={repo.repoId}
+								className="badge-secondary text-xs"
+								title={repo.repoUrl || repo.repoName}
+							>
+								{formatRepoName(repo.repoName)}
+							</span>
+						))}
+						{repos.length > 3 && (
+							<span className="text-xs text-secondary-400 dark:text-secondary-500">
+								+{repos.length - 3}
+							</span>
+						)}
+					</div>
+				);
+			}
 			default:
 				return null;
 		}
 	};
 
-	// Get unique categories
-	const categories =
-		[...new Set(packages?.map((pkg) => pkg.category).filter(Boolean))] || [];
+	// Card figures follow the heading: every number on screen describes the same
+	// scope. Host-scoped values are live per-host counts; fleet values come from
+	// the dashboard's system_statistics snapshot.
+	//
+	// Note these deliberately ignore the update-status filter. The cards are the
+	// fixed summary you navigate with, the table is the filtered view; making the
+	// summary move as you click through it is how "12" and "19" ended up side by
+	// side meaning different things.
+	const totalPackagesCount = isHostScoped
+		? (scopedHost?.stats?.total_packages ?? 0)
+		: totalPackages;
 
-	// Calculate unique package hosts
-	const uniquePackageHosts = new Set();
-	packages?.forEach((pkg) => {
-		// Only count hosts for packages that need updates
-		if ((pkg.stats?.updatesNeeded || 0) > 0) {
-			const packageHosts = pkg.packageHosts || [];
-			packageHosts.forEach((host) => {
-				uniquePackageHosts.add(host.hostId);
-			});
-		}
-	});
-	const uniquePackageHostsCount = uniquePackageHosts.size;
+	// Backend aggregate across the whole filtered set, not just this page. Only
+	// meaningful fleet-wide: on one host every package is installed exactly once,
+	// so the card would just restate Packages.
+	const totalInstallationsCount = packagesResponse?.totalInstalls ?? 0;
 
-	// Calculate total packages installed
-	// Show unique package count (same as table) for consistency
-	const totalPackagesCount = packages?.length || 0;
+	const outdatedPackagesCount = isHostScoped
+		? (scopedHost?.stats?.outdated_packages ?? 0)
+		: (dashboardStats?.cards?.totalOutdatedPackages ?? 0);
 
-	// Calculate total installations across all hosts
-	const totalInstallationsCount =
-		packages?.reduce((sum, pkg) => sum + (pkg.stats?.totalInstalls || 0), 0) ||
-		0;
-
-	// Use dashboard stats for outdated packages count (consistent with homepage)
-	const outdatedPackagesCount =
-		dashboardStats?.cards?.totalOutdatedPackages || 0;
-
-	// Use dashboard stats for security updates count (consistent with homepage)
-	const securityUpdatesCount = dashboardStats?.cards?.securityUpdates || 0;
+	const securityUpdatesCount = isHostScoped
+		? (scopedHost?.stats?.security_updates ?? 0)
+		: (dashboardStats?.cards?.securityUpdates ?? 0);
 
 	if (isLoading) {
 		return (
@@ -543,18 +651,79 @@ const Packages = () => {
 	}
 
 	return (
-		<div className="md:h-[calc(100vh-7rem)] flex flex-col md:overflow-hidden min-h-0">
+		<div className="min-h-0 flex flex-col md:h-[calc(100vh-7rem)] md:overflow-hidden">
 			{/* Page Header */}
 			<div className="flex items-center justify-between mb-6">
 				<div>
-					<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
-						Packages
-					</h1>
+					<div className="flex flex-wrap items-center gap-2 sm:gap-3">
+						<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
+							{isHostScoped
+								? `Packages for ${patchModalHostName || "this"} Host`
+								: "Packages on all Hosts"}
+						</h1>
+						{isHostScoped && (
+							<button
+								type="button"
+								onClick={clearHostFilter}
+								className="btn-outline flex items-center gap-1.5 px-3 py-1.5 min-h-[44px] sm:min-h-0 text-xs sm:text-sm"
+								title="Show packages across every host"
+							>
+								<X className="h-3.5 w-3.5" />
+								Clear filter
+							</button>
+						)}
+					</div>
 					<p className="text-sm text-secondary-600 dark:text-white mt-1">
-						Manage package updates and security patches
+						{isHostScoped
+							? "Every figure below counts this host only"
+							: "Manage package updates and security patches"}
 					</p>
 				</div>
 				<div className="flex items-center gap-3">
+					{selectedPackages.length > 0 &&
+						canManageHosts() &&
+						!isWindowsHostFilter && (
+							<button
+								type="button"
+								onClick={() => setShowPatchPackageMultiHostModal(true)}
+								className="btn-primary flex items-center gap-2"
+								title={
+									hostFilter && hostFilter !== "all"
+										? `Patch ${selectedPackages.length} selected package(s) on ${
+												patchModalHostName || "this host"
+											}`
+										: `Patch ${selectedPackages.length} selected package(s) on chosen hosts`
+								}
+							>
+								<Wrench className="h-4 w-4" />
+								Patch selected ({selectedPackages.length})
+							</button>
+						)}
+					{hostFilter &&
+						hostFilter !== "all" &&
+						canManageHosts() &&
+						!isWindowsHostFilter && (
+							<button
+								type="button"
+								onClick={() => setShowPatchConfirmModal(true)}
+								className="btn-primary flex items-center gap-2"
+								title="Run system package updates on this host"
+							>
+								<Wrench className="h-4 w-4" />
+								Patch all
+							</button>
+						)}
+					{hostFilter &&
+						hostFilter !== "all" &&
+						canManageHosts() &&
+						isWindowsHostFilter && (
+							<span
+								className="text-xs text-secondary-400 dark:text-secondary-300 italic"
+								title="Windows patching is managed through Windows Update or WinGet on the host"
+							>
+								Patching managed via Windows Update
+							</span>
+						)}
 					<button
 						type="button"
 						onClick={handleRefresh}
@@ -570,8 +739,14 @@ const Packages = () => {
 				</div>
 			</div>
 
-			{/* Summary Stats */}
-			<div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6 flex-shrink-0">
+			{/* Summary Stats. Host-scoped drops Installations (one host installs
+			    each package once, so it duplicates Packages) and Outdated Hosts
+			    (a single host is not a fleet figure). */}
+			<div
+				className={`grid grid-cols-2 gap-3 sm:gap-4 mb-6 ${
+					isHostScoped ? "sm:grid-cols-3" : "sm:grid-cols-4 lg:grid-cols-5"
+				}`}
+			>
 				<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
 					<div className="flex items-center">
 						<Package className="h-5 w-5 text-primary-600 mr-2" />
@@ -586,30 +761,35 @@ const Packages = () => {
 					</div>
 				</div>
 
-				<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
-					<div className="flex items-center">
-						<Package className="h-5 w-5 text-blue-600 mr-2" />
-						<div>
-							<p className="text-sm text-secondary-500 dark:text-white">
-								Installations
-							</p>
-							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
-								{totalInstallationsCount}
-							</p>
+				{!isHostScoped && (
+					<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
+						<div className="flex items-center">
+							<Package className="h-5 w-5 text-blue-600 mr-2" />
+							<div>
+								<p className="text-sm text-secondary-500 dark:text-white">
+									Installations
+								</p>
+								<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+									{totalInstallationsCount}
+								</p>
+							</div>
 						</div>
 					</div>
-				</div>
+				)}
 
 				<button
 					type="button"
 					onClick={() => {
 						setUpdateStatusFilter("needs-updates");
 						setCategoryFilter("all");
-						setHostFilter("all");
 						setSearchTerm("");
 					}}
 					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full"
-					title="Click to filter packages that need updates"
+					title={
+						isHostScoped
+							? "Click to filter this host's packages that need updates"
+							: "Click to filter packages that need updates"
+					}
 				>
 					<div className="flex items-center">
 						<Package className="h-5 w-5 text-warning-600 mr-2" />
@@ -629,11 +809,14 @@ const Packages = () => {
 					onClick={() => {
 						setUpdateStatusFilter("security-updates");
 						setCategoryFilter("all");
-						setHostFilter("all");
 						setSearchTerm("");
 					}}
 					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full"
-					title="Click to filter packages with security updates"
+					title={
+						isHostScoped
+							? "Click to filter this host's packages with security updates"
+							: "Click to filter packages with security updates"
+					}
 				>
 					<div className="flex items-center">
 						<Shield className="h-5 w-5 text-danger-600 mr-2" />
@@ -648,40 +831,56 @@ const Packages = () => {
 					</div>
 				</button>
 
-				<button
-					type="button"
-					onClick={() => navigate("/hosts?filter=needsUpdates")}
-					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full"
-					title="Click to view hosts that need updates"
-				>
-					<div className="flex items-center">
-						<Server className="h-5 w-5 text-warning-600 mr-2" />
-						<div>
-							<p className="text-sm text-secondary-500 dark:text-white">
-								Outdated Hosts
-							</p>
-							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
-								{uniquePackageHostsCount}
-							</p>
+				{!isHostScoped && (
+					<button
+						type="button"
+						onClick={() => navigate("/hosts?filter=needsUpdates")}
+						className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full"
+						title="Click to view hosts that need updates"
+					>
+						<div className="flex items-center">
+							<Server className="h-5 w-5 text-warning-600 mr-2" />
+							<div>
+								<p className="text-sm text-secondary-500 dark:text-white">
+									Outdated Hosts
+								</p>
+								<p className="text-xl font-semibold text-secondary-900 dark:text-white">
+									{dashboardStats?.cards?.hostsNeedingUpdates ?? 0}
+								</p>
+							</div>
 						</div>
-					</div>
-				</button>
+					</button>
+				)}
 			</div>
 
 			{/* Packages List */}
-			<div className="card md:flex-1 flex flex-col md:overflow-hidden min-h-0">
-				<div className="px-4 py-4 sm:p-4 md:flex-1 flex flex-col md:overflow-hidden min-h-0">
-					<div className="flex items-center justify-end mb-4">
-						{/* Empty selection controls area to match hosts page spacing */}
+			<div className="card flex-1 flex flex-col md:overflow-hidden min-h-0">
+				<div className="px-4 py-4 sm:p-4 flex-1 flex flex-col md:overflow-hidden min-h-0">
+					<div className="flex items-center justify-between mb-4">
+						{selectedPackages.length > 0 && (
+							<div className="flex items-center gap-2">
+								<span className="text-sm text-secondary-600 dark:text-white/80">
+									{selectedPackages.length} package
+									{selectedPackages.length !== 1 ? "s" : ""} selected
+								</span>
+								<button
+									type="button"
+									onClick={() => setSelectedPackages([])}
+									className="text-sm text-secondary-500 dark:text-white/70 hover:text-secondary-700 dark:hover:text-white/90"
+								>
+									Clear selection
+								</button>
+							</div>
+						)}
 					</div>
 
 					{/* Table Controls */}
 					<div className="mb-4 space-y-4">
 						<div className="flex flex-col sm:flex-row gap-4">
 							{/* Search */}
-							<div className="hidden md:flex flex-1">
+							<div className="flex flex-1">
 								<div className="relative w-full">
-									<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-secondary-500" />
+									<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-white" />
 									<input
 										type="text"
 										placeholder="Search packages..."
@@ -747,7 +946,7 @@ const Packages = () => {
 								<button
 									type="button"
 									onClick={() => setShowColumnSettings(true)}
-									className="flex items-center gap-2 px-3 py-2 text-sm text-secondary-700 dark:text-secondary-300 bg-white dark:bg-secondary-700 border border-secondary-300 dark:border-secondary-600 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-600 transition-colors"
+									className="flex items-center gap-2 px-3 py-2 text-sm text-secondary-700 dark:text-white bg-white dark:bg-secondary-700 border border-secondary-300 dark:border-secondary-600 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-600 transition-colors"
 								>
 									<Columns className="h-4 w-4" />
 									Columns
@@ -756,17 +955,17 @@ const Packages = () => {
 						</div>
 					</div>
 
-					<div className="md:flex-1 md:overflow-hidden">
+					<div className="flex-1 md:overflow-hidden">
 						{filteredAndSortedPackages.length === 0 ? (
 							<div className="text-center py-8">
 								<Package className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
-								<p className="text-secondary-500 dark:text-secondary-300">
+								<p className="text-secondary-500 dark:text-white">
 									{packages?.length === 0
 										? "No packages found"
 										: "No packages match your filters"}
 								</p>
 								{packages?.length === 0 && (
-									<p className="text-sm text-secondary-400 dark:text-secondary-400 mt-2">
+									<p className="text-sm text-secondary-400 dark:text-white mt-2">
 										Packages will appear here once hosts start reporting their
 										installed packages
 									</p>
@@ -776,114 +975,158 @@ const Packages = () => {
 							<>
 								{/* Mobile Card Layout */}
 								<div className="md:hidden space-y-3 pb-4">
-									{paginatedPackages.map((pkg) => (
-										<div key={pkg.id} className="card p-4 space-y-3">
-											{/* Package Name */}
-											<div className="flex items-center gap-2">
-												<button
-													type="button"
-													onClick={() => navigate(`/packages/${pkg.id}`)}
-													className="text-left flex-1"
-												>
-													<div className="flex items-center gap-3">
-														<Package className="h-5 w-5 text-secondary-400 flex-shrink-0" />
-														<div className="text-base font-semibold text-secondary-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400">
-															{pkg.name}
-														</div>
-													</div>
-												</button>
-												{pkg.description && (
+									{paginatedPackages.map((pkg) => {
+										const isSelected = selectedPackages.includes(pkg.name);
+										return (
+											<div
+												key={pkg.id}
+												className={`card p-4 space-y-3 ${
+													isSelected
+														? "ring-2 ring-primary-500 bg-primary-50/50 dark:bg-primary-900/10"
+														: ""
+												}`}
+											>
+												{/* Package Name */}
+												<div className="flex items-center gap-2">
 													<button
 														type="button"
-														onClick={(e) => {
-															e.stopPropagation();
-															setDescriptionModal({
-																packageName: pkg.name,
-																description: pkg.description,
-															});
-														}}
-														className="flex-shrink-0 p-1 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded transition-colors"
-														title="View description"
+														onClick={() => handleSelectPackage(pkg.name)}
+														className="flex-shrink-0 min-w-[44px] min-h-[44px] flex items-center justify-center"
 													>
-														<Info className="h-4 w-4 text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-300" />
+														{isSelected ? (
+															<CheckSquare className="h-5 w-5 text-primary-600" />
+														) : (
+															<Square className="h-5 w-5 text-secondary-400" />
+														)}
 													</button>
-												)}
-											</div>
+													<button
+														type="button"
+														onClick={() => navigate(`/packages/${pkg.id}`)}
+														className="text-left flex-1"
+													>
+														<div className="flex items-center gap-3">
+															<Package className="h-5 w-5 text-secondary-400 flex-shrink-0" />
+															<div className="text-base font-semibold text-secondary-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400">
+																{pkg.name}
+															</div>
+														</div>
+													</button>
+													{pkg.description && (
+														<button
+															type="button"
+															onClick={(e) => {
+																e.stopPropagation();
+																setDescriptionModal({
+																	packageName: pkg.name,
+																	description: pkg.description,
+																});
+															}}
+															className="flex-shrink-0 p-1 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded transition-colors"
+															title="View description"
+														>
+															<Info className="h-4 w-4 text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-300" />
+														</button>
+													)}
+												</div>
 
-											{/* Status and Hosts on same line */}
-											<div className="flex items-center justify-between gap-2">
-												<div className="flex items-center gap-1.5">
-													{(() => {
-														const needsUpdates =
-															(pkg.stats?.updatesNeeded || 0) > 0;
-														if (!needsUpdates) {
-															return (
-																<span className="badge-success text-xs">
-																	Up to Date
+												{/* Status and Hosts on same line */}
+												<div className="flex items-center justify-between gap-2">
+													<div className="flex items-center gap-1.5">
+														{(() => {
+															const needsUpdates =
+																(pkg.stats?.updatesNeeded || 0) > 0;
+															if (!needsUpdates) {
+																return (
+																	<span className="badge-success text-xs">
+																		Up to Date
+																	</span>
+																);
+															}
+															return pkg.isSecurityUpdate ? (
+																<span className="badge-danger text-xs flex items-center gap-1">
+																	<Shield className="h-3 w-3" />
+																	Security
+																</span>
+															) : (
+																<span className="badge-warning text-xs">
+																	Update
 																</span>
 															);
-														}
-														return pkg.isSecurityUpdate ? (
-															<span className="badge-danger text-xs flex items-center gap-1">
-																<Shield className="h-3 w-3" />
-																Security
-															</span>
-														) : (
-															<span className="badge-warning text-xs">
-																Update
-															</span>
-														);
-													})()}
+														})()}
+													</div>
+													<button
+														type="button"
+														onClick={() => handlePackageHostsClick(pkg)}
+														className="text-sm hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded px-2 py-1 -mx-2 transition-colors"
+													>
+														<span className="text-secondary-500 dark:text-white">
+															On:&nbsp;
+														</span>
+														<span className="text-secondary-900 dark:text-white font-semibold">
+															{(() => {
+																const installedHostsCount =
+																	pkg.packageHostsCount ||
+																	pkg.stats?.totalInstalls ||
+																	pkg.packageHosts?.length ||
+																	0;
+																const hostsNeedingUpdates =
+																	pkg.stats?.updatesNeeded || 0;
+																return hostsNeedingUpdates > 0 &&
+																	hostsNeedingUpdates < installedHostsCount
+																	? `${hostsNeedingUpdates}/${installedHostsCount}`
+																	: installedHostsCount;
+															})()}
+														</span>
+														<span className="text-secondary-500 dark:text-white">
+															{(() => {
+																const installedHostsCount =
+																	pkg.packageHostsCount ||
+																	pkg.stats?.totalInstalls ||
+																	pkg.packageHosts?.length ||
+																	0;
+																return ` host${installedHostsCount !== 1 ? "s" : ""}`;
+															})()}
+														</span>
+													</button>
 												</div>
-												<button
-													type="button"
-													onClick={() => handlePackageHostsClick(pkg)}
-													className="text-sm hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded px-2 py-1 -mx-2 transition-colors"
-												>
-													<span className="text-secondary-500 dark:text-secondary-400">
-														On:&nbsp;
-													</span>
-													<span className="text-secondary-900 dark:text-white font-semibold">
-														{(() => {
-															const installedHostsCount =
-																pkg.packageHostsCount ||
-																pkg.stats?.totalInstalls ||
-																pkg.packageHosts?.length ||
-																0;
-															const hostsNeedingUpdates =
-																pkg.stats?.updatesNeeded || 0;
-															return hostsNeedingUpdates > 0 &&
-																hostsNeedingUpdates < installedHostsCount
-																? `${hostsNeedingUpdates}/${installedHostsCount}`
-																: installedHostsCount;
-														})()}
-													</span>
-													<span className="text-secondary-500 dark:text-secondary-400">
-														{(() => {
-															const installedHostsCount =
-																pkg.packageHostsCount ||
-																pkg.stats?.totalInstalls ||
-																pkg.packageHosts?.length ||
-																0;
-															return ` host${installedHostsCount !== 1 ? "s" : ""}`;
-														})()}
-													</span>
-												</button>
-											</div>
 
-											{/* Version Info */}
-											<div className="pt-2 border-t border-secondary-200 dark:border-secondary-600">
-												<div className="text-sm">
-													<span className="text-secondary-500 dark:text-secondary-400">
-														Latest:&nbsp;
-													</span>
-													<span className="text-secondary-900 dark:text-white font-mono text-sm">
-														{pkg.latestVersion || "Unknown"}
-													</span>
+												{/* Version Info */}
+												<div className="pt-2 border-t border-secondary-200 dark:border-secondary-600">
+													<div className="text-sm">
+														<span className="text-secondary-500 dark:text-white">
+															Latest:&nbsp;
+														</span>
+														<span className="text-secondary-900 dark:text-white font-mono text-sm">
+															{pkg.latestVersion || "N/A"}
+														</span>
+													</div>
 												</div>
+
+												{/* Source Repos */}
+												{pkg.sourceRepos?.length > 0 && (
+													<div className="flex items-center gap-2 flex-wrap">
+														<span className="text-xs text-secondary-500 dark:text-white">
+															Repos:
+														</span>
+														{pkg.sourceRepos.slice(0, 3).map((repo) => (
+															<span
+																key={repo.repoId}
+																className="badge-secondary text-xs"
+																title={repo.repoUrl || repo.repoName}
+															>
+																{formatRepoName(repo.repoName)}
+															</span>
+														))}
+														{pkg.sourceRepos.length > 3 && (
+															<span className="text-xs text-secondary-400 dark:text-secondary-500">
+																+{pkg.sourceRepos.length - 3}
+															</span>
+														)}
+													</div>
+												)}
 											</div>
-										</div>
-									))}
+										);
+									})}
 								</div>
 
 								{/* Desktop Table Layout */}
@@ -891,39 +1134,88 @@ const Packages = () => {
 									<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
 										<thead className="bg-secondary-50 dark:bg-secondary-700 sticky top-0 z-10">
 											<tr>
+												<th className="w-12 px-2 py-2">
+													<button
+														type="button"
+														onClick={handleSelectAllOnPage}
+														className="flex items-center justify-center w-full"
+														title={
+															paginatedPackages.every((p) =>
+																selectedPackages.includes(p.name),
+															)
+																? "Deselect all on page"
+																: "Select all on page"
+														}
+													>
+														{paginatedPackages.length > 0 &&
+														paginatedPackages.every((p) =>
+															selectedPackages.includes(p.name),
+														) ? (
+															<CheckSquare className="h-5 w-5 text-primary-600" />
+														) : (
+															<Square className="h-5 w-5 text-secondary-400" />
+														)}
+													</button>
+												</th>
 												{visibleColumns.map((column) => (
 													<th
 														key={column.id}
-														className="px-4 py-2 text-center text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider"
+														className="px-4 py-2 text-center text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 													>
-														<button
-															type="button"
-															onClick={() => handleSort(column.id)}
-															className="flex items-center gap-1 hover:text-secondary-700 dark:hover:text-secondary-200 transition-colors"
-														>
-															{column.label}
-															{getSortIcon(column.id)}
-														</button>
+														{PACKAGES_SORTABLE_COLUMNS.has(column.id) ? (
+															<button
+																type="button"
+																onClick={() => handleSort(column.id)}
+																className="flex items-center gap-1 hover:text-secondary-700 dark:hover:text-secondary-200 transition-colors"
+															>
+																{column.label}
+																{getSortIcon(column.id)}
+															</button>
+														) : (
+															<span className="flex items-center gap-1">
+																{column.label}
+															</span>
+														)}
 													</th>
 												))}
 											</tr>
 										</thead>
 										<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
-											{paginatedPackages.map((pkg) => (
-												<tr
-													key={pkg.id}
-													className="hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors"
-												>
-													{visibleColumns.map((column) => (
-														<td
-															key={column.id}
-															className="px-4 py-2 whitespace-nowrap text-center"
-														>
-															{renderCellContent(column, pkg)}
+											{paginatedPackages.map((pkg) => {
+												const isSelected = selectedPackages.includes(pkg.name);
+												return (
+													<tr
+														key={pkg.id}
+														className={`hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors ${
+															isSelected
+																? "ring-1 ring-inset ring-primary-500 bg-primary-50/50 dark:bg-primary-900/10"
+																: ""
+														}`}
+													>
+														<td className="w-12 px-2 py-2">
+															<button
+																type="button"
+																onClick={() => handleSelectPackage(pkg.name)}
+																className="flex items-center justify-center w-full p-1"
+															>
+																{isSelected ? (
+																	<CheckSquare className="h-5 w-5 text-primary-600" />
+																) : (
+																	<Square className="h-5 w-5 text-secondary-400" />
+																)}
+															</button>
 														</td>
-													))}
-												</tr>
-											))}
+														{visibleColumns.map((column) => (
+															<td
+																key={column.id}
+																className="px-4 py-2 whitespace-nowrap text-center"
+															>
+																{renderCellContent(column, pkg)}
+															</td>
+														))}
+													</tr>
+												);
+											})}
 										</tbody>
 									</table>
 								</div>
@@ -936,7 +1228,7 @@ const Packages = () => {
 						<div className="flex items-center justify-between px-6 py-3 bg-white dark:bg-secondary-800 border-t border-secondary-200 dark:border-secondary-600">
 							<div className="flex items-center gap-4">
 								<div className="flex items-center gap-2">
-									<span className="text-sm text-secondary-700 dark:text-secondary-300">
+									<span className="text-sm text-secondary-700 dark:text-white">
 										Rows per page:
 									</span>
 									<select
@@ -952,10 +1244,8 @@ const Packages = () => {
 										<option value={200}>200</option>
 									</select>
 								</div>
-								<span className="text-sm text-secondary-700 dark:text-secondary-300">
-									{startIndex + 1}-
-									{Math.min(endIndex, filteredAndSortedPackages.length)} of{" "}
-									{filteredAndSortedPackages.length}
+								<span className="text-sm text-secondary-700 dark:text-white">
+									{startIndex + 1}-{endIndex} of {totalPackages}
 								</span>
 							</div>
 							<div className="flex items-center gap-2">
@@ -967,7 +1257,7 @@ const Packages = () => {
 								>
 									<ChevronLeft className="h-4 w-4" />
 								</button>
-								<span className="text-sm text-secondary-700 dark:text-secondary-300">
+								<span className="text-sm text-secondary-700 dark:text-white">
 									Page {currentPage} of {totalPages}
 								</span>
 								<button
@@ -1013,14 +1303,14 @@ const Packages = () => {
 								<button
 									type="button"
 									onClick={() => setDescriptionModal(null)}
-									className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
+									className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
 								>
 									<X className="h-5 w-5" />
 								</button>
 							</div>
 						</div>
 						<div className="px-6 py-4">
-							<p className="text-sm text-secondary-700 dark:text-secondary-300 whitespace-pre-wrap">
+							<p className="text-sm text-secondary-700 dark:text-white whitespace-pre-wrap">
 								{descriptionModal.description}
 							</p>
 						</div>
@@ -1035,6 +1325,71 @@ const Packages = () => {
 						</div>
 					</div>
 				</div>
+			)}
+
+			{/* Flow 3: Patch selected packages across chosen hosts.
+			    When the packages list is filtered to a single host, we inherit
+			    that filter: the wizard is locked to that one host so the user
+			    isn't offered every other host that happens to have the same
+			    package installed. Without a host filter we keep the original
+			    multi-host discovery behavior. */}
+			{showPatchPackageMultiHostModal && (
+				<PatchWizard
+					isOpen={showPatchPackageMultiHostModal}
+					onClose={() => setShowPatchPackageMultiHostModal(false)}
+					mode="trigger"
+					patchType="patch_package"
+					packageNames={selectedPackages}
+					{...(hostFilter && hostFilter !== "all"
+						? {
+								lockHosts: true,
+								presetHosts: [
+									{
+										id: hostFilter,
+										friendly_name: hosts?.find((h) => h.id === hostFilter)
+											?.friendly_name,
+										hostname: hosts?.find((h) => h.id === hostFilter)?.hostname,
+									},
+								],
+							}
+						: {})}
+					onSuccess={(mode, info) => {
+						setSelectedPackages([]);
+						setShowPatchPackageMultiHostModal(false);
+						queryClient.invalidateQueries({ queryKey: ["patching-dashboard"] });
+						queryClient.invalidateQueries({ queryKey: ["patching-runs"] });
+						const runs = info?.runs || [];
+						if (mode === "approval") {
+							toast.success(
+								runs.length === 1
+									? "Submitted 1 run for approval"
+									: `Submitted ${runs.length} runs for approval`,
+							);
+							if (!info?.deferred) navigate("/patching?tab=runs");
+							return;
+						}
+						if (info?.deferred) return;
+						const immediate = runs.filter((r) => r.immediate);
+						if (mode === "patch" && immediate.length === 1) {
+							navigate(`/patching/runs/${immediate[0].runId}`);
+						} else {
+							navigate("/patching?tab=runs");
+						}
+					}}
+				/>
+			)}
+
+			{/* Flow 2: Patch all on the currently filtered host */}
+			{showPatchConfirmModal && hostFilter && hostFilter !== "all" && (
+				<PatchWizard
+					isOpen={showPatchConfirmModal}
+					onClose={() => setShowPatchConfirmModal(false)}
+					mode="trigger"
+					patchType="patch_all"
+					lockHosts
+					presetHosts={[{ id: hostFilter, friendly_name: patchModalHostName }]}
+					onSuccess={handlePatchAllSuccess}
+				/>
 			)}
 		</div>
 	);
@@ -1078,7 +1433,7 @@ const ColumnSettingsModal = ({
 					<button
 						type="button"
 						onClick={onClose}
-						className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
+						className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
 					>
 						<X className="h-5 w-5" />
 					</button>
@@ -1102,7 +1457,7 @@ const ColumnSettingsModal = ({
 							} border-secondary-200 dark:border-secondary-600`}
 						>
 							<div className="flex items-center gap-3">
-								<GripVertical className="h-4 w-4 text-secondary-400 dark:text-secondary-500" />
+								<GripVertical className="h-4 w-4 text-secondary-400 dark:text-white" />
 								<span className="text-sm font-medium text-secondary-900 dark:text-white">
 									{column.label}
 								</span>

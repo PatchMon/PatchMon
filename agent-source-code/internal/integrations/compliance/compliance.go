@@ -14,12 +14,17 @@ import (
 
 const integrationName = "compliance"
 
+// ScannerOptionsGetter returns openscap and docker bench enabled flags for scheduled scans.
+// When set, used when CollectWithOptions is called with options=nil.
+type ScannerOptionsGetter func() (openscapEnabled, dockerBenchEnabled bool)
+
 // Integration implements the Integration interface for compliance scanning
 type Integration struct {
 	logger                   *logrus.Logger
 	openscap                 *OpenSCAPScanner
 	dockerBench              *DockerBenchScanner
 	dockerIntegrationEnabled bool
+	scannerOptionsGetter     ScannerOptionsGetter
 }
 
 // New creates a new Compliance integration
@@ -30,6 +35,11 @@ func New(logger *logrus.Logger) *Integration {
 		dockerBench:              NewDockerBenchScanner(logger),
 		dockerIntegrationEnabled: false,
 	}
+}
+
+// SetScannerOptionsGetter sets the getter for scanner toggles when options is nil (scheduled scans).
+func (c *Integration) SetScannerOptionsGetter(getter ScannerOptionsGetter) {
+	c.scannerOptionsGetter = getter
 }
 
 // SetDockerIntegrationEnabled sets whether Docker integration is enabled
@@ -83,7 +93,7 @@ func (c *Integration) CollectWithOptions(ctx context.Context, options *models.Co
 	// Docker Bench is only available if Docker integration is enabled AND Docker is installed
 	dockerBenchEffectivelyAvailable := c.dockerIntegrationEnabled && c.dockerBench.IsAvailable()
 
-	// Per-host scanner toggles: default to enabled if not specified
+	// Per-host scanner toggles: from options, or from config getter (scheduled scans), or default enabled
 	openscapScanEnabled := true
 	dockerBenchScanEnabled := true
 	if options != nil {
@@ -93,6 +103,8 @@ func (c *Integration) CollectWithOptions(ctx context.Context, options *models.Co
 		if options.DockerBenchEnabled != nil {
 			dockerBenchScanEnabled = *options.DockerBenchEnabled
 		}
+	} else if c.scannerOptionsGetter != nil {
+		openscapScanEnabled, dockerBenchScanEnabled = c.scannerOptionsGetter()
 	}
 
 	complianceData := &models.ComplianceData{
@@ -202,10 +214,18 @@ func (c *Integration) CollectWithOptions(ctx context.Context, options *models.Co
 	}, nil
 }
 
-// UpgradeSSGContent upgrades the SCAP Security Guide content packages
+// UpgradeSSGContent upgrades the SCAP Security Guide content packages (legacy GitHub fallback).
 func (c *Integration) UpgradeSSGContent() error {
 	if c.openscap == nil {
 		return fmt.Errorf("OpenSCAP scanner not initialized")
 	}
 	return c.openscap.UpgradeSSGContent()
+}
+
+// UpgradeSSGContentFromServer downloads SSG content from the PatchMon server.
+func (c *Integration) UpgradeSSGContentFromServer(downloader SSGContentDownloader, targetVersion string) error {
+	if c.openscap == nil {
+		return fmt.Errorf("OpenSCAP scanner not initialized")
+	}
+	return c.openscap.UpgradeSSGContentFromServer(downloader, targetVersion)
 }

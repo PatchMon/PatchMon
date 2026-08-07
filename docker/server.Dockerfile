@@ -1,0 +1,197 @@
+# Development stage - run with go run, source can be volume-mounted for live reload
+FROM golang:1.26-alpine AS development
+
+RUN apk add --no-cache git ca-certificates tzdata curl node npm
+
+WORKDIR /app
+
+# Copy agent scripts and binaries (same layout as production; run `make build-all-for-docker` in agent-source-code if agents-prebuilt is missing)
+COPY agents ./agents/
+COPY --chmod=755 agents-prebuilt/patchmon-agent-* ./agents/
+
+# Build frontend for embed
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm install --ignore-scripts --legacy-peer-deps 2>/dev/null || true
+COPY frontend/ ./
+RUN npm run build 2>/dev/null || mkdir -p dist && echo '<!DOCTYPE html><html><body>Build frontend first</body></html>' > dist/index.html
+
+WORKDIR /app/server
+COPY server-source-code/ ./
+RUN mkdir -p cmd/server/static/frontend && cp -r /app/frontend/dist cmd/server/static/frontend/
+
+RUN go mod download
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=5 \
+  CMD curl -f http://localhost:${PORT:-3000}/health || exit 1
+
+# Default: run server. Override CMD or use volume mount for live reload
+ENV AGENTS_DIR=/app/agents
+ENV PORT=3000
+CMD ["go", "run", "./cmd/server"]
+
+# Frontend builder stage for production.
+#
+# Pinned to $BUILDPLATFORM. The output is static JS/CSS/HTML (see the COPY of
+# /app/frontend/dist below), which is architecture-independent, so there is
+# nothing to gain from building it once per target platform — and a great deal
+# to lose. Without this pin BuildKit instantiates this stage for every
+# --platform in the build, so the linux/arm64 variant runs Node and npm under
+# QEMU user-mode emulation on an amd64 runner. That crashed `npm ci` with
+# "qemu: uncaught target signal 4 (Illegal instruction)" and exit code 132,
+# while the native amd64 variant of the same step succeeded in seconds.
+#
+# Pinning also roughly halves this stage's wall-clock cost, since the install
+# and the Vite build no longer run twice. The consumer of dist is the `builder`
+# stage, which is itself $BUILDPLATFORM-pinned, so nothing downstream needs a
+# target-architecture copy of these files.
+FROM --platform=$BUILDPLATFORM dhi.io/node:22-debian13-dev AS frontend-builder
+
+WORKDIR /app
+
+# Install from the committed lockfile so the image resolves exactly the versions
+# the host and CI resolve. The previous "rm package-lock.json && npm install
+# --force" left the image free to pick any version matching the semver ranges,
+# which silently broke the build when react-icons 5.7.0 dropped SiSlack.
+#
+# frontend is an npm workspace member and the lockfile lives at the repo root,
+# so both manifests must be present before npm ci can run.
+COPY package.json package-lock.json ./
+COPY frontend/package.json ./frontend/
+
+RUN npm ci --workspace=frontend --include=dev --ignore-scripts --no-audit \
+    && npm cache clean --force
+
+COPY frontend/ ./frontend/
+
+WORKDIR /app/frontend
+
+RUN npm run build
+
+# Build stage - server (runs on amd64, cross-compiles for target platform)
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates tzdata
+
+WORKDIR /app
+
+# Copy server source
+COPY server-source-code/ ./server/
+# Copy built frontend into embed directory
+COPY --from=frontend-builder /app/frontend/dist ./server/cmd/server/static/frontend/dist
+
+WORKDIR /app/server
+
+ARG TARGETOS
+ARG TARGETARCH
+# The git tag is the single source of truth for the version, and .dockerignore
+# excludes .git, so the version must be passed in. Use docker/build.sh, which
+# works it out from `git describe`, or pass it yourself:
+#   --build-arg VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')"
+#
+# Only MAJOR.MINOR.PATCH is accepted. The server parses versions as
+# dot-separated integers and silently treats any suffix as 0, so a value like
+# "2.0.2-60-gABC" or "dev" would report as 2.0.0 and make the instance believe
+# an update is available.
+ARG VERSION=""
+# Community counts for the nav, login footer and setup wizard, read from
+# https://patchmon.net/socialstats/<platform> by the caller and passed in the
+# same way as VERSION. The build never fetches them itself, so it stays
+# hermetic and works with no network beyond the module proxy.
+#
+# Each is an integer. Omitted means "keep the compiled-in default"; 0 means the
+# endpoint could not determine the count and the number should be hidden.
+# Anything non-numeric is dropped rather than failing the build, because a bad
+# social count is never a reason to block a release.
+ARG GITHUB_STARS=""
+ARG DISCORD_MEMBERS=""
+ARG YOUTUBE_SUBSCRIBERS=""
+ARG LINKEDIN_FOLLOWERS=""
+RUN go mod download && \
+    VER="${VERSION#v}"; \
+    LDFLAGS="-s -w"; \
+    if [ -z "$VER" ]; then \
+      echo "WARNING: no VERSION build arg; this image will report 0.0.0. Use docker/build.sh." >&2; \
+    elif printf '%s' "$VER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then \
+      LDFLAGS="$LDFLAGS -X github.com/PatchMon/PatchMon/server-source-code/internal/config.DefaultVersion=$VER"; \
+    else \
+      echo "ERROR: VERSION='$VER' is not MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-PRERELEASE" >&2; exit 1; \
+    fi; \
+    SOCIAL_PKG="github.com/PatchMon/PatchMon/server-source-code/internal/social"; \
+    for pair in "GitHubStars:$GITHUB_STARS" "DiscordMembers:$DISCORD_MEMBERS" \
+                "YouTubeSubscribers:$YOUTUBE_SUBSCRIBERS" "LinkedInFollowers:$LINKEDIN_FOLLOWERS"; do \
+      name="${pair%%:*}"; value="${pair#*:}"; \
+      if [ -z "$value" ]; then continue; fi; \
+      if printf '%s' "$value" | grep -qE '^[0-9]+$'; then \
+        LDFLAGS="$LDFLAGS -X $SOCIAL_PKG.$name=$value"; \
+      else \
+        echo "WARNING: ignoring non-numeric social count $name='$value'" >&2; \
+      fi; \
+    done; \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -buildvcs=false -ldflags="$LDFLAGS" -o /app/patchmon-server ./cmd/server
+
+# SSG content stage — download ComplianceAsCode datastream files at build time.
+# Pass --build-arg SSG_VERSION=0.1.80 to pin a specific version; otherwise
+# the latest GitHub release is resolved automatically.
+#
+# Pinned to $BUILDPLATFORM for the same reason as frontend-builder: the payload
+# is ssg-*-ds.xml datastream files, which are architecture-independent. Left
+# unpinned, this stage downloaded and unpacked the same ~30s archive once per
+# target platform, and did the unpacking under QEMU for the non-native one.
+FROM --platform=$BUILDPLATFORM alpine:3.23 AS ssg-content
+ARG SSG_VERSION=""
+# Use shell variable VER to avoid Docker ARG substitution in the wget URL.
+# Docker substitutes ${SSG_VERSION} at parse time; when empty, the URL would be
+# .../v/scap-security-guide-.zip. VER is set once from ARG, then expanded by the shell.
+RUN apk add --no-cache wget unzip jq \
+    && VER="${SSG_VERSION}" \
+    && if [ -z "${VER}" ]; then \
+         VER=$(wget -qO- https://api.github.com/repos/ComplianceAsCode/content/releases/latest | jq -r '.tag_name' | sed 's/^v//'); \
+         echo "Resolved latest SSG version from GitHub API: ${VER}"; \
+       else \
+         echo "Using pinned SSG version: ${VER}"; \
+       fi \
+    && if [ -z "${VER}" ] || [ "${VER}" = "null" ]; then \
+         echo "ERROR: Could not resolve SSG version (GitHub API may be rate-limited). Pass --build-arg SSG_VERSION=x.y.z to pin." >&2; exit 1; \
+       fi \
+    && wget -q "https://github.com/ComplianceAsCode/content/releases/download/v${VER}/scap-security-guide-${VER}.zip" -O /tmp/ssg.zip \
+    && mkdir -p /tmp/ssg-extract /ssg-content \
+    && unzip -q /tmp/ssg.zip -d /tmp/ssg-extract \
+    && find /tmp/ssg-extract -name 'ssg-*-ds.xml' -exec cp {} /ssg-content/ \; \
+    && echo "${VER}" > /ssg-content/.ssg-version \
+    && rm -rf /tmp/ssg.zip /tmp/ssg-extract
+
+# Production stage — hardened Alpine runtime (no -dev; no shell/apk). Use 3.23 for production.
+FROM dhi.io/alpine-base:3.23
+
+# Runtime image has no apk; ca-certificates/tzdata are in the base. No RUN needed.
+
+WORKDIR /app
+
+# Copy binary (migrations and frontend are embedded in the binary)
+COPY --from=builder /app/patchmon-server ./
+
+# Copy SSG content (SCAP datastream files for compliance scanning)
+COPY --from=ssg-content /ssg-content ./ssg-content/
+
+# Copy agent scripts and binaries to /app/agents (in-image, read-only; no volume)
+COPY agents ./agents/
+COPY --chmod=755 agents-prebuilt/patchmon-agent-* ./agents/
+
+# Entrypoint starts server (no volume copy; agents served from image)
+COPY --chmod=755 docker/backend.docker-entrypoint.sh ./entrypoint.sh
+
+ENV PORT=3000
+ENV AGENTS_DIR=/app/agents
+ENV SSG_CONTENT_DIR=/app/ssg-content
+# Cap Go heap to reduce RAM (override at runtime if needed, e.g. GOMEMLIMIT=128MiB)
+ENV GOMEMLIMIT=256MiB
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=5 \
+  CMD wget -q -O /dev/null http://localhost:${PORT:-3000}/health || exit 1
+
+ENTRYPOINT ["./entrypoint.sh"]

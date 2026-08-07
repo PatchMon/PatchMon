@@ -1,0 +1,166 @@
+-- name: ListHosts :many
+SELECT * FROM hosts ORDER BY friendly_name;
+
+-- name: ListHostsPaginated :many
+SELECT id, friendly_name, hostname, ip, os_type, os_version, architecture, last_update, status, api_id, agent_version, auto_update, created_at, notes, system_uptime, boot_time, needs_reboot, docker_enabled, compliance_enabled
+FROM hosts
+ORDER BY created_at DESC
+LIMIT $1 OFFSET $2;
+
+-- name: ListHostOptions :many
+SELECT id, friendly_name, hostname, os_type, status
+FROM hosts
+WHERE (sqlc.narg('search')::text IS NULL OR friendly_name ILIKE '%' || sqlc.narg('search') || '%' OR hostname ILIKE '%' || sqlc.narg('search') || '%')
+ORDER BY friendly_name ASC, hostname ASC NULLS LAST, id ASC
+LIMIT sqlc.arg('row_limit')::int
+OFFSET sqlc.arg('row_offset')::int;
+
+-- name: CountHosts :one
+SELECT COUNT(*) FROM hosts WHERE status = 'active';
+
+-- name: GetHostByID :one
+SELECT * FROM hosts WHERE id = $1;
+
+-- name: GetHostsByIDs :many
+SELECT * FROM hosts WHERE id = ANY($1::text[]);
+
+-- name: DeleteHostsByIDs :exec
+DELETE FROM hosts WHERE id = ANY($1::text[]);
+
+-- name: GetHostByApiID :one
+SELECT * FROM hosts WHERE api_id = $1;
+
+-- name: ListExistingHostApiIDs :many
+SELECT api_id FROM hosts WHERE api_id = ANY($1::text[]);
+
+-- name: CreateHost :exec
+INSERT INTO hosts (
+    id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status,
+    api_id, api_key, agent_version, auto_update, created_at, updated_at,
+    docker_enabled, compliance_enabled, compliance_on_demand_only, expected_platform
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9,
+    $10, $11, $12, $13, $14, $15,
+    $16, $17, $18, $19
+);
+
+-- name: UpdateHostFriendlyName :exec
+UPDATE hosts SET friendly_name = $1, updated_at = NOW() WHERE id = $2;
+
+-- name: UpdateHostNotes :exec
+UPDATE hosts SET notes = $1, updated_at = NOW() WHERE id = $2;
+
+-- name: UpdateHostConnection :exec
+UPDATE hosts SET ip = $1, hostname = $2, updated_at = NOW() WHERE id = $3;
+
+-- name: UpdateHostPrimaryInterface :exec
+UPDATE hosts SET primary_interface = $1, updated_at = NOW() WHERE id = $2;
+
+-- name: UpdateHostAutoUpdate :exec
+UPDATE hosts SET auto_update = $1, updated_at = NOW() WHERE id = $2;
+
+-- name: UpdateHostDownAlerts :exec
+UPDATE hosts SET host_down_alerts_enabled = $1, updated_at = NOW() WHERE id = $2;
+
+-- name: UpdateHostDockerEnabled :exec
+UPDATE hosts SET docker_enabled = $1, updated_at = NOW() WHERE id = $2;
+
+-- name: UpdateHostComplianceEnabled :exec
+UPDATE hosts SET compliance_enabled = $1, updated_at = NOW() WHERE id = $2;
+
+-- name: UpdateHostComplianceMode :exec
+UPDATE hosts SET compliance_enabled = $1, compliance_on_demand_only = $2, updated_at = NOW() WHERE id = $3;
+
+-- name: UpdateHostComplianceScanners :exec
+UPDATE hosts SET compliance_openscap_enabled = $1, compliance_docker_bench_enabled = $2, updated_at = NOW() WHERE id = $3;
+
+-- name: UpdateHostComplianceDefaultProfile :exec
+UPDATE hosts SET compliance_default_profile_id = $1, updated_at = NOW() WHERE id = $2;
+
+-- name: UpdateHostComplianceScannerStatus :exec
+UPDATE hosts SET compliance_scanner_status = $1, compliance_scanner_updated_at = $2, updated_at = NOW() WHERE id = $3;
+
+-- name: UpdateHostApiCredentials :exec
+UPDATE hosts SET api_id = $1, api_key = $2, updated_at = NOW() WHERE id = $3;
+
+-- name: UpdateHostRebootStatus :exec
+UPDATE hosts SET needs_reboot = $2, reboot_reason = $3, updated_at = NOW() WHERE id = $1;
+
+-- name: UpdateHostPing :exec
+UPDATE hosts SET last_update = NOW(), updated_at = NOW(), status = 'active' WHERE id = $1;
+
+-- name: GetHostCheckin :one
+-- Single-row read used on the per-ping hot path. Returns the host's identity
+-- and the six per-section hashes the server compares against incoming agent
+-- hashes.
+SELECT
+    id, api_key, friendly_name, hostname, docker_enabled, compliance_enabled,
+    packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash
+FROM hosts
+WHERE api_id = $1;
+
+-- name: UpdateHostMetrics :exec
+-- Ping-side write of volatile metrics. Every column is guarded so a ping that
+-- omits a metric leaves the stored value intact.
+UPDATE hosts SET
+    last_update    = NOW(),
+    updated_at     = NOW(),
+    status         = CASE WHEN status = 'pending' THEN 'active' ELSE status END,
+    cpu_cores      = COALESCE(sqlc.narg('cpu_cores')::int, cpu_cores),
+    cpu_model      = COALESCE(sqlc.narg('cpu_model')::text, cpu_model),
+    ram_installed  = COALESCE(sqlc.narg('ram_installed')::double precision, ram_installed),
+    swap_size      = COALESCE(sqlc.narg('swap_size')::double precision, swap_size),
+    disk_details   = COALESCE(sqlc.narg('disk_details')::jsonb, disk_details),
+    system_uptime  = COALESCE(sqlc.narg('system_uptime')::text, system_uptime),
+    boot_time      = COALESCE(sqlc.narg('boot_time')::timestamptz, boot_time),
+    load_average   = COALESCE(sqlc.narg('load_average')::jsonb, load_average),
+    needs_reboot   = COALESCE(sqlc.narg('needs_reboot')::boolean, needs_reboot),
+    -- Not a plain COALESCE: that would make the reason unclearable. Tied to
+    -- needs_reboot so clearing the flag clears both, while a ping asserting the
+    -- flag without a reason leaves the stored one alone.
+    reboot_reason  = CASE
+        WHEN sqlc.narg('needs_reboot')::boolean IS NULL THEN reboot_reason
+        WHEN sqlc.narg('needs_reboot')::boolean IS TRUE
+             AND sqlc.narg('reboot_reason')::text IS NULL THEN reboot_reason
+        ELSE sqlc.narg('reboot_reason')::text
+    END,
+    agent_version  = COALESCE(sqlc.narg('agent_version')::text, agent_version)
+WHERE id = sqlc.arg('id');
+
+-- name: UpdateHostDockerHash :exec
+UPDATE hosts SET docker_hash = $1, updated_at = NOW() WHERE id = $2;
+
+-- name: UpdateHostComplianceHash :exec
+UPDATE hosts SET compliance_hash = $1, updated_at = NOW() WHERE id = $2;
+
+-- name: ClearHostDockerHashOnEnable :exec
+-- Force a fresh docker payload on next check-in by NULLing the hash whenever
+-- the operator re-enables docker. If the agent was already streaming docker
+-- data (docker_enabled stays true) the hash is left alone.
+UPDATE hosts
+SET docker_hash = CASE WHEN $1 = true AND docker_enabled = false THEN NULL ELSE docker_hash END,
+    docker_enabled = $1,
+    updated_at = NOW()
+WHERE id = $2;
+
+-- name: ClearHostComplianceHashOnEnable :exec
+UPDATE hosts
+SET compliance_hash = CASE WHEN $1 = true AND compliance_enabled = false THEN NULL ELSE compliance_hash END,
+    compliance_enabled = $1,
+    updated_at = NOW()
+WHERE id = $2;
+
+-- name: DeleteHost :exec
+DELETE FROM hosts WHERE id = $1;
+
+-- name: ListHostsForComplianceDashboard :many
+SELECT id, hostname, friendly_name, compliance_enabled, compliance_on_demand_only, docker_enabled,
+       compliance_openscap_enabled, compliance_docker_bench_enabled
+FROM hosts;
+
+-- name: CountUnscannedHosts :one
+SELECT COUNT(*) FROM hosts h
+WHERE NOT EXISTS (SELECT 1 FROM compliance_scans cs WHERE cs.host_id = h.id);
+
+-- name: SetHostAwaitingPostPatchReport :exec
+UPDATE hosts SET awaiting_post_patch_report_run_id = $1, updated_at = NOW() WHERE id = $2;

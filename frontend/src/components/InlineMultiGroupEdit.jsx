@@ -200,7 +200,7 @@ const InlineMultiGroupEdit = ({
 										</label>
 									))}
 									{options.length === 0 && (
-										<div className="px-3 py-2 text-sm text-secondary-500 dark:text-secondary-400">
+										<div className="px-3 py-2 text-sm text-secondary-500 dark:text-white">
 											No groups available
 										</div>
 									)}

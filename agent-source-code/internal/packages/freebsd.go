@@ -65,23 +65,36 @@ func (m *FreeBSDManager) getPkgPath() string {
 // getPkgPackages gets installed and upgradable packages from pkg
 func (m *FreeBSDManager) getPkgPackages() ([]models.Package, error) {
 	pkgPath := m.getPkgPath()
-	// Get installed packages: pkg info
-	m.logger.Debug("Getting installed packages with pkg info...")
-	installedCmd := exec.Command(pkgPath, "info")
-	installedOutput, err := installedCmd.Output()
 
-	var installedPackages map[string]string
+	// Get installed packages with repo info: pkg query -a '%n\t%v\t%R'
+	m.logger.Debug("Getting installed packages with pkg query...")
+	queryCmd, cancelQuery := boundedCommand(collectorTimeout, pkgPath, "query", "-a", "%n\t%v\t%R")
+	defer cancelQuery()
+	queryOutput, err := queryCmd.Output()
+
+	installedPackages := make(map[string]string)
+	repoByName := make(map[string]string)
+
 	if err != nil {
-		m.logger.WithError(err).Warn("Failed to get installed packages")
-		installedPackages = make(map[string]string)
+		m.logger.WithError(err).Warn("Failed to get installed packages via pkg query, falling back to pkg info")
+		// Fallback to pkg info
+		infoCmd, cancelInfo := boundedCommand(collectorTimeout, pkgPath, "info")
+		defer cancelInfo()
+		infoOutput, infoErr := infoCmd.Output()
+		if infoErr != nil {
+			m.logger.WithError(infoErr).Warn("Failed to get installed packages")
+		} else {
+			installedPackages = m.parseInstalledPackagesLegacy(string(infoOutput))
+		}
 	} else {
-		installedPackages = m.parseInstalledPackages(string(installedOutput))
+		installedPackages, repoByName = m.parsePkgQuery(string(queryOutput))
 		m.logger.WithField("count", len(installedPackages)).Debug("Found installed packages")
 	}
 
 	// Get upgradable packages: pkg upgrade -n
 	m.logger.Debug("Checking for package upgrades...")
-	upgradeCmd := exec.Command(pkgPath, "upgrade", "-n")
+	upgradeCmd, cancelUpgrade := boundedCommand(networkCollectorTimeout, pkgPath, "upgrade", "-n")
+	defer cancelUpgrade()
 	upgradeOutput, err := upgradeCmd.Output()
 
 	var upgradablePackages []models.Package
@@ -104,14 +117,62 @@ func (m *FreeBSDManager) getPkgPackages() ([]models.Package, error) {
 	}
 
 	// Combine installed and upgradable packages
-	packages := CombinePackageData(installedPackages, upgradablePackages)
+	packages := CombinePackageData(stringMapToPackageMap(installedPackages), upgradablePackages)
+
+	// Apply repository attribution
+	for i := range packages {
+		if repo, ok := repoByName[packages[i].Name]; ok {
+			packages[i].SourceRepository = repo
+		}
+	}
+
 	return packages, nil
 }
 
-// parseInstalledPackages parses pkg info output
+// parsePkgQuery parses pkg query -a '%n\t%v\t%R' output.
+// Returns installed packages map and repo-by-name map.
+func (m *FreeBSDManager) parsePkgQuery(output string) (map[string]string, map[string]string) {
+	installedPackages := make(map[string]string)
+	repoByName := make(map[string]string)
+
+	scanner := bufio.NewScanner(strings.NewReader(output))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) < 2 {
+			continue
+		}
+
+		name := parts[0]
+		version := parts[1]
+		repo := ""
+		if len(parts) == 3 {
+			repo = parts[2]
+		}
+
+		if name == "" || version == "" {
+			continue
+		}
+
+		installedPackages[name] = version
+
+		// Normalise unknown-repository to local
+		if repo == "unknown-repository" || repo == "" {
+			repo = "local"
+		}
+		repoByName[name] = repo
+	}
+
+	return installedPackages, repoByName
+}
+
+// parseInstalledPackagesLegacy parses pkg info output (fallback when pkg query fails).
 // Format: package-name-version    Description
-// Example: bash-5.3.9                     GNU Project's Bourne Again SHell
-func (m *FreeBSDManager) parseInstalledPackages(output string) map[string]string {
+func (m *FreeBSDManager) parseInstalledPackagesLegacy(output string) map[string]string {
 	installedPackages := make(map[string]string)
 
 	scanner := bufio.NewScanner(strings.NewReader(output))
@@ -121,7 +182,6 @@ func (m *FreeBSDManager) parseInstalledPackages(output string) map[string]string
 			continue
 		}
 
-		// Split on whitespace: first field is package-version
 		fields := strings.Fields(line)
 		if len(fields) < 1 {
 			continue
@@ -208,13 +268,17 @@ func (m *FreeBSDManager) markSecurityVulnerabilities(packages []models.Package) 
 	m.logger.Debug("Running pkg audit to check for vulnerabilities...")
 
 	// First update the vulnerability database
-	fetchCmd := exec.Command(pkgPath, "audit", "-F")
+	// Downloads the VuXML database, so it can block indefinitely on a host
+	// whose egress to the mirror is silently dropped.
+	fetchCmd, cancelFetch := boundedCommand(networkCollectorTimeout, pkgPath, "audit", "-F")
+	defer cancelFetch()
 	if err := fetchCmd.Run(); err != nil {
 		m.logger.WithError(err).Debug("Failed to fetch vulnerability database (may require root)")
 	}
 
 	// Run the audit
-	auditCmd := exec.Command(pkgPath, "audit")
+	auditCmd, cancelAudit := boundedCommand(collectorTimeout, pkgPath, "audit")
+	defer cancelAudit()
 	auditOutput, err := auditCmd.CombinedOutput()
 
 	if err != nil {
@@ -279,7 +343,9 @@ func (m *FreeBSDManager) getFreeBSDUpdates() *models.Package {
 
 	// Run freebsd-update fetch (requires root, will fail gracefully otherwise)
 	// We use fetch with --not-running-from-cron to avoid emails
-	cmd := exec.Command("freebsd-update", "fetch", "--not-running-from-cron")
+	// Same exposure as pkg audit -F: reaches update.freebsd.org.
+	cmd, cancelFetchBase := boundedCommand(networkCollectorTimeout, "freebsd-update", "fetch", "--not-running-from-cron")
+	defer cancelFetchBase()
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
@@ -306,7 +372,8 @@ func (m *FreeBSDManager) getFreeBSDUpdates() *models.Package {
 		m.logger.Debug("FreeBSD base system updates available")
 
 		// Get current FreeBSD version
-		versionCmd := exec.Command("freebsd-version")
+		versionCmd, cancelVersion := boundedCommand(collectorTimeout, "freebsd-version")
+		defer cancelVersion()
 		versionOutput, err := versionCmd.Output()
 		currentVersion := "Unknown"
 		if err == nil {

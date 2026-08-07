@@ -9,22 +9,22 @@ import (
 
 	"patchmon-agent/pkg/models"
 
-	"github.com/docker/docker/api/types/container"
+	"github.com/moby/moby/client"
 )
 
 // collectContainers collects all Docker containers (running and stopped)
 func (d *Integration) collectContainers(ctx context.Context) ([]models.DockerContainer, error) {
 	// List all containers
-	containers, err := d.client.ContainerList(ctx, container.ListOptions{
+	containerResult, err := d.client.ContainerList(ctx, client.ContainerListOptions{
 		All: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list containers: %w", err)
 	}
 
-	result := make([]models.DockerContainer, 0, len(containers))
+	result := make([]models.DockerContainer, 0, len(containerResult.Items))
 
-	for _, c := range containers {
+	for _, c := range containerResult.Items {
 		// Parse image name
 		repository, tag := parseImageName(c.Image)
 
@@ -48,7 +48,7 @@ func (d *Integration) collectContainers(ctx context.Context) ([]models.DockerCon
 		}
 
 		// Normalize status
-		status := normalizeStatus(c.Status, c.State)
+		status := normalizeStatus(c.Status, string(c.State))
 
 		// Convert ports
 		ports := convertPorts(c.Ports)
@@ -74,7 +74,7 @@ func (d *Integration) collectContainers(ctx context.Context) ([]models.DockerCon
 			ImageSource:     source,
 			ImageID:         strings.TrimPrefix(c.ImageID, "sha256:"),
 			Status:          status,
-			State:           c.State,
+			State:           string(c.State),
 			Ports:           ports,
 			CreatedAt:       createdAt,
 			Labels:          c.Labels,

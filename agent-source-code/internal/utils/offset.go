@@ -23,12 +23,12 @@ func CalculateReportOffset(apiID string, intervalMinutes int) time.Duration {
 
 	if intervalMinutes >= 60 {
 		// For hourly or longer intervals, offset in minutes (0-59)
-		// Example: api_id hash % 60 = 10 → reports at :10 past each hour
+		// Example: api_id hash % 60 = 10 -> reports at :10 past each hour
 		offsetMinutes := hash % 60
 		return time.Duration(offsetMinutes) * time.Minute
 	}
 	// For sub-hourly intervals, offset in seconds
-	// Example: 5-minute interval, hash % 300 = 7 → reports at :07, :12, :17, etc.
+	// Example: 5-minute interval, hash % 300 = 7 -> reports at :07, :12, :17, etc.
 	maxOffsetSeconds := intervalMinutes * 60
 	offsetSeconds := hash % uint64(maxOffsetSeconds)
 	return time.Duration(offsetSeconds) * time.Second

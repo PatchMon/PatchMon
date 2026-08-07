@@ -11,8 +11,8 @@ import (
 	"patchmon-agent/internal/utils"
 	"patchmon-agent/pkg/models"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	"github.com/sirupsen/logrus"
 )
 
@@ -61,7 +61,7 @@ func (d *Integration) IsAvailable() bool {
 	}
 
 	// Try to create a Docker client and ping the daemon
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := client.New(client.FromEnv)
 	if err != nil {
 		d.logger.WithError(err).Debug("Failed to create Docker client")
 		return false
@@ -78,7 +78,7 @@ func (d *Integration) IsAvailable() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if _, err := cli.Ping(ctx); err != nil {
+	if _, err := cli.Ping(ctx, client.PingOptions{}); err != nil {
 		d.logger.WithError(err).Debug("Failed to ping Docker daemon")
 		return false
 	}
@@ -185,12 +185,12 @@ func (d *Integration) Close() error {
 
 // collectDaemonInfo collects Docker daemon information
 func (d *Integration) collectDaemonInfo(ctx context.Context) (*models.DockerDaemonInfo, error) {
-	info, err := d.client.Info(ctx)
+	infoResult, err := d.client.Info(ctx, client.InfoOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get daemon info: %w", err)
 	}
 
-	version, err := d.client.ServerVersion(ctx)
+	version, err := d.client.ServerVersion(ctx, client.ServerVersionOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get server version: %w", err)
 	}
@@ -198,11 +198,11 @@ func (d *Integration) collectDaemonInfo(ctx context.Context) (*models.DockerDaem
 	return &models.DockerDaemonInfo{
 		Version:       version.Version,
 		APIVersion:    version.APIVersion,
-		OS:            info.OperatingSystem,
-		Architecture:  info.Architecture,
-		KernelVersion: info.KernelVersion,
-		TotalMemory:   info.MemTotal,
-		NCPU:          info.NCPU,
+		OS:            infoResult.Info.OperatingSystem,
+		Architecture:  infoResult.Info.Architecture,
+		KernelVersion: infoResult.Info.KernelVersion,
+		TotalMemory:   infoResult.Info.MemTotal,
+		NCPU:          infoResult.Info.NCPU,
 	}, nil
 }
 
@@ -326,7 +326,7 @@ func cleanImageRepository(repository string) string {
 }
 
 // convertPorts converts Docker port bindings to simplified map
-func convertPorts(ports []container.Port) map[string]string {
+func convertPorts(ports []container.PortSummary) map[string]string {
 	portMap := make(map[string]string)
 	for _, port := range ports {
 		if port.PublicPort > 0 {

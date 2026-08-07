@@ -7,22 +7,21 @@ import (
 
 	"patchmon-agent/pkg/models"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/volume"
+	"github.com/moby/moby/client"
 )
 
 // collectVolumes collects all Docker volumes
 func (d *Integration) collectVolumes(ctx context.Context) ([]models.DockerVolume, error) {
 	// List all volumes
-	volumes, err := d.client.VolumeList(ctx, volume.ListOptions{})
+	volumeResult, err := d.client.VolumeList(ctx, client.VolumeListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list volumes: %w", err)
 	}
 
-	result := make([]models.DockerVolume, 0, len(volumes.Volumes))
+	result := make([]models.DockerVolume, 0, len(volumeResult.Items))
 
 	// Get system disk usage info to include volume sizes
-	diskUsage, err := d.client.DiskUsage(ctx, types.DiskUsageOptions{})
+	diskUsage, err := d.client.DiskUsage(ctx, client.DiskUsageOptions{Volumes: true})
 	if err != nil {
 		d.logger.WithError(err).Debug("Failed to get disk usage (volume sizes unavailable)")
 	}
@@ -30,14 +29,14 @@ func (d *Integration) collectVolumes(ctx context.Context) ([]models.DockerVolume
 	// Create a map of volume name to usage for quick lookup
 	volumeUsage := make(map[string]int64)
 	if err == nil {
-		for _, vol := range diskUsage.Volumes {
+		for _, vol := range diskUsage.Volumes.Items {
 			if vol.UsageData != nil {
 				volumeUsage[vol.Name] = vol.UsageData.Size
 			}
 		}
 	}
 
-	for _, vol := range volumes.Volumes {
+	for _, vol := range volumeResult.Items {
 		// Parse created timestamp
 		var createdAt *time.Time
 		if vol.CreatedAt != "" {

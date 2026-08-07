@@ -8,13 +8,13 @@ import (
 
 	"patchmon-agent/pkg/models"
 
-	"github.com/docker/docker/api/types/image"
+	"github.com/moby/moby/client"
 )
 
 // collectImages collects all Docker images
 func (d *Integration) collectImages(ctx context.Context) ([]models.DockerImage, error) {
 	// List all images
-	images, err := d.client.ImageList(ctx, image.ListOptions{
+	imageResult, err := d.client.ImageList(ctx, client.ImageListOptions{
 		All: false, // Only show non-intermediate images
 	})
 	if err != nil {
@@ -23,7 +23,7 @@ func (d *Integration) collectImages(ctx context.Context) ([]models.DockerImage, 
 
 	result := make([]models.DockerImage, 0)
 
-	for _, img := range images {
+	for _, img := range imageResult.Items {
 		// Skip images with no tags (dangling images)
 		if len(img.RepoTags) == 0 {
 			continue

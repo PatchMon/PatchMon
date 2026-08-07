@@ -1,5 +1,5 @@
 import { cleanup } from "@testing-library/react";
-import { afterEach } from "vitest";
+import { afterEach, vi } from "vitest";
 import "@testing-library/jest-dom";
 
 // Cleanup after each test
@@ -7,33 +7,72 @@ afterEach(() => {
 	cleanup();
 });
 
-// Mock WebSocket
-global.WebSocket = class WebSocket {
+// Mock HTMLCanvasElement.getContext - jsdom doesn't implement canvas; required by Chart.js and xterm.js
+HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
+	canvas: { width: 0, height: 0 },
+	clearRect: vi.fn(),
+	fillRect: vi.fn(),
+	strokeRect: vi.fn(),
+	beginPath: vi.fn(),
+	closePath: vi.fn(),
+	moveTo: vi.fn(),
+	lineTo: vi.fn(),
+	arc: vi.fn(),
+	fill: vi.fn(),
+	stroke: vi.fn(),
+	save: vi.fn(),
+	restore: vi.fn(),
+	scale: vi.fn(),
+	translate: vi.fn(),
+	rotate: vi.fn(),
+	drawImage: vi.fn(),
+	createLinearGradient: vi.fn(() => ({
+		addColorStop: vi.fn(),
+	})),
+	createRadialGradient: vi.fn(() => ({
+		addColorStop: vi.fn(),
+	})),
+	measureText: vi.fn(() => ({ width: 0 })),
+	setTransform: vi.fn(),
+	getImageData: vi.fn(() => ({ data: [] })),
+	putImageData: vi.fn(),
+	fillText: vi.fn(),
+	strokeText: vi.fn(),
+	clip: vi.fn(),
+	setLineDash: vi.fn(),
+	getLineDash: vi.fn(() => []),
+	resetTransform: vi.fn(),
+	bezierCurveTo: vi.fn(),
+	quadraticCurveTo: vi.fn(),
+	rect: vi.fn(),
+	isPointInPath: vi.fn(() => false),
+}));
+
+// Mock WebSocket - use vi.fn() so tests can assert WebSocket.mock.calls / .mock.results
+const WebSocketImpl = class WebSocket {
 	constructor(url) {
 		this.url = url;
-		this.readyState = WebSocket.CONNECTING;
+		this.readyState = WebSocketImpl.CONNECTING;
 		this.onopen = null;
 		this.onclose = null;
 		this.onerror = null;
 		this.onmessage = null;
-	}
-
-	send(_data) {
-		if (this.readyState !== WebSocket.OPEN) {
-			throw new Error("WebSocket is not open");
-		}
-	}
-
-	close() {
-		this.readyState = WebSocket.CLOSED;
-		if (this.onclose) {
-			this.onclose({ code: 1000, reason: "Normal closure" });
-		}
+		this.send = vi.fn().mockImplementation(function send(_data) {
+			if (this.readyState !== WebSocketImpl.OPEN) {
+				throw new Error("WebSocket is not open");
+			}
+		});
+		this.close = vi.fn().mockImplementation(function close() {
+			this.readyState = WebSocketImpl.CLOSED;
+			if (this.onclose) {
+				this.onclose({ code: 1000, reason: "Normal closure" });
+			}
+		});
 	}
 
 	// Helper methods for testing
 	_simulateOpen() {
-		this.readyState = WebSocket.OPEN;
+		this.readyState = WebSocketImpl.OPEN;
 		if (this.onopen) {
 			this.onopen();
 		}
@@ -52,12 +91,23 @@ global.WebSocket = class WebSocket {
 	}
 };
 
-WebSocket.CONNECTING = 0;
-WebSocket.OPEN = 1;
-WebSocket.CLOSING = 2;
-WebSocket.CLOSED = 3;
+WebSocketImpl.CONNECTING = 0;
+WebSocketImpl.OPEN = 1;
+WebSocketImpl.CLOSING = 2;
+WebSocketImpl.CLOSED = 3;
 
-import { vi } from "vitest";
+// Use a regular function so `new WebSocket(url)` works (arrow functions can't be constructors)
+// biome-ignore lint/complexity/useArrowFunction: constructor must be a regular function
+global.WebSocket = vi.fn().mockImplementation(function (url) {
+	return new WebSocketImpl(url);
+});
+global.WebSocket.CONNECTING = 0;
+global.WebSocket.OPEN = 1;
+global.WebSocket.CLOSING = 2;
+global.WebSocket.CLOSED = 3;
+if (typeof window !== "undefined") {
+	window.WebSocket = global.WebSocket;
+}
 
 // Mock localStorage
 const localStorageMock = {

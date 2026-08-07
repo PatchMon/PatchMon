@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"patchmon-agent/internal/logutil"
 	"patchmon-agent/pkg/models"
 
 	"github.com/sirupsen/logrus"
@@ -354,7 +355,7 @@ func (s *OscapDockerScanner) EnsureInstalled() error {
 		installCmd := exec.CommandContext(ctx, "dnf", "install", "-y", "openscap-containers")
 		output, err := installCmd.CombinedOutput()
 		if err != nil {
-			s.logger.WithError(err).WithField("output", string(output)).Warn("Failed to install openscap-containers")
+			s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to install openscap-containers")
 			return fmt.Errorf("failed to install openscap-containers: %w", err)
 		}
 	} else if _, err := exec.LookPath("yum"); err == nil {
@@ -363,7 +364,7 @@ func (s *OscapDockerScanner) EnsureInstalled() error {
 		installCmd := exec.CommandContext(ctx, "yum", "install", "-y", "openscap-containers")
 		output, err := installCmd.CombinedOutput()
 		if err != nil {
-			s.logger.WithError(err).WithField("output", string(output)).Warn("Failed to install openscap-containers")
+			s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to install openscap-containers")
 			return fmt.Errorf("failed to install openscap-containers: %w", err)
 		}
 	} else if _, err := exec.LookPath("apk"); err == nil {

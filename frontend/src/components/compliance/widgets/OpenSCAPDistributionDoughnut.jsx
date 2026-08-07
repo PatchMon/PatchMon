@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Bar } from "react-chartjs-2";
+import { useNavigate } from "react-router-dom";
 import { useTheme } from "../../../contexts/ThemeContext";
 import { getBarOptions } from "./chartOptions";
 
@@ -20,6 +21,7 @@ function getSegmentValues(stats) {
 
 const OpenSCAPDistributionDoughnut = ({ data }) => {
 	const { isDark } = useTheme();
+	const navigate = useNavigate();
 	const [show_skipped, set_show_skipped] = useState(false);
 
 	const profile_stats = data?.profile_type_stats || [];
@@ -38,18 +40,24 @@ const OpenSCAPDistributionDoughnut = ({ data }) => {
 			data: [osc.passed, db.passed],
 			backgroundColor: PASSED_COLOR,
 			borderWidth: 0,
+			borderRadius: 4,
+			borderSkipped: false,
 		},
 		{
 			label: "Failed",
 			data: [osc.failed, db.failed],
 			backgroundColor: FAILED_COLOR,
 			borderWidth: 0,
+			borderRadius: 4,
+			borderSkipped: false,
 		},
 		{
 			label: "Warnings",
 			data: [osc.warnings, db.warnings],
 			backgroundColor: WARNINGS_COLOR,
 			borderWidth: 0,
+			borderRadius: 4,
+			borderSkipped: false,
 		},
 		...(show_skipped
 			? [
@@ -58,6 +66,8 @@ const OpenSCAPDistributionDoughnut = ({ data }) => {
 						data: [osc.skipped, db.skipped],
 						backgroundColor: SKIPPED_COLOR,
 						borderWidth: 0,
+						borderRadius: 4,
+						borderSkipped: false,
 					},
 				]
 			: []),
@@ -68,7 +78,23 @@ const OpenSCAPDistributionDoughnut = ({ data }) => {
 		datasets,
 	};
 
-	const options = getBarOptions(isDark, "y");
+	const base_options = getBarOptions(isDark, "y");
+	const options = {
+		...base_options,
+		plugins: { ...base_options.plugins },
+		scales: { ...base_options.scales },
+		onClick: (_event, elements) => {
+			if (elements.length > 0) {
+				const profile_type =
+					elements[0].index === 0 ? "openscap" : "docker-bench";
+				navigate(`/compliance?tab=hosts&profile_type=${profile_type}`);
+			}
+		},
+		onHover: (event, elements) => {
+			event.native.target.style.cursor =
+				elements.length > 0 ? "pointer" : "default";
+		},
+	};
 
 	return (
 		<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
@@ -83,7 +109,7 @@ const OpenSCAPDistributionDoughnut = ({ data }) => {
 						onChange={(e) => set_show_skipped(e.target.checked)}
 						className="rounded border-secondary-300 dark:border-secondary-600 text-primary-600 focus:ring-primary-500"
 					/>
-					<span className="text-sm text-secondary-600 dark:text-secondary-400">
+					<span className="text-sm text-secondary-600 dark:text-white">
 						Show skipped
 					</span>
 				</label>
@@ -92,7 +118,7 @@ const OpenSCAPDistributionDoughnut = ({ data }) => {
 				{has_data ? (
 					<Bar data={chart_data} options={options} />
 				) : (
-					<div className="flex items-center justify-center h-full text-secondary-500 dark:text-secondary-400 text-sm">
+					<div className="flex items-center justify-center h-full text-secondary-500 dark:text-white text-sm">
 						No benchmark data yet
 					</div>
 				)}

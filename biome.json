@@ -1,5 +1,6 @@
 {
-	"$schema": "https://biomejs.dev/schemas/2.4.3/schema.json",
+	"root": true,
+	"$schema": "https://biomejs.dev/schemas/2.4.12/schema.json",
 	"vcs": {
 		"enabled": true,
 		"clientKind": "git",
@@ -8,6 +9,7 @@
 	"files": {
 		"includes": [
 			"**",
+			"!**/.claude",
 			"!**/dist",
 			"!**/node_modules",
 			"!**/*.min.js",

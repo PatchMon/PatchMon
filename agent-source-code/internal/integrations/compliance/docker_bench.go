@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"patchmon-agent/internal/logutil"
 	"patchmon-agent/pkg/models"
 
 	"github.com/sirupsen/logrus"
@@ -197,7 +198,7 @@ func (s *DockerBenchScanner) RunScan(ctx context.Context) (*models.ComplianceSca
 	if outputLen == 0 {
 		s.logger.Warn("Docker Bench produced no output - container may have failed to start")
 	} else if outputLen < 500 {
-		s.logger.WithField("output", outputStr).Debug("Docker Bench produced short output")
+		s.logger.WithField("output", logutil.Sanitize(outputStr)).Debug("Docker Bench produced short output")
 	} else {
 		s.logger.WithField("output_length", outputLen).Debug("Docker Bench output captured")
 	}
@@ -216,7 +217,7 @@ func (s *DockerBenchScanner) RunScan(ctx context.Context) (*models.ComplianceSca
 		if len(preview) > 500 {
 			preview = preview[:500] + "..."
 		}
-		s.logger.WithField("output_preview", preview).Warn("Docker Bench output received but no rules parsed - check output format")
+		s.logger.WithField("output_preview", logutil.Sanitize(preview)).Warn("Docker Bench output received but no rules parsed - check output format")
 	}
 
 	return scan, nil
@@ -456,34 +457,5 @@ func (s *DockerBenchScanner) EnsureInstalled() error {
 	}
 
 	s.logger.Info("Docker Bench image pulled successfully")
-	return nil
-}
-
-// Cleanup removes the Docker Bench image to free up space
-func (s *DockerBenchScanner) Cleanup() error {
-	if !s.available {
-		s.logger.Debug("Docker not available, nothing to clean up")
-		return nil
-	}
-
-	s.logger.Info("Removing Docker Bench for Security image...")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	// Remove the image
-	removeCmd := exec.CommandContext(ctx, dockerBinary, "rmi", dockerBenchImage)
-	output, err := removeCmd.CombinedOutput()
-	if err != nil {
-		// Image might not exist, which is fine
-		if strings.Contains(string(output), "No such image") {
-			s.logger.Debug("Docker Bench image already removed")
-			return nil
-		}
-		s.logger.WithError(err).WithField("output", string(output)).Warn("Failed to remove Docker Bench image")
-		return fmt.Errorf("failed to remove Docker Bench image: %w", err)
-	}
-
-	s.logger.Info("Docker Bench image removed successfully")
 	return nil
 }

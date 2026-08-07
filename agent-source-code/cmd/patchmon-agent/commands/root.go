@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"patchmon-agent/internal/config"
 	"patchmon-agent/internal/constants"
@@ -42,8 +43,8 @@ func Execute() error {
 }
 
 func init() {
-	// Set default values
-	configFile = config.DefaultConfigFile
+	// Set default values (OS-specific paths for Windows)
+	configFile = config.DefaultConfigFilePath()
 	logLevel = config.DefaultLogLevel
 
 	// Add global flags
@@ -86,7 +87,7 @@ func initialiseAgent() {
 	_ = cfgManager.LoadConfig()
 	logFile := cfgManager.GetConfig().LogFile
 	if logFile == "" {
-		logFile = config.DefaultLogFile
+		logFile = config.DefaultLogFilePath()
 	}
 	// SECURITY: Use 0750 for log directory (no world access)
 	_ = os.MkdirAll(filepath.Dir(logFile), 0750)
@@ -127,8 +128,12 @@ func updateLogLevel(cmd *cobra.Command) {
 	}
 }
 
-// checkRoot ensures the command is run as root
+// checkRoot ensures the command is run as root (Unix) or Administrator (Windows)
 func checkRoot() error {
+	if runtime.GOOS == "windows" {
+		// On Windows, admin check is done at install time; agent runs as Administrator
+		return nil
+	}
 	if os.Geteuid() != 0 {
 		return fmt.Errorf("this command requires root privileges, please run with sudo or as root user")
 	}

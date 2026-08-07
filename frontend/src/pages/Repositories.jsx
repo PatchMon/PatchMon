@@ -1,10 +1,17 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	keepPreviousData,
+	useMutation,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import {
 	AlertTriangle,
 	ArrowDown,
 	ArrowUp,
 	ArrowUpDown,
 	Check,
+	ChevronLeft,
+	ChevronRight,
 	Columns,
 	Database,
 	GripVertical,
@@ -18,9 +25,23 @@ import {
 	Unlock,
 	X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { dashboardAPI, repositoryAPI } from "../utils/api";
+
+const REPOSITORIES_PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
+const REPOSITORIES_DEFAULT_PAGE_SIZE = 50;
+const REPOSITORIES_PAGE_SIZE_STORAGE_KEY = "repositories-page-size";
+
+// Mirrors the backend sort whitelist in store/repositories.go (repoListSortKey).
+const SORTABLE_COLUMN_IDS = new Set([
+	"name",
+	"url",
+	"distribution",
+	"security",
+	"status",
+	"hostCount",
+]);
 
 const Repositories = () => {
 	const queryClient = useQueryClient();
@@ -34,6 +55,27 @@ const Repositories = () => {
 	const [sortDirection, setSortDirection] = useState("asc");
 	const [showColumnSettings, setShowColumnSettings] = useState(false);
 	const [deleteModalData, setDeleteModalData] = useState(null);
+	const [currentPage, setCurrentPage] = useState(1);
+	const [pageSize, setPageSize] = useState(() => {
+		const saved = localStorage.getItem(REPOSITORIES_PAGE_SIZE_STORAGE_KEY);
+		const parsed = Number.parseInt(saved, 10);
+		return REPOSITORIES_PAGE_SIZE_OPTIONS.includes(parsed)
+			? parsed
+			: REPOSITORIES_DEFAULT_PAGE_SIZE;
+	});
+
+	// Debounce search for backend
+	const [debouncedSearch, setDebouncedSearch] = useState("");
+	const searchDebounceRef = useRef(null);
+	useEffect(() => {
+		if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+		searchDebounceRef.current = setTimeout(() => {
+			setDebouncedSearch(searchTerm?.trim() || "");
+		}, 400);
+		return () => {
+			if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+		};
+	}, [searchTerm]);
 
 	// Handle host filter from URL parameter
 	useEffect(() => {
@@ -74,17 +116,51 @@ const Repositories = () => {
 		);
 	};
 
+	// Build backend filter params
+	const repoQueryParams = useMemo(() => {
+		const params = {
+			limit: pageSize,
+			offset: (currentPage - 1) * pageSize,
+			sort: sortField,
+			order: sortDirection,
+		};
+		if (hostFilter && hostFilter !== "all") params.host = hostFilter;
+		if (debouncedSearch) params.search = debouncedSearch;
+		if (filterStatus && filterStatus !== "all") params.status = filterStatus;
+		if (filterType && filterType !== "all") params.type = filterType;
+		return params;
+	}, [
+		hostFilter,
+		debouncedSearch,
+		filterStatus,
+		filterType,
+		pageSize,
+		currentPage,
+		sortField,
+		sortDirection,
+	]);
+
 	// Fetch repositories
 	const {
-		data: repositories = [],
+		data: repositoriesResponse,
 		isLoading,
 		error,
 		refetch,
 		isFetching,
 	} = useQuery({
-		queryKey: ["repositories"],
-		queryFn: () => repositoryAPI.list().then((res) => res.data),
+		queryKey: ["repositories", repoQueryParams],
+		queryFn: () => repositoryAPI.list(repoQueryParams).then((res) => res.data),
+		placeholderData: keepPreviousData,
 	});
+	const repositories = repositoriesResponse?.items || [];
+	const totalRepositories = repositoriesResponse?.total || 0;
+	const totalPages = Math.max(1, Math.ceil(totalRepositories / pageSize));
+	const pageStart =
+		totalRepositories === 0 ? 0 : (repositoriesResponse?.offset || 0) + 1;
+	const pageEnd = Math.min(
+		(repositoriesResponse?.offset || 0) + repositories.length,
+		totalRepositories,
+	);
 
 	// Fetch repository statistics
 	const { data: stats } = useQuery({
@@ -92,10 +168,13 @@ const Repositories = () => {
 		queryFn: () => repositoryAPI.getStats().then((res) => res.data),
 	});
 
-	// Fetch host information when filtering by host
+	// Fetch host information when filtering by host. The fetch is
+	// filter-independent, so the key must be too: keying it on `hostFilter`
+	// re-pulled 5000 rows for every distinct filter value.
 	const { data: hosts } = useQuery({
-		queryKey: ["hosts"],
-		queryFn: () => dashboardAPI.getHosts().then((res) => res.data),
+		queryKey: ["hostOptions"],
+		queryFn: () =>
+			dashboardAPI.getHostOptions({ limit: 5000 }).then((res) => res.data),
 		staleTime: 5 * 60 * 1000,
 		enabled: !!hostFilter,
 	});
@@ -107,8 +186,8 @@ const Repositories = () => {
 	const deleteRepositoryMutation = useMutation({
 		mutationFn: (repositoryId) => repositoryAPI.delete(repositoryId),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["repositories"]);
-			queryClient.invalidateQueries(["repository-stats"]);
+			queryClient.invalidateQueries({ queryKey: ["repositories"] });
+			queryClient.invalidateQueries({ queryKey: ["repository-stats"] });
 		},
 	});
 
@@ -196,80 +275,40 @@ const Repositories = () => {
 		setDeleteModalData(null);
 	};
 
-	// Filter and sort repositories
+	// Repositories are filtered, sorted, and paginated by the backend.
 	const filteredAndSortedRepositories = useMemo(() => {
-		if (!repositories) return [];
+		return repositories || [];
+	}, [repositories]);
 
-		// Filter repositories
-		const filtered = repositories.filter((repo) => {
-			const matchesSearch =
-				repo.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-				repo.url.toLowerCase().includes(searchTerm.toLowerCase()) ||
-				repo.distribution.toLowerCase().includes(searchTerm.toLowerCase());
-
-			// Check security based on URL if isSecure property doesn't exist
-			const isSecure =
-				repo.isSecure !== undefined
-					? repo.isSecure
-					: repo.url.startsWith("https://");
-
-			const matchesType =
-				filterType === "all" ||
-				(filterType === "secure" && isSecure) ||
-				(filterType === "insecure" && !isSecure);
-
-			const matchesStatus =
-				filterStatus === "all" ||
-				(filterStatus === "active" && repo.is_active === true) ||
-				(filterStatus === "inactive" && repo.is_active === false);
-
-			// Filter by host if hostFilter is set
-			const matchesHost =
-				!hostFilter || repo.hosts?.some((host) => host.id === hostFilter);
-
-			return matchesSearch && matchesType && matchesStatus && matchesHost;
-		});
-
-		// Sort repositories
-		const sorted = filtered.sort((a, b) => {
-			let aValue = a[sortField];
-			let bValue = b[sortField];
-
-			// Handle special cases
-			if (sortField === "security") {
-				// Use the same logic as filtering to determine isSecure
-				const aIsSecure =
-					a.isSecure !== undefined ? a.isSecure : a.url.startsWith("https://");
-				const bIsSecure =
-					b.isSecure !== undefined ? b.isSecure : b.url.startsWith("https://");
-				// Sort by boolean: true (Secure) comes before false (Insecure) when ascending
-				aValue = aIsSecure ? 1 : 0;
-				bValue = bIsSecure ? 1 : 0;
-			} else if (sortField === "status") {
-				aValue = a.is_active ? "Active" : "Inactive";
-				bValue = b.is_active ? "Active" : "Inactive";
-			}
-
-			if (typeof aValue === "string") {
-				aValue = aValue.toLowerCase();
-				bValue = bValue.toLowerCase();
-			}
-
-			if (aValue < bValue) return sortDirection === "asc" ? -1 : 1;
-			if (aValue > bValue) return sortDirection === "asc" ? 1 : -1;
-			return 0;
-		});
-
-		return sorted;
+	// biome-ignore lint/correctness/useExhaustiveDependencies: Reset to the first page when filters, sorting, or page size change.
+	useEffect(() => {
+		setCurrentPage(1);
 	}, [
-		repositories,
-		searchTerm,
+		debouncedSearch,
 		filterType,
 		filterStatus,
+		hostFilter,
+		pageSize,
 		sortField,
 		sortDirection,
-		hostFilter,
 	]);
+
+	// Clamp the page once totals are known. Deleting the last rows on the final
+	// page otherwise leaves "Page 5 of 3" over an empty table until the next
+	// filter change.
+	useEffect(() => {
+		if (!repositoriesResponse) return;
+		if (currentPage <= totalPages) return;
+		setCurrentPage(totalPages);
+	}, [repositoriesResponse, currentPage, totalPages]);
+
+	const handlePageSizeChange = (nextPageSize) => {
+		setPageSize(nextPageSize);
+		localStorage.setItem(
+			REPOSITORIES_PAGE_SIZE_STORAGE_KEY,
+			String(nextPageSize),
+		);
+	};
 
 	if (isLoading) {
 		return (
@@ -296,35 +335,61 @@ const Repositories = () => {
 		<div className="min-h-screen flex flex-col">
 			{/* Delete Confirmation Modal */}
 			{deleteModalData && (
-				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-					<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 max-w-md w-full mx-4">
-						<div className="flex items-center mb-4">
-							<AlertTriangle className="h-6 w-6 text-red-500 mr-3" />
-							<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
-								Delete Repository
-							</h3>
+				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+					<button
+						type="button"
+						onClick={cancelDelete}
+						className="fixed inset-0 cursor-default"
+						aria-label="Close modal"
+						disabled={deleteRepositoryMutation.isPending}
+					/>
+					<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 relative z-10">
+						<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
+							<div className="flex items-center justify-between gap-3">
+								<div className="flex items-center gap-3 min-w-0">
+									<div className="w-10 h-10 bg-danger-100 dark:bg-danger-900 rounded-full flex items-center justify-center flex-shrink-0">
+										<AlertTriangle className="h-5 w-5 text-danger-600 dark:text-danger-400" />
+									</div>
+									<div className="min-w-0">
+										<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+											Delete Repository
+										</h3>
+										<p className="text-sm text-secondary-600 dark:text-white">
+											This action cannot be undone
+										</p>
+									</div>
+								</div>
+								<button
+									type="button"
+									onClick={cancelDelete}
+									className="p-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-700 text-secondary-400 hover:text-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
+									aria-label="Close"
+									disabled={deleteRepositoryMutation.isPending}
+								>
+									<X className="h-5 w-5" />
+								</button>
+							</div>
 						</div>
-						<div className="mb-6">
-							<p className="text-secondary-700 dark:text-secondary-300 mb-2">
+						<div className="px-6 py-4">
+							<p className="text-secondary-700 dark:text-white">
 								Are you sure you want to delete{" "}
-								<strong>"{deleteModalData.name}"</strong>?
+								<span className="font-semibold">"{deleteModalData.name}"</span>?
 							</p>
 							{deleteModalData.hostCount > 0 && (
-								<p className="text-amber-600 dark:text-amber-400 text-sm">
-									⚠️ This repository is currently assigned to{" "}
-									{deleteModalData.hostCount} host
-									{deleteModalData.hostCount !== 1 ? "s" : ""}.
-								</p>
+								<div className="mt-3 p-3 bg-danger-50 dark:bg-danger-900 border border-danger-200 dark:border-danger-700 rounded-md">
+									<p className="text-sm text-danger-800 dark:text-danger-200">
+										<strong>Warning:</strong> This repository is currently
+										assigned to {deleteModalData.hostCount} host
+										{deleteModalData.hostCount !== 1 ? "s" : ""}.
+									</p>
+								</div>
 							)}
-							<p className="text-red-600 dark:text-red-400 text-sm mt-2">
-								This action cannot be undone.
-							</p>
 						</div>
-						<div className="flex gap-3 justify-end">
+						<div className="px-6 py-4 border-t border-secondary-200 dark:border-secondary-600 flex justify-end gap-3">
 							<button
 								type="button"
 								onClick={cancelDelete}
-								className="px-4 py-2 text-secondary-600 dark:text-secondary-400 hover:text-secondary-800 dark:hover:text-secondary-200 transition-colors"
+								className="btn-outline"
 								disabled={deleteRepositoryMutation.isPending}
 							>
 								Cancel
@@ -332,7 +397,7 @@ const Repositories = () => {
 							<button
 								type="button"
 								onClick={confirmDelete}
-								className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+								className="btn-danger disabled:opacity-50 disabled:cursor-not-allowed"
 								disabled={deleteRepositoryMutation.isPending}
 							>
 								{deleteRepositoryMutation.isPending
@@ -350,7 +415,7 @@ const Repositories = () => {
 					<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
 						Repositories
 					</h1>
-					<p className="text-sm text-secondary-600 dark:text-secondary-400 mt-1">
+					<p className="text-sm text-secondary-600 dark:text-white mt-1">
 						Manage and monitor your package repositories
 					</p>
 				</div>
@@ -372,7 +437,16 @@ const Repositories = () => {
 
 			{/* Summary Stats */}
 			<div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6 flex-shrink-0">
-				<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
+				<button
+					type="button"
+					onClick={() => {
+						setFilterType("all");
+						setFilterStatus("all");
+						setSearchTerm("");
+					}}
+					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full min-h-[44px]"
+					title="Click to clear all repository filters"
+				>
 					<div className="flex items-center">
 						<Database className="h-5 w-5 text-primary-600 mr-2" />
 						<div>
@@ -384,9 +458,18 @@ const Repositories = () => {
 							</p>
 						</div>
 					</div>
-				</div>
+				</button>
 
-				<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
+				<button
+					type="button"
+					onClick={() => {
+						setFilterStatus("active");
+						setFilterType("all");
+						setSearchTerm("");
+					}}
+					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full min-h-[44px]"
+					title="Click to filter active repositories only"
+				>
 					<div className="flex items-center">
 						<Server className="h-5 w-5 text-success-600 mr-2" />
 						<div>
@@ -398,9 +481,18 @@ const Repositories = () => {
 							</p>
 						</div>
 					</div>
-				</div>
+				</button>
 
-				<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
+				<button
+					type="button"
+					onClick={() => {
+						setFilterType("secure");
+						setFilterStatus("all");
+						setSearchTerm("");
+					}}
+					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full min-h-[44px]"
+					title="Click to filter HTTPS repositories only"
+				>
 					<div className="flex items-center">
 						<Shield className="h-5 w-5 text-warning-600 mr-2" />
 						<div>
@@ -412,9 +504,9 @@ const Repositories = () => {
 							</p>
 						</div>
 					</div>
-				</div>
+				</button>
 
-				<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
+				<div className="card p-4">
 					<div className="flex items-center">
 						<ShieldCheck className="h-5 w-5 text-danger-600 mr-2" />
 						<div>
@@ -442,7 +534,7 @@ const Repositories = () => {
 							{/* Search */}
 							<div className="flex-1">
 								<div className="relative">
-									<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-secondary-500" />
+									<Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-secondary-400 dark:text-white" />
 									<input
 										type="text"
 										placeholder="Search repositories..."
@@ -509,7 +601,7 @@ const Repositories = () => {
 								<button
 									type="button"
 									onClick={() => setShowColumnSettings(true)}
-									className="flex items-center gap-2 px-3 py-2 text-sm text-secondary-700 dark:text-secondary-300 bg-white dark:bg-secondary-700 border border-secondary-300 dark:border-secondary-600 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-600 transition-colors"
+									className="flex items-center gap-2 px-3 py-2 text-sm text-secondary-700 dark:text-white bg-white dark:bg-secondary-700 border border-secondary-300 dark:border-secondary-600 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-600 transition-colors"
 								>
 									<Columns className="h-4 w-4" />
 									Columns
@@ -522,13 +614,13 @@ const Repositories = () => {
 						{filteredAndSortedRepositories.length === 0 ? (
 							<div className="text-center py-8">
 								<Database className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
-								<p className="text-secondary-500 dark:text-secondary-300">
+								<p className="text-secondary-500 dark:text-white">
 									{repositories?.length === 0
 										? "No repositories found"
 										: "No repositories match your filters"}
 								</p>
 								{repositories?.length === 0 && (
-									<p className="text-sm text-secondary-400 dark:text-secondary-400 mt-2">
+									<p className="text-sm text-secondary-400 dark:text-white mt-2">
 										No repositories have been reported by your hosts yet
 									</p>
 								)}
@@ -568,7 +660,7 @@ const Repositories = () => {
 															{visibleColumns.some(
 																(col) => col.id === "distribution",
 															) && (
-																<p className="text-sm text-secondary-500 dark:text-secondary-400 mt-0.5">
+																<p className="text-sm text-secondary-500 dark:text-white mt-0.5">
 																	{repo.distribution}
 																</p>
 															)}
@@ -578,10 +670,10 @@ const Repositories = () => {
 														(col) => col.id === "status",
 													) && (
 														<span
-															className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium flex-shrink-0 ${
+															className={`flex-shrink-0 ${
 																repo.is_active
-																	? "bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300"
-																	: "bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-300"
+																	? "badge-success"
+																	: "badge-danger"
 															}`}
 														>
 															{repo.is_active ? "Active" : "Inactive"}
@@ -592,7 +684,7 @@ const Repositories = () => {
 												{/* URL */}
 												{visibleColumns.some((col) => col.id === "url") && (
 													<div>
-														<p className="text-xs text-secondary-500 dark:text-secondary-400 mb-1">
+														<p className="text-xs text-secondary-500 dark:text-white mb-1">
 															URL
 														</p>
 														<p
@@ -632,7 +724,7 @@ const Repositories = () => {
 													) && (
 														<div className="flex items-center gap-1">
 															<Server className="h-4 w-4 text-secondary-400" />
-															<span className="text-sm text-secondary-700 dark:text-secondary-300">
+															<span className="text-sm text-secondary-700 dark:text-white">
 																{repo.hostCount} Host
 																{repo.hostCount !== 1 ? "s" : ""}
 															</span>
@@ -671,16 +763,22 @@ const Repositories = () => {
 												{visibleColumns.map((column) => (
 													<th
 														key={column.id}
-														className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-secondary-300 uppercase tracking-wider"
+														className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
 													>
-														<button
-															type="button"
-															onClick={() => handleSort(column.id)}
-															className="flex items-center justify-start gap-1 hover:text-secondary-700 dark:hover:text-secondary-200 transition-colors"
-														>
-															{column.label}
-															{getSortIcon(column.id)}
-														</button>
+														{SORTABLE_COLUMN_IDS.has(column.id) ? (
+															<button
+																type="button"
+																onClick={() => handleSort(column.id)}
+																className="flex items-center justify-start gap-1 hover:text-secondary-700 dark:hover:text-secondary-200 transition-colors"
+															>
+																{column.label}
+																{getSortIcon(column.id)}
+															</button>
+														) : (
+															<span className="flex items-center justify-start">
+																{column.label}
+															</span>
+														)}
 													</th>
 												))}
 											</tr>
@@ -709,6 +807,58 @@ const Repositories = () => {
 						)}
 					</div>
 				</div>
+				{totalRepositories > 0 && (
+					<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 py-3 border-t border-secondary-200 dark:border-secondary-600">
+						<div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+							<div className="flex items-center gap-2">
+								<span className="text-sm text-secondary-700 dark:text-white">
+									Rows per page:
+								</span>
+								<select
+									value={pageSize}
+									onChange={(e) =>
+										handlePageSizeChange(Number.parseInt(e.target.value, 10))
+									}
+									className="text-sm border border-secondary-300 dark:border-secondary-600 rounded px-2 py-1 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white min-h-[36px]"
+								>
+									{REPOSITORIES_PAGE_SIZE_OPTIONS.map((size) => (
+										<option key={size} value={size}>
+											{size}
+										</option>
+									))}
+								</select>
+							</div>
+							<span className="text-sm text-secondary-700 dark:text-white">
+								{pageStart}-{pageEnd} of {totalRepositories}
+							</span>
+						</div>
+						<div className="flex items-center gap-2">
+							<button
+								type="button"
+								onClick={() => setCurrentPage((page) => Math.max(page - 1, 1))}
+								disabled={currentPage <= 1}
+								className="p-2 rounded border border-secondary-300 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+								aria-label="Previous repositories page"
+							>
+								<ChevronLeft className="h-4 w-4" />
+							</button>
+							<span className="text-sm text-secondary-700 dark:text-white">
+								Page {currentPage} of {totalPages}
+							</span>
+							<button
+								type="button"
+								onClick={() =>
+									setCurrentPage((page) => Math.min(page + 1, totalPages))
+								}
+								disabled={currentPage >= totalPages}
+								className="p-2 rounded border border-secondary-300 dark:border-secondary-600 hover:bg-secondary-100 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+								aria-label="Next repositories page"
+							>
+								<ChevronRight className="h-4 w-4" />
+							</button>
+						</div>
+					</div>
+				)}
 			</div>
 
 			{/* Column Settings Modal */}
@@ -776,13 +926,7 @@ const Repositories = () => {
 			}
 			case "status":
 				return (
-					<span
-						className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-							repo.is_active
-								? "bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300"
-								: "bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-300"
-						}`}
-					>
+					<span className={repo.is_active ? "badge-success" : "badge-danger"}>
 						{repo.is_active ? "Active" : "Inactive"}
 					</span>
 				);
@@ -851,7 +995,7 @@ const ColumnSettingsModal = ({
 					<button
 						type="button"
 						onClick={onClose}
-						className="text-secondary-400 hover:text-secondary-600 dark:text-secondary-500 dark:hover:text-secondary-300"
+						className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
 					>
 						<X className="h-5 w-5" />
 					</button>
@@ -898,7 +1042,7 @@ const ColumnSettingsModal = ({
 					<button
 						type="button"
 						onClick={onReset}
-						className="px-4 py-2 text-sm text-secondary-600 dark:text-secondary-400 hover:text-secondary-800 dark:hover:text-secondary-200"
+						className="px-4 py-2 text-sm text-secondary-600 dark:text-white hover:text-secondary-800 dark:hover:text-secondary-200"
 					>
 						Reset to Default
 					</button>

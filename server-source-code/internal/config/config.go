@@ -1,0 +1,478 @@
+// Package config provides application configuration from environment.
+package config
+
+import (
+	"fmt"
+	"log/slog"
+	"math"
+	"os"
+	"strconv"
+	"strings"
+
+	"github.com/joho/godotenv"
+)
+
+// DefaultVersion is the server version reported by the API and used to look up
+// release notes. It is a var rather than a const so builds can override it at
+// link time:
+//
+//	-ldflags "-X github.com/PatchMon/PatchMon/server-source-code/internal/config.DefaultVersion=2.0.4"
+//
+// The value below is a deliberate non-version. The git tag is the single
+// source of truth for the version, and every supported build path (make,
+// docker/build.sh, CI) derives it from there and injects it. Seeing 0.0.0 in
+// the UI means a build path skipped the injection rather than that the version
+// is merely stale.
+var DefaultVersion = "0.0.0"
+
+// Config holds application configuration loaded from environment.
+// Uses same variable names as PatchMon/server for compatibility.
+type Config struct {
+	// Database
+	DatabaseURL          string
+	DBConnMaxAttempts    int
+	DBConnWaitInterval   int
+	DBConnectionLimit    int
+	DBPoolTimeout        int
+	DBConnectTimeout     int
+	DBIdleTimeout        int
+	DBMaxLifetime        int
+	DBTransactionMaxWait int
+	DBTransactionTimeout int
+
+	// Server
+	Port    int
+	Env     string
+	Version string
+
+	// Auth
+	JWTSecret    string
+	JWTExpiresIn string
+	// AuthBrowserSessionCookies: when true, token and refresh_token cookies omit Max-Age (session cookies)
+	// so they are cleared when the browser session ends instead of persisting across restarts.
+	AuthBrowserSessionCookies bool
+
+	// CORS
+	CORSOrigin string
+
+	// Assets directory for custom branding (logos, favicons). Used for Docker volume mount.
+	// AssetsDir is deprecated. Custom logos are now stored in the database and served via GET /api/v1/settings/logos/{type}.
+	AssetsDir string
+
+	// Logging
+	EnableLogging bool
+	LogLevel      string
+
+	// Profiling (pprof, memstats)
+	EnablePprof         bool
+	PprofPort           int
+	MemstatsIntervalSec int
+
+	// Patching: minutes a patch run can stay in "running" before the periodic
+	// cleanup marks it as timed_out. Default 30, minimum 5.
+	PatchRunStallTimeoutMin int
+
+	// AgentReportsRetentionDays controls how long Agent Activity rows
+	// (update_history) are kept before the daily cleanup sweep deletes them.
+	// Default 30, minimum 7, maximum 365.
+	AgentReportsRetentionDays int
+
+	// Redis (for bootstrap tokens, asynq job queues, TFA lockout, etc.)
+	RedisHost           string
+	RedisPort           int
+	RedisPassword       string
+	RedisUser           string
+	RedisDB             int
+	RedisTLS            bool
+	RedisConnectTimeout int
+	RedisCommandTimeout int
+
+	// TFA (Two-Factor Authentication)
+	MaxTfaAttempts         int
+	TfaLockoutDurationMin  int
+	TfaRememberMeExpiresIn string // e.g. "30d"
+
+	// Auth/Lockout (env -> DB -> default)
+	MaxLoginAttempts   int
+	LockoutDurationMin int
+	// Server
+	EnableHSTS bool
+	TrustProxy bool
+	// TrustedProxyRanges lists CIDRs (or bare IPs) of reverse proxies in front of
+	// PatchMon. Env-only: exposing this in the settings UI would let an admin
+	// widen it to 0.0.0.0/0 and restore X-Forwarded-For spoofing.
+	TrustedProxyRanges []string
+	// Rate limits (env -> DB -> default)
+	RateLimitWindowMs         int
+	RateLimitMax              int
+	AuthRateLimitWindowMs     int
+	AuthRateLimitMax          int
+	AgentRateLimitWindowMs    int
+	AgentRateLimitMax         int
+	PasswordRateLimitWindowMs int
+	PasswordRateLimitMax      int
+	// Password policy
+	PasswordMinLength        int
+	PasswordRequireUppercase bool
+	PasswordRequireLowercase bool
+	PasswordRequireNumber    bool
+	PasswordRequireSpecial   bool
+	// Body limits (bytes)
+	JSONBodyLimitBytes        int64
+	AgentUpdateBodyLimitBytes int64
+	// AgentPingBodyLimitBytes caps /hosts/ping bodies. Worst case is ~3-4 KB
+	// of hashes + metrics; 8 KiB gives headroom without letting an attacker
+	// abuse the cheap ping endpoint as a payload sink.
+	AgentPingBodyLimitBytes int64
+	// Redis (env only)
+	RedisTLSCA string
+	// Timezone
+	Timezone string
+	// User
+	DefaultUserRole string
+	// Session
+	SessionInactivityTimeoutMin int
+	TfaMaxRememberSessions      int
+	// DB
+	DBTransactionLongTimeout int
+
+	// Multi-host (registry + per-host pools)
+	RegistryDatabaseURL  string
+	RegistryReloadSecret string
+	HostPoolMaxConns     int
+	HostPoolMinConns     int
+	HostCacheTTLMin      int
+
+	// RDP (guacd for in-browser RDP)
+	GuacdPath    string // Path to guacd binary, or empty for PATH
+	GuacdAddress string // Listen address for guacd, e.g. 127.0.0.1:4822
+
+	// OIDC (OpenID Connect / SSO)
+	OidcEnabled          bool
+	OidcIssuerURL        string
+	OidcClientID         string
+	OidcClientSecret     string
+	OidcRedirectURI      string
+	OidcScopes           string
+	OidcAutoCreateUsers  bool
+	OidcDefaultRole      string
+	OidcDisableLocalAuth bool
+	OidcButtonText       string
+	OidcSessionTTL       int
+	OidcPostLogoutURI    string
+	OidcSyncRoles        bool
+	// Group-to-role mapping
+	OidcAdminGroup       string
+	OidcSuperadminGroup  string
+	OidcHostManagerGroup string
+	OidcReadonlyGroup    string
+	OidcUserGroup        string
+	OidcEnforceHTTPS     bool
+
+	// SSG (SCAP Security Guide) content directory for compliance scanning
+	SSGContentDir string
+
+	// AdminMode restricts context-facing features (env var page, newsletter opt-in).
+	// Set ADMIN_MODE=on in .env for managed/multi-context deployments.
+	AdminMode bool
+
+	// BillingPortalURL is the Stripe customer portal URL shown to tenants when AdminMode is on.
+	BillingPortalURL string
+
+	// BillingServiceURL is the base URL of the internal billing service (e.g. http://billing:8082).
+	// Used by the PatchMon-native Billing page to proxy subscription and portal requests.
+	// Only meaningful when AdminMode is on.
+	BillingServiceURL string
+
+	// BillingInternalSecret is the shared secret sent as X-Billing-Secret to authenticate
+	// the server to the internal billing service.
+	BillingInternalSecret string
+
+	// ProvisionerURL is the base URL of the regional provisioner service
+	// (e.g. http://provisioner:8083). Used by the tenant-facing Billing page
+	// to proxy the "Sync host count" action: the server forwards to the
+	// provisioner, which does a live count on the tenant DB and pushes the
+	// new usage through to the manager / Stripe. Only meaningful when
+	// AdminMode is on. Auth uses X-Registry-Reload-Secret.
+	ProvisionerURL string
+}
+
+// Load reads configuration from environment.
+// Loads .env from current directory, or path from ENV_FILE if set.
+func Load() (*Config, error) {
+	envPath := os.Getenv("ENV_FILE")
+	if envPath == "" {
+		envPath = ".env"
+	}
+	_ = godotenv.Load(envPath)
+
+	cfg := &Config{
+		DatabaseURL:          getEnv("DATABASE_URL", ""),
+		DBConnMaxAttempts:    getEnvInt("PM_DB_CONN_MAX_ATTEMPTS", 30),
+		DBConnWaitInterval:   getEnvInt("PM_DB_CONN_WAIT_INTERVAL", 2),
+		DBConnectionLimit:    getEnvInt("DB_CONNECTION_LIMIT", 30),
+		DBPoolTimeout:        getEnvInt("DB_POOL_TIMEOUT", 20),
+		DBConnectTimeout:     getEnvInt("DB_CONNECT_TIMEOUT", 10),
+		DBIdleTimeout:        getEnvInt("DB_IDLE_TIMEOUT", 300),
+		DBMaxLifetime:        getEnvInt("DB_MAX_LIFETIME", 1800),
+		DBTransactionMaxWait: getEnvInt("DB_TRANSACTION_MAX_WAIT", 10000),
+		DBTransactionTimeout: getEnvInt("DB_TRANSACTION_TIMEOUT", 30000),
+
+		Port:    getEnvInt("PORT", 3000),
+		Env:     getEnvEnv(),
+		Version: strings.TrimPrefix(DefaultVersion, "v"),
+
+		JWTSecret:                 getEnv("JWT_SECRET", ""),
+		JWTExpiresIn:              getEnv("JWT_EXPIRES_IN", "1h"),
+		AuthBrowserSessionCookies: getEnv("AUTH_BROWSER_SESSION_COOKIES", "") == "true",
+
+		CORSOrigin: getEnv("CORS_ORIGIN", "http://localhost:3000"),
+		AssetsDir:  getEnv("ASSETS_DIR", ""),
+
+		EnableLogging: getEnv("ENABLE_LOGGING", "") == "true",
+		LogLevel:      getEnv("LOG_LEVEL", "info"),
+
+		EnablePprof:               getEnv("ENABLE_PPROF", "") == "true",
+		PprofPort:                 getEnvInt("PPROF_PORT", 6060),
+		MemstatsIntervalSec:       getEnvInt("MEMSTATS_INTERVAL_SEC", 60),
+		PatchRunStallTimeoutMin:   getEnvInt("PATCH_RUN_STALL_TIMEOUT_MIN", 30),
+		AgentReportsRetentionDays: getEnvInt("AGENT_REPORTS_RETENTION_DAYS", 30),
+
+		RedisHost:           getEnv("REDIS_HOST", "localhost"),
+		RedisPort:           getEnvInt("REDIS_PORT", 6379),
+		RedisPassword:       getEnv("REDIS_PASSWORD", ""),
+		RedisUser:           getEnv("REDIS_USER", ""),
+		RedisDB:             getEnvInt("REDIS_DB", 0),
+		RedisTLS:            getEnv("REDIS_TLS", "") == "true",
+		RedisConnectTimeout: getEnvInt("REDIS_CONNECT_TIMEOUT_MS", 60000),
+		RedisCommandTimeout: getEnvInt("REDIS_COMMAND_TIMEOUT_MS", 60000),
+
+		MaxTfaAttempts:         getEnvInt("MAX_TFA_ATTEMPTS", 5),
+		TfaLockoutDurationMin:  getEnvInt("TFA_LOCKOUT_DURATION_MINUTES", 30),
+		TfaRememberMeExpiresIn: getEnv("TFA_REMEMBER_ME_EXPIRES_IN", "30d"),
+
+		OidcEnabled:          getEnv("OIDC_ENABLED", "") == "true",
+		OidcIssuerURL:        getEnv("OIDC_ISSUER_URL", ""),
+		OidcClientID:         getEnv("OIDC_CLIENT_ID", ""),
+		OidcClientSecret:     getEnv("OIDC_CLIENT_SECRET", ""),
+		OidcRedirectURI:      getEnv("OIDC_REDIRECT_URI", ""),
+		OidcScopes:           getEnv("OIDC_SCOPES", "openid email profile groups"),
+		OidcAutoCreateUsers:  getEnv("OIDC_AUTO_CREATE_USERS", "") == "true",
+		OidcDefaultRole:      getEnv("OIDC_DEFAULT_ROLE", "user"),
+		OidcDisableLocalAuth: getEnv("OIDC_DISABLE_LOCAL_AUTH", "") == "true",
+		OidcButtonText:       getEnv("OIDC_BUTTON_TEXT", "Login with SSO"),
+		OidcSessionTTL:       getEnvInt("OIDC_SESSION_TTL", 600),
+		OidcPostLogoutURI:    getEnv("OIDC_POST_LOGOUT_URI", getEnv("FRONTEND_URL", getEnv("CORS_ORIGIN", "http://localhost:3000"))+"/login"),
+		OidcSyncRoles:        getEnv("OIDC_SYNC_ROLES", "") == "true",
+		OidcAdminGroup:       getEnv("OIDC_ADMIN_GROUP", ""),
+		OidcSuperadminGroup:  getEnv("OIDC_SUPERADMIN_GROUP", ""),
+		OidcHostManagerGroup: getEnv("OIDC_HOST_MANAGER_GROUP", ""),
+		OidcReadonlyGroup:    getEnv("OIDC_READONLY_GROUP", ""),
+		OidcUserGroup:        getEnv("OIDC_USER_GROUP", ""),
+		OidcEnforceHTTPS:     getEnv("OIDC_ENFORCE_HTTPS", "true") != "false",
+
+		SSGContentDir:         getEnv("SSG_CONTENT_DIR", "./ssg-content"),
+		AdminMode:             getEnv("ADMIN_MODE", "") == "on",
+		BillingPortalURL:      getEnv("BILLING_PORTAL_URL", ""),
+		BillingServiceURL:     getEnv("BILLING_SERVICE_URL", ""),
+		BillingInternalSecret: getEnv("BILLING_INTERNAL_SECRET", ""),
+		ProvisionerURL:        getEnv("PROVISIONER_URL", ""),
+
+		MaxLoginAttempts:   getEnvInt("MAX_LOGIN_ATTEMPTS", 5),
+		LockoutDurationMin: getEnvInt("LOCKOUT_DURATION_MINUTES", 15),
+		EnableHSTS:         getEnv("ENABLE_HSTS", "") == "true",
+		// Default true: PatchMon's officially supported deployment is Docker
+		// behind a reverse proxy (Traefik, Caddy, nginx, NPM), where the proxy
+		// terminates TLS and sends X-Forwarded-Proto / X-Forwarded-For. With
+		// this off, OIDC's HTTPS gate rejects requests, real client IPs do not
+		// reach the audit log, and rate limiting keys on the proxy's IP.
+		// Set TRUST_PROXY=false explicitly only when PatchMon is exposed
+		// directly to the internet without a reverse proxy.
+		TrustProxy: getEnv("TRUST_PROXY", "true") != "false",
+		// Comma-separated CIDRs or bare IPs of the reverse proxies in front of
+		// PatchMon. Empty is the correct value for a single proxy (the default
+		// Docker deployment); set it when proxies are chained, e.g. Cloudflare
+		// in front of Nginx Proxy Manager.
+		TrustedProxyRanges:          splitAndTrim(getEnv("TRUSTED_PROXY_RANGES", "")),
+		RateLimitWindowMs:           getEnvInt("RATE_LIMIT_WINDOW_MS", 900000),
+		RateLimitMax:                getEnvInt("RATE_LIMIT_MAX", 5000),
+		AuthRateLimitWindowMs:       getEnvInt("AUTH_RATE_LIMIT_WINDOW_MS", 600000),
+		AuthRateLimitMax:            getEnvInt("AUTH_RATE_LIMIT_MAX", 500),
+		AgentRateLimitWindowMs:      getEnvInt("AGENT_RATE_LIMIT_WINDOW_MS", 60000),
+		AgentRateLimitMax:           getEnvInt("AGENT_RATE_LIMIT_MAX", 1000),
+		PasswordRateLimitWindowMs:   getEnvInt("PASSWORD_RATE_LIMIT_WINDOW_MS", 900000),
+		PasswordRateLimitMax:        getEnvInt("PASSWORD_RATE_LIMIT_MAX", 5),
+		PasswordMinLength:           getEnvInt("PASSWORD_MIN_LENGTH", 8),
+		PasswordRequireUppercase:    getEnv("PASSWORD_REQUIRE_UPPERCASE", "true") != "false",
+		PasswordRequireLowercase:    getEnv("PASSWORD_REQUIRE_LOWERCASE", "true") != "false",
+		PasswordRequireNumber:       getEnv("PASSWORD_REQUIRE_NUMBER", "true") != "false",
+		PasswordRequireSpecial:      getEnv("PASSWORD_REQUIRE_SPECIAL", "true") != "false",
+		JSONBodyLimitBytes:          getEnvBytes("JSON_BODY_LIMIT", 5),
+		AgentUpdateBodyLimitBytes:   getEnvBytes("AGENT_UPDATE_BODY_LIMIT", 5),
+		AgentPingBodyLimitBytes:     getEnvBytesKBDefault("AGENT_PING_BODY_LIMIT", 8),
+		RedisTLSCA:                  getEnv("REDIS_TLS_CA", ""),
+		Timezone:                    getEnv("TZ", getEnv("TIMEZONE", "UTC")),
+		DefaultUserRole:             getEnv("DEFAULT_USER_ROLE", "user"),
+		SessionInactivityTimeoutMin: getEnvInt("SESSION_INACTIVITY_TIMEOUT_MINUTES", 30),
+		TfaMaxRememberSessions:      getEnvInt("TFA_MAX_REMEMBER_SESSIONS", 5),
+		DBTransactionLongTimeout:    getEnvInt("DB_TRANSACTION_LONG_TIMEOUT", 60000),
+
+		RegistryDatabaseURL:  getEnv("REGISTRY_DATABASE_URL", ""),
+		RegistryReloadSecret: getEnv("REGISTRY_RELOAD_SECRET", ""),
+		HostPoolMaxConns:     getEnvInt("HOST_POOL_MAX_CONNS", 5),
+		HostPoolMinConns:     getEnvInt("HOST_POOL_MIN_CONNS", 1),
+		HostCacheTTLMin:      getEnvInt("HOST_CACHE_TTL_MINUTES", 10),
+
+		GuacdPath:    getEnv("GUACD_PATH", ""),
+		GuacdAddress: getEnv("GUACD_ADDRESS", "127.0.0.1:4822"),
+	}
+
+	// Clamp pathologically aggressive timeouts: a sub-5 minute window will
+	// kill runs that are still legitimately starting on slow hosts.
+	if cfg.PatchRunStallTimeoutMin < 5 {
+		slog.Warn("PATCH_RUN_STALL_TIMEOUT_MIN below minimum, clamping to 5", "value", cfg.PatchRunStallTimeoutMin)
+		cfg.PatchRunStallTimeoutMin = 5
+	}
+
+	// AGENT_REPORTS_RETENTION_DAYS: floor 7 (a week of history protects most
+	// forensic use cases), ceiling 365 (one year keeps update_history bounded
+	// on busy fleets without blowing past Postgres practical sizes).
+	if cfg.AgentReportsRetentionDays < 7 {
+		slog.Warn("AGENT_REPORTS_RETENTION_DAYS below minimum, clamping to 7", "value", cfg.AgentReportsRetentionDays)
+		cfg.AgentReportsRetentionDays = 7
+	}
+	if cfg.AgentReportsRetentionDays > 365 {
+		slog.Warn("AGENT_REPORTS_RETENTION_DAYS above maximum, clamping to 365", "value", cfg.AgentReportsRetentionDays)
+		cfg.AgentReportsRetentionDays = 365
+	}
+
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
+
+// Validate checks required configuration.
+func (c *Config) Validate() error {
+	if c.DatabaseURL == "" {
+		return fmt.Errorf("DATABASE_URL is required")
+	}
+	if c.JWTSecret == "" {
+		return fmt.Errorf("JWT_SECRET is required")
+	}
+	if c.Port < 1 || c.Port > 65535 {
+		return fmt.Errorf("PORT must be between 1 and 65535, got %d", c.Port)
+	}
+	if c.DBConnectionLimit < 0 || c.DBConnectionLimit > math.MaxInt32 {
+		return fmt.Errorf("DB_CONNECTION_LIMIT must be 0..%d, got %d", math.MaxInt32, c.DBConnectionLimit)
+	}
+	level := strings.ToLower(c.LogLevel)
+	switch level {
+	case "debug", "info", "warn", "error":
+	default:
+		return fmt.Errorf("LOG_LEVEL must be debug, info, warn, or error, got %q", c.LogLevel)
+	}
+	if c.OidcEnabled {
+		if c.OidcIssuerURL == "" || c.OidcClientID == "" || c.OidcClientSecret == "" || c.OidcRedirectURI == "" {
+			return fmt.Errorf("OIDC is enabled but missing required config: OIDC_ISSUER_URL, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_REDIRECT_URI")
+		}
+	}
+	return nil
+}
+
+func getEnv(key, defaultVal string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultVal
+}
+
+// splitAndTrim splits a comma-separated env value, trimming whitespace and
+// dropping empty entries. Returns nil for an empty value.
+func splitAndTrim(v string) []string {
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+// getEnvEnv returns APP_ENV if set, else NODE_ENV (for backward compatibility), else "production".
+func getEnvEnv() string {
+	return getEnv("APP_ENV", getEnv("NODE_ENV", "production"))
+}
+
+func getEnvInt(key string, defaultVal int) int {
+	s := os.Getenv(key)
+	if s == "" {
+		return defaultVal
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return defaultVal
+	}
+	return v
+}
+
+// getEnvBytes parses size strings like "5mb", "2mb", "1gb" into bytes.
+// defaultMB is used when env is empty or parse fails.
+func getEnvBytes(key string, defaultMB int) int64 {
+	s := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	if s == "" {
+		return int64(defaultMB) * 1024 * 1024
+	}
+	var mult int64 = 1024 * 1024
+	if strings.HasSuffix(s, "kb") {
+		mult = 1024
+		s = strings.TrimSuffix(s, "kb")
+	} else if strings.HasSuffix(s, "mb") {
+		s = strings.TrimSuffix(s, "mb")
+	} else if strings.HasSuffix(s, "gb") {
+		mult = 1024 * 1024 * 1024
+		s = strings.TrimSuffix(s, "gb")
+	} else if strings.HasSuffix(s, "b") {
+		mult = 1
+		s = strings.TrimSuffix(s, "b")
+	}
+	s = strings.TrimSpace(s)
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || v < 1 {
+		return int64(defaultMB) * 1024 * 1024
+	}
+	return v * mult
+}
+
+// getEnvBytesKBDefault parses size strings like getEnvBytes but defaults to
+// `defaultKB` kibibytes (not megabytes) when env is empty or unparseable.
+// Kept separate from getEnvBytes so the existing MB-default sites don't
+// silently shrink to KB if a future caller forgets which helper they're
+// invoking.
+func getEnvBytesKBDefault(key string, defaultKB int) int64 {
+	s := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	if s == "" {
+		return int64(defaultKB) * 1024
+	}
+	var mult int64 = 1024
+	if strings.HasSuffix(s, "kb") {
+		s = strings.TrimSuffix(s, "kb")
+	} else if strings.HasSuffix(s, "mb") {
+		mult = 1024 * 1024
+		s = strings.TrimSuffix(s, "mb")
+	} else if strings.HasSuffix(s, "b") {
+		mult = 1
+		s = strings.TrimSuffix(s, "b")
+	}
+	s = strings.TrimSpace(s)
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || v < 1 {
+		return int64(defaultKB) * 1024
+	}
+	return v * mult
+}

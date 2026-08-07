@@ -13,14 +13,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
+	"patchmon-agent/internal/client"
 	"patchmon-agent/internal/config"
+	"patchmon-agent/internal/logutil"
 	"patchmon-agent/internal/pkgversion"
-	"patchmon-agent/internal/utils"
 
 	"github.com/spf13/cobra"
 )
@@ -29,6 +30,10 @@ const (
 	serverTimeout       = 30 * time.Second
 	versionCheckTimeout = 10 * time.Second // Shorter timeout for version checks
 )
+
+// agentVersionOutputRe parses the version out of `patchmon-agent --version`,
+// which cobra renders as "patchmon-agent version 2.0.3-rc.137".
+var agentVersionOutputRe = regexp.MustCompile(`(?i)(?:PatchMon Agent v|patchmon-agent version |patchmon-agent v|version )?([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)`)
 
 // ServerVersionResponse represents the response from the server when checking for version updates
 type ServerVersionResponse struct {
@@ -97,11 +102,11 @@ func checkVersion() error {
 		fmt.Printf("  Latest version: %s\n", latestVersion)
 		fmt.Printf("\nTo update, run: patchmon-agent update-agent\n")
 	} else if versionInfo.AutoUpdateDisabled && latestVersion != currentVersion {
-		logger.WithFields(map[string]interface{}{
+		logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 			"current": currentVersion,
 			"latest":  latestVersion,
 			"reason":  versionInfo.AutoUpdateDisabledReason,
-		}).Info("New update available but auto-update is disabled")
+		})).Info("New update available but auto-update is disabled")
 		fmt.Printf("Current version: %s\n", currentVersion)
 		fmt.Printf("Latest version: %s\n", latestVersion)
 		fmt.Printf("Status: %s\n", versionInfo.AutoUpdateDisabledReason)
@@ -181,10 +186,10 @@ func updateAgent() error {
 
 	actualHash := fmt.Sprintf("%x", sha256.Sum256(newAgentData))
 	if actualHash != versionInfo.Hash {
-		logger.WithFields(map[string]interface{}{
+		logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 			"expected": versionInfo.Hash,
 			"actual":   actualHash,
-		}).Error("Binary hash verification failed - possible tampering detected")
+		})).Error("Binary hash verification failed - possible tampering detected")
 		return fmt.Errorf("binary hash mismatch: expected %s, got %s", versionInfo.Hash, actualHash)
 	}
 	logger.WithField("hash", actualHash).Info("Binary integrity verified successfully")
@@ -214,42 +219,53 @@ func updateAgent() error {
 		return fmt.Errorf("failed to write new agent: %w", err)
 	}
 
-	// Verify the new executable works and check its version
+	// Verify the new executable works and check its version.
+	// Bounded: this contacts the server, and a hang here strands the host with
+	// the backup taken and the replacement not yet renamed into place.
 	logger.Debug("Validating new executable...")
-	testCmd := exec.Command(tempPath, "check-version")
+	testCtx, testCancel := context.WithTimeout(context.Background(), serverTimeout+30*time.Second)
+	testCmd := exec.CommandContext(testCtx, tempPath, "check-version")
 	testCmd.Env = os.Environ() // Preserve environment variables
-	if err := testCmd.Run(); err != nil {
+	testErr := testCmd.Run()
+	testCancel()
+	if testErr != nil {
 		if removeErr := os.Remove(tempPath); removeErr != nil {
 			logger.WithError(removeErr).Warn("Failed to remove temporary file after validation failure")
 		}
-		return fmt.Errorf("new agent executable is invalid: %w", err)
+		return fmt.Errorf("new agent executable is invalid: %w", testErr)
 	}
 	logger.Debug("New executable validation passed")
 
-	// Verify the downloaded binary version matches expected version
-	// This prevents issues where wrong binary might be downloaded
+	// Verify the downloaded binary version matches expected version.
+	// The binary only exposes --version (cobra's version flag); there is no
+	// "version" subcommand, and asking for one silently skipped this check.
 	logger.Debug("Verifying downloaded binary version...")
-	versionCmd := exec.Command(tempPath, "version")
+	versionCtx, versionCancel := context.WithTimeout(context.Background(), versionCheckTimeout)
+	versionCmd := exec.CommandContext(versionCtx, tempPath, "--version")
 	versionCmd.Env = os.Environ()
-	versionOutput, err := versionCmd.Output()
-	if err == nil {
-		// Try to extract version from output (format: "PatchMon Agent v1.3.4" or "1.3.4")
-		versionStr := strings.TrimSpace(string(versionOutput))
-		// Remove "PatchMon Agent v" prefix if present
-		versionStr = strings.TrimPrefix(versionStr, "PatchMon Agent v")
-		versionStr = strings.TrimPrefix(versionStr, "v")
-		versionStr = strings.TrimSpace(versionStr)
+	versionOutput, versionErr := versionCmd.CombinedOutput()
+	versionCancel()
+	if versionErr == nil {
+		versionStr := ""
+		if m := agentVersionOutputRe.FindStringSubmatch(string(versionOutput)); len(m) >= 2 {
+			versionStr = m[1]
+		}
 
-		if versionStr != "" && versionStr != newVersion {
-			logger.WithFields(map[string]interface{}{
+		switch {
+		case versionStr == "":
+			logger.Debug("Could not parse version from downloaded binary (non-critical)")
+		case versionStr != newVersion:
+			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 				"expected": newVersion,
 				"actual":   versionStr,
-			}).Warn("Downloaded binary version mismatch - this may indicate server issue, but proceeding")
-		} else if versionStr == newVersion {
+			})).Warn("Downloaded binary version mismatch - this may indicate server issue, but proceeding")
+			// Prefer what the binary reports over what the server advertised.
+			newVersion = versionStr
+		default:
 			logger.WithField("version", versionStr).Debug("Downloaded binary version verified")
 		}
 	} else {
-		logger.WithError(err).Debug("Could not verify binary version (non-critical)")
+		logger.WithError(versionErr).Debug("Could not verify binary version (non-critical)")
 	}
 
 	// Replace current executable atomically
@@ -335,20 +351,9 @@ func getServerVersionInfo() (*ServerVersionInfo, error) {
 		},
 	}
 
-	// SECURITY: Configure for insecure SSL if needed (NOT RECOMMENDED)
-	// Even with hash verification, TLS provides important protections
-	if cfg.SkipSSLVerify {
-		// SECURITY: Block skip_ssl_verify in production environments
-		if utils.IsProductionEnvironment() {
-			logger.Error("╔══════════════════════════════════════════════════════════════════╗")
-			logger.Error("║  SECURITY ERROR: skip_ssl_verify is BLOCKED in production!       ║")
-			logger.Error("║  Set PATCHMON_ENV to 'development' to enable insecure mode.      ║")
-			logger.Error("║  This setting cannot be used when PATCHMON_ENV=production        ║")
-			logger.Error("╚══════════════════════════════════════════════════════════════════╝")
-			return nil, fmt.Errorf("skip_ssl_verify is blocked in production environment")
-		}
-
-		logger.Warn("⚠️  TLS verification disabled for version check - NOT RECOMMENDED")
+	// Operator-gated insecure TLS for lab/air-gapped deployments.
+	if cfg.SkipSSLVerify || client.IsSkipSSLVerifyEnvSet() {
+		logger.Warn("TLS verification disabled for version check")
 		httpClient.Transport = &http.Transport{
 			ResponseHeaderTimeout: 5 * time.Second,
 			TLSClientConfig: &tls.Config{
@@ -394,7 +399,8 @@ func getLatestBinaryFromServer() (*ServerVersionResponse, error) {
 	credentials := cfgManager.GetCredentials()
 
 	architecture := getArchitecture()
-	url := fmt.Sprintf("%s/api/v1/hosts/agent/download?arch=%s", cfg.PatchmonServer, architecture)
+	platform := getPlatform()
+	url := fmt.Sprintf("%s/api/v1/hosts/agent/download?arch=%s&os=%s", cfg.PatchmonServer, architecture, platform)
 
 	ctx, cancel := context.WithTimeout(context.Background(), serverTimeout)
 	defer cancel()
@@ -408,29 +414,11 @@ func getLatestBinaryFromServer() (*ServerVersionResponse, error) {
 	req.Header.Set("X-API-ID", credentials.APIID)
 	req.Header.Set("X-API-KEY", credentials.APIKey)
 
-	// SECURITY: Configure HTTP client for insecure SSL if needed
+	// Operator-gated insecure TLS for lab/air-gapped deployments.
 	// WARNING: This is dangerous for binary downloads even with hash verification!
-	// An attacker could provide both a malicious binary AND a matching hash.
-	// TLS ensures we're talking to the legitimate server.
 	httpClient := http.DefaultClient
-	if cfg.SkipSSLVerify {
-		// SECURITY: Block skip_ssl_verify in production environments
-		if utils.IsProductionEnvironment() {
-			logger.Error("╔══════════════════════════════════════════════════════════════════╗")
-			logger.Error("║  SECURITY ERROR: skip_ssl_verify is BLOCKED in production!       ║")
-			logger.Error("║  Set PATCHMON_ENV to 'development' to enable insecure mode.      ║")
-			logger.Error("║  This setting cannot be used when PATCHMON_ENV=production        ║")
-			logger.Error("╚══════════════════════════════════════════════════════════════════╝")
-			return nil, fmt.Errorf("skip_ssl_verify is blocked in production environment")
-		}
-
-		logger.Error("╔══════════════════════════════════════════════════════════════════╗")
-		logger.Error("║  CRITICAL: TLS verification DISABLED for binary download!        ║")
-		logger.Error("║  This is a severe security risk - MITM attacks are possible.     ║")
-		logger.Error("║  Hash verification provides some protection, but TLS ensures     ║")
-		logger.Error("║  you're communicating with the legitimate server.                ║")
-		logger.Error("║  Use a valid TLS certificate in production!                      ║")
-		logger.Error("╚══════════════════════════════════════════════════════════════════╝")
+	if cfg.SkipSSLVerify || client.IsSkipSSLVerifyEnvSet() {
+		logger.Warn("TLS verification disabled for binary download")
 		httpClient = &http.Client{
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
@@ -488,9 +476,11 @@ func getArchitecture() string {
 	return runtime.GOARCH
 }
 
-// getPlatform returns "linux" or "freebsd" for the version/download API (server uses this to pick the right binary)
+// getPlatform returns the OS name for the version/download API (server uses this to pick the right binary)
 func getPlatform() string {
 	switch runtime.GOOS {
+	case "windows":
+		return "windows"
 	case "freebsd":
 		return "freebsd"
 	default:
@@ -635,7 +625,12 @@ func restartService(_ string, _ string) error {
 		}
 		helperScript := `#!/bin/sh
 sleep 2
-service patchmon_agent restart 2>&1 || service patchmon_agent start 2>&1
+# Prefer service, fallback to rc.d script (pfSense, minimal env)
+if [ -x /usr/sbin/service ]; then
+    /usr/sbin/service patchmon_agent restart 2>/dev/null || /usr/sbin/service patchmon_agent start 2>/dev/null
+else
+    /usr/local/etc/rc.d/patchmon_agent restart 2>/dev/null || /usr/local/etc/rc.d/patchmon_agent start 2>/dev/null
+fi
 rm -f "$0"
 `
 		randomBytes := make([]byte, 8)
@@ -672,7 +667,7 @@ rm -f "$0"
 		}
 		cmd.Stdout = nil
 		cmd.Stderr = nil
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		cmd.SysProcAttr = sysProcAttrForDetach()
 		if err := cmd.Start(); err != nil {
 			_ = os.Remove(helperPath)
 			logger.WithError(err).Warn("Failed to start restart helper, exiting to let daemon -r respawn")
@@ -771,11 +766,7 @@ rm -f "$0"
 				cmd.Stdout = nil
 				cmd.Stderr = nil
 				// Create a new session to fully detach the child process
-				// Setsid ensures the helper script is not killed when systemd cleans up
-				// the service's cgroup, as the new session may escape cgroup tracking
-				cmd.SysProcAttr = &syscall.SysProcAttr{
-					Setsid: true,
-				}
+				cmd.SysProcAttr = sysProcAttrForDetach()
 				if err := cmd.Start(); err != nil {
 					logger.WithError(err).Warn("Failed to start restart helper script, will exit and rely on systemd auto-restart")
 					// Clean up script
@@ -889,11 +880,7 @@ rm -f "$0"
 				cmd.Stdout = nil
 				cmd.Stderr = nil
 				// Create a new session to fully detach the child process
-				// Setsid is stronger than Setpgid — it creates a new session,
-				// ensuring the helper script survives even if the parent's cgroup is cleaned up
-				cmd.SysProcAttr = &syscall.SysProcAttr{
-					Setsid: true,
-				}
+				cmd.SysProcAttr = sysProcAttrForDetach()
 				if err := cmd.Start(); err != nil {
 					logger.WithError(err).Warn("Failed to start restart helper script, supervise-daemon will handle restart")
 					// Clean up script
@@ -1006,9 +993,7 @@ rm -f "$0"
 	cmd.Stderr = nil
 	// Create a new session to fully detach the child process from the current process
 	// This ensures the helper script survives even after the parent exits
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true,
-	}
+	cmd.SysProcAttr = sysProcAttrForDetach()
 
 	if err := cmd.Start(); err != nil {
 		logger.WithError(err).Error("Failed to start restart helper script")

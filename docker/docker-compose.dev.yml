@@ -36,7 +36,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     # WARNING: Insecure development password - DO NOT use in production
-    command: redis-server --requirepass 1NS3CU6E_DEV_R3DIS_PASSW0RD
+    command: redis-server --requirepass 1NS3CU6E_DEV_R3DIS_PASSW0RD --databases 256
     environment:
       REDIS_PASSWORD: 1NS3CU6E_DEV_R3DIS_PASSW0RD
     ports:
@@ -51,15 +51,15 @@ services:
       timeout: 5s
       retries: 7
 
-  backend:
+  server:
     build:
       context: ..
-      dockerfile: docker/backend.Dockerfile
+      dockerfile: docker/server.Dockerfile
       target: development
-      tags: [patchmon-backend:dev]
+      tags: [patchmon-server:dev]
     restart: unless-stopped
     environment:
-      NODE_ENV: development
+      APP_ENV: development
       LOG_LEVEL: info
       DATABASE_URL: postgresql://patchmon_user:1NS3CU6E_DEV_D8_PASSW0RD@database:5432/patchmon_db
       JWT_SECRET: INS3CURE_DEV_7WT_5ECR3T
@@ -85,13 +85,8 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: 1NS3CU6E_DEV_R3DIS_PASSW0RD
       REDIS_DB: 0
-      # Assets directory for custom branding (logos, favicons)
-      ASSETS_DIR: /app/assets
     ports:
-      - "3001:3001"
-    volumes:
-      - ./compose_dev_data/agents:/app/agents
-      - ./compose_dev_data/assets:/app/assets
+      - "3000:3000"
     networks:
       - patchmon-internal
     depends_on:
@@ -101,45 +96,9 @@ services:
         condition: service_healthy
     develop:
       watch:
-        - action: sync
-          path: ../backend/src
-          target: /app/backend/src
-          ignore:
-            - node_modules/
-        - action: sync
-          path: ../backend/prisma
-          target: /app/backend/prisma
+        # Go server: rebuild and restart when source changes
         - action: rebuild
-          path: ../backend/package.json
-
-  frontend:
-    build:
-      context: ..
-      dockerfile: docker/frontend.Dockerfile
-      target: development
-      tags: [patchmon-frontend:dev]
-    restart: unless-stopped
-    environment:
-      BACKEND_HOST: backend
-      BACKEND_PORT: 3001
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./compose_dev_data/assets:/app/frontend/public/assets
-    networks:
-      - patchmon-internal
-    depends_on:
-      backend:
-        condition: service_healthy
-    develop:
-      watch:
-        - action: sync
-          path: ../frontend/src
-          target: /app/frontend/src
-          ignore:
-            - node_modules/
-        - action: rebuild
-          path: ../frontend/package.json
+          path: ../server-source-code
 
 networks:
   patchmon-internal:

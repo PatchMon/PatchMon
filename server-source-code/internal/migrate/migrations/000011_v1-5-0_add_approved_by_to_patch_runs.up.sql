@@ -1,0 +1,1 @@
+ALTER TABLE patch_runs ADD COLUMN IF NOT EXISTS approved_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL;

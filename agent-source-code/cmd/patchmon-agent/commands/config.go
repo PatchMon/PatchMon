@@ -109,12 +109,7 @@ func configureCreds(apiID, apiKey, serverURL string) error {
 		return fmt.Errorf("invalid server URL format. Must start with http:// or https://")
 	}
 
-	// Set server URL in config
-	cfg := cfgManager.GetConfig()
-	cfg.PatchmonServer = serverURL
-
-	// Save config
-	if err := cfgManager.SaveConfig(); err != nil {
+	if err := cfgManager.SetPatchmonServer(serverURL); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
@@ -125,7 +120,7 @@ func configureCreds(apiID, apiKey, serverURL string) error {
 
 	logger.Info("Configuration saved successfully")
 	logger.WithField("path", cfgManager.GetConfigFile()).Info("Config saved")
-	logger.WithField("path", cfg.CredentialsFile).Info("Credentials saved")
+	logger.WithField("path", cfgManager.GetConfig().CredentialsFile).Info("Credentials saved")
 
 	// Test credentials
 	logger.Info("Testing connection...")
