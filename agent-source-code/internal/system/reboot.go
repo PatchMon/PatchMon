@@ -134,6 +134,12 @@ func (d *Detector) checkNeedsRestarting() (bool, string) {
 
 // getRunningKernel gets the currently running kernel version
 func (d *Detector) getRunningKernel() string {
+	// Windows has no uname and no kernel-package model, so asking would fork a
+	// process per report only to fail and warn.
+	if runtime.GOOS == "windows" {
+		return ""
+	}
+
 	cmd := exec.Command("uname", "-r")
 	output, err := cmd.Output()
 	if err != nil {
@@ -165,7 +171,11 @@ func (d *Detector) latestInstalledKernel(runningKernel string) string {
 	}
 
 	for _, source := range sources {
-		if latest := selectLatestKernel(source.collect(), flavour); latest != "" {
+		if latest := d.selectLatestKernel(source.collect(), flavour); latest != "" {
+			d.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
+				"source": source.name,
+				"latest": latest,
+			})).Debug("Resolved latest installed kernel")
 			return latest
 		}
 	}
@@ -182,7 +192,7 @@ func (d *Detector) latestInstalledKernel(runningKernel string) string {
 // neither is an upgrade of the other, so a 2712 host must only ever be compared
 // against 2712 kernels. If nothing matches the running flavour the whole set is
 // considered, which keeps behaviour sane when the running kernel is unknown.
-func selectLatestKernel(candidates []string, flavour string) string {
+func (d *Detector) selectLatestKernel(candidates []string, flavour string) string {
 	usable := make([]string, 0, len(candidates))
 	for _, candidate := range candidates {
 		if hasVersionCore(candidate) {
@@ -203,6 +213,10 @@ func selectLatestKernel(candidates []string, flavour string) string {
 			}
 		}
 		if len(matching) == 0 {
+			d.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
+				"flavour":    flavour,
+				"candidates": usable,
+			})).Debug("No installed kernel matches the running line, comparing against all")
 			matching = usable
 		}
 	}
@@ -270,14 +284,24 @@ func hasVersionCore(release string) bool {
 	return kernelCoreRe.MatchString(release)
 }
 
-// kernelFlavour returns the component identifying which kernel line a release
-// belongs to, which is its final component: amd64, pve, generic, 2712, v8.
+// kernelFlavour returns a key identifying which kernel line a release belongs
+// to: amd64, pve, generic, rpt-rpi for the Pi 5 build, arch or zen.
+//
+// It keeps the components that name the line and discards those that only carry
+// a revision, so that releases from one line always agree. Purely numeric
+// components are revisions (the 1 in deb13.1, the pkgrel in arch1-1), and a
+// trailing number on a label marks a point release (el9_4 and el9_5 are both
+// el), so both are dropped. A release with no labels at all yields an empty
+// flavour, which means the running line is unknown and every candidate counts.
 func kernelFlavour(release string) string {
-	parts := parseKernelVersion(release)
-	if len(parts) == 0 {
-		return ""
+	var labels []string
+	for _, part := range parseKernelVersion(release) {
+		if _, err := strconv.Atoi(part); err == nil {
+			continue
+		}
+		labels = append(labels, strings.TrimRight(part, "0123456789_"))
 	}
-	return parts[len(parts)-1]
+	return strings.Join(labels, "-")
 }
 
 // compareKernelVersions compares two kernel version strings
@@ -414,6 +438,9 @@ func (d *Detector) collectKernelsFromDpkg() []string {
 		if fields[0] == "ii" && strings.HasPrefix(fields[1], "linux-image-") {
 			pkgName := fields[1]
 			version := strings.TrimPrefix(pkgName, "linux-image-")
+			// Ubuntu ships linux-image-unsigned-<release>-<flavour> alongside
+			// the signed build; both name the same kernel.
+			version = strings.TrimPrefix(version, "unsigned-")
 
 			if isKernelMetaPackage(version) {
 				metaPackages[pkgName] = true
