@@ -221,6 +221,10 @@ response=$(curl $CURL_FLAGS --show-error -X POST \
     "$PATCHMON_URL/api/v1/auto-enrollment/enroll" \
     -w "\n%{http_code}" 2>&1) || curl_exit=$? #if curl fails, we store the exit code
 
+if [ "$curl_exit" -ne 0 ]; then
+    error "Could not reach $PATCHMON_URL - $(echo "$response" | sed '$d')"
+fi
+
 http_code=$(echo "$response" | tail -n 1)
 body=$(echo "$response" | sed '$d')
 
