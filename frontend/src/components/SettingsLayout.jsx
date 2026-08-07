@@ -7,6 +7,7 @@ import {
 	Code,
 	Folder,
 	Image,
+	Key,
 	KeyRound,
 	RefreshCw,
 	Settings,
@@ -178,6 +179,11 @@ const SettingsLayout = ({ children }) => {
 					name: "Metrics",
 					href: "/settings/metrics",
 					icon: BarChart3,
+				});
+				serverItems.push({
+					name: "API Tokens",
+					href: "/settings/api-tokens",
+					icon: Key,
 				});
 			}
 			nav.push({

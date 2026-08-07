@@ -62,6 +62,9 @@ const SettingsServerConfig = lazy(
 	() => import("./pages/settings/SettingsServerConfig"),
 );
 const SettingsMetrics = lazy(() => import("./pages/settings/SettingsMetrics"));
+const ApiTokensSettings = lazy(
+	() => import("./pages/settings/ApiTokensSettings"),
+);
 const EnvironmentSettings = lazy(
 	() => import("./pages/settings/EnvironmentSettings"),
 );
@@ -488,6 +491,14 @@ function AppRoutes() {
 							element={
 								<ProtectedRoute requirePermission="can_manage_settings">
 									<SettingsMetrics />
+								</ProtectedRoute>
+							}
+						/>
+						<Route
+							path="api-tokens"
+							element={
+								<ProtectedRoute requirePermission="can_manage_settings">
+									<ApiTokensSettings />
 								</ProtectedRoute>
 							}
 						/>
