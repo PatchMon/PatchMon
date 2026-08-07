@@ -140,7 +140,7 @@ RUN go mod download && \
 # is ssg-*-ds.xml datastream files, which are architecture-independent. Left
 # unpinned, this stage downloaded and unpacked the same ~30s archive once per
 # target platform, and did the unpacking under QEMU for the non-native one.
-FROM --platform=$BUILDPLATFORM alpine:3.23 AS ssg-content
+FROM --platform=$BUILDPLATFORM alpine:3.24 AS ssg-content
 ARG SSG_VERSION=""
 # Use shell variable VER to avoid Docker ARG substitution in the wget URL.
 # Docker substitutes ${SSG_VERSION} at parse time; when empty, the URL would be
