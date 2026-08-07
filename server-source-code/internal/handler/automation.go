@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
@@ -22,6 +23,26 @@ type AutomationHandler struct {
 	registry    *agentregistry.Registry
 	settings    *store.SettingsStore
 	alertConfig *store.AlertConfigStore
+	cfg         *config.Config
+}
+
+// WithConfig wires the process config, used to gate the queue views in managed
+// deployments.
+func (h *AutomationHandler) WithConfig(cfg *config.Config) *AutomationHandler {
+	h.cfg = cfg
+	return h
+}
+
+// adminModeGuard returns true (and writes a 403) when AdminMode is active.
+// The asynq queues are shared by every context on the process and asynq exposes
+// no per-context breakdown, so the aggregate counts describe platform activity
+// rather than the caller's own. Mirrors MetricsHandler.adminModeGuard.
+func (h *AutomationHandler) adminModeGuard(w http.ResponseWriter) bool {
+	if h.cfg != nil && h.cfg.AdminMode {
+		Error(w, http.StatusForbidden, "Automation is not available in managed mode")
+		return true
+	}
+	return false
 }
 
 // NewAutomationHandler creates a new automation handler.
@@ -127,6 +148,9 @@ func (h *AutomationHandler) getQueueLastRunInfo(queueName string) (lastRun strin
 
 // Overview handles GET /automation/overview.
 func (h *AutomationHandler) Overview(w http.ResponseWriter, r *http.Request) {
+	if h.adminModeGuard(w) {
+		return
+	}
 	queues := []string{
 		queue.QueueVersionUpdateCheck,
 		queue.QueueSessionCleanup,
@@ -217,6 +241,9 @@ func (h *AutomationHandler) Overview(w http.ResponseWriter, r *http.Request) {
 
 // Stats handles GET /automation/stats.
 func (h *AutomationHandler) Stats(w http.ResponseWriter, r *http.Request) {
+	if h.adminModeGuard(w) {
+		return
+	}
 	queues := []string{
 		queue.QueueVersionUpdateCheck,
 		queue.QueueSessionCleanup,
@@ -246,6 +273,9 @@ func (h *AutomationHandler) Stats(w http.ResponseWriter, r *http.Request) {
 
 // Jobs handles GET /automation/jobs/:queueName.
 func (h *AutomationHandler) Jobs(w http.ResponseWriter, r *http.Request) {
+	if h.adminModeGuard(w) {
+		return
+	}
 	queueName := chi.URLParam(r, "queueName")
 	limit := parseIntQuery(r, "limit", 10)
 	if limit > 50 {

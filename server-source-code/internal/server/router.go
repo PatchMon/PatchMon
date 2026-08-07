@@ -260,7 +260,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	agentVersionHandler := handler.NewAgentVersionHandler(log)
 	alertConfigHandler := handler.NewAlertConfigHandler(alertConfigStore)
 	notificationsHandler := handler.NewNotificationsHandler(dbProvider, enc, notifyEmit, resolved, cfg, settingsStore, queueClient)
-	automationHandler := handler.NewAutomationHandler(queueInspector, queueClient, registry, settingsStore, alertConfigStore)
+	automationHandler := handler.NewAutomationHandler(queueInspector, queueClient, registry, settingsStore, alertConfigStore).WithConfig(cfg)
 	apiHostsHandler := handler.NewApiHostsHandler(hostsStore, hostGroupsStore, dbProvider, dashboardStore, queueInspector)
 
 	patchPoliciesStore := store.NewPatchPoliciesStore(dbProvider)
