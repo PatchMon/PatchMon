@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 
 	"patchmon-agent/pkg/models"
@@ -41,6 +42,23 @@ var rpmArchSuffixes = map[string]bool{
 	"s390x":   true,
 	"riscv64": true,
 	"src":     true,
+}
+
+// An RPM EVR is "[epoch:]version-release": it always starts with a digit
+// (epoch or version) and always carries a release separated by a hyphen.
+// Both conditions together are enough to tell a version column apart from
+// an English word.
+func looksLikeRPMVersion(s string) bool {
+	s = strings.TrimPrefix(s, "*") // yum marks obsoleting packages with a leading *
+	if i := strings.Index(s, ":"); i > 0 {
+		if _, err := strconv.Atoi(s[:i]); err == nil {
+			s = s[i+1:]
+		}
+	}
+	if s == "" || s[0] < '0' || s[0] > '9' {
+		return false
+	}
+	return strings.Contains(s, "-")
 }
 
 // Both parsers must agree: CombinePackageData keys its upgradable set on
@@ -352,6 +370,14 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 			continue
 		}
 
+		// A real row is "name.arch  epoch:version-release  repo". Banner lines
+		// such as "Updating Subscription Management repositories." also have
+		// three or more fields, so the column has to be validated by shape or
+		// they are ingested as packages.
+		if !looksLikeRPMVersion(fields[1]) {
+			continue
+		}
+
 		packageName := stripRPMArchSuffix(fields[0])
 		availableVersion := fields[1]
 
@@ -446,7 +472,7 @@ func (m *DNFManager) parseInstalledPackages(output string) map[string]models.Pac
 		parts := strings.Fields(trimmed)
 
 		// Normal single-line format: "name.arch  version  repo"
-		if len(parts) >= 3 {
+		if len(parts) >= 3 && looksLikeRPMVersion(parts[1]) {
 			packageName := stripRPMArchSuffix(parts[0])
 			version := parts[1]
 			installedPackages[packageName] = models.Package{
