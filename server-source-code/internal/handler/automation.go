@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
@@ -281,8 +283,16 @@ func (h *AutomationHandler) Jobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The asynq queues are shared by every context on this process, so a task
+	// here may belong to another one. Task IDs embed identifiers (for example
+	// refresh-integration-status-<apiID>), so an unfiltered list discloses
+	// another context's host api_ids.
+	callerHost := hostctx.TenantHostKey(r.Context())
 	formatted := make([]map[string]interface{}, 0, len(tasks))
 	for _, t := range tasks {
+		if !taskBelongsToContext(t.Payload, callerHost) {
+			continue
+		}
 		status := "completed"
 		if t.LastErr != "" {
 			status = "failed"
@@ -464,4 +474,20 @@ func (h *AutomationHandler) ComplianceScanCleanup(w http.ResponseWriter, r *http
 			"message": "Compliance scan cleanup triggered successfully",
 		},
 	})
+}
+
+// taskBelongsToContext reports whether a queued task was raised by the given
+// context. Tasks carry their originating host in the payload; one that carries
+// none predates multi-context routing and is only shown to the default context.
+func taskBelongsToContext(payload []byte, callerHost string) bool {
+	if len(payload) == 0 {
+		return callerHost == ""
+	}
+	var p struct {
+		Host string `json:"host"`
+	}
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return callerHost == ""
+	}
+	return strings.EqualFold(strings.TrimSpace(p.Host), strings.TrimSpace(callerHost))
 }
