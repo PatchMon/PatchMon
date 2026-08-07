@@ -29,8 +29,8 @@ func RedisOpts() asynq.RedisClientOpt {
 
 	return asynq.RedisClientOpt{
 		Addr:      fmt.Sprintf("%s:%d", host, port),
-		Password:  password,
 		Username:  username,
+		Password:  password,
 		DB:        db,
 		TLSConfig: patchmonredis.TLSConfigFromEnv(),
 	}
