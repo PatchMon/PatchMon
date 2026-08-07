@@ -52,6 +52,9 @@ type OidcHandler struct {
 // backstop for any invalidation path that is missed.
 const oidcClientTTL = 10 * time.Minute
 
+// oidcBuildTimeout bounds the settings read when building a context's entry.
+const oidcBuildTimeout = 10 * time.Second
+
 // oidcContextEntry is one context's resolved OIDC configuration and client.
 type oidcContextEntry struct {
 	client   *oidc.Client
@@ -119,7 +122,30 @@ func (h *OidcHandler) entryFor(ctx context.Context) *oidcContextEntry {
 		return e
 	}
 
-	built := h.buildEntry(ctx)
+	// Build off a context that survives client disconnect. entryFor runs on the
+	// request path, so a caller that hangs up mid-build must not be able to
+	// cache an "unconfigured" result for the full TTL and take this context's
+	// SSO offline. WithoutCancel keeps the injected per-context DB and entry.
+	buildCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), oidcBuildTimeout)
+	defer cancel()
+
+	built, err := h.buildEntry(buildCtx)
+	if err != nil {
+		// Settings unreadable. Do not cache a negative result: keep serving the
+		// previous entry if there is one, otherwise retry on the next request
+		// rather than in oidcClientTTL.
+		if h.log != nil {
+			h.log.Warn("OIDC settings read failed, keeping previous configuration", "error", err)
+		}
+		h.clientMu.RLock()
+		prev := h.entries[key]
+		h.clientMu.RUnlock()
+		if prev != nil {
+			return prev
+		}
+		return &oidcContextEntry{expiresAt: time.Now()}
+	}
+
 	h.clientMu.Lock()
 	h.entries[key] = built
 	h.clientMu.Unlock()
@@ -129,27 +155,38 @@ func (h *OidcHandler) entryFor(ctx context.Context) *oidcContextEntry {
 // buildEntry resolves this context's OIDC settings and constructs its client.
 // oidc.NewClient performs no I/O; provider discovery is deferred to the first
 // AuthCodeURL/Exchange on the returned client, so this stays cheap.
-func (h *OidcHandler) buildEntry(ctx context.Context) *oidcContextEntry {
+func (h *OidcHandler) buildEntry(ctx context.Context) (*oidcContextEntry, error) {
 	empty := &oidcContextEntry{expiresAt: time.Now().Add(oidcClientTTL)}
 	if h.settings == nil {
-		return empty
+		return empty, nil
 	}
-	oidcResolved, err := config.ResolveOidcConfig(ctx, h.cfg, h.settings.GetFirst)
+	// Read the row here rather than handing GetFirst to ResolveOidcConfig, which
+	// treats a read failure as "no DB settings" and resolves from env instead.
+	// That makes an unreadable row indistinguishable from an unconfigured one.
+	s, err := h.settings.GetFirst(ctx)
 	if err != nil {
-		if h.log != nil {
-			h.log.Warn("OIDC resolve failed", "error", err)
-		}
-		return empty
+		return nil, err
 	}
+	oidcResolved, _ := config.ResolveOidcConfig(ctx, h.cfg, func(context.Context) (*models.Settings, error) {
+		return s, nil
+	})
 	clientSecret := oidcResolved.ClientSecret
 	if !oidcResolved.ConfiguredViaEnv && clientSecret != "" && h.enc != nil {
-		if dec, decErr := h.enc.Decrypt(clientSecret); decErr == nil {
-			clientSecret = dec
+		dec, decErr := h.enc.Decrypt(clientSecret)
+		if decErr != nil {
+			// Fail closed. Keeping the ciphertext would leave the secret
+			// non-empty, so OIDC would report as configured and every login
+			// would post the ciphertext to the provider as client_secret.
+			if h.log != nil {
+				h.log.Warn("OIDC client secret could not be decrypted; treating OIDC as unconfigured")
+			}
+			return empty, nil
 		}
+		clientSecret = dec
 	}
 	valid := oidcResolved.Enabled && oidcResolved.IssuerURL != "" && oidcResolved.ClientID != "" && clientSecret != "" && oidcResolved.RedirectURI != ""
 	if !valid {
-		return empty
+		return empty, nil
 	}
 	resolvedPtr := &oidcResolved
 	c, _ := oidc.NewClient(ctx, oidc.Config{
@@ -164,7 +201,7 @@ func (h *OidcHandler) buildEntry(ctx context.Context) *oidcContextEntry {
 		resolved:        resolvedPtr,
 		configuredValid: true,
 		expiresAt:       time.Now().Add(oidcClientTTL),
-	}
+	}, nil
 }
 
 // evictOidcClient drops this context's cached entry so the next request
@@ -180,6 +217,14 @@ func (h *OidcHandler) EvictHost(host string) {
 	if h == nil {
 		return
 	}
+	// Take the per-key lock first, so an in-flight buildEntry for this context
+	// finishes and stores before we delete. Without it, a build that started
+	// before a settings save can write the pre-save entry back afterwards and
+	// keep the old configuration live for the full TTL.
+	lock := h.entryLock(host)
+	lock.Lock()
+	defer lock.Unlock()
+
 	h.clientMu.Lock()
 	delete(h.entries, host)
 	h.clientMu.Unlock()

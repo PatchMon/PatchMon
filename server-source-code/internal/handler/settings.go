@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"log/slog"
@@ -30,17 +31,28 @@ type SettingsHandler struct {
 	assetsDir string
 	cfg       *config.Config
 	resolved  *config.ResolvedConfig
-	// cfgResolver caches each context's resolved settings. A write here must
-	// invalidate it, or enforcement keeps using the previous values until the
-	// cache TTL expires.
-	cfgResolver *hostctx.ConfigResolver
+	// evictors are the per-context caches derived from the settings row. A write
+	// here must drop them, or enforcement keeps using the previous values until
+	// each cache's TTL expires. OIDC belongs here too: its redirect URI is
+	// derived from server_url when no explicit one is set.
+	evictors []hostctx.HostEvictor
 }
 
-// WithConfigResolver wires the per-context config resolver so settings writes
-// can invalidate it.
-func (h *SettingsHandler) WithConfigResolver(r *hostctx.ConfigResolver) *SettingsHandler {
-	h.cfgResolver = r
+// WithEvictors wires the per-context caches invalidated on a settings write.
+func (h *SettingsHandler) WithEvictors(e ...hostctx.HostEvictor) *SettingsHandler {
+	h.evictors = append(h.evictors, e...)
 	return h
+}
+
+// invalidateContextCaches drops every per-context cache derived from this
+// context's settings row.
+func (h *SettingsHandler) invalidateContextCaches(ctx context.Context) {
+	host := hostctx.TenantHostKey(ctx)
+	for _, e := range h.evictors {
+		if e != nil {
+			e.EvictHost(host)
+		}
+	}
 }
 
 // NewSettingsHandler creates a new settings handler.
@@ -612,7 +624,7 @@ func (h *SettingsHandler) UpdateEnvironmentConfig(w http.ResponseWriter, r *http
 		Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.cfgResolver.Invalidate(r.Context())
+	h.invalidateContextCaches(r.Context())
 	slog.Debug("env config update saved", "key", key, "settings_id", s.ID)
 	JSON(w, http.StatusOK, map[string]string{"message": "Saved. Restart the application for changes to take effect."})
 }
@@ -696,7 +708,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	// Drop this context's cached config so the new values are enforced now
 	// rather than when the cache TTL happens to expire.
-	h.cfgResolver.Invalidate(r.Context())
+	h.invalidateContextCaches(r.Context())
 
 	intervalChanged := s.UpdateInterval != oldInterval && s.UpdateInterval > 0
 	complianceIntervalChanged := s.ComplianceScanInterval != oldComplianceScanInterval && s.ComplianceScanInterval > 0
