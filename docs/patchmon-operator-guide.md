@@ -1712,7 +1712,8 @@ Rules applied when a user sets or changes a local account password. These do not
 |----------|---------|----------|-------------|
 | `ENABLE_LOGGING` | `false` | No | When `true`, enables structured application logging to stdout. Set to `true` in production to capture request and error logs. |
 | `LOG_LEVEL` | `info` | No | Minimum log level to output. Accepted values: `debug`, `info`, `warn`, `error`. Must be one of these exact strings. The server will fail to start if an invalid value is provided. |
-| `ENABLE_PPROF` | `false` | No | When `true`, exposes Go pprof profiling endpoints. For diagnostics only. Do not enable in production unless actively investigating a performance issue. |
+| `ENABLE_PPROF` | `false` | No | When `true`, serves Go pprof profiling endpoints on a separate listener. For diagnostics only. Do not enable in production unless actively investigating a performance issue. |
+| `PPROF_PORT` | `6060` | No | Port for the profiling listener when `ENABLE_PPROF=true`. The listener binds to `127.0.0.1` only and is not published by the Docker compose file, so there is nothing to open in a firewall or reverse proxy. Reach it from inside the container, or publish it bound to host loopback and connect over an SSH tunnel. |
 | `MEMSTATS_INTERVAL_SEC` | `60` | No | How often (in seconds) the server logs Go runtime memory statistics when profiling is active. Only relevant when `ENABLE_PPROF=true`. |
 
 **Log level guide:**
