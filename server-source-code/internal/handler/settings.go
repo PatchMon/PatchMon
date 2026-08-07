@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"log/slog"
@@ -30,6 +31,23 @@ type SettingsHandler struct {
 	assetsDir string
 	cfg       *config.Config
 	resolved  *config.ResolvedConfig
+	// Per-context caches derived from the settings row, dropped on write.
+	evictors []hostctx.HostEvictor
+}
+
+// WithEvictors wires the caches invalidated on a settings write.
+func (h *SettingsHandler) WithEvictors(e ...hostctx.HostEvictor) *SettingsHandler {
+	h.evictors = append(h.evictors, e...)
+	return h
+}
+
+func (h *SettingsHandler) invalidateContextCaches(ctx context.Context) {
+	host := hostctx.TenantHostKey(ctx)
+	for _, e := range h.evictors {
+		if e != nil {
+			e.EvictHost(host)
+		}
+	}
 }
 
 // NewSettingsHandler creates a new settings handler.
@@ -460,7 +478,7 @@ func buildEnvironmentVariables(cfg *config.Config, resolved *config.ResolvedConf
 		{Category: "Database", Key: "PM_DB_CONN_WAIT_INTERVAL", EffectiveValue: strconv.Itoa(cfg.DBConnWaitInterval), EffectiveSource: source(env("PM_DB_CONN_WAIT_INTERVAL"), "", "2"), EnvValue: env("PM_DB_CONN_WAIT_INTERVAL"), DBValue: "", DefaultValue: "2", Editable: false, Conflict: false, Description: "Seconds between connection retries; configure via .env"},
 		{Category: "Server", Key: "CORS_ORIGIN", EffectiveValue: corsEffective, EffectiveSource: corsSource, EnvValue: env("CORS_ORIGIN"), DBValue: dbStr(s.CorsOrigin), DefaultValue: "http://localhost:3000", Editable: true, Conflict: env("CORS_ORIGIN") != "" && s.CorsOrigin != nil && *s.CorsOrigin != "", Description: "Allowed origin for CORS (frontend URL). Comma-separated for multiple origins. Requires a server restart to take effect."},
 		{Category: "Server", Key: "ENABLE_HSTS", EffectiveValue: boolStr(resolved.EnableHSTS), EffectiveSource: source(env("ENABLE_HSTS"), dbBool(s.EnableHSTS), "false"), EnvValue: env("ENABLE_HSTS"), DBValue: dbBool(s.EnableHSTS), DefaultValue: "false", Editable: true, Conflict: env("ENABLE_HSTS") != "" && s.EnableHSTS != nil, Description: "Enable HSTS header for HTTPS"},
-		{Category: "Server", Key: "TRUST_PROXY", EffectiveValue: trustProxyStr, EffectiveSource: source(env("TRUST_PROXY"), dbBool(s.TrustProxy), "true"), EnvValue: env("TRUST_PROXY"), DBValue: dbBool(s.TrustProxy), DefaultValue: "true", Editable: true, Conflict: env("TRUST_PROXY") != "" && s.TrustProxy != nil, Description: "Trust proxy headers (X-Forwarded-Proto / X-Forwarded-For) from a reverse proxy. Default true; set to false only if PatchMon is exposed directly to the internet without a proxy."},
+		{Category: "Server", Key: "TRUST_PROXY", EffectiveValue: trustProxyStr, EffectiveSource: source(env("TRUST_PROXY"), dbBool(s.TrustProxy), "true"), EnvValue: env("TRUST_PROXY"), DBValue: dbBool(s.TrustProxy), DefaultValue: "true", Editable: false, Conflict: env("TRUST_PROXY") != "" && s.TrustProxy != nil, Description: "Trust proxy headers (X-Forwarded-Proto / X-Forwarded-For) from a reverse proxy. Read once at startup and applied process-wide, so it describes the deployment rather than a single context; configure via .env. Default true; set to false only if PatchMon is exposed directly to the internet without a proxy."},
 		{Category: "Server", Key: "TRUSTED_PROXY_RANGES", EffectiveValue: strings.Join(cfg.TrustedProxyRanges, ", "), EffectiveSource: source(env("TRUSTED_PROXY_RANGES"), "", ""), EnvValue: env("TRUSTED_PROXY_RANGES"), DBValue: "", DefaultValue: "(empty)", Editable: false, Conflict: false, Description: "Comma-separated CIDRs or IPs of reverse proxies in front of PatchMon, used to resolve the real client IP from X-Forwarded-For. Leave empty for a single proxy; set it when proxies are chained (e.g. Cloudflare in front of NPM). Env only, and deliberately not editable here: widening it would allow X-Forwarded-For spoofing."},
 		{Category: "Server", Key: "PORT", EffectiveValue: strconv.Itoa(cfg.Port), EffectiveSource: source(env("PORT"), "", "3001"), EnvValue: env("PORT"), DBValue: "", DefaultValue: "3001", Editable: false, Conflict: false, Description: "Backend API port; configure via .env"},
 		{Category: "Server", Key: "APP_ENV", EffectiveValue: cfg.Env, EffectiveSource: source(env("APP_ENV"), "", envDefault("NODE_ENV", "production")), EnvValue: env("APP_ENV"), DBValue: "", DefaultValue: "production", Editable: false, Conflict: false, Description: "Environment mode (production/development)"},
@@ -601,6 +619,7 @@ func (h *SettingsHandler) UpdateEnvironmentConfig(w http.ResponseWriter, r *http
 		Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.invalidateContextCaches(r.Context())
 	slog.Debug("env config update saved", "key", key, "settings_id", s.ID)
 	JSON(w, http.StatusOK, map[string]string{"message": "Saved. Restart the application for changes to take effect."})
 }
@@ -682,6 +701,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to update settings")
 		return
 	}
+	h.invalidateContextCaches(r.Context())
 
 	intervalChanged := s.UpdateInterval != oldInterval && s.UpdateInterval > 0
 	complianceIntervalChanged := s.ComplianceScanInterval != oldComplianceScanInterval && s.ComplianceScanInterval > 0

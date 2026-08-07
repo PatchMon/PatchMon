@@ -1,22 +1,32 @@
 package handler
 
 import (
+	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 )
 
-// TestOidcHandler_ResolvedAccessorsAreRaceFree guards the accessors that read
-// h.resolved on the request path.
-//
-// reinitOidcClient replaces h.resolved under clientMu when an admin saves OIDC
-// settings, and sets it to nil when OIDC is disabled. The accessors read the
-// field directly with no lock, so a login concurrent with a settings save was a
-// data race. A read that saw nil silently fell back to the h.cfg env values,
-// giving different auto-create and role-mapping behaviour for that login.
-//
-// Run under -race this fails without the snapshot helper.
+func configuredEntry() *oidcContextEntry {
+	return &oidcContextEntry{
+		resolved: &config.ResolvedOidcConfig{
+			IssuerURL:       "https://db.example.com",
+			ClientID:        "db-client",
+			AutoCreateUsers: true,
+			SyncRoles:       true,
+			SuperadminGroup: "db-superadmins",
+		},
+		configuredValid: true,
+		expiresAt:       time.Now().Add(oidcClientTTL),
+	}
+}
+
+// TestOidcHandler_ResolvedAccessorsAreRaceFree guards the accessors that read a
+// context's resolved OIDC config while a settings save evicts it. Run under
+// -race, this fails if the accessors touch the cache directly.
 func TestOidcHandler_ResolvedAccessorsAreRaceFree(t *testing.T) {
 	t.Parallel()
 
@@ -28,47 +38,36 @@ func TestOidcHandler_ResolvedAccessorsAreRaceFree(t *testing.T) {
 			OidcSyncRoles:       false,
 			OidcSuperadminGroup: "env-superadmins",
 		},
-		resolved: &config.ResolvedOidcConfig{
-			IssuerURL:       "https://db.example.com",
-			ClientID:        "db-client",
-			AutoCreateUsers: true,
-			SyncRoles:       true,
-			SuperadminGroup: "db-superadmins",
-		},
+		entries: map[string]*oidcContextEntry{"": configuredEntry()},
 	}
 
+	ctx := context.Background()
 	const iterations = 200
 	var wg sync.WaitGroup
 
-	// Writer: the settings-save path, flipping between configured and disabled.
+	// Writer: the settings-save path, alternating evict and re-seed.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		for i := 0; i < iterations; i++ {
-			h.clientMu.Lock()
 			if i%2 == 0 {
-				h.resolved = nil // OIDC disabled
+				h.evictOidcClient(ctx)
 			} else {
-				h.resolved = &config.ResolvedOidcConfig{
-					IssuerURL:       "https://db.example.com",
-					ClientID:        "db-client",
-					AutoCreateUsers: true,
-					SyncRoles:       true,
-					SuperadminGroup: "db-superadmins",
-				}
+				h.clientMu.Lock()
+				h.entries[""] = configuredEntry()
+				h.clientMu.Unlock()
 			}
-			h.clientMu.Unlock()
 		}
 	}()
 
 	// Readers: every accessor a callback touches.
 	readers := []func(){
-		func() { _ = h.oidcIssuerURL() },
-		func() { _ = h.oidcClientID() },
-		func() { _ = h.oidcAutoCreateUsers() },
-		func() { _ = h.oidcSyncRoles() },
-		func() { _ = h.oidcSuperadminGroup() },
-		func() { _ = h.mapGroupsToRole([]string{"admins", "users"}) },
+		func() { _ = h.oidcIssuerURL(ctx) },
+		func() { _ = h.oidcClientID(ctx) },
+		func() { _ = h.oidcAutoCreateUsers(ctx) },
+		func() { _ = h.oidcSyncRoles(ctx) },
+		func() { _ = h.oidcSuperadminGroup(ctx) },
+		func() { _ = h.mapGroupsToRole(ctx, []string{"admins", "users"}) },
 	}
 	for _, read := range readers {
 		wg.Add(1)
@@ -81,4 +80,48 @@ func TestOidcHandler_ResolvedAccessorsAreRaceFree(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+// TestOidcHandler_EntriesAreIsolatedPerContext asserts one context's OIDC
+// configuration is never served to another.
+func TestOidcHandler_EntriesAreIsolatedPerContext(t *testing.T) {
+	t.Parallel()
+
+	entryFor := func(issuer, clientID string) *oidcContextEntry {
+		return &oidcContextEntry{
+			resolved: &config.ResolvedOidcConfig{
+				IssuerURL: issuer,
+				ClientID:  clientID,
+			},
+			configuredValid: true,
+			expiresAt:       time.Now().Add(oidcClientTTL),
+		}
+	}
+
+	h := &OidcHandler{
+		cfg: &config.Config{},
+		entries: map[string]*oidcContextEntry{
+			"a.example.com": entryFor("https://idp-a.example.com", "client-a"),
+			"b.example.com": entryFor("https://idp-b.example.com", "client-b"),
+		},
+	}
+
+	ctxA := hostctx.WithEntry(context.Background(), &hostctx.Entry{Host: "a.example.com"})
+	ctxB := hostctx.WithEntry(context.Background(), &hostctx.Entry{Host: "b.example.com"})
+
+	if got, want := h.oidcIssuerURL(ctxA), "https://idp-a.example.com"; got != want {
+		t.Errorf("context A issuer = %q, want %q", got, want)
+	}
+	if got, want := h.oidcIssuerURL(ctxB), "https://idp-b.example.com"; got != want {
+		t.Errorf("context B issuer = %q, want %q", got, want)
+	}
+	if got, want := h.oidcClientID(ctxA), "client-a"; got != want {
+		t.Errorf("context A client id = %q, want %q", got, want)
+	}
+
+	// Evicting one context must not disturb the other.
+	h.evictOidcClient(ctxA)
+	if got, want := h.oidcIssuerURL(ctxB), "https://idp-b.example.com"; got != want {
+		t.Errorf("context B issuer after evicting A = %q, want %q", got, want)
+	}
 }

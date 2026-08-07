@@ -121,14 +121,18 @@ run: build
 run-pprof: build
 	ENABLE_PPROF=true ./$(BINARY)
 
-# Fetch heap profile (server must be running with pprof on port 3001)
+# Fetch heap profile. pprof listens on its own loopback-only port (PPROF_PORT,
+# default 6060), not the main API port. For a remote server, tunnel first:
+#   ssh -L $(PPROF_PORT):127.0.0.1:$(PPROF_PORT) <host>
+PPROF_PORT ?= 6060
+
 profile-heap:
-	@curl -s "http://localhost:3001/debug/pprof/heap" -o heap.prof
+	@curl -s "http://127.0.0.1:$(PPROF_PORT)/debug/pprof/heap" -o heap.prof
 	@echo "Saved to heap.prof. View with: go tool pprof -http=:8080 heap.prof"
 
 # Fetch allocs profile
 profile-allocs:
-	@curl -s "http://localhost:3001/debug/pprof/allocs" -o allocs.prof
+	@curl -s "http://127.0.0.1:$(PPROF_PORT)/debug/pprof/allocs" -o allocs.prof
 	@echo "Saved to allocs.prof"
 
 # Database migrations (requires DATABASE_URL)

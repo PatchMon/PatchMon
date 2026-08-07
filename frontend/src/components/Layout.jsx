@@ -416,11 +416,16 @@ const Layout = ({ children }) => {
 		if (canViewHosts() || canViewPackages() || canViewReports()) {
 			const systemItems = [];
 
-			systemItems.push({
-				name: "Automation",
-				href: "/automation",
-				icon: RefreshCw,
-			});
+			// Automation shows asynq queue activity for the whole process, which
+			// on a managed deployment spans every context. Hidden there, as
+			// Metrics and Server Version are.
+			if (publicSettings?.admin_mode !== true) {
+				systemItems.push({
+					name: "Automation",
+					href: "/automation",
+					icon: RefreshCw,
+				});
+			}
 
 			// Billing — double-gated: only on cloud installs (admin_mode === true)
 			// AND only for users with can_manage_billing permission. On self-hosted

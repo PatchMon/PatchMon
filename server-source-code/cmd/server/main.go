@@ -86,6 +86,8 @@ func main() {
 	var poolCache *hostctx.PoolCache
 	var redisCache *hostctx.RedisCache
 	if cfg.RegistryDatabaseURL != "" {
+		hostctx.EnableMultiContextChecks()
+
 		// Poll interval is a failsafe - the primary path for registry updates is the
 		// immediate reload webhook (POST /api/v1/internal/reload-registry-map) triggered
 		// by the provisioner after every context create/update/delete.
@@ -197,7 +199,7 @@ func main() {
 	// waiting for the next daily 5 AM scheduled run.
 	go func() {
 		time.Sleep(30 * time.Second)
-		ssgTask := asynq.NewTask(queue.TypeSSGUpdateCheck, []byte("{}"))
+		ssgTask := asynq.NewTask(queue.TypeSSGUpdateCheck, nil)
 		if _, err := queueClient.Enqueue(ssgTask, asynq.Queue(queue.QueueSSGUpdateCheck)); err != nil {
 			slog.Debug("startup ssg-update-check enqueue skipped", "error", err)
 		} else {
@@ -210,7 +212,7 @@ func main() {
 	// rather than waiting up to 2 minutes for the next scheduled run.
 	go func() {
 		time.Sleep(15 * time.Second)
-		t := asynq.NewTask(queue.TypePackageStatsRefresh, []byte("{}"))
+		t := asynq.NewTask(queue.TypePackageStatsRefresh, nil)
 		if _, err := queueClient.Enqueue(t, asynq.Queue(queue.QueuePackageStatsRefresh)); err != nil {
 			slog.Debug("startup package-stats-refresh enqueue skipped", "error", err)
 		} else {
@@ -249,6 +251,18 @@ func main() {
 		}
 	}()
 
+	// Profiling listens on its own loopback-only port. See internal/server/pprof.go.
+	var pprofSrv *http.Server
+	if cfg.EnablePprof {
+		pprofSrv = server.NewPprofServer(cfg.PprofPort)
+		go func() {
+			slog.Info("pprof listening", "addr", pprofSrv.Addr)
+			if err := pprofSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("pprof server", "error", err)
+			}
+		}()
+	}
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
@@ -272,6 +286,12 @@ func main() {
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
+	if pprofSrv != nil {
+		if err := pprofSrv.Shutdown(shutdownCtx); err != nil {
+			slog.Error("pprof shutdown", "error", err)
+		}
+	}
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("shutdown", "error", err)

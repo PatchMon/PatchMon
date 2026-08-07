@@ -9,6 +9,7 @@ import (
 	"log/slog"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -28,7 +29,7 @@ func Auth(cfg *config.Config, log *slog.Logger) func(http.Handler) http.Handler 
 }
 
 // AuthWithSessionCheck returns Auth middleware with session inactivity validation.
-func AuthWithSessionCheck(cfg *config.Config, sessionsStore *store.SessionsStore, resolved *config.ResolvedConfig, log *slog.Logger) func(http.Handler) http.Handler {
+func AuthWithSessionCheck(cfg *config.Config, sessionsStore *store.SessionsStore, cfgResolver *hostctx.ConfigResolver, log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token, source := extractToken(r)
@@ -87,7 +88,8 @@ func AuthWithSessionCheck(cfg *config.Config, sessionsStore *store.SessionsStore
 					return
 				}
 
-				// The inactivity comparison itself is opt-in.
+				// The inactivity comparison is opt-in.
+				resolved := cfgResolver.Resolve(r.Context())
 				if resolved != nil && resolved.SessionInactivityTimeoutMin > 0 {
 					inactive := time.Since(sess.LastActivity) > time.Duration(resolved.SessionInactivityTimeoutMin)*time.Minute
 					if inactive {

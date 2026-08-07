@@ -1,11 +1,14 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
@@ -20,6 +23,23 @@ type AutomationHandler struct {
 	registry    *agentregistry.Registry
 	settings    *store.SettingsStore
 	alertConfig *store.AlertConfigStore
+	cfg         *config.Config
+}
+
+// WithConfig wires the process config.
+func (h *AutomationHandler) WithConfig(cfg *config.Config) *AutomationHandler {
+	h.cfg = cfg
+	return h
+}
+
+// adminModeGuard returns true (and writes a 403) when AdminMode is active.
+// Queue totals are process-wide, so they are not shown per context.
+func (h *AutomationHandler) adminModeGuard(w http.ResponseWriter) bool {
+	if h.cfg != nil && h.cfg.AdminMode {
+		Error(w, http.StatusForbidden, "Automation is not available in managed mode")
+		return true
+	}
+	return false
 }
 
 // NewAutomationHandler creates a new automation handler.
@@ -125,6 +145,9 @@ func (h *AutomationHandler) getQueueLastRunInfo(queueName string) (lastRun strin
 
 // Overview handles GET /automation/overview.
 func (h *AutomationHandler) Overview(w http.ResponseWriter, r *http.Request) {
+	if h.adminModeGuard(w) {
+		return
+	}
 	queues := []string{
 		queue.QueueVersionUpdateCheck,
 		queue.QueueSessionCleanup,
@@ -215,6 +238,9 @@ func (h *AutomationHandler) Overview(w http.ResponseWriter, r *http.Request) {
 
 // Stats handles GET /automation/stats.
 func (h *AutomationHandler) Stats(w http.ResponseWriter, r *http.Request) {
+	if h.adminModeGuard(w) {
+		return
+	}
 	queues := []string{
 		queue.QueueVersionUpdateCheck,
 		queue.QueueSessionCleanup,
@@ -244,6 +270,9 @@ func (h *AutomationHandler) Stats(w http.ResponseWriter, r *http.Request) {
 
 // Jobs handles GET /automation/jobs/:queueName.
 func (h *AutomationHandler) Jobs(w http.ResponseWriter, r *http.Request) {
+	if h.adminModeGuard(w) {
+		return
+	}
 	queueName := chi.URLParam(r, "queueName")
 	limit := parseIntQuery(r, "limit", 10)
 	if limit > 50 {
@@ -281,8 +310,13 @@ func (h *AutomationHandler) Jobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Queues are shared across contexts; only list this one's tasks.
+	callerHost := hostctx.TenantHostKey(r.Context())
 	formatted := make([]map[string]interface{}, 0, len(tasks))
 	for _, t := range tasks {
+		if !taskBelongsToContext(t.Payload, callerHost) {
+			continue
+		}
 		status := "completed"
 		if t.LastErr != "" {
 			status = "failed"
@@ -464,4 +498,19 @@ func (h *AutomationHandler) ComplianceScanCleanup(w http.ResponseWriter, r *http
 			"message": "Compliance scan cleanup triggered successfully",
 		},
 	})
+}
+
+// taskBelongsToContext reports whether a task was raised by the given context.
+// A payload with no host predates multi-context routing and belongs to default.
+func taskBelongsToContext(payload []byte, callerHost string) bool {
+	if len(payload) == 0 {
+		return callerHost == ""
+	}
+	var p struct {
+		Host string `json:"host"`
+	}
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return callerHost == ""
+	}
+	return strings.EqualFold(strings.TrimSpace(p.Host), strings.TrimSpace(callerHost))
 }

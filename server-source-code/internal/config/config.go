@@ -65,6 +65,7 @@ type Config struct {
 
 	// Profiling (pprof, memstats)
 	EnablePprof         bool
+	PprofPort           int
 	MemstatsIntervalSec int
 
 	// Patching: minutes a patch run can stay in "running" before the periodic
@@ -232,6 +233,7 @@ func Load() (*Config, error) {
 		LogLevel:      getEnv("LOG_LEVEL", "info"),
 
 		EnablePprof:               getEnv("ENABLE_PPROF", "") == "true",
+		PprofPort:                 getEnvInt("PPROF_PORT", 6060),
 		MemstatsIntervalSec:       getEnvInt("MEMSTATS_INTERVAL_SEC", 60),
 		PatchRunStallTimeoutMin:   getEnvInt("PATCH_RUN_STALL_TIMEOUT_MIN", 30),
 		AgentReportsRetentionDays: getEnvInt("AGENT_REPORTS_RETENTION_DAYS", 30),

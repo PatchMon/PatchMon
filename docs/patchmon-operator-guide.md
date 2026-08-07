@@ -1712,7 +1712,8 @@ Rules applied when a user sets or changes a local account password. These do not
 |----------|---------|----------|-------------|
 | `ENABLE_LOGGING` | `false` | No | When `true`, enables structured application logging to stdout. Set to `true` in production to capture request and error logs. |
 | `LOG_LEVEL` | `info` | No | Minimum log level to output. Accepted values: `debug`, `info`, `warn`, `error`. Must be one of these exact strings. The server will fail to start if an invalid value is provided. |
-| `ENABLE_PPROF` | `false` | No | When `true`, exposes Go pprof profiling endpoints. For diagnostics only. Do not enable in production unless actively investigating a performance issue. |
+| `ENABLE_PPROF` | `false` | No | When `true`, serves Go pprof profiling endpoints on a separate loopback-only listener (see `PPROF_PORT`). For diagnostics only. Do not enable in production unless actively investigating a performance issue. |
+| `PPROF_PORT` | `6060` | No | Port for the profiling listener when `ENABLE_PPROF=true`. Binds to `127.0.0.1` only, so nothing needs opening in a firewall or reverse proxy. |
 | `MEMSTATS_INTERVAL_SEC` | `60` | No | How often (in seconds) the server logs Go runtime memory statistics when profiling is active. Only relevant when `ENABLE_PPROF=true`. |
 
 **Log level guide:**
@@ -3909,7 +3910,7 @@ sudo systemctl restart patchmon-agent  # restart to apply changes
 The agent checks for updates in two ways:
 
 1. **After each report**: the agent queries the server for the latest version and updates automatically if one is available
-2. **Server-initiated**: the server can push an `update_notification` or `update_agent` command via WebSocket
+2. **Server-initiated**: the server can push an `update_agent` command via WebSocket
 
 When an update is detected:
 1. The new binary is downloaded from the PatchMon server
@@ -5036,7 +5037,7 @@ The agent updates `config.yml` automatically in several scenarios. These are in-
 | **Agent startup** | `update_interval`, `report_offset` | Agent fetches the current interval from the server. If it differs from config, the agent updates config.yml. |
 | **Agent startup** | `integrations.docker`, `integrations.compliance` | Agent fetches integration status from the server. If it differs from config, the agent updates config.yml. |
 | **WebSocket: `settings_update`** | `update_interval`, `report_offset` | Server pushes a new interval. Agent saves it and recalculates the report offset. |
-| **WebSocket: `integration_toggle`** | `integrations.*` (except SSH/RDP proxy) | Server pushes a toggle for Docker or compliance. Agent saves the change and restarts the relevant service. |
+| **WebSocket: `apply_config`** | `integrations.docker`, `integrations.compliance.enabled`, `integrations.compliance.openscap_enabled`, `integrations.compliance.docker_bench_enabled` | Toggling an integration in the UI is staged, not sent. The server holds it as a pending change until you press **Apply** on the host detail page, then pushes the whole integration block in one message. The agent saves it to config.yml and restarts itself. |
 
 #### Agent-Calculated Updates
 
