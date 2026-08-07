@@ -646,6 +646,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/alerts", alertsHandler.List)
 			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/alerts/stats", alertsHandler.GetStats)
 			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/alerts/actions", alertsHandler.GetAvailableActions)
+			r.With(middleware.RequirePermission("can_view_reports", permissionsStore)).Get("/alerts/types", alertsHandler.ListTypes)
 			r.With(middleware.RequirePermission("can_manage_alerts", permissionsStore)).Post("/alerts/bulk-delete", alertsHandler.BulkDelete)
 			r.With(middleware.RequirePermission("can_manage_alerts", permissionsStore)).Post("/alerts/bulk-action", alertsHandler.BulkAction)
 			// Advanced alert configuration (gated by alerts_advanced module, Plus tier).

@@ -335,35 +335,61 @@ const Repositories = () => {
 		<div className="min-h-screen flex flex-col">
 			{/* Delete Confirmation Modal */}
 			{deleteModalData && (
-				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-					<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 max-w-md w-full mx-4">
-						<div className="flex items-center mb-4">
-							<AlertTriangle className="h-6 w-6 text-red-500 mr-3" />
-							<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
-								Delete Repository
-							</h3>
+				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+					<button
+						type="button"
+						onClick={cancelDelete}
+						className="fixed inset-0 cursor-default"
+						aria-label="Close modal"
+						disabled={deleteRepositoryMutation.isPending}
+					/>
+					<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 relative z-10">
+						<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
+							<div className="flex items-center justify-between gap-3">
+								<div className="flex items-center gap-3 min-w-0">
+									<div className="w-10 h-10 bg-danger-100 dark:bg-danger-900 rounded-full flex items-center justify-center flex-shrink-0">
+										<AlertTriangle className="h-5 w-5 text-danger-600 dark:text-danger-400" />
+									</div>
+									<div className="min-w-0">
+										<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+											Delete Repository
+										</h3>
+										<p className="text-sm text-secondary-600 dark:text-white">
+											This action cannot be undone
+										</p>
+									</div>
+								</div>
+								<button
+									type="button"
+									onClick={cancelDelete}
+									className="p-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-700 text-secondary-400 hover:text-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
+									aria-label="Close"
+									disabled={deleteRepositoryMutation.isPending}
+								>
+									<X className="h-5 w-5" />
+								</button>
+							</div>
 						</div>
-						<div className="mb-6">
-							<p className="text-secondary-700 dark:text-white mb-2">
+						<div className="px-6 py-4">
+							<p className="text-secondary-700 dark:text-white">
 								Are you sure you want to delete{" "}
-								<strong>"{deleteModalData.name}"</strong>?
+								<span className="font-semibold">"{deleteModalData.name}"</span>?
 							</p>
 							{deleteModalData.hostCount > 0 && (
-								<p className="text-amber-600 dark:text-amber-400 text-sm">
-									⚠️ This repository is currently assigned to{" "}
-									{deleteModalData.hostCount} host
-									{deleteModalData.hostCount !== 1 ? "s" : ""}.
-								</p>
+								<div className="mt-3 p-3 bg-danger-50 dark:bg-danger-900 border border-danger-200 dark:border-danger-700 rounded-md">
+									<p className="text-sm text-danger-800 dark:text-danger-200">
+										<strong>Warning:</strong> This repository is currently
+										assigned to {deleteModalData.hostCount} host
+										{deleteModalData.hostCount !== 1 ? "s" : ""}.
+									</p>
+								</div>
 							)}
-							<p className="text-red-600 dark:text-red-400 text-sm mt-2">
-								This action cannot be undone.
-							</p>
 						</div>
-						<div className="flex gap-3 justify-end">
+						<div className="px-6 py-4 border-t border-secondary-200 dark:border-secondary-600 flex justify-end gap-3">
 							<button
 								type="button"
 								onClick={cancelDelete}
-								className="px-4 py-2 text-secondary-600 dark:text-white hover:text-secondary-800 dark:hover:text-secondary-200 transition-colors"
+								className="btn-outline"
 								disabled={deleteRepositoryMutation.isPending}
 							>
 								Cancel
@@ -371,7 +397,7 @@ const Repositories = () => {
 							<button
 								type="button"
 								onClick={confirmDelete}
-								className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+								className="btn-danger disabled:opacity-50 disabled:cursor-not-allowed"
 								disabled={deleteRepositoryMutation.isPending}
 							>
 								{deleteRepositoryMutation.isPending
@@ -644,10 +670,10 @@ const Repositories = () => {
 														(col) => col.id === "status",
 													) && (
 														<span
-															className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium flex-shrink-0 ${
+															className={`flex-shrink-0 ${
 																repo.is_active
-																	? "bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300"
-																	: "bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-300"
+																	? "badge-success"
+																	: "badge-danger"
 															}`}
 														>
 															{repo.is_active ? "Active" : "Inactive"}
@@ -900,13 +926,7 @@ const Repositories = () => {
 			}
 			case "status":
 				return (
-					<span
-						className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium ${
-							repo.is_active
-								? "bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300"
-								: "bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-300"
-						}`}
-					>
+					<span className={repo.is_active ? "badge-success" : "badge-danger"}>
 						{repo.is_active ? "Active" : "Inactive"}
 					</span>
 				);

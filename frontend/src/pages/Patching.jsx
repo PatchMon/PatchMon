@@ -46,6 +46,7 @@ import TierBadge from "../components/TierBadge";
 import UpgradeRequiredContent from "../components/UpgradeRequiredContent";
 import { getRequiredTier } from "../constants/tiers";
 import { useAuth } from "../contexts/AuthContext";
+import { useConfirm } from "../contexts/ConfirmContext";
 import { useSettings } from "../contexts/SettingsContext";
 import { useToast } from "../contexts/ToastContext";
 import { adminHostsAPI, formatDate, hostGroupsAPI } from "../utils/api";
@@ -1332,6 +1333,7 @@ const delay_type_labels = {
 function PoliciesTab() {
 	const queryClient = useQueryClient();
 	const toast = useToast();
+	const confirm = useConfirm();
 	const { settings } = useSettings();
 	const orgTimezone = settings?.timezone || "UTC";
 	const [showModal, setShowModal] = useState(false);
@@ -1553,11 +1555,13 @@ function PoliciesTab() {
 													</button>
 													<button
 														type="button"
-														onClick={() => {
+														onClick={async () => {
 															if (
-																window.confirm(
-																	`Delete policy "${policy.name}"?`,
-																)
+																await confirm({
+																	title: "Delete policy",
+																	message: `Delete the patching policy "${policy.name}"?`,
+																	confirmLabel: "Delete policy",
+																})
 															)
 																deleteMutation.mutate(policy.id);
 														}}

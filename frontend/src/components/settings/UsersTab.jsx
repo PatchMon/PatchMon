@@ -14,7 +14,9 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { useAuth } from "../../contexts/AuthContext";
+import { useConfirm } from "../../contexts/ConfirmContext";
 import { useSettings } from "../../contexts/SettingsContext";
+import { useToast } from "../../contexts/ToastContext";
 import {
 	adminUsersAPI,
 	formatDateOnly,
@@ -24,6 +26,8 @@ import {
 import { isRenderableAvatarSrc } from "../../utils/avatar";
 
 const UsersTab = () => {
+	const confirm = useConfirm();
+	const toast = useToast();
 	const [showAddModal, setShowAddModal] = useState(false);
 	const [editingUser, setEditingUser] = useState(null);
 	const [resetPasswordUser, setResetPasswordUser] = useState(null);
@@ -161,16 +165,19 @@ const UsersTab = () => {
 	};
 
 	const handleDeleteUser = async (userId, username) => {
-		if (
-			window.confirm(
-				`Are you sure you want to delete user "${username}"? This action cannot be undone.`,
-			)
-		) {
-			try {
-				await deleteUserMutation.mutateAsync(userId);
-			} catch (error) {
-				console.error("Failed to delete user:", error);
-			}
+		const confirmed = await confirm({
+			title: "Delete user",
+			message: `Are you sure you want to delete user "${username}"?`,
+			confirmLabel: "Delete user",
+		});
+		if (!confirmed) return;
+
+		try {
+			await deleteUserMutation.mutateAsync(userId);
+			toast.success(`User "${username}" deleted`);
+		} catch (error) {
+			console.error("Failed to delete user:", error);
+			toast.error(error.response?.data?.error || "Failed to delete user");
 		}
 	};
 

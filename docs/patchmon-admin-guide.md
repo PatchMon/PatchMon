@@ -3387,15 +3387,27 @@ The **Alerts** tab supports four filters in addition to a free-text search box:
 | Filter | Values |
 |--------|--------|
 | **Severity** | `All Severities`, `Informational`, `Warning`, `Error`, `Critical` |
-| **Type** | `All Types` or any alert type present in the current result set |
+| **Type** | `All Types` or any alert type that exists in your alert history |
 | **Status** | `All Status`, `Open`, `Acknowledged`, `Investigating`, `Escalated`, `Silenced`, `Done`, `Resolved` |
-| **Assignment** | `All Assignments`, `Assigned to me`, `Assigned`, `Unassigned` |
+| **Assignment** | `All Assignments`, `Assigned to me`, `Assigned`, `Unassigned`, or a specific responder |
 
 Filters persist in the URL (`?tab=alerts&severity=critical&status=open`), so you can deep-link directly to a filtered view. The severity cards in the header also highlight when a filter is active.
 
+Filtering and searching are applied by the server across every alert, not just the alerts on the page you are looking at, so a search always returns matches from the whole history. The search box waits briefly after you stop typing before it runs, so results settle rather than flickering on every keystroke.
+
 #### Sorting
 
-Three columns in the alerts table are sortable by clicking the header: **Severity**, **Type**, and **Created**. The arrow icon next to the column header indicates the current sort direction.
+Three columns in the alerts table are sortable by clicking the header: **Severity**, **Type**, and **Created**. The arrow icon next to the column header indicates the current sort direction. Sorting is applied across the whole filtered set, so the first page always shows the true top of the sort.
+
+#### Pagination
+
+The alerts table is paginated. Below the table you will find:
+
+- **Rows per page**: 25, 50, 100, or 200. Your choice is remembered in the browser.
+- A count of the rows shown and the total number of alerts matching the current filters.
+- Previous and next page controls, with the current page number.
+
+Changing a filter, the search text, the sort, or the page size returns you to page one. Any row selection is cleared when you change page or filter, so a bulk action can only ever apply to alerts you can see.
 
 ### Alert lifecycle
 
@@ -3447,7 +3459,7 @@ Select one or more alerts using the checkboxes in the **Alerts** tab to reveal a
 
 Bulk updates stream through the same history recording as individual actions. Deleting an alert does not leave a history trail; use a resolution action if you want to keep the audit record.
 
-The number of selected alerts is shown on the left. Use the checkbox in the table header to select or deselect every visible row.
+The number of selected alerts is shown on the left. Use the checkbox in the table header to select or deselect every row on the current page. Selection does not carry across pages: to act on more alerts at once, raise the rows-per-page setting first.
 
 ### Per-alert-type configuration
 

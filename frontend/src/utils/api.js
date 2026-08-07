@@ -701,6 +701,7 @@ export const alertsAPI = {
 		return api.get(url);
 	},
 	getAlertStats: () => api.get("/alerts/stats"),
+	getAlertTypes: () => api.get("/alerts/types"),
 	getAlert: (id) => api.get(`/alerts/${id}`),
 	getAlertHistory: (id) => api.get(`/alerts/${id}/history`),
 	getAvailableActions: () => api.get("/alerts/actions"),
