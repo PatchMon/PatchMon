@@ -45,6 +45,25 @@ type AuthHandler struct {
 	// (such as can_manage_billing) alongside the user response. Wired via
 	// WithPermissions to avoid threading it through the constructor signature.
 	permissions *store.PermissionsStore
+	// cfgResolver resolves the calling context's own settings. `resolved` above is
+	// read once at startup from the default database, so it must not be used to
+	// enforce anything a context can set for itself.
+	cfgResolver *hostctx.ConfigResolver
+}
+
+// WithConfigResolver wires the per-context config resolver.
+func (h *AuthHandler) WithConfigResolver(r *hostctx.ConfigResolver) *AuthHandler {
+	h.cfgResolver = r
+	return h
+}
+
+// resolvedFor returns the effective config for ctx's context, falling back to
+// the startup config when no resolver is wired.
+func (h *AuthHandler) resolvedFor(ctx context.Context) *config.ResolvedConfig {
+	if rc := h.cfgResolver.Resolve(ctx); rc != nil {
+		return rc
+	}
+	return h.resolved
 }
 
 // WithPermissions attaches a PermissionsStore to the handler. Returns the handler
@@ -240,7 +259,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 				if remainingSec <= 0 {
 					remainingSec = 900 // fallback 15 min
 					if h.resolved != nil {
-						remainingSec = h.resolved.LockoutDurationMin * 60
+						remainingSec = h.resolvedFor(r.Context()).LockoutDurationMin * 60
 					}
 				}
 				w.Header().Set("Retry-After", strconv.Itoa(remainingSec))
@@ -415,7 +434,7 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 				Error(w, http.StatusTooManyRequests, "Too many failed TFA attempts. Please try again later.")
 				return
 			}
-			remaining := h.getMaxTfaAttempts() - attempts
+			remaining := h.getMaxTfaAttempts(r.Context()) - attempts
 			if remaining < 0 {
 				remaining = 0
 			}
@@ -479,7 +498,7 @@ func setAuthCookiesWithRemember(w http.ResponseWriter, r *http.Request, accessTo
 
 // completeLogin creates tokens, optionally creates session for remember-me, sets cookies, returns JSON.
 func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, user *models.User, rememberMe bool) {
-	expiresIn := h.getJwtExpiresInSeconds()
+	expiresIn := h.getJwtExpiresInSeconds(r.Context())
 
 	refreshExpSec := int64(7 * 24 * 3600)
 	if rememberMe {
@@ -508,7 +527,7 @@ func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, user
 	// Mint a device-trust token when the user asked to skip MFA on this device.
 	var trustExpiresAt time.Time
 	if rememberMe && user.TfaEnabled && h.trustedDevices != nil {
-		trustDuration := parseTfaRememberDuration(h.getTfaRememberMeExpiresIn())
+		trustDuration := parseTfaRememberDuration(h.getTfaRememberMeExpiresIn(r.Context()))
 		trustExpiresAt = time.Now().Add(trustDuration)
 		rawToken, tokenHash, genErr := store.GenerateTrustToken()
 		if genErr != nil {
@@ -546,7 +565,7 @@ func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, user
 
 	expiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second).Format(time.RFC3339)
 
-	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, rememberMe, h.cfg.Env, false, h.authBrowserSessionCookies())
+	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, rememberMe, h.cfg.Env, false, h.authBrowserSessionCookies(r.Context()))
 
 	// Emit user_login event
 	if h.notify != nil {
@@ -612,18 +631,18 @@ func (h *AuthHandler) clientIP(r *http.Request) string {
 }
 
 // authBrowserSessionCookies returns whether to use session-only cookies (env -> DB -> default).
-func (h *AuthHandler) authBrowserSessionCookies() bool {
-	if h.resolved != nil {
-		return h.resolved.AuthBrowserSessionCookies
+func (h *AuthHandler) authBrowserSessionCookies(ctx context.Context) bool {
+	if rc := h.resolvedFor(ctx); rc != nil {
+		return rc.AuthBrowserSessionCookies
 	}
 	return h.cfg.AuthBrowserSessionCookies
 }
 
 // getJwtExpiresInSeconds returns JWT access token expiry in seconds (resolved from env -> DB -> default).
-func (h *AuthHandler) getJwtExpiresInSeconds() int64 {
+func (h *AuthHandler) getJwtExpiresInSeconds(ctx context.Context) int64 {
 	s := h.cfg.JWTExpiresIn
-	if h.resolved != nil && h.resolved.JwtExpiresIn != "" {
-		s = h.resolved.JwtExpiresIn
+	if rc := h.resolvedFor(ctx); rc != nil && rc.JwtExpiresIn != "" {
+		s = rc.JwtExpiresIn
 	}
 	return parseJwtExpiresInSeconds(s)
 }
@@ -634,17 +653,17 @@ func parseJwtExpiresInSeconds(s string) int64 {
 }
 
 // getTfaRememberMeExpiresIn returns TFA remember-me duration string (resolved from env -> DB -> default).
-func (h *AuthHandler) getTfaRememberMeExpiresIn() string {
-	if h.resolved != nil && h.resolved.TfaRememberMeExpiresIn != "" {
-		return h.resolved.TfaRememberMeExpiresIn
+func (h *AuthHandler) getTfaRememberMeExpiresIn(ctx context.Context) string {
+	if rc := h.resolvedFor(ctx); rc != nil && rc.TfaRememberMeExpiresIn != "" {
+		return rc.TfaRememberMeExpiresIn
 	}
 	return h.cfg.TfaRememberMeExpiresIn
 }
 
 // getMaxTfaAttempts returns max TFA attempts before lockout (resolved from env -> DB -> default).
-func (h *AuthHandler) getMaxTfaAttempts() int {
-	if h.resolved != nil && h.resolved.MaxTfaAttempts > 0 {
-		return h.resolved.MaxTfaAttempts
+func (h *AuthHandler) getMaxTfaAttempts(ctx context.Context) int {
+	if rc := h.resolvedFor(ctx); rc != nil && rc.MaxTfaAttempts > 0 {
+		return rc.MaxTfaAttempts
 	}
 	return h.cfg.MaxTfaAttempts
 }
@@ -673,7 +692,7 @@ func parseTfaRememberDuration(s string) time.Duration {
 // CompleteOidcLogin creates tokens, sets cookies (SameSite=Lax for IdP redirects), and redirects to success.
 // Used by OIDC callback after successful authentication.
 func (h *AuthHandler) CompleteOidcLogin(w http.ResponseWriter, r *http.Request, user *models.User) {
-	expiresIn := h.getJwtExpiresInSeconds()
+	expiresIn := h.getJwtExpiresInSeconds(r.Context())
 	refreshExpSec := int64(7 * 24 * 3600)
 	refreshToken, _ := h.createRefreshToken(user.ID, user.Role, refreshExpSec)
 	var sessionID string
@@ -695,7 +714,7 @@ func (h *AuthHandler) CompleteOidcLogin(w http.ResponseWriter, r *http.Request, 
 		http.Redirect(w, r, "/login?error=Authentication+failed", http.StatusFound)
 		return
 	}
-	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, false, h.cfg.Env, true, h.authBrowserSessionCookies())
+	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, false, h.cfg.Env, true, h.authBrowserSessionCookies(r.Context()))
 
 	// Emit user_login event for OIDC login
 	if h.notify != nil {
@@ -729,7 +748,7 @@ func (h *AuthHandler) CompleteOidcLogin(w http.ResponseWriter, r *http.Request, 
 // CompleteDiscordLogin creates tokens, sets cookies, and redirects to /?discord=success.
 // Used by Discord OAuth callback after successful authentication.
 func (h *AuthHandler) CompleteDiscordLogin(w http.ResponseWriter, r *http.Request, user *models.User) {
-	expiresIn := h.getJwtExpiresInSeconds()
+	expiresIn := h.getJwtExpiresInSeconds(r.Context())
 	refreshExpSec := int64(7 * 24 * 3600)
 	refreshToken, _ := h.createRefreshToken(user.ID, user.Role, refreshExpSec)
 	var sessionID string
@@ -751,7 +770,7 @@ func (h *AuthHandler) CompleteDiscordLogin(w http.ResponseWriter, r *http.Reques
 		http.Redirect(w, r, "/login?error=Authentication+failed", http.StatusFound)
 		return
 	}
-	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, false, h.cfg.Env, true, h.authBrowserSessionCookies())
+	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, false, h.cfg.Env, true, h.authBrowserSessionCookies(r.Context()))
 
 	// Emit user_login event for Discord login
 	if h.notify != nil {
@@ -1141,7 +1160,7 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "Current password is required")
 		return
 	}
-	if err := ValidatePasswordPolicy(h.resolved, req.NewPassword); err != nil {
+	if err := ValidatePasswordPolicy(h.resolvedFor(r.Context()), req.NewPassword); err != nil {
 		Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -1387,7 +1406,7 @@ func (h *AuthHandler) SetupAdmin(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "All fields are required")
 		return
 	}
-	if err := ValidatePasswordPolicy(h.resolved, req.Password); err != nil {
+	if err := ValidatePasswordPolicy(h.resolvedFor(r.Context()), req.Password); err != nil {
 		Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -1437,7 +1456,7 @@ func (h *AuthHandler) SetupAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 	expiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second).Format(time.RFC3339)
 
-	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, false, h.cfg.Env, false, h.authBrowserSessionCookies())
+	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, false, h.cfg.Env, false, h.authBrowserSessionCookies(r.Context()))
 
 	JSON(w, http.StatusCreated, map[string]interface{}{
 		"message":       "Admin user created successfully",
@@ -1478,7 +1497,7 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "Username must be at least 3 characters")
 		return
 	}
-	if err := ValidatePasswordPolicy(h.resolved, req.Password); err != nil {
+	if err := ValidatePasswordPolicy(h.resolvedFor(r.Context()), req.Password); err != nil {
 		Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -1491,7 +1510,7 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 
 	role := s.DefaultUserRole
 	if role == "" && h.resolved != nil {
-		role = h.resolved.DefaultUserRole
+		role = h.resolvedFor(r.Context()).DefaultUserRole
 	}
 	if role == "" {
 		role = "user"
