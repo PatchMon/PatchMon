@@ -197,7 +197,7 @@ func main() {
 	// waiting for the next daily 5 AM scheduled run.
 	go func() {
 		time.Sleep(30 * time.Second)
-		ssgTask := asynq.NewTask(queue.TypeSSGUpdateCheck, []byte("{}"))
+		ssgTask := asynq.NewTask(queue.TypeSSGUpdateCheck, nil)
 		if _, err := queueClient.Enqueue(ssgTask, asynq.Queue(queue.QueueSSGUpdateCheck)); err != nil {
 			slog.Debug("startup ssg-update-check enqueue skipped", "error", err)
 		} else {
@@ -210,7 +210,7 @@ func main() {
 	// rather than waiting up to 2 minutes for the next scheduled run.
 	go func() {
 		time.Sleep(15 * time.Second)
-		t := asynq.NewTask(queue.TypePackageStatsRefresh, []byte("{}"))
+		t := asynq.NewTask(queue.TypePackageStatsRefresh, nil)
 		if _, err := queueClient.Enqueue(t, asynq.Queue(queue.QueuePackageStatsRefresh)); err != nil {
 			slog.Debug("startup package-stats-refresh enqueue skipped", "error", err)
 		} else {

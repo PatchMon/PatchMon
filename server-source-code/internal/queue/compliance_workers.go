@@ -59,8 +59,20 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 		return err
 	}
 
-	// Resolve per-context DB when Host is in payload (multi-host mode).
+	// Resolve per-context DB when Host is in payload (multi-host mode), and put
+	// it on ctx so DBProvider-backed stores (h.compliance) resolve to the same
+	// database rather than silently falling back to the default one.
 	d := resolveDBFromPayload(ctx, t.Payload(), h.db, h.poolCache)
+	if d != nil {
+		ctx = hostctx.WithDB(ctx, d)
+	}
+	// Workers never go through the HTTP middleware, so ctx carries no context
+	// entry and hostctx.TenantKey silently returns an unprefixed Redis key.
+	// The HTTP side writes prefixed keys, so without this the two never meet:
+	// the scan-cancel flag set from the UI would never be seen here.
+	if p.Host != "" {
+		ctx = hostctx.WithEntry(ctx, &hostctx.Entry{Host: p.Host})
+	}
 	taskID, _ := asynq.GetTaskID(ctx)
 	retryCount, _ := asynq.GetRetryCount(ctx)
 	attempt := int32(retryCount + 1)
@@ -192,18 +204,27 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	profilesToUse := []string{}
 	if effectiveProfileType == "all" || effectiveProfileType == "openscap" {
 		prof, err := h.compliance.GetOrCreateProfile(ctx, "OpenSCAP Scan", "openscap")
-		if err == nil {
+		if err != nil {
+			h.log.Warn("run_scan: could not resolve OpenSCAP profile", "host_id", p.HostID, "error", err)
+		} else {
 			profilesToUse = append(profilesToUse, prof.ID)
 		}
 	}
 	if effectiveProfileType == "all" || effectiveProfileType == "docker-bench" {
 		prof, err := h.compliance.GetOrCreateProfile(ctx, "Docker Bench Security", "docker-bench")
-		if err == nil {
+		if err != nil {
+			h.log.Warn("run_scan: could not resolve Docker Bench profile", "host_id", p.HostID, "error", err)
+		} else {
 			profilesToUse = append(profilesToUse, prof.ID)
 		}
 	}
 	for _, profileID := range profilesToUse {
-		_ = h.compliance.CreateRunningScan(ctx, p.HostID, profileID)
+		if err := h.compliance.CreateRunningScan(ctx, p.HostID, profileID); err != nil {
+			// Previously discarded, which hid a foreign-key violation when the
+			// scan was written to a database the host does not belong to while
+			// the job still reported success.
+			h.log.Warn("run_scan: could not record running scan", "host_id", p.HostID, "profile_id", profileID, "error", err)
+		}
 	}
 
 	if taskID != "" && d != nil {

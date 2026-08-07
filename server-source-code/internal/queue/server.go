@@ -131,7 +131,7 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	mux.Handle(TypePackageStatsRefresh, wrap(TypePackageStatsRefresh, NewPackageStatsRefreshHandler(db, opts.PoolCache, log)))
 	mux.Handle(TypeSSGUpdateCheck, wrap(TypeSSGUpdateCheck, NewSSGUpdateCheckHandler(registry, db, opts.PoolCache, opts.QueueClient, opts.SSGContentDir, log)))
 	mux.Handle(TypeSSGUpgrade, wrap(TypeSSGUpgrade, NewSSGUpgradeHandler(registry, db, opts.PoolCache, log)))
-	complianceStore := store.NewComplianceStore(db)
+	complianceStore := store.NewComplianceStore(&hostctx.DBResolver{Default: db})
 	var integrationStatusStore *store.IntegrationStatusStore
 	if opts.RDB != nil {
 		integrationStatusStore = store.NewIntegrationStatusStore(&hostctx.RedisResolver{Default: opts.RDB})
