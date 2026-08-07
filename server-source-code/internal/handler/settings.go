@@ -30,6 +30,17 @@ type SettingsHandler struct {
 	assetsDir string
 	cfg       *config.Config
 	resolved  *config.ResolvedConfig
+	// cfgResolver caches each context's resolved settings. A write here must
+	// invalidate it, or enforcement keeps using the previous values until the
+	// cache TTL expires.
+	cfgResolver *hostctx.ConfigResolver
+}
+
+// WithConfigResolver wires the per-context config resolver so settings writes
+// can invalidate it.
+func (h *SettingsHandler) WithConfigResolver(r *hostctx.ConfigResolver) *SettingsHandler {
+	h.cfgResolver = r
+	return h
 }
 
 // NewSettingsHandler creates a new settings handler.
@@ -601,6 +612,7 @@ func (h *SettingsHandler) UpdateEnvironmentConfig(w http.ResponseWriter, r *http
 		Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.cfgResolver.Invalidate(r.Context())
 	slog.Debug("env config update saved", "key", key, "settings_id", s.ID)
 	JSON(w, http.StatusOK, map[string]string{"message": "Saved. Restart the application for changes to take effect."})
 }
@@ -682,6 +694,9 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to update settings")
 		return
 	}
+	// Drop this context's cached config so the new values are enforced now
+	// rather than when the cache TTL happens to expire.
+	h.cfgResolver.Invalidate(r.Context())
 
 	intervalChanged := s.UpdateInterval != oldInterval && s.UpdateInterval > 0
 	complianceIntervalChanged := s.ComplianceScanInterval != oldComplianceScanInterval && s.ComplianceScanInterval > 0

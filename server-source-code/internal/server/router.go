@@ -86,10 +86,6 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	// hijacked ResponseWriter causing "WriteHeader on hijacked connection".
 	// Instead, timeout is applied per-group below, skipping WS routes.
 
-	if poolCache != nil && cfg.RegistryReloadSecret != "" {
-		r.Post("/internal/reload-tenant", hostctx.ReloadHandler(poolCache, redisCache, cfg.RegistryReloadSecret))
-	}
-
 	usersStore := store.NewUsersStore(dbProvider)
 	permissionsStore := store.NewPermissionsStore(dbProvider)
 
@@ -161,7 +157,13 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	tfaHandler := handler.NewTfaHandler(usersStore, store.NewSessionsStore(dbProvider), trustedDevicesStore, dbProvider, notifyEmit, log)
 	trustedDevicesHandler := handler.NewTrustedDevicesHandler(trustedDevicesStore, log)
 	userPrefsHandler := handler.NewUserPreferencesHandler(usersStore)
-	settingsHandler := handler.NewSettingsHandlerWithConfig(settingsStore, usersStore, enc, registry, cfg.AssetsDir, cfg, resolved)
+	settingsHandler := handler.NewSettingsHandlerWithConfig(settingsStore, usersStore, enc, registry, cfg.AssetsDir, cfg, resolved).WithConfigResolver(cfgResolver)
+	// Registered here rather than earlier so every per-context cache exists and
+	// can be evicted together when the provisioner signals a context change.
+	if poolCache != nil && cfg.RegistryReloadSecret != "" {
+		r.Post("/internal/reload-tenant", hostctx.ReloadHandler(poolCache, redisCache, cfg.RegistryReloadSecret, cfgResolver, oidcHandler))
+	}
+
 	permissionsHandler := handler.NewPermissionsHandler(permissionsStore)
 	usersHandler := handler.NewUsersHandler(usersStore, store.NewSessionsStore(dbProvider), trustedDevicesStore, permissionsStore, settingsStore, resolved, cfg, dbProvider, notifyEmit, log).WithConfigResolver(cfgResolver)
 	hostsStore := store.NewHostsStore(dbProvider)

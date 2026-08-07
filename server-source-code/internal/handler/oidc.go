@@ -170,9 +170,18 @@ func (h *OidcHandler) buildEntry(ctx context.Context) *oidcContextEntry {
 // evictOidcClient drops this context's cached entry so the next request
 // rebuilds it. Called after a settings write.
 func (h *OidcHandler) evictOidcClient(ctx context.Context) {
-	key := hostctx.TenantHostKey(ctx)
+	h.EvictHost(hostctx.TenantHostKey(ctx))
+}
+
+// EvictHost drops a named context's cached entry. Satisfies
+// hostctx.HostEvictor so the provisioner's reload endpoint can invalidate this
+// cache alongside the pool and Redis caches.
+func (h *OidcHandler) EvictHost(host string) {
+	if h == nil {
+		return
+	}
 	h.clientMu.Lock()
-	delete(h.entries, key)
+	delete(h.entries, host)
 	h.clientMu.Unlock()
 }
 

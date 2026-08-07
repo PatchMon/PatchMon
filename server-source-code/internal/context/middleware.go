@@ -109,10 +109,19 @@ func Middleware(registry *Registry, poolCache *PoolCache, redisCache *RedisCache
 	}
 }
 
+// HostEvictor is any per-context cache that must be dropped when a context's
+// configuration changes out of band. New caches should implement this and be
+// passed to ReloadHandler, rather than the handler accumulating a list of
+// concrete types that the next cache forgets to join.
+type HostEvictor interface {
+	EvictHost(host string)
+}
+
 // ReloadHandler returns a handler for POST /internal/reload that evicts a host from the pool and Redis caches.
 // Requires X-Registry-Reload-Secret header to match reloadSecret.
 // Query param: host (the host to evict).
-func ReloadHandler(poolCache *PoolCache, redisCache *RedisCache, reloadSecret string) http.HandlerFunc {
+// extra receives any additional per-context caches to evict for the same host.
+func ReloadHandler(poolCache *PoolCache, redisCache *RedisCache, reloadSecret string, extra ...HostEvictor) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -132,6 +141,11 @@ func ReloadHandler(poolCache *PoolCache, redisCache *RedisCache, reloadSecret st
 		}
 		if redisCache != nil {
 			redisCache.Evict(host)
+		}
+		for _, e := range extra {
+			if e != nil {
+				e.EvictHost(host)
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)

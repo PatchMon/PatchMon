@@ -91,3 +91,15 @@ func (r *ConfigResolver) Invalidate(ctx stdctx.Context) {
 	delete(r.cache, key)
 	r.mu.Unlock()
 }
+
+// EvictHost drops a named context's cached config. Satisfies HostEvictor so the
+// provisioner's reload endpoint can invalidate this cache alongside the pool and
+// Redis caches.
+func (r *ConfigResolver) EvictHost(host string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	delete(r.cache, host)
+	r.mu.Unlock()
+}
