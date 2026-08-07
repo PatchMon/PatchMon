@@ -3909,7 +3909,7 @@ sudo systemctl restart patchmon-agent  # restart to apply changes
 The agent checks for updates in two ways:
 
 1. **After each report**: the agent queries the server for the latest version and updates automatically if one is available
-2. **Server-initiated**: the server can push an `update_notification` or `update_agent` command via WebSocket
+2. **Server-initiated**: the server can push an `update_agent` command via WebSocket
 
 When an update is detected:
 1. The new binary is downloaded from the PatchMon server
@@ -5036,7 +5036,7 @@ The agent updates `config.yml` automatically in several scenarios. These are in-
 | **Agent startup** | `update_interval`, `report_offset` | Agent fetches the current interval from the server. If it differs from config, the agent updates config.yml. |
 | **Agent startup** | `integrations.docker`, `integrations.compliance` | Agent fetches integration status from the server. If it differs from config, the agent updates config.yml. |
 | **WebSocket: `settings_update`** | `update_interval`, `report_offset` | Server pushes a new interval. Agent saves it and recalculates the report offset. |
-| **WebSocket: `integration_toggle`** | `integrations.*` (except SSH/RDP proxy) | Server pushes a toggle for Docker or compliance. Agent saves the change and restarts the relevant service. |
+| **WebSocket: `apply_config`** | `integrations.docker`, `integrations.compliance.enabled`, `integrations.compliance.openscap_enabled`, `integrations.compliance.docker_bench_enabled` | Toggling an integration in the UI is staged, not sent. The server holds it as a pending change until you press **Apply** on the host detail page, then pushes the whole integration block in one message. The agent saves it to config.yml and restarts itself. |
 
 #### Agent-Calculated Updates
 
