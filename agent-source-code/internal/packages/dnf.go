@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -12,6 +13,10 @@ import (
 
 	"github.com/sirupsen/logrus"
 )
+
+// Vendor advisory identifiers all share the shape PREFIX-YEAR:SEQUENCE, for
+// example RHSA-2025:1234, ALSA-2025:11140, RLSA-2025:5678, ELSA-2025-1234.
+var advisoryIDRe = regexp.MustCompile(`^[A-Z]{2,10}-\d{4}[:-]\d+`)
 
 // DNFManager handles dnf/yum package information collection
 type DNFManager struct {
@@ -275,16 +280,11 @@ func (m *DNFManager) getSecurityPackages(packageManager string) map[string]bool 
 			continue
 		}
 
-		// Skip lines that don't start with advisory IDs
-		// Common advisory ID prefixes: RHSA (Red Hat), ALSA (AlmaLinux), ELSA (Oracle/Enterprise Linux), CESA (CentOS)
-		// This filters out header lines like "expiration"
+		// Match the advisory ID by shape rather than by a list of known
+		// vendor prefixes, so a new distribution does not silently report
+		// zero security updates. Filters out header lines like "expiration".
 		advisoryID := fields[0]
-		isAdvisory := strings.HasPrefix(advisoryID, "RHSA") ||
-			strings.HasPrefix(advisoryID, "ALSA") ||
-			strings.HasPrefix(advisoryID, "ELSA") ||
-			strings.HasPrefix(advisoryID, "CESA")
-
-		if !isAdvisory {
+		if !advisoryIDRe.MatchString(advisoryID) {
 			continue
 		}
 
