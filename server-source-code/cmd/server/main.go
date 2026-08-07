@@ -249,6 +249,20 @@ func main() {
 		}
 	}()
 
+	// Profiling listens on its own loopback-only port rather than the main
+	// router: a heap dump spans every context on the process, so reachability
+	// is the control instead of a per-context permission.
+	var pprofSrv *http.Server
+	if cfg.EnablePprof {
+		pprofSrv = server.NewPprofServer(cfg.PprofPort)
+		go func() {
+			slog.Info("pprof listening", "addr", pprofSrv.Addr)
+			if err := pprofSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("pprof server", "error", err)
+			}
+		}()
+	}
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
@@ -272,6 +286,12 @@ func main() {
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
+	if pprofSrv != nil {
+		if err := pprofSrv.Shutdown(shutdownCtx); err != nil {
+			slog.Error("pprof shutdown", "error", err)
+		}
+	}
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("shutdown", "error", err)
