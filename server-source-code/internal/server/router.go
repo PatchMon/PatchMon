@@ -108,13 +108,18 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 
 	enc, _ := util.NewEncryption()
 
+	// Resolves each context's own settings per request. `resolved` above is read
+	// once from the default database, so it cannot enforce anything a context
+	// sets for itself.
+	cfgResolver := hostctx.NewConfigResolver(cfg, resolved, settingsStore.GetFirst)
+
 	var tfaLockout *store.TfaLockoutStore
 	var loginLockout *store.LoginLockoutStore
 	if rdb != nil {
-		tfaLockout = store.NewTfaLockoutStore(redisResolver, resolved.MaxTfaAttempts, resolved.TfaLockoutDurationMin)
+		tfaLockout = store.NewTfaLockoutStore(redisResolver, cfgResolver, resolved.MaxTfaAttempts, resolved.TfaLockoutDurationMin)
 	}
 	if rdb != nil {
-		loginLockout = store.NewLoginLockoutStore(redisResolver, resolved.MaxLoginAttempts, resolved.LockoutDurationMin)
+		loginLockout = store.NewLoginLockoutStore(redisResolver, cfgResolver, resolved.MaxLoginAttempts, resolved.LockoutDurationMin)
 	}
 	releaseNotesAcceptanceStore := store.NewReleaseNotesAcceptanceStore(dbProvider)
 	trustedDevicesStore := store.NewTrustedDevicesStore(dbProvider)
