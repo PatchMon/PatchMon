@@ -30,6 +30,30 @@ func (s *DashboardStore) withWorkMem(ctx context.Context, fn func(q *db.Queries)
 	return withWorkMemTx(ctx, s.db, fn)
 }
 
+// updateStatusSegments builds the update-status chart's segments.
+//
+// Every segment carries the Hosts-page filter it links to, so the dashboard
+// never maps a display label back to a filter. That keeps renaming a segment a
+// display-only change: deriving the filter from the label breaks silently the
+// moment the wording moves, because no branch matches and the click lands on an
+// unfiltered host list.
+//
+// The third segment reads "Not reporting" rather than "Errored" because that is
+// what it counts — hosts silent past the reporting threshold. GetDashboardStats
+// inlines that predicate as (status = 'active' AND last_update < $1) OR
+// status = 'inactive', mirroring the effective_status = 'inactive' column
+// GetHostsWithCounts filters on so the count and the list it links to agree.
+// Whether the last job succeeded does not enter into it, so a host that patched
+// cleanly and then stopped checking in belongs here, while one whose run failed
+// but is still reporting does not.
+func updateStatusSegments(upToDate, needsUpdates, notReporting int) []map[string]interface{} {
+	return []map[string]interface{}{
+		{"name": "Up to date", "filter": "upToDate", "count": upToDate},
+		{"name": "Needs updates", "filter": "needsUpdates", "count": needsUpdates},
+		{"name": "Not reporting", "filter": "inactive", "count": notReporting},
+	}
+}
+
 // GetStats returns dashboard statistics matching Node backend structure for frontend compatibility.
 func (s *DashboardStore) GetStats(ctx context.Context) (map[string]interface{}, error) {
 	now := time.Now()
@@ -109,11 +133,7 @@ func (s *DashboardStore) GetStats(ctx context.Context) (map[string]interface{}, 
 		}
 	}
 
-	updateStatusDistribution := []map[string]interface{}{
-		{"name": "Up to date", "count": upToDateHosts},
-		{"name": "Needs updates", "count": hostsNeedingUpdates},
-		{"name": "Errored", "count": erroredHosts},
-	}
+	updateStatusDistribution := updateStatusSegments(upToDateHosts, hostsNeedingUpdates, erroredHosts)
 
 	regularUpdates := totalOutdatedPackages - securityUpdates
 	if regularUpdates < 0 {
