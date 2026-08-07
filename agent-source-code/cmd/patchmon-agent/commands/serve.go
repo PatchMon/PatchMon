@@ -2363,14 +2363,16 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 					}
 				}
 			default: // dnf, yum
+				// "install" on an already-installed package is a no-op on
+				// dnf/yum, unlike apt-get install which upgrades it.
 				if dryRun {
-					args := append([]string{"install", "--assumeno"}, packageNames...)
-					if err, abort := runStep(true, upgradeBin+" install --assumeno", upgradeBin+" install --assumeno failed: %w", upgradeBin, args...); abort {
+					args := append([]string{"upgrade", "--assumeno"}, packageNames...)
+					if err, abort := runStep(true, upgradeBin+" upgrade --assumeno", upgradeBin+" upgrade --assumeno failed: %w", upgradeBin, args...); abort {
 						stepErr = err
 					}
 				} else {
-					args := append([]string{"install", "-y"}, packageNames...)
-					if err, abort := runStep(false, upgradeBin+" install", upgradeBin+" install failed: %w", upgradeBin, args...); abort {
+					args := append([]string{"upgrade", "-y"}, packageNames...)
+					if err, abort := runStep(false, upgradeBin+" upgrade", upgradeBin+" upgrade failed: %w", upgradeBin, args...); abort {
 						stepErr = err
 					}
 				}
