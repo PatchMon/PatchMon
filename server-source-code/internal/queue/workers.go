@@ -35,17 +35,28 @@ const (
 
 // resolveDBFromPayload returns the DB to use: from poolCache when host is in payload, else defaultDB.
 func resolveDBFromPayload(ctx context.Context, payload []byte, defaultDB *database.DB, poolCache *hostctx.PoolCache) *database.DB {
-	db := defaultDB
 	if len(payload) == 0 || poolCache == nil {
-		return db
+		return defaultDB
 	}
 	var p AutomationPayload
-	if err := json.Unmarshal(payload, &p); err == nil && strings.TrimSpace(p.Host) != "" {
-		if resolved, err := poolCache.GetOrCreate(ctx, p.Host); err == nil && resolved != nil {
-			db = resolved
-		}
+	if err := json.Unmarshal(payload, &p); err == nil {
+		return resolveDBForHost(ctx, p.Host, defaultDB, poolCache)
 	}
-	return db
+	return defaultDB
+}
+
+// resolveDBForHost returns the database for a job's context. Workers have no
+// HTTP request and so no context resolution of their own: the host travels in
+// the job payload and must be resolved explicitly, or the job silently operates
+// on the default context's database.
+func resolveDBForHost(ctx context.Context, host string, defaultDB *database.DB, poolCache *hostctx.PoolCache) *database.DB {
+	if poolCache == nil || strings.TrimSpace(host) == "" {
+		return defaultDB
+	}
+	if resolved, err := poolCache.GetOrCreate(ctx, host); err == nil && resolved != nil {
+		return resolved
+	}
+	return defaultDB
 }
 
 // workerTenantKey prefixes a Redis key with the context domain for multi-context isolation.

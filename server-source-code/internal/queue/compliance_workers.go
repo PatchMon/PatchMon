@@ -238,16 +238,18 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 type InstallComplianceToolsHandler struct {
 	registry   *agentregistry.Registry
 	db         *database.DB
+	poolCache  *hostctx.PoolCache
 	rdb        *redis.Client
 	redisCache *hostctx.RedisCache
 	log        *slog.Logger
 }
 
 // NewInstallComplianceToolsHandler creates an install_compliance_tools handler.
-func NewInstallComplianceToolsHandler(registry *agentregistry.Registry, db *database.DB, rdb *redis.Client, redisCache *hostctx.RedisCache, log *slog.Logger) *InstallComplianceToolsHandler {
+func NewInstallComplianceToolsHandler(registry *agentregistry.Registry, db *database.DB, poolCache *hostctx.PoolCache, rdb *redis.Client, redisCache *hostctx.RedisCache, log *slog.Logger) *InstallComplianceToolsHandler {
 	return &InstallComplianceToolsHandler{
 		registry:   registry,
 		db:         db,
+		poolCache:  poolCache,
 		rdb:        rdb,
 		redisCache: redisCache,
 		log:        log,
@@ -260,6 +262,8 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return err
 	}
+	// job_history belongs to the context that raised the job.
+	d := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
 
 	// Resolve Redis from payload.Host when set; fall back to system rdb.
 	rdb := h.rdb
@@ -272,14 +276,14 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 	retryCount, _ := asynq.GetRetryCount(ctx)
 	attempt := int32(retryCount + 1)
 
-	if h.db != nil && taskID != "" && retryCount == 0 {
-		host, err := h.db.Queries.GetHostByApiID(ctx, p.ApiID)
+	if d != nil && taskID != "" && retryCount == 0 {
+		host, err := d.Queries.GetHostByApiID(ctx, p.ApiID)
 		var hostID *string
 		if err == nil {
 			hostID = &host.ID
 		}
 		apiIDPtr := &p.ApiID
-		_ = h.db.Queries.InsertJobHistory(ctx, db.InsertJobHistoryParams{
+		_ = d.Queries.InsertJobHistory(ctx, db.InsertJobHistoryParams{
 			ID:            uuid.New().String(),
 			JobID:         taskID,
 			QueueName:     QueueCompliance,
@@ -293,8 +297,8 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 
 	if !h.registry.IsConnected(p.ApiID) {
 		msg := "Agent is not connected. Cannot run install."
-		if taskID != "" && h.db != nil {
-			_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
+		if taskID != "" && d != nil {
+			_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
 		}
 		h.log.Warn("install_compliance_tools: agent not connected", "api_id", p.ApiID)
 		return nil
@@ -303,15 +307,15 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 	msg := map[string]interface{}{"type": "install_scanner"}
 	if err := h.registry.SendJSON(p.ApiID, msg); err != nil {
 		errMsg := "Failed to send install_scanner command to agent"
-		if taskID != "" && h.db != nil {
-			_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
+		if taskID != "" && d != nil {
+			_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
 		}
 		return err
 	}
 
 	if rdb == nil {
-		if taskID != "" && h.db != nil {
-			_ = h.db.Queries.UpdateJobHistoryCompleted(ctx, taskID)
+		if taskID != "" && d != nil {
+			_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
 		}
 		h.log.Info("install_compliance_tools: sent (no Redis for polling)", "host_id", p.HostID)
 		return nil
@@ -327,8 +331,8 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 		select {
 		case <-ctx.Done():
 			errMsg := "Job cancelled (context cancelled)"
-			if taskID != "" && h.db != nil {
-				_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
+			if taskID != "" && d != nil {
+				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
 			}
 			return ctx.Err()
 		default:
@@ -338,8 +342,8 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 		if cancelled != "" {
 			_ = rdb.Del(ctx, cancelKey).Err()
 			errMsg := "Cancelled by user"
-			if taskID != "" && h.db != nil {
-				_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
+			if taskID != "" && d != nil {
+				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
 			}
 			return nil
 		}
@@ -353,14 +357,14 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 			_ = json.Unmarshal([]byte(raw), &data)
 			switch data.Status {
 			case "ready":
-				if taskID != "" && h.db != nil {
-					_ = h.db.Queries.UpdateJobHistoryCompleted(ctx, taskID)
+				if taskID != "" && d != nil {
+					_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
 				}
 				h.log.Info("install_compliance_tools: completed", "host_id", p.HostID)
 				return nil
 			case "partial":
-				if taskID != "" && h.db != nil {
-					_ = h.db.Queries.UpdateJobHistoryCompleted(ctx, taskID)
+				if taskID != "" && d != nil {
+					_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
 				}
 				h.log.Info("install_compliance_tools: completed (partial)", "host_id", p.HostID)
 				return nil
@@ -369,8 +373,8 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 				if errMsg == "" {
 					errMsg = "Agent reported error"
 				}
-				if taskID != "" && h.db != nil {
-					_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
+				if taskID != "" && d != nil {
+					_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
 				}
 				return nil
 			}
@@ -380,8 +384,8 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 		select {
 		case <-ctx.Done():
 			errMsg := "Job cancelled (context cancelled)"
-			if taskID != "" && h.db != nil {
-				_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
+			if taskID != "" && d != nil {
+				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
 			}
 			return ctx.Err()
 		case <-pollTimer.C:
@@ -389,8 +393,8 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 	}
 
 	errMsg := "Install timed out after 5 minutes"
-	if taskID != "" && h.db != nil {
-		_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
+	if taskID != "" && d != nil {
+		_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
 	}
 	h.log.Warn("install_compliance_tools: timeout", "host_id", p.HostID)
 	return nil

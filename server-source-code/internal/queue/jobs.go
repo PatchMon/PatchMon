@@ -358,14 +358,15 @@ func NewHostStatusMonitorTask(host string) (*asynq.Task, error) {
 
 // ReportNowHandler handles report_now jobs.
 type ReportNowHandler struct {
-	registry *agentregistry.Registry
-	db       *database.DB
-	log      *slog.Logger
+	registry  *agentregistry.Registry
+	db        *database.DB
+	poolCache *hostctx.PoolCache
+	log       *slog.Logger
 }
 
 // NewReportNowHandler creates a report_now handler.
-func NewReportNowHandler(registry *agentregistry.Registry, db *database.DB, log *slog.Logger) *ReportNowHandler {
-	return &ReportNowHandler{registry: registry, db: db, log: log}
+func NewReportNowHandler(registry *agentregistry.Registry, db *database.DB, poolCache *hostctx.PoolCache, log *slog.Logger) *ReportNowHandler {
+	return &ReportNowHandler{registry: registry, db: db, poolCache: poolCache, log: log}
 }
 
 // ProcessTask implements asynq.Handler.
@@ -374,20 +375,22 @@ func (h *ReportNowHandler) ProcessTask(ctx context.Context, t *asynq.Task) error
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return err
 	}
+	// job_history belongs to the context that raised the job, not the default one.
+	d := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
 
 	taskID, _ := asynq.GetTaskID(ctx)
 	retryCount, _ := asynq.GetRetryCount(ctx)
 	attempt := int32(retryCount + 1)
 
 	// Log to job_history on first attempt so it persists in Agent Queue tab (like BullMQ)
-	if h.db != nil && taskID != "" && retryCount == 0 {
-		host, err := h.db.Queries.GetHostByApiID(ctx, p.ApiID)
+	if d != nil && taskID != "" && retryCount == 0 {
+		host, err := d.Queries.GetHostByApiID(ctx, p.ApiID)
 		var hostID *string
 		if err == nil {
 			hostID = &host.ID
 		}
 		apiIDPtr := &p.ApiID
-		_ = h.db.Queries.InsertJobHistory(ctx, db.InsertJobHistoryParams{
+		_ = d.Queries.InsertJobHistory(ctx, db.InsertJobHistoryParams{
 			ID:            uuid.New().String(),
 			JobID:         taskID,
 			QueueName:     QueueAgentCommands,
@@ -401,9 +404,9 @@ func (h *ReportNowHandler) ProcessTask(ctx context.Context, t *asynq.Task) error
 
 	if !h.registry.IsConnected(p.ApiID) {
 		h.log.Warn("report_now: agent not connected", "api_id", p.ApiID)
-		if taskID != "" && h.db != nil {
+		if taskID != "" && d != nil {
 			msg := "Agent not connected"
-			_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
+			_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
 		}
 		return nil // Don't retry - agent may connect later, user can retry
 	}
@@ -413,8 +416,8 @@ func (h *ReportNowHandler) ProcessTask(ctx context.Context, t *asynq.Task) error
 		return err // Retry on write failure - don't update job_history yet
 	}
 
-	if taskID != "" && h.db != nil {
-		_ = h.db.Queries.UpdateJobHistoryCompleted(ctx, taskID)
+	if taskID != "" && d != nil {
+		_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
 	}
 	h.log.Info("report_now sent", "api_id", p.ApiID)
 	return nil
@@ -427,15 +430,17 @@ func sendAgentCommand(ctx context.Context, h *ReportNowHandler, p ReportNowPaylo
 		taskID = taskIDVal
 	}
 	attempt := int32(retryCount + 1)
+	// job_history belongs to the context that raised the job, not the default one.
+	d := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
 
-	if h.db != nil && taskID != "" && retryCount == 0 {
-		host, err := h.db.Queries.GetHostByApiID(ctx, p.ApiID)
+	if d != nil && taskID != "" && retryCount == 0 {
+		host, err := d.Queries.GetHostByApiID(ctx, p.ApiID)
 		var hostID *string
 		if err == nil {
 			hostID = &host.ID
 		}
 		apiIDPtr := &p.ApiID
-		_ = h.db.Queries.InsertJobHistory(ctx, db.InsertJobHistoryParams{
+		_ = d.Queries.InsertJobHistory(ctx, db.InsertJobHistoryParams{
 			ID:            uuid.New().String(),
 			JobID:         taskID,
 			QueueName:     QueueAgentCommands,
@@ -449,9 +454,9 @@ func sendAgentCommand(ctx context.Context, h *ReportNowHandler, p ReportNowPaylo
 
 	if !h.registry.IsConnected(p.ApiID) {
 		h.log.Warn(msgType+": agent not connected", "api_id", p.ApiID)
-		if taskID != "" && h.db != nil {
+		if taskID != "" && d != nil {
 			msg := "Agent not connected"
-			_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
+			_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
 		}
 		return nil
 	}
@@ -461,8 +466,8 @@ func sendAgentCommand(ctx context.Context, h *ReportNowHandler, p ReportNowPaylo
 		return err
 	}
 
-	if taskID != "" && h.db != nil {
-		_ = h.db.Queries.UpdateJobHistoryCompleted(ctx, taskID)
+	if taskID != "" && d != nil {
+		_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
 	}
 	h.log.Info(msgType+" sent", "api_id", p.ApiID)
 	return nil
@@ -474,8 +479,8 @@ type RefreshIntegrationStatusHandler struct {
 }
 
 // NewRefreshIntegrationStatusHandler creates a refresh_integration_status handler.
-func NewRefreshIntegrationStatusHandler(registry *agentregistry.Registry, db *database.DB, log *slog.Logger) *RefreshIntegrationStatusHandler {
-	return &RefreshIntegrationStatusHandler{ReportNowHandler: NewReportNowHandler(registry, db, log)}
+func NewRefreshIntegrationStatusHandler(registry *agentregistry.Registry, db *database.DB, poolCache *hostctx.PoolCache, log *slog.Logger) *RefreshIntegrationStatusHandler {
+	return &RefreshIntegrationStatusHandler{ReportNowHandler: NewReportNowHandler(registry, db, poolCache, log)}
 }
 
 // ProcessTask implements asynq.Handler.
@@ -494,8 +499,8 @@ type DockerInventoryRefreshHandler struct {
 }
 
 // NewDockerInventoryRefreshHandler creates a docker_inventory_refresh handler.
-func NewDockerInventoryRefreshHandler(registry *agentregistry.Registry, db *database.DB, log *slog.Logger) *DockerInventoryRefreshHandler {
-	return &DockerInventoryRefreshHandler{ReportNowHandler: NewReportNowHandler(registry, db, log)}
+func NewDockerInventoryRefreshHandler(registry *agentregistry.Registry, db *database.DB, poolCache *hostctx.PoolCache, log *slog.Logger) *DockerInventoryRefreshHandler {
+	return &DockerInventoryRefreshHandler{ReportNowHandler: NewReportNowHandler(registry, db, poolCache, log)}
 }
 
 // ProcessTask implements asynq.Handler.
@@ -510,14 +515,15 @@ func (h *DockerInventoryRefreshHandler) ProcessTask(ctx context.Context, t *asyn
 
 // UpdateAgentHandler handles update_agent jobs.
 type UpdateAgentHandler struct {
-	registry *agentregistry.Registry
-	db       *database.DB
-	log      *slog.Logger
+	registry  *agentregistry.Registry
+	db        *database.DB
+	poolCache *hostctx.PoolCache
+	log       *slog.Logger
 }
 
 // NewUpdateAgentHandler creates an update_agent handler.
-func NewUpdateAgentHandler(registry *agentregistry.Registry, db *database.DB, log *slog.Logger) *UpdateAgentHandler {
-	return &UpdateAgentHandler{registry: registry, db: db, log: log}
+func NewUpdateAgentHandler(registry *agentregistry.Registry, db *database.DB, poolCache *hostctx.PoolCache, log *slog.Logger) *UpdateAgentHandler {
+	return &UpdateAgentHandler{registry: registry, db: db, poolCache: poolCache, log: log}
 }
 
 // ProcessTask implements asynq.Handler.
@@ -526,19 +532,22 @@ func (h *UpdateAgentHandler) ProcessTask(ctx context.Context, t *asynq.Task) err
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return err
 	}
+	// The settings row, the host lookup and job_history all belong to the
+	// context that raised the job, not the default one.
+	d := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
 
 	taskID, _ := asynq.GetTaskID(ctx)
 	retryCount, _ := asynq.GetRetryCount(ctx)
 	attempt := int32(retryCount + 1)
 
-	if h.db != nil && taskID != "" && retryCount == 0 {
-		host, err := h.db.Queries.GetHostByApiID(ctx, p.ApiID)
+	if d != nil && taskID != "" && retryCount == 0 {
+		host, err := d.Queries.GetHostByApiID(ctx, p.ApiID)
 		var hostID *string
 		if err == nil {
 			hostID = &host.ID
 		}
 		apiIDPtr := &p.ApiID
-		_ = h.db.Queries.InsertJobHistory(ctx, db.InsertJobHistoryParams{
+		_ = d.Queries.InsertJobHistory(ctx, db.InsertJobHistoryParams{
 			ID:            uuid.New().String(),
 			JobID:         taskID,
 			QueueName:     QueueAgentCommands,
@@ -551,27 +560,27 @@ func (h *UpdateAgentHandler) ProcessTask(ctx context.Context, t *asynq.Task) err
 	}
 
 	if !p.BypassSettings {
-		settings, err := h.db.Queries.GetFirstSettings(ctx)
+		settings, err := d.Queries.GetFirstSettings(ctx)
 		if err != nil || !settings.AutoUpdate {
 			msg := "Auto-update is disabled in server settings"
-			if taskID != "" && h.db != nil {
-				_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
+			if taskID != "" && d != nil {
+				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
 			}
 			h.log.Info("update_agent: skipped", "api_id", p.ApiID, "reason", msg)
 			return nil
 		}
-		host, err := h.db.Queries.GetHostByApiID(ctx, p.ApiID)
+		host, err := d.Queries.GetHostByApiID(ctx, p.ApiID)
 		if err != nil {
 			msg := "Host not found"
-			if taskID != "" && h.db != nil {
-				_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
+			if taskID != "" && d != nil {
+				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
 			}
 			return nil
 		}
 		if !host.AutoUpdate {
 			msg := "Auto-update is disabled for this host"
-			if taskID != "" && h.db != nil {
-				_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
+			if taskID != "" && d != nil {
+				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
 			}
 			h.log.Info("update_agent: skipped", "api_id", p.ApiID, "reason", msg)
 			return nil
@@ -580,9 +589,9 @@ func (h *UpdateAgentHandler) ProcessTask(ctx context.Context, t *asynq.Task) err
 
 	if !h.registry.IsConnected(p.ApiID) {
 		h.log.Warn("update_agent: agent not connected", "api_id", p.ApiID)
-		if taskID != "" && h.db != nil {
+		if taskID != "" && d != nil {
 			msg := "Agent not connected"
-			_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
+			_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
 		}
 		return nil
 	}
@@ -592,8 +601,8 @@ func (h *UpdateAgentHandler) ProcessTask(ctx context.Context, t *asynq.Task) err
 		return err
 	}
 
-	if taskID != "" && h.db != nil {
-		_ = h.db.Queries.UpdateJobHistoryCompleted(ctx, taskID)
+	if taskID != "" && d != nil {
+		_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
 	}
 	h.log.Info("update_agent sent", "api_id", p.ApiID)
 	return nil
