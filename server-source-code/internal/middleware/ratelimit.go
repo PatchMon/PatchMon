@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/clientip"
-	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 )
 
@@ -42,9 +41,10 @@ func rateLimitUnavailable(w http.ResponseWriter, r *http.Request, typ RateLimitT
 }
 
 // RateLimit returns middleware that limits requests per client by type.
-func RateLimit(rdb *hostctx.RedisResolver, resolved *config.ResolvedConfig, typ RateLimitType) func(http.Handler) http.Handler {
+func RateLimit(rdb *hostctx.RedisResolver, cfgResolver *hostctx.ConfigResolver, typ RateLimitType) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			resolved := cfgResolver.Resolve(r.Context())
 			if rdb == nil || resolved == nil {
 				rateLimitUnavailable(w, r, typ)
 				if rateLimitSecurityCritical(typ) {
@@ -122,9 +122,10 @@ func RateLimit(rdb *hostctx.RedisResolver, resolved *config.ResolvedConfig, typ 
 }
 
 // RateLimitAgentByAPIID returns middleware for agent routes that uses API ID as key.
-func RateLimitAgentByAPIID(rdb *hostctx.RedisResolver, resolved *config.ResolvedConfig, getAPIID func(*http.Request) string) func(http.Handler) http.Handler {
+func RateLimitAgentByAPIID(rdb *hostctx.RedisResolver, cfgResolver *hostctx.ConfigResolver, getAPIID func(*http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			resolved := cfgResolver.Resolve(r.Context())
 			if rdb == nil || resolved == nil {
 				slog.Warn("agent rate limiter unavailable, allowing request", "path", r.URL.Path)
 				next.ServeHTTP(w, r)

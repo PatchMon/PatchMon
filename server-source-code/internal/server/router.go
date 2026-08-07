@@ -295,7 +295,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Use(middleware.HSTS(resolved.EnableHSTS))
 		r.Use(middleware.Timeout(30 * time.Second))
-		r.Use(middleware.BodyLimit(resolved.JSONBodyLimitBytes))
+		r.Use(middleware.BodyLimitFor(cfgResolver, func(rc *config.ResolvedConfig) int64 { return rc.JSONBodyLimitBytes }))
 		// Internal: registry reload (provisioner calls after creating context)
 		if ctxRegistry != nil && cfg.RegistryReloadSecret != "" {
 			r.Post("/internal/reload-registry-map", hostctx.RegistryReloadHandler(ctxRegistry, cfg.RegistryReloadSecret))
@@ -312,8 +312,8 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		r.Get("/hosts/remove", installHandler.ServeRemove)
 		r.Get("/hosts/agent/version", installHandler.ServeAgentVersion)
 		r.Get("/hosts/agent/download", installHandler.ServeAgentDownload)
-		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAgent), middleware.BodyLimit(resolved.AgentPingBodyLimitBytes)).Post("/hosts/ping", installHandler.ServePing)
-		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAgent), middleware.BodyLimit(resolved.AgentUpdateBodyLimitBytes)).Post("/hosts/update", installHandler.ServeUpdate)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent), middleware.BodyLimitFor(cfgResolver, func(rc *config.ResolvedConfig) int64 { return rc.AgentPingBodyLimitBytes })).Post("/hosts/ping", installHandler.ServePing)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent), middleware.BodyLimitFor(cfgResolver, func(rc *config.ResolvedConfig) int64 { return rc.AgentUpdateBodyLimitBytes })).Post("/hosts/update", installHandler.ServeUpdate)
 		r.Post("/hosts/bootstrap/exchange", installHandler.BootstrapExchange)
 		r.Get("/hosts/integrations", integrationsHandler.AgentGetIntegrationStatus)
 		r.Post("/integrations/docker", integrationsHandler.ReceiveDockerData)
@@ -322,12 +322,12 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		r.Get("/compliance/ssg-version", complianceHandler.SSGVersion)
 		r.Get("/compliance/ssg-content/{filename}", complianceHandler.SSGContent)
 		// Patching agent output (API key auth)
-		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAgent)).Post("/patching/runs/{id}/output", patchingHandler.ServePatchOutput)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Post("/patching/runs/{id}/output", patchingHandler.ServePatchOutput)
 		// Windows Update agent callbacks (API key auth)
-		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAgent)).Post("/patching/windows-updates/result", windowsUpdatesHandler.RecordInstallResult)
-		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAgent)).Post("/patching/windows-updates/reboot", windowsUpdatesHandler.RecordRebootStatus)
-		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAgent)).Post("/patching/windows-updates/superseded", windowsUpdatesHandler.RemoveSuperseded)
-		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAgent)).Get("/patching/windows-updates/approved", windowsUpdatesHandler.GetApprovedGUIDs)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Post("/patching/windows-updates/result", windowsUpdatesHandler.RecordInstallResult)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Post("/patching/windows-updates/reboot", windowsUpdatesHandler.RecordRebootStatus)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Post("/patching/windows-updates/superseded", windowsUpdatesHandler.RemoveSuperseded)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Get("/patching/windows-updates/approved", windowsUpdatesHandler.GetApprovedGUIDs)
 		// Auto-enrollment (public, token in headers for enroll, query params for script)
 		r.Post("/auto-enrollment/enroll", autoEnrollmentHandler.Enroll)
 		r.Get("/auto-enrollment/script", autoEnrollmentHandler.ServeScript)
@@ -345,10 +345,10 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		}
 
 		r.Get("/auth/signup-enabled", authHandler.SignupEnabled)
-		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAuth)).Post("/auth/login", authHandler.Login)
-		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAuth)).Post("/auth/verify-tfa", authHandler.VerifyTfa)
-		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAuth)).Post("/auth/setup-admin", authHandler.SetupAdmin)
-		r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitAuth)).Post("/auth/signup", authHandler.Signup)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAuth)).Post("/auth/login", authHandler.Login)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAuth)).Post("/auth/verify-tfa", authHandler.VerifyTfa)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAuth)).Post("/auth/setup-admin", authHandler.SetupAdmin)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAuth)).Post("/auth/signup", authHandler.Signup)
 		if oidcHandler != nil {
 			r.Get("/auth/oidc/config", oidcHandler.Config)
 			r.Get("/auth/oidc/login", oidcHandler.Login)
@@ -409,7 +409,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		})
 
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitGeneral))
+			r.Use(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitGeneral))
 			r.Use(middleware.AuthWithSessionCheck(cfg, store.NewSessionsStore(dbProvider), resolved, log))
 			// Swagger UI - JWT protected, documents integration API endpoints only
 			r.Get("/api-docs", func(w http.ResponseWriter, r *http.Request) {
@@ -442,7 +442,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			// to the manager + Stripe. Gated identically to the other billing
 			// endpoints (AdminMode + can_manage_billing; 404 on failure).
 			r.Post("/me/billing/sync", billingHandler.PostMyBillingSync(permissionsStore))
-			r.With(middleware.RateLimit(redisResolver, resolved, middleware.RateLimitPassword)).Put("/auth/change-password", authHandler.ChangePassword)
+			r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitPassword)).Put("/auth/change-password", authHandler.ChangePassword)
 			r.Post("/auth/logout", authHandler.Logout)
 			r.Get("/auth/sessions", authHandler.GetSessions)
 			r.Delete("/auth/sessions", authHandler.RevokeAllSessions)
