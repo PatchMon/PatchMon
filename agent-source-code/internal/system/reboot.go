@@ -72,7 +72,11 @@ func kernelIsOutdated(running, latest string) bool {
 }
 
 // checkWindowsRebootRequired checks if Windows requires a reboot (per UsoClient/WUA docs)
-// Checks: RebootRequired registry, PendingFileRenameOperations, CBS reboot-pending
+// Checks: Windows Update RebootRequired and Component Based Servicing reboot-pending.
+//
+// PendingFileRenameOperations is deliberately not consulted. Ordinary application
+// updaters write to that key during routine self-updates, so treating it as a
+// reboot signal marks healthy hosts as needing a reboot indefinitely.
 func (d *Detector) checkWindowsRebootRequired() (bool, string) {
 	psScript := `
 $ErrorActionPreference = "SilentlyContinue"
@@ -81,10 +85,6 @@ $reasons = @()
 # Windows Update RebootRequired
 $wu = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired" -ErrorAction SilentlyContinue
 if ($wu) { $reasons += "Windows Update requires reboot" }
-
-# Pending file rename operations (installer pending reboot)
-$pfro = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager" -Name PendingFileRenameOperations -ErrorAction SilentlyContinue
-if ($pfro -and $pfro.PendingFileRenameOperations) { $reasons += "Pending file rename operations" }
 
 # Component Based Servicing (CBS) reboot pending
 $cbs = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending" -ErrorAction SilentlyContinue
