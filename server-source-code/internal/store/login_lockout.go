@@ -25,8 +25,7 @@ type LoginLockoutStore struct {
 }
 
 // NewLoginLockoutStore creates a login lockout store. cfgResolver supplies the
-// calling context's own thresholds; the passed values are the fallback used when
-// it is unset or a settings read fails.
+// calling context's thresholds; the passed values are the fallback.
 func NewLoginLockoutStore(rdb *hostctx.RedisResolver, cfgResolver *hostctx.ConfigResolver, maxAttempts int, lockoutDurationMinutes int) *LoginLockoutStore {
 	if maxAttempts <= 0 {
 		maxAttempts = 5
@@ -42,7 +41,6 @@ func NewLoginLockoutStore(rdb *hostctx.RedisResolver, cfgResolver *hostctx.Confi
 	}
 }
 
-// limits returns the thresholds for ctx's context.
 func (s *LoginLockoutStore) limits(ctx context.Context) (int, time.Duration) {
 	if rc := s.cfgResolver.Resolve(ctx); rc != nil {
 		dur := time.Duration(rc.LockoutDurationMin) * time.Minute

@@ -59,24 +59,18 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 		return err
 	}
 
-	// Resolve per-context DB when Host is in payload (multi-host mode), and put
-	// it on ctx so DBProvider-backed stores (h.compliance) resolve to the same
-	// database rather than silently falling back to the default one.
+	// Resolve per-context DB and put it on ctx so DBProvider-backed stores
+	// (h.compliance) resolve to the same database.
 	d := resolveDBFromPayload(ctx, t.Payload(), h.db, h.poolCache)
 	if d != nil {
 		ctx = hostctx.WithDB(ctx, d)
 	}
-	// Workers never go through the HTTP middleware, so ctx carries no context
-	// entry and hostctx.TenantKey silently returns an unprefixed Redis key.
-	// The HTTP side writes prefixed keys, so without this the two never meet:
-	// the scan-cancel flag set from the UI would never be seen here.
+	// Workers carry no context entry, so TenantKey would build unprefixed Redis
+	// keys and never match the ones the HTTP side writes.
 	//
-	// Only Host is populated, which is all TenantKey needs. Nothing reachable
-	// from a worker reads the quota or module fields today (they are read only
-	// in internal/handler, from r.Context()). Be careful adding a call that
-	// does: a nil MaxUsers/MaxHosts skips the limit check and a nil Modules
-	// makes HasModule allow everything, so this entry would fail open. Populate
-	// it from the registry if that ever becomes reachable.
+	// Only Host is set, which is all TenantKey needs. Nothing reachable from a
+	// worker reads the quota or module fields; if that changes, populate them
+	// from the registry, since a nil MaxHosts or Modules fails open.
 	if p.Host != "" {
 		ctx = hostctx.WithEntry(ctx, &hostctx.Entry{Host: p.Host})
 	}
@@ -227,9 +221,6 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	}
 	for _, profileID := range profilesToUse {
 		if err := h.compliance.CreateRunningScan(ctx, p.HostID, profileID); err != nil {
-			// Previously discarded, which hid a foreign-key violation when the
-			// scan was written to a database the host does not belong to while
-			// the job still reported success.
 			h.log.Warn("run_scan: could not record running scan", "host_id", p.HostID, "profile_id", profileID, "error", err)
 		}
 	}
@@ -269,7 +260,6 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return err
 	}
-	// job_history belongs to the context that raised the job.
 	d := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
 
 	// Resolve Redis from payload.Host when set; fall back to system rdb.

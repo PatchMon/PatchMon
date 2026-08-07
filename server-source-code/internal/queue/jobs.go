@@ -375,7 +375,6 @@ func (h *ReportNowHandler) ProcessTask(ctx context.Context, t *asynq.Task) error
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return err
 	}
-	// job_history belongs to the context that raised the job, not the default one.
 	d := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
 
 	taskID, _ := asynq.GetTaskID(ctx)
@@ -430,7 +429,6 @@ func sendAgentCommand(ctx context.Context, h *ReportNowHandler, p ReportNowPaylo
 		taskID = taskIDVal
 	}
 	attempt := int32(retryCount + 1)
-	// job_history belongs to the context that raised the job, not the default one.
 	d := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
 
 	if d != nil && taskID != "" && retryCount == 0 {
@@ -532,8 +530,6 @@ func (h *UpdateAgentHandler) ProcessTask(ctx context.Context, t *asynq.Task) err
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return err
 	}
-	// The settings row, the host lookup and job_history all belong to the
-	// context that raised the job, not the default one.
 	d := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
 
 	taskID, _ := asynq.GetTaskID(ctx)

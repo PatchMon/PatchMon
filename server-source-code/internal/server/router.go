@@ -92,9 +92,8 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 
 	enc, _ := util.NewEncryption()
 
-	// Resolves each context's own settings per request. `resolved` above is read
-	// once from the default database, so it cannot enforce anything a context
-	// sets for itself.
+	// `resolved` above is read once from the default database; this resolves
+	// each context's own settings per request.
 	cfgResolver := hostctx.NewConfigResolver(cfg, resolved, settingsStore.GetFirst)
 
 	var tfaLockout *store.TfaLockoutStore
@@ -146,8 +145,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	trustedDevicesHandler := handler.NewTrustedDevicesHandler(trustedDevicesStore, log)
 	userPrefsHandler := handler.NewUserPreferencesHandler(usersStore)
 	settingsHandler := handler.NewSettingsHandlerWithConfig(settingsStore, usersStore, enc, registry, cfg.AssetsDir, cfg, resolved).WithEvictors(cfgResolver, oidcHandler)
-	// Registered here rather than earlier so every per-context cache exists and
-	// can be evicted together when the provisioner signals a context change.
+	// Registered here so every per-context cache exists and can be evicted.
 	if poolCache != nil && cfg.RegistryReloadSecret != "" {
 		r.Post("/internal/reload-tenant", hostctx.ReloadHandler(poolCache, redisCache, cfg.RegistryReloadSecret, cfgResolver, oidcHandler))
 	}

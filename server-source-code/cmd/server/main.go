@@ -86,9 +86,6 @@ func main() {
 	var poolCache *hostctx.PoolCache
 	var redisCache *hostctx.RedisCache
 	if cfg.RegistryDatabaseURL != "" {
-		// This process serves more than one context, so an unprefixed Redis key
-		// lands in a keyspace shared with other customers. Turn on the warning
-		// that catches it, before anything can be served.
 		hostctx.EnableMultiContextChecks()
 
 		// Poll interval is a failsafe - the primary path for registry updates is the
@@ -254,9 +251,7 @@ func main() {
 		}
 	}()
 
-	// Profiling listens on its own loopback-only port rather than the main
-	// router: a heap dump spans every context on the process, so reachability
-	// is the control instead of a per-context permission.
+	// Profiling listens on its own loopback-only port. See internal/server/pprof.go.
 	var pprofSrv *http.Server
 	if cfg.EnablePprof {
 		pprofSrv = server.NewPprofServer(cfg.PprofPort)

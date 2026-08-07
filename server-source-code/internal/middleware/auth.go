@@ -88,8 +88,7 @@ func AuthWithSessionCheck(cfg *config.Config, sessionsStore *store.SessionsStore
 					return
 				}
 
-				// The inactivity comparison itself is opt-in, and the timeout is
-				// the calling context's own setting.
+				// The inactivity comparison is opt-in.
 				resolved := cfgResolver.Resolve(r.Context())
 				if resolved != nil && resolved.SessionInactivityTimeoutMin > 0 {
 					inactive := time.Since(sess.LastActivity) > time.Duration(resolved.SessionInactivityTimeoutMin)*time.Minute

@@ -26,17 +26,14 @@ type AutomationHandler struct {
 	cfg         *config.Config
 }
 
-// WithConfig wires the process config, used to gate the queue views in managed
-// deployments.
+// WithConfig wires the process config.
 func (h *AutomationHandler) WithConfig(cfg *config.Config) *AutomationHandler {
 	h.cfg = cfg
 	return h
 }
 
 // adminModeGuard returns true (and writes a 403) when AdminMode is active.
-// The asynq queues are shared by every context on the process and asynq exposes
-// no per-context breakdown, so the aggregate counts describe platform activity
-// rather than the caller's own. Mirrors MetricsHandler.adminModeGuard.
+// Queue totals are process-wide, so they are not shown per context.
 func (h *AutomationHandler) adminModeGuard(w http.ResponseWriter) bool {
 	if h.cfg != nil && h.cfg.AdminMode {
 		Error(w, http.StatusForbidden, "Automation is not available in managed mode")
@@ -313,10 +310,7 @@ func (h *AutomationHandler) Jobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The asynq queues are shared by every context on this process, so a task
-	// here may belong to another one. Task IDs embed identifiers (for example
-	// refresh-integration-status-<apiID>), so an unfiltered list discloses
-	// another context's host api_ids.
+	// Queues are shared across contexts; only list this one's tasks.
 	callerHost := hostctx.TenantHostKey(r.Context())
 	formatted := make([]map[string]interface{}, 0, len(tasks))
 	for _, t := range tasks {
@@ -506,9 +500,8 @@ func (h *AutomationHandler) ComplianceScanCleanup(w http.ResponseWriter, r *http
 	})
 }
 
-// taskBelongsToContext reports whether a queued task was raised by the given
-// context. Tasks carry their originating host in the payload; one that carries
-// none predates multi-context routing and is only shown to the default context.
+// taskBelongsToContext reports whether a task was raised by the given context.
+// A payload with no host predates multi-context routing and belongs to default.
 func taskBelongsToContext(payload []byte, callerHost string) bool {
 	if len(payload) == 0 {
 		return callerHost == ""

@@ -12,14 +12,12 @@ import (
 
 const dashboardCacheTTL = 45 * time.Second
 
-// dashboardCacheEntry is one context's cached dashboard.
 type dashboardCacheEntry struct {
 	data *ComplianceDashboard
 	exp  time.Time
 }
 
-// dashboardCache is keyed by context. A single shared entry would serve one
-// context's hosts and scores to every other context on the process.
+// Keyed by context.
 var (
 	dashboardCacheMu sync.Mutex
 	dashboardCache   = map[string]dashboardCacheEntry{}

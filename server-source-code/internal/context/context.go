@@ -110,26 +110,19 @@ func TenantHostKey(ctx stdctx.Context) string {
 	return e.Host
 }
 
-// multiContext records whether this process serves more than one context. Set
-// once at startup when a registry is configured, before any request is served.
+// Set once at startup when a registry is configured.
 var multiContext atomic.Bool
 
-// EnableMultiContextChecks marks the process as serving multiple contexts, which
-// turns on the unprefixed-key warning in TenantKey.
+// EnableMultiContextChecks turns on the unprefixed-key warning in TenantKey.
 func EnableMultiContextChecks() { multiContext.Store(true) }
 
 // TenantKey prefixes a Redis key with the context domain for multi-host isolation.
 // In single-context mode (no entry in context), returns the key unchanged.
 // Example: TenantKey(ctx, "ssh:ticket:abc") -> "t:ctx1.patchmon.cloud:ssh:ticket:abc"
 //
-// Redis is shared by every context, so this prefix is the ONLY isolation
-// boundary there. The no-entry fallback exists for single-context installs, but
-// in a multi-context process it means an unprefixed key in a shared keyspace,
-// and it is silent: the usual cause is a background worker, whose context never
-// carries an entry because only the HTTP middleware sets one. Workers must
-// derive the host from the job payload (see workerTenantKey in internal/queue)
-// or inject it with WithEntry. The warning below exists because this failure
-// mode is otherwise invisible and only manifests in the cloud.
+// Redis is shared across contexts, so this prefix is the only boundary there.
+// A worker's context carries no entry (only the HTTP middleware sets one), so
+// workers must use workerTenantKey with the payload host or inject WithEntry.
 func TenantKey(ctx stdctx.Context, key string) string {
 	if e := EntryFromContext(ctx); e != nil && e.Host != "" {
 		return "t:" + e.Host + ":" + key
@@ -145,8 +138,7 @@ func TenantKey(ctx stdctx.Context, key string) string {
 	return key
 }
 
-// keyPrefixForLog returns the namespace portion of a Redis key, so the warning
-// identifies the call site without logging identifiers from the key itself.
+// keyPrefixForLog returns the key namespace, so the warning carries no identifiers.
 func keyPrefixForLog(key string) string {
 	if i := strings.Index(key, ":"); i > 0 {
 		return key[:i]

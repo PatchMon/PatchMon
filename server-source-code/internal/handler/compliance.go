@@ -615,9 +615,7 @@ func (h *ComplianceHandler) GetActiveScans(w http.ResponseWriter, r *http.Reques
 			if hostIDsInDB[q.HostID] {
 				continue // already have DB record for this host
 			}
-			// The queue is shared by every context, so a queued task may belong
-			// to another one. This lookup is context-scoped: if the host is not
-			// ours, skip the task rather than reporting it as "Unknown".
+			// Context-scoped lookup: skip tasks for hosts we do not own.
 			host, err := h.hostsStore.GetByID(r.Context(), q.HostID)
 			if err != nil || host == nil {
 				continue

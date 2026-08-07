@@ -109,10 +109,8 @@ func Middleware(registry *Registry, poolCache *PoolCache, redisCache *RedisCache
 	}
 }
 
-// HostEvictor is any per-context cache that must be dropped when a context's
-// configuration changes out of band. New caches should implement this and be
-// passed to ReloadHandler, rather than the handler accumulating a list of
-// concrete types that the next cache forgets to join.
+// HostEvictor is a per-context cache dropped when a context changes out of band.
+// New caches should implement this and be passed to ReloadHandler.
 type HostEvictor interface {
 	EvictHost(host string)
 }

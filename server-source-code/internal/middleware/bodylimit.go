@@ -22,8 +22,7 @@ func BodyLimit(limit int64) func(http.Handler) http.Handler {
 	}
 }
 
-// BodyLimitFor limits the request body using the calling context's own setting.
-// pick selects the relevant field from that context's resolved config.
+// BodyLimitFor limits the request body using the calling context's setting.
 func BodyLimitFor(cfgResolver *hostctx.ConfigResolver, pick func(*config.ResolvedConfig) int64) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

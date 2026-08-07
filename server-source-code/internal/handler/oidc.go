@@ -37,30 +37,23 @@ type OidcHandler struct {
 	enc         *util.Encryption
 	log         *slog.Logger
 
-	// clientMu protects entries. Each context gets its own entry: OIDC settings
-	// live in each context's own database, so a single shared client would let
-	// one context's settings save repoint every other context's SSO.
+	// clientMu protects entries, keyed by context.
 	clientMu sync.RWMutex
 	entries  map[string]*oidcContextEntry
-	// entryMu holds a per-context mutex so a slow provider discovery in one
-	// context does not block logins in another. Mirrors PoolCache.hostLock.
+	// entryMu holds a per-context mutex, so a slow provider discovery in one
+	// context does not block another. Mirrors PoolCache.hostLock.
 	entryMu sync.Map
 }
 
-// oidcClientTTL bounds how long a context's resolved OIDC config is reused.
-// Explicit eviction on settings save is the primary mechanism; this is a
-// backstop for any invalidation path that is missed.
+// Eviction on settings save is the primary invalidation; the TTL is a backstop.
 const oidcClientTTL = 10 * time.Minute
 
-// oidcBuildTimeout bounds the settings read when building a context's entry.
 const oidcBuildTimeout = 10 * time.Second
 
-// oidcContextEntry is one context's resolved OIDC configuration and client.
 type oidcContextEntry struct {
 	client   *oidc.Client
 	resolved *config.ResolvedOidcConfig
-	// configuredValid is true when all required fields are present and enabled,
-	// even if the provider connection later fails.
+	// True when all required fields are present, even if the provider is down.
 	configuredValid bool
 	expiresAt       time.Time
 }
@@ -78,9 +71,7 @@ func NewOidcHandler(cfg *config.Config, resolved *config.ResolvedOidcConfig, res
 		log:         log,
 		entries:     map[string]*oidcContextEntry{},
 	}
-	// Seed the default context with what was resolved at startup, so a
-	// single-context install behaves exactly as before with no first-request
-	// resolve. TenantHostKey returns "" for the default context.
+	// Seed the default context ("" key) from the startup resolve.
 	h.entries[""] = &oidcContextEntry{
 		client:          client,
 		resolved:        resolved,
@@ -90,15 +81,14 @@ func NewOidcHandler(cfg *config.Config, resolved *config.ResolvedOidcConfig, res
 	return h
 }
 
-// entryLock returns the per-context mutex, so only requests for the same
-// context block each other while an entry is being built.
+// entryLock returns the per-context mutex.
 func (h *OidcHandler) entryLock(key string) *sync.Mutex {
 	v, _ := h.entryMu.LoadOrStore(key, &sync.Mutex{})
 	return v.(*sync.Mutex)
 }
 
 // entryFor returns the OIDC entry for ctx's context, building it on first use.
-// Never returns nil; an unconfigured context yields a zero entry.
+// Never nil; an unconfigured context yields a zero entry.
 func (h *OidcHandler) entryFor(ctx context.Context) *oidcContextEntry {
 	key := hostctx.TenantHostKey(ctx)
 
@@ -113,8 +103,7 @@ func (h *OidcHandler) entryFor(ctx context.Context) *oidcContextEntry {
 	lock.Lock()
 	defer lock.Unlock()
 
-	// Re-check: another request for this context may have built it while we
-	// waited on the lock.
+	// Re-check: another request may have built it while we waited.
 	h.clientMu.RLock()
 	e, ok = h.entries[key]
 	h.clientMu.RUnlock()
@@ -122,18 +111,14 @@ func (h *OidcHandler) entryFor(ctx context.Context) *oidcContextEntry {
 		return e
 	}
 
-	// Build off a context that survives client disconnect. entryFor runs on the
-	// request path, so a caller that hangs up mid-build must not be able to
-	// cache an "unconfigured" result for the full TTL and take this context's
-	// SSO offline. WithoutCancel keeps the injected per-context DB and entry.
+	// Build off a context that survives client disconnect, so an abandoned
+	// request cannot cache a negative result. WithoutCancel keeps ctx values.
 	buildCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), oidcBuildTimeout)
 	defer cancel()
 
 	built, err := h.buildEntry(buildCtx)
 	if err != nil {
-		// Settings unreadable. Do not cache a negative result: keep serving the
-		// previous entry if there is one, otherwise retry on the next request
-		// rather than in oidcClientTTL.
+		// Keep the previous entry rather than caching a negative result.
 		if h.log != nil {
 			h.log.Warn("OIDC settings read failed, keeping previous configuration", "error", err)
 		}
@@ -153,16 +138,14 @@ func (h *OidcHandler) entryFor(ctx context.Context) *oidcContextEntry {
 }
 
 // buildEntry resolves this context's OIDC settings and constructs its client.
-// oidc.NewClient performs no I/O; provider discovery is deferred to the first
-// AuthCodeURL/Exchange on the returned client, so this stays cheap.
+// oidc.NewClient performs no I/O; discovery is deferred to first use.
 func (h *OidcHandler) buildEntry(ctx context.Context) (*oidcContextEntry, error) {
 	empty := &oidcContextEntry{expiresAt: time.Now().Add(oidcClientTTL)}
 	if h.settings == nil {
 		return empty, nil
 	}
-	// Read the row here rather than handing GetFirst to ResolveOidcConfig, which
-	// treats a read failure as "no DB settings" and resolves from env instead.
-	// That makes an unreadable row indistinguishable from an unconfigured one.
+	// Read the row here: ResolveOidcConfig treats a read failure as "no DB
+	// settings" and falls back to env, which hides the difference.
 	s, err := h.settings.GetFirst(ctx)
 	if err != nil {
 		return nil, err
@@ -174,9 +157,7 @@ func (h *OidcHandler) buildEntry(ctx context.Context) (*oidcContextEntry, error)
 	if !oidcResolved.ConfiguredViaEnv && clientSecret != "" && h.enc != nil {
 		dec, decErr := h.enc.Decrypt(clientSecret)
 		if decErr != nil {
-			// Fail closed. Keeping the ciphertext would leave the secret
-			// non-empty, so OIDC would report as configured and every login
-			// would post the ciphertext to the provider as client_secret.
+			// Fail closed: a non-empty ciphertext would read as configured.
 			if h.log != nil {
 				h.log.Warn("OIDC client secret could not be decrypted; treating OIDC as unconfigured")
 			}
@@ -204,23 +185,17 @@ func (h *OidcHandler) buildEntry(ctx context.Context) (*oidcContextEntry, error)
 	}, nil
 }
 
-// evictOidcClient drops this context's cached entry so the next request
-// rebuilds it. Called after a settings write.
+// evictOidcClient drops this context's cached entry.
 func (h *OidcHandler) evictOidcClient(ctx context.Context) {
 	h.EvictHost(hostctx.TenantHostKey(ctx))
 }
 
-// EvictHost drops a named context's cached entry. Satisfies
-// hostctx.HostEvictor so the provisioner's reload endpoint can invalidate this
-// cache alongside the pool and Redis caches.
+// EvictHost drops a named context's cached entry. Satisfies hostctx.HostEvictor.
 func (h *OidcHandler) EvictHost(host string) {
 	if h == nil {
 		return
 	}
-	// Take the per-key lock first, so an in-flight buildEntry for this context
-	// finishes and stores before we delete. Without it, a build that started
-	// before a settings save can write the pre-save entry back afterwards and
-	// keep the old configuration live for the full TTL.
+	// Per-key lock first, so an in-flight build stores before we delete.
 	lock := h.entryLock(host)
 	lock.Lock()
 	defer lock.Unlock()
@@ -818,9 +793,8 @@ func extractHost(u string) string {
 	return parsed.Hostname()
 }
 
-// resolvedSnapshot returns this context's resolved OIDC config, or nil when the
-// context has none configured. Accessors below must go through this rather than
-// touching the cache directly, so a settings save racing a login stays safe.
+// resolvedSnapshot returns this context's resolved OIDC config, or nil.
+// Accessors must go through this rather than touching the cache directly.
 func (h *OidcHandler) resolvedSnapshot(ctx context.Context) *config.ResolvedOidcConfig {
 	return h.entryFor(ctx).resolved
 }

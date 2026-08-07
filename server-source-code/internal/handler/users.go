@@ -33,8 +33,7 @@ type UsersHandler struct {
 	// adminMode mirrors cfg.AdminMode at construction time. Used to drive
 	// auto-newsletter-subscription for SaaS-hosted users on creation.
 	adminMode bool
-	// cfgResolver resolves the calling context's own settings. `resolved` above
-	// is read once at startup from the default database.
+	// Resolves the calling context's own settings; `resolved` is startup-only.
 	cfgResolver *hostctx.ConfigResolver
 }
 
@@ -44,7 +43,6 @@ func (h *UsersHandler) WithConfigResolver(r *hostctx.ConfigResolver) *UsersHandl
 	return h
 }
 
-// resolvedFor returns the effective config for ctx's context.
 func (h *UsersHandler) resolvedFor(ctx context.Context) *config.ResolvedConfig {
 	if rc := h.cfgResolver.Resolve(ctx); rc != nil {
 		return rc

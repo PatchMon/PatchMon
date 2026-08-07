@@ -25,15 +25,8 @@ func configuredEntry() *oidcContextEntry {
 }
 
 // TestOidcHandler_ResolvedAccessorsAreRaceFree guards the accessors that read a
-// context's resolved OIDC config on the request path.
-//
-// A settings save evicts that context's cached entry while logins are reading
-// it. The accessors must go through entryFor rather than touching the cache, or
-// a login concurrent with a save is a data race. A read that saw no entry would
-// silently fall back to the h.cfg env values, giving different auto-create and
-// role-mapping behaviour for that login.
-//
-// Run under -race this fails if the accessors read the map directly.
+// context's resolved OIDC config while a settings save evicts it. Run under
+// -race, this fails if the accessors touch the cache directly.
 func TestOidcHandler_ResolvedAccessorsAreRaceFree(t *testing.T) {
 	t.Parallel()
 
@@ -52,8 +45,7 @@ func TestOidcHandler_ResolvedAccessorsAreRaceFree(t *testing.T) {
 	const iterations = 200
 	var wg sync.WaitGroup
 
-	// Writer: the settings-save path, alternating between evicting the entry
-	// (OIDC disabled) and re-seeding a configured one.
+	// Writer: the settings-save path, alternating evict and re-seed.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -90,13 +82,8 @@ func TestOidcHandler_ResolvedAccessorsAreRaceFree(t *testing.T) {
 	wg.Wait()
 }
 
-// TestOidcHandler_EntriesAreIsolatedPerContext is the isolation invariant: one
-// context's OIDC configuration must never be served to another.
-//
-// One process serves every context, and each context's OIDC settings live in its
-// own database. Before per-context entries existed, a settings save by one
-// context replaced the single shared client for everyone, so a customer could
-// repoint every other customer's SSO at an issuer of their choosing.
+// TestOidcHandler_EntriesAreIsolatedPerContext asserts one context's OIDC
+// configuration is never served to another.
 func TestOidcHandler_EntriesAreIsolatedPerContext(t *testing.T) {
 	t.Parallel()
 

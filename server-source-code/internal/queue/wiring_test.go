@@ -8,27 +8,13 @@ import (
 	"testing"
 )
 
-// TestStoresInQueueWiringUseAContextResolver guards a mistake the type system
-// cannot catch.
+// TestStoresInQueueWiringUseAContextResolver guards a mistake the compiler
+// cannot catch: a raw *database.DB satisfies hostctx.DBProvider, because
+// (*DB).DB(ctx) ignores its context and returns the receiver. So passing one to
+// a store compiles and silently pins it to the default database.
 //
-// Stores take a hostctx.DBProvider. A raw *database.DB satisfies that interface,
-// because (*DB).DB(ctx) ignores its context and returns the receiver:
-//
-//	func (d *DB) DB(_ context.Context) *DB { return d }
-//
-// That exists so single-context installs can pass a plain handle. The
-// consequence is that store.NewXxxStore(db) compiles, passes review, and
-// silently pins the store to whichever database DATABASE_URL points at. In a
-// multi-context deployment every job then reads and writes the wrong customer's
-// data, with no error and no log line.
-//
-// This is not hypothetical: the compliance store was wired that way, so every
-// scan triggered by a non-default context wrote its profile rows into the
-// default context's database and its scan insert failed a foreign-key check
-// that was being discarded.
-//
-// Queue handlers are different and are deliberately not checked here: they take
-// (db, poolCache) and resolve per job internally.
+// Queue handlers are not checked here: they take (db, poolCache) and resolve
+// per job internally.
 func TestStoresInQueueWiringUseAContextResolver(t *testing.T) {
 	t.Parallel()
 
@@ -52,12 +38,9 @@ func TestStoresInQueueWiringUseAContextResolver(t *testing.T) {
 		if !ok || pkg.Name != "store" || !strings.HasPrefix(sel.Sel.Name, "New") {
 			return true
 		}
-		// A bare identifier as the first argument means a concrete handle was
-		// passed where a resolver belongs.
 		if ident, ok := call.Args[0].(*ast.Ident); ok && ident.Name == "db" {
-			t.Errorf("%s: store.%s is constructed with the raw default database.\n"+
-				"Pass &hostctx.DBResolver{Default: db} instead, or the store resolves to the\n"+
-				"default context for every job regardless of which context raised it.",
+			t.Errorf("%s: store.%s takes the raw default database. "+
+				"Pass &hostctx.DBResolver{Default: db} instead.",
 				fset.Position(call.Pos()), sel.Sel.Name)
 		}
 		return true

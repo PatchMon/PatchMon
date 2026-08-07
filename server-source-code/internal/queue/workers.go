@@ -46,9 +46,7 @@ func resolveDBFromPayload(ctx context.Context, payload []byte, defaultDB *databa
 }
 
 // resolveDBForHost returns the database for a job's context. Workers have no
-// HTTP request and so no context resolution of their own: the host travels in
-// the job payload and must be resolved explicitly, or the job silently operates
-// on the default context's database.
+// HTTP request, so the host travels in the job payload.
 func resolveDBForHost(ctx context.Context, host string, defaultDB *database.DB, poolCache *hostctx.PoolCache) *database.DB {
 	if poolCache == nil || strings.TrimSpace(host) == "" {
 		return defaultDB

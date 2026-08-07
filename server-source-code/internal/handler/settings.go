@@ -31,21 +31,16 @@ type SettingsHandler struct {
 	assetsDir string
 	cfg       *config.Config
 	resolved  *config.ResolvedConfig
-	// evictors are the per-context caches derived from the settings row. A write
-	// here must drop them, or enforcement keeps using the previous values until
-	// each cache's TTL expires. OIDC belongs here too: its redirect URI is
-	// derived from server_url when no explicit one is set.
+	// Per-context caches derived from the settings row, dropped on write.
 	evictors []hostctx.HostEvictor
 }
 
-// WithEvictors wires the per-context caches invalidated on a settings write.
+// WithEvictors wires the caches invalidated on a settings write.
 func (h *SettingsHandler) WithEvictors(e ...hostctx.HostEvictor) *SettingsHandler {
 	h.evictors = append(h.evictors, e...)
 	return h
 }
 
-// invalidateContextCaches drops every per-context cache derived from this
-// context's settings row.
 func (h *SettingsHandler) invalidateContextCaches(ctx context.Context) {
 	host := hostctx.TenantHostKey(ctx)
 	for _, e := range h.evictors {
@@ -706,8 +701,6 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to update settings")
 		return
 	}
-	// Drop this context's cached config so the new values are enforced now
-	// rather than when the cache TTL happens to expire.
 	h.invalidateContextCaches(r.Context())
 
 	intervalChanged := s.UpdateInterval != oldInterval && s.UpdateInterval > 0

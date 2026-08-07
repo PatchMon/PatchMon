@@ -9,17 +9,9 @@ import (
 
 // NewPprofServer builds the profiling listener.
 //
-// pprof is deliberately not mounted on the main router. One process serves every
-// context, so a heap dump contains every context's data. Gating it on a
-// permission would mean any single context's admin could obtain all of it, and
-// the endpoints are expensive enough (/debug/pprof/profile blocks for 30s by
-// default) to be a denial-of-service lever on the port serving users.
-//
-// Instead the listener binds to loopback only, so reachability is the control:
-// you need shell access on the host, typically via an SSH tunnel:
-//
-//	ssh -L 6060:127.0.0.1:6060 <host>
-//	go tool pprof http://localhost:6060/debug/pprof/heap
+// Not mounted on the main router: a heap dump spans every context, so
+// reachability is the control rather than a per-context permission. Reach it
+// over an SSH tunnel. See docs PROFILING.md.
 func NewPprofServer(port int) *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
@@ -29,12 +21,10 @@ func NewPprofServer(port int) *http.Server {
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	return &http.Server{
-		// Loopback only. Binding to :port would expose heap and goroutine dumps
-		// on every interface.
+		// Loopback only.
 		Addr:              fmt.Sprintf("127.0.0.1:%d", port),
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
-		// No WriteTimeout: /debug/pprof/profile and /trace stream for their full
-		// duration and would be cut short by one.
+		// No WriteTimeout: profile and trace stream for their full duration.
 	}
 }

@@ -45,9 +45,7 @@ type AuthHandler struct {
 	// (such as can_manage_billing) alongside the user response. Wired via
 	// WithPermissions to avoid threading it through the constructor signature.
 	permissions *store.PermissionsStore
-	// cfgResolver resolves the calling context's own settings. `resolved` above is
-	// read once at startup from the default database, so it must not be used to
-	// enforce anything a context can set for itself.
+	// Resolves the calling context's own settings; `resolved` is startup-only.
 	cfgResolver *hostctx.ConfigResolver
 }
 
@@ -57,8 +55,7 @@ func (h *AuthHandler) WithConfigResolver(r *hostctx.ConfigResolver) *AuthHandler
 	return h
 }
 
-// resolvedFor returns the effective config for ctx's context, falling back to
-// the startup config when no resolver is wired.
+// resolvedFor returns the effective config for ctx's context.
 func (h *AuthHandler) resolvedFor(ctx context.Context) *config.ResolvedConfig {
 	if rc := h.cfgResolver.Resolve(ctx); rc != nil {
 		return rc

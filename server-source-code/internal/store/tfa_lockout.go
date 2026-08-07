@@ -23,8 +23,7 @@ type TfaLockoutStore struct {
 }
 
 // NewTfaLockoutStore creates a TFA lockout store. cfgResolver supplies the
-// calling context's own thresholds; the passed values are the fallback used when
-// it is unset or a settings read fails.
+// calling context's thresholds; the passed values are the fallback.
 func NewTfaLockoutStore(rdb *hostctx.RedisResolver, cfgResolver *hostctx.ConfigResolver, maxAttempts int, lockoutDurationMinutes int) *TfaLockoutStore {
 	if maxAttempts <= 0 {
 		maxAttempts = 5
@@ -40,7 +39,6 @@ func NewTfaLockoutStore(rdb *hostctx.RedisResolver, cfgResolver *hostctx.ConfigR
 	}
 }
 
-// limits returns the thresholds for ctx's context.
 func (s *TfaLockoutStore) limits(ctx context.Context) (int, time.Duration) {
 	if rc := s.cfgResolver.Resolve(ctx); rc != nil {
 		dur := time.Duration(rc.TfaLockoutDurationMin) * time.Minute
