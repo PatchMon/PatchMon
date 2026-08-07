@@ -152,6 +152,10 @@ describe("ConfirmContext", () => {
 
 	it("throws when used outside a provider", () => {
 		const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+		// React re-throws through a DOM error event, which jsdom reports to its
+		// own console unless the event is cancelled.
+		const swallow = (event) => event.preventDefault();
+		window.addEventListener("error", swallow);
 		const Bare = () => {
 			useConfirm();
 			return null;
@@ -159,6 +163,7 @@ describe("ConfirmContext", () => {
 		expect(() => render(<Bare />)).toThrow(
 			"useConfirm must be used within a ConfirmProvider",
 		);
+		window.removeEventListener("error", swallow);
 		spy.mockRestore();
 	});
 });
