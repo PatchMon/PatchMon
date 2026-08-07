@@ -73,6 +73,12 @@ func TestCompareKernelVersions(t *testing.T) {
 			expected: 1,
 		},
 		{
+			name:     "v1 newest minor versions in Debian format",
+			v1:       "6.12.101+deb13-amd64",
+			v2:       "6.12.95+deb13-amd64",
+			expected: 1,
+		},
+		{
 			name:     "same versions in Arch Linux",
 			v1:       "7.0.9-hardened1-1-hardened",
 			v2:       "7.0.9-hardened1-1-hardened",
