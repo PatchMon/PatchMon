@@ -523,17 +523,40 @@ jobs:
           }
 
           # Get-EventLog does not exist in PowerShell 7, which is what `shell:
-          # pwsh` runs; Get-WinEvent is the supported replacement.
-          Write-Host "===== Application event log (PatchMonAgent) =====" -ForegroundColor Cyan
-          Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'PatchMonAgent' } `
-                       -MaxEvents 50 -ErrorAction SilentlyContinue |
-              Format-List TimeCreated, LevelDisplayName, Message
+          # pwsh` runs, so this uses Get-WinEvent.
+          #
+          # -FilterHashtable is deliberately not used. It resolves ProviderName
+          # while building the query and fails with "The parameter is incorrect"
+          # when that provider has never written to the log, which is the normal
+          # case here: runWindowsService opens its event source but never
+          # registers one. -ErrorAction SilentlyContinue does not suppress that,
+          # because it happens before any record is emitted. Filtering
+          # client-side costs a little more and simply prints nothing when there
+          # is nothing to print, which is what a diagnostic step needs to do.
+          function Show-Events {
+              param([string]$Log, [scriptblock]$Filter, [int]$Keep)
 
-          Write-Host "===== Service Control Manager errors =====" -ForegroundColor Cyan
-          Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager'; Level = 2 } `
-                       -MaxEvents 20 -ErrorAction SilentlyContinue |
-              Where-Object { $_.Message -match 'PatchMon' } |
-              Format-List TimeCreated, Message
+              try {
+                  $events = Get-WinEvent -LogName $Log -MaxEvents 500 -ErrorAction Stop |
+                      Where-Object $Filter | Select-Object -First $Keep
+              } catch {
+                  Write-Host "could not read the $Log log: $($_.Exception.Message)"
+                  return
+              }
+              if ($events) {
+                  $events | Format-List TimeCreated, LevelDisplayName, Message | Out-String -Width 400 | Write-Host
+              } else {
+                  Write-Host "no matching events in the $Log log"
+              }
+          }
+
+          Write-Host "===== Application event log (PatchMonAgent) =====" -ForegroundColor Cyan
+          Show-Events -Log Application -Keep 50 -Filter { $_.ProviderName -eq 'PatchMonAgent' }
+
+          Write-Host "===== Service Control Manager, PatchMon only =====" -ForegroundColor Cyan
+          Show-Events -Log System -Keep 20 -Filter {
+              $_.ProviderName -eq 'Service Control Manager' -and $_.Message -match 'PatchMon'
+          }
 
       - name: Remove service
         if: always()
