@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 
+	"patchmon-agent/internal/textsan"
 	"patchmon-agent/pkg/models"
 
 	"github.com/sirupsen/logrus"
@@ -55,22 +56,32 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 
 	m.logger.WithField("package_manager", packageManager).Debug("Detected package manager")
 
+	var (
+		pkgs []models.Package
+		err  error
+	)
 	switch packageManager {
 	case "windows":
-		return m.winManager.GetPackages(), nil
+		pkgs = m.winManager.GetPackages()
 	case "apt":
-		return m.aptManager.GetPackages()
+		pkgs, err = m.aptManager.GetPackages()
 	case "dnf", "yum":
-		return m.dnfManager.GetPackages()
+		pkgs, err = m.dnfManager.GetPackages()
 	case "apk":
-		return m.apkManager.GetPackages()
+		pkgs, err = m.apkManager.GetPackages()
 	case "pacman":
-		return m.pacmanManager.GetPackages()
+		pkgs, err = m.pacmanManager.GetPackages()
 	case "pkg":
-		return m.freebsdManager.GetPackages()
+		pkgs, err = m.freebsdManager.GetPackages()
 	default:
 		return nil, fmt.Errorf("unsupported package manager: %s", packageManager)
 	}
+	if err != nil {
+		return nil, err
+	}
+	// Cleaning here, at the single collection choke point, keeps the canonical
+	// hash and the report payload consistent — both are derived downstream.
+	return textsan.CleanPackages(pkgs), nil
 }
 
 // DetectPackageManager detects which package manager is available on the system.

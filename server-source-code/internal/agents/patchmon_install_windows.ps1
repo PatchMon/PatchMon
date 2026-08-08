@@ -265,28 +265,28 @@ if ($serviceStarted) {
 }
 Write-Host ""
 Write-Host "Installation Summary:" -ForegroundColor Green
-Write-Host "   • Configuration directory: $ConfigPath" -ForegroundColor Gray
-Write-Host "   • Agent binary installed: $InstallPath\patchmon-agent.exe" -ForegroundColor Gray
-Write-Host "   • Architecture: $arch" -ForegroundColor Gray
+Write-Host "   - Configuration directory: $ConfigPath" -ForegroundColor Gray
+Write-Host "   - Agent binary installed: $InstallPath\patchmon-agent.exe" -ForegroundColor Gray
+Write-Host "   - Architecture: $arch" -ForegroundColor Gray
 $svc = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
 if ($svc -and $svc.Status -eq "Running") {
-    Write-Host "   • Windows Service: configured and running" -ForegroundColor Gray
+    Write-Host "   - Windows Service: configured and running" -ForegroundColor Gray
 } elseif ($svc) {
-    Write-Host "   • Windows Service: configured (Status: $($svc.Status))" -ForegroundColor Gray
+    Write-Host "   - Windows Service: configured (Status: $($svc.Status))" -ForegroundColor Gray
 } else {
-    Write-Host "   • Windows Service: not configured (run manually: patchmon-agent.exe serve)" -ForegroundColor Gray
+    Write-Host "   - Windows Service: not configured (run manually: patchmon-agent.exe serve)" -ForegroundColor Gray
 }
-Write-Host "   • API credentials configured and tested" -ForegroundColor Gray
-Write-Host "   • Logs: $ConfigPath\patchmon-agent.log" -ForegroundColor Gray
+Write-Host "   - API credentials configured and tested" -ForegroundColor Gray
+Write-Host "   - Logs: $ConfigPath\patchmon-agent.log" -ForegroundColor Gray
 
 Write-Host ""
 Write-Host "Management Commands:" -ForegroundColor Cyan
-Write-Host "   • Test connection: patchmon-agent ping" -ForegroundColor Gray
-Write-Host "   • Manual report: patchmon-agent report" -ForegroundColor Gray
-Write-Host "   • Check status: patchmon-agent diagnostics" -ForegroundColor Gray
-Write-Host "   • Service status: Get-Service -Name $serviceName" -ForegroundColor Gray
-Write-Host "   • Service logs: Get-Content `"$ConfigPath\patchmon-agent.log`" -Tail 50 -Wait" -ForegroundColor Gray
-Write-Host "   • Restart service: Restart-Service -Name $serviceName" -ForegroundColor Gray
+Write-Host "   - Test connection: patchmon-agent ping" -ForegroundColor Gray
+Write-Host "   - Manual report: patchmon-agent report" -ForegroundColor Gray
+Write-Host "   - Check status: patchmon-agent diagnostics" -ForegroundColor Gray
+Write-Host "   - Service status: Get-Service -Name $serviceName" -ForegroundColor Gray
+Write-Host "   - Service logs: Get-Content `"$ConfigPath\patchmon-agent.log`" -Tail 50 -Wait" -ForegroundColor Gray
+Write-Host "   - Restart service: Restart-Service -Name $serviceName" -ForegroundColor Gray
 
 Write-Host ""
 if ($serviceStarted) {

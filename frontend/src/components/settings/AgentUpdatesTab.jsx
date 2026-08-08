@@ -85,6 +85,12 @@ const AgentUpdatesTab = () => {
 	});
 	const serverUrl = serverUrlData?.server_url || window.location.origin;
 
+	// Built once and used for both the displayed text and the copy button. JSX
+	// collapses a multi-line literal to whitespace-separated words, which used
+	// to put a space inside the URL of the command shown on screen.
+	const windowsRemoveCommand = (extraArgs = "") =>
+		`Invoke-WebRequest -Uri "${serverUrl}/api/v1/hosts/remove?os=windows" -UseBasicParsing -OutFile "$env:TEMP\\patchmon-remove.ps1"; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-remove.ps1"${extraArgs}`;
+
 	// Update form data when settings are loaded
 	useEffect(() => {
 		if (settings) {
@@ -694,19 +700,13 @@ const AgentUpdatesTab = () => {
 											</div>
 											<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
 												<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1 break-all overflow-x-auto">
-													$script = Invoke-WebRequest -Uri "{serverUrl}
-													/api/v1/hosts/remove?os=windows " -UseBasicParsing;
-													$script.Content | Out-File -FilePath
-													"$env:TEMP\patchmon-remove.ps1" -Encoding utf8;
-													powershell.exe -ExecutionPolicy Bypass -File
-													"$env:TEMP\patchmon-remove.ps1"
+													{windowsRemoveCommand()}
 												</div>
 												<button
 													type="button"
 													onClick={async () => {
 														try {
-															const cmd = `$script = Invoke-WebRequest -Uri "${serverUrl}/api/v1/hosts/remove?os=windows" -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-remove.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-remove.ps1"`;
-															await copyToClipboard(cmd);
+															await copyToClipboard(windowsRemoveCommand());
 															showToast(
 																"Standard removal command copied!",
 																"success",
@@ -730,19 +730,15 @@ const AgentUpdatesTab = () => {
 											</div>
 											<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
 												<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1 break-all overflow-x-auto">
-													$script = Invoke-WebRequest -Uri "{serverUrl}
-													/api/v1/hosts/remove?os=windows " -UseBasicParsing;
-													$script.Content | Out-File -FilePath
-													"$env:TEMP\patchmon-remove.ps1" -Encoding utf8;
-													powershell.exe -ExecutionPolicy Bypass -File
-													"$env:TEMP\patchmon-remove.ps1" -RemoveAll -Force
+													{windowsRemoveCommand(" -RemoveAll -Force")}
 												</div>
 												<button
 													type="button"
 													onClick={async () => {
 														try {
-															const cmd = `$script = Invoke-WebRequest -Uri "${serverUrl}/api/v1/hosts/remove?os=windows" -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-remove.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-remove.ps1" -RemoveAll -Force`;
-															await copyToClipboard(cmd);
+															await copyToClipboard(
+																windowsRemoveCommand(" -RemoveAll -Force"),
+															);
 															showToast(
 																"Complete removal command copied!",
 																"success",
