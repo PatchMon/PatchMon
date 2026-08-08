@@ -4,10 +4,9 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
-	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/clientip"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 )
 
@@ -42,9 +41,10 @@ func rateLimitUnavailable(w http.ResponseWriter, r *http.Request, typ RateLimitT
 }
 
 // RateLimit returns middleware that limits requests per client by type.
-func RateLimit(rdb *hostctx.RedisResolver, resolved *config.ResolvedConfig, typ RateLimitType) func(http.Handler) http.Handler {
+func RateLimit(rdb *hostctx.RedisResolver, cfgResolver *hostctx.ConfigResolver, typ RateLimitType) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			resolved := cfgResolver.Resolve(r.Context())
 			if rdb == nil || resolved == nil {
 				rateLimitUnavailable(w, r, typ)
 				if rateLimitSecurityCritical(typ) {
@@ -122,9 +122,10 @@ func RateLimit(rdb *hostctx.RedisResolver, resolved *config.ResolvedConfig, typ 
 }
 
 // RateLimitAgentByAPIID returns middleware for agent routes that uses API ID as key.
-func RateLimitAgentByAPIID(rdb *hostctx.RedisResolver, resolved *config.ResolvedConfig, getAPIID func(*http.Request) string) func(http.Handler) http.Handler {
+func RateLimitAgentByAPIID(rdb *hostctx.RedisResolver, cfgResolver *hostctx.ConfigResolver, getAPIID func(*http.Request) string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			resolved := cfgResolver.Resolve(r.Context())
 			if rdb == nil || resolved == nil {
 				slog.Warn("agent rate limiter unavailable, allowing request", "path", r.URL.Path)
 				next.ServeHTTP(w, r)
@@ -174,16 +175,14 @@ func RateLimitAgentByAPIID(rdb *hostctx.RedisResolver, resolved *config.Resolved
 	}
 }
 
+// rateLimitClientIP returns the client IP to key the rate-limit bucket on.
+//
+// It deliberately does NOT read X-Forwarded-For itself. The RealIP middleware
+// has already resolved it into RemoteAddr; parsing the header here would take
+// the client-supplied leftmost entry and let callers rotate buckets at will.
 func rateLimitClientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if idx := strings.Index(xff, ","); idx != -1 {
-			return strings.TrimSpace(xff[:idx])
-		}
-		return strings.TrimSpace(xff)
-	}
-	host, _, _ := strings.Cut(r.RemoteAddr, ":")
-	if host != "" {
-		return host
+	if ip := clientip.FromRequest(r); ip != "" {
+		return ip
 	}
 	return r.RemoteAddr
 }

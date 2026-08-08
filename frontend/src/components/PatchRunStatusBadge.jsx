@@ -46,6 +46,14 @@ const STATUS_MAP = {
 			"bg-secondary-100 text-secondary-600 dark:bg-secondary-600 dark:text-secondary-200",
 		label: "Cancelled",
 	},
+	timed_out: {
+		class: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
+		label: "Timed out",
+	},
+	agent_disconnected: {
+		class: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
+		label: "Agent disconnected",
+	},
 };
 
 /**

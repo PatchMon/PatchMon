@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { Link } from "react-router-dom";
+import { useConfirm } from "../../contexts/ConfirmContext";
+import { useToast } from "../../contexts/ToastContext";
 import api, { dashboardAPI, formatDate, settingsAPI } from "../../utils/api";
 
 // Checkmk CSV export: format per https://docs.checkmk.com/latest/en/hosts_setup.html#import
@@ -143,6 +145,8 @@ function CheckmkExportButton({ include_additional_fields }) {
 }
 
 const Integrations = () => {
+	const confirm = useConfirm();
+	const toast = useToast();
 	// Generate unique IDs for form elements
 	const token_name_id = useId();
 	const token_key_id = useId();
@@ -314,25 +318,25 @@ const Integrations = () => {
 			const error_message = error.response?.data?.errors
 				? error.response.data.errors.map((e) => e.msg).join(", ")
 				: error.response?.data?.error || "Failed to create token";
-			alert(error_message);
+			toast.error(error_message);
 		}
 	};
 
 	const delete_token = async (id, name) => {
-		if (
-			!confirm(
-				`Are you sure you want to delete the token "${name}"? This action cannot be undone.`,
-			)
-		) {
-			return;
-		}
+		const confirmed = await confirm({
+			title: "Delete token",
+			message: `Are you sure you want to delete the token "${name}"?`,
+			confirmLabel: "Delete token",
+		});
+		if (!confirmed) return;
 
 		try {
 			await api.delete(`/auto-enrollment/tokens/${id}`);
+			toast.success(`Token "${name}" deleted`);
 			load_tokens();
 		} catch (error) {
 			console.error("Failed to delete token:", error);
-			alert(error.response?.data?.error || "Failed to delete token");
+			toast.error(error.response?.data?.error || "Failed to delete token");
 		}
 	};
 
@@ -344,7 +348,7 @@ const Integrations = () => {
 			load_tokens();
 		} catch (error) {
 			console.error("Failed to toggle token:", error);
-			alert(error.response?.data?.error || "Failed to toggle token");
+			toast.error(error.response?.data?.error || "Failed to toggle token");
 		}
 	};
 
@@ -416,7 +420,7 @@ const Integrations = () => {
 			const error_message = error.response?.data?.errors
 				? error.response.data.errors.map((e) => e.msg).join(", ")
 				: error.response?.data?.error || "Failed to update token";
-			alert(error_message);
+			toast.error(error_message);
 		}
 	};
 
@@ -457,11 +461,11 @@ const Integrations = () => {
 				}, 2000);
 			} else {
 				console.error("Fallback copy failed");
-				alert("Failed to copy to clipboard. Please copy manually.");
+				toast.error("Failed to copy to clipboard. Please copy manually.");
 			}
 		} catch (fallbackError) {
 			console.error("Fallback copy failed:", fallbackError);
-			alert("Failed to copy to clipboard. Please copy manually.");
+			toast.error("Failed to copy to clipboard. Please copy manually.");
 		}
 	};
 

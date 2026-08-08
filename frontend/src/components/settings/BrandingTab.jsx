@@ -88,7 +88,7 @@ const BrandingTab = () => {
 			// Also update ["settings", "public"] so LogoProvider (favicon) updates immediately
 			queryClient.setQueryData(["settings", "public"], updateCache);
 			// Invalidate to refetch full settings (ensures updated_at from server)
-			queryClient.invalidateQueries(["settings"]);
+			queryClient.invalidateQueries({ queryKey: ["settings"] });
 			setLogoUploadState((prev) => ({
 				...prev,
 				[variables.logoType]: { uploading: false, error: null },
@@ -134,7 +134,7 @@ const BrandingTab = () => {
 			};
 			queryClient.setQueryData(["settings"], updateCache);
 			queryClient.setQueryData(["settings", "public"], updateCache);
-			queryClient.invalidateQueries(["settings"]);
+			queryClient.invalidateQueries({ queryKey: ["settings"] });
 		},
 		onError: (error) => {
 			console.error("Reset logo error:", error);

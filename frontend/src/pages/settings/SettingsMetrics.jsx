@@ -15,12 +15,29 @@ import {
 import { useState } from "react";
 import { formatDate } from "../../utils/api";
 
-// API functions - use httpOnly cookies for auth
+// These bypass the shared axios client, which rejects on non-2xx. Raw fetch
+// resolves for a 401 or 500, so onSuccess would run for a failed request.
+const parseJSONResponse = async (res) => {
+	if (!res.ok) {
+		let message = `Request failed (${res.status})`;
+		try {
+			const body = await res.json();
+			if (body?.error) {
+				message = body.error;
+			}
+		} catch {
+			// Non-JSON error body; keep the status-based message.
+		}
+		throw new Error(message);
+	}
+	return res.json();
+};
+
 const metricsAPI = {
 	getSettings: () =>
 		fetch("/api/v1/metrics", {
 			credentials: "include",
-		}).then((res) => res.json()),
+		}).then(parseJSONResponse),
 	updateSettings: (data) =>
 		fetch("/api/v1/metrics", {
 			method: "PUT",
@@ -29,17 +46,17 @@ const metricsAPI = {
 			},
 			credentials: "include",
 			body: JSON.stringify(data),
-		}).then((res) => res.json()),
+		}).then(parseJSONResponse),
 	regenerateId: () =>
 		fetch("/api/v1/metrics/regenerate-id", {
 			method: "POST",
 			credentials: "include",
-		}).then((res) => res.json()),
+		}).then(parseJSONResponse),
 	sendNow: () =>
 		fetch("/api/v1/metrics/send-now", {
 			method: "POST",
 			credentials: "include",
-		}).then((res) => res.json()),
+		}).then(parseJSONResponse),
 };
 
 const SettingsMetrics = () => {
@@ -61,7 +78,7 @@ const SettingsMetrics = () => {
 		mutationFn: (enabled) =>
 			metricsAPI.updateSettings({ metrics_enabled: enabled }),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["metrics-settings"]);
+			queryClient.invalidateQueries({ queryKey: ["metrics-settings"] });
 		},
 	});
 
@@ -69,7 +86,7 @@ const SettingsMetrics = () => {
 	const regenerateIdMutation = useMutation({
 		mutationFn: () => metricsAPI.regenerateId(),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["metrics-settings"]);
+			queryClient.invalidateQueries({ queryKey: ["metrics-settings"] });
 		},
 	});
 
@@ -77,7 +94,7 @@ const SettingsMetrics = () => {
 	const sendNowMutation = useMutation({
 		mutationFn: () => metricsAPI.sendNow(),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["metrics-settings"]);
+			queryClient.invalidateQueries({ queryKey: ["metrics-settings"] });
 		},
 	});
 

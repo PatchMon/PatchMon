@@ -44,6 +44,34 @@ func (q *Queries) CountRepositories(ctx context.Context) (int32, error) {
 	return column_1, err
 }
 
+const countRepositoriesForList = `-- name: CountRepositoriesForList :one
+SELECT COUNT(*)::int
+FROM repositories r
+WHERE ($1::text IS NULL OR EXISTS (SELECT 1 FROM host_repositories hr WHERE hr.repository_id = r.id AND hr.host_id = $1))
+AND ($2::text IS NULL OR r.name ILIKE '%' || $2 || '%' OR r.url ILIKE '%' || $2 || '%' OR r.distribution ILIKE '%' || $2 || '%' OR COALESCE(r.description, '') ILIKE '%' || $2 || '%')
+AND ($3::text IS NULL OR ($3 = 'active' AND r.is_active = true) OR ($3 = 'inactive' AND r.is_active = false))
+AND ($4::text IS NULL OR ($4 = 'secure' AND r.is_secure = true) OR ($4 = 'insecure' AND r.is_secure = false))
+`
+
+type CountRepositoriesForListParams struct {
+	HostID *string `json:"host_id"`
+	Search *string `json:"search"`
+	Status *string `json:"status"`
+	Type   *string `json:"type"`
+}
+
+func (q *Queries) CountRepositoriesForList(ctx context.Context, arg CountRepositoriesForListParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countRepositoriesForList,
+		arg.HostID,
+		arg.Search,
+		arg.Status,
+		arg.Type,
+	)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countSecureRepositories = `-- name: CountSecureRepositories :one
 SELECT COUNT(*)::int FROM repositories WHERE is_secure = true
 `
@@ -299,6 +327,49 @@ func (q *Queries) GetHostRepositoryCountByHostIDs(ctx context.Context, dollar_1 
 	return items, nil
 }
 
+const getRepoCountsForRepos = `-- name: GetRepoCountsForRepos :many
+SELECT hr.repository_id,
+    COUNT(*)::int AS host_count,
+    COUNT(*) FILTER (WHERE hr.is_enabled)::int AS enabled_host_count,
+    COUNT(*) FILTER (WHERE h.status = 'active')::int AS active_host_count
+FROM host_repositories hr
+JOIN hosts h ON h.id = hr.host_id
+WHERE hr.repository_id = ANY($1::text[])
+GROUP BY hr.repository_id
+`
+
+type GetRepoCountsForReposRow struct {
+	RepositoryID     string `json:"repository_id"`
+	HostCount        int32  `json:"host_count"`
+	EnabledHostCount int32  `json:"enabled_host_count"`
+	ActiveHostCount  int32  `json:"active_host_count"`
+}
+
+func (q *Queries) GetRepoCountsForRepos(ctx context.Context, dollar_1 []string) ([]GetRepoCountsForReposRow, error) {
+	rows, err := q.db.Query(ctx, getRepoCountsForRepos, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetRepoCountsForReposRow
+	for rows.Next() {
+		var i GetRepoCountsForReposRow
+		if err := rows.Scan(
+			&i.RepositoryID,
+			&i.HostCount,
+			&i.EnabledHostCount,
+			&i.ActiveHostCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getRepositoryByID = `-- name: GetRepositoryByID :one
 SELECT id, name, url, distribution, components, repo_type, is_active, is_secure, priority, description, created_at, updated_at FROM repositories WHERE id = $1
 `
@@ -319,6 +390,56 @@ func (q *Queries) GetRepositoryByID(ctx context.Context, id string) (Repository,
 		&i.Description,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getRepositoryByURLDistComponents = `-- name: GetRepositoryByURLDistComponents :one
+SELECT id, name, repo_type, is_active, is_secure, priority, description
+FROM repositories
+WHERE url = $1 AND distribution = $2 AND components = $3
+`
+
+type GetRepositoryByURLDistComponentsParams struct {
+	Url          string `json:"url"`
+	Distribution string `json:"distribution"`
+	Components   string `json:"components"`
+}
+
+type GetRepositoryByURLDistComponentsRow struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	RepoType    string  `json:"repo_type"`
+	IsActive    bool    `json:"is_active"`
+	IsSecure    bool    `json:"is_secure"`
+	Priority    *int32  `json:"priority"`
+	Description *string `json:"description"`
+}
+
+// Lock-free read on the (url, distribution, components) unique key. Serves
+// two purposes for the report path, both described on UpsertRepository:
+//  1. The pre-check that lets an unchanged report skip the upsert entirely,
+//     so it never takes the hot-row lock. Hence the projection is exactly
+//     the columns UpsertRepository's DO UPDATE would set.
+//  2. Resolving the id when that upsert skipped its no-op DO UPDATE and
+//     returned nothing. As a separate statement it reads at a fresh
+//     snapshot and sees rows committed by concurrent reports.
+//
+// Use (2) REQUIRES READ COMMITTED: only there does a new statement take a new
+// snapshot. At REPEATABLE READ or SERIALIZABLE it would reuse the transaction
+// snapshot and resolve nothing. The pool sets no TxOptions, so the server
+// default applies — do not raise it without revisiting this.
+func (q *Queries) GetRepositoryByURLDistComponents(ctx context.Context, arg GetRepositoryByURLDistComponentsParams) (GetRepositoryByURLDistComponentsRow, error) {
+	row := q.db.QueryRow(ctx, getRepositoryByURLDistComponents, arg.Url, arg.Distribution, arg.Components)
+	var i GetRepositoryByURLDistComponentsRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.RepoType,
+		&i.IsActive,
+		&i.IsSecure,
+		&i.Priority,
+		&i.Description,
 	)
 	return i, err
 }
@@ -405,23 +526,79 @@ func (q *Queries) ListOrphanedRepositories(ctx context.Context) ([]ListOrphanedR
 }
 
 const listRepositories = `-- name: ListRepositories :many
-SELECT id, name, url, distribution, components, repo_type, is_active, is_secure, priority, description, created_at, updated_at FROM repositories r
-WHERE ($1::text IS NULL OR EXISTS (SELECT 1 FROM host_repositories hr WHERE hr.repository_id = r.id AND hr.host_id = $1))
-AND ($2::text IS NULL OR r.name ILIKE '%' || $2 || '%' OR r.url ILIKE '%' || $2 || '%' OR r.distribution ILIKE '%' || $2 || '%' OR COALESCE(r.description, '') ILIKE '%' || $2 || '%')
-AND ($3::text IS NULL OR ($3 = 'active' AND r.is_active = true) OR ($3 = 'inactive' AND r.is_active = false))
-AND ($4::text IS NULL OR ($4 = 'secure' AND r.is_secure = true) OR ($4 = 'insecure' AND r.is_secure = false))
-ORDER BY r.name ASC, r.url ASC
+WITH filtered_repositories AS (
+    SELECT r.id, r.name, r.url, r.distribution, r.components, r.repo_type, r.is_active, r.is_secure, r.priority, r.description, r.created_at, r.updated_at
+    FROM repositories r
+    WHERE ($5::text IS NULL OR EXISTS (SELECT 1 FROM host_repositories hr WHERE hr.repository_id = r.id AND hr.host_id = $5))
+    AND ($6::text IS NULL OR r.name ILIKE '%' || $6 || '%' OR r.url ILIKE '%' || $6 || '%' OR r.distribution ILIKE '%' || $6 || '%' OR COALESCE(r.description, '') ILIKE '%' || $6 || '%')
+    AND ($7::text IS NULL OR ($7 = 'active' AND r.is_active = true) OR ($7 = 'inactive' AND r.is_active = false))
+    AND ($8::text IS NULL OR ($8 = 'secure' AND r.is_secure = true) OR ($8 = 'insecure' AND r.is_secure = false))
+),
+repo_counts AS (
+    SELECT hr.repository_id, COUNT(*)::int AS host_count
+    FROM host_repositories hr
+    JOIN filtered_repositories fr ON fr.id = hr.repository_id
+    GROUP BY hr.repository_id
+),
+enriched_repositories AS (
+    SELECT fr.id, fr.name, fr.url, fr.distribution, fr.components, fr.repo_type, fr.is_active, fr.is_secure, fr.priority, fr.description, fr.created_at, fr.updated_at, COALESCE(rc.host_count, 0)::int AS host_count
+    FROM filtered_repositories fr
+    LEFT JOIN repo_counts rc ON rc.repository_id = fr.id
+)
+SELECT id, name, url, distribution, components, repo_type, is_active, is_secure, priority, description, created_at, updated_at
+FROM enriched_repositories
+ORDER BY
+    CASE WHEN $1::text = 'name'         AND $2::text = 'asc'  THEN name END ASC,
+    CASE WHEN $1::text = 'name'         AND $2::text = 'desc' THEN name END DESC,
+    CASE WHEN $1::text = 'url'          AND $2::text = 'asc'  THEN url END ASC,
+    CASE WHEN $1::text = 'url'          AND $2::text = 'desc' THEN url END DESC,
+    CASE WHEN $1::text = 'distribution' AND $2::text = 'asc'  THEN distribution END ASC,
+    CASE WHEN $1::text = 'distribution' AND $2::text = 'desc' THEN distribution END DESC,
+    CASE WHEN $1::text = 'security'     AND $2::text = 'asc'  THEN is_secure END ASC,
+    CASE WHEN $1::text = 'security'     AND $2::text = 'desc' THEN is_secure END DESC,
+    CASE WHEN $1::text = 'status'       AND $2::text = 'asc'  THEN is_active END DESC,
+    CASE WHEN $1::text = 'status'       AND $2::text = 'desc' THEN is_active END ASC,
+    CASE WHEN $1::text = 'hostCount'    AND $2::text = 'asc'  THEN host_count END ASC,
+    CASE WHEN $1::text = 'hostCount'    AND $2::text = 'desc' THEN host_count END DESC,
+    name ASC,
+    url ASC,
+    id ASC
+LIMIT $4::int
+OFFSET $3::int
 `
 
 type ListRepositoriesParams struct {
-	HostID *string `json:"host_id"`
-	Search *string `json:"search"`
-	Status *string `json:"status"`
-	Type   *string `json:"type"`
+	SortKey   string  `json:"sort_key"`
+	SortDir   string  `json:"sort_dir"`
+	RowOffset int32   `json:"row_offset"`
+	RowLimit  int32   `json:"row_limit"`
+	HostID    *string `json:"host_id"`
+	Search    *string `json:"search"`
+	Status    *string `json:"status"`
+	Type      *string `json:"type"`
 }
 
-func (q *Queries) ListRepositories(ctx context.Context, arg ListRepositoriesParams) ([]Repository, error) {
+type ListRepositoriesRow struct {
+	ID           string           `json:"id"`
+	Name         string           `json:"name"`
+	Url          string           `json:"url"`
+	Distribution string           `json:"distribution"`
+	Components   string           `json:"components"`
+	RepoType     string           `json:"repo_type"`
+	IsActive     bool             `json:"is_active"`
+	IsSecure     bool             `json:"is_secure"`
+	Priority     *int32           `json:"priority"`
+	Description  *string          `json:"description"`
+	CreatedAt    pgtype.Timestamp `json:"created_at"`
+	UpdatedAt    pgtype.Timestamp `json:"updated_at"`
+}
+
+func (q *Queries) ListRepositories(ctx context.Context, arg ListRepositoriesParams) ([]ListRepositoriesRow, error) {
 	rows, err := q.db.Query(ctx, listRepositories,
+		arg.SortKey,
+		arg.SortDir,
+		arg.RowOffset,
+		arg.RowLimit,
 		arg.HostID,
 		arg.Search,
 		arg.Status,
@@ -431,9 +608,9 @@ func (q *Queries) ListRepositories(ctx context.Context, arg ListRepositoriesPara
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Repository
+	var items []ListRepositoriesRow
 	for rows.Next() {
-		var i Repository
+		var i ListRepositoriesRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
@@ -513,6 +690,13 @@ ON CONFLICT (url, distribution, components) DO UPDATE SET
     priority    = EXCLUDED.priority,
     description = COALESCE(EXCLUDED.description, repositories.description),
     updated_at  = NOW()
+WHERE
+       repositories.name        IS DISTINCT FROM EXCLUDED.name
+    OR repositories.repo_type   IS DISTINCT FROM EXCLUDED.repo_type
+    OR repositories.is_active   IS DISTINCT FROM EXCLUDED.is_active
+    OR repositories.is_secure   IS DISTINCT FROM EXCLUDED.is_secure
+    OR repositories.priority    IS DISTINCT FROM EXCLUDED.priority
+    OR repositories.description IS DISTINCT FROM COALESCE(EXCLUDED.description, repositories.description)
 RETURNING id
 `
 
@@ -539,13 +723,33 @@ type UpsertRepositoryParams struct {
 // KEY UPDATE — safe vs concurrent FK FOR KEY SHARE locks held by
 // host_packages inserts pointing at this row.
 //
-// Returns the canonical id whether the row was newly inserted, updated, or
-// (in the no-op case where every column matches) updated to identical
-// values. There is no skip-no-op WHERE here because reports rarely repeat
-// identical repository metadata across runs and the row count per host is
-// small (typically 1-10) — the WAL/lock cost of unconditional UPDATE is
-// negligible compared with packages, and avoiding the WHERE keeps RETURNING
-// always-populated for a simpler caller contract.
+// Repository rows are shared across the whole fleet: every host on a distro
+// reports the same (url, distribution, components). Running this statement on
+// every report takes a FOR NO KEY UPDATE lock on ONE hot row and holds it
+// until the report transaction commits — which is after that transaction's
+// full host_packages delete and bulk insert. Contention scales with fleet
+// concurrency, not with the handful of repository rows per host, so at 64
+// concurrent reports they serialise behind the hot row until statement_timeout.
+//
+// The skip-no-op WHERE below does NOT prevent that lock. PostgreSQL's
+// ON CONFLICT arbiter locks the conflicting tuple BEFORE it evaluates the
+// DO UPDATE WHERE, so a skipped no-op still holds the row lock to end of
+// transaction (verified: holder reports INSERT 0 0 while a concurrent
+// FOR NO KEY UPDATE on the same row blocks). The WHERE earns its keep by
+// avoiding the heap write, dead tuple and WAL when two reports race on the
+// same genuine change — not by avoiding locks.
+//
+// Avoiding the lock is therefore the CALLER's job: upsertRepositoryResolvingID
+// reads the row first (a plain SELECT takes no lock) and only reaches this
+// statement when the row is absent or a column it would set actually differs.
+// Do not "simplify" the caller back to calling this unconditionally.
+//
+// Consequence of the WHERE: RETURNING is NOT always populated. A skipped
+// no-op returns zero rows and this is a :one query, so the caller gets
+// pgx.ErrNoRows and MUST resolve the id via GetRepositoryByURLDistComponents.
+// Do NOT "fix" this with a same-statement fallback SELECT — both halves would
+// read at the same statement snapshot and miss rows a concurrent transaction
+// committed after the statement began.
 func (q *Queries) UpsertRepository(ctx context.Context, arg UpsertRepositoryParams) (string, error) {
 	row := q.db.QueryRow(ctx, upsertRepository,
 		arg.ID,

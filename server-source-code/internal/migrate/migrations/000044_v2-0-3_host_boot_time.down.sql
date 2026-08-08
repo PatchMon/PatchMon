@@ -1,0 +1,1 @@
+ALTER TABLE hosts DROP COLUMN IF EXISTS boot_time;

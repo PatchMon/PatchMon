@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,6 +27,12 @@ const (
 	scapContentDir = "/usr/share/xml/scap/ssg/content"
 	osReleasePath  = "/etc/os-release"
 )
+
+// ErrContentMissing reports that the oscap binary is installed and working but
+// no SCAP datastream for this OS is on disk. It is recoverable: the PatchMon
+// server holds the authoritative content, so callers should continue to the
+// server sync instead of failing the install.
+var ErrContentMissing = errors.New("openscap is installed but no SCAP content is present for this OS")
 
 // Profile mappings for different OS families
 var profileMappings = map[string]map[string]string{
@@ -369,8 +376,8 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 				upgradePkgs = append(upgradePkgs, "ssg-debian")
 			}
 			upgradeCmd := exec.CommandContext(ctx, "apt-get", append([]string{"install", "--only-upgrade", "-y", "-qq",
-			    "-o", "Dpkg::Options::=--force-confdef",
-    			"-o", "Dpkg::Options::=--force-confold"}, upgradePkgs...)...)
+				"-o", "Dpkg::Options::=--force-confdef",
+				"-o", "Dpkg::Options::=--force-confold"}, upgradePkgs...)...)
 			upgradeCmd.Env = nonInteractiveEnv
 			upgradeOutput, upgradeErr := upgradeCmd.CombinedOutput()
 			if upgradeErr != nil {
@@ -453,6 +460,16 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 	// Re-check availability after installation
 	s.checkAvailability()
 	if !s.available {
+		// Distinguish "scanner works, content absent" from a genuinely broken
+		// install. The former is recoverable and common: apt reports success
+		// for ssg-base and ssg-debderived whenever dpkg already has them
+		// registered, even if the files are gone from disk, and neither ships
+		// Ubuntu 24.04 content in the first place. The PatchMon server serves
+		// the correct datastream, so callers should carry on to the server
+		// sync rather than abandoning the install.
+		if _, lookErr := exec.LookPath(oscapBinary); lookErr == nil && s.getContentFile() == "" {
+			return ErrContentMissing
+		}
 		return fmt.Errorf("OpenSCAP installed but still not available - content files may be missing")
 	}
 
@@ -2106,65 +2123,4 @@ func (s *OpenSCAPScanner) extractTitle(ruleID string) string {
 	}
 
 	return title
-}
-
-// Cleanup removes OpenSCAP and related packages
-// Note: This is optional - packages can be left installed if desired
-func (s *OpenSCAPScanner) Cleanup() error {
-	if !s.available {
-		s.logger.Debug("OpenSCAP not installed, nothing to clean up")
-		return nil
-	}
-
-	s.logger.Info("Removing OpenSCAP packages...")
-
-	// Create context with timeout for package operations
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-
-	// Environment for non-interactive apt operations
-	nonInteractiveEnv := append(os.Environ(),
-		"DEBIAN_FRONTEND=noninteractive",
-		"NEEDRESTART_MODE=a",
-		"NEEDRESTART_SUSPEND=1",
-	)
-
-	var removeCmd *exec.Cmd
-
-	switch s.osInfo.Family {
-	case "debian":
-		removeCmd = exec.CommandContext(ctx, "apt-get", "remove", "-y", "-qq",
-			"-o", "Dpkg::Options::=--force-confdef",
-			"-o", "Dpkg::Options::=--force-confold",
-			"openscap-scanner", "ssg-debderived", "ssg-base")
-		removeCmd.Env = nonInteractiveEnv
-	case "rhel":
-		if _, err := exec.LookPath("dnf"); err == nil {
-			removeCmd = exec.CommandContext(ctx, "dnf", "remove", "-y", "-q", "openscap-scanner", "scap-security-guide")
-		} else {
-			removeCmd = exec.CommandContext(ctx, "yum", "remove", "-y", "-q", "openscap-scanner", "scap-security-guide")
-		}
-	case "suse":
-		removeCmd = exec.CommandContext(ctx, "zypper", "--non-interactive", "remove", "openscap-utils", "scap-security-guide")
-	default:
-		s.logger.Debug("Unknown OS family, skipping package removal")
-		return nil
-	}
-
-	output, err := removeCmd.CombinedOutput()
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			s.logger.Warn("OpenSCAP removal timed out after 3 minutes")
-			return fmt.Errorf("removal timed out after 3 minutes")
-		}
-		s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to remove OpenSCAP packages")
-		// Don't return error - cleanup is best-effort
-		return nil
-	}
-
-	s.logger.Info("OpenSCAP packages removed successfully")
-	s.available = false
-	s.version = ""
-
-	return nil
 }

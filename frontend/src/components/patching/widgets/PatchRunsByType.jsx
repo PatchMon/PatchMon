@@ -41,7 +41,7 @@ const PatchRunsByType = ({ data }) => {
 	const options = {
 		...base_options,
 		onClick: (_event, elements) => {
-			if (elements.length > 0) {
+			if (elements.length > 0 && has_data) {
 				const type = TYPE_FILTERS[elements[0].index];
 				if (type) {
 					navigate(`/patching?tab=runs&type=${type}`);
@@ -50,7 +50,7 @@ const PatchRunsByType = ({ data }) => {
 		},
 		onHover: (event, elements) => {
 			event.native.target.style.cursor =
-				elements.length > 0 ? "pointer" : "default";
+				has_data && elements.length > 0 ? "pointer" : "default";
 		},
 	};
 

@@ -401,15 +401,36 @@ func getStringClaim(primary, fallback map[string]interface{}, key string) string
 	return ""
 }
 
+// getBoolClaim reads a boolean claim, tolerating the string and numeric
+// encodings real providers emit.
+//
+// Only v.(bool) was accepted before. email_verified now gates login, so a
+// provider sending "true" as a JSON string (some Keycloak configurations) or 1
+// would have every email-matched login rejected with "Email not verified at
+// identity provider". Being liberal about the ENCODING is safe; being liberal
+// about a MISSING claim would not be, so absent still means false.
+//
+// Note this does not help Microsoft Entra, which omits email_verified
+// altogether. That needs an explicit per-provider trust setting rather than a
+// decoding change, and is called out in the operator guide.
 func getBoolClaim(primary, fallback map[string]interface{}, key string) bool {
-	if v, ok := primary[key]; ok && v != nil {
-		if b, ok := v.(bool); ok {
-			return b
+	for _, claims := range []map[string]interface{}{primary, fallback} {
+		v, ok := claims[key]
+		if !ok || v == nil {
+			continue
 		}
-	}
-	if v, ok := fallback[key]; ok && v != nil {
-		if b, ok := v.(bool); ok {
-			return b
+		switch t := v.(type) {
+		case bool:
+			return t
+		case string:
+			switch strings.ToLower(strings.TrimSpace(t)) {
+			case "true", "1", "yes":
+				return true
+			case "false", "0", "no", "":
+				return false
+			}
+		case float64: // encoding/json decodes all JSON numbers as float64
+			return t != 0
 		}
 	}
 	return false

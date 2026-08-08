@@ -42,7 +42,7 @@ func (h *AIHandler) checkRateLimit(ctx context.Context, userID string) bool {
 	if rdb == nil || userID == "" {
 		return true
 	}
-	key := "ratelimit:ai:" + userID
+	key := hostctx.TenantKey(ctx, "ratelimit:ai:"+userID)
 	count, err := rdb.Incr(ctx, key).Result()
 	if err != nil {
 		return true // fail open

@@ -66,8 +66,8 @@ const ProtocolUrlTab = () => {
 			if (data?.settings) {
 				queryClient.setQueryData(["settings"], data.settings);
 			}
-			queryClient.invalidateQueries(["settings"]);
-			queryClient.invalidateQueries(["serverUrl"]);
+			queryClient.invalidateQueries({ queryKey: ["settings"] });
+			queryClient.invalidateQueries({ queryKey: ["serverUrl"] });
 			setIsDirty(false);
 			setErrors({});
 		},

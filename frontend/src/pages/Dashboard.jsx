@@ -106,6 +106,12 @@ ChartJS.register(
 	Title,
 );
 
+// Hosts-page filter shared by the errored-hosts card and the "Errored" segment
+// of the update-status chart. The server-side `inactive` filter resolves to the
+// same "active host, silent past 2x the update interval" set the card counts,
+// so the count and the resulting list always agree.
+const ERRORED_HOSTS_FILTER = "inactive";
+
 // Drag-to-resize handle on the right edge of a card in edit mode
 const CARD_RESIZE_PIXELS_PER_COLUMN = 40;
 
@@ -268,11 +274,14 @@ const Dashboard = () => {
 	};
 
 	const handleErroredHostsClick = () => {
-		navigate("/hosts?filter=inactive");
+		navigate(`/hosts?filter=${ERRORED_HOSTS_FILTER}`);
 	};
 
 	const handleOfflineHostsClick = () => {
-		navigate("/hosts?filter=offline");
+		// "Offline" was a conflated label in the legacy UI; the new vocabulary
+		// is "stale" (overdue + WS down). The Hosts page also legacy-redirects
+		// `?filter=offline` to `?filter=stale` for any old bookmarks.
+		navigate("/hosts?filter=stale");
 	};
 
 	// New navigation handlers for top cards
@@ -340,6 +349,8 @@ const Dashboard = () => {
 				filter = "needsUpdates";
 			} else if (statusName.toLowerCase().includes("up to date")) {
 				filter = "upToDate";
+			} else if (statusName.toLowerCase().includes("errored")) {
+				filter = ERRORED_HOSTS_FILTER;
 			} else if (statusName.toLowerCase().includes("stale")) {
 				filter = "stale";
 			}
@@ -367,10 +378,11 @@ const Dashboard = () => {
 	};
 
 	// Helper function to format the update interval threshold
+	// The server serialises this as update_interval, not updateInterval.
 	const formatUpdateIntervalThreshold = () => {
-		if (!settings?.updateInterval) return "24 hours";
+		if (!settings?.update_interval) return "24 hours";
 
-		const intervalMinutes = settings.updateInterval;
+		const intervalMinutes = settings.update_interval;
 		const thresholdMinutes = intervalMinutes * 2; // 2x the update interval
 
 		if (thresholdMinutes < 60) {
@@ -1267,21 +1279,21 @@ const Dashboard = () => {
 								{stats.cards.offlineHosts > 0 ? (
 									<>
 										<h3 className="text-sm font-medium text-warning-800">
-											{stats.cards.offlineHosts} host
-											{stats.cards.offlineHosts > 1 ? "s" : ""} offline/stale
+											{stats.cards.offlineHosts} stale host
+											{stats.cards.offlineHosts > 1 ? "s" : ""}
 										</h3>
 										<p className="text-sm text-warning-700 mt-1">
-											These hosts haven't reported in{" "}
-											{formatUpdateIntervalThreshold() * 3}+ minutes.
+											These hosts haven't reported in over{" "}
+											{formatUpdateIntervalThreshold()}.
 										</p>
 									</>
 								) : (
 									<>
 										<h3 className="text-sm font-medium text-success-800">
-											All hosts are online
+											All hosts are reporting
 										</h3>
 										<p className="text-sm text-success-700 mt-1">
-											No hosts are offline or stale.
+											No hosts are stale.
 										</p>
 									</>
 								)}
@@ -1697,9 +1709,9 @@ const Dashboard = () => {
 								</div>
 								<div
 									className="text-xs text-secondary-500 dark:text-white/70 truncate"
-									title="Online"
+									title="Reporting"
 								>
-									Online
+									Reporting
 								</div>
 								<div className="text-[10px] sm:text-xs text-secondary-400 dark:text-white/60 truncate">
 									{onlineHosts}/{stats.cards.totalHosts}
