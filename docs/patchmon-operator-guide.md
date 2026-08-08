@@ -1657,6 +1657,20 @@ Redis is used for background job queues (asynq), bootstrap tokens, and TFA locko
 | `REDIS_CONNECT_TIMEOUT_MS` | `60000` | No | Milliseconds to wait when establishing a new connection to Redis before timing out. |
 | `REDIS_COMMAND_TIMEOUT_MS` | `60000` | No | Milliseconds to wait for a Redis command to complete before timing out. |
 
+**Required Redis permissions when using ACLs:**
+
+If you set `REDIS_USER` and restrict that user with an ACL command allowlist, the user must be able to run server-side Lua scripts. Rate limiting evaluates a small script so that a counter and its expiry are set together, which stops a dropped expiry stranding a client on HTTP 429 indefinitely.
+
+Grant at least:
+
+```
+ACL SETUSER patchmon on >yourpassword ~* +@read +@write +@keyspace +eval +evalsha +script
+```
+
+Without `+eval` and `+evalsha`, rate limiting fails. Sign-in and password endpoints deliberately fail closed when the rate limiter is unavailable, so the visible symptom is `503 Service temporarily unavailable` on login rather than a rate limiting warning. If you see that after tightening an ACL, check these permissions first.
+
+Redis users with no ACL restrictions, and deployments using `REDIS_PASSWORD` alone, need no change.
+
 **Generating a secure Redis password:**
 
 ```bash
