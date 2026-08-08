@@ -257,6 +257,18 @@ func (s *UsersStore) UpdatePassword(ctx context.Context, userID, hash string) er
 	return d.Queries.UpdatePassword(ctx, db.UpdatePasswordParams{PasswordHash: &hash, ID: userID})
 }
 
+// UpdateLastLogin records the time of a successful sign-in.
+//
+// The OIDC and Discord paths set this as part of their profile sync, so this
+// exists for local sign-ins, which had no write path at all.
+func (s *UsersStore) UpdateLastLogin(ctx context.Context, userID string, at time.Time) error {
+	d := s.db.DB(ctx)
+	return d.Queries.UpdateLastLogin(ctx, db.UpdateLastLoginParams{
+		LastLogin: pgtime.From(at),
+		ID:        userID,
+	})
+}
+
 // Delete deletes a user.
 func (s *UsersStore) Delete(ctx context.Context, id string) error {
 	d := s.db.DB(ctx)

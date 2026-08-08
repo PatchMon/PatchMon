@@ -64,6 +64,9 @@ DELETE FROM users WHERE id = $1;
 -- name: UpdatePassword :exec
 UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2;
 
+-- name: UpdateLastLogin :exec
+UPDATE users SET last_login = $1 WHERE id = $2;
+
 -- name: CreateUser :exec
 INSERT INTO users (
     id, username, email, password_hash, role, is_active, created_at, updated_at,

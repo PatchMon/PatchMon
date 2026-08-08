@@ -668,6 +668,20 @@ func (q *Queries) SetNewsletterSubscribed(ctx context.Context, id string) error 
 	return err
 }
 
+const updateLastLogin = `-- name: UpdateLastLogin :exec
+UPDATE users SET last_login = $1 WHERE id = $2
+`
+
+type UpdateLastLoginParams struct {
+	LastLogin pgtype.Timestamp `json:"last_login"`
+	ID        string           `json:"id"`
+}
+
+func (q *Queries) UpdateLastLogin(ctx context.Context, arg UpdateLastLoginParams) error {
+	_, err := q.db.Exec(ctx, updateLastLogin, arg.LastLogin, arg.ID)
+	return err
+}
+
 const updatePassword = `-- name: UpdatePassword :exec
 UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2
 `

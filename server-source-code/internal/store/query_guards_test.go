@@ -116,3 +116,19 @@ func TestUpdateHostMetrics_RebootReasonIsPairedWithNeedsReboot(t *testing.T) {
 		}
 	}
 }
+
+// #730: local sign-ins never wrote users.last_login, so the Users table showed
+// "Never" and the dashboard's recent-logins widget was empty on password-only
+// installs. The query must set the column and be scoped to a single user.
+func TestUpdateLastLoginWritesTheColumnScopedToOneUser(t *testing.T) {
+	t.Parallel()
+
+	stmt := extractStatement(t, readQueryFile(t, "../sqlc/queries/users.sql"), "UpdateLastLogin")
+
+	if !strings.Contains(stmt, "last_login") {
+		t.Error("UpdateLastLogin does not assign last_login")
+	}
+	if !strings.Contains(stmt, "WHERE id =") {
+		t.Error("UpdateLastLogin is not scoped by id; it would stamp every user")
+	}
+}

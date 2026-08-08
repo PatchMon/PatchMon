@@ -497,6 +497,11 @@ func setAuthCookiesWithRemember(w http.ResponseWriter, r *http.Request, accessTo
 func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, user *models.User, rememberMe bool) {
 	expiresIn := h.getJwtExpiresInSeconds(r.Context())
 
+	// Losing a timestamp is not a reason to fail an otherwise valid sign-in.
+	if err := h.users.UpdateLastLogin(r.Context(), user.ID, time.Now()); err != nil && h.log != nil {
+		h.log.Error("failed to record last login", "user_id", user.ID, "error", err)
+	}
+
 	refreshExpSec := int64(7 * 24 * 3600)
 	if rememberMe {
 		refreshExpSec = 30 * 24 * 3600
