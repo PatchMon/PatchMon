@@ -1,7 +1,10 @@
 package config
 
 import (
+	"errors"
+	"io/fs"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -32,6 +35,33 @@ func bulkyViper() *viper.Viper {
 	}
 	v.Set("integrations", padding)
 	return v
+}
+
+// classifyReadFailure buckets a failed config read by root cause. The three
+// buckets need different fixes, so a failure that does not say which one it hit
+// is not actionable.
+//
+// Deliberately string-based rather than build-tagged: this file compiles on
+// every platform, and the Windows error text is what identifies the case.
+func classifyReadFailure(err error) string {
+	if err == nil {
+		return "parsed but empty"
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return "file missing (gap between remove and rename)"
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "being used by another process"),
+		strings.Contains(msg, "sharing violation"):
+		return "sharing violation (locked out mid-replace)"
+	case strings.Contains(msg, "access is denied"):
+		return "access denied"
+	case strings.Contains(msg, "yaml"), strings.Contains(msg, "unmarshal"):
+		return "parse error (genuinely partial content)"
+	default:
+		return "other: " + err.Error()
+	}
 }
 
 // A reader must never observe a partially written config. saveConfigLocked runs
@@ -76,6 +106,15 @@ func TestConfigWrite_ReaderNeverObservesPartialFile(t *testing.T) {
 				}
 			}()
 
+			// Bucketed by cause. "The write is not atomic" can mean three very
+			// different things, and they do not share a fix: a missing file is
+			// a gap between unlink and rename, a sharing violation is the
+			// reader being locked out mid-replace, and a parse error is the
+			// only one that means genuinely partial content. Counting them
+			// together hides which one is happening.
+			causes := map[string]int{}
+			var sampleErr error
+
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -86,18 +125,27 @@ func TestConfigWrite_ReaderNeverObservesPartialFile(t *testing.T) {
 					r.SetConfigFile(path)
 					r.SetConfigType("yaml")
 					err := r.ReadInConfig()
-					// A parse error is the CI symptom. A file that parses to
-					// nothing is the truncate window caught a moment earlier.
-					if err != nil || len(r.AllKeys()) == 0 {
-						mu.Lock()
-						corruptions++
-						mu.Unlock()
+					if err == nil && len(r.AllKeys()) > 0 {
+						continue
 					}
+					mu.Lock()
+					corruptions++
+					causes[classifyReadFailure(err)]++
+					if sampleErr == nil && err != nil {
+						sampleErr = err
+					}
+					mu.Unlock()
 				}
 			}()
 
 			wg.Wait()
 			t.Logf("%s writer: reader observed %d corrupt reads out of %d", w.name, corruptions, iterations)
+			for cause, n := range causes {
+				t.Logf("    %s: %d", cause, n)
+			}
+			if sampleErr != nil {
+				t.Logf("    sample error: %v", sampleErr)
+			}
 
 			switch {
 			case w.wantCorruption && corruptions == 0:
