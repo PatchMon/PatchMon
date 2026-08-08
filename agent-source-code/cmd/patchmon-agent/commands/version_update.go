@@ -213,8 +213,18 @@ func updateAgent() error {
 	}
 	logger.WithField("path", backupPath).Info("Backup saved")
 
-	// Write new version to temporary file (reuse the temp file we already created for version check)
+	// Write new version to temporary file.
+	// On Windows the temp file must have an .exe extension so CreateProcess can execute it
+	// for the validation step, and we place it in the system temp dir to avoid writing
+	// into the locked install directory.
 	tempPath := executablePath + ".new"
+	if runtime.GOOS == "windows" {
+		dir, dirErr := secureUpdateDir()
+		if dirErr != nil {
+			return fmt.Errorf("failed to prepare update directory: %w", dirErr)
+		}
+		tempPath = filepath.Join(dir, fmt.Sprintf("patchmon-agent-update-%d.exe", time.Now().UnixNano()))
+	}
 	if err := os.WriteFile(tempPath, newAgentData, 0755); err != nil {
 		return fmt.Errorf("failed to write new agent: %w", err)
 	}
@@ -268,6 +278,12 @@ func updateAgent() error {
 		logger.WithError(versionErr).Debug("Could not verify binary version (non-critical)")
 	}
 
+	// Windows: os.Rename cannot overwrite a running .exe (file locked by SCM).
+	// Delegate the replacement and restart to a detached PowerShell script.
+	if runtime.GOOS == "windows" {
+		return updateAgentWindows(executablePath, tempPath, newVersion)
+	}
+
 	// Replace current executable atomically
 	// On Linux, we can rename over a running executable - the old process keeps using the old inode
 	// When the service restarts, it will use the new binary
@@ -312,6 +328,90 @@ func updateAgent() error {
 	// Note: os.Exit terminates the process, so the return below is unreachable
 	os.Exit(0)
 	return nil // Unreachable, but satisfies function signature
+}
+
+// serviceName is the Windows service name. Declared here rather than in the
+// windows-only file because the update path builds PowerShell referencing it
+// from code that compiles on every platform, and a second literal would drift.
+const serviceName = "PatchMonAgent"
+
+// psQuote escapes a value for use inside a single-quoted PowerShell string.
+// PowerShell escapes a quote by doubling it. Without this, an install path
+// containing an apostrophe, which is legal on Windows, closes the literal and
+// the rest of the path is parsed as code.
+func psQuote(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
+}
+
+// updateAgentWindows handles the Windows-specific update path.
+//
+// On Windows, os.Rename cannot overwrite a running executable because the SCM
+// holds an open handle on it. Instead we:
+//  1. Keep the verified new binary in the system temp dir (already written there).
+//  2. Write a self-deleting PowerShell script that stops the service, copies the
+//     new binary into place, and restarts the service.
+//  3. Launch that script detached so it outlives this process.
+//  4. Exit immediately — the script takes over.
+func updateAgentWindows(executablePath, tempPath, newVersion string) error {
+	dir, err := secureUpdateDir()
+	if err != nil {
+		_ = os.Remove(tempPath)
+		return fmt.Errorf("failed to prepare update directory: %w", err)
+	}
+	psScriptPath := filepath.Join(dir, fmt.Sprintf("patchmon-update-%d.ps1", time.Now().UnixNano()))
+
+	// Start-Service runs from finally so a failed copy cannot leave the host
+	// with the service stopped and the old binary still in place. Copy-Item is
+	// also retried, because Stop-Service returns when the SCM reports stopped,
+	// which is not always when the image handle has been released.
+	psScript := fmt.Sprintf(`$ErrorActionPreference = 'SilentlyContinue'
+Start-Sleep -Seconds 2
+Stop-Service -Name '%s' -Force -ErrorAction SilentlyContinue
+try {
+    $copied = $false
+    for ($i = 0; $i -lt 10 -and -not $copied; $i++) {
+        Start-Sleep -Seconds 2
+        try {
+            Copy-Item -Path '%s' -Destination '%s' -Force -ErrorAction Stop
+            $copied = $true
+        } catch {
+            # Image still locked; retry.
+        }
+    }
+} finally {
+    Start-Service -Name '%s'
+    Remove-Item -Path '%s' -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+}
+`, serviceName, psQuote(tempPath), psQuote(executablePath), serviceName, psQuote(tempPath))
+
+	if err := os.WriteFile(psScriptPath, []byte(psScript), 0600); err != nil {
+		_ = os.Remove(tempPath)
+		return fmt.Errorf("failed to write Windows update script: %w", err)
+	}
+
+	markRecentUpdate()
+
+	logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
+		"new_version": newVersion,
+		"script":      psScriptPath,
+	})).Info("Launching Windows update script (stop service → replace binary → start service)...")
+
+	cmd := exec.Command("powershell",
+		"-NonInteractive", "-WindowStyle", "Hidden",
+		"-ExecutionPolicy", "Bypass",
+		"-File", psScriptPath)
+	cmd.SysProcAttr = sysProcAttrForDetach()
+	if err := cmd.Start(); err != nil {
+		_ = os.Remove(tempPath)
+		_ = os.Remove(psScriptPath)
+		return fmt.Errorf("failed to launch Windows update script: %w", err)
+	}
+
+	logger.Info("Windows update script launched — exiting to allow service replacement")
+	time.Sleep(500 * time.Millisecond)
+	os.Exit(0)
+	return nil // unreachable
 }
 
 // getServerVersionInfo fetches version information from the PatchMon server
@@ -563,6 +663,9 @@ func cleanupOldBackups(executablePath string) {
 // checkRecentUpdate checks if we updated recently to prevent update loops
 func checkRecentUpdate() error {
 	updateMarkerPath := "/etc/patchmon/.last_update_timestamp"
+	if runtime.GOOS == "windows" {
+		updateMarkerPath = `C:\ProgramData\PatchMon\.last_update_timestamp`
+	}
 
 	// Check if marker file exists
 	info, err := os.Stat(updateMarkerPath)
@@ -588,10 +691,17 @@ func checkRecentUpdate() error {
 // markRecentUpdate creates a timestamp file to mark that we just updated
 func markRecentUpdate() {
 	updateMarkerPath := "/etc/patchmon/.last_update_timestamp"
+	markerDir := "/etc/patchmon"
+	if runtime.GOOS == "windows" {
+		updateMarkerPath = `C:\ProgramData\PatchMon\.last_update_timestamp`
+		markerDir = `C:\ProgramData\PatchMon`
+	}
 
-	// SECURITY: Ensure directory exists with restrictive permissions
-	if err := os.MkdirAll("/etc/patchmon", 0700); err != nil {
-		logger.WithError(err).Debug("Could not create /etc/patchmon directory (non-critical)")
+	// SECURITY: restrictive on Unix. On Windows the mode is not applied, so
+	// the marker directory inherits the ProgramData ACL; it is a hint used to
+	// damp update loops, not a trust boundary.
+	if err := os.MkdirAll(markerDir, 0700); err != nil {
+		logger.WithError(err).Debug("Could not create patchmon directory (non-critical)")
 		return
 	}
 
@@ -616,6 +726,46 @@ func markRecentUpdate() {
 func restartService(_ string, _ string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+
+	// Windows: stop and start the service via a detached PowerShell script.
+	// This branch is a safety net; the primary Windows update path goes through
+	// updateAgentWindows() before restartService is ever called.
+	if runtime.GOOS == "windows" {
+		dir, dirErr := secureUpdateDir()
+		if dirErr != nil {
+			logger.WithError(dirErr).Error("Failed to prepare update directory for restart script")
+			os.Exit(0)
+			return nil
+		}
+		psScriptPath := filepath.Join(dir, fmt.Sprintf("patchmon-restart-%d.ps1", time.Now().UnixNano()))
+		psScript := fmt.Sprintf(`$ErrorActionPreference = 'SilentlyContinue'
+Start-Sleep -Seconds 2
+Stop-Service -Name '%s' -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+Start-Service -Name '%s'
+Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+`, serviceName, serviceName)
+		if err := os.WriteFile(psScriptPath, []byte(psScript), 0600); err != nil {
+			logger.WithError(err).Error("Failed to write Windows restart script")
+			os.Exit(0)
+			return nil
+		}
+		cmd := exec.Command("powershell",
+			"-NonInteractive", "-WindowStyle", "Hidden",
+			"-ExecutionPolicy", "Bypass",
+			"-File", psScriptPath)
+		cmd.SysProcAttr = sysProcAttrForDetach()
+		if err := cmd.Start(); err != nil {
+			_ = os.Remove(psScriptPath)
+			logger.WithError(err).Error("Failed to start Windows restart script")
+			os.Exit(0)
+			return nil
+		}
+		logger.Info("Windows restart script launched, exiting...")
+		time.Sleep(500 * time.Millisecond)
+		os.Exit(0)
+		return nil
+	}
 
 	// FreeBSD / pfSense: use service patchmon_agent restart (rc.d)
 	if runtime.GOOS == "freebsd" {
