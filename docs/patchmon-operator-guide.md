@@ -3121,7 +3121,7 @@ patchmon-agent [command] [flags]
 | `config set-api` | Configure API credentials and server URL | Yes |
 | `check-version` | Check if an agent update is available | Yes |
 | `update-agent` | Download and install the latest agent version | Yes |
-| `version` | Print the agent version | No |
+| `--version` | Print the agent version. A flag, not a subcommand | No |
 
 #### Global Flags
 
