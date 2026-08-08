@@ -16,8 +16,6 @@ import (
 // signalNotify wraps signal.Notify for Windows
 var signalNotify = signal.Notify
 
-const serviceName = "PatchMonAgent"
-
 // patchmonService implements svc.Handler interface for Windows Service
 type patchmonService struct {
 	stopCh chan struct{}
