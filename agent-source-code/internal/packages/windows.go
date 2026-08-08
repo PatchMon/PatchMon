@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"unicode"
 
 	"patchmon-agent/internal/logutil"
 	"patchmon-agent/internal/winexec"
@@ -414,45 +415,63 @@ func (m *WindowsManager) parseWingetTable(output string) []wingetEntry {
 		return nil
 	}
 
-	// Derive column boundaries from header: find start of each word (column)
-	wordRe := regexp.MustCompile(`\S+`)
-	matches := wordRe.FindAllStringIndex(headerLine, -1)
-	if len(matches) < 3 {
+	// Column boundaries are measured in characters, not bytes. winget pads the
+	// table to a fixed display width, and it truncates a long name with a
+	// single ellipsis character that is three bytes of UTF-8. Slicing a data
+	// line at a byte offset taken from the ASCII header therefore cuts that
+	// character in half, leaving "\xe2\x80" on the end of the name and "\xa6"
+	// on the front of the version. Both fields are then invalid UTF-8,
+	// stripEllipsis never matches because the ellipsis is in fragments, and
+	// the mangled names defeat deduplication in mergeRegistryAndWinget so the
+	// same package is reported twice.
+	headerRunes := []rune(headerLine)
+	type colSpan struct{ start, end int }
+	var spans []colSpan
+	for i := 0; i < len(headerRunes); {
+		if unicode.IsSpace(headerRunes[i]) {
+			i++
+			continue
+		}
+		start := i
+		for i < len(headerRunes) && !unicode.IsSpace(headerRunes[i]) {
+			i++
+		}
+		spans = append(spans, colSpan{start: start, end: i})
+	}
+	if len(spans) < 3 {
 		m.logger.WithField("header", headerLine).Debug("parseWingetTable: header has fewer than 3 columns")
 		return nil
 	}
 
-	// colStarts[i] = start of column i; colEnd for column i = colStarts[i+1] or len(line)
-	colStarts := make([]int, len(matches))
-	for i, m := range matches {
-		colStarts[i] = m[0]
+	// colStarts[i] = start of column i; colEnd for column i = colStarts[i+1] or end of line
+	colStarts := make([]int, len(spans))
+	for i, s := range spans {
+		colStarts[i] = s.start
 	}
 
-	extractCol := func(line string, col int) string {
+	extractCol := func(lineRunes []rune, col int) string {
 		if col < 0 || col >= len(colStarts) {
 			return ""
 		}
 		start := colStarts[col]
-		var end int
+		end := len(lineRunes)
 		if col+1 < len(colStarts) {
 			end = colStarts[col+1]
-		} else {
-			end = len(line) + 1
 		}
-		if start >= len(line) {
+		if start >= len(lineRunes) {
 			return ""
 		}
-		if end > len(line) {
-			end = len(line)
+		if end > len(lineRunes) {
+			end = len(lineRunes)
 		}
-		return strings.TrimSpace(line[start:end])
+		return strings.TrimSpace(string(lineRunes[start:end]))
 	}
 
 	// Map column index to field (handles "Name"/"SearchName", "Id"/"SearchId", etc.)
 	nameCol, idCol, versionCol := 0, 1, 2
 	availCol, sourceCol := -1, -1
-	for i := 0; i < len(matches) && i < 5; i++ {
-		word := strings.ToLower(strings.TrimSpace(headerLine[matches[i][0]:matches[i][1]]))
+	for i := 0; i < len(spans) && i < 5; i++ {
+		word := strings.ToLower(strings.TrimSpace(string(headerRunes[spans[i].start:spans[i].end])))
 		switch {
 		case word == "name" || strings.HasSuffix(word, "name"):
 			nameCol = i
@@ -487,18 +506,19 @@ func (m *WindowsManager) parseWingetTable(output string) []wingetEntry {
 			continue
 		}
 
-		name := extractCol(line, nameCol)
-		id := extractCol(line, idCol)
-		version := extractCol(line, versionCol)
+		lineRunes := []rune(line)
+		name := extractCol(lineRunes, nameCol)
+		id := extractCol(lineRunes, idCol)
+		version := extractCol(lineRunes, versionCol)
 		if name == "" && id == "" {
 			continue
 		}
 		e := wingetEntry{Name: name, ID: id, Version: version}
 		if availCol >= 0 {
-			e.Available = extractCol(line, availCol)
+			e.Available = extractCol(lineRunes, availCol)
 		}
 		if sourceCol >= 0 && sourceCol < len(colStarts) {
-			e.Source = extractCol(line, sourceCol)
+			e.Source = extractCol(lineRunes, sourceCol)
 		}
 		entries = append(entries, e)
 	}
