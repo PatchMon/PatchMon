@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"patchmon-agent/internal/logutil"
+	"patchmon-agent/internal/winexec"
 	"patchmon-agent/pkg/models"
 
 	"github.com/sirupsen/logrus"
@@ -217,7 +218,7 @@ foreach ($path in $paths) {
 if ($result.Count -gt 5000) { $result = $result[0..4999] }
 $result | ConvertTo-Json -Compress -Depth 3
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
@@ -225,7 +226,7 @@ $result | ConvertTo-Json -Compress -Depth 3
 		return nil
 	}
 
-	outputStr := strings.TrimSpace(string(output))
+	outputStr := strings.TrimSpace(string(winexec.TrimBOM(output)))
 	if outputStr == "" || outputStr == "null" || outputStr == "[]" {
 		return nil
 	}
@@ -294,7 +295,6 @@ func (m *WindowsManager) getPackagesFromWinget() []models.Package {
 	psScript := `
 $ErrorActionPreference = "SilentlyContinue"
 $env:TERM = 'dumb'
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 # Resolve winget.exe path — handle SYSTEM/Session 0 where it's not on PATH
 $wingetPath = $null
@@ -323,7 +323,7 @@ if (-not $wingetPath) {
 $out = & $wingetPath list --accept-source-agreements --disable-interactivity 2>&1
 if ($out) { $out | Out-String }
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
@@ -510,7 +510,6 @@ func (m *WindowsManager) getWingetUpgradeAvailable() map[string]string {
 	psScript := `
 $ErrorActionPreference = "SilentlyContinue"
 $env:TERM = 'dumb'
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 # Resolve winget.exe path (same logic as main list)
 $wingetPath = $null
@@ -535,7 +534,7 @@ if (-not $wingetPath) { exit 0 }
 $out = & $wingetPath list --upgrade-available --accept-source-agreements --disable-interactivity 2>&1
 if ($out) { $out | Out-String }
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
@@ -562,13 +561,18 @@ if ($out) { $out | Out-String }
 
 func stripEllipsis(s string) string {
 	s = strings.TrimSpace(s)
-	// Winget truncates with U+2026 HORIZONTAL ELLIPSIS; also handle mis-encoded ÔÇª
+	// Winget truncates with U+2026 HORIZONTAL ELLIPSIS.
 	const ellipsis = "\u2026"
 	if strings.HasSuffix(s, ellipsis) {
 		return strings.TrimSuffix(s, ellipsis)
 	}
-	if strings.HasSuffix(s, "\u00d4\u00c2\u00c9") { // ÔÇª in UTF-8
-		return strings.TrimSuffix(s, "\u00d4\u00c2\u00c9")
+	// The same character written as UTF-8 (E2 80 A6) and read back through a
+	// single-byte code page lands as ÔÇª under CP850 or â€¦ under CP1252.
+	// The constant here used to spell ÔÂÉ, so it never matched anything.
+	for _, mangled := range []string{"\u00d4\u00c7\u00aa", "\u00e2\u20ac\u00a6"} {
+		if strings.HasSuffix(s, mangled) {
+			return strings.TrimSuffix(s, mangled)
+		}
 	}
 	return s
 }
@@ -586,7 +590,7 @@ $server = (Get-ItemProperty -Path $wuKey -Name WUServer -ErrorAction SilentlyCon
 $useWU = (Get-ItemProperty -Path "$wuKey\AU" -Name UseWUServer -ErrorAction SilentlyContinue).UseWUServer
 if ($server -and $useWU -eq 1) { "WSUS_ACTIVE" } else { "WSUS_INACTIVE" }
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
@@ -718,7 +722,7 @@ if ($comFailed) {
 
 $result | ConvertTo-Json -Compress -Depth 4
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
@@ -726,7 +730,7 @@ $result | ConvertTo-Json -Compress -Depth 4
 		return nil
 	}
 
-	outputStr := strings.TrimSpace(string(output))
+	outputStr := strings.TrimSpace(string(winexec.TrimBOM(output)))
 	// Check for COM error message (e.g. E_ACCESSDENIED in Session 0)
 	if strings.Contains(outputStr, "WUA_COM_ERROR:") {
 		idx := strings.Index(outputStr, "WUA_COM_ERROR:")
