@@ -1,14 +1,57 @@
 package middleware
 
 import (
+	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/PatchMon/PatchMon/server-source-code/internal/clientip"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 )
+
+// rateLimitScript increments a bucket and guarantees the key carries an expiry.
+//
+// INCR and EXPIRE used to be separate calls, with EXPIRE issued only when the
+// counter came back as 1 and its error discarded. One lost EXPIRE therefore
+// stranded the key with no TTL for good: the counter kept climbing, the
+// count == 1 branch never came round again, and every later request from that
+// IP was answered 429 until somebody deleted the key by hand. Re-arming
+// whenever the TTL is missing makes that state self-healing, and returning the
+// remaining TTL from the same call saves the follow-up PTTL the 429 path made.
+// A PTTL below zero covers both cases that need arming: INCR has just created
+// the key, or the key outlived its expiry. Anything else is a bucket already
+// counting down, left alone so the window stays fixed rather than sliding.
+var rateLimitScript = redis.NewScript(`
+local count = redis.call('INCR', KEYS[1])
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl < 0 then
+	redis.call('PEXPIRE', KEYS[1], ARGV[1])
+	ttl = tonumber(ARGV[1])
+end
+return {count, ttl}
+`)
+
+// rateLimitHit registers one request against key and reports the running count
+// for the current window along with the time left in it. A non-positive TTL is
+// reported as zero so callers fall back to the configured window.
+func rateLimitHit(ctx context.Context, client redis.Scripter, key string, windowMs int) (int64, time.Duration, error) {
+	res, err := rateLimitScript.Run(ctx, client, []string{key}, windowMs).Int64Slice()
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(res) != 2 {
+		return 0, 0, fmt.Errorf("rate limit script returned %d values, want 2", len(res))
+	}
+	if res[1] <= 0 {
+		return res[0], 0, nil
+	}
+	return res[0], time.Duration(res[1]) * time.Millisecond, nil
+}
 
 // RateLimitType identifies which rate limit config to use.
 type RateLimitType int
@@ -92,7 +135,7 @@ func RateLimit(rdb *hostctx.RedisResolver, cfgResolver *hostctx.ConfigResolver, 
 			clientIP := rateLimitClientIP(r)
 			key := hostctx.TenantKey(r.Context(), keyPrefix+clientIP)
 			ctx := r.Context()
-			count, err := client.Incr(ctx, key).Result()
+			count, ttl, err := rateLimitHit(ctx, client, key, windowMs)
 			if err != nil {
 				rateLimitUnavailable(w, r, typ)
 				if rateLimitSecurityCritical(typ) {
@@ -101,11 +144,7 @@ func RateLimit(rdb *hostctx.RedisResolver, cfgResolver *hostctx.ConfigResolver, 
 				next.ServeHTTP(w, r)
 				return
 			}
-			if count == 1 {
-				_ = client.Expire(ctx, key, time.Duration(windowMs)*time.Millisecond).Err()
-			}
 			if count > int64(max) {
-				ttl, _ := client.TTL(ctx, key).Result()
 				remainingSec := int(ttl.Seconds())
 				if remainingSec <= 0 {
 					remainingSec = windowMs / 1000
@@ -149,17 +188,13 @@ func RateLimitAgentByAPIID(rdb *hostctx.RedisResolver, cfgResolver *hostctx.Conf
 				return
 			}
 			ctx := r.Context()
-			count, err := client.Incr(ctx, key).Result()
+			count, ttl, err := rateLimitHit(ctx, client, key, windowMs)
 			if err != nil {
 				slog.Warn("agent rate limiter redis error, allowing request", "error", err, "path", r.URL.Path)
 				next.ServeHTTP(w, r)
 				return
 			}
-			if count == 1 {
-				_ = client.Expire(ctx, key, time.Duration(windowMs)*time.Millisecond).Err()
-			}
 			if count > int64(max) {
-				ttl, _ := client.TTL(ctx, key).Result()
 				remainingSec := int(ttl.Seconds())
 				if remainingSec <= 0 {
 					remainingSec = windowMs / 1000
