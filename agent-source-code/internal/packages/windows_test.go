@@ -6,6 +6,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"patchmon-agent/pkg/models"
+
 	"github.com/sirupsen/logrus"
 )
 
@@ -95,5 +97,59 @@ func TestParseWingetTableSplitsOnCharactersNotBytes(t *testing.T) {
 	}
 	if got := entries[1].Name; got != "Plain ASCII Package" {
 		t.Errorf("ascii row regressed: name = %q", got)
+	}
+}
+
+// winget truncates names to its column width, so two distinct packages can
+// arrive with the same name. The lookup in mergeRegistryAndWinget holds one
+// record per normalised name, so both rows used to find the same unmatched
+// record and both got appended, reaching the server as two identical packages.
+func TestMergeRegistryAndWingetAppendsEachNameOnce(t *testing.T) {
+	m := &WindowsManager{logger: logrus.New()}
+	m.logger.SetOutput(io.Discard)
+
+	// The x86 and x64 redistributables truncate to the same string and carry
+	// the same version, which is how CI surfaced this.
+	const shared = "Microsoft Visual C++ v14 Redistributabl"
+	wingetPkgs := []models.Package{
+		{Name: shared, CurrentVersion: "14.51.36247.0", SourceRepository: "winget"},
+		{Name: shared, CurrentVersion: "14.51.36247.0", SourceRepository: "winget"},
+		{Name: "Contoso Widget", CurrentVersion: "1.0.0", SourceRepository: "winget"},
+	}
+
+	merged := m.mergeRegistryAndWinget(nil, wingetPkgs)
+
+	counts := map[string]int{}
+	for _, p := range merged {
+		counts[p.Name+"@"+p.CurrentVersion]++
+	}
+	if got := counts[shared+"@14.51.36247.0"]; got != 1 {
+		t.Errorf("emitted %d copies of the truncated name, want 1", got)
+	}
+	if got := counts["Contoso Widget@1.0.0"]; got != 1 {
+		t.Errorf("unrelated winget-only package emitted %d times, want 1", got)
+	}
+}
+
+// A winget entry that enriched a registry entry must not also be appended.
+func TestMergeRegistryAndWingetDoesNotDuplicateMatchedEntries(t *testing.T) {
+	m := &WindowsManager{logger: logrus.New()}
+	m.logger.SetOutput(io.Discard)
+
+	regPkgs := []models.Package{{Name: "Contoso Widget", CurrentVersion: "1.0.0"}}
+	wingetPkgs := []models.Package{
+		{Name: "Contoso Widget", AvailableVersion: "2.0.0", NeedsUpdate: true, SourceRepository: "winget"},
+	}
+
+	merged := m.mergeRegistryAndWinget(regPkgs, wingetPkgs)
+
+	if len(merged) != 1 {
+		t.Fatalf("expected 1 merged package, got %d: %+v", len(merged), merged)
+	}
+	if !merged[0].NeedsUpdate || merged[0].AvailableVersion != "2.0.0" {
+		t.Errorf("registry entry was not enriched from winget: %+v", merged[0])
+	}
+	if merged[0].SourceRepository != "winget" {
+		t.Errorf("SourceRepository = %q, want %q", merged[0].SourceRepository, "winget")
 	}
 }

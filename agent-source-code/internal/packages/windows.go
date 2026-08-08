@@ -105,8 +105,13 @@ func (m *WindowsManager) mergeRegistryAndWinget(regPkgs, wingetPkgs []models.Pac
 		AvailableVersion string
 		NeedsUpdate      bool
 		SourceRepository string
-		matched          bool
+		// matched: enriched a registry entry, so it is already represented.
+		matched bool
+		// appended: already emitted as a winget-only entry.
+		appended bool
 	}
+	// One record per normalised name. winget truncates names to its column
+	// width, so distinct packages can collapse onto the same key here.
 	wingetByName := make(map[string]*wingetInfo, len(wingetPkgs))
 	for i := range wingetPkgs {
 		key := normalizePackageName(wingetPkgs[i].Name)
@@ -135,11 +140,18 @@ func (m *WindowsManager) mergeRegistryAndWinget(regPkgs, wingetPkgs []models.Pac
 		}
 	}
 
-	// Add WinGet-only entries that weren't in registry
+	// Add WinGet-only entries that weren't in registry.
+	//
+	// Guarded by appended as well as matched: the lookup holds one record per
+	// normalised name, so two winget rows whose names truncate to the same
+	// string both find the same unmatched record and would each be appended,
+	// reaching the server as two identical packages. Observed on CI as two
+	// copies of "Microsoft Visual C++ v14 Redistributabl" at the same version.
 	for i := range wingetPkgs {
 		key := normalizePackageName(wingetPkgs[i].Name)
-		if winfo, ok := wingetByName[key]; ok && !winfo.matched {
+		if winfo, ok := wingetByName[key]; ok && !winfo.matched && !winfo.appended {
 			regPkgs = append(regPkgs, wingetPkgs[i])
+			winfo.appended = true
 		}
 	}
 
