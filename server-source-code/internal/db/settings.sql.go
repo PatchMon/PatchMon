@@ -114,6 +114,7 @@ func (q *Queries) GetFirstSettings(ctx context.Context) (Setting, error) {
 		&i.PasswordRateLimitWindowMs,
 		&i.PasswordRateLimitMax,
 		&i.AuthBrowserSessionCookies,
+		&i.PrometheusEnabled,
 	)
 	return i, err
 }
@@ -179,8 +180,9 @@ UPDATE settings SET
     favicon_content_type = $56,
     compliance_scan_interval = $57,
     package_cache_refresh_mode = $58,
-    package_cache_refresh_max_age = $59
-WHERE id = $60
+    package_cache_refresh_max_age = $59,
+    prometheus_enabled = $60
+WHERE id = $61
 `
 
 type UpdateSettingsParams struct {
@@ -243,6 +245,7 @@ type UpdateSettingsParams struct {
 	ComplianceScanInterval    int32            `json:"compliance_scan_interval"`
 	PackageCacheRefreshMode   string           `json:"package_cache_refresh_mode"`
 	PackageCacheRefreshMaxAge int32            `json:"package_cache_refresh_max_age"`
+	PrometheusEnabled         bool             `json:"prometheus_enabled"`
 	ID                        string           `json:"id"`
 }
 
@@ -307,6 +310,7 @@ func (q *Queries) UpdateSettings(ctx context.Context, arg UpdateSettingsParams) 
 		arg.ComplianceScanInterval,
 		arg.PackageCacheRefreshMode,
 		arg.PackageCacheRefreshMaxAge,
+		arg.PrometheusEnabled,
 		arg.ID,
 	)
 	return err

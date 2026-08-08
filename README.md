@@ -113,6 +113,7 @@ The core of PatchMon - orchestrate updates across your fleet with validation, ap
 |---|---|
 | **Integrations** | 33+ integrations including Proxmox LXC auto-enrolment, getHomepage, Ansible and more. |
 | **REST API** | Full `/api/v1` with JWT authentication and interactive Swagger / OpenAPI docs at `/api-docs`. |
+| **Prometheus Exporter** | Built-in `/metrics` endpoint in Prometheus text format. Exposes fleet-wide and per-host pending update counts (regular and security), host health status, reboot flags and last-seen timestamps. Enable in **Settings → Metrics**. |
 
 ---
 
