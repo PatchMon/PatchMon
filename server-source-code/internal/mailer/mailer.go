@@ -9,6 +9,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"mime"
+	"mime/quotedprintable"
 	"net/mail"
 	"strings"
 	"time"
@@ -247,15 +250,24 @@ func validate(cfg Config, msg Message) *SendError {
 	return nil
 }
 
+// headerLineLimit is the soft wrap point for header lines. RFC 5322 recommends
+// 78 octets; RFC 5321's hard limit is 998.
+const headerLineLimit = 78
+
 // renderMessage builds the full RFC 5322 byte stream including headers.
 // Subject is stripped of CR/LF to prevent SMTP header injection. From uses the
 // FromName when present (encoded as a name-addr pair).
 func renderMessage(cfg Config, msg Message) []byte {
-	subject := strings.NewReplacer("\r", "", "\n", "").Replace(msg.Subject)
+	subject := foldHeader("Subject", stripCRLF(msg.Subject))
 	from := cfg.From
 	if strings.TrimSpace(cfg.FromName) != "" {
-		cleanName := strings.NewReplacer("\r", "", "\n", "").Replace(cfg.FromName)
-		from = fmt.Sprintf("%q <%s>", cleanName, cfg.From)
+		cleanName := stripCRLF(cfg.FromName)
+		if encoded := mime.QEncoding.Encode("utf-8", cleanName); encoded != cleanName {
+			// An RFC 2047 encoded-word must not be quoted.
+			from = fmt.Sprintf("%s <%s>", encoded, cfg.From)
+		} else {
+			from = fmt.Sprintf("%q <%s>", cleanName, cfg.From)
+		}
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "From: %s\r\n", from)
@@ -263,7 +275,62 @@ func renderMessage(cfg Config, msg Message) []byte {
 	fmt.Fprintf(&b, "Subject: %s\r\n", subject)
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: text/html; charset=utf-8\r\n")
+	b.WriteString("Content-Transfer-Encoding: quoted-printable\r\n")
 	b.WriteString("\r\n")
-	b.WriteString(msg.HTMLBody)
+
+	// RFC 5321 caps a line at 998 octets excluding CRLF, and a generated alert
+	// body routinely puts more than that on one line. Without an encoding a
+	// standards-compliant MTA is right to reject the whole message, which is
+	// what #845 saw: host_down alerts bounced with "maximum allowed line length
+	// is 998 octets" while shorter host_recovered alerts got through.
+	// quoted-printable inserts soft breaks, so no line can exceed the limit.
+	qp := quotedprintable.NewWriter(&b)
+	if _, err := io.WriteString(qp, msg.HTMLBody); err != nil {
+		// strings.Builder never fails; fall back to the raw body rather than
+		// silently sending an empty one.
+		_ = qp.Close()
+		return []byte(b.String() + msg.HTMLBody)
+	}
+	if err := qp.Close(); err != nil {
+		return []byte(b.String() + msg.HTMLBody)
+	}
 	return []byte(b.String())
+}
+
+func stripCRLF(s string) string {
+	return strings.NewReplacer("\r", "", "\n", "").Replace(s)
+}
+
+// foldHeader keeps a header line inside the RFC 5321 limit by folding it onto
+// continuation lines, and RFC 2047 encodes it when it is not plain ASCII. A
+// long subject is a second way to breach 998 octets, and the reporter on #845
+// could not tell from the rejection whether it was a header or the body.
+func foldHeader(name, value string) string {
+	if encoded := mime.QEncoding.Encode("utf-8", value); encoded != value {
+		// QEncoding already splits into encoded-words short enough to fold.
+		return strings.ReplaceAll(encoded, " ", "\r\n\t")
+	}
+	// +2 for the ": " separator.
+	if len(name)+2+len(value) <= headerLineLimit {
+		return value
+	}
+
+	var out strings.Builder
+	lineLen := len(name) + 2
+	for i, word := range strings.Fields(value) {
+		switch {
+		case i == 0:
+			out.WriteString(word)
+			lineLen += len(word)
+		case lineLen+1+len(word) > headerLineLimit:
+			out.WriteString("\r\n\t")
+			out.WriteString(word)
+			lineLen = 1 + len(word)
+		default:
+			out.WriteString(" ")
+			out.WriteString(word)
+			lineLen += 1 + len(word)
+		}
+	}
+	return out.String()
 }
