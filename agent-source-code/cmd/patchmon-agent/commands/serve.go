@@ -1340,6 +1340,131 @@ func (cs *complianceScheduler) loop() {
 	}
 }
 
+const (
+	wsPingPeriod = 30 * time.Second
+	wsWriteWait  = 5 * time.Second
+)
+
+// Overridable so tests can exercise the timeout paths without real waits.
+var (
+	wsHandshakeTimeout = 45 * time.Second
+	wsPongWait         = 90 * time.Second
+	wsDispatchWait     = 5 * time.Second
+)
+
+// newWSDialer builds the dialer used for the agent WebSocket.
+//
+// The fields are copied from DefaultDialer rather than starting from a zero
+// Dialer: gorilla only puts a deadline on the socket when HandshakeTimeout is
+// non-zero, so a zero value leaves the TLS handshake and the read of the 101
+// response completely unbounded. A peer that completes the TCP handshake and
+// then stalls (a reverse proxy mid-restart, a backend with no healthy upstream)
+// parks wsLoop forever with the socket ESTABLISHED and nothing logged. A nil
+// Proxy would also ignore the HTTPS_PROXY the HTTP client honours.
+func newWSDialer(skipSSLVerify bool) *websocket.Dialer {
+	d := *websocket.DefaultDialer
+	d.HandshakeTimeout = wsHandshakeTimeout
+	if skipSSLVerify {
+		// Operator-gated insecure TLS for lab/air-gapped deployments with
+		// self-signed certs. This exposes the agent to man-in-the-middle
+		// attacks on command delivery.
+		d.TLSClientConfig = &tls.Config{
+			InsecureSkipVerify: true,
+		}
+	}
+	return &d
+}
+
+// wsControlWriter is the subset of *websocket.Conn that runWSPingLoop needs.
+type wsControlWriter interface {
+	WriteControl(messageType int, data []byte, deadline time.Time) error
+	Close() error
+}
+
+// runWSPingLoop proves liveness to the server and, via the pong it elicits,
+// is the only thing that re-arms the agent's read deadline.
+//
+// A failed WriteControl does not mean the socket is gone: gorilla returns a
+// plain timeout when another writer still holds the write mutex at the
+// deadline, which happens under a proxy burst or TCP backpressure. Returning on
+// that error left a live connection with nothing pinging it and nothing
+// watching it, so the connection has to be closed to hand over to wsLoop.
+func runWSPingLoop(conn wsControlWriter, interval time.Duration, done <-chan struct{}) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-t.C:
+			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(wsWriteWait)); err != nil {
+				logger.WithError(err).Warn("WebSocket ping failed; closing connection to force reconnect")
+				_ = conn.Close()
+				return
+			}
+		}
+	}
+}
+
+// configureWSDeadlines arms the read deadline and keeps it armed on any frame
+// from the server, not only on pongs. Data proves the link just as well, and
+// dropping a busy connection because a pong was late produces a redial the
+// server then has to reconcile against the one it already holds.
+func configureWSDeadlines(conn *websocket.Conn) {
+	extend := func() error {
+		return conn.SetReadDeadline(time.Now().Add(wsPongWait))
+	}
+	_ = extend()
+	conn.SetPongHandler(func(string) error { return extend() })
+	// Gorilla's default ping handler gives the pong reply a 1s write deadline
+	// and discards a timeout without a word, so a busy agent goes silent and
+	// the server's own pong wait expires on a healthy connection. Take longer
+	// and say something. A timeout is contention on the write mutex rather
+	// than a dead socket, so it is tolerated; anything else is returned, which
+	// fails the read and hands over to wsLoop.
+	conn.SetPingHandler(func(appData string) error {
+		_ = extend()
+		err := conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(wsWriteWait))
+		if err == nil || errors.Is(err, websocket.ErrCloseSent) {
+			return nil
+		}
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			logger.WithError(err).Warn("Failed to send WebSocket pong")
+			return nil
+		}
+		return err
+	})
+}
+
+// readWSMessage reads one frame and re-arms the read deadline, so that any
+// traffic from the server counts as proof of life. See configureWSDeadlines.
+func readWSMessage(conn *websocket.Conn) ([]byte, error) {
+	_, data, err := conn.ReadMessage()
+	if err != nil {
+		return nil, err
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(wsPongWait))
+	return data, nil
+}
+
+// dispatchWSMessage hands a decoded message to the service loop.
+//
+// It must never block indefinitely. While the read loop is parked on this send
+// it is not inside ReadMessage, and a Go read deadline only produces an error
+// on an attempted read, so an unbounded send disables the connection watchdog
+// for as long as the service loop is busy. The service loop runs check-ins and
+// reports inline, and proxy input frames fill the buffer in milliseconds.
+func dispatchWSMessage(out chan<- wsMsg, m wsMsg) {
+	timer := time.NewTimer(wsDispatchWait)
+	defer timer.Stop()
+	select {
+	case out <- m:
+	case <-timer.C:
+		logger.WithField("type", logutil.Sanitize(m.kind)).Warn("Service loop busy; dropping WebSocket message")
+	}
+}
+
 func wsLoop(out chan<- wsMsg, dockerEvents <-chan interface{}) {
 	backoff := time.Second
 	for {
@@ -1389,18 +1514,11 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 	header.Set("X-API-ID", apiID)
 	header.Set("X-API-KEY", apiKey)
 
-	// SECURITY: Configure WebSocket dialer for insecure connections if needed
-	// WARNING: This exposes the agent to man-in-the-middle attacks!
-	dialer := websocket.DefaultDialer
-	if cfgManager.GetConfig().SkipSSLVerify || client.IsSkipSSLVerifyEnvSet() {
+	skipSSLVerify := cfgManager.GetConfig().SkipSSLVerify || client.IsSkipSSLVerifyEnvSet()
+	if skipSSLVerify {
 		logger.Warn("TLS verification disabled for WebSocket")
-		// Operator-gated insecure TLS for lab/air-gapped deployments with self-signed certs.
-		dialer = &websocket.Dialer{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
-		}
 	}
+	dialer := newWSDialer(skipSSLVerify)
 
 	conn, _, err := dialer.Dial(wsURL, header)
 	if err != nil {
@@ -1422,27 +1540,9 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 		}
 	}()
 
-	// ping loop - now with cancellation support
-	go func() {
-		t := time.NewTicker(30 * time.Second)
-		defer t.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-t.C:
-				if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second)); err != nil {
-					return // Connection closed, exit goroutine
-				}
-			}
-		}
-	}()
+	go runWSPingLoop(conn, wsPingPeriod, done)
 
-	// Set read deadlines and extend them on pong frames to avoid idle timeouts
-	_ = conn.SetReadDeadline(time.Now().Add(90 * time.Second))
-	conn.SetPongHandler(func(string) error {
-		return conn.SetReadDeadline(time.Now().Add(90 * time.Second))
-	})
+	configureWSDeadlines(conn)
 
 	// SECURITY: Limit WebSocket message size to prevent DoS attacks (64KB max)
 	conn.SetReadLimit(64 * 1024)
@@ -1543,7 +1643,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 	}()
 
 	for {
-		_, data, err := conn.ReadMessage()
+		data, err := readWSMessage(conn)
 		if err != nil {
 			return connected, err
 		}
@@ -1592,19 +1692,19 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 		switch payload.Type {
 		case "settings_update":
 			logger.WithField("interval", payload.UpdateInterval).Info("settings_update received")
-			out <- wsMsg{kind: "settings_update", interval: payload.UpdateInterval, complianceScanInterval: payload.ComplianceScanInterval, packageCacheRefreshMode: payload.PackageCacheRefreshMode, packageCacheRefreshMaxAge: payload.PackageCacheRefreshMaxAge}
+			dispatchWSMessage(out, wsMsg{kind: "settings_update", interval: payload.UpdateInterval, complianceScanInterval: payload.ComplianceScanInterval, packageCacheRefreshMode: payload.PackageCacheRefreshMode, packageCacheRefreshMaxAge: payload.PackageCacheRefreshMaxAge})
 		case "report_now":
 			logger.Info("report_now received")
-			out <- wsMsg{kind: "report_now"}
+			dispatchWSMessage(out, wsMsg{kind: "report_now"})
 		case "update_agent":
 			logger.Info("update_agent received")
-			out <- wsMsg{kind: "update_agent"}
+			dispatchWSMessage(out, wsMsg{kind: "update_agent"})
 		case "refresh_integration_status":
 			logger.Info("refresh_integration_status received")
-			out <- wsMsg{kind: "refresh_integration_status"}
+			dispatchWSMessage(out, wsMsg{kind: "refresh_integration_status"})
 		case "docker_inventory_refresh":
 			logger.Info("docker_inventory_refresh received")
-			out <- wsMsg{kind: "docker_inventory_refresh"}
+			dispatchWSMessage(out, wsMsg{kind: "docker_inventory_refresh"})
 		case "run_patch":
 			if payload.PatchRunID == "" {
 				logger.Warn("run_patch missing patch_run_id")
@@ -1648,13 +1748,13 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 				"package_names": packageNames,
 				"dry_run":       payload.DryRun,
 			})).Info("run_patch received")
-			out <- wsMsg{
+			dispatchWSMessage(out, wsMsg{
 				kind:         "run_patch",
 				patchRunID:   payload.PatchRunID,
 				patchType:    patchType,
 				packageNames: packageNames,
 				dryRun:       payload.DryRun,
-			}
+			})
 		case "compliance_scan":
 			// Validate profile ID to prevent command injection
 			if err := validateProfileID(payload.ProfileID); err != nil {
@@ -1670,7 +1770,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 				"profile_id":         payload.ProfileID,
 				"enable_remediation": payload.EnableRemediation,
 			})).Info("compliance_scan received")
-			out <- wsMsg{
+			dispatchWSMessage(out, wsMsg{
 				kind:                 "compliance_scan",
 				profileType:          profileType,
 				profileID:            payload.ProfileID,
@@ -1678,24 +1778,24 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 				fetchRemoteResources: payload.FetchRemoteResources,
 				openscapEnabled:      payload.OpenSCAPEnabled,
 				dockerBenchEnabled:   payload.DockerBenchEnabled,
-			}
+			})
 		case "compliance_scan_cancel":
 			logger.Info("compliance_scan_cancel received")
-			out <- wsMsg{kind: "compliance_scan_cancel"}
+			dispatchWSMessage(out, wsMsg{kind: "compliance_scan_cancel"})
 		case "patch_run_stop":
 			if payload.PatchRunID == "" {
 				logger.Warn("patch_run_stop missing patch_run_id")
 				continue
 			}
 			logger.WithField("patch_run_id", logutil.Sanitize(payload.PatchRunID)).Info("patch_run_stop received")
-			out <- wsMsg{kind: "patch_run_stop", patchRunID: payload.PatchRunID}
+			dispatchWSMessage(out, wsMsg{kind: "patch_run_stop", patchRunID: payload.PatchRunID})
 		case "upgrade_ssg":
 			logger.WithField("version", payload.Version).Info("upgrade_ssg received from WebSocket")
-			out <- wsMsg{kind: "upgrade_ssg", version: payload.Version}
+			dispatchWSMessage(out, wsMsg{kind: "upgrade_ssg", version: payload.Version})
 			logger.Info("upgrade_ssg sent to message channel")
 		case "install_scanner":
 			logger.Info("install_scanner received from WebSocket")
-			out <- wsMsg{kind: "install_scanner"}
+			dispatchWSMessage(out, wsMsg{kind: "install_scanner"})
 		case "remediate_rule":
 			// Validate rule ID to prevent command injection
 			if err := validateRuleID(payload.RuleID); err != nil {
@@ -1703,7 +1803,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 				continue
 			}
 			logger.WithField("rule_id", logutil.Sanitize(payload.RuleID)).Info("remediate_rule received")
-			out <- wsMsg{kind: "remediate_rule", ruleID: payload.RuleID}
+			dispatchWSMessage(out, wsMsg{kind: "remediate_rule", ruleID: payload.RuleID})
 		case "docker_image_scan":
 			// Validate Docker image and container names to prevent command injection
 			if err := validateDockerImageName(payload.ImageName); err != nil {
@@ -1719,15 +1819,15 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 				"container_name":  payload.ContainerName,
 				"scan_all_images": payload.ScanAllImages,
 			})).Info("docker_image_scan received")
-			out <- wsMsg{
+			dispatchWSMessage(out, wsMsg{
 				kind:          "docker_image_scan",
 				imageName:     payload.ImageName,
 				containerName: payload.ContainerName,
 				scanAllImages: payload.ScanAllImages,
-			}
+			})
 		case "apply_config":
 			logger.Info("apply_config received")
-			out <- wsMsg{kind: "apply_config", applyConfig: payload.Config}
+			dispatchWSMessage(out, wsMsg{kind: "apply_config", applyConfig: payload.Config})
 		case "ssh_proxy":
 			// Validate SSH proxy is enabled in config
 			if !cfgManager.IsIntegrationEnabled("ssh-proxy-enabled") {
@@ -1781,7 +1881,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 				"port":       payload.Port,
 				"username":   payload.Username,
 			})).Info("ssh_proxy received")
-			out <- wsMsg{
+			dispatchWSMessage(out, wsMsg{
 				kind:               "ssh_proxy",
 				sshProxySessionID:  payload.SessionID,
 				sshProxyHost:       payload.Host,
@@ -1793,37 +1893,37 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 				sshProxyTerminal:   payload.Terminal,
 				sshProxyCols:       payload.Cols,
 				sshProxyRows:       payload.Rows,
-			}
+			})
 		case "ssh_proxy_input":
 			if payload.SessionID == "" {
 				logger.Warn("ssh_proxy_input missing session_id")
 				continue
 			}
-			out <- wsMsg{
+			dispatchWSMessage(out, wsMsg{
 				kind:              "ssh_proxy_input",
 				sshProxySessionID: payload.SessionID,
 				sshProxyData:      payload.Data,
-			}
+			})
 		case "ssh_proxy_resize":
 			if payload.SessionID == "" {
 				logger.Warn("ssh_proxy_resize missing session_id")
 				continue
 			}
-			out <- wsMsg{
+			dispatchWSMessage(out, wsMsg{
 				kind:              "ssh_proxy_resize",
 				sshProxySessionID: payload.SessionID,
 				sshProxyCols:      payload.Cols,
 				sshProxyRows:      payload.Rows,
-			}
+			})
 		case "ssh_proxy_disconnect":
 			if payload.SessionID == "" {
 				logger.Warn("ssh_proxy_disconnect missing session_id")
 				continue
 			}
-			out <- wsMsg{
+			dispatchWSMessage(out, wsMsg{
 				kind:              "ssh_proxy_disconnect",
 				sshProxySessionID: payload.SessionID,
-			}
+			})
 		case "rdp_proxy":
 			if !cfgManager.IsIntegrationEnabled("rdp-proxy-enabled") {
 				logger.Warn("RDP proxy requested but not enabled in config.yml")
@@ -1869,31 +1969,31 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 				"host":       rdpHost,
 				"port":       port,
 			})).Info("rdp_proxy received")
-			out <- wsMsg{
+			dispatchWSMessage(out, wsMsg{
 				kind:              "rdp_proxy",
 				rdpProxySessionID: payload.SessionID,
 				rdpProxyHost:      rdpHost,
 				rdpProxyPort:      port,
-			}
+			})
 		case "rdp_proxy_input":
 			if payload.SessionID == "" {
 				logger.Warn("rdp_proxy_input missing session_id")
 				continue
 			}
-			out <- wsMsg{
+			dispatchWSMessage(out, wsMsg{
 				kind:              "rdp_proxy_input",
 				rdpProxySessionID: payload.SessionID,
 				rdpProxyData:      payload.Data,
-			}
+			})
 		case "rdp_proxy_disconnect":
 			if payload.SessionID == "" {
 				logger.Warn("rdp_proxy_disconnect missing session_id")
 				continue
 			}
-			out <- wsMsg{
+			dispatchWSMessage(out, wsMsg{
 				kind:              "rdp_proxy_disconnect",
 				rdpProxySessionID: payload.SessionID,
-			}
+			})
 		default:
 			if payload.Type != "" && payload.Type != "connected" {
 				logger.WithField("type", logutil.Sanitize(payload.Type)).Warn("Unknown WebSocket message type")
