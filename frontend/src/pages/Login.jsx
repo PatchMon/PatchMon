@@ -684,6 +684,8 @@ const Login = () => {
 												name="username"
 												type="text"
 												required
+												// biome-ignore lint/a11y/noAutofocus: sign-in is the page's only purpose and this is its first field
+												autoFocus
 												value={formData.username}
 												onChange={handleInputChange}
 												className="appearance-none rounded-md relative block w-full pl-10 pr-3 py-2 border border-secondary-300 placeholder-secondary-500 text-secondary-900 focus:outline-none focus:ring-primary-500 focus:border-primary-500 focus:z-10 sm:text-sm"
