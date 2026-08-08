@@ -74,16 +74,19 @@ JOIN compliance_profiles cp ON cp.id = cs.profile_id
 WHERE (sqlc.narg('status')::text IS NULL OR cs.status = sqlc.narg('status'))
   AND (sqlc.narg('host_id')::text IS NULL OR cs.host_id = sqlc.narg('host_id'))
   AND (sqlc.narg('profile_type')::text IS NULL OR cp.type = sqlc.narg('profile_type'))
+  AND (sqlc.narg('search')::text IS NULL OR h.friendly_name ILIKE '%' || sqlc.narg('search') || '%' OR h.hostname ILIKE '%' || sqlc.narg('search') || '%' OR cp.name ILIKE '%' || sqlc.narg('search') || '%')
 ORDER BY cs.started_at DESC
 LIMIT $1 OFFSET $2;
 
 -- name: CountComplianceScansHistory :one
 SELECT COUNT(*)
 FROM compliance_scans cs
+JOIN hosts h ON h.id = cs.host_id
 JOIN compliance_profiles cp ON cp.id = cs.profile_id
 WHERE (sqlc.narg('status')::text IS NULL OR cs.status = sqlc.narg('status'))
   AND (sqlc.narg('host_id')::text IS NULL OR cs.host_id = sqlc.narg('host_id'))
-  AND (sqlc.narg('profile_type')::text IS NULL OR cp.type = sqlc.narg('profile_type'));
+  AND (sqlc.narg('profile_type')::text IS NULL OR cp.type = sqlc.narg('profile_type'))
+  AND (sqlc.narg('search')::text IS NULL OR h.friendly_name ILIKE '%' || sqlc.narg('search') || '%' OR h.hostname ILIKE '%' || sqlc.narg('search') || '%' OR cp.name ILIKE '%' || sqlc.narg('search') || '%');
 
 -- name: ListActiveComplianceScans :many
 SELECT cs.id, cs.host_id, cs.profile_id, cs.started_at, cs.status,

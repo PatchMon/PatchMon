@@ -144,7 +144,7 @@ const OidcSettings = () => {
 	const updateMutation = useMutation({
 		mutationFn: (data) => oidcAPI.updateSettings(data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["oidcSettings"]);
+			queryClient.invalidateQueries({ queryKey: ["oidcSettings"] });
 			setSecretInput("");
 			toast.success("OIDC settings saved");
 		},
@@ -157,7 +157,7 @@ const OidcSettings = () => {
 	const importMutation = useMutation({
 		mutationFn: () => oidcAPI.importFromEnv(),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["oidcSettings"]);
+			queryClient.invalidateQueries({ queryKey: ["oidcSettings"] });
 			toast.success("OIDC settings imported from .env");
 		},
 		onError: (err) => {

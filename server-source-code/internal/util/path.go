@@ -6,13 +6,23 @@ import (
 	"strings"
 )
 
-// SafePathUnderBase joins baseDir and name, resolves symlinks, and verifies the result
-// is under baseDir. Returns the resolved path or an error if path traversal is detected.
-// Use when baseDir may come from env vars and name from validated user input.
+// SafePathUnderBase joins baseDir and a single path component, resolves symlinks,
+// and verifies the result is under baseDir. Returns the resolved path or an error.
+// name must be one component: no separators, not absolute, no traversal. Use when
+// baseDir may come from env vars and name from validated user input.
 func SafePathUnderBase(baseDir, name string) (string, error) {
 	baseClean := filepath.Clean(baseDir)
+	if name == "" || name == "." {
+		return "", fmt.Errorf("path component is empty")
+	}
+	if filepath.IsAbs(name) {
+		return "", fmt.Errorf("absolute path is not allowed")
+	}
+	if strings.ContainsRune(name, '/') || strings.ContainsRune(name, '\\') {
+		return "", fmt.Errorf("path separators are not allowed")
+	}
 	nameClean := filepath.Clean(name)
-	if nameClean == ".." || strings.HasPrefix(nameClean, "..") {
+	if nameClean == "." || nameClean == ".." || strings.HasPrefix(nameClean, "..") {
 		return "", fmt.Errorf("path component contains traversal")
 	}
 	joined := filepath.Join(baseClean, nameClean)

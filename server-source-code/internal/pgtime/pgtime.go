@@ -42,3 +42,23 @@ func FromPtr(t *time.Time) pgtype.Timestamp {
 func Now() pgtype.Timestamp {
 	return pgtype.Timestamp{Time: time.Now().UTC(), Valid: true}
 }
+
+// FromPtrTz returns an invalid pgtype.Timestamptz when t is nil, otherwise a
+// valid one with *t normalized to UTC. Use this for TIMESTAMPTZ columns
+// (e.g. hosts.boot_time) where the column carries a real UTC instant.
+func FromPtrTz(t *time.Time) pgtype.Timestamptz {
+	if t == nil {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
+}
+
+// PtrTz returns nil when ts is invalid, otherwise a *time.Time pointing at
+// the UTC instant. Mirror of pgTimePtr for TIMESTAMPTZ columns.
+func PtrTz(ts pgtype.Timestamptz) *time.Time {
+	if !ts.Valid {
+		return nil
+	}
+	t := ts.Time.UTC()
+	return &t
+}

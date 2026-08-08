@@ -12,6 +12,7 @@ import SetupCheckError from "./components/SetupCheckError";
 import { isAuthPhase } from "./constants/authPhases";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { ColorThemeProvider } from "./contexts/ColorThemeContext";
+import { ConfirmProvider } from "./contexts/ConfirmContext";
 import { SettingsProvider } from "./contexts/SettingsContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { ToastProvider } from "./contexts/ToastContext";
@@ -548,11 +549,13 @@ function App() {
 					<SettingsProvider>
 						<ColorThemeProvider>
 							<ToastProvider>
-								<UpdateNotificationProvider>
-									<LogoProvider>
-										<AppRoutes />
-									</LogoProvider>
-								</UpdateNotificationProvider>
+								<ConfirmProvider>
+									<UpdateNotificationProvider>
+										<LogoProvider>
+											<AppRoutes />
+										</LogoProvider>
+									</UpdateNotificationProvider>
+								</ConfirmProvider>
 							</ToastProvider>
 						</ColorThemeProvider>
 					</SettingsProvider>

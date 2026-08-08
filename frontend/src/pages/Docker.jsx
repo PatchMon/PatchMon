@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
+import { useToast } from "../contexts/ToastContext";
 import api, { formatError } from "../utils/api";
 import { generateRegistryLink, getSourceDisplayName } from "../utils/docker";
 
@@ -33,6 +34,7 @@ const VALID_DOCKER_TABS = [
 
 const Docker = () => {
 	const queryClient = useQueryClient();
+	const toast = useToast();
 	const [searchParams] = useSearchParams();
 	const location = useLocation();
 	const [searchTerm, setSearchTerm] = useState("");
@@ -165,12 +167,12 @@ const Docker = () => {
 			return response.data;
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries(["docker", "containers"]);
-			queryClient.invalidateQueries(["docker", "dashboard"]);
+			queryClient.invalidateQueries({ queryKey: ["docker", "containers"] });
+			queryClient.invalidateQueries({ queryKey: ["docker", "dashboard"] });
 			setDeleteContainerModal(null);
 		},
 		onError: (error) => {
-			alert(
+			toast.error(
 				`Failed to delete container: ${error.response?.data?.error || error.message}`,
 			);
 		},
@@ -183,12 +185,12 @@ const Docker = () => {
 			return response.data;
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries(["docker", "images"]);
-			queryClient.invalidateQueries(["docker", "dashboard"]);
+			queryClient.invalidateQueries({ queryKey: ["docker", "images"] });
+			queryClient.invalidateQueries({ queryKey: ["docker", "dashboard"] });
 			setDeleteImageModal(null);
 		},
 		onError: (error) => {
-			alert(
+			toast.error(
 				`Failed to delete image: ${error.response?.data?.error || error.message}`,
 			);
 		},
@@ -201,12 +203,12 @@ const Docker = () => {
 			return response.data;
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries(["docker", "volumes"]);
-			queryClient.invalidateQueries(["docker", "dashboard"]);
+			queryClient.invalidateQueries({ queryKey: ["docker", "volumes"] });
+			queryClient.invalidateQueries({ queryKey: ["docker", "dashboard"] });
 			setDeleteVolumeModal(null);
 		},
 		onError: (error) => {
-			alert(
+			toast.error(
 				`Failed to delete volume: ${error.response?.data?.error || error.message}`,
 			);
 		},
@@ -219,12 +221,12 @@ const Docker = () => {
 			return response.data;
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries(["docker", "networks"]);
-			queryClient.invalidateQueries(["docker", "dashboard"]);
+			queryClient.invalidateQueries({ queryKey: ["docker", "networks"] });
+			queryClient.invalidateQueries({ queryKey: ["docker", "dashboard"] });
 			setDeleteNetworkModal(null);
 		},
 		onError: (error) => {
-			alert(
+			toast.error(
 				`Failed to delete network: ${error.response?.data?.error || error.message}`,
 			);
 		},
@@ -241,7 +243,8 @@ const Docker = () => {
 				(c) =>
 					(c.name || "").toLowerCase().includes(term) ||
 					(c.image_name || "").toLowerCase().includes(term) ||
-					c.host?.friendly_name?.toLowerCase().includes(term),
+					c.host?.friendly_name?.toLowerCase().includes(term) ||
+					c.host?.hostname?.toLowerCase().includes(term),
 			);
 		}
 
@@ -383,7 +386,8 @@ const Docker = () => {
 			filtered = filtered.filter(
 				(v) =>
 					(v.name || "").toLowerCase().includes(term) ||
-					v.hosts?.friendly_name?.toLowerCase().includes(term),
+					v.hosts?.friendly_name?.toLowerCase().includes(term) ||
+					v.hosts?.hostname?.toLowerCase().includes(term),
 			);
 		}
 
@@ -435,7 +439,8 @@ const Docker = () => {
 			filtered = filtered.filter(
 				(n) =>
 					(n.name || "").toLowerCase().includes(term) ||
-					n.hosts?.friendly_name?.toLowerCase().includes(term),
+					n.hosts?.friendly_name?.toLowerCase().includes(term) ||
+					n.hosts?.hostname?.toLowerCase().includes(term),
 			);
 		}
 
@@ -726,6 +731,7 @@ const Docker = () => {
 									setActiveTab(tab.id);
 									setSearchTerm("");
 									setUpdatesFilter("all"); // Reset updates filter when switching tabs
+									setStatusFilter("all");
 									setSortField(
 										tab.id === "containers"
 											? "status"
@@ -855,7 +861,7 @@ const Docker = () => {
 							</div>
 						) : (
 							<StacksView
-								containers={containersData?.containers || []}
+								containers={filteredContainers}
 								getStatusBadge={getStatusBadge}
 							/>
 						))}
@@ -2484,7 +2490,8 @@ function StacksView({ containers, getStatusBadge }) {
 																	</td>
 																	<td className="px-4 py-2 whitespace-nowrap">
 																		<span className="text-sm text-secondary-500 dark:text-secondary-400 font-mono">
-																			{container.image}
+																			{container.image_name}:
+																			{container.image_tag}
 																		</span>
 																	</td>
 																	<td />
