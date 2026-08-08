@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
 	ArrowDown,
 	ArrowUp,
@@ -47,6 +47,7 @@ const ScanResultsTab = ({
 	useEffect(() => {
 		if (initialFilters && initialFilters !== applied_filters_ref.current) {
 			applied_filters_ref.current = initialFilters;
+			set_severity_filter(initialFilters.severity || "");
 			set_status_filter(initialFilters.status || "");
 			set_host_filter(initialFilters.host_id || "");
 			setPage(0);
@@ -93,7 +94,7 @@ const ScanResultsTab = ({
 			}),
 		staleTime: 60 * 1000,
 		refetchOnWindowFocus: false,
-		keepPreviousData: true,
+		placeholderData: keepPreviousData,
 	});
 
 	const sorted_rules = data?.rules || [];

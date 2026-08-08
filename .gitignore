@@ -93,7 +93,6 @@ temp/
 .DS_Store?
 ._*
 Thumbs.db
-build.sh
 
 # Legacy Node.js backend (replaced by server-source-code/)
 backend/

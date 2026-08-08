@@ -182,7 +182,8 @@ func RebootRequired() bool {
 $key = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'
 if (Test-Path $key) { Write-Output 'true' } else { Write-Output 'false' }
 `
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	cmd, cancel := boundedCommand(collectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	defer cancel()
 	out, err := cmd.Output()
 	if err != nil {
 		return false

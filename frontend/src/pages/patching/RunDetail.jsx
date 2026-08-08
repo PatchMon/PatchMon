@@ -23,6 +23,7 @@ import { PatchRunStatusBadge } from "../../components/PatchRunStatusBadge";
 import { useToast } from "../../contexts/ToastContext";
 import { formatDate } from "../../utils/api";
 import { buildRunStreamURL, patchingAPI } from "../../utils/patchingApi";
+import { hasExtraDependencies } from "../../utils/patchRun";
 
 // Statuses where we should open the live WebSocket stream and show the Stop
 // Run affordance. Everything else is already terminal or still scheduled.
@@ -36,6 +37,8 @@ const TERMINAL_STATUSES = new Set([
 	"cancelled",
 	"validated",
 	"dry_run_completed",
+	"timed_out",
+	"agent_disconnected",
 ]);
 
 // PostPatchReportPill renders one of two pills next to the run status:
@@ -174,8 +177,14 @@ const RunDetail = () => {
 	const handleConfirmStop = async () => {
 		setStopError(null);
 		try {
-			await stopRunMutation.mutateAsync(id);
+			const result = await stopRunMutation.mutateAsync(id);
 			setStopConfirmOpen(false);
+			const cancelledVia = result?.cancelled_via;
+			if (cancelledVia === "db_only") {
+				toast.success("Run cancelled (agent was offline)");
+			} else {
+				toast.success("Run cancelled");
+			}
 		} catch (err) {
 			const msg =
 				err?.response?.data?.error ||
@@ -400,9 +409,7 @@ const RunDetail = () => {
 		!stopRunMutation.isPending &&
 		!TERMINAL_STATUSES.has(run.status);
 
-	const hasExtraDeps =
-		run.status === "validated" &&
-		run.packages_affected?.length > (run.package_names?.length || 1);
+	const hasExtraDeps = hasExtraDependencies(run);
 
 	const hasPolicy = Boolean(run.policy_name || run.policy_snapshot);
 	const showDefaultPolicy = !hasPolicy && !run.dry_run;

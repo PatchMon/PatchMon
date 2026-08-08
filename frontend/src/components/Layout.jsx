@@ -48,6 +48,78 @@ import ReleaseNotesModal from "./ReleaseNotesModal";
 import TierBadge from "./TierBadge";
 import UpgradeNotificationIcon from "./UpgradeNotificationIcon";
 
+// Sidebar counter next to the "Hosts" nav item. Renders green connected /
+// red offline once WS status has loaded, and falls back to a neutral total
+// while it is still in flight so the badge never disappears between paints.
+const HostsNavBadge = ({ total, connected }) => {
+	if (!(total > 0)) return null;
+
+	if (connected === undefined || connected === null) {
+		return (
+			<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700 dark:bg-secondary-600 dark:text-secondary-200">
+				{total}
+			</span>
+		);
+	}
+
+	// `total` is cached for longer than `connected`, so a host added or removed
+	// between refetches can transiently make the two disagree. Clamping both
+	// ends keeps the pair summing to the total rather than rendering a
+	// connected count larger than the fleet.
+	const online = Math.min(connected, total);
+	const offline = total - online;
+
+	return (
+		<span className="ml-2 flex items-center gap-1">
+			{online > 0 && (
+				<span
+					className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+					title={`${online} host${online === 1 ? "" : "s"} connected`}
+				>
+					{online}
+				</span>
+			)}
+			{offline > 0 && (
+				<span
+					className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
+					title={`${offline} host${offline === 1 ? "" : "s"} offline`}
+				>
+					{offline}
+				</span>
+			)}
+		</span>
+	);
+};
+
+// Routes that hide the top bar page title and give the full remaining width to
+// the search box. Kept in one place so a new detail route can't pick up the
+// title on some pages and not others.
+const FULL_WIDTH_SEARCH_ROUTES = [
+	"/",
+	"/hosts",
+	"/repositories",
+	"/packages",
+	"/reporting",
+	"/automation",
+	"/compliance",
+	"/docker",
+	"/patching",
+];
+
+const FULL_WIDTH_SEARCH_PREFIXES = [
+	"/hosts/",
+	"/repositories/",
+	"/packages/",
+	"/compliance/",
+	"/docker/",
+	"/patching/",
+	"/settings/",
+];
+
+const usesFullWidthSearch = (pathname) =>
+	FULL_WIDTH_SEARCH_ROUTES.includes(pathname) ||
+	FULL_WIDTH_SEARCH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+
 const Layout = ({ children }) => {
 	// When used as a layout route, render Outlet; otherwise render children (backwards compat)
 	const content = children ?? <Outlet />;
@@ -92,18 +164,20 @@ const Layout = ({ children }) => {
 		useSettings();
 	const canManageBilling =
 		publicSettings?.admin_mode === true && hasPermission("can_manage_billing");
+	const canViewHostsAllowed = canViewHosts();
 	const { updateAvailable } = useUpdateNotification();
 	const { themeConfig } = useColorTheme();
 	const userMenuRef = useRef(null);
 
-	// Fetch dashboard stats for the "Last updated" info
+	// Fetch cheap navigation counters; full dashboard stats are page-local.
 	const {
 		data: stats,
 		refetch,
 		isFetching,
 	} = useQuery({
-		queryKey: ["dashboardStats"],
-		queryFn: () => dashboardAPI.getStats().then((res) => res.data),
+		queryKey: ["navigationStats"],
+		queryFn: () => dashboardAPI.getNavigationStats().then((res) => res.data),
+		enabled: canViewDashboard(),
 		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
 		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
@@ -121,14 +195,28 @@ const Layout = ({ children }) => {
 		staleTime: 300000, // Consider data stale after 5 minutes
 	});
 
-	// Fetch hosts for connection status (only if user can view hosts)
-	// Use dashboardAPI.getHosts() to match Hosts.jsx page and ensure api_id is included
-	const { data: hosts } = useQuery({
-		queryKey: ["hosts", "sidebar"],
-		queryFn: () => dashboardAPI.getHosts().then((res) => res.data),
-		enabled: canViewHosts(),
+	const { data: hostCounts } = useQuery({
+		queryKey: ["hostCounts"],
+		queryFn: () => dashboardAPI.getHostCounts().then((res) => res.data),
+		enabled: canViewHostsAllowed,
 		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
 		refetchOnWindowFocus: false,
+	});
+
+	// Live WebSocket connection count for the Hosts sidebar badge. Shares its
+	// query key with the Hosts page "Connection Status" card so TanStack Query
+	// dedupes them into a single request when both are mounted. The server counts
+	// agents labelled with this deployment context straight out of its in-memory
+	// registry, so the figure is scoped rather than a raw process-wide count and
+	// costs no database work per poll. Paused in background tabs
+	// (refetchIntervalInBackground defaults off).
+	const { data: wsStatusSummary } = useQuery({
+		queryKey: ["wsStatusSummary"],
+		queryFn: () => dashboardAPI.getWsStatusSummary().then((res) => res.data),
+		enabled: canViewHostsAllowed,
+		refetchInterval: 10000,
+		staleTime: 10000,
+		refetchOnWindowFocus: true,
 	});
 
 	// Fetch alert stats for Reporting badge (only if user can view reports and alerts are enabled)
@@ -140,67 +228,11 @@ const Layout = ({ children }) => {
 		staleTime: 0, // Always consider stale
 	});
 
-	// Track WebSocket status for hosts
-	const [wsStatusMap, setWsStatusMap] = useState({});
-
-	// Fetch WebSocket status for hosts
-	useEffect(() => {
-		if (!hosts || !Array.isArray(hosts) || hosts.length === 0) return;
-
-		// Fetch initial WebSocket status for all hosts
-		const fetchInitialStatus = async () => {
-			const apiIds = hosts
-				.filter((host) => host.api_id)
-				.map((host) => host.api_id);
-
-			if (apiIds.length === 0) return;
-
-			try {
-				const response = await fetch(
-					`/api/v1/ws/status?apiIds=${apiIds.join(",")}`,
-					{
-						credentials: "include",
-					},
-				);
-				if (response.ok) {
-					const result = await response.json();
-					setWsStatusMap(result.data);
-				}
-			} catch (_error) {
-				// Silently handle errors
-			}
-		};
-
-		fetchInitialStatus();
-
-		// Poll every 10 seconds for status updates
-		const pollInterval = setInterval(() => {
-			const apiIds = hosts
-				.filter((host) => host.api_id)
-				.map((host) => host.api_id);
-
-			if (apiIds.length === 0) return;
-
-			fetch(`/api/v1/ws/status?apiIds=${apiIds.join(",")}`, {
-				credentials: "include",
-			})
-				.then((response) => response.json())
-				.then((result) => {
-					if (result.success && result.data) {
-						setWsStatusMap(result.data);
-					} else if (result.data) {
-						setWsStatusMap(result.data);
-					}
-				})
-				.catch(() => {
-					// Silently handle errors
-				});
-		}, 10000);
-
-		return () => {
-			clearInterval(pollInterval);
-		};
-	}, [hosts]);
+	// Single source for the Hosts badge total across all four nav render sites.
+	// `stats` is gated on can_view_dashboard, so hostCounts has to lead here or
+	// hosts-only users lose the badge entirely.
+	const hostsBadgeTotal = hostCounts?.total ?? stats?.cards?.totalHosts ?? 0;
+	const hostsConnected = wsStatusSummary?.connected;
 
 	// Check for new release notes when user or version changes.
 	// Wait until public settings have loaded so ReleaseNotesModal can snapshot
@@ -298,7 +330,6 @@ const Layout = ({ children }) => {
 					name: "Patching",
 					href: "/patching",
 					icon: Wrench,
-					new: !patchingLocked,
 					lockedModule: patchingLocked ? "patching" : null,
 					lockedTier: patchingLocked ? getRequiredTier("patching") : null,
 					children: patchingChildren,
@@ -348,7 +379,6 @@ const Layout = ({ children }) => {
 					name: "Reporting",
 					href: "/reporting",
 					icon: AlertTriangle,
-					new: true,
 					children: reportingChildren,
 				});
 			}
@@ -386,11 +416,16 @@ const Layout = ({ children }) => {
 		if (canViewHosts() || canViewPackages() || canViewReports()) {
 			const systemItems = [];
 
-			systemItems.push({
-				name: "Automation",
-				href: "/automation",
-				icon: RefreshCw,
-			});
+			// Automation shows asynq queue activity for the whole process, which
+			// on a managed deployment spans every context. Hidden there, as
+			// Metrics and Server Version are.
+			if (publicSettings?.admin_mode !== true) {
+				systemItems.push({
+					name: "Automation",
+					href: "/automation",
+					icon: RefreshCw,
+				});
+			}
 
 			// Billing — double-gated: only on cloud installs (admin_mode === true)
 			// AND only for users with can_manage_billing permission. On self-hosted
@@ -418,7 +453,14 @@ const Layout = ({ children }) => {
 				});
 			}
 
-			const sidebarLinkIds = ["roadmap", "docs", "email", "website", "billing"];
+			const sidebarLinkIds = [
+				"roadmap",
+				"github_issues",
+				"docs",
+				"email",
+				"website",
+				"billing",
+			];
 			const linkChildren = communityLinks
 				.filter((l) => sidebarLinkIds.includes(l.id))
 				.map((l) => ({
@@ -767,13 +809,12 @@ const Layout = ({ children }) => {
 																	<subItem.icon className="mr-3 h-5 w-5" />
 																	<span className="flex items-center gap-2 flex-1">
 																		{subItem.name}
-																		{subItem.name === "Hosts" &&
-																			stats?.cards?.totalHosts !==
-																				undefined && (
-																				<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-200">
-																					{stats.cards.totalHosts}
-																				</span>
-																			)}
+																		{subItem.name === "Hosts" && (
+																			<HostsNavBadge
+																				total={hostsBadgeTotal}
+																				connected={hostsConnected}
+																			/>
+																		)}
 																	</span>
 																	<button
 																		type="button"
@@ -824,13 +865,12 @@ const Layout = ({ children }) => {
 																		<subItem.icon className="mr-3 h-5 w-5" />
 																		<span className="flex items-center gap-2 flex-1">
 																			{subItem.name}
-																			{subItem.name === "Hosts" &&
-																				stats?.cards?.totalHosts !==
-																					undefined && (
-																					<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 dark:bg-secondary-600 text-secondary-700 dark:text-secondary-200">
-																						{stats.cards.totalHosts}
-																					</span>
-																				)}
+																			{subItem.name === "Hosts" && (
+																				<HostsNavBadge
+																					total={hostsBadgeTotal}
+																					connected={hostsConnected}
+																				/>
+																			)}
 																			{subItem.name === "Reporting" &&
 																				alertStats && (
 																					<div className="ml-2 flex items-center gap-0.5">
@@ -1215,57 +1255,12 @@ const Layout = ({ children }) => {
 																			{!sidebarCollapsed && (
 																				<span className="truncate flex items-center gap-2 flex-1">
 																					{subItem.name}
-																					{subItem.name === "Hosts" &&
-																						hosts &&
-																						Array.isArray(hosts) &&
-																						hosts.length > 0 && (
-																							<div className="ml-2 flex items-center gap-1">
-																								{(() => {
-																									// Use the exact same logic as Hosts.jsx page
-																									const connectedCount =
-																										hosts?.filter(
-																											(h) =>
-																												wsStatusMap[h.api_id]
-																													?.connected === true,
-																										).length || 0;
-																									const offlineCount =
-																										hosts?.filter(
-																											(h) =>
-																												wsStatusMap[h.api_id]
-																													?.connected !== true,
-																										).length || 0;
-
-																									// If we have WebSocket data, show connected/disconnected badges
-																									// Otherwise show total count as fallback
-																									if (
-																										Object.keys(wsStatusMap)
-																											.length > 0
-																									) {
-																										return (
-																											<>
-																												{connectedCount > 0 && (
-																													<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-200">
-																														{connectedCount}
-																													</span>
-																												)}
-																												{offlineCount > 0 && (
-																													<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200">
-																														{offlineCount}
-																													</span>
-																												)}
-																											</>
-																										);
-																									}
-
-																									// Fallback: show total count if WebSocket status not available yet
-																									return (
-																										<span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700 dark:bg-secondary-600 dark:text-secondary-200">
-																											{hosts?.length || 0}
-																										</span>
-																									);
-																								})()}
-																							</div>
-																						)}
+																					{subItem.name === "Hosts" && (
+																						<HostsNavBadge
+																							total={hostsBadgeTotal}
+																							connected={hostsConnected}
+																						/>
+																					)}
 																					{/* {subItem.name === "Packages" &&
 																				stats?.cards?.totalOutdatedPackages !==
 																					undefined && (
@@ -1349,13 +1344,12 @@ const Layout = ({ children }) => {
 																			{!sidebarCollapsed && (
 																				<span className="truncate flex items-center gap-2 flex-1">
 																					{subItem.name}
-																					{subItem.name === "Hosts" &&
-																						stats?.cards?.totalHosts !==
-																							undefined && (
-																							<span className="ml-2 inline-flex items-center justify-center px-1.5 py-0.5 text-xs rounded bg-secondary-100 text-secondary-700">
-																								{stats.cards.totalHosts}
-																							</span>
-																						)}
+																					{subItem.name === "Hosts" && (
+																						<HostsNavBadge
+																							total={hostsBadgeTotal}
+																							connected={hostsConnected}
+																						/>
+																					)}
 																					{subItem.name === "Reporting" &&
 																						alertStats && (
 																							<div className="ml-2 flex items-center gap-0.5">
@@ -1657,34 +1651,22 @@ const Layout = ({ children }) => {
 						<div className="h-6 w-px bg-secondary-200 dark:bg-secondary-600 lg:hidden" />
 
 						<div className="flex flex-1 gap-x-2 sm:gap-x-4 self-stretch lg:gap-x-6 min-w-0">
-							{/* Page title - hidden on dashboard, hosts, repositories, packages, automation, compliance, docker, settings, and host details to give more space to search */}
-							{![
-								"/",
-								"/hosts",
-								"/repositories",
-								"/packages",
-								"/reporting",
-								"/automation",
-								"/compliance",
-								"/docker",
-								"/patching",
-							].includes(location.pathname) &&
-								!location.pathname.startsWith("/hosts/") &&
-								!location.pathname.startsWith("/compliance/") &&
-								!location.pathname.startsWith("/docker/") &&
-								!location.pathname.startsWith("/packages/") &&
-								!location.pathname.startsWith("/patching/") &&
-								!location.pathname.startsWith("/settings/") && (
-									<div className="relative flex items-center flex-shrink-0">
-										<h2 className="text-base sm:text-lg font-semibold text-secondary-900 dark:text-secondary-100 whitespace-nowrap">
-											{getPageTitle()}
-										</h2>
-									</div>
-								)}
+							{/* Page title - hidden on the list and detail routes above to give more space to search */}
+							{!usesFullWidthSearch(location.pathname) && (
+								<div className="relative flex items-center flex-shrink-0">
+									<h2 className="text-base sm:text-lg font-semibold text-secondary-900 dark:text-secondary-100 whitespace-nowrap">
+										{getPageTitle()}
+									</h2>
+								</div>
+							)}
 
 							{/* Global Search Bar */}
 							<div
-								className={`flex items-center min-w-0 ${["/", "/hosts", "/repositories", "/packages", "/reporting", "/automation", "/compliance", "/docker", "/patching"].includes(location.pathname) || location.pathname.startsWith("/hosts/") || location.pathname.startsWith("/compliance/") || location.pathname.startsWith("/docker/") || location.pathname.startsWith("/packages/") || location.pathname.startsWith("/patching/") || location.pathname.startsWith("/settings/") ? "flex-1 max-w-none" : "flex-1 md:flex-none md:max-w-sm"}`}
+								className={`flex items-center min-w-0 ${
+									usesFullWidthSearch(location.pathname)
+										? "flex-1 max-w-none"
+										: "flex-1 md:flex-none md:max-w-sm"
+								}`}
 							>
 								<GlobalSearch />
 							</div>

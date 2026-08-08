@@ -14,7 +14,9 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { useAuth } from "../../contexts/AuthContext";
+import { useConfirm } from "../../contexts/ConfirmContext";
 import { useSettings } from "../../contexts/SettingsContext";
+import { useToast } from "../../contexts/ToastContext";
 import {
 	adminUsersAPI,
 	formatDateOnly,
@@ -24,6 +26,8 @@ import {
 import { isRenderableAvatarSrc } from "../../utils/avatar";
 
 const UsersTab = () => {
+	const confirm = useConfirm();
+	const toast = useToast();
 	const [showAddModal, setShowAddModal] = useState(false);
 	const [editingUser, setEditingUser] = useState(null);
 	const [resetPasswordUser, setResetPasswordUser] = useState(null);
@@ -103,16 +107,21 @@ const UsersTab = () => {
 	const deleteUserMutation = useMutation({
 		mutationFn: adminUsersAPI.delete,
 		onSuccess: () => {
-			queryClient.invalidateQueries(["users"]);
+			queryClient.invalidateQueries({ queryKey: ["users"] });
 		},
 	});
 
 	// Update user mutation
+	// The modal awaits this, so it must be mutateAsync: mutate() swallows
+	// rejections and the await would resolve on failure.
 	const updateUserMutation = useMutation({
 		mutationFn: ({ id, data }) => adminUsersAPI.update(id, data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["users"]);
+			queryClient.invalidateQueries({ queryKey: ["users"] });
 			setEditingUser(null);
+		},
+		onError: (error) => {
+			console.error("Failed to update user:", error);
 		},
 	});
 
@@ -121,8 +130,11 @@ const UsersTab = () => {
 		mutationFn: ({ userId, newPassword }) =>
 			adminUsersAPI.resetPassword(userId, newPassword),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["users"]);
+			queryClient.invalidateQueries({ queryKey: ["users"] });
 			setResetPasswordUser(null);
+		},
+		onError: (error) => {
+			console.error("Failed to reset password:", error);
 		},
 	});
 
@@ -132,7 +144,7 @@ const UsersTab = () => {
 			return settingsAPI.update(data).then((res) => res.data);
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries(["settings"]);
+			queryClient.invalidateQueries({ queryKey: ["settings"] });
 			setIsSignupDirty(false);
 		},
 	});
@@ -153,21 +165,24 @@ const UsersTab = () => {
 	};
 
 	const handleDeleteUser = async (userId, username) => {
-		if (
-			window.confirm(
-				`Are you sure you want to delete user "${username}"? This action cannot be undone.`,
-			)
-		) {
-			try {
-				await deleteUserMutation.mutateAsync(userId);
-			} catch (error) {
-				console.error("Failed to delete user:", error);
-			}
+		const confirmed = await confirm({
+			title: "Delete user",
+			message: `Are you sure you want to delete user "${username}"?`,
+			confirmLabel: "Delete user",
+		});
+		if (!confirmed) return;
+
+		try {
+			await deleteUserMutation.mutateAsync(userId);
+			toast.success(`User "${username}" deleted`);
+		} catch (error) {
+			console.error("Failed to delete user:", error);
+			toast.error(error.response?.data?.error || "Failed to delete user");
 		}
 	};
 
 	const handleUserCreated = () => {
-		queryClient.invalidateQueries(["users"]);
+		queryClient.invalidateQueries({ queryKey: ["users"] });
 		setShowAddModal(false);
 	};
 
@@ -562,7 +577,7 @@ const UsersTab = () => {
 					user={editingUser}
 					isOpen={!!editingUser}
 					onClose={() => setEditingUser(null)}
-					onUpdateUser={updateUserMutation.mutate}
+					onUpdateUser={updateUserMutation.mutateAsync}
 					isLoading={updateUserMutation.isPending}
 					roles={roles}
 				/>
@@ -574,7 +589,7 @@ const UsersTab = () => {
 					user={resetPasswordUser}
 					isOpen={!!resetPasswordUser}
 					onClose={() => setResetPasswordUser(null)}
-					onPasswordReset={resetPasswordMutation.mutate}
+					onPasswordReset={resetPasswordMutation.mutateAsync}
 					isLoading={resetPasswordMutation.isPending}
 				/>
 			)}

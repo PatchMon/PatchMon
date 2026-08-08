@@ -21,9 +21,13 @@ import {
 	riskLabel,
 } from "../../constants/permissionGroups";
 import { useAuth } from "../../contexts/AuthContext";
+import { useConfirm } from "../../contexts/ConfirmContext";
+import { useToast } from "../../contexts/ToastContext";
 import { permissionsAPI } from "../../utils/api";
 
 const RolesTab = () => {
+	const confirm = useConfirm();
+	const toast = useToast();
 	const [editingRole, setEditingRole] = useState(null);
 	const [showAddModal, setShowAddModal] = useState(false);
 	const queryClient = useQueryClient();
@@ -113,16 +117,19 @@ const RolesTab = () => {
 	};
 
 	const handleDeleteRole = async (role) => {
-		if (
-			window.confirm(
-				`Are you sure you want to delete the "${role}" role? This action cannot be undone.`,
-			)
-		) {
-			try {
-				await deleteRoleMutation.mutateAsync(role);
-			} catch (error) {
-				console.error("Failed to delete role:", error);
-			}
+		const confirmed = await confirm({
+			title: "Delete role",
+			message: `Are you sure you want to delete the "${role}" role?`,
+			confirmLabel: "Delete role",
+		});
+		if (!confirmed) return;
+
+		try {
+			await deleteRoleMutation.mutateAsync(role);
+			toast.success(`Role "${role}" deleted`);
+		} catch (error) {
+			console.error("Failed to delete role:", error);
+			toast.error(error.response?.data?.error || "Failed to delete role");
 		}
 	};
 

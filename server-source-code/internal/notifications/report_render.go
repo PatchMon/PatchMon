@@ -284,19 +284,23 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 		case "hosts_by_updates":
 			body.WriteString(sectionHeader("Hosts by Outstanding Updates"))
 			dashStore := store.NewDashboardStore(d)
-			hostsData, e := dashStore.GetHostsWithCounts(ctx, store.HostsListParams{})
-			if e == nil && len(hostsData) > 0 {
+			// Pull as wide a page as the store allows so the report
+			// covers the whole fleet at typical sizes. We then sort +
+			// truncate to `top` below.
+			hostsData, e := dashStore.GetHostsWithCounts(ctx, store.HostsListParams{Limit: store.HostsListMaxLimit})
+			if e == nil && hostsData != nil && len(hostsData.Items) > 0 {
+				items := hostsData.Items
 				// Sort by updates count descending
-				sort.Slice(hostsData, func(i, j int) bool {
-					ci, _ := hostsData[i]["updatesCount"].(int64)
-					cj, _ := hostsData[j]["updatesCount"].(int64)
+				sort.Slice(items, func(i, j int) bool {
+					ci, _ := items[i]["updatesCount"].(int64)
+					cj, _ := items[j]["updatesCount"].(int64)
 					if ci == 0 {
-						if v, ok := hostsData[i]["updatesCount"].(int32); ok {
+						if v, ok := items[i]["updatesCount"].(int32); ok {
 							ci = int64(v)
 						}
 					}
 					if cj == 0 {
-						if v, ok := hostsData[j]["updatesCount"].(int32); ok {
+						if v, ok := items[j]["updatesCount"].(int32); ok {
 							cj = int64(v)
 						}
 					}
@@ -305,7 +309,7 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 
 				body.WriteString(tableOpen([]string{"Host", "Outstanding Updates", "Security Updates", "Status", "Last Seen"}))
 				n := 0
-				for _, h := range hostsData {
+				for _, h := range items {
 					if n >= top {
 						break
 					}

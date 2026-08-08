@@ -255,51 +255,59 @@ type DockerVolume struct {
 }
 
 type Host struct {
-	ID                           string           `json:"id"`
-	MachineID                    *string          `json:"machine_id"`
-	FriendlyName                 string           `json:"friendly_name"`
-	Ip                           *string          `json:"ip"`
-	OsType                       string           `json:"os_type"`
-	OsVersion                    string           `json:"os_version"`
-	Architecture                 *string          `json:"architecture"`
-	LastUpdate                   pgtype.Timestamp `json:"last_update"`
-	Status                       string           `json:"status"`
-	CreatedAt                    pgtype.Timestamp `json:"created_at"`
-	UpdatedAt                    pgtype.Timestamp `json:"updated_at"`
-	ApiID                        string           `json:"api_id"`
-	ApiKey                       string           `json:"api_key"`
-	AgentVersion                 *string          `json:"agent_version"`
-	AutoUpdate                   bool             `json:"auto_update"`
-	CpuCores                     *int32           `json:"cpu_cores"`
-	CpuModel                     *string          `json:"cpu_model"`
-	DiskDetails                  []byte           `json:"disk_details"`
-	DnsServers                   []byte           `json:"dns_servers"`
-	GatewayIp                    *string          `json:"gateway_ip"`
-	Hostname                     *string          `json:"hostname"`
-	KernelVersion                *string          `json:"kernel_version"`
-	InstalledKernelVersion       *string          `json:"installed_kernel_version"`
-	LoadAverage                  []byte           `json:"load_average"`
-	NetworkInterfaces            []byte           `json:"network_interfaces"`
-	RamInstalled                 *float64         `json:"ram_installed"`
-	SelinuxStatus                *string          `json:"selinux_status"`
-	SwapSize                     *float64         `json:"swap_size"`
-	SystemUptime                 *string          `json:"system_uptime"`
-	Notes                        *string          `json:"notes"`
-	NeedsReboot                  *bool            `json:"needs_reboot"`
-	RebootReason                 *string          `json:"reboot_reason"`
-	DockerEnabled                bool             `json:"docker_enabled"`
-	ComplianceEnabled            bool             `json:"compliance_enabled"`
-	ComplianceOnDemandOnly       bool             `json:"compliance_on_demand_only"`
-	ComplianceOpenscapEnabled    bool             `json:"compliance_openscap_enabled"`
-	ComplianceDockerBenchEnabled bool             `json:"compliance_docker_bench_enabled"`
-	ComplianceScannerStatus      []byte           `json:"compliance_scanner_status"`
-	ComplianceScannerUpdatedAt   pgtype.Timestamp `json:"compliance_scanner_updated_at"`
-	ComplianceDefaultProfileID   *string          `json:"compliance_default_profile_id"`
-	HostDownAlertsEnabled        *bool            `json:"host_down_alerts_enabled"`
-	ExpectedPlatform             *string          `json:"expected_platform"`
-	PackageManager               *string          `json:"package_manager"`
-	PrimaryInterface             *string          `json:"primary_interface"`
-	AwaitingPostPatchReportRunID *string          `json:"awaiting_post_patch_report_run_id"`
+	ID                           string             `json:"id"`
+	MachineID                    *string            `json:"machine_id"`
+	FriendlyName                 string             `json:"friendly_name"`
+	Ip                           *string            `json:"ip"`
+	OsType                       string             `json:"os_type"`
+	OsVersion                    string             `json:"os_version"`
+	Architecture                 *string            `json:"architecture"`
+	LastUpdate                   pgtype.Timestamp   `json:"last_update"`
+	Status                       string             `json:"status"`
+	CreatedAt                    pgtype.Timestamp   `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamp   `json:"updated_at"`
+	ApiID                        string             `json:"api_id"`
+	ApiKey                       string             `json:"api_key"`
+	AgentVersion                 *string            `json:"agent_version"`
+	AutoUpdate                   bool               `json:"auto_update"`
+	CpuCores                     *int32             `json:"cpu_cores"`
+	CpuModel                     *string            `json:"cpu_model"`
+	DiskDetails                  []byte             `json:"disk_details"`
+	DnsServers                   []byte             `json:"dns_servers"`
+	GatewayIp                    *string            `json:"gateway_ip"`
+	Hostname                     *string            `json:"hostname"`
+	KernelVersion                *string            `json:"kernel_version"`
+	InstalledKernelVersion       *string            `json:"installed_kernel_version"`
+	LoadAverage                  []byte             `json:"load_average"`
+	NetworkInterfaces            []byte             `json:"network_interfaces"`
+	RamInstalled                 *float64           `json:"ram_installed"`
+	SelinuxStatus                *string            `json:"selinux_status"`
+	SwapSize                     *float64           `json:"swap_size"`
+	SystemUptime                 *string            `json:"system_uptime"`
+	BootTime                     pgtype.Timestamptz `json:"boot_time"`
+	Notes                        *string            `json:"notes"`
+	NeedsReboot                  *bool              `json:"needs_reboot"`
+	RebootReason                 *string            `json:"reboot_reason"`
+	DockerEnabled                bool               `json:"docker_enabled"`
+	ComplianceEnabled            bool               `json:"compliance_enabled"`
+	ComplianceOnDemandOnly       bool               `json:"compliance_on_demand_only"`
+	ComplianceOpenscapEnabled    bool               `json:"compliance_openscap_enabled"`
+	ComplianceDockerBenchEnabled bool               `json:"compliance_docker_bench_enabled"`
+	ComplianceScannerStatus      []byte             `json:"compliance_scanner_status"`
+	ComplianceScannerUpdatedAt   pgtype.Timestamp   `json:"compliance_scanner_updated_at"`
+	ComplianceDefaultProfileID   *string            `json:"compliance_default_profile_id"`
+	HostDownAlertsEnabled        *bool              `json:"host_down_alerts_enabled"`
+	ExpectedPlatform             *string            `json:"expected_platform"`
+	PackageManager               *string            `json:"package_manager"`
+	PrimaryInterface             *string            `json:"primary_interface"`
+	AwaitingPostPatchReportRunID *string            `json:"awaiting_post_patch_report_run_id"`
+	PackagesHash                 *string            `json:"packages_hash"`
+	ReposHash                    *string            `json:"repos_hash"`
+	InterfacesHash               *string            `json:"interfaces_hash"`
+	HostnameHash                 *string            `json:"hostname_hash"`
+	DockerHash                   *string            `json:"docker_hash"`
+	ComplianceHash               *string            `json:"compliance_hash"`
+	LastFullReportAt             pgtype.Timestamp   `json:"last_full_report_at"`
 }
 
 type HostGroup struct {
@@ -372,6 +380,13 @@ type JobHistory struct {
 	CreatedAt     pgtype.Timestamp `json:"created_at"`
 	UpdatedAt     pgtype.Timestamp `json:"updated_at"`
 	CompletedAt   pgtype.Timestamp `json:"completed_at"`
+}
+
+type MvPackageStat struct {
+	PackageID       string `json:"package_id"`
+	TotalInstalls   int32  `json:"total_installs"`
+	UpdatesNeeded   int32  `json:"updates_needed"`
+	SecurityUpdates int32  `json:"security_updates"`
 }
 
 type NotificationDeliveryLog struct {
@@ -615,6 +630,8 @@ type Setting struct {
 	MaxLoginAttempts                *int32           `json:"max_login_attempts"`
 	LockoutDurationMinutes          *int32           `json:"lockout_duration_minutes"`
 	SessionInactivityTimeoutMinutes *int32           `json:"session_inactivity_timeout_minutes"`
+	PatchRunStallTimeoutMinutes     *int32           `json:"patch_run_stall_timeout_minutes"`
+	AgentReportsRetentionDays       *int32           `json:"agent_reports_retention_days"`
 	TfaMaxRememberSessions          *int32           `json:"tfa_max_remember_sessions"`
 	PasswordMinLength               *int32           `json:"password_min_length"`
 	PasswordRequireUppercase        *bool            `json:"password_require_uppercase"`
@@ -656,16 +673,20 @@ type SystemStatistic struct {
 }
 
 type UpdateHistory struct {
-	ID            string           `json:"id"`
-	HostID        string           `json:"host_id"`
-	PackagesCount int32            `json:"packages_count"`
-	SecurityCount int32            `json:"security_count"`
-	TotalPackages *int32           `json:"total_packages"`
-	PayloadSizeKb *float64         `json:"payload_size_kb"`
-	ExecutionTime *float64         `json:"execution_time"`
-	Timestamp     pgtype.Timestamp `json:"timestamp"`
-	Status        string           `json:"status"`
-	ErrorMessage  *string          `json:"error_message"`
+	ID                string           `json:"id"`
+	HostID            string           `json:"host_id"`
+	PackagesCount     int32            `json:"packages_count"`
+	SecurityCount     int32            `json:"security_count"`
+	TotalPackages     *int32           `json:"total_packages"`
+	PayloadSizeKb     *float64         `json:"payload_size_kb"`
+	ExecutionTime     *float64         `json:"execution_time"`
+	Timestamp         pgtype.Timestamp `json:"timestamp"`
+	Status            string           `json:"status"`
+	ErrorMessage      *string          `json:"error_message"`
+	ReportType        string           `json:"report_type"`
+	SectionsSent      []string         `json:"sections_sent"`
+	SectionsUnchanged []string         `json:"sections_unchanged"`
+	AgentExecutionMs  *int32           `json:"agent_execution_ms"`
 }
 
 type User struct {

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
 import {
 	CheckCircle,
@@ -10,7 +10,7 @@ import {
 	Shield,
 	XCircle,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { complianceAPI } from "../../utils/complianceApi";
 
@@ -56,7 +56,21 @@ const ScanHistoryTab = ({ scanned_hosts }) => {
 	const [type_filter, set_type_filter] = useState("");
 	const [host_filter, set_host_filter] = useState("");
 	const [search, set_search] = useState("");
+	const [debounced_search, set_debounced_search] = useState("");
+	const search_debounce_ref = useRef(null);
 	const limit = 25;
+
+	useEffect(() => {
+		if (search_debounce_ref.current) clearTimeout(search_debounce_ref.current);
+		search_debounce_ref.current = setTimeout(() => {
+			set_debounced_search(search.trim());
+			set_page(0);
+		}, 400);
+		return () => {
+			if (search_debounce_ref.current)
+				clearTimeout(search_debounce_ref.current);
+		};
+	}, [search]);
 
 	const { data, isLoading } = useQuery({
 		queryKey: [
@@ -65,28 +79,22 @@ const ScanHistoryTab = ({ scanned_hosts }) => {
 			status_filter,
 			type_filter,
 			host_filter,
+			debounced_search,
 		],
 		queryFn: () => {
 			const params = { limit, offset: page * limit };
 			if (status_filter) params.status = status_filter;
 			if (type_filter) params.profile_type = type_filter;
 			if (host_filter) params.host_id = host_filter;
+			if (debounced_search) params.search = debounced_search;
 			return complianceAPI.getScanHistory(params);
 		},
 		staleTime: 30 * 1000,
-		keepPreviousData: true,
+		placeholderData: keepPreviousData,
 	});
 
 	const scans = data?.scans || [];
 	const { total = 0, total_pages = 1 } = data?.pagination || {};
-
-	const filtered_scans = search.trim()
-		? scans.filter(
-				(s) =>
-					s.host_name.toLowerCase().includes(search.toLowerCase()) ||
-					s.profile_name.toLowerCase().includes(search.toLowerCase()),
-			)
-		: scans;
 
 	const host_options = scanned_hosts || [];
 
@@ -190,14 +198,16 @@ const ScanHistoryTab = ({ scanned_hosts }) => {
 					<div className="flex items-center justify-center py-16">
 						<RefreshCw className="h-6 w-6 animate-spin text-secondary-400 dark:text-white" />
 					</div>
-				) : filtered_scans.length === 0 ? (
+				) : scans.length === 0 ? (
 					<div className="text-center py-16 text-secondary-400 dark:text-white">
 						<Shield className="h-10 w-10 mx-auto mb-3" />
 						<p className="font-medium text-secondary-700 dark:text-white">
 							No scan history found
 						</p>
 						<p className="text-sm mt-1">
-							Completed and failed scans will appear here.
+							{debounced_search
+								? "No scans match your search."
+								: "Completed and failed scans will appear here."}
 						</p>
 					</div>
 				) : (
@@ -229,7 +239,7 @@ const ScanHistoryTab = ({ scanned_hosts }) => {
 								</tr>
 							</thead>
 							<tbody className="divide-y divide-secondary-200 dark:divide-secondary-700">
-								{filtered_scans.map((scan) => {
+								{scans.map((scan) => {
 									const cfg =
 										STATUS_CONFIG[scan.status] || STATUS_CONFIG.completed;
 									const StatusIcon = cfg.icon;

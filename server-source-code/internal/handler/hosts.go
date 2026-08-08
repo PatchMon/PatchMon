@@ -59,6 +59,25 @@ func (h *HostsHandler) List(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, hosts)
 }
 
+// Options handles GET /hosts/options.
+func (h *HostsHandler) Options(w http.ResponseWriter, r *http.Request) {
+	search := r.URL.Query().Get("search")
+	if len(search) > 200 {
+		search = search[:200]
+	}
+	limit := parseIntQuery(r, "limit", 100)
+	offset := parseIntQuery(r, "offset", 0)
+	if limit > 5000 {
+		limit = 5000
+	}
+	options, err := h.hosts.ListOptions(r.Context(), search, limit, offset)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to load host options")
+		return
+	}
+	JSON(w, http.StatusOK, options)
+}
+
 // AdminList handles GET /hosts/admin/list.
 func (h *HostsHandler) AdminList(w http.ResponseWriter, r *http.Request) {
 	returnAll := r.URL.Query().Get("all") == "true"
@@ -271,6 +290,25 @@ func (h *HostsHandler) UpdateGroups(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GetByID returns (nil, nil) for "no such row", and the updates are :exec, so
+// an unknown id otherwise means a no-op write then a nil dereference.
+func (h *HostsHandler) requireHost(w http.ResponseWriter, r *http.Request, hostID string) (*models.Host, bool) {
+	host, err := h.hosts.GetByID(r.Context(), hostID)
+	if err != nil || host == nil {
+		Error(w, http.StatusNotFound, "Host not found")
+		return nil, false
+	}
+	return host, true
+}
+
+// Never returns nil; falls back to the pre-write row.
+func (h *HostsHandler) reloadHost(r *http.Request, hostID string, fallback *models.Host) *models.Host {
+	if updated, err := h.hosts.GetByID(r.Context(), hostID); err == nil && updated != nil {
+		return updated
+	}
+	return fallback
+}
+
 // UpdateFriendlyName handles PATCH /hosts/:hostId/friendly-name.
 func (h *HostsHandler) UpdateFriendlyName(w http.ResponseWriter, r *http.Request) {
 	hostID := chi.URLParam(r, "hostId")
@@ -286,11 +324,16 @@ func (h *HostsHandler) UpdateFriendlyName(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	existing, ok := h.requireHost(w, r, hostID)
+	if !ok {
+		return
+	}
+
 	if err := h.hosts.UpdateFriendlyName(r.Context(), hostID, req.FriendlyName); err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to update friendly name")
 		return
 	}
-	host, _ := h.hosts.GetByID(r.Context(), hostID)
+	host := h.reloadHost(r, hostID, existing)
 	groups, _ := h.hosts.GetHostGroups(r.Context(), hostID)
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Friendly name updated successfully",
@@ -309,11 +352,16 @@ func (h *HostsHandler) UpdateNotes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	existing, ok := h.requireHost(w, r, hostID)
+	if !ok {
+		return
+	}
+
 	if err := h.hosts.UpdateNotes(r.Context(), hostID, req.Notes); err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to update notes")
 		return
 	}
-	host, _ := h.hosts.GetByID(r.Context(), hostID)
+	host := h.reloadHost(r, hostID, existing)
 	groups, _ := h.hosts.GetHostGroups(r.Context(), hostID)
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Notes updated successfully",
@@ -333,11 +381,16 @@ func (h *HostsHandler) UpdateConnection(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	existing, ok := h.requireHost(w, r, hostID)
+	if !ok {
+		return
+	}
+
 	if err := h.hosts.UpdateConnection(r.Context(), hostID, req.IP, req.Hostname); err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to update connection")
 		return
 	}
-	host, _ := h.hosts.GetByID(r.Context(), hostID)
+	host := h.reloadHost(r, hostID, existing)
 	groups, _ := h.hosts.GetHostGroups(r.Context(), hostID)
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Host connection information updated successfully",
@@ -412,7 +465,7 @@ func (h *HostsHandler) UpdateHostDownAlerts(w http.ResponseWriter, r *http.Reque
 		hostResp["friendlyName"] = host.FriendlyName
 	}
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"message": "Host down alerts " + statusMsg + " successfully",
+		"message": "Host agent down alerts " + statusMsg + " successfully",
 		"host":    hostResp,
 	})
 }
@@ -428,11 +481,16 @@ func (h *HostsHandler) UpdateAutoUpdate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	existing, ok := h.requireHost(w, r, hostID)
+	if !ok {
+		return
+	}
+
 	if err := h.hosts.UpdateAutoUpdate(r.Context(), hostID, req.AutoUpdate); err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to update auto-update")
 		return
 	}
-	host, _ := h.hosts.GetByID(r.Context(), hostID)
+	host := h.reloadHost(r, hostID, existing)
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Agent auto-update " + map[bool]string{true: "enabled", false: "disabled"}[req.AutoUpdate] + " successfully",
 		"host":    map[string]interface{}{"id": host.ID, "friendlyName": host.FriendlyName, "autoUpdate": req.AutoUpdate},
@@ -703,10 +761,11 @@ func (h *HostsHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify all exist
+	// The nil check is what enforces this: GetByID returns (nil, nil) for
+	// "no such row".
 	for _, id := range req.HostIds {
-		_, err := h.hosts.GetByID(r.Context(), id)
-		if err != nil {
+		existing, err := h.hosts.GetByID(r.Context(), id)
+		if err != nil || existing == nil {
 			Error(w, http.StatusNotFound, "Some hosts not found")
 			return
 		}
@@ -1009,8 +1068,11 @@ func (h *HostsHandler) SetComplianceScanners(w http.ResponseWriter, r *http.Requ
 		Error(w, http.StatusBadRequest, "At least one of openscap_enabled or docker_bench_enabled must be provided")
 		return
 	}
-	_, err := h.hosts.GetByID(r.Context(), hostID)
-	if err != nil {
+	// GetByID returns (nil, nil) for "no such row", so the nil check is what
+	// actually makes this a 404; testing err alone let an unknown id fall
+	// through to a no-op update reported as success.
+	existing, err := h.hosts.GetByID(r.Context(), hostID)
+	if err != nil || existing == nil {
 		Error(w, http.StatusNotFound, "Host not found")
 		return
 	}
@@ -1049,8 +1111,11 @@ func (h *HostsHandler) SetComplianceDefaultProfile(w http.ResponseWriter, r *htt
 		Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
-	_, err := h.hosts.GetByID(r.Context(), hostID)
-	if err != nil {
+	// GetByID returns (nil, nil) for "no such row", so the nil check is what
+	// actually makes this a 404; testing err alone let an unknown id fall
+	// through to a no-op update reported as success.
+	existing, err := h.hosts.GetByID(r.Context(), hostID)
+	if err != nil || existing == nil {
 		Error(w, http.StatusNotFound, "Host not found")
 		return
 	}
@@ -1233,7 +1298,7 @@ func hostToResponse(h *models.Host, groups []models.HostGroup) map[string]interf
 		"os_type": h.OSType, "os_version": h.OSVersion, "architecture": h.Architecture,
 		"last_update": h.LastUpdate, "status": h.Status, "api_id": h.ApiID, "agent_version": h.AgentVersion,
 		"auto_update": h.AutoUpdate, "created_at": h.CreatedAt, "notes": h.Notes,
-		"system_uptime": h.SystemUptime, "needs_reboot": h.NeedsReboot,
+		"system_uptime": h.SystemUptime, "boot_time": h.BootTime, "needs_reboot": h.NeedsReboot,
 		"docker_enabled": h.DockerEnabled, "compliance_enabled": h.ComplianceEnabled,
 		"package_manager": h.PackageManager, "primary_interface": h.PrimaryInterface,
 		"awaiting_post_patch_report_run_id": h.AwaitingPostPatchReportRunID,

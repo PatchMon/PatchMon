@@ -137,8 +137,8 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 				const status = wsResult.data;
 				if (status?.connected && connectionStage === "waiting") {
 					setConnectionStage("connected");
-					queryClient.invalidateQueries(["host", createdHost.id]);
-					queryClient.invalidateQueries(["hosts"]);
+					queryClient.invalidateQueries({ queryKey: ["host", createdHost.id] });
+					queryClient.invalidateQueries({ queryKey: ["hosts"] });
 				}
 				if (
 					status?.connected &&
@@ -205,8 +205,8 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 				state: { fromWizard: true, apiKey: plaintextApiKey },
 			});
 			setTimeout(() => {
-				queryClient.invalidateQueries(["host", createdHost.id]);
-				queryClient.invalidateQueries(["hosts"]);
+				queryClient.invalidateQueries({ queryKey: ["host", createdHost.id] });
+				queryClient.invalidateQueries({ queryKey: ["hosts"] });
 			}, 2000);
 		}, 300);
 	}, [
@@ -267,8 +267,9 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 				document.body.appendChild(ta);
 				ta.focus();
 				ta.select();
-				document.execCommand("copy");
+				const successful = document.execCommand("copy");
 				document.body.removeChild(ta);
+				if (!successful) throw new Error("Copy command failed");
 			}
 			setStep(4);
 		} catch (_err) {
