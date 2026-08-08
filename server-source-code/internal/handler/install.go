@@ -170,7 +170,7 @@ func (h *InstallHandler) ServeInstall(w http.ResponseWriter, r *http.Request) {
 			script = append([]byte("#"), script[1:]...)
 		}
 		script = append([]byte(envBlock), script...)
-		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Content-Disposition", `inline; filename="patchmon_install_windows.ps1"`)
 		_, _ = w.Write(script)
 		return
@@ -233,7 +233,7 @@ fetch_credentials
 	}
 	script = append([]byte(envBlock), script...)
 
-	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", `inline; filename="patchmon_install.sh"`)
 	_, _ = w.Write(script)
 }
@@ -254,7 +254,7 @@ func (h *InstallHandler) ServeRemove(w http.ResponseWriter, r *http.Request) {
 			JSON(w, http.StatusNotFound, map[string]string{"error": "Windows removal script not found"})
 			return
 		}
-		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Content-Disposition", `inline; filename="patchmon_remove_windows.ps1"`)
 		_, _ = w.Write(script)
 		return
@@ -274,7 +274,7 @@ func (h *InstallHandler) ServeRemove(w http.ResponseWriter, r *http.Request) {
 		script = append([]byte("#"), script[1:]...)
 	}
 	script = append(envPrefix, script...)
-	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", `inline; filename="patchmon_remove.sh"`)
 	_, _ = w.Write(script)
 }

@@ -700,7 +700,7 @@ func (h *AutoEnrollmentHandler) ServeScript(w http.ResponseWriter, r *http.Reque
 	out.WriteString(envBlock)
 	out.WriteString(scriptStr)
 
-	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", "inline; filename=\""+scriptType+"_auto_enroll.sh\"")
 	// Prevent caching of URLs containing token credentials in query parameters.
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")

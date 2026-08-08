@@ -2832,7 +2832,7 @@ curl -s "https://patchmon.example.com/api/v1/hosts/install?os=freebsd" \
 **Windows one-liner** (elevated PowerShell, single line):
 
 ```powershell
-$r = Invoke-WebRequest -Uri "https://patchmon.example.com/api/v1/hosts/install?os=windows" -Headers @{"X-API-ID"="patchmon_a1b2c3d4"; "X-API-KEY"="<64-char-key>"} -UseBasicParsing; $r.Content | Set-Content "$env:TEMP\patchmon-install.ps1" -Encoding UTF8; & "$env:TEMP\patchmon-install.ps1"
+Invoke-WebRequest -Uri "https://patchmon.example.com/api/v1/hosts/install?os=windows" -Headers @{"X-API-ID"="patchmon_a1b2c3d4"; "X-API-KEY"="<64-char-key>"} -UseBasicParsing -OutFile "$env:TEMP\patchmon-install.ps1"; & "$env:TEMP\patchmon-install.ps1"
 ```
 
 Click **Copy command**. The wizard advances to **Step 5: Connection** automatically.
@@ -4002,10 +4002,11 @@ curl -s https://patchmon.example.com/api/v1/hosts/remove | sudo sh
 
 ```powershell
 $ProgressPreference = 'SilentlyContinue'
-irm https://patchmon.example.com/api/v1/hosts/remove?os=windows | iex
+Invoke-WebRequest https://patchmon.example.com/api/v1/hosts/remove?os=windows -UseBasicParsing -OutFile "$env:TEMP\patchmon-remove.ps1"
+powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\patchmon-remove.ps1"
 ```
 
-(Or download first, inspect, then run: `irm ... -OutFile remove.ps1; .\remove.ps1`.)
+`-OutFile` writes the script to disk byte for byte. Piping the response through `iex` makes Windows PowerShell 5.1 decode it as text first, which is a common source of parser errors.
 
 The Linux/FreeBSD script handles everything:
 - Stops the service (systemd, OpenRC, or crontab)
@@ -4392,7 +4393,8 @@ curl -s https://patchmon.example.com/api/v1/hosts/remove | sudo REMOVE_BACKUPS=1
 
 ```powershell
 $ProgressPreference = 'SilentlyContinue'
-irm https://patchmon.example.com/api/v1/hosts/remove?os=windows | iex
+Invoke-WebRequest https://patchmon.example.com/api/v1/hosts/remove?os=windows -UseBasicParsing -OutFile "$env:TEMP\patchmon-remove.ps1"
+powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\patchmon-remove.ps1"
 ```
 
 Or download first, inspect, then run:
