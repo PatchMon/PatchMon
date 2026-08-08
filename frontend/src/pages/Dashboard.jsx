@@ -106,10 +106,11 @@ ChartJS.register(
 	Title,
 );
 
-// Hosts-page filter shared by the errored-hosts card and the "Errored" segment
-// of the update-status chart. The server-side `inactive` filter resolves to the
-// same "active host, silent past 2x the update interval" set the card counts,
-// so the count and the resulting list always agree.
+// Hosts-page filter for the not-reporting card. The server-side `inactive`
+// filter resolves to the same "active host, silent past 2x the update interval"
+// set the card counts, so the count and the resulting list always agree. The
+// update-status chart reaches the same list through the `filter` its segment
+// carries, rather than through this constant.
 const ERRORED_HOSTS_FILTER = "inactive";
 
 // Drag-to-resize handle on the right edge of a card in edit mode
@@ -340,23 +341,13 @@ const Dashboard = () => {
 		if (elements.length > 0 && stats?.charts?.updateStatusDistribution) {
 			const elementIndex = elements[0].index;
 			const statusItem = stats.charts.updateStatusDistribution[elementIndex];
-			if (!statusItem?.name) return;
 
-			const statusName = statusItem.name;
-			// Map status names to filter parameters
-			let filter = "";
-			if (statusName.toLowerCase().includes("needs updates")) {
-				filter = "needsUpdates";
-			} else if (statusName.toLowerCase().includes("up to date")) {
-				filter = "upToDate";
-			} else if (statusName.toLowerCase().includes("errored")) {
-				filter = ERRORED_HOSTS_FILTER;
-			} else if (statusName.toLowerCase().includes("stale")) {
-				filter = "stale";
-			}
-
-			if (filter) {
-				navigate(`/hosts?filter=${filter}`, { replace: true });
+			// The segment carries the filter it links to. Deriving it from the
+			// display label instead breaks silently the moment a segment is
+			// renamed: no branch matches, no filter is applied, and the click
+			// lands on an unfiltered host list that looks like it worked.
+			if (statusItem?.filter) {
+				navigate(`/hosts?filter=${statusItem.filter}`, { replace: true });
 			}
 		}
 	};
@@ -2310,7 +2301,7 @@ const Dashboard = () => {
 				backgroundColor: [
 					"#10B981", // Green - Up to date
 					"#F59E0B", // Yellow - Needs updates
-					"#EF4444", // Red - Errored
+					"#EF4444", // Red - Not reporting
 				],
 				borderWidth: 0,
 			},
