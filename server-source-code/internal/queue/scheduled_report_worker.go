@@ -362,7 +362,7 @@ type scheduledEmailConfig struct {
 	// UseTLS is the legacy boolean preserved for backward compatibility on rows
 	// written before TLSMode existed. New code should set TLSMode and let
 	// mailer.ResolveMode pick the effective policy.
-	UseTLS  bool   `json:"use_tls"`
+	UseTLS  *bool  `json:"use_tls"`
 	TLSMode string `json:"tls_mode"`
 }
 
@@ -378,7 +378,7 @@ func sendScheduledEmail(ctx context.Context, log *slog.Logger, plain, subject, h
 		cfg.SMTPPort = 587
 	}
 
-	mode := mailer.ResolveMode(cfg.TLSMode, &cfg.UseTLS, cfg.SMTPPort)
+	mode := mailer.ResolveMode(cfg.TLSMode, cfg.UseTLS, cfg.SMTPPort)
 	mc := mailer.Config{
 		Host:     cfg.SMTPHost,
 		Port:     cfg.SMTPPort,

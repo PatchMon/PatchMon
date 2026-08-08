@@ -86,6 +86,69 @@ func (h *AutomationHandler) getQueueStats(queueName string) QueueStats {
 	}
 }
 
+// completedPageSize bounds the single page read to find the newest completion.
+const completedPageSize = 100
+
+// latestCompletedTask returns the most recently completed task on a queue, or
+// nil if there are none.
+//
+// Asynq keeps completed tasks in a sorted set scored by retention expiry and
+// ListCompletedTasks returns them in ascending score order, so the first page
+// holds the OLDEST retained completion, not the newest. Reading page one made
+// "Last Run" freeze at whatever completed first and stay there until retention
+// evicted it, while the total-runs counter kept climbing.
+func (h *AutomationHandler) latestCompletedTask(queueName string) *asynq.TaskInfo {
+	info, err := h.inspector.GetQueueInfo(queueName)
+	if err != nil || info.Completed == 0 {
+		return nil
+	}
+
+	lastPage := lastCompletedPage(info.Completed, completedPageSize)
+	tasks, err := h.inspector.ListCompletedTasks(queueName,
+		asynq.PageSize(completedPageSize), asynq.Page(lastPage))
+	if err != nil {
+		return nil
+	}
+	if len(tasks) == 0 && lastPage > 1 {
+		// The set shrank between the count and the read; fall back to page one
+		// rather than reporting "never run".
+		tasks, err = h.inspector.ListCompletedTasks(queueName, asynq.PageSize(completedPageSize))
+		if err != nil {
+			return nil
+		}
+	}
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	return newestByCompletedAt(tasks)
+}
+
+// lastCompletedPage returns the 1-based page holding the highest-scored
+// entries for a set of the given size.
+func lastCompletedPage(completed, pageSize int) int {
+	if completed <= 0 || pageSize <= 0 {
+		return 1
+	}
+	return (completed + pageSize - 1) / pageSize
+}
+
+// newestByCompletedAt picks the latest completion from a page. The set is
+// scored by expiry rather than completion time, so tasks carrying different
+// retentions can interleave and position alone is not enough.
+func newestByCompletedAt(tasks []*asynq.TaskInfo) *asynq.TaskInfo {
+	var newest *asynq.TaskInfo
+	for _, t := range tasks {
+		if t == nil {
+			continue
+		}
+		if newest == nil || t.CompletedAt.After(newest.CompletedAt) {
+			newest = t
+		}
+	}
+	return newest
+}
+
 // getQueueLastRunInfo returns lastRun, lastRunTs, and status from Asynq/Redis for a queue.
 // Checks completed, active, retry, and archived tasks to reflect exact queue state.
 func (h *AutomationHandler) getQueueLastRunInfo(queueName string) (lastRun string, lastRunTs int64, status string) {
@@ -93,9 +156,8 @@ func (h *AutomationHandler) getQueueLastRunInfo(queueName string) (lastRun strin
 		return "Never", 0, "Never run"
 	}
 
-	// 1. Completed tasks (most recent first) - only present when Retention is set
-	if tasks, err := h.inspector.ListCompletedTasks(queueName, asynq.PageSize(1)); err == nil && len(tasks) > 0 {
-		t := tasks[0]
+	// 1. Completed tasks - only present when Retention is set
+	if t := h.latestCompletedTask(queueName); t != nil {
 		lastRunTs = t.CompletedAt.UnixMilli()
 		lastRun = t.CompletedAt.Format("1/2/2006, 3:04:05 PM")
 		if t.LastErr != "" {

@@ -386,7 +386,10 @@ func (m *APTManager) isCacheStale(maxAgeMinutes int) bool {
 // trailing architecture field is bracketed too, so scanning for "the first
 // [...] field" picks up [amd64] on those lines and reports it as the installed
 // version. Some lines also end in a bare [], which a scan happily absorbs.
-var aptInstRe = regexp.MustCompile(`^Inst\s+(\S+)\s+(?:\[([^\]]*)\]\s+)?\(([^\s)]+)`)
+// The trailing group is the origin list, which is the only part that may be
+// searched for the security pocket: the package name is on the same line and
+// 43 packages in Debian main contain "security" in their name.
+var aptInstRe = regexp.MustCompile(`^Inst\s+(\S+)\s+(?:\[([^\]]*)\]\s+)?\(([^\s)]+)([^)]*)`)
 
 // parseAPTUpgrade parses apt/apt-get upgrade simulation output
 func (m *APTManager) parseAPTUpgrade(output string) []models.Package {
@@ -407,6 +410,7 @@ func (m *APTManager) parseAPTUpgrade(output string) []models.Package {
 			continue
 		}
 		packageName, currentVersion, availableVersion := match[1], match[2], match[3]
+		origins := match[4]
 
 		// No current version means apt is installing this package rather than
 		// upgrading it, so there is nothing on the host to be out of date.
@@ -421,7 +425,7 @@ func (m *APTManager) parseAPTUpgrade(output string) []models.Package {
 			CurrentVersion:   currentVersion,
 			AvailableVersion: availableVersion,
 			NeedsUpdate:      true,
-			IsSecurityUpdate: strings.Contains(strings.ToLower(line), "security"),
+			IsSecurityUpdate: strings.Contains(strings.ToLower(origins), "security"),
 		})
 	}
 

@@ -5,13 +5,19 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"patchmon-agent/pkg/models"
 
 	"github.com/sirupsen/logrus"
 )
+
+// Vendor advisory identifiers all share the shape PREFIX-YEAR:SEQUENCE, for
+// example RHSA-2025:1234, ALSA-2025:11140, RLSA-2025:5678, ELSA-2025-1234.
+var advisoryIDRe = regexp.MustCompile(`^[A-Z]{2,10}-\d{4}[:-]\d+`)
 
 // DNFManager handles dnf/yum package information collection
 type DNFManager struct {
@@ -41,6 +47,23 @@ var rpmArchSuffixes = map[string]bool{
 	"s390x":   true,
 	"riscv64": true,
 	"src":     true,
+}
+
+// An RPM EVR is "[epoch:]version-release": it always starts with a digit
+// (epoch or version) and always carries a release separated by a hyphen.
+// Both conditions together are enough to tell a version column apart from
+// an English word.
+func looksLikeRPMVersion(s string) bool {
+	s = strings.TrimPrefix(s, "*") // yum marks obsoleting packages with a leading *
+	if i := strings.Index(s, ":"); i > 0 {
+		if _, err := strconv.Atoi(s[:i]); err == nil {
+			s = s[i+1:]
+		}
+	}
+	if s == "" || s[0] < '0' || s[0] > '9' {
+		return false
+	}
+	return strings.Contains(s, "-")
 }
 
 // Both parsers must agree: CombinePackageData keys its upgradable set on
@@ -275,16 +298,11 @@ func (m *DNFManager) getSecurityPackages(packageManager string) map[string]bool 
 			continue
 		}
 
-		// Skip lines that don't start with advisory IDs
-		// Common advisory ID prefixes: RHSA (Red Hat), ALSA (AlmaLinux), ELSA (Oracle/Enterprise Linux), CESA (CentOS)
-		// This filters out header lines like "expiration"
+		// Match the advisory ID by shape rather than by a list of known
+		// vendor prefixes, so a new distribution does not silently report
+		// zero security updates. Filters out header lines like "expiration".
 		advisoryID := fields[0]
-		isAdvisory := strings.HasPrefix(advisoryID, "RHSA") ||
-			strings.HasPrefix(advisoryID, "ALSA") ||
-			strings.HasPrefix(advisoryID, "ELSA") ||
-			strings.HasPrefix(advisoryID, "CESA")
-
-		if !isAdvisory {
+		if !advisoryIDRe.MatchString(advisoryID) {
 			continue
 		}
 
@@ -349,6 +367,14 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 
 		fields := slices.Collect(strings.FieldsSeq(line))
 		if len(fields) < 3 {
+			continue
+		}
+
+		// A real row is "name.arch  epoch:version-release  repo". Banner lines
+		// such as "Updating Subscription Management repositories." also have
+		// three or more fields, so the column has to be validated by shape or
+		// they are ingested as packages.
+		if !looksLikeRPMVersion(fields[1]) {
 			continue
 		}
 
@@ -446,7 +472,7 @@ func (m *DNFManager) parseInstalledPackages(output string) map[string]models.Pac
 		parts := strings.Fields(trimmed)
 
 		// Normal single-line format: "name.arch  version  repo"
-		if len(parts) >= 3 {
+		if len(parts) >= 3 && looksLikeRPMVersion(parts[1]) {
 			packageName := stripRPMArchSuffix(parts[0])
 			version := parts[1]
 			installedPackages[packageName] = models.Package{
