@@ -360,12 +360,40 @@ func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, osType, stage, ou
 		if errorMessage == "" {
 			errPtr = nil
 		}
-		if err := d.Queries.UpdatePatchRunCancelled(ctx, db.UpdatePatchRunCancelledParams{
+		rows, err := d.Queries.UpdatePatchRunCancelled(ctx, db.UpdatePatchRunCancelledParams{
 			ID:           id,
 			ShellOutput:  output,
 			ErrorMessage: errPtr,
-		}); err != nil {
+		})
+		if err != nil {
 			return err
+		}
+		if rows == 0 {
+			// The status guard blocked the transition. On the COMMON path this
+			// is not a conflict at all: StopRun marks the row cancelled in the
+			// database first and only then signals the agent, so by the time the
+			// agent honours patch_run_stop and posts its cancelled-stage report
+			// the row is already status='cancelled'. Rejecting it outright threw
+			// away both the agent's authoritative captured output and the
+			// packages-actually-applied parse — the entire point of reporting a
+			// cancelled run.
+			//
+			// Retry as a fields-only update scoped to status='cancelled'. It
+			// changes no status, so the protection that stops a late 'completed'
+			// from overwriting a cancelled run is untouched.
+			outRows, outErr := d.Queries.UpdatePatchRunCancelledOutput(ctx, db.UpdatePatchRunCancelledOutputParams{
+				ID:           id,
+				ShellOutput:  output,
+				ErrorMessage: errPtr,
+			})
+			if outErr != nil {
+				return outErr
+			}
+			if outRows == 0 {
+				// Genuinely a different terminal state (completed / failed /
+				// timed_out). Leave it alone.
+				return nil
+			}
 		}
 		// Record packages that were actually applied before the stop so the
 		// UI can still show partial state on a cancelled run.
@@ -385,14 +413,54 @@ func (s *PatchRunsStore) UpdateStatus(ctx context.Context, id, status string) er
 	return d.Queries.UpdatePatchRunStatus(ctx, db.UpdatePatchRunStatusParams{ID: id, Status: status})
 }
 
+// Cancel transitions a patch run to the cancelled terminal state on a
+// user-initiated stop. Returns the number of rows affected; zero means another
+// caller already terminated the run (status guard). Deliberately does NOT
+// update shell_output so progress chunks streamed after our caller read the
+// row are preserved.
+func (s *PatchRunsStore) Cancel(ctx context.Context, id, errorMessage string) (int64, error) {
+	d := s.db.DB(ctx)
+	var errPtr *string
+	if errorMessage != "" {
+		errPtr = &errorMessage
+	}
+	return d.Queries.MarkPatchRunCancelledByUser(ctx, db.MarkPatchRunCancelledByUserParams{
+		ID:           id,
+		ErrorMessage: errPtr,
+	})
+}
+
+// MarkRunsAgentDisconnected marks every running patch run for the given host
+// as agent_disconnected. Returns the number of rows updated.
+func (s *PatchRunsStore) MarkRunsAgentDisconnected(ctx context.Context, hostID, errorMessage string) (int64, error) {
+	d := s.db.DB(ctx)
+	var errPtr *string
+	if errorMessage != "" {
+		errPtr = &errorMessage
+	}
+	return d.Queries.MarkPatchRunsAgentDisconnected(ctx, db.MarkPatchRunsAgentDisconnectedParams{
+		ErrorMessage: errPtr,
+		HostID:       hostID,
+	})
+}
+
 // MarkValidationApproved marks a validation run as approved (terminal state).
 // The actual patch run is created separately via CreateRun with ValidationRunID set.
-func (s *PatchRunsStore) MarkValidationApproved(ctx context.Context, id string, approvedByUserID *string) error {
+//
+// Returns false when no row moved, which means another approval got there
+// first (or the run left an approvable status). Callers must treat that as a
+// conflict and stop: the status guard in the SQL is the only thing serialising
+// concurrent approvals.
+func (s *PatchRunsStore) MarkValidationApproved(ctx context.Context, id string, approvedByUserID *string) (bool, error) {
 	d := s.db.DB(ctx)
-	return d.Queries.MarkValidationApproved(ctx, db.MarkValidationApprovedParams{
+	n, err := d.Queries.MarkValidationApproved(ctx, db.MarkValidationApprovedParams{
 		ID:               id,
 		ApprovedByUserID: approvedByUserID,
 	})
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // SetPolicySnapshot stores the effective policy snapshot on a run (called at trigger/approve time).

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"os"
@@ -32,6 +33,21 @@ type UsersHandler struct {
 	// adminMode mirrors cfg.AdminMode at construction time. Used to drive
 	// auto-newsletter-subscription for SaaS-hosted users on creation.
 	adminMode bool
+	// Resolves the calling context's own settings; `resolved` is startup-only.
+	cfgResolver *hostctx.ConfigResolver
+}
+
+// WithConfigResolver wires the per-context config resolver.
+func (h *UsersHandler) WithConfigResolver(r *hostctx.ConfigResolver) *UsersHandler {
+	h.cfgResolver = r
+	return h
+}
+
+func (h *UsersHandler) resolvedFor(ctx context.Context) *config.ResolvedConfig {
+	if rc := h.cfgResolver.Resolve(ctx); rc != nil {
+		return rc
+	}
+	return h.resolved
 }
 
 // NewUsersHandler creates a new users handler.
@@ -173,7 +189,7 @@ func (h *UsersHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "Password is required")
 		return
 	}
-	if err := ValidatePasswordPolicy(h.resolved, req.Password); err != nil {
+	if err := ValidatePasswordPolicy(h.resolvedFor(r.Context()), req.Password); err != nil {
 		Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -185,7 +201,7 @@ func (h *UsersHandler) Create(w http.ResponseWriter, r *http.Request) {
 			role = s.DefaultUserRole
 		}
 		if role == "" && h.resolved != nil {
-			role = h.resolved.DefaultUserRole
+			role = h.resolvedFor(r.Context()).DefaultUserRole
 		}
 		if role == "" && os.Getenv("DEFAULT_USER_ROLE") != "" {
 			role = strings.TrimSpace(os.Getenv("DEFAULT_USER_ROLE"))
@@ -502,7 +518,7 @@ func (h *UsersHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := ValidatePasswordPolicy(h.resolved, req.NewPassword); err != nil {
+	if err := ValidatePasswordPolicy(h.resolvedFor(r.Context()), req.NewPassword); err != nil {
 		Error(w, http.StatusBadRequest, err.Error())
 		return
 	}

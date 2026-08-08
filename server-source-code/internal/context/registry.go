@@ -18,11 +18,6 @@ type Entry struct {
 	Slug           string
 	Host           string
 	DatabaseURL    string
-	RedisHost      *string
-	RedisPort      *int
-	RedisDB        *int
-	RedisUsername  *string
-	RedisPassword  *string
 	BackendURL     string
 	Status         string
 	MaxConnections *int
@@ -108,8 +103,12 @@ func (r *Registry) poll() {
 
 func (r *Registry) refresh(ctx stdctx.Context) error {
 	rows, err := r.pool.Query(ctx, `
+		-- The registry table also carries redis_host/redis_port/redis_db per
+		-- context. They are deliberately not selected: every context shares one
+		-- Redis client (see RedisCache.GetOrCreate) and isolation there is by key
+		-- prefix alone. Scanning them into Entry implied a per-context Redis that
+		-- does not exist, which has already misled a reader.
 		SELECT id, slug, host, COALESCE(database_url, ''),
-		       redis_host, redis_port, redis_db, redis_username, redis_password,
 		       backend_url, status,
 		       max_db_connections, min_db_connections, max_users, max_hosts, modules,
 		       created_at, updated_at
@@ -127,7 +126,6 @@ func (r *Registry) refresh(ctx stdctx.Context) error {
 		var dbURL string
 		err := rows.Scan(
 			&t.ID, &t.Slug, &t.Host, &dbURL,
-			&t.RedisHost, &t.RedisPort, &t.RedisDB, &t.RedisUsername, &t.RedisPassword,
 			&t.BackendURL, &t.Status,
 			&t.MaxConnections, &t.MinConnections, &t.MaxUsers, &t.MaxHosts, &t.Modules,
 			&t.CreatedAt, &t.UpdatedAt,

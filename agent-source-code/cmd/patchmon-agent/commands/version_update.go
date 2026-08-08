@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -29,6 +30,10 @@ const (
 	serverTimeout       = 30 * time.Second
 	versionCheckTimeout = 10 * time.Second // Shorter timeout for version checks
 )
+
+// agentVersionOutputRe parses the version out of `patchmon-agent --version`,
+// which cobra renders as "patchmon-agent version 2.0.3-rc.137".
+var agentVersionOutputRe = regexp.MustCompile(`(?i)(?:PatchMon Agent v|patchmon-agent version |patchmon-agent v|version )?([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)`)
 
 // ServerVersionResponse represents the response from the server when checking for version updates
 type ServerVersionResponse struct {
@@ -220,42 +225,53 @@ func updateAgent() error {
 		return fmt.Errorf("failed to write new agent: %w", err)
 	}
 
-	// Verify the new executable works and check its version
+	// Verify the new executable works and check its version.
+	// Bounded: this contacts the server, and a hang here strands the host with
+	// the backup taken and the replacement not yet renamed into place.
 	logger.Debug("Validating new executable...")
-	testCmd := exec.Command(tempPath, "check-version")
+	testCtx, testCancel := context.WithTimeout(context.Background(), serverTimeout+30*time.Second)
+	testCmd := exec.CommandContext(testCtx, tempPath, "check-version")
 	testCmd.Env = os.Environ() // Preserve environment variables
-	if err := testCmd.Run(); err != nil {
+	testErr := testCmd.Run()
+	testCancel()
+	if testErr != nil {
 		if removeErr := os.Remove(tempPath); removeErr != nil {
 			logger.WithError(removeErr).Warn("Failed to remove temporary file after validation failure")
 		}
-		return fmt.Errorf("new agent executable is invalid: %w", err)
+		return fmt.Errorf("new agent executable is invalid: %w", testErr)
 	}
 	logger.Debug("New executable validation passed")
 
-	// Verify the downloaded binary version matches expected version
-	// This prevents issues where wrong binary might be downloaded
+	// Verify the downloaded binary version matches expected version.
+	// The binary only exposes --version (cobra's version flag); there is no
+	// "version" subcommand, and asking for one silently skipped this check.
 	logger.Debug("Verifying downloaded binary version...")
-	versionCmd := exec.Command(tempPath, "version")
+	versionCtx, versionCancel := context.WithTimeout(context.Background(), versionCheckTimeout)
+	versionCmd := exec.CommandContext(versionCtx, tempPath, "--version")
 	versionCmd.Env = os.Environ()
-	versionOutput, err := versionCmd.Output()
-	if err == nil {
-		// Try to extract version from output (format: "PatchMon Agent v1.3.4" or "1.3.4")
-		versionStr := strings.TrimSpace(string(versionOutput))
-		// Remove "PatchMon Agent v" prefix if present
-		versionStr = strings.TrimPrefix(versionStr, "PatchMon Agent v")
-		versionStr = strings.TrimPrefix(versionStr, "v")
-		versionStr = strings.TrimSpace(versionStr)
+	versionOutput, versionErr := versionCmd.CombinedOutput()
+	versionCancel()
+	if versionErr == nil {
+		versionStr := ""
+		if m := agentVersionOutputRe.FindStringSubmatch(string(versionOutput)); len(m) >= 2 {
+			versionStr = m[1]
+		}
 
-		if versionStr != "" && versionStr != newVersion {
+		switch {
+		case versionStr == "":
+			logger.Debug("Could not parse version from downloaded binary (non-critical)")
+		case versionStr != newVersion:
 			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 				"expected": newVersion,
 				"actual":   versionStr,
 			})).Warn("Downloaded binary version mismatch - this may indicate server issue, but proceeding")
-		} else if versionStr == newVersion {
+			// Prefer what the binary reports over what the server advertised.
+			newVersion = versionStr
+		default:
 			logger.WithField("version", versionStr).Debug("Downloaded binary version verified")
 		}
 	} else {
-		logger.WithError(err).Debug("Could not verify binary version (non-critical)")
+		logger.WithError(versionErr).Debug("Could not verify binary version (non-critical)")
 	}
 
 	// Windows: os.Rename cannot overwrite a running .exe (file locked by SCM).

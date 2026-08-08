@@ -106,8 +106,8 @@ const AgentUpdatesTab = () => {
 			return settingsAPI.update(data).then((res) => res.data);
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries(["settings"]);
-			queryClient.invalidateQueries(["serverUrl"]);
+			queryClient.invalidateQueries({ queryKey: ["settings"] });
+			queryClient.invalidateQueries({ queryKey: ["serverUrl"] });
 			setIsDirty(false);
 			setErrors({});
 		},

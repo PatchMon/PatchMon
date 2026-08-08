@@ -1,1 +1,26 @@
+# Issues are for bugs. Everything else has a better home, linked below.
+#
+# Only the Bug Report template can create an issue here, so the issue count
+# reflects the stability of the project rather than a mix of bugs, feature
+# requests and questions.
+#
+# Security reports are deliberately not listed: GitHub adds its own "Report a
+# vulnerability" entry to this chooser whenever private vulnerability reporting
+# is enabled, so a manual link would only duplicate it. See SECURITY.md.
 blank_issues_enabled: false
+contact_links:
+  - name: Request a feature
+    url: https://feedback.patchmon.net
+    about: Feature requests are tracked on our feedback portal, where you can vote on ideas, follow progress and see what we have committed to building.
+
+  - name: Ask a question / How do I...?
+    url: https://github.com/PatchMon/PatchMon/discussions
+    about: Setup help, configuration questions and how-tos belong in Discussions, where answers stay searchable for the next person.
+
+  - name: Documentation
+    url: https://patchmon.net/docs
+    about: Installation guides, configuration reference and troubleshooting.
+
+  - name: Join the community
+    url: https://patchmon.net/discord
+    about: Chat with the community and the development team on Discord.

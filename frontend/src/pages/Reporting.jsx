@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	keepPreviousData,
+	useMutation,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import {
 	AlertTriangle,
 	ArrowDown,
@@ -8,6 +13,8 @@ import {
 	BookOpen,
 	Calendar,
 	CheckCircle,
+	ChevronLeft,
+	ChevronRight,
 	GitBranch,
 	Info,
 	LayoutDashboard,
@@ -33,6 +40,7 @@ import TierBadge from "../components/TierBadge";
 import UpgradeRequiredContent from "../components/UpgradeRequiredContent";
 import { getRequiredTier } from "../constants/tiers";
 import { useAuth } from "../contexts/AuthContext";
+import { useConfirm } from "../contexts/ConfirmContext";
 import { useToast } from "../contexts/ToastContext";
 import {
 	adminUsersAPI,
@@ -46,6 +54,23 @@ import { AlertSettings } from "./settings/AlertSettings";
 // System-only actions that should not appear in user-facing menus
 const SYSTEM_ONLY_ACTIONS = new Set(["created", "updated"]);
 
+// Assignment filter values that are not a specific user id
+const ASSIGNMENT_PRESETS = new Set([
+	"all",
+	"assignedToMe",
+	"assigned",
+	"unassigned",
+]);
+
+const isResponderAssignment = (value) =>
+	Boolean(value) && !ASSIGNMENT_PRESETS.has(value);
+
+const userDisplayName = (user) =>
+	`${user.first_name || ""} ${user.last_name || ""}`.trim() ||
+	user.username ||
+	user.email ||
+	"Unknown user";
+
 const VALID_TABS = new Set([
 	"overview",
 	"alerts",
@@ -56,11 +81,24 @@ const VALID_TABS = new Set([
 	"log",
 ]);
 
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
+const DEFAULT_PAGE_SIZE = 50;
+const PAGE_SIZE_STORAGE_KEY = "alerts-page-size";
+
+const readStoredPageSize = () => {
+	const stored = Number.parseInt(
+		localStorage.getItem(PAGE_SIZE_STORAGE_KEY),
+		10,
+	);
+	return PAGE_SIZE_OPTIONS.includes(stored) ? stored : DEFAULT_PAGE_SIZE;
+};
+
 const Reporting = () => {
 	const { user: _user, hasModule } = useAuth();
 	const alertLifecycleLocked = !hasModule("alerts_advanced");
 	const queryClient = useQueryClient();
 	const toast = useToast();
+	const confirm = useConfirm();
 	const [searchParams] = useSearchParams();
 	const location = useLocation();
 
@@ -88,6 +126,20 @@ const Reporting = () => {
 	const [activeTab, setActiveTab] = useState(
 		VALID_TABS.has(urlTab) ? urlTab : "overview",
 	);
+	const [currentPage, setCurrentPage] = useState(1);
+	const [pageSize, setPageSize] = useState(readStoredPageSize);
+	const [debouncedSearch, setDebouncedSearch] = useState("");
+
+	const searchDebounceRef = useRef(null);
+	useEffect(() => {
+		if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+		searchDebounceRef.current = setTimeout(() => {
+			setDebouncedSearch(searchTerm.trim());
+		}, 400);
+		return () => {
+			if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+		};
+	}, [searchTerm]);
 
 	// Sync tab and filters on actual URL navigation (not in-page tab clicks)
 	useEffect(() => {
@@ -96,14 +148,10 @@ const Reporting = () => {
 		if (tab && VALID_TABS.has(tab)) {
 			setActiveTab(tab);
 		}
-		const severity = params.get("severity");
-		if (severity) setSeverityFilter(severity);
-		const status = params.get("status");
-		if (status) setStatusFilter(status);
-		const type = params.get("type");
-		if (type) setTypeFilter(type);
-		const assignment = params.get("assignment");
-		if (assignment) setAssignmentFilter(assignment);
+		setSeverityFilter(params.get("severity") || "all");
+		setStatusFilter(params.get("status") || "all");
+		setTypeFilter(params.get("type") || "all");
+		setAssignmentFilter(params.get("assignment") || "all");
 	}, [location.search]);
 
 	const tabs = [
@@ -116,42 +164,81 @@ const Reporting = () => {
 		{ id: "log", name: "Delivery Log", icon: BookOpen },
 	];
 
-	// Fetch ALL alerts (unfiltered) for overview widgets
-	const {
-		data: allAlertsData,
-		refetch: refetchAlerts,
-		isFetching: isFetchingAlerts,
-	} = useQuery({
-		queryKey: ["alerts"],
+	// Fetch ALL alerts (unfiltered) for the overview widgets, which aggregate
+	// across every alert. Only runs on the overview tab so the alerts table
+	// never pays for it.
+	const { data: allAlertsData, isFetching: isFetchingAllAlerts } = useQuery({
+		queryKey: ["alerts", "all"],
 		queryFn: async () => {
 			const response = await alertsAPI.getAlerts();
 			return response.data.data || [];
 		},
+		enabled: activeTab === "overview",
 		refetchInterval: 30000,
 		refetchOnWindowFocus: true,
 		refetchOnMount: true,
 		staleTime: 0,
 	});
 
-	// Fetch alerts for the alerts table tab (respects assignment filter)
+	// Server-side filtering, sorting and pagination for the alerts table.
+	const alertsQueryParams = useMemo(() => {
+		const params = {
+			page: currentPage,
+			limit: pageSize,
+			sortBy: sortField,
+			sortOrder: sortDirection,
+		};
+		if (debouncedSearch) params.search = debouncedSearch;
+		if (severityFilter !== "all") params.severity = severityFilter;
+		if (typeFilter !== "all") params.type = typeFilter;
+		if (statusFilter !== "all") params.status = statusFilter;
+		if (assignmentFilter === "assignedToMe") {
+			params.assignedToMe = "true";
+		} else if (assignmentFilter !== "all") {
+			params.assignment = assignmentFilter;
+		}
+		return params;
+	}, [
+		currentPage,
+		pageSize,
+		sortField,
+		sortDirection,
+		debouncedSearch,
+		severityFilter,
+		typeFilter,
+		statusFilter,
+		assignmentFilter,
+	]);
+
 	const {
-		data: alertsData,
+		data: alertsResponse,
 		isLoading: alertsLoading,
+		isFetching: isFetchingAlerts,
 		error: alertsError,
 	} = useQuery({
-		queryKey: ["alerts", "filtered", assignmentFilter],
+		queryKey: ["alerts", "page", alertsQueryParams],
 		queryFn: async () => {
-			const params = {};
-			if (assignmentFilter === "assignedToMe") {
-				params.assignedToMe = "true";
-			}
-			const response = await alertsAPI.getAlerts(params);
-			return response.data.data || [];
+			const response = await alertsAPI.getAlerts(alertsQueryParams);
+			return response.data;
 		},
+		enabled: activeTab === "alerts",
+		placeholderData: keepPreviousData,
 		refetchInterval: 30000,
 		refetchOnWindowFocus: true,
 		refetchOnMount: true,
 		staleTime: 0,
+	});
+
+	// Distinct alert types for the type filter. A single page of rows can no
+	// longer supply the full option list.
+	const { data: alertTypes } = useQuery({
+		queryKey: ["alert-types"],
+		queryFn: async () => {
+			const response = await alertsAPI.getAlertTypes();
+			return response.data.data || [];
+		},
+		enabled: activeTab === "alerts",
+		staleTime: 5 * 60 * 1000,
 	});
 
 	// Fetch alert stats - polling for updates
@@ -221,7 +308,6 @@ const Reporting = () => {
 			// Immediately refetch to show changes
 			queryClient.invalidateQueries({ queryKey: ["alerts"] });
 			queryClient.invalidateQueries({ queryKey: ["alert-stats"] });
-			refetchAlerts();
 		},
 	});
 
@@ -234,7 +320,6 @@ const Reporting = () => {
 			// Immediately refetch to show changes
 			queryClient.invalidateQueries({ queryKey: ["alerts"] });
 			queryClient.invalidateQueries({ queryKey: ["alert-stats"] }); // Invalidate all alert-stats queries (including sidebar)
-			refetchAlerts();
 		},
 	});
 
@@ -247,7 +332,6 @@ const Reporting = () => {
 			// Immediately refetch to show changes
 			queryClient.invalidateQueries({ queryKey: ["alerts"] });
 			queryClient.invalidateQueries({ queryKey: ["alert-stats"] }); // Invalidate all alert-stats queries (including sidebar)
-			refetchAlerts();
 		},
 	});
 
@@ -264,7 +348,6 @@ const Reporting = () => {
 			// Immediately refetch to show changes
 			queryClient.invalidateQueries({ queryKey: ["alerts"] });
 			queryClient.invalidateQueries({ queryKey: ["alert-stats"] });
-			refetchAlerts();
 			setSelectedAlerts(new Set()); // Clear selection after delete
 		},
 	});
@@ -277,7 +360,6 @@ const Reporting = () => {
 		onSuccess: (_data, variables) => {
 			queryClient.invalidateQueries({ queryKey: ["alerts"] });
 			queryClient.invalidateQueries({ queryKey: ["alert-stats"] });
-			refetchAlerts();
 			setSelectedAlerts(new Set());
 			toast.success(
 				`${variables.alertIds.length} alert(s) updated: ${variables.action}`,
@@ -306,8 +388,28 @@ const Reporting = () => {
 	}, [statsData]);
 
 	const allAlerts = allAlertsData || [];
-	const alerts = alertsData || [];
+	const alerts = alertsResponse?.data || [];
 	const stats = statsData || {};
+
+	const isRefreshing = isFetchingAllAlerts || isFetchingAlerts;
+
+	// Derive the row range from the response rather than local state so the
+	// count stays in step with the rows on screen while a new page loads.
+	const alertsPagination = alertsResponse?.pagination || {};
+	const totalAlerts = alertsPagination.total || 0;
+	const totalPages = Math.max(1, alertsPagination.pages || 1);
+	const startIndex =
+		totalAlerts === 0
+			? 0
+			: ((alertsPagination.page || currentPage) - 1) *
+				(alertsPagination.limit || pageSize);
+	const endIndex = Math.min(startIndex + alerts.length, totalAlerts);
+	const filtersActive =
+		Boolean(searchTerm) ||
+		severityFilter !== "all" ||
+		typeFilter !== "all" ||
+		statusFilter !== "all" ||
+		assignmentFilter !== "all";
 
 	// Get severity badge
 	const getSeverityBadge = (severity) => {
@@ -410,109 +512,48 @@ const Reporting = () => {
 		);
 	};
 
-	// Filter and sort alerts
-	const filteredAndSortedAlerts = useMemo(() => {
-		let filtered = [...alerts];
+	const assignmentUsers = usersData || [];
+	const responderFilterActive = isResponderAssignment(assignmentFilter);
+	const responderInUserList = assignmentUsers.some(
+		(u) => u.id === assignmentFilter,
+	);
 
-		// Search filter
-		if (searchTerm) {
-			const searchLower = searchTerm.toLowerCase();
-			filtered = filtered.filter(
-				(alert) =>
-					alert.title?.toLowerCase().includes(searchLower) ||
-					alert.message?.toLowerCase().includes(searchLower) ||
-					alert.type?.toLowerCase().includes(searchLower),
-			);
-		}
-
-		// Severity filter
-		if (severityFilter !== "all") {
-			filtered = filtered.filter(
-				(alert) =>
-					alert.severity?.toLowerCase() === severityFilter.toLowerCase(),
-			);
-		}
-
-		// Type filter
-		if (typeFilter !== "all") {
-			filtered = filtered.filter((alert) => alert.type === typeFilter);
-		}
-
-		// Status filter
-		if (statusFilter !== "all") {
-			filtered = filtered.filter((alert) => {
-				const currentState = alert.current_state;
-				const action = currentState?.action?.toLowerCase() || "";
-				const resolvedStates = ["done", "resolved"];
-				if (statusFilter === "open")
-					return !action || !resolvedStates.includes(action);
-				if (statusFilter === "acknowledged") return action === "acknowledged";
-				if (statusFilter === "investigating") return action === "investigating";
-				if (statusFilter === "escalated") return action === "escalated";
-				if (statusFilter === "silenced") return action === "silenced";
-				if (statusFilter === "done") return action === "done";
-				if (statusFilter === "resolved") return action === "resolved";
-				return true;
-			});
-		}
-
-		// Assignment filter
-		if (assignmentFilter === "assigned") {
-			filtered = filtered.filter((alert) => alert.assigned_to_user_id !== null);
-		} else if (assignmentFilter === "unassigned") {
-			filtered = filtered.filter((alert) => alert.assigned_to_user_id === null);
-		}
-
-		// Sort
-		filtered.sort((a, b) => {
-			let aValue, bValue;
-
-			if (sortField === "created_at") {
-				aValue = new Date(a.created_at).getTime();
-				bValue = new Date(b.created_at).getTime();
-			} else if (sortField === "severity") {
-				const severityOrder = {
-					critical: 4,
-					error: 3,
-					warning: 2,
-					informational: 1,
-				};
-				aValue = severityOrder[a.severity?.toLowerCase()] || 0;
-				bValue = severityOrder[b.severity?.toLowerCase()] || 0;
-			} else if (sortField === "type") {
-				aValue = a.type || "";
-				bValue = b.type || "";
-			} else {
-				aValue = a[sortField] || "";
-				bValue = b[sortField] || "";
-			}
-
-			if (sortDirection === "asc") {
-				return aValue > bValue ? 1 : aValue < bValue ? -1 : 0;
-			} else {
-				return aValue < bValue ? 1 : aValue > bValue ? -1 : 0;
-			}
-		});
-
-		return filtered;
+	// biome-ignore lint/correctness/useExhaustiveDependencies: resetting to page 1 is the intent whenever a filter, sort or page size changes
+	useEffect(() => {
+		setCurrentPage(1);
+		setSelectedAlerts(new Set());
 	}, [
-		alerts,
-		searchTerm,
+		debouncedSearch,
 		severityFilter,
 		typeFilter,
 		statusFilter,
 		assignmentFilter,
 		sortField,
 		sortDirection,
+		pageSize,
 	]);
 
-	// Get unique alert types for filter
-	const alertTypes = useMemo(() => {
-		const types = new Set(
-			alerts.map((alert) => alert.type).filter((t) => t != null && t !== ""),
-		);
-		return Array.from(types).sort();
-	}, [alerts]);
+	// Deleting the last rows of the final page can leave currentPage past the
+	// end of the result set.
+	useEffect(() => {
+		if (currentPage <= totalPages) return;
+		setCurrentPage(totalPages);
+	}, [currentPage, totalPages]);
+
+	const goToPage = (nextPage) => {
+		setCurrentPage(Math.min(Math.max(nextPage, 1), totalPages));
+		setSelectedAlerts(new Set());
+	};
+
+	const handlePageSizeChange = (newPageSize) => {
+		setPageSize(newPageSize);
+		localStorage.setItem(PAGE_SIZE_STORAGE_KEY, String(newPageSize));
+	};
+
+	const handleRefresh = () => {
+		queryClient.invalidateQueries({ queryKey: ["alerts"] });
+		queryClient.invalidateQueries({ queryKey: ["alert-stats"] });
+	};
 
 	// Handle sort
 	const handleSort = (field) => {
@@ -644,10 +685,10 @@ const Reporting = () => {
 		setSelectedAlerts(newSelected);
 	};
 
-	// Handle select all
+	// Handle select all (current page only)
 	const handleSelectAll = (checked) => {
 		if (checked) {
-			setSelectedAlerts(new Set(filteredAndSortedAlerts.map((a) => a.id)));
+			setSelectedAlerts(new Set(alerts.map((a) => a.id)));
 		} else {
 			setSelectedAlerts(new Set());
 		}
@@ -657,16 +698,20 @@ const Reporting = () => {
 	const handleDeleteSelected = async () => {
 		if (selectedAlerts.size === 0) return;
 
-		if (
-			window.confirm(
-				`Are you sure you want to delete ${selectedAlerts.size} alert(s)? This action cannot be undone.`,
-			)
-		) {
-			try {
-				await deleteAlertsMutation.mutateAsync(Array.from(selectedAlerts));
-			} catch (error) {
-				console.error("Failed to delete alerts:", error);
-			}
+		const count = selectedAlerts.size;
+		const confirmed = await confirm({
+			title: "Delete alerts",
+			message: `Are you sure you want to delete ${count} alert${count === 1 ? "" : "s"}?`,
+			confirmLabel: `Delete ${count} alert${count === 1 ? "" : "s"}`,
+		});
+		if (!confirmed) return;
+
+		try {
+			await deleteAlertsMutation.mutateAsync(Array.from(selectedAlerts));
+			toast.success(`${count} alert${count === 1 ? "" : "s"} deleted`);
+		} catch (error) {
+			console.error("Failed to delete alerts:", error);
+			toast.error(error.response?.data?.error || "Failed to delete alerts");
 		}
 	};
 
@@ -684,7 +729,7 @@ const Reporting = () => {
 						</p>
 						<button
 							type="button"
-							onClick={() => refetchAlerts()}
+							onClick={handleRefresh}
 							className="mt-2 btn-danger text-xs"
 						>
 							Try again
@@ -709,13 +754,13 @@ const Reporting = () => {
 				<div className="flex items-center gap-3">
 					<button
 						type="button"
-						onClick={() => refetchAlerts()}
-						disabled={isFetchingAlerts}
+						onClick={handleRefresh}
+						disabled={isRefreshing}
 						className="btn-outline flex items-center justify-center p-2"
 						title="Refresh alerts"
 					>
 						<RefreshCw
-							className={`h-4 w-4 ${isFetchingAlerts ? "animate-spin" : ""}`}
+							className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
 						/>
 					</button>
 				</div>
@@ -873,7 +918,7 @@ const Reporting = () => {
 									className="px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm"
 								>
 									<option value="all">All Types</option>
-									{alertTypes.map((type) => (
+									{(alertTypes || []).map((type) => (
 										<option key={type} value={type}>
 											{String(type).replace("_", " ")}
 										</option>
@@ -904,6 +949,20 @@ const Reporting = () => {
 									<option value="assignedToMe">Assigned to me</option>
 									<option value="assigned">Assigned</option>
 									<option value="unassigned">Unassigned</option>
+									{assignmentUsers.length > 0 && (
+										<optgroup label="Assigned to responder">
+											{assignmentUsers.map((u) => (
+												<option key={u.id} value={u.id}>
+													{userDisplayName(u)}
+												</option>
+											))}
+										</optgroup>
+									)}
+									{responderFilterActive && !responderInUserList && (
+										<option value={assignmentFilter}>
+											{usersData ? "Unknown user" : "Loading users"}
+										</option>
+									)}
 								</select>
 							</div>
 						</div>
@@ -959,16 +1018,14 @@ const Reporting = () => {
 									Loading alerts...
 								</p>
 							</div>
-						) : filteredAndSortedAlerts.length === 0 ? (
+						) : alerts.length === 0 ? (
 							<div className="text-center py-8">
 								<AlertTriangle className="h-12 w-12 mx-auto text-secondary-400" />
 								<h3 className="mt-2 text-sm font-medium text-secondary-900 dark:text-white">
 									No alerts found
 								</h3>
 								<p className="mt-1 text-sm text-secondary-500">
-									{searchTerm ||
-									severityFilter !== "all" ||
-									typeFilter !== "all"
+									{filtersActive
 										? "Try adjusting your search filters"
 										: "No active alerts"}
 								</p>
@@ -987,8 +1044,7 @@ const Reporting = () => {
 													type="checkbox"
 													checked={
 														selectedAlerts.size > 0 &&
-														selectedAlerts.size ===
-															filteredAndSortedAlerts.length
+														selectedAlerts.size === alerts.length
 													}
 													onChange={(e) => {
 														e.stopPropagation();
@@ -1061,7 +1117,7 @@ const Reporting = () => {
 										</tr>
 									</thead>
 									<tbody className="bg-white dark:bg-secondary-900 divide-y divide-secondary-200 dark:divide-secondary-700">
-										{filteredAndSortedAlerts.map((alert) => (
+										{alerts.map((alert) => (
 											<tr
 												key={alert.id}
 												className="hover:bg-secondary-50 dark:hover:bg-secondary-800"
@@ -1186,6 +1242,58 @@ const Reporting = () => {
 										))}
 									</tbody>
 								</table>
+							</div>
+						)}
+
+						{/* Pagination Controls */}
+						{alerts.length > 0 && (
+							<div className="flex items-center justify-between px-4 py-3 bg-white dark:bg-secondary-800 border-t border-secondary-200 dark:border-secondary-600 flex-wrap gap-3">
+								<div className="flex items-center gap-4">
+									<div className="flex items-center gap-2">
+										<span className="text-sm text-secondary-700 dark:text-white">
+											Rows per page:
+										</span>
+										<select
+											value={pageSize}
+											onChange={(e) =>
+												handlePageSizeChange(Number(e.target.value))
+											}
+											className="text-sm border border-secondary-300 dark:border-secondary-600 rounded px-2 py-1 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+										>
+											{PAGE_SIZE_OPTIONS.map((size) => (
+												<option key={size} value={size}>
+													{size}
+												</option>
+											))}
+										</select>
+									</div>
+									<span className="text-sm text-secondary-700 dark:text-white">
+										{startIndex + 1}-{endIndex} of {totalAlerts}
+									</span>
+								</div>
+								<div className="flex items-center gap-2">
+									<button
+										type="button"
+										onClick={() => goToPage(currentPage - 1)}
+										disabled={currentPage === 1}
+										className="p-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+										aria-label="Previous page"
+									>
+										<ChevronLeft className="h-4 w-4" />
+									</button>
+									<span className="text-sm text-secondary-700 dark:text-white">
+										Page {currentPage} of {totalPages}
+									</span>
+									<button
+										type="button"
+										onClick={() => goToPage(currentPage + 1)}
+										disabled={currentPage >= totalPages}
+										className="p-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+										aria-label="Next page"
+									>
+										<ChevronRight className="h-4 w-4" />
+									</button>
+								</div>
 							</div>
 						)}
 					</div>

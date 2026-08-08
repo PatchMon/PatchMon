@@ -99,7 +99,7 @@
 	}
 
 	.badge-primary {
-		@apply badge bg-primary-100 text-primary-800;
+		@apply badge bg-primary-100 text-primary-800 dark:bg-primary-900 dark:text-primary-200;
 	}
 
 	.badge-secondary {
@@ -107,15 +107,15 @@
 	}
 
 	.badge-success {
-		@apply badge bg-success-100 text-success-800;
+		@apply badge bg-success-100 text-success-800 dark:bg-success-900 dark:text-success-200;
 	}
 
 	.badge-warning {
-		@apply badge bg-warning-100 text-warning-800;
+		@apply badge bg-warning-100 text-warning-800 dark:bg-warning-900 dark:text-warning-200;
 	}
 
 	.badge-danger {
-		@apply badge bg-danger-100 text-danger-800;
+		@apply badge bg-danger-100 text-danger-800 dark:bg-danger-900 dark:text-danger-200;
 	}
 }
 

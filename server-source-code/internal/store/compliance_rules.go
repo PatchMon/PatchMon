@@ -143,6 +143,16 @@ func (s *ComplianceStore) ListRules(ctx context.Context, severity, statusFilter,
 		return 0
 	}
 	asc := sortDir == "asc"
+	// Final tiebreaker on the unique rule identity so ordering never depends on map iteration order.
+	tieBreak := func(a, b RuleWithCounts) bool {
+		if a.Title != b.Title {
+			return a.Title < b.Title
+		}
+		if a.ID != b.ID {
+			return a.ID < b.ID
+		}
+		return ptrStr(a.ProfileType) < ptrStr(b.ProfileType)
+	}
 	sort.Slice(rules, func(i, j int) bool {
 		switch sortBy {
 		case "status":
@@ -155,19 +165,50 @@ func (s *ComplianceStore) ListRules(ctx context.Context, severity, statusFilter,
 			if sa != sb {
 				return (asc && sa < sb) || (!asc && sa > sb)
 			}
-			return rules[i].Title < rules[j].Title
+			return tieBreak(rules[i], rules[j])
 		case "severity":
 			sa, sb := severityRank[ptrStr(rules[i].Severity)], severityRank[ptrStr(rules[j].Severity)]
 			if sa != sb {
 				return (asc && sa < sb) || (!asc && sa > sb)
 			}
-			return getStatusRank(rules[i]) > getStatusRank(rules[j])
+			ra, rb := getStatusRank(rules[i]), getStatusRank(rules[j])
+			if ra != rb {
+				return ra > rb
+			}
+			return tieBreak(rules[i], rules[j])
 		case "title":
-			return (asc && rules[i].Title < rules[j].Title) || (!asc && rules[i].Title > rules[j].Title)
+			if rules[i].Title != rules[j].Title {
+				return (asc && rules[i].Title < rules[j].Title) || (!asc && rules[i].Title > rules[j].Title)
+			}
+			return tieBreak(rules[i], rules[j])
+		case "profile_type":
+			pa, pb := ptrStr(rules[i].ProfileType), ptrStr(rules[j].ProfileType)
+			if pa != pb {
+				return (asc && pa < pb) || (!asc && pa > pb)
+			}
+			return tieBreak(rules[i], rules[j])
+		case "hosts_passed":
+			if rules[i].HostsPassed != rules[j].HostsPassed {
+				return (asc && rules[i].HostsPassed < rules[j].HostsPassed) || (!asc && rules[i].HostsPassed > rules[j].HostsPassed)
+			}
+			return tieBreak(rules[i], rules[j])
 		case "hosts_failed":
-			return (asc && rules[i].HostsFailed < rules[j].HostsFailed) || (!asc && rules[i].HostsFailed > rules[j].HostsFailed)
+			if rules[i].HostsFailed != rules[j].HostsFailed {
+				return (asc && rules[i].HostsFailed < rules[j].HostsFailed) || (!asc && rules[i].HostsFailed > rules[j].HostsFailed)
+			}
+			return tieBreak(rules[i], rules[j])
+		case "hosts_warned":
+			if rules[i].HostsWarned != rules[j].HostsWarned {
+				return (asc && rules[i].HostsWarned < rules[j].HostsWarned) || (!asc && rules[i].HostsWarned > rules[j].HostsWarned)
+			}
+			return tieBreak(rules[i], rules[j])
+		case "total_hosts":
+			if rules[i].TotalHosts != rules[j].TotalHosts {
+				return (asc && rules[i].TotalHosts < rules[j].TotalHosts) || (!asc && rules[i].TotalHosts > rules[j].TotalHosts)
+			}
+			return tieBreak(rules[i], rules[j])
 		default:
-			return false
+			return tieBreak(rules[i], rules[j])
 		}
 	})
 

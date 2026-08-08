@@ -1,0 +1,150 @@
+name: Release context
+description: >
+  Resolve the app version from the git tag and, on a release build, pull the
+  release notes out of the GitHub release into the source tree so they get
+  compiled into the binary.
+
+inputs:
+  token:
+    description: Token used for the GitHub API
+    required: true
+  tag:
+    description: >
+      Release tag. Defaults to the triggering tag or release. Leave blank for
+      branch and PR builds.
+    required: false
+    default: ''
+  fetch-notes:
+    description: >
+      Set to false for jobs that do not build the server binary, e.g. the agent
+      matrix. They still need the version but not the notes.
+    required: false
+    default: 'true'
+
+outputs:
+  version:
+    description: >
+      MAJOR.MINOR.PATCH on a release tag. On branch and PR builds, the next
+      patch as a pre-release (2.0.3-rc.61) so edge sorts above the last release
+      and below the next one.
+    value: ${{ steps.resolve.outputs.version }}
+  is-release:
+    description: '"true" when building a vX.Y.Z release tag'
+    value: ${{ steps.resolve.outputs.is-release }}
+
+runs:
+  using: composite
+  steps:
+    - id: resolve
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        INPUT_TAG: ${{ inputs.tag }}
+        REF_TYPE: ${{ github.ref_type }}
+        REF_NAME: ${{ github.ref_name }}
+        RELEASE_TAG: ${{ github.event.release.tag_name }}
+        FETCH_NOTES: ${{ inputs.fetch-notes }}
+      run: |
+        set -euo pipefail
+
+        # Tag names reach the shell through env, never template interpolation.
+        # Do not write the interpolation braces here either: Actions evaluates
+        # them inside run blocks regardless of the shell comment, and an empty
+        # pair fails the manifest with "An expression was expected".
+        TAG="$INPUT_TAG"
+        if [ -z "$TAG" ] && [ "$REF_TYPE" = "tag" ]; then TAG="$REF_NAME"; fi
+        if [ -z "$TAG" ]; then TAG="$RELEASE_TAG"; fi
+
+        IS_RELEASE=false
+        if printf '%s' "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+          IS_RELEASE=true
+          VERSION="${TAG#v}"
+        else
+          # Branch or PR build. Report the NEXT patch version as a pre-release:
+          # last tag v2.0.2 plus 61 commits becomes 2.0.3-rc.61.
+          #
+          # Why not just the last tag: an :edge image built from main contains
+          # post-2.0.2 code, so reporting "2.0.2" understates it and edge agents
+          # never move. Why not a bare "2.0.3": it would collide with the real
+          # release, and because the agent's update gate is a string comparison,
+          # edge hosts would keep running mid-cycle binaries after 2.0.3 shipped.
+          #
+          # A pre-release sorts strictly between the two (2.0.2 < 2.0.3-rc.61 <
+          # 2.0.3), so edge instances converge onto the release on their own.
+          # util.CompareVersions and frontend/src/utils/version.js both implement
+          # that ordering; do not reintroduce a bare suffix without them.
+          #
+          # The counter is commit distance, not github.run_number, so rebuilding
+          # the same commit yields the same version. It resets at each tag, which
+          # is safe because the core bumps at the same moment.
+          BASE_TAG="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
+          if [ -z "$BASE_TAG" ]; then
+            # describe walks history to find the nearest tag, so it needs both
+            # the tags and the ancestry. Fetching tags into a shallow clone is
+            # not enough; unshallow first.
+            git fetch --unshallow --tags --quiet origin 2>/dev/null \
+              || git fetch --tags --quiet origin 2>/dev/null || true
+            BASE_TAG="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
+          fi
+
+          if printf '%s' "$BASE_TAG" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            MAJOR="${BASE_TAG%%.*}"
+            REST="${BASE_TAG#*.}"
+            MINOR="${REST%%.*}"
+            PATCH="${REST#*.}"
+            DISTANCE="$(git rev-list --count "v${BASE_TAG}..HEAD" 2>/dev/null || echo 0)"
+            # Zero distance means we are sitting on the tagged commit without a
+            # tag ref build (e.g. a re-run of main at release time). rc.0 would
+            # be misleading, so fall back to the tag itself.
+            if [ "$DISTANCE" -eq 0 ]; then
+              VERSION="$BASE_TAG"
+            else
+              VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))-rc.${DISTANCE}"
+            fi
+          else
+            VERSION=""
+          fi
+        fi
+
+        if ! printf '%s' "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+          echo "::error::Could not resolve a version (tag='$TAG', resolved='$VERSION')."
+          echo "::error::Set 'fetch-depth: 0' on actions/checkout. 'fetch-tags: true' is not sufficient: it fetches the tag refs but leaves the clone shallow, so git describe has no ancestry to walk."
+          exit 1
+        fi
+
+        {
+          echo "version=$VERSION"
+          echo "is-release=$IS_RELEASE"
+        } >> "$GITHUB_OUTPUT"
+        echo "Version: $VERSION (release: $IS_RELEASE)"
+
+        if [ "$IS_RELEASE" != "true" ] || [ "$FETCH_NOTES" != "true" ]; then
+          exit 0
+        fi
+
+        # The GitHub release is the source of truth for release notes. Pull the
+        # body into the tree so //go:embed compiles it into the binary; the
+        # in-app "What's New" modal then works with no network access. Nothing
+        # is committed: this file exists only in the build.
+        NOTES="server-source-code/internal/handler/release_notes_data/RELEASE_NOTES_${VERSION}.md"
+
+        # Publishing the release is what creates the tag, so the release should
+        # already exist when this runs. Retry briefly against propagation lag.
+        body=""
+        for attempt in 1 2 3 4 5; do
+          if body="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" --jq '.body' 2>/dev/null)"; then
+            [ -n "${body//[[:space:]]/}" ] && break
+          fi
+          echo "Release $TAG not readable yet (attempt $attempt), waiting..."
+          sleep 5
+          body=""
+        done
+
+        if [ -z "${body//[[:space:]]/}" ]; then
+          echo "::error::No release notes found for $TAG. Draft the release with its notes and publish it; do not push the tag by hand."
+          exit 1
+        fi
+
+        # GitHub stores release bodies with CRLF.
+        printf '%s\n' "$body" | tr -d '\r' > "$NOTES"
+        echo "Wrote $(wc -c < "$NOTES") bytes to $NOTES"

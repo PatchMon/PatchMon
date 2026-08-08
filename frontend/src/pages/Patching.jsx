@@ -46,10 +46,12 @@ import TierBadge from "../components/TierBadge";
 import UpgradeRequiredContent from "../components/UpgradeRequiredContent";
 import { getRequiredTier } from "../constants/tiers";
 import { useAuth } from "../contexts/AuthContext";
+import { useConfirm } from "../contexts/ConfirmContext";
 import { useSettings } from "../contexts/SettingsContext";
 import { useToast } from "../contexts/ToastContext";
 import { adminHostsAPI, formatDate, hostGroupsAPI } from "../utils/api";
 import { patchingAPI } from "../utils/patchingApi";
+import { hasExtraDependencies } from "../utils/patchRun";
 
 const PATCHING_TABS = [
 	{ id: "overview", label: "Overview", icon: LayoutDashboard },
@@ -119,7 +121,15 @@ const Patching = () => {
 	});
 
 	const { data: runsData } = useQuery({
-		queryKey: ["patching-runs", runsFilterStatus, runsFilterType, runsPage],
+		// runsLimit is in the key because the queryFn uses it; without it,
+		// changing page size on page 1 serves the cached result.
+		queryKey: [
+			"patching-runs",
+			runsFilterStatus,
+			runsFilterType,
+			runsPage,
+			runsLimit,
+		],
 		queryFn: () =>
 			patchingAPI.getRuns({
 				...(runsFilterStatus ? { status: runsFilterStatus } : {}),
@@ -536,11 +546,11 @@ const Patching = () => {
 					lockPackages
 					presetHosts={approveWizardRuns.map((r) => r.host)}
 					validationRunIds={approveWizardRuns.map((r) => r.runId)}
-					packagesByHost={Object.fromEntries(
-						approveWizardRuns.map((r) => [r.host.id, r.packageNames]),
+					packagesByRun={Object.fromEntries(
+						approveWizardRuns.map((r) => [r.runId, r.packageNames]),
 					)}
-					patchTypeByHost={Object.fromEntries(
-						approveWizardRuns.map((r) => [r.host.id, r.patchType]),
+					patchTypeByRun={Object.fromEntries(
+						approveWizardRuns.map((r) => [r.runId, r.patchType]),
 					)}
 					onSuccess={handleApproveWizardSuccess}
 				/>
@@ -564,6 +574,8 @@ const STATUS_OPTIONS = [
 	{ value: "completed", label: "Completed" },
 	{ value: "failed", label: "Failed" },
 	{ value: "cancelled", label: "Cancelled" },
+	{ value: "timed_out", label: "Timed out" },
+	{ value: "agent_disconnected", label: "Agent disconnected" },
 ];
 
 const TYPE_OPTIONS = [
@@ -929,10 +941,7 @@ function RunsTab({
 								const isApprovable = approvableStatuses.has(run.status);
 								const isSelectedForDelete = selectedRunIds.has(run.id);
 								const isSelectedForApprove = selectedApproveIds.has(run.id);
-								const hasExtraDeps =
-									run.status === "validated" &&
-									run.packages_affected?.length >
-										(run.package_names?.length || 1);
+								const hasExtraDeps = hasExtraDependencies(run);
 								const hostLabel =
 									run.hosts?.friendly_name ||
 									run.hosts?.hostname ||
@@ -1147,10 +1156,7 @@ function RunsTab({
 										const isSelectedForApprove = selectedApproveIds.has(run.id);
 										const isSelected =
 											isSelectedForDelete || isSelectedForApprove;
-										const hasExtraDeps =
-											run.status === "validated" &&
-											run.packages_affected?.length >
-												(run.package_names?.length || 1);
+										const hasExtraDeps = hasExtraDependencies(run);
 										const hostLabel =
 											run.hosts?.friendly_name ||
 											run.hosts?.hostname ||
@@ -1327,6 +1333,7 @@ const delay_type_labels = {
 function PoliciesTab() {
 	const queryClient = useQueryClient();
 	const toast = useToast();
+	const confirm = useConfirm();
 	const { settings } = useSettings();
 	const orgTimezone = settings?.timezone || "UTC";
 	const [showModal, setShowModal] = useState(false);
@@ -1548,11 +1555,13 @@ function PoliciesTab() {
 													</button>
 													<button
 														type="button"
-														onClick={() => {
+														onClick={async () => {
 															if (
-																window.confirm(
-																	`Delete policy "${policy.name}"?`,
-																)
+																await confirm({
+																	title: "Delete policy",
+																	message: `Delete the patching policy "${policy.name}"?`,
+																	confirmLabel: "Delete policy",
+																})
 															)
 																deleteMutation.mutate(policy.id);
 														}}

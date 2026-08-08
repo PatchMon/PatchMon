@@ -1,38 +1,51 @@
 package handler
 
 import (
-	_ "embed"
+	"embed"
 	"net/http"
+	"path"
+	"regexp"
 
 	"github.com/go-chi/chi/v5"
 )
 
-//go:embed release_notes_data/RELEASE_NOTES_2.0.1.md
-var releaseNotes2_0_1 string
+// Every RELEASE_NOTES_<semver>.md in release_notes_data is embedded at build
+// time, so the "What's New" modal works without network access. The files are
+// written into the tree during CI by .github/actions/release-context, which
+// reads the body of the published GitHub release, and are never committed.
+// Shipping a release adds one file and needs no Go change.
+//
+//go:embed release_notes_data/*.md
+var releaseNotesFS embed.FS
 
-//go:embed release_notes_data/RELEASE_NOTES_2.0.0.md
-var releaseNotes2_0_0 string
+const releaseNotesDir = "release_notes_data"
 
-//go:embed release_notes_data/RELEASE_NOTES_1.4.2.md
-var releaseNotes1_4_2 string
+var releaseNotesFileRe = regexp.MustCompile(`^RELEASE_NOTES_(\d+\.\d+\.\d+)\.md$`)
 
-//go:embed release_notes_data/RELEASE_NOTES_1.4.1.md
-var releaseNotes1_4_1 string
+// releaseNotesContent maps version to markdown content.
+var releaseNotesContent = loadReleaseNotes()
 
-//go:embed release_notes_data/RELEASE_NOTES_1.4.0.md
-var releaseNotes1_4_0 string
-
-//go:embed release_notes_data/RELEASE_NOTES_1.3.7.md
-var releaseNotes1_3_7 string
-
-// releaseNotesContent maps version to markdown content (embedded at build time).
-var releaseNotesContent = map[string]string{
-	"1.3.7": releaseNotes1_3_7,
-	"1.4.0": releaseNotes1_4_0,
-	"1.4.1": releaseNotes1_4_1,
-	"1.4.2": releaseNotes1_4_2,
-	"2.0.0": releaseNotes2_0_0,
-	"2.0.1": releaseNotes2_0_1,
+func loadReleaseNotes() map[string]string {
+	entries, err := releaseNotesFS.ReadDir(releaseNotesDir)
+	if err != nil {
+		return map[string]string{}
+	}
+	notes := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		match := releaseNotesFileRe.FindStringSubmatch(entry.Name())
+		if match == nil {
+			continue
+		}
+		content, err := releaseNotesFS.ReadFile(path.Join(releaseNotesDir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		notes[match[1]] = string(content)
+	}
+	return notes
 }
 
 // ReleaseNotesHandler serves release notes embedded in the binary.

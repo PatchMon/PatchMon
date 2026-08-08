@@ -8,6 +8,7 @@ This guide covers everything you need to know to get set up, make a change and g
 
 ## Table of Contents
 
+- [Where to Raise Things](#where-to-raise-things)
 - [Code of Conduct](#code-of-conduct)
 - [Ways to Contribute](#ways-to-contribute)
 - [Getting Started](#getting-started)
@@ -20,6 +21,64 @@ This guide covers everything you need to know to get set up, make a change and g
 - [Documentation](#documentation)
 - [Security Issues](#security-issues)
 - [Getting Help](#getting-help)
+
+---
+
+## Where to Raise Things
+
+Different kinds of contribution live in different places. This keeps the issue
+tracker a true reflection of the project's stability, and keeps feature demand
+somewhere it can be voted on and prioritised.
+
+| What you have | Where it goes |
+|---|---|
+| 🐛 A bug or crash | **GitHub Issues** — use the Bug Report template |
+| 💡 A feature idea | **[feedback.patchmon.net](https://feedback.patchmon.net)** — vote, comment, follow progress |
+| ❓ A question or "how do I…?" | **[GitHub Discussions](https://github.com/PatchMon/PatchMon/discussions)** |
+| 📚 A documentation fix | **A pull request** against this repository |
+| 🔒 A security vulnerability | **[Private advisory](https://github.com/PatchMon/PatchMon/security/advisories/new)** — see [SECURITY.md](SECURITY.md) |
+| 💬 General chat | **[Discord](https://patchmon.net/discord)** |
+
+Bug Report is the only issue template, so anything else you pick from the "New
+issue" screen takes you straight to the right place before you start writing.
+
+Each of these is explained in more depth in the help centre on the feedback
+portal:
+
+- [How the Feedback Portal works](https://feedback.patchmon.net/hc/how-we-work/how-the-feedback-portal-works) — boards, roadmaps and where everything goes
+- [Where to report a bug](https://feedback.patchmon.net/hc/how-we-work/where-to-report-a-bug) — what to include and why bugs stay on GitHub
+- [How a feature request gets built](https://feedback.patchmon.net/hc/how-we-work/how-a-feature-request-gets-built) — the statuses, the review queue and how votes are used
+- [Asking a question or how-to](https://feedback.patchmon.net/hc/how-we-work/asking-a-question) — Discussions vs bug vs feature request
+- [Contributing code](https://feedback.patchmon.net/hc/how-we-work/contributing-code) — the short version of this document
+
+If something feature-shaped does land in the issue tracker, a maintainer will
+label it `enhancement`, move it to the feedback portal, add a comment with the
+direct link, and close the issue, so nothing you wrote is lost. Follow it on the
+portal from there.
+
+The portal and this repository are linked by hand rather than by an integration,
+so comments do not sync between them. Once a request has moved, the portal post
+is where the discussion continues.
+
+### Before you write code for a new feature
+
+**Please get the request accepted before you build it.**
+
+Feature requests on the feedback portal go through review before they reach the
+roadmap. A request that has not been accepted may be declined or deferred — and
+we would much rather tell you that before you spend a weekend on it than after.
+
+If you open a feature PR without an accepted request, we will label it
+`needs-accepted-request` and link the feedback post. **We will not close it.**
+Once the request is accepted, the PR gets reviewed normally.
+
+Bug fixes and documentation improvements do not need this — just open the PR.
+
+### Our current focus: stability
+
+We are prioritising stability over new features for the next few release cycles.
+Feature PRs raised during this period may be labelled `deferred-stability-phase`
+and revisited later. That is a scheduling decision, not a rejection.
 
 ---
 
@@ -39,7 +98,7 @@ Be respectful, constructive and patient. We want PatchMon to be a welcoming proj
 You don't have to write code to contribute. Valued contributions include:
 
 - **Bug reports** - open an issue with reproduction steps, expected vs actual behaviour, and environment details.
-- **Feature requests** - describe the problem first, then the proposed solution. Discussions welcome on [Discord](https://patchmon.net/discord) before opening an issue.
+- **Feature requests** - raise them at [feedback.patchmon.net](https://feedback.patchmon.net), where they can be voted on and prioritised. Describe the problem first, then the proposed solution.
 - **Documentation** - fix typos, clarify steps, add missing detail.
 - **Code** - bug fixes, new features, refactors, test coverage.
 - **Community support** - answer questions on Discord, help new users.
@@ -124,6 +183,63 @@ cd agent-source-code
 make build          # Build native binary
 make build-all      # Build all platforms
 ```
+
+### Building the Docker image
+
+```bash
+./docker/build.sh                    # builds patchmon-server:local
+./docker/build.sh --tag mytag        # custom image tag
+./docker/build.sh --version 2.0.1    # pin the version it reports
+```
+
+Use this rather than calling `docker build` directly. The git tag is the only
+place a version is declared: no source file contains one, so the version has to
+be passed into the image as a build arg, and `.dockerignore` excludes `.git` so
+the Dockerfile cannot work it out for itself. `docker/build.sh` derives it from
+`git describe --tags --abbrev=0` and passes it through, along with building the
+agent binaries the image bundles.
+
+If you would rather drive `docker build` yourself:
+
+```bash
+docker build -f docker/server.Dockerfile \
+  --build-arg VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')" \
+  -t patchmon-server:local .
+```
+
+Only bare `MAJOR.MINOR.PATCH` is accepted. The server parses versions as
+dot-separated integers and discards parse errors, so anything with a suffix
+(`2.0.2-60-gabc1234`, `dev`) silently reads as `2.0.0` and makes the instance
+think an update is available. The build rejects those rather than letting it
+through. Omitting `VERSION` entirely builds an image reporting `0.0.0`, which is
+a deliberate signal that the version was never injected.
+
+The version is worked out with `git describe`, which walks back through history
+to find the nearest tag. A shallow clone (`git clone --depth 1`) has no history
+to walk, and fetching tags alone does not fix that. Run
+`git fetch --unshallow --tags`, or pass `--version` explicitly.
+
+### Your pull request should not contain
+
+- **A version bump.** Nothing in this repository declares a version. Both
+  `config.DefaultVersion` and `pkgversion.Version` are `0.0.0` placeholders that
+  every build path overwrites from the git tag. Editing them by hand is always
+  the wrong fix.
+- **Release notes.** Release notes are written in the body of the GitHub
+  release. CI reads them back at build time and compiles them in. Any
+  `RELEASE_NOTES_*.md` you add will be ignored and overwritten.
+
+### Further reading
+
+Longer explanations of the build mechanics live in the help centre:
+
+- [Building PatchMon locally](https://feedback.patchmon.net/hc/developing-patchmon/building-patchmon-locally)
+- [How versioning works](https://feedback.patchmon.net/hc/developing-patchmon/how-versioning-works)
+- [How a release happens](https://feedback.patchmon.net/hc/developing-patchmon/how-a-release-happens)
+- [What happens when you open a pull request](https://feedback.patchmon.net/hc/developing-patchmon/what-happens-when-you-open-a-pull-request)
+
+This file stays the authority on the exact commands, because it lives with the
+code and moves when the build does. The articles explain the why.
 
 ---
 
@@ -262,7 +378,7 @@ AI disclosure is used for review context, not as a judgement. Maintainers may as
 
 - < 400 lines changed: easy to review, fast merge.
 - 400-1000 lines: OK if cohesive, but consider splitting.
-- > 1000 lines: please discuss with maintainers on Discord first.
+- \> 1000 lines: please discuss with maintainers on Discord first.
 
 ### What maintainers look for
 
@@ -310,6 +426,7 @@ We will acknowledge within 2 business days and work with you on a coordinated di
 
 - **Discord:** [patchmon.net/discord](https://patchmon.net/discord) - fastest way to reach the team and community.
 - **GitHub Discussions:** for longer-form questions.
+- **Help centre:** [feedback.patchmon.net/hc](https://feedback.patchmon.net/hc) - how feedback, issues, roadmaps and pull requests fit together.
 - **Email:** support@patchmon.net - for professional, enterprise or security enquiries.
 
 ---
