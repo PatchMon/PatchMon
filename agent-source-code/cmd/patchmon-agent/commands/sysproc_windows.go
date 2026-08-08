@@ -4,8 +4,12 @@ package commands
 
 import "syscall"
 
-// sysProcAttrForDetach returns nil on Windows (Setsid is Unix-only).
-// Child process detachment is handled differently on Windows.
+const createNewProcessGroup = 0x00000200 // CREATE_NEW_PROCESS_GROUP
+
+// sysProcAttrForDetach returns SysProcAttr that creates a new process group so
+// that the child PowerShell script is not killed when the parent agent exits.
 func sysProcAttrForDetach() *syscall.SysProcAttr {
-	return nil
+	return &syscall.SysProcAttr{
+		CreationFlags: createNewProcessGroup,
+	}
 }
