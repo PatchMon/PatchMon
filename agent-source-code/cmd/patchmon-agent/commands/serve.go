@@ -2259,7 +2259,10 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 				stepErr = err
 			}
 		default:
-			if err, abort := runStep(false, upgradeBin+" makecache", upgradeBin+" makecache failed: %w", upgradeBin, "makecache", "-q"); abort {
+			// -y/--assumeyes accepts new GPG key imports non-interactively.
+			// Without it, dnf prompts "Is this ok [y/N]:" for keys like the
+			// PostgreSQL pgdg repo and the patch run hangs/fails.
+			if err, abort := runStep(false, upgradeBin+" makecache", upgradeBin+" makecache failed: %w", upgradeBin, "makecache", "-q", "-y"); abort {
 				stepErr = err
 			}
 		}
@@ -2326,13 +2329,13 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 			switch pkgManager {
 			case "apt":
 				if dryRun {
-					args := append([]string{"-s", "install"}, packageNames...)
-					if err, abort := runStep(false, "apt-get -s install", "apt-get -s install failed: %w", "apt-get", args...); abort {
+					args := append([]string{"-s", "--only-upgrade", "install"}, packageNames...)
+					if err, abort := runStep(false, "apt-get -s --only-upgrade install", "apt-get -s --only-upgrade install failed: %w", "apt-get", args...); abort {
 						stepErr = err
 					}
 				} else {
-					args := append([]string{"install", "-y"}, packageNames...)
-					if err, abort := runStep(false, "apt-get install", "apt-get install failed: %w", "apt-get", args...); abort {
+					args := append([]string{"--only-upgrade", "install", "-y"}, packageNames...)
+					if err, abort := runStep(false, "apt-get --only-upgrade install", "apt-get --only-upgrade install failed: %w", "apt-get", args...); abort {
 						stepErr = err
 					}
 				}
