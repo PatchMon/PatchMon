@@ -190,13 +190,26 @@ func TestGetPackagesLive(t *testing.T) {
 	}
 	assertPackagesWellFormed(t, pkgs)
 
-	seen := make(map[string]int, len(pkgs))
+	// Sharing a display name is not by itself a duplicate. The x86 and x64
+	// builds of a redistributable genuinely carry the same DisplayName, and
+	// winget truncates long names to its column width, which collapses more of
+	// them together. What must not happen is the same name at the same version
+	// appearing twice, which is the merge emitting one install as two.
+	type pkgKey struct{ name, version string }
+	byIdentity := make(map[pkgKey]int, len(pkgs))
+	byName := make(map[string]int, len(pkgs))
 	for _, p := range pkgs {
-		seen[p.Name]++
+		byIdentity[pkgKey{p.Name, p.CurrentVersion}]++
+		byName[p.Name]++
 	}
-	for name, n := range seen {
+	for k, n := range byIdentity {
 		if n > 1 {
-			t.Errorf("mergeRegistryAndWinget left %d copies of %q", n, name)
+			t.Errorf("mergeRegistryAndWinget left %d copies of %q at version %q", n, k.name, k.version)
+		}
+	}
+	for name, n := range byName {
+		if n > 1 {
+			t.Logf("note: %d installs share the display name %q, at different versions", n, name)
 		}
 	}
 	t.Logf("GetPackages returned %d merged packages", len(pkgs))
