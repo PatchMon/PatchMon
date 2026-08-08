@@ -102,6 +102,26 @@ Conf libcap2-bin (1:2.66-5ubuntu2.4 Ubuntu:24.04/noble-updates, Ubuntu:24.04/nob
 		}
 	})
 
+	t.Run("parses apk simulate output", func(t *testing.T) {
+		output := `$ apk update
+v3.22.4-151-g9faf79747cd [http://dl-cdn.alpinelinux.org/alpine/v3.22/main]
+v3.22.4-142-g851e02b940b [http://dl-cdn.alpinelinux.org/alpine/v3.22/community]
+OK: 26353 distinct packages available
+$ apk upgrade --simulate libssl3
+(1/2) Upgrading libcrypto3 (3.5.4-r0 -> 3.5.7-r0)
+(2/2) Upgrading libssl3 (3.5.4-r0 -> 3.5.7-r0)
+OK: 80 MiB in 76 packages
+
+--- Dry run completed at 2026-06-20T15:55:42Z ---`
+
+		got := parsePackagesAffectedFromDryRunOutput("alpine", output)
+		want := []string{"libcrypto3", "libssl3"}
+
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("parsePackagesAffectedFromDryRunOutput() = %v, want %v", got, want)
+		}
+	})
+
 	t.Run("apt bulk dry run does not emit freebsd-base on linux", func(t *testing.T) {
 		output := `$ apt-get update -qq
 $ apt-get -s install libcap2 libcap2-bin libntfs-3g89t64 libpam-cap libpython3.12-minimal libpython3.12-stdlib libpython3.12t64 ntfs-3g python3.12 python3.12-minimal
@@ -167,6 +187,26 @@ Number of packages to be installed: 1
 
 		got := parsePackagesAffectedFromRealOutput("freebsd", output)
 		want := []string{freeBSDBasePackageName, "curl", "ca_root_nss"}
+
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("parsePackagesAffectedFromRealOutput() = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("parses apk real output", func(t *testing.T) {
+		output := `$ apk update
+v3.22.4-151-g9faf79747cd [http://dl-cdn.alpinelinux.org/alpine/v3.22/main]
+v3.22.4-142-g851e02b940b [http://dl-cdn.alpinelinux.org/alpine/v3.22/community]
+OK: 26353 distinct packages available
+$ apk upgrade libssl3
+(1/2) Upgrading libcrypto3 (3.5.4-r0 -> 3.5.7-r0)
+(2/2) Upgrading libssl3 (3.5.4-r0 -> 3.5.7-r0)
+OK: 80 MiB in 76 packages
+
+--- Patch run completed at 2026-06-20T16:00:55Z ---`
+
+		got := parsePackagesAffectedFromRealOutput("alpine", output)
+		want := []string{"libcrypto3", "libssl3"}
 
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("parsePackagesAffectedFromRealOutput() = %v, want %v", got, want)
