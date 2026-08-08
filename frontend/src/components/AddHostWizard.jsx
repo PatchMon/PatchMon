@@ -3,6 +3,7 @@ import { CheckCircle, Copy, Download, RefreshCw, Wifi, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { DiWindows } from "react-icons/di";
 import { SiFreebsd, SiLinux } from "react-icons/si";
+import { UCSLogoIcon } from "../utils/osIcons";
 import { useNavigate } from "react-router-dom";
 import {
 	adminHostsAPI,
@@ -37,7 +38,7 @@ const hasInitialReport = (hostData) => {
 
 const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 	const [step, setStep] = useState(1);
-	const [platform, setPlatform] = useState("linux"); // linux | freebsd | windows
+	const [platform, setPlatform] = useState("linux"); // linux | freebsd | windows | ucs
 	const [formData, setFormData] = useState({
 		friendly_name: "",
 		hostGroupIds: [],
@@ -93,6 +94,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 		const params = new URLSearchParams();
 		if (platform === "freebsd") params.set("os", "freebsd");
 		if (platform === "windows") params.set("os", "windows");
+		if (platform === "ucs") params.set("os", "ucs");
 		if (force && platform !== "windows") params.set("force", "true");
 		const qs = params.toString();
 		return qs ? `${base}?${qs}` : base;
@@ -342,7 +344,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 							Select the operating system of the host you want to add. The
 							install command will match this choice.
 						</p>
-						<div className="grid grid-cols-3 gap-4">
+						<div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
 							<button
 								type="button"
 								onClick={() => setPlatform("linux")}
@@ -378,6 +380,18 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 							>
 								<DiWindows className="h-12 w-12 text-secondary-700 dark:text-secondary-200 mb-2" />
 								<span className="text-sm font-medium">Windows</span>
+							</button>
+							<button
+								type="button"
+								onClick={() => setPlatform("ucs")}
+								className={`flex flex-col items-center justify-center p-6 rounded-lg border-2 transition-all ${
+									platform === "ucs"
+										? "border-primary-500 bg-primary-50 dark:bg-primary-900/30"
+										: "border-secondary-300 dark:border-secondary-600 hover:border-primary-400"
+								}`}
+							>
+								<UCSLogoIcon className="h-12 w-12 mb-2" />
+								<span className="text-sm font-medium text-center">Univention UCS</span>
 							</button>
 						</div>
 						<div className="flex justify-end pt-2">
@@ -557,7 +571,9 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 								? "Windows"
 								: platform === "freebsd"
 									? "FreeBSD"
-									: "Linux"}{" "}
+									: platform === "ucs"
+										? "Univention UCS"
+										: "Linux"}{" "}
 							host to install the agent
 							{platform === "windows"
 								? " (run PowerShell as Administrator)"

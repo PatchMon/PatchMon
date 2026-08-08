@@ -27,6 +27,7 @@ type Manager struct {
 	pacmanManager  *PacmanManager
 	freebsdManager *FreeBSDManager
 	winManager     *WindowsManager
+	ucsManager     *UCSManager
 }
 
 // New creates a new package manager
@@ -37,6 +38,7 @@ func New(logger *logrus.Logger, cacheRefresh CacheRefreshConfig) *Manager {
 	pacmanManager := NewPacmanManager(logger)
 	freebsdManager := NewFreeBSDManager(logger)
 	winManager := NewWindowsManager(logger)
+	ucsManager := NewUCSManager(logger, cacheRefresh)
 
 	return &Manager{
 		logger:         logger,
@@ -46,6 +48,7 @@ func New(logger *logrus.Logger, cacheRefresh CacheRefreshConfig) *Manager {
 		pacmanManager:  pacmanManager,
 		freebsdManager: freebsdManager,
 		winManager:     winManager,
+		ucsManager:     ucsManager,
 	}
 }
 
@@ -58,6 +61,8 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 	switch packageManager {
 	case "windows":
 		return m.winManager.GetPackages(), nil
+	case "ucs":
+		return m.ucsManager.GetPackages(), nil
 	case "apt":
 		return m.aptManager.GetPackages()
 	case "dnf", "yum":
@@ -101,6 +106,11 @@ func (m *Manager) DetectPackageManager() string {
 	// Check for APK (Alpine Linux)
 	if _, err := exec.LookPath("apk"); err == nil {
 		return "apk"
+	}
+
+	// Check for UCS before generic APT — UCS has apt, but uses univention-upgrade for patching
+	if IsUCS() {
+		return "ucs"
 	}
 
 	// Check for APT
