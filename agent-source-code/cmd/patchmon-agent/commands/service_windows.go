@@ -22,7 +22,7 @@ type patchmonService struct {
 }
 
 // Execute is called by Windows Service Control Manager
-func (s *patchmonService) Execute(args []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (ssec bool, errno uint32) {
+func (s *patchmonService) Execute(_ []string, r <-chan svc.ChangeRequest, changes chan<- svc.Status) (ssec bool, errno uint32) {
 	const cmdsAccepted = svc.AcceptStop | svc.AcceptShutdown
 
 	// Notify SCM that we're starting
@@ -46,8 +46,8 @@ func (s *patchmonService) Execute(args []string, r <-chan svc.ChangeRequest, cha
 			if err != nil {
 				elog, _ := eventlog.Open(serviceName)
 				if elog != nil {
-					elog.Error(1, fmt.Sprintf("Service error: %v", err))
-					elog.Close()
+					_ = elog.Error(1, fmt.Sprintf("Service error: %v", err))
+					_ = elog.Close()
 				}
 				return false, 1
 			}
@@ -68,8 +68,8 @@ func (s *patchmonService) Execute(args []string, r <-chan svc.ChangeRequest, cha
 			default:
 				elog, _ := eventlog.Open(serviceName)
 				if elog != nil {
-					elog.Error(1, fmt.Sprintf("Unexpected control request #%d", c))
-					elog.Close()
+					_ = elog.Error(1, fmt.Sprintf("Unexpected control request #%d", c))
+					_ = elog.Close()
 				}
 			}
 		}
@@ -95,24 +95,24 @@ func runWindowsService() error {
 	}
 	defer func() {
 		if elog != nil {
-			elog.Close()
+			_ = elog.Close()
 		}
 	}()
 
 	if elog != nil {
-		elog.Info(1, fmt.Sprintf("Starting %s service", serviceName))
+		_ = elog.Info(1, fmt.Sprintf("Starting %s service", serviceName))
 	}
 
 	err = svc.Run(serviceName, &patchmonService{})
 	if err != nil {
 		if elog != nil {
-			elog.Error(1, fmt.Sprintf("Service failed: %v", err))
+			_ = elog.Error(1, fmt.Sprintf("Service failed: %v", err))
 		}
 		return fmt.Errorf("service failed: %w", err)
 	}
 
 	if elog != nil {
-		elog.Info(1, fmt.Sprintf("%s service stopped", serviceName))
+		_ = elog.Info(1, fmt.Sprintf("%s service stopped", serviceName))
 	}
 	return nil
 }

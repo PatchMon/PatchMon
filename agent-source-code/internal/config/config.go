@@ -144,7 +144,10 @@ func (m *Manager) LoadConfig() error {
 	v.SetConfigFile(m.configFile)
 	v.SetConfigType("yaml")
 
-	if err := v.ReadInConfig(); err != nil {
+	// A concurrent write of this same file locks the open out on Windows. The
+	// file is intact either side of that window, so the read is retried rather
+	// than failing the load.
+	if err := retryTransientFile(v.ReadInConfig); err != nil {
 		return fmt.Errorf("error reading config file: %w", err)
 	}
 
@@ -293,7 +296,7 @@ func (m *Manager) LoadCredentials() error {
 	credViper.SetConfigFile(m.config.CredentialsFile)
 	credViper.SetConfigType("yaml")
 
-	if err := credViper.ReadInConfig(); err != nil {
+	if err := retryTransientFile(credViper.ReadInConfig); err != nil {
 		return fmt.Errorf("error reading credentials file: %w", err)
 	}
 
@@ -377,7 +380,9 @@ func (m *Manager) SaveCredentials(apiID, apiKey string) error {
 
 	// Atomic rename - this is the only operation that exposes the file
 	// Since we set permissions before writing, no race window exists
-	if err := os.Rename(tmpPath, m.config.CredentialsFile); err != nil {
+	if err := retryTransientFile(func() error {
+		return os.Rename(tmpPath, m.config.CredentialsFile)
+	}); err != nil {
 		return fmt.Errorf("error renaming credentials file: %w", err)
 	}
 
@@ -491,7 +496,10 @@ func writeConfigAtomically(v *viper.Viper, path string) error {
 		return fmt.Errorf("error closing temp config file: %w", err)
 	}
 
-	if err := os.Rename(tmpName, path); err != nil {
+	// On Windows a reader holding the destination open makes this fail with
+	// ERROR_ACCESS_DENIED. The rename leaves the destination untouched when it
+	// fails, so retrying is safe.
+	if err := retryTransientFile(func() error { return os.Rename(tmpName, path) }); err != nil {
 		return fmt.Errorf("error replacing config file: %w", err)
 	}
 
