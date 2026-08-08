@@ -99,7 +99,11 @@ func TestConfigWrite_ReaderNeverObservesPartialFile(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for range iterations {
-					if err := w.write(v, path); err != nil {
+					// The in-place writer has no retry, so on Windows the
+					// concurrent reader locks it out. That is contention, not
+					// the corruption this test measures, so it is not a
+					// failure of the test itself.
+					if err := w.write(v, path); err != nil && !isTransientFileError(err) {
 						t.Errorf("write: %v", err)
 						return
 					}
@@ -119,12 +123,15 @@ func TestConfigWrite_ReaderNeverObservesPartialFile(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for range iterations {
-					// Read it exactly as LoadConfig does, so a failure here is
-					// the failure the agent would hit.
+					// Read it exactly as LoadConfig does, including its retry
+					// of transient sharing violations, so a failure here is
+					// the failure the agent would hit. Without the retry this
+					// measures Windows file-sharing contention rather than
+					// whether the write is atomic.
 					r := viper.New()
 					r.SetConfigFile(path)
 					r.SetConfigType("yaml")
-					err := r.ReadInConfig()
+					err := retryTransientFile(r.ReadInConfig)
 					if err == nil && len(r.AllKeys()) > 0 {
 						continue
 					}
