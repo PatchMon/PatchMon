@@ -6,15 +6,21 @@ import (
 	"sync"
 	"time"
 
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 )
 
 const dashboardCacheTTL = 45 * time.Second
 
+type dashboardCacheEntry struct {
+	data *ComplianceDashboard
+	exp  time.Time
+}
+
+// Keyed by context.
 var (
-	dashboardCacheMu   sync.Mutex
-	dashboardCacheData *ComplianceDashboard
-	dashboardCacheExp  time.Time
+	dashboardCacheMu sync.Mutex
+	dashboardCache   = map[string]dashboardCacheEntry{}
 )
 
 // ComplianceDashboard is the dashboard response structure (matches legacy/frontend).
@@ -84,6 +90,10 @@ type ComplianceDashboardHost struct {
 	ComplianceMode    string     `json:"compliance_mode"`
 	ComplianceEnabled bool       `json:"compliance_enabled"`
 	DockerEnabled     bool       `json:"docker_enabled"`
+	// Per-scanner flags. docker_enabled is the Docker integration, not Docker
+	// Bench scanning, so the benchmark filter needs these to be accurate.
+	OpenscapEnabled    bool `json:"compliance_openscap_enabled"`
+	DockerBenchEnabled bool `json:"compliance_docker_bench_enabled"`
 }
 
 type ComplianceDashboardWorstHost struct {
@@ -147,9 +157,10 @@ type ComplianceDashboardProfileTypeStat struct {
 // GetDashboard returns the compliance dashboard data (matches legacy structure).
 func (s *ComplianceStore) GetDashboard(ctx context.Context) (*ComplianceDashboard, error) {
 	d := s.db.DB(ctx)
+	cacheKey := hostctx.TenantHostKey(ctx)
 	dashboardCacheMu.Lock()
-	if dashboardCacheData != nil && time.Now().Before(dashboardCacheExp) {
-		data := dashboardCacheData
+	if e, ok := dashboardCache[cacheKey]; ok && e.data != nil && time.Now().Before(e.exp) {
+		data := e.data
 		dashboardCacheMu.Unlock()
 		return data, nil
 	}
@@ -312,19 +323,21 @@ func (s *ComplianceStore) GetDashboard(ctx context.Context) (*ComplianceDashboar
 			}
 		}
 		hostsWithLatestScan = append(hostsWithLatestScan, ComplianceDashboardHost{
-			HostID:            h.ID,
-			Hostname:          h.Hostname,
-			FriendlyName:      h.FriendlyName,
-			LastScanDate:      lastScan,
-			LastActivityTitle: &profileName,
-			Passed:            &passed,
-			Failed:            &failed,
-			Skipped:           &skipped,
-			Score:             scan.Score,
-			ScannerStatus:     scannerStatus,
-			ComplianceMode:    complianceMode,
-			ComplianceEnabled: h.ComplianceEnabled,
-			DockerEnabled:     h.DockerEnabled,
+			HostID:             h.ID,
+			Hostname:           h.Hostname,
+			FriendlyName:       h.FriendlyName,
+			LastScanDate:       lastScan,
+			LastActivityTitle:  &profileName,
+			Passed:             &passed,
+			Failed:             &failed,
+			Skipped:            &skipped,
+			Score:              scan.Score,
+			ScannerStatus:      scannerStatus,
+			ComplianceMode:     complianceMode,
+			ComplianceEnabled:  h.ComplianceEnabled,
+			DockerEnabled:      h.DockerEnabled,
+			OpenscapEnabled:    h.ComplianceOpenscapEnabled,
+			DockerBenchEnabled: h.ComplianceDockerBenchEnabled,
 		})
 	}
 
@@ -590,8 +603,7 @@ func (s *ComplianceStore) GetDashboard(ctx context.Context) (*ComplianceDashboar
 	}
 
 	dashboardCacheMu.Lock()
-	dashboardCacheData = out
-	dashboardCacheExp = time.Now().Add(dashboardCacheTTL)
+	dashboardCache[cacheKey] = dashboardCacheEntry{data: out, exp: time.Now().Add(dashboardCacheTTL)}
 	dashboardCacheMu.Unlock()
 
 	return out, nil

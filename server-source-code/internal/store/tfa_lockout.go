@@ -17,12 +17,14 @@ const (
 // Uses same keys as Node: tfa:lockout:{userID}, tfa:failed:{userID}.
 type TfaLockoutStore struct {
 	rdb             *hostctx.RedisResolver
+	cfgResolver     *hostctx.ConfigResolver
 	maxAttempts     int
 	lockoutDuration time.Duration
 }
 
-// NewTfaLockoutStore creates a TFA lockout store.
-func NewTfaLockoutStore(rdb *hostctx.RedisResolver, maxAttempts int, lockoutDurationMinutes int) *TfaLockoutStore {
+// NewTfaLockoutStore creates a TFA lockout store. cfgResolver supplies the
+// calling context's thresholds; the passed values are the fallback.
+func NewTfaLockoutStore(rdb *hostctx.RedisResolver, cfgResolver *hostctx.ConfigResolver, maxAttempts int, lockoutDurationMinutes int) *TfaLockoutStore {
 	if maxAttempts <= 0 {
 		maxAttempts = 5
 	}
@@ -31,9 +33,20 @@ func NewTfaLockoutStore(rdb *hostctx.RedisResolver, maxAttempts int, lockoutDura
 	}
 	return &TfaLockoutStore{
 		rdb:             rdb,
+		cfgResolver:     cfgResolver,
 		maxAttempts:     maxAttempts,
 		lockoutDuration: time.Duration(lockoutDurationMinutes) * time.Minute,
 	}
+}
+
+func (s *TfaLockoutStore) limits(ctx context.Context) (int, time.Duration) {
+	if rc := s.cfgResolver.Resolve(ctx); rc != nil {
+		dur := time.Duration(rc.TfaLockoutDurationMin) * time.Minute
+		if rc.MaxTfaAttempts > 0 && dur > 0 {
+			return rc.MaxTfaAttempts, dur
+		}
+	}
+	return s.maxAttempts, s.lockoutDuration
 }
 
 // IsTFALocked returns whether the user is locked and remaining seconds.
@@ -61,13 +74,14 @@ func (s *TfaLockoutStore) RecordFailedAttempt(ctx context.Context, userID string
 	if err != nil {
 		return 0, false
 	}
+	maxAttempts, lockoutDuration := s.limits(ctx)
 	attempts = int(attempts64)
 	if attempts == 1 {
-		_ = rdb.Expire(ctx, key, s.lockoutDuration)
+		_ = rdb.Expire(ctx, key, lockoutDuration)
 	}
-	if attempts >= s.maxAttempts {
+	if attempts >= maxAttempts {
 		lockKey := hostctx.TenantKey(ctx, TfaLockoutPrefix+userID)
-		_ = rdb.Set(ctx, lockKey, strconv.FormatInt(time.Now().UnixMilli(), 10), s.lockoutDuration).Err()
+		_ = rdb.Set(ctx, lockKey, strconv.FormatInt(time.Now().UnixMilli(), 10), lockoutDuration).Err()
 		_ = rdb.Del(ctx, key).Err()
 		return attempts, true
 	}

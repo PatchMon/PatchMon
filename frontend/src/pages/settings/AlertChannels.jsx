@@ -13,13 +13,15 @@ import {
 	Plus,
 	RefreshCw,
 	Send,
+	Slack,
 	Trash2,
 	X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { SiDiscord, SiNtfy, SiSlack } from "react-icons/si";
+import { SiDiscord, SiNtfy } from "react-icons/si";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
+import { useConfirm } from "../../contexts/ConfirmContext";
 import { useToast } from "../../contexts/ToastContext";
 import {
 	adminHostsAPI,
@@ -32,8 +34,8 @@ import {
 
 const EVENT_TYPES = [
 	{ value: "*", label: "All events" },
-	{ value: "host_down", label: "Host down" },
-	{ value: "host_recovered", label: "Host recovered / up" },
+	{ value: "host_down", label: "Host Agent Down" },
+	{ value: "host_recovered", label: "Host Agent Recovered" },
 	{ value: "host_enrolled", label: "Host enrolled" },
 	{ value: "host_deleted", label: "Host deleted" },
 	{ value: "server_update", label: "Server update" },
@@ -93,7 +95,7 @@ const CHANNEL_TYPES = [
 		label: "Webhook",
 		description: "Generic, Discord, or Slack",
 		icon: Globe,
-		brandIcons: { discord: SiDiscord, slack: SiSlack },
+		brandIcons: { discord: SiDiscord, slack: Slack },
 	},
 	{
 		value: "email",
@@ -137,6 +139,41 @@ const DAY_LABELS = [
 	{ value: "6", short: "Sat" },
 	{ value: "0", short: "Sun" },
 ];
+
+const TLS_MODES = [
+	{ value: "starttls", label: "STARTTLS (recommended)" },
+	{ value: "tls", label: "Implicit TLS / SSL" },
+	{ value: "none", label: "None (insecure)" },
+	{ value: "auto", label: "Auto" },
+];
+
+const TLS_MODE_HELP = {
+	starttls:
+		"Connect in plaintext on the submission port, then upgrade to TLS via the STARTTLS command. Typical port: 587.",
+	tls: "Open a TLS connection from the start (sometimes called SMTPS). Typical port: 465.",
+	none: "Send mail in plaintext. Credentials will be rejected by the server. Use only for local relays you trust.",
+	auto: "Try STARTTLS first, then fall back to implicit TLS on the same host and port. Mail is never sent in plaintext in this mode; if neither works, sending fails.",
+};
+
+const TLS_MODE_DEFAULT_PORTS = {
+	starttls: 587,
+	tls: 465,
+	none: 25,
+};
+
+const KNOWN_SMTP_PORTS = new Set([25, 465, 587, 2525]);
+
+export const hydrateTLSMode = (cfg) => {
+	if (!cfg || typeof cfg !== "object") return "starttls";
+	if (
+		typeof cfg.tls_mode === "string" &&
+		TLS_MODES.some((m) => m.value === cfg.tls_mode)
+	) {
+		return cfg.tls_mode;
+	}
+	if (cfg.use_tls === false) return "none";
+	return "auto";
+};
 
 const buildCron = (frequency, time, days, monthDay) => {
 	const [h, m] = (time || "08:00").split(":");
@@ -239,9 +276,20 @@ const DestinationModal = ({
 	);
 	const [enabled, setEnabled] = useState(editingDest?.enabled !== false);
 	const [config, setConfig] = useState(editingDest?._loadedConfig || {});
+	const [tlsMode, setTlsMode] = useState(
+		editingDest ? hydrateTLSMode(editingDest._loadedConfig || {}) : "starttls",
+	);
+	const [isTestingSMTP, setIsTestingSMTP] = useState(false);
 	const toast = useToast();
 
 	if (!isOpen) return null;
+
+	const credentialsSet = Boolean(
+		(config.username && String(config.username).length > 0) ||
+			(config.password && String(config.password).length > 0),
+	);
+	const showPlainAuthWarning =
+		channelType === "email" && tlsMode === "none" && credentialsSet;
 
 	const handleSave = () => {
 		if (!displayName.trim()) {
@@ -259,20 +307,87 @@ const DestinationModal = ({
 			toast.warning("SMTP host, from, and to are required");
 			return;
 		}
+		if (channelType === "email" && showPlainAuthWarning) {
+			toast.warning(
+				"Clear the credentials or pick STARTTLS / Implicit TLS before saving",
+			);
+			return;
+		}
 		if (channelType === "ntfy" && !config.topic) {
 			toast.warning("Topic is required");
 			return;
 		}
+		let outConfig = config;
+		if (channelType === "email") {
+			// Dual-write tls_mode (new) and use_tls (legacy) so the existing backend
+			// read path keeps working for one release while the new mailer rolls out.
+			outConfig = {
+				...config,
+				tls_mode: tlsMode,
+				use_tls: tlsMode !== "none",
+			};
+		}
 		onSave({
 			channel_type: channelType,
 			display_name: displayName.trim(),
-			config,
+			config: outConfig,
 			enabled,
 		});
 	};
 
 	const updateConfig = (key, value) =>
 		setConfig((p) => ({ ...p, [key]: value }));
+
+	const handleTLSModeChange = (nextMode) => {
+		const prevDefault = TLS_MODE_DEFAULT_PORTS[tlsMode];
+		const nextDefault = TLS_MODE_DEFAULT_PORTS[nextMode];
+		setTlsMode(nextMode);
+		const currentPortRaw = config.smtp_port;
+		const currentPort =
+			typeof currentPortRaw === "number"
+				? currentPortRaw
+				: Number(currentPortRaw);
+		const portIsKnownDefault =
+			!Number.isNaN(currentPort) &&
+			KNOWN_SMTP_PORTS.has(currentPort) &&
+			(prevDefault === undefined || currentPort === prevDefault);
+		if (
+			nextDefault !== undefined &&
+			(currentPortRaw === undefined ||
+				currentPortRaw === "" ||
+				portIsKnownDefault)
+		) {
+			setConfig((p) => ({ ...p, smtp_port: nextDefault }));
+		}
+	};
+
+	const handleSendTestEmail = async () => {
+		if (!editingDest?.id) {
+			toast.warning("Save the destination first to send a test email");
+			return;
+		}
+		setIsTestingSMTP(true);
+		try {
+			const resp = await notificationsAPI.testSMTP(editingDest.id);
+			const data = resp?.data || {};
+			if (data.ok) {
+				toast.success("Test email sent successfully");
+			} else {
+				const stage = data.stage ? `${data.stage} failed` : "Test failed";
+				const message = data.message ? `: ${data.message}` : "";
+				toast.error(`${stage}${message}`);
+			}
+		} catch (err) {
+			const apiMsg =
+				err?.response?.data?.message ||
+				err?.response?.data?.error ||
+				err?.message ||
+				"Failed to send test email";
+			toast.error(apiMsg);
+		} finally {
+			setIsTestingSMTP(false);
+		}
+	};
 
 	const renderFields = () => {
 		switch (channelType) {
@@ -384,14 +499,32 @@ const DestinationModal = ({
 								/>
 							</div>
 						</div>
-						<label className="flex items-center gap-2 text-sm text-secondary-700 dark:text-white">
-							<input
-								type="checkbox"
-								checked={config.use_tls !== false}
-								onChange={(e) => updateConfig("use_tls", e.target.checked)}
-							/>
-							Use TLS
-						</label>
+						<div>
+							<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+								TLS mode
+							</label>
+							<select
+								className={`${SELECT} min-h-[44px]`}
+								value={tlsMode}
+								onChange={(e) => handleTLSModeChange(e.target.value)}
+							>
+								{TLS_MODES.map((m) => (
+									<option key={m.value} value={m.value}>
+										{m.label}
+									</option>
+								))}
+							</select>
+							<p className="mt-1 text-xs text-secondary-500">
+								{TLS_MODE_HELP[tlsMode]}
+							</p>
+						</div>
+						{showPlainAuthWarning && (
+							<div className="bg-danger-50 dark:bg-danger-900/30 border border-danger-200 dark:border-danger-700 rounded-md p-3 text-sm text-danger-700 dark:text-danger-300">
+								PLAIN authentication over an unencrypted connection will be
+								rejected by the server. Either clear the credentials or choose
+								STARTTLS / Implicit TLS.
+							</div>
+						)}
 					</div>
 				);
 			case "ntfy":
@@ -570,10 +703,35 @@ const DestinationModal = ({
 					) : (
 						<div />
 					)}
-					<div className="flex gap-2">
+					<div className="flex flex-wrap gap-2">
 						<button type="button" className="btn-outline" onClick={onClose}>
 							Cancel
 						</button>
+						{step === 2 && channelType === "email" && (
+							<button
+								type="button"
+								className="btn-outline flex items-center gap-1 min-h-[44px]"
+								disabled={
+									!editingDest?.id ||
+									isPending ||
+									isTestingSMTP ||
+									showPlainAuthWarning
+								}
+								onClick={handleSendTestEmail}
+								title={
+									!editingDest?.id
+										? "Save the destination first to send a test email"
+										: "Send a test email using the saved configuration"
+								}
+							>
+								{isTestingSMTP ? (
+									<RefreshCw className="h-4 w-4 animate-spin" />
+								) : (
+									<Send className="h-4 w-4" />
+								)}
+								{isTestingSMTP ? "Sending..." : "Send test email"}
+							</button>
+						)}
 						{step === 1 && (
 							<button
 								type="button"
@@ -588,7 +746,7 @@ const DestinationModal = ({
 							<button
 								type="button"
 								className="btn-primary flex items-center gap-1"
-								disabled={isPending}
+								disabled={isPending || isTestingSMTP || showPlainAuthWarning}
 								onClick={handleSave}
 							>
 								{isPending ? (
@@ -1221,6 +1379,7 @@ const ReportModal = ({
 export const NotificationPanel = ({ panel }) => {
 	const queryClient = useQueryClient();
 	const toast = useToast();
+	const confirm = useConfirm();
 	const { canManageNotifications, canViewNotificationLogs, hasPermission } =
 		useAuth();
 	const canManage = canManageNotifications();
@@ -1266,15 +1425,19 @@ export const NotificationPanel = ({ panel }) => {
 		queryFn: () => hostGroupsAPI.list().then((r) => r.data ?? []),
 		enabled: canManage && canListHostGroups,
 	});
-	const { data: hostsList = [] } = useQuery({
+	const { data: hostsData } = useQuery({
 		queryKey: ["hosts-list"],
-		queryFn: () => adminHostsAPI.list().then((r) => r.data ?? []),
+		queryFn: () => adminHostsAPI.list().then((r) => r.data),
 		enabled: canManage && canListHostGroups,
 	});
 
 	const hostGroupOptions = useMemo(
 		() => (Array.isArray(hostGroups) ? hostGroups : []),
 		[hostGroups],
+	);
+	const hostOptions = useMemo(
+		() => (Array.isArray(hostsData?.data) ? hostsData.data : []),
+		[hostsData],
 	);
 	const destNameMap = useMemo(() => {
 		const m = {};
@@ -1596,8 +1759,14 @@ export const NotificationPanel = ({ panel }) => {
 														<button
 															type="button"
 															className="text-red-600 hover:text-red-700 inline-flex items-center gap-1 text-xs"
-															onClick={() => {
-																if (confirm("Delete this destination?"))
+															onClick={async () => {
+																if (
+																	await confirm({
+																		title: "Delete destination",
+																		message: `Delete the destination "${d.display_name}"?`,
+																		confirmLabel: "Delete destination",
+																	})
+																)
 																	deleteDest.mutate(d.id);
 															}}
 														>
@@ -1719,8 +1888,14 @@ export const NotificationPanel = ({ panel }) => {
 												<button
 													type="button"
 													className="text-red-600 hover:text-red-700 inline-flex items-center gap-1 text-xs"
-													onClick={() => {
-														if (confirm("Delete this route?"))
+													onClick={async () => {
+														if (
+															await confirm({
+																title: "Delete route",
+																message: "Delete this event route?",
+																confirmLabel: "Delete route",
+															})
+														)
 															deleteRoute.mutate(row.id);
 													}}
 												>
@@ -1829,8 +2004,14 @@ export const NotificationPanel = ({ panel }) => {
 												<button
 													type="button"
 													className="text-red-600 hover:text-red-700 inline-flex items-center gap-1 text-xs"
-													onClick={() => {
-														if (confirm("Delete this report?"))
+													onClick={async () => {
+														if (
+															await confirm({
+																title: "Delete scheduled report",
+																message: `Delete the scheduled report "${r.name}"?`,
+																confirmLabel: "Delete report",
+															})
+														)
 															deleteReport.mutate(r.id);
 													}}
 												>
@@ -1986,7 +2167,7 @@ export const NotificationPanel = ({ panel }) => {
 				editingRoute={routeModal.editing}
 				destinations={destinations}
 				hostGroups={hostGroupOptions}
-				hosts={Array.isArray(hostsList) ? hostsList : []}
+				hosts={hostOptions}
 				isPending={createRoute.isPending || updateRoute.isPending}
 			/>
 			<ReportModal

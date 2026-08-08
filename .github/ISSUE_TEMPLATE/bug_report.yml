@@ -1,7 +1,7 @@
 name: "Bug Report"
 description: Report a bug or unexpected behavior
-title: "[Bug]: "
 labels: ["bug"]
+type: Bug
 body:
   - type: markdown
     attributes:
@@ -16,7 +16,6 @@ body:
         - ""
         - Docker
         - Proxmox-community script
-        - setup.sh native install script
         - Other
     validations:
       required: true

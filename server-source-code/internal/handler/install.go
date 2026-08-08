@@ -3,10 +3,10 @@ package handler
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,8 +16,10 @@ import (
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agents"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
+	"github.com/jackc/pgx/v5"
 )
 
 // InstallHandler handles agent install, bootstrap, ping, update, and agent download endpoints.
@@ -305,8 +307,19 @@ func (h *InstallHandler) BootstrapExchange(w http.ResponseWriter, r *http.Reques
 }
 
 // ServePing handles POST /api/v1/hosts/ping.
-// Agent connectivity test and credential validation. Updates host last_update and status.
+//
+// Hash-gated agent check-in. The agent ships its per-section content hashes
+// (and volatile metrics like CPU/RAM/uptime) on every cycle; the server
+// compares against stored hashes and replies with the list of stale sections
+// in `requestFull`. The agent then fires a follow-up POST /hosts/update for
+// just those sections.
+//
+// Empty body is supported as a legacy heartbeat path so old agents keep
+// working unmodified — they get the same response shape they always did
+// (without `requestFull`), and their next /hosts/update is treated as a
+// full report.
 func (h *InstallHandler) ServePing(w http.ResponseWriter, r *http.Request) {
+	pingStart := time.Now()
 	defer func() {
 		if err := recover(); err != nil {
 			slog.Error("ping handler panic", "error", err, "stack", string(debug.Stack()))
@@ -326,47 +339,263 @@ func (h *InstallHandler) ServePing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	host, err := h.hosts.GetByApiID(r.Context(), apiID)
-	if err != nil || host == nil {
+	// Single SELECT loads identity + hashes + integration toggles.
+	//
+	// Only a genuine "no such api_id" is a credentials problem. Mapping every
+	// error here to 401 told the entire fleet its credentials were invalid
+	// whenever the database was briefly unavailable, which sends operators
+	// hunting for a rotated API key instead of a DB outage.
+	checkin, err := h.hosts.GetCheckin(r.Context(), apiID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			JSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid API credentials"})
+			return
+		}
+		slog.Error("ping: host check-in lookup failed", "api_id", apiID, "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to look up host: database error"})
+		return
+	}
+	if checkin == nil {
 		JSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid API credentials"})
 		return
 	}
 
-	ok, err := util.VerifyAPIKey(apiKey, host.ApiKey)
+	ok, err := util.VerifyAPIKey(apiKey, checkin.ApiKey)
 	if err != nil || !ok {
 		JSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid API credentials"})
 		return
 	}
 
-	if err := h.hosts.UpdatePing(r.Context(), host.ID); err != nil {
-		slog.Error("failed to update host ping", "host_id", host.ID, "error", err)
-		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Ping failed"})
-		return
+	// Decode body. Empty body (legacy heartbeat, including chunked-encoded
+	// empty bodies that arrive with ContentLength=-1) is supported.
+	// io.EOF on the first read means there were no bytes to decode — fall
+	// through to the legacy heartbeat path. Unknown fields are tolerated
+	// so newer agents shipping additional optional fields keep working
+	// against older servers (forward compat).
+	var req models.PingRequest
+	hasBody := false
+	if r.ContentLength != 0 {
+		err := json.NewDecoder(r.Body).Decode(&req)
+		switch {
+		case err == nil:
+			hasBody = true
+		case errors.Is(err, io.EOF):
+			// Empty body on a chunked or unspecified-length request.
+			// Treat as legacy heartbeat.
+			hasBody = false
+		default:
+			JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+			return
+		}
+	}
+
+	// Volatile metrics ride on every ping body. Apply them via a dedicated
+	// COALESCE-guarded UPDATE so omitted fields don't clobber. Also bumps
+	// last_update + status so the legacy heartbeat side-effect is preserved.
+	if hasBody {
+		mp := buildMetricsParams(&req)
+		if err := h.hosts.UpdateMetrics(r.Context(), checkin.ID, mp); err != nil {
+			slog.Error("failed to update host metrics", "host_id", checkin.ID, "error", err)
+			JSON(w, http.StatusInternalServerError, map[string]string{"error": "Ping failed"})
+			return
+		}
+	} else {
+		// Legacy heartbeat: just bump last_update.
+		if err := h.hosts.UpdatePing(r.Context(), checkin.ID); err != nil {
+			slog.Error("failed to update host ping", "host_id", checkin.ID, "error", err)
+			JSON(w, http.StatusInternalServerError, map[string]string{"error": "Ping failed"})
+			return
+		}
+	}
+
+	// Hash compare. If the agent shipped no body (legacy) we skip this and
+	// `requestFull` stays empty — matches previous behaviour exactly.
+	var requestFull []string
+	if hasBody {
+		requestFull = computeRequestFull(checkin, &req.Hashes)
 	}
 
 	now := time.Now()
-	friendlyName := host.FriendlyName
-	if friendlyName == "" && host.Hostname != nil {
-		friendlyName = *host.Hostname
+	friendlyName := checkin.FriendlyName
+	if friendlyName == "" && checkin.Hostname != nil {
+		friendlyName = *checkin.Hostname
 	}
 	if friendlyName == "" {
-		friendlyName = host.ApiID
+		friendlyName = apiID
 	}
 
 	resp := map[string]interface{}{
 		"message":      "Ping successful",
 		"timestamp":    now.Format(time.RFC3339),
 		"friendlyName": friendlyName,
-		"agentStartup": true, // simplified; Node.js computes from last_update delta
+		"agentStartup": true,
+		// Capability marker for the hash gate. A pre-2.0.3 server returns 200
+		// with no `requestFull` and no `hashGate`, which a hash-gated agent
+		// would otherwise read as "steady state, nothing to send" forever: the
+		// host keeps bumping last_update and looks perfectly healthy while
+		// every section silently goes stale. The agent treats the ABSENCE of
+		// this key as "server does not support the hash gate" and falls back to
+		// sending full reports. The key name and value are a fixed contract
+		// with the agent — do not rename or change the shape.
+		"hashGate": true,
 		"integrations": map[string]bool{
-			"docker":     host.DockerEnabled,
-			"compliance": host.ComplianceEnabled,
+			"docker":     checkin.DockerEnabled,
+			"compliance": checkin.ComplianceEnabled,
 		},
+	}
+	if len(requestFull) > 0 {
+		resp["requestFull"] = requestFull
+	}
+
+	// Record one update_history row per ping cycle for the Agent Activity
+	// feed. Best-effort: failure is logged but does not fail the ping — the
+	// agent has already done its work and the activity row is a UI nicety.
+	// sections_unchanged = enabled hash-gated sections \ requestFull (server
+	// is happy with whatever the agent has stored for those). Metrics ride on
+	// every ping body, so they are the only "updated" section for a normal
+	// body ping; legacy empty-body pings emit no updated sections.
+	stale := make(map[string]struct{}, len(requestFull))
+	for _, s := range requestFull {
+		stale[s] = struct{}{}
+	}
+	pingSections := []string{
+		models.SectionPackages,
+		models.SectionRepos,
+		models.SectionInterfaces,
+		models.SectionHostname,
+	}
+	if checkin.DockerEnabled {
+		pingSections = append(pingSections, models.SectionDocker)
+	}
+	if checkin.ComplianceEnabled {
+		pingSections = append(pingSections, models.SectionCompliance)
+	}
+	unchanged := []string{}
+	if hasBody {
+		unchanged = make([]string, 0, len(pingSections))
+		for _, s := range pingSections {
+			if _, ok := stale[s]; !ok {
+				unchanged = append(unchanged, s)
+			}
+		}
+	}
+	sectionsSent := []string{}
+	if hasBody {
+		sectionsSent = append(sectionsSent, models.SectionMetrics)
+	}
+	procSec := time.Since(pingStart).Seconds()
+	var payloadKb *float64
+	if r.ContentLength > 0 {
+		v := float64(r.ContentLength) / 1024.0
+		payloadKb = &v
+	}
+	var agentExec *int
+	if hasBody && req.AgentExecutionMs != nil {
+		agentExec = req.AgentExecutionMs
+	}
+	if err := h.reports.InsertActivityRow(r.Context(), store.AgentActivityInsert{
+		HostID:            checkin.ID,
+		ReportType:        "ping",
+		SectionsSent:      sectionsSent,
+		SectionsUnchanged: unchanged,
+		PayloadSizeKb:     payloadKb,
+		ServerProcessing:  &procSec,
+		AgentExecutionMs:  agentExec,
+		Status:            "success",
+		ErrorMessage:      nil,
+	}); err != nil {
+		slog.Warn("ping: failed to record agent activity row", "host_id", checkin.ID, "error", err)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// buildMetricsParams maps a PingRequest's metrics into the store's update
+// param shape. Empty / zero-valued fields stay nil so COALESCE preserves the
+// existing column value.
+func buildMetricsParams(req *models.PingRequest) store.HostMetricsParams {
+	mp := store.HostMetricsParams{}
+	m := &req.Metrics
+	if m.CPUCores != nil {
+		c := int32(*m.CPUCores)
+		mp.CPUCores = &c
+	}
+	if m.CPUModel != nil && *m.CPUModel != "" {
+		mp.CPUModel = m.CPUModel
+	}
+	if m.RAMInstalled != nil {
+		mp.RAMInstalled = m.RAMInstalled
+	}
+	if m.SwapSize != nil {
+		mp.SwapSize = m.SwapSize
+	}
+	if m.SystemUptime != nil && *m.SystemUptime != "" {
+		mp.SystemUptime = m.SystemUptime
+	}
+	if m.BootTime != nil {
+		mp.BootTime = m.BootTime
+	}
+	if m.NeedsReboot != nil {
+		mp.NeedsReboot = m.NeedsReboot
+	}
+	if m.RebootReason != nil {
+		mp.RebootReason = m.RebootReason
+	}
+	if len(m.DiskDetails) > 0 {
+		if b, err := json.Marshal(m.DiskDetails); err == nil {
+			mp.DiskDetails = b
+		}
+	}
+	if len(m.LoadAverage) > 0 {
+		if b, err := json.Marshal(m.LoadAverage); err == nil {
+			mp.LoadAverage = b
+		}
+	}
+	if req.AgentVersion != "" {
+		v := req.AgentVersion
+		mp.AgentVersion = &v
+	}
+	return mp
+}
+
+// computeRequestFull diffs the agent's claimed hashes against the stored
+// hashes and returns the section identifiers the server needs filled in.
+// A NULL stored hash, an empty agent hash, or a mismatch all flag the
+// section as stale. Docker / compliance entries are suppressed when the
+// integration is disabled server-side — the agent should not bother
+// shipping data the operator has switched off.
+func computeRequestFull(c *store.HostCheckin, h *models.PingHashes) []string {
+	out := make([]string, 0, len(models.AllSections))
+	stale := func(stored *string, agent string) bool {
+		if stored == nil || *stored == "" {
+			return true
+		}
+		if agent == "" {
+			return true
+		}
+		return *stored != agent
+	}
+	if stale(c.Hashes.PackagesHash, h.PackagesHash) {
+		out = append(out, models.SectionPackages)
+	}
+	if stale(c.Hashes.ReposHash, h.ReposHash) {
+		out = append(out, models.SectionRepos)
+	}
+	if stale(c.Hashes.InterfacesHash, h.InterfacesHash) {
+		out = append(out, models.SectionInterfaces)
+	}
+	if stale(c.Hashes.HostnameHash, h.HostnameHash) {
+		out = append(out, models.SectionHostname)
+	}
+	if c.DockerEnabled && stale(c.Hashes.DockerHash, h.DockerHash) {
+		out = append(out, models.SectionDocker)
+	}
+	if c.ComplianceEnabled && stale(c.Hashes.ComplianceHash, h.ComplianceHash) {
+		out = append(out, models.SectionCompliance)
+	}
+	return out
 }
 
 // ServeUpdateInterval handles GET /api/v1/settings/update-interval.
@@ -402,9 +631,44 @@ func (h *InstallHandler) ServeUpdateInterval(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+// rejectUpdate writes an error response for a rejected /hosts/update AND
+// records a matching "error" row in the Agent Activity feed.
+//
+// Without the activity row a rejection is completely invisible in the UI: the
+// agent keeps pinging successfully every cycle, so the feed shows an unbroken
+// healthy stream while no content has landed for hours. Every hash-mismatch and
+// coherence rejection below is a symptom of a real client/server disagreement
+// that an operator needs to be able to see.
+//
+// Recording the row is best-effort — the response is what matters.
+func (h *InstallHandler) rejectUpdate(w http.ResponseWriter, r *http.Request, hostID, reportType string, sectionsSent []string, status int, reason string, start time.Time) {
+	if h.reports != nil {
+		procSec := time.Since(start).Seconds()
+		var payloadKb *float64
+		if r.ContentLength > 0 {
+			v := float64(r.ContentLength) / 1024.0
+			payloadKb = &v
+		}
+		msg := reason
+		if err := h.reports.InsertActivityRow(r.Context(), store.AgentActivityInsert{
+			HostID:           hostID,
+			ReportType:       reportType,
+			SectionsSent:     sectionsSent,
+			PayloadSizeKb:    payloadKb,
+			ServerProcessing: &procSec,
+			Status:           "error",
+			ErrorMessage:     &msg,
+		}); err != nil {
+			slog.Warn("update: failed to record rejected-report activity row", "host_id", hostID, "error", err)
+		}
+	}
+	JSON(w, status, map[string]string{"error": reason})
+}
+
 // ServeUpdate handles POST /api/v1/hosts/update.
 // Agent sends package and system info report.
 func (h *InstallHandler) ServeUpdate(w http.ResponseWriter, r *http.Request) {
+	updateStart := time.Now()
 	defer func() {
 		if err := recover(); err != nil {
 			slog.Error("update handler panic", "error", err, "stack", string(debug.Stack()))
@@ -438,18 +702,138 @@ func (h *InstallHandler) ServeUpdate(w http.ResponseWriter, r *http.Request) {
 
 	var payload store.ReportPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		h.rejectUpdate(w, r, host.ID, "full", nil, http.StatusBadRequest, "Invalid request body", updateStart)
 		return
 	}
 
-	if len(payload.Packages) == 0 {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "Packages array is required"})
-		return
+	// Resolve which sections this payload claims to deliver. An absent
+	// `sections` field means full report (legacy/old-agent path) — every
+	// claimed top-level block is processed.
+	reportType := "full"
+	if len(payload.Sections) > 0 {
+		reportType = "partial"
+	}
+	reject := func(status int, reason string) {
+		h.rejectUpdate(w, r, host.ID, reportType, payload.Sections, status, reason, updateStart)
+	}
+
+	var sections store.ReportSections
+	if len(payload.Sections) > 0 {
+		sections = store.SectionsFromList(payload.Sections)
+		// Validate: at least one known section must be claimed. An empty
+		// list after parsing means agent sent only unknown section names.
+		if !sections.Packages && !sections.Repos && !sections.Interfaces && !sections.Hostname {
+			reject(http.StatusBadRequest, "sections must contain at least one of packages, repos, interfaces, hostname")
+			return
+		}
+		// Section/payload coherence — an unclaimed section MUST be empty so we
+		// don't accidentally write a section the agent didn't intend to send.
+		//
+		// The inverse (claimed but empty) is NOT symmetrical:
+		//
+		//   * packages: an empty package list is never a legitimate state. Every
+		//     supported platform has installed packages, and accepting an empty
+		//     list would DELETE the host's entire package inventory (the
+		//     packages section is delete-then-reinsert). An empty array here
+		//     always means a broken collector, so it stays a 400.
+		//   * repos: an empty repository list IS legitimate — an unsupported
+		//     package manager, a dnf parse soft-fail, or simply a host with no
+		//     configured repositories all produce one. Rejecting it used to
+		//     kill the ENTIRE bundled update (packages, interfaces and hostname
+		//     went down with it) and, because repos_hash then stayed NULL, the
+		//     next ping asked for repos again — so such a host never delivered
+		//     any section again. It is accepted and converges on the empty set.
+		if sections.Packages && len(payload.Packages) == 0 {
+			reject(http.StatusBadRequest, "sections claims 'packages' but packages array is empty")
+			return
+		}
+		if !sections.Packages && len(payload.Packages) > 0 {
+			reject(http.StatusBadRequest, "packages provided but 'packages' not in sections")
+			return
+		}
+		if !sections.Repos && len(payload.Repositories) > 0 {
+			reject(http.StatusBadRequest, "repositories provided but 'repos' not in sections")
+			return
+		}
+		// Hostname coherence: the content write below is guarded on a non-empty
+		// hostname but the hash write is not, so a claimed-but-empty hostname
+		// would store the hash of "" while the column kept its old value —
+		// permanently "in sync" according to the hash gate and permanently
+		// stale in reality.
+		//
+		// Drop the offending section instead of rejecting the request. A 400
+		// here would kill the ENTIRE bundle: packages, repos and interfaces
+		// would all die alongside the one bad section, which is exactly the
+		// failure shape documented for repos above. With the section dropped,
+		// hostname_hash is left unwritten so the next ping simply asks for
+		// hostname again, while every other section in this report still lands.
+		if sections.Hostname && payload.Hostname == "" {
+			slog.Warn("update: sections claims 'hostname' but hostname is empty; dropping that section and processing the remainder",
+				"host_id", host.ID)
+			sections.Hostname = false
+		}
+	} else {
+		sections = store.FullReport()
+		if len(payload.Packages) == 0 {
+			reject(http.StatusBadRequest, "Packages array is required")
+			return
+		}
 	}
 
 	if len(payload.Packages) > 10000 {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "Packages array exceeds maximum size"})
+		reject(http.StatusBadRequest, "Packages array exceeds maximum size")
 		return
+	}
+
+	// Drift check: if the agent supplied a hash for a section, recompute the
+	// canonical hash from the data they actually shipped and verify it
+	// matches. Mismatch means the agent's canonicalisation diverged from
+	// ours — a real bug we want to surface immediately rather than silently
+	// store a hash that the next ping will reject.
+	if hash := payload.Hashes.PackagesHash; sections.Packages && hash != "" {
+		got, err := CanonicalPackagesHash(payload.Packages)
+		if err != nil {
+			reject(http.StatusInternalServerError, "hash computation failed")
+			return
+		}
+		if got != hash {
+			reject(http.StatusBadRequest, "packages hash mismatch")
+			return
+		}
+	}
+	if hash := payload.Hashes.ReposHash; sections.Repos && hash != "" {
+		got, err := CanonicalReposHash(payload.Repositories)
+		if err != nil {
+			reject(http.StatusInternalServerError, "hash computation failed")
+			return
+		}
+		if got != hash {
+			reject(http.StatusBadRequest, "repos hash mismatch")
+			return
+		}
+	}
+	if hash := payload.Hashes.InterfacesHash; sections.Interfaces && hash != "" {
+		ifaces, err := decodeNetworkInterfaces(payload.NetworkInterfaces)
+		if err != nil {
+			reject(http.StatusBadRequest, "invalid networkInterfaces")
+			return
+		}
+		got, err := CanonicalInterfacesHash(ifaces)
+		if err != nil {
+			reject(http.StatusInternalServerError, "hash computation failed")
+			return
+		}
+		if got != hash {
+			reject(http.StatusBadRequest, "interfaces hash mismatch")
+			return
+		}
+	}
+	if hash := payload.Hashes.HostnameHash; sections.Hostname && hash != "" {
+		got := CanonicalHostnameHash(payload.Hostname)
+		if got != hash {
+			reject(http.StatusBadRequest, "hostname hash mismatch")
+			return
+		}
 	}
 
 	// Wrap ProcessReport in WithRetry so transient 40P01 (deadlock) and 40001
@@ -459,7 +843,7 @@ func (h *InstallHandler) ServeUpdate(w http.ResponseWriter, r *http.Request) {
 	var result *store.ProcessReportResult
 	err = database.WithRetry(r.Context(), "process_report", database.RetryConfig{}, func(ctx context.Context) error {
 		var procErr error
-		result, procErr = h.reports.ProcessReport(ctx, host.ID, &payload)
+		result, procErr = h.reports.ProcessReport(ctx, host.ID, &payload, sections, payload.Hashes)
 		return procErr
 	})
 	if err != nil {
@@ -561,33 +945,15 @@ func (h *InstallHandler) ServeAgentVersion(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	validArchLinux := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
-	validArchFreebsd := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
-	validArchWindows := map[string]bool{"amd64": true, "arm64": true}
-	var validArch map[string]bool
-	var archList string
-	switch osParam {
-	case "freebsd":
-		validArch = validArchFreebsd
-		archList = "amd64, 386, arm64, arm"
-	case "windows":
-		validArch = validArchWindows
-		archList = "amd64, 386"
-	default:
-		validArch = validArchLinux
-		archList = "amd64, 386, arm64, arm"
-	}
-	if !validArch[architecture] {
+	binaryName, supported := util.AgentBinaryName(osParam, architecture)
+	if !supported {
 		JSON(w, http.StatusBadRequest, map[string]string{
-			"error": fmt.Sprintf("Invalid architecture for %s. Must be one of: %s", osParam, archList),
+			"error": fmt.Sprintf("Invalid architecture for %s. Must be one of: %s",
+				osParam, strings.Join(util.SupportedAgentArches(osParam), ", ")),
 		})
 		return
 	}
 
-	binaryName := fmt.Sprintf("patchmon-agent-%s-%s", osParam, architecture)
-	if osParam == "windows" {
-		binaryName = binaryName + ".exe"
-	}
 	binDir := util.GetAgentsDir()
 	binaryPath, err := util.SafePathUnderBase(binDir, binaryName)
 	if err != nil {
@@ -627,7 +993,11 @@ func (h *InstallHandler) ServeAgentVersion(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	serverVersion := util.GetVersionFromBinaryPath(r.Context(), binaryPath)
+	binaryInfo, err := util.GetAgentBinaryInfo(r.Context(), binaryPath)
+	if err != nil {
+		slog.Error("failed to read agent binary", "path", binaryPath, "error", err)
+	}
+	serverVersion := binaryInfo.Version
 	if serverVersion == "" {
 		agentVersion := r.URL.Query().Get("currentVersion")
 		if agentVersion == "" {
@@ -658,12 +1028,6 @@ func (h *InstallHandler) ServeAgentVersion(w http.ResponseWriter, r *http.Reques
 		hasUpdate = false
 	}
 
-	var binaryHash string
-	if data, err := os.ReadFile(binaryPath); err == nil {
-		sum := sha256.Sum256(data)
-		binaryHash = hex.EncodeToString(sum[:])
-	}
-
 	downloadURL := fmt.Sprintf("/api/v1/hosts/agent/download?arch=%s&os=%s", architecture, osParam)
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"currentVersion":           agentVersion,
@@ -676,7 +1040,7 @@ func (h *InstallHandler) ServeAgentVersion(w http.ResponseWriter, r *http.Reques
 		"minServerVersion":         nil,
 		"architecture":             architecture,
 		"agentType":                "go",
-		"hash":                     binaryHash,
+		"hash":                     binaryInfo.Hash,
 	})
 }
 
@@ -745,32 +1109,13 @@ func (h *InstallHandler) ServeAgentDownload(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	validArchLinux := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
-	validArchFreebsd := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
-	validArchWindows := map[string]bool{"amd64": true, "arm64": true}
-	var validArch map[string]bool
-	var archList string
-	switch osParam {
-	case "freebsd":
-		validArch = validArchFreebsd
-		archList = "amd64, 386, arm64, arm"
-	case "windows":
-		validArch = validArchWindows
-		archList = "amd64, 386"
-	default:
-		validArch = validArchLinux
-		archList = "amd64, 386, arm64, arm"
-	}
-	if !validArch[architecture] {
+	binaryName, supported := util.AgentBinaryName(osParam, architecture)
+	if !supported {
 		JSON(w, http.StatusBadRequest, map[string]string{
-			"error": fmt.Sprintf("Invalid architecture for %s. Must be one of: %s", osParam, archList),
+			"error": fmt.Sprintf("Invalid architecture for %s. Must be one of: %s",
+				osParam, strings.Join(util.SupportedAgentArches(osParam), ", ")),
 		})
 		return
-	}
-
-	binaryName := fmt.Sprintf("patchmon-agent-%s-%s", osParam, architecture)
-	if osParam == "windows" {
-		binaryName = binaryName + ".exe"
 	}
 
 	// Resolve binary directory: AGENT_BINARIES_DIR, then AGENTS_DIR, then "agents" in cwd

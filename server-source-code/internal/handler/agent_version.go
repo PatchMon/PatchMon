@@ -6,20 +6,14 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 )
 
-const (
-	agentDNSDomain = "agent.vcheck.patchmon.net"
-	agentVersionRe = `(?i)(?:PatchMon Agent v|patchmon-agent v|version )?([0-9]+\.[0-9]+\.[0-9]+)`
-)
+const agentDNSDomain = "agent.vcheck.patchmon.net"
 
 // AgentVersionHandler handles agent version routes.
 //
@@ -53,64 +47,17 @@ func NewAgentVersionHandler(log *slog.Logger) *AgentVersionHandler {
 	return &AgentVersionHandler{agentsDir: agentsDir, log: log}
 }
 
-// getServerGoArch maps runtime.GOARCH to Go binary naming (matches Node os.arch() mapping).
-func getServerGoArch() string {
-	archMap := map[string]string{
-		"amd64": "amd64",
-		"386":   "386",
-		"arm64": "arm64",
-		"arm":   "arm",
-	}
-	if a, ok := archMap[runtime.GOARCH]; ok {
-		return a
-	}
-	return runtime.GOARCH
-}
-
-// getCurrentAgentVersion finds the Linux agent binary for server arch and executes it to get version.
+// getCurrentAgentVersion returns the version of the Linux agent binary bundled
+// for the server's own architecture. Detection lives in util so this and the
+// agent-facing /hosts/agent/version endpoint cannot drift apart.
 func (h *AgentVersionHandler) getCurrentAgentVersion(ctx context.Context) string {
-	serverGoArch := getServerGoArch()
-	h.log.Debug("agent version: detected server arch", "goarch", runtime.GOARCH, "mapped", serverGoArch)
-
-	possiblePaths := []string{
-		filepath.Join(h.agentsDir, fmt.Sprintf("patchmon-agent-linux-%s", serverGoArch)),
-		filepath.Join(h.agentsDir, "patchmon-agent-linux-amd64"),
-		filepath.Join(h.agentsDir, "patchmon-agent"),
-	}
-
-	var agentPath string
-	for _, p := range possiblePaths {
-		if _, err := os.Stat(p); err == nil {
-			agentPath = p
-			h.log.Debug("agent version: found binary", "path", p)
-			break
-		}
-	}
-	if agentPath == "" {
-		h.log.Debug("agent version: no binary found", "arch", serverGoArch)
+	version := util.GetCurrentAgentVersionFromBinary(ctx, h.agentsDir)
+	if version == "" {
+		h.log.Debug("agent version: could not determine bundled agent version", "dir", h.agentsDir)
 		return ""
 	}
-
-	versionCommands := []string{"--version", "version", "--help"}
-	versionRe := regexp.MustCompile(agentVersionRe)
-
-	for _, cmd := range versionCommands {
-		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		out, err := exec.CommandContext(ctx, agentPath, cmd).CombinedOutput()
-		cancel()
-		if err != nil {
-			h.log.Debug("agent version: exec failed", "cmd", cmd, "error", err)
-			continue
-		}
-		output := string(out)
-		if m := versionRe.FindStringSubmatch(output); len(m) >= 2 {
-			h.log.Info("agent version: current from binary", "version", m[1], "cmd", cmd)
-			return m[1]
-		}
-	}
-
-	h.log.Debug("agent version: could not parse version from binary output")
-	return ""
+	h.log.Info("agent version: current from binary", "version", version)
+	return version
 }
 
 // getLatestVersionFromDNS performs DNS TXT lookup for agent version (matches Node checkVersionFromDNS).
@@ -191,18 +138,14 @@ func (h *AgentVersionHandler) GetVersionInfo(w http.ResponseWriter, r *http.Requ
 	}
 
 	resp := map[string]interface{}{
-		"currentVersion":  h.currentVersion,
-		"latestVersion":   latestVersion,
-		"upstreamVersion": h.upstreamVersion,
-		"hasUpdate":       hasUpdate,
-		"updateStatus":    updateStatus,
-		"lastChecked":     h.lastChecked,
-		"supportedArchitectures": []string{
-			"linux-amd64", "linux-arm64", "linux-386", "linux-arm",
-			"freebsd-amd64", "freebsd-arm64", "freebsd-386", "freebsd-arm",
-			"windows-amd64", "windows-arm64",
-		},
-		"status": "ready",
+		"currentVersion":         h.currentVersion,
+		"latestVersion":          latestVersion,
+		"upstreamVersion":        h.upstreamVersion,
+		"hasUpdate":              hasUpdate,
+		"updateStatus":           updateStatus,
+		"lastChecked":            h.lastChecked,
+		"supportedArchitectures": util.SupportedAgentTargets(),
+		"status":                 "ready",
 	}
 	if latestVersion == "" {
 		resp["status"] = "no-version"
@@ -244,25 +187,13 @@ func (h *AgentVersionHandler) ServeAgentDownload(w http.ResponseWriter, r *http.
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid os. Must be one of: linux, freebsd, windows"})
 		return
 	}
-	validArchLinux := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
-	validArchFreebsd := map[string]bool{"amd64": true, "386": true, "arm64": true, "arm": true}
-	validArchWindows := map[string]bool{"amd64": true, "arm64": true}
-	var validArch map[string]bool
-	switch osParam {
-	case "freebsd":
-		validArch = validArchFreebsd
-	case "windows":
-		validArch = validArchWindows
-	default:
-		validArch = validArchLinux
-	}
-	if !validArch[architecture] {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid architecture for " + osParam})
+	binaryName, supported := util.AgentBinaryName(osParam, architecture)
+	if !supported {
+		JSON(w, http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("Invalid architecture for %s. Must be one of: %s",
+				osParam, strings.Join(util.SupportedAgentArches(osParam), ", ")),
+		})
 		return
-	}
-	binaryName := fmt.Sprintf("patchmon-agent-%s-%s", osParam, architecture)
-	if osParam == "windows" {
-		binaryName = binaryName + ".exe"
 	}
 	binaryPath, err := util.SafePathUnderBase(h.agentsDir, binaryName)
 	if err != nil {

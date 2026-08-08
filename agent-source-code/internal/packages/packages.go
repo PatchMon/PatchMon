@@ -59,11 +59,11 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 	case "windows":
 		return m.winManager.GetPackages(), nil
 	case "apt":
-		return m.aptManager.GetPackages(), nil
+		return m.aptManager.GetPackages()
 	case "dnf", "yum":
-		return m.dnfManager.GetPackages(), nil
+		return m.dnfManager.GetPackages()
 	case "apk":
-		return m.apkManager.GetPackages(), nil
+		return m.apkManager.GetPackages()
 	case "pacman":
 		return m.pacmanManager.GetPackages()
 	case "pkg":
@@ -162,7 +162,10 @@ func CombinePackageData(installedPackages map[string]models.Package, upgradableP
 	packages := make([]models.Package, 0)
 	upgradableMap := make(map[string]bool)
 
-	// First, add upgradable packages, merging in description and repo from installed if available
+	// Deduplicated by name: a multilib host lists glibc.i686 and glibc.x86_64
+	// separately and arch-stripping collapses both, which aborts the server's
+	// bulk upsert. A security update outranks a plain one.
+	upgradableIdx := make(map[string]int, len(upgradablePackages))
 	for _, pkg := range upgradablePackages {
 		if installed, ok := installedPackages[pkg.Name]; ok {
 			if installed.Description != "" {
@@ -172,7 +175,14 @@ func CombinePackageData(installedPackages map[string]models.Package, upgradableP
 				pkg.SourceRepository = installed.SourceRepository
 			}
 		}
+		if i, seen := upgradableIdx[pkg.Name]; seen {
+			if pkg.IsSecurityUpdate && !packages[i].IsSecurityUpdate {
+				packages[i] = pkg
+			}
+			continue
+		}
 		packages = append(packages, pkg)
+		upgradableIdx[pkg.Name] = len(packages) - 1
 		upgradableMap[pkg.Name] = true
 	}
 

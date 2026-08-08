@@ -7,7 +7,7 @@ live with the next website deploy.
 
 ## What's here
 
-Four single-file books, kept monolithic on purpose so each one is easy to
+Three single-file books, kept monolithic on purpose so each one is easy to
 read top-to-bottom and ships as a downloadable PDF on the website:
 
 | File | Book |
@@ -15,7 +15,6 @@ read top-to-bottom and ships as a downloadable PDF on the website:
 | `patchmon-admin-guide.md` | Day-to-day usage for admins/operators in the web UI |
 | `patchmon-operator-guide.md` | Install, configure, OIDC SSO, agent management, troubleshooting |
 | `patchmon-api-integrations-guide.md` | Discord, gethomepage, Ansible, Proxmox auto-enrollment, REST APIs |
-| `patchmon-release-notes.md` | Version-by-version release notes (auto-built from `server-source-code/internal/handler/release_notes_data/`) |
 | `assets/` | Images referenced by the books |
 
 ## Editing workflow
@@ -46,19 +45,21 @@ Update the in-document TOC list to match — there's no separate manifest.
 
 ## Release notes
 
-`patchmon-release-notes.md` is **regenerated** from
-`server-source-code/internal/handler/release_notes_data/RELEASE_NOTES_*.md`
-by `tools/consolidate-docs.py`. To publish a new version:
+Release notes are **not** a book here, and they are not authored in this repo.
 
-1. Add `RELEASE_NOTES_<version>.md` to that directory.
-2. Run `python3 tools/consolidate-docs.py` from the repo root. This
-   rebuilds `patchmon-release-notes.md` from the release-note sources
-   (newest version first). It does not touch the other three books;
-   those are edited directly.
+They are written in the body of the GitHub release, and nowhere else.
+Publishing the release creates the tag; CI then reads the body back and writes
 
-Alternatively, if you just want to add a manual release-notes entry without
-running the script, edit `patchmon-release-notes.md` by hand. The website
-doesn't care which path produced the file.
+    server-source-code/internal/handler/release_notes_data/RELEASE_NOTES_<version>.md
+
+into the build so the server binary embeds it and the in-app "What's New"
+modal works with no network access. That file is **never committed** and must
+not be hand-written. CI also drafts a matching entry at
+<https://feedback.patchmon.net/changelog> for you to publish.
+
+`patchmon.net/docs/patchmon-release-notes` redirects to the changelog. The
+full release procedure is in `docs/Internal documentation/technical/CI_CD.md`
+in the workspace.
 
 ## Why monolithic?
 

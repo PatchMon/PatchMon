@@ -139,6 +139,10 @@ type DockerPayload struct {
 	Hostname     string `json:"hostname"`
 	MachineID    string `json:"machine_id"`
 	AgentVersion string `json:"agent_version"`
+	// DockerHash is the agent-computed canonical hash for the docker
+	// payload. Server validates the hash on receipt and persists it for
+	// hash-gating on subsequent pings.
+	DockerHash string `json:"docker_hash,omitempty"`
 }
 
 // DockerResponse represents the response from the Docker collection endpoint

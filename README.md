@@ -8,7 +8,8 @@
 [![Cloud](https://img.shields.io/badge/Cloud-patchmon.net%2Fcloud-purple?style=for-the-badge)](https://patchmon.net/cloud)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-blue?style=for-the-badge&logo=discord)](https://patchmon.net/discord)
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-black?style=for-the-badge&logo=github)](https://github.com/PatchMon/PatchMon)
-[![Roadmap](https://img.shields.io/badge/Roadmap-View%20Progress-green?style=for-the-badge&logo=github)](https://github.com/orgs/PatchMon/projects/2)
+[![Feedback](https://img.shields.io/badge/Feedback-Request%20a%20Feature-008080?style=for-the-badge)](https://feedback.patchmon.net)
+[![Roadmap](https://img.shields.io/badge/Roadmap-View%20Progress-green?style=for-the-badge)](https://feedback.patchmon.net/roadmap)
 [![Documentation](https://img.shields.io/badge/Docs-patchmon.net%2Fdocs-blue?style=for-the-badge)](https://patchmon.net/docs/)
 
 [![Latest Release](https://img.shields.io/github/v/release/PatchMon/PatchMon?style=for-the-badge&color=blue)](https://github.com/PatchMon/PatchMon/releases)
@@ -210,7 +211,10 @@ Full documentation at **[patchmon.net/docs](https://patchmon.net/docs)**.
 
 ### Community
 
-- **Discord:** [https://patchmon.net/discord](https://patchmon.net/discord)
+- **Discord:** [https://patchmon.net/discord](https://patchmon.net/discord) - development and general chat
+- **GitHub Discussions:** [Ask a question](https://github.com/PatchMon/PatchMon/discussions) - how-tos and "is this possible"
+- **Feedback portal:** [feedback.patchmon.net](https://feedback.patchmon.net) - request features, vote and follow progress
+- **Help centre:** [How we work](https://feedback.patchmon.net/hc) - where bugs, ideas, questions and pull requests each go
 - **Email:** support@patchmon.net
 
 ### Professional & Enterprise
@@ -232,11 +236,17 @@ Quick summary:
 
 Good first issues are labelled in the [issue tracker](https://github.com/PatchMon/PatchMon/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
 
+Not sure where something goes? Bugs belong in [GitHub Issues](https://github.com/PatchMon/PatchMon/issues), feature ideas in the [feedback portal](https://feedback.patchmon.net), and questions in [Discussions](https://github.com/PatchMon/PatchMon/discussions). The [help centre](https://feedback.patchmon.net/hc) explains each in more detail.
+
+If you plan to build a feature, please get the request accepted on the feedback portal first. AI-assisted contributions are welcome but **disclosure is required** - see [AI-Assisted Contributions](CONTRIBUTING.md#ai-assisted-contributions) and our [AI Declaration](AI-DECLARATION.md).
+
 ---
 
 ## Roadmap
 
-Track upcoming features and progress on the **[PatchMon Roadmap](https://github.com/orgs/PatchMon/projects/2)**.
+Track upcoming features and vote on what gets built next at **[feedback.patchmon.net/roadmap](https://feedback.patchmon.net/roadmap)**.
+
+Requests we have accepted appear on the roadmap and move through Planned, In Progress and Completed as they ship. Voting is open to everyone and you are notified when something you voted for is released. See [How a feature request gets built](https://feedback.patchmon.net/hc/how-we-work/how-a-feature-request-gets-built) for the full process.
 
 ---
 
@@ -278,6 +288,7 @@ This project represents hundreds of hours of development work. If PatchMon has s
 [![Cloud](https://img.shields.io/badge/Cloud-patchmon.net%2Fcloud-purple?style=for-the-badge)](https://patchmon.net/cloud)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Server-blue?style=for-the-badge&logo=discord)](https://patchmon.net/discord)
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-black?style=for-the-badge&logo=github)](https://github.com/PatchMon/PatchMon)
+[![Feedback](https://img.shields.io/badge/Feedback-Request%20a%20Feature-008080?style=for-the-badge)](https://feedback.patchmon.net)
 [![Documentation](https://img.shields.io/badge/Docs-patchmon.net%2Fdocs-blue?style=for-the-badge)](https://patchmon.net/docs/)
 
 </div>

@@ -83,7 +83,7 @@
 					{
 						"name": "include",
 						"in": "query",
-						"description": "Comma-separated. Supported: stats (adds updates_count, security_updates_count, total_packages, needs_reboot, os_type, os_version, last_update, status).",
+						"description": "Comma-separated. Supported: stats (adds updates_count, security_updates_count, total_packages, needs_reboot, os_type, os_version, last_update, status, reporting_state, update_state). reporting_state is one of 'reporting' | 'overdue' | 'stale'. update_state is one of 'up_to_date' | 'updates_pending' | 'security_required'.",
 						"schema": { "type": "string" }
 					}
 				],
@@ -108,7 +108,9 @@
 											"os_type": "Ubuntu",
 											"os_version": "22.04",
 											"last_update": "2025-03-01T12:00:00Z",
-											"status": "online"
+											"status": "active",
+											"reporting_state": "reporting",
+											"update_state": "security_required"
 										}
 									],
 									"total": 1
@@ -349,6 +351,7 @@
 									"installed_kernel_version": "5.15.0-91-generic",
 									"selinux_status": "disabled",
 									"system_uptime": "15 days",
+									"boot_time": "2026-04-18T12:34:56Z",
 									"cpu_model": "Intel Xeon",
 									"cpu_cores": 4,
 									"ram_installed": 8192,
