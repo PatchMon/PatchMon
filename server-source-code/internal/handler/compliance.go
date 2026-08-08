@@ -966,6 +966,10 @@ func (h *ComplianceHandler) TriggerScan(w http.ResponseWriter, r *http.Request) 
 	if req.ProfileType != "" {
 		profileType = req.ProfileType
 	}
+	if err := queue.ValidateComplianceScanReadiness([]byte(host.ComplianceScannerStatus), profileType, req.ProfileID, host.ComplianceOpenscapEnabled, host.ComplianceDockerBenchEnabled); err != nil {
+		Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if h.integrationStatus != nil {
 		_ = h.integrationStatus.ClearComplianceScanCancel(r.Context(), hostID)
 	}
@@ -1014,33 +1018,60 @@ func (h *ComplianceHandler) TriggerBulkScan(w http.ResponseWriter, r *http.Reque
 		hostByID[hosts[i].ID] = &hosts[i]
 	}
 	enqueued := 0
+	skipped := 0
+	skipErrors := make([]map[string]string, 0)
 	for _, hostID := range req.HostIDs {
 		host := hostByID[hostID]
 		if host == nil {
+			skipped++
+			continue
+		}
+		if !host.ComplianceEnabled {
+			skipped++
+			skipErrors = append(skipErrors, map[string]string{
+				"hostId": hostID,
+				"error":  "Compliance scanning is disabled for this host",
+			})
+			continue
+		}
+		if err := queue.ValidateComplianceScanReadiness([]byte(host.ComplianceScannerStatus), "all", nil, host.ComplianceOpenscapEnabled, host.ComplianceDockerBenchEnabled); err != nil {
+			skipped++
+			skipErrors = append(skipErrors, map[string]string{
+				"hostId": hostID,
+				"error":  err.Error(),
+			})
 			continue
 		}
 		if h.integrationStatus != nil {
 			_ = h.integrationStatus.ClearComplianceScanCancel(r.Context(), hostID)
 		}
 		if h.queueClient == nil {
+			skipped++
 			continue
 		}
 		task, err := queue.NewRunScanTask(queue.RunScanPayload{
 			HostID: hostID, ApiID: host.ApiID, Host: hostFromRequest(r), ProfileType: "all",
 		})
 		if err != nil {
+			skipped++
 			continue
 		}
 		if _, err := h.queueClient.Enqueue(task); err != nil {
+			skipped++
 			continue
 		}
 		enqueued++
 	}
-	JSON(w, http.StatusOK, map[string]interface{}{
+	resp := map[string]interface{}{
 		"success":  true,
 		"message":  "Bulk scan triggered",
 		"enqueued": enqueued,
-	})
+		"skipped":  skipped,
+	}
+	if len(skipErrors) > 0 {
+		resp["errors"] = skipErrors
+	}
+	JSON(w, http.StatusOK, resp)
 }
 
 // CancelScan handles POST /compliance/cancel/:hostId.
