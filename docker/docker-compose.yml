@@ -24,7 +24,7 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:${PORT:-3000}"
     networks:
       - patchmon-internal
     depends_on:

@@ -237,30 +237,17 @@ elif [[ "$OLD_FRONTEND_HOST_PORT" == "3000" ]]; then
 else
     echo "  Custom frontend host port detected: ${OLD_FRONTEND_HOST_PORT}"
 
-    # Patch the server.ports line in the new compose file:
-    #   "3000:3000"  →  "<custom>:3000"
-    # Uses awk to scope the replacement strictly within the "server:" service
-    # block, so no other service's ports line is ever touched.
-    awk -v port="${OLD_FRONTEND_HOST_PORT}" '
-        /^  server:$/         { in_server=1 }
-        in_server && /^  [a-z]/ && !/^  server:$/ { in_server=0 }
-        in_server             { sub(/"3000:3000"/, "\"" port ":3000\"") }
-        { print }
-    ' docker-compose.yml > docker-compose.yml.tmp && mv docker-compose.yml.tmp docker-compose.yml
-    echo "  Updated docker-compose.yml server ports: \"${OLD_FRONTEND_HOST_PORT}:3000\""
-
-    # Also write PORT= into the new .env so the Go server binds to the right port
-    # inside the container (the container-side port stays 3000 in this model, but
-    # set it explicitly so it is visible to the user).
+    # The compose port mapping follows PORT, so carrying the old host port
+    # through .env is all that is needed.
     if grep -q "^#\?[[:space:]]*PORT=" "$NEW_ENV"; then
-        sed -i "s|^#\?[[:space:]]*PORT=.*|PORT=3000|" "$NEW_ENV"
+        sed -i "s|^#\?[[:space:]]*PORT=.*|PORT=${OLD_FRONTEND_HOST_PORT}|" "$NEW_ENV"
     else
-        echo "PORT=3000" >> "$NEW_ENV"
+        echo "PORT=${OLD_FRONTEND_HOST_PORT}" >> "$NEW_ENV"
     fi
-    echo "  Ensured PORT=3000 is set in .env (container-internal port)."
+    echo "  Set PORT=${OLD_FRONTEND_HOST_PORT} in .env."
     echo ""
-    echo "  NOTE: The server container now listens internally on port 3000 and is"
-    echo "  exposed to your host on port ${OLD_FRONTEND_HOST_PORT}."
+    echo "  NOTE: The server container listens on port ${OLD_FRONTEND_HOST_PORT} and is"
+    echo "  exposed to your host on the same port."
     echo "  Update CORS_ORIGIN in .env to use port ${OLD_FRONTEND_HOST_PORT} if it"
     echo "  references the old port."
 fi

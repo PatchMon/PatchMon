@@ -160,7 +160,7 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:${PORT:-3000}"
     networks:
       - patchmon-internal
     depends_on:
@@ -1542,7 +1542,7 @@ General HTTP server and network settings.
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `PORT` | `3000` | No | TCP port the server listens on. |
+| `PORT` | `3000` | No | TCP port the server listens on. In the Docker Compose stack the published port mapping follows this value, so you only need to update `CORS_ORIGIN` to match. |
 | `APP_ENV` | `production` | No | Runtime environment. Accepted values: `production`, `development`. `NODE_ENV` is also read as a backward-compatibility alias; `APP_ENV` takes precedence when both are set. |
 | `CORS_ORIGIN` | `http://localhost:3000` | No | Allowed CORS origin(s). Must match the exact URL you use to access PatchMon in your browser (protocol, hostname, and port; no path, no trailing slash). To allow multiple origins, separate them with a comma and no spaces (e.g. `https://patchmon.example.com,https://patchmon.internal.lan`). |
 | `ENABLE_HSTS` | `false` | No | When `true`, the server adds an `HTTP Strict Transport Security` header to responses. Enable this only when PatchMon is served over HTTPS. |
@@ -5261,12 +5261,12 @@ A stock `docker-compose.yml` deployment runs four containers on the `patchmon-in
 
 | Service | Image | Port (exposed) | Depends on |
 |---------|-------|----------------|-----------|
-| `server` | `ghcr.io/patchmon/patchmon-server:latest` | `3000:3000` | `database`, `redis`, `guacd` |
+| `server` | `ghcr.io/patchmon/patchmon-server:latest` | `${PORT:-3000}:${PORT:-3000}` | `database`, `redis`, `guacd` |
 | `database` | `postgres:17-alpine` | not exposed | n/a |
 | `redis` | `redis:7-alpine` | not exposed | n/a |
 | `guacd` | `guacamole/guacd:1.6.0` | not exposed | n/a |
 
-The `server` container embeds the Go HTTP server, the frontend, the queue worker, and the migration runner. No separate migration job is needed. In front of it you typically run Nginx / Traefik / Caddy / Cloudflare that terminates TLS and forwards to `server:3000`.
+The `server` container embeds the Go HTTP server, the frontend, the queue worker, and the migration runner. No separate migration job is needed. In front of it you typically run Nginx / Traefik / Caddy / Cloudflare that terminates TLS and forwards to `server:3000`, or to whichever port you set `PORT` to.
 
 ### Gathering Diagnostic Info
 
