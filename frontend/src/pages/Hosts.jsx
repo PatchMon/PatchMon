@@ -1715,12 +1715,11 @@ const Hosts = () => {
 		navigate(`/hosts?${newSearchParams.toString()}`, { replace: true });
 	};
 
-	// Offline is the actionable half of the Connection Status card, so that is
-	// what the card filters to. Live WS state is not a backend filter, so this
-	// stays in local state like the Reporting filter rather than in the URL.
-	const handleConnectionStatusClick = () => {
+	// Live WS state is not a backend filter, so this stays in local state like
+	// the Reporting filter rather than in the URL.
+	const handleConnectionFilterClick = (value) => {
 		resetLocalFilters();
-		setConnectionFilter("offline");
+		setConnectionFilter(value);
 		setShowFilters(true);
 		const newSearchParams = new URLSearchParams(searchParams);
 		newSearchParams.delete("filter");
@@ -1857,18 +1856,10 @@ const Hosts = () => {
 						</div>
 					</div>
 				</button>
-				<button
-					type="button"
-					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full min-h-[44px]"
-					onClick={handleConnectionStatusClick}
-					title="Click to filter hosts that are offline"
-				>
+				<div className="card p-4">
 					<div className="flex items-center">
-						<Wifi className="h-5 w-5 text-primary-600 mr-2" />
-						<div className="flex-1">
-							<p className="text-sm text-secondary-500 dark:text-white mb-1">
-								Connection Status
-							</p>
+						<Wifi className="h-5 w-5 text-primary-600 mr-2 shrink-0" />
+						<div className="flex-1 min-w-0">
 							{(() => {
 								const totalForStatus = hostCounts?.total ?? 0;
 								const connectedCount = wsStatusSummary?.connected ?? 0;
@@ -1877,31 +1868,41 @@ const Hosts = () => {
 									0,
 								);
 								return (
-									<div className="flex gap-4">
-										<div className="flex items-center gap-1">
-											<div className="w-2 h-2 bg-green-500 rounded-full"></div>
-											<span className="text-sm font-medium text-secondary-900 dark:text-white">
+									<div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+										<button
+											type="button"
+											onClick={() => handleConnectionFilterClick("connected")}
+											title="Click to filter hosts that are connected"
+											className="flex items-center gap-1.5 rounded-md px-2 py-1 -ml-2 min-h-[44px] cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-700 transition-colors"
+										>
+											<div className="w-2 h-2 bg-green-500 rounded-full shrink-0"></div>
+											<span className="text-xl font-semibold text-secondary-900 dark:text-white">
 												{connectedCount}
 											</span>
-											<span className="text-xs text-secondary-500 dark:text-white hidden sm:inline">
+											<span className="text-sm text-secondary-500 dark:text-white">
 												Connected
 											</span>
-										</div>
-										<div className="flex items-center gap-1">
-											<div className="w-2 h-2 bg-red-500 rounded-full"></div>
-											<span className="text-sm font-medium text-secondary-900 dark:text-white">
+										</button>
+										<button
+											type="button"
+											onClick={() => handleConnectionFilterClick("offline")}
+											title="Click to filter hosts that are offline"
+											className="flex items-center gap-1.5 rounded-md px-2 py-1 min-h-[44px] cursor-pointer hover:bg-secondary-100 dark:hover:bg-secondary-700 transition-colors"
+										>
+											<div className="w-2 h-2 bg-red-500 rounded-full shrink-0"></div>
+											<span className="text-xl font-semibold text-secondary-900 dark:text-white">
 												{offlineCount}
 											</span>
-											<span className="text-xs text-secondary-500 dark:text-white hidden sm:inline">
+											<span className="text-sm text-secondary-500 dark:text-white">
 												Offline
 											</span>
-										</div>
+										</button>
 									</div>
 								);
 							})()}
 						</div>
 					</div>
-				</button>
+				</div>
 			</div>
 
 			{/* Hosts List */}
