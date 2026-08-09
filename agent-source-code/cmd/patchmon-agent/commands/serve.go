@@ -2003,25 +2003,54 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 	}
 }
 
-// dryRunOutputIndicatesError returns true if the output contains dependency or
-// resolution error messages. Used to distinguish "declined" (exit 1, success)
-// from actual dependency/validation failures (exit 1, failure).
+// dryRunErrorLinePrefixes must open a line to count. Package names contain
+// these substrings: FreeBSD pkg lists "libgpg-error: 1.51" and a dnf table row
+// carries perl-Error, neither of which is a failure.
+var dryRunErrorLinePrefixes = []string{
+	"error:", "error ",
+}
+
+// dryRunErrorPhrases count anywhere in the output. Each is specific enough that
+// it cannot occur in a package name or a table column, so they carry the cases
+// where a tool does not open the line with Error:.
+var dryRunErrorPhrases = []string{
+	"transaction check error",
+	"depsolve error",
+	"failed to resolve the transaction",
+	"no match for argument",
+	"unable to find a match",
+	"unable to resolve",
+	"no packages available to install",
+	"cannot solve problem using sat solver",
+	"cannot find package",
+	"could not find",
+	"could not satisfy dependencies",
+	"unresolvable package conflicts",
+	"failed to prepare transaction",
+	"failed to commit transaction",
+	"failed to synchronize",
+}
+
+// dryRunOutputIndicatesError returns true if the output reports a dependency or
+// resolution failure. Used to distinguish "declined" (exit 1, success) from an
+// actual failure (exit 1, failure).
+//
+// A bare "Problem:" is deliberately absent: dnf opens one when it skips a
+// broken package and then resolves the rest, which is a successful dry run. A
+// fatal dnf problem is introduced by an "Error:" line.
 func dryRunOutputIndicatesError(output string) bool {
 	lower := strings.ToLower(output)
-	errorPatterns := []string{
-		"error:", "error ", "unable to find", "unable to resolve", "no match for",
-		"problem:", "transaction check error", "cannot install", "could not find",
-		"failed to synchronize", "dependency resolution", "conflict",
-		"no packages available to install", "pkg: no packages available",
-		"cannot find package",
-		// pacman-specific
-		"error: failed to prepare transaction", "could not satisfy dependencies",
-		"failed to commit transaction", "error: target not found",
-		"unresolvable package conflicts",
-	}
-	for _, p := range errorPatterns {
+	for _, p := range dryRunErrorPhrases {
 		if strings.Contains(lower, p) {
 			return true
+		}
+	}
+	for _, line := range strings.FieldsFunc(lower, func(r rune) bool { return r == '\n' || r == '\r' }) {
+		l := strings.TrimSpace(line)
+		for _, p := range dryRunErrorLinePrefixes {
+			if strings.HasPrefix(l, p) {
+				return true
+			}
 		}
 	}
 	return false
@@ -2033,7 +2062,7 @@ func dryRunOutputIndicatesError(output string) bool {
 // dry-run); we treat that as success. But if the output contains error messages
 // (e.g. "Unable to resolve", "Problem:"), we treat it as failure.
 func isDryRunExit1Success(err error, output string) bool {
-	if output == "" {
+	if strings.TrimSpace(output) == "" {
 		return false
 	}
 	if dryRunOutputIndicatesError(output) {
@@ -2152,6 +2181,11 @@ func (s *streamSink) Flush() {
 	s.lastFlush = time.Now()
 	s.mu.Unlock()
 
+	// A sink with no client only accumulates.
+	if s.client == nil {
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := s.client.SendPatchOutput(ctx, s.patchRunID, "progress", chunk, ""); err != nil {
@@ -2162,7 +2196,12 @@ func (s *streamSink) Flush() {
 // runStreamingPatchStep executes a command, streaming its stdout+stderr into
 // the provided sink. On context cancellation it sends SIGINT and allows
 // WaitDelay for the process to clean up (rollbacks etc.) before forcing a kill.
-func runStreamingPatchStep(ctx context.Context, sink *streamSink, env []string, name string, args ...string) error {
+//
+// It also returns the step's own output, stdout then stderr, each kept whole
+// rather than interleaved chronologically. The sink mixes both pipes at
+// arbitrary byte boundaries, which is fine for a terminal view but splices
+// lines together, so anything parsing the result must read this copy.
+func runStreamingPatchStep(ctx context.Context, sink *streamSink, env []string, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = env
 	cmd.Cancel = func() error {
@@ -2177,18 +2216,21 @@ func runStreamingPatchStep(ctx context.Context, sink *streamSink, env []string, 
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("stdout pipe: %w", err)
+		return "", fmt.Errorf("stdout pipe: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return fmt.Errorf("stderr pipe: %w", err)
+		return "", fmt.Errorf("stderr pipe: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start: %w", err)
+		return "", fmt.Errorf("start: %w", err)
 	}
 
+	// One builder per pipe, each written by a single goroutine, so lines within
+	// a stream stay intact even though the sink interleaves them.
+	var outCapture, errCapture strings.Builder
 	var wg sync.WaitGroup
-	copyPipe := func(rc io.ReadCloser) {
+	copyPipe := func(rc io.ReadCloser, capture *strings.Builder) {
 		defer wg.Done()
 		br := bufio.NewReader(rc)
 		buf := make([]byte, 4096)
@@ -2196,6 +2238,7 @@ func runStreamingPatchStep(ctx context.Context, sink *streamSink, env []string, 
 			n, readErr := br.Read(buf)
 			if n > 0 {
 				_, _ = sink.Write(buf[:n])
+				capture.Write(buf[:n])
 			}
 			if readErr != nil {
 				return
@@ -2203,13 +2246,13 @@ func runStreamingPatchStep(ctx context.Context, sink *streamSink, env []string, 
 		}
 	}
 	wg.Add(2)
-	go copyPipe(stdout)
-	go copyPipe(stderr)
+	go copyPipe(stdout, &outCapture)
+	go copyPipe(stderr, &errCapture)
 	wg.Wait()
 
 	waitErr := cmd.Wait()
 	sink.Flush()
-	return waitErr
+	return outCapture.String() + "\n" + errCapture.String(), waitErr
 }
 
 // patchRunTrailer returns a short human-readable trailer the agent appends to
@@ -2321,6 +2364,15 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		upgradeBin = pkgManager
 	}
 
+	// Dry-run classification reads the package manager's own wording, so pin the
+	// message locale. Not LC_ALL: that also pins LC_CTYPE, and yum 3 on RHEL 7
+	// and Amazon Linux 2 runs on Python 2.7, which then falls back to ascii and
+	// dies on non-ASCII repo metadata.
+	if env == nil {
+		env = os.Environ()
+	}
+	env = append(env, "LC_MESSAGES=C")
+
 	if err := httpClient.SendPatchOutput(ctx, patchRunID, "started", "", ""); err != nil {
 		logger.WithError(err).Warn("Failed to send patch started to server")
 	}
@@ -2332,14 +2384,21 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 	// runStep streams a single package-manager command's output and returns
 	// (terminalError, shouldAbort). If isDryRunStep is true, exit-1 from tools
 	// that use it to signal "changes pending" is accepted as success.
+	// lastStepOutput holds the framed output of the step that just ran, for
+	// callers that parse it. Reading the sink instead would splice lines.
+	var lastStepOutput string
 	runStep := func(isDryRunStep bool, errTag, errFmt, name string, args ...string) (error, bool) {
 		sink.WriteString(formatCmd(name, args...))
 		sink.Flush()
-		err := runStreamingPatchStep(ctx, sink, env, name, args...)
+		stepOutput, err := runStreamingPatchStep(ctx, sink, env, name, args...)
+		lastStepOutput = stepOutput
 		if err == nil {
 			return nil, false
 		}
-		if isDryRunStep && isDryRunExit1Success(err, fullOutput.String()) {
+		// Classify this step's own output. An earlier step's diagnostics, such as
+		// pacman reporting a dead mirror it then recovered from, are not this
+		// step's failure.
+		if isDryRunStep && isDryRunExit1Success(err, stepOutput) {
 			return nil, false
 		}
 		logger.WithError(err).Warn(errTag + " failed")
@@ -2351,15 +2410,10 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 	var stepErr error
 
 	if includeFreeBSDBase {
-		fetchStart := fullOutput.Len()
 		if err, abort := runStep(false, "freebsd-update fetch", "freebsd-update fetch failed: %w", freeBSDUpdateBin, "fetch", "--not-running-from-cron"); abort {
 			stepErr = err
 		}
-		fetchOutput := ""
-		if fullOutput.Len() > fetchStart {
-			fetchOutput = fullOutput.String()[fetchStart:]
-		}
-		if stepErr == nil && !dryRun && freeBSDUpdateOutputHasPendingUpdates(fetchOutput) {
+		if stepErr == nil && !dryRun && freeBSDUpdateOutputHasPendingUpdates(lastStepOutput) {
 			if err, abort := runStep(false, "freebsd-update install", "freebsd-update install failed: %w", freeBSDUpdateBin, "install"); abort {
 				stepErr = err
 			}
