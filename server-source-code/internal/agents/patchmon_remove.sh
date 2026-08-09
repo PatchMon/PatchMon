@@ -75,8 +75,10 @@ info "🗑️  Starting PatchMon Agent Removal..."
 info "🛑 Stopping PatchMon service..."
 SERVICE_STOPPED=0
 
-# Check for systemd service
-if command -v systemctl >/dev/null 2>&1; then
+# Check for systemd service. /run/systemd/system exists only when systemd is the
+# running init; the systemctl binary alone is also present when systemd is
+# merely installed, and every systemctl call then fails.
+if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
     info "📋 Checking systemd service status..."
     
     # Check if service is active

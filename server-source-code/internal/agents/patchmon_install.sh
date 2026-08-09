@@ -689,7 +689,9 @@ fi
 # Step 5: Setup service for WebSocket connection
 # Note: The service will automatically send an initial report on startup (see serve.go)
 # Detect init system and create appropriate service
-if command -v systemctl >/dev/null 2>&1; then
+# /run/systemd/system exists only when systemd is the running init. The
+# systemctl binary alone is also present when systemd is merely installed.
+if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
     # Systemd is available
     info "Setting up systemd service..."
     
