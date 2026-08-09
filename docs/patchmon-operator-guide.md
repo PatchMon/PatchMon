@@ -1603,7 +1603,7 @@ Settings for JWT tokens, browser sessions, account lockout, two-factor authentic
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
 | `JWT_SECRET` | _(none)_ | **Yes** | See [Required Variables](#1-required-variables). |
-| `JWT_EXPIRES_IN` | `1h` | No | How long an access token is valid. Accepts duration strings: `30m`, `1h`, `2h`, `1d`. Shorter values are more secure but require more frequent token refreshes. |
+| `JWT_EXPIRES_IN` | `1h` | No | How long an access token is valid. Accepts duration strings: `30m`, `1h`, `2h`, `1d`. The web interface renews the token automatically in the background, so a short value is not visible to signed-in users; it only controls how quickly a stolen token becomes useless. |
 | `AUTH_BROWSER_SESSION_COOKIES` | `false` | No | When set to `true`, the `token` and `refresh_token` cookies are issued without a `Max-Age` attribute, making them session cookies that are cleared when the browser is closed rather than persisting across browser restarts. |
 
 #### Account Lockout
@@ -1619,7 +1619,19 @@ Lockout is applied per user account after repeated failed login attempts.
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `SESSION_INACTIVITY_TIMEOUT_MINUTES` | `30` | No | Minutes of inactivity before a user session is automatically invalidated. Each authenticated request resets the timer. |
+| `SESSION_INACTIVITY_TIMEOUT_MINUTES` | `30` | No | Minutes without user activity before a session is invalidated and the browser returns to the login screen. Set to `0` to disable the inactivity timeout entirely. |
+
+"Activity" means someone actually using the interface: clicking, typing, scrolling, moving the
+pointer, or switching back to the tab. Pages that refresh data on a timer do not count, so a
+browser left open on an unattended machine still times out.
+
+The timer is enforced by the server and evaluated when the next request arrives, so a session that
+has been idle past the limit ends at the next click or background refresh rather than at the exact
+second the limit passes. Signing out, or an administrator revoking the session, ends it immediately
+either way.
+
+This setting is independent of `JWT_EXPIRES_IN`. Access tokens are renewed in the background for as
+long as the session stays active, so a value larger than `JWT_EXPIRES_IN` works as expected.
 
 #### Two-Factor Authentication (TFA)
 

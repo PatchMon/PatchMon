@@ -1,4 +1,6 @@
 import axios from "axios";
+import { requestTokenRefresh } from "./sessionRefresh";
+import { consumeInteraction } from "./userActivity";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "/api/v1";
 
@@ -42,6 +44,12 @@ api.interceptors.request.use(
 		}
 		config.headers["X-Device-ID"] = deviceId;
 
+		// Only requests that follow a real interaction slide the session
+		// inactivity window. Background polling deliberately goes unmarked.
+		if (consumeInteraction()) {
+			config.headers["X-User-Activity"] = "1";
+		}
+
 		return config;
 	},
 	(error) => {
@@ -49,24 +57,55 @@ api.interceptors.request.use(
 	},
 );
 
+// Endpoints whose own 401 means "these credentials are bad", not "this token
+// aged out", so retrying them behind a refresh would be pointless.
+const isSessionEndpoint = (url) =>
+	url.includes("/auth/login") ||
+	url.includes("/auth/refresh") ||
+	url.includes("/auth/logout");
+
 // Response interceptor
 api.interceptors.response.use(
 	(response) => response,
-	(error) => {
-		if (error.response?.status === 401) {
-			// Don't redirect if we're on the login page or if it's a TFA-related error
-			const currentPath = window.location.pathname;
-			const requestUrl = error.config?.url || "";
-			const isTfaError =
-				requestUrl.includes("/verify-tfa") || requestUrl.includes("/tfa/");
+	async (error) => {
+		if (error.response?.status !== 401) return Promise.reject(error);
 
-			if (currentPath !== "/login" && !isTfaError) {
-				// Dispatch event for AuthContext to handle - avoids race with React updates
-				// that could trigger ErrorBoundary "Something went wrong" before redirect
-				localStorage.removeItem("user");
-				window.dispatchEvent(new CustomEvent("auth:session-expired"));
+		// Don't redirect if we're on the login page or if it's a TFA-related error
+		const currentPath = window.location.pathname;
+		const config = error.config;
+		const requestUrl = config?.url || "";
+		const isTfaError =
+			requestUrl.includes("/verify-tfa") || requestUrl.includes("/tfa/");
+
+		if (currentPath === "/login" || isTfaError) {
+			return Promise.reject(error);
+		}
+
+		// Access tokens expire on a fixed schedule regardless of use, so most 401s
+		// here are an aged-out token rather than a dead session. Trade it for a
+		// fresh one and replay once; the session itself is only gone if that fails.
+		if (
+			config &&
+			!config._sessionRefreshAttempted &&
+			!isSessionEndpoint(requestUrl)
+		) {
+			config._sessionRefreshAttempted = true;
+			try {
+				await requestTokenRefresh();
+				return await api(config);
+			} catch (refreshError) {
+				// Only a 401 proves the session is gone. A network drop, a 5xx, or a
+				// rate limiter that is failing closed says nothing about the session,
+				// and signing the user out over it would turn a blip into a logout.
+				const status = refreshError?.response?.status;
+				if (status && status !== 401) return Promise.reject(error);
 			}
 		}
+
+		// Dispatch event for AuthContext to handle - avoids race with React updates
+		// that could trigger ErrorBoundary "Something went wrong" before redirect
+		localStorage.removeItem("user");
+		window.dispatchEvent(new CustomEvent("auth:session-expired"));
 		return Promise.reject(error);
 	},
 );
@@ -575,6 +614,9 @@ export const authAPI = {
 			lastName,
 		}),
 	subscribeNewsletter: () => api.post("/auth/subscribe-newsletter"),
+	// Carries X-User-Activity when the user has interacted since the last beat.
+	// The auth middleware does the work; the response body is empty.
+	heartbeat: () => api.post("/auth/heartbeat"),
 };
 
 // TFA API

@@ -452,29 +452,42 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 	h.completeLogin(w, r, user, req.RememberMe)
 }
 
-// setAuthCookiesWithRemember sets cookies; rememberMe uses 30-day refresh token.
-// useLax forces SameSite=Lax (required for OIDC redirects from IdP).
-// browserSessionCookies: when true, both cookies use MaxAge 0 (session cookies) so they are not
-// persisted to disk and are dropped when the browser session ends (close all windows / quit).
-func setAuthCookiesWithRemember(w http.ResponseWriter, r *http.Request, accessToken, refreshToken string, tokenMaxAge int64, rememberMe bool, env string, useLax bool, browserSessionCookies bool) {
-	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
-	sameSite := http.SameSiteLaxMode
+func cookieSameSite(env string, useLax, secure bool) http.SameSite {
 	if !useLax && env == "production" && secure {
-		sameSite = http.SameSiteStrictMode
+		return http.SameSiteStrictMode
 	}
-	tokenCookieMaxAge := int(tokenMaxAge)
+	return http.SameSiteLaxMode
+}
+
+// setAccessCookie writes the access-token cookie. Shared by login and by
+// /auth/refresh. Refresh passes useLax=false: the Lax relaxation exists for the
+// IdP redirect chain at login time, and a refresh is an ordinary same-origin XHR
+// that has no need of it.
+func setAccessCookie(w http.ResponseWriter, r *http.Request, accessToken string, tokenMaxAge int64, env string, useLax, browserSessionCookies bool) {
+	secure := isSecureRequest(r)
+	maxAge := int(tokenMaxAge)
 	if browserSessionCookies {
-		tokenCookieMaxAge = 0
+		maxAge = 0
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     "token",
 		Value:    accessToken,
 		Path:     "/",
-		MaxAge:   tokenCookieMaxAge,
+		MaxAge:   maxAge,
 		HttpOnly: true,
 		Secure:   secure && env == "production",
-		SameSite: sameSite,
+		SameSite: cookieSameSite(env, useLax, secure),
 	})
+}
+
+// setAuthCookiesWithRemember sets cookies; rememberMe uses 30-day refresh token.
+// useLax forces SameSite=Lax (required for OIDC redirects from IdP).
+// browserSessionCookies: when true, both cookies use MaxAge 0 (session cookies) so they are not
+// persisted to disk and are dropped when the browser session ends (close all windows / quit).
+func setAuthCookiesWithRemember(w http.ResponseWriter, r *http.Request, accessToken, refreshToken string, tokenMaxAge int64, rememberMe bool, env string, useLax bool, browserSessionCookies bool) {
+	secure := isSecureRequest(r)
+	sameSite := cookieSameSite(env, useLax, secure)
+	setAccessCookie(w, r, accessToken, tokenMaxAge, env, useLax, browserSessionCookies)
 	refreshMaxAge := 7 * 24 * 3600 // 7 days
 	if rememberMe {
 		refreshMaxAge = 30 * 24 * 3600 // 30 days
@@ -1228,6 +1241,102 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 	clearAuthCookies(w, r)
 	JSON(w, http.StatusOK, map[string]string{"message": "Logged out"})
+}
+
+// Heartbeat handles POST /auth/heartbeat. It exists purely so the UI has
+// something cheap to call that carries X-User-Activity: the auth middleware does
+// the session lookup, the inactivity check and the last_activity write, so this
+// body has nothing left to do. Pages differ in what they poll, and some poll
+// nothing at all, so without a dedicated beat a user reading a screen would be
+// logged out mid-read on those pages.
+func (h *AuthHandler) Heartbeat(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Refresh handles POST /auth/refresh. It swaps the refresh_token cookie for a
+// fresh access token on the same session.
+//
+// Without this the access token's lifetime was the real session length: it is
+// absolute from login, no amount of use extended it, and any
+// SESSION_INACTIVITY_TIMEOUT_MINUTES longer than JWT_EXPIRES_IN was unreachable.
+//
+// The refresh token is deliberately not rotated. It is bound to the session row,
+// which several tabs share, and rotating it would make whichever tab lost the
+// race log the user out.
+func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
+	if h.log != nil {
+		h.log.Debug("auth request", "method", r.Method, "path", r.URL.Path)
+	}
+	deny := func(msg string) {
+		clearAuthCookies(w, r)
+		Error(w, http.StatusUnauthorized, msg)
+	}
+
+	c, err := r.Cookie("refresh_token")
+	if err != nil || c.Value == "" {
+		deny("Missing refresh token")
+		return
+	}
+
+	claims := jwt.MapClaims{}
+	t, err := jwt.ParseWithClaims(c.Value, &claims, func(_ *jwt.Token) (interface{}, error) {
+		return []byte(h.cfg.JWTSecret), nil
+	}, jwt.WithValidMethods([]string{"HS256"}))
+	if err != nil || !t.Valid {
+		deny("Invalid refresh token")
+		return
+	}
+	// An access token presented here would otherwise be accepted as a refresh
+	// token, letting a leaked one outlive its own expiry.
+	if typ, _ := claims["typ"].(string); typ != tokenTypeRefresh {
+		deny("Invalid refresh token")
+		return
+	}
+	userID, _ := claims["sub"].(string)
+	if userID == "" {
+		deny("Invalid refresh token")
+		return
+	}
+
+	// GetByRefreshToken already filters on is_revoked and expires_at, so a logged
+	// out or reaped session cannot be refreshed.
+	sess, err := h.sessions.GetByRefreshToken(r.Context(), c.Value)
+	if err != nil || sess == nil || sess.UserID != userID {
+		deny("Session expired")
+		return
+	}
+
+	// Same rule the middleware applies, for the same reason: a refresh is not user
+	// activity, so it must not resurrect a session that has already gone idle.
+	rc := h.resolvedFor(r.Context())
+	if rc != nil && rc.SessionInactivityTimeoutMin > 0 &&
+		time.Since(sess.LastActivity) > time.Duration(rc.SessionInactivityTimeoutMin)*time.Minute {
+		if err := h.sessions.RevokeByID(r.Context(), sess.ID, sess.UserID); err != nil && h.log != nil {
+			h.log.Error("refresh: failed to revoke inactive session", "session_id", sess.ID, "error", err)
+		}
+		deny("Session expired due to inactivity")
+		return
+	}
+
+	user, err := h.users.GetByID(r.Context(), userID)
+	if err != nil || user == nil || !user.IsActive {
+		deny("Session expired")
+		return
+	}
+
+	expiresIn := h.getJwtExpiresInSeconds(r.Context())
+	// Role comes from the database, not the refresh token, so a demotion takes
+	// effect on the next refresh rather than at the end of the refresh window.
+	accessToken, err := h.createAccessToken(user.ID, user.Role, sess.ID, expiresIn)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to refresh session")
+		return
+	}
+
+	setAccessCookie(w, r, accessToken, expiresIn, h.cfg.Env, false, h.authBrowserSessionCookies(r.Context()))
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"expires_at": time.Now().Add(time.Duration(expiresIn) * time.Second).Format(time.RFC3339),
+	})
 }
 
 // parseUserAgent extracts browser, OS, and device from user agent string.

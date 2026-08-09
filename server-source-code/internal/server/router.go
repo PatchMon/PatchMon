@@ -335,6 +335,10 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		r.Get("/auth/signup-enabled", authHandler.SignupEnabled)
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAuth)).Post("/auth/login", authHandler.Login)
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAuth)).Post("/auth/verify-tfa", authHandler.VerifyTfa)
+		// Unauthenticated by design: it authenticates itself with the refresh_token
+		// cookie, and the caller reaches it precisely because its access token has
+		// expired.
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAuth)).Post("/auth/refresh", authHandler.Refresh)
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAuth)).Post("/auth/setup-admin", authHandler.SetupAdmin)
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAuth)).Post("/auth/signup", authHandler.Signup)
 		if oidcHandler != nil {
@@ -432,6 +436,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.Post("/me/billing/sync", billingHandler.PostMyBillingSync(permissionsStore))
 			r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitPassword)).Put("/auth/change-password", authHandler.ChangePassword)
 			r.Post("/auth/logout", authHandler.Logout)
+			r.Post("/auth/heartbeat", authHandler.Heartbeat)
 			r.Get("/auth/sessions", authHandler.GetSessions)
 			r.Delete("/auth/sessions", authHandler.RevokeAllSessions)
 			r.Delete("/auth/sessions/{sessionId}", authHandler.RevokeSession)
