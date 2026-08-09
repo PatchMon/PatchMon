@@ -332,7 +332,7 @@ const Repositories = () => {
 	}
 
 	return (
-		<div className="min-h-screen flex flex-col">
+		<div className="min-h-[calc(100vh-var(--app-main-inset))] flex flex-col">
 			{/* Delete Confirmation Modal */}
 			{deleteModalData && (
 				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">

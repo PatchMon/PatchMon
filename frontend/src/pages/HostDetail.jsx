@@ -1330,7 +1330,7 @@ const HostDetail = () => {
 	const displayUptime = liveUptime || host.system_uptime || null;
 
 	return (
-		<div className="min-h-screen flex flex-col">
+		<div className="min-h-[calc(100vh-var(--app-main-inset))] flex flex-col">
 			{/* Header */}
 			<div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-4 pb-4 border-b border-secondary-200 dark:border-secondary-600">
 				<div className="flex items-start gap-3">
