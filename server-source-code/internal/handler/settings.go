@@ -253,6 +253,14 @@ func (h *SettingsHandler) isDiscordProperlyConfigured(s *models.Settings) bool {
 	return err == nil
 }
 
+// resolvedConfigFor resolves config from a freshly read settings row rather than h.resolved.
+func (h *SettingsHandler) resolvedConfigFor(ctx context.Context, s *models.Settings) *config.ResolvedConfig {
+	if h.cfg == nil {
+		return h.resolved
+	}
+	return config.ResolveConfig(ctx, h.cfg, s)
+}
+
 // GetLoginSettings handles GET /settings/login-settings (public, used by login screen and first-time admin setup).
 // Includes has_admin_users and oidc fields for first-time setup flow (replaces /auth/check-admin-users).
 func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Request) {
@@ -293,6 +301,7 @@ func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Reques
 				"autoCreateUsers":  false,
 				"canBypassWelcome": false,
 			},
+			"password_policy": resolvePasswordPolicy(h.resolvedConfigFor(r.Context(), nil)),
 		})
 		return
 	}
@@ -349,6 +358,7 @@ func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Reques
 			"autoCreateUsers":  s.OidcAutoCreateUsers,
 			"canBypassWelcome": canBypassWelcome,
 		},
+		"password_policy": resolvePasswordPolicy(h.resolvedConfigFor(r.Context(), s)),
 	})
 }
 
