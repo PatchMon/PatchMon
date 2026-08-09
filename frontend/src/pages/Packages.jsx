@@ -651,7 +651,7 @@ const Packages = () => {
 	}
 
 	return (
-		<div className="min-h-0 flex flex-col md:h-[calc(100vh-7rem)] md:overflow-hidden">
+		<div className="min-h-0 flex flex-col md:h-[calc(100vh-var(--app-main-inset))] md:overflow-hidden">
 			{/* Page Header */}
 			<div className="flex items-center justify-between mb-6">
 				<div>
