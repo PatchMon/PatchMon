@@ -37,7 +37,7 @@ PatchMon runs as a single container backed by three supporting services. The Pat
 | `server` | `ghcr.io/patchmon/patchmon-server` | PatchMon application (API + frontend + migrations) |
 | `database` | `postgres:17-alpine` | Primary data store |
 | `redis` | `redis:7-alpine` | Background job queues (asynq) |
-| `guacd` | `guacamole/guacd:1.5.5` | RDP gateway (required for in-browser RDP) |
+| `guacd` | `guacamole/guacd:1.6.0` | RDP gateway (required for in-browser RDP) |
 
 All four services communicate over an isolated internal Docker network (`patchmon-internal`). Only the `server` port is exposed to the host.
 
@@ -160,7 +160,7 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:${PORT:-3000}"
     networks:
       - patchmon-internal
     depends_on:
@@ -191,7 +191,7 @@ services:
       - patchmon-internal
 
   guacd:
-    image: guacamole/guacd:1.5.5
+    image: guacamole/guacd:1.6.0
     restart: unless-stopped
     networks:
       - patchmon-internal
@@ -380,7 +380,7 @@ If your version of the chart still ships with separate backend and frontend depl
 | Server | `ghcr.io/patchmon/patchmon-server` | `2.0.0` |
 | Database | `docker.io/postgres` | `17-alpine` |
 | Redis | `docker.io/redis` | `7-alpine` |
-| guacd (RDP sidecar, optional) | `docker.io/guacamole/guacd` | `1.5.5` |
+| guacd (RDP sidecar, optional) | `docker.io/guacamole/guacd` | `1.6.0` |
 
 #### Available tags (server image)
 
@@ -671,7 +671,7 @@ guacd:
   enabled: true
   image:
     repository: guacamole/guacd
-    tag: "1.5.5"
+    tag: "1.6.0"
 ```
 
 > **Verify against the latest chart.** `guacd` support was added after the original 1.4.x chart; if your chart version does not include a `guacd.enabled` option, you can deploy it as a separate Deployment and Service in the same namespace and set `GUACD_ADDRESS` to its ClusterIP hostname.
@@ -771,7 +771,7 @@ This changes every image pull to use the specified registry:
 - `registry.example.com/postgres:17-alpine`
 - `registry.example.com/redis:7-alpine`
 - `registry.example.com/patchmon/patchmon-server:2.0.0`
-- `registry.example.com/guacamole/guacd:1.5.5` (when RDP is enabled)
+- `registry.example.com/guacamole/guacd:1.6.0` (when RDP is enabled)
 
 #### Horizontal Pod Autoscaling
 
@@ -1542,7 +1542,7 @@ General HTTP server and network settings.
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `PORT` | `3000` | No | TCP port the server listens on. |
+| `PORT` | `3000` | No | TCP port the server listens on. In the Docker Compose stack the published port mapping follows this value, so you only need to update `CORS_ORIGIN` to match. |
 | `APP_ENV` | `production` | No | Runtime environment. Accepted values: `production`, `development`. `NODE_ENV` is also read as a backward-compatibility alias; `APP_ENV` takes precedence when both are set. |
 | `CORS_ORIGIN` | `http://localhost:3000` | No | Allowed CORS origin(s). Must match the exact URL you use to access PatchMon in your browser (protocol, hostname, and port; no path, no trailing slash). To allow multiple origins, separate them with a comma and no spaces (e.g. `https://patchmon.example.com,https://patchmon.internal.lan`). |
 | `ENABLE_HSTS` | `false` | No | When `true`, the server adds an `HTTP Strict Transport Security` header to responses. Enable this only when PatchMon is served over HTTPS. |
@@ -4949,7 +4949,7 @@ For these reasons, `rdp-proxy-enabled` **cannot be toggled from the PatchMon UI 
 
 ##### Prerequisites
 
-- The PatchMon **server** must have `guacd` available (the default Docker Compose stack includes `guacamole/guacd:1.5.5` as a sidecar).
+- The PatchMon **server** must have `guacd` available (the default Docker Compose stack includes `guacamole/guacd:1.6.0` as a sidecar).
 - The **Windows host** must have Remote Desktop enabled.
 - The PatchMon agent must be installed on the Windows host.
 - PatchMon only needs RDP listening on `localhost:3389` on the Windows host. You do not need to expose RDP publicly.
@@ -5261,12 +5261,12 @@ A stock `docker-compose.yml` deployment runs four containers on the `patchmon-in
 
 | Service | Image | Port (exposed) | Depends on |
 |---------|-------|----------------|-----------|
-| `server` | `ghcr.io/patchmon/patchmon-server:latest` | `3000:3000` | `database`, `redis`, `guacd` |
+| `server` | `ghcr.io/patchmon/patchmon-server:latest` | `${PORT:-3000}:${PORT:-3000}` | `database`, `redis`, `guacd` |
 | `database` | `postgres:17-alpine` | not exposed | n/a |
 | `redis` | `redis:7-alpine` | not exposed | n/a |
-| `guacd` | `guacamole/guacd:1.5.5` | not exposed | n/a |
+| `guacd` | `guacamole/guacd:1.6.0` | not exposed | n/a |
 
-The `server` container embeds the Go HTTP server, the frontend, the queue worker, and the migration runner. No separate migration job is needed. In front of it you typically run Nginx / Traefik / Caddy / Cloudflare that terminates TLS and forwards to `server:3000`.
+The `server` container embeds the Go HTTP server, the frontend, the queue worker, and the migration runner. No separate migration job is needed. In front of it you typically run Nginx / Traefik / Caddy / Cloudflare that terminates TLS and forwards to `server:3000`, or to whichever port you set `PORT` to.
 
 ### Gathering Diagnostic Info
 

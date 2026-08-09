@@ -24,7 +24,7 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:${PORT:-3000}"
     networks:
       - patchmon-internal
     depends_on:
@@ -80,7 +80,7 @@ services:
         max-file: "3"
 
   guacd:
-    image: guacamole/guacd:latest
+    image: guacamole/guacd:1.6.0
     restart: unless-stopped
     read_only: true
     tmpfs:

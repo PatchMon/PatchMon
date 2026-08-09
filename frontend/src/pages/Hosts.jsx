@@ -63,12 +63,13 @@ const HOSTS_DEFAULT_PAGE_SIZE = 50;
 const HOSTS_PAGE_SIZE_STORAGE_KEY = "hosts-page-size";
 const WS_STATUS_BATCH_SIZE = 200;
 
-// The Reporting filter depends on live WebSocket state the server does not
-// hold, so it has to run client-side. To keep the row count, the range text
-// and the page controls honest we fetch an unpaginated slab, filter it, then
-// paginate the filtered result ourselves. The cap bounds that fetch; when the
-// fleet exceeds it the UI says so rather than quietly showing a partial list.
-const REPORTING_FILTER_FETCH_LIMIT = 1000;
+// The Reporting and Connection filters depend on live WebSocket state the
+// server does not hold, so they have to run client-side. To keep the row count,
+// the range text and the page controls honest we fetch an unpaginated slab,
+// filter it, then paginate the filtered result ourselves. The cap bounds that
+// fetch; when the fleet exceeds it the UI says so rather than quietly showing a
+// partial list.
+const LIVE_FILTER_FETCH_LIMIT = 1000;
 
 const HOSTS_SORT_FIELDS = {
 	agent_version: "agent_version",
@@ -118,6 +119,7 @@ const fetchWsStatusBatches = async (apiIds) => {
 const Hosts = () => {
 	const hostGroupFilterId = useId();
 	const statusFilterId = useId();
+	const connectionFilterId = useId();
 	const osFilterId = useId();
 	const osVersionFilterId = useId();
 	const [showAddModal, setShowAddModal] = useState(false);
@@ -149,6 +151,7 @@ const Hosts = () => {
 	const [sortDirection, setSortDirection] = useState("asc");
 	const [groupFilter, setGroupFilter] = useState("all");
 	const [statusFilter, setStatusFilter] = useState("all");
+	const [connectionFilter, setConnectionFilter] = useState("all");
 	const [osFilter, setOsFilter] = useState("all");
 	const [osVersionFilter, setOsVersionFilter] = useState("all");
 	const [showFilters, setShowFilters] = useState(false);
@@ -405,13 +408,17 @@ const Hosts = () => {
 		next.set("filter", "stale");
 		navigate(`/hosts?${next.toString()}`, { replace: true });
 	}, [urlFilter, searchParams, navigate]);
-	// The Reporting filter (reporting / overdue / stale) is derived from live
-	// WebSocket state that the server does not hold at query time, so it has to
-	// run client-side. While it is active we ask the server for one bounded slab
-	// rather than a page, then filter and paginate that slab locally, so the
-	// count, the range text and the page controls always agree with the rows on
-	// screen.
+	// The Reporting filter (reporting / overdue / stale) and the Connection
+	// filter (connected / offline) are derived from live WebSocket state that the
+	// server does not hold at query time, so they have to run client-side. While
+	// either is active we ask the server for one bounded slab rather than a page,
+	// then filter and paginate that slab locally, so the count, the range text
+	// and the page controls always agree with the rows on screen.
 	const reportingFilterActive = Boolean(statusFilter && statusFilter !== "all");
+	const connectionFilterActive = Boolean(
+		connectionFilter && connectionFilter !== "all",
+	);
+	const liveFilterActive = reportingFilterActive || connectionFilterActive;
 
 	const hostsQueryParams = useMemo(() => {
 		const params = {};
@@ -432,8 +439,8 @@ const Hosts = () => {
 		}
 		if (searchParams.get("reboot") === "true") params.reboot = "true";
 		if (hideStale) params.hideStale = "true";
-		if (reportingFilterActive) {
-			params.limit = REPORTING_FILTER_FETCH_LIMIT;
+		if (liveFilterActive) {
+			params.limit = LIVE_FILTER_FETCH_LIMIT;
 			params.offset = 0;
 		} else {
 			params.limit = pageSize;
@@ -450,7 +457,7 @@ const Hosts = () => {
 		urlFilter,
 		searchParams,
 		hideStale,
-		reportingFilterActive,
+		liveFilterActive,
 		pageSize,
 		offset,
 		sortField,
@@ -498,6 +505,7 @@ const Hosts = () => {
 		search: debouncedSearch,
 		group: groupFilter,
 		status: statusFilter,
+		connection: connectionFilter,
 		os: osFilter,
 		osVersion: osVersionFilter,
 		filter: urlFilter,
@@ -1065,20 +1073,30 @@ const Hosts = () => {
 		selectedHostIdsSetForFilter,
 	]);
 
-	// Apply the new tri-state Status filter (reporting / overdue / stale) on
-	// top of the backend / legacy-mode filter result. Cross-couples each host's
-	// reportingState with the live WS map so the dropdown matches what the user
-	// sees in the Reporting pill. Done here rather than in the predicate above
-	// so the pill colours and the filter logic stay in lock-step.
+	// Apply the tri-state Status filter (reporting / overdue / stale) and the
+	// Connection filter (connected / offline) on top of the backend / legacy-mode
+	// filter result. Both cross-couple each host with the live WS map so the
+	// dropdowns match what the user sees in the Reporting and Connection pills.
+	// Done here rather than in the predicate above so the pill colours and the
+	// filter logic stay in lock-step.
 	const filteredHosts = useMemo(() => {
-		if (!statusFilter || statusFilter === "all") return filteredAndSortedHosts;
+		if (!reportingFilterActive && !connectionFilterActive) {
+			return filteredAndSortedHosts;
+		}
 		return filteredAndSortedHosts.filter((host) => {
-			// Treat missing WS data as "assume connected" so the dropdown
-			// matches the pill, which uses the same convention.
+			// Treat missing WS data as "assume connected" so the dropdowns
+			// match the pills, which use the same convention.
 			const wsEntry = wsStatusMap[host.api_id];
 			const wsConnectedOrUnknown =
 				wsEntry === undefined || wsEntry?.connected === true;
+			if (
+				connectionFilterActive &&
+				wsConnectedOrUnknown !== (connectionFilter === "connected")
+			) {
+				return false;
+			}
 			return (
+				!reportingFilterActive ||
 				deriveReportingState(
 					host,
 					wsConnectedOrUnknown,
@@ -1088,34 +1106,35 @@ const Hosts = () => {
 		});
 	}, [
 		filteredAndSortedHosts,
+		reportingFilterActive,
+		connectionFilterActive,
+		connectionFilter,
 		statusFilter,
 		wsStatusMap,
 		updateIntervalMinutes,
 	]);
 
-	// Pagination is derived AFTER the Reporting filter so the footer count, the
-	// range text and the page controls describe the rows actually rendered. With
-	// no Reporting filter the server already returned exactly one page and this
-	// is a pass-through.
-	const totalHosts = reportingFilterActive
-		? filteredHosts.length
-		: serverTotalHosts;
+	// Pagination is derived AFTER the client-side filters so the footer count,
+	// the range text and the page controls describe the rows actually rendered.
+	// With no client-side filter the server already returned exactly one page and
+	// this is a pass-through.
+	const totalHosts = liveFilterActive ? filteredHosts.length : serverTotalHosts;
 	const totalPages = Math.max(1, Math.ceil(totalHosts / pageSize));
 	const visibleHosts = useMemo(() => {
-		if (!reportingFilterActive) return filteredHosts;
+		if (!liveFilterActive) return filteredHosts;
 		const start = (page - 1) * pageSize;
 		return filteredHosts.slice(start, start + pageSize);
-	}, [filteredHosts, reportingFilterActive, page, pageSize]);
+	}, [filteredHosts, liveFilterActive, page, pageSize]);
 	const pageStart =
 		visibleHosts.length === 0
 			? 0
-			: (reportingFilterActive ? (page - 1) * pageSize : hostsPage.offset) + 1;
+			: (liveFilterActive ? (page - 1) * pageSize : hostsPage.offset) + 1;
 	const pageEnd = pageStart === 0 ? 0 : pageStart + visibleHosts.length - 1;
 
 	// The client-side slab is bounded, so say so rather than silently hiding
 	// matches that fell outside it.
-	const reportingFilterTruncated =
-		reportingFilterActive && serverTotalHosts > REPORTING_FILTER_FETCH_LIMIT;
+	const liveFilterTruncated =
+		liveFilterActive && serverTotalHosts > LIVE_FILTER_FETCH_LIMIT;
 
 	// Clamp out-of-range deep links (`?page=999`) and pages that empty out after
 	// a delete, but only once the totals are known so a legitimate deep link is
@@ -1671,6 +1690,7 @@ const Hosts = () => {
 		setSearchTerm("");
 		setGroupFilter("all");
 		setStatusFilter("all");
+		setConnectionFilter("all");
 		setOsFilter("all");
 		setOsVersionFilter("all");
 		setGroupBy("none");
@@ -1693,6 +1713,20 @@ const Hosts = () => {
 		newSearchParams.set("filter", "needsUpdates");
 		newSearchParams.delete("reboot"); // Clear reboot filter when switching to needsUpdates
 		navigate(`/hosts?${newSearchParams.toString()}`, { replace: true });
+	};
+
+	// Offline is the actionable half of the Connection Status card, so that is
+	// what the card filters to. Live WS state is not a backend filter, so this
+	// stays in local state like the Reporting filter rather than in the URL.
+	const handleConnectionStatusClick = () => {
+		resetLocalFilters();
+		setConnectionFilter("offline");
+		setShowFilters(true);
+		const newSearchParams = new URLSearchParams(searchParams);
+		newSearchParams.delete("filter");
+		newSearchParams.delete("reboot");
+		newSearchParams.delete("selected");
+		setSearchParams(newSearchParams, { replace: true });
 	};
 
 	if (isLoading && !hostsResponse) {
@@ -1823,7 +1857,12 @@ const Hosts = () => {
 						</div>
 					</div>
 				</button>
-				<div className="card p-4 text-left w-full">
+				<button
+					type="button"
+					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full min-h-[44px]"
+					onClick={handleConnectionStatusClick}
+					title="Click to filter hosts that are offline"
+				>
 					<div className="flex items-center">
 						<Wifi className="h-5 w-5 text-primary-600 mr-2" />
 						<div className="flex-1">
@@ -1862,7 +1901,7 @@ const Hosts = () => {
 							})()}
 						</div>
 					</div>
-				</div>
+				</button>
 			</div>
 
 			{/* Hosts List */}
@@ -2039,6 +2078,24 @@ const Hosts = () => {
 									</div>
 									<div>
 										<label
+											htmlFor={connectionFilterId}
+											className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-1"
+										>
+											Connection
+										</label>
+										<select
+											id={connectionFilterId}
+											value={connectionFilter}
+											onChange={(e) => setConnectionFilter(e.target.value)}
+											className="w-full border border-secondary-300 dark:border-secondary-600 rounded-lg px-3 py-2.5 sm:py-2 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white min-h-[44px]"
+										>
+											<option value="all">All</option>
+											<option value="connected">Connected</option>
+											<option value="offline">Offline</option>
+										</select>
+									</div>
+									<div>
+										<label
 											htmlFor={osFilterId}
 											className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-1"
 										>
@@ -2115,15 +2172,14 @@ const Hosts = () => {
 						)}
 					</div>
 
-					{reportingFilterTruncated && (
+					{liveFilterTruncated && (
 						<div className="mb-4 flex items-start gap-2 rounded-md border border-warning-200 dark:border-warning-700 bg-warning-50 dark:bg-warning-900 p-3">
 							<AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5 text-warning-600 dark:text-warning-300" />
 							<p className="text-sm text-warning-800 dark:text-warning-200">
-								The Reporting filter is applied to the first{" "}
-								{REPORTING_FILTER_FETCH_LIMIT.toLocaleString()} hosts only, out
-								of {serverTotalHosts.toLocaleString()} matching your other
-								filters. Narrow the search, group or OS filters to cover every
-								host.
+								The Reporting and Connection filters are applied to the first{" "}
+								{LIVE_FILTER_FETCH_LIMIT.toLocaleString()} hosts only, out of{" "}
+								{serverTotalHosts.toLocaleString()} matching your other filters.
+								Narrow the search, group or OS filters to cover every host.
 							</p>
 						</div>
 					)}
@@ -2969,6 +3025,10 @@ const ColumnSettingsModal = ({
 		setDraggedIndex(null);
 	};
 
+	const handleDragEnd = () => {
+		setDraggedIndex(null);
+	};
+
 	return (
 		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
 			<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-lg w-full max-h-[85vh] flex flex-col">
@@ -3003,6 +3063,7 @@ const ColumnSettingsModal = ({
 								onDragStart={(e) => handleDragStart(e, index)}
 								onDragOver={handleDragOver}
 								onDrop={(e) => handleDrop(e, index)}
+								onDragEnd={handleDragEnd}
 								onKeyDown={(e) => {
 									if (e.key === "Enter" || e.key === " ") {
 										e.preventDefault();

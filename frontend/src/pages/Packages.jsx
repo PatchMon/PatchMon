@@ -747,7 +747,23 @@ const Packages = () => {
 					isHostScoped ? "sm:grid-cols-3" : "sm:grid-cols-4 lg:grid-cols-5"
 				}`}
 			>
-				<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
+				<button
+					type="button"
+					onClick={() => {
+						setUpdateStatusFilter("all-packages");
+						setCategoryFilter("all");
+						setSearchTerm("");
+						const next = new URLSearchParams(searchParams);
+						next.delete("filter");
+						setSearchParams(next, { replace: true });
+					}}
+					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full min-h-[44px]"
+					title={
+						isHostScoped
+							? "Click to show all of this host's packages"
+							: "Click to show all packages"
+					}
+				>
 					<div className="flex items-center">
 						<Package className="h-5 w-5 text-primary-600 mr-2" />
 						<div>
@@ -759,10 +775,10 @@ const Packages = () => {
 							</p>
 						</div>
 					</div>
-				</div>
+				</button>
 
 				{!isHostScoped && (
-					<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
+					<div className="card p-4">
 						<div className="flex items-center">
 							<Package className="h-5 w-5 text-blue-600 mr-2" />
 							<div>
@@ -1423,6 +1439,10 @@ const ColumnSettingsModal = ({
 		setDraggedIndex(null);
 	};
 
+	const handleDragEnd = () => {
+		setDraggedIndex(null);
+	};
+
 	return (
 		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
 			<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 w-full max-w-md">
@@ -1450,6 +1470,7 @@ const ColumnSettingsModal = ({
 							onDragStart={(e) => handleDragStart(e, index)}
 							onDragOver={handleDragOver}
 							onDrop={(e) => handleDrop(e, index)}
+							onDragEnd={handleDragEnd}
 							className={`flex items-center justify-between p-3 border rounded-lg cursor-move w-full ${
 								draggedIndex === index
 									? "opacity-50"
