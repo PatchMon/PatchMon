@@ -747,7 +747,23 @@ const Packages = () => {
 					isHostScoped ? "sm:grid-cols-3" : "sm:grid-cols-4 lg:grid-cols-5"
 				}`}
 			>
-				<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
+				<button
+					type="button"
+					onClick={() => {
+						setUpdateStatusFilter("all-packages");
+						setCategoryFilter("all");
+						setSearchTerm("");
+						const next = new URLSearchParams(searchParams);
+						next.delete("filter");
+						setSearchParams(next, { replace: true });
+					}}
+					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full min-h-[44px]"
+					title={
+						isHostScoped
+							? "Click to show all of this host's packages"
+							: "Click to show all packages"
+					}
+				>
 					<div className="flex items-center">
 						<Package className="h-5 w-5 text-primary-600 mr-2" />
 						<div>
@@ -759,10 +775,10 @@ const Packages = () => {
 							</p>
 						</div>
 					</div>
-				</div>
+				</button>
 
 				{!isHostScoped && (
-					<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
+					<div className="card p-4">
 						<div className="flex items-center">
 							<Package className="h-5 w-5 text-blue-600 mr-2" />
 							<div>
