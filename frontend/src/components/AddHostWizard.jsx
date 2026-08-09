@@ -10,6 +10,7 @@ import {
 	hostGroupsAPI,
 	settingsAPI,
 } from "../utils/api";
+import ModalPortal from "./ui/ModalPortal";
 
 const STEPS = [
 	{ key: 1, label: "Choose OS" },
@@ -319,8 +320,8 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 		</div>
 	);
 
-	return (
-		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+	const modal = (
+		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120] p-4">
 			<div className="bg-white dark:bg-secondary-800 rounded-lg p-4 sm:p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
 				<div className="flex justify-between items-center mb-2">
 					<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
@@ -713,6 +714,8 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 };
 
 export default AddHostWizard;
