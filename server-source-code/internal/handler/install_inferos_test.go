@@ -26,6 +26,13 @@ func TestInferHostOS(t *testing.T) {
 		{name: "os type rocky", osType: "Rocky Linux", want: "linux"},
 
 		{name: "nothing known defaults to linux", want: "linux"},
+
+		// A freshly auto-enrolled host carries the literal string "unknown"
+		// with no expected platform, so there is nothing to infer from and this
+		// correctly yields linux. That is exactly why the enrolment script has
+		// to send os= itself: inference cannot help on the one path where the
+		// host has not reported anything yet.
+		{name: "os type unknown yields no signal", osType: "unknown", want: "linux"},
 	}
 
 	for _, tt := range tests {

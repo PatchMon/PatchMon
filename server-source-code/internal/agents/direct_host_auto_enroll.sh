@@ -124,7 +124,7 @@ ip_address=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "unknown")
 # Detect architecture
 arch_raw=$(uname -m 2>/dev/null || echo "unknown")
 case "$arch_raw" in
-    "x86_64")
+    "x86_64"|"amd64")
         architecture="amd64"
         ;;
     "i386"|"i686")
@@ -139,6 +139,19 @@ case "$arch_raw" in
     *)
         warn "  ⚠ Unknown architecture '$arch_raw', defaulting to amd64"
         architecture="amd64"
+        ;;
+esac
+
+# Detect OS. The server cannot work this out for itself at this point: the host
+# record is created with os_type "unknown" and no expected_platform, so it has
+# no signal until the agent's first report, which cannot happen until the
+# correct binary is installed.
+case "$(uname -s 2>/dev/null)" in
+    "FreeBSD")
+        os_type="freebsd"
+        ;;
+    *)
+        os_type="linux"
         ;;
 esac
 
@@ -243,13 +256,13 @@ if [ "$http_code" = "201" ]; then
     # ===== INSTALL AGENT =====
     info "Installing PatchMon agent..."
 
-    # Build install URL with force flag and architecture
-    install_url="$PATCHMON_URL/api/v1/hosts/install?arch=$architecture"
+    # Build install URL with force flag, architecture and OS
+    install_url="$PATCHMON_URL/api/v1/hosts/install?arch=$architecture&os=$os_type"
     if [ "$FORCE_INSTALL" = "true" ]; then
         install_url="$install_url&force=true"
         info "Using force mode - will bypass broken packages"
     fi
-    info "Using architecture: $architecture"
+    info "Using architecture: $architecture ($os_type)"
     
     # Download and execute installation script
     install_exit_code=0
