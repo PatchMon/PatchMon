@@ -1568,13 +1568,6 @@ DEBUG=true ./proxmox_auto_enroll.sh
 HOST_PREFIX="prod-" ./proxmox_auto_enroll.sh
 ```
 
-#### Include Stopped Containers
-
-```bash
-# Also process stopped containers (enrollment only, agent install fails)
-SKIP_STOPPED=false ./proxmox_auto_enroll.sh
-```
-
 #### Force Install Mode (Broken Packages)
 
 If containers have broken packages (CloudPanel, WHM, cPanel, etc.) that block `apt-get`:
@@ -1738,7 +1731,6 @@ All configuration can be set via environment variables:
 | `CURL_FLAGS` | `-s` | Curl options | `-sk` (for self-signed SSL) |
 | `DRY_RUN` | `false` | Preview mode (no changes) | `true`/`false` |
 | `HOST_PREFIX` | `""` | Prefix for host names | `proxmox-`, `prod-`, etc. |
-| `SKIP_STOPPED` | `true` | Skip stopped containers | `true`/`false` |
 | `FORCE_INSTALL` | `false` | Bypass broken packages | `true`/`false` |
 | `DEBUG` | `false` | Enable debug logging | `true`/`false` |
 
@@ -1754,7 +1746,6 @@ AUTO_ENROLLMENT_SECRET="${AUTO_ENROLLMENT_SECRET:-your_secret_here}"
 CURL_FLAGS="${CURL_FLAGS:--s}"
 DRY_RUN="${DRY_RUN:-false}"
 HOST_PREFIX="${HOST_PREFIX:-}"
-SKIP_STOPPED="${SKIP_STOPPED:-true}"
 FORCE_INSTALL="${FORCE_INSTALL:-false}"
 ```
 
