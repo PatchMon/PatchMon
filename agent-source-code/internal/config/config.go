@@ -67,15 +67,24 @@ var AvailableIntegrations = []string{
 	// Future: "proxmox", "kubernetes", etc.
 }
 
+// ErrConfigUnreadable is returned by a save when the config file exists but the
+// last load could not parse it. The in-memory config is New()'s defaults at that
+// point, so writing it out would replace the operator's settings, and
+// patchmon_server defaults to empty.
+var ErrConfigUnreadable = errors.New("refusing to overwrite a config file that could not be read")
+
 // Manager handles configuration management
 type Manager struct {
-	// Guards config, credentials and configFile. LoadConfig replaces
+	// Guards config, credentials, configFile and loadErr. LoadConfig replaces
 	// config.Integrations while the service loop and schedulers read it, and a
 	// concurrent map read/write is an unrecoverable runtime fatal.
 	mu          sync.RWMutex
 	config      *models.Config
 	credentials *models.Credentials
 	configFile  string
+	// Set when configFile exists but did not parse. Every automatic save is
+	// refused while it is set.
+	loadErr error
 }
 
 // New creates a new configuration manager
@@ -111,6 +120,15 @@ func (m *Manager) GetConfigFile() string {
 	return m.configFile
 }
 
+// LoadError returns the failure from the last LoadConfig, or nil if the config
+// file parsed or does not exist. A non-nil value means the running config is
+// defaults rather than what is on disk.
+func (m *Manager) LoadError() error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.loadErr
+}
+
 // GetConfig returns the current configuration
 // The returned pointer is a snapshot: LoadConfig swaps in a fresh struct rather
 // than mutating this one.
@@ -135,6 +153,7 @@ func (m *Manager) LoadConfig() error {
 	// Check if config file exists
 	if _, err := os.Stat(m.configFile); errors.Is(err, fs.ErrNotExist) {
 		// Use defaults if config file doesn't exist
+		m.loadErr = nil
 		return nil
 	}
 
@@ -148,6 +167,7 @@ func (m *Manager) LoadConfig() error {
 	// file is intact either side of that window, so the read is retried rather
 	// than failing the load.
 	if err := retryTransientFile(v.ReadInConfig); err != nil {
+		m.loadErr = err
 		return fmt.Errorf("error reading config file: %w", err)
 	}
 
@@ -156,8 +176,10 @@ func (m *Manager) LoadConfig() error {
 	loaded := *m.config
 	loaded.Integrations = nil
 	if err := v.Unmarshal(&loaded); err != nil {
+		m.loadErr = err
 		return fmt.Errorf("error unmarshaling config: %w", err)
 	}
+	m.loadErr = nil
 	m.config = &loaded
 
 	// Handle backward compatibility: set defaults for fields that may not exist in older configs
@@ -398,6 +420,10 @@ func (m *Manager) SaveConfig() error {
 
 // Caller must hold the write lock.
 func (m *Manager) saveConfigLocked() error {
+	if m.loadErr != nil {
+		return fmt.Errorf("%w (%s): %w", ErrConfigUnreadable, m.configFile, m.loadErr)
+	}
+
 	if err := m.setupDirectories(); err != nil {
 		return err
 	}
@@ -518,9 +544,14 @@ func (m *Manager) SetUpdateInterval(interval int) error {
 }
 
 // SetPatchmonServer sets the server URL and saves it.
+//
+// `config set-api` is the documented recovery for a config file the agent
+// cannot parse, so this is the one saver that replaces an unreadable file
+// instead of refusing. The operator asked for the rewrite explicitly.
 func (m *Manager) SetPatchmonServer(serverURL string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.loadErr = nil
 	m.config.PatchmonServer = serverURL
 	return m.saveConfigLocked()
 }

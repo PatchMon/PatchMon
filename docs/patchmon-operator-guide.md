@@ -4649,6 +4649,19 @@ On Linux, these files are owned by root and set to `600` permissions (read/write
 | **Log File** | Linux: `/etc/patchmon/logs/patchmon-agent.log`  Windows: `C:\ProgramData\PatchMon\patchmon-agent.log` | Agent log output |
 | **Cron File** | `/etc/cron.d/patchmon-agent` | Scheduled reporting (fallback for non-systemd systems) |
 
+#### Quoting Windows paths
+
+YAML treats a backslash inside **double** quotes as the start of an escape sequence, so a double-quoted Windows path is either rejected or silently altered. `"C:\ProgramData\PatchMon\credentials.yml"` fails to parse, because `\c` is not a valid escape. `"C:\ProgramData\PatchMon\Notes"` is worse: it parses, but `\N` is a valid escape and becomes a control character, so the path you get is not the path you wrote.
+
+Use single quotes, or no quotes at all, for any value containing a backslash:
+
+```yaml
+credentials_file: 'C:\ProgramData\PatchMon\credentials.yml'
+log_file: C:\ProgramData\PatchMon\patchmon-agent.log
+```
+
+If `config.yml` cannot be parsed, the agent refuses to start rather than falling back to its built-in defaults, and writes the parse error to the agent log. This is deliberate: an agent running on defaults has no server URL, so it reports nothing, and its first save would overwrite your file with those defaults. Repair the file, or run `patchmon-agent.exe config set-api <API_ID> <API_KEY> <SERVER_URL>` to write a fresh one.
+
 ### Full Configuration Reference
 
 Below is a complete `config.yml` with all available parameters, their defaults, and descriptions:
