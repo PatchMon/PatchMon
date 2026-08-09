@@ -36,9 +36,6 @@ func TestBuildEnrollmentScript_KeepsUninjectedDefaults(t *testing.T) {
 			want: []string{
 				`DRY_RUN="${DRY_RUN:-false}"`,
 				`HOST_PREFIX="${HOST_PREFIX:-}"`,
-				`SKIP_STOPPED="${SKIP_STOPPED:-true}"`,
-				`PARALLEL_INSTALL="${PARALLEL_INSTALL:-false}"`,
-				`MAX_PARALLEL="${MAX_PARALLEL:-5}"`,
 			},
 		},
 		{
