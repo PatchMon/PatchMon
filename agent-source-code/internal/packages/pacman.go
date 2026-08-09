@@ -2,6 +2,7 @@ package packages
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"os/exec"
 	"regexp"
@@ -210,13 +211,16 @@ func (m *PacmanManager) getUpgradableFromLocalDB() ([]models.Package, error) {
 	cmd := runCommand("pacman", "-Qu")
 	output, err := cmd.Output()
 	if err != nil {
-		// Exits 1 when nothing is upgradable.
+		// -Qu exits 1 both when nothing is upgradable and on a genuine failure,
+		// so the exit code alone cannot tell them apart. Only a real failure
+		// writes to stderr. Without that check a broken package database is
+		// reported as "no updates available", which is worse than an error
+		// because it looks like a healthy host.
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		if isExitCode(err, 1) && errors.As(err, &exitErr) && len(bytes.TrimSpace(exitErr.Stderr)) == 0 {
 			return []models.Package{}, nil
 		}
-		m.logger.WithError(err).Error("pacman -Qu failed")
-		return nil, err
+		return nil, commandError("pacman -Qu", err)
 	}
 
 	return m.parseCheckUpdate(string(output)), nil
