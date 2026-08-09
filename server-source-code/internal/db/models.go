@@ -610,6 +610,8 @@ type Setting struct {
 	DiscordClientSecret             *string          `json:"discord_client_secret"`
 	DiscordRedirectUri              *string          `json:"discord_redirect_uri"`
 	DiscordButtonText               *string          `json:"discord_button_text"`
+	DiscordAllowRegistration        bool             `json:"discord_allow_registration"`
+	DiscordRequiredGuildID          *string          `json:"discord_required_guild_id"`
 	OidcEnabled                     bool             `json:"oidc_enabled"`
 	OidcIssuerUrl                   *string          `json:"oidc_issuer_url"`
 	OidcClientID                    *string          `json:"oidc_client_id"`
