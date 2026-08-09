@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDryRunOutputIndicatesError(t *testing.T) {
@@ -208,5 +209,50 @@ func TestRunStreamingPatchStepKeepsEachStreamWhole(t *testing.T) {
 	}
 	if !dryRunOutputIndicatesError(out) {
 		t.Errorf("genuine failure classified as success: %q", out)
+	}
+}
+
+// A package manager can leave a grandchild holding the output pipes open long
+// after it exits, for example an rpm scriptlet. The step must give up once
+// WaitDelay has elapsed rather than waiting for the grandchild, otherwise Stop
+// and the run timeout do nothing.
+func TestRunStreamingPatchStepGivesUpOnAHeldPipe(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell")
+	}
+
+	restore := patchStepWaitDelay
+	patchStepWaitDelay = 500 * time.Millisecond
+	t.Cleanup(func() { patchStepWaitDelay = restore })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	var full strings.Builder
+	sink := newStreamSink(nil, "test-run", &full)
+
+	start := time.Now()
+	out, err := runStreamingPatchStep(ctx, sink, nil, "sh", "-c",
+		`sh -c 'sleep 5' & echo started; exit 0`)
+	elapsed := time.Since(start)
+
+	// Comfortably above the 500ms delay and below the grandchild's 5s, so this
+	// fires if the step ever goes back to waiting for the pipe to close.
+	if elapsed > 3*time.Second {
+		t.Fatalf("step waited %v for a held pipe; the context and WaitDelay were ignored", elapsed)
+	}
+	// The command exited 0. Only its pipes outlived it, so the step succeeded.
+	if err != nil {
+		t.Errorf("a held pipe should not fail a command that exited cleanly: %v", err)
+	}
+	if !strings.Contains(out, "started") {
+		t.Errorf("output written before the pipes were closed was lost: %q", out)
+	}
+	// The notice belongs in the terminal view, not in the copy callers parse.
+	if !strings.Contains(full.String(), "still holding it open") {
+		t.Errorf("truncation was not reported to the operator: %q", full.String())
+	}
+	if strings.Contains(out, "still holding it open") {
+		t.Error("the notice leaked into the parsed output")
 	}
 }
