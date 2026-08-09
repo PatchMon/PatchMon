@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"bufio"
 	"context"
 	"crypto/tls"
 	"encoding/base64"
@@ -2193,6 +2192,10 @@ func (s *streamSink) Flush() {
 	}
 }
 
+// patchStepWaitDelay is how long a step allows for the process to exit and then
+// for its pipes to close. A flush in flight can still outlast it. Set by tests.
+var patchStepWaitDelay = 30 * time.Second
+
 // runStreamingPatchStep executes a command, streaming its stdout+stderr into
 // the provided sink. On context cancellation it sends SIGINT and allows
 // WaitDelay for the process to clean up (rollbacks etc.) before forcing a kill.
@@ -2208,51 +2211,53 @@ func runStreamingPatchStep(ctx context.Context, sink *streamSink, env []string, 
 		if cmd.Process == nil {
 			return nil
 		}
-		// os.Interrupt maps to SIGINT on Unix; on Windows the runtime emulates
-		// a best-effort interrupt. Subsequent WaitDelay will SIGKILL if needed.
+		// SIGINT on Unix. Windows rejects any signal but Kill, so there the
+		// process dies when WaitDelay elapses instead.
 		return cmd.Process.Signal(os.Interrupt)
 	}
-	cmd.WaitDelay = 30 * time.Second
+	cmd.WaitDelay = patchStepWaitDelay
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", fmt.Errorf("stdout pipe: %w", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return "", fmt.Errorf("stderr pipe: %w", err)
-	}
+	// exec must own the pipes: WaitDelay cannot close one returned by StdoutPipe.
+	outStream := &stepStream{sink: sink}
+	errStream := &stepStream{sink: sink}
+	cmd.Stdout = outStream
+	cmd.Stderr = errStream
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("start: %w", err)
 	}
 
-	// One builder per pipe, each written by a single goroutine, so lines within
-	// a stream stay intact even though the sink interleaves them.
-	var outCapture, errCapture strings.Builder
-	var wg sync.WaitGroup
-	copyPipe := func(rc io.ReadCloser, capture *strings.Builder) {
-		defer wg.Done()
-		br := bufio.NewReader(rc)
-		buf := make([]byte, 4096)
-		for {
-			n, readErr := br.Read(buf)
-			if n > 0 {
-				_, _ = sink.Write(buf[:n])
-				capture.Write(buf[:n])
-			}
-			if readErr != nil {
-				return
-			}
-		}
-	}
-	wg.Add(2)
-	go copyPipe(stdout, &outCapture)
-	go copyPipe(stderr, &errCapture)
-	wg.Wait()
-
 	waitErr := cmd.Wait()
+	// The command exited cleanly and only its pipes outlived it, so this is not a
+	// step failure. The tail of the output is lost though, and a caller may be
+	// parsing it, so say so where an operator will see it. The notice goes to the
+	// sink rather than the returned copy, which is what gets parsed.
+	if errors.Is(waitErr, exec.ErrWaitDelay) {
+		sink.WriteString("\n[patchmon] gave up reading output: a child process is still holding it open\n")
+		waitErr = nil
+	}
 	sink.Flush()
-	return outCapture.String() + "\n" + errCapture.String(), waitErr
+	return outStream.captured() + "\n" + errStream.captured(), waitErr
+}
+
+// stepStream tees one of a command's output streams into the shared sink and
+// into a buffer of its own. exec gives each stream its own goroutine, so a
+// buffer has one writer and its lines stay whole even though the sink
+// interleaves the two streams.
+type stepStream struct {
+	sink *streamSink
+	buf  strings.Builder
+}
+
+func (s *stepStream) Write(p []byte) (int, error) {
+	_, _ = s.sink.Write(p)
+	s.buf.Write(p)
+	return len(p), nil
+}
+
+// captured is safe to call once cmd.Wait has returned, which joins the copy
+// goroutines on every path including the WaitDelay one.
+func (s *stepStream) captured() string {
+	return s.buf.String()
 }
 
 // patchRunTrailer returns a short human-readable trailer the agent appends to
