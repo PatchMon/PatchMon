@@ -752,6 +752,10 @@ func (s *DashboardStore) GetHostDetail(ctx context.Context, hostID string, histo
 		"dns_servers": dnsServers, "network_interfaces": networkInterfaces,
 		"disk_details": diskDetails, "load_average": loadAverage,
 		"host_group_memberships": hg, "primary_interface": host.PrimaryInterface,
+		// Until the agent checks in, os_type is "unknown", so the install
+		// command the UI offers can only come from the platform picked at
+		// creation time.
+		"expected_platform": host.ExpectedPlatform,
 	}
 
 	stats, _ := d.Queries.GetHostPackageStats(ctx, hostID)
