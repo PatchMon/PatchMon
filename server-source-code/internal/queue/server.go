@@ -245,8 +245,10 @@ func NewScheduler(opts asynq.RedisClientOpt, db *database.DB, log *slog.Logger) 
 		return nil, err
 	}
 
+	// Hourly, not daily: the handler ends scans running over three hours, and a
+	// daily sweep left them holding the host's Run Scan button for most of a day.
 	complianceScanTask := asynq.NewTask(TypeComplianceScanCleanup, nil)
-	if _, err := scheduler.Register("0 1 * * *", complianceScanTask, asynq.Queue(QueueComplianceScanCleanup), asynq.Retention(AutomationRetention)); err != nil {
+	if _, err := scheduler.Register("0 * * * *", complianceScanTask, asynq.Queue(QueueComplianceScanCleanup), asynq.Retention(AutomationRetention)); err != nil {
 		return nil, err
 	}
 
