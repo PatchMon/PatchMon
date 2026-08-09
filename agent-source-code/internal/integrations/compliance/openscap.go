@@ -260,13 +260,8 @@ func (s *OpenSCAPScanner) GetScannerDetails() *models.ComplianceScannerDetails {
 	mismatchWarning := ""
 	if contentFile != "" && s.osInfo.Version != "" {
 		baseName := filepath.Base(contentFile)
-		osVersion := strings.ReplaceAll(s.osInfo.Version, ".", "")
-		majorVersion := strings.Split(s.osInfo.Version, ".")[0]
-		contentOSName := s.getContentOSName()
 		// Match if file contains full version (e.g. 2204) or distro+major (e.g. rhel9, almalinux9)
-		versionMatch := strings.Contains(baseName, osVersion) ||
-			strings.Contains(baseName, contentOSName+majorVersion)
-		if !versionMatch {
+		if !s.contentFileMatchesOSVersion(baseName) {
 			contentMismatch = true
 			mismatchWarning = fmt.Sprintf("Content file %s may not match OS version %s.", baseName, s.osInfo.Version)
 		}
@@ -498,17 +493,33 @@ func (s *OpenSCAPScanner) checkContentCompatibility() {
 	}).Debug("Checking SCAP content compatibility")
 
 	// Check if content file matches OS version (SSG uses major version, e.g. ssg-rhel9 for 9.x)
-	contentOSName := s.getContentOSName()
-	majorVersion := strings.Split(s.osInfo.Version, ".")[0]
-	osVersion := strings.ReplaceAll(s.osInfo.Version, ".", "")
-	versionMatch := strings.Contains(baseName, osVersion) ||
-		strings.Contains(baseName, contentOSName+majorVersion)
-	if !versionMatch {
+	if !s.contentFileMatchesOSVersion(baseName) {
 		s.logger.WithFields(logrus.Fields{
 			"os_version":   s.osInfo.Version,
 			"content_file": baseName,
 		}).Warn("SCAP content may not match OS version - scan results may show many 'notapplicable' rules. Consider updating ssg-base package.")
 	}
+}
+
+// contentFileMatchesOSVersion reports whether a datastream file name belongs to
+// this OS version, accepting any of the product name variants for the distro.
+func (s *OpenSCAPScanner) contentFileMatchesOSVersion(baseName string) bool {
+	if strings.Contains(baseName, strings.ReplaceAll(s.osInfo.Version, ".", "")) {
+		return true
+	}
+
+	majorVersion := strings.Split(s.osInfo.Version, ".")[0]
+	contentOSName := s.getContentOSName()
+	names := contentOSNameVariants(contentOSName)
+	if contentOSName != s.osInfo.Name {
+		names = append(names, contentOSNameVariants(s.osInfo.Name)...)
+	}
+	for _, name := range names {
+		if strings.Contains(baseName, name+majorVersion) {
+			return true
+		}
+	}
+	return false
 }
 
 // SSGContentDownloader abstracts the ability to download SSG content from the PatchMon server.
@@ -577,32 +588,20 @@ func (s *OpenSCAPScanner) UpgradeSSGContentFromServer(downloader SSGContentDownl
 // pickSSGFile selects the best datastream file for this OS from the available server files.
 func (s *OpenSCAPScanner) pickSSGFile(available []string) string {
 	contentOSName := s.getContentOSName()
-	major := strings.Split(s.osInfo.Version, ".")[0]
-
-	candidates := []string{
-		fmt.Sprintf("ssg-%s%s-ds.xml", contentOSName, strings.ReplaceAll(s.osInfo.Version, ".", "")),
-		fmt.Sprintf("ssg-%s%s-ds.xml", contentOSName, major),
-		fmt.Sprintf("ssg-%s-ds.xml", contentOSName),
-	}
 
 	avail := make(map[string]bool, len(available))
 	for _, f := range available {
 		avail[f] = true
 	}
 
-	for _, c := range candidates {
+	for _, c := range ssgFileCandidates(contentOSName, s.osInfo.Version) {
 		if avail[c] {
 			return c
 		}
 	}
 
 	if contentOSName != s.osInfo.Name {
-		fallbacks := []string{
-			fmt.Sprintf("ssg-%s%s-ds.xml", s.osInfo.Name, strings.ReplaceAll(s.osInfo.Version, ".", "")),
-			fmt.Sprintf("ssg-%s%s-ds.xml", s.osInfo.Name, major),
-			fmt.Sprintf("ssg-%s-ds.xml", s.osInfo.Name),
-		}
-		for _, c := range fallbacks {
+		for _, c := range ssgFileCandidates(s.osInfo.Name, s.osInfo.Version) {
 			if avail[c] {
 				return c
 			}
@@ -610,6 +609,42 @@ func (s *OpenSCAPScanner) pickSSGFile(available []string) string {
 	}
 
 	return ""
+}
+
+// contentOSNameVariants returns the SSG product names to try for an OS name, in
+// preference order. A few distributions ship a datastream whose product name is
+// not their os-release ID: Rocky's scap-security-guide package provides
+// ssg-rl9-ds.xml, and SUSE's products are sle12/sle15, not sles12/sles15.
+func contentOSNameVariants(osName string) []string {
+	switch osName {
+	case "rocky":
+		return []string{osName, "rl"}
+	case "sles":
+		return []string{osName, "sle"}
+	case "alma":
+		return []string{osName, "almalinux"}
+	case "opensuse-leap":
+		return []string{osName, "opensuse"}
+	}
+	return []string{osName}
+}
+
+// ssgFileCandidates returns the datastream filenames to try for an OS name and
+// version, in preference order.
+func ssgFileCandidates(osName, version string) []string {
+	compact := strings.ReplaceAll(version, ".", "")
+	major := strings.Split(version, ".")[0]
+
+	variants := contentOSNameVariants(osName)
+	candidates := make([]string, 0, len(variants)*3)
+	for _, name := range variants {
+		candidates = append(candidates,
+			fmt.Sprintf("ssg-%s%s-ds.xml", name, compact),
+			fmt.Sprintf("ssg-%s%s-ds.xml", name, major),
+			fmt.Sprintf("ssg-%s-ds.xml", name),
+		)
+	}
+	return candidates
 }
 
 // UpgradeSSGContent upgrades the SCAP Security Guide content from GitHub releases (legacy fallback).
@@ -1088,15 +1123,23 @@ func (s *OpenSCAPScanner) getContentFile() string {
 	// Get the base distribution name for content file lookup
 	contentOSName := s.getContentOSName()
 
-	// Build possible content file names
-	patterns := []string{
-		fmt.Sprintf("ssg-%s%s-ds.xml", contentOSName, strings.ReplaceAll(s.osInfo.Version, ".", "")),
-		fmt.Sprintf("ssg-%s%s-ds.xml", contentOSName, strings.Split(s.osInfo.Version, ".")[0]),
-		fmt.Sprintf("ssg-%s-ds.xml", contentOSName),
+	if path := s.findContentFile(contentOSName); path != "" {
+		return path
 	}
 
-	// Check each pattern
-	for _, pattern := range patterns {
+	// If still not found and we normalized to a base distribution, try the original OS name as fallback
+	if contentOSName != s.osInfo.Name {
+		if path := s.findContentFile(s.osInfo.Name); path != "" {
+			return path
+		}
+	}
+
+	return ""
+}
+
+// findContentFile looks on disk for a datastream belonging to one OS name.
+func (s *OpenSCAPScanner) findContentFile(osName string) string {
+	for _, pattern := range ssgFileCandidates(osName, s.osInfo.Version) {
 		path := filepath.Join(scapContentDir, pattern)
 		if _, err := os.Stat(path); err == nil {
 			return path
@@ -1104,27 +1147,10 @@ func (s *OpenSCAPScanner) getContentFile() string {
 	}
 
 	// Try to find any matching file; when multiple exist, prefer the one that matches OS version
-	matches, err := filepath.Glob(filepath.Join(scapContentDir, fmt.Sprintf("ssg-%s*-ds.xml", contentOSName)))
-	if err == nil && len(matches) > 0 {
-		return s.bestContentMatch(matches, contentOSName)
-	}
-
-	// If still not found and we normalized to a base distribution, try the original OS name as fallback
-	if contentOSName != s.osInfo.Name {
-		patterns = []string{
-			fmt.Sprintf("ssg-%s%s-ds.xml", s.osInfo.Name, strings.ReplaceAll(s.osInfo.Version, ".", "")),
-			fmt.Sprintf("ssg-%s%s-ds.xml", s.osInfo.Name, strings.Split(s.osInfo.Version, ".")[0]),
-			fmt.Sprintf("ssg-%s-ds.xml", s.osInfo.Name),
-		}
-		for _, pattern := range patterns {
-			path := filepath.Join(scapContentDir, pattern)
-			if _, err := os.Stat(path); err == nil {
-				return path
-			}
-		}
-		matches, err := filepath.Glob(filepath.Join(scapContentDir, fmt.Sprintf("ssg-%s*-ds.xml", s.osInfo.Name)))
+	for _, name := range contentOSNameVariants(osName) {
+		matches, err := filepath.Glob(filepath.Join(scapContentDir, fmt.Sprintf("ssg-%s*-ds.xml", name)))
 		if err == nil && len(matches) > 0 {
-			return s.bestContentMatch(matches, s.osInfo.Name)
+			return s.bestContentMatch(matches, name)
 		}
 	}
 
