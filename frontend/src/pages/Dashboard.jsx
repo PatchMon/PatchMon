@@ -31,6 +31,7 @@ import {
 import {
 	AlertTriangle,
 	CheckCircle,
+	ChevronRight,
 	Eye,
 	EyeOff,
 	Folder,
@@ -1335,17 +1336,7 @@ const Dashboard = () => {
 
 			case "updateStatus":
 				return (
-					<button
-						type="button"
-						className="card p-4 sm:p-6 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full flex flex-col"
-						onClick={handleUpdateStatusClick}
-						onKeyDown={(e) => {
-							if (e.key === "Enter" || e.key === " ") {
-								e.preventDefault();
-								handleUpdateStatusClick();
-							}
-						}}
-					>
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4 flex-shrink-0">
 							Update Status
 						</h3>
@@ -1357,7 +1348,15 @@ const Dashboard = () => {
 								/>
 							</div>
 						</div>
-					</button>
+						<button
+							type="button"
+							onClick={handleUpdateStatusClick}
+							className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 min-h-[44px] sm:min-h-0 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 hover:underline flex-shrink-0"
+						>
+							View hosts needing updates
+							<ChevronRight className="h-4 w-4" />
+						</button>
+					</div>
 				);
 
 			case "packagePriority":
@@ -1966,6 +1965,12 @@ const Dashboard = () => {
 			},
 		},
 		onClick: handleUpdateStatusChartClick,
+		onHover: (event, elements) => {
+			const target = event.native?.target;
+			if (target) {
+				target.style.cursor = elements.length > 0 ? "pointer" : "default";
+			}
+		},
 	};
 
 	const packagePriorityChartOptions = {
