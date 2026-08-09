@@ -3025,6 +3025,10 @@ const ColumnSettingsModal = ({
 		setDraggedIndex(null);
 	};
 
+	const handleDragEnd = () => {
+		setDraggedIndex(null);
+	};
+
 	return (
 		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
 			<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-lg w-full max-h-[85vh] flex flex-col">
@@ -3059,6 +3063,7 @@ const ColumnSettingsModal = ({
 								onDragStart={(e) => handleDragStart(e, index)}
 								onDragOver={handleDragOver}
 								onDrop={(e) => handleDrop(e, index)}
+								onDragEnd={handleDragEnd}
 								onKeyDown={(e) => {
 									if (e.key === "Enter" || e.key === " ") {
 										e.preventDefault();

@@ -985,6 +985,10 @@ const ColumnSettingsModal = ({
 		setDraggedIndex(null);
 	};
 
+	const handleDragEnd = () => {
+		setDraggedIndex(null);
+	};
+
 	return (
 		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
 			<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 w-full max-w-md">
@@ -1012,6 +1016,7 @@ const ColumnSettingsModal = ({
 							onDragStart={(e) => handleDragStart(e, index)}
 							onDragOver={handleDragOver}
 							onDrop={(e) => handleDrop(e, index)}
+							onDragEnd={handleDragEnd}
 							className="flex items-center justify-between p-3 bg-secondary-50 dark:bg-secondary-700 rounded-lg cursor-move hover:bg-secondary-100 dark:hover:bg-secondary-600 transition-colors w-full"
 						>
 							<div className="flex items-center gap-3">

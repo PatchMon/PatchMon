@@ -1439,6 +1439,10 @@ const ColumnSettingsModal = ({
 		setDraggedIndex(null);
 	};
 
+	const handleDragEnd = () => {
+		setDraggedIndex(null);
+	};
+
 	return (
 		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
 			<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 w-full max-w-md">
@@ -1466,6 +1470,7 @@ const ColumnSettingsModal = ({
 							onDragStart={(e) => handleDragStart(e, index)}
 							onDragOver={handleDragOver}
 							onDrop={(e) => handleDrop(e, index)}
+							onDragEnd={handleDragEnd}
 							className={`flex items-center justify-between p-3 border rounded-lg cursor-move w-full ${
 								draggedIndex === index
 									? "opacity-50"
