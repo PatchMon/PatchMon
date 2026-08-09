@@ -1843,7 +1843,7 @@ const Layout = ({ children }) => {
 						</div>
 					</div>
 
-					<main className="flex-1 py-6 bg-secondary-50 dark:bg-transparent pt-24">
+					<main className="flex-1 pt-[var(--app-main-pt)] pb-[var(--app-main-pb)] bg-secondary-50 dark:bg-transparent">
 						<div className="px-4 sm:px-6 lg:px-8">{content}</div>
 					</main>
 				</div>

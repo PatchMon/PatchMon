@@ -577,7 +577,7 @@ const Docker = () => {
 	};
 
 	return (
-		<div className="space-y-6 md:h-[calc(100vh-7rem)] md:flex md:flex-col md:overflow-hidden">
+		<div className="space-y-6 md:h-[calc(100vh-var(--app-main-inset))] md:flex md:flex-col md:overflow-hidden">
 			<div className="flex items-center justify-between">
 				<div>
 					<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">

@@ -134,7 +134,7 @@ export const dashboardAPI = {
 // Admin Hosts API (for management interface)
 export const adminHostsAPI = {
 	create: (data) => api.post("/hosts/create", data),
-	list: () => api.get("/hosts/admin/list"),
+	list: (params = {}) => api.get("/hosts/admin/list", { params }),
 	delete: (hostId) => api.delete(`/hosts/${hostId}`),
 	deleteBulk: (hostIds) => api.delete("/hosts/bulk", { data: { hostIds } }),
 	regenerateCredentials: (hostId) =>

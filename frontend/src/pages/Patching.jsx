@@ -24,7 +24,7 @@ import {
 	X,
 	XCircle,
 } from "lucide-react";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
 	Link,
 	useLocation,
@@ -1358,8 +1358,11 @@ function PoliciesTab() {
 	});
 
 	const { data: hostsData } = useQuery({
-		queryKey: ["hosts-list"],
-		queryFn: () => adminHostsAPI.list().then((res) => res.data),
+		// Distinct key: other pages cache the default first-page response under
+		// "hosts-list", and the exclusion picker intersects this with group
+		// membership, so a truncated page renders as "nothing left to exclude".
+		queryKey: ["hosts-list", "all"],
+		queryFn: () => adminHostsAPI.list({ all: true }).then((res) => res.data),
 	});
 	const hosts = hostsData?.data || [];
 
@@ -1741,7 +1744,11 @@ function PolicyAssignments({ policy, hosts, hostGroups, onUpdate }) {
 	const [addTargetId, setAddTargetId] = useState("");
 	const [addExclusionHostId, setAddExclusionHostId] = useState("");
 
-	const { data: fullPolicy } = useQuery({
+	const {
+		data: fullPolicy,
+		isPending: policyPending,
+		isError: policyError,
+	} = useQuery({
 		queryKey: ["patching-policy", policy.id],
 		queryFn: () => patchingAPI.getPolicyById(policy.id),
 		enabled: !!policy.id,
@@ -1814,6 +1821,30 @@ function PolicyAssignments({ policy, hosts, hostGroups, onUpdate }) {
 		const g = hostGroups.find((x) => x.id === a.target_id);
 		return g?.name || a.target_id;
 	};
+
+	const assignedGroupIds = useMemo(
+		() =>
+			new Set(
+				assignments
+					.filter((a) => a.target_type === "host_group")
+					.map((a) => a.target_id),
+			),
+		[assignments],
+	);
+
+	// An exclusion only has meaning against a group assignment, so the picker
+	// offers members of the assigned groups that are not already excluded.
+	const excludableHosts = useMemo(() => {
+		if (assignedGroupIds.size === 0) return [];
+		const excludedHostIds = new Set(exclusions.map((e) => e.host_id));
+		return hosts.filter(
+			(h) =>
+				!excludedHostIds.has(h.id) &&
+				(h.host_group_memberships || []).some((m) =>
+					assignedGroupIds.has(m?.host_groups?.id ?? m?.id),
+				),
+		);
+	}, [hosts, exclusions, assignedGroupIds]);
 
 	return (
 		<div className="px-4 pb-4 pt-3 bg-secondary-50 dark:bg-secondary-900/50 border-t border-secondary-200 dark:border-secondary-600">
@@ -1917,28 +1948,49 @@ function PolicyAssignments({ policy, hosts, hostGroups, onUpdate }) {
 						))}
 					</ul>
 				)}
-				<div className="flex flex-wrap items-center gap-2">
-					<select
-						value={addExclusionHostId}
-						onChange={(e) => setAddExclusionHostId(e.target.value)}
-						className="rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white text-sm px-2 py-1 min-w-[160px]"
-					>
-						<option value="">Select host to exclude...</option>
-						{hosts.map((h) => (
-							<option key={h.id} value={h.id}>
-								{h.friendly_name || h.hostname || h.id}
+				{policyPending ? (
+					<p className="text-sm text-secondary-500 dark:text-secondary-400">
+						Loading assignments...
+					</p>
+				) : policyError ? (
+					<p className="text-sm text-danger-600 dark:text-danger-400">
+						Could not load this policy's assignments.
+					</p>
+				) : assignedGroupIds.size === 0 ? (
+					<p className="text-sm text-secondary-500 dark:text-secondary-400">
+						Assign a host group to this policy before excluding hosts from it.
+					</p>
+				) : (
+					<div className="flex flex-wrap items-center gap-2">
+						<select
+							value={addExclusionHostId}
+							onChange={(e) => setAddExclusionHostId(e.target.value)}
+							disabled={excludableHosts.length === 0}
+							className="rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white text-sm px-2 py-1 min-w-[160px] disabled:opacity-50 disabled:cursor-not-allowed"
+						>
+							<option value="">
+								{excludableHosts.length === 0
+									? "No hosts left to exclude"
+									: "Select host to exclude..."}
 							</option>
-						))}
-					</select>
-					<button
-						type="button"
-						onClick={() => addExclusionHostId && addExclusionMutation.mutate()}
-						disabled={!addExclusionHostId || addExclusionMutation.isPending}
-						className="btn-outline text-sm py-1"
-					>
-						Exclude host
-					</button>
-				</div>
+							{excludableHosts.map((h) => (
+								<option key={h.id} value={h.id}>
+									{h.friendly_name || h.hostname || h.id}
+								</option>
+							))}
+						</select>
+						<button
+							type="button"
+							onClick={() =>
+								addExclusionHostId && addExclusionMutation.mutate()
+							}
+							disabled={!addExclusionHostId || addExclusionMutation.isPending}
+							className="btn-outline text-sm py-1 disabled:opacity-50 disabled:cursor-not-allowed"
+						>
+							Exclude host
+						</button>
+					</div>
+				)}
 			</div>
 		</div>
 	);

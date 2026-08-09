@@ -95,13 +95,14 @@ const Packages = () => {
 		};
 	}, [searchTerm]);
 
-	// Handle host filter from URL parameter
+	// The URL is the source of truth for these two filters. Each effect depends
+	// on its own param so writing one cannot reset the other.
+	const hostParam = searchParams.get("host");
+	const filterParam = searchParams.get("filter");
+
 	useEffect(() => {
-		const hostParam = searchParams.get("host");
-		if (hostParam) {
-			setHostFilter(hostParam);
-		}
-	}, [searchParams]);
+		setHostFilter(hostParam || "all");
+	}, [hostParam]);
 
 	// Column configuration
 	const [columnConfig, setColumnConfig] = useState(() => {
@@ -168,16 +169,17 @@ const Packages = () => {
 		}
 	};
 
-	// Handle URL filter parameters
 	useEffect(() => {
-		const filter = searchParams.get("filter");
-		if (filter === "outdated") {
+		if (filterParam === "outdated") {
 			setCategoryFilter("all");
 			setUpdateStatusFilter("needs-updates");
-		} else if (filter === "security" || filter === "security-updates") {
+		} else if (
+			filterParam === "security" ||
+			filterParam === "security-updates"
+		) {
 			setUpdateStatusFilter("security-updates");
 			setCategoryFilter("all");
-		} else if (filter === "regular") {
+		} else if (filterParam === "regular") {
 			setUpdateStatusFilter("regular-updates");
 			setCategoryFilter("all");
 		} else {
@@ -185,7 +187,7 @@ const Packages = () => {
 			setUpdateStatusFilter("all-packages");
 			setCategoryFilter("all");
 		}
-	}, [searchParams]);
+	}, [filterParam]);
 
 	const {
 		data: packagesResponse,
@@ -348,6 +350,16 @@ const Packages = () => {
 		staleTime: 60 * 1000,
 		refetchOnWindowFocus: false,
 	});
+
+	const selectHostFilter = (value) => {
+		const next = new URLSearchParams(searchParams);
+		if (value && value !== "all") {
+			next.set("host", value);
+		} else {
+			next.delete("host");
+		}
+		setSearchParams(next, { replace: true });
+	};
 
 	const clearHostFilter = () => {
 		setHostFilter("all");
@@ -651,7 +663,7 @@ const Packages = () => {
 	}
 
 	return (
-		<div className="min-h-0 flex flex-col md:h-[calc(100vh-7rem)] md:overflow-hidden">
+		<div className="min-h-0 flex flex-col md:h-[calc(100vh-var(--app-main-inset))] md:overflow-hidden">
 			{/* Page Header */}
 			<div className="flex items-center justify-between mb-6">
 				<div>
@@ -945,7 +957,7 @@ const Packages = () => {
 							<div className="sm:w-48">
 								<select
 									value={hostFilter}
-									onChange={(e) => setHostFilter(e.target.value)}
+									onChange={(e) => selectHostFilter(e.target.value)}
 									className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"
 								>
 									<option value="all">All Hosts</option>
