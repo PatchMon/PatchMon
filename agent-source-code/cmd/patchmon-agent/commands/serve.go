@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -2231,6 +2232,29 @@ func patchRunTrailer(wasStopped bool, stepErr error, dryRun bool) string {
 	}
 }
 
+// dpkgConfOptions stop dpkg prompting on a modified conffile.
+var dpkgConfOptions = []string{
+	"-o", "Dpkg::Options::=--force-confdef",
+	"-o", "Dpkg::Options::=--force-confold",
+}
+
+// aptUpgradeArgs builds the apt-get arguments for a full upgrade.
+func aptUpgradeArgs(dryRun bool) []string {
+	if dryRun {
+		return []string{"-s", "--with-new-pkgs", "upgrade"}
+	}
+	return append(slices.Clone(dpkgConfOptions), "--with-new-pkgs", "upgrade", "-y")
+}
+
+// aptOnlyUpgradeArgs builds the apt-get arguments for upgrading named packages.
+func aptOnlyUpgradeArgs(dryRun bool, packageNames []string) []string {
+	if dryRun {
+		return append([]string{"-s", "--only-upgrade", "install"}, packageNames...)
+	}
+	args := append(slices.Clone(dpkgConfOptions), "--only-upgrade", "install", "-y")
+	return append(args, packageNames...)
+}
+
 // When dryRun is true, simulates and sends dry_run_completed instead of completed.
 func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
@@ -2381,11 +2405,11 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 				// applies the patch, installs nothing, and reports them as
 				// outdated again forever.
 				if dryRun {
-					if err, abort := runStep(false, "apt-get -s upgrade", "apt-get -s upgrade failed: %w", "apt-get", "-s", "--with-new-pkgs", "upgrade"); abort {
+					if err, abort := runStep(false, "apt-get -s upgrade", "apt-get -s upgrade failed: %w", "apt-get", aptUpgradeArgs(true)...); abort {
 						stepErr = err
 					}
 				} else {
-					if err, abort := runStep(false, "apt-get upgrade", "apt-get upgrade failed: %w", "apt-get", "--with-new-pkgs", "upgrade", "-y"); abort {
+					if err, abort := runStep(false, "apt-get upgrade", "apt-get upgrade failed: %w", "apt-get", aptUpgradeArgs(false)...); abort {
 						stepErr = err
 					}
 				}
@@ -2429,12 +2453,12 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 			switch pkgManager {
 			case "apt":
 				if dryRun {
-					args := append([]string{"-s", "--only-upgrade", "install"}, packageNames...)
+					args := aptOnlyUpgradeArgs(true, packageNames)
 					if err, abort := runStep(false, "apt-get -s --only-upgrade install", "apt-get -s --only-upgrade install failed: %w", "apt-get", args...); abort {
 						stepErr = err
 					}
 				} else {
-					args := append([]string{"--only-upgrade", "install", "-y"}, packageNames...)
+					args := aptOnlyUpgradeArgs(false, packageNames)
 					if err, abort := runStep(false, "apt-get --only-upgrade install", "apt-get --only-upgrade install failed: %w", "apt-get", args...); abort {
 						stepErr = err
 					}
