@@ -631,7 +631,24 @@ func (h *SettingsHandler) UpdateEnvironmentConfig(w http.ResponseWriter, r *http
 	}
 	h.invalidateContextCaches(r.Context())
 	slog.Debug("env config update saved", "key", key, "settings_id", s.ID)
-	JSON(w, http.StatusOK, map[string]string{"message": "Saved. Restart the application for changes to take effect."})
+	msg := "Saved. The new value is in effect."
+	if startupOnlyConfigKeys[key] {
+		msg = "Saved. Restart the application for this change to take effect."
+	}
+	JSON(w, http.StatusOK, map[string]string{"message": msg})
+}
+
+// startupOnlyConfigKeys are wired into middleware or the logger when the process
+// boots, so a saved value sits unused until a restart. Everything else resolves
+// per request through ConfigResolver, whose cache this handler has just
+// invalidated, and so applies immediately.
+var startupOnlyConfigKeys = map[string]bool{
+	"CORS_ORIGIN":                 true,
+	"ENABLE_LOGGING":              true,
+	"LOG_LEVEL":                   true,
+	"ENABLE_HSTS":                 true,
+	"TRUST_PROXY":                 true,
+	"DB_TRANSACTION_LONG_TIMEOUT": true,
 }
 
 func orEmpty(s, fallback string) string {
