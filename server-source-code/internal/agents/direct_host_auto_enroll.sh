@@ -94,7 +94,22 @@ echo ""
 info "Gathering host information..."
 
 # Get hostname
-hostname=$(hostname)
+hostname=""
+if command -v hostname >/dev/null 2>&1; then
+    hostname=$(hostname 2>/dev/null || echo "")
+fi
+if [ -z "$hostname" ] && command -v hostnamectl >/dev/null 2>&1; then
+    hostname=$(hostnamectl --static 2>/dev/null || echo "")
+fi
+if [ -z "$hostname" ] && [ -f /etc/hostname ]; then
+    hostname=$(head -n 1 /etc/hostname 2>/dev/null || echo "")
+fi
+if [ -z "$hostname" ]; then
+    hostname=$(uname -n 2>/dev/null || echo "")
+fi
+if [ -z "$hostname" ]; then
+    error "Could not determine hostname. Install 'hostname' or set /etc/hostname, then retry."
+fi
 
 # Use FRIENDLY_NAME env var if provided, otherwise use hostname
 if [ -n "$FRIENDLY_NAME" ]; then
@@ -119,7 +134,23 @@ if [ -f /etc/os-release ]; then
 fi
 
 # Get IP address (first non-loopback)
-ip_address=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "unknown")
+ip_address=""
+if command -v hostname >/dev/null 2>&1; then
+    ip_address=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "")
+fi
+if [ -z "$ip_address" ] && command -v ip >/dev/null 2>&1; then
+    ip_address=$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit }}' || echo "")
+    if [ -z "$ip_address" ]; then
+        ip_address=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d'/' -f1 | head -n 1 || echo "")
+    fi
+fi
+if [ -z "$ip_address" ] && command -v ifconfig >/dev/null 2>&1; then
+    ip_address=$(ifconfig 2>/dev/null | awk '/inet /{addr = $2; sub(/^addr:/, "", addr); if (addr !~ /^127\./) { print addr; exit }}' || echo "")
+fi
+if [ -z "$ip_address" ]; then
+    warn "Could not determine an IP address for this host"
+    ip_address="unknown"
+fi
 
 # Detect architecture
 arch_raw=$(uname -m 2>/dev/null || echo "unknown")

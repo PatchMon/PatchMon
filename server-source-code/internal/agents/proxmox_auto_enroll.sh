@@ -150,7 +150,11 @@ while IFS= read -r line; do
     # Get container details
     debug "  Gathering container information..."
     hostname=$(timeout 5 pct exec "$vmid" -- hostname 2>/dev/null </dev/null || echo "$name")
-    ip_address=$(timeout 5 pct exec "$vmid" -- hostname -I 2>/dev/null </dev/null | awk '{print $1}' || echo "unknown")
+    ip_address=$(timeout 5 pct exec "$vmid" -- hostname -I 2>/dev/null </dev/null | awk '{print $1}' || echo "")
+    if [ -z "$ip_address" ]; then
+        ip_address=$(timeout 5 pct exec "$vmid" -- ip route get 1.1.1.1 2>/dev/null </dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit }}' || echo "")
+    fi
+    [ -n "$ip_address" ] || ip_address="unknown"
     os_info=$(timeout 5 pct exec "$vmid" -- cat /etc/os-release 2>/dev/null </dev/null | grep "^PRETTY_NAME=" | cut -d'"' -f2 || echo "unknown")
     
     # Detect container architecture
