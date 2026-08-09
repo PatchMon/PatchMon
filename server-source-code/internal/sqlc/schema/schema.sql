@@ -594,6 +594,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_compliance_scans_host_profile_completed
 ON compliance_scans (host_id, profile_id)
 WHERE status = 'completed';
 
+-- Serves the stalled-scan sweep and its matching read paths (ListActiveComplianceScans,
+-- ListStalledComplianceScansWithDetails). Predicate mirrors those queries' WHERE clause
+-- exactly so the partial index is provably usable; see migration 000046.
+CREATE INDEX IF NOT EXISTS idx_compliance_scans_stalled
+ON compliance_scans (started_at)
+WHERE status = 'running' OR (completed_at IS NULL AND status != 'failed');
+
 -- compliance_rules
 CREATE TABLE IF NOT EXISTS compliance_rules (
     id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
