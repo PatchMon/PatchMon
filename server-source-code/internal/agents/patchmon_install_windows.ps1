@@ -146,10 +146,10 @@ skip_ssl_verify: $($SkipSslVerify.ToString().ToLower())
     if ($content) {
         # Repair paths written double-quoted by an earlier installer, which left
         # the file unparseable and the agent running on defaults.
-        $doubleQuotedPath = "(?m)^(\s*)(patchmon_server|api_version|credentials_file|log_file|log_level)\s*:\s*`"([^`"]*\\[^`"]*)`"\s*$"
+        $doubleQuotedPath = '(?m)^([ \t]*)(patchmon_server|api_version|credentials_file|log_file|log_level)[ \t]*:[ \t]*"([^"]*\\[^"]*)"([ \t]*(?:#[^\r\n]*)?)(\r?)$'
         $content = [regex]::Replace($content, $doubleQuotedPath, {
             param($m)
-            "$($m.Groups[1].Value)$($m.Groups[2].Value): '$($m.Groups[3].Value -replace "'", "''")'"
+            "$($m.Groups[1].Value)$($m.Groups[2].Value): '$($m.Groups[3].Value -replace "'", "''")'$($m.Groups[4].Value)$($m.Groups[5].Value)"
         })
 
         if ($content -match "skip_ssl_verify\s*:\s*(true|false)") {

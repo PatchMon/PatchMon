@@ -135,6 +135,45 @@ func TestLoadConfig_ClearsFailureOnceTheFileParses(t *testing.T) {
 	}
 }
 
+// A file that parses to nothing is the same hazard as one that does not parse:
+// LoadConfig would otherwise report success and immediately save its defaults
+// back over it. A truncated write leaves exactly this.
+func TestLoadConfig_EmptyFileIsAFailure(t *testing.T) {
+	t.Parallel()
+
+	for name, content := range map[string]string{
+		"zero bytes":    "",
+		"only comments": "# nothing here\n",
+		"only newlines": "\n\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			cfgPath := filepath.Join(dir, "config.yml")
+			if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
+				t.Fatalf("writing test config: %v", err)
+			}
+
+			m := New()
+			m.SetConfigFile(cfgPath)
+			cfg := m.GetConfig()
+			cfg.CredentialsFile = filepath.Join(dir, "credentials.yml")
+			cfg.LogFile = filepath.Join(dir, "agent.log")
+
+			if err := m.LoadConfig(); !errors.Is(err, ErrConfigEmpty) {
+				t.Fatalf("LoadConfig error = %v, want ErrConfigEmpty", err)
+			}
+			after, err := os.ReadFile(cfgPath)
+			if err != nil {
+				t.Fatalf("reading config back: %v", err)
+			}
+			if string(after) != content {
+				t.Fatalf("config file was rewritten:\n%s", after)
+			}
+		})
+	}
+}
+
 // A missing file is not a failure: the agent is meant to start on defaults so
 // that config set-api can create one.
 func TestLoadConfig_MissingFileIsNotAFailure(t *testing.T) {

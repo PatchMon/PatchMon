@@ -4660,7 +4660,11 @@ credentials_file: 'C:\ProgramData\PatchMon\credentials.yml'
 log_file: C:\ProgramData\PatchMon\patchmon-agent.log
 ```
 
-If `config.yml` cannot be parsed, the agent refuses to start rather than falling back to its built-in defaults, and writes the parse error to the agent log. This is deliberate: an agent running on defaults has no server URL, so it reports nothing, and its first save would overwrite your file with those defaults. Repair the file, or run `patchmon-agent.exe config set-api <API_ID> <API_KEY> <SERVER_URL>` to write a fresh one.
+If `config.yml` cannot be parsed, the agent **service** refuses to start rather than falling back to its built-in defaults, and writes the parse error to the agent log. This is deliberate: an agent running on defaults has no server URL, so it reports nothing, and its first save would overwrite your file with those defaults. One-off commands such as `report` and `ping`, including the cron fallback on hosts without systemd, still run, but they will fail against that empty server URL.
+
+The same applies to a `config.yml` that is present but empty, which is what a write interrupted by a full disk or a power cut leaves behind.
+
+To recover, repair the file, or run `patchmon-agent config set-api <API_ID> <API_KEY> <SERVER_URL>` (`patchmon-agent.exe` on Windows) to write a fresh one. Note that this writes a complete new file, so any other settings the old one held are lost.
 
 ### Full Configuration Reference
 

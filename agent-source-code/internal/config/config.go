@@ -73,6 +73,11 @@ var AvailableIntegrations = []string{
 // patchmon_server defaults to empty.
 var ErrConfigUnreadable = errors.New("refusing to overwrite a config file that could not be read")
 
+// ErrConfigEmpty is the load failure for a file that parses but yields nothing.
+// Valid YAML, no settings: a truncated write leaves exactly this, and treating
+// it as a successful load would mean saving defaults back over it.
+var ErrConfigEmpty = errors.New("config file contains no settings")
+
 // Manager handles configuration management
 type Manager struct {
 	// Guards config, credentials, configFile and loadErr. LoadConfig replaces
@@ -169,6 +174,11 @@ func (m *Manager) LoadConfig() error {
 	if err := retryTransientFile(v.ReadInConfig); err != nil {
 		m.loadErr = err
 		return fmt.Errorf("error reading config file: %w", err)
+	}
+
+	if len(v.AllKeys()) == 0 {
+		m.loadErr = ErrConfigEmpty
+		return fmt.Errorf("error reading config file: %w", ErrConfigEmpty)
 	}
 
 	// Swapped in rather than mutated, so readers holding a GetConfig() pointer

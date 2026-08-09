@@ -72,6 +72,76 @@ func TestWindowsInstallScriptGeneratesParseableConfig(t *testing.T) {
 	}
 }
 
+// The repair branch rewrites a config an older installer left double-quoted, so
+// a host that is already broken recovers on re-run. No test executes PowerShell,
+// but the pattern itself is RE2-compatible and is lifted from the script rather
+// than restated, so a change there is a change here.
+func TestWindowsInstallScriptRepairPattern(t *testing.T) {
+	re := regexp.MustCompile(extractRepairPattern(t, string(PatchmonWindowsInstallScript)))
+	const repl = "${1}${2}: '${3}'${4}${5}"
+
+	for name, c := range map[string]struct{ in, want string }{
+		"repairs a broken path": {
+			"credentials_file: \"C:\\ProgramData\\PatchMon\\credentials.yml\"\n",
+			"credentials_file: 'C:\\ProgramData\\PatchMon\\credentials.yml'\n",
+		},
+		"preserves CRLF": {
+			"log_file: \"C:\\a\\b.log\"\r\n",
+			"log_file: 'C:\\a\\b.log'\r\n",
+		},
+		"preserves indentation and a trailing comment": {
+			"  log_file: \"C:\\a\\b.log\"  # note\n",
+			"  log_file: 'C:\\a\\b.log'  # note\n",
+		},
+		"leaves an already single-quoted path alone": {
+			"log_file: 'C:\\a\\b.log'\n",
+			"log_file: 'C:\\a\\b.log'\n",
+		},
+		"leaves a double-quoted value with no backslash alone": {
+			"patchmon_server: \"https://patchmon.example.net\"\n",
+			"patchmon_server: \"https://patchmon.example.net\"\n",
+		},
+		"leaves an unrelated key alone": {
+			"some_other_path: \"C:\\a\\b\"\n",
+			"some_other_path: \"C:\\a\\b\"\n",
+		},
+		"does not touch skip_ssl_verify": {
+			"skip_ssl_verify: false\n",
+			"skip_ssl_verify: false\n",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := re.ReplaceAllString(c.in, repl); got != c.want {
+				t.Errorf("got  %q\nwant %q", got, c.want)
+			}
+		})
+	}
+
+	// The whole point is that the repaired document parses.
+	broken := "patchmon_server: \"https://patchmon.example.net\"\n" +
+		"credentials_file: \"C:\\ProgramData\\PatchMon\\credentials.yml\"\n" +
+		"log_file: \"C:\\ProgramData\\PatchMon\\patchmon-agent.log\"\n"
+	var out struct {
+		CredentialsFile string `yaml:"credentials_file"`
+	}
+	if err := yaml.Unmarshal([]byte(re.ReplaceAllString(broken, repl)), &out); err != nil {
+		t.Fatalf("repaired config does not parse: %v", err)
+	}
+	if want := `C:\ProgramData\PatchMon\credentials.yml`; out.CredentialsFile != want {
+		t.Errorf("credentials_file = %q, want %q", out.CredentialsFile, want)
+	}
+}
+
+func extractRepairPattern(t *testing.T, script string) string {
+	t.Helper()
+	re := regexp.MustCompile(`(?m)^\s*\$doubleQuotedPath = '(.*)'\s*$`)
+	m := re.FindStringSubmatch(script)
+	if m == nil {
+		t.Fatal("could not find the $doubleQuotedPath assignment in patchmon_install_windows.ps1")
+	}
+	return m[1]
+}
+
 func extractConfigHereString(t *testing.T, script string) string {
 	t.Helper()
 	re := regexp.MustCompile(`(?s)\$configContent = @"\r?\n(.*?)\r?\n"@`)
