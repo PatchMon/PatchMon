@@ -40,7 +40,7 @@
 		"test-exclude": {
 			"minimatch": "10.2.5"
 		},
-		"esbuild": "0.25.12"
+		"esbuild": "0.28.2"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.3",
