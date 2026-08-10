@@ -48,11 +48,18 @@ import {
 	formatDate,
 	formatRelativeTime,
 } from "../utils/api";
+import { anchorVertically } from "../utils/popoverPosition";
 import { NotificationPanel } from "./settings/AlertChannels";
 import { AlertSettings } from "./settings/AlertSettings";
 
 // System-only actions that should not appear in user-facing menus
 const SYSTEM_ONLY_ACTIONS = new Set(["created", "updated"]);
+
+// Approximate row metrics for the actions menu, used only to decide whether it
+// would rather open upwards. The rendered height is capped either way.
+const ACTION_HEIGHT = 36;
+const SECTION_HEADING_HEIGHT = 24;
+const MENU_PADDING = 8;
 
 // Assignment filter values that are not a specific user id
 const ASSIGNMENT_PRESETS = new Set([
@@ -120,7 +127,11 @@ const Reporting = () => {
 	const [selectedAlert, setSelectedAlert] = useState(null);
 	const [showAlertModal, setShowAlertModal] = useState(false);
 	const [openActionMenu, setOpenActionMenu] = useState(null);
-	const [menuPosition, setMenuPosition] = useState({ top: 0, right: 0 });
+	const [menuPosition, setMenuPosition] = useState({
+		top: 0,
+		right: 0,
+		maxHeight: 0,
+	});
 	const menuButtonRefs = useRef({});
 	const [selectedAlerts, setSelectedAlerts] = useState(new Set());
 	const [activeTab, setActiveTab] = useState(
@@ -593,16 +604,25 @@ const Reporting = () => {
 	};
 
 	// Calculate menu position based on button location
-	const calculateMenuPosition = useCallback((alertId) => {
-		const buttonRef = menuButtonRefs.current[alertId];
-		if (buttonRef) {
+	const calculateMenuPosition = useCallback(
+		(alertId) => {
+			const buttonRef = menuButtonRefs.current[alertId];
+			if (!buttonRef) return;
 			const rect = buttonRef.getBoundingClientRect();
+			const desiredHeight =
+				(workflowActions.length + resolutionActions.length) * ACTION_HEIGHT +
+				(workflowActions.length > 0 ? SECTION_HEADING_HEIGHT : 0) +
+				(resolutionActions.length > 0 ? SECTION_HEADING_HEIGHT : 0) +
+				MENU_PADDING;
+			const { top, maxHeight } = anchorVertically(rect, desiredHeight);
 			setMenuPosition({
-				top: rect.bottom + window.scrollY + 4,
-				right: window.innerWidth - rect.right + window.scrollX,
+				top,
+				right: Math.max(0, window.innerWidth - rect.right),
+				maxHeight,
 			});
-		}
-	}, []);
+		},
+		[workflowActions.length, resolutionActions.length],
+	);
 
 	// Update menu position when menu opens
 	useEffect(() => {
@@ -1310,10 +1330,11 @@ const Reporting = () => {
 							/>
 							<div
 								data-menu-id={openActionMenu}
-								className="fixed z-50 w-48 bg-white dark:bg-secondary-800 rounded-md shadow-lg border border-secondary-200 dark:border-secondary-600"
+								className="fixed z-50 w-48 bg-white dark:bg-secondary-800 rounded-md shadow-lg border border-secondary-200 dark:border-secondary-600 overflow-y-auto"
 								style={{
 									top: `${menuPosition.top}px`,
 									right: `${menuPosition.right}px`,
+									maxHeight: `${menuPosition.maxHeight}px`,
 								}}
 								onClick={(e) => e.stopPropagation()}
 							>

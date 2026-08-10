@@ -9,6 +9,7 @@ import {
 	X,
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
+import ModalPortal from "../../components/ui/ModalPortal";
 import { adminHostsAPI, settingsAPI } from "../../utils/api";
 import WaitingForConnection from "./WaitingForConnection";
 
@@ -179,8 +180,8 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 		);
 	}
 
-	return (
-		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+	const modal = (
+		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120] p-4">
 			<div className="bg-white dark:bg-secondary-800 rounded-lg p-4 md:p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
 				<div className="flex justify-between items-center mb-4 gap-3">
 					<h3 className="text-base md:text-lg font-medium text-secondary-900 dark:text-white truncate">
@@ -509,6 +510,8 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 };
 
 export default CredentialsModal;

@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { CheckCircle, Copy, Download, RefreshCw, Wifi, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import ModalPortal from "../../components/ui/ModalPortal";
 import { dashboardAPI } from "../../utils/api";
 
 // Check if host has received initial report (has system info beyond "unknown")
@@ -180,8 +181,8 @@ const WaitingForConnection = ({
 		}
 	};
 
-	return (
-		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+	const modal = (
+		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120] p-4">
 			<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 w-full max-w-md">
 				<div className="flex justify-between items-center mb-6">
 					<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
@@ -331,6 +332,8 @@ const WaitingForConnection = ({
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 };
 
 export default WaitingForConnection;
