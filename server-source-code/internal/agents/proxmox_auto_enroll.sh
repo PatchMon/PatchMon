@@ -30,9 +30,6 @@ AUTO_ENROLLMENT_SECRET="${AUTO_ENROLLMENT_SECRET:-}"
 CURL_FLAGS="${CURL_FLAGS:--s}"
 DRY_RUN="${DRY_RUN:-false}"
 HOST_PREFIX="${HOST_PREFIX:-}"
-SKIP_STOPPED="${SKIP_STOPPED:-true}"
-PARALLEL_INSTALL="${PARALLEL_INSTALL:-false}"
-MAX_PARALLEL="${MAX_PARALLEL:-5}"
 FORCE_INSTALL="${FORCE_INSTALL:-false}"
 
 # ===== COLOR OUTPUT =====
@@ -91,7 +88,6 @@ done
 info "Configuration validated successfully"
 info "PatchMon Server: $PATCHMON_URL"
 info "Dry Run Mode: $DRY_RUN"
-info "Skip Stopped Containers: $SKIP_STOPPED"
 echo ""
 
 # ===== DISCOVER LXC CONTAINERS =====
@@ -131,17 +127,9 @@ while IFS= read -r line; do
 
     info "Processing LXC $vmid: $name (status: $status)"
 
-    # Skip stopped containers if configured
-    if [[ "$status" != "running" ]] && [[ "$SKIP_STOPPED" == "true" ]]; then
-        warn "  Skipping $name - container not running"
-        ((skipped_count++)) || true
-        echo ""
-        continue
-    fi
-
-    # Check if container is stopped
+    # pct exec cannot reach a container that is not running
     if [[ "$status" != "running" ]]; then
-        warn "  Container $name is stopped - cannot gather info or install agent"
+        warn "  Skipping $name - container is $status, agent installation requires it running"
         ((skipped_count++)) || true
         echo ""
         continue
