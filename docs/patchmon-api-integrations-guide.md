@@ -3177,7 +3177,8 @@ Content-Type: application/json
 | `kernelVersion` | string | No | Running kernel version |
 | `installedKernelVersion` | string | No | Installed (on-disk) kernel version |
 | `selinuxStatus` | string | No | SELinux status (`enabled`, `disabled`, or `permissive`) |
-| `systemUptime` | string | No | System uptime |
+| `systemUptime` | string | No | System uptime. Inside a container (Proxmox LXC, Docker) this is the container's own uptime, not the host's |
+| `bootTime` | string | No | Boot instant as a UTC ISO 8601 timestamp. Lets the UI tick uptime live between reports |
 | `loadAverage` | array | No | Load average values |
 | `machineId` | string | No | Machine ID |
 | `needsReboot` | boolean | No | Whether a reboot is required |
