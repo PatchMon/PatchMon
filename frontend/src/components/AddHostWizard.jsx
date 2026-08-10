@@ -10,6 +10,7 @@ import {
 	hostGroupsAPI,
 	settingsAPI,
 } from "../utils/api";
+import { invalidateHostScope } from "../utils/queryScopes";
 import ModalPortal from "./ui/ModalPortal";
 
 const STEPS = [
@@ -143,7 +144,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 				if (status?.connected && connectionStage === "waiting") {
 					setConnectionStage("connected");
 					queryClient.invalidateQueries({ queryKey: ["host", createdHost.id] });
-					queryClient.invalidateQueries({ queryKey: ["hosts"] });
+					invalidateHostScope(queryClient);
 				}
 				if (
 					status?.connected &&
@@ -211,7 +212,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 			});
 			setTimeout(() => {
 				queryClient.invalidateQueries({ queryKey: ["host", createdHost.id] });
-				queryClient.invalidateQueries({ queryKey: ["hosts"] });
+				invalidateHostScope(queryClient);
 			}, 2000);
 		}, 300);
 	}, [

@@ -83,6 +83,7 @@ import {
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { useToast } from "../contexts/ToastContext";
+import { usePageRefresh } from "../hooks/usePageRefresh";
 import {
 	adminUsersAPI,
 	alertsAPI,
@@ -113,6 +114,20 @@ ChartJS.register(
 // update-status chart reaches the same list through the `filter` its segment
 // carries, rather than through this constant.
 const ERRORED_HOSTS_FILTER = "inactive";
+
+// Every monitoring query the dashboard renders. Card layout and preferences are
+// deliberately absent: refreshing the data must not reshuffle a layout the user
+// is part-way through editing.
+const DASHBOARD_REFRESH_KEYS = [
+	["dashboardStats"],
+	["packageTrends"],
+	["dashboardRecentUsers"],
+	["dashboardRecentCollection"],
+	["compliance-dashboard"],
+	["patching-dashboard"],
+	["alerts"],
+	["alert-stats"],
+];
 
 // Drag-to-resize handle on the right edge of a card in edit mode
 const CARD_RESIZE_PIXELS_PER_COLUMN = 40;
@@ -401,13 +416,15 @@ const Dashboard = () => {
 		isLoading,
 		error,
 		refetch,
-		isFetching,
 	} = useQuery({
 		queryKey: ["dashboardStats"],
 		queryFn: () => dashboardAPI.getStats().then((res) => res.data),
-		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
-		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
+
+	// The header button refreshes the whole screen, not just this query.
+	const { refresh: refreshDashboard, isRefreshing } = usePageRefresh(
+		DASHBOARD_REFRESH_KEYS,
+	);
 
 	// Package trends data query
 	const {
@@ -426,8 +443,11 @@ const Dashboard = () => {
 			}
 			return dashboardAPI.getPackageTrends(params).then((res) => res.data);
 		},
-		staleTime: 5 * 60 * 1000, // 5 minutes
-		refetchOnWindowFocus: false,
+		// Deliberately above the 60s default. This aggregates up to a year of
+		// system_statistics with no server-side cache, and the series is
+		// day-granular, so refetching it on every remount past a minute costs a
+		// lot and can change nothing. The Refresh button still forces it.
+		staleTime: 5 * 60 * 1000,
 	});
 
 	// Fetch user's dashboard preferences (must be fetched before recentUsers query)
@@ -471,7 +491,6 @@ const Dashboard = () => {
 		queryKey: ["compliance-dashboard"],
 		queryFn: () => complianceAPI.getDashboard().then((res) => res.data),
 		staleTime: 60 * 1000,
-		refetchOnWindowFocus: false,
 		enabled:
 			has_view_hosts &&
 			is_any_compliance_card_enabled &&
@@ -2351,13 +2370,13 @@ const Dashboard = () => {
 					</button>
 					<button
 						type="button"
-						onClick={() => refetch()}
-						disabled={isFetching}
+						onClick={() => refreshDashboard()}
+						disabled={isRefreshing}
 						className="btn-outline flex items-center gap-2 min-h-[44px] min-w-[44px] justify-center"
 						title="Refresh dashboard data"
 					>
 						<RefreshCw
-							className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`}
+							className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
 						/>
 					</button>
 				</div>

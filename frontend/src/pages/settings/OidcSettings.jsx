@@ -69,6 +69,7 @@ const OidcSettings = () => {
 	const [showSetupGuide, setShowSetupGuide] = useState(false);
 
 	// Local form state - only saved when user clicks Apply
+	const [isDirty, setIsDirty] = useState(false);
 	const [form, setForm] = useState({
 		oidc_issuer_url: "",
 		oidc_client_id: "",
@@ -117,9 +118,10 @@ const OidcSettings = () => {
 		});
 	}, [rolesData]);
 
-	// Sync form from server when settings load; pre-fill redirect URI from callback_url when empty
+	// Sync form from server; pre-fill redirect URI from callback_url when empty.
+	// Never hydrate over unsaved edits: a refetch would otherwise discard them.
 	useEffect(() => {
-		if (!settings) return;
+		if (!settings || isDirty) return;
 		setForm({
 			oidc_issuer_url: settings.oidc_issuer_url || "",
 			oidc_client_id: settings.oidc_client_id || "",
@@ -138,7 +140,7 @@ const OidcSettings = () => {
 			oidc_auto_create_users: settings.oidc_auto_create_users ?? true,
 			oidc_enforce_https: settings.oidc_enforce_https ?? true,
 		});
-	}, [settings]);
+	}, [settings, isDirty]);
 
 	// Update settings mutation
 	const updateMutation = useMutation({
@@ -146,6 +148,7 @@ const OidcSettings = () => {
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["oidcSettings"] });
 			setSecretInput("");
+			setIsDirty(false);
 			toast.success("OIDC settings saved");
 		},
 		onError: (err) => {
@@ -158,6 +161,8 @@ const OidcSettings = () => {
 		mutationFn: () => oidcAPI.importFromEnv(),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["oidcSettings"] });
+			// The imported values are meant to land in the form, so drop the guard.
+			setIsDirty(false);
 			toast.success("OIDC settings imported from .env");
 		},
 		onError: (err) => {
@@ -172,6 +177,7 @@ const OidcSettings = () => {
 	};
 
 	const handleFieldChange = (field, value) => {
+		setIsDirty(true);
 		setForm((prev) => ({ ...prev, [field]: value }));
 	};
 

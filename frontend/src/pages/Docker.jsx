@@ -20,8 +20,13 @@ import {
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { useToast } from "../contexts/ToastContext";
+import { usePageRefresh } from "../hooks/usePageRefresh";
 import api, { formatError } from "../utils/api";
 import { generateRegistryLink, getSourceDisplayName } from "../utils/docker";
+
+// Every tab's data plus the stat cards live under this prefix, so one key
+// covers the lot. The per-tab dispatch this replaces never refreshed the cards.
+const DOCKER_REFRESH_KEYS = [["docker"]];
 
 const VALID_DOCKER_TABS = [
 	"stacks",
@@ -42,6 +47,8 @@ const Docker = () => {
 	const [activeTab, setActiveTab] = useState(
 		VALID_DOCKER_TABS.includes(urlTab) ? urlTab : "stacks",
 	);
+	const { refresh: refreshDocker, isRefreshing } =
+		usePageRefresh(DOCKER_REFRESH_KEYS);
 
 	// Sync tab only on actual URL navigation (not in-page tab clicks)
 	useEffect(() => {
@@ -73,11 +80,7 @@ const Docker = () => {
 	});
 
 	// Fetch containers
-	const {
-		data: containersData,
-		isLoading: containersLoading,
-		refetch: refetchContainers,
-	} = useQuery({
+	const { data: containersData, isLoading: containersLoading } = useQuery({
 		queryKey: ["docker", "containers", statusFilter],
 		queryFn: async () => {
 			const params = new URLSearchParams();
@@ -90,11 +93,7 @@ const Docker = () => {
 	});
 
 	// Fetch images
-	const {
-		data: imagesData,
-		isLoading: imagesLoading,
-		refetch: refetchImages,
-	} = useQuery({
+	const { data: imagesData, isLoading: imagesLoading } = useQuery({
 		queryKey: ["docker", "images", sourceFilter],
 		queryFn: async () => {
 			const params = new URLSearchParams();
@@ -590,20 +589,14 @@ const Docker = () => {
 				<div className="flex items-center gap-3">
 					<button
 						type="button"
-						onClick={() => {
-							// Trigger refresh based on active tab
-							if (activeTab === "stacks") refetchContainers();
-							else if (activeTab === "containers") refetchContainers();
-							else if (activeTab === "images") refetchImages();
-							else if (activeTab === "volumes") refetchVolumes();
-							else if (activeTab === "networks") refetchNetworks();
-							else if (activeTab === "hosts") refetchHosts();
-							else window.location.reload();
-						}}
+						onClick={() => refreshDocker()}
+						disabled={isRefreshing}
 						className="btn-outline flex items-center justify-center p-2"
 						title="Refresh data"
 					>
-						<RefreshCw className="h-4 w-4" />
+						<RefreshCw
+							className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
+						/>
 					</button>
 				</div>
 			</div>

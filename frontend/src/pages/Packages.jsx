@@ -30,7 +30,16 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import PatchWizard from "../components/PatchWizard";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
+import { usePageRefresh } from "../hooks/usePageRefresh";
 import { dashboardAPI, packagesAPI } from "../utils/api";
+
+// The table, the stat cards and the host filter are three separate queries.
+const PACKAGES_REFRESH_KEYS = [
+	["packages"],
+	["dashboardStats"],
+	["packagesHostStats"],
+	["packageCategories"],
+];
 
 const PACKAGES_PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
 
@@ -194,7 +203,6 @@ const Packages = () => {
 		isLoading,
 		error,
 		refetch,
-		isFetching,
 	} = useQuery({
 		queryKey: [
 			"packages",
@@ -236,7 +244,6 @@ const Packages = () => {
 		},
 		placeholderData: keepPreviousData,
 		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
-		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
 
 	// Extract packages from the response and normalise the data structure
@@ -261,24 +268,20 @@ const Packages = () => {
 	const endIndex = Math.min(startIndex + packages.length, totalPackages);
 
 	// Fetch dashboard stats for card counts (consistent with homepage)
-	const { data: dashboardStats, refetch: refetchDashboardStats } = useQuery({
+	const { data: dashboardStats } = useQuery({
 		queryKey: ["dashboardStats"],
 		queryFn: () => dashboardAPI.getStats().then((res) => res.data),
-		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
-		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
 
 	const { data: categories = [] } = useQuery({
 		queryKey: ["packageCategories"],
 		queryFn: () => packagesAPI.getCategories().then((res) => res.data),
 		staleTime: 5 * 60 * 1000,
-		refetchOnWindowFocus: false,
 	});
 
-	// Handle refresh - refetch all related data
-	const handleRefresh = async () => {
-		await Promise.all([refetch(), refetchDashboardStats()]);
-	};
+	const { refresh: handleRefresh, isRefreshing } = usePageRefresh(
+		PACKAGES_REFRESH_KEYS,
+	);
 
 	// Post-submit UX for the Patch all wizard. The wizard now owns the server
 	// call; this handler only routes the user to the right place afterwards.
@@ -348,7 +351,6 @@ const Packages = () => {
 				.then((res) => res.data),
 		enabled: isHostScoped,
 		staleTime: 60 * 1000,
-		refetchOnWindowFocus: false,
 	});
 
 	const selectHostFilter = (value) => {
@@ -738,15 +740,15 @@ const Packages = () => {
 						)}
 					<button
 						type="button"
-						onClick={handleRefresh}
-						disabled={isFetching}
+						onClick={() => handleRefresh()}
+						disabled={isRefreshing}
 						className="btn-outline flex items-center gap-2"
 						title="Refresh packages and statistics data"
 					>
 						<RefreshCw
-							className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`}
+							className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
 						/>
-						{isFetching ? "Refreshing..." : "Refresh"}
+						{isRefreshing ? "Refreshing..." : "Refresh"}
 					</button>
 				</div>
 			</div>
