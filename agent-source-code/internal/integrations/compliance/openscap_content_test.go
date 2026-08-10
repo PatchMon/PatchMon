@@ -1,6 +1,7 @@
 package compliance
 
 import (
+	"strings"
 	"testing"
 
 	"patchmon-agent/pkg/models"
@@ -84,6 +85,96 @@ func TestPickSSGFile(t *testing.T) {
 			}
 			if got := s.pickSSGFile(tt.available); got != tt.want {
 				t.Fatalf("pickSSGFile() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPolicyHasCandidate(t *testing.T) {
+	tests := []struct {
+		name string
+		out  string
+		want bool
+	}{
+		{
+			name: "installable",
+			out:  "openscap-scanner:\n  Installed: (none)\n  Candidate: 1.3.7+dfsg-1+deb12u1\n  Version table:\n",
+			want: true,
+		},
+		{
+			// A name apt knows but cannot install, which is how bookworm reports
+			// libopenscap8.
+			name: "known but no candidate",
+			out:  "libopenscap8:\n  Installed: (none)\n  Candidate: (none)\n  Version table:\n",
+			want: false,
+		},
+		{
+			// A name apt does not know at all produces no output whatsoever, and
+			// still exits zero.
+			name: "unknown package",
+			out:  "",
+			want: false,
+		},
+		{
+			name: "already installed",
+			out:  "libopenscap8:\n  Installed: 1.2.17-0.1ubuntu7.22.04.3\n  Candidate: 1.2.17-0.1ubuntu7.22.04.3\n",
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := policyHasCandidate(tt.out); got != tt.want {
+				t.Fatalf("policyHasCandidate() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDebianScannerSet(t *testing.T) {
+	tests := []struct {
+		name      string
+		available []string
+		want      []string
+	}{
+		{
+			name:      "bookworm and noble",
+			available: []string{"openscap-scanner", "openscap-common", "ssg-base"},
+			want:      []string{"openscap-scanner", "openscap-common"},
+		},
+		{
+			name:      "jammy has only the library package",
+			available: []string{"libopenscap8"},
+			want:      []string{"libopenscap8"},
+		},
+		{
+			name:      "buster has both, newest wins",
+			available: []string{"libopenscap8", "openscap-scanner", "openscap-common"},
+			want:      []string{"openscap-scanner", "openscap-common"},
+		},
+		{
+			// A partial modern set must not be selected: installing
+			// openscap-scanner without openscap-common fails the transaction.
+			name:      "partial modern set falls through",
+			available: []string{"openscap-scanner", "libopenscap8"},
+			want:      []string{"libopenscap8"},
+		},
+		{
+			name:      "bullseye packages no scanner at all",
+			available: nil,
+			want:      nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			avail := make(map[string]bool, len(tt.available))
+			for _, p := range tt.available {
+				avail[p] = true
+			}
+			got := debianScannerSet(func(p string) bool { return avail[p] })
+			if strings.Join(got, " ") != strings.Join(tt.want, " ") {
+				t.Fatalf("debianScannerSet() = %v, want %v", got, tt.want)
 			}
 		})
 	}

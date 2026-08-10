@@ -1129,6 +1129,11 @@ func (h *ComplianceHandler) InstallScanner(w http.ResponseWriter, r *http.Reques
 		Error(w, http.StatusInternalServerError, "Failed to create install task")
 		return
 	}
+	// Drop the previous install's events before the new job exists, so the
+	// first poll cannot read the old run's terminal step as this run's outcome.
+	if h.integrationStatus != nil {
+		_ = h.integrationStatus.ClearInstallEvents(r.Context(), host.ApiID, "compliance")
+	}
 	info, err := h.queueClient.Enqueue(task)
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to enqueue install")
@@ -1173,6 +1178,68 @@ func (h *ComplianceHandler) CancelInstall(w http.ResponseWriter, r *http.Request
 		"success": true,
 		"message": "Cancel requested",
 	})
+}
+
+// installJobStatusFromEvents derives the install outcome from the agent's
+// install_events, returning the status and the message to report as `error`.
+//
+// The queue state this overrides only describes delivery of the WebSocket
+// command, which reaches a terminal state the moment the agent is told to
+// begin, so it reads "completed" or "unknown" for an install that failed.
+//
+// The outcome deliberately does NOT come from the stored `status` field, even
+// though the install path sets it. That field is shared with the agent's
+// periodic availability report, which writes "error" on any host where OpenSCAP
+// is simply not present yet, from two seconds after agent startup onwards and
+// again on every refresh the compliance tab triggers. Reading it would report
+// every fresh install as already failed before the agent had done anything, and
+// report a re-install on a working host as already complete.
+//
+// install_events are written only by runInstallScanner, and its last step is
+// always `complete`, `done` on success and `failed` on failure. Anything
+// short of that terminal step leaves the queue state alone rather than
+// inventing a verdict: an install that died mid-flight should not read as
+// permanently active.
+// The failure message is taken from the step that actually failed rather than
+// from the terminal step or the stored `message`. The failing step carries the
+// specific reason ("OpenSCAP installation failed: found no installable ...")
+// where `complete` is sometimes just "Installation failed", and unlike
+// `message` it cannot be overwritten by the availability reporter.
+func installJobStatusFromEvents(events []interface{}) (status, message string, ok bool) {
+	terminal := ""
+	terminalMsg := ""
+	failedStepMsg := ""
+
+	for _, raw := range events {
+		e, isMap := raw.(map[string]interface{})
+		if !isMap {
+			continue
+		}
+		step, _ := e["step"].(string)
+		stepStatus, _ := e["status"].(string)
+		msg, _ := e["message"].(string)
+
+		if step == "complete" {
+			switch stepStatus {
+			case "failed":
+				terminal, terminalMsg = "failed", msg
+			case "done":
+				terminal, terminalMsg = "completed", msg
+			}
+			continue
+		}
+		if stepStatus == "failed" && msg != "" && failedStepMsg == "" {
+			failedStepMsg = msg
+		}
+	}
+
+	if terminal == "" {
+		return "", "", false
+	}
+	if terminal == "failed" && failedStepMsg != "" {
+		return terminal, failedStepMsg, true
+	}
+	return terminal, terminalMsg, true
 }
 
 // GetInstallJobStatus handles GET /compliance/install-job/:hostId.
@@ -1230,6 +1297,20 @@ func (h *ComplianceHandler) GetInstallJobStatus(w http.ResponseWriter, r *http.R
 				}
 				if evts, ok := live["install_events"].([]interface{}); ok && len(evts) > 0 {
 					resp["install_events"] = evts
+					if mapped, reason, ok := installJobStatusFromEvents(evts); ok {
+						resp["status"] = mapped
+						if mapped == "failed" {
+							// live["message"] is the last resort only: the
+							// availability reporter writes that field too, so it
+							// may describe the host rather than this install.
+							if reason == "" {
+								reason, _ = live["message"].(string)
+							}
+							if reason != "" {
+								resp["error"] = reason
+							}
+						}
+					}
 				}
 				if prog, ok := live["progress"].(float64); ok {
 					resp["progress"] = prog
