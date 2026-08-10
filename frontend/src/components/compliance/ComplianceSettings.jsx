@@ -39,15 +39,14 @@ const ComplianceSettings = () => {
 		staleTime: 30 * 60 * 1000,
 	});
 
+	// Never hydrate over unsaved edits: a refetch would otherwise discard them.
 	useEffect(() => {
-		if (settings) {
-			setFormData({
-				defaultComplianceMode: settings.default_compliance_mode || "on-demand",
-				complianceScanInterval: settings.compliance_scan_interval || 1440,
-			});
-			setIsDirty(false);
-		}
-	}, [settings]);
+		if (!settings || isDirty) return;
+		setFormData({
+			defaultComplianceMode: settings.default_compliance_mode || "on-demand",
+			complianceScanInterval: settings.compliance_scan_interval || 1440,
+		});
+	}, [settings, isDirty]);
 
 	const updateMutation = useMutation({
 		mutationFn: (data) => settingsAPI.update(data).then((res) => res.data),

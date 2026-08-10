@@ -91,20 +91,18 @@ const AgentUpdatesTab = () => {
 	const windowsRemoveCommand = (extraArgs = "") =>
 		`Invoke-WebRequest -Uri "${serverUrl}/api/v1/hosts/remove?os=windows" -UseBasicParsing -OutFile "$env:TEMP\\patchmon-remove.ps1"; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-remove.ps1"${extraArgs}`;
 
-	// Update form data when settings are loaded
+	// Hydrate the form from the server, but never over unsaved edits: any
+	// refetch (returning to the tab, a sibling tab's save, a reconnect) would
+	// otherwise discard whatever the user had typed.
 	useEffect(() => {
-		if (settings) {
-			const newFormData = {
-				updateInterval: settings.update_interval || 60,
-				autoUpdate: settings.auto_update || false,
-				packageCacheRefreshMode:
-					settings.package_cache_refresh_mode || "always",
-				packageCacheRefreshMaxAge: settings.package_cache_refresh_max_age || 60,
-			};
-			setFormData(newFormData);
-			setIsDirty(false);
-		}
-	}, [settings]);
+		if (!settings || isDirty) return;
+		setFormData({
+			updateInterval: settings.update_interval || 60,
+			autoUpdate: settings.auto_update || false,
+			packageCacheRefreshMode: settings.package_cache_refresh_mode || "always",
+			packageCacheRefreshMaxAge: settings.package_cache_refresh_max_age || 60,
+		});
+	}, [settings, isDirty]);
 
 	// Update settings mutation
 	const updateSettingsMutation = useMutation({

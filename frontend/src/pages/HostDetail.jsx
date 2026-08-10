@@ -64,6 +64,7 @@ import UpgradeRequiredContent from "../components/UpgradeRequiredContent";
 import { getRequiredTier } from "../constants/tiers";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
+import { usePageRefresh } from "../hooks/usePageRefresh";
 import { useTick } from "../hooks/useTick";
 import {
 	adminHostsAPI,
@@ -78,6 +79,7 @@ import {
 import { complianceAPI } from "../utils/complianceApi";
 import { OSIcon } from "../utils/osIcons.jsx";
 import { patchingAPI } from "../utils/patchingApi";
+import { invalidateHostScope } from "../utils/queryScopes";
 import AgentActivityTab from "./hostdetail/AgentActivityTab";
 import CredentialsModal from "./hostdetail/CredentialsModal";
 import DeleteConfirmationModal from "./hostdetail/DeleteConfirmationModal";
@@ -212,7 +214,6 @@ const HostDetail = () => {
 		isLoading,
 		error,
 		refetch,
-		isFetching,
 	} = useQuery({
 		queryKey: ["host", hostId, historyPage, historyLimit],
 		queryFn: () =>
@@ -222,9 +223,29 @@ const HostDetail = () => {
 					offset: historyPage * historyLimit,
 				})
 				.then((res) => res.data),
-		staleTime: 5 * 60 * 1000, // 5 minutes - data stays fresh longer
-		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
+
+	// The tabs on this page (packages, integrations, compliance, Docker,
+	// patching) each own their query, so refreshing only the host record left
+	// whichever tab was open showing stale rows.
+	const hostRefreshKeys = useMemo(
+		() => [
+			["host", hostId],
+			// Not covered by ["host", hostId] — the key is a different string, so
+			// it does not prefix-match. The Activity tab polls every 30s, which
+			// is what made the omission easy to miss.
+			["host-activity", hostId],
+			["host-repositories", hostId],
+			["host-integrations", hostId],
+			["compliance-latest", hostId],
+			["compliance-setup-status", hostId],
+			["docker", "host", hostId],
+			["patching-runs", hostId],
+		],
+		[hostId],
+	);
+	const { refresh: refreshHost, isRefreshing } =
+		usePageRefresh(hostRefreshKeys);
 
 	// Fetch global settings to check if auto-update master toggle is enabled
 	// Try public endpoint first (works for all users), fallback to full settings if user has permissions
@@ -290,7 +311,6 @@ const HostDetail = () => {
 		queryKey: ["host-repositories", hostId],
 		queryFn: () => repositoryAPI.getByHost(hostId).then((res) => res.data),
 		staleTime: 5 * 60 * 1000, // 5 minutes - data stays fresh longer
-		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 		enabled: !!hostId,
 	});
 
@@ -299,7 +319,6 @@ const HostDetail = () => {
 		queryKey: ["host-groups"],
 		queryFn: () => hostGroupsAPI.list().then((res) => res.data),
 		staleTime: 5 * 60 * 1000, // 5 minutes - data stays fresh longer
-		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
 
 	// Tab change handler. Mirror "activity" into ?tab= so the new merged tab is
@@ -422,7 +441,7 @@ const HostDetail = () => {
 	const deleteHostMutation = useMutation({
 		mutationFn: (hostId) => adminHostsAPI.delete(hostId),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["hosts"] });
+			invalidateHostScope(queryClient);
 			navigate("/hosts");
 		},
 	});
@@ -708,7 +727,6 @@ const HostDetail = () => {
 		queryFn: () =>
 			adminHostsAPI.getIntegrations(hostId).then((res) => res.data),
 		staleTime: 30 * 1000, // 30 seconds
-		refetchOnWindowFocus: false,
 		enabled: !!hostId, // Always fetch to control tab visibility
 	});
 
@@ -721,7 +739,6 @@ const HostDetail = () => {
 				.then((res) => res.data)
 				.catch(() => null),
 		staleTime: 2 * 60 * 1000, // 2 minutes
-		refetchOnWindowFocus: false,
 		enabled:
 			!!hostId &&
 			!!integrationsData?.data?.integrations?.compliance &&
@@ -746,7 +763,6 @@ const HostDetail = () => {
 				}
 				return false; // Stop polling when done
 			},
-			refetchOnWindowFocus: false,
 			// Also fetched while compliance is disabled, so the page can tell
 			// whether the scanning tools are still installed on the host.
 			enabled: !!hostId && hasModule("compliance"),
@@ -902,7 +918,6 @@ const HostDetail = () => {
 				.getHostDetail(hostId, { include: "docker" })
 				.then((res) => res.data?.docker),
 		staleTime: 30 * 1000,
-		refetchOnWindowFocus: false,
 		enabled:
 			!!hostId &&
 			(activeTab === "docker" || integrationsData?.data?.integrations?.docker),
@@ -1452,13 +1467,13 @@ const HostDetail = () => {
 						</button>
 						<button
 							type="button"
-							onClick={() => refetch()}
-							disabled={isFetching}
+							onClick={() => refreshHost()}
+							disabled={isRefreshing}
 							className="btn-outline flex items-center justify-center p-2 text-sm"
-							title="Refresh dashboard"
+							title="Refresh host data"
 						>
 							<RefreshCw
-								className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`}
+								className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
 							/>
 						</button>
 						<button

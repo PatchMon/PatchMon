@@ -44,6 +44,7 @@ import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import InlineToggle from "../components/InlineToggle";
 import Tooltip from "../components/ui/Tooltip";
+import { usePageRefresh } from "../hooks/usePageRefresh";
 import { useTick } from "../hooks/useTick";
 import {
 	adminHostsAPI,
@@ -57,6 +58,17 @@ import {
 } from "../utils/api";
 import { deriveReportingState } from "../utils/hostStatus";
 import { getOSDisplayName, OSIcon } from "../utils/osIcons.jsx";
+import { invalidateHostScope } from "../utils/queryScopes";
+
+// Everything the page renders, not just the table: the stat cards, the filter
+// dropdowns and the connection badge each have their own query.
+const HOSTS_REFRESH_KEYS = [
+	["hosts"],
+	["hostCounts"],
+	["hostFilterOptions"],
+	["hostGroups"],
+	["wsStatusSummary"],
+];
 
 const HOSTS_PAGE_SIZE_OPTIONS = [25, 50, 100, 200, 500];
 const HOSTS_DEFAULT_PAGE_SIZE = 50;
@@ -469,15 +481,18 @@ const Hosts = () => {
 		isLoading,
 		error,
 		refetch,
-		isFetching,
 	} = useQuery({
 		queryKey: ["hosts", hostsQueryParams],
 		queryFn: () =>
 			dashboardAPI.getHosts(hostsQueryParams).then((res) => res.data),
 		placeholderData: keepPreviousData,
-		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
-		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
+
+	// The stat cards and the filter dropdowns come from their own queries, so a
+	// button bound only to the table left them showing counts that disagreed
+	// with the rows underneath.
+	const { refresh: refreshHosts, isRefreshing } =
+		usePageRefresh(HOSTS_REFRESH_KEYS);
 
 	const hostsPage = useMemo(() => {
 		if (Array.isArray(hostsResponse)) {
@@ -562,14 +577,11 @@ const Hosts = () => {
 		queryKey: ["hostFilterOptions"],
 		queryFn: () => dashboardAPI.getHostFilterOptions().then((res) => res.data),
 		staleTime: 5 * 60 * 1000,
-		refetchOnWindowFocus: false,
 	});
 
 	const { data: hostCounts } = useQuery({
 		queryKey: ["hostCounts"],
 		queryFn: () => dashboardAPI.getHostCounts().then((res) => res.data),
-		staleTime: 5 * 60 * 1000,
-		refetchOnWindowFocus: false,
 	});
 
 	const { data: wsStatusSummary } = useQuery({
@@ -577,7 +589,6 @@ const Hosts = () => {
 		queryFn: () => dashboardAPI.getWsStatusSummary().then((res) => res.data),
 		refetchInterval: 10000,
 		staleTime: 10000,
-		refetchOnWindowFocus: false,
 	});
 
 	// host_down alert config drives the WS pill amber→red threshold (seconds).
@@ -776,7 +787,7 @@ const Hosts = () => {
 	const bulkDeleteMutation = useMutation({
 		mutationFn: (hostIds) => adminHostsAPI.deleteBulk(hostIds),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["hosts"] });
+			invalidateHostScope(queryClient);
 			setSelectedHosts([]);
 			setShowBulkDeleteModal(false);
 		},
@@ -1776,13 +1787,13 @@ const Hosts = () => {
 				<div className="flex items-center gap-3">
 					<button
 						type="button"
-						onClick={() => refetch()}
-						disabled={isFetching}
+						onClick={() => refreshHosts()}
+						disabled={isRefreshing}
 						className="btn-outline flex items-center justify-center p-2"
 						title="Refresh hosts data"
 					>
 						<RefreshCw
-							className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`}
+							className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
 						/>
 					</button>
 					<button
