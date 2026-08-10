@@ -14,6 +14,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 env:
   TAG_NAME: ${{ github.event.release.tag_name }}
@@ -173,6 +175,10 @@ jobs:
               echo "✅ No GLIBC version requirements found (statically linked)"
             fi
           fi
+      - name: Generate artifact attestation
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 #v4.1.0
+        with:
+          subject-path: agent-source-code/patchmon-agent-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
 
       - name: Upload agent binary to release
         uses: softprops/action-gh-release@b25b93d384199fc0fc8c2e126b2d937a0cbeb2ae
@@ -257,6 +263,11 @@ jobs:
             -ldflags="-s -w -X 'github.com/PatchMon/PatchMon/server-source-code/internal/config.DefaultVersion=${VERSION}'" \
             -o "${OUTPUT_NAME}" ./cmd/server
           mv "${OUTPUT_NAME}" ../
+
+      - name: Generate artifact attestation
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 #v4.1.0
+        with:
+          subject-path: patchmon-server-${{ matrix.goos }}-${{ matrix.goarch }}
 
       - name: Upload patchmon-server to release
         uses: softprops/action-gh-release@b25b93d384199fc0fc8c2e126b2d937a0cbeb2ae
