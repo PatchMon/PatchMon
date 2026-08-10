@@ -309,125 +309,37 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 		"NEEDRESTART_SUSPEND=1",
 	)
 
+	var scannerErr error
 	switch s.osInfo.Family {
 	case "debian":
-		// Ubuntu/Debian - always update and upgrade to get latest content
-		s.logger.Info("Installing/upgrading OpenSCAP on Debian-based system...")
-
-		// Update package cache first (with timeout)
-		updateCmd := exec.CommandContext(ctx, "apt-get", "update", "-qq")
-		updateCmd.Env = nonInteractiveEnv
-		if err := updateCmd.Run(); err != nil {
-			// Ignore errors on update - non-critical
-			_ = err
-		}
-
-		// Build package list - openscap-common is required for Ubuntu 24.04+
-		packages := []string{"openscap-scanner", "openscap-common"}
-
-		// SSG content: ssg-base + ssg-debderived provide Ubuntu content; on Debian we need ssg-debian for ssg-debian10/11/12/13-ds.xml
-		ssgPackages := []string{"ssg-debderived", "ssg-base"}
-		if s.osInfo.Name == "debian" {
-			ssgPackages = append(ssgPackages, "ssg-debian")
-		}
-
-		// Install core OpenSCAP packages first
-		installArgs := append([]string{"install", "-y", "-qq",
-			"-o", "Dpkg::Options::=--force-confdef",
-			"-o", "Dpkg::Options::=--force-confold"}, packages...)
-		installCmd := exec.CommandContext(ctx, "apt-get", installArgs...)
-		installCmd.Env = nonInteractiveEnv
-		output, err := installCmd.CombinedOutput()
-		if err != nil {
-			if ctx.Err() == context.DeadlineExceeded {
-				s.logger.Warn("OpenSCAP installation timed out after 5 minutes")
-				return fmt.Errorf("installation timed out after 5 minutes")
-			}
-			s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to install OpenSCAP core packages")
-			// Truncate output for error message
-			outputStr := string(output)
-			if len(outputStr) > 500 {
-				outputStr = outputStr[:500] + "... (truncated)"
-			}
-			return fmt.Errorf("failed to install OpenSCAP: %w - %s", err, outputStr)
-		}
-		s.logger.Info("OpenSCAP core packages installed successfully")
-
-		// Try to install SSG content packages (best effort - may fail on Ubuntu 24.04+)
-		ssgArgs := append([]string{"install", "-y", "-qq",
-			"-o", "Dpkg::Options::=--force-confdef",
-			"-o", "Dpkg::Options::=--force-confold"}, ssgPackages...)
-		ssgCmd := exec.CommandContext(ctx, "apt-get", ssgArgs...)
-		ssgCmd.Env = nonInteractiveEnv
-		ssgOutput, ssgErr := ssgCmd.CombinedOutput()
-		if ssgErr != nil {
-			s.logger.WithField("output", logutil.Sanitize(string(ssgOutput))).Warn("SSG content packages not available or failed to install. CIS scanning may have limited functionality.")
-		} else {
-			s.logger.Info("SSG content packages installed successfully")
-
-			// Explicitly upgrade to ensure we have the latest SCAP content
-			upgradePkgs := []string{"ssg-base", "ssg-debderived"}
-			if s.osInfo.Name == "debian" {
-				upgradePkgs = append(upgradePkgs, "ssg-debian")
-			}
-			upgradeCmd := exec.CommandContext(ctx, "apt-get", append([]string{"install", "--only-upgrade", "-y", "-qq",
-				"-o", "Dpkg::Options::=--force-confdef",
-				"-o", "Dpkg::Options::=--force-confold"}, upgradePkgs...)...)
-			upgradeCmd.Env = nonInteractiveEnv
-			upgradeOutput, upgradeErr := upgradeCmd.CombinedOutput()
-			if upgradeErr != nil {
-				s.logger.WithField("output", logutil.Sanitize(string(upgradeOutput))).Debug("Package upgrade returned non-zero (may already be latest)")
-			} else {
-				s.logger.Info("SCAP content packages upgraded to latest version")
-			}
-		}
-
+		scannerErr = s.installDebian(ctx, nonInteractiveEnv)
 	case "rhel":
-		// RHEL/CentOS/Rocky/Alma/Fedora
-		s.logger.Info("Installing/upgrading OpenSCAP on RHEL-based system...")
-		var installCmd *exec.Cmd
-		if _, err := exec.LookPath("dnf"); err == nil {
-			installCmd = exec.CommandContext(ctx, "dnf", "install", "-y", "-q", "openscap-scanner", "scap-security-guide")
-		} else {
-			installCmd = exec.CommandContext(ctx, "yum", "install", "-y", "-q", "openscap-scanner", "scap-security-guide")
-		}
-		output, err := installCmd.CombinedOutput()
-		if err != nil {
-			if ctx.Err() == context.DeadlineExceeded {
-				s.logger.Warn("OpenSCAP installation timed out after 5 minutes")
-				return fmt.Errorf("installation timed out after 5 minutes")
-			}
-			s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to install OpenSCAP")
-			outputStr := string(output)
-			if len(outputStr) > 500 {
-				outputStr = outputStr[:500] + "... (truncated)"
-			}
-			return fmt.Errorf("failed to install OpenSCAP: %w - %s", err, outputStr)
-		}
-
+		scannerErr = s.installRHEL(ctx)
 	case "suse":
-		// SLES/openSUSE
-		s.logger.Info("Installing/upgrading OpenSCAP on SUSE-based system...")
-		installCmd := exec.CommandContext(ctx, "zypper", "--non-interactive", "install", "openscap-utils", "scap-security-guide")
-		output, err := installCmd.CombinedOutput()
-		if err != nil {
-			if ctx.Err() == context.DeadlineExceeded {
-				s.logger.Warn("OpenSCAP installation timed out after 5 minutes")
-				return fmt.Errorf("installation timed out after 5 minutes")
-			}
-			s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to install OpenSCAP")
-			outputStr := string(output)
-			if len(outputStr) > 500 {
-				outputStr = outputStr[:500] + "... (truncated)"
-			}
-			return fmt.Errorf("failed to install OpenSCAP: %w - %s", err, outputStr)
-		}
-
+		scannerErr = s.installSUSE(ctx)
 	default:
-		return fmt.Errorf("unsupported OS family: %s (OS: %s)", s.osInfo.Family, s.osInfo.Name)
+		// Alpine, Arch and FreeBSD land here. Alpine does package an openscap
+		// apk, but no SSG datastream exists for any of the three, on the distro
+		// or on the PatchMon server, so a scanner would have nothing to scan
+		// against. Say that rather than emit a bare family name.
+		platform := strings.TrimSpace(s.osInfo.Name + " " + s.osInfo.Version)
+		if platform == "" {
+			platform = "this platform (no /etc/os-release)"
+		}
+		return fmt.Errorf("compliance scanning is not supported on %s: no SCAP content is published for it", platform)
 	}
 
-	s.logger.Info("OpenSCAP installed/upgraded successfully")
+	if scannerErr != nil {
+		// A failed package transaction is only fatal when it leaves no scanner
+		// behind. Where oscap ended up present anyway, the content steps below
+		// and the caller's server sync can still complete the install.
+		if _, lookErr := exec.LookPath(oscapBinary); lookErr != nil {
+			return scannerErr
+		}
+		s.logger.WithError(scannerErr).Warn("Package install reported a failure but the oscap binary is present; continuing")
+	} else {
+		s.logger.Info("OpenSCAP installed/upgraded successfully")
+	}
 
 	// On Debian 12+, if no content file or content doesn't match OS version (e.g. only ssg-debian11 on Debian 13), try GitHub SSG
 	if s.osInfo.Family == "debian" && s.osInfo.Name == "debian" {
@@ -471,6 +383,207 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 	// Check for content version mismatch
 	s.checkContentCompatibility()
 
+	return nil
+}
+
+// truncateOutput trims command output to a length usable in an error message.
+//
+// Sanitised, not just truncated: this string is embedded in a returned error
+// that callers log and the UI renders, so it carries the same log-injection
+// risk as the adjacent log field.
+func truncateOutput(b []byte) string {
+	out := logutil.Sanitize(string(b))
+	if len(out) > 500 {
+		return out[:500] + "... (truncated)"
+	}
+	return out
+}
+
+// aptCandidate reports whether apt has an installable candidate for pkg.
+//
+// The OpenSCAP package names changed between releases: bookworm and noble ship
+// openscap-scanner plus openscap-common, while buster and jammy only ever
+// provided libopenscap8, and bullseye has neither. Asking the archive is the
+// only way to pick the right set without a release table that goes stale. A
+// name apt does not know prints nothing at all; a name it knows but cannot
+// install prints "(none)".
+func aptCandidate(ctx context.Context, env []string, pkg string) bool {
+	cmd := exec.CommandContext(ctx, "apt-cache", "policy", pkg)
+	cmd.Env = env
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return policyHasCandidate(string(out))
+}
+
+// policyHasCandidate parses `apt-cache policy` output.
+func policyHasCandidate(out string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "Candidate:") {
+			continue
+		}
+		v := strings.TrimSpace(strings.TrimPrefix(line, "Candidate:"))
+		return v != "" && v != "(none)"
+	}
+	return false
+}
+
+// debianScannerSets lists the package sets that provide the oscap binary, most
+// current first.
+var debianScannerSets = [][]string{
+	{"openscap-scanner", "openscap-common"}, // Debian 12+, Ubuntu 24.04+
+	{"libopenscap8"},                        // Debian 10, Ubuntu up to 22.04
+}
+
+// debianScannerSet returns the first set whose members are all installable, or
+// nil when the archive provides no scanner at all.
+func debianScannerSet(available func(string) bool) []string {
+	for _, set := range debianScannerSets {
+		ok := true
+		for _, p := range set {
+			if !available(p) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return set
+		}
+	}
+	return nil
+}
+
+// aptAvailable filters pkgs down to those apt can install.
+func aptAvailable(ctx context.Context, env []string, pkgs []string) []string {
+	out := make([]string, 0, len(pkgs))
+	for _, p := range pkgs {
+		if aptCandidate(ctx, env, p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// aptInstall runs a non-interactive install, optionally restricted to upgrades.
+func aptInstall(ctx context.Context, env []string, onlyUpgrade bool, pkgs ...string) ([]byte, error) {
+	args := []string{"install", "-y", "-qq",
+		"-o", "Dpkg::Options::=--force-confdef",
+		"-o", "Dpkg::Options::=--force-confold"}
+	if onlyUpgrade {
+		args = append(args, "--only-upgrade")
+	}
+	cmd := exec.CommandContext(ctx, "apt-get", append(args, pkgs...)...)
+	cmd.Env = env
+	return cmd.CombinedOutput()
+}
+
+// installDebian installs the scanner and, separately and best effort, the SSG
+// content packages. The two are separate transactions because content is
+// recoverable from the PatchMon server and the scanner is not.
+func (s *OpenSCAPScanner) installDebian(ctx context.Context, env []string) error {
+	s.logger.Info("Installing/upgrading OpenSCAP on Debian-based system...")
+
+	updateCmd := exec.CommandContext(ctx, "apt-get", "update", "-qq")
+	updateCmd.Env = env
+	if err := updateCmd.Run(); err != nil {
+		// Ignore errors on update - non-critical
+		_ = err
+	}
+
+	packages := debianScannerSet(func(p string) bool { return aptCandidate(ctx, env, p) })
+	if packages == nil {
+		// Debian 11 is the live case: openscap was removed before bullseye
+		// released. Worded as "none found" rather than "none exists" because
+		// aptCandidate also returns false when apt-cache itself cannot answer,
+		// and the apt-get update above deliberately ignores its own failure.
+		return fmt.Errorf("found no installable OpenSCAP package for %s %s (looked for openscap-scanner with openscap-common, then libopenscap8); "+
+			"on Debian 11 there is none to find, otherwise check that the package cache is current and the mirrors are reachable",
+			s.osInfo.Name, s.osInfo.Version)
+	}
+
+	output, err := aptInstall(ctx, env, false, packages...)
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			s.logger.Warn("OpenSCAP installation timed out after 5 minutes")
+			return fmt.Errorf("installation timed out after 5 minutes")
+		}
+		s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to install OpenSCAP core packages")
+		return fmt.Errorf("failed to install OpenSCAP: %w - %s", err, truncateOutput(output))
+	}
+	s.logger.WithField("packages", strings.Join(packages, " ")).Info("OpenSCAP core packages installed successfully")
+
+	// ssg-base and ssg-debderived carry Ubuntu content; Debian needs ssg-debian
+	// for ssg-debian10/11/12/13-ds.xml. Ubuntu packages none of them.
+	ssgPackages := []string{"ssg-debderived", "ssg-base"}
+	if s.osInfo.Name == "debian" {
+		ssgPackages = append(ssgPackages, "ssg-debian")
+	}
+	ssgPackages = aptAvailable(ctx, env, ssgPackages)
+	if len(ssgPackages) == 0 {
+		s.logger.Info("No SSG content packages in this archive; content will be synced from the PatchMon server")
+		return nil
+	}
+
+	ssgOutput, ssgErr := aptInstall(ctx, env, false, ssgPackages...)
+	if ssgErr != nil {
+		s.logger.WithField("output", logutil.Sanitize(string(ssgOutput))).Warn("SSG content packages failed to install. CIS scanning may have limited functionality.")
+		return nil
+	}
+	s.logger.Info("SSG content packages installed successfully")
+
+	upgradeOutput, upgradeErr := aptInstall(ctx, env, true, ssgPackages...)
+	if upgradeErr != nil {
+		s.logger.WithField("output", logutil.Sanitize(string(upgradeOutput))).Debug("Package upgrade returned non-zero (may already be latest)")
+	} else {
+		s.logger.Info("SCAP content packages upgraded to latest version")
+	}
+	return nil
+}
+
+func (s *OpenSCAPScanner) installRHEL(ctx context.Context) error {
+	s.logger.Info("Installing/upgrading OpenSCAP on RHEL-based system...")
+
+	pm := "yum"
+	if _, err := exec.LookPath("dnf"); err == nil {
+		pm = "dnf"
+	}
+
+	output, err := exec.CommandContext(ctx, pm, "install", "-y", "-q", "openscap-scanner").CombinedOutput()
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			s.logger.Warn("OpenSCAP installation timed out after 5 minutes")
+			return fmt.Errorf("installation timed out after 5 minutes")
+		}
+		s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to install OpenSCAP")
+		return fmt.Errorf("failed to install OpenSCAP: %w - %s", err, truncateOutput(output))
+	}
+
+	ssgOutput, ssgErr := exec.CommandContext(ctx, pm, "install", "-y", "-q", "scap-security-guide").CombinedOutput()
+	if ssgErr != nil {
+		s.logger.WithField("output", logutil.Sanitize(string(ssgOutput))).Warn("scap-security-guide not available; content will be synced from the PatchMon server")
+	}
+	return nil
+}
+
+func (s *OpenSCAPScanner) installSUSE(ctx context.Context) error {
+	s.logger.Info("Installing/upgrading OpenSCAP on SUSE-based system...")
+
+	output, err := exec.CommandContext(ctx, "zypper", "--non-interactive", "install", "openscap-utils").CombinedOutput()
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			s.logger.Warn("OpenSCAP installation timed out after 5 minutes")
+			return fmt.Errorf("installation timed out after 5 minutes")
+		}
+		s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to install OpenSCAP")
+		return fmt.Errorf("failed to install OpenSCAP: %w - %s", err, truncateOutput(output))
+	}
+
+	ssgOutput, ssgErr := exec.CommandContext(ctx, "zypper", "--non-interactive", "install", "scap-security-guide").CombinedOutput()
+	if ssgErr != nil {
+		s.logger.WithField("output", logutil.Sanitize(string(ssgOutput))).Warn("scap-security-guide not available; content will be synced from the PatchMon server")
+	}
 	return nil
 }
 

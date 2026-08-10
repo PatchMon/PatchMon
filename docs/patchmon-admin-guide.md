@@ -3009,10 +3009,31 @@ Compliance scanning on a host needs OpenSCAP (`oscap` binary) installed and the 
 2. On next Apply Pending Config, the agent receives the new integration state and reports that the scanner is not installed.
 3. From the Host Detail Compliance tab, click **Install Scanner**. The UI calls `POST /api/v1/compliance/install-scanner/{hostId}`.
 4. The server enqueues an install task. The worker sends an install message to the agent.
-5. The agent installs `openscap-scanner` (via `apt` / `dnf`) and downloads SSG content from the server via `GET /api/v1/compliance/ssg-content/{filename}`. Progress events are reported back to Redis and surfaced in the UI via `GET /compliance/install-job/{hostId}`, which returns the current state (`waiting`, `active`, `completed`) plus a per-step message and progress percent.
+5. The agent installs the OpenSCAP scanner with the host's own package manager, then downloads SSG content from the server via `GET /api/v1/compliance/ssg-content/{filename}`. Progress events are reported back to Redis and surfaced in the UI via `GET /compliance/install-job/{hostId}`, which returns the current state plus a per-step message and progress percent. The states are `none` (no install has been requested), `waiting`, `active`, `completed`, `failed`, and `unknown` when the job can no longer be found. A `failed` state also carries an `error` field with the reason.
 6. When the install completes, the Run Scan button becomes active.
 
+The scanner package name is not the same on every release, so the agent asks the archive which one it has rather than assuming. Debian 12 and newer, and Ubuntu 24.04 and newer, provide `openscap-scanner` plus `openscap-common`; Debian 10 and Ubuntu 22.04 provide `libopenscap8` instead. RHEL-family hosts use `openscap-scanner` and SUSE hosts use `openscap-utils`.
+
+Content is handled separately from the scanner, and a host that gets one without the other is not a failure. Ubuntu packages no SSG content at all, so on Ubuntu the datastream always comes from the PatchMon server. The install only fails outright when the host ends up with no working `oscap` binary.
+
 Install can be cancelled mid-flight from the same UI via `POST /api/v1/compliance/install-scanner/{hostId}/cancel`.
+
+#### Platforms where the scanner cannot be installed
+
+Some supported PatchMon hosts cannot run compliance scanning at all, because the platform publishes no OpenSCAP package, no SCAP content, or neither. On most of these the install reports the reason in plain terms. The exception is Amazon Linux 2, where the failure surfaces as raw `yum` output:
+
+| Platform | Reason |
+|----------|--------|
+| Debian 11 (bullseye) | OpenSCAP was removed from the archive before bullseye released, so no package provides `oscap` |
+| Amazon Linux 2 | The amzn2 repositories carry neither `openscap-scanner` nor `scap-security-guide` |
+| Alpine Linux | No SCAP datastream is published for Alpine, so a scanner would have nothing to scan against |
+| Arch Linux | OpenSCAP is available only from the AUR, and no datastream is published |
+| FreeBSD | No OpenSCAP port and no datastream |
+| Windows | The agent has no compliance integration on Windows |
+
+Everything else in the supported matrix can install the scanner: Debian 10, 12, 13 and 14, Ubuntu 22.04 and 24.04, the RHEL family (Rocky, AlmaLinux, CentOS Stream, Oracle Linux, Fedora, Amazon Linux 2023), and openSUSE.
+
+On Debian 10 the install succeeds but the results are not useful. PatchMon ships no Debian 10 datastream, so the host falls back to the very old content in buster's own `ssg-debian` package, and every rule comes back as "not applicable" because the content targets an earlier Debian release. Treat compliance scanning on Debian 10 as unavailable in practice.
 
 If the status panel shows **Partial Installation**, some scanners are present and others are not. A common case is a host running Docker, where Docker Bench is ready but OpenSCAP is missing, so scans return Docker Bench results only and the scanner panel reports "No SCAP content found". The same button appears in that state, labelled **Retry install**, and installs whatever is missing.
 

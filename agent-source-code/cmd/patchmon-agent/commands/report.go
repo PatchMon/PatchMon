@@ -903,7 +903,10 @@ func runScheduledComplianceScan() {
 	})
 
 	if !complianceInteg.IsAvailable() {
-		logger.Debug("Compliance scanning not available on this system, skipping scheduled scan")
+		// Info, not Debug: at the default level this was the only outcome that
+		// printed nothing at all after "Starting scheduled compliance scan", so
+		// a host with no scanner was indistinguishable from a hung scan.
+		logger.Info("Compliance scanning not available on this system (no scanner or no SCAP content), skipping scheduled scan")
 		return
 	}
 
