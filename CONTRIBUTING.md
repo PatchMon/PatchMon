@@ -269,6 +269,33 @@ npm run test:run                # Run Vitest suite
 
 **All frontend PRs must pass `npx biome check src/` with zero errors and zero warnings** before being submitted.
 
+### Frontend data fetching and refresh
+
+Server state is held by TanStack Query. The client defaults in `src/main.jsx` are
+`staleTime: 60s` and `refetchOnWindowFocus: true`. Those two move together: focus and mount
+refetching only act on queries that are already stale, so raising `staleTime` back to several
+minutes quietly turns both off for the whole app. Guard tests in
+`src/__tests__/pageRefresh.test.jsx` will fail the build if either is changed that way.
+
+If you add a page or a Refresh button:
+
+1. **Use `usePageRefresh(keys)` from `src/hooks/usePageRefresh.js`.** Pass every query key the
+   screen renders from, not just the main one. Pages commonly mount ten or more queries, and a
+   button bound to a single `refetch()` refreshes one panel while the rest keep showing cached
+   values. The hook also drives the spinner from all the keys, so it keeps turning until the
+   slowest panel lands. Keys match by prefix, so `["hosts"]` covers `["hosts", params]`.
+2. **Invalidate the whole scope a mutation affects.** Host membership changes go through
+   `invalidateHostScope()` in `src/utils/queryScopes.js`, because the sidebar counters and the
+   dashboard cards read the same rows under different keys. Add to that helper rather than
+   listing keys at each call site.
+3. **Do not hydrate a form from query data unconditionally.** An effect of the shape
+   `useEffect(() => setForm(data), [data])` discards whatever the user has typed as soon as a
+   refetch lands. Guard it on the component's dirty flag, and clear that flag in the mutation's
+   `onSuccess` so the saved values re-hydrate.
+4. **Prefer focus refetching over polling.** A `refetchInterval` runs against every open tab and
+   does not fire while a tab is in the background. Reserve it for genuinely live data, and keep an
+   eye on how expensive the endpoint is.
+
 ### Database schema changes
 
 If you change the database schema:
