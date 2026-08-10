@@ -5,8 +5,8 @@ RUN apk add --no-cache git ca-certificates tzdata curl nodejs npm
 
 WORKDIR /app
 
-# Copy agent scripts and binaries (same layout as production; run `make build-all-for-docker` in agent-source-code if agents-prebuilt is missing)
-COPY agents ./agents/
+# Copy agent binaries (run `make build-all-for-docker` in agent-source-code if agents-prebuilt is missing).
+# Scripts are not copied: they are go:embed'ed into the server binary.
 COPY --chmod=755 agents-prebuilt/patchmon-agent-* ./agents/
 
 # Build frontend for embed
@@ -176,8 +176,8 @@ COPY --from=builder /app/patchmon-server ./
 # Copy SSG content (SCAP datastream files for compliance scanning)
 COPY --from=ssg-content /ssg-content ./ssg-content/
 
-# Copy agent scripts and binaries to /app/agents (in-image, read-only; no volume)
-COPY agents ./agents/
+# Copy agent binaries to /app/agents (in-image, read-only; no volume).
+# Scripts are not copied: they are go:embed'ed into the server binary.
 COPY --chmod=755 agents-prebuilt/patchmon-agent-* ./agents/
 
 # Entrypoint starts server (no volume copy; agents served from image)

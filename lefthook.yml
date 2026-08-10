@@ -65,42 +65,6 @@ pre-commit:
       fail_text: "Vulnerable dependencies found (npm audit or govulncheck). Fix or update dependencies."
       skip: merge
 
-    agent-scripts-sync:
-      run: |
-        echo "Checking agent scripts are in sync..."
-        # agents/ is copied into the Docker image; internal/agents/ is go:embed'ed
-        # and is what users actually receive. They must not drift.
-        embedded_dir="server-source-code/internal/agents"
-        drift=""
-        for f in agents/*.sh "$embedded_dir"/*.sh; do
-          [ -f "$f" ] || continue
-          name=$(basename "$f")
-          case " $drift " in *" $name "*) continue ;; esac
-          if [ ! -f "agents/$name" ] || [ ! -f "$embedded_dir/$name" ]; then
-            drift="$drift $name"
-          elif ! cmp -s "agents/$name" "$embedded_dir/$name"; then
-            drift="$drift $name"
-          fi
-        done
-        if [ -n "$drift" ]; then
-          echo "Agent scripts are out of sync between agents/ and $embedded_dir/:"
-          for name in $drift; do
-            if [ ! -f "agents/$name" ]; then
-              echo "  $name: only in $embedded_dir/"
-            elif [ ! -f "$embedded_dir/$name" ]; then
-              echo "  $name: only in agents/"
-            else
-              echo "  $name: contents differ"
-              diff "agents/$name" "$embedded_dir/$name" || true
-            fi
-          done
-          exit 1
-        fi
-        echo "  agent scripts in sync"
-      stage_fixed: false
-      fail_text: "Agent scripts drifted between agents/ and server-source-code/internal/agents/. Both ship: agents/ is copied into the Docker image, internal/agents/ is embedded in the binary and is what users are served. Copy the intended version across so both match."
-      skip: merge
-
     frontend-check:
       run: |
         echo "Running frontend tests..."
