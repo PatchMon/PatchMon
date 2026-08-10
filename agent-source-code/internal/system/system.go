@@ -238,11 +238,14 @@ func (d *Detector) GetSystemInfo() models.SystemInfo {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// Probed once so the uptime string and the boot time cannot disagree.
+	uptime, containerised := containerUptime()
+
 	info := models.SystemInfo{
 		KernelVersion: d.GetKernelVersion(),
 		SELinuxStatus: d.getSELinuxStatus(),
-		SystemUptime:  d.getSystemUptime(ctx),
-		BootTime:      d.getBootTime(ctx),
+		SystemUptime:  d.getSystemUptime(ctx, uptime, containerised),
+		BootTime:      d.getBootTime(ctx, uptime, containerised),
 		LoadAverage:   d.getLoadAverage(ctx),
 	}
 
@@ -373,15 +376,18 @@ func (d *Detector) getSELinuxStatus() string {
 	return constants.SELinuxDisabled
 }
 
-// getSystemUptime gets system uptime
-func (d *Detector) getSystemUptime(ctx context.Context) string {
-	info, err := host.InfoWithContext(ctx)
-	if err != nil {
-		d.logger.WithError(err).Warn("Failed to get uptime")
-		return "Unknown"
+// getSystemUptime gets system uptime. When containerised is set, uptime is the
+// container's own figure from containerUptime and is used in preference to the
+// host's, which is all gopsutil can report.
+func (d *Detector) getSystemUptime(ctx context.Context, uptime time.Duration, containerised bool) string {
+	if !containerised {
+		info, err := host.InfoWithContext(ctx)
+		if err != nil {
+			d.logger.WithError(err).Warn("Failed to get uptime")
+			return "Unknown"
+		}
+		uptime = time.Duration(info.Uptime) * time.Second
 	}
-
-	uptime := time.Duration(info.Uptime) * time.Second
 
 	days := int(uptime.Hours() / 24)
 	hours := int(uptime.Hours()) % 24
@@ -402,7 +408,15 @@ func (d *Detector) getSystemUptime(ctx context.Context) string {
 // instead of clobbering it with a sentinel. Companion to getSystemUptime,
 // which keeps shipping its pre-formatted string for back-compat with
 // pre-boot_time servers.
-func (d *Detector) getBootTime(ctx context.Context) *time.Time {
+//
+// Inside a container the boot instant is derived from the container's own
+// uptime, because gopsutil reports the host's.
+func (d *Detector) getBootTime(ctx context.Context, uptime time.Duration, containerised bool) *time.Time {
+	if containerised {
+		t := time.Now().Add(-uptime).UTC()
+		return &t
+	}
+
 	info, err := host.InfoWithContext(ctx)
 	if err != nil {
 		d.logger.WithError(err).Warn("Failed to get boot time")
