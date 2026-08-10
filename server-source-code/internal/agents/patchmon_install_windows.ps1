@@ -128,12 +128,15 @@ Remove-Item -Path $tempPath -Force
 $configFile = Join-Path $ConfigPath "config.yml"
 if (-not (Test-Path $configFile)) {
     Write-Host "Creating default configuration file..." -ForegroundColor Yellow
+    # Single-quoted YAML scalars. A double-quoted scalar processes backslash
+    # escapes, so a Windows path either fails to parse ("\c" in \credentials.yml)
+    # or is silently mangled ("\P" is a valid escape for U+2029).
     $configContent = @"
-patchmon_server: "$ServerURL"
-api_version: "v1"
-credentials_file: "$ConfigPath\credentials.yml"
-log_file: "$ConfigPath\patchmon-agent.log"
-log_level: "info"
+patchmon_server: '$($ServerURL -replace "'", "''")'
+api_version: 'v1'
+credentials_file: '$($ConfigPath -replace "'", "''")\credentials.yml'
+log_file: '$($ConfigPath -replace "'", "''")\patchmon-agent.log'
+log_level: 'info'
 skip_ssl_verify: $($SkipSslVerify.ToString().ToLower())
 "@
     Set-Content -Path $configFile -Value $configContent -Encoding UTF8
@@ -141,6 +144,14 @@ skip_ssl_verify: $($SkipSslVerify.ToString().ToLower())
     # Config exists - update skip_ssl_verify to match server settings
     $content = Get-Content -Path $configFile -Raw -ErrorAction SilentlyContinue
     if ($content) {
+        # Repair paths written double-quoted by an earlier installer, which left
+        # the file unparseable and the agent running on defaults.
+        $doubleQuotedPath = '(?m)^([ \t]*)(patchmon_server|api_version|credentials_file|log_file|log_level)[ \t]*:[ \t]*"([^"]*\\[^"]*)"([ \t]*(?:#[^\r\n]*)?)(\r?)$'
+        $content = [regex]::Replace($content, $doubleQuotedPath, {
+            param($m)
+            "$($m.Groups[1].Value)$($m.Groups[2].Value): '$($m.Groups[3].Value -replace "'", "''")'$($m.Groups[4].Value)$($m.Groups[5].Value)"
+        })
+
         if ($content -match "skip_ssl_verify\s*:\s*(true|false)") {
             $content = $content -replace "skip_ssl_verify\s*:\s*(true|false)", "skip_ssl_verify: $($SkipSslVerify.ToString().ToLower())"
         } else {

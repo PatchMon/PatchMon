@@ -4649,6 +4649,23 @@ On Linux, these files are owned by root and set to `600` permissions (read/write
 | **Log File** | Linux: `/etc/patchmon/logs/patchmon-agent.log`  Windows: `C:\ProgramData\PatchMon\patchmon-agent.log` | Agent log output |
 | **Cron File** | `/etc/cron.d/patchmon-agent` | Scheduled reporting (fallback for non-systemd systems) |
 
+#### Quoting Windows paths
+
+YAML treats a backslash inside **double** quotes as the start of an escape sequence, so a double-quoted Windows path is either rejected or silently altered. `"C:\ProgramData\PatchMon\credentials.yml"` fails to parse, because `\c` is not a valid escape. `"C:\ProgramData\PatchMon\Notes"` is worse: it parses, but `\N` is a valid escape and becomes a control character, so the path you get is not the path you wrote.
+
+Use single quotes, or no quotes at all, for any value containing a backslash:
+
+```yaml
+credentials_file: 'C:\ProgramData\PatchMon\credentials.yml'
+log_file: C:\ProgramData\PatchMon\patchmon-agent.log
+```
+
+If `config.yml` cannot be parsed, the agent **service** refuses to start rather than falling back to its built-in defaults, and writes the parse error to the agent log. This is deliberate: an agent running on defaults has no server URL, so it reports nothing, and its first save would overwrite your file with those defaults. One-off commands such as `report` and `ping`, including the cron fallback on hosts without systemd, still run, but they will fail against that empty server URL.
+
+The same applies to a `config.yml` that is present but empty, which is what a write interrupted by a full disk or a power cut leaves behind.
+
+To recover, repair the file, or run `patchmon-agent config set-api <API_ID> <API_KEY> <SERVER_URL>` (`patchmon-agent.exe` on Windows) to write a fresh one. Note that this writes a complete new file, so any other settings the old one held are lost.
+
 ### Full Configuration Reference
 
 Below is a complete `config.yml` with all available parameters, their defaults, and descriptions:

@@ -4,6 +4,7 @@ package commands
 import (
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 
 	"patchmon-agent/internal/pkgversion"
@@ -107,6 +108,15 @@ func configureCreds(apiID, apiKey, serverURL string) error {
 
 	if !strings.HasPrefix(serverURL, "http://") && !strings.HasPrefix(serverURL, "https://") {
 		return fmt.Errorf("invalid server URL format. Must start with http:// or https://")
+	}
+
+	if loadErr := cfgManager.LoadError(); loadErr != nil {
+		// The logger writes only to the agent log, and this is the one
+		// deliberately destructive path, so the operator gets it on stderr too.
+		fmt.Fprintf(os.Stderr, "warning: %s could not be parsed (%v) and is being replaced with defaults; any other settings it held are lost\n",
+			cfgManager.GetConfigFile(), loadErr)
+		logger.WithError(loadErr).WithField("path", cfgManager.GetConfigFile()).
+			Warn("Existing config could not be parsed and is being replaced with defaults, any settings it held are lost")
 	}
 
 	if err := cfgManager.SetPatchmonServer(serverURL); err != nil {

@@ -72,6 +72,13 @@ func agentHostKeyCallback() ssh.HostKeyCallback {
 
 // runServiceLoop is the main service loop. stopCh signals shutdown (nil = run forever on Unix)
 func runServiceLoop(stopCh <-chan struct{}) error {
+	// Starting on defaults when the file is present but unparseable means an
+	// empty patchmon_server, so every call fails and the agent reports nothing.
+	// Fail visibly instead of running blind.
+	if err := cfgManager.LoadError(); err != nil {
+		return fmt.Errorf("config file %s could not be read, refusing to start on defaults: %w", cfgManager.GetConfigFile(), err)
+	}
+
 	// When running as Windows service, allow a brief delay for system initialization
 	// (network, filesystem) to be ready after SCM starts the process. This addresses
 	// first-start issues where the report task would not run.
