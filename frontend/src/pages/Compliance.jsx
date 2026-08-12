@@ -47,8 +47,9 @@ import {
 import { getDoughnutOptions } from "../components/compliance/widgets/chartOptions";
 import { useTheme } from "../contexts/ThemeContext";
 import { useToast } from "../contexts/ToastContext";
-import { adminHostsAPI } from "../utils/api";
+import { adminHostsAPI, settingsAPI } from "../utils/api";
 import { complianceAPI } from "../utils/complianceApi";
+import { deriveReportingStateByTime } from "../utils/hostStatus";
 
 // Custom tooltip component for consistent styling across all charts
 const CustomTooltip = ({ active, payload, label, type }) => {
@@ -203,6 +204,18 @@ const Compliance = () => {
 		staleTime: 60000,
 		select: (data) => ({ hosts: data.data || [] }),
 	});
+
+	// update_interval drives the host picker's reporting dot, the same ×2
+	// boundary the Hosts table and HostStatusPills use.
+	const { data: complianceSettings } = useQuery({
+		queryKey: ["settings", "public"],
+		queryFn: () => settingsAPI.getPublic().then((res) => res.data),
+		staleTime: 5 * 60 * 1000,
+	});
+	const updateIntervalMinutes = (() => {
+		const parsed = Number.parseInt(complianceSettings?.update_interval, 10);
+		return Number.isFinite(parsed) && parsed > 0 ? parsed : 60;
+	})();
 
 	// Track active scans and notify when they complete
 	useEffect(() => {
@@ -1042,34 +1055,57 @@ const Compliance = () => {
 									</button>
 								</div>
 								<div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[200px] overflow-y-auto">
-									{allHosts.map((host) => (
-										<label
-											key={host.id}
-											className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors ${
-												selectedHosts.includes(host.id)
-													? "bg-primary-900/30 border border-primary-700"
-													: "bg-secondary-700/50 border border-secondary-600 hover:border-secondary-500"
-											}`}
-										>
-											<input
-												type="checkbox"
-												checked={selectedHosts.includes(host.id)}
-												onChange={() => handleToggleHost(host.id)}
-												className="w-4 h-4 rounded bg-secondary-700 border-secondary-600"
-											/>
-											<div className="flex-1 min-w-0">
-												<p className="text-sm font-medium text-white truncate">
-													{host.friendly_name || host.hostname}
-												</p>
-												<p className="text-xs text-white truncate">
-													{host.hostname}
-												</p>
-											</div>
-											<div
-												className={`w-2 h-2 rounded-full ${host.status === "online" ? "bg-green-500" : "bg-red-500"}`}
-											/>
-										</label>
-									))}
+									{allHosts.map((host) => {
+										const reportingState = deriveReportingStateByTime(
+											host.last_update,
+											updateIntervalMinutes,
+										);
+										const dotVariant =
+											reportingState === "reporting"
+												? {
+														className: "bg-success-500",
+														label: "Reporting",
+													}
+												: reportingState === "overdue"
+													? {
+															className: "bg-warning-500",
+															label: "Overdue",
+														}
+													: {
+															className: "bg-danger-500",
+															label: "Not reporting",
+														};
+										return (
+											<label
+												key={host.id}
+												className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors ${
+													selectedHosts.includes(host.id)
+														? "bg-primary-900/30 border border-primary-700"
+														: "bg-secondary-700/50 border border-secondary-600 hover:border-secondary-500"
+												}`}
+											>
+												<input
+													type="checkbox"
+													checked={selectedHosts.includes(host.id)}
+													onChange={() => handleToggleHost(host.id)}
+													className="w-4 h-4 rounded bg-secondary-700 border-secondary-600"
+												/>
+												<div className="flex-1 min-w-0">
+													<p className="text-sm font-medium text-white truncate">
+														{host.friendly_name || host.hostname}
+													</p>
+													<p className="text-xs text-white truncate">
+														{host.hostname}
+													</p>
+												</div>
+												<div
+													className={`w-2 h-2 rounded-full flex-shrink-0 ${dotVariant.className}`}
+													title={dotVariant.label}
+												/>
+												<span className="sr-only">{dotVariant.label}</span>
+											</label>
+										);
+									})}
 								</div>
 							</div>
 
