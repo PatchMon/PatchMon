@@ -279,6 +279,16 @@ type Querier interface {
 	// that had been created but not yet enrolled. That filter also did not mean
 	// what it appeared to: hosts.status is an enrolment lifecycle column and never
 	// becomes 'inactive', so a host that stopped reporting was counted regardless.
+	// Distinct counts are expressed as GROUP BY subqueries, not COUNT(DISTINCT),
+	// and must stay that way. COUNT(DISTINCT) cannot stream: it sorts the whole
+	// matching set, which at 3.7M host_packages rows spills multiple megabytes to
+	// disk and costs ~3x what the identical aggregates cost in GetDashboardStats,
+	// which already uses this shape. GROUP BY reads straight off the partial
+	// covering indexes (idx_host_packages_needs_update_host_cover and the
+	// _package / _security_package pair) and sorts nothing worth spilling.
+	//
+	// Exact, not approximate: the two forms differ only on NULL handling, and
+	// host_id and package_id are both NOT NULL.
 	GetHomepageStats(ctx context.Context, since pgtype.Timestamp) (GetHomepageStatsRow, error)
 	GetHostByApiID(ctx context.Context, apiID string) (Host, error)
 	GetHostByID(ctx context.Context, id string) (Host, error)
