@@ -474,7 +474,7 @@ Each `mappings` entry has two parts:
 
 | Field | Type | Description | Included by default |
 |-------|------|-------------|---------------------|
-| `total_hosts` | Number | Total active hosts in PatchMon | Yes |
+| `total_hosts` | Number | Total hosts in PatchMon, matching the Total Hosts card on the dashboard | Yes |
 | `hosts_needing_updates` | Number | Hosts with at least one outdated package | Yes |
 | `security_updates` | Number | Total security updates available across all hosts | Yes |
 | `up_to_date_hosts` | Number | Hosts with zero outdated packages | No |

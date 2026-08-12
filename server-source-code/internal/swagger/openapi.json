@@ -820,7 +820,7 @@
 			"get": {
 				"tags": ["GetHomepage"],
 				"summary": "Get homepage widget statistics",
-				"description": "Returns widget statistics for GetHomepage dashboard (total hosts, outdated packages, security updates, OS distribution, etc.). Requires Basic Auth with GetHomepage credentials.",
+				"description": "Returns widget statistics for GetHomepage dashboard (total hosts, outdated packages, security updates, OS distribution, etc.). The host counters match the equivalent cards on the PatchMon dashboard: total_hosts counts every host, including ones created but not yet enrolled. Requires Basic Auth with GetHomepage credentials.",
 				"security": [{ "basicAuth": [] }],
 				"responses": {
 					"200": {

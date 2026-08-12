@@ -512,22 +512,23 @@ FROM hosts
 ORDER BY friendly_name ASC;
 
 -- name: GetHomepageStats :one
-WITH active_hosts AS (
-    SELECT id FROM hosts WHERE status = 'active'
-),
-host_counts AS (
-    SELECT COUNT(*)::int AS total_hosts FROM active_hosts
+-- The host counters here must match GetDashboardStats, otherwise a widget and
+-- the dashboard card it mirrors report different numbers for the same fleet.
+-- They previously filtered on status = 'active', which silently dropped hosts
+-- that had been created but not yet enrolled. That filter also did not mean
+-- what it appeared to: hosts.status is an enrolment lifecycle column and never
+-- becomes 'inactive', so a host that stopped reporting was counted regardless.
+WITH host_counts AS (
+    SELECT COUNT(*)::int AS total_hosts FROM hosts
 ),
 hosts_needing_updates AS (
     SELECT COUNT(DISTINCT hp.host_id)::int AS cnt
     FROM host_packages hp
-    JOIN active_hosts ah ON ah.id = hp.host_id
     WHERE hp.needs_update = true
 ),
 hosts_with_security AS (
     SELECT COUNT(DISTINCT hp.host_id)::int AS cnt
     FROM host_packages hp
-    JOIN active_hosts ah ON ah.id = hp.host_id
     WHERE hp.needs_update = true AND hp.is_security_update = true
 ),
 package_counts AS (

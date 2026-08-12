@@ -273,6 +273,12 @@ type Querier interface {
 	GetDockerHostsMinimalByIDs(ctx context.Context, dollar_1 []string) ([]GetDockerHostsMinimalByIDsRow, error)
 	GetFirstComplianceProfileByType(ctx context.Context, type_ string) (ComplianceProfile, error)
 	GetFirstSettings(ctx context.Context) (Setting, error)
+	// The host counters here must match GetDashboardStats, otherwise a widget and
+	// the dashboard card it mirrors report different numbers for the same fleet.
+	// They previously filtered on status = 'active', which silently dropped hosts
+	// that had been created but not yet enrolled. That filter also did not mean
+	// what it appeared to: hosts.status is an enrolment lifecycle column and never
+	// becomes 'inactive', so a host that stopped reporting was counted regardless.
 	GetHomepageStats(ctx context.Context, since pgtype.Timestamp) (GetHomepageStatsRow, error)
 	GetHostByApiID(ctx context.Context, apiID string) (Host, error)
 	GetHostByID(ctx context.Context, id string) (Host, error)
