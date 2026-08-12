@@ -199,22 +199,17 @@ func (q *Queries) GetDashboardStats(ctx context.Context, arg GetDashboardStatsPa
 }
 
 const getHomepageStats = `-- name: GetHomepageStats :one
-WITH active_hosts AS (
-    SELECT id FROM hosts WHERE status = 'active'
-),
-host_counts AS (
-    SELECT COUNT(*)::int AS total_hosts FROM active_hosts
+WITH host_counts AS (
+    SELECT COUNT(*)::int AS total_hosts FROM hosts
 ),
 hosts_needing_updates AS (
     SELECT COUNT(DISTINCT hp.host_id)::int AS cnt
     FROM host_packages hp
-    JOIN active_hosts ah ON ah.id = hp.host_id
     WHERE hp.needs_update = true
 ),
 hosts_with_security AS (
     SELECT COUNT(DISTINCT hp.host_id)::int AS cnt
     FROM host_packages hp
-    JOIN active_hosts ah ON ah.id = hp.host_id
     WHERE hp.needs_update = true AND hp.is_security_update = true
 ),
 package_counts AS (
@@ -248,6 +243,12 @@ type GetHomepageStatsRow struct {
 	RecentUpdates24h         int32 `json:"recent_updates_24h"`
 }
 
+// The host counters here must match GetDashboardStats, otherwise a widget and
+// the dashboard card it mirrors report different numbers for the same fleet.
+// They previously filtered on status = 'active', which silently dropped hosts
+// that had been created but not yet enrolled. That filter also did not mean
+// what it appeared to: hosts.status is an enrolment lifecycle column and never
+// becomes 'inactive', so a host that stopped reporting was counted regardless.
 func (q *Queries) GetHomepageStats(ctx context.Context, since pgtype.Timestamp) (GetHomepageStatsRow, error) {
 	row := q.db.QueryRow(ctx, getHomepageStats, since)
 	var i GetHomepageStatsRow
