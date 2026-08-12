@@ -1451,7 +1451,9 @@ func (h *ComplianceHandler) listSSGFiles() []string {
 	return files
 }
 
-// SSGVersion handles GET /compliance/ssg-version (agent + session auth).
+// SSGVersion handles GET /compliance/ssg-info (session auth). Agents use
+// AgentSSGVersion instead; this one stays a 200 with an empty version when no
+// content is bundled, so Compliance Settings still renders.
 func (h *ComplianceHandler) SSGVersion(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"version": h.readSSGVersion(),
@@ -1459,9 +1461,43 @@ func (h *ComplianceHandler) SSGVersion(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// AgentSSGVersion handles GET /compliance/ssg-version (agent auth).
+//
+// Unlike the session-facing SSGVersion, a server with no bundled content is a
+// 503 here rather than a 200 with an empty version. Agents have no other source
+// for SSG content, so an ambiguous success would leave them unable to tell
+// "nothing to do" from "the server cannot serve me".
+func (h *ComplianceHandler) AgentSSGVersion(w http.ResponseWriter, r *http.Request) {
+	if !h.authenticateAgent(w, r) {
+		return
+	}
+	payload, ok := h.agentSSGVersionPayload()
+	if !ok {
+		Error(w, http.StatusServiceUnavailable, "No SSG content available on server")
+		return
+	}
+	JSON(w, http.StatusOK, payload)
+}
+
+// agentSSGVersionPayload builds the agent-facing version response, reporting
+// false when this server has no bundled content to offer.
+func (h *ComplianceHandler) agentSSGVersionPayload() (map[string]interface{}, bool) {
+	version := h.readSSGVersion()
+	if version == "" {
+		return nil, false
+	}
+	return map[string]interface{}{
+		"version": version,
+		"files":   h.listSSGFiles(),
+	}, true
+}
+
 // SSGContent handles GET /compliance/ssg-content/{filename} (agent auth).
 // Serves a specific datastream file from the SSG content directory.
 func (h *ComplianceHandler) SSGContent(w http.ResponseWriter, r *http.Request) {
+	if !h.authenticateAgent(w, r) {
+		return
+	}
 	filename := chi.URLParam(r, "filename")
 	if !ssgFilenameRe.MatchString(filename) {
 		Error(w, http.StatusBadRequest, "Invalid filename")
@@ -1474,6 +1510,31 @@ func (h *ComplianceHandler) SSGContent(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/xml")
 	http.ServeFile(w, r, filePath)
+}
+
+// authenticateAgent verifies agent API credentials from the request headers,
+// writing a 401 and returning false when they are missing or invalid.
+func (h *ComplianceHandler) authenticateAgent(w http.ResponseWriter, r *http.Request) bool {
+	apiID := r.Header.Get("X-API-ID")
+	apiKey := r.Header.Get("X-API-KEY")
+	if apiID == "" || apiKey == "" {
+		JSON(w, http.StatusUnauthorized, map[string]string{"error": "API credentials required"})
+		return false
+	}
+
+	host, err := h.hostsStore.GetByApiID(r.Context(), apiID)
+	if err != nil || host == nil {
+		JSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid API credentials"})
+		return false
+	}
+
+	ok, err := util.VerifyAPIKey(apiKey, host.ApiKey)
+	if err != nil || !ok {
+		JSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid API credentials"})
+		return false
+	}
+
+	return true
 }
 
 // RemediateRule handles POST /compliance/remediate/:hostId.

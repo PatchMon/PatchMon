@@ -615,30 +615,38 @@ func (a *ssgClientAdapter) DownloadSSGContent(ctx context.Context, filename, des
 	return a.c.DownloadSSGContent(ctx, filename, destPath)
 }
 
-// upgradeSSGContent upgrades the SCAP Security Guide content packages.
-// Prefers downloading from PatchMon server; falls back to GitHub if server has no content.
+// upgradeSSGContent upgrades the SCAP Security Guide content from the PatchMon
+// server, which is the agent's only source for it. SSG content is baked into
+// the server image at build time; the agent never fetches it from the internet.
+// A server with no content is reported as a failure rather than worked around,
+// so the operator sees it in the UI instead of the fleet silently drifting.
 func upgradeSSGContent(targetVersion string) error {
 	httpClient := client.New(cfgManager, logger)
 	complianceInteg := compliance.New(logger)
 
 	downloader := &ssgClientAdapter{c: httpClient}
 	if err := complianceInteg.UpgradeSSGContentFromServer(downloader, targetVersion); err != nil {
-		logger.WithError(err).Warn("Server-based SSG upgrade failed, falling back to GitHub...")
-		if fallbackErr := complianceInteg.UpgradeSSGContent(); fallbackErr != nil {
-			return fmt.Errorf("server upgrade: %w; github fallback: %v", err, fallbackErr)
-		}
+		logger.WithError(err).Warn("SSG content upgrade from the PatchMon server failed")
+		sendComplianceSetupStatus(httpClient, "failed", fmt.Sprintf("SSG content upgrade failed: %v", err))
+		return fmt.Errorf("server upgrade: %w", err)
 	}
 
 	logger.Info("Sending updated compliance status to backend...")
+	sendComplianceSetupStatus(httpClient, "ready", "SSG content upgraded successfully")
+
+	return nil
+}
+
+// sendComplianceSetupStatus reports the outcome of a compliance setup step
+// along with current scanner details.
+func sendComplianceSetupStatus(httpClient *client.Client, status, message string) {
 	ctx := context.Background()
 
-	// Get new scanner details
 	openscapScanner := compliance.NewOpenSCAPScanner(logger)
 	scannerDetails := openscapScanner.GetScannerDetails()
 
 	// Check if Docker integration is enabled for Docker Bench and oscap-docker info
-	dockerIntegrationEnabled := cfgManager.IsIntegrationEnabled("docker")
-	if dockerIntegrationEnabled {
+	if cfgManager.IsIntegrationEnabled("docker") {
 		dockerBenchScanner := compliance.NewDockerBenchScanner(logger)
 		scannerDetails.DockerBenchAvailable = dockerBenchScanner.IsAvailable()
 
@@ -646,21 +654,19 @@ func upgradeSSGContent(targetVersion string) error {
 		scannerDetails.OscapDockerAvailable = oscapDockerScanner.IsAvailable()
 	}
 
-	// Send updated status
 	if err := httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
 		Integration: "compliance",
 		Enabled:     cfgManager.IsIntegrationEnabled("compliance"),
-		Status:      "ready",
-		Message:     "SSG content upgraded successfully",
+		Status:      status,
+		Message:     message,
 		ScannerInfo: scannerDetails,
 	}); err != nil {
-		logger.WithError(err).Warn("Failed to send updated compliance status")
 		// Don't fail the upgrade just because status update failed
-	} else {
-		logger.Info("Updated compliance status sent to backend")
+		logger.WithError(err).Warn("Failed to send updated compliance status")
+		return
 	}
 
-	return nil
+	logger.Info("Updated compliance status sent to backend")
 }
 
 // runInstallScanner installs OpenSCAP and SSG content (apt/dnf install, update SSG) and reports status via HTTP
@@ -772,6 +778,12 @@ func runInstallScanner() error {
 	// Step 3b: Sync SSG content from PatchMon server (server is single source of truth).
 	// This ensures the agent has the same SSG version the server was built with,
 	// regardless of what the OS package manager provided.
+	//
+	// Runs unconditionally, and must stay that way. It is tempting to gate it on
+	// ErrContentMissing above, but that error only fires when there is no content
+	// file at all. A host with the *wrong* content, Debian 13 carrying only
+	// ssg-debian11-ds.xml, returns nil from EnsureInstalled and would silently
+	// skip the one step that replaces it.
 	addEvent("sync_ssg", "in_progress", "Syncing SSG content from PatchMon server...")
 	sendStatus("installing", "Syncing SSG content from server...", nil)
 

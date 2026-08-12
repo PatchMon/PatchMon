@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 	_ "time/tzdata"
@@ -157,6 +159,8 @@ func main() {
 		r := config.ResolveConfig(context.Background(), cfg, s)
 		return r.AgentReportsRetentionDays
 	}
+	warnIfSSGContentMissing(cfg.SSGContentDir, slog)
+
 	queueMux := queue.Mux(queue.MuxOpts{
 		Registry:                     registry,
 		DB:                           db,
@@ -297,4 +301,30 @@ func main() {
 		slog.Error("shutdown", "error", err)
 	}
 	slog.Info("server stopped")
+}
+
+// warnIfSSGContentMissing surfaces an empty SSG content directory at startup.
+// Content is baked into the server image at build time and agents have no other
+// source for it, so an empty directory silently disables compliance content
+// updates fleet-wide. Better to say so in the logs than to let operators find
+// out from stale SSG versions weeks later.
+func warnIfSSGContentMissing(dir string, log *slog.Logger) {
+	if dir == "" {
+		log.Warn("SSG content directory is not configured; compliance content updates are unavailable", "env", "SSG_CONTENT_DIR")
+		return
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		log.Warn("SSG content directory is unreadable; compliance content updates are unavailable", "dir", dir, "error", err)
+		return
+	}
+
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), "-ds.xml") {
+			return
+		}
+	}
+
+	log.Warn("SSG content directory contains no datastream files; compliance content updates are unavailable", "dir", dir)
 }

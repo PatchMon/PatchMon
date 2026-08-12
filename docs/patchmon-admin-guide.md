@@ -2754,7 +2754,7 @@ This is one of the most important architectural changes in 2.0 for compliance.
 
 In 1.x and earlier, each agent fetched SCAP Security Guide (SSG) content from GitHub at scan time. That required every agent to have outbound access to `github.com`, created occasional transient failures when GitHub was unavailable, and allowed agents to drift to different SSG versions depending on when they last pulled.
 
-In 2.0, SSG and CIS benchmarking content is **bundled with the server binary at build time** and served from a single `SSG_CONTENT_DIR` on the server. Agents now fetch content from the server itself, via two new endpoints:
+In 2.0, SSG and CIS benchmarking content is **bundled into the server image at build time** and served from a single `SSG_CONTENT_DIR` on the server. Agents now fetch content from the server itself, via two new endpoints:
 
 - `GET /api/v1/compliance/ssg-version`, returns the SSG version string and the list of `ssg-*-ds.xml` files available.
 - `GET /api/v1/compliance/ssg-content/{filename}`, streams a specific datastream file to the agent.
@@ -2763,9 +2763,10 @@ Both endpoints accept agent API-key authentication.
 
 #### What this means operationally
 
-- **No external network calls at scan time.** Agents in air-gapped environments no longer need GitHub access; they need server access, which they already had for heartbeats.
+- **No external network calls at scan time.** The server is the only place an agent gets SSG content from. Agents never contact `github.com` for it under any circumstance, so air-gapped fleets need nothing beyond the server access they already had for heartbeats.
 - **One SSG version across the fleet.** Every agent gets the same content bundle. The Compliance Settings page shows the active version and the list of content files under **OpenSCAP Content**.
-- **Version-pinned scanning.** Because the server binary ships with the content, upgrading the server is the way to get new SSG rules. You can also trigger a per-host `UpgradeSSG` job (Host Detail → Integrations → Compliance) to push the current server-bundled version to that host.
+- **Version-pinned scanning.** Because the image ships with the content, upgrading the server is the way to get new SSG rules. Hosts pick the new version up automatically on the daily content check, and you can push it to a single host sooner with the API call described under "Upgrading SSG content on a host".
+- **A server with no content fails loudly.** If the content directory is empty, for example because a volume was mounted over it, the server logs a warning at startup, Compliance Settings reports the content as unavailable, and agents are told so explicitly rather than quietly falling back to some other source.
 
 #### Where to see the active version
 
@@ -3039,11 +3040,16 @@ If the status panel shows **Partial Installation**, some scanners are present an
 
 #### Upgrading SSG content on a host
 
-When the server is upgraded to a newer PatchMon version with newer bundled SSG content, existing hosts may still have older content cached locally. To force an upgrade:
+When the server is upgraded to a newer PatchMon version with newer bundled SSG content, existing hosts may still have older content cached locally.
 
-1. Host Detail → Integrations → Compliance → **Upgrade SSG Content**. The UI calls `POST /api/v1/compliance/upgrade-ssg/{hostId}`.
-2. The server enqueues an `ssg_upgrade` task. The agent downloads the latest `ssg-*-ds.xml` files from the server.
-3. Poll the upgrade job via `GET /api/v1/compliance/ssg-upgrade-job/{hostId}`: the UI shows `waiting`, `active`, or `completed` with a message.
+You do not normally need to do anything. A daily check compares each host's reported SSG version against the version bundled with the server and pushes an upgrade to any host that is behind, so the fleet converges on its own within a day of a server upgrade.
+
+To push it to one host sooner:
+
+1. Call `POST /api/v1/compliance/upgrade-ssg/{hostId}` (requires the `can_manage_compliance` permission). The server enqueues an `ssg_upgrade` task and the agent downloads the current `ssg-*-ds.xml` for its OS from the server.
+2. Poll `GET /api/v1/compliance/ssg-upgrade-job/{hostId}` for `waiting`, `active`, or `completed` with a message.
+
+Re-running **Install Scanner** from Host Detail also re-syncs content from the server as part of the install.
 
 The Compliance Settings page always shows the currently-active server-side SSG version under **OpenSCAP Content → SSG *x.y.z***.
 
