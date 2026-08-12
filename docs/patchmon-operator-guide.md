@@ -2070,8 +2070,11 @@ Create a new OAuth2 / OIDC application in your Identity Provider with the follow
 | **Scopes** | `openid`, `email`, `profile`, `groups` |
 | **Grant type** | Authorization Code |
 | **Token endpoint auth** | Client Secret (Basic) |
+| **ID token signing** | An asymmetric algorithm: `RS256` (or `RS384`, `RS512`, `ES256`, `ES384`, `ES512`, `PS256`, `PS384`, `PS512`, `EdDSA`) |
 
 After creating the application, note the **Client ID** and **Client Secret** as you'll need both.
+
+> **Important: PatchMon cannot accept HS256-signed ID tokens.** PatchMon validates ID tokens against the public keys published at your IdP's JWKS endpoint, so the token must be signed asymmetrically with a certificate or key pair. Symmetric HMAC signing (`HS256`, `HS384`, `HS512`), where the client secret doubles as the signing key, is rejected. Most identity providers use `RS256` by default, but Authentik does not unless you tell it to. See the Authentik note below.
 
 > **Tip:** If you plan to use group-based role mapping, ensure your IdP includes the `groups` claim in the ID token. In Authentik, this is enabled by default. In Keycloak, you may need to add a "Group Membership" mapper to the client scope.
 
@@ -2079,6 +2082,7 @@ After creating the application, note the **Client ID** and **Client Secret** as 
 
 **Authentik:**
 - Create an OAuth2/OIDC Provider, then create an Application linked to it
+- **Set a Signing Key on the provider.** This is required and is the single most common cause of a failed Authentik setup. Open the provider, expand **Advanced protocol settings**, and set **Signing Key** to a certificate, for example the built-in `authentik Self-signed Certificate`. If **Signing Key** is left empty, Authentik signs ID tokens symmetrically with the client secret using `HS256`, which PatchMon rejects. Every login then fails with a generic "Authentication failed" message on the login page
 - Issuer URL format: `https://auth.example.com/application/o/patchmon/`
 - Groups are included via the `groups` or `ak_groups` claim (both are supported)
 
@@ -2190,7 +2194,7 @@ You only need to define the groups you intend to use. Any variables left unset a
 
 ### Step 4 - Restart PatchMon
 
-After updating your `.env` file, restart the server so it discovers your OIDC provider on startup:
+After updating your `.env` file, restart the server so it picks up your OIDC configuration:
 
 ```bash
 # Docker
@@ -2203,7 +2207,7 @@ docker compose up -d --force-recreate patchmon-server
 sudo systemctl restart <your-domain>
 ```
 
-Check the logs to confirm OIDC initialised:
+Check the logs to confirm PatchMon accepted the configuration:
 
 ```bash
 # Docker
@@ -2213,15 +2217,29 @@ docker compose logs patchmon-server | grep -i oidc
 journalctl -u <your-domain> | grep -i oidc
 ```
 
-You should see:
+You should see a line confirming SSO is enabled, containing the message `OIDC SSO enabled; provider discovery is deferred to the first login attempt` along with the issuer and client ID that were loaded.
+
+The surrounding format depends on `APP_ENV`. In production, which is the default, logs are JSON:
+
+```json
+{"time":"2026-08-12T20:34:34.526Z","level":"INFO","msg":"OIDC SSO enabled; provider discovery is deferred to the first login attempt","issuer":"https://auth.example.com/application/o/patchmon/","client_id":"patchmon","source":"environment variables"}
+```
+
+With `APP_ENV` set to anything else, the same record is printed as plain text:
 
 ```
-Discovering OIDC configuration from: https://auth.example.com/...
-OIDC Issuer discovered: https://auth.example.com/...
-OIDC client initialized successfully
+time=2026-08-12T20:34:34.526Z level=INFO msg="OIDC SSO enabled; provider discovery is deferred to the first login attempt" issuer=https://auth.example.com/application/o/patchmon/ client_id=patchmon source="environment variables"
 ```
 
-If you see `OIDC is enabled but missing required configuration`, double-check your environment variables.
+The `source` field tells you which configuration won: `environment variables` or `database settings`. If you edited SSO settings in the web UI but see `environment variables`, your `.env` is overriding them.
+
+You may also see a second OIDC line warning about superadmin role sync. That is unrelated to whether SSO loaded correctly and is covered under Step 3.
+
+**PatchMon does not contact your identity provider at startup.** Provider discovery (the request to `.well-known/openid-configuration`) is deliberately deferred until the first login attempt, so a temporarily unreachable IdP cannot stop the server from booting. The startup line above therefore confirms only that your four required variables were read and that the SSO button will appear. It does not prove your IdP is reachable or that your provider is configured correctly. The first login attempt is what tests that, and any failure is logged at that point.
+
+If you see `OIDC is enabled but missing required config: ...`, one or more of the four required variables is empty. If you see `OIDC is partially configured via env vars but SSO is disabled`, you have set some but not all of them.
+
+> **Note:** Releases before 2.0.3 logged nothing at all on a successful OIDC configuration. If you are on 2.0.2 or older, an empty `grep -i oidc` is expected and does not mean OIDC failed to load. Check whether the SSO button appears on the login page instead. From 2.0.3 onwards, silence does mean your configuration did not resolve.
 
 ---
 
@@ -2311,6 +2329,8 @@ OIDC_USER_GROUP=PatchMon Users
 OIDC_SYNC_ROLES=true
 ```
 
+> **Reminder:** On the Authentik side, the provider's **Signing Key** (under **Advanced protocol settings**) must be set to a certificate. Leaving it empty makes Authentik sign ID tokens with `HS256`, which PatchMon rejects, and every login will fail with "Authentication failed".
+
 #### Keycloak
 
 ```bash
@@ -2336,23 +2356,43 @@ OIDC_SYNC_ROLES=true
 
 #### OIDC Not Initialising
 
-**Logs show:** `OIDC is enabled but missing required configuration`
+**Logs show:** `OIDC is enabled but missing required config: ...`
 
-All four required variables must be set: `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI`. Check for typos or empty values.
+All four required variables must be set: `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI`. Check for typos or empty values. A related message, `OIDC is partially configured via env vars but SSO is disabled`, means some but not all of the four are set.
+
+#### No OIDC Lines in the Startup Logs
+
+On a healthy configuration, PatchMon 2.0.3 and later logs `OIDC SSO enabled; provider discovery is deferred to the first login attempt` at startup. It does **not** contact your identity provider at startup, so there are never any discovery or connection messages to look for.
+
+On 2.0.2 and older, a correct configuration logged nothing at all, so an empty `grep -i oidc` was not evidence of failure. Confirm by checking whether the SSO button appears on the login page.
 
 #### SSO Button Not Appearing
 
-The button only appears if OIDC is both enabled (`OIDC_ENABLED=true`) **and** successfully initialised. Check server logs for OIDC errors. Common causes:
+The button appears when all four required variables resolve to non-empty values (from environment variables, or from Settings in the web UI). Because PatchMon does not contact your IdP until someone actually logs in, an unreachable or misconfigured IdP does **not** hide the button. If the button is missing, the problem is in your configuration values rather than your IdP:
 
-- PatchMon cannot reach the IdP (DNS / firewall issue)
-- Issuer URL is incorrect
-- IdP's `.well-known/openid-configuration` endpoint is not accessible
+- One of the four required variables is empty or misspelled. Check the startup logs for `missing required config` or `partially configured`
+- `OIDC_ENABLED` is not `true` and no OIDC settings have been saved in the web UI
+- The client secret was saved in the web UI but cannot be decrypted, which is logged as `OIDC client secret could not be decrypted; treating OIDC as unconfigured`. This usually means your encryption key changed. Re-enter and save the secret
 
 #### "Authentication Failed" After Redirect
 
-- Verify the **Redirect URI** in your IdP matches `OIDC_REDIRECT_URI` exactly (including trailing slashes)
-- Ensure cookies are not being blocked (OIDC uses httpOnly cookies for session state)
-- Check that your IdP supports PKCE (PatchMon uses S256 code challenge)
+This is the generic error for any failure during the token exchange, after your IdP has sent the user back to PatchMon. **Check the server logs for the line beginning `oidc exchange failed`, which contains the specific reason.** Common causes:
+
+- **Your IdP is signing ID tokens with HS256.** The log contains `unexpected signature algorithm "HS256"`. PatchMon only accepts asymmetrically signed tokens. In Authentik, open the OAuth2/OIDC provider, expand **Advanced protocol settings**, and set **Signing Key** to a certificate such as `authentik Self-signed Certificate`. An empty Signing Key is what causes this
+- The **Redirect URI** in your IdP does not match `OIDC_REDIRECT_URI` exactly (including trailing slashes)
+- Cookies are being blocked (OIDC uses httpOnly cookies for session state)
+- Your IdP does not support PKCE (PatchMon uses the S256 code challenge)
+
+#### "Failed to reach the OIDC provider" When Clicking the SSO Button
+
+You get this error immediately on clicking the SSO button, before your IdP's login page ever appears, and the logs show `oidc auth url failed`.
+
+PatchMon fetches your IdP's discovery document (`.well-known/openid-configuration`) on the first login attempt rather than at startup, so all connectivity and issuer problems surface at this point:
+
+- PatchMon cannot reach the IdP from inside the container (DNS, firewall, or network policy)
+- `OIDC_ISSUER_URL` is wrong. It must not include `.well-known/openid-configuration`, which PatchMon appends itself
+- The issuer URL in the discovery document does not match `OIDC_ISSUER_URL`. For Authentik, the trailing slash matters
+- The IdP's TLS certificate is not trusted by the PatchMon container
 
 #### "Session Expired" Error
 
@@ -2362,8 +2402,7 @@ The OIDC login state has a configurable window (default 600 seconds via `OIDC_SE
 
 - Check that the `groups` scope is included in `OIDC_SCOPES`
 - Verify your IdP is including groups in the ID token (not just the access token)
-- Check server logs as they show which groups were received: `OIDC groups found: [...]`
-- If logs show `No groups found in OIDC token`, configure your IdP to include the groups claim
+- If the logs show `oidc no groups in token`, your IdP sent no groups at all. Configure it to include the groups claim. In Authentik this means adding a Scope Mapping that emits `groups`
 - Group matching is case-insensitive, so `patchmon admins` matches `PatchMon Admins`
 
 #### OIDC Banners / Restrictions Appearing When They Shouldn't

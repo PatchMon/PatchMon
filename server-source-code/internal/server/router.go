@@ -134,6 +134,16 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 				Scopes:       oidcResolved.Scopes,
 			})
 			oidcClient = c
+			if log != nil {
+				source := "database settings"
+				if oidcResolved.ConfiguredViaEnv {
+					source = "environment variables"
+				}
+				log.Info("OIDC SSO enabled; provider discovery is deferred to the first login attempt",
+					"issuer", oidcResolved.IssuerURL,
+					"client_id", oidcResolved.ClientID,
+					"source", source)
+			}
 		}
 		oidcHandler = handler.NewOidcHandler(cfg, resolvedPtr, resolved, oidcClient, valid, store.NewOidcSessionStore(redisResolver), usersStore, authHandler, settingsStore, enc, log)
 	}
