@@ -58,6 +58,10 @@ services:
       target: development
       tags: [patchmon-server:dev]
     restart: unless-stopped
+    # See the note in docker-compose.yml: a stable hostname keeps the agent
+    # presence registry able to recognise its own records across a rebuild,
+    # which recreates the container far more often here than in production.
+    hostname: patchmon-server-dev
     environment:
       APP_ENV: development
       LOG_LEVEL: info

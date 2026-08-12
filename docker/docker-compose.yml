@@ -22,6 +22,11 @@ services:
   server:
     image: ghcr.io/patchmon/patchmon-server:latest
     restart: unless-stopped
+    # Stable identity for the agent presence registry. Without this the server
+    # identifies itself by the container hostname, which Docker derives from the
+    # container ID, so upgrading with `up -d` recreates the container and the
+    # new process cannot recognise the presence records the old one left behind.
+    hostname: patchmon-server
     env_file: .env
     ports:
       - "${PORT:-3000}:${PORT:-3000}"
