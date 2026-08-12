@@ -468,6 +468,22 @@ func (r *Registry) handlePubSubMessage(channel string, payload []byte) {
 			slog.Error("agentregistry: invalid event payload", "error", err)
 			return
 		}
+		// Our own events carry nothing we do not already hold: Register,
+		// SetConnection and markDisconnectedLocked all write meta and podMap
+		// under the lock before the publish leaves the process. Applying them
+		// back is not merely redundant, it reorders. setPresence publishes from
+		// a goroutine while removePresence publishes inline, so a socket that
+		// dies inside that scheduling window delivers connect AFTER disconnect
+		// and the connect branch below rebuilds the entry as connected. Nothing
+		// then clears it — meta has no TTL — so the agent is a ghost for the
+		// life of the process: host_down suppressed, sidebar count inflated,
+		// every send failing with ErrNotConnected.
+		r.mu.RLock()
+		self := r.podID
+		r.mu.RUnlock()
+		if ev.Pod == self {
+			return
+		}
 		r.mu.Lock()
 		switch ev.Type {
 		case "connect":

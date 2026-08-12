@@ -118,12 +118,25 @@ func TestUpgradePath_PlainHTTPFleetNeverReportsSecure(t *testing.T) {
 	// Give every async publish and its pubsub round trip room to land.
 	time.Sleep(time.Second)
 
-	var mislabelled []string
+	// Assert on the durable presence record as well as local meta. Local meta
+	// alone would pass vacuously on a runner slow enough that no event is
+	// consumed within the settle window, since Register's own correct value
+	// would simply still be sitting there — the guard would silently disarm
+	// rather than fail. The hash is also what a peer's snapshotPresence reads
+	// back, so a wrong value there mislabels the pill on another pod too.
+	var mislabelled, badRecord []string
 	for i := range fleet {
 		apiID := fmt.Sprintf("api-%02d", i)
 		if r.Get(apiID).Secure {
 			mislabelled = append(mislabelled, apiID)
 		}
+		if got := awaitPresenceField(t, client, apiID, "secure"); got != "0" {
+			badRecord = append(badRecord, fmt.Sprintf("%s=%s", apiID, got))
+		}
+	}
+	if len(badRecord) > 0 {
+		t.Errorf("%d/%d plain-HTTP agents have a secure presence record: %v",
+			len(badRecord), fleet, badRecord)
 	}
 	if len(mislabelled) > 0 {
 		t.Fatalf("%d/%d plain-HTTP agents reported Secure=true (UI renders a WSS pill): %v",
