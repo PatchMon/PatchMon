@@ -1579,7 +1579,13 @@ const Hosts = () => {
 				let badgeClass;
 				let label;
 				let tooltipText;
-				if (reportingState === "reporting") {
+				if (reportingState === "awaiting") {
+					badgeClass =
+						"badge bg-secondary-100 text-secondary-700 dark:bg-secondary-700 dark:text-secondary-200";
+					label = "Awaiting report";
+					tooltipText =
+						"This host has been added but its agent has not sent a report yet. Install and start the agent on the host to begin monitoring.";
+				} else if (reportingState === "reporting") {
 					badgeClass =
 						"badge bg-success-100 text-success-800 dark:bg-success-900 dark:text-success-200";
 					label = "Reporting";
@@ -2096,6 +2102,7 @@ const Hosts = () => {
 											<option value="reporting">Reporting</option>
 											<option value="overdue">Overdue</option>
 											<option value="stale">Stale</option>
+											<option value="awaiting">Awaiting report</option>
 										</select>
 									</div>
 									<div>

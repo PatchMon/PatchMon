@@ -645,9 +645,9 @@ The top of the page has four main areas:
 - **Hostname** and **IP** underneath, both editable inline (clicking shows a text field; Enter to save, Esc to cancel).
 - **Status pills** (four independent indicators, each with a hover tooltip explaining what it means):
   - **WS** — WebSocket control channel state. Green when connected, amber while disconnected within the configured grace window, red once the grace window elapses. The grace window is the `host_down` alert threshold (default 30 seconds, see [Per-alert-type configuration](#per-alert-type-configuration)).
-  - **Reporting** — agent report freshness. Green when the agent has reported within its update interval, amber when overdue but the WebSocket is still connected (agent is alive, just hasn't pushed yet), red ("Stale") when overdue *and* the WebSocket is also disconnected.
+  - **Reporting** — agent report freshness. Grey ("Awaiting report") until the agent sends its very first report, then green when the agent has reported within its update interval, amber when overdue but the WebSocket is still connected (agent is alive, just hasn't pushed yet), red ("Stale") when overdue *and* the WebSocket is also disconnected.
   - **Reboot pending** — only shown when the host has flagged a pending reboot (e.g. `/var/run/reboot-required`, kernel updates).
-  - **Updates** — green "Up to date", amber "Updates pending" (non-security only), red "Security patches required" when one or more security updates are available.
+  - **Updates** — grey "No package data" until the first report arrives, then green "Up to date", amber "Updates pending" (non-security only), red "Security patches required" when one or more security updates are available.
 - **Uptime** and **Last updated** relative timestamps.
 
 If there's a pending patch run awaiting a fresh post-patch report, you'll see an **Awaiting inventory report** chip that links to the run.

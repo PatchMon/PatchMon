@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
 	deriveReportingState,
 	deriveReportingStateByTime,
+	hasNeverReported,
 } from "../../utils/hostStatus";
 
 // Fixed clock so the tests never depend on wall time.
@@ -117,12 +118,31 @@ describe("deriveReportingState", () => {
 		).toBe(expected);
 	});
 
-	it("does not depend on host.status", () => {
-		// A pending host silent for 19 hours must read as stale, not Reporting,
+	it("does not depend on host.status for hosts that have reported", () => {
+		// An inactive host silent for 19 hours must read as stale, not Reporting,
 		// even though the SQL isStale flag only flips for status='active'.
-		const pending = { status: "pending", last_update: minutesAgo(19 * 60) };
-		expect(deriveReportingState(pending, false, interval, NOW)).toBe("stale");
-		expect(deriveReportingState(pending, true, interval, NOW)).toBe("overdue");
+		const inactive = { status: "inactive", last_update: minutesAgo(19 * 60) };
+		expect(deriveReportingState(inactive, false, interval, NOW)).toBe("stale");
+		expect(deriveReportingState(inactive, true, interval, NOW)).toBe("overdue");
+	});
+
+	it("returns awaiting for a host that has never reported", () => {
+		// last_update is seeded at creation, so a just-added host would otherwise
+		// read as Reporting even though no agent has ever contacted the server.
+		const justAdded = { status: "pending", last_update: minutesAgo(0) };
+		expect(deriveReportingState(justAdded, true, interval, NOW)).toBe(
+			"awaiting",
+		);
+		expect(deriveReportingState(justAdded, false, interval, NOW)).toBe(
+			"awaiting",
+		);
+	});
+
+	it("keeps a never-reported host in awaiting no matter how old it is", () => {
+		const abandoned = { status: "pending", last_update: minutesAgo(19 * 60) };
+		expect(deriveReportingState(abandoned, false, interval, NOW)).toBe(
+			"awaiting",
+		);
 	});
 
 	it("treats a missing host as stale rather than throwing", () => {
@@ -130,5 +150,19 @@ describe("deriveReportingState", () => {
 		expect(deriveReportingState(undefined, true, interval, NOW)).toBe(
 			"overdue",
 		);
+	});
+});
+
+describe("hasNeverReported", () => {
+	it("is true only for the pending status", () => {
+		expect(hasNeverReported({ status: "pending" })).toBe(true);
+		expect(hasNeverReported({ status: "active" })).toBe(false);
+		expect(hasNeverReported({ status: "inactive" })).toBe(false);
+	});
+
+	it("is false for a missing host or missing status", () => {
+		expect(hasNeverReported(null)).toBe(false);
+		expect(hasNeverReported(undefined)).toBe(false);
+		expect(hasNeverReported({})).toBe(false);
 	});
 });
