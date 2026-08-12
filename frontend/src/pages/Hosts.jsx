@@ -235,6 +235,10 @@ const Hosts = () => {
 					setShowFilters(true);
 					setStatusFilter("reporting");
 					break;
+				case "awaitingData":
+					setShowFilters(true);
+					setStatusFilter("all");
+					break;
 				default:
 					break;
 			}
@@ -910,7 +914,13 @@ const Hosts = () => {
 					(host.updatesCount && host.updatesCount > 0)) &&
 				(filter !== "inactive" ||
 					(host.effectiveStatus || host.status) === "inactive") &&
-				(filter !== "upToDate" || (!host.isStale && host.updatesCount === 0)) &&
+				// "Up to date" requires package data: a host we have never received
+				// packages from is unknown, not healthy. Mirrors the server predicate.
+				(filter !== "upToDate" ||
+					(!host.isStale &&
+						host.totalPackagesCount > 0 &&
+						host.updatesCount === 0)) &&
+				(filter !== "awaitingData" || !host.totalPackagesCount) &&
 				(filter !== "stale" || host.isStale) &&
 				(filter !== "selected" ||
 					(selectedIds &&
