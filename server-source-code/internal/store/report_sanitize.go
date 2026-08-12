@@ -52,6 +52,13 @@ func sanitizeTextSlice(ss []string) {
 // Docker labels and port maps are arbitrary strings set by whoever built the
 // image, so neither side can be assumed clean. Rebuilt rather than mutated in
 // place because sanitising a key changes its identity.
+//
+// Two keys differing only by a NUL collapse into one, and the survivor is
+// whichever the map range happens to reach last. That is deliberate: the
+// alternative is failing the write, which is the exact outage this is here to
+// prevent. Losing one absurd duplicate label beats rejecting the host's whole
+// payload. The report path has the same hazard on package names and resolves
+// it the same way, by deduplicating rather than erroring.
 func sanitizeTextMap(m map[string]string) map[string]string {
 	if len(m) == 0 {
 		return m
