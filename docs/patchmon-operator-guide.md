@@ -2207,7 +2207,7 @@ docker compose up -d --force-recreate patchmon-server
 sudo systemctl restart <your-domain>
 ```
 
-Check the logs to confirm PatchMon accepted the configuration:
+**This check needs logging switched on, and it is off by default.** Set `ENABLE_LOGGING=true` in your `.env` (or enable it in **Settings > Environment**) and restart, or the server writes no logs at all and the commands below return nothing regardless of whether OIDC loaded. Leave `LOG_LEVEL` at `info` or lower, since the confirmation line is logged at info level.
 
 ```bash
 # Docker
@@ -2219,27 +2219,25 @@ journalctl -u <your-domain> | grep -i oidc
 
 You should see a line confirming SSO is enabled, containing the message `OIDC SSO enabled; provider discovery is deferred to the first login attempt` along with the issuer and client ID that were loaded.
 
+**PatchMon does not contact your identity provider at startup.** Provider discovery (the request to `.well-known/openid-configuration`) is deliberately deferred until the first login attempt, so a temporarily unreachable IdP cannot stop the server from booting. This line therefore confirms only that your four required variables were read and that the SSO button will appear. It does not prove your IdP is reachable or that your provider is configured correctly. The first login attempt is what tests that, and any failure is logged at that point.
+
 The surrounding format depends on `APP_ENV`. In production, which is the default, logs are JSON:
 
 ```json
-{"time":"2026-08-12T20:34:34.526Z","level":"INFO","msg":"OIDC SSO enabled; provider discovery is deferred to the first login attempt","issuer":"https://auth.example.com/application/o/patchmon/","client_id":"patchmon","source":"environment variables"}
+{"time":"2026-08-12T20:34:34.526Z","level":"INFO","msg":"OIDC SSO enabled; provider discovery is deferred to the first login attempt","version":"2.0.3","port":3000,"issuer":"https://auth.example.com/application/o/patchmon/","client_id":"patchmon","source":"environment variables"}
 ```
 
 With `APP_ENV` set to anything else, the same record is printed as plain text:
 
 ```
-time=2026-08-12T20:34:34.526Z level=INFO msg="OIDC SSO enabled; provider discovery is deferred to the first login attempt" issuer=https://auth.example.com/application/o/patchmon/ client_id=patchmon source="environment variables"
+time=2026-08-12T20:34:34.526Z level=INFO msg="OIDC SSO enabled; provider discovery is deferred to the first login attempt" version=2.0.3 port=3000 issuer=https://auth.example.com/application/o/patchmon/ client_id=patchmon source="environment variables"
 ```
 
 The `source` field tells you which configuration won: `environment variables` or `database settings`. If you edited SSO settings in the web UI but see `environment variables`, your `.env` is overriding them.
 
-You may also see a second OIDC line warning about superadmin role sync. That is unrelated to whether SSO loaded correctly and is covered under Step 3.
-
-**PatchMon does not contact your identity provider at startup.** Provider discovery (the request to `.well-known/openid-configuration`) is deliberately deferred until the first login attempt, so a temporarily unreachable IdP cannot stop the server from booting. The startup line above therefore confirms only that your four required variables were read and that the SSO button will appear. It does not prove your IdP is reachable or that your provider is configured correctly. The first login attempt is what tests that, and any failure is logged at that point.
-
 If you see `OIDC is enabled but missing required config: ...`, one or more of the four required variables is empty. If you see `OIDC is partially configured via env vars but SSO is disabled`, you have set some but not all of them.
 
-> **Note:** Releases before 2.0.3 logged nothing at all on a successful OIDC configuration. If you are on 2.0.2 or older, an empty `grep -i oidc` is expected and does not mean OIDC failed to load. Check whether the SSO button appears on the login page instead. From 2.0.3 onwards, silence does mean your configuration did not resolve.
+> **Note:** Releases before 2.0.3 logged nothing at all on a successful OIDC configuration. If you are on 2.0.2 or older, an empty `grep -i oidc` is expected and does not mean OIDC failed to load. Check whether the SSO button appears on the login page instead.
 
 ---
 
@@ -2364,7 +2362,16 @@ All four required variables must be set: `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `O
 
 On a healthy configuration, PatchMon 2.0.3 and later logs `OIDC SSO enabled; provider discovery is deferred to the first login attempt` at startup. It does **not** contact your identity provider at startup, so there are never any discovery or connection messages to look for.
 
-On 2.0.2 and older, a correct configuration logged nothing at all, so an empty `grep -i oidc` was not evidence of failure. Confirm by checking whether the SSO button appears on the login page.
+An empty `grep -i oidc` has four possible causes, and only the last one is a problem with your SSO configuration:
+
+- **Logging is off.** `ENABLE_LOGGING` defaults to `false`, and the shipped `env.example` has it commented out. With logging disabled the server writes nothing at all, so this check tells you nothing. Set `ENABLE_LOGGING=true` and restart
+- **`LOG_LEVEL` is above `info`.** The confirmation line is logged at info level, so `warn` or `error` hides it
+- **You are on 2.0.2 or older.** A correct configuration logged nothing at all on those releases
+- **Your configuration did not resolve.** Check for `missing required config` or `partially configured` in the same output
+
+If logging is off and you would rather not turn it on, check whether the SSO button appears on the login page instead. That is driven by the same resolved configuration.
+
+You may also see a second OIDC line warning that role sync cannot grant superadmin. That is unrelated to whether SSO loaded and is covered under Step 3.
 
 #### SSO Button Not Appearing
 
@@ -2385,9 +2392,9 @@ This is the generic error for any failure during the token exchange, after your 
 
 #### "Failed to reach the OIDC provider" When Clicking the SSO Button
 
-You get this error immediately on clicking the SSO button, before your IdP's login page ever appears, and the logs show `oidc auth url failed`.
+You get this immediately on clicking the SSO button, before your IdP's login page ever appears. The browser shows it as a bare JSON response rather than a styled error page, and the logs show `oidc auth url failed`.
 
-PatchMon fetches your IdP's discovery document (`.well-known/openid-configuration`) on the first login attempt rather than at startup, so all connectivity and issuer problems surface at this point:
+PatchMon fetches your IdP's discovery document (`.well-known/openid-configuration`) on the first login attempt rather than at startup, so problems reaching or validating that document surface at this point:
 
 - PatchMon cannot reach the IdP from inside the container (DNS, firewall, or network policy)
 - `OIDC_ISSUER_URL` is wrong. It must not include `.well-known/openid-configuration`, which PatchMon appends itself
