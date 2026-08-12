@@ -138,11 +138,11 @@ func (h *ApiHostsHandler) ListHosts(w http.ResponseWriter, r *http.Request) {
 	// can show "reporting / overdue / stale" without parsing timestamps.
 	updateIntervalMinutes := h.dashboard.UpdateIntervalMinutesOrDefault(ctx)
 	if updateIntervalMinutes <= 0 {
-		updateIntervalMinutes = 60
+		updateIntervalMinutes = store.DefaultUpdateIntervalMinutes
 	}
 	now := time.Now()
 	overdueCutoff := now.Add(-time.Duration(updateIntervalMinutes) * time.Minute)
-	staleCutoff := now.Add(-time.Duration(updateIntervalMinutes*2) * time.Minute)
+	staleCutoff := store.StaleCutoff(now, updateIntervalMinutes)
 
 	out := make([]map[string]interface{}, len(hosts))
 	for i, host := range hosts {
@@ -174,6 +174,10 @@ func (h *ApiHostsHandler) ListHosts(w http.ResponseWriter, r *http.Request) {
 			item["os_version"] = host.OSVersion
 			item["last_update"] = host.LastUpdate.Format(time.RFC3339)
 			item["status"] = host.Status
+			// `status` is the stored provisioning lifecycle value and never
+			// becomes "inactive"; `effective_status` is what the UI renders.
+			// Both are returned so existing consumers keep the old field.
+			item["effective_status"] = store.EffectiveStatus(host.Status, host.LastUpdate, staleCutoff)
 			item["needs_reboot"] = host.NeedsReboot != nil && *host.NeedsReboot
 			st := statsMap[host.ID]
 			item["updates_count"] = st.Outdated
