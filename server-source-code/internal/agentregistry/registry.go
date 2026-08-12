@@ -119,12 +119,16 @@ func (r *Registry) SetConnection(apiID string, conn *websocket.Conn) {
 	prev.LastConnectedAt = &now
 	prev.DisconnectedAt = nil
 	r.meta[apiID] = prev
-	// Carried from the Register call that precedes this on the upgrade path, so
-	// the presence record republished below keeps the agent's context label.
+	// Both carried from the Register call that precedes this on the upgrade
+	// path, so the presence record republished below keeps the agent's context
+	// label and its real TLS state. Secure must never be a constant here: the
+	// two publishes race through agent:events, and the pod consumes its own
+	// events, so a hardcoded value wins for roughly half the fleet.
 	scope := prev.Scope
+	secure := prev.Secure
 	r.mu.Unlock()
 	if r.rdb != nil {
-		go func() { _ = r.setPresence(apiID, true, scope) }()
+		go func() { _ = r.setPresence(apiID, secure, scope) }()
 	}
 }
 
