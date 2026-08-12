@@ -373,12 +373,30 @@ func (r *Registry) EnableDistributed(ctx context.Context, rdb *redisclient.Clien
 }
 
 // snapshotPresence reads existing agent:meta:* keys and populates local maps.
+//
+// It runs once from EnableDistributed, at startup, when this process owns no
+// agent connections at all. A record naming another pod is therefore a claim
+// about a connection someone else holds, and is imported as connected. A
+// record naming US is a leftover from the process we just replaced: its socket
+// died with the old process, so importing it as connected would have the
+// registry assert a connection nothing in this process can write to. That lie
+// reaches operators directly — the WS pill shows connected, the sidebar count
+// is inflated, and host_down alerting is suppressed — for as long as the key
+// survives its 5 minute TTL, or until the agent reconnects and Register
+// overwrites the entry honestly.
+//
+// Own records are imported disconnected instead, stamped from now: the real
+// drop time is unknowable here, and "since this server started" is the honest
+// floor. Residual case not covered: a restart that changes the pod identity
+// (POD_ID unset and the container recreated, so os.Hostname differs) makes our
+// own leftovers indistinguishable from a peer's, and they import as connected
+// until the TTL expires.
 func (r *Registry) snapshotPresence() error {
 	if r.rdb == nil {
 		return fmt.Errorf("redis not configured")
 	}
 	var cursor uint64
-	var total int
+	var total, stale int
 	for {
 		keys, cur, err := r.rdb.Scan(r.distCtx, cursor, "agent:meta:*", 100).Result()
 		if err != nil {
@@ -404,14 +422,25 @@ func (r *Registry) snapshotPresence() error {
 					lastConnected = &t
 				}
 			}
-			r.mu.Lock()
-			r.meta[apiID] = ConnectionInfo{
-				Connected:       true,
+			// An empty pod is treated as ours: it cannot be routed to, so
+			// claiming it is connected is the same unbackable assertion.
+			ours := pod == "" || pod == r.podID
+			info := ConnectionInfo{
+				Connected:       !ours,
 				Secure:          secure,
 				Scope:           vals["scope"],
 				LastConnectedAt: lastConnected,
 			}
-			if pod != "" {
+			if ours {
+				now := time.Now().UTC()
+				info.DisconnectedAt = &now
+				stale++
+			}
+			r.mu.Lock()
+			r.meta[apiID] = info
+			// Only record a route we could actually publish to; publishForward
+			// rejects our own pod anyway.
+			if !ours {
 				r.podMap[apiID] = pod
 			}
 			r.mu.Unlock()
@@ -421,7 +450,7 @@ func (r *Registry) snapshotPresence() error {
 			break
 		}
 	}
-	slog.Info("agentregistry: snapshotPresence loaded", "keys", total)
+	slog.Info("agentregistry: snapshotPresence loaded", "keys", total, "stale_own_pod", stale)
 	return nil
 }
 
