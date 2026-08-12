@@ -49,7 +49,10 @@ import { useTheme } from "../contexts/ThemeContext";
 import { useToast } from "../contexts/ToastContext";
 import { adminHostsAPI, settingsAPI } from "../utils/api";
 import { complianceAPI } from "../utils/complianceApi";
-import { deriveReportingStateByTime } from "../utils/hostStatus";
+import {
+	deriveReportingStateByTime,
+	hasNeverReported,
+} from "../utils/hostStatus";
 
 // Custom tooltip component for consistent styling across all charts
 const CustomTooltip = ({ active, payload, label, type }) => {
@@ -1056,25 +1059,32 @@ const Compliance = () => {
 								</div>
 								<div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[200px] overflow-y-auto">
 									{allHosts.map((host) => {
-										const reportingState = deriveReportingStateByTime(
-											host.last_update,
-											updateIntervalMinutes,
-										);
+										const reportingState = hasNeverReported(host)
+											? "awaiting"
+											: deriveReportingStateByTime(
+													host.last_update,
+													updateIntervalMinutes,
+												);
 										const dotVariant =
-											reportingState === "reporting"
+											reportingState === "awaiting"
 												? {
-														className: "bg-success-500",
-														label: "Reporting",
+														className: "bg-secondary-400",
+														label: "Awaiting first report",
 													}
-												: reportingState === "overdue"
+												: reportingState === "reporting"
 													? {
-															className: "bg-warning-500",
-															label: "Overdue",
+															className: "bg-success-500",
+															label: "Reporting",
 														}
-													: {
-															className: "bg-danger-500",
-															label: "Not reporting",
-														};
+													: reportingState === "overdue"
+														? {
+																className: "bg-warning-500",
+																label: "Overdue",
+															}
+														: {
+																className: "bg-danger-500",
+																label: "Not reporting",
+															};
 										return (
 											<label
 												key={host.id}
