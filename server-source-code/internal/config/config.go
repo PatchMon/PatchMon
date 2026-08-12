@@ -229,7 +229,7 @@ func Load() (*Config, error) {
 		CORSOrigin: getEnv("CORS_ORIGIN", "http://localhost:3000"),
 		AssetsDir:  getEnv("ASSETS_DIR", ""),
 
-		EnableLogging: getEnv("ENABLE_LOGGING", "") == "true",
+		EnableLogging: getEnv("ENABLE_LOGGING", "true") != "false",
 		LogLevel:      getEnv("LOG_LEVEL", "info"),
 
 		EnablePprof:               getEnv("ENABLE_PPROF", "") == "true",

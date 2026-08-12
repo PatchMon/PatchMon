@@ -29,6 +29,34 @@ func TestLoad_ValidEnv(t *testing.T) {
 	}
 }
 
+func TestLoad_EnableLoggingDefault(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want bool
+	}{
+		{name: "unset defaults to on", env: "", want: true},
+		{name: "explicit false is honoured", env: "false", want: false},
+		{name: "explicit true", env: "true", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ENV_FILE", "/nonexistent")
+			t.Setenv("DATABASE_URL", "postgresql://localhost/test")
+			t.Setenv("JWT_SECRET", "test-secret")
+			t.Setenv("ENABLE_LOGGING", tt.env)
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if cfg.EnableLogging != tt.want {
+				t.Errorf("EnableLogging = %v, want %v", cfg.EnableLogging, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoad_MissingDatabaseURL(t *testing.T) {
 	t.Setenv("ENV_FILE", "/nonexistent")
 	t.Setenv("DATABASE_URL", "")
