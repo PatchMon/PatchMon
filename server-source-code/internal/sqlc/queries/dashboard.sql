@@ -7,7 +7,19 @@ WITH host_counts AS (
         -- links to disagree.
         COUNT(*) FILTER (WHERE (status = 'active' AND last_update < $1) OR status = 'inactive')::int AS errored_hosts,
         COUNT(*) FILTER (WHERE status = 'active' AND last_update < $2)::int AS offline_hosts,
-        COUNT(*) FILTER (WHERE needs_reboot = true)::int AS hosts_needing_reboot
+        COUNT(*) FILTER (WHERE needs_reboot = true)::int AS hosts_needing_reboot,
+        -- Hosts we have actually received packages from. "Up to date" is
+        -- derived from this, not from total_hosts, so a host we know nothing
+        -- about is never reported as healthy.
+        --
+        -- An EXISTS semi-join, not COUNT(DISTINCT host_id) over host_packages:
+        -- the latter reads every row in the table (1.25M at 1k hosts, 55 ms)
+        -- to rediscover something 1000 index probes answer in 2 ms, and it
+        -- scales with package rows rather than host count. It also rides the
+        -- scan of hosts this CTE is already doing.
+        COUNT(*) FILTER (WHERE EXISTS (
+            SELECT 1 FROM host_packages hp WHERE hp.host_id = hosts.id
+        ))::int AS hosts_with_package_data
     FROM hosts
 ),
 hp_package_counts AS (
@@ -38,13 +50,7 @@ hp_package_counts AS (
                 WHERE hp.needs_update = true AND hp.is_security_update = true
                 GROUP BY hp.package_id
             ) security_packages
-        ), 0)::int AS security_updates,
-        -- Hosts we have actually received packages from. "Up to date" is
-        -- derived from this, not from total_hosts, so a host we know nothing
-        -- about is never reported as healthy.
-        COALESCE((
-            SELECT COUNT(DISTINCT hp.host_id)::int FROM host_packages hp
-        ), 0)::int AS hosts_with_package_data
+        ), 0)::int AS security_updates
 )
 SELECT
     hc.total_hosts,
@@ -57,7 +63,7 @@ SELECT
     (SELECT COUNT(*)::int FROM host_groups),
     (SELECT COUNT(*)::int FROM users),
     (SELECT COUNT(*)::int FROM repositories),
-    hpc.hosts_with_package_data
+    hc.hosts_with_package_data
 FROM host_counts hc
 CROSS JOIN hp_package_counts hpc;
 
@@ -539,7 +545,13 @@ ORDER BY friendly_name ASC;
 -- what it appeared to: hosts.status is an enrolment lifecycle column and never
 -- becomes 'inactive', so a host that stopped reporting was counted regardless.
 WITH host_counts AS (
-    SELECT COUNT(*)::int AS total_hosts FROM hosts
+    SELECT COUNT(*)::int AS total_hosts,
+           -- See GetDashboardStats: semi-join, not COUNT(DISTINCT), and it
+           -- rides the scan of `hosts` already happening here.
+           COUNT(*) FILTER (WHERE EXISTS (
+               SELECT 1 FROM host_packages hp WHERE hp.host_id = hosts.id
+           ))::int AS hosts_with_package_data
+    FROM hosts
 ),
 hosts_needing_updates AS (
     SELECT COUNT(DISTINCT hp.host_id)::int AS cnt
@@ -557,9 +569,6 @@ package_counts AS (
         COUNT(DISTINCT package_id) FILTER (WHERE is_security_update)::int AS security_updates
     FROM host_packages
     WHERE needs_update = true
-),
-hosts_with_data AS (
-    SELECT COUNT(DISTINCT host_id)::int AS cnt FROM host_packages
 )
 SELECT
     hc.total_hosts,
@@ -569,10 +578,9 @@ SELECT
     hws.cnt AS hosts_with_security_updates,
     (SELECT COUNT(*)::int FROM repositories WHERE is_active = true) AS total_repos,
     (SELECT COUNT(*)::int FROM update_history WHERE timestamp >= sqlc.arg('since') AND status = 'success' AND report_type IN ('full', 'partial')) AS recent_updates_24h,
-    hwd.cnt AS hosts_with_package_data
+    hc.hosts_with_package_data
 FROM host_counts hc
 CROSS JOIN hosts_needing_updates hnu
 CROSS JOIN hosts_with_security hws
-CROSS JOIN package_counts pc
-CROSS JOIN hosts_with_data hwd;
+CROSS JOIN package_counts pc;
 
