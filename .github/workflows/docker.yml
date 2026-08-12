@@ -113,6 +113,11 @@ jobs:
       # and `push-to-registry: true` would then fail against a digest the
       # registry has never seen.
       PUSHED: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'workflow_dispatch' || inputs.push == 'true') }}
+      # The same idea for Harbor, which unlike GHCR *does* push on
+      # pull_request_target. Gates the Trivy scan, which resolves the image by
+      # digest from the registry: a workflow_dispatch build that stayed local
+      # has nothing to pull.
+      HARBOR_PUSHED: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -324,7 +329,10 @@ jobs:
       # ---------------------------------------------------------------------
       - name: Resolve image names
         id: img
-        if: env.PUSHED == 'true'
+        # Deliberately not gated on PUSHED, unlike the attest-* steps that
+        # follow: the Trivy scan needs the Harbor name on pull_request_target
+        # too, and two echoes cost nothing.
+        #
         # `github.repository` is `PatchMon/PatchMon`, and the attest-* actions
         # reject a mixed-case subject-name. The build steps above never hit
         # this because docker/metadata-action lowercases internally.
@@ -422,6 +430,120 @@ jobs:
             sbom-image.cdx.json
             sbom-source.cdx.json
 
+      # ---------------------------------------------------------------------
+      # Vulnerability scan of the image that was actually pushed to Harbor,
+      # resolved by digest rather than tag so the report cannot drift from the
+      # artifact a reviewer pulls. Runs for PRs, main and tags.
+      #
+      # This is not Harbor's own Trivy scanner. Harbor's would need scan
+      # permissions on the robot account and a poll loop against the scan
+      # status API; running it here is one step, and the runner is already
+      # logged in to Harbor. Enabling auto-scan-on-push in the Harbor project
+      # is complementary, not a substitute, and does not touch this workflow.
+      #
+      # The image is a multi-arch index, so Trivy resolves it to the runner's
+      # platform (linux/amd64). The two arches share a base image and Go
+      # module graph, so the finding set does not differ meaningfully.
+      #
+      # Never fails the build: a base-image CVE is not a reason to red-X a
+      # contributor's PR, and a Trivy DB fetch hiccup is not a build failure.
+      # ---------------------------------------------------------------------
+      - name: Scan pushed image for vulnerabilities
+        id: trivy
+        if: env.HAS_HARBOR == 'true' && env.HARBOR_PUSHED == 'true' && steps.build-harbor.outputs.digest != ''
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          # Trivy reads ~/.docker/config.json via the default keychain, which
+          # docker/login-action has already populated, but setting these makes
+          # the Harbor pull explicit rather than dependent on how the runner
+          # stores credentials.
+          TRIVY_USERNAME: ${{ secrets.HARBOR_USERNAME }}
+          TRIVY_PASSWORD: ${{ secrets.HARBOR_TOKEN }}
+        with:
+          image-ref: ${{ steps.img.outputs.harbor }}@${{ steps.build-harbor.outputs.digest }}
+          format: json
+          output: trivy-results.json
+          scanners: vuln
+          hide-progress: true
+          timeout: 10m
+
+      - name: Render vulnerability summary
+        id: trivy-md
+        if: steps.trivy.outcome == 'success'
+        # Also continue-on-error, and for a different reason than the scan step:
+        # a hard failure here would skip every step after it, including the PR
+        # comment. An unparseable report must cost the vulnerability section,
+        # not the image URL a reviewer came for.
+        continue-on-error: true
+        env:
+          # Caps the rendered table. A GitHub comment body is limited to 65536
+          # characters and an unbounded HIGH list can exceed it; the full report
+          # goes up as an artifact either way.
+          MAX_ROWS: "40"
+        run: |
+          set -euo pipefail
+          if [ ! -s trivy-results.json ]; then
+            echo "::warning::Trivy produced no report; skipping vulnerability summary"
+            exit 0
+          fi
+
+          jq -r --argjson max "$MAX_ROWS" '
+            def sevrank: if . == "CRITICAL" then 0 elif . == "HIGH" then 1 else 2 end;
+            def nsev($s): [ .[] | select(.Severity == $s) ] | length;
+
+            [ .Results[]? | .Vulnerabilities[]? ] as $all
+            | ($all | nsev("CRITICAL")) as $c
+            | ($all | nsev("HIGH")) as $h
+            | ($all | nsev("MEDIUM")) as $m
+            | ($all | nsev("LOW")) as $l
+            | ($all | nsev("UNKNOWN")) as $u
+            | ( $all
+                | map(select(.Severity == "CRITICAL" or .Severity == "HIGH"))
+                | sort_by((.Severity | sevrank), .PkgName)
+                | map({
+                    sev: .Severity,
+                    pkg: .PkgName,
+                    installed: .InstalledVersion,
+                    fix: (if (.FixedVersion // "") == "" then "_not fixed_" else "`" + .FixedVersion + "`" end),
+                    id: .VulnerabilityID,
+                    url: (.PrimaryURL // ("https://nvd.nist.gov/vuln/detail/" + .VulnerabilityID))
+                  }) ) as $top
+            | ($top | length) as $n
+            | "### Vulnerability scan (Trivy)\n"
+            + "\nCritical: **\($c)** · High: **\($h)** · Medium: **\($m)** · Low: **\($l)** · Unknown: **\($u)**\n"
+            + ( if $n == 0 then
+                  "\nNo critical or high severity findings.\n"
+                else
+                  "\n<details>\n<summary>Critical and high findings (\($n))</summary>\n\n"
+                  + "| Severity | Package | Installed | Fixed in | Advisory |\n|---|---|---|---|---|\n"
+                  + ( $top[0:$max] | map("| \(.sev) | `\(.pkg)` | `\(.installed)` | \(.fix) | [\(.id)](\(.url)) |") | join("\n") )
+                  + "\n"
+                  + ( if $n > $max then "\n_Showing \($max) of \($n). The full JSON report is attached to this workflow run._\n" else "" end )
+                  + "\n</details>\n"
+                end )
+          ' trivy-results.json > vuln-summary.md
+
+          # Random delimiter: the report embeds package names and advisory
+          # titles from an image built out of PR code, so a fixed heredoc marker
+          # is attacker-choosable.
+          delim="TRIVY_EOF_$(openssl rand -hex 12)"
+          {
+            echo "markdown<<${delim}"
+            cat vuln-summary.md
+            echo "${delim}"
+          } >> "$GITHUB_OUTPUT"
+
+          cat vuln-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload vulnerability report
+        if: steps.trivy.outcome == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: trivy-server-${{ steps.ctx.outputs.version }}
+          path: trivy-results.json
+
       # Locate a previous image comment by its marker so a re-push updates it
       # instead of appending another one. `synchronize` is a trigger, so
       # without this every push to the PR leaves a fresh near-identical comment.
@@ -469,4 +591,6 @@ jobs:
               patchmon-server:
                 image: ${{ env.HARBOR_REGISTRY }}/pr/patchmon-server@${{ steps.build-harbor.outputs.digest }}
             ```
+
+            ${{ steps.trivy-md.outputs.markdown }}
 
