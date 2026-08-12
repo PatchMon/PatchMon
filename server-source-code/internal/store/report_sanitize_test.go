@@ -173,3 +173,92 @@ func TestSanitizeRawJSON(t *testing.T) {
 		}
 	})
 }
+
+func TestSanitizeDockerPayload_StripsNulsEverywhere(t *testing.T) {
+	nul := "\x00"
+	p := &DockerReceivePayload{
+		Containers: []DockerReceiveContainer{{
+			ContainerID: "abc" + nul,
+			Name:        "web" + nul,
+			ImageName:   "nginx" + nul,
+			ImageTag:    "1.27" + nul,
+			Status:      "Up 3 hours" + nul,
+			State:       "running" + nul,
+			Ports:       map[string]string{"80/tcp" + nul: "8080" + nul},
+			Labels:      map[string]string{"com.example" + nul: "value" + nul},
+		}},
+		Images:   []DockerReceiveImage{{Repository: "nginx" + nul, Tag: "latest" + nul, Digest: "sha256:x" + nul}},
+		Volumes:  []DockerReceiveVolume{{Name: "data" + nul, Mountpoint: "/var/lib/x" + nul, Options: map[string]string{"o" + nul: "bind" + nul}}},
+		Networks: []DockerReceiveNetwork{{Name: "bridge" + nul, Driver: "bridge" + nul, Labels: map[string]string{"k" + nul: "v" + nul}}},
+		Updates:  []DockerReceiveImageUpdate{{Repository: "nginx" + nul, AvailableTag: "1.28" + nul}},
+	}
+
+	sanitizeDockerPayload(p)
+
+	c := p.Containers[0]
+	for name, got := range map[string]string{
+		"ContainerID": c.ContainerID, "Name": c.Name, "ImageName": c.ImageName,
+		"ImageTag": c.ImageTag, "Status": c.Status, "State": c.State,
+		"image.Repository": p.Images[0].Repository, "image.Tag": p.Images[0].Tag,
+		"image.Digest": p.Images[0].Digest, "volume.Name": p.Volumes[0].Name,
+		"volume.Mountpoint": p.Volumes[0].Mountpoint, "network.Name": p.Networks[0].Name,
+		"network.Driver": p.Networks[0].Driver, "update.Repository": p.Updates[0].Repository,
+		"update.AvailableTag": p.Updates[0].AvailableTag,
+	} {
+		if strings.ContainsRune(got, 0) {
+			t.Errorf("%s still contains NUL: %q", name, got)
+		}
+	}
+
+	// Maps must be cleaned on both sides. A NUL in a key survives
+	// json.Marshal as an escape sequence and aborts the jsonb write.
+	for label, m := range map[string]map[string]string{
+		"container.Ports": c.Ports, "container.Labels": c.Labels,
+		"volume.Options": p.Volumes[0].Options, "network.Labels": p.Networks[0].Labels,
+	} {
+		for k, v := range m {
+			if strings.ContainsRune(k, 0) {
+				t.Errorf("%s key still contains NUL: %q", label, k)
+			}
+			if strings.ContainsRune(v, 0) {
+				t.Errorf("%s value still contains NUL: %q", label, v)
+			}
+		}
+	}
+	if got := c.Labels["com.example"]; got != "value" {
+		t.Errorf("label not reachable under its cleaned key, got %q", got)
+	}
+}
+
+func TestSanitizeComplianceScans_StripsNulsEverywhere(t *testing.T) {
+	nul := "\x00"
+	scans := []SubmittedScan{{
+		ProfileName: "CIS" + nul,
+		ProfileType: "openscap" + nul,
+		Status:      "completed" + nul,
+		Error:       "none" + nul,
+		Results: []SubmittedScanResult{{
+			RuleRef: "r1" + nul, Title: "Ensure X" + nul, Description: "desc" + nul,
+			Severity: "high" + nul, Section: "1.1" + nul, Remediation: "do y" + nul,
+			Status: "fail" + nul, Finding: "f" + nul, Actual: "a" + nul, Expected: "e" + nul,
+		}},
+	}}
+
+	sanitizeComplianceScans(scans)
+
+	s := scans[0]
+	r := s.Results[0]
+	for name, got := range map[string]string{
+		"ProfileName": s.ProfileName, "ProfileType": s.ProfileType, "Status": s.Status,
+		"Error": s.Error, "RuleRef": r.RuleRef, "Title": r.Title, "Description": r.Description,
+		"Severity": r.Severity, "Section": r.Section, "Remediation": r.Remediation,
+		"result.Status": r.Status, "Finding": r.Finding, "Actual": r.Actual, "Expected": r.Expected,
+	} {
+		if strings.ContainsRune(got, 0) {
+			t.Errorf("%s still contains NUL: %q", name, got)
+		}
+	}
+	if s.ProfileName != "CIS" || r.Title != "Ensure X" {
+		t.Errorf("content altered beyond NUL removal: %q / %q", s.ProfileName, r.Title)
+	}
+}

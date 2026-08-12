@@ -162,6 +162,11 @@ type ProcessedScan struct {
 // SubmitScan processes and stores scan results from an agent.
 // All DB writes are wrapped in a transaction to prevent partial/orphaned data.
 func (s *ComplianceStore) SubmitScan(ctx context.Context, hostID string, openscapEnabled, dockerBenchEnabled bool, scans []SubmittedScan) ([]ProcessedScan, error) {
+	// Strip NUL before anything touches a query parameter. The handler has
+	// already run the canonical compliance-hash check by this point, so
+	// cleaning here cannot cause a hash mismatch.
+	sanitizeComplianceScans(scans)
+
 	d := s.db.DB(ctx)
 
 	tx, err := d.BeginLong(ctx)
