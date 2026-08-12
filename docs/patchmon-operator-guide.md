@@ -2209,7 +2209,7 @@ docker compose up -d --force-recreate patchmon-server
 sudo systemctl restart <your-domain>
 ```
 
-This check needs logging on, which is the default from 2.0.3. If you have set `ENABLE_LOGGING=false`, or you are on 2.0.2 or earlier where `false` was the default, the server writes no logs at all and the commands below return nothing regardless of whether OIDC loaded. Keep `LOG_LEVEL` at `info` or lower too, since the confirmation line is logged at info level.
+This check needs `ENABLE_LOGGING=true`, which is the default from 2.0.3. If you have set `ENABLE_LOGGING=false`, or you are on 2.0.2 or earlier where `false` was the default, the server writes no logs at all and the commands below return nothing regardless of whether OIDC loaded. Keep `LOG_LEVEL` at `info` or lower too, since the confirmation line is logged at info level.
 
 ```bash
 # Docker
@@ -2723,7 +2723,7 @@ The button shows when OIDC is enabled and all four required values are present. 
 
 If the button appears but login fails, the problem is Entra connectivity or configuration instead. A blocked `login.microsoftonline.com` gives "Failed to reach the OIDC provider" on clicking the button, and a wrong issuer URL (it must end in `/v2.0`, so check the tenant GUID for typos) gives the same.
 
-Check the server logs; search for `oidc`. This needs `ENABLE_LOGGING` on, which is the default from 2.0.3:
+Check the server logs; search for `oidc`. This needs `ENABLE_LOGGING=true`, which is the default from 2.0.3:
 
 ```bash
 # Docker
