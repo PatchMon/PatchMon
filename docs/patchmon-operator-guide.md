@@ -1843,7 +1843,7 @@ Settings for SCAP Security Guide content used by the compliance scanning feature
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `SSG_CONTENT_DIR` | `./ssg-content` | No | Path to the directory containing SCAP Security Guide content (`.xml` datastream files). The compliance scanner reads SCAP profiles from this directory. When running in Docker, mount your SSG content to this path. |
+| `SSG_CONTENT_DIR` | `./ssg-content` | No | Path to the directory holding SCAP Security Guide datastream files (`ssg-*-ds.xml`), which agents download from. The official image already contains this content at `/app/ssg-content` and sets this variable for you, so leave it alone unless you are deliberately supplying your own content. **Do not mount an empty volume at this path.** Doing so hides the bundled content and leaves every host in your fleet unable to update its compliance content. |
 
 ---
 

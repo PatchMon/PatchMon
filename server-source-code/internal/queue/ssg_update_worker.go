@@ -66,16 +66,33 @@ func (h *SSGUpdateCheckHandler) ProcessTask(ctx context.Context, t *asynq.Task) 
 }
 
 func (h *SSGUpdateCheckHandler) checkDB(ctx context.Context, d *database.DB, tenantHost, serverVersion string) int {
-	// Use array comparison for proper semantic version ordering.
+	// Gate on the scanner binary, not on scanner availability. A host reports
+	// openscap_available = false when the binary is fine but no datastream is on
+	// disk, which is exactly the host that needs a content push; gating on it
+	// would permanently strand any host whose first sync failed, because the
+	// agent only ever acts on a server-pushed command and never retries by
+	// itself. openscap_version is set from `oscap --version` before the content
+	// check, so it means "scanner installed" regardless of content.
+	//
+	// A host with no scanner at all is excluded: it needs install_scanner, and
+	// under the old NULL/empty arms it re-qualified on every sweep forever.
+	//
+	// on-demand hosts are deliberately still included. That flag governs scan
+	// scheduling, not content distribution: an on-demand host still scans when
+	// asked and needs current content to do it. A push is now one datastream
+	// from this server, version-checked and skipped when already current, so
+	// there is nothing to opt out of. #841 is the fix for on-demand hosts doing
+	// unrequested work.
+	//
+	// Version ordering uses array comparison so 0.1.9 sorts below 0.1.10.
 	const query = `
 		SELECT h.id, h.api_id
 		FROM hosts h
 		WHERE h.compliance_enabled = true
 		  AND h.status = 'active'
+		  AND COALESCE(h.compliance_scanner_status->'scanner_info'->>'openscap_version', '') <> ''
 		  AND (
-		    h.compliance_scanner_status IS NULL
-		    OR h.compliance_scanner_status->'scanner_info'->>'ssg_version' IS NULL
-		    OR h.compliance_scanner_status->'scanner_info'->>'ssg_version' = ''
+		    COALESCE(h.compliance_scanner_status->'scanner_info'->>'ssg_version', '') = ''
 		    OR (SELECT array_agg(COALESCE(NULLIF(regexp_replace(elem, '[^0-9].*', ''), ''), '0')::int) FROM unnest(string_to_array(h.compliance_scanner_status->'scanner_info'->>'ssg_version', '.')) AS elem)
 		       < (SELECT array_agg(COALESCE(NULLIF(regexp_replace(elem, '[^0-9].*', ''), ''), '0')::int) FROM unnest(string_to_array($1, '.')) AS elem)
 		  )`

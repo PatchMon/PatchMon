@@ -1,18 +1,14 @@
 package compliance
 
 import (
-	"archive/zip"
 	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -101,12 +97,13 @@ func (s *OpenSCAPScanner) GetContentFilePath() string {
 }
 
 // GetContentPackageVersion returns the SSG content version
-// First checks for GitHub-installed version, then falls back to package manager
+// First checks the marker written by a server sync, then falls back to the
+// package manager version.
 func (s *OpenSCAPScanner) GetContentPackageVersion() string {
-	// First check for GitHub-installed version marker
-	githubVersion := s.getInstalledSSGVersion()
-	if githubVersion != "" {
-		return githubVersion
+	// The marker is written by UpgradeSSGContentFromServer and is authoritative:
+	// server-synced content supersedes whatever the distro package registered.
+	if marker := s.getInstalledSSGVersion(); marker != "" {
+		return marker
 	}
 
 	// Fall back to package manager version
@@ -273,9 +270,8 @@ func (s *OpenSCAPScanner) GetScannerDetails() *models.ComplianceScannerDetails {
 	profiles := s.DiscoverProfiles()
 
 	contentPackage := fmt.Sprintf("ssg-base %s", contentVersion)
-	githubVersion := s.getInstalledSSGVersion()
-	if githubVersion != "" {
-		contentPackage = fmt.Sprintf("SSG %s (server)", githubVersion)
+	if marker := s.getInstalledSSGVersion(); marker != "" {
+		contentPackage = fmt.Sprintf("SSG %s (server)", marker)
 	}
 
 	return &models.ComplianceScannerDetails{
@@ -341,28 +337,10 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 		s.logger.Info("OpenSCAP installed/upgraded successfully")
 	}
 
-	// On Debian 12+, if no content file or content doesn't match OS version (e.g. only ssg-debian11 on Debian 13), try GitHub SSG
-	if s.osInfo.Family == "debian" && s.osInfo.Name == "debian" {
-		ver := s.osInfo.Version
-		major := strings.Split(ver, ".")[0]
-		majorInt, _ := strconv.Atoi(major)
-		if majorInt >= 12 {
-			contentFile := s.getContentFile()
-			needGitHub := contentFile == ""
-			if contentFile != "" && major != "" {
-				base := filepath.Base(contentFile)
-				needGitHub = !strings.Contains(base, "debian"+major)
-			}
-			if needGitHub {
-				s.logger.Info("Debian SCAP content missing or version mismatch, attempting download from ComplianceAsCode GitHub...")
-				if err := s.UpgradeSSGContent(); err != nil {
-					s.logger.WithError(err).Warn("Failed to install SSG content from GitHub; ensure ssg-debian package is available for your Debian version")
-				} else {
-					s.logger.Info("SSG content installed from GitHub successfully")
-				}
-			}
-		}
-	}
+	// Distro packages often ship no datastream for the running release (Debian 13
+	// with only ssg-debian11, Ubuntu 24.04 with none at all). The PatchMon server
+	// serves the correct one, so the caller carries on to the server sync rather
+	// than the agent sourcing content itself.
 
 	// Re-check availability after installation
 	s.checkAvailability()
@@ -758,322 +736,6 @@ func ssgFileCandidates(osName, version string) []string {
 		)
 	}
 	return candidates
-}
-
-// UpgradeSSGContent upgrades the SCAP Security Guide content from GitHub releases (legacy fallback).
-func (s *OpenSCAPScanner) UpgradeSSGContent() error {
-	s.logger.Info("Upgrading SCAP Security Guide content from GitHub (fallback)...")
-
-	if err := s.installSSGFromGitHub(); err != nil {
-		s.logger.WithError(err).Warn("Failed to install SSG from GitHub")
-		return err
-	}
-
-	s.checkAvailability()
-	s.checkContentCompatibility()
-
-	newVersion := s.getInstalledSSGVersion()
-	s.logger.WithField("version", newVersion).Info("SSG content upgrade completed")
-
-	return nil
-}
-
-// installSSGFromGitHub downloads and installs SSG content from GitHub releases
-func (s *OpenSCAPScanner) installSSGFromGitHub() error {
-	// Latest stable version - update this periodically
-	const ssgVersion = "0.1.79"
-	const ssgURL = "https://github.com/ComplianceAsCode/content/releases/download/v" + ssgVersion + "/scap-security-guide-" + ssgVersion + ".zip"
-
-	s.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
-		"version": ssgVersion,
-		"url":     ssgURL,
-	})).Info("Downloading SSG from GitHub...")
-
-	// Create temp directory
-	tmpDir, err := os.MkdirTemp("", "ssg-upgrade-")
-	if err != nil {
-		return fmt.Errorf("failed to create temp directory: %w", err)
-	}
-	defer func() {
-		if err := os.RemoveAll(tmpDir); err != nil {
-			// Log cleanup errors but don't fail
-			_ = err
-		}
-	}()
-
-	zipPath := filepath.Join(tmpDir, "ssg.zip")
-
-	// Download the zip file
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	if err := s.downloadFile(ctx, ssgURL, zipPath); err != nil {
-		return fmt.Errorf("failed to download SSG: %w", err)
-	}
-
-	s.logger.Info("Extracting SSG content...")
-
-	// Extract the zip file
-	extractDir := filepath.Join(tmpDir, "extracted")
-	if err := s.extractZip(zipPath, extractDir); err != nil {
-		return fmt.Errorf("failed to extract SSG: %w", err)
-	}
-
-	// Find the content directory in the extracted files
-	contentSrcDir := filepath.Join(extractDir, "scap-security-guide-"+ssgVersion)
-	if _, err := os.Stat(contentSrcDir); os.IsNotExist(err) {
-		// Try without version suffix
-		entries, _ := os.ReadDir(extractDir)
-		for _, e := range entries {
-			if e.IsDir() && strings.HasPrefix(e.Name(), "scap-security-guide") {
-				contentSrcDir = filepath.Join(extractDir, e.Name())
-				break
-			}
-		}
-	}
-
-	// Ensure target directory exists
-	targetDir := scapContentDir
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return fmt.Errorf("failed to create content directory: %w", err)
-	}
-
-	// Copy all datastream files (ssg-*-ds.xml) to the target directory.
-	// Search recursively so we find files in build/ or any subdir (release zip layout varies).
-	s.logger.WithField("target", targetDir).Info("Installing SSG content files...")
-
-	xmlFiles := s.findDatastreamFiles(contentSrcDir)
-	if len(xmlFiles) == 0 {
-		s.logger.Warn("No ssg-*-ds.xml files found in release zip; trying nightly build...")
-		return s.installSSGFromNightly(tmpDir, targetDir)
-	}
-
-	copiedCount := 0
-	for _, src := range xmlFiles {
-		baseName := filepath.Base(src)
-		dst := filepath.Join(targetDir, baseName)
-		if err := s.copyFile(src, dst); err != nil {
-			s.logger.WithError(err).WithField("file", baseName).Warn("Failed to copy content file")
-		} else {
-			copiedCount++
-		}
-	}
-
-	if copiedCount == 0 {
-		return fmt.Errorf("no SSG content files were installed")
-	}
-
-	s.logger.WithField("files_installed", copiedCount).Info("SSG content files installed successfully")
-
-	// Create a version marker file
-	versionFile := filepath.Join(targetDir, ".ssg-version")
-	if err := os.WriteFile(versionFile, []byte(ssgVersion+"\n"), 0644); err != nil {
-		return fmt.Errorf("failed to write version marker: %w", err)
-	}
-
-	return nil
-}
-
-// findDatastreamFiles returns paths to all ssg-*-ds.xml files under dir (recursive).
-func (s *OpenSCAPScanner) findDatastreamFiles(dir string) []string {
-	var out []string
-	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		base := filepath.Base(path)
-		if strings.HasPrefix(base, "ssg-") && strings.HasSuffix(base, "-ds.xml") {
-			out = append(out, path)
-		}
-		return nil
-	})
-	return out
-}
-
-// installSSGFromNightly downloads the ComplianceAsCode nightly build (pre-built datastreams) and installs them.
-func (s *OpenSCAPScanner) installSSGFromNightly(tmpDir, targetDir string) error {
-	const nightlyURL = "https://nightly.link/ComplianceAsCode/content/workflows/nightly_build/master/Nightly%20Build.zip"
-	s.logger.Info("Downloading SSG from nightly build...")
-
-	zipPath := filepath.Join(tmpDir, "ssg-nightly.zip")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-
-	if err := s.downloadFile(ctx, nightlyURL, zipPath); err != nil {
-		return fmt.Errorf("failed to download nightly SSG: %w", err)
-	}
-
-	nightlyExtract := filepath.Join(tmpDir, "nightly-extracted")
-	if err := s.extractZip(zipPath, nightlyExtract); err != nil {
-		return fmt.Errorf("failed to extract nightly SSG: %w", err)
-	}
-
-	// Nightly zip may have top-level dir like "content-master" or flat ssg-*-ds.xml
-	contentSrcDir := nightlyExtract
-	entries, _ := os.ReadDir(nightlyExtract)
-	if len(entries) == 1 && entries[0].IsDir() {
-		contentSrcDir = filepath.Join(nightlyExtract, entries[0].Name())
-	}
-
-	xmlFiles := s.findDatastreamFiles(contentSrcDir)
-	if len(xmlFiles) == 0 {
-		return fmt.Errorf("no ssg-*-ds.xml files found in nightly build")
-	}
-
-	copiedCount := 0
-	for _, src := range xmlFiles {
-		baseName := filepath.Base(src)
-		dst := filepath.Join(targetDir, baseName)
-		if err := s.copyFile(src, dst); err != nil {
-			s.logger.WithError(err).WithField("file", baseName).Warn("Failed to copy content file")
-		} else {
-			copiedCount++
-		}
-	}
-	if copiedCount == 0 {
-		return fmt.Errorf("no SSG content files were installed from nightly")
-	}
-
-	versionFile := filepath.Join(targetDir, ".ssg-version")
-	_ = os.WriteFile(versionFile, []byte("nightly\n"), 0644)
-	s.logger.WithField("files_installed", copiedCount).Info("SSG content from nightly build installed successfully")
-	return nil
-}
-
-// downloadFile downloads a file from a URL
-func (s *OpenSCAPScanner) downloadFile(ctx context.Context, url, destPath string) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return err
-	}
-
-	client := &http.Client{
-		Timeout: 5 * time.Minute,
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			// Log cleanup errors but don't fail
-			_ = err
-		}
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP error: %s", resp.Status)
-	}
-
-	out, err := os.Create(destPath)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := out.Close(); err != nil {
-			// Log cleanup errors but don't fail
-			_ = err
-		}
-	}()
-
-	_, err = io.Copy(out, resp.Body)
-	return err
-}
-
-// extractZip extracts a zip file to a directory
-func (s *OpenSCAPScanner) extractZip(zipPath, destDir string) error {
-	r, err := zip.OpenReader(zipPath)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := r.Close(); err != nil {
-			// Log cleanup errors but don't fail
-			_ = err
-		}
-	}()
-
-	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return err
-	}
-
-	for _, f := range r.File {
-		fpath := filepath.Join(destDir, f.Name)
-
-		// Check for ZipSlip vulnerability
-		if !strings.HasPrefix(fpath, filepath.Clean(destDir)+string(os.PathSeparator)) {
-			return fmt.Errorf("invalid file path: %s", fpath)
-		}
-
-		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(fpath, f.Mode()); err != nil {
-				return fmt.Errorf("failed to create directory: %w", err)
-			}
-			continue
-		}
-
-		if err := os.MkdirAll(filepath.Dir(fpath), 0755); err != nil {
-			return err
-		}
-
-		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
-		if err != nil {
-			return err
-		}
-
-		rc, err := f.Open()
-		if err != nil {
-			if closeErr := outFile.Close(); closeErr != nil {
-				_ = closeErr
-			}
-			return err
-		}
-
-		_, err = io.Copy(outFile, rc)
-		if closeErr := outFile.Close(); closeErr != nil {
-			_ = closeErr
-		}
-		if closeErr := rc.Close(); closeErr != nil {
-			_ = closeErr
-		}
-
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// copyFile copies a file from src to dst
-func (s *OpenSCAPScanner) copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := in.Close(); err != nil {
-			_ = err
-		}
-	}()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := out.Close(); err != nil {
-			_ = err
-		}
-	}()
-
-	_, err = io.Copy(out, in)
-	if err != nil {
-		return err
-	}
-
-	return out.Chmod(0644)
 }
 
 // getInstalledSSGVersion reads the version from the marker file
