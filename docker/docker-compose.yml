@@ -26,6 +26,9 @@ services:
     # identifies itself by the container hostname, which Docker derives from the
     # container ID, so upgrading with `up -d` recreates the container and the
     # new process cannot recognise the presence records the old one left behind.
+    # This name must also be unique per server process. The stack below ships
+    # its own Redis, so separate installs cannot collide; if you instead point
+    # several servers at one shared Redis, give each a distinct POD_ID.
     hostname: patchmon-server
     env_file: .env
     ports:
