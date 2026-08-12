@@ -692,12 +692,7 @@ func (s *DashboardStore) UpdateIntervalMinutesOrDefault(ctx context.Context) int
 // conservative fallback. It is a helper so the list and count endpoints use
 // exactly the same stale/down thresholds.
 func UpdateIntervalMinutes(ctx context.Context, s *DashboardStore) int {
-	if settings, _ := s.getSettings(ctx); settings != nil {
-		if settings.UpdateInterval > 0 {
-			return settings.UpdateInterval
-		}
-	}
-	return 60
+	return UpdateIntervalMinutesFromDB(ctx, s.db)
 }
 
 // GetHostDetail returns host detail with packages and history for dashboard (matches Node structure).
@@ -738,7 +733,10 @@ func (s *DashboardStore) GetHostDetail(ctx context.Context, hostID string, histo
 		"id": host.ID, "machine_id": host.MachineID, "friendly_name": host.FriendlyName,
 		"hostname": host.Hostname, "ip": host.IP, "gateway_ip": host.GatewayIP,
 		"os_type": host.OSType, "os_version": host.OSVersion, "architecture": host.Architecture,
-		"last_update": host.LastUpdate, "status": host.Status, "api_id": host.ApiID,
+		"last_update": host.LastUpdate, "status": host.Status,
+		"effective_status": EffectiveStatus(host.Status, host.LastUpdate,
+			StaleCutoff(time.Now(), UpdateIntervalMinutes(ctx, s))),
+		"api_id":        host.ApiID,
 		"agent_version": host.AgentVersion, "auto_update": host.AutoUpdate, "notes": host.Notes,
 		"system_uptime": host.SystemUptime, "boot_time": host.BootTime, "needs_reboot": host.NeedsReboot,
 		"reboot_reason":  host.RebootReason,

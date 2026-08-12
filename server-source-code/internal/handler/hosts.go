@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
@@ -106,13 +107,14 @@ func (h *HostsHandler) AdminList(w http.ResponseWriter, r *http.Request) {
 	groupsByHost, _ := h.hosts.GetHostGroupsForHosts(r.Context(), hostIDs)
 
 	// Enrich with host groups
+	staleCutoff := h.hosts.StaleCutoff(r.Context())
 	data := make([]map[string]interface{}, len(hosts))
 	for i, host := range hosts {
 		groups := groupsByHost[host.ID]
 		if groups == nil {
 			groups = []models.HostGroup{}
 		}
-		data[i] = hostToResponse(&host, groups)
+		data[i] = hostToResponse(&host, groups, staleCutoff)
 	}
 
 	totalPages := 1
@@ -143,7 +145,7 @@ func (h *HostsHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	groups, _ := h.hosts.GetHostGroups(r.Context(), host.ID)
-	JSON(w, http.StatusOK, hostToResponse(host, groups))
+	JSON(w, http.StatusOK, hostToResponse(host, groups, h.hosts.StaleCutoff(r.Context())))
 }
 
 // Create handles POST /hosts/create.
@@ -286,7 +288,7 @@ func (h *HostsHandler) UpdateGroups(w http.ResponseWriter, r *http.Request) {
 	groups, _ := h.hosts.GetHostGroups(r.Context(), hostID)
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Host groups updated successfully",
-		"host":    hostToResponse(host, groups),
+		"host":    hostToResponse(host, groups, h.hosts.StaleCutoff(r.Context())),
 	})
 }
 
@@ -337,7 +339,7 @@ func (h *HostsHandler) UpdateFriendlyName(w http.ResponseWriter, r *http.Request
 	groups, _ := h.hosts.GetHostGroups(r.Context(), hostID)
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Friendly name updated successfully",
-		"host":    hostToResponse(host, groups),
+		"host":    hostToResponse(host, groups, h.hosts.StaleCutoff(r.Context())),
 	})
 }
 
@@ -365,7 +367,7 @@ func (h *HostsHandler) UpdateNotes(w http.ResponseWriter, r *http.Request) {
 	groups, _ := h.hosts.GetHostGroups(r.Context(), hostID)
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Notes updated successfully",
-		"host":    hostToResponse(host, groups),
+		"host":    hostToResponse(host, groups, h.hosts.StaleCutoff(r.Context())),
 	})
 }
 
@@ -394,7 +396,7 @@ func (h *HostsHandler) UpdateConnection(w http.ResponseWriter, r *http.Request) 
 	groups, _ := h.hosts.GetHostGroups(r.Context(), hostID)
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Host connection information updated successfully",
-		"host":    hostToResponse(host, groups),
+		"host":    hostToResponse(host, groups, h.hosts.StaleCutoff(r.Context())),
 	})
 }
 
@@ -432,7 +434,7 @@ func (h *HostsHandler) SetPrimaryInterface(w http.ResponseWriter, r *http.Reques
 	groups, _ := h.hosts.GetHostGroups(r.Context(), hostID)
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Primary interface updated successfully",
-		"host":    hostToResponse(host, groups),
+		"host":    hostToResponse(host, groups, h.hosts.StaleCutoff(r.Context())),
 	})
 }
 
@@ -823,13 +825,14 @@ func (h *HostsHandler) BulkUpdateGroups(w http.ResponseWriter, r *http.Request) 
 	for i := range hostsList {
 		hostByID[hostsList[i].ID] = &hostsList[i]
 	}
+	staleCutoff := h.hosts.StaleCutoff(r.Context())
 	for i, hid := range req.HostIds {
 		if host := hostByID[hid]; host != nil {
 			groups := groupsByHost[hid]
 			if groups == nil {
 				groups = []models.HostGroup{}
 			}
-			hosts[i] = hostToResponse(host, groups)
+			hosts[i] = hostToResponse(host, groups, staleCutoff)
 		}
 	}
 
@@ -1292,11 +1295,13 @@ func (h *HostsHandler) ApplyPendingConfig(w http.ResponseWriter, r *http.Request
 	})
 }
 
-func hostToResponse(h *models.Host, groups []models.HostGroup) map[string]interface{} {
+func hostToResponse(h *models.Host, groups []models.HostGroup, staleCutoff time.Time) map[string]interface{} {
 	res := map[string]interface{}{
 		"id": h.ID, "friendly_name": h.FriendlyName, "hostname": h.Hostname, "ip": h.IP,
 		"os_type": h.OSType, "os_version": h.OSVersion, "architecture": h.Architecture,
-		"last_update": h.LastUpdate, "status": h.Status, "api_id": h.ApiID, "agent_version": h.AgentVersion,
+		"last_update": h.LastUpdate, "status": h.Status,
+		"effective_status": store.EffectiveStatus(h.Status, h.LastUpdate, staleCutoff),
+		"api_id":           h.ApiID, "agent_version": h.AgentVersion,
 		"auto_update": h.AutoUpdate, "created_at": h.CreatedAt, "notes": h.Notes,
 		"system_uptime": h.SystemUptime, "boot_time": h.BootTime, "needs_reboot": h.NeedsReboot,
 		"docker_enabled": h.DockerEnabled, "compliance_enabled": h.ComplianceEnabled,
