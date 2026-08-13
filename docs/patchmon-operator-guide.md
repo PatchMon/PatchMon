@@ -5450,6 +5450,17 @@ or
 
 PatchMon uses `golang-migrate` with embedded SQL files. On every server start, the server runs pending migrations before opening its HTTP listener. A **dirty** state means a previous migration started and crashed mid-way. The `schema_migrations` table records the version but the `dirty` column is `true`.
 
+From v2.1.1 onwards the server prints the recovery SQL for you, naming the database and the exact statement to run, so in most cases you can follow that block instead of working it out by hand:
+
+```
+[migrate] Migration 42 did not complete on database "patchmon_db", so it is marked dirty and
+[migrate] no further migrations will run against it until that marker is cleared.
+...
+[migrate]   UPDATE schema_migrations SET version = 41, dirty = false;
+```
+
+One exception: if the dirty version is `1`, there is no earlier version to rewind to. Run `DELETE FROM schema_migrations;` instead, which clears the migration marker only and touches no application data, then let the server re-run migrations from the beginning. The server prints this variant automatically.
+
 #### Fix: Stuck on Dirty
 
 When the server logs report `Dirty database version N. Fix and force version.`, the simplest path is to connect directly to Postgres, confirm whether the migration's actual work landed, and either mark the version clean or rewind one step so the migration re-runs. PatchMon's migrations are written to be idempotent, so re-running a clean migration is safe.
@@ -5506,22 +5517,40 @@ After updating `schema_migrations`, exit psql and restart:
 
 You should see migrations advance through 31, 32, 33, then `server starting`.
 
+#### Fix: Stuck on Dirty 42 After Upgrading to v2.1.0
+
+v2.1.0 shipped a migration (`000042`) that failed on a small number of installs with:
+
+```
+cannot set path in scalar (22023)
+```
+
+This happens when the `host_down` row in `alert_config` stores its `metadata` as the JSON value `null` rather than an empty object, which the migration did not allow for. The migration rolls back cleanly when it fails, so nothing is half-applied, but the database is left dirty at 42 and the server crash-loops.
+
+**Upgrade to v2.1.1 or later first.** The migration is fixed there and handles that value correctly. Rewinding on v2.1.0 will just fail the same way on the next boot.
+
+Once you are on the fixed image, connect to the database as shown above and rewind one step:
+
+```sql
+UPDATE schema_migrations SET version = 41, dirty = false;
+```
+
+Then restart. Migration 42 re-runs and succeeds.
+
 > **Only mark a migration clean** after you've verified the schema is actually consistent. Forcing onto an inconsistent schema hides the problem until the next migration.
 
 #### Fix: Run Migrations Manually
 
-The server runs migrations automatically at startup, so you normally never need to run them by hand. If you do (e.g. scripted rollout, debugging):
+The server runs migrations automatically at startup, so you normally never need to run them by hand.
 
-```bash
-# Up (apply all pending)
-docker compose run --rm --entrypoint migrate server up
+The Docker image does not ship a separate migration tool. Migrations are embedded in the server binary and there is no `migrate` command inside the container, so drive them by restarting the server and reading its logs, and inspect or adjust state with SQL as shown above:
 
-# Down one step (rollback the most recent migration)
-docker compose run --rm --entrypoint migrate server down
-
-# Show current version
-docker compose run --rm --entrypoint migrate server version
+```sql
+-- Show current version
+SELECT * FROM schema_migrations;
 ```
+
+If you are building from source, `make build-migrate` in `server-source-code/` produces a standalone `migrate` CLI supporting `up`, `down`, `force VERSION`, and `version`. It needs `DATABASE_URL` set and is not part of any released image.
 
 ### 3. "CORS Error" in the Browser
 
