@@ -30,6 +30,7 @@ type fakeSMTPServer struct {
 	mu          sync.Mutex
 	gotStartTLS bool
 	gotAuth     bool
+	authLine    string
 	body        string
 	listener    net.Listener
 	addr        string
@@ -141,6 +142,7 @@ func (s *fakeSMTPServer) handle(c net.Conn) {
 		case strings.HasPrefix(upper, "AUTH"):
 			s.mu.Lock()
 			s.gotAuth = true
+			s.authLine = line
 			s.mu.Unlock()
 			if !write("235 2.7.0 Authentication successful") {
 				return
