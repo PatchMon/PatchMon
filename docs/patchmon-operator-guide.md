@@ -1623,12 +1623,16 @@ Settings for JWT tokens, browser sessions, account lockout, two-factor authentic
 
 #### Account Lockout
 
-Lockout is applied per user account after repeated failed login attempts.
+Lockout is applied per combination of client IP address and the username that was typed, after repeated failed login attempts. Usernames that do not exist are counted too, so a lockout can be reached for a name that was never an account. That is deliberate: it means the point at which a lockout starts no longer reveals which usernames are real.
+
+Because the counter is per username, a lockout does not stop an attacker who tries a different username each time. The protection against that is the auth rate limit (`AUTH_RATE_LIMIT_MAX` and `AUTH_RATE_LIMIT_WINDOW_MS`), which is applied per client IP address across all sign-in attempts.
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `MAX_LOGIN_ATTEMPTS` | `5` | No | Number of consecutive failed login attempts before the account is temporarily locked. |
-| `LOCKOUT_DURATION_MINUTES` | `15` | No | How long (in minutes) an account stays locked after exceeding `MAX_LOGIN_ATTEMPTS`. |
+| `MAX_LOGIN_ATTEMPTS` | `5` | No | Number of consecutive failed attempts against one username, from one client IP address, before further attempts on that combination are refused. |
+| `LOCKOUT_DURATION_MINUTES` | `15` | No | How long (in minutes) that combination stays locked after exceeding `MAX_LOGIN_ATTEMPTS`. |
+
+Every rejected sign-in is written to the server log at `warn` level, so it is visible at the default `LOG_LEVEL` without switching to `debug`. See [Failed Login Attempts in the Log](#failed-login-attempts-in-the-log).
 
 #### Session Inactivity
 
@@ -1765,6 +1769,48 @@ Rules applied when a user sets or changes a local account password. These do not
 | `info` | Normal production operation |
 | `warn` | Quieter production operation; only non-critical issues and errors |
 | `error` | Minimal output; critical errors only |
+
+#### Failed Login Attempts in the Log
+
+Every rejected sign-in produces exactly one `warn` line, so it appears at the default `LOG_LEVEL` and at `warn`. A successful sign-in produces one `info` line.
+
+```json
+{"time":"2026-08-13T18:22:41Z","level":"WARN","msg":"login failed","reason":"user_not_found","username":"hackerman","ip":"203.0.113.9","user_agent":"curl/8.7.1"}
+```
+
+`username` and `user_agent` are whatever the client sent, truncated, and are recorded exactly as received. `username` is omitted when the client sent none. `ip` is the client address resolved through `TRUST_PROXY` and `TRUSTED_PROXY_RANGES`, so get those right or every attempt will appear to come from your reverse proxy.
+
+`"locked": true` is added when that particular attempt is the one that triggered the lockout. The `reason` still describes what was actually wrong, so counting a reason across your logs stays accurate.
+
+The `reason` field distinguishes the failure:
+
+| Reason | Meaning |
+|---|---|
+| `user_not_found` | No account matches the username or email that was typed |
+| `invalid_password` | The account exists and the password was wrong |
+| `account_disabled` | The account exists but is deactivated |
+| `no_password_set` | The account has no local password, typically SSO-only |
+| `locked_out` | Refused on arrival because a lockout from earlier attempts is still in force |
+| `missing_credentials` | The request omitted the username or the password |
+| `malformed_request` | The request body was not valid JSON |
+| `local_auth_disabled` | A password sign-in was attempted while the instance is SSO-only |
+| `invalid_tfa_code` | The password was accepted but the two-factor code was wrong |
+| `tfa_locked_out` | Refused on arrival because a two-factor lockout from earlier wrong codes is still in force |
+| `tfa_token_malformed` | The submitted two-factor code was not six alphanumeric characters |
+| `tfa_ticket_invalid` | The two-factor step was reached without a valid, unexpired ticket from the password step |
+| `tfa_user_ineligible` | The ticket resolved to an account that is inactive or has no two-factor enrolled |
+
+A failed lookup caused by the database being unreachable is **not** reported as `user_not_found`. It is logged separately at `error` level as `auth login lookup failed`, and it does not consume a lockout attempt, so a database problem cannot lock out the people retrying a correct password.
+
+To watch sign-in activity on a Docker install:
+
+```bash
+docker compose logs -f server | grep -E '"msg":"login (failed|succeeded)"'
+```
+
+That grep assumes JSON output, which is what a production install emits. Setting `APP_ENV=development` switches the logger to plain text, where the same lines read `msg="login failed"`.
+
+Nothing is logged when `ENABLE_LOGGING=false`, and these lines are suppressed if `LOG_LEVEL` is set to `error`.
 
 ---
 

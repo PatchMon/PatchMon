@@ -21,6 +21,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -166,11 +167,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		h.log.Debug("auth request", "method", r.Method, "path", r.URL.Path)
 	}
 	if h.cfg.OidcEnabled && h.cfg.OidcDisableLocalAuth {
+		h.logLoginFailure(r, "local_auth_disabled", "", "")
 		Error(w, http.StatusForbidden, "Local authentication is disabled. Please use SSO.")
 		return
 	}
 	var req LoginRequest
 	if err := decodeJSON(r, &req); err != nil {
+		h.logLoginFailure(r, "malformed_request", "", "")
 		if h.log != nil {
 			h.log.Debug("auth login invalid body", "error", err)
 		}
@@ -178,6 +181,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Username == "" || req.Password == "" {
+		h.logLoginFailure(r, "missing_credentials", req.Username, "")
 		Error(w, http.StatusBadRequest, "username and password required")
 		return
 	}
@@ -189,20 +193,36 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if h.loginLockout != nil {
 		identifier := h.loginLockout.Identifier(h.clientIP(r), req.Username)
 		if locked, remainingSec := h.loginLockout.IsLocked(r.Context(), identifier); locked {
-			w.Header().Set("Retry-After", strconv.Itoa(remainingSec))
-			JSON(w, http.StatusTooManyRequests, map[string]interface{}{
-				"message":           "Too many failed login attempts. Try again later.",
-				"remaining_seconds": remainingSec,
-			})
+			h.logLoginFailure(r, "locked_out", req.Username, "")
+			writeLoginLockedResponse(w, remainingSec)
 			return
 		}
 	}
 
 	user, err := h.users.GetByUsernameOrEmail(r.Context(), req.Username)
 	if err != nil {
-		if h.log != nil {
-			h.log.Debug("auth login user not found", "identifier", req.Username, "err", err.Error())
+		// A DB failure is not a wrong username. Counting it would let an outage
+		// lock out the very people retrying a correct password.
+		if !errors.Is(err, pgx.ErrNoRows) {
+			if h.log != nil {
+				h.log.Error("auth login lookup failed", "ip", h.clientIP(r), "error", err)
+			}
+			Error(w, http.StatusUnauthorized, "Invalid credentials")
+			return
 		}
+		// An unknown username consumes an attempt too, so that a 429 is reachable
+		// for names that do not exist and stops being an "account exists" signal.
+		// Deliberately no notification event: the username is unbounded attacker
+		// input and each distinct guess would write a row.
+		if h.loginLockout != nil {
+			identifier := h.loginLockout.Identifier(h.clientIP(r), req.Username)
+			if _, locked := h.loginLockout.RecordFailedAttempt(r.Context(), identifier); locked {
+				h.logLoginFailure(r, "user_not_found", req.Username, "", "locked", true)
+				writeLoginLockedResponse(w, h.lockoutRemaining(r.Context(), identifier))
+				return
+			}
+		}
+		h.logLoginFailure(r, "user_not_found", req.Username, "")
 		Error(w, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
@@ -210,16 +230,12 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		h.log.Debug("auth login user found", "user_id", user.ID, "username", user.Username, "is_active", user.IsActive, "has_password", user.PasswordHash != nil)
 	}
 	if !user.IsActive {
-		if h.log != nil {
-			h.log.Debug("auth login account disabled", "user_id", user.ID)
-		}
+		h.logLoginFailure(r, "account_disabled", req.Username, user.ID)
 		Error(w, http.StatusUnauthorized, "Account is disabled")
 		return
 	}
 	if user.PasswordHash == nil {
-		if h.log != nil {
-			h.log.Debug("auth login no password hash", "user_id", user.ID, "reason", "oidc_only_or_missing")
-		}
+		h.logLoginFailure(r, "no_password_set", req.Username, user.ID)
 		Error(w, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
@@ -252,18 +268,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 						})
 					}
 				}
-				_, remainingSec := h.loginLockout.IsLocked(r.Context(), identifier)
-				if remainingSec <= 0 {
-					remainingSec = 900 // fallback 15 min
-					if h.resolved != nil {
-						remainingSec = h.resolvedFor(r.Context()).LockoutDurationMin * 60
-					}
-				}
-				w.Header().Set("Retry-After", strconv.Itoa(remainingSec))
-				JSON(w, http.StatusTooManyRequests, map[string]interface{}{
-					"message":           "Too many failed login attempts. Try again later.",
-					"remaining_seconds": remainingSec,
-				})
+				h.logLoginFailure(r, "invalid_password", req.Username, user.ID, "locked", true)
+				writeLoginLockedResponse(w, h.lockoutRemaining(r.Context(), identifier))
 				return
 			}
 		}
@@ -287,18 +293,9 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 		}
+		h.logLoginFailure(r, "invalid_password", req.Username, user.ID)
 		if h.log != nil {
-			hashPrefix := hash
-			if len(hash) > 10 {
-				hashPrefix = hash[:10] + "..."
-			}
-			h.log.Debug("auth login bcrypt failed",
-				"username", req.Username,
-				"user_id", user.ID,
-				"hash_len", len(hash),
-				"hash_prefix", hashPrefix,
-				"bcrypt_err", err.Error(),
-			)
+			h.log.Debug("auth login bcrypt failed", "user_id", user.ID, "hash_len", len(hash), "bcrypt_err", err.Error())
 		}
 		Error(w, http.StatusUnauthorized, "Invalid credentials")
 		return
@@ -311,7 +308,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.log != nil {
-		h.log.Debug("auth login success", "user_id", user.ID, "username", user.Username)
+		attrs := []any{"user_id", user.ID, "username", user.Username, "ip", h.clientIP(r)}
+		if host := hostctx.TenantHostKey(r.Context()); host != "" {
+			attrs = append(attrs, "host", host)
+		}
+		h.log.Info("login succeeded", attrs...)
 	}
 
 	// TFA check: if enabled, require TFA verification unless a valid device-trust
@@ -375,6 +376,7 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !util.TokenRegex.MatchString(req.Token) {
+		h.logLoginFailure(r, "tfa_token_malformed", "", "")
 		Error(w, http.StatusBadRequest, "Token must be 6 alphanumeric characters")
 		return
 	}
@@ -390,12 +392,16 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, err := h.pendingLogin.Consume(r.Context(), req.TfaTicket)
 	if err != nil {
+		// The username is whatever the client typed; the trusted identity comes
+		// from the ticket, which is exactly what failed here.
+		h.logLoginFailure(r, "tfa_ticket_invalid", "", "", "claimed_username", truncateForLog(req.Username, 64))
 		Error(w, http.StatusUnauthorized, "Login session expired, please sign in again")
 		return
 	}
 
 	user, err := h.users.GetByID(r.Context(), userID)
 	if err != nil || user == nil || !user.IsActive || !user.TfaEnabled || user.TfaSecret == nil {
+		h.logLoginFailure(r, "tfa_user_ineligible", "", userID)
 		Error(w, http.StatusUnauthorized, "Invalid credentials or TFA not enabled")
 		return
 	}
@@ -403,6 +409,7 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 	if h.tfaLockout != nil {
 		locked, _ := h.tfaLockout.IsTFALocked(r.Context(), user.ID)
 		if locked {
+			h.logLoginFailure(r, "tfa_locked_out", user.Username, user.ID)
 			Error(w, http.StatusTooManyRequests, "Too many failed TFA attempts. Please try again later.")
 			return
 		}
@@ -428,9 +435,11 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 		if h.tfaLockout != nil {
 			attempts, locked := h.tfaLockout.RecordFailedAttempt(r.Context(), user.ID)
 			if locked {
+				h.logLoginFailure(r, "invalid_tfa_code", user.Username, user.ID, "locked", true)
 				Error(w, http.StatusTooManyRequests, "Too many failed TFA attempts. Please try again later.")
 				return
 			}
+			h.logLoginFailure(r, "invalid_tfa_code", user.Username, user.ID)
 			remaining := h.getMaxTfaAttempts(r.Context()) - attempts
 			if remaining < 0 {
 				remaining = 0
@@ -441,6 +450,7 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		h.logLoginFailure(r, "invalid_tfa_code", user.Username, user.ID)
 		Error(w, http.StatusUnauthorized, "Invalid verification code")
 		return
 	}
@@ -643,6 +653,61 @@ func (h *AuthHandler) clientIP(r *http.Request) string {
 		return ip
 	}
 	return r.RemoteAddr
+}
+
+// truncateForLog bounds unauthenticated input before it reaches the log.
+func truncateForLog(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return strings.ToValidUTF8(s[:max], "") + "..."
+}
+
+// logLoginFailure records a rejected sign-in at Warn, so it is visible at the
+// default log level rather than only under LOG_LEVEL=debug. One line per
+// rejected request; extra carries any additional slog attributes.
+func (h *AuthHandler) logLoginFailure(r *http.Request, reason, username, userID string, extra ...any) {
+	if h.log == nil {
+		return
+	}
+	attrs := []any{
+		"reason", reason,
+		"ip", h.clientIP(r),
+		"user_agent", truncateForLog(r.UserAgent(), 200),
+	}
+	if username != "" {
+		attrs = append(attrs, "username", truncateForLog(username, 64))
+	}
+	if userID != "" {
+		attrs = append(attrs, "user_id", userID)
+	}
+	if host := hostctx.TenantHostKey(r.Context()); host != "" {
+		attrs = append(attrs, "host", host)
+	}
+	h.log.Warn("login failed", append(attrs, extra...)...)
+}
+
+// lockoutRemaining returns seconds left on a lockout, falling back to the
+// configured duration when Redis cannot supply a TTL.
+func (h *AuthHandler) lockoutRemaining(ctx context.Context, identifier string) int {
+	if h.loginLockout == nil {
+		return 0
+	}
+	if _, remainingSec := h.loginLockout.IsLocked(ctx, identifier); remainingSec > 0 {
+		return remainingSec
+	}
+	if h.resolved != nil {
+		return h.resolvedFor(ctx).LockoutDurationMin * 60
+	}
+	return 900
+}
+
+func writeLoginLockedResponse(w http.ResponseWriter, remainingSec int) {
+	w.Header().Set("Retry-After", strconv.Itoa(remainingSec))
+	JSON(w, http.StatusTooManyRequests, map[string]interface{}{
+		"message":           "Too many failed login attempts. Try again later.",
+		"remaining_seconds": remainingSec,
+	})
 }
 
 // authBrowserSessionCookies returns whether to use session-only cookies (env -> DB -> default).
