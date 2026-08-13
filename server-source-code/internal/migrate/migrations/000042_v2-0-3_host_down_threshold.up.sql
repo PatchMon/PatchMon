@@ -3,11 +3,20 @@
 -- hardcoding update_interval x 3 minutes. Idempotent: only fills in the
 -- threshold/threshold_unit keys when they are missing, so an operator's
 -- previously-saved value is preserved on re-runs.
+--
+-- metadata may hold the JSON scalar null rather than SQL NULL on older installs.
+-- COALESCE does not catch that, `? 'threshold'` returns false for it so the row
+-- still matches, and jsonb_set then fails with 22023 "cannot set path in scalar",
+-- aborting the migration. Normalise anything that is not a JSON object to '{}'
+-- and match on jsonb_typeof rather than IS NULL.
 
 UPDATE alert_config
 SET metadata = jsonb_set(
         jsonb_set(
-            COALESCE(metadata, '{}'::jsonb),
+            CASE
+                WHEN jsonb_typeof(metadata) = 'object' THEN metadata
+                ELSE '{}'::jsonb
+            END,
             '{threshold}',
             '30'::jsonb,
             true
@@ -18,4 +27,4 @@ SET metadata = jsonb_set(
     ),
     updated_at = NOW()
 WHERE alert_type = 'host_down'
-  AND (metadata IS NULL OR NOT (metadata ? 'threshold'));
+  AND (jsonb_typeof(metadata) IS DISTINCT FROM 'object' OR NOT (metadata ? 'threshold'));
