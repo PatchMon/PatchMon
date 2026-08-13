@@ -185,6 +185,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "username and password required")
 		return
 	}
+	// No real identifier approaches this. Rejecting here keeps an oversized body
+	// out of the user lookup and out of the lockout key.
+	if len(req.Username) > maxLoginIdentifierBytes {
+		h.logLoginFailure(r, "username_too_long", "", "", "length", len(req.Username))
+		Error(w, http.StatusBadRequest, "username and password required")
+		return
+	}
 	if h.log != nil {
 		h.log.Debug("auth login attempt", "username", req.Username)
 	}
@@ -229,12 +236,23 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if h.log != nil {
 		h.log.Debug("auth login user found", "user_id", user.ID, "username", user.Username, "is_active", user.IsActive, "has_password", user.PasswordHash != nil)
 	}
+	// These two branches consume an attempt as well. If they did not, the absence
+	// of a lockout would identify exactly the accounts that are disabled or
+	// SSO-only, now that unknown usernames do lock out.
 	if !user.IsActive {
+		if locked := h.recordLoginFailure(w, r, req.Username); locked {
+			h.logLoginFailure(r, "account_disabled", req.Username, user.ID, "locked", true)
+			return
+		}
 		h.logLoginFailure(r, "account_disabled", req.Username, user.ID)
 		Error(w, http.StatusUnauthorized, "Account is disabled")
 		return
 	}
 	if user.PasswordHash == nil {
+		if locked := h.recordLoginFailure(w, r, req.Username); locked {
+			h.logLoginFailure(r, "no_password_set", req.Username, user.ID, "locked", true)
+			return
+		}
 		h.logLoginFailure(r, "no_password_set", req.Username, user.ID)
 		Error(w, http.StatusUnauthorized, "Invalid credentials")
 		return
@@ -655,6 +673,10 @@ func (h *AuthHandler) clientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
+// maxLoginIdentifierBytes caps the username accepted at sign-in. 254 is the
+// practical maximum length of an email address, and usernames are shorter.
+const maxLoginIdentifierBytes = 254
+
 // truncateForLog bounds unauthenticated input before it reaches the log.
 func truncateForLog(s string, max int) string {
 	if len(s) <= max {
@@ -685,6 +707,23 @@ func (h *AuthHandler) logLoginFailure(r *http.Request, reason, username, userID 
 		attrs = append(attrs, "host", host)
 	}
 	h.log.Warn("login failed", append(attrs, extra...)...)
+}
+
+// recordLoginFailure counts an attempt against the lockout for branches that
+// reject before a password is ever checked, and writes the 429 itself when that
+// attempt is the one that trips it. Returning 401 on the trip and only 429 on
+// the request after would make the lockout arrive a request later than it does
+// for an unknown username, which is the enumeration signal this exists to close.
+func (h *AuthHandler) recordLoginFailure(w http.ResponseWriter, r *http.Request, username string) (handled bool) {
+	if h.loginLockout == nil {
+		return false
+	}
+	identifier := h.loginLockout.Identifier(h.clientIP(r), username)
+	if _, locked := h.loginLockout.RecordFailedAttempt(r.Context(), identifier); !locked {
+		return false
+	}
+	writeLoginLockedResponse(w, h.lockoutRemaining(r.Context(), identifier))
+	return true
 }
 
 // lockoutRemaining returns seconds left on a lockout, falling back to the

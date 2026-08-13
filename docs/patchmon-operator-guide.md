@@ -1627,6 +1627,8 @@ Lockout is applied per combination of client IP address and the username that wa
 
 Because the counter is per username, a lockout does not stop an attacker who tries a different username each time. The protection against that is the auth rate limit (`AUTH_RATE_LIMIT_MAX` and `AUTH_RATE_LIMIT_WINDOW_MS`), which is applied per client IP address across all sign-in attempts.
 
+Usernames are matched case-insensitively, and the lockout counter follows the same rule, so `admin` and `Admin` are one account with one shared allowance rather than two.
+
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
 | `MAX_LOGIN_ATTEMPTS` | `5` | No | Number of consecutive failed attempts against one username, from one client IP address, before further attempts on that combination are refused. |
@@ -1792,6 +1794,7 @@ The `reason` field distinguishes the failure:
 | `no_password_set` | The account has no local password, typically SSO-only |
 | `locked_out` | Refused on arrival because a lockout from earlier attempts is still in force |
 | `missing_credentials` | The request omitted the username or the password |
+| `username_too_long` | The submitted username exceeded 254 characters and was rejected before any lookup |
 | `malformed_request` | The request body was not valid JSON |
 | `local_auth_disabled` | A password sign-in was attempted while the instance is SSO-only |
 | `invalid_tfa_code` | The password was accepted but the two-factor code was wrong |
