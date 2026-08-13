@@ -108,3 +108,65 @@ func TestEmailConfig_SendPathsAgreeWithTestPath(t *testing.T) {
 		t.Errorf("scheduled report worker resolved %q but the test-email path resolves %q", got, want)
 	}
 }
+
+// allow_insecure_auth is the fourth key to live in this blob, and it is decoded
+// by the same three structs. A tag typo in any one of them compiles, passes
+// every other test, and fails silently in production: the operator ticks the
+// box, "send test email" succeeds via the handler path, and scheduled reports
+// still refuse to authenticate. That is the same class of bug this file exists
+// to catch, so pin all three against one raw string.
+func TestEmailConfig_AllowInsecureAuthAgreesAcrossPaths(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{
+			name: "absent key means no consent",
+			raw:  `{"smtp_host":"relay.internal","smtp_port":25,"from":"a@b.c","to":"d@e.f","tls_mode":"none"}`,
+			want: false,
+		},
+		{
+			name: "explicit false means no consent",
+			raw:  `{"smtp_host":"relay.internal","smtp_port":25,"from":"a@b.c","to":"d@e.f","tls_mode":"none","allow_insecure_auth":false}`,
+			want: false,
+		},
+		{
+			name: "explicit true is carried on every path",
+			raw:  `{"smtp_host":"relay.internal","smtp_port":25,"from":"a@b.c","to":"d@e.f","tls_mode":"none","username":"u","password":"p","allow_insecure_auth":true}`,
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Mirrors testSMTPRequest in internal/handler/notifications.go, which
+			// lives in another package and cannot be referenced from here.
+			var handlerSide struct {
+				TLSMode           string `json:"tls_mode"`
+				AllowInsecureAuth bool   `json:"allow_insecure_auth"`
+			}
+			if err := json.Unmarshal([]byte(tt.raw), &handlerSide); err != nil {
+				t.Fatal(err)
+			}
+			var alert emailConfig
+			if err := json.Unmarshal([]byte(tt.raw), &alert); err != nil {
+				t.Fatal(err)
+			}
+			var report scheduledEmailConfig
+			if err := json.Unmarshal([]byte(tt.raw), &report); err != nil {
+				t.Fatal(err)
+			}
+
+			if handlerSide.AllowInsecureAuth != tt.want {
+				t.Errorf("test-email path decoded %v, want %v", handlerSide.AllowInsecureAuth, tt.want)
+			}
+			if alert.AllowInsecureAuth != tt.want {
+				t.Errorf("alert worker decoded %v, want %v", alert.AllowInsecureAuth, tt.want)
+			}
+			if report.AllowInsecureAuth != tt.want {
+				t.Errorf("scheduled report worker decoded %v, want %v", report.AllowInsecureAuth, tt.want)
+			}
+		})
+	}
+}
