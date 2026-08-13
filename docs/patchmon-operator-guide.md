@@ -265,6 +265,16 @@ docker compose up -d
 
 Check the [GitHub releases page](https://github.com/PatchMon/PatchMon/releases) for version-specific changes and migration notes before upgrading.
 
+#### Why the newest version can take a day to appear
+
+Publishing a release and announcing it to running instances are two separate steps.
+
+Your instance checks for a newer server version once a day, and that check reads a value we only update after a release has been through our phased rollout. So for roughly the first 24 hours after a new version appears on GitHub, it is normal for PatchMon to keep showing an older version as the latest available, and for the `server_update` alert not to have fired yet. Nothing is wrong with your install. It will pick the new version up on a following daily check.
+
+The delay is deliberate. Releasing in phases means a version is running in the wild for a while before every instance is told about it, so any problem is caught before the whole community is prompted to upgrade.
+
+If you would rather not wait, pull the new image whenever you like. The version check only controls the notification, never your ability to upgrade.
+
 ---
 
 ### Reverse Proxy Setup
@@ -745,6 +755,8 @@ helm upgrade patchmon oci://ghcr.io/ruthlessbeat200/charts/patchmon \
 ```
 
 Check the [chart releases page](https://github.com/RuTHlessBEat200/PatchMon-helm/releases) and the [PatchMon releases page](https://github.com/PatchMon/PatchMon/releases) before upgrading.
+
+> **Note:** For about the first 24 hours after a release is published, PatchMon may still report an older version as the latest available. That is expected and is part of our phased rollout. See [Why the newest version can take a day to appear](#why-the-newest-version-can-take-a-day-to-appear) in the Docker chapter.
 
 ---
 
