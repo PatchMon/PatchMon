@@ -1,4 +1,4 @@
--- Reverse of 000041_v2-0-3_release. Drops in the opposite order to up
+-- Reverse of 000041_v2-1-0_release. Drops in the opposite order to up
 -- (matview before its dependent indexes; columns last) so a partial
 -- rollback never trips on a still-extant dependency.
 
@@ -6,7 +6,7 @@
 DROP MATERIALIZED VIEW IF EXISTS mv_package_stats;
 
 -- 4. host_packages perf indexes. Recreate the v1.5.0 init index that the up
--- migration dropped as superseded, so a rollback lands back on the pre-2.0.3
+-- migration dropped as superseded, so a rollback lands back on the pre-2.1.0
 -- index set exactly.
 DROP INDEX IF EXISTS idx_host_packages_needs_update_security_package;
 DROP INDEX IF EXISTS idx_host_packages_needs_update_package;

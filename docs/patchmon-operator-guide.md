@@ -10,7 +10,7 @@ This is the deployment, configuration, and maintenance guide for PatchMon operat
 ## Table of Contents
 
 - [Chapter 1: Installing PatchMon Server on Docker](#installing-patchmon-server-on-docker)
-- [Chapter 2: Installing PatchMon on Kubernetes with Helm](#installing-patchmon-on-kubernetes-helm)
+- [Chapter 2: Installing PatchMon on Kubernetes](#installing-patchmon-on-kubernetes-helm)
 - [Chapter 3: Reverse Proxy Examples](#reverse-proxy-examples)
 - [Chapter 4: First-Time Admin Setup](#first-time-admin-setup)
 - [Chapter 5: PatchMon Environment Variables Reference](#patchmon-environment-variables-reference)
@@ -265,6 +265,16 @@ docker compose up -d
 
 Check the [GitHub releases page](https://github.com/PatchMon/PatchMon/releases) for version-specific changes and migration notes before upgrading.
 
+#### Why the newest version can take a day to appear
+
+Publishing a release and announcing it to running instances are two separate steps.
+
+Your instance checks for a newer server version once a day, and that check reads a value we only update after a release has been through our phased rollout. So for roughly the first 24 hours after a new version appears on GitHub, it is normal for PatchMon to keep showing an older version as the latest available, and for the `server_update` alert not to have fired yet. Nothing is wrong with your install. It will pick the new version up on a following daily check.
+
+The delay is deliberate. Releasing in phases means a version is running in the wild for a while before every instance is told about it, so any problem is caught before the whole community is prompted to upgrade.
+
+If you would rather not wait, pull the new image whenever you like. The version check only controls the notification, never your ability to upgrade.
+
 ---
 
 ### Reverse Proxy Setup
@@ -336,9 +346,16 @@ Update `SERVER_PORT` in your `.env` to match if agents need to reach the server 
 
 ---
 
-## Chapter 2: Installing PatchMon on Kubernetes with Helm {#installing-patchmon-on-kubernetes-helm}
+## Chapter 2: Installing PatchMon on Kubernetes {#installing-patchmon-on-kubernetes-helm}
 
 ### Overview
+
+There are two ways to run PatchMon on Kubernetes:
+
+- **The community Helm chart**, covered by most of this chapter. Best if you want values-driven configuration and upgrades handled for you.
+- **Plain manifests**, covered by [Deploying with plain manifests](#deploying-with-plain-manifests). Best if you deploy with Argo CD or Flux, or you simply want to see and own every object. This is also the route to follow on k3s.
+
+Either way, read the "Important: PatchMon 2.0 architecture" note below first, because it explains what changed from the 1.4.x Node.js stack.
 
 The community Helm chart for PatchMon deploys the server on any Kubernetes 1.19+ cluster. It is maintained in a separate repository:
 
@@ -746,6 +763,8 @@ helm upgrade patchmon oci://ghcr.io/ruthlessbeat200/charts/patchmon \
 
 Check the [chart releases page](https://github.com/RuTHlessBEat200/PatchMon-helm/releases) and the [PatchMon releases page](https://github.com/PatchMon/PatchMon/releases) before upgrading.
 
+> **Note:** For about the first 24 hours after a release is published, PatchMon may still report an older version as the latest available. That is expected and is part of our phased rollout. See [Why the newest version can take a day to appear](#why-the-newest-version-can-take-a-day-to-appear) in the Docker chapter.
+
 ---
 
 ### Uninstalling
@@ -822,6 +841,478 @@ The client secret should live in a Kubernetes Secret and be mounted as `OIDC_CLI
 
 ---
 
+### Deploying with plain manifests {#deploying-with-plain-manifests}
+
+If you deploy through Argo CD or Flux, or you would rather own every object yourself, you can skip Helm entirely. The manifests below are a complete, working stack: PostgreSQL, Redis, the PatchMon server, a Service, and an Ingress.
+
+They are written for k3s with [Longhorn](https://longhorn.io/) storage and the built-in Traefik Ingress controller, because that is a common self-hosted combination, but they work on any cluster once you change `storageClassName` and `ingressClassName` to suit.
+
+> **Read the volume note before you deploy.** The single most common mistake when writing PostgreSQL manifests by hand costs you your database on the first redeploy. It is explained in [The PostgreSQL data directory](#the-postgresql-data-directory) below, and the manifests here already account for it.
+
+#### 1. Create the namespace and secrets
+
+```bash
+kubectl create namespace patchmon
+
+kubectl create secret generic patchmon-secrets \
+  --namespace patchmon \
+  --from-literal=JWT_SECRET="$(openssl rand -hex 64)" \
+  --from-literal=SESSION_SECRET="$(openssl rand -hex 64)" \
+  --from-literal=AI_ENCRYPTION_KEY="$(openssl rand -hex 64)" \
+  --from-literal=POSTGRES_PASSWORD="$(openssl rand -hex 32)" \
+  --from-literal=REDIS_PASSWORD="$(openssl rand -hex 32)"
+```
+
+If you keep your manifests in Git, do not commit these in plain text. Use [Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets), [SOPS](https://github.com/getsops/sops), or the [External Secrets Operator](https://external-secrets.io/) instead. The keys above are consumed as environment variables, so keep the names exactly as written.
+
+#### 2. Apply the manifests
+
+Save this as `patchmon.yaml`, change `patchmon.example.com` to your own hostname in both the ConfigMap and the Ingress, and apply it.
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: patchmon-config
+  namespace: patchmon
+data:
+  # Must match exactly the URL your users open PatchMon on.
+  CORS_ORIGIN: "https://patchmon.example.com"
+  POSTGRES_HOST: "patchmon-db"
+  POSTGRES_USER: "patchmon_user"
+  POSTGRES_DB: "patchmon_db"
+  REDIS_HOST: "patchmon-redis"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  PORT: "3000"
+  # Required when running behind an Ingress controller.
+  TRUST_PROXY: "true"
+  TZ: "UTC"
+---
+# ------------------------------------------------------------------ PostgreSQL
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: patchmon-db-data
+  namespace: patchmon
+  annotations:
+    # Keeps Argo CD from ever pruning or deleting the database volume.
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 8Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: patchmon-db
+  namespace: patchmon
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: patchmon-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: patchmon-db
+  namespace: patchmon
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  replicas: 1
+  # Never run two PostgreSQL pods against one ReadWriteOnce volume.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: patchmon-db
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: patchmon-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: patchmon-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: patchmon-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: patchmon-secrets
+                  key: POSTGRES_PASSWORD
+            # Do not change these two settings without reading
+            # "The PostgreSQL data directory" below.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: db-data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" -h localhost
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: db-data
+          persistentVolumeClaim:
+            claimName: patchmon-db-data
+---
+# ----------------------------------------------------------------------- Redis
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: patchmon-redis-data
+  namespace: patchmon
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: patchmon-redis
+  namespace: patchmon
+spec:
+  selector:
+    app.kubernetes.io/name: patchmon-redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: patchmon-redis
+  namespace: patchmon
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: patchmon-redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: patchmon-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command: ["sh", "-c", "redis-server --requirepass \"$REDIS_PASSWORD\""]
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: patchmon-secrets
+                  key: REDIS_PASSWORD
+          ports:
+            - name: redis
+              containerPort: 6379
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - redis-cli --no-auth-warning -a "$REDIS_PASSWORD" ping
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: patchmon-redis-data
+---
+# ---------------------------------------------------------------------- Server
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: patchmon-server
+  namespace: patchmon
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: patchmon-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: patchmon-server
+    spec:
+      # Stable identity for the agent presence registry. Keep this, and give
+      # each server process a distinct value if several share one Redis.
+      hostname: patchmon-server
+      containers:
+        - name: server
+          image: ghcr.io/patchmon/patchmon-server:latest
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: patchmon-config
+            - secretRef:
+                name: patchmon-secrets
+          env:
+            # $(VAR) resolves against the envFrom entries above, so this
+            # assembles the URL from the ConfigMap and Secret values.
+            - name: DATABASE_URL
+              value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):5432/$(POSTGRES_DB)"
+          startupProbe:
+            tcpSocket:
+              port: http
+            # The first start applies the schema migrations.
+            failureThreshold: 40
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 30
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: patchmon-server
+  namespace: patchmon
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: patchmon-server
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+# --------------------------------------------------------------------- Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: patchmon
+  namespace: patchmon
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: patchmon.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: patchmon-server
+                port:
+                  name: http
+  tls:
+    - hosts:
+        - patchmon.example.com
+      secretName: patchmon-tls
+```
+
+```bash
+kubectl apply -f patchmon.yaml
+kubectl get pods -n patchmon -w
+```
+
+The server pod may restart once or twice on a brand new cluster while it waits for PostgreSQL and cluster DNS to come up. That is expected and it recovers on its own. Watch the migrations apply:
+
+```bash
+kubectl logs -n patchmon deploy/patchmon-server -f
+```
+
+Then open your hostname and complete the [first-time admin setup](#first-time-admin-setup).
+
+#### The PostgreSQL data directory {#the-postgresql-data-directory}
+
+This is the detail worth getting right, and it is the reason a hand-written PostgreSQL manifest can appear to work perfectly and still lose its data on the next deploy.
+
+The `postgres` image stores its data in `PGDATA`, which defaults to `/var/lib/postgresql/data`. The obvious instinct is to mount your volume at the parent, `/var/lib/postgresql`, and let the data directory sit inside it. **That does not work.** The image declares `VOLUME /var/lib/postgresql/data`, and containerd honours image volumes by mounting a scratch directory over that exact path. Your persistent volume ends up underneath it, and `PGDATA` lands in the scratch directory instead:
+
+```
+/var/lib/postgresql       <- your PersistentVolumeClaim
+/var/lib/postgresql/data  <- a per-container scratch directory, mounted on top
+```
+
+That scratch directory is keyed by container ID. It is created empty and destroyed with the container, so every redeploy, and every container restart from a failed probe or an out-of-memory kill, hands PostgreSQL an empty `PGDATA`. `initdb` runs again and you get a brand new empty database, while your persistent volume holds nothing but an empty `data` directory.
+
+Mounting the volume at `/var/lib/postgresql/data` fixes that, but introduces a second problem on block storage such as Longhorn or Ceph. A freshly formatted ext4 volume already contains a `lost+found` directory, and `initdb` refuses to use a directory that is not empty:
+
+```
+initdb: error: directory "/var/lib/postgresql/data" exists but is not empty
+initdb: detail: It contains a lost+found directory, perhaps due to it being a mount point.
+initdb: hint: Using a mount point directly as the data directory is not recommended.
+```
+
+So mount the volume at `/var/lib/postgresql/data` **and** point `PGDATA` at a subdirectory of it, exactly as the manifests above do:
+
+```yaml
+env:
+  - name: PGDATA
+    value: /var/lib/postgresql/data/pgdata
+volumeMounts:
+  - name: db-data
+    mountPath: /var/lib/postgresql/data
+```
+
+Redis needs no equivalent treatment. Its image declares `VOLUME /data` and the manifest mounts at `/data` exactly, so the explicit mount takes precedence.
+
+To confirm your own deployment is correct, check that only one filesystem is mounted under the data directory:
+
+```bash
+kubectl exec -n patchmon deploy/patchmon-db -- grep postgresql /proc/mounts
+```
+
+One line means the volume is mounted correctly. Two lines means a scratch directory is sitting on top of your data, and the database will not survive a redeploy.
+
+#### Notes for Argo CD
+
+- **Sync waves.** The database and Redis carry `argocd.argoproj.io/sync-wave: "0"` and the server carries `"1"`, so the data services settle before the server starts. Without this the server crash-loops a few times on the first sync before recovering.
+- **Protect the volumes.** Both PVCs carry `argocd.argoproj.io/sync-options: Prune=false,Delete=false`, so removing the manifest from Git, or deleting the Argo CD Application, does not take the database with it.
+- **Never sync a PVC with Replace.** `Replace=true`, and the "Replace" option on a manual sync, delete and recreate the object. On a StorageClass with the default `Delete` reclaim policy, that destroys the volume and its data.
+
+#### Optional: in-browser RDP
+
+The server reaches Windows hosts over RDP through a `guacd` sidecar. It is only needed for that feature. To enable it, add the Deployment and Service below, then set `GUACD_ADDRESS: "patchmon-guacd:4822"` in the ConfigMap.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: patchmon-guacd
+  namespace: patchmon
+spec:
+  selector:
+    app.kubernetes.io/name: patchmon-guacd
+  ports:
+    - name: guacd
+      port: 4822
+      targetPort: 4822
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: patchmon-guacd
+  namespace: patchmon
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: patchmon-guacd
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: patchmon-guacd
+    spec:
+      containers:
+        - name: guacd
+          image: guacamole/guacd:1.6.0
+          ports:
+            - name: guacd
+              containerPort: 4822
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            tcpSocket:
+              port: 4822
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+```
+
+#### Ingress controllers other than Traefik
+
+Traefik proxies WebSockets without extra configuration, so the Ingress above needs no annotations. On NGINX Ingress you must raise the timeouts, or agent connections, SSH terminals, and live patch streams will drop about every 30 seconds:
+
+```yaml
+metadata:
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "86400"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "86400"
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+```
+
+See [Reverse proxy examples](#reverse-proxy-examples) for the full list of WebSocket endpoints to verify.
+
+---
+
 ### Troubleshooting
 
 #### Check pod status
@@ -869,6 +1360,8 @@ Response is `healthy` (plain text) or a JSON structure when the `Accept: applica
 | Ingress returns 404 / 502 | Ingress misconfigured or points at wrong port | All traffic should go to `server:3000` |
 | WebSocket connections drop every ~30s | Ingress default read timeout too short | Set `proxy-read-timeout: "86400"` |
 | `secret ... not found` | Required Secret not created before install | Create the Secret or set `secret.create: true` |
+| Database is empty again after every redeploy, and the setup wizard reappears | Hand-written manifests mounting the volume at `/var/lib/postgresql` instead of at `PGDATA` | See [The PostgreSQL data directory](#the-postgresql-data-directory) |
+| `initdb: error: directory ... exists but is not empty` | Volume mounted straight at `PGDATA` on block storage, which contains `lost+found` | Set `PGDATA` to a subdirectory of the mount. See [The PostgreSQL data directory](#the-postgresql-data-directory) |
 | CORS errors in browser | `CORS_ORIGIN` doesn't match the URL users see | Set it to the exact URL from the Ingress host. If the chart exposes more than one Ingress host, comma-separate them with no spaces, e.g. `https://patchmon.example.com,https://patchmon.internal.lan` |
 
 ---
@@ -884,6 +1377,7 @@ Response is `healthy` (plain text) or a JSON structure when the `Accept: applica
 ### See also
 
 - [Installing PatchMon Server on Docker](#installing-patchmon-server-on-docker): the officially supported deployment method
+- [Deploying with plain manifests](#deploying-with-plain-manifests): the full YAML stack for k3s, Argo CD, and Flux
 - [Reverse proxy examples](#reverse-proxy-examples): Nginx, Caddy, Traefik snippets
 - [PatchMon Environment Variables Reference](#patchmon-environment-variables-reference): every variable the server reads
 - [First-time admin setup](#first-time-admin-setup): what to do once the pod is running
@@ -1287,7 +1781,7 @@ This page walks through every step so you know what to expect.
 Before starting the wizard, PatchMon must already be running. You should be able to open `http://localhost:3000` (or your configured URL) in a browser and see the wizard's welcome screen. If you don't, check:
 
 - [Installing PatchMon Server on Docker](#installing-patchmon-server-on-docker): for Docker deployments
-- [Installing PatchMon on Kubernetes with Helm](#installing-patchmon-on-kubernetes-helm): for Kubernetes deployments
+- [Installing PatchMon on Kubernetes](#installing-patchmon-on-kubernetes-helm): for Kubernetes deployments, with Helm or plain manifests
 - [Reverse proxy examples](#reverse-proxy-examples): if you're behind Nginx, Caddy, Traefik, or NPM
 
 ---
@@ -1611,12 +2105,18 @@ Settings for JWT tokens, browser sessions, account lockout, two-factor authentic
 
 #### Account Lockout
 
-Lockout is applied per user account after repeated failed login attempts.
+Lockout is applied per combination of client IP address and the username that was typed, after repeated failed login attempts. Usernames that do not exist are counted too, so a lockout can be reached for a name that was never an account. That is deliberate: it means the point at which a lockout starts no longer reveals which usernames are real.
+
+Because the counter is per username, a lockout does not stop an attacker who tries a different username each time. The protection against that is the auth rate limit (`AUTH_RATE_LIMIT_MAX` and `AUTH_RATE_LIMIT_WINDOW_MS`), which is applied per client IP address across all sign-in attempts.
+
+Usernames are matched case-insensitively, and the lockout counter follows the same rule, so `admin` and `Admin` are one account with one shared allowance rather than two.
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `MAX_LOGIN_ATTEMPTS` | `5` | No | Number of consecutive failed login attempts before the account is temporarily locked. |
-| `LOCKOUT_DURATION_MINUTES` | `15` | No | How long (in minutes) an account stays locked after exceeding `MAX_LOGIN_ATTEMPTS`. |
+| `MAX_LOGIN_ATTEMPTS` | `5` | No | Number of consecutive failed attempts against one username, from one client IP address, before further attempts on that combination are refused. |
+| `LOCKOUT_DURATION_MINUTES` | `15` | No | How long (in minutes) that combination stays locked after exceeding `MAX_LOGIN_ATTEMPTS`. |
+
+Every rejected sign-in is written to the server log at `warn` level, so it is visible at the default `LOG_LEVEL` without switching to `debug`. See [Failed Login Attempts in the Log](#failed-login-attempts-in-the-log).
 
 #### Session Inactivity
 
@@ -1753,6 +2253,49 @@ Rules applied when a user sets or changes a local account password. These do not
 | `info` | Normal production operation |
 | `warn` | Quieter production operation; only non-critical issues and errors |
 | `error` | Minimal output; critical errors only |
+
+#### Failed Login Attempts in the Log
+
+Every rejected sign-in produces exactly one `warn` line, so it appears at the default `LOG_LEVEL` and at `warn`. A successful sign-in produces one `info` line.
+
+```json
+{"time":"2026-08-13T18:22:41Z","level":"WARN","msg":"login failed","reason":"user_not_found","username":"hackerman","ip":"203.0.113.9","user_agent":"curl/8.7.1"}
+```
+
+`username` and `user_agent` are whatever the client sent, truncated, and are recorded exactly as received. `username` is omitted when the client sent none. `ip` is the client address resolved through `TRUST_PROXY` and `TRUSTED_PROXY_RANGES`, so get those right or every attempt will appear to come from your reverse proxy.
+
+`"locked": true` is added when that particular attempt is the one that triggered the lockout. The `reason` still describes what was actually wrong, so counting a reason across your logs stays accurate.
+
+The `reason` field distinguishes the failure:
+
+| Reason | Meaning |
+|---|---|
+| `user_not_found` | No account matches the username or email that was typed |
+| `invalid_password` | The account exists and the password was wrong |
+| `account_disabled` | The account exists but is deactivated |
+| `no_password_set` | The account has no local password, typically SSO-only |
+| `locked_out` | Refused on arrival because a lockout from earlier attempts is still in force |
+| `missing_credentials` | The request omitted the username or the password |
+| `username_too_long` | The submitted username exceeded 254 characters and was rejected before any lookup |
+| `malformed_request` | The request body was not valid JSON |
+| `local_auth_disabled` | A password sign-in was attempted while the instance is SSO-only |
+| `invalid_tfa_code` | The password was accepted but the two-factor code was wrong |
+| `tfa_locked_out` | Refused on arrival because a two-factor lockout from earlier wrong codes is still in force |
+| `tfa_token_malformed` | The submitted two-factor code was not six alphanumeric characters |
+| `tfa_ticket_invalid` | The two-factor step was reached without a valid, unexpired ticket from the password step |
+| `tfa_user_ineligible` | The ticket resolved to an account that is inactive or has no two-factor enrolled |
+
+A failed lookup caused by the database being unreachable is **not** reported as `user_not_found`. It is logged separately at `error` level as `auth login lookup failed`, and it does not consume a lockout attempt, so a database problem cannot lock out the people retrying a correct password.
+
+To watch sign-in activity on a Docker install:
+
+```bash
+docker compose logs -f server | grep -E '"msg":"login (failed|succeeded)"'
+```
+
+That grep assumes JSON output, which is what a production install emits. Setting `APP_ENV=development` switches the logger to plain text, where the same lines read `msg="login failed"`.
+
+Nothing is logged when `ENABLE_LOGGING=false`, and these lines are suppressed if `LOG_LEVEL` is set to `error`.
 
 ---
 
@@ -3764,7 +4307,21 @@ patchmon-agent config show
 
 - **Service won't start.** Check the latest application-log entries: `Get-WinEvent -LogName Application -MaxEvents 20 | Where-Object ProviderName -like '*PatchMon*'`. Common causes: missing `credentials.yml`, stale `skip_ssl_verify` setting after a server cert change, firewall blocking outbound 443/WSS.
 - **ARM64 device showing x64 in `Get-ComputerInfo`.** If you ran an older (pre-2.0.0) installer the amd64 binary may be installed and running under x64 emulation. Re-run the latest install script; it detects `PROCESSOR_ARCHITEW6432=ARM64` and swaps in the native `patchmon-agent-windows-arm64.exe`.
-- **SmartScreen / Defender blocking the `.exe`.** The binary is unsigned as of v2.0.0. Use `Unblock-File 'C:\Program Files\PatchMon\patchmon-agent.exe'` or authorise it via Windows Security → Virus & threat protection → Allowed threats. Code-signing is planned for a future release.
+- **SmartScreen / Defender blocking the `.exe`.** The binary is unsigned as of v2.0.0, so real-time protection can quarantine it or hold it open while it scans. Use `Unblock-File 'C:\Program Files\PatchMon\patchmon-agent.exe'` or authorise it via Windows Security → Virus & threat protection → Allowed threats. Code-signing is planned for a future release.
+- **Install fails with `Program 'patchmon-agent.exe' failed to run: Access is denied`.** Same cause as the bullet above, hit during installation rather than afterwards. Since v2.1.1 the installer clears the download marker itself, waits up to 10 seconds for a scanner to release the freshly written binary, and then prints the recovery steps rather than a bare PowerShell stack. If it still fails, work through them in order:
+
+  ```powershell
+  # 1. Was it quarantined?
+  Get-MpThreat | Select-Object -Last 5
+
+  # 2. Clear the download marker
+  Unblock-File 'C:\Program Files\PatchMon\patchmon-agent.exe'
+
+  # 3. Still blocked? Exclude the install directory, then re-run the installer
+  Add-MpPreference -ExclusionPath 'C:\Program Files\PatchMon'
+  ```
+
+  Re-running the install script is safe. On a machine managed by AppLocker or WDAC, an unsigned binary in `C:\Program Files\PatchMon` may be blocked by policy instead, which no exclusion will fix; check with `Get-AppLockerPolicy -Effective -Xml`.
 - **TLS errors against the PatchMon server.** Windows 10 pre-1903 defaults to TLS 1.0/1.1; the installer explicitly enables TLS 1.2 at the session level. For older hosts, update the .NET Framework or set the registry keys documented by Microsoft in the `SchUseStrongCrypto` KB article.
 
 ### Viewing Logs
