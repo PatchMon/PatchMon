@@ -2628,6 +2628,7 @@ After creating the application, note the **Client ID** and **Client Secret** as 
 **Authentik:**
 - Create an OAuth2/OIDC Provider, then create an Application linked to it
 - **Set a Signing Key on the provider.** This is required and is the single most common cause of a failed Authentik setup. Open the provider, expand **Advanced protocol settings**, and set **Signing Key** to a certificate, for example the built-in `authentik Self-signed Certificate`. If **Signing Key** is left empty, Authentik signs ID tokens symmetrically with the client secret using `HS256`, which PatchMon rejects. Every login then fails with a generic "Authentication failed" message on the login page
+- **Replace the default `email` scope mapping.** Authentik's stock mapping always reports the address as unverified, which PatchMon rejects from 2.1.0 onwards. See [The verified email requirement](#the-verified-email-requirement)
 - Issuer URL format: `https://auth.example.com/application/o/patchmon/`
 - Groups are included via the `groups` or `ak_groups` claim (both are supported)
 
@@ -2639,6 +2640,7 @@ After creating the application, note the **Client ID** and **Client Secret** as 
 **Okta / Azure AD:**
 - Create an OIDC Web Application
 - Ensure groups are included in the ID token claims
+- **Entra ID only:** it does not send `email_verified`, which PatchMon requires from 2.1.0 onwards for account linking and auto-creation. See [The verified email requirement](#the-verified-email-requirement)
 
 ---
 
@@ -2833,7 +2835,63 @@ The following is **only synced when `OIDC_SYNC_ROLES=true`:**
 
 #### Account Linking
 
-If a local PatchMon user already exists with the same email as the OIDC user, PatchMon will automatically link the accounts, but only if the email is marked as **verified** by the IdP. This prevents account takeover via unverified emails.
+If a local PatchMon user already exists with the same email as the OIDC user, PatchMon will automatically link the accounts, but only if the IdP marks that email as verified. See [The verified email requirement](#the-verified-email-requirement) below, which applies to new accounts too, not only to linking.
+
+#### The Verified Email Requirement {#the-verified-email-requirement}
+
+*Applies from PatchMon 2.1.0.*
+
+When PatchMon cannot recognise you by a subject it has already stored, the email address is the only thing deciding who you are. Trusting an unverified one would let anyone who can set their own email address at your IdP sign in as an existing PatchMon user. So in that situation PatchMon requires the IdP to state that the address is verified, by sending an `email_verified` claim set to `true`.
+
+This applies in two cases:
+
+- **Linking to an existing local account** by matching email.
+- **Creating a new account** on first login when `OIDC_AUTO_CREATE_USERS=true`.
+
+It does not apply once an account is linked. After a successful first login PatchMon stores the IdP's subject identifier, matches on that from then on, and the email claim stops being the deciding factor.
+
+**If the claim is missing, PatchMon treats it as not verified.** Several identity providers do not send it by default, and two common ones need configuration:
+
+##### Authentik
+
+Authentik's stock `authentik default OAuth Mapping: OpenID 'email'` scope mapping returns `email_verified: False` unconditionally, because Authentik does not track per-user email verification. Every login therefore fails until you replace that mapping:
+
+1. Sign in to Authentik as an administrator.
+2. Go to **Customisation** > **Property Mappings**.
+3. Select **Create**, then choose **Scope Mapping**.
+4. Fill it in as follows:
+   - **Name:** `authentik main OAuth Mapping: OpenID verified 'email'`
+   - **Scope name:** `email`
+   - **Description:** `Verified Email address`
+   - **Expression:**
+
+     ```python
+     return {
+         "email": request.user.email,
+         "email_verified": True
+     }
+     ```
+
+5. Select **Create**.
+6. Open the OAuth2 provider you configured for PatchMon and select **Edit**.
+7. Expand **Advanced protocol settings** and scroll to **Scopes**.
+8. Remove `authentik default OAuth Mapping: OpenID 'email'`.
+9. Add the mapping you created in step 4.
+10. Sign in to PatchMon again.
+
+By making this change you are asserting that the email addresses in your Authentik directory are trustworthy. That is a reasonable statement for a directory you control and populate yourself. It is not reasonable if users can self-register with an arbitrary address.
+
+##### Microsoft Entra ID
+
+Entra ID does not send `email_verified` at all. Adding `email` as an optional claim does not help, because that supplies the address and not the verification signal, and neither does `xms_edov`, which PatchMon does not read.
+
+Add the claim through a claims mapping policy on the application, or leave `OIDC_AUTO_CREATE_USERS` off and link accounts by having each user sign in once while a matching local account exists.
+
+##### Other providers
+
+Keycloak, Okta and Google Workspace all send `email_verified` correctly with their default configuration and need no change.
+
+To check what your IdP actually sends, decode the ID token at [jwt.io](https://jwt.io) after a login attempt, or read the rejection in the server log (see [Troubleshooting](#troubleshooting)).
 
 ---
 
@@ -2934,6 +2992,19 @@ This is the generic error for any failure during the token exchange, after your 
 - The **Redirect URI** in your IdP does not match `OIDC_REDIRECT_URI` exactly (including trailing slashes)
 - Cookies are being blocked (OIDC uses httpOnly cookies for session state)
 - Your IdP does not support PKCE (PatchMon uses the S256 code challenge)
+
+#### "Unable to sign in with this account" After a Successful IdP Login
+
+You signed in at your IdP, it sent you back, and PatchMon refused you. The token exchange worked, so this is not the error above. **Check the server logs**, where one of these lines gives the reason:
+
+| Log line | Meaning | Fix |
+|----------|---------|-----|
+| `oidc login rejected: unverified email claim` | Your IdP did not state that the email address is verified. From 2.1.0 PatchMon requires this when it has to identify you by email. Affects Authentik and Microsoft Entra ID out of the box | [The verified email requirement](#the-verified-email-requirement) |
+| `oidc user not found and auto-create disabled` | No PatchMon account matches, and `OIDC_AUTO_CREATE_USERS` is off | Create the user in PatchMon first, or set `OIDC_AUTO_CREATE_USERS=true` |
+
+A deactivated account is a different case and shows **"Account disabled"** rather than this message, logged as `oidc login inactive user`.
+
+If your logs show nothing at all, raise `LOG_LEVEL` to `debug` and try again.
 
 #### "Failed to reach the OIDC provider" When Clicking the SSO Button
 
