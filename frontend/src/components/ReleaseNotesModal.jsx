@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useId, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useAuth } from "../contexts/AuthContext";
 import { useSettings } from "../contexts/SettingsContext";
 import { authAPI, versionAPI } from "../utils/api";
@@ -179,7 +180,9 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 					aria-label="Close modal"
 				/>
 
-				<div className="inline-block align-bottom bg-white dark:bg-secondary-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-2xl sm:w-full">
+				{/* Wider than the standard max-w-2xl modal: release notes are a
+				    document, not a form, and the tables need the room. */}
+				<div className="inline-block align-bottom bg-white dark:bg-secondary-800 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full">
 					<div className="bg-white dark:bg-secondary-800 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
 						{/* Header */}
 						<div className="flex items-center justify-between mb-4">
@@ -225,6 +228,10 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 								) : hasReleaseNotes ? (
 									<div className="prose prose-sm dark:prose-invert max-w-none">
 										<ReactMarkdown
+											// Tables, strikethrough and autolinks are GitHub
+											// Flavoured Markdown, not CommonMark. Without this the
+											// release-note tables render as literal pipe characters.
+											remarkPlugins={[remarkGfm]}
 											components={{
 												h1: ({ node, ...props }) => (
 													<h1
@@ -274,6 +281,80 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 												hr: ({ node, ...props }) => (
 													<hr
 														className="my-4 border-secondary-200 dark:border-secondary-600"
+														{...props}
+													/>
+												),
+												h4: ({ node, ...props }) => (
+													<h4
+														className="text-sm font-semibold text-secondary-900 dark:text-white mt-3 mb-1.5"
+														{...props}
+													/>
+												),
+												ol: ({ node, ...props }) => (
+													<ol
+														className="list-decimal list-inside text-sm text-secondary-600 dark:text-white mb-3 space-y-1.5 ml-2"
+														{...props}
+													/>
+												),
+												a: ({ node, ...props }) => (
+													<a
+														className="text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 underline"
+														target="_blank"
+														rel="noopener noreferrer"
+														{...props}
+													/>
+												),
+												blockquote: ({ node, ...props }) => (
+													<blockquote
+														className="border-l-4 border-secondary-300 dark:border-secondary-600 pl-3 my-3 text-sm text-secondary-600 dark:text-secondary-300 italic"
+														{...props}
+													/>
+												),
+												// The inline `code` styling above would double up
+												// inside a fenced block, so it is neutralised here.
+												pre: ({ node, ...props }) => (
+													<pre
+														className="bg-secondary-100 dark:bg-secondary-900 rounded-md p-3 mb-3 overflow-x-auto text-xs font-mono text-secondary-800 dark:text-secondary-100 [&>code]:bg-transparent [&>code]:p-0"
+														{...props}
+													/>
+												),
+												// Wide tables scroll inside their own container
+												// rather than stretching the modal.
+												table: ({ node, ...props }) => (
+													<div className="overflow-x-auto mb-4 rounded-md border border-secondary-200 dark:border-secondary-600">
+														<table
+															className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600"
+															{...props}
+														/>
+													</div>
+												),
+												thead: ({ node, ...props }) => (
+													<thead
+														className="bg-secondary-50 dark:bg-secondary-700"
+														{...props}
+													/>
+												),
+												tbody: ({ node, ...props }) => (
+													<tbody
+														className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600"
+														{...props}
+													/>
+												),
+												tr: ({ node, ...props }) => (
+													<tr
+														className="hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors"
+														{...props}
+													/>
+												),
+												th: ({ node, ...props }) => (
+													<th
+														className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+														{...props}
+													/>
+												),
+												td: ({ node, ...props }) => (
+													<td
+														className="px-3 sm:px-4 py-2 align-top text-sm text-secondary-900 dark:text-white"
 														{...props}
 													/>
 												),
