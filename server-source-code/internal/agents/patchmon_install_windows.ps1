@@ -4,6 +4,78 @@
 
 $ErrorActionPreference = "Stop"
 
+# Launching a binary written to disk moments ago can fail with "Access is
+# denied" before the process ever starts. Windows file sharing is mandatory
+# rather than advisory, so an antivirus scanner holding the freshly written
+# image locks out CreateProcess, and a large unsigned executable is exactly
+# what real-time protection stops to inspect. The agent already rides out this
+# error class on its own config file (internal/config/transient_windows.go);
+# the installer is the first thing to execute a just-written image, so it needs
+# the same tolerance. A launch failure raises an error rather than setting an
+# exit code, so $LASTEXITCODE alone never sees it.
+function Invoke-AgentBinary {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$AgentArgs
+    )
+
+    $attempts = 6
+    $backoffSeconds = 2
+
+    for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+        try {
+            & $Path @AgentArgs
+            return
+        } catch {
+            if ($attempt -eq $attempts) {
+                throw
+            }
+            Write-Host "Windows would not start the agent yet (attempt $attempt of $attempts). Retrying in $backoffSeconds seconds..." -ForegroundColor Yellow
+            Start-Sleep -Seconds $backoffSeconds
+        }
+    }
+}
+
+function Show-AgentLaunchFailure {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [string]$InstallDir,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ConfigFile,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Reason
+    )
+
+    Write-Host ""
+    Write-Warning "The agent was installed but Windows would not run it: $Reason"
+    Write-Host ""
+    Write-Host "This is nearly always antivirus or SmartScreen blocking an unsigned" -ForegroundColor Yellow
+    Write-Host "executable. The PatchMon agent is not code-signed yet, so real-time" -ForegroundColor Yellow
+    Write-Host "protection can quarantine it or hold it open as soon as it is written." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "1. Check whether it was quarantined:" -ForegroundColor Cyan
+    Write-Host "     Get-MpThreat | Select-Object -Last 5" -ForegroundColor Gray
+    Write-Host "2. Clear the download marker:" -ForegroundColor Cyan
+    Write-Host "     Unblock-File '$Path'" -ForegroundColor Gray
+    Write-Host "3. If it is still blocked, exclude the install directory:" -ForegroundColor Cyan
+    Write-Host "     Add-MpPreference -ExclusionPath '$InstallDir'" -ForegroundColor Gray
+    Write-Host "4. Re-run this installer. Running it again is safe." -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "What is on this machine now:" -ForegroundColor Yellow
+    Write-Host "   - Agent binary installed at $Path" -ForegroundColor Gray
+    Write-Host "   - Configuration written to $ConfigFile" -ForegroundColor Gray
+    Write-Host "   - System PATH updated" -ForegroundColor Gray
+    Write-Host "   - No Windows service created, so nothing is running yet" -ForegroundColor Gray
+}
+
 # Read server-injected values from environment variables
 $ServerURL     = $env:PATCHMON_SERVER_URL
 $BootstrapToken = $env:PATCHMON_BOOTSTRAP_TOKEN
@@ -121,6 +193,12 @@ Start-Sleep -Seconds 1
 Write-Host "Installing agent to $targetPath..." -ForegroundColor Yellow
 Copy-Item -Path $tempPath -Destination $targetPath -Force
 
+# Clear the download marker if one was attached. Invoke-WebRequest does not
+# normally write a Zone.Identifier stream, but some endpoint protection products
+# do, and it survives an NTFS to NTFS copy, so it would follow the binary into
+# Program Files and SmartScreen would refuse to start it.
+Unblock-File -Path $targetPath -ErrorAction SilentlyContinue
+
 # Clean up temp file
 Remove-Item -Path $tempPath -Force
 
@@ -175,7 +253,12 @@ if ($ServerURL -and $APIID -and $APIKey) {
     if ($SkipSslVerify) {
         $env:PATCHMON_SKIP_SSL_VERIFY = "true"
     }
-    & $targetPath --config (Join-Path $ConfigPath "config.yml") config set-api $APIID $APIKey $ServerURL
+    try {
+        Invoke-AgentBinary -Path $targetPath -AgentArgs @("--config", $configFile, "config", "set-api", $APIID, $APIKey, $ServerURL)
+    } catch {
+        Show-AgentLaunchFailure -Path $targetPath -InstallDir $InstallPath -ConfigFile $configFile -Reason $_.Exception.Message
+        exit 1
+    }
     if ($LASTEXITCODE -eq 0) {
         Write-Host "Credentials configured successfully." -ForegroundColor Green
     } else {
@@ -194,7 +277,12 @@ Write-Host "Testing installation..." -ForegroundColor Yellow
 if ($SkipSslVerify) {
     $env:PATCHMON_SKIP_SSL_VERIFY = "true"
 }
-& $targetPath --config (Join-Path $ConfigPath "config.yml") ping
+try {
+    Invoke-AgentBinary -Path $targetPath -AgentArgs @("--config", $configFile, "ping")
+} catch {
+    Show-AgentLaunchFailure -Path $targetPath -InstallDir $InstallPath -ConfigFile $configFile -Reason $_.Exception.Message
+    exit 1
+}
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Installation test failed. Please check the installation manually."
     exit 1
@@ -258,6 +346,9 @@ try {
     }
 } catch {
     Write-Warning "Failed to create/start Windows Service: $_"
+    Write-Host ""
+    Write-Host "If this says access is denied, antivirus is likely blocking the unsigned" -ForegroundColor Yellow
+    Write-Host "binary. Try: Unblock-File '$servicePath'   or exclude '$InstallPath'." -ForegroundColor Yellow
     Write-Host ""
     Write-Host "The agent is installed and configured, but you'll need to run it manually:" -ForegroundColor Yellow
     Write-Host "  patchmon-agent.exe serve" -ForegroundColor Cyan

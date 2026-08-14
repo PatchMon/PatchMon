@@ -3825,7 +3825,21 @@ patchmon-agent config show
 
 - **Service won't start.** Check the latest application-log entries: `Get-WinEvent -LogName Application -MaxEvents 20 | Where-Object ProviderName -like '*PatchMon*'`. Common causes: missing `credentials.yml`, stale `skip_ssl_verify` setting after a server cert change, firewall blocking outbound 443/WSS.
 - **ARM64 device showing x64 in `Get-ComputerInfo`.** If you ran an older (pre-2.0.0) installer the amd64 binary may be installed and running under x64 emulation. Re-run the latest install script; it detects `PROCESSOR_ARCHITEW6432=ARM64` and swaps in the native `patchmon-agent-windows-arm64.exe`.
-- **SmartScreen / Defender blocking the `.exe`.** The binary is unsigned as of v2.0.0. Use `Unblock-File 'C:\Program Files\PatchMon\patchmon-agent.exe'` or authorise it via Windows Security → Virus & threat protection → Allowed threats. Code-signing is planned for a future release.
+- **SmartScreen / Defender blocking the `.exe`.** The binary is unsigned as of v2.0.0, so real-time protection can quarantine it or hold it open while it scans. Use `Unblock-File 'C:\Program Files\PatchMon\patchmon-agent.exe'` or authorise it via Windows Security → Virus & threat protection → Allowed threats. Code-signing is planned for a future release.
+- **Install fails with `Program 'patchmon-agent.exe' failed to run: Access is denied`.** Same cause as the bullet above, hit during installation rather than afterwards. Since v2.1.1 the installer clears the download marker itself, waits up to 10 seconds for a scanner to release the freshly written binary, and then prints the recovery steps rather than a bare PowerShell stack. If it still fails, work through them in order:
+
+  ```powershell
+  # 1. Was it quarantined?
+  Get-MpThreat | Select-Object -Last 5
+
+  # 2. Clear the download marker
+  Unblock-File 'C:\Program Files\PatchMon\patchmon-agent.exe'
+
+  # 3. Still blocked? Exclude the install directory, then re-run the installer
+  Add-MpPreference -ExclusionPath 'C:\Program Files\PatchMon'
+  ```
+
+  Re-running the install script is safe. On a machine managed by AppLocker or WDAC, an unsigned binary in `C:\Program Files\PatchMon` may be blocked by policy instead, which no exclusion will fix; check with `Get-AppLockerPolicy -Effective -Xml`.
 - **TLS errors against the PatchMon server.** Windows 10 pre-1903 defaults to TLS 1.0/1.1; the installer explicitly enables TLS 1.2 at the session level. For older hosts, update the .NET Framework or set the registry keys documented by Microsoft in the `SchUseStrongCrypto` KB article.
 
 ### Viewing Logs
