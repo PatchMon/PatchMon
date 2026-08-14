@@ -22,7 +22,8 @@ type TLSMode string
 
 const (
 	// TLSModeNone dials cleartext and never upgrades. Reject if credentials are
-	// set (PLAIN over cleartext leaks them on the wire).
+	// set (PLAIN over cleartext leaks them on the wire) unless the operator has
+	// explicitly set Config.AllowInsecureAuth.
 	TLSModeNone TLSMode = "none"
 	// TLSModeStartTLS dials cleartext then mandates STARTTLS. If the server
 	// does not advertise STARTTLS the dial fails closed.
@@ -46,6 +47,12 @@ type Config struct {
 	TLSMode     TLSMode
 	DialTimeout time.Duration
 	SendTimeout time.Duration
+	// AllowInsecureAuth permits PLAIN authentication over an unencrypted
+	// connection. It applies only to TLSModeNone and is an explicit per
+	// destination opt-in for trusted internal relays that require AUTH but do
+	// not offer TLS. It sends the credentials in the clear, so it stays false
+	// unless the operator sets it.
+	AllowInsecureAuth bool
 }
 
 // Message is one outbound email.
@@ -242,10 +249,10 @@ func validate(cfg Config, msg Message) *SendError {
 	if _, err := mail.ParseAddress(msg.To); err != nil {
 		return newSendError(StageValidate, fmt.Errorf("invalid to %q: %w", msg.To, err))
 	}
-	if cfg.TLSMode == TLSModeNone &&
+	if cfg.TLSMode == TLSModeNone && !cfg.AllowInsecureAuth &&
 		(strings.TrimSpace(cfg.Username) != "" || strings.TrimSpace(cfg.Password) != "") {
 		return newSendError(StageValidate,
-			errors.New("refusing PLAIN auth over cleartext: tls_mode=none with credentials would leak them on the wire"))
+			errors.New("refusing PLAIN auth over cleartext: tls_mode=none with credentials would leak them on the wire. Enable allow_insecure_auth on the destination if the relay is on a trusted network"))
 	}
 	return nil
 }

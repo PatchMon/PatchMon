@@ -364,6 +364,9 @@ type scheduledEmailConfig struct {
 	// mailer.ResolveMode pick the effective policy.
 	UseTLS  *bool  `json:"use_tls"`
 	TLSMode string `json:"tls_mode"`
+	// AllowInsecureAuth permits PLAIN auth over cleartext. Only meaningful
+	// with tls_mode=none; see mailer.Config.AllowInsecureAuth.
+	AllowInsecureAuth bool `json:"allow_insecure_auth"`
 }
 
 func sendScheduledEmail(ctx context.Context, log *slog.Logger, plain, subject, html, _csv string) error {
@@ -387,6 +390,9 @@ func sendScheduledEmail(ctx context.Context, log *slog.Logger, plain, subject, h
 		From:     cfg.From,
 		FromName: cfg.FromName,
 		TLSMode:  mode,
+		// Only honoured for tls_mode=none; mailer.validate() rejects the
+		// combination when this is false.
+		AllowInsecureAuth: cfg.AllowInsecureAuth,
 	}
 	if err := mailer.Send(ctx, mc, mailer.Message{To: cfg.To, Subject: subject, HTMLBody: html}); err != nil {
 		var se *mailer.SendError
