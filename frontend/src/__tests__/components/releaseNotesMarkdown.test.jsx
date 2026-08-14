@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { describe, expect, it } from "vitest";
 
 // Release note bodies are written as GitHub Flavoured Markdown, but
 // react-markdown only implements CommonMark. Without remark-gfm a table renders
