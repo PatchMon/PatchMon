@@ -2,11 +2,9 @@ package oidc
 
 import "testing"
 
-// A representative Entra issuer; isMicrosoftIdentityIssuer gates the fallback.
 const msIssuer = "https://login.microsoftonline.com/tenant-id/v2.0"
 
-// resolveEmailVerified gates account linking and auto-creation, so the ordering
-// between email_verified and xms_edov is a security property, not a preference.
+// The ordering between email_verified and xms_edov is a security property.
 func TestResolveEmailVerified(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -41,9 +39,6 @@ func TestResolveEmailVerified(t *testing.T) {
 			want:     false,
 		},
 		{
-			// The security-critical case. Stock Authentik sends an explicit
-			// false. A provider denying verification must not be overridden by
-			// a second claim.
 			name:     "explicit email_verified false is NOT overridden by xms_edov",
 			userInfo: map[string]interface{}{"email_verified": false},
 			idTok:    map[string]interface{}{"xms_edov": true},
@@ -77,7 +72,6 @@ func TestResolveEmailVerified(t *testing.T) {
 			want:     true,
 		},
 		{
-			// A nil value is not an assertion, so resolution must continue.
 			name:     "nil email_verified falls through to xms_edov",
 			userInfo: map[string]interface{}{"email_verified": nil},
 			idTok:    map[string]interface{}{"xms_edov": true},
@@ -85,7 +79,6 @@ func TestResolveEmailVerified(t *testing.T) {
 			want:     true,
 		},
 		{
-			// An undecodable value must not be read as a denial.
 			name:     "garbage email_verified falls through to xms_edov",
 			userInfo: map[string]interface{}{"email_verified": "banana"},
 			idTok:    map[string]interface{}{"xms_edov": true},
@@ -93,8 +86,6 @@ func TestResolveEmailVerified(t *testing.T) {
 			want:     true,
 		},
 		{
-			// xms_edov is Microsoft-proprietary. An IdP that maps arbitrary
-			// user attributes into claims could otherwise manufacture it.
 			name:     "xms_edov is ignored for a non-Microsoft issuer",
 			userInfo: map[string]interface{}{},
 			idTok:    map[string]interface{}{"xms_edov": true},
@@ -109,8 +100,6 @@ func TestResolveEmailVerified(t *testing.T) {
 			want:     false,
 		},
 		{
-			// The UserInfo body is not signature-verified; Microsoft only ever
-			// issues xms_edov in the ID token.
 			name:     "xms_edov from UserInfo is ignored even for Microsoft",
 			userInfo: map[string]interface{}{"xms_edov": true},
 			idTok:    map[string]interface{}{},
@@ -132,8 +121,6 @@ func TestResolveEmailVerified(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("resolveEmailVerified() = %v, want %v (reason %q)", got, tt.want, reason)
 			}
-			// The reason is what an operator reads in the log, so a rejection
-			// must always explain itself and a success must never add noise.
 			if !got && reason == "" {
 				t.Error("rejection returned an empty reason")
 			}

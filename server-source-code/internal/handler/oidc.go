@@ -372,9 +372,7 @@ func (h *OidcHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	matchedBySub := user != nil && user.OidcSub != nil && *user.OidcSub == userInfo.Sub
 
 	// An email match, or auto-create, means the email claim decides who this is,
-	// so it has to be verified. OIDC_TRUST_UNVERIFIED_EMAIL waives that for
-	// operators whose provider cannot assert it; the log line records every use
-	// so a relaxed deployment is visible after the fact.
+	// so it has to be verified.
 	if !matchedBySub && !userInfo.EmailVerified {
 		if h.oidcTrustUnverifiedEmail(r.Context()) {
 			if h.log != nil {
