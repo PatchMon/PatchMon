@@ -23,9 +23,10 @@ const (
 
 // Config holds Discord OAuth2 client configuration.
 type Config struct {
-	ClientID     string
-	ClientSecret string
-	RedirectURI  string
+	ClientID        string
+	ClientSecret    string
+	RedirectURI     string
+	RequiredGuildID string
 }
 
 // DiscordUser holds the Discord user profile from /users/@me.
@@ -67,17 +68,22 @@ func GeneratePKCE() (codeVerifier, codeChallenge string, err error) {
 	return codeVerifier, codeChallenge, nil
 }
 
-// GenerateAuthURL builds the Discord OAuth2 authorization URL with PKCE.
 func (c *Config) GenerateAuthURL(state, codeVerifier string) (string, error) {
 	codeChallenge, err := pkceChallenge(codeVerifier)
 	if err != nil {
 		return "", err
 	}
+	// Request the `guilds` scope only when a required guild is configured, so
+	// the normal login/link flow does not ask for server-list access.
+	scopes := discordScopes
+	if c.RequiredGuildID != "" {
+		scopes = discordScopes + " guilds"
+	}
 	params := url.Values{
 		"client_id":             {c.ClientID},
 		"redirect_uri":          {c.RedirectURI},
 		"response_type":         {"code"},
-		"scope":                 {discordScopes},
+		"scope":                 {scopes},
 		"state":                 {state},
 		"code_challenge":        {codeChallenge},
 		"code_challenge_method": {"S256"},
@@ -156,6 +162,68 @@ func GetUser(ctx context.Context, accessToken string) (*DiscordUser, error) {
 		return nil, fmt.Errorf("discord: parse user response: %w", err)
 	}
 	return &u, nil
+}
+
+// Guild is the subset of a Discord guild (server) entry returned by
+// /users/@me/guilds. Only the ID is needed for membership checks.
+type Guild struct {
+	ID string `json:"id"`
+}
+
+// GetUserGuilds fetches the guilds (servers) the authenticated user belongs
+// to. Requires the "guilds" OAuth2 scope.
+func GetUserGuilds(ctx context.Context, accessToken string) ([]Guild, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discordAPIBase+"/users/@me/guilds", nil)
+	if err != nil {
+		return nil, fmt.Errorf("discord: create guilds request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("discord: fetch guilds: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("discord: read guilds response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("discord: fetch guilds failed: %s", string(body))
+	}
+
+	guilds, err := parseGuilds(body)
+	if err != nil {
+		return nil, fmt.Errorf("discord: parse guilds response: %w", err)
+	}
+	return guilds, nil
+}
+
+// parseGuilds decodes the Discord /users/@me/guilds JSON payload. Split out so
+// decode failures can be tested without a network round-trip.
+func parseGuilds(body []byte) ([]Guild, error) {
+	var guilds []Guild
+	if err := json.Unmarshal(body, &guilds); err != nil {
+		return nil, err
+	}
+	return guilds, nil
+}
+
+// IsGuildMember reports whether the user belongs to the required guild. An
+// empty requiredGuildID means no restriction is configured and any caller is
+// considered a member.
+func IsGuildMember(guilds []Guild, requiredGuildID string) bool {
+	if requiredGuildID == "" {
+		return true
+	}
+	for _, g := range guilds {
+		if g.ID == requiredGuildID {
+			return true
+		}
+	}
+	return false
 }
 
 // AvatarURL returns the CDN URL for a Discord user's avatar.
