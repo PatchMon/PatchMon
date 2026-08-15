@@ -32,7 +32,7 @@ services:
     hostname: patchmon-server
     env_file: .env
     ports:
-      - "${PORT:-3000}:${PORT:-3000}"
+      - "${PATCHMON_PORT:-3000}:${PATCHMON_PORT:-3000}"
     networks:
       - patchmon-internal
     depends_on:
