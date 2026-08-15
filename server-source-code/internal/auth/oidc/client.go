@@ -37,9 +37,13 @@ type UserInfo struct {
 	GivenName     string
 	FamilyName    string
 	EmailVerified bool
-	Groups        []string
-	Picture       string
-	IDToken       string
+	// EmailVerifiedReason explains why verification was not established, for
+	// operator-facing logs only. Empty when EmailVerified is true. Never shown
+	// to the browser.
+	EmailVerifiedReason string
+	Groups              []string
+	Picture             string
+	IDToken             string
 }
 
 // Client wraps the OIDC provider and OAuth2 config.
@@ -284,7 +288,7 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 		return nil, errors.New("oidc: no email in UserInfo or id_token")
 	}
 
-	userInfo.EmailVerified = resolveEmailVerified(userInfoClaims, idClaims, c.cfg.IssuerURL)
+	userInfo.EmailVerified, userInfo.EmailVerifiedReason = resolveEmailVerified(userInfoClaims, idClaims, c.cfg.IssuerURL)
 	userInfo.Name = getStringClaim(userInfoClaims, idClaims, "name")
 	if userInfo.Name == "" {
 		userInfo.Name = getStringClaim(userInfoClaims, idClaims, "preferred_username")
@@ -450,26 +454,17 @@ func getStringClaim(primary, fallback map[string]interface{}, key string) string
 	return ""
 }
 
-// getBoolClaim reads a boolean claim, tolerating the string and numeric
-// encodings real providers emit.
+// lookupBoolClaim reports a boolean claim's value and whether it was found at
+// all in a form it could decode. A claim present with an undecodable value is
+// treated as not found, so resolution continues to the fallback map and then to
+// any alternative claim.
 //
-// Only v.(bool) was accepted before. email_verified now gates login, so a
-// provider sending "true" as a JSON string (some Keycloak configurations) or 1
-// would have every email-matched login rejected with "Email not verified at
-// identity provider". Being liberal about the ENCODING is safe; being liberal
-// about a MISSING claim would not be, so absent still means false.
-//
-// Microsoft Entra omits email_verified altogether; resolveEmailVerified below
-// handles that case via xms_edov.
-func getBoolClaim(primary, fallback map[string]interface{}, key string) bool {
-	v, _ := lookupBoolClaim(primary, fallback, key)
-	return v
-}
-
-// lookupBoolClaim is getBoolClaim plus whether the claim was found at all in a
-// form it could decode. A claim present with an undecodable value is treated as
-// not found, so resolution continues to the fallback map and then to any
-// alternative claim.
+// It tolerates the string and numeric encodings real providers emit, not just
+// v.(bool): email_verified gates login, so a provider sending "true" as a JSON
+// string (some Keycloak configurations) or 1 would otherwise have every
+// email-matched login rejected. Being liberal about the ENCODING is safe; being
+// liberal about a MISSING claim would not be, which is what the found return
+// exists to keep separate.
 func lookupBoolClaim(primary, fallback map[string]interface{}, key string) (value, found bool) {
 	for _, claims := range []map[string]interface{}{primary, fallback} {
 		v, ok := claims[key]
@@ -518,15 +513,39 @@ func lookupBoolClaim(primary, fallback map[string]interface{}, key string) (valu
 //     application/jwt. Microsoft only ever issues xms_edov in the ID and access
 //     tokens, so reading it from UserInfo would accept a weaker source for no
 //     practical gain.
-func resolveEmailVerified(primary, fallback map[string]interface{}, issuerURL string) bool {
+//
+// The second return value is a short operator-facing reason, empty on success.
+// It exists because the restrictions above are invisible from the outside: a
+// provider can send xms_edov and have it ignored, and an operator told only
+// that the claim "was not sent" would go and configure it again to no effect.
+func resolveEmailVerified(primary, fallback map[string]interface{}, issuerURL string) (bool, string) {
 	if v, found := lookupBoolClaim(primary, fallback, "email_verified"); found {
-		return v
+		if v {
+			return true, ""
+		}
+		return false, "provider sent email_verified=false"
 	}
+
+	_, edovInIDToken := lookupBoolClaim(fallback, nil, "xms_edov")
+	_, edovInUserInfo := lookupBoolClaim(primary, nil, "xms_edov")
+
 	if !isMicrosoftIdentityIssuer(issuerURL) {
-		return false
+		if edovInIDToken || edovInUserInfo {
+			return false, "xms_edov was sent but is only honoured from a Microsoft identity platform issuer, and this issuer is not one"
+		}
+		return false, "provider sent no email_verified claim"
 	}
-	v, _ := lookupBoolClaim(fallback, nil, "xms_edov")
-	return v
+	if edovInIDToken {
+		v, _ := lookupBoolClaim(fallback, nil, "xms_edov")
+		if v {
+			return true, ""
+		}
+		return false, "provider sent xms_edov=false"
+	}
+	if edovInUserInfo {
+		return false, "xms_edov was sent in the UserInfo response but is only honoured from the ID token; add it as an ID token optional claim"
+	}
+	return false, "provider sent neither email_verified nor xms_edov"
 }
 
 // extractGroups extracts group names from claims (groups or ak_groups for Authentik).

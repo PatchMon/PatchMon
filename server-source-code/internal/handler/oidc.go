@@ -385,7 +385,8 @@ func (h *OidcHandler) Callback(w http.ResponseWriter, r *http.Request) {
 			if h.log != nil {
 				h.log.Warn("oidc login rejected: unverified email claim",
 					"email", userInfo.Email, "sub", userInfo.Sub,
-					"hint", "provider sent neither email_verified nor xms_edov; see the operator guide, The verified email requirement")
+					"reason", userInfo.EmailVerifiedReason,
+					"hint", "see the operator guide, The verified email requirement")
 			}
 			http.Redirect(w, r, "/login?error=Unable+to+sign+in+with+this+account", http.StatusFound)
 			return

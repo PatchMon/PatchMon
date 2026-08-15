@@ -128,8 +128,17 @@ func TestResolveEmailVerified(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := resolveEmailVerified(tt.userInfo, tt.idTok, tt.issuer); got != tt.want {
-				t.Errorf("resolveEmailVerified() = %v, want %v", got, tt.want)
+			got, reason := resolveEmailVerified(tt.userInfo, tt.idTok, tt.issuer)
+			if got != tt.want {
+				t.Errorf("resolveEmailVerified() = %v, want %v (reason %q)", got, tt.want, reason)
+			}
+			// The reason is what an operator reads in the log, so a rejection
+			// must always explain itself and a success must never add noise.
+			if !got && reason == "" {
+				t.Error("rejection returned an empty reason")
+			}
+			if got && reason != "" {
+				t.Errorf("success returned reason %q, want empty", reason)
 			}
 		})
 	}
@@ -160,15 +169,5 @@ func TestLookupBoolClaimReportsPresence(t *testing.T) {
 					v, found, tt.wantValue, tt.wantFound)
 			}
 		})
-	}
-}
-
-// getBoolClaim keeps its old signature and behaviour for existing callers.
-func TestGetBoolClaimUnchanged(t *testing.T) {
-	if getBoolClaim(map[string]interface{}{"k": true}, nil, "k") != true {
-		t.Error("true claim should read true")
-	}
-	if getBoolClaim(map[string]interface{}{}, nil, "k") != false {
-		t.Error("absent claim should read false")
 	}
 }
