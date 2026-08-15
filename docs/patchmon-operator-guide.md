@@ -2314,6 +2314,7 @@ OpenID Connect configuration for Single Sign-On. When `OIDC_ENABLED=true`, the f
 | `OIDC_REDIRECT_URI` | _(none)_ | If OIDC enabled | The callback URL registered in your identity provider. Must be: `https://your-patchmon-url/api/v1/auth/oidc/callback` |
 | `OIDC_SCOPES` | `openid email profile groups` | No | Space-separated list of OAuth scopes to request. The `groups` scope is required for group-to-role mapping to work. |
 | `OIDC_ENFORCE_HTTPS` | `true` | No | When `true` (the default), the server rejects OIDC configurations using a non-HTTPS issuer URL. Set to `false` only in a local development environment with a non-TLS identity provider. |
+| `OIDC_TRUST_UNVERIFIED_EMAIL` | `false` | No | When `true`, PatchMon links and creates accounts even if the identity provider does not confirm the email address is verified. This reduces account-takeover protection, so only enable it if your provider cannot assert verification. See [The verified email requirement](#the-verified-email-requirement). Also settable in **Settings > OIDC**. |
 
 #### User Provisioning
 
@@ -2640,7 +2641,7 @@ After creating the application, note the **Client ID** and **Client Secret** as 
 **Okta / Azure AD:**
 - Create an OIDC Web Application
 - Ensure groups are included in the ID token claims
-- **Entra ID only:** it does not send `email_verified`, which PatchMon requires from 2.1.0 onwards for account linking and auto-creation. See [The verified email requirement](#the-verified-email-requirement)
+- **Entra ID only:** it does not send `email_verified`, which PatchMon requires from 2.1.0 onwards for account linking and auto-creation. Add the `xms_edov` optional claim instead. See [The verified email requirement](#the-verified-email-requirement)
 
 ---
 
@@ -2690,6 +2691,7 @@ OIDC_SYNC_ROLES=false
 | `OIDC_SESSION_TTL` | `600` | Seconds the OIDC login state is valid. If the user takes longer than this at the IdP, the session expires and they must try again |
 | `OIDC_POST_LOGOUT_URI` | `<CORS_ORIGIN>/login` | Where to redirect after a logout. Defaults to the PatchMon login page |
 | `OIDC_ENFORCE_HTTPS` | `true` | When `true`, enforces HTTPS on OIDC login and callback routes. Set to `false` only for local development |
+| `OIDC_TRUST_UNVERIFIED_EMAIL` | `false` | When `true`, waives the verified-email requirement for account linking and auto-creation. Reduces account-takeover protection |
 | `OIDC_SYNC_ROLES` | `false` | When `true`, the user's role is updated on every login based on current group membership. When `false`, roles are managed locally in PatchMon and OIDC login does not change them |
 
 > **Note on `APP_ENV`:** PatchMon reads `APP_ENV` to determine the runtime environment (e.g. `production`). `NODE_ENV` is accepted as a backward-compatibility alias but `APP_ENV` is preferred.
@@ -2883,9 +2885,30 @@ By making this change you are asserting that the email addresses in your Authent
 
 ##### Microsoft Entra ID
 
-Entra ID does not send `email_verified` at all. Adding `email` as an optional claim does not help, because that supplies the address and not the verification signal, and neither does `xms_edov`, which PatchMon does not read.
+Entra ID does not send `email_verified` at all, and there is no way to make it. Adding `email` as an optional claim does not help, because that supplies the address and not the verification signal.
 
-Add the claim through a claims mapping policy on the application, or leave `OIDC_AUTO_CREATE_USERS` off and link accounts by having each user sign in once while a matching local account exists.
+Instead, **from PatchMon 2.1.2, add the `xms_edov` optional claim.** This is Microsoft's own "Email Domain Owner Verified" signal, introduced in response to nOAuth, which is the same account-takeover-by-email-spoofing attack this requirement exists to prevent. PatchMon reads it when `email_verified` is absent, so no security setting has to be relaxed.
+
+1. In the Microsoft Entra admin centre, open your app registration.
+2. Go to **Manage** > **Token configuration** > **Add optional claim**.
+3. Select token type **ID**, then add `xms_edov`. If the portal marks it unrecognised, add it by editing the manifest instead: find the `optionalClaims` object and add `xms_edov` to the `idToken` array.
+4. Sign in to PatchMon again.
+
+On older PatchMon versions, or if you would rather not configure the claim, leave `OIDC_AUTO_CREATE_USERS` off and link accounts by having each user sign in once while a matching local account exists, or use the opt-in below.
+
+##### If your provider cannot assert verification at all
+
+*Available from PatchMon 2.1.2.*
+
+Some directories genuinely have no notion of a verified email address. For those, set **Trust unverified email** in **Settings > OIDC**, or `OIDC_TRUST_UNVERIFIED_EMAIL=true` in the environment. It is off by default.
+
+Be clear about what this does. With it on, anyone who can set their own email address at your identity provider can sign in as an existing PatchMon user with that address. It is only reasonable when you control who can change addresses in your directory. Every login it permits is recorded in the server log at warn level, so a relaxed deployment stays visible:
+
+```
+oidc accepting unverified email: trust_unverified_email is enabled
+```
+
+Prefer a real fix where one exists: the Authentik scope mapping above, or `xms_edov` for Entra.
 
 ##### Other providers
 
@@ -2999,7 +3022,8 @@ You signed in at your IdP, it sent you back, and PatchMon refused you. The token
 
 | Log line | Meaning | Fix |
 |----------|---------|-----|
-| `oidc login rejected: unverified email claim` | Your IdP did not state that the email address is verified. From 2.1.0 PatchMon requires this when it has to identify you by email. Affects Authentik and Microsoft Entra ID out of the box | [The verified email requirement](#the-verified-email-requirement) |
+| `oidc login rejected: unverified email claim` | Your IdP sent neither `email_verified` nor `xms_edov`. From 2.1.0 PatchMon requires one of these when it has to identify you by email. Affects Authentik and Microsoft Entra ID out of the box | [The verified email requirement](#the-verified-email-requirement) |
+| `oidc accepting unverified email: trust_unverified_email is enabled` | Not an error. Records that a login was allowed through with an unverified address because the opt-in is on | Expected if you enabled it deliberately. If not, turn it off in **Settings > OIDC** |
 | `oidc user not found and auto-create disabled` | No PatchMon account matches, and `OIDC_AUTO_CREATE_USERS` is off | Create the user in PatchMon first, or set `OIDC_AUTO_CREATE_USERS=true` |
 
 A deactivated account is a different case and shows **"Account disabled"** rather than this message, logged as `oidc login inactive user`.
