@@ -255,8 +255,13 @@ const OidcSettings = () => {
 								OIDC is configured via .env
 							</h3>
 							<p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
-								Import these settings and save to database to manage from the
-								UI. After saving, remove OIDC_* from .env.
+								<strong>
+									Every OIDC setting below is read from the environment, so
+									changes saved here have no effect.
+								</strong>{" "}
+								That includes the toggles. Import these settings and save to
+								database to manage from the UI. After saving, remove OIDC_* from
+								.env.
 							</p>
 							{settings?.env_preview &&
 								Object.keys(settings.env_preview).length > 0 && (

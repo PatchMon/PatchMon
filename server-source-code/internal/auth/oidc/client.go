@@ -207,6 +207,15 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 	if token.AccessToken != "" {
 		oidcUserInfo, err := c.provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
 		if err != nil {
+			// Accepted limitation. go-oidc rejects an email_verified it cannot
+			// read as a bool (0, 1, null, a structured value) by failing
+			// UserInfo outright. For other issuers that is a hard login
+			// failure below, so nothing is lost. For a Microsoft issuer the
+			// error is swallowed here and userInfoClaims stays empty, so a
+			// denial expressed in one of those encodings would disappear and
+			// xms_edov from the ID token would decide instead. Unreachable in
+			// practice: Microsoft sends no email_verified at all, in any
+			// encoding. Revisit if that ever changes.
 			if !isMicrosoftIdentityIssuer(c.cfg.IssuerURL) {
 				return nil, fmt.Errorf("oidc: fetch userinfo: %w", err)
 			}

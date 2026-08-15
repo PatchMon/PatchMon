@@ -2,11 +2,11 @@ package oidc
 
 import "testing"
 
+// A representative Entra issuer; isMicrosoftIdentityIssuer gates the fallback.
+const msIssuer = "https://login.microsoftonline.com/tenant-id/v2.0"
+
 // resolveEmailVerified gates account linking and auto-creation, so the ordering
 // between email_verified and xms_edov is a security property, not a preference.
-// A representative Entra issuer; isMicrosoftIdentityIssuer gates the fallback.
-const MSIssuer = "https://login.microsoftonline.com/tenant-id/v2.0"
-
 func TestResolveEmailVerified(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -30,14 +30,14 @@ func TestResolveEmailVerified(t *testing.T) {
 			name:     "Entra: xms_edov in the id_token is used when email_verified absent",
 			userInfo: map[string]interface{}{},
 			idTok:    map[string]interface{}{"xms_edov": true},
-			issuer:   MSIssuer,
+			issuer:   msIssuer,
 			want:     true,
 		},
 		{
 			name:     "Entra: xms_edov false is still false",
 			userInfo: map[string]interface{}{},
 			idTok:    map[string]interface{}{"xms_edov": false},
-			issuer:   MSIssuer,
+			issuer:   msIssuer,
 			want:     false,
 		},
 		{
@@ -47,14 +47,14 @@ func TestResolveEmailVerified(t *testing.T) {
 			name:     "explicit email_verified false is NOT overridden by xms_edov",
 			userInfo: map[string]interface{}{"email_verified": false},
 			idTok:    map[string]interface{}{"xms_edov": true},
-			issuer:   MSIssuer,
+			issuer:   msIssuer,
 			want:     false,
 		},
 		{
 			name:     "explicit false in id_token is not overridden either",
 			userInfo: map[string]interface{}{},
 			idTok:    map[string]interface{}{"email_verified": false, "xms_edov": true},
-			issuer:   MSIssuer,
+			issuer:   msIssuer,
 			want:     false,
 		},
 		{
@@ -67,7 +67,7 @@ func TestResolveEmailVerified(t *testing.T) {
 			name:     "xms_edov string encoding tolerated",
 			userInfo: map[string]interface{}{},
 			idTok:    map[string]interface{}{"xms_edov": "1"},
-			issuer:   MSIssuer,
+			issuer:   msIssuer,
 			want:     true,
 		},
 		{
@@ -81,7 +81,7 @@ func TestResolveEmailVerified(t *testing.T) {
 			name:     "nil email_verified falls through to xms_edov",
 			userInfo: map[string]interface{}{"email_verified": nil},
 			idTok:    map[string]interface{}{"xms_edov": true},
-			issuer:   MSIssuer,
+			issuer:   msIssuer,
 			want:     true,
 		},
 		{
@@ -89,7 +89,7 @@ func TestResolveEmailVerified(t *testing.T) {
 			name:     "garbage email_verified falls through to xms_edov",
 			userInfo: map[string]interface{}{"email_verified": "banana"},
 			idTok:    map[string]interface{}{"xms_edov": true},
-			issuer:   MSIssuer,
+			issuer:   msIssuer,
 			want:     true,
 		},
 		{
@@ -114,7 +114,7 @@ func TestResolveEmailVerified(t *testing.T) {
 			name:     "xms_edov from UserInfo is ignored even for Microsoft",
 			userInfo: map[string]interface{}{"xms_edov": true},
 			idTok:    map[string]interface{}{},
-			issuer:   MSIssuer,
+			issuer:   msIssuer,
 			want:     false,
 		},
 		{
