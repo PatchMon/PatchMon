@@ -95,7 +95,7 @@ const CHANNEL_TYPES = [
 	{
 		value: "webhook",
 		label: "Webhook",
-		description: "Generic, Discord, or Slack",
+		description: "Generic, Discord, Slack, Mattermost or Rocket.Chat",
 		icon: Globe,
 		brandIcons: { discord: SiDiscord, slack: Slack },
 	},
@@ -417,7 +417,8 @@ const DestinationModal = ({
 								onChange={(e) => updateConfig("url", e.target.value)}
 							/>
 							<p className="mt-1 text-xs text-secondary-500">
-								Discord and Slack URLs are auto-detected for rich formatting
+								Discord, Slack, Mattermost and Rocket.Chat URLs are
+								auto-detected for rich formatting
 							</p>
 						</div>
 						<div>
