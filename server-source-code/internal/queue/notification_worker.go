@@ -186,6 +186,16 @@ func isSlackCompatibleWebhookURL(raw string) bool {
 	return false
 }
 
+// webhookHostForLog returns just the host of a webhook URL. The path carries the
+// secret token, so it must never reach a log line.
+func webhookHostForLog(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return "unparseable"
+	}
+	return u.Host
+}
+
 func truncateUTF8(s string, maxRunes int) string {
 	if maxRunes <= 0 {
 		return ""
@@ -718,10 +728,13 @@ func (h *NotificationDeliverHandler) sendWebhook(ctx context.Context, plain stri
 	}
 	var b []byte
 	var err error
+	format := "generic"
 	switch {
 	case isDiscordWebhookURL(cfg.URL):
+		format = "discord"
 		b, err = discordWebhookBody(p)
 	case isSlackIncomingWebhookURL(cfg.URL), isSlackCompatibleWebhookURL(cfg.URL):
+		format = "slack_compatible"
 		b, err = slackIncomingWebhookBody(p)
 	default:
 		body := map[string]interface{}{
@@ -743,6 +756,17 @@ func (h *NotificationDeliverHandler) sendWebhook(ctx context.Context, plain stri
 	}
 	if err != nil {
 		return err
+	}
+	if h.log != nil {
+		// Host only, never the path: the token in a webhook URL is a secret.
+		h.log.Debug("webhook dispatch",
+			"destination_id", p.DestinationID,
+			"event_type", p.EventType,
+			"format", format,
+			"host", webhookHostForLog(cfg.URL),
+			"body_bytes", len(b),
+			"signed", cfg.SigningSecret != "",
+		)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.URL, bytes.NewReader(b))
 	if err != nil {

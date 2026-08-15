@@ -360,6 +360,29 @@ func TestSlackNotificationTextGolden(t *testing.T) {
 	}
 }
 
+// A webhook URL's path carries a secret token, so it must never reach a log line.
+func TestWebhookHostForLogDropsThePath(t *testing.T) {
+	cases := []struct {
+		url  string
+		want string
+	}{
+		{"https://chat.example.com/hooks/" + mattermostToken, "chat.example.com"},
+		{"https://chat.example.com:8065/hooks/" + mattermostToken, "chat.example.com:8065"},
+		{"https://hooks.slack.com/services/T/B/secret", "hooks.slack.com"},
+		{"", "unparseable"},
+		{"://nonsense", "unparseable"},
+	}
+	for _, tc := range cases {
+		got := webhookHostForLog(tc.url)
+		if got != tc.want {
+			t.Errorf("webhookHostForLog(%q) = %q, want %q", tc.url, got, tc.want)
+		}
+		if strings.Contains(got, mattermostToken) || strings.Contains(got, "secret") {
+			t.Errorf("webhookHostForLog(%q) leaked the token: %q", tc.url, got)
+		}
+	}
+}
+
 // The signature must cover the exact bytes sent, whichever body shape was chosen.
 func TestSigningSecretCoversTheSentBody(t *testing.T) {
 	for _, path := range []string{"/hooks/" + mattermostToken, "/generic/receiver"} {

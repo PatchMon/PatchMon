@@ -2,12 +2,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	Bell,
 	Check,
+	CheckCircle2,
 	CheckSquare,
 	ChevronLeft,
 	ChevronRight,
 	Clock,
 	Edit2,
 	Globe,
+	Info,
 	Loader2,
 	Mail,
 	Play,
@@ -31,6 +33,11 @@ import {
 	hostGroupsAPI,
 	notificationsAPI,
 } from "../../utils/api";
+import {
+	detectWebhookFormat,
+	WEBHOOK_FORMATS,
+	webhookFormatLabel,
+} from "../../utils/webhookFormat";
 
 /* ───────────────────── Constants ───────────────────── */
 
@@ -265,6 +272,36 @@ const statusBadge = (status) => {
 	);
 };
 
+/* Shows which payload PatchMon will send to the webhook URL as it is typed. */
+const WebhookFormatHint = ({ url }) => {
+	const format = useMemo(() => detectWebhookFormat(url), [url]);
+	const meta = webhookFormatLabel(format);
+
+	if (!meta) {
+		return (
+			<p className="mt-1 text-xs text-secondary-500">
+				Discord, Slack, Mattermost and Rocket.Chat URLs are auto-detected for
+				rich formatting
+			</p>
+		);
+	}
+
+	const isGeneric = format === WEBHOOK_FORMATS.GENERIC;
+	return (
+		<p className="mt-1 flex items-start gap-1.5 text-xs text-secondary-500">
+			{isGeneric ? (
+				<Info className="h-3.5 w-3.5 shrink-0 mt-px" />
+			) : (
+				<CheckCircle2 className="h-3.5 w-3.5 shrink-0 mt-px text-success-600 dark:text-success-400" />
+			)}
+			<span>
+				Detected <span className="font-medium">{meta.label}</span>.{" "}
+				{meta.detail}.
+			</span>
+		</p>
+	);
+};
+
 /* ───────────────── Destination Modal ───────────────── */
 
 const DestinationModal = ({
@@ -416,10 +453,7 @@ const DestinationModal = ({
 								value={config.url || ""}
 								onChange={(e) => updateConfig("url", e.target.value)}
 							/>
-							<p className="mt-1 text-xs text-secondary-500">
-								Discord, Slack, Mattermost and Rocket.Chat URLs are
-								auto-detected for rich formatting
-							</p>
+							<WebhookFormatHint url={config.url} />
 						</div>
 						<div>
 							<label className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">

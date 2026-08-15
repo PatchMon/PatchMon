@@ -3851,6 +3851,26 @@ Duplicates suppressed by the 2-minute dedup window do **not** appear in the deli
 2. No route has been deleted.
 3. The per-minute rate cap is not being exceeded upstream. 60 messages/minute is per-destination.
 
+#### Diagnosing a webhook with `LOG_LEVEL=debug`
+
+The delivery log records the outcome of a delivery, not how it was built. To see which payload format a webhook destination actually received, set `LOG_LEVEL` to `debug` (**Settings > Environment**, or the `LOG_LEVEL` env var). Every webhook delivery then writes one line:
+
+```
+level=DEBUG msg="webhook dispatch" destination_id=... event_type=host_down
+  format=slack_compatible host=chat.example.com body_bytes=229 signed=true
+```
+
+| Field | Meaning |
+|-------|---------|
+| `format` | `discord`, `slack_compatible` or `generic`. This is the payload shape that was sent, so it tells you whether auto-detection recognised your receiver. |
+| `host` | Host of the destination URL. The path is deliberately omitted because it carries the webhook's secret token. |
+| `body_bytes` | Size of the JSON body, useful when a receiver enforces a size limit. |
+| `signed` | Whether an HMAC signature header was attached. |
+
+If `format` is `generic` for a chat server you expected to be recognised, the URL is not on a `/hooks/<token>` path. The delivery still works, because the generic body carries a `text` key, but the message will be less richly formatted. The destination form shows the same detection result before you save.
+
+Debug level is verbose across the whole server, so turn it back to `info` once you have the answer.
+
 ### App links in notifications
 
 Every notification includes an `app_link` in its metadata pointing back to the most relevant page in PatchMon:
