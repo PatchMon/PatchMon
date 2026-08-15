@@ -2314,7 +2314,7 @@ OpenID Connect configuration for Single Sign-On. When `OIDC_ENABLED=true`, the f
 | `OIDC_REDIRECT_URI` | _(none)_ | If OIDC enabled | The callback URL registered in your identity provider. Must be: `https://your-patchmon-url/api/v1/auth/oidc/callback` |
 | `OIDC_SCOPES` | `openid email profile groups` | No | Space-separated list of OAuth scopes to request. The `groups` scope is required for group-to-role mapping to work. |
 | `OIDC_ENFORCE_HTTPS` | `true` | No | When `true` (the default), the server rejects OIDC configurations using a non-HTTPS issuer URL. Set to `false` only in a local development environment with a non-TLS identity provider. |
-| `OIDC_TRUST_UNVERIFIED_EMAIL` | `false` | No | When `true`, PatchMon links and creates accounts even if the identity provider does not confirm the email address is verified. This reduces account-takeover protection, so only enable it if your provider cannot assert verification. See [The verified email requirement](#the-verified-email-requirement). Also settable in **Settings > OIDC**. |
+| `OIDC_TRUST_UNVERIFIED_EMAIL` | `false` | No | When `true`, PatchMon links and creates accounts even if the identity provider does not confirm the email address is verified. This reduces account-takeover protection, so only enable it if your provider cannot assert verification. See [The verified email requirement](#the-verified-email-requirement). Also settable in **Settings > OIDC**, but only when OIDC itself is configured in the UI rather than through environment variables. |
 
 #### User Provisioning
 
@@ -2901,6 +2901,8 @@ On older PatchMon versions, or if you would rather not configure the claim, leav
 *Available from PatchMon 2.1.2.*
 
 Some directories genuinely have no notion of a verified email address. For those, set **Trust unverified email** in **Settings > OIDC**, or `OIDC_TRUST_UNVERIFIED_EMAIL=true` in the environment. It is off by default.
+
+> **Set it in the same place you configured OIDC itself.** PatchMon takes its whole OIDC configuration from one source or the other, never a mix: if any of `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI`, `OIDC_SCOPES` or `OIDC_ENABLED` is set in the environment, every OIDC setting comes from the environment and the values in **Settings > OIDC** are ignored. So if you configured OIDC through environment variables, the toggle in the UI will appear to save but have no effect, and you must set `OIDC_TRUST_UNVERIFIED_EMAIL=true` instead. If you configured OIDC in the UI, setting only `OIDC_TRUST_UNVERIFIED_EMAIL` in the environment does nothing, and you must use the toggle. This applies to every OIDC setting, not just this one.
 
 Be clear about what this does. With it on, anyone who can set their own email address at your identity provider can sign in as an existing PatchMon user with that address. It is only reasonable when you control who can change addresses in your directory. Every login it permits is recorded in the server log at warn level, so a relaxed deployment stays visible:
 
