@@ -1,0 +1,64 @@
+name: Discord Release Announcement
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    name: Post the release to Discord
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.release.prerelease }}
+    steps:
+      - name: Send the webhook
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          TAG: ${{ github.event.release.tag_name }}
+          NAME: ${{ github.event.release.name }}
+          URL: ${{ github.event.release.html_url }}
+          BODY: ${{ github.event.release.body }}
+          PUBLISHED_AT: ${{ github.event.release.published_at }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${WEBHOOK}" ]; then
+            echo "::warning::DISCORD_RELEASE_WEBHOOK is not set — skipping the Discord announcement."
+            exit 0
+          fi
+
+          intro="$(printf '%s\n' "$BODY" | tr -d '\r' | awk 'NR==1 && /^# /{next} /^#+ /{exit} {print}')"
+          if ! printf '%s' "$intro" | grep -q '[^[:space:]]'; then
+            intro="$(printf '%s\n' "$BODY" | tr -d '\r')"
+          fi
+
+          payload="$(jq -n \
+            --arg title "${NAME:-$TAG}" \
+            --arg url "$URL" \
+            --arg intro "$intro" \
+            --arg ts "$PUBLISHED_AT" \
+            --arg repo "$REPO" \
+            '($intro | sub("\\s+$"; "") | if length > 1800 then .[0:1800] + "…" else . end) as $summary
+             | {
+                 username: "PatchMon",
+                 content: "**\($title)** is out",
+                 embeds: [{
+                   title: $title,
+                   url: $url,
+                   description: "\($summary)\n\n**[Read the full release notes](\($url))**",
+                   color: 2450411,
+                   timestamp: $ts,
+                   footer: { text: $repo }
+                 }]
+               }')"
+
+          curl --silent --show-error --fail \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --connect-timeout 10 --max-time 30 --retry 2 --retry-connrefused \
+            --data "$payload" \
+            "$WEBHOOK"
+          echo "Posted ${TAG} to Discord"
