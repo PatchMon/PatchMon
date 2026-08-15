@@ -4,14 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/ssgcontent"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/hibiken/asynq"
@@ -45,7 +43,14 @@ func NewSSGUpdateCheckHandler(registry *agentregistry.Registry, defaultDB *datab
 func (h *SSGUpdateCheckHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	serverVersion := h.readSSGVersion()
 	if serverVersion == "" {
-		h.log.Warn("ssg-update-check: no .ssg-version file found, skipping")
+		// Absent content and unnameable content both stop the sweep, but they
+		// need different fixes, and an operator looking at a directory full of
+		// datastreams is not helped by being told there are none.
+		if len(ssgcontent.Files(h.ssgContentDir)) == 0 {
+			h.log.Warn("ssg-update-check: no SSG content on server, skipping", "dir", h.ssgContentDir)
+		} else {
+			h.log.Warn("ssg-update-check: SSG content present but its release could not be determined, skipping", "dir", h.ssgContentDir)
+		}
 		return nil
 	}
 
@@ -85,6 +90,13 @@ func (h *SSGUpdateCheckHandler) checkDB(ctx context.Context, d *database.DB, ten
 	// unrequested work.
 	//
 	// Version ordering uses array comparison so 0.1.9 sorts below 0.1.10.
+	//
+	// Components cast to numeric rather than int deliberately. int4 stops at ten
+	// digits and errors rather than wrapping, and the left-hand side is the
+	// host's self-reported ssg_version, stored verbatim from the agent, so an
+	// eleven-digit component from a single host would error this query and stop
+	// SSG update checks for its whole context behind one log line. numeric cannot
+	// overflow and compares element-wise identically.
 	const query = `
 		SELECT h.id, h.api_id
 		FROM hosts h
@@ -93,8 +105,8 @@ func (h *SSGUpdateCheckHandler) checkDB(ctx context.Context, d *database.DB, ten
 		  AND COALESCE(h.compliance_scanner_status->'scanner_info'->>'openscap_version', '') <> ''
 		  AND (
 		    COALESCE(h.compliance_scanner_status->'scanner_info'->>'ssg_version', '') = ''
-		    OR (SELECT array_agg(COALESCE(NULLIF(regexp_replace(elem, '[^0-9].*', ''), ''), '0')::int) FROM unnest(string_to_array(h.compliance_scanner_status->'scanner_info'->>'ssg_version', '.')) AS elem)
-		       < (SELECT array_agg(COALESCE(NULLIF(regexp_replace(elem, '[^0-9].*', ''), ''), '0')::int) FROM unnest(string_to_array($1, '.')) AS elem)
+		    OR (SELECT array_agg(COALESCE(NULLIF(regexp_replace(elem, '[^0-9].*', ''), ''), '0')::numeric) FROM unnest(string_to_array(h.compliance_scanner_status->'scanner_info'->>'ssg_version', '.')) AS elem)
+		       < (SELECT array_agg(COALESCE(NULLIF(regexp_replace(elem, '[^0-9].*', ''), ''), '0')::numeric) FROM unnest(string_to_array($1, '.')) AS elem)
 		  )`
 
 	rows, err := d.Raw(ctx, query, serverVersion)
@@ -224,12 +236,5 @@ func (h *SSGUpgradeHandler) ProcessTask(ctx context.Context, t *asynq.Task) erro
 }
 
 func (h *SSGUpdateCheckHandler) readSSGVersion() string {
-	if h.ssgContentDir == "" {
-		return ""
-	}
-	data, err := os.ReadFile(filepath.Join(h.ssgContentDir, ".ssg-version"))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
+	return ssgcontent.Version(h.ssgContentDir)
 }

@@ -7,11 +7,47 @@ const msIssuer = "https://login.microsoftonline.com/tenant-id/v2.0"
 // The ordering between email_verified and xms_edov is a security property.
 func TestResolveEmailVerified(t *testing.T) {
 	tests := []struct {
-		name            string
-		userInfo, idTok map[string]interface{}
-		issuer          string
-		want            bool
+		name             string
+		userInfo, idTok  map[string]interface{}
+		emailFromIDToken bool
+		issuer           string
+		want             bool
 	}{
+		{
+			name:             "signed denial is not overridden by an unsigned assertion",
+			userInfo:         map[string]interface{}{"email_verified": true},
+			idTok:            map[string]interface{}{"email_verified": false},
+			emailFromIDToken: true,
+			want:             false,
+		},
+		{
+			name:             "id token assertion is honoured when the email came from it",
+			userInfo:         map[string]interface{}{},
+			idTok:            map[string]interface{}{"email_verified": true},
+			emailFromIDToken: true,
+			want:             true,
+		},
+		{
+			name:             "userinfo still fills an absence when the email came from the id token",
+			userInfo:         map[string]interface{}{"email_verified": true},
+			idTok:            map[string]interface{}{},
+			emailFromIDToken: true,
+			want:             true,
+		},
+		{
+			name:             "array encoded assertion is decoded",
+			userInfo:         map[string]interface{}{},
+			idTok:            map[string]interface{}{"email_verified": []interface{}{"true"}},
+			emailFromIDToken: true,
+			want:             true,
+		},
+		{
+			name:             "array encoded denial is a denial",
+			userInfo:         map[string]interface{}{},
+			idTok:            map[string]interface{}{"email_verified": []interface{}{"false"}},
+			emailFromIDToken: true,
+			want:             false,
+		},
 		{
 			name:     "no claims at all fails closed",
 			userInfo: map[string]interface{}{},
@@ -117,7 +153,7 @@ func TestResolveEmailVerified(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, reason := resolveEmailVerified(tt.userInfo, tt.idTok, tt.issuer)
+			got, reason := resolveEmailVerified(tt.userInfo, tt.idTok, tt.emailFromIDToken, tt.issuer)
 			if got != tt.want {
 				t.Errorf("resolveEmailVerified() = %v, want %v (reason %q)", got, tt.want, reason)
 			}

@@ -171,18 +171,6 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Log in to Harbor
-        # Skip when HARBOR_USERNAME/HARBOR_TOKEN aren't set (forks, test repos,
-        # contributor PRs from forks). The Harbor push step below also guards
-        # on the same env, so the workflow still succeeds — it just doesn't
-        # publish to Harbor.
-        if: env.HAS_HARBOR == 'true'
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
-        with:
-          registry: ${{ env.HARBOR_REGISTRY }}
-          username: ${{ secrets.HARBOR_USERNAME }}
-          password: ${{ secrets.HARBOR_TOKEN }}
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
         with:
@@ -207,24 +195,18 @@ jobs:
             type=edge,branch=main
             type=raw,value=edge,enable=${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
 
+      # Harbor is staging only: PR previews and the `main` edge build. Releases
+      # go to GHCR alone, hence the ref_type gate here and on every Harbor step
+      # below. Any future Harbor name needs a project prefix; Harbor rejects a
+      # single-segment name with `400 invalid repository name`.
       - name: Extract metadata (tags, labels) for Harbor
         id: meta-harbor
-        if: env.HAS_HARBOR == 'true'
+        if: env.HAS_HARBOR == 'true' && github.ref_type != 'tag'
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051
         with:
-          # Release tag pushes publish to `cr.dev.patchmon.cloud/patchmon-server`.
-          # PR and edge builds publish to the `/pr/` staging namespace
-          # (`cr.dev.patchmon.cloud/pr/patchmon-server`) so production pulls
-          # never accidentally resolve to an in-flight build.
-          images: |
-            name=${{ env.HARBOR_REGISTRY }}/patchmon-server,enable=${{ github.ref_type == 'tag' }}
-            name=${{ env.HARBOR_REGISTRY }}/pr/patchmon-server,enable=${{ github.ref_type != 'tag' }}
-          flavor: |
-            latest=auto
+          images: ${{ env.HARBOR_REGISTRY }}/pr/patchmon-server
+          # No `type=semver` or `latest=auto`: both only emit on a tag ref.
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
             type=edge,branch=main
             type=raw,value=edge,enable=${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
             type=ref,event=pr,prefix=pr-
@@ -255,48 +237,6 @@ jobs:
           # See: https://github.com/PatchMon/PatchMon/issues/679
           outputs: type=image,compression=gzip,force-compression=true
 
-      - name: Build and push server image to Harbor (PRs, main, and tags)
-        id: build-harbor
-        # Only run when Harbor credentials are set and metadata-action produced
-        # at least one tag. Forks / test repos simply skip this step; GHCR push
-        # above still happens.
-        if: env.HAS_HARBOR == 'true' && steps.meta-harbor.outputs.tags != ''
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
-        with:
-          context: .
-          file: docker/server.Dockerfile
-          platforms: linux/amd64,linux/arm64
-          build-args: |
-            VERSION=${{ steps.ctx.outputs.version }}
-            GITHUB_STARS=${{ steps.social.outputs.github }}
-            DISCORD_MEMBERS=${{ steps.social.outputs.discord }}
-            YOUTUBE_SUBSCRIBERS=${{ steps.social.outputs.youtube }}
-            LINKEDIN_FOLLOWERS=${{ steps.social.outputs.linkedin }}
-          push: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
-          tags: ${{ steps.meta-harbor.outputs.tags }}
-          labels: ${{ steps.meta-harbor.outputs.labels }}
-          # Reads the shared cache but deliberately never writes it.
-          #
-          # On pull_request_target the Actions runtime token is read-only
-          # ("Actions runtime token ACs: refs/heads/main: read"), so a gha cache
-          # export fails the whole step with "failed to reserve cache" — after
-          # the image has already been built and pushed, which made the job look
-          # like a build failure when it was not.
-          #
-          # On main and tags the GHCR step above already exports to this exact
-          # scope from an identical build, so exporting again here would just
-          # repeat ~50s of "preparing build cache for export" for no benefit.
-          #
-          # Either way PR builds still get fast cache HITS from main via
-          # cache-from; they simply do not write back.
-          cache-from: type=gha,scope=server
-          provenance: false
-          # Force gzip on all layers (including base image layers from dhi.io/alpine-base
-          # which ship as zstd). Without force-compression, mixed zstd/gzip manifests
-          # break Podman <5.7 and Docker without the containerd image store.
-          # See: https://github.com/PatchMon/PatchMon/issues/679
-          outputs: type=image,compression=gzip,force-compression=true
-
       # ---------------------------------------------------------------------
       # SBOM and build provenance.
       #
@@ -310,11 +250,12 @@ jobs:
       # `provenance: mode=max`, which adds attestation manifests to the image
       # index and surfaces them as `unknown/unknown` platform entries. That is
       # the same manifest-shape change that broke Podman <5.7 in #679, so both
-      # build steps above keep `provenance: false` and the pull path is
-      # untouched.
+      # the GHCR build above and the Harbor build below keep `provenance: false`
+      # and the pull path is untouched.
       #
-      # Attached to both GHCR and Harbor (2.15.0, which has the OCI referrers
-      # API). Attestations also land in the GitHub attestation store, so
+      # Attached to GHCR always, and to Harbor (2.15.0, which has the OCI
+      # referrers API) on the `main` edge build, the only Harbor push that is
+      # not a PR. Attestations also land in the GitHub attestation store, so
       # `gh attestation verify` works against any copy of the image whose
       # digest is unchanged, whatever registry it came from.
       #
@@ -326,24 +267,15 @@ jobs:
         id: img
         if: env.PUSHED == 'true'
         # `github.repository` is `PatchMon/PatchMon`, and the attest-* actions
-        # reject a mixed-case subject-name. The build steps above never hit
-        # this because docker/metadata-action lowercases internally.
-        #
-        # The Harbor names are already lowercase, but the repository switches
-        # on ref_type. This mirrors the `images:` block on meta-harbor: only a
-        # release tag publishes to the bare name, everything else goes to the
-        # /pr/ staging namespace.
+        # reject a mixed-case subject-name. The GHCR build step above never
+        # hits this because docker/metadata-action lowercases internally.
         #
         # REGISTRY and HARBOR_REGISTRY come from the workflow-level env block.
         env:
           REPO: ${{ github.repository }}
         run: |
           echo "ghcr=${REGISTRY}/$(echo "${REPO}" | tr '[:upper:]' '[:lower:]')-server" >> "$GITHUB_OUTPUT"
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            echo "harbor=${HARBOR_REGISTRY}/patchmon-server" >> "$GITHUB_OUTPUT"
-          else
-            echo "harbor=${HARBOR_REGISTRY}/pr/patchmon-server" >> "$GITHUB_OUTPUT"
-          fi
+          echo "harbor=${HARBOR_REGISTRY}/pr/patchmon-server" >> "$GITHUB_OUTPUT"
 
       # Source-side SBOM. This is not redundant with the image scan below:
       # the React frontend is bundled by Vite and then compiled into the Go
@@ -389,6 +321,69 @@ jobs:
           sbom-path: sbom-image.cdx.json
           push-to-registry: true
 
+      # Also kept as a plain artifact so an SBOM can be pulled without going
+      # through the registry referrers API.
+      - name: Upload SBOMs
+        if: env.PUSHED == 'true' && steps.build.outputs.digest != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sbom-server-${{ steps.ctx.outputs.version }}
+          path: |
+            sbom-image.cdx.json
+            sbom-source.cdx.json
+
+      # Both Harbor steps run last, login included. A failing step ends the job
+      # and skips everything after it whatever its `if:` says, so a Harbor
+      # problem here cannot cost the GHCR image or its SBOM and attestations.
+      - name: Log in to Harbor
+        # Also skipped when HARBOR_USERNAME/HARBOR_TOKEN aren't set, so forks
+        # and test repos fall through to a GHCR-only build.
+        if: env.HAS_HARBOR == 'true' && github.ref_type != 'tag'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ${{ env.HARBOR_REGISTRY }}
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_TOKEN }}
+
+      - name: Build and push server image to Harbor (PRs and main only)
+        id: build-harbor
+        if: env.HAS_HARBOR == 'true' && github.ref_type != 'tag' && steps.meta-harbor.outputs.tags != ''
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: docker/server.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ steps.ctx.outputs.version }}
+            GITHUB_STARS=${{ steps.social.outputs.github }}
+            DISCORD_MEMBERS=${{ steps.social.outputs.discord }}
+            YOUTUBE_SUBSCRIBERS=${{ steps.social.outputs.youtube }}
+            LINKEDIN_FOLLOWERS=${{ steps.social.outputs.linkedin }}
+          push: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
+          tags: ${{ steps.meta-harbor.outputs.tags }}
+          labels: ${{ steps.meta-harbor.outputs.labels }}
+          # Reads the shared cache but deliberately never writes it.
+          #
+          # On pull_request_target the Actions runtime token is read-only
+          # ("Actions runtime token ACs: refs/heads/main: read"), so a gha cache
+          # export fails the whole step with "failed to reserve cache" — after
+          # the image has already been built and pushed, which made the job look
+          # like a build failure when it was not.
+          #
+          # On main and tags the GHCR step above already exports to this exact
+          # scope from an identical build, so exporting again here would just
+          # repeat ~50s of "preparing build cache for export" for no benefit.
+          #
+          # Either way PR builds still get fast cache HITS from main via
+          # cache-from; they simply do not write back.
+          cache-from: type=gha,scope=server
+          provenance: false
+          # Force gzip on all layers (including base image layers from dhi.io/alpine-base
+          # which ship as zstd). Without force-compression, mixed zstd/gzip manifests
+          # break Podman <5.7 and Docker without the containerd image store.
+          # See: https://github.com/PatchMon/PatchMon/issues/679
+          outputs: type=image,compression=gzip,force-compression=true
+
       - name: Attest build provenance (Harbor)
         if: env.PUSHED == 'true' && env.HAS_HARBOR == 'true' && steps.build-harbor.outputs.digest != ''
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -410,17 +405,6 @@ jobs:
           subject-digest: ${{ steps.build-harbor.outputs.digest }}
           sbom-path: sbom-image.cdx.json
           push-to-registry: true
-
-      # Also kept as a plain artifact so an SBOM can be pulled without going
-      # through the registry referrers API.
-      - name: Upload SBOMs
-        if: env.PUSHED == 'true' && steps.build.outputs.digest != ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sbom-server-${{ steps.ctx.outputs.version }}
-          path: |
-            sbom-image.cdx.json
-            sbom-source.cdx.json
 
       # Locate a previous image comment by its marker so a re-push updates it
       # instead of appending another one. `synchronize` is a trigger, so

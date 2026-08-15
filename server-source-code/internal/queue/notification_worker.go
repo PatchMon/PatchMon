@@ -142,6 +142,60 @@ func isSlackIncomingWebhookURL(raw string) bool {
 	return strings.HasPrefix(u.Path, "/services/")
 }
 
+// slackCompatibleTokenRe matches the opaque IDs Mattermost and Rocket.Chat place
+// after /hooks/, which are long and unpunctuated unlike routing words such as the
+// "catch" in a Zapier catch hook.
+var slackCompatibleTokenRe = regexp.MustCompile(`^[A-Za-z0-9_-]{15,}$`)
+
+// genericIngestHosts are automation platforms whose incoming URLs are shaped like
+// a chat webhook but whose users build rules against the structured body. They
+// answer 2xx to anything, so mis-detecting one fails silently.
+var genericIngestHosts = map[string]bool{
+	"automation.atlassian.com": true,
+	"automation.codebarrel.io": true,
+}
+
+// isSlackCompatibleWebhookURL matches self-hosted receivers that speak the Slack
+// incoming-webhook payload format, chiefly Mattermost and Rocket.Chat. They run on
+// arbitrary domains, so the only stable signal is a "/hooks/" segment followed by
+// one or two opaque tokens. Nothing before "hooks" is constrained, so an instance
+// behind a subpath proxy still matches. A miss is safe rather than fatal: the
+// generic body also carries a top-level text.
+func isSlackCompatibleWebhookURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || genericIngestHosts[strings.ToLower(u.Hostname())] {
+		return false
+	}
+	// EscapedPath keeps %2F inside a segment instead of decoding it into a separator.
+	segs := strings.Split(strings.Trim(u.EscapedPath(), "/"), "/")
+	for i, s := range segs {
+		if !strings.EqualFold(s, "hooks") {
+			continue
+		}
+		rest := segs[i+1:]
+		if len(rest) == 0 || len(rest) > 2 {
+			return false
+		}
+		for _, tok := range rest {
+			if !slackCompatibleTokenRe.MatchString(tok) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// webhookHostForLog returns just the host of a webhook URL. The path carries the
+// secret token, so it must never reach a log line.
+func webhookHostForLog(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return "unparseable"
+	}
+	return u.Host
+}
+
 func truncateUTF8(s string, maxRunes int) string {
 	if maxRunes <= 0 {
 		return ""
@@ -396,6 +450,11 @@ func discordWebhookBody(p notifications.NotificationDeliverPayload) ([]byte, err
 // slackTextMaxRunes stays under Slack incoming-webhook message size limits with headroom.
 const slackTextMaxRunes = 12000
 
+// genericFallbackTextMaxRunes bounds the text added to the generic scheduled-report
+// body, whose html and csv fields already carry the report in full. The generic
+// notification body has no such duplication and keeps the full slackTextMaxRunes.
+const genericFallbackTextMaxRunes = 2000
+
 // buildSlackNOCFields creates human-readable Slack mrkdwn lines per event type.
 func buildSlackNOCFields(p notifications.NotificationDeliverPayload) string {
 	m := p.Metadata
@@ -496,6 +555,15 @@ func buildSlackNOCFields(p notifications.NotificationDeliverPayload) string {
 }
 
 func slackIncomingWebhookBody(p notifications.NotificationDeliverPayload) ([]byte, error) {
+	out := map[string]interface{}{
+		"text":       slackIncomingWebhookText(p),
+		"username":   "PatchMon",
+		"icon_emoji": ":bell:",
+	}
+	return json.Marshal(out)
+}
+
+func slackIncomingWebhookText(p notifications.NotificationDeliverPayload) string {
 	var sb strings.Builder
 	sev := strings.TrimSpace(p.Severity)
 	if sev == "" {
@@ -530,13 +598,7 @@ func slackIncomingWebhookBody(p notifications.NotificationDeliverPayload) ([]byt
 		sb.WriteString("|🔗 View in PatchMon>\n")
 	}
 
-	text := truncateUTF8(sb.String(), slackTextMaxRunes)
-	out := map[string]interface{}{
-		"text":       text,
-		"username":   "PatchMon",
-		"icon_emoji": ":bell:",
-	}
-	return json.Marshal(out)
+	return truncateUTF8(sb.String(), slackTextMaxRunes)
 }
 
 // stripScheduledReportHTML removes tags (including script blocks) for a short Discord-friendly excerpt.
@@ -591,6 +653,30 @@ func discordScheduledReportWebhookBody(subject, html, csv string) ([]byte, error
 }
 
 func slackScheduledReportWebhookBody(subject, html, csv string) ([]byte, error) {
+	out := map[string]interface{}{
+		"text":       slackScheduledReportText(subject, html, csv),
+		"username":   "PatchMon",
+		"icon_emoji": ":bar_chart:",
+	}
+	return json.Marshal(out)
+}
+
+// genericScheduledReportText is the short preview carried by the generic body for
+// receivers that require a non-empty text. It omits the CSV block rather than
+// truncating into it, which would leave an unterminated code fence.
+func genericScheduledReportText(subject, html string) string {
+	subj := strings.TrimSpace(subject)
+	if subj == "" {
+		subj = "(no subject)"
+	}
+	body := stripScheduledReportHTML(html)
+	if body == "" {
+		body = "No HTML body in this delivery"
+	}
+	return truncateUTF8("PatchMon scheduled report: "+subj+"\n\n"+body, genericFallbackTextMaxRunes)
+}
+
+func slackScheduledReportText(subject, html, csv string) string {
 	var sb strings.Builder
 	sb.WriteString("*PatchMon · scheduled report*\n*")
 	subj := strings.TrimSpace(subject)
@@ -611,13 +697,7 @@ func slackScheduledReportWebhookBody(subject, html, csv string) ([]byte, error) 
 		sb.WriteString(cv)
 		sb.WriteString("\n```\n")
 	}
-	text := truncateUTF8(sb.String(), slackTextMaxRunes)
-	out := map[string]interface{}{
-		"text":       text,
-		"username":   "PatchMon",
-		"icon_emoji": ":bar_chart:",
-	}
-	return json.Marshal(out)
+	return truncateUTF8(sb.String(), slackTextMaxRunes)
 }
 
 type emailConfig struct {
@@ -648,10 +728,13 @@ func (h *NotificationDeliverHandler) sendWebhook(ctx context.Context, plain stri
 	}
 	var b []byte
 	var err error
+	format := "generic"
 	switch {
 	case isDiscordWebhookURL(cfg.URL):
+		format = "discord"
 		b, err = discordWebhookBody(p)
-	case isSlackIncomingWebhookURL(cfg.URL):
+	case isSlackIncomingWebhookURL(cfg.URL), isSlackCompatibleWebhookURL(cfg.URL):
+		format = "slack_compatible"
 		b, err = slackIncomingWebhookBody(p)
 	default:
 		body := map[string]interface{}{
@@ -664,6 +747,7 @@ func (h *NotificationDeliverHandler) sendWebhook(ctx context.Context, plain stri
 				"id":   p.ReferenceID,
 			},
 			"metadata": p.Metadata,
+			"text":     slackIncomingWebhookText(p),
 		}
 		if link := nocMetaStr(p.Metadata, "app_link"); link != "" {
 			body["app_link"] = link
@@ -672,6 +756,17 @@ func (h *NotificationDeliverHandler) sendWebhook(ctx context.Context, plain stri
 	}
 	if err != nil {
 		return err
+	}
+	if h.log != nil {
+		// Host only, never the path: the token in a webhook URL is a secret.
+		h.log.Debug("webhook dispatch",
+			"destination_id", p.DestinationID,
+			"event_type", p.EventType,
+			"format", format,
+			"host", webhookHostForLog(cfg.URL),
+			"body_bytes", len(b),
+			"signed", cfg.SigningSecret != "",
+		)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.URL, bytes.NewReader(b))
 	if err != nil {

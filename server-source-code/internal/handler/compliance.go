@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -18,15 +17,13 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/ssgcontent"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 )
-
-// ssgFilenameRe validates SSG datastream filenames to prevent path traversal.
-var ssgFilenameRe = regexp.MustCompile(`^ssg-[a-z0-9]+-ds\.xml$`)
 
 // ComplianceHandler handles compliance endpoints.
 type ComplianceHandler struct {
@@ -1421,34 +1418,14 @@ func (h *ComplianceHandler) GetSSGUpgradeJobStatus(w http.ResponseWriter, r *htt
 	JSON(w, http.StatusOK, resp)
 }
 
-// readSSGVersion reads the embedded SSG version from the .ssg-version marker file.
+// readSSGVersion reports which SSG release the content directory holds.
 func (h *ComplianceHandler) readSSGVersion() string {
-	if h.ssgContentDir == "" {
-		return ""
-	}
-	data, err := os.ReadFile(filepath.Join(h.ssgContentDir, ".ssg-version"))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
+	return ssgcontent.Version(h.ssgContentDir)
 }
 
 // listSSGFiles returns the names of all ssg-*-ds.xml files in the content dir.
 func (h *ComplianceHandler) listSSGFiles() []string {
-	if h.ssgContentDir == "" {
-		return nil
-	}
-	entries, err := os.ReadDir(h.ssgContentDir)
-	if err != nil {
-		return nil
-	}
-	var files []string
-	for _, e := range entries {
-		if !e.IsDir() && ssgFilenameRe.MatchString(e.Name()) {
-			files = append(files, e.Name())
-		}
-	}
-	return files
+	return ssgcontent.Files(h.ssgContentDir)
 }
 
 // SSGVersion handles GET /compliance/ssg-info (session auth). Agents use
@@ -1499,7 +1476,7 @@ func (h *ComplianceHandler) SSGContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filename := chi.URLParam(r, "filename")
-	if !ssgFilenameRe.MatchString(filename) {
+	if !ssgcontent.FilenameRe.MatchString(filename) {
 		Error(w, http.StatusBadRequest, "Invalid filename")
 		return
 	}

@@ -24,7 +24,13 @@ const StatusInactive = "inactive"
 // calling context, falling back to DefaultUpdateIntervalMinutes. Callers that
 // already hold a DashboardStore should use UpdateIntervalMinutes instead.
 func UpdateIntervalMinutesFromDB(ctx context.Context, dbp database.DBProvider) int {
-	setting, err := dbp.DB(ctx).Queries.GetFirstSettings(ctx)
+	return ResolveUpdateIntervalMinutes(ctx, dbp.DB(ctx))
+}
+
+// ResolveUpdateIntervalMinutes is the same lookup for callers that already hold
+// a resolved connection, such as queue workers.
+func ResolveUpdateIntervalMinutes(ctx context.Context, d *database.DB) int {
+	setting, err := d.Queries.GetFirstSettings(ctx)
 	if err != nil {
 		return DefaultUpdateIntervalMinutes
 	}
@@ -42,6 +48,16 @@ func StaleCutoff(now time.Time, updateIntervalMinutes int) time.Time {
 		updateIntervalMinutes = DefaultUpdateIntervalMinutes
 	}
 	return now.Add(-time.Duration(updateIntervalMinutes*2) * time.Minute)
+}
+
+// OverdueCutoff returns the instant before which a host has missed a report
+// cycle: one agent update interval back from now. Shared by the host list SQL's
+// overdue_threshold and the reconnect catch-up so both use the same boundary.
+func OverdueCutoff(now time.Time, updateIntervalMinutes int) time.Time {
+	if updateIntervalMinutes <= 0 {
+		updateIntervalMinutes = DefaultUpdateIntervalMinutes
+	}
+	return now.Add(-time.Duration(updateIntervalMinutes) * time.Minute)
 }
 
 // EffectiveStatus derives the status the UI renders from the stored

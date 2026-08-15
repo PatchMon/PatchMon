@@ -650,6 +650,8 @@ The top of the page has four main areas:
   - **Updates** — grey "No package data" until the first report arrives, then green "Up to date", amber "Updates pending" (non-security only), red "Security patches required" when one or more security updates are available.
 - **Uptime** and **Last updated** relative timestamps.
 
+**Suspended machines catch up on their own.** A laptop or VM does not run its report timer while it is asleep, so it wakes up with an amber Reporting pill (red, while it was still asleep and its WebSocket was down). When an agent connects and the host has not reported within its update interval, the server asks it for a fresh report within the following minute, so the pill clears without anyone pressing **Fetch Report**. The same applies to a host that was powered off, or cut off by a network outage. Hosts that keep reporting on schedule are unaffected.
+
 If there's a pending patch run awaiting a fresh post-patch report, you'll see an **Awaiting inventory report** chip that links to the run.
 
 #### Action buttons (top right)
@@ -3552,7 +3554,7 @@ PatchMon 2.0 ships four destination channel types. The list is fixed in the serv
 
 | Channel | Value | What it does |
 |---------|-------|--------------|
-| **Webhook** | `webhook` | HTTP POST of a JSON payload to any URL. Generic by default; Discord and Slack webhook URLs are auto-detected and formatted with the appropriate rich payload. |
+| **Webhook** | `webhook` | HTTP POST of a JSON payload to any URL. Generic by default; Discord, Slack, Mattermost and Rocket.Chat webhook URLs are auto-detected and formatted with the appropriate rich payload. |
 | **Email** | `email` | SMTP delivery to one or more recipients, with HTML body and an optional attachment for scheduled reports. |
 | **ntfy** | `ntfy` | Push notification via [ntfy.sh](https://ntfy.sh) or a self-hosted ntfy server. |
 | **Internal Alerts** | `internal` | Built-in destination that drops events into the **Alerts** tab. You cannot create or delete this one; it is created automatically and can only be enabled or disabled. |
@@ -3577,12 +3579,16 @@ A successfully-created destination shows up in the destinations table with its c
 
 #### Webhook
 
-Pick this for **generic JSON webhooks, Discord, or Slack**. Discord and Slack URLs are auto-detected and sent rich payloads; other URLs receive a generic JSON body.
+Pick this for **generic JSON webhooks, Discord, Slack, Mattermost or Rocket.Chat**. Discord, Slack, Mattermost and Rocket.Chat URLs are auto-detected and sent rich payloads; other URLs receive a generic JSON body.
 
 | Field | Required | Notes |
 |-------|:--------:|-------|
-| **Webhook URL** | Yes | Full HTTPS URL. Discord: `https://discord.com/api/webhooks/...`. Slack: `https://hooks.slack.com/services/...`. Generic: any endpoint that accepts `POST` with `Content-Type: application/json`. |
+| **Webhook URL** | Yes | Full HTTPS URL. Discord: `https://discord.com/api/webhooks/...`. Slack: `https://hooks.slack.com/services/...`. Mattermost: `https://your-mattermost/hooks/...`. Generic: any endpoint that accepts `POST` with `Content-Type: application/json`. |
 | **Signing secret** | No | Optional HMAC secret. When set, each webhook is signed with SHA-256 over the payload; the signature is sent in a header so the receiver can verify authenticity. |
+
+> **Mattermost and Rocket.Chat.** Both are self-hosted on your own domain, so PatchMon cannot detect them by hostname. It detects them by the `/hooks/<token>` path that both use for incoming webhooks, and sends the Slack-compatible payload they expect. A URL such as `https://chat.example.com/hooks/xxxgeneratedkeyxxx` is matched, and so is one behind a subpath proxy, for example `https://example.com/mattermost/hooks/xxxgeneratedkeyxxx`. The match requires one or two long opaque tokens after `/hooks/`, so an automation platform that happens to use a `/hooks/` path for routing (a Zapier catch hook, for example) is not mistaken for a chat server and keeps the generic body. Jira and Confluence automation URLs on `automation.atlassian.com` are excluded by name, because they are shaped like a chat webhook but are consumed as structured data.
+
+The generic JSON body also carries a top-level `text` key, alongside the structured `event_type`, `severity`, `title`, `message`, `reference` and `metadata` fields. Receivers that read the structured fields are unaffected, and any receiver that requires a `text` key works without extra configuration. Note that `text` is formatted in Slack-style markdown, so it contains `*bold*` markers and Slack link syntax such as `<https://…|View in PatchMon>`; a receiver that renders it as literal text will show that markup. On scheduled reports the `text` key is a short preview only, because the full report is already present in the `html` and `csv` fields.
 
 #### Email (SMTP)
 
@@ -3833,6 +3839,7 @@ If all five retries fail, the delivery row stays at the last `failed` state. The
 | `connect: connection refused` / `i/o timeout` | Destination host is unreachable from the PatchMon server. Check firewall / network. |
 | `authentication failed` / `535 5.7.8` | Wrong SMTP credentials or token. Re-edit the destination and re-enter. |
 | `400 Bad Request` from Discord/Slack webhook | Webhook URL is wrong, revoked, or the rich payload is malformed for a customised Slack app. |
+| `webhook status 400` from Mattermost or Rocket.Chat | The webhook was deleted or the token is wrong, or the target channel no longer exists. Re-copy the URL from the integration page. Versions before 2.1.3 returned this for every delivery regardless of the URL; upgrade if you are on an older release. |
 | `403 Forbidden` from ntfy | Topic requires auth you have not provided, or token is expired. |
 | `destination disabled` | Someone disabled the destination between enqueue and delivery. Re-enable and re-trigger. |
 
@@ -3845,6 +3852,26 @@ Duplicates suppressed by the 2-minute dedup window do **not** appear in the deli
 1. The destination is enabled.
 2. No route has been deleted.
 3. The per-minute rate cap is not being exceeded upstream. 60 messages/minute is per-destination.
+
+#### Diagnosing a webhook with `LOG_LEVEL=debug`
+
+The delivery log records the outcome of a delivery, not how it was built. To see which payload format a webhook destination actually received, set `LOG_LEVEL` to `debug` (**Settings > Environment**, or the `LOG_LEVEL` env var). Every webhook delivery then writes one line:
+
+```
+level=DEBUG msg="webhook dispatch" destination_id=... event_type=host_down
+  format=slack_compatible host=chat.example.com body_bytes=229 signed=true
+```
+
+| Field | Meaning |
+|-------|---------|
+| `format` | `discord`, `slack_compatible` or `generic`. This is the payload shape that was sent, so it tells you whether auto-detection recognised your receiver. |
+| `host` | Host of the destination URL. The path is deliberately omitted because it carries the webhook's secret token. |
+| `body_bytes` | Size of the JSON body, useful when a receiver enforces a size limit. |
+| `signed` | Whether an HMAC signature header was attached. |
+
+If `format` is `generic` for a chat server you expected to be recognised, the URL is not on a `/hooks/<token>` path. The delivery still works, because the generic body carries a `text` key, but the message will be less richly formatted. The destination form shows the same detection result before you save.
+
+Debug level is verbose across the whole server, so turn it back to `info` once you have the answer.
 
 ### App links in notifications
 

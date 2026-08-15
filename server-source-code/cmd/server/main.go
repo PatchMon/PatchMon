@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 	_ "time/tzdata"
@@ -23,6 +22,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/redis"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/server"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/ssgcontent"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/hibiken/asynq"
@@ -159,7 +159,7 @@ func main() {
 		r := config.ResolveConfig(context.Background(), cfg, s)
 		return r.AgentReportsRetentionDays
 	}
-	warnIfSSGContentMissing(cfg.SSGContentDir, slog)
+	warnIfSSGContentUnusable(cfg.SSGContentDir, slog)
 
 	queueMux := queue.Mux(queue.MuxOpts{
 		Registry:                     registry,
@@ -303,28 +303,37 @@ func main() {
 	slog.Info("server stopped")
 }
 
-// warnIfSSGContentMissing surfaces an empty SSG content directory at startup.
-// Content is baked into the server image at build time and agents have no other
-// source for it, so an empty directory silently disables compliance content
-// updates fleet-wide. Better to say so in the logs than to let operators find
-// out from stale SSG versions weeks later.
-func warnIfSSGContentMissing(dir string, log *slog.Logger) {
+// warnIfSSGContentUnusable surfaces an SSG content directory the server cannot
+// serve from, at startup. Agents have no source for this content other than the
+// server, so a directory that is empty, unreadable, or holds datastreams whose
+// release cannot be determined silently disables compliance content updates
+// fleet-wide. Better to say so in the logs than to let operators find out from
+// stale SSG versions weeks later.
+func warnIfSSGContentUnusable(dir string, log *slog.Logger) {
 	if dir == "" {
 		log.Warn("SSG content directory is not configured; compliance content updates are unavailable", "env", "SSG_CONTENT_DIR")
 		return
 	}
 
-	entries, err := os.ReadDir(dir)
-	if err != nil {
+	// Load-bearing despite the discarded result: Files reports nil for an
+	// unreadable directory and for an empty one alike, and those want different
+	// warnings.
+	if _, err := os.ReadDir(dir); err != nil {
 		log.Warn("SSG content directory is unreadable; compliance content updates are unavailable", "dir", dir, "error", err)
 		return
 	}
 
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), "-ds.xml") {
-			return
-		}
+	// Deliberately the same view of the directory the serving code takes, so this
+	// check cannot pass on content the handlers would not recognise.
+	if len(ssgcontent.Files(dir)) == 0 {
+		log.Warn("SSG content directory contains no datastream files; compliance content updates are unavailable", "dir", dir)
+		return
 	}
 
-	log.Warn("SSG content directory contains no datastream files; compliance content updates are unavailable", "dir", dir)
+	// Datastreams alone are not enough: everything downstream keys off the
+	// release they belong to, so content whose version cannot be resolved is
+	// content agents will never be offered.
+	if ssgcontent.Version(dir) == "" {
+		log.Warn("SSG content version could not be determined; compliance content updates are unavailable", "dir", dir)
+	}
 }

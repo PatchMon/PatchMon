@@ -2389,7 +2389,7 @@ Settings for SCAP Security Guide content used by the compliance scanning feature
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `SSG_CONTENT_DIR` | `./ssg-content` | No | Path to the directory holding SCAP Security Guide datastream files (`ssg-*-ds.xml`), which agents download from. The official image already contains this content at `/app/ssg-content` and sets this variable for you, so leave it alone unless you are deliberately supplying your own content. **Do not mount an empty volume at this path.** Doing so hides the bundled content and leaves every host in your fleet unable to update its compliance content. |
+| `SSG_CONTENT_DIR` | `./ssg-content` | No | Path to the directory holding SCAP Security Guide datastream files (`ssg-*-ds.xml`), which agents download from. The official image already contains this content at `/app/ssg-content` and sets this variable for you, so leave it alone unless you are deliberately supplying your own content. If you do supply your own, put the `ssg-*-ds.xml` datastreams in the directory and the server works out which SCAP Security Guide release they belong to by reading them, so no separate version file is needed. This relies on the datastreams declaring a release in the form `0.1.81`, which official ComplianceAsCode releases do. If you build your own content, or use a vendor build whose release is labelled some other way, add a `.ssg-version` file to the directory containing just that version string. Compliance Settings tells you if the release could not be determined, and until it is resolved, hosts cannot update their content. **Do not mount an empty volume at this path.** Doing so hides the bundled content and leaves every host in your fleet unable to update its compliance content. |
 
 ---
 
@@ -2985,6 +2985,16 @@ OIDC_SYNC_ROLES=true
 **Logs show:** `OIDC is enabled but missing required config: ...`
 
 All four required variables must be set: `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI`. Check for typos or empty values. A related message, `OIDC is partially configured via env vars but SSO is disabled`, means some but not all of the four are set.
+
+#### Login Fails with "no email in UserInfo or id_token"
+
+**Logs show:** `oidc exchange failed` with `error: oidc: no email in UserInfo or id_token`, whilst the login page shows a generic "Authentication failed".
+
+Fixed in 2.1.3. Two separate defects produced the same message. ADFS sends single-valued claims as a JSON array (`"email": ["user@example.com"]`) in the ID token, and PatchMon only accepted a plain string. Separately, any provider whose UserInfo endpoint returns no email caused that empty value to hide a perfectly good email in the ID token. PatchMon now accepts the array form in the ID token and treats an empty value as missing, so it falls through correctly.
+
+If you are on 2.1.3 or later and still see this, your provider is genuinely not sending an email address. Check that the `email` scope is requested and that the claim is mapped on the provider side, then decode the ID token at [jwt.io](https://jwt.io) after a login attempt to confirm what arrives. PatchMon reads only the standard `email` claim; there is no claim mapping setting, and `upn` is not used as a substitute.
+
+A related but distinct failure logs `oidc: fetch userinfo: oidc: failed to decode userinfo` instead. That means your provider returned an array (or another non-string type) for a field in its **UserInfo** response rather than in the ID token. That response is decoded before PatchMon sees it, so the array handling above does not apply. Have the provider return plain strings from `/userinfo`, or map the claim into the ID token instead.
 
 #### No OIDC Lines in the Startup Logs
 
