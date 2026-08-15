@@ -183,6 +183,8 @@ func NewUpdateThresholdMonitorTask(host string) (*asynq.Task, error) {
 type ReportNowPayload struct {
 	ApiID string `json:"api_id"`
 	Host  string `json:"host,omitempty"`
+	// Set by the reconnect catch-up, never by an operator-triggered fetch.
+	OnlyIfOverdue bool `json:"only_if_overdue,omitempty"`
 }
 
 // NewReportNowTask creates a report_now task.
@@ -192,6 +194,26 @@ func NewReportNowTask(apiID, host string) (*asynq.Task, error) {
 		return nil, err
 	}
 	return asynq.NewTask(TypeReportNow, payload, asynq.Queue(QueueAgentCommands), asynq.MaxRetry(3)), nil
+}
+
+const CatchUpUniqueTTL = 5 * time.Minute
+
+// NewCatchUpReportTask creates a report_now task for a reconnecting host whose
+// report cadence has lapsed.
+//
+// Must stay asynq.Unique, not asynq.TaskID: an archived task keeps its task key,
+// so a TaskID would block this host's catch-ups for the 90-day archive retention.
+func NewCatchUpReportTask(apiID, host string, delay time.Duration) (*asynq.Task, error) {
+	payload, err := json.Marshal(ReportNowPayload{ApiID: apiID, Host: host, OnlyIfOverdue: true})
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TypeReportNow, payload,
+		asynq.Queue(QueueAgentCommands),
+		asynq.MaxRetry(1),
+		asynq.Unique(CatchUpUniqueTTL),
+		asynq.ProcessIn(delay),
+	), nil
 }
 
 // NewRefreshIntegrationStatusTask creates a refresh_integration_status task.
@@ -356,6 +378,20 @@ func NewHostStatusMonitorTask(host string) (*asynq.Task, error) {
 	return asynq.NewTask(TypeHostStatusMonitor, payload, asynq.Queue(QueueHostStatus), asynq.MaxRetry(2), asynq.Retention(AutomationRetention)), nil
 }
 
+// Fails open: an unreadable row sends the report rather than dropping it.
+// Returns the host ID so the caller need not read the row again.
+func hostStillOverdue(ctx context.Context, d *database.DB, apiID string) (bool, string) {
+	host, err := d.Queries.GetHostByApiID(ctx, apiID)
+	if err != nil {
+		return true, ""
+	}
+	if host.Status != store.StatusActive || !host.LastUpdate.Valid {
+		return false, host.ID
+	}
+	cutoff := store.OverdueCutoff(time.Now(), store.ResolveUpdateIntervalMinutes(ctx, d))
+	return host.LastUpdate.Time.Before(cutoff), host.ID
+}
+
 // ReportNowHandler handles report_now jobs.
 type ReportNowHandler struct {
 	registry  *agentregistry.Registry
@@ -377,15 +413,27 @@ func (h *ReportNowHandler) ProcessTask(ctx context.Context, t *asynq.Task) error
 	}
 	d := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
 
+	// The host may have reported during the catch-up's jitter delay.
+	knownHostID := ""
+	if p.OnlyIfOverdue && d != nil {
+		overdue, id := hostStillOverdue(ctx, d, p.ApiID)
+		if !overdue {
+			h.log.Debug("report_now: host reported since catch-up was queued, dropping", "api_id", p.ApiID)
+			return nil
+		}
+		knownHostID = id
+	}
+
 	taskID, _ := asynq.GetTaskID(ctx)
 	retryCount, _ := asynq.GetRetryCount(ctx)
 	attempt := int32(retryCount + 1)
 
 	// Log to job_history on first attempt so it persists in Agent Queue tab (like BullMQ)
 	if d != nil && taskID != "" && retryCount == 0 {
-		host, err := d.Queries.GetHostByApiID(ctx, p.ApiID)
 		var hostID *string
-		if err == nil {
+		if knownHostID != "" {
+			hostID = &knownHostID
+		} else if host, err := d.Queries.GetHostByApiID(ctx, p.ApiID); err == nil {
 			hostID = &host.ID
 		}
 		apiIDPtr := &p.ApiID

@@ -27,6 +27,38 @@ func TestStaleCutoff(t *testing.T) {
 	}
 }
 
+func TestOverdueCutoff(t *testing.T) {
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name     string
+		interval int
+		want     time.Time
+	}{
+		{"default interval", 60, now.Add(-60 * time.Minute)},
+		{"laptop interval", 360, now.Add(-360 * time.Minute)},
+		{"short interval", 5, now.Add(-5 * time.Minute)},
+		{"zero falls back to default", 0, now.Add(-60 * time.Minute)},
+		{"negative falls back to default", -30, now.Add(-60 * time.Minute)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := OverdueCutoff(now, tt.interval); !got.Equal(tt.want) {
+				t.Errorf("OverdueCutoff(%d) = %v, want %v", tt.interval, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOverdueCutoffIsAfterStaleCutoff(t *testing.T) {
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	for _, interval := range []int{0, 5, 60, 360} {
+		if !OverdueCutoff(now, interval).After(StaleCutoff(now, interval)) {
+			t.Errorf("interval %d: overdue cutoff should be after stale cutoff", interval)
+		}
+	}
+}
+
 // The boundaries here must stay identical to the effective_status CASE in
 // GetHostsWithCounts, otherwise the scoped API and the UI disagree again.
 func TestEffectiveStatus(t *testing.T) {

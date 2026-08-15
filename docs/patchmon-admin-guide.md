@@ -650,6 +650,8 @@ The top of the page has four main areas:
   - **Updates** — grey "No package data" until the first report arrives, then green "Up to date", amber "Updates pending" (non-security only), red "Security patches required" when one or more security updates are available.
 - **Uptime** and **Last updated** relative timestamps.
 
+**Suspended machines catch up on their own.** A laptop or VM does not run its report timer while it is asleep, so it wakes up with an amber Reporting pill (red, while it was still asleep and its WebSocket was down). When an agent connects and the host has not reported within its update interval, the server asks it for a fresh report within the following minute, so the pill clears without anyone pressing **Fetch Report**. The same applies to a host that was powered off, or cut off by a network outage. Hosts that keep reporting on schedule are unaffected.
+
 If there's a pending patch run awaiting a fresh post-patch report, you'll see an **Awaiting inventory report** chip that links to the run.
 
 #### Action buttons (top right)

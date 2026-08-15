@@ -435,8 +435,8 @@ func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsLis
 
 	updateIntervalMinutes := UpdateIntervalMinutes(ctx, s)
 	now := time.Now()
-	staleThreshold := pgtime.From(now.Add(-time.Duration(updateIntervalMinutes*2) * time.Minute))
-	overdueThreshold := pgtime.From(now.Add(-time.Duration(updateIntervalMinutes) * time.Minute))
+	staleThreshold := pgtime.From(StaleCutoff(now, updateIntervalMinutes))
+	overdueThreshold := pgtime.From(OverdueCutoff(now, updateIntervalMinutes))
 	arg := db.GetHostsWithCountsParams{
 		SelectedIds:      params.SelectedIDs,
 		StaleThreshold:   staleThreshold,
