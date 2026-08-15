@@ -4,10 +4,14 @@ import "testing"
 
 // resolveEmailVerified gates account linking and auto-creation, so the ordering
 // between email_verified and xms_edov is a security property, not a preference.
+// A representative Entra issuer; isMicrosoftIdentityIssuer gates the fallback.
+const MSIssuer = "https://login.microsoftonline.com/tenant-id/v2.0"
+
 func TestResolveEmailVerified(t *testing.T) {
 	tests := []struct {
 		name            string
 		userInfo, idTok map[string]interface{}
+		issuer          string
 		want            bool
 	}{
 		{
@@ -23,15 +27,17 @@ func TestResolveEmailVerified(t *testing.T) {
 			want:     true,
 		},
 		{
-			name:     "Entra: xms_edov used when email_verified absent",
+			name:     "Entra: xms_edov in the id_token is used when email_verified absent",
 			userInfo: map[string]interface{}{},
 			idTok:    map[string]interface{}{"xms_edov": true},
+			issuer:   MSIssuer,
 			want:     true,
 		},
 		{
 			name:     "Entra: xms_edov false is still false",
 			userInfo: map[string]interface{}{},
 			idTok:    map[string]interface{}{"xms_edov": false},
+			issuer:   MSIssuer,
 			want:     false,
 		},
 		{
@@ -41,12 +47,14 @@ func TestResolveEmailVerified(t *testing.T) {
 			name:     "explicit email_verified false is NOT overridden by xms_edov",
 			userInfo: map[string]interface{}{"email_verified": false},
 			idTok:    map[string]interface{}{"xms_edov": true},
+			issuer:   MSIssuer,
 			want:     false,
 		},
 		{
 			name:     "explicit false in id_token is not overridden either",
 			userInfo: map[string]interface{}{},
 			idTok:    map[string]interface{}{"email_verified": false, "xms_edov": true},
+			issuer:   MSIssuer,
 			want:     false,
 		},
 		{
@@ -59,6 +67,7 @@ func TestResolveEmailVerified(t *testing.T) {
 			name:     "xms_edov string encoding tolerated",
 			userInfo: map[string]interface{}{},
 			idTok:    map[string]interface{}{"xms_edov": "1"},
+			issuer:   MSIssuer,
 			want:     true,
 		},
 		{
@@ -72,6 +81,7 @@ func TestResolveEmailVerified(t *testing.T) {
 			name:     "nil email_verified falls through to xms_edov",
 			userInfo: map[string]interface{}{"email_verified": nil},
 			idTok:    map[string]interface{}{"xms_edov": true},
+			issuer:   MSIssuer,
 			want:     true,
 		},
 		{
@@ -79,13 +89,46 @@ func TestResolveEmailVerified(t *testing.T) {
 			name:     "garbage email_verified falls through to xms_edov",
 			userInfo: map[string]interface{}{"email_verified": "banana"},
 			idTok:    map[string]interface{}{"xms_edov": true},
+			issuer:   MSIssuer,
+			want:     true,
+		},
+		{
+			// xms_edov is Microsoft-proprietary. An IdP that maps arbitrary
+			// user attributes into claims could otherwise manufacture it.
+			name:     "xms_edov is ignored for a non-Microsoft issuer",
+			userInfo: map[string]interface{}{},
+			idTok:    map[string]interface{}{"xms_edov": true},
+			issuer:   "https://authentik.example.com/application/o/patchmon/",
+			want:     false,
+		},
+		{
+			name:     "xms_edov is ignored when the issuer is empty",
+			userInfo: map[string]interface{}{},
+			idTok:    map[string]interface{}{"xms_edov": true},
+			issuer:   "",
+			want:     false,
+		},
+		{
+			// The UserInfo body is not signature-verified; Microsoft only ever
+			// issues xms_edov in the ID token.
+			name:     "xms_edov from UserInfo is ignored even for Microsoft",
+			userInfo: map[string]interface{}{"xms_edov": true},
+			idTok:    map[string]interface{}{},
+			issuer:   MSIssuer,
+			want:     false,
+		},
+		{
+			name:     "other Microsoft issuer hosts are accepted",
+			userInfo: map[string]interface{}{},
+			idTok:    map[string]interface{}{"xms_edov": true},
+			issuer:   "https://sts.windows.net/tenant-id/",
 			want:     true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := resolveEmailVerified(tt.userInfo, tt.idTok); got != tt.want {
+			if got := resolveEmailVerified(tt.userInfo, tt.idTok, tt.issuer); got != tt.want {
 				t.Errorf("resolveEmailVerified() = %v, want %v", got, tt.want)
 			}
 		})

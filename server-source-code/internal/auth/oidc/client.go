@@ -232,6 +232,31 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 				for k, v := range extraClaims {
 					userInfoClaims[k] = v
 				}
+			} else {
+				// Without the raw response there is no way to tell an absent
+				// email_verified from an explicit false, and guessing wrong in
+				// this direction would let a provider that DENIES verification
+				// fall through to xms_edov. Record go-oidc's parsed value
+				// instead: it collapses absent into false, which fails closed
+				// and merely costs the xms_edov fallback in a path that should
+				// not occur, since the body already parsed once above.
+				userInfoClaims["email_verified"] = oidcUserInfo.EmailVerified
+			}
+			// encoding/json matches struct tags case-insensitively, but the
+			// merge above is case-sensitive. A provider sending
+			// "Email_Verified": false therefore lands a non-canonical key and
+			// leaves email_verified absent, which would fall through to
+			// xms_edov and silently lose an explicit denial. Normalise it.
+			// Only when the provider actually sent the claim under some other
+			// casing: a genuinely absent claim must stay absent, or the
+			// xms_edov fallback becomes unreachable for Entra.
+			if _, ok := userInfoClaims["email_verified"]; !ok {
+				for k, v := range extraClaims {
+					if strings.EqualFold(k, "email_verified") {
+						userInfoClaims["email_verified"] = v
+						break
+					}
+				}
 			}
 		}
 	}
@@ -244,7 +269,7 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 		return nil, errors.New("oidc: no email in UserInfo or id_token")
 	}
 
-	userInfo.EmailVerified = resolveEmailVerified(userInfoClaims, idClaims)
+	userInfo.EmailVerified = resolveEmailVerified(userInfoClaims, idClaims, c.cfg.IssuerURL)
 	userInfo.Name = getStringClaim(userInfoClaims, idClaims, "name")
 	if userInfo.Name == "" {
 		userInfo.Name = getStringClaim(userInfoClaims, idClaims, "preferred_username")
@@ -464,14 +489,28 @@ func lookupBoolClaim(primary, fallback map[string]interface{}, key string) (valu
 //
 // xms_edov is consulted ONLY when email_verified is absent. A provider that
 // explicitly sends email_verified=false is denying verification, and must not
-// be overridden by a second claim. Entra sends neither by default; xms_edov has
-// to be configured as an optional claim, which is a deliberate act by the
-// operator, not something a caller can induce.
-func resolveEmailVerified(primary, fallback map[string]interface{}) bool {
+// be overridden by a second claim.
+//
+// Two deliberate restrictions on the fallback:
+//
+//   - Microsoft issuers only. xms_edov is Microsoft-proprietary. Honouring it
+//     from any issuer would let an IdP that maps arbitrary user attributes into
+//     claims (Authentik property mappings, Keycloak user-attribute mappers)
+//     manufacture the signal, which is a route straight back into the nOAuth
+//     scenario this gate exists to block.
+//   - ID token only. The ID token is signature, issuer, audience and nonce
+//     verified; the UserInfo body is plain JSON over TLS unless served as
+//     application/jwt. Microsoft only ever issues xms_edov in the ID and access
+//     tokens, so reading it from UserInfo would accept a weaker source for no
+//     practical gain.
+func resolveEmailVerified(primary, fallback map[string]interface{}, issuerURL string) bool {
 	if v, found := lookupBoolClaim(primary, fallback, "email_verified"); found {
 		return v
 	}
-	v, _ := lookupBoolClaim(primary, fallback, "xms_edov")
+	if !isMicrosoftIdentityIssuer(issuerURL) {
+		return false
+	}
+	v, _ := lookupBoolClaim(fallback, nil, "xms_edov")
 	return v
 }
 
