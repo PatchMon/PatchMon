@@ -86,6 +86,7 @@ const OidcSettings = () => {
 		oidc_disable_local_auth: false,
 		oidc_auto_create_users: true,
 		oidc_enforce_https: true,
+		oidc_trust_unverified_email: false,
 	});
 
 	// Fetch OIDC settings
@@ -139,6 +140,8 @@ const OidcSettings = () => {
 			oidc_disable_local_auth: settings.oidc_disable_local_auth ?? false,
 			oidc_auto_create_users: settings.oidc_auto_create_users ?? true,
 			oidc_enforce_https: settings.oidc_enforce_https ?? true,
+			oidc_trust_unverified_email:
+				settings.oidc_trust_unverified_email ?? false,
 		});
 	}, [settings, isDirty]);
 
@@ -199,6 +202,7 @@ const OidcSettings = () => {
 			oidc_disable_local_auth: form.oidc_disable_local_auth,
 			oidc_auto_create_users: form.oidc_auto_create_users,
 			oidc_enforce_https: form.oidc_enforce_https ?? true,
+			oidc_trust_unverified_email: form.oidc_trust_unverified_email ?? false,
 		};
 		if (secretInput.trim()) {
 			payload.oidc_client_secret = secretInput.trim();
@@ -251,8 +255,14 @@ const OidcSettings = () => {
 								OIDC is configured via .env
 							</h3>
 							<p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
-								Import these settings and save to database to manage from the
-								UI. After saving, remove OIDC_* from .env.
+								<strong>
+									Every OIDC setting below is read from the environment, so
+									changes saved here take no effect yet.
+								</strong>{" "}
+								That includes the toggles. They are still saved, and they start
+								applying the moment the OIDC_* variables are removed from .env,
+								so check them before you do. Import these settings and save to
+								database to manage from the UI.
 							</p>
 							{settings?.env_preview &&
 								Object.keys(settings.env_preview).length > 0 && (
@@ -290,7 +300,7 @@ const OidcSettings = () => {
 				<h3 className="font-medium text-secondary-900 dark:text-white mb-4">
 					Configuration
 				</h3>
-				<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+				<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
 					{/* Enable OIDC */}
 					<ToggleCard
 						label="Enable OIDC / SSO"
@@ -345,7 +355,30 @@ const OidcSettings = () => {
 						}
 						disabled={updateMutation.isPending}
 					/>
+					{/* Trust unverified email */}
+					<ToggleCard
+						label="Trust unverified email"
+						description="Only if your IdP cannot confirm addresses"
+						checked={form.oidc_trust_unverified_email}
+						onChange={() =>
+							handleFieldChange(
+								"oidc_trust_unverified_email",
+								!form.oidc_trust_unverified_email,
+							)
+						}
+						disabled={updateMutation.isPending}
+					/>
 				</div>
+				{form.oidc_trust_unverified_email && (
+					<div className="mt-4 p-3 rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+						<p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+							Trust unverified email is on. Anyone who can set their own email
+							address at your identity provider can sign in as an existing
+							PatchMon user. Only leave this on if you control who can change
+							addresses in your directory.
+						</p>
+					</div>
+				)}
 				{!form.oidc_enforce_https && (
 					<div className="mt-4 p-3 rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
 						<p className="text-sm font-medium text-amber-800 dark:text-amber-200">
