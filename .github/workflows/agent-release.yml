@@ -265,7 +265,7 @@ jobs:
           files: patchmon-server-${{ matrix.goos }}-${{ matrix.goarch }}
 
   changelog:
-    name: Draft the feedback portal changelog
+    name: Publish the feedback portal changelog
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -278,18 +278,24 @@ jobs:
           token: ${{ github.token }}
           tag: ${{ env.TAG_NAME }}
 
-      # Creates the entry as a draft so the notes can be proofread on the portal
-      # before they go public. Idempotent: entries are matched by the exact
-      # title "Version X.Y.Z" and updated in place, so a rerun is safe.
+      # Idempotent: entries are matched by the exact title "Version X.Y.Z" and
+      # updated in place, so a rerun is safe.
       - name: Push notes to the Quackback changelog
         env:
           QUACKBACK_API_KEY: ${{ secrets.QUACKBACK_API_KEY }}
           VERSION: ${{ steps.ctx.outputs.version }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+          PUBLISHED_AT: ${{ github.event.release.published_at }}
         run: |
           if [ -z "${QUACKBACK_API_KEY}" ]; then
             echo "::warning::QUACKBACK_API_KEY is not set — skipping the feedback portal changelog."
             exit 0
           fi
+          if [ "${IS_PRERELEASE}" = "true" ]; then
+            echo "Pre-release: leaving the changelog entry as a draft."
+            PUBLISHED_AT=""
+          fi
+          export PUBLISHED_AT
           chmod +x .github/scripts/publish-changelog.sh
           .github/scripts/publish-changelog.sh "$VERSION" \
             "server-source-code/internal/handler/release_notes_data/RELEASE_NOTES_${VERSION}.md"
