@@ -1,0 +1,131 @@
+package oidc
+
+import "testing"
+
+// resolveEmailVerified gates account linking and auto-creation, so the ordering
+// between email_verified and xms_edov is a security property, not a preference.
+func TestResolveEmailVerified(t *testing.T) {
+	tests := []struct {
+		name            string
+		userInfo, idTok map[string]interface{}
+		want            bool
+	}{
+		{
+			name:     "no claims at all fails closed",
+			userInfo: map[string]interface{}{},
+			idTok:    map[string]interface{}{},
+			want:     false,
+		},
+		{
+			name:     "email_verified true is honoured",
+			userInfo: map[string]interface{}{"email_verified": true},
+			idTok:    map[string]interface{}{},
+			want:     true,
+		},
+		{
+			name:     "Entra: xms_edov used when email_verified absent",
+			userInfo: map[string]interface{}{},
+			idTok:    map[string]interface{}{"xms_edov": true},
+			want:     true,
+		},
+		{
+			name:     "Entra: xms_edov false is still false",
+			userInfo: map[string]interface{}{},
+			idTok:    map[string]interface{}{"xms_edov": false},
+			want:     false,
+		},
+		{
+			// The security-critical case. Stock Authentik sends an explicit
+			// false. A provider denying verification must not be overridden by
+			// a second claim.
+			name:     "explicit email_verified false is NOT overridden by xms_edov",
+			userInfo: map[string]interface{}{"email_verified": false},
+			idTok:    map[string]interface{}{"xms_edov": true},
+			want:     false,
+		},
+		{
+			name:     "explicit false in id_token is not overridden either",
+			userInfo: map[string]interface{}{},
+			idTok:    map[string]interface{}{"email_verified": false, "xms_edov": true},
+			want:     false,
+		},
+		{
+			name:     "string encodings still tolerated",
+			userInfo: map[string]interface{}{"email_verified": "true"},
+			idTok:    map[string]interface{}{},
+			want:     true,
+		},
+		{
+			name:     "xms_edov string encoding tolerated",
+			userInfo: map[string]interface{}{},
+			idTok:    map[string]interface{}{"xms_edov": "1"},
+			want:     true,
+		},
+		{
+			name:     "userinfo takes precedence over id_token for email_verified",
+			userInfo: map[string]interface{}{"email_verified": true},
+			idTok:    map[string]interface{}{"email_verified": false},
+			want:     true,
+		},
+		{
+			// A nil value is not an assertion, so resolution must continue.
+			name:     "nil email_verified falls through to xms_edov",
+			userInfo: map[string]interface{}{"email_verified": nil},
+			idTok:    map[string]interface{}{"xms_edov": true},
+			want:     true,
+		},
+		{
+			// An undecodable value must not be read as a denial.
+			name:     "garbage email_verified falls through to xms_edov",
+			userInfo: map[string]interface{}{"email_verified": "banana"},
+			idTok:    map[string]interface{}{"xms_edov": true},
+			want:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolveEmailVerified(tt.userInfo, tt.idTok); got != tt.want {
+				t.Errorf("resolveEmailVerified() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLookupBoolClaimReportsPresence(t *testing.T) {
+	tests := []struct {
+		name      string
+		claims    map[string]interface{}
+		wantValue bool
+		wantFound bool
+	}{
+		{"absent", map[string]interface{}{}, false, false},
+		{"nil is absent", map[string]interface{}{"k": nil}, false, false},
+		{"undecodable is absent", map[string]interface{}{"k": "banana"}, false, false},
+		{"struct is absent", map[string]interface{}{"k": struct{}{}}, false, false},
+		{"explicit false is present", map[string]interface{}{"k": false}, false, true},
+		{"explicit true is present", map[string]interface{}{"k": true}, true, true},
+		{"empty string reads as false, present", map[string]interface{}{"k": ""}, false, true},
+		{"zero number is present", map[string]interface{}{"k": float64(0)}, false, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v, found := lookupBoolClaim(tt.claims, map[string]interface{}{}, "k")
+			if v != tt.wantValue || found != tt.wantFound {
+				t.Errorf("lookupBoolClaim() = (%v, %v), want (%v, %v)",
+					v, found, tt.wantValue, tt.wantFound)
+			}
+		})
+	}
+}
+
+// getBoolClaim keeps its old signature and behaviour for existing callers.
+func TestGetBoolClaimUnchanged(t *testing.T) {
+	if getBoolClaim(map[string]interface{}{"k": true}, nil, "k") != true {
+		t.Error("true claim should read true")
+	}
+	if getBoolClaim(map[string]interface{}{}, nil, "k") != false {
+		t.Error("absent claim should read false")
+	}
+}

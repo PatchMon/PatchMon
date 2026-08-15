@@ -216,7 +216,16 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 			}
 			userInfoClaims["sub"] = oidcUserInfo.Subject
 			userInfoClaims["email"] = oidcUserInfo.Email
-			userInfoClaims["email_verified"] = oidcUserInfo.EmailVerified
+			// Only record a positive assertion. go-oidc decodes a missing
+			// email_verified into the zero value, so writing it unconditionally
+			// fabricates an explicit "false" for every provider that omits the
+			// claim, which is indistinguishable from one that denies it. The
+			// xms_edov fallback below depends on telling those apart. An
+			// explicit false really sent by the provider is restored by the
+			// extraClaims merge underneath.
+			if oidcUserInfo.EmailVerified {
+				userInfoClaims["email_verified"] = true
+			}
 			userInfoClaims["profile"] = oidcUserInfo.Profile
 			var extraClaims map[string]interface{}
 			if err := oidcUserInfo.Claims(&extraClaims); err == nil {
@@ -235,7 +244,7 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 		return nil, errors.New("oidc: no email in UserInfo or id_token")
 	}
 
-	userInfo.EmailVerified = getBoolClaim(userInfoClaims, idClaims, "email_verified")
+	userInfo.EmailVerified = resolveEmailVerified(userInfoClaims, idClaims)
 	userInfo.Name = getStringClaim(userInfoClaims, idClaims, "name")
 	if userInfo.Name == "" {
 		userInfo.Name = getStringClaim(userInfoClaims, idClaims, "preferred_username")
@@ -410,10 +419,18 @@ func getStringClaim(primary, fallback map[string]interface{}, key string) string
 // identity provider". Being liberal about the ENCODING is safe; being liberal
 // about a MISSING claim would not be, so absent still means false.
 //
-// Note this does not help Microsoft Entra, which omits email_verified
-// altogether. That needs an explicit per-provider trust setting rather than a
-// decoding change, and is called out in the operator guide.
+// Microsoft Entra omits email_verified altogether; resolveEmailVerified below
+// handles that case via xms_edov.
 func getBoolClaim(primary, fallback map[string]interface{}, key string) bool {
+	v, _ := lookupBoolClaim(primary, fallback, key)
+	return v
+}
+
+// lookupBoolClaim is getBoolClaim plus whether the claim was found at all in a
+// form it could decode. A claim present with an undecodable value is treated as
+// not found, so resolution continues to the fallback map and then to any
+// alternative claim.
+func lookupBoolClaim(primary, fallback map[string]interface{}, key string) (value, found bool) {
 	for _, claims := range []map[string]interface{}{primary, fallback} {
 		v, ok := claims[key]
 		if !ok || v == nil {
@@ -421,19 +438,41 @@ func getBoolClaim(primary, fallback map[string]interface{}, key string) bool {
 		}
 		switch t := v.(type) {
 		case bool:
-			return t
+			return t, true
 		case string:
 			switch strings.ToLower(strings.TrimSpace(t)) {
 			case "true", "1", "yes":
-				return true
+				return true, true
 			case "false", "0", "no", "":
-				return false
+				return false, true
 			}
 		case float64: // encoding/json decodes all JSON numbers as float64
-			return t != 0
+			return t != 0, true
 		}
 	}
-	return false
+	return false, false
+}
+
+// resolveEmailVerified reports whether the identity provider asserted that the
+// email address is verified. This gates account linking and auto-creation, so
+// "not asserted" must fail closed.
+//
+// Microsoft Entra never sends email_verified. Its documented equivalent is
+// xms_edov ("Email Domain Owner Verified"), which Microsoft introduced in
+// response to nOAuth, the same account-takeover-by-email-spoofing class this
+// gate exists to prevent. It therefore carries the assurance we need.
+//
+// xms_edov is consulted ONLY when email_verified is absent. A provider that
+// explicitly sends email_verified=false is denying verification, and must not
+// be overridden by a second claim. Entra sends neither by default; xms_edov has
+// to be configured as an optional claim, which is a deliberate act by the
+// operator, not something a caller can induce.
+func resolveEmailVerified(primary, fallback map[string]interface{}) bool {
+	if v, found := lookupBoolClaim(primary, fallback, "email_verified"); found {
+		return v
+	}
+	v, _ := lookupBoolClaim(primary, fallback, "xms_edov")
+	return v
 }
 
 // extractGroups extracts group names from claims (groups or ak_groups for Authentik).

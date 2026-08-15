@@ -162,12 +162,13 @@ type Config struct {
 	OidcPostLogoutURI    string
 	OidcSyncRoles        bool
 	// Group-to-role mapping
-	OidcAdminGroup       string
-	OidcSuperadminGroup  string
-	OidcHostManagerGroup string
-	OidcReadonlyGroup    string
-	OidcUserGroup        string
-	OidcEnforceHTTPS     bool
+	OidcAdminGroup           string
+	OidcSuperadminGroup      string
+	OidcHostManagerGroup     string
+	OidcReadonlyGroup        string
+	OidcUserGroup            string
+	OidcEnforceHTTPS         bool
+	OidcTrustUnverifiedEmail bool
 
 	// SSG (SCAP Security Guide) content directory for compliance scanning
 	SSGContentDir string
@@ -251,25 +252,26 @@ func Load() (*Config, error) {
 		TfaLockoutDurationMin:  getEnvInt("TFA_LOCKOUT_DURATION_MINUTES", 30),
 		TfaRememberMeExpiresIn: getEnv("TFA_REMEMBER_ME_EXPIRES_IN", "30d"),
 
-		OidcEnabled:          getEnv("OIDC_ENABLED", "") == "true",
-		OidcIssuerURL:        getEnv("OIDC_ISSUER_URL", ""),
-		OidcClientID:         getEnv("OIDC_CLIENT_ID", ""),
-		OidcClientSecret:     getEnv("OIDC_CLIENT_SECRET", ""),
-		OidcRedirectURI:      getEnv("OIDC_REDIRECT_URI", ""),
-		OidcScopes:           getEnv("OIDC_SCOPES", "openid email profile groups"),
-		OidcAutoCreateUsers:  getEnv("OIDC_AUTO_CREATE_USERS", "") == "true",
-		OidcDefaultRole:      getEnv("OIDC_DEFAULT_ROLE", "user"),
-		OidcDisableLocalAuth: getEnv("OIDC_DISABLE_LOCAL_AUTH", "") == "true",
-		OidcButtonText:       getEnv("OIDC_BUTTON_TEXT", "Login with SSO"),
-		OidcSessionTTL:       getEnvInt("OIDC_SESSION_TTL", 600),
-		OidcPostLogoutURI:    getEnv("OIDC_POST_LOGOUT_URI", getEnv("FRONTEND_URL", getEnv("CORS_ORIGIN", "http://localhost:3000"))+"/login"),
-		OidcSyncRoles:        getEnv("OIDC_SYNC_ROLES", "") == "true",
-		OidcAdminGroup:       getEnv("OIDC_ADMIN_GROUP", ""),
-		OidcSuperadminGroup:  getEnv("OIDC_SUPERADMIN_GROUP", ""),
-		OidcHostManagerGroup: getEnv("OIDC_HOST_MANAGER_GROUP", ""),
-		OidcReadonlyGroup:    getEnv("OIDC_READONLY_GROUP", ""),
-		OidcUserGroup:        getEnv("OIDC_USER_GROUP", ""),
-		OidcEnforceHTTPS:     getEnv("OIDC_ENFORCE_HTTPS", "true") != "false",
+		OidcEnabled:              getEnv("OIDC_ENABLED", "") == "true",
+		OidcIssuerURL:            getEnv("OIDC_ISSUER_URL", ""),
+		OidcClientID:             getEnv("OIDC_CLIENT_ID", ""),
+		OidcClientSecret:         getEnv("OIDC_CLIENT_SECRET", ""),
+		OidcRedirectURI:          getEnv("OIDC_REDIRECT_URI", ""),
+		OidcScopes:               getEnv("OIDC_SCOPES", "openid email profile groups"),
+		OidcAutoCreateUsers:      getEnv("OIDC_AUTO_CREATE_USERS", "") == "true",
+		OidcDefaultRole:          getEnv("OIDC_DEFAULT_ROLE", "user"),
+		OidcDisableLocalAuth:     getEnv("OIDC_DISABLE_LOCAL_AUTH", "") == "true",
+		OidcButtonText:           getEnv("OIDC_BUTTON_TEXT", "Login with SSO"),
+		OidcSessionTTL:           getEnvInt("OIDC_SESSION_TTL", 600),
+		OidcPostLogoutURI:        getEnv("OIDC_POST_LOGOUT_URI", getEnv("FRONTEND_URL", getEnv("CORS_ORIGIN", "http://localhost:3000"))+"/login"),
+		OidcSyncRoles:            getEnv("OIDC_SYNC_ROLES", "") == "true",
+		OidcAdminGroup:           getEnv("OIDC_ADMIN_GROUP", ""),
+		OidcSuperadminGroup:      getEnv("OIDC_SUPERADMIN_GROUP", ""),
+		OidcHostManagerGroup:     getEnv("OIDC_HOST_MANAGER_GROUP", ""),
+		OidcReadonlyGroup:        getEnv("OIDC_READONLY_GROUP", ""),
+		OidcUserGroup:            getEnv("OIDC_USER_GROUP", ""),
+		OidcEnforceHTTPS:         getEnv("OIDC_ENFORCE_HTTPS", "true") != "false",
+		OidcTrustUnverifiedEmail: getEnv("OIDC_TRUST_UNVERIFIED_EMAIL", "") == "true",
 
 		SSGContentDir:         getEnv("SSG_CONTENT_DIR", "./ssg-content"),
 		AdminMode:             getEnv("ADMIN_MODE", "") == "on",

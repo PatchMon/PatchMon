@@ -372,14 +372,24 @@ func (h *OidcHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	matchedBySub := user != nil && user.OidcSub != nil && *user.OidcSub == userInfo.Sub
 
 	// An email match, or auto-create, means the email claim decides who this is,
-	// so it has to be verified.
+	// so it has to be verified. OIDC_TRUST_UNVERIFIED_EMAIL waives that for
+	// operators whose provider cannot assert it; the log line records every use
+	// so a relaxed deployment is visible after the fact.
 	if !matchedBySub && !userInfo.EmailVerified {
-		if h.log != nil {
-			h.log.Warn("oidc login rejected: unverified email claim",
-				"email", userInfo.Email, "sub", userInfo.Sub)
+		if h.oidcTrustUnverifiedEmail(r.Context()) {
+			if h.log != nil {
+				h.log.Warn("oidc accepting unverified email: trust_unverified_email is enabled",
+					"email", userInfo.Email, "sub", userInfo.Sub)
+			}
+		} else {
+			if h.log != nil {
+				h.log.Warn("oidc login rejected: unverified email claim",
+					"email", userInfo.Email, "sub", userInfo.Sub,
+					"hint", "provider sent neither email_verified nor xms_edov; see the operator guide, The verified email requirement")
+			}
+			http.Redirect(w, r, "/login?error=Unable+to+sign+in+with+this+account", http.StatusFound)
+			return
 		}
-		http.Redirect(w, r, "/login?error=Unable+to+sign+in+with+this+account", http.StatusFound)
-		return
 	}
 
 	if user == nil && h.oidcAutoCreateUsers(r.Context()) {
@@ -523,6 +533,7 @@ func (h *OidcHandler) ImportFromEnv(w http.ResponseWriter, r *http.Request) {
 	s.OidcReadonlyGroup = strOrNil(strings.TrimSpace(h.cfg.OidcReadonlyGroup))
 	s.OidcUserGroup = strOrNil(strings.TrimSpace(h.cfg.OidcUserGroup))
 	s.OidcEnforceHTTPS = h.cfg.OidcEnforceHTTPS
+	s.OidcTrustUnverifiedEmail = h.cfg.OidcTrustUnverifiedEmail
 	if secret := strings.TrimSpace(h.cfg.OidcClientSecret); secret != "" && h.enc != nil {
 		encrypted, err := h.enc.Encrypt(secret)
 		if err == nil {
@@ -614,6 +625,7 @@ func oidcSettingsResponse(s *models.Settings, secretSet *bool, configuredViaEnv 
 		res["oidc_readonly_group"] = s.OidcReadonlyGroup
 		res["oidc_user_group"] = s.OidcUserGroup
 		res["oidc_enforce_https"] = s.OidcEnforceHTTPS
+		res["oidc_trust_unverified_email"] = s.OidcTrustUnverifiedEmail
 	}
 	if secretSet != nil {
 		res["oidc_client_secret_set"] = *secretSet
@@ -715,6 +727,9 @@ func applyOidcSettingsUpdate(s *models.Settings, req map[string]interface{}, enc
 	}
 	if v, ok := getReqBool(req, "oidc_enforce_https", "oidcEnforceHttps"); ok {
 		s.OidcEnforceHTTPS = v
+	}
+	if v, ok := getReqBool(req, "oidc_trust_unverified_email", "oidcTrustUnverifiedEmail"); ok {
+		s.OidcTrustUnverifiedEmail = v
 	}
 }
 
@@ -818,6 +833,13 @@ func (h *OidcHandler) oidcAutoCreateUsers(ctx context.Context) bool {
 		return r.AutoCreateUsers
 	}
 	return h.cfg.OidcAutoCreateUsers
+}
+
+func (h *OidcHandler) oidcTrustUnverifiedEmail(ctx context.Context) bool {
+	if r := h.resolvedSnapshot(ctx); r != nil {
+		return r.TrustUnverifiedEmail
+	}
+	return h.cfg.OidcTrustUnverifiedEmail
 }
 
 func (h *OidcHandler) oidcSyncRoles(ctx context.Context) bool {

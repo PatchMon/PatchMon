@@ -627,6 +627,7 @@ type Setting struct {
 	OidcReadonlyGroup               *string          `json:"oidc_readonly_group"`
 	OidcUserGroup                   *string          `json:"oidc_user_group"`
 	OidcEnforceHttps                bool             `json:"oidc_enforce_https"`
+	OidcTrustUnverifiedEmail        bool             `json:"oidc_trust_unverified_email"`
 	MaxLoginAttempts                *int32           `json:"max_login_attempts"`
 	LockoutDurationMinutes          *int32           `json:"lockout_duration_minutes"`
 	SessionInactivityTimeoutMinutes *int32           `json:"session_inactivity_timeout_minutes"`

@@ -160,6 +160,7 @@ type Settings struct {
 	OidcReadonlyGroup               *string    `db:"oidc_readonly_group"`
 	OidcUserGroup                   *string    `db:"oidc_user_group"`
 	OidcEnforceHTTPS                bool       `db:"oidc_enforce_https"`
+	OidcTrustUnverifiedEmail        bool       `db:"oidc_trust_unverified_email"`
 	MaxLoginAttempts                *int       `db:"max_login_attempts"`
 	LockoutDurationMinutes          *int       `db:"lockout_duration_minutes"`
 	SessionInactivityTimeoutMinutes *int       `db:"session_inactivity_timeout_minutes"`
