@@ -218,11 +218,17 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 			userInfoClaims["email"] = oidcUserInfo.Email
 			// Only record a positive assertion. go-oidc decodes a missing
 			// email_verified into the zero value, so writing it unconditionally
-			// fabricates an explicit "false" for every provider that omits the
-			// claim, which is indistinguishable from one that denies it. The
-			// xms_edov fallback below depends on telling those apart. An
-			// explicit false really sent by the provider is restored by the
-			// extraClaims merge underneath.
+			// would fabricate an explicit "false" for every provider that omits
+			// the claim, making it indistinguishable from one that denies it.
+			// The xms_edov fallback depends on telling those apart.
+			//
+			// Every branch below now overwrites this, so it is belt-and-braces
+			// rather than load-bearing: the merge wins when the raw claims
+			// decode, the else wins when they do not, and the normalisation
+			// after that covers a non-canonical key. Kept so that removing any
+			// single one of those still leaves the invariant intact. Do not
+			// reason about this block as if it were the only thing setting the
+			// claim.
 			if oidcUserInfo.EmailVerified {
 				userInfoClaims["email_verified"] = true
 			}
