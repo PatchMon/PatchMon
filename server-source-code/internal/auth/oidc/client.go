@@ -249,12 +249,13 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 	idClaims := make(map[string]interface{})
 	_ = idToken.Claims(&idClaims)
 
-	userInfo.Email = getStringClaim(userInfoClaims, idClaims, "email")
+	email, emailFromIDToken := lookupStringClaim(userInfoClaims, idClaims, "email")
+	userInfo.Email = email
 	if userInfo.Email == "" {
 		return nil, errors.New("oidc: no email in UserInfo or id_token")
 	}
 
-	userInfo.EmailVerified, userInfo.EmailVerifiedReason = resolveEmailVerified(userInfoClaims, idClaims, c.cfg.IssuerURL)
+	userInfo.EmailVerified, userInfo.EmailVerifiedReason = resolveEmailVerified(userInfoClaims, idClaims, emailFromIDToken, c.cfg.IssuerURL)
 	userInfo.Name = getStringClaim(userInfoClaims, idClaims, "name")
 	if userInfo.Name == "" {
 		userInfo.Name = getStringClaim(userInfoClaims, idClaims, "preferred_username")
@@ -407,17 +408,36 @@ func fetchMicrosoftGraphPhotoDataURL(ctx context.Context, token *oauth2.Token) (
 }
 
 func getStringClaim(primary, fallback map[string]interface{}, key string) string {
-	if v, ok := primary[key]; ok && v != nil {
-		if s, ok := v.(string); ok {
-			return s
+	v, _ := lookupStringClaim(primary, fallback, key)
+	return v
+}
+
+// Empty counts as absent. Arrays are the ADFS encoding; strings return verbatim
+// because a padded value may already be stored against an account.
+func lookupStringClaim(primary, fallback map[string]interface{}, key string) (value string, fromFallback bool) {
+	for i, claims := range []map[string]interface{}{primary, fallback} {
+		v, ok := claims[key]
+		if !ok || v == nil {
+			continue
+		}
+		switch t := v.(type) {
+		case string:
+			if strings.TrimSpace(t) != "" {
+				return t, i == 1
+			}
+		case []interface{}:
+			for _, item := range t {
+				s, ok := item.(string)
+				if !ok {
+					continue
+				}
+				if s = strings.TrimSpace(s); s != "" {
+					return s, i == 1
+				}
+			}
 		}
 	}
-	if v, ok := fallback[key]; ok && v != nil {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
+	return "", false
 }
 
 // lookupBoolClaim reports a boolean claim's value and whether it was found in a
@@ -430,19 +450,34 @@ func lookupBoolClaim(primary, fallback map[string]interface{}, key string) (valu
 		if !ok || v == nil {
 			continue
 		}
-		switch t := v.(type) {
-		case bool:
-			return t, true
-		case string:
-			switch strings.ToLower(strings.TrimSpace(t)) {
-			case "true", "1", "yes":
-				return true, true
-			case "false", "0", "no", "":
-				return false, true
-			}
-		case float64: // encoding/json decodes all JSON numbers as float64
-			return t != 0, true
+		if b, ok := decodeBoolClaim(v); ok {
+			return b, true
 		}
+		// Same ADFS array encoding lookupStringClaim handles.
+		if arr, ok := v.([]interface{}); ok {
+			for _, item := range arr {
+				if b, ok := decodeBoolClaim(item); ok {
+					return b, true
+				}
+			}
+		}
+	}
+	return false, false
+}
+
+func decodeBoolClaim(v interface{}) (value, ok bool) {
+	switch t := v.(type) {
+	case bool:
+		return t, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(t)) {
+		case "true", "1", "yes":
+			return true, true
+		case "false", "0", "no", "":
+			return false, true
+		}
+	case float64: // encoding/json decodes all JSON numbers as float64
+		return t != 0, true
 	}
 	return false, false
 }
@@ -455,8 +490,14 @@ func lookupBoolClaim(primary, fallback map[string]interface{}, key string) (valu
 // an explicit false is a denial and is never overridden. It is accepted only
 // from a Microsoft issuer, because an IdP with user-controlled claim mapping
 // could otherwise forge it, and only from the signature-verified ID token.
-func resolveEmailVerified(primary, fallback map[string]interface{}, issuerURL string) (bool, string) {
-	if v, found := lookupBoolClaim(primary, fallback, "email_verified"); found {
+// emailFromFallback makes the map that supplied the email win, so an unsigned
+// UserInfo assertion cannot override a signed denial in the ID token.
+func resolveEmailVerified(primary, fallback map[string]interface{}, emailFromFallback bool, issuerURL string) (bool, string) {
+	first, second := primary, fallback
+	if emailFromFallback {
+		first, second = fallback, primary
+	}
+	if v, found := lookupBoolClaim(first, second, "email_verified"); found {
 		if v {
 			return true, ""
 		}
