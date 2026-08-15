@@ -39,6 +39,11 @@ const ComplianceSettings = () => {
 		staleTime: 30 * 60 * 1000,
 	});
 
+	// Datastreams present, not a version string, is what "configured" means. A
+	// server can hold content whose release it cannot name, and that is still
+	// content.
+	const ssgFileCount = serverSSGInfo?.files?.length ?? 0;
+
 	// Never hydrate over unsaved edits: a refetch would otherwise discard them.
 	useEffect(() => {
 		if (!settings || isDirty) return;
@@ -215,11 +220,13 @@ const ComplianceSettings = () => {
 						<h3 className="text-sm font-semibold text-secondary-900 dark:text-white">
 							OpenSCAP Content
 						</h3>
-						{serverSSGInfo?.version && (
+						{(serverSSGInfo?.version || ssgFileCount > 0) && (
 							<span className="text-xs text-secondary-400 dark:text-secondary-500">
-								SSG {serverSSGInfo.version}
-								{serverSSGInfo.files?.length > 0 &&
-									` · ${serverSSGInfo.files.length} file${serverSSGInfo.files.length !== 1 ? "s" : ""}`}
+								{serverSSGInfo.version
+									? `SSG ${serverSSGInfo.version}`
+									: "SSG version unknown"}
+								{ssgFileCount > 0 &&
+									` · ${ssgFileCount} file${ssgFileCount !== 1 ? "s" : ""}`}
 							</span>
 						)}
 					</div>
@@ -235,10 +242,24 @@ const ComplianceSettings = () => {
 					</button>
 				</div>
 
-				{!serverSSGInfo?.version && serverSSGInfo !== undefined && (
+				{serverSSGInfo !== undefined && ssgFileCount === 0 && (
 					<p className="text-sm text-secondary-500 dark:text-secondary-400 mt-2">
 						No SSG content configured on server
 					</p>
+				)}
+
+				{/* Content the server cannot name is content it will not hand out: the
+				    agent endpoint refuses it, so hosts stay on old rules. Staying quiet
+				    here would repeat the failure this panel just stopped having. */}
+				{ssgFileCount > 0 && !serverSSGInfo.version && (
+					<div className="mt-2 p-3 bg-danger-50 dark:bg-danger-900 border border-danger-200 dark:border-danger-700 rounded-md">
+						<p className="text-sm text-danger-700 dark:text-danger-300">
+							SSG content is present but its release could not be determined, so
+							hosts cannot be updated from it. Add a .ssg-version file to the
+							content directory containing the release number, for example
+							0.1.81.
+						</p>
+					</div>
 				)}
 
 				{showProfiles && (

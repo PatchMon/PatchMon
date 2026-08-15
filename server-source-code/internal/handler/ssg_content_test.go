@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/PatchMon/PatchMon/server-source-code/internal/ssgcontent"
 )
 
 // ssgHandler builds a ComplianceHandler wired to nothing but a content
@@ -107,15 +109,15 @@ func TestSSGFilenameRegexRejectsTraversal(t *testing.T) {
 		"",
 	}
 	for _, name := range rejected {
-		if ssgFilenameRe.MatchString(name) {
-			t.Errorf("ssgFilenameRe accepted %q, want rejected", name)
+		if ssgcontent.FilenameRe.MatchString(name) {
+			t.Errorf("ssgcontent.FilenameRe accepted %q, want rejected", name)
 		}
 	}
 
 	accepted := []string{"ssg-debian13-ds.xml", "ssg-ubuntu2404-ds.xml", "ssg-rhel9-ds.xml"}
 	for _, name := range accepted {
-		if !ssgFilenameRe.MatchString(name) {
-			t.Errorf("ssgFilenameRe rejected %q, want accepted", name)
+		if !ssgcontent.FilenameRe.MatchString(name) {
+			t.Errorf("ssgcontent.FilenameRe rejected %q, want accepted", name)
 		}
 	}
 }
@@ -185,9 +187,59 @@ func TestReadSSGVersion(t *testing.T) {
 		t.Errorf("readSSGVersion() = %q, want %q", got, "0.1.81")
 	}
 	if got := ssgHandler(t.TempDir()).readSSGVersion(); got != "" {
-		t.Errorf("readSSGVersion() with no marker = %q, want empty", got)
+		t.Errorf("readSSGVersion() with no content = %q, want empty", got)
 	}
 	if got := ssgHandler("").readSSGVersion(); got != "" {
 		t.Errorf("readSSGVersion() with no dir = %q, want empty", got)
+	}
+}
+
+// Content laid down from the upstream ComplianceAsCode release has no
+// .ssg-version marker, which used to read as an empty content directory: the UI
+// said nothing was configured and agents were turned away with a 503 while the
+// datastreams sat right there on disk (#1060).
+func TestSSGContentWithoutMarkerIsStillServed(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	body := `<?xml version="1.0" encoding="utf-8"?>
+<ds:data-stream-collection xmlns:ds="http://scap.nist.gov/schema/scap/source/1.2" xmlns:xccdf-1.2="http://checklists.nist.gov/xccdf/1.2">
+  <ds:component id="scap_org.open-scap_comp_ssg-debian13-xccdf.xml">
+    <xccdf-1.2:Benchmark>
+      <xccdf-1.2:version update="https://github.com/ComplianceAsCode/content/releases/latest">0.1.81</xccdf-1.2:version>
+    </xccdf-1.2:Benchmark>
+  </ds:component>
+</ds:data-stream-collection>`
+	if err := os.WriteFile(filepath.Join(dir, "ssg-debian13-ds.xml"), []byte(body), 0o600); err != nil {
+		t.Fatalf("write datastream: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".ssg-version")); !os.IsNotExist(err) {
+		t.Fatalf("marker should be absent, stat err = %v", err)
+	}
+
+	h := ssgHandler(dir)
+
+	payload, ok := h.agentSSGVersionPayload()
+	if !ok {
+		t.Fatal("ok = false with unmarked content, want true so agents are served")
+	}
+	if payload["version"] != "0.1.81" {
+		t.Errorf("version = %v, want %q", payload["version"], "0.1.81")
+	}
+
+	rec := httptest.NewRecorder()
+	h.SSGVersion(rec, httptest.NewRequest(http.MethodGet, "/compliance/ssg-info", nil))
+	var got struct {
+		Version string   `json:"version"`
+		Files   []string `json:"files"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Version != "0.1.81" {
+		t.Errorf("version = %q, want %q", got.Version, "0.1.81")
+	}
+	if len(got.Files) != 1 {
+		t.Errorf("files = %v, want one datastream", got.Files)
 	}
 }
