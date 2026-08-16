@@ -1138,7 +1138,5 @@ func (h *InstallHandler) ServeAgentDownload(w http.ResponseWriter, r *http.Reque
 	}
 	defer func() { _ = f.Close() }()
 
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, binaryName))
-	http.ServeContent(w, r, binaryName, info.ModTime(), f)
+	serveAgentBinary(w, r, binaryName, info, f)
 }
