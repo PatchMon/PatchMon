@@ -1138,5 +1138,5 @@ func (h *InstallHandler) ServeAgentDownload(w http.ResponseWriter, r *http.Reque
 	}
 	defer func() { _ = f.Close() }()
 
-	serveAgentBinary(w, r, binaryName, info, f)
+	serveAgentBinary(w, r, binaryPath, info, f)
 }

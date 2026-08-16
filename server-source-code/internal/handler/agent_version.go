@@ -218,7 +218,7 @@ func (h *AgentVersionHandler) ServeAgentDownload(w http.ResponseWriter, r *http.
 		return
 	}
 	defer func() { _ = f.Close() }()
-	serveAgentBinary(w, r, binaryName, info, f)
+	serveAgentBinary(w, r, binaryPath, info, f)
 }
 
 // CheckForUpdates refreshes the upstream version from DNS and reports whether

@@ -5,12 +5,15 @@ import (
 	"compress/gzip"
 	"crypto/rand"
 	"crypto/sha256"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestAcceptsGzip(t *testing.T) {
@@ -60,8 +63,19 @@ func compressibleBinary(t *testing.T, size int) (string, []byte) {
 	return path, data
 }
 
+func resetAgentGzipCache(t *testing.T) {
+	t.Helper()
+
+	agentGzipCache.Range(func(k, _ interface{}) bool {
+		agentGzipCache.Delete(k)
+		return true
+	})
+	agentGzipFills.Store(0)
+}
+
 func binaryServer(t *testing.T, path string) *httptest.Server {
 	t.Helper()
+	resetAgentGzipCache(t)
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f, err := os.Open(path)
@@ -76,7 +90,7 @@ func binaryServer(t *testing.T, path string) *httptest.Server {
 			t.Errorf("stat: %v", err)
 			return
 		}
-		serveAgentBinary(w, r, filepath.Base(path), info, f)
+		serveAgentBinary(w, r, path, info, f)
 	}))
 }
 
@@ -247,68 +261,6 @@ func TestServeAgentBinaryConditionalRequestStillAnswers304(t *testing.T) {
 	}
 }
 
-func TestServeAgentBinaryFallsBackToIdentityWhenSlotsExhausted(t *testing.T) {
-	path, want := compressibleBinary(t, 64*1024)
-	srv := binaryServer(t, path)
-	defer srv.Close()
-
-	for i := 0; i < maxConcurrentAgentGzip; i++ {
-		agentGzipSlots <- struct{}{}
-	}
-	defer func() {
-		for i := 0; i < maxConcurrentAgentGzip; i++ {
-			<-agentGzipSlots
-		}
-	}()
-
-	req, err := http.NewRequest(http.MethodGet, srv.URL, nil)
-	if err != nil {
-		t.Fatalf("request: %v", err)
-	}
-	req.Header.Set("Accept-Encoding", "gzip")
-
-	client := &http.Client{Transport: &http.Transport{DisableCompression: true}}
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("do: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if enc := resp.Header.Get("Content-Encoding"); enc != "" {
-		t.Fatalf("Content-Encoding = %q, want empty once slots are exhausted", enc)
-	}
-	if resp.ContentLength != int64(len(want)) {
-		t.Fatalf("Content-Length = %d, want %d", resp.ContentLength, len(want))
-	}
-
-	got, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if sha256.Sum256(got) != sha256.Sum256(want) {
-		t.Fatal("fallback response does not match the source file")
-	}
-}
-
-func TestServeAgentBinarySlotsAreReleased(t *testing.T) {
-	path, _ := compressibleBinary(t, 32*1024)
-	srv := binaryServer(t, path)
-	defer srv.Close()
-
-	for i := 0; i < maxConcurrentAgentGzip+4; i++ {
-		resp, err := srv.Client().Get(srv.URL)
-		if err != nil {
-			t.Fatalf("get %d: %v", i, err)
-		}
-		_, _ = io.Copy(io.Discard, resp.Body)
-		_ = resp.Body.Close()
-	}
-
-	if len(agentGzipSlots) != 0 {
-		t.Fatalf("%d slots still held after sequential requests", len(agentGzipSlots))
-	}
-}
-
 func TestServeAgentBinaryPooledWritersDoNotBleed(t *testing.T) {
 	path, want := compressibleBinary(t, 128*1024)
 	srv := binaryServer(t, path)
@@ -327,5 +279,167 @@ func TestServeAgentBinaryPooledWritersDoNotBleed(t *testing.T) {
 		if sha256.Sum256(got) != sha256.Sum256(want) {
 			t.Fatalf("response %d does not match the source file", i)
 		}
+	}
+}
+
+func TestServeAgentBinaryCompressesOnlyOncePerBinary(t *testing.T) {
+	path, want := compressibleBinary(t, 256*1024)
+	srv := binaryServer(t, path)
+	defer srv.Close()
+
+	for i := 0; i < 12; i++ {
+		resp, err := srv.Client().Get(srv.URL)
+		if err != nil {
+			t.Fatalf("get %d: %v", i, err)
+		}
+		got, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			t.Fatalf("read %d: %v", i, err)
+		}
+		if sha256.Sum256(got) != sha256.Sum256(want) {
+			t.Fatalf("response %d does not match the source file", i)
+		}
+	}
+
+	if n := agentGzipFills.Load(); n != 1 {
+		t.Fatalf("compressed %d times across 12 requests, want 1", n)
+	}
+}
+
+func TestServeAgentBinaryConcurrentColdRequestsCompressOnce(t *testing.T) {
+	path, want := compressibleBinary(t, 512*1024)
+	srv := binaryServer(t, path)
+	defer srv.Close()
+
+	const callers = 32
+	var wg sync.WaitGroup
+	errs := make(chan error, callers)
+	start := make(chan struct{})
+
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			resp, err := srv.Client().Get(srv.URL)
+			if err != nil {
+				errs <- err
+				return
+			}
+			got, err := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if err != nil {
+				errs <- err
+				return
+			}
+			if sha256.Sum256(got) != sha256.Sum256(want) {
+				errs <- fmt.Errorf("payload mismatch")
+			}
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent caller: %v", err)
+	}
+
+	if n := agentGzipFills.Load(); n != 1 {
+		t.Fatalf("compressed %d times across %d concurrent cold requests, want 1", n, callers)
+	}
+}
+
+func TestServeAgentBinaryRecompressesWhenBinaryReplaced(t *testing.T) {
+	path, _ := compressibleBinary(t, 128*1024)
+	srv := binaryServer(t, path)
+	defer srv.Close()
+
+	resp, err := srv.Client().Get(srv.URL)
+	if err != nil {
+		t.Fatalf("first get: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	replacement := make([]byte, 128*1024)
+	for i := range replacement {
+		replacement[i] = byte('a' + i%23)
+	}
+	if err := os.WriteFile(path, replacement, 0o600); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	if err := os.Chtimes(path, time.Now().Add(time.Hour), time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	resp2, err := srv.Client().Get(srv.URL)
+	if err != nil {
+		t.Fatalf("second get: %v", err)
+	}
+	got, err := io.ReadAll(resp2.Body)
+	_ = resp2.Body.Close()
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	if sha256.Sum256(got) != sha256.Sum256(replacement) {
+		t.Fatal("served the stale cached copy after the binary was replaced")
+	}
+	if n := agentGzipFills.Load(); n != 2 {
+		t.Fatalf("compressed %d times, want 2 after a replacement", n)
+	}
+}
+
+func TestEvictIdleAgentGzipDropsOnlyStaleEntries(t *testing.T) {
+	resetAgentGzipCache(t)
+
+	fresh := &agentGzipEntry{data: []byte("fresh"), size: 5}
+	fresh.lastAccess.Store(time.Now().UnixNano())
+	agentGzipCache.Store("/fresh", fresh)
+
+	stale := &agentGzipEntry{data: []byte("stale"), size: 5}
+	stale.lastAccess.Store(time.Now().Add(-agentGzipIdleTTL - time.Minute).UnixNano())
+	agentGzipCache.Store("/stale", stale)
+
+	if evicted := evictIdleAgentGzip(time.Now()); evicted != 1 {
+		t.Fatalf("evicted %d entries, want 1", evicted)
+	}
+	if _, ok := agentGzipCache.Load("/fresh"); !ok {
+		t.Fatal("evicted an entry that was still in use")
+	}
+	if _, ok := agentGzipCache.Load("/stale"); ok {
+		t.Fatal("kept an entry idle past the TTL")
+	}
+}
+
+func TestServeAgentBinaryCachedResponseCarriesContentLength(t *testing.T) {
+	path, _ := compressibleBinary(t, 256*1024)
+	srv := binaryServer(t, path)
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Accept-Encoding", "gzip")
+
+	client := &http.Client{Transport: &http.Transport{DisableCompression: true}}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.ContentLength <= 0 {
+		t.Fatalf("ContentLength = %d, want a positive length on the gzip path", resp.ContentLength)
+	}
+	wire, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if int64(len(wire)) != resp.ContentLength {
+		t.Fatalf("read %d bytes, Content-Length said %d", len(wire), resp.ContentLength)
 	}
 }
