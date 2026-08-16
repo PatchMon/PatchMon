@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"patchmon-agent/internal/client"
@@ -29,6 +31,12 @@ import (
 const (
 	serverTimeout       = 30 * time.Second
 	versionCheckTimeout = 10 * time.Second // Shorter timeout for version checks
+
+	// The binary download is deliberately bounded by progress, not by a total
+	// deadline: 12MB inside 30s needs 3.2Mbit/s that a 200ms RTT link cannot reach.
+	downloadHeaderTimeout = 30 * time.Second
+	downloadStallTimeout  = 60 * time.Second
+	downloadMaxTimeout    = 30 * time.Minute
 )
 
 // agentVersionOutputRe parses the version out of `patchmon-agent --version`,
@@ -484,6 +492,22 @@ func getServerVersionInfo() (*ServerVersionInfo, error) {
 	return &versionInfo, nil
 }
 
+// stallReader restarts the idle timer whenever bytes arrive, so a download is
+// abandoned only when the link goes quiet rather than when it is merely slow.
+type stallReader struct {
+	r     io.Reader
+	timer *time.Timer
+	idle  time.Duration
+}
+
+func (s *stallReader) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	if n > 0 {
+		s.timer.Reset(s.idle)
+	}
+	return n, err
+}
+
 // getLatestBinaryFromServer fetches the latest binary information from the PatchMon server
 func getLatestBinaryFromServer() (*ServerVersionResponse, error) {
 	cfgManager := config.New()
@@ -502,7 +526,7 @@ func getLatestBinaryFromServer() (*ServerVersionResponse, error) {
 	platform := getPlatform()
 	url := fmt.Sprintf("%s/api/v1/hosts/agent/download?arch=%s&os=%s", cfg.PatchmonServer, architecture, platform)
 
-	ctx, cancel := context.WithTimeout(context.Background(), serverTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), downloadMaxTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -514,20 +538,31 @@ func getLatestBinaryFromServer() (*ServerVersionResponse, error) {
 	req.Header.Set("X-API-ID", credentials.APIID)
 	req.Header.Set("X-API-KEY", credentials.APIKey)
 
-	// Operator-gated insecure TLS for lab/air-gapped deployments.
-	// WARNING: This is dangerous for binary downloads even with hash verification!
-	httpClient := http.DefaultClient
-	if cfg.SkipSSLVerify || client.IsSkipSSLVerifyEnvSet() {
-		logger.Warn("TLS verification disabled for binary download")
-		httpClient = &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true,
-				},
-			},
-		}
+	// Leave Accept-Encoding unset so the transport negotiates gzip and unwraps it
+	// for us; setting it by hand would hand back a compressed body we then hash.
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   30 * time.Second,
+		ResponseHeaderTimeout: downloadHeaderTimeout,
 	}
 
+	// Operator-gated insecure TLS for lab/air-gapped deployments.
+	// WARNING: This is dangerous for binary downloads even with hash verification!
+	if cfg.SkipSSLVerify || client.IsSkipSSLVerifyEnvSet() {
+		logger.Warn("TLS verification disabled for binary download")
+		transport.TLSClientConfig = &tls.Config{
+			InsecureSkipVerify: true,
+		}
+	}
+	defer transport.CloseIdleConnections()
+
+	httpClient := &http.Client{Transport: transport}
+
+	started := time.Now()
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -542,14 +577,28 @@ func getLatestBinaryFromServer() (*ServerVersionResponse, error) {
 		return nil, fmt.Errorf("server returned status %d", resp.StatusCode)
 	}
 
+	var stalled atomic.Bool
+	stallTimer := time.AfterFunc(downloadStallTimeout, func() {
+		stalled.Store(true)
+		cancel()
+	})
+	defer stallTimer.Stop()
+
 	// SECURITY: Limit binary download size to prevent DoS attacks
 	// Max 100MB should be more than enough for the agent binary
 	const maxBinarySize = 100 * 1024 * 1024
-	limitedReader := io.LimitReader(resp.Body, maxBinarySize+1)
+	limitedReader := io.LimitReader(&stallReader{
+		r:     resp.Body,
+		timer: stallTimer,
+		idle:  downloadStallTimeout,
+	}, maxBinarySize+1)
 
 	// Read the binary data with size limit
 	binaryData, err := io.ReadAll(limitedReader)
 	if err != nil {
+		if stalled.Load() {
+			return nil, fmt.Errorf("download stalled: no data received for %s after %d bytes", downloadStallTimeout, len(binaryData))
+		}
 		return nil, fmt.Errorf("failed to read binary data: %w", err)
 	}
 
@@ -557,6 +606,12 @@ func getLatestBinaryFromServer() (*ServerVersionResponse, error) {
 	if int64(len(binaryData)) > maxBinarySize {
 		return nil, fmt.Errorf("binary size exceeds maximum allowed (%d MB)", maxBinarySize/(1024*1024))
 	}
+
+	logger.WithFields(map[string]interface{}{
+		"bytes":      len(binaryData),
+		"elapsed_ms": time.Since(started).Milliseconds(),
+		"compressed": resp.Uncompressed,
+	}).Info("Agent binary downloaded")
 
 	// Calculate hash
 	hash := fmt.Sprintf("%x", sha256.Sum256(binaryData))
