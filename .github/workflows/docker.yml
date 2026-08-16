@@ -86,9 +86,127 @@ jobs:
           name: agent-binaries
           path: agents-prebuilt/
 
+  build-server-binaries:
+    name: Build server binaries
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name != 'pull_request_target' ||
+      github.event.pull_request.head.repo.full_name == github.repository ||
+      contains(join(github.event.pull_request.labels.*.name, ', '), 'approved-for-build')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.ref }}
+          fetch-depth: 0
+
+      # On a release tag this also writes the release notes into
+      # release_notes_data/ so //go:embed compiles them in. Nothing is committed.
+      - name: Resolve version and inject release notes
+        id: ctx
+        uses: ./.github/actions/release-context
+        with:
+          token: ${{ github.token }}
+
+      - name: Fetch community counts
+        id: social
+        # Bakes the current GitHub/Discord/YouTube/LinkedIn counts into every
+        # binary, so an install from a release asset shows the same numbers as
+        # one from the image. patchmon.net/socialstats is public, so this works
+        # on forks with no secrets.
+        #
+        # Never fails the build: an unreachable endpoint leaves the count empty
+        # and the server keeps its compiled-in default, while a deliberate 0
+        # hides that number instead.
+        continue-on-error: true
+        run: |
+          for platform in github discord youtube linkedin; do
+            count="$(curl -fsS --max-time 10 --retry 2 --retry-delay 2 \
+              "https://patchmon.net/socialstats/${platform}" 2>/dev/null || true)"
+            count="$(printf '%s' "$count" | tr -dc '0-9')"
+            if [ -z "$count" ]; then
+              echo "::notice::no count for ${platform}; keeping compiled-in default"
+            else
+              echo "${platform}=${count}" >> "$GITHUB_OUTPUT"
+              echo "${platform}: ${count}"
+            fi
+          done
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: "package.json"
+          cache: "npm"
+
+      # Built once for every architecture: the output is static JS/CSS/HTML and
+      # is embedded into each binary by //go:embed.
+      - name: Build frontend for embed
+        run: |
+          npm ci
+          npm run build --workspace=frontend
+          rm -rf server-source-code/cmd/server/static/frontend/dist
+          mkdir -p server-source-code/cmd/server/static/frontend
+          cp -r frontend/dist server-source-code/cmd/server/static/frontend/
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: 'server-source-code/go.mod'
+          cache-dependency-path: 'server-source-code/go.sum'
+
+      # A release needs all four architectures for the release page. Every other
+      # event only needs the two the image is built for, so PRs do not pay for
+      # 386 and arm.
+      - name: Build server binaries
+        working-directory: server-source-code
+        env:
+          CGO_ENABLED: 0
+          VERSION: ${{ steps.ctx.outputs.version }}
+          GITHUB_STARS: ${{ steps.social.outputs.github }}
+          DISCORD_MEMBERS: ${{ steps.social.outputs.discord }}
+          YOUTUBE_SUBSCRIBERS: ${{ steps.social.outputs.youtube }}
+          LINKEDIN_FOLLOWERS: ${{ steps.social.outputs.linkedin }}
+        run: |
+          set -euo pipefail
+          mkdir -p ../server-prebuilt
+
+          SOCIAL_PKG="github.com/PatchMon/PatchMon/server-source-code/internal/social"
+          LDFLAGS="-s -w -X github.com/PatchMon/PatchMon/server-source-code/internal/config.DefaultVersion=${VERSION}"
+          for pair in "GitHubStars:${GITHUB_STARS}" "DiscordMembers:${DISCORD_MEMBERS}" \
+                      "YouTubeSubscribers:${YOUTUBE_SUBSCRIBERS}" "LinkedInFollowers:${LINKEDIN_FOLLOWERS}"; do
+            name="${pair%%:*}"; value="${pair#*:}"
+            [ -n "$value" ] || continue
+            if printf '%s' "$value" | grep -qE '^[0-9]+$'; then
+              LDFLAGS="$LDFLAGS -X $SOCIAL_PKG.$name=$value"
+            else
+              echo "::warning::ignoring non-numeric social count $name='$value'"
+            fi
+          done
+
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            ARCHES="amd64 arm64 386 arm"
+          else
+            ARCHES="amd64 arm64"
+          fi
+          echo "building: $ARCHES"
+
+          for arch in $ARCHES; do
+            export GOOS=linux GOARCH="$arch"
+            case "$arch" in arm) export GOARM=6 ;; *) unset GOARM ;; esac
+            go build -buildvcs=false -ldflags="$LDFLAGS" \
+              -o "../server-prebuilt/patchmon-server-linux-${arch}" ./cmd/server
+          done
+          ls -la ../server-prebuilt
+
+      - name: Upload server binaries
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: server-binaries
+          path: server-prebuilt/
+
   build-server:
     name: Build server image
-    needs: build-agents
+    needs: [build-agents, build-server-binaries]
     runs-on: ubuntu-latest
     # id-token/attestations are scoped to this job rather than the workflow so
     # `build-agents` cannot mint a Sigstore token. They are needed by the
@@ -133,35 +251,17 @@ jobs:
         with:
           token: ${{ github.token }}
 
-      - name: Fetch community counts
-        id: social
-        # Bakes the current GitHub/Discord/YouTube/LinkedIn counts into the
-        # binary so the nav, login footer and setup wizard are accurate as of
-        # the release. patchmon.net/socialstats is public and unauthenticated,
-        # so this works on forks with no secrets configured.
-        #
-        # Never fails the build: an unreachable endpoint leaves the outputs
-        # empty and the server keeps its compiled-in defaults, while a
-        # deliberate 0 from the endpoint hides that number instead.
-        continue-on-error: true
-        run: |
-          for platform in github discord youtube linkedin; do
-            count="$(curl -fsS --max-time 10 --retry 2 --retry-delay 2 \
-              "https://patchmon.net/socialstats/${platform}" 2>/dev/null || true)"
-            count="$(printf '%s' "$count" | tr -dc '0-9')"
-            if [ -z "$count" ]; then
-              echo "::notice::no count for ${platform}; keeping compiled-in default"
-            else
-              echo "${platform}=${count}" >> "$GITHUB_OUTPUT"
-              echo "${platform}: ${count}"
-            fi
-          done
-
       - name: Download agent binaries
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: agent-binaries
           path: agents-prebuilt/
+
+      - name: Download server binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: server-binaries
+          path: server-prebuilt/
 
       - name: Log in to container registry (GHCR)
         if: github.event_name != 'pull_request_target'
@@ -219,12 +319,6 @@ jobs:
           context: .
           file: docker/server.Dockerfile
           platforms: linux/amd64,linux/arm64
-          build-args: |
-            VERSION=${{ steps.ctx.outputs.version }}
-            GITHUB_STARS=${{ steps.social.outputs.github }}
-            DISCORD_MEMBERS=${{ steps.social.outputs.discord }}
-            YOUTUBE_SUBSCRIBERS=${{ steps.social.outputs.youtube }}
-            LINKEDIN_FOLLOWERS=${{ steps.social.outputs.linkedin }}
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -353,12 +447,6 @@ jobs:
           context: .
           file: docker/server.Dockerfile
           platforms: linux/amd64,linux/arm64
-          build-args: |
-            VERSION=${{ steps.ctx.outputs.version }}
-            GITHUB_STARS=${{ steps.social.outputs.github }}
-            DISCORD_MEMBERS=${{ steps.social.outputs.discord }}
-            YOUTUBE_SUBSCRIBERS=${{ steps.social.outputs.youtube }}
-            LINKEDIN_FOLLOWERS=${{ steps.social.outputs.linkedin }}
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
           tags: ${{ steps.meta-harbor.outputs.tags }}
           labels: ${{ steps.meta-harbor.outputs.labels }}
@@ -454,3 +542,93 @@ jobs:
                 image: ${{ env.HARBOR_REGISTRY }}/pr/patchmon-server@${{ steps.build-harbor.outputs.digest }}
             ```
 
+
+  # Release artefacts. Runs only on a tag, and takes its binaries from the two
+  # build jobs above rather than the release page, so there is no cross-workflow
+  # race over which assets exist yet.
+  release-assets:
+    name: Publish release binaries, checksums and provenance
+    needs: [build-agents, build-server-binaries]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      # Generated before the binaries land in dist/ so the scan covers the
+      # source tree only and does not re-catalogue the built artefacts.
+      - name: Generate source SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: sbom-source.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Download agent binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: agent-binaries
+          path: dist/
+
+      - name: Download server binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: server-binaries
+          path: dist/
+
+      - name: Verify binaries
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          expected=14
+          found=$(ls patchmon-* | wc -l)
+          if [ "$found" -ne "$expected" ]; then
+            echo "::error::expected ${expected} binaries, found ${found}"
+            ls -la
+            exit 1
+          fi
+
+          for f in patchmon-*; do
+            chmod +x "$f"
+            case "$f" in
+              *windows*) pattern="PE32|MS Windows" ;;
+              *)         pattern="ELF" ;;
+            esac
+            if ! file "$f" | grep -qE "$pattern"; then
+              echo "::error::${f} is not the expected binary format: $(file "$f")"
+              exit 1
+            fi
+            # CGO is off everywhere, so anything dynamically linked is a
+            # regression that would break on older distributions.
+            if file "$f" | grep -q "dynamically linked"; then
+              echo "::error::${f} is dynamically linked"
+              exit 1
+            fi
+          done
+          file patchmon-*
+
+      - name: Generate SHA256SUMS
+        working-directory: dist
+        run: |
+          sha256sum patchmon-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attest binary provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: 'dist/patchmon-*'
+
+      - name: Upload binaries, checksums and SBOM to release
+        uses: softprops/action-gh-release@b25b93d384199fc0fc8c2e126b2d937a0cbeb2ae
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            dist/patchmon-*
+            dist/SHA256SUMS
+            sbom-source.cdx.json

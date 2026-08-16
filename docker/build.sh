@@ -6,8 +6,9 @@
 # repo declares one, so the version has to be passed into the image build.
 # This script works it out for you and passes it through as a build arg.
 #
-# .dockerignore excludes .git, so the Dockerfile cannot derive the version
-# itself. That is why this wrapper exists rather than a plain `docker build`.
+# The image no longer compiles anything: it copies prebuilt binaries out of
+# agents-prebuilt/ and server-prebuilt/, both gitignored. This script produces
+# them, which is why a plain `docker build` on a clean checkout will not work.
 #
 # Usage:
 #   ./docker/build.sh                      # version from the nearest git tag
@@ -15,11 +16,6 @@
 #                                          # the auto-update path)
 #   ./docker/build.sh --tag mytag          # image tag (default: local)
 #   ./docker/build.sh --skip-agents        # reuse whatever is in agents-prebuilt/
-#
-# Equivalent by hand:
-#   docker build -f docker/server.Dockerfile \
-#     --build-arg VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')" \
-#     -t patchmon-server:local .
 # =============================================================================
 
 set -euo pipefail
@@ -98,13 +94,28 @@ echo "==> Building frontend for embed"
 # silently, on every commit after a local image build.
 npm ci --workspace=frontend --include=dev --include-workspace-root
 npm run build --workspace=frontend
+# Cleared first: Vite emits content-hashed filenames, so copying into an
+# existing dist/ accumulates every past build and embeds them all.
+rm -rf server-source-code/cmd/server/static/frontend/dist
 mkdir -p server-source-code/cmd/server/static/frontend
 cp -r frontend/dist server-source-code/cmd/server/static/frontend/
+
+# The image copies these in rather than compiling; both platforms it supports
+# are built so `docker build --platform` works either way. Community counts are
+# left out, so a local image shows the compiled-in defaults.
+echo "==> Building server binaries for embed"
+mkdir -p server-prebuilt
+for arch in amd64 arm64; do
+  ( cd server-source-code && \
+    GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build -buildvcs=false \
+      -ldflags="-s -w -X github.com/PatchMon/PatchMon/server-source-code/internal/config.DefaultVersion=${VERSION}" \
+      -o "../server-prebuilt/patchmon-server-linux-${arch}" ./cmd/server )
+  echo "    linux/${arch}"
+done
 
 echo "==> Building image patchmon-server:${IMAGE_TAG}"
 docker build \
   -f docker/server.Dockerfile \
-  --build-arg VERSION="$VERSION" \
   -t "patchmon-server:${IMAGE_TAG}" \
   .
 
