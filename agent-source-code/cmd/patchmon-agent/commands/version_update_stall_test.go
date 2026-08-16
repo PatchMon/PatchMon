@@ -3,10 +3,34 @@ package commands
 import (
 	"errors"
 	"io"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+// A second caller must bounce off the guard rather than start its own download
+// and rename its own temporary file over the live binary.
+func TestUpdateAgentAdmitsOneUpdateAtATime(t *testing.T) {
+	if !updateInFlight.CompareAndSwap(false, true) {
+		t.Fatal("guard was already held before the test started")
+	}
+	defer updateInFlight.Store(false)
+
+	err := updateAgent()
+	if err == nil {
+		t.Fatal("expected the second concurrent update to be refused")
+	}
+	if !strings.Contains(err.Error(), "already in progress") {
+		t.Fatalf("error = %v, want an already-in-progress refusal", err)
+	}
+}
+
+func TestUpdateAgentGuardClearsAfterRefusal(t *testing.T) {
+	if updateInFlight.Load() {
+		t.Fatal("guard leaked from an earlier test")
+	}
+}
 
 // slowReader hands back one byte per tick, standing in for a link that is
 // making progress far slower than any fixed download deadline would allow.

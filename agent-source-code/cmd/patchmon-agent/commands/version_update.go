@@ -127,7 +127,17 @@ func checkVersion() error {
 	return nil
 }
 
+// updateInFlight admits one update at a time. Reports run on their own
+// goroutines and the WebSocket loop triggers updates too, so without this two
+// callers can download concurrently and rename over the same live binary.
+var updateInFlight atomic.Bool
+
 func updateAgent() error {
+	if !updateInFlight.CompareAndSwap(false, true) {
+		return fmt.Errorf("update skipped: another update is already in progress")
+	}
+	defer updateInFlight.Store(false)
+
 	logger.Info("Updating agent...")
 
 	// Check if we recently updated to prevent update loops
