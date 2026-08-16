@@ -32,8 +32,6 @@ const (
 	serverTimeout       = 30 * time.Second
 	versionCheckTimeout = 10 * time.Second // Shorter timeout for version checks
 
-	// The binary download is deliberately bounded by progress, not by a total
-	// deadline: 12MB inside 30s needs 3.2Mbit/s that a 200ms RTT link cannot reach.
 	downloadHeaderTimeout = 30 * time.Second
 	downloadStallTimeout  = 60 * time.Second
 	downloadMaxTimeout    = 30 * time.Minute
@@ -127,9 +125,8 @@ func checkVersion() error {
 	return nil
 }
 
-// updateInFlight admits one update at a time. Reports run on their own
-// goroutines and the WebSocket loop triggers updates too, so without this two
-// callers can download concurrently and rename over the same live binary.
+// Without this, a report goroutine and the WebSocket loop can both download and
+// rename over the same live binary.
 var updateInFlight atomic.Bool
 
 func updateAgent() error {
@@ -502,8 +499,6 @@ func getServerVersionInfo() (*ServerVersionInfo, error) {
 	return &versionInfo, nil
 }
 
-// stallReader restarts the idle timer whenever bytes arrive, so a download is
-// abandoned only when the link goes quiet rather than when it is merely slow.
 type stallReader struct {
 	r     io.Reader
 	timer *time.Timer
@@ -550,12 +545,15 @@ func getLatestBinaryFromServer() (*ServerVersionResponse, error) {
 
 	// Leave Accept-Encoding unset so the transport negotiates gzip and unwraps it
 	// for us; setting it by hand would hand back a compressed body we then hash.
+	// Setting DialContext silently disables HTTP/2 unless this is set, which
+	// would quietly downgrade a transport that used to come from DefaultTransport.
 	transport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
+		ForceAttemptHTTP2:     true,
 		TLSHandshakeTimeout:   30 * time.Second,
 		ResponseHeaderTimeout: downloadHeaderTimeout,
 	}

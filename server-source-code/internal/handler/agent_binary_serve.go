@@ -12,13 +12,15 @@ import (
 	"sync"
 )
 
+// Each live compressor holds roughly 800KB of flate state on a heap shared by
+// every context, so concurrency is capped and excess requests serve uncompressed.
+const maxConcurrentAgentGzip = 16
+
+var agentGzipSlots = make(chan struct{}, maxConcurrentAgentGzip)
+
 var agentGzipWriterPool = sync.Pool{
 	New: func() interface{} {
-		w, err := gzip.NewWriterLevel(io.Discard, gzip.BestSpeed)
-		if err != nil {
-			return gzip.NewWriter(io.Discard)
-		}
-		return w
+		return gzip.NewWriter(io.Discard)
 	},
 }
 
@@ -44,18 +46,36 @@ func acceptsGzip(header string) bool {
 	return false
 }
 
+// Byte offsets only mean anything against the identity encoding, and only
+// ServeContent knows how to answer a conditional request, so both stay raw.
+func compressible(r *http.Request) bool {
+	if r.Header.Get("Range") != "" || r.Header.Get("If-Range") != "" {
+		return false
+	}
+	if r.Header.Get("If-None-Match") != "" || r.Header.Get("If-Modified-Since") != "" {
+		return false
+	}
+	return acceptsGzip(r.Header.Get("Accept-Encoding"))
+}
+
 // serveAgentBinary writes an agent binary, compressing it when the client
-// accepts gzip. The binaries are ~12MB raw and ~5MB gzipped, which decides
-// whether a high-latency agent finishes its self-update before timing out.
+// accepts gzip and a compressor slot is free.
 func serveAgentBinary(w http.ResponseWriter, r *http.Request, binaryName string, info os.FileInfo, f *os.File) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, binaryName))
 	w.Header().Add("Vary", "Accept-Encoding")
 
-	// Byte offsets only mean anything against the identity encoding, and only
-	// ServeContent knows how to answer a conditional request, so both stay raw.
-	conditional := r.Header.Get("If-None-Match") != "" || r.Header.Get("If-Modified-Since") != "" || r.Header.Get("If-Range") != ""
-	if r.Header.Get("Range") != "" || conditional || !acceptsGzip(r.Header.Get("Accept-Encoding")) {
+	if !compressible(r) {
+		http.ServeContent(w, r, binaryName, info.ModTime(), f)
+		return
+	}
+
+	// Falling back to the uncompressed path under load is never worse than the
+	// behaviour before compression existed, so a burst degrades instead of failing.
+	select {
+	case agentGzipSlots <- struct{}{}:
+		defer func() { <-agentGzipSlots }()
+	default:
 		http.ServeContent(w, r, binaryName, info.ModTime(), f)
 		return
 	}
@@ -63,12 +83,14 @@ func serveAgentBinary(w http.ResponseWriter, r *http.Request, binaryName string,
 	w.Header().Set("Content-Encoding", "gzip")
 	w.WriteHeader(http.StatusOK)
 
-	gzw, ok := agentGzipWriterPool.Get().(*gzip.Writer)
-	if !ok {
-		gzw = gzip.NewWriter(io.Discard)
-	}
+	gzw := agentGzipWriterPool.Get().(*gzip.Writer)
 	gzw.Reset(w)
-	defer agentGzipWriterPool.Put(gzw)
+	defer func() {
+		// Without this the pooled writer keeps the ResponseWriter, and with it the
+		// connection and request, reachable until the next Get.
+		gzw.Reset(io.Discard)
+		agentGzipWriterPool.Put(gzw)
+	}()
 
 	if _, err := io.Copy(gzw, f); err != nil {
 		slog.Warn("agent binary download interrupted", "name", binaryName, "error", err)

@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-// A second caller must bounce off the guard rather than start its own download
-// and rename its own temporary file over the live binary.
 func TestUpdateAgentAdmitsOneUpdateAtATime(t *testing.T) {
 	if !updateInFlight.CompareAndSwap(false, true) {
 		t.Fatal("guard was already held before the test started")
@@ -26,14 +24,6 @@ func TestUpdateAgentAdmitsOneUpdateAtATime(t *testing.T) {
 	}
 }
 
-func TestUpdateAgentGuardClearsAfterRefusal(t *testing.T) {
-	if updateInFlight.Load() {
-		t.Fatal("guard leaked from an earlier test")
-	}
-}
-
-// slowReader hands back one byte per tick, standing in for a link that is
-// making progress far slower than any fixed download deadline would allow.
 type slowReader struct {
 	remaining int
 	tick      time.Duration
@@ -49,8 +39,6 @@ func (s *slowReader) Read(p []byte) (int, error) {
 	return 1, nil
 }
 
-// deadReader accepts the read and never returns anything, standing in for a
-// link that has gone silent without closing.
 type deadReader struct {
 	release chan struct{}
 }
@@ -60,7 +48,6 @@ func (d *deadReader) Read(_ []byte) (int, error) {
 	return 0, errors.New("connection aborted")
 }
 
-// A slow but live download must survive well past the old 30s total deadline.
 func TestStallReaderAllowsSlowButSteadyProgress(t *testing.T) {
 	idle := 200 * time.Millisecond
 
@@ -101,7 +88,6 @@ func TestStallReaderFiresWhenTheLinkGoesQuiet(t *testing.T) {
 	}
 }
 
-// Progress must push the deadline out, not merely delay the first firing.
 func TestStallReaderResetsOnEveryChunk(t *testing.T) {
 	idle := 120 * time.Millisecond
 

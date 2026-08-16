@@ -41,8 +41,6 @@ func TestAcceptsGzip(t *testing.T) {
 	}
 }
 
-// compressibleBinary writes a file that gzips well, so the test can assert the
-// wire form is genuinely smaller rather than accidentally passing on noise.
 func compressibleBinary(t *testing.T, size int) (string, []byte) {
 	t.Helper()
 
@@ -82,8 +80,6 @@ func binaryServer(t *testing.T, path string) *httptest.Server {
 	}))
 }
 
-// The agent hashes what it reads and compares against the hash of the raw file,
-// so transparent decompression must hand back the exact original bytes.
 func TestServeAgentBinaryGzipRoundTripPreservesHash(t *testing.T) {
 	path, want := compressibleBinary(t, 512*1024)
 	srv := binaryServer(t, path)
@@ -182,8 +178,6 @@ func TestServeAgentBinaryIdentityWhenGzipNotAccepted(t *testing.T) {
 	}
 }
 
-// Range requests must stay uncompressed, otherwise the byte offsets a resuming
-// client asks for would address the compressed stream instead of the binary.
 func TestServeAgentBinaryRangeStaysUncompressed(t *testing.T) {
 	path, want := compressibleBinary(t, 64*1024)
 	srv := binaryServer(t, path)
@@ -253,8 +247,70 @@ func TestServeAgentBinaryConditionalRequestStillAnswers304(t *testing.T) {
 	}
 }
 
-// The gzip writers are pooled and shared across every context this process
-// serves, so a reused writer must never carry bytes from a previous response.
+// A burst must degrade to the uncompressed path rather than allocating an
+// unbounded number of compressors on the shared heap.
+func TestServeAgentBinaryFallsBackToIdentityWhenSlotsExhausted(t *testing.T) {
+	path, want := compressibleBinary(t, 64*1024)
+	srv := binaryServer(t, path)
+	defer srv.Close()
+
+	for i := 0; i < maxConcurrentAgentGzip; i++ {
+		agentGzipSlots <- struct{}{}
+	}
+	defer func() {
+		for i := 0; i < maxConcurrentAgentGzip; i++ {
+			<-agentGzipSlots
+		}
+	}()
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Accept-Encoding", "gzip")
+
+	client := &http.Client{Transport: &http.Transport{DisableCompression: true}}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if enc := resp.Header.Get("Content-Encoding"); enc != "" {
+		t.Fatalf("Content-Encoding = %q, want empty once slots are exhausted", enc)
+	}
+	if resp.ContentLength != int64(len(want)) {
+		t.Fatalf("Content-Length = %d, want %d", resp.ContentLength, len(want))
+	}
+
+	got, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if sha256.Sum256(got) != sha256.Sum256(want) {
+		t.Fatal("fallback response does not match the source file")
+	}
+}
+
+func TestServeAgentBinarySlotsAreReleased(t *testing.T) {
+	path, _ := compressibleBinary(t, 32*1024)
+	srv := binaryServer(t, path)
+	defer srv.Close()
+
+	for i := 0; i < maxConcurrentAgentGzip+4; i++ {
+		resp, err := srv.Client().Get(srv.URL)
+		if err != nil {
+			t.Fatalf("get %d: %v", i, err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}
+
+	if len(agentGzipSlots) != 0 {
+		t.Fatalf("%d slots still held after sequential requests", len(agentGzipSlots))
+	}
+}
+
 func TestServeAgentBinaryPooledWritersDoNotBleed(t *testing.T) {
 	path, want := compressibleBinary(t, 128*1024)
 	srv := binaryServer(t, path)
