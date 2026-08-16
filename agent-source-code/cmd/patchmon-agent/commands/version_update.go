@@ -545,14 +545,13 @@ func getLatestBinaryFromServer() (*ServerVersionResponse, error) {
 
 	// Leave Accept-Encoding unset so the transport negotiates gzip and unwraps it
 	// for us; setting it by hand would hand back a compressed body we then hash.
-	// Setting DialContext silently disables HTTP/2 unless this is set, which
-	// would quietly downgrade a transport that used to come from DefaultTransport.
 	transport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
+		// Setting DialContext silently disables HTTP/2 unless this is set.
 		ForceAttemptHTTP2:     true,
 		TLSHandshakeTimeout:   30 * time.Second,
 		ResponseHeaderTimeout: downloadHeaderTimeout,

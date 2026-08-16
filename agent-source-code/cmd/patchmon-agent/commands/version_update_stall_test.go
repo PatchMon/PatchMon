@@ -103,7 +103,6 @@ func TestStallReaderResetsOnEveryChunk(t *testing.T) {
 		}
 	}
 
-	// 6 x 60ms is 360ms of wall clock, comfortably past a single 120ms window.
 	if fired.Load() {
 		t.Fatal("stall timer fired despite continuous progress")
 	}

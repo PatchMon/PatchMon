@@ -12,8 +12,7 @@ import (
 	"sync"
 )
 
-// Each live compressor holds roughly 800KB of flate state on a heap shared by
-// every context, so concurrency is capped and excess requests serve uncompressed.
+// Live compressors hold flate state on a heap shared by every context.
 const maxConcurrentAgentGzip = 16
 
 var agentGzipSlots = make(chan struct{}, maxConcurrentAgentGzip)
@@ -70,8 +69,6 @@ func serveAgentBinary(w http.ResponseWriter, r *http.Request, binaryName string,
 		return
 	}
 
-	// Falling back to the uncompressed path under load is never worse than the
-	// behaviour before compression existed, so a burst degrades instead of failing.
 	select {
 	case agentGzipSlots <- struct{}{}:
 		defer func() { <-agentGzipSlots }()
@@ -92,12 +89,14 @@ func serveAgentBinary(w http.ResponseWriter, r *http.Request, binaryName string,
 		agentGzipWriterPool.Put(gzw)
 	}()
 
+	// A client hanging up mid-download is a client-side event, and during a release
+	// stampede it would otherwise flood the log every context shares.
 	if _, err := io.Copy(gzw, f); err != nil {
-		slog.Warn("agent binary download interrupted", "name", binaryName, "error", err)
+		slog.Debug("agent binary download interrupted", "name", binaryName, "error", err)
 		_ = gzw.Close()
 		return
 	}
 	if err := gzw.Close(); err != nil {
-		slog.Warn("agent binary download failed to flush", "name", binaryName, "error", err)
+		slog.Debug("agent binary download failed to flush", "name", binaryName, "error", err)
 	}
 }

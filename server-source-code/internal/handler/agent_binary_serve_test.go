@@ -247,8 +247,6 @@ func TestServeAgentBinaryConditionalRequestStillAnswers304(t *testing.T) {
 	}
 }
 
-// A burst must degrade to the uncompressed path rather than allocating an
-// unbounded number of compressors on the shared heap.
 func TestServeAgentBinaryFallsBackToIdentityWhenSlotsExhausted(t *testing.T) {
 	path, want := compressibleBinary(t, 64*1024)
 	srv := binaryServer(t, path)
