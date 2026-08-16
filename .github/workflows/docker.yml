@@ -613,6 +613,16 @@ jobs:
           done
           file patchmon-*
 
+      # Proves the binaries actually execute, not merely that they are the
+      # right shape. Only the native arch can run on the runner.
+      - name: Smoke-test the native binaries
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          ./patchmon-agent-linux-amd64 --version
+          ./patchmon-agent-linux-amd64 --help > /dev/null
+          echo "agent linux/amd64 runs"
+
       - name: Generate SHA256SUMS
         working-directory: dist
         run: |
