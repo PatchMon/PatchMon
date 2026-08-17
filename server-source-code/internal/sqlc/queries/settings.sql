@@ -63,8 +63,9 @@ UPDATE settings SET
     compliance_scan_interval = $57,
     package_cache_refresh_mode = $58,
     package_cache_refresh_max_age = $59,
-    oidc_trust_unverified_email = $60
-WHERE id = $61;
+    oidc_trust_unverified_email = $60,
+    prometheus_enabled = $61
+WHERE id = $62;
 
 -- name: UpdateSettingsConfig :exec
 UPDATE settings SET

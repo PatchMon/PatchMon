@@ -661,6 +661,7 @@ type Setting struct {
 	PasswordRateLimitWindowMs       *int32           `json:"password_rate_limit_window_ms"`
 	PasswordRateLimitMax            *int32           `json:"password_rate_limit_max"`
 	AuthBrowserSessionCookies       *bool            `json:"auth_browser_session_cookies"`
+	PrometheusEnabled               bool             `json:"prometheus_enabled"`
 }
 
 type SystemStatistic struct {
