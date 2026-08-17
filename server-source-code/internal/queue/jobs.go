@@ -35,6 +35,7 @@ const (
 	TypeInstallComplianceTools   = "install_compliance_tools"
 	TypeSSGUpgrade               = "ssg_upgrade"
 	TypeRunPatch                 = "run_patch"
+	TypeAutoPatchDispatch        = "auto_patch_dispatch"
 	TypeScheduledReportsDispatch = "scheduled_reports_dispatch"
 	TypeScheduledReportRun       = "scheduled_report_run"
 	QueueAgentCommands           = "agent-commands"
@@ -140,6 +141,10 @@ type RunPatchPayload struct {
 	PackageName  *string  `json:"package_name,omitempty"`
 	PackageNames []string `json:"package_names,omitempty"`
 	DryRun       bool     `json:"dry_run,omitempty"`
+	// RebootIfRequired tells the agent to reboot after a successful run iff
+	// the host still flags a pending reboot. Set by policy-driven automatic
+	// runs (patch_policies.auto_reboot); manual runs leave it false.
+	RebootIfRequired bool `json:"reboot_if_required,omitempty"`
 }
 
 // NewRunPatchTask creates a run_patch task.
@@ -832,6 +837,9 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 	}
 	if len(p.PackageNames) > 0 {
 		payload["package_names"] = p.PackageNames
+	}
+	if p.RebootIfRequired {
+		payload["reboot_if_required"] = true
 	}
 	msg, err := json.Marshal(payload)
 	if err != nil {

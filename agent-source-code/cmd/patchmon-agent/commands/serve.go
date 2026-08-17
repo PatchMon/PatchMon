@@ -403,7 +403,7 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 				go refreshDockerInventory(ctx)
 			case "run_patch":
 				go func(msg wsMsg) {
-					if err := runPatch(msg.patchRunID, msg.patchType, msg.packageNames, msg.dryRun); err != nil {
+					if err := runPatch(msg.patchRunID, msg.patchType, msg.packageNames, msg.dryRun, msg.rebootIfRequired); err != nil {
 						logger.WithError(err).Warn("run_patch failed")
 					} else {
 						logger.Info("run_patch completed successfully")
@@ -1179,11 +1179,12 @@ type wsMsg struct {
 	sshProxyCols       int    // Terminal columns
 	sshProxyRows       int    // Terminal rows
 	// run_patch fields
-	patchRunID   string
-	patchType    string
-	packageNames []string
-	dryRun       bool
-	sshProxyData string // SSH input data
+	patchRunID       string
+	patchType        string
+	packageNames     []string
+	dryRun           bool
+	rebootIfRequired bool   // reboot after success iff host still needs it
+	sshProxyData     string // SSH input data
 	// reboot_host fields
 	rebootDelayMinutes int
 	rebootReason       string
@@ -1709,11 +1710,12 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 			Rows       int    `json:"rows"`        // Terminal rows
 			Data       string `json:"data"`        // SSH input data
 			// run_patch fields
-			PatchRunID   string   `json:"patch_run_id"`
-			PatchType    string   `json:"patch_type"`
-			PackageName  string   `json:"package_name"`
-			PackageNames []string `json:"package_names"`
-			DryRun       bool     `json:"dry_run"`
+			PatchRunID       string   `json:"patch_run_id"`
+			PatchType        string   `json:"patch_type"`
+			PackageName      string   `json:"package_name"`
+			PackageNames     []string `json:"package_names"`
+			DryRun           bool     `json:"dry_run"`
+			RebootIfRequired bool     `json:"reboot_if_required"`
 			// reboot_host fields
 			RebootDelayMinutes int    `json:"reboot_delay_minutes"`
 			RebootReason       string `json:"reboot_reason"`
@@ -1777,17 +1779,19 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 				continue
 			}
 			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
-				"patch_run_id":  payload.PatchRunID,
-				"patch_type":    patchType,
-				"package_names": packageNames,
-				"dry_run":       payload.DryRun,
+				"patch_run_id":       payload.PatchRunID,
+				"patch_type":         patchType,
+				"package_names":      packageNames,
+				"dry_run":            payload.DryRun,
+				"reboot_if_required": payload.RebootIfRequired,
 			})).Info("run_patch received")
 			dispatchWSMessage(out, wsMsg{
-				kind:         "run_patch",
-				patchRunID:   payload.PatchRunID,
-				patchType:    patchType,
-				packageNames: packageNames,
-				dryRun:       payload.DryRun,
+				kind:             "run_patch",
+				patchRunID:       payload.PatchRunID,
+				patchType:        patchType,
+				packageNames:     packageNames,
+				dryRun:           payload.DryRun,
+				rebootIfRequired: payload.RebootIfRequired,
 			})
 		case "compliance_scan":
 			// Validate profile ID to prevent command injection
@@ -2360,7 +2364,7 @@ func aptOnlyUpgradeArgs(dryRun bool, packageNames []string) []string {
 }
 
 // When dryRun is true, simulates and sends dry_run_completed instead of completed.
-func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) error {
+func runPatch(patchRunID, patchType string, packageNames []string, dryRun, rebootIfRequired bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
@@ -2684,6 +2688,25 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 
 	if wasStopped {
 		return fmt.Errorf("patch run stopped by user")
+	}
+
+	// Policy-driven post-patch reboot (Linux/BSD; the Windows path returned
+	// earlier). Only after a fully successful, non-dry, non-stopped run, and
+	// only if the host still reports a pending reboot — patching that didn't
+	// touch the kernel/libc leaves the box up. Ordered after the post-patch
+	// report so the refreshed inventory reaches the server before the
+	// connection drops. 1-minute delay gives logged-in users the wall notice
+	// and lets the final WS/HTTP exchanges drain.
+	if rebootIfRequired && !dryRun {
+		detector := system.New(logger)
+		if needs, reason := detector.CheckRebootRequired(); needs {
+			logger.WithField("reason", reason).Info("Post-patch reboot required by policy; scheduling reboot")
+			if err := detector.ExecuteReboot(1, "PatchMon post-patch reboot (policy)"); err != nil {
+				logger.WithError(err).Warn("Post-patch reboot scheduling failed")
+			}
+		} else {
+			logger.Info("Post-patch reboot requested by policy but host does not need one; skipping")
+		}
 	}
 	return nil
 }

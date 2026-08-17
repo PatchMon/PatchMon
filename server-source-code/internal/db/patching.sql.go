@@ -226,7 +226,7 @@ func (q *Queries) ExistsPatchPolicyExclusion(ctx context.Context, arg ExistsPatc
 }
 
 const getDirectPatchPolicyAssignment = `-- name: GetDirectPatchPolicyAssignment :one
-SELECT pp.id, pp.name, pp.description, pp.patch_delay_type, pp.delay_minutes, pp.fixed_time_utc, pp.timezone, pp.created_at, pp.updated_at FROM patch_policy_assignments ppa
+SELECT pp.id, pp.name, pp.description, pp.patch_delay_type, pp.delay_minutes, pp.fixed_time_utc, pp.timezone, pp.auto_reboot, pp.auto_patch_enabled, pp.auto_patch_days, pp.auto_patch_time, pp.auto_patch_last_run_at, pp.created_at, pp.updated_at FROM patch_policy_assignments ppa
 JOIN patch_policies pp ON ppa.patch_policy_id = pp.id
 WHERE ppa.target_type = 'host' AND ppa.target_id = $1
 ORDER BY ppa.created_at ASC
@@ -245,6 +245,11 @@ func (q *Queries) GetDirectPatchPolicyAssignment(ctx context.Context, targetID s
 		&i.DelayMinutes,
 		&i.FixedTimeUtc,
 		&i.Timezone,
+		&i.AutoReboot,
+		&i.AutoPatchEnabled,
+		&i.AutoPatchDays,
+		&i.AutoPatchTime,
+		&i.AutoPatchLastRunAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -294,7 +299,7 @@ func (q *Queries) GetPatchPolicyAssignmentByID(ctx context.Context, id string) (
 }
 
 const getPatchPolicyByGroupAssignment = `-- name: GetPatchPolicyByGroupAssignment :one
-SELECT pp.id, pp.name, pp.description, pp.patch_delay_type, pp.delay_minutes, pp.fixed_time_utc, pp.timezone, pp.created_at, pp.updated_at FROM patch_policy_assignments ppa
+SELECT pp.id, pp.name, pp.description, pp.patch_delay_type, pp.delay_minutes, pp.fixed_time_utc, pp.timezone, pp.auto_reboot, pp.auto_patch_enabled, pp.auto_patch_days, pp.auto_patch_time, pp.auto_patch_last_run_at, pp.created_at, pp.updated_at FROM patch_policy_assignments ppa
 JOIN patch_policies pp ON ppa.patch_policy_id = pp.id
 WHERE ppa.target_type = 'host_group' AND ppa.target_id = $1
 ORDER BY ppa.created_at ASC
@@ -312,6 +317,11 @@ func (q *Queries) GetPatchPolicyByGroupAssignment(ctx context.Context, targetID 
 		&i.DelayMinutes,
 		&i.FixedTimeUtc,
 		&i.Timezone,
+		&i.AutoReboot,
+		&i.AutoPatchEnabled,
+		&i.AutoPatchDays,
+		&i.AutoPatchTime,
+		&i.AutoPatchLastRunAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -319,7 +329,7 @@ func (q *Queries) GetPatchPolicyByGroupAssignment(ctx context.Context, targetID 
 }
 
 const getPatchPolicyByID = `-- name: GetPatchPolicyByID :one
-SELECT id, name, description, patch_delay_type, delay_minutes, fixed_time_utc, timezone, created_at, updated_at FROM patch_policies WHERE id = $1
+SELECT id, name, description, patch_delay_type, delay_minutes, fixed_time_utc, timezone, auto_reboot, auto_patch_enabled, auto_patch_days, auto_patch_time, auto_patch_last_run_at, created_at, updated_at FROM patch_policies WHERE id = $1
 `
 
 func (q *Queries) GetPatchPolicyByID(ctx context.Context, id string) (PatchPolicy, error) {
@@ -333,6 +343,11 @@ func (q *Queries) GetPatchPolicyByID(ctx context.Context, id string) (PatchPolic
 		&i.DelayMinutes,
 		&i.FixedTimeUtc,
 		&i.Timezone,
+		&i.AutoReboot,
+		&i.AutoPatchEnabled,
+		&i.AutoPatchDays,
+		&i.AutoPatchTime,
+		&i.AutoPatchLastRunAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -528,8 +543,72 @@ func (q *Queries) ListActivePatchRuns(ctx context.Context) ([]ListActivePatchRun
 	return items, nil
 }
 
+const listAutoPatchPolicies = `-- name: ListAutoPatchPolicies :many
+SELECT id, name, description, patch_delay_type, delay_minutes, fixed_time_utc, timezone, auto_reboot, auto_patch_enabled, auto_patch_days, auto_patch_time, auto_patch_last_run_at, created_at, updated_at FROM patch_policies WHERE auto_patch_enabled = true ORDER BY name ASC
+`
+
+func (q *Queries) ListAutoPatchPolicies(ctx context.Context) ([]PatchPolicy, error) {
+	rows, err := q.db.Query(ctx, listAutoPatchPolicies)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PatchPolicy
+	for rows.Next() {
+		var i PatchPolicy
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.PatchDelayType,
+			&i.DelayMinutes,
+			&i.FixedTimeUtc,
+			&i.Timezone,
+			&i.AutoReboot,
+			&i.AutoPatchEnabled,
+			&i.AutoPatchDays,
+			&i.AutoPatchTime,
+			&i.AutoPatchLastRunAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listHostIDsWithActivePatchRuns = `-- name: ListHostIDsWithActivePatchRuns :many
+SELECT DISTINCT host_id FROM patch_runs
+WHERE status IN ('queued', 'running', 'pending_validation', 'pending_approval', 'validated')
+`
+
+func (q *Queries) ListHostIDsWithActivePatchRuns(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, listHostIDsWithActivePatchRuns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var host_id string
+		if err := rows.Scan(&host_id); err != nil {
+			return nil, err
+		}
+		items = append(items, host_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPatchPolicies = `-- name: ListPatchPolicies :many
-SELECT id, name, description, patch_delay_type, delay_minutes, fixed_time_utc, timezone, created_at, updated_at FROM patch_policies ORDER BY name ASC
+SELECT id, name, description, patch_delay_type, delay_minutes, fixed_time_utc, timezone, auto_reboot, auto_patch_enabled, auto_patch_days, auto_patch_time, auto_patch_last_run_at, created_at, updated_at FROM patch_policies ORDER BY name ASC
 `
 
 // patch_policies
@@ -550,6 +629,11 @@ func (q *Queries) ListPatchPolicies(ctx context.Context) ([]PatchPolicy, error) 
 			&i.DelayMinutes,
 			&i.FixedTimeUtc,
 			&i.Timezone,
+			&i.AutoReboot,
+			&i.AutoPatchEnabled,
+			&i.AutoPatchDays,
+			&i.AutoPatchTime,
+			&i.AutoPatchLastRunAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -670,6 +754,36 @@ func (q *Queries) ListPatchPolicyExclusions(ctx context.Context, patchPolicyID s
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPatchPolicyTargetHostIDs = `-- name: ListPatchPolicyTargetHostIDs :many
+SELECT ppa1.target_id AS host_id FROM patch_policy_assignments ppa1
+WHERE ppa1.patch_policy_id = $1 AND ppa1.target_type = 'host'
+UNION
+SELECT hgm.host_id AS host_id FROM host_group_memberships hgm
+JOIN patch_policy_assignments ppa2
+  ON ppa2.target_type = 'host_group' AND ppa2.target_id = hgm.host_group_id
+WHERE ppa2.patch_policy_id = $1
+`
+
+func (q *Queries) ListPatchPolicyTargetHostIDs(ctx context.Context, patchPolicyID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, listPatchPolicyTargetHostIDs, patchPolicyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var host_id string
+		if err := rows.Scan(&host_id); err != nil {
+			return nil, err
+		}
+		items = append(items, host_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -1769,6 +1883,15 @@ func (q *Queries) MarkValidationApproved(ctx context.Context, arg MarkValidation
 	return result.RowsAffected(), nil
 }
 
+const setPatchPolicyAutoPatchLastRun = `-- name: SetPatchPolicyAutoPatchLastRun :exec
+UPDATE patch_policies SET auto_patch_last_run_at = NOW() WHERE id = $1
+`
+
+func (q *Queries) SetPatchPolicyAutoPatchLastRun(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, setPatchPolicyAutoPatchLastRun, id)
+	return err
+}
+
 const setPatchRunPolicySnapshot = `-- name: SetPatchRunPolicySnapshot :exec
 UPDATE patch_runs SET policy_id = $2, policy_name = $3, policy_snapshot = $4, updated_at = NOW() WHERE id = $1
 `
@@ -1815,6 +1938,35 @@ func (q *Queries) UpdatePatchPolicy(ctx context.Context, arg UpdatePatchPolicyPa
 		arg.DelayMinutes,
 		arg.FixedTimeUtc,
 		arg.Timezone,
+	)
+	return err
+}
+
+const updatePatchPolicyAutoPatch = `-- name: UpdatePatchPolicyAutoPatch :exec
+UPDATE patch_policies
+SET auto_patch_enabled = $1,
+    auto_patch_days = $2,
+    auto_patch_time = $3,
+    auto_reboot = $4,
+    updated_at = NOW()
+WHERE id = $5
+`
+
+type UpdatePatchPolicyAutoPatchParams struct {
+	AutoPatchEnabled bool    `json:"auto_patch_enabled"`
+	AutoPatchDays    *string `json:"auto_patch_days"`
+	AutoPatchTime    *string `json:"auto_patch_time"`
+	AutoReboot       bool    `json:"auto_reboot"`
+	ID               string  `json:"id"`
+}
+
+func (q *Queries) UpdatePatchPolicyAutoPatch(ctx context.Context, arg UpdatePatchPolicyAutoPatchParams) error {
+	_, err := q.db.Exec(ctx, updatePatchPolicyAutoPatch,
+		arg.AutoPatchEnabled,
+		arg.AutoPatchDays,
+		arg.AutoPatchTime,
+		arg.AutoReboot,
+		arg.ID,
 	)
 	return err
 }
