@@ -21,6 +21,7 @@ const freeBSDBasePackageName = "freebsd-base"
 
 var freeBSDPkgSummaryLinePattern = regexp.MustCompile(`^\s+(\S+):\s+`)
 var freeBSDPkgActionLinePattern = regexp.MustCompile(`^\[\d+/\d+\]\s+(?:Installing|Upgrading|Reinstalling)\s+(\S+)`)
+var apkActionLinePattern = regexp.MustCompile(`^\(\d+/\d+\)\s+(?:Installing|Upgrading|Reinstalling)\s+(\S+)`)
 
 // isFreeBSD reports whether the host OS type represents FreeBSD. The synthetic
 // "freebsd-base" package must only be emitted for FreeBSD hosts; otherwise
@@ -56,6 +57,12 @@ func parsePackagesAffectedFromDryRunOutput(osType, output string) []string {
 			if len(fields) >= 2 {
 				addPkg(fields[1])
 			}
+			continue
+		}
+
+		// apk (--simulate and real): "(1/3) Upgrading pkgname (oldver -> newver)"
+		if matches := apkActionLinePattern.FindStringSubmatch(trimmed); len(matches) == 2 {
+			addPkg(matches[1])
 			continue
 		}
 
@@ -135,6 +142,11 @@ func parsePackagesAffectedFromRealOutput(osType, output string) []string {
 			if len(fields) >= 3 {
 				addPkg(fields[2])
 			}
+			continue
+		}
+		// apk (--simulate and real): "(1/3) Upgrading pkgname (oldver -> newver)"
+		if matches := apkActionLinePattern.FindStringSubmatch(trimmed); len(matches) == 2 {
+			addPkg(matches[1])
 			continue
 		}
 		// dnf/yum real: "  Upgrading   : pkgname-version.arch" / "  Installing  : pkgname-version.arch"

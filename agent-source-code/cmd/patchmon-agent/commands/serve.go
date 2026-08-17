@@ -2342,8 +2342,8 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		return runPatchWindows(ctx, httpClient, patchRunID, patchType, packageNames, dryRun)
 	}
 
-	if pkgManager != "apt" && pkgManager != "dnf" && pkgManager != "yum" && pkgManager != "pkg" && pkgManager != "pacman" {
-		errMsg := fmt.Sprintf("package manager %q not supported for patching (apt, dnf, yum, pkg, pacman required)", pkgManager)
+	if pkgManager != "apt" && pkgManager != "dnf" && pkgManager != "yum" && pkgManager != "pkg" && pkgManager != "pacman" && pkgManager != "apk" {
+		errMsg := fmt.Sprintf("package manager %q not supported for patching (apt, dnf, yum, pkg, pacman, apk required)", pkgManager)
 		_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
@@ -2373,6 +2373,12 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 				return fmt.Errorf("freebsd-update not found: %w", err)
 			}
 		}
+	case "apk":
+		if _, err := exec.LookPath("apk"); err != nil {
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "apk not found: Alpine Linux package manager not installed")
+			return fmt.Errorf("apk not found: %w", err)
+		}
+		upgradeBin = "apk"
 	case "pacman":
 		if _, err := exec.LookPath("pacman"); err != nil {
 			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "pacman not found: Arch Linux package manager not installed")
@@ -2456,6 +2462,10 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 			if err, abort := runStep(false, "pkg update", "pkg update failed: %w", upgradeBin, "update"); abort {
 				stepErr = err
 			}
+		case "apk":
+			if err, abort := runStep(false, "apk update", "apk update failed: %w", "apk", "update"); abort {
+				stepErr = err
+			}
 		case "pacman":
 			if err, abort := runStep(false, "pacman refresh", "pacman -Sy failed: %w", "pacman", "-Sy", "--noconfirm"); abort {
 				stepErr = err
@@ -2498,6 +2508,16 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 					}
 				} else {
 					if err, abort := runStep(false, "pkg upgrade", "pkg upgrade failed: %w", upgradeBin, "upgrade", "-y"); abort {
+						stepErr = err
+					}
+				}
+			case "apk":
+				if dryRun {
+					if err, abort := runStep(false, "apk upgrade --simulate", "apk upgrade --simulate failed: %w", "apk", "upgrade", "--simulate"); abort {
+						stepErr = err
+					}
+				} else {
+					if err, abort := runStep(false, "apk upgrade", "apk upgrade failed: %w", "apk", "upgrade"); abort {
 						stepErr = err
 					}
 				}
@@ -2553,6 +2573,18 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 						if err, abort := runStep(false, "pkg install", "pkg install failed: %w", upgradeBin, args...); abort {
 							stepErr = err
 						}
+					}
+				}
+			case "apk":
+				if dryRun {
+					args := append([]string{"upgrade", "--simulate"}, packageNames...)
+					if err, abort := runStep(false, "apk upgrade --simulate", "apk upgrade --simulate failed: %w", "apk", args...); abort {
+						stepErr = err
+					}
+				} else {
+					args := append([]string{"upgrade"}, packageNames...)
+					if err, abort := runStep(false, "apk upgrade", "apk upgrade failed: %w", "apk", args...); abort {
+						stepErr = err
 					}
 				}
 			case "pacman":
