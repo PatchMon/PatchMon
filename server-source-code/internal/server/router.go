@@ -165,6 +165,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	hostsStore := store.NewHostsStore(dbProvider)
 	billingHandler := handler.NewBillingHandler(cfg, log, hostsStore)
 	metricsHandler := handler.NewMetricsHandler(settingsStore, hostsStore, cfg)
+	prometheusHandler := handler.NewPrometheusExporterHandler(settingsStore, hostsStore, dbProvider)
 	hostGroupsStore := store.NewHostGroupsStore(dbProvider)
 	var integrationStatusStore *store.IntegrationStatusStore
 	if rdb != nil {
@@ -279,6 +280,9 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	communityHandler := handler.NewCommunityHandler(cfg)
 
 	r.Get("/health", healthHandler(db, rdb))
+	// Prometheus scrape endpoint. Returns 404 when prometheus_enabled=false in settings.
+	// Intentionally public (no auth) — protect via network firewall or reverse-proxy when needed.
+	r.Get("/metrics", prometheusHandler.ServeMetrics)
 
 	// Start guacd subprocess if RDP enabled and address is localhost.
 	// When GUACD_ADDRESS points to a remote host (e.g. guacd:4822 in Docker), guacd runs as a sidecar.
@@ -497,6 +501,8 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Put("/metrics", metricsHandler.Update)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Post("/metrics/regenerate-id", metricsHandler.RegenerateID)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Post("/metrics/send-now", metricsHandler.SendNow)
+			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/prometheus/settings", prometheusHandler.GetSettings)
+			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Put("/prometheus/settings", prometheusHandler.UpdateSettings)
 			r.Get("/version/current", settingsHandler.VersionCurrent(cfg.Version))
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/version/check-updates", settingsHandler.VersionCheckUpdates(cfg.Version))
 			// AI routes gated by the ai module (Max tier).
