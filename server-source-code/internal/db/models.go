@@ -789,6 +789,16 @@ type User struct {
 	PreviousPasswordHash   *string          `json:"previous_password_hash"`
 }
 
+type UserApiToken struct {
+	ID         string             `json:"id"`
+	UserID     string             `json:"user_id"`
+	Name       string             `json:"name"`
+	TokenHash  string             `json:"token_hash"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+}
+
 type UserSession struct {
 	ID                string           `json:"id"`
 	UserID            string           `json:"user_id"`
