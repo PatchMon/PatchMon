@@ -475,6 +475,7 @@ type Querier interface {
 	ListAlertConfig(ctx context.Context) ([]ListAlertConfigRow, error)
 	ListAlertHistoryByAlertID(ctx context.Context, alertID string) ([]ListAlertHistoryByAlertIDRow, error)
 	ListAutoEnrollmentTokens(ctx context.Context) ([]ListAutoEnrollmentTokensRow, error)
+	ListAutoPatchPolicies(ctx context.Context) ([]PatchPolicy, error)
 	ListComplianceProfiles(ctx context.Context) ([]ComplianceProfile, error)
 	ListComplianceResultsByScan(ctx context.Context, arg ListComplianceResultsByScanParams) ([]ListComplianceResultsByScanRow, error)
 	ListComplianceRulesByProfile(ctx context.Context, profileID string) ([]ComplianceRule, error)
@@ -486,6 +487,7 @@ type Querier interface {
 	ListExistingHostApiIDs(ctx context.Context, dollar_1 []string) ([]string, error)
 	ListHostGroups(ctx context.Context) ([]HostGroup, error)
 	ListHostGroupsWithHostCount(ctx context.Context) ([]ListHostGroupsWithHostCountRow, error)
+	ListHostIDsWithActivePatchRuns(ctx context.Context) ([]string, error)
 	ListHostOptions(ctx context.Context, arg ListHostOptionsParams) ([]ListHostOptionsRow, error)
 	ListHosts(ctx context.Context) ([]Host, error)
 	ListHostsForComplianceDashboard(ctx context.Context) ([]ListHostsForComplianceDashboardRow, error)
@@ -509,6 +511,7 @@ type Querier interface {
 	ListPatchPolicyAssignmentsByPolicy(ctx context.Context, patchPolicyID string) ([]PatchPolicyAssignment, error)
 	// patch_policy_exclusions
 	ListPatchPolicyExclusions(ctx context.Context, patchPolicyID string) ([]ListPatchPolicyExclusionsRow, error)
+	ListPatchPolicyTargetHostIDs(ctx context.Context, patchPolicyID string) ([]string, error)
 	// The 'status' filter accepts an exact status value. The pseudo-value
 	// 'active' matches any in-flight run (queued or running) so UI widgets
 	// that aggregate those two states can link to a single filter.
@@ -560,6 +563,7 @@ type Querier interface {
 	RevokeTrustedDeviceByID(ctx context.Context, arg RevokeTrustedDeviceByIDParams) error
 	SetHostAwaitingPostPatchReport(ctx context.Context, arg SetHostAwaitingPostPatchReportParams) error
 	SetNewsletterSubscribed(ctx context.Context, id string) error
+	SetPatchPolicyAutoPatchLastRun(ctx context.Context, id string) error
 	SetPatchRunPolicySnapshot(ctx context.Context, arg SetPatchRunPolicySnapshotParams) error
 	ToggleHostRepository(ctx context.Context, arg ToggleHostRepositoryParams) error
 	TouchTrustedDeviceLastUsed(ctx context.Context, arg TouchTrustedDeviceLastUsedParams) error
@@ -604,6 +608,7 @@ type Querier interface {
 	UpdateNotificationRoute(ctx context.Context, arg UpdateNotificationRouteParams) (NotificationRoute, error)
 	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) error
 	UpdatePatchPolicy(ctx context.Context, arg UpdatePatchPolicyParams) error
+	UpdatePatchPolicyAutoPatch(ctx context.Context, arg UpdatePatchPolicyAutoPatchParams) error
 	// Terminal cancelled state set by the agent's late "cancelled" stage report.
 	// Replaces shell_output with the full captured output so rollback/cleanup text is preserved.
 	// :execrows so the handler can detect concurrent termination (rows=0) cleanly.
