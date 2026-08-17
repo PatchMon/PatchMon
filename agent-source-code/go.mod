@@ -1,6 +1,6 @@
 module patchmon-agent
 
-go 1.26.5
+go 1.26.6
 
 require (
 	github.com/go-resty/resty/v2 v2.17.2

@@ -34,6 +34,7 @@ import { useColorTheme } from "../contexts/ColorThemeContext";
 import { useSettings } from "../contexts/SettingsContext";
 import SidebarContext from "../contexts/SidebarContext";
 import { useUpdateNotification } from "../contexts/UpdateNotificationContext";
+import { useGlobalRefresh } from "../hooks/usePageRefresh";
 import { alertsAPI, dashboardAPI, settingsAPI, versionAPI } from "../utils/api";
 import { isRenderableAvatarSrc } from "../utils/avatar";
 import { resolveLogoPath } from "../utils/logoPaths";
@@ -170,17 +171,17 @@ const Layout = ({ children }) => {
 	const userMenuRef = useRef(null);
 
 	// Fetch cheap navigation counters; full dashboard stats are page-local.
-	const {
-		data: stats,
-		refetch,
-		isFetching,
-	} = useQuery({
+	const { data: stats } = useQuery({
 		queryKey: ["navigationStats"],
 		queryFn: () => dashboardAPI.getNavigationStats().then((res) => res.data),
 		enabled: canViewDashboard(),
-		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
-		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
+
+	// Layout never unmounts, so this control sat next to a timestamp it reset
+	// while refetching only the three sidebar counters. Everything the user was
+	// actually looking at kept its cached values, which is what taught people to
+	// reload the browser instead. Refresh every active query.
+	const { refresh: refreshAll, isRefreshing } = useGlobalRefresh();
 
 	// Fetch settings for favicon, logos, and alerts_enabled (public endpoint works for all users)
 	const { data: settings } = useQuery({
@@ -199,8 +200,6 @@ const Layout = ({ children }) => {
 		queryKey: ["hostCounts"],
 		queryFn: () => dashboardAPI.getHostCounts().then((res) => res.data),
 		enabled: canViewHostsAllowed,
-		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
-		refetchOnWindowFocus: false,
 	});
 
 	// Live WebSocket connection count for the Hosts sidebar badge. Shares its
@@ -216,7 +215,6 @@ const Layout = ({ children }) => {
 		enabled: canViewHostsAllowed,
 		refetchInterval: 10000,
 		staleTime: 10000,
-		refetchOnWindowFocus: true,
 	});
 
 	// Fetch alert stats for Reporting badge (only if user can view reports and alerts are enabled)
@@ -1554,13 +1552,13 @@ const Layout = ({ children }) => {
 												</span>
 												<button
 													type="button"
-													onClick={() => refetch()}
-													disabled={isFetching}
+													onClick={() => refreshAll()}
+													disabled={isRefreshing}
 													className="p-1 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded flex-shrink-0 disabled:opacity-50"
-													title="Refresh data"
+													title="Refresh all data"
 												>
 													<RefreshCw
-														className={`h-3 w-3 ${isFetching ? "animate-spin" : ""}`}
+														className={`h-3 w-3 ${isRefreshing ? "animate-spin" : ""}`}
 													/>
 												</button>
 											</div>
@@ -1601,13 +1599,13 @@ const Layout = ({ children }) => {
 										<div className="flex flex-col items-center py-1 border-t border-secondary-200 dark:border-secondary-700">
 											<button
 												type="button"
-												onClick={() => refetch()}
-												disabled={isFetching}
+												onClick={() => refreshAll()}
+												disabled={isRefreshing}
 												className="p-1 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded disabled:opacity-50"
-												title={`Refresh data - Updated: ${formatRelativeTimeShort(stats.lastUpdated)}`}
+												title={`Refresh all data - Updated: ${formatRelativeTimeShort(stats.lastUpdated)}`}
 											>
 												<RefreshCw
-													className={`h-3 w-3 ${isFetching ? "animate-spin" : ""}`}
+													className={`h-3 w-3 ${isRefreshing ? "animate-spin" : ""}`}
 												/>
 											</button>
 										</div>
@@ -1843,7 +1841,7 @@ const Layout = ({ children }) => {
 						</div>
 					</div>
 
-					<main className="flex-1 py-6 bg-secondary-50 dark:bg-transparent pt-24">
+					<main className="flex-1 pt-[var(--app-main-pt)] pb-[var(--app-main-pb)] bg-secondary-50 dark:bg-transparent">
 						<div className="px-4 sm:px-6 lg:px-8">{content}</div>
 					</main>
 				</div>

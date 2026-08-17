@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -54,17 +55,23 @@ func (s *SettingsStore) UpdateConfigKey(ctx context.Context, settingsID, key str
 	}
 	switch key {
 	case "MAX_LOGIN_ATTEMPTS":
-		if v, ok := toInt32(value); ok {
-			arg.MaxLoginAttempts = &v
+		v, ok := toInt32(value)
+		if !ok {
+			return fmt.Errorf("%s requires an integer value", key)
 		}
+		arg.MaxLoginAttempts = &v
 	case "LOCKOUT_DURATION_MINUTES":
-		if v, ok := toInt32(value); ok {
-			arg.LockoutDurationMinutes = &v
+		v, ok := toInt32(value)
+		if !ok {
+			return fmt.Errorf("%s requires an integer value", key)
 		}
+		arg.LockoutDurationMinutes = &v
 	case "SESSION_INACTIVITY_TIMEOUT_MINUTES":
-		if v, ok := toInt32(value); ok {
-			arg.SessionInactivityTimeoutMinutes = &v
+		v, ok := toInt32(value)
+		if !ok {
+			return fmt.Errorf("%s requires an integer value", key)
 		}
+		arg.SessionInactivityTimeoutMinutes = &v
 	case "PATCH_RUN_STALL_TIMEOUT_MIN":
 		v, ok := toInt32(value)
 		if !ok {
@@ -92,45 +99,65 @@ func (s *SettingsStore) UpdateConfigKey(ctx context.Context, settingsID, key str
 		}
 		arg.AgentReportsRetentionDays = &v
 	case "TFA_MAX_REMEMBER_SESSIONS":
-		if v, ok := toInt32(value); ok {
-			arg.TfaMaxRememberSessions = &v
+		v, ok := toInt32(value)
+		if !ok {
+			return fmt.Errorf("%s requires an integer value", key)
 		}
+		arg.TfaMaxRememberSessions = &v
 	case "PASSWORD_MIN_LENGTH":
-		if v, ok := toInt32(value); ok {
-			arg.PasswordMinLength = &v
+		v, ok := toInt32(value)
+		if !ok {
+			return fmt.Errorf("%s requires an integer value", key)
 		}
+		arg.PasswordMinLength = &v
 	case "PASSWORD_REQUIRE_UPPERCASE":
-		if v, ok := toBool(value); ok {
-			arg.PasswordRequireUppercase = &v
+		v, ok := toBool(value)
+		if !ok {
+			return fmt.Errorf("%s requires a true/false value", key)
 		}
+		arg.PasswordRequireUppercase = &v
 	case "PASSWORD_REQUIRE_LOWERCASE":
-		if v, ok := toBool(value); ok {
-			arg.PasswordRequireLowercase = &v
+		v, ok := toBool(value)
+		if !ok {
+			return fmt.Errorf("%s requires a true/false value", key)
 		}
+		arg.PasswordRequireLowercase = &v
 	case "PASSWORD_REQUIRE_NUMBER":
-		if v, ok := toBool(value); ok {
-			arg.PasswordRequireNumber = &v
+		v, ok := toBool(value)
+		if !ok {
+			return fmt.Errorf("%s requires a true/false value", key)
 		}
+		arg.PasswordRequireNumber = &v
 	case "PASSWORD_REQUIRE_SPECIAL":
-		if v, ok := toBool(value); ok {
-			arg.PasswordRequireSpecial = &v
+		v, ok := toBool(value)
+		if !ok {
+			return fmt.Errorf("%s requires a true/false value", key)
 		}
+		arg.PasswordRequireSpecial = &v
 	case "ENABLE_HSTS":
-		if v, ok := toBool(value); ok {
-			arg.EnableHsts = &v
+		v, ok := toBool(value)
+		if !ok {
+			return fmt.Errorf("%s requires a true/false value", key)
 		}
+		arg.EnableHsts = &v
 	case "JSON_BODY_LIMIT":
-		if v, ok := toStr(value); ok {
-			arg.JsonBodyLimit = &v
+		v, ok := toStr(value)
+		if !ok {
+			return fmt.Errorf("%s requires a string value", key)
 		}
+		arg.JsonBodyLimit = &v
 	case "AGENT_UPDATE_BODY_LIMIT":
-		if v, ok := toStr(value); ok {
-			arg.AgentUpdateBodyLimit = &v
+		v, ok := toStr(value)
+		if !ok {
+			return fmt.Errorf("%s requires a string value", key)
 		}
+		arg.AgentUpdateBodyLimit = &v
 	case "DB_TRANSACTION_LONG_TIMEOUT":
-		if v, ok := toInt32(value); ok {
-			arg.DbTransactionLongTimeout = &v
+		v, ok := toInt32(value)
+		if !ok {
+			return fmt.Errorf("%s requires an integer value", key)
 		}
+		arg.DbTransactionLongTimeout = &v
 	case "CORS_ORIGIN":
 		v, ok := toStr(value)
 		if !ok {
@@ -138,9 +165,11 @@ func (s *SettingsStore) UpdateConfigKey(ctx context.Context, settingsID, key str
 		}
 		arg.CorsOrigin = &v
 	case "ENABLE_LOGGING":
-		if v, ok := toBool(value); ok {
-			arg.EnableLogging = &v
+		v, ok := toBool(value)
+		if !ok {
+			return fmt.Errorf("%s requires a true/false value", key)
 		}
+		arg.EnableLogging = &v
 	case "LOG_LEVEL":
 		v, ok := toStr(value)
 		if !ok {
@@ -160,17 +189,23 @@ func (s *SettingsStore) UpdateConfigKey(ctx context.Context, settingsID, key str
 		}
 		arg.JwtExpiresIn = &v
 	case "AUTH_BROWSER_SESSION_COOKIES":
-		if v, ok := toBool(value); ok {
-			arg.AuthBrowserSessionCookies = &v
+		v, ok := toBool(value)
+		if !ok {
+			return fmt.Errorf("%s requires a true/false value", key)
 		}
+		arg.AuthBrowserSessionCookies = &v
 	case "MAX_TFA_ATTEMPTS":
-		if v, ok := toInt32(value); ok {
-			arg.MaxTfaAttempts = &v
+		v, ok := toInt32(value)
+		if !ok {
+			return fmt.Errorf("%s requires an integer value", key)
 		}
+		arg.MaxTfaAttempts = &v
 	case "TFA_LOCKOUT_DURATION_MINUTES":
-		if v, ok := toInt32(value); ok {
-			arg.TfaLockoutDurationMinutes = &v
+		v, ok := toInt32(value)
+		if !ok {
+			return fmt.Errorf("%s requires an integer value", key)
 		}
+		arg.TfaLockoutDurationMinutes = &v
 	case "TFA_REMEMBER_ME_EXPIRES_IN":
 		v, ok := toStr(value)
 		if !ok {
@@ -184,41 +219,59 @@ func (s *SettingsStore) UpdateConfigKey(ctx context.Context, settingsID, key str
 		}
 		arg.DefaultUserRole = v
 	case "TRUST_PROXY":
-		if v, ok := toBool(value); ok {
-			arg.TrustProxy = &v
+		v, ok := toBool(value)
+		if !ok {
+			return fmt.Errorf("%s requires a true/false value", key)
 		}
+		arg.TrustProxy = &v
 	case "RATE_LIMIT_WINDOW_MS":
-		if v, ok := toInt32(value); ok {
-			arg.RateLimitWindowMs = &v
+		v, ok := toInt32(value)
+		if !ok {
+			return fmt.Errorf("%s requires an integer value", key)
 		}
+		arg.RateLimitWindowMs = &v
 	case "RATE_LIMIT_MAX":
-		if v, ok := toInt32(value); ok {
-			arg.RateLimitMax = &v
+		v, ok := toInt32(value)
+		if !ok {
+			return fmt.Errorf("%s requires an integer value", key)
 		}
+		arg.RateLimitMax = &v
 	case "AUTH_RATE_LIMIT_WINDOW_MS":
-		if v, ok := toInt32(value); ok {
-			arg.AuthRateLimitWindowMs = &v
+		v, ok := toInt32(value)
+		if !ok {
+			return fmt.Errorf("%s requires an integer value", key)
 		}
+		arg.AuthRateLimitWindowMs = &v
 	case "AUTH_RATE_LIMIT_MAX":
-		if v, ok := toInt32(value); ok {
-			arg.AuthRateLimitMax = &v
+		v, ok := toInt32(value)
+		if !ok {
+			return fmt.Errorf("%s requires an integer value", key)
 		}
+		arg.AuthRateLimitMax = &v
 	case "AGENT_RATE_LIMIT_WINDOW_MS":
-		if v, ok := toInt32(value); ok {
-			arg.AgentRateLimitWindowMs = &v
+		v, ok := toInt32(value)
+		if !ok {
+			return fmt.Errorf("%s requires an integer value", key)
 		}
+		arg.AgentRateLimitWindowMs = &v
 	case "AGENT_RATE_LIMIT_MAX":
-		if v, ok := toInt32(value); ok {
-			arg.AgentRateLimitMax = &v
+		v, ok := toInt32(value)
+		if !ok {
+			return fmt.Errorf("%s requires an integer value", key)
 		}
+		arg.AgentRateLimitMax = &v
 	case "PASSWORD_RATE_LIMIT_WINDOW_MS":
-		if v, ok := toInt32(value); ok {
-			arg.PasswordRateLimitWindowMs = &v
+		v, ok := toInt32(value)
+		if !ok {
+			return fmt.Errorf("%s requires an integer value", key)
 		}
+		arg.PasswordRateLimitWindowMs = &v
 	case "PASSWORD_RATE_LIMIT_MAX":
-		if v, ok := toInt32(value); ok {
-			arg.PasswordRateLimitMax = &v
+		v, ok := toInt32(value)
+		if !ok {
+			return fmt.Errorf("%s requires an integer value", key)
 		}
+		arg.PasswordRateLimitMax = &v
 	default:
 		return errors.New("unknown config key")
 	}

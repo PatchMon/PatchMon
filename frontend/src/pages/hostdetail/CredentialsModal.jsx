@@ -9,6 +9,7 @@ import {
 	X,
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
+import ModalPortal from "../../components/ui/ModalPortal";
 import { adminHostsAPI, settingsAPI } from "../../utils/api";
 import WaitingForConnection from "./WaitingForConnection";
 
@@ -114,7 +115,11 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 			const curlInsecure = windowsIgnoreSsl ? " -k" : "";
 			return `${sslBlock}curl.exe${curlInsecure} -s -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" -o "$env:TEMP\\patchmon-install.ps1" "${installUrl}"; if ($LASTEXITCODE -eq 0) { & "$env:TEMP\\patchmon-install.ps1" } else { Write-Error "curl failed with exit code $LASTEXITCODE" }`;
 		}
-		return `${sslBlock}$r = Invoke-WebRequest -Uri "${installUrl}" -Headers @{"X-API-ID"="${effectiveApiId}"; "X-API-KEY"="${effectiveApiKey}"} -UseBasicParsing; $r.Content | Set-Content "$env:TEMP\\patchmon-install.ps1" -Encoding UTF8; & "$env:TEMP\\patchmon-install.ps1"`;
+		// -OutFile writes the response bytes straight to disk. Reading
+		// $r.Content instead makes Windows PowerShell 5.1 decode the body
+		// through the Windows ANSI code page, which corrupts every non-ASCII
+		// character in the script.
+		return `${sslBlock}Invoke-WebRequest -Uri "${installUrl}" -Headers @{"X-API-ID"="${effectiveApiId}"; "X-API-KEY"="${effectiveApiKey}"} -UseBasicParsing -OutFile "$env:TEMP\\patchmon-install.ps1"; & "$env:TEMP\\patchmon-install.ps1"`;
 	};
 
 	const getLinuxInstallCommand = () =>
@@ -175,8 +180,8 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 		);
 	}
 
-	return (
-		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+	const modal = (
+		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120] p-4">
 			<div className="bg-white dark:bg-secondary-800 rounded-lg p-4 md:p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
 				<div className="flex justify-between items-center mb-4 gap-3">
 					<h3 className="text-base md:text-lg font-medium text-secondary-900 dark:text-white truncate">
@@ -505,6 +510,8 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 };
 
 export default CredentialsModal;

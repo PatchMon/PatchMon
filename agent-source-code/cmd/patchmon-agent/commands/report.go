@@ -396,7 +396,7 @@ func sendIntegrationData() {
 	// Set enabled checker to respect config.yml settings
 	// Load config first to check integration status
 	if err := cfgManager.LoadConfig(); err != nil {
-		logger.WithError(err).Debug("Failed to load config for integration check")
+		logger.WithError(err).Warn("Failed to load config for integration check")
 	}
 	integrationMgr.SetEnabledChecker(func(name string) bool {
 		return cfgManager.IsIntegrationEnabled(name)
@@ -893,7 +893,7 @@ func runScheduledComplianceScan() {
 	logger.Info("Starting scheduled compliance scan")
 
 	if err := cfgManager.LoadConfig(); err != nil {
-		logger.WithError(err).Debug("Failed to load config for scheduled compliance scan")
+		logger.WithError(err).Warn("Failed to load config for scheduled compliance scan")
 	}
 
 	complianceInteg := compliance.New(logger)
@@ -903,7 +903,10 @@ func runScheduledComplianceScan() {
 	})
 
 	if !complianceInteg.IsAvailable() {
-		logger.Debug("Compliance scanning not available on this system, skipping scheduled scan")
+		// Info, not Debug: at the default level this was the only outcome that
+		// printed nothing at all after "Starting scheduled compliance scan", so
+		// a host with no scanner was indistinguishable from a hung scan.
+		logger.Info("Compliance scanning not available on this system (no scanner or no SCAP content), skipping scheduled scan")
 		return
 	}
 

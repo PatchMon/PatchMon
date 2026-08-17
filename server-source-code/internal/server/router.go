@@ -134,6 +134,16 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 				Scopes:       oidcResolved.Scopes,
 			})
 			oidcClient = c
+			if log != nil {
+				source := "database settings"
+				if oidcResolved.ConfiguredViaEnv {
+					source = "environment variables"
+				}
+				log.Info("OIDC SSO enabled; provider discovery is deferred to the first login attempt",
+					"issuer", oidcResolved.IssuerURL,
+					"client_id", oidcResolved.ClientID,
+					"source", source)
+			}
 		}
 		oidcHandler = handler.NewOidcHandler(cfg, resolvedPtr, resolved, oidcClient, valid, store.NewOidcSessionStore(redisResolver), usersStore, authHandler, settingsStore, enc, log)
 	}
@@ -307,8 +317,8 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		r.Post("/integrations/docker", integrationsHandler.ReceiveDockerData)
 		r.Post("/hosts/integration-status", integrationsHandler.ReceiveIntegrationStatus)
 		r.Post("/compliance/scans", complianceHandler.ReceiveScans)
-		r.Get("/compliance/ssg-version", complianceHandler.SSGVersion)
-		r.Get("/compliance/ssg-content/{filename}", complianceHandler.SSGContent)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Get("/compliance/ssg-version", complianceHandler.AgentSSGVersion)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Get("/compliance/ssg-content/{filename}", complianceHandler.SSGContent)
 		// Patching agent output (API key auth)
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Post("/patching/runs/{id}/output", patchingHandler.ServePatchOutput)
 		// Windows Update agent callbacks (API key auth)
@@ -335,6 +345,10 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		r.Get("/auth/signup-enabled", authHandler.SignupEnabled)
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAuth)).Post("/auth/login", authHandler.Login)
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAuth)).Post("/auth/verify-tfa", authHandler.VerifyTfa)
+		// Unauthenticated by design: it authenticates itself with the refresh_token
+		// cookie, and the caller reaches it precisely because its access token has
+		// expired.
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAuth)).Post("/auth/refresh", authHandler.Refresh)
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAuth)).Post("/auth/setup-admin", authHandler.SetupAdmin)
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAuth)).Post("/auth/signup", authHandler.Signup)
 		if oidcHandler != nil {
@@ -432,6 +446,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.Post("/me/billing/sync", billingHandler.PostMyBillingSync(permissionsStore))
 			r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitPassword)).Put("/auth/change-password", authHandler.ChangePassword)
 			r.Post("/auth/logout", authHandler.Logout)
+			r.Post("/auth/heartbeat", authHandler.Heartbeat)
 			r.Get("/auth/sessions", authHandler.GetSessions)
 			r.Delete("/auth/sessions", authHandler.RevokeAllSessions)
 			r.Delete("/auth/sessions/{sessionId}", authHandler.RevokeSession)

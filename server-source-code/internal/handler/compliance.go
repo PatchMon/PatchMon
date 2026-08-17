@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -18,15 +17,13 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/ssgcontent"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 )
-
-// ssgFilenameRe validates SSG datastream filenames to prevent path traversal.
-var ssgFilenameRe = regexp.MustCompile(`^ssg-[a-z0-9]+-ds\.xml$`)
 
 // ComplianceHandler handles compliance endpoints.
 type ComplianceHandler struct {
@@ -966,6 +963,10 @@ func (h *ComplianceHandler) TriggerScan(w http.ResponseWriter, r *http.Request) 
 	if req.ProfileType != "" {
 		profileType = req.ProfileType
 	}
+	if err := queue.ValidateComplianceScanReadiness([]byte(host.ComplianceScannerStatus), profileType, req.ProfileID, host.ComplianceOpenscapEnabled, host.ComplianceDockerBenchEnabled); err != nil {
+		Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if h.integrationStatus != nil {
 		_ = h.integrationStatus.ClearComplianceScanCancel(r.Context(), hostID)
 	}
@@ -1014,33 +1015,60 @@ func (h *ComplianceHandler) TriggerBulkScan(w http.ResponseWriter, r *http.Reque
 		hostByID[hosts[i].ID] = &hosts[i]
 	}
 	enqueued := 0
+	skipped := 0
+	skipErrors := make([]map[string]string, 0)
 	for _, hostID := range req.HostIDs {
 		host := hostByID[hostID]
 		if host == nil {
+			skipped++
+			continue
+		}
+		if !host.ComplianceEnabled {
+			skipped++
+			skipErrors = append(skipErrors, map[string]string{
+				"hostId": hostID,
+				"error":  "Compliance scanning is disabled for this host",
+			})
+			continue
+		}
+		if err := queue.ValidateComplianceScanReadiness([]byte(host.ComplianceScannerStatus), "all", nil, host.ComplianceOpenscapEnabled, host.ComplianceDockerBenchEnabled); err != nil {
+			skipped++
+			skipErrors = append(skipErrors, map[string]string{
+				"hostId": hostID,
+				"error":  err.Error(),
+			})
 			continue
 		}
 		if h.integrationStatus != nil {
 			_ = h.integrationStatus.ClearComplianceScanCancel(r.Context(), hostID)
 		}
 		if h.queueClient == nil {
+			skipped++
 			continue
 		}
 		task, err := queue.NewRunScanTask(queue.RunScanPayload{
 			HostID: hostID, ApiID: host.ApiID, Host: hostFromRequest(r), ProfileType: "all",
 		})
 		if err != nil {
+			skipped++
 			continue
 		}
 		if _, err := h.queueClient.Enqueue(task); err != nil {
+			skipped++
 			continue
 		}
 		enqueued++
 	}
-	JSON(w, http.StatusOK, map[string]interface{}{
+	resp := map[string]interface{}{
 		"success":  true,
 		"message":  "Bulk scan triggered",
 		"enqueued": enqueued,
-	})
+		"skipped":  skipped,
+	}
+	if len(skipErrors) > 0 {
+		resp["errors"] = skipErrors
+	}
+	JSON(w, http.StatusOK, resp)
 }
 
 // CancelScan handles POST /compliance/cancel/:hostId.
@@ -1098,6 +1126,11 @@ func (h *ComplianceHandler) InstallScanner(w http.ResponseWriter, r *http.Reques
 		Error(w, http.StatusInternalServerError, "Failed to create install task")
 		return
 	}
+	// Drop the previous install's events before the new job exists, so the
+	// first poll cannot read the old run's terminal step as this run's outcome.
+	if h.integrationStatus != nil {
+		_ = h.integrationStatus.ClearInstallEvents(r.Context(), host.ApiID, "compliance")
+	}
 	info, err := h.queueClient.Enqueue(task)
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to enqueue install")
@@ -1142,6 +1175,68 @@ func (h *ComplianceHandler) CancelInstall(w http.ResponseWriter, r *http.Request
 		"success": true,
 		"message": "Cancel requested",
 	})
+}
+
+// installJobStatusFromEvents derives the install outcome from the agent's
+// install_events, returning the status and the message to report as `error`.
+//
+// The queue state this overrides only describes delivery of the WebSocket
+// command, which reaches a terminal state the moment the agent is told to
+// begin, so it reads "completed" or "unknown" for an install that failed.
+//
+// The outcome deliberately does NOT come from the stored `status` field, even
+// though the install path sets it. That field is shared with the agent's
+// periodic availability report, which writes "error" on any host where OpenSCAP
+// is simply not present yet, from two seconds after agent startup onwards and
+// again on every refresh the compliance tab triggers. Reading it would report
+// every fresh install as already failed before the agent had done anything, and
+// report a re-install on a working host as already complete.
+//
+// install_events are written only by runInstallScanner, and its last step is
+// always `complete`, `done` on success and `failed` on failure. Anything
+// short of that terminal step leaves the queue state alone rather than
+// inventing a verdict: an install that died mid-flight should not read as
+// permanently active.
+// The failure message is taken from the step that actually failed rather than
+// from the terminal step or the stored `message`. The failing step carries the
+// specific reason ("OpenSCAP installation failed: found no installable ...")
+// where `complete` is sometimes just "Installation failed", and unlike
+// `message` it cannot be overwritten by the availability reporter.
+func installJobStatusFromEvents(events []interface{}) (status, message string, ok bool) {
+	terminal := ""
+	terminalMsg := ""
+	failedStepMsg := ""
+
+	for _, raw := range events {
+		e, isMap := raw.(map[string]interface{})
+		if !isMap {
+			continue
+		}
+		step, _ := e["step"].(string)
+		stepStatus, _ := e["status"].(string)
+		msg, _ := e["message"].(string)
+
+		if step == "complete" {
+			switch stepStatus {
+			case "failed":
+				terminal, terminalMsg = "failed", msg
+			case "done":
+				terminal, terminalMsg = "completed", msg
+			}
+			continue
+		}
+		if stepStatus == "failed" && msg != "" && failedStepMsg == "" {
+			failedStepMsg = msg
+		}
+	}
+
+	if terminal == "" {
+		return "", "", false
+	}
+	if terminal == "failed" && failedStepMsg != "" {
+		return terminal, failedStepMsg, true
+	}
+	return terminal, terminalMsg, true
 }
 
 // GetInstallJobStatus handles GET /compliance/install-job/:hostId.
@@ -1199,6 +1294,20 @@ func (h *ComplianceHandler) GetInstallJobStatus(w http.ResponseWriter, r *http.R
 				}
 				if evts, ok := live["install_events"].([]interface{}); ok && len(evts) > 0 {
 					resp["install_events"] = evts
+					if mapped, reason, ok := installJobStatusFromEvents(evts); ok {
+						resp["status"] = mapped
+						if mapped == "failed" {
+							// live["message"] is the last resort only: the
+							// availability reporter writes that field too, so it
+							// may describe the host rather than this install.
+							if reason == "" {
+								reason, _ = live["message"].(string)
+							}
+							if reason != "" {
+								resp["error"] = reason
+							}
+						}
+					}
 				}
 				if prog, ok := live["progress"].(float64); ok {
 					resp["progress"] = prog
@@ -1309,37 +1418,19 @@ func (h *ComplianceHandler) GetSSGUpgradeJobStatus(w http.ResponseWriter, r *htt
 	JSON(w, http.StatusOK, resp)
 }
 
-// readSSGVersion reads the embedded SSG version from the .ssg-version marker file.
+// readSSGVersion reports which SSG release the content directory holds.
 func (h *ComplianceHandler) readSSGVersion() string {
-	if h.ssgContentDir == "" {
-		return ""
-	}
-	data, err := os.ReadFile(filepath.Join(h.ssgContentDir, ".ssg-version"))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
+	return ssgcontent.Version(h.ssgContentDir)
 }
 
 // listSSGFiles returns the names of all ssg-*-ds.xml files in the content dir.
 func (h *ComplianceHandler) listSSGFiles() []string {
-	if h.ssgContentDir == "" {
-		return nil
-	}
-	entries, err := os.ReadDir(h.ssgContentDir)
-	if err != nil {
-		return nil
-	}
-	var files []string
-	for _, e := range entries {
-		if !e.IsDir() && ssgFilenameRe.MatchString(e.Name()) {
-			files = append(files, e.Name())
-		}
-	}
-	return files
+	return ssgcontent.Files(h.ssgContentDir)
 }
 
-// SSGVersion handles GET /compliance/ssg-version (agent + session auth).
+// SSGVersion handles GET /compliance/ssg-info (session auth). Agents use
+// AgentSSGVersion instead; this one stays a 200 with an empty version when no
+// content is bundled, so Compliance Settings still renders.
 func (h *ComplianceHandler) SSGVersion(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"version": h.readSSGVersion(),
@@ -1347,11 +1438,45 @@ func (h *ComplianceHandler) SSGVersion(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// AgentSSGVersion handles GET /compliance/ssg-version (agent auth).
+//
+// Unlike the session-facing SSGVersion, a server with no bundled content is a
+// 503 here rather than a 200 with an empty version. Agents have no other source
+// for SSG content, so an ambiguous success would leave them unable to tell
+// "nothing to do" from "the server cannot serve me".
+func (h *ComplianceHandler) AgentSSGVersion(w http.ResponseWriter, r *http.Request) {
+	if !h.authenticateAgent(w, r) {
+		return
+	}
+	payload, ok := h.agentSSGVersionPayload()
+	if !ok {
+		Error(w, http.StatusServiceUnavailable, "No SSG content available on server")
+		return
+	}
+	JSON(w, http.StatusOK, payload)
+}
+
+// agentSSGVersionPayload builds the agent-facing version response, reporting
+// false when this server has no bundled content to offer.
+func (h *ComplianceHandler) agentSSGVersionPayload() (map[string]interface{}, bool) {
+	version := h.readSSGVersion()
+	if version == "" {
+		return nil, false
+	}
+	return map[string]interface{}{
+		"version": version,
+		"files":   h.listSSGFiles(),
+	}, true
+}
+
 // SSGContent handles GET /compliance/ssg-content/{filename} (agent auth).
 // Serves a specific datastream file from the SSG content directory.
 func (h *ComplianceHandler) SSGContent(w http.ResponseWriter, r *http.Request) {
+	if !h.authenticateAgent(w, r) {
+		return
+	}
 	filename := chi.URLParam(r, "filename")
-	if !ssgFilenameRe.MatchString(filename) {
+	if !ssgcontent.FilenameRe.MatchString(filename) {
 		Error(w, http.StatusBadRequest, "Invalid filename")
 		return
 	}
@@ -1362,6 +1487,31 @@ func (h *ComplianceHandler) SSGContent(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/xml")
 	http.ServeFile(w, r, filePath)
+}
+
+// authenticateAgent verifies agent API credentials from the request headers,
+// writing a 401 and returning false when they are missing or invalid.
+func (h *ComplianceHandler) authenticateAgent(w http.ResponseWriter, r *http.Request) bool {
+	apiID := r.Header.Get("X-API-ID")
+	apiKey := r.Header.Get("X-API-KEY")
+	if apiID == "" || apiKey == "" {
+		JSON(w, http.StatusUnauthorized, map[string]string{"error": "API credentials required"})
+		return false
+	}
+
+	host, err := h.hostsStore.GetByApiID(r.Context(), apiID)
+	if err != nil || host == nil {
+		JSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid API credentials"})
+		return false
+	}
+
+	ok, err := util.VerifyAPIKey(apiKey, host.ApiKey)
+	if err != nil || !ok {
+		JSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid API credentials"})
+		return false
+	}
+
+	return true
 }
 
 // RemediateRule handles POST /compliance/remediate/:hostId.

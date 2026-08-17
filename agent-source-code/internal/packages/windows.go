@@ -5,8 +5,10 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"unicode"
 
 	"patchmon-agent/internal/logutil"
+	"patchmon-agent/internal/winexec"
 	"patchmon-agent/pkg/models"
 
 	"github.com/sirupsen/logrus"
@@ -103,8 +105,13 @@ func (m *WindowsManager) mergeRegistryAndWinget(regPkgs, wingetPkgs []models.Pac
 		AvailableVersion string
 		NeedsUpdate      bool
 		SourceRepository string
-		matched          bool
+		// matched: enriched a registry entry, so it is already represented.
+		matched bool
+		// appended: already emitted as a winget-only entry.
+		appended bool
 	}
+	// One record per normalised name. winget truncates names to its column
+	// width, so distinct packages can collapse onto the same key here.
 	wingetByName := make(map[string]*wingetInfo, len(wingetPkgs))
 	for i := range wingetPkgs {
 		key := normalizePackageName(wingetPkgs[i].Name)
@@ -133,11 +140,18 @@ func (m *WindowsManager) mergeRegistryAndWinget(regPkgs, wingetPkgs []models.Pac
 		}
 	}
 
-	// Add WinGet-only entries that weren't in registry
+	// Add WinGet-only entries that weren't in registry.
+	//
+	// Guarded by appended as well as matched: the lookup holds one record per
+	// normalised name, so two winget rows whose names truncate to the same
+	// string both find the same unmatched record and would each be appended,
+	// reaching the server as two identical packages. Observed on CI as two
+	// copies of "Microsoft Visual C++ v14 Redistributabl" at the same version.
 	for i := range wingetPkgs {
 		key := normalizePackageName(wingetPkgs[i].Name)
-		if winfo, ok := wingetByName[key]; ok && !winfo.matched {
+		if winfo, ok := wingetByName[key]; ok && !winfo.matched && !winfo.appended {
 			regPkgs = append(regPkgs, wingetPkgs[i])
+			winfo.appended = true
 		}
 	}
 
@@ -217,7 +231,7 @@ foreach ($path in $paths) {
 if ($result.Count -gt 5000) { $result = $result[0..4999] }
 $result | ConvertTo-Json -Compress -Depth 3
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
@@ -225,7 +239,7 @@ $result | ConvertTo-Json -Compress -Depth 3
 		return nil
 	}
 
-	outputStr := strings.TrimSpace(string(output))
+	outputStr := strings.TrimSpace(string(winexec.TrimBOM(output)))
 	if outputStr == "" || outputStr == "null" || outputStr == "[]" {
 		return nil
 	}
@@ -294,7 +308,6 @@ func (m *WindowsManager) getPackagesFromWinget() []models.Package {
 	psScript := `
 $ErrorActionPreference = "SilentlyContinue"
 $env:TERM = 'dumb'
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 # Resolve winget.exe path — handle SYSTEM/Session 0 where it's not on PATH
 $wingetPath = $null
@@ -323,7 +336,7 @@ if (-not $wingetPath) {
 $out = & $wingetPath list --accept-source-agreements --disable-interactivity 2>&1
 if ($out) { $out | Out-String }
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
@@ -414,45 +427,63 @@ func (m *WindowsManager) parseWingetTable(output string) []wingetEntry {
 		return nil
 	}
 
-	// Derive column boundaries from header: find start of each word (column)
-	wordRe := regexp.MustCompile(`\S+`)
-	matches := wordRe.FindAllStringIndex(headerLine, -1)
-	if len(matches) < 3 {
+	// Column boundaries are measured in characters, not bytes. winget pads the
+	// table to a fixed display width, and it truncates a long name with a
+	// single ellipsis character that is three bytes of UTF-8. Slicing a data
+	// line at a byte offset taken from the ASCII header therefore cuts that
+	// character in half, leaving "\xe2\x80" on the end of the name and "\xa6"
+	// on the front of the version. Both fields are then invalid UTF-8,
+	// stripEllipsis never matches because the ellipsis is in fragments, and
+	// the mangled names defeat deduplication in mergeRegistryAndWinget so the
+	// same package is reported twice.
+	headerRunes := []rune(headerLine)
+	type colSpan struct{ start, end int }
+	var spans []colSpan
+	for i := 0; i < len(headerRunes); {
+		if unicode.IsSpace(headerRunes[i]) {
+			i++
+			continue
+		}
+		start := i
+		for i < len(headerRunes) && !unicode.IsSpace(headerRunes[i]) {
+			i++
+		}
+		spans = append(spans, colSpan{start: start, end: i})
+	}
+	if len(spans) < 3 {
 		m.logger.WithField("header", headerLine).Debug("parseWingetTable: header has fewer than 3 columns")
 		return nil
 	}
 
-	// colStarts[i] = start of column i; colEnd for column i = colStarts[i+1] or len(line)
-	colStarts := make([]int, len(matches))
-	for i, m := range matches {
-		colStarts[i] = m[0]
+	// colStarts[i] = start of column i; colEnd for column i = colStarts[i+1] or end of line
+	colStarts := make([]int, len(spans))
+	for i, s := range spans {
+		colStarts[i] = s.start
 	}
 
-	extractCol := func(line string, col int) string {
+	extractCol := func(lineRunes []rune, col int) string {
 		if col < 0 || col >= len(colStarts) {
 			return ""
 		}
 		start := colStarts[col]
-		var end int
+		end := len(lineRunes)
 		if col+1 < len(colStarts) {
 			end = colStarts[col+1]
-		} else {
-			end = len(line) + 1
 		}
-		if start >= len(line) {
+		if start >= len(lineRunes) {
 			return ""
 		}
-		if end > len(line) {
-			end = len(line)
+		if end > len(lineRunes) {
+			end = len(lineRunes)
 		}
-		return strings.TrimSpace(line[start:end])
+		return strings.TrimSpace(string(lineRunes[start:end]))
 	}
 
 	// Map column index to field (handles "Name"/"SearchName", "Id"/"SearchId", etc.)
 	nameCol, idCol, versionCol := 0, 1, 2
 	availCol, sourceCol := -1, -1
-	for i := 0; i < len(matches) && i < 5; i++ {
-		word := strings.ToLower(strings.TrimSpace(headerLine[matches[i][0]:matches[i][1]]))
+	for i := 0; i < len(spans) && i < 5; i++ {
+		word := strings.ToLower(strings.TrimSpace(string(headerRunes[spans[i].start:spans[i].end])))
 		switch {
 		case word == "name" || strings.HasSuffix(word, "name"):
 			nameCol = i
@@ -487,18 +518,19 @@ func (m *WindowsManager) parseWingetTable(output string) []wingetEntry {
 			continue
 		}
 
-		name := extractCol(line, nameCol)
-		id := extractCol(line, idCol)
-		version := extractCol(line, versionCol)
+		lineRunes := []rune(line)
+		name := extractCol(lineRunes, nameCol)
+		id := extractCol(lineRunes, idCol)
+		version := extractCol(lineRunes, versionCol)
 		if name == "" && id == "" {
 			continue
 		}
 		e := wingetEntry{Name: name, ID: id, Version: version}
 		if availCol >= 0 {
-			e.Available = extractCol(line, availCol)
+			e.Available = extractCol(lineRunes, availCol)
 		}
 		if sourceCol >= 0 && sourceCol < len(colStarts) {
-			e.Source = extractCol(line, sourceCol)
+			e.Source = extractCol(lineRunes, sourceCol)
 		}
 		entries = append(entries, e)
 	}
@@ -510,7 +542,6 @@ func (m *WindowsManager) getWingetUpgradeAvailable() map[string]string {
 	psScript := `
 $ErrorActionPreference = "SilentlyContinue"
 $env:TERM = 'dumb'
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 # Resolve winget.exe path (same logic as main list)
 $wingetPath = $null
@@ -535,7 +566,7 @@ if (-not $wingetPath) { exit 0 }
 $out = & $wingetPath list --upgrade-available --accept-source-agreements --disable-interactivity 2>&1
 if ($out) { $out | Out-String }
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
@@ -562,13 +593,18 @@ if ($out) { $out | Out-String }
 
 func stripEllipsis(s string) string {
 	s = strings.TrimSpace(s)
-	// Winget truncates with U+2026 HORIZONTAL ELLIPSIS; also handle mis-encoded ÔÇª
+	// Winget truncates with U+2026 HORIZONTAL ELLIPSIS.
 	const ellipsis = "\u2026"
 	if strings.HasSuffix(s, ellipsis) {
 		return strings.TrimSuffix(s, ellipsis)
 	}
-	if strings.HasSuffix(s, "\u00d4\u00c2\u00c9") { // ÔÇª in UTF-8
-		return strings.TrimSuffix(s, "\u00d4\u00c2\u00c9")
+	// The same character written as UTF-8 (E2 80 A6) and read back through a
+	// single-byte code page lands as ÔÇª under CP850 or â€¦ under CP1252.
+	// The constant here used to spell ÔÂÉ, so it never matched anything.
+	for _, mangled := range []string{"\u00d4\u00c7\u00aa", "\u00e2\u20ac\u00a6"} {
+		if strings.HasSuffix(s, mangled) {
+			return strings.TrimSuffix(s, mangled)
+		}
 	}
 	return s
 }
@@ -586,7 +622,7 @@ $server = (Get-ItemProperty -Path $wuKey -Name WUServer -ErrorAction SilentlyCon
 $useWU = (Get-ItemProperty -Path "$wuKey\AU" -Name UseWUServer -ErrorAction SilentlyContinue).UseWUServer
 if ($server -and $useWU -eq 1) { "WSUS_ACTIVE" } else { "WSUS_INACTIVE" }
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
@@ -718,7 +754,7 @@ if ($comFailed) {
 
 $result | ConvertTo-Json -Compress -Depth 4
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
@@ -726,7 +762,7 @@ $result | ConvertTo-Json -Compress -Depth 4
 		return nil
 	}
 
-	outputStr := strings.TrimSpace(string(output))
+	outputStr := strings.TrimSpace(string(winexec.TrimBOM(output)))
 	// Check for COM error message (e.g. E_ACCESSDENIED in Session 0)
 	if strings.Contains(outputStr, "WUA_COM_ERROR:") {
 		idx := strings.Index(outputStr, "WUA_COM_ERROR:")

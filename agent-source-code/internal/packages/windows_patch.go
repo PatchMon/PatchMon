@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"patchmon-agent/internal/winexec"
 )
 
 // WindowsPatcher executes Windows patching operations via PowerShell.
@@ -72,7 +74,7 @@ try {
 }
 `, guid)
 
-	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	out, err := cmd.CombinedOutput()
 	output := strings.TrimSpace(string(out))
 	if err != nil {
@@ -128,13 +130,12 @@ func (p *WindowsPatcher) WinGetUpgradeAll(ctx context.Context, dryRun bool) (str
 	}
 	psScript := fmt.Sprintf(`
 $ErrorActionPreference = "SilentlyContinue"
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $env:TERM = 'dumb'
 %s
 %s
 `, wingetResolveBlock, action)
 
-	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	out, err := cmd.CombinedOutput()
 	output := strings.TrimSpace(string(out))
 	if err != nil {
@@ -160,13 +161,12 @@ Write-Output $out
 	}
 	psScript := fmt.Sprintf(`
 $ErrorActionPreference = "SilentlyContinue"
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $env:TERM = 'dumb'
 %s
 %s
 `, wingetResolveBlock, action)
 
-	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	out, err := cmd.CombinedOutput()
 	output := strings.TrimSpace(string(out))
 	if err != nil {
@@ -182,7 +182,7 @@ func RebootRequired() bool {
 $key = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'
 if (Test-Path $key) { Write-Output 'true' } else { Write-Output 'false' }
 `
-	cmd, cancel := boundedCommand(collectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	cmd, cancel := boundedCommand(collectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
 	out, err := cmd.Output()
 	if err != nil {

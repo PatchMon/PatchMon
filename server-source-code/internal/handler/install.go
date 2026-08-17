@@ -89,6 +89,32 @@ func normalizeLineEndings(b []byte) []byte {
 	return []byte(s)
 }
 
+// inferHostOS resolves the OS to serve for a host when the request does not
+// specify one, using what the host has already reported about itself.
+func inferHostOS(expectedPlatform *string, osType string) string {
+	if expectedPlatform != nil {
+		ep := strings.ToLower(*expectedPlatform)
+		if ep == "windows" {
+			return "windows"
+		}
+		if strings.Contains(ep, "freebsd") || strings.Contains(ep, "pfsense") {
+			return "freebsd"
+		}
+		return "linux"
+	}
+	if osType != "" {
+		reported := strings.ToLower(osType)
+		if strings.Contains(reported, "windows") {
+			return "windows"
+		}
+		if strings.Contains(reported, "freebsd") || strings.Contains(reported, "pfsense") {
+			return "freebsd"
+		}
+		return "linux"
+	}
+	return "linux"
+}
+
 // ServeInstall handles GET /api/v1/hosts/install.
 // Requires X-API-ID and X-API-KEY headers. Serves the install script with env vars and bootstrap token injected.
 func (h *InstallHandler) ServeInstall(w http.ResponseWriter, r *http.Request) {
@@ -145,7 +171,7 @@ func (h *InstallHandler) ServeInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	osParam := r.URL.Query().Get("os")
 	if osParam != "linux" && osParam != "freebsd" && osParam != "windows" {
-		osParam = "linux"
+		osParam = inferHostOS(host.ExpectedPlatform, host.OSType)
 	}
 
 	// Windows: serve PowerShell script with env vars
@@ -170,7 +196,7 @@ func (h *InstallHandler) ServeInstall(w http.ResponseWriter, r *http.Request) {
 			script = append([]byte("#"), script[1:]...)
 		}
 		script = append([]byte(envBlock), script...)
-		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Content-Disposition", `inline; filename="patchmon_install_windows.ps1"`)
 		_, _ = w.Write(script)
 		return
@@ -233,7 +259,7 @@ fetch_credentials
 	}
 	script = append([]byte(envBlock), script...)
 
-	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", `inline; filename="patchmon_install.sh"`)
 	_, _ = w.Write(script)
 }
@@ -254,7 +280,7 @@ func (h *InstallHandler) ServeRemove(w http.ResponseWriter, r *http.Request) {
 			JSON(w, http.StatusNotFound, map[string]string{"error": "Windows removal script not found"})
 			return
 		}
-		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Content-Disposition", `inline; filename="patchmon_remove_windows.ps1"`)
 		_, _ = w.Write(script)
 		return
@@ -274,7 +300,7 @@ func (h *InstallHandler) ServeRemove(w http.ResponseWriter, r *http.Request) {
 		script = append([]byte("#"), script[1:]...)
 	}
 	script = append(envPrefix, script...)
-	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", `inline; filename="patchmon_remove.sh"`)
 	_, _ = w.Write(script)
 }
@@ -915,28 +941,8 @@ func (h *InstallHandler) ServeAgentVersion(w http.ResponseWriter, r *http.Reques
 	}
 
 	osParam := r.URL.Query().Get("os")
-	if osParam == "" && host.ExpectedPlatform != nil {
-		ep := strings.ToLower(*host.ExpectedPlatform)
-		if ep == "windows" {
-			osParam = "windows"
-		} else if strings.Contains(ep, "freebsd") || strings.Contains(ep, "pfsense") {
-			osParam = "freebsd"
-		} else {
-			osParam = "linux"
-		}
-	}
-	if osParam == "" && host.OSType != "" {
-		reported := strings.ToLower(host.OSType)
-		if strings.Contains(reported, "windows") {
-			osParam = "windows"
-		} else if strings.Contains(reported, "freebsd") || strings.Contains(reported, "pfsense") {
-			osParam = "freebsd"
-		} else {
-			osParam = "linux"
-		}
-	}
 	if osParam == "" {
-		osParam = "linux"
+		osParam = inferHostOS(host.ExpectedPlatform, host.OSType)
 	}
 
 	validOss := map[string]bool{"linux": true, "freebsd": true, "windows": true}
@@ -1079,28 +1085,8 @@ func (h *InstallHandler) ServeAgentDownload(w http.ResponseWriter, r *http.Reque
 	}
 
 	osParam := r.URL.Query().Get("os")
-	if osParam == "" && host.ExpectedPlatform != nil {
-		ep := strings.ToLower(*host.ExpectedPlatform)
-		if ep == "windows" {
-			osParam = "windows"
-		} else if strings.Contains(ep, "freebsd") || strings.Contains(ep, "pfsense") {
-			osParam = "freebsd"
-		} else {
-			osParam = "linux"
-		}
-	}
-	if osParam == "" && host.OSType != "" {
-		reported := strings.ToLower(host.OSType)
-		if strings.Contains(reported, "windows") {
-			osParam = "windows"
-		} else if strings.Contains(reported, "freebsd") || strings.Contains(reported, "pfsense") {
-			osParam = "freebsd"
-		} else {
-			osParam = "linux"
-		}
-	}
 	if osParam == "" {
-		osParam = "linux"
+		osParam = inferHostOS(host.ExpectedPlatform, host.OSType)
 	}
 
 	validOss := map[string]bool{"linux": true, "freebsd": true, "windows": true}

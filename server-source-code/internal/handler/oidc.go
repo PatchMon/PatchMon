@@ -374,12 +374,21 @@ func (h *OidcHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	// An email match, or auto-create, means the email claim decides who this is,
 	// so it has to be verified.
 	if !matchedBySub && !userInfo.EmailVerified {
-		if h.log != nil {
-			h.log.Warn("oidc login rejected: unverified email claim",
-				"email", userInfo.Email, "sub", userInfo.Sub)
+		if h.oidcTrustUnverifiedEmail(r.Context()) {
+			if h.log != nil {
+				h.log.Warn("oidc accepting unverified email: trust_unverified_email is enabled",
+					"email", userInfo.Email, "sub", userInfo.Sub)
+			}
+		} else {
+			if h.log != nil {
+				h.log.Warn("oidc login rejected: unverified email claim",
+					"email", userInfo.Email, "sub", userInfo.Sub,
+					"reason", userInfo.EmailVerifiedReason,
+					"hint", "see the operator guide, The verified email requirement")
+			}
+			http.Redirect(w, r, "/login?error=Unable+to+sign+in+with+this+account", http.StatusFound)
+			return
 		}
-		http.Redirect(w, r, "/login?error=Unable+to+sign+in+with+this+account", http.StatusFound)
-		return
 	}
 
 	if user == nil && h.oidcAutoCreateUsers(r.Context()) {
@@ -523,6 +532,7 @@ func (h *OidcHandler) ImportFromEnv(w http.ResponseWriter, r *http.Request) {
 	s.OidcReadonlyGroup = strOrNil(strings.TrimSpace(h.cfg.OidcReadonlyGroup))
 	s.OidcUserGroup = strOrNil(strings.TrimSpace(h.cfg.OidcUserGroup))
 	s.OidcEnforceHTTPS = h.cfg.OidcEnforceHTTPS
+	s.OidcTrustUnverifiedEmail = h.cfg.OidcTrustUnverifiedEmail
 	if secret := strings.TrimSpace(h.cfg.OidcClientSecret); secret != "" && h.enc != nil {
 		encrypted, err := h.enc.Encrypt(secret)
 		if err == nil {
@@ -576,26 +586,27 @@ func (h *OidcHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 func oidcSettingsResponse(s *models.Settings, secretSet *bool, configuredViaEnv bool, envPreview map[string]string, callbackURL ...string) map[string]interface{} {
 	res := map[string]interface{}{
-		"configured_via_env":      configuredViaEnv,
-		"env_preview":             envPreview,
-		"oidc_enabled":            false,
-		"oidc_issuer_url":         nil,
-		"oidc_client_id":          nil,
-		"oidc_client_secret_set":  false,
-		"oidc_redirect_uri":       nil,
-		"oidc_scopes":             "openid email profile groups",
-		"oidc_auto_create_users":  false,
-		"oidc_default_role":       "user",
-		"oidc_disable_local_auth": false,
-		"oidc_button_text":        "Login with SSO",
-		"oidc_sync_roles":         false,
-		"oidc_admin_group":        nil,
-		"oidc_superadmin_group":   nil,
-		"oidc_host_manager_group": nil,
-		"oidc_readonly_group":     nil,
-		"oidc_user_group":         nil,
-		"oidc_enforce_https":      true,
-		"callback_url":            "",
+		"configured_via_env":          configuredViaEnv,
+		"env_preview":                 envPreview,
+		"oidc_enabled":                false,
+		"oidc_issuer_url":             nil,
+		"oidc_client_id":              nil,
+		"oidc_client_secret_set":      false,
+		"oidc_redirect_uri":           nil,
+		"oidc_scopes":                 "openid email profile groups",
+		"oidc_auto_create_users":      false,
+		"oidc_default_role":           "user",
+		"oidc_disable_local_auth":     false,
+		"oidc_button_text":            "Login with SSO",
+		"oidc_sync_roles":             false,
+		"oidc_admin_group":            nil,
+		"oidc_superadmin_group":       nil,
+		"oidc_host_manager_group":     nil,
+		"oidc_readonly_group":         nil,
+		"oidc_user_group":             nil,
+		"oidc_enforce_https":          true,
+		"oidc_trust_unverified_email": false,
+		"callback_url":                "",
 	}
 	if s != nil {
 		res["oidc_enabled"] = s.OidcEnabled
@@ -614,6 +625,7 @@ func oidcSettingsResponse(s *models.Settings, secretSet *bool, configuredViaEnv 
 		res["oidc_readonly_group"] = s.OidcReadonlyGroup
 		res["oidc_user_group"] = s.OidcUserGroup
 		res["oidc_enforce_https"] = s.OidcEnforceHTTPS
+		res["oidc_trust_unverified_email"] = s.OidcTrustUnverifiedEmail
 	}
 	if secretSet != nil {
 		res["oidc_client_secret_set"] = *secretSet
@@ -715,6 +727,9 @@ func applyOidcSettingsUpdate(s *models.Settings, req map[string]interface{}, enc
 	}
 	if v, ok := getReqBool(req, "oidc_enforce_https", "oidcEnforceHttps"); ok {
 		s.OidcEnforceHTTPS = v
+	}
+	if v, ok := getReqBool(req, "oidc_trust_unverified_email", "oidcTrustUnverifiedEmail"); ok {
+		s.OidcTrustUnverifiedEmail = v
 	}
 }
 
@@ -818,6 +833,13 @@ func (h *OidcHandler) oidcAutoCreateUsers(ctx context.Context) bool {
 		return r.AutoCreateUsers
 	}
 	return h.cfg.OidcAutoCreateUsers
+}
+
+func (h *OidcHandler) oidcTrustUnverifiedEmail(ctx context.Context) bool {
+	if r := h.resolvedSnapshot(ctx); r != nil {
+		return r.TrustUnverifiedEmail
+	}
+	return h.cfg.OidcTrustUnverifiedEmail
 }
 
 func (h *OidcHandler) oidcSyncRoles(ctx context.Context) bool {

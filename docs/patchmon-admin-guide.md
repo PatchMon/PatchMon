@@ -646,10 +646,12 @@ The top of the page has four main areas:
 - **Hostname** and **IP** underneath, both editable inline (clicking shows a text field; Enter to save, Esc to cancel).
 - **Status pills** (four independent indicators, each with a hover tooltip explaining what it means):
   - **WS** — WebSocket control channel state. Green when connected, amber while disconnected within the configured grace window, red once the grace window elapses. The grace window is the `host_down` alert threshold (default 30 seconds, see [Per-alert-type configuration](#per-alert-type-configuration)).
-  - **Reporting** — agent report freshness. Green when the agent has reported within its update interval, amber when overdue but the WebSocket is still connected (agent is alive, just hasn't pushed yet), red ("Stale") when overdue *and* the WebSocket is also disconnected.
+  - **Reporting** — agent report freshness. Grey ("Awaiting report") until the agent sends its very first report, then green when the agent has reported within its update interval, amber when overdue but the WebSocket is still connected (agent is alive, just hasn't pushed yet), red ("Stale") when overdue *and* the WebSocket is also disconnected.
   - **Reboot pending** — only shown when the host has flagged a pending reboot (e.g. `/var/run/reboot-required`, kernel updates).
-  - **Updates** — green "Up to date", amber "Updates pending" (non-security only), red "Security patches required" when one or more security updates are available.
+  - **Updates** — grey "No package data" until the first report arrives, then green "Up to date", amber "Updates pending" (non-security only), red "Security patches required" when one or more security updates are available.
 - **Uptime** and **Last updated** relative timestamps.
+
+**Suspended machines catch up on their own.** A laptop or VM does not run its report timer while it is asleep, so it wakes up with an amber Reporting pill (red, while it was still asleep and its WebSocket was down). When an agent connects and the host has not reported within its update interval, the server asks it for a fresh report within the following minute, so the pill clears without anyone pressing **Fetch Report**. The same applies to a host that was powered off, or cut off by a network outage. Hosts that keep reporting on schedule are unaffected.
 
 If there's a pending patch run awaiting a fresh post-patch report, you'll see an **Awaiting inventory report** chip that links to the run.
 
@@ -2755,7 +2757,7 @@ This is one of the most important architectural changes in 2.0 for compliance.
 
 In 1.x and earlier, each agent fetched SCAP Security Guide (SSG) content from GitHub at scan time. That required every agent to have outbound access to `github.com`, created occasional transient failures when GitHub was unavailable, and allowed agents to drift to different SSG versions depending on when they last pulled.
 
-In 2.0, SSG and CIS benchmarking content is **bundled with the server binary at build time** and served from a single `SSG_CONTENT_DIR` on the server. Agents now fetch content from the server itself, via two new endpoints:
+In 2.0, SSG and CIS benchmarking content is **bundled into the server image at build time** and served from a single `SSG_CONTENT_DIR` on the server. Agents now fetch content from the server itself, via two new endpoints:
 
 - `GET /api/v1/compliance/ssg-version`, returns the SSG version string and the list of `ssg-*-ds.xml` files available.
 - `GET /api/v1/compliance/ssg-content/{filename}`, streams a specific datastream file to the agent.
@@ -2764,9 +2766,10 @@ Both endpoints accept agent API-key authentication.
 
 #### What this means operationally
 
-- **No external network calls at scan time.** Agents in air-gapped environments no longer need GitHub access; they need server access, which they already had for heartbeats.
+- **No external network calls at scan time.** The server is the only place an agent gets SSG content from. Agents never contact `github.com` for it under any circumstance, so air-gapped fleets need nothing beyond the server access they already had for heartbeats.
 - **One SSG version across the fleet.** Every agent gets the same content bundle. The Compliance Settings page shows the active version and the list of content files under **OpenSCAP Content**.
-- **Version-pinned scanning.** Because the server binary ships with the content, upgrading the server is the way to get new SSG rules. You can also trigger a per-host `UpgradeSSG` job (Host Detail → Integrations → Compliance) to push the current server-bundled version to that host.
+- **Version-pinned scanning.** Because the image ships with the content, upgrading the server is the way to get new SSG rules. Hosts pick the new version up automatically on the daily content check, and you can push it to a single host sooner with the API call described under "Upgrading SSG content on a host".
+- **A server with no content fails loudly.** If the content directory is empty, for example because a volume was mounted over it, the server logs a warning at startup, Compliance Settings reports the content as unavailable, and agents are told so explicitly rather than quietly falling back to some other source.
 
 #### Where to see the active version
 
@@ -3010,20 +3013,46 @@ Compliance scanning on a host needs OpenSCAP (`oscap` binary) installed and the 
 2. On next Apply Pending Config, the agent receives the new integration state and reports that the scanner is not installed.
 3. From the Host Detail Compliance tab, click **Install Scanner**. The UI calls `POST /api/v1/compliance/install-scanner/{hostId}`.
 4. The server enqueues an install task. The worker sends an install message to the agent.
-5. The agent installs `openscap-scanner` (via `apt` / `dnf`) and downloads SSG content from the server via `GET /api/v1/compliance/ssg-content/{filename}`. Progress events are reported back to Redis and surfaced in the UI via `GET /compliance/install-job/{hostId}`, which returns the current state (`waiting`, `active`, `completed`) plus a per-step message and progress percent.
+5. The agent installs the OpenSCAP scanner with the host's own package manager, then downloads SSG content from the server via `GET /api/v1/compliance/ssg-content/{filename}`. Progress events are reported back to Redis and surfaced in the UI via `GET /compliance/install-job/{hostId}`, which returns the current state plus a per-step message and progress percent. The states are `none` (no install has been requested), `waiting`, `active`, `completed`, `failed`, and `unknown` when the job can no longer be found. A `failed` state also carries an `error` field with the reason.
 6. When the install completes, the Run Scan button becomes active.
 
+The scanner package name is not the same on every release, so the agent asks the archive which one it has rather than assuming. Debian 12 and newer, and Ubuntu 24.04 and newer, provide `openscap-scanner` plus `openscap-common`; Debian 10 and Ubuntu 22.04 provide `libopenscap8` instead. RHEL-family hosts use `openscap-scanner` and SUSE hosts use `openscap-utils`.
+
+Content is handled separately from the scanner, and a host that gets one without the other is not a failure. Ubuntu packages no SSG content at all, so on Ubuntu the datastream always comes from the PatchMon server. The install only fails outright when the host ends up with no working `oscap` binary.
+
 Install can be cancelled mid-flight from the same UI via `POST /api/v1/compliance/install-scanner/{hostId}/cancel`.
+
+#### Platforms where the scanner cannot be installed
+
+Some supported PatchMon hosts cannot run compliance scanning at all, because the platform publishes no OpenSCAP package, no SCAP content, or neither. On most of these the install reports the reason in plain terms. The exception is Amazon Linux 2, where the failure surfaces as raw `yum` output:
+
+| Platform | Reason |
+|----------|--------|
+| Debian 11 (bullseye) | OpenSCAP was removed from the archive before bullseye released, so no package provides `oscap` |
+| Amazon Linux 2 | The amzn2 repositories carry neither `openscap-scanner` nor `scap-security-guide` |
+| Alpine Linux | No SCAP datastream is published for Alpine, so a scanner would have nothing to scan against |
+| Arch Linux | OpenSCAP is available only from the AUR, and no datastream is published |
+| FreeBSD | No OpenSCAP port and no datastream |
+| Windows | The agent has no compliance integration on Windows |
+
+Everything else in the supported matrix can install the scanner: Debian 10, 12, 13 and 14, Ubuntu 22.04 and 24.04, the RHEL family (Rocky, AlmaLinux, CentOS Stream, Oracle Linux, Fedora, Amazon Linux 2023), and openSUSE.
+
+On Debian 10 the install succeeds but the results are not useful. PatchMon ships no Debian 10 datastream, so the host falls back to the very old content in buster's own `ssg-debian` package, and every rule comes back as "not applicable" because the content targets an earlier Debian release. Treat compliance scanning on Debian 10 as unavailable in practice.
 
 If the status panel shows **Partial Installation**, some scanners are present and others are not. A common case is a host running Docker, where Docker Bench is ready but OpenSCAP is missing, so scans return Docker Bench results only and the scanner panel reports "No SCAP content found". The same button appears in that state, labelled **Retry install**, and installs whatever is missing.
 
 #### Upgrading SSG content on a host
 
-When the server is upgraded to a newer PatchMon version with newer bundled SSG content, existing hosts may still have older content cached locally. To force an upgrade:
+When the server is upgraded to a newer PatchMon version with newer bundled SSG content, existing hosts may still have older content cached locally.
 
-1. Host Detail → Integrations → Compliance → **Upgrade SSG Content**. The UI calls `POST /api/v1/compliance/upgrade-ssg/{hostId}`.
-2. The server enqueues an `ssg_upgrade` task. The agent downloads the latest `ssg-*-ds.xml` files from the server.
-3. Poll the upgrade job via `GET /api/v1/compliance/ssg-upgrade-job/{hostId}`: the UI shows `waiting`, `active`, or `completed` with a message.
+You do not normally need to do anything. A daily check compares each host's reported SSG version against the version bundled with the server and pushes an upgrade to any host that is behind, so the fleet converges on its own within a day of a server upgrade.
+
+To push it to one host sooner:
+
+1. Call `POST /api/v1/compliance/upgrade-ssg/{hostId}` (requires the `can_manage_compliance` permission). The server enqueues an `ssg_upgrade` task and the agent downloads the current `ssg-*-ds.xml` for its OS from the server.
+2. Poll `GET /api/v1/compliance/ssg-upgrade-job/{hostId}` for `waiting`, `active`, or `completed` with a message.
+
+Re-running **Install Scanner** from Host Detail also re-syncs content from the server as part of the install.
 
 The Compliance Settings page always shows the currently-active server-side SSG version under **OpenSCAP Content → SSG *x.y.z***.
 
@@ -3526,7 +3555,7 @@ PatchMon 2.0 ships four destination channel types. The list is fixed in the serv
 
 | Channel | Value | What it does |
 |---------|-------|--------------|
-| **Webhook** | `webhook` | HTTP POST of a JSON payload to any URL. Generic by default; Discord and Slack webhook URLs are auto-detected and formatted with the appropriate rich payload. |
+| **Webhook** | `webhook` | HTTP POST of a JSON payload to any URL. Generic by default; Discord, Slack, Mattermost and Rocket.Chat webhook URLs are auto-detected and formatted with the appropriate rich payload. |
 | **Email** | `email` | SMTP delivery to one or more recipients, with HTML body and an optional attachment for scheduled reports. |
 | **ntfy** | `ntfy` | Push notification via [ntfy.sh](https://ntfy.sh) or a self-hosted ntfy server. |
 | **Internal Alerts** | `internal` | Built-in destination that drops events into the **Alerts** tab. You cannot create or delete this one; it is created automatically and can only be enabled or disabled. |
@@ -3551,12 +3580,16 @@ A successfully-created destination shows up in the destinations table with its c
 
 #### Webhook
 
-Pick this for **generic JSON webhooks, Discord, or Slack**. Discord and Slack URLs are auto-detected and sent rich payloads; other URLs receive a generic JSON body.
+Pick this for **generic JSON webhooks, Discord, Slack, Mattermost or Rocket.Chat**. Discord, Slack, Mattermost and Rocket.Chat URLs are auto-detected and sent rich payloads; other URLs receive a generic JSON body.
 
 | Field | Required | Notes |
 |-------|:--------:|-------|
-| **Webhook URL** | Yes | Full HTTPS URL. Discord: `https://discord.com/api/webhooks/...`. Slack: `https://hooks.slack.com/services/...`. Generic: any endpoint that accepts `POST` with `Content-Type: application/json`. |
+| **Webhook URL** | Yes | Full HTTPS URL. Discord: `https://discord.com/api/webhooks/...`. Slack: `https://hooks.slack.com/services/...`. Mattermost: `https://your-mattermost/hooks/...`. Generic: any endpoint that accepts `POST` with `Content-Type: application/json`. |
 | **Signing secret** | No | Optional HMAC secret. When set, each webhook is signed with SHA-256 over the payload; the signature is sent in a header so the receiver can verify authenticity. |
+
+> **Mattermost and Rocket.Chat.** Both are self-hosted on your own domain, so PatchMon cannot detect them by hostname. It detects them by the `/hooks/<token>` path that both use for incoming webhooks, and sends the Slack-compatible payload they expect. A URL such as `https://chat.example.com/hooks/xxxgeneratedkeyxxx` is matched, and so is one behind a subpath proxy, for example `https://example.com/mattermost/hooks/xxxgeneratedkeyxxx`. The match requires one or two long opaque tokens after `/hooks/`, so an automation platform that happens to use a `/hooks/` path for routing (a Zapier catch hook, for example) is not mistaken for a chat server and keeps the generic body. Jira and Confluence automation URLs on `automation.atlassian.com` are excluded by name, because they are shaped like a chat webhook but are consumed as structured data.
+
+The generic JSON body also carries a top-level `text` key, alongside the structured `event_type`, `severity`, `title`, `message`, `reference` and `metadata` fields. Receivers that read the structured fields are unaffected, and any receiver that requires a `text` key works without extra configuration. Note that `text` is formatted in Slack-style markdown, so it contains `*bold*` markers and Slack link syntax such as `<https://…|View in PatchMon>`; a receiver that renders it as literal text will show that markup. On scheduled reports the `text` key is a short preview only, because the full report is already present in the `html` and `csv` fields.
 
 #### Email (SMTP)
 
@@ -3576,8 +3609,22 @@ PatchMon offers four TLS modes on every email destination. Pick the one your rel
 
 - **STARTTLS (recommended).** PatchMon connects in plaintext on the SMTP port (typically 587) and then requires the server to advertise `STARTTLS`. The connection is upgraded to TLS before any credentials or message body are sent. If the server does not advertise `STARTTLS`, PatchMon refuses to send and reports the failure. This is the right choice for the vast majority of modern relays (Microsoft 365, Google Workspace, SendGrid, Postmark, Mailgun, Amazon SES on port 587, and most on-prem mail servers).
 - **Implicit TLS / SSL.** PatchMon opens a TLS connection from the very first byte, with no plaintext handshake. The default port for this mode is 465. Use it when your relay only accepts TLS on a dedicated port and does not support `STARTTLS`. Some legacy or appliance-based servers only offer this mode.
-- **None (insecure).** Cleartext SMTP, no TLS at any stage. PatchMon refuses to send if a username or password is set on the destination, because it would otherwise leak credentials onto the wire. Use only for trusted internal relays on a private network where TLS is genuinely unavailable.
+- **None (insecure).** Cleartext SMTP, no TLS at any stage. If a username or password is set on the destination, PatchMon refuses to send unless you also tick **Send credentials over an unencrypted connection**, because authenticating in cleartext puts the credentials on the wire. See **Authenticated relays without TLS** below. Use this mode only for trusted internal relays on a private network where TLS is genuinely unavailable.
 - **Auto.** Legacy opportunistic mode kept for backward compatibility. PatchMon tries `STARTTLS` first and falls back to implicit TLS on the same host and port if `STARTTLS` is not advertised. Existing destinations that were saved before the explicit modes were added load as **Auto** so they keep working unchanged. Open the destination, pick **STARTTLS** or **Implicit TLS / SSL** explicitly once you have confirmed which one your relay supports, and save. New destinations should not be configured as **Auto**.
+
+##### Authenticated relays without TLS
+
+Some internal relays require SMTP AUTH but do not offer TLS at all. By default PatchMon refuses that combination, because PLAIN authentication over cleartext puts the username and password on the wire in a form anyone on the network path can read.
+
+If the relay is on a network you trust and you accept that trade-off, set **TLS mode** to **None (insecure)** and tick **Send credentials over an unencrypted connection** on the destination. PatchMon then authenticates in cleartext for that destination only.
+
+Points worth knowing before you enable it:
+
+- The setting is per destination, not global. Other email destinations are unaffected.
+- It applies only in **None (insecure)** mode. In **STARTTLS**, **Implicit TLS / SSL**, and **Auto** it is ignored, so it can never weaken a mode that does use TLS.
+- It is off by default, including on every destination that already exists.
+- Anyone able to observe traffic between PatchMon and the relay can read the credentials. Use a dedicated relay account with no privileges beyond sending mail, and never reuse a password from elsewhere.
+- The preferred fix remains enabling STARTTLS on the relay, even with a self-signed or internal CA certificate.
 
 > Port and mode are independent. The port field is just the TCP port to connect to; the TLS mode controls how the connection is secured. The defaults (587 for STARTTLS, 465 for implicit TLS) match the conventional ports, but you can override the port if your relay listens elsewhere.
 
@@ -3586,9 +3633,11 @@ PatchMon offers four TLS modes on every email destination. Pick the one your rel
 Saved email destinations have a **Send test email** button next to the standard **Test** action. Unlike **Test**, which enqueues a synthetic notification through the worker, **Send test email** performs a synchronous live SMTP probe directly from the API request and reports the result inline:
 
 - On success the toast confirms delivery and the recipients should receive a short test message.
-- On failure PatchMon reports which stage of the SMTP exchange failed: `validate` (the configuration is rejected before any network activity, for example a missing host or a username set with TLS mode **None**), `dial` (the TCP connection or implicit TLS handshake could not be established), `starttls` (the server did not advertise `STARTTLS` in the chosen mode), `auth` (the relay rejected the credentials), or `send` (the relay accepted the session but rejected the recipients or message). The toast includes the underlying error message returned by the relay.
+- On failure PatchMon reports which stage of the SMTP exchange failed: `validate` (the configuration is rejected before any network activity, for example a missing host, or a username set with TLS mode **None** without the cleartext credentials opt-in), `dial` (the TCP connection or implicit TLS handshake could not be established), `starttls` (the server did not advertise `STARTTLS` in the chosen mode), `auth` (the relay rejected the credentials), or `send` (the relay accepted the session but rejected the recipients or message). The toast includes the underlying error message returned by the relay.
 
 This is the fastest way to diagnose a TLS or auth misconfiguration without trawling through server logs. The probe respects the same `can_manage_notifications` permission as editing the destination.
+
+> The probe always uses the **last saved** configuration, not what is currently on screen. Save the destination before testing, otherwise you are testing the previous settings. This matters most when you have just ticked **Send credentials over an unencrypted connection**: until you save, the probe still fails at the `validate` stage.
 
 #### ntfy
 
@@ -3791,6 +3840,7 @@ If all five retries fail, the delivery row stays at the last `failed` state. The
 | `connect: connection refused` / `i/o timeout` | Destination host is unreachable from the PatchMon server. Check firewall / network. |
 | `authentication failed` / `535 5.7.8` | Wrong SMTP credentials or token. Re-edit the destination and re-enter. |
 | `400 Bad Request` from Discord/Slack webhook | Webhook URL is wrong, revoked, or the rich payload is malformed for a customised Slack app. |
+| `webhook status 400` from Mattermost or Rocket.Chat | The webhook was deleted or the token is wrong, or the target channel no longer exists. Re-copy the URL from the integration page. Versions before 2.1.3 returned this for every delivery regardless of the URL; upgrade if you are on an older release. |
 | `403 Forbidden` from ntfy | Topic requires auth you have not provided, or token is expired. |
 | `destination disabled` | Someone disabled the destination between enqueue and delivery. Re-enable and re-trigger. |
 
@@ -3803,6 +3853,26 @@ Duplicates suppressed by the 2-minute dedup window do **not** appear in the deli
 1. The destination is enabled.
 2. No route has been deleted.
 3. The per-minute rate cap is not being exceeded upstream. 60 messages/minute is per-destination.
+
+#### Diagnosing a webhook with `LOG_LEVEL=debug`
+
+The delivery log records the outcome of a delivery, not how it was built. To see which payload format a webhook destination actually received, set `LOG_LEVEL` to `debug` (**Settings > Environment**, or the `LOG_LEVEL` env var). Every webhook delivery then writes one line:
+
+```
+level=DEBUG msg="webhook dispatch" destination_id=... event_type=host_down
+  format=slack_compatible host=chat.example.com body_bytes=229 signed=true
+```
+
+| Field | Meaning |
+|-------|---------|
+| `format` | `discord`, `slack_compatible` or `generic`. This is the payload shape that was sent, so it tells you whether auto-detection recognised your receiver. |
+| `host` | Host of the destination URL. The path is deliberately omitted because it carries the webhook's secret token. |
+| `body_bytes` | Size of the JSON body, useful when a receiver enforces a size limit. |
+| `signed` | Whether an HMAC signature header was attached. |
+
+If `format` is `generic` for a chat server you expected to be recognised, the URL is not on a `/hooks/<token>` path. The delivery still works, because the generic body carries a `text` key, but the message will be less richly formatted. The destination form shows the same detection result before you save.
+
+Debug level is verbose across the whole server, so turn it back to `info` once you have the answer.
 
 ### App links in notifications
 
@@ -4151,7 +4221,7 @@ RDP is provided under the **remote_access** capability module.
 
 Key components:
 
-- **`guacd`**: Apache Guacamole's daemon, shipped as a sidecar container in PatchMon's Docker Compose (`guacamole/guacd:1.5.5`). Runs on `4822/tcp` inside the `patchmon-internal` network. No public ports.
+- **`guacd`**: Apache Guacamole's daemon, shipped as a sidecar container in PatchMon's Docker Compose (`guacamole/guacd:1.6.0`). Runs on `4822/tcp` inside the `patchmon-internal` network. No public ports.
 - **PatchMon server**: acts as the Guacamole WebSocket tunnel endpoint and owns the RDP ticket store. It asks the host's agent to set up a local TCP proxy, then hands that proxy to `guacd`.
 - **Agent proxy**: on receiving `rdp_proxy` over its WebSocket, the agent opens a local TCP bridge and forwards bytes between PatchMon and `localhost:3389` on the Windows host. Requires `integrations.rdp-proxy-enabled: true` in the agent config.
 - **Windows host**: runs the standard Windows RDP service on `127.0.0.1:3389` (bound to localhost via the agent; no inbound exposure needed).

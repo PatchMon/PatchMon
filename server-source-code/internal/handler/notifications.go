@@ -481,6 +481,9 @@ type testSMTPRequest struct {
 	To       string `json:"to"`
 	UseTLS   *bool  `json:"use_tls"`
 	TLSMode  string `json:"tls_mode"`
+	// AllowInsecureAuth permits PLAIN auth over cleartext. Only meaningful
+	// with tls_mode=none; see mailer.Config.AllowInsecureAuth.
+	AllowInsecureAuth bool `json:"allow_insecure_auth"`
 }
 
 // TestSMTP POST /notifications/destinations/{id}/test-smtp
@@ -500,6 +503,10 @@ func (h *NotificationsHandler) TestSMTP(w http.ResponseWriter, r *http.Request) 
 	if r.Body != nil && r.ContentLength != 0 {
 		dec := json.NewDecoder(r.Body)
 		if err := dec.Decode(&override); err == nil {
+			// AllowInsecureAuth is deliberately absent from this list. Including it would
+			// let a caller post {"allow_insecure_auth":true} alone to flip hasOverride and
+			// probe a saved destination with cleartext auth it never opted in to. Leaving
+			// it out means such a body is ignored and the stored config is used instead.
 			hasOverride = override.SMTPHost != "" || override.From != "" || override.To != "" ||
 				override.SMTPPort != 0 || override.TLSMode != "" || override.UseTLS != nil ||
 				override.Username != "" || override.Password != "" || override.FromName != ""
@@ -553,6 +560,9 @@ func (h *NotificationsHandler) TestSMTP(w http.ResponseWriter, r *http.Request) 
 		From:     cfg.From,
 		FromName: cfg.FromName,
 		TLSMode:  mode,
+		// Only honoured for tls_mode=none; mailer.validate() rejects the
+		// combination when this is false.
+		AllowInsecureAuth: cfg.AllowInsecureAuth,
 	}
 	msg := mailer.Message{
 		To:       cfg.To,

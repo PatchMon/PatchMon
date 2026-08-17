@@ -58,6 +58,7 @@ jobs:
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
           go-version-file: 'agent-source-code/go.mod'
+          cache-dependency-path: 'agent-source-code/go.sum'
 
       - name: Build all agent binaries
         working-directory: agent-source-code
@@ -80,15 +81,142 @@ jobs:
           done
 
       - name: Upload agent binaries
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: agent-binaries
           path: agents-prebuilt/
 
+  build-server-binaries:
+    name: Build server binaries
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name != 'pull_request_target' ||
+      github.event.pull_request.head.repo.full_name == github.repository ||
+      contains(join(github.event.pull_request.labels.*.name, ', '), 'approved-for-build')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.ref }}
+          fetch-depth: 0
+
+      # On a release tag this also writes the release notes into
+      # release_notes_data/ so //go:embed compiles them in. Nothing is committed.
+      - name: Resolve version and inject release notes
+        id: ctx
+        uses: ./.github/actions/release-context
+        with:
+          token: ${{ github.token }}
+
+      - name: Fetch community counts
+        id: social
+        # Bakes the current GitHub/Discord/YouTube/LinkedIn counts into every
+        # binary, so an install from a release asset shows the same numbers as
+        # one from the image. patchmon.net/socialstats is public, so this works
+        # on forks with no secrets.
+        #
+        # Never fails the build: an unreachable endpoint leaves the count empty
+        # and the server keeps its compiled-in default, while a deliberate 0
+        # hides that number instead.
+        continue-on-error: true
+        run: |
+          for platform in github discord youtube linkedin; do
+            count="$(curl -fsS --max-time 10 --retry 2 --retry-delay 2 \
+              "https://patchmon.net/socialstats/${platform}" 2>/dev/null || true)"
+            count="$(printf '%s' "$count" | tr -dc '0-9')"
+            if [ -z "$count" ]; then
+              echo "::notice::no count for ${platform}; keeping compiled-in default"
+            else
+              echo "${platform}=${count}" >> "$GITHUB_OUTPUT"
+              echo "${platform}: ${count}"
+            fi
+          done
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: "package.json"
+          cache: "npm"
+
+      # Built once for every architecture: the output is static JS/CSS/HTML and
+      # is embedded into each binary by //go:embed.
+      - name: Build frontend for embed
+        run: |
+          npm ci
+          npm run build --workspace=frontend
+          rm -rf server-source-code/cmd/server/static/frontend/dist
+          mkdir -p server-source-code/cmd/server/static/frontend
+          cp -r frontend/dist server-source-code/cmd/server/static/frontend/
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: 'server-source-code/go.mod'
+          cache-dependency-path: 'server-source-code/go.sum'
+
+      # A release needs all four architectures for the release page. Every other
+      # event only needs the two the image is built for, so PRs do not pay for
+      # 386 and arm.
+      - name: Build server binaries
+        working-directory: server-source-code
+        env:
+          CGO_ENABLED: 0
+          VERSION: ${{ steps.ctx.outputs.version }}
+          GITHUB_STARS: ${{ steps.social.outputs.github }}
+          DISCORD_MEMBERS: ${{ steps.social.outputs.discord }}
+          YOUTUBE_SUBSCRIBERS: ${{ steps.social.outputs.youtube }}
+          LINKEDIN_FOLLOWERS: ${{ steps.social.outputs.linkedin }}
+        run: |
+          set -euo pipefail
+          mkdir -p ../server-prebuilt
+
+          SOCIAL_PKG="github.com/PatchMon/PatchMon/server-source-code/internal/social"
+          LDFLAGS="-s -w -X github.com/PatchMon/PatchMon/server-source-code/internal/config.DefaultVersion=${VERSION}"
+          for pair in "GitHubStars:${GITHUB_STARS}" "DiscordMembers:${DISCORD_MEMBERS}" \
+                      "YouTubeSubscribers:${YOUTUBE_SUBSCRIBERS}" "LinkedInFollowers:${LINKEDIN_FOLLOWERS}"; do
+            name="${pair%%:*}"; value="${pair#*:}"
+            [ -n "$value" ] || continue
+            if printf '%s' "$value" | grep -qE '^[0-9]+$'; then
+              LDFLAGS="$LDFLAGS -X $SOCIAL_PKG.$name=$value"
+            else
+              echo "::warning::ignoring non-numeric social count $name='$value'"
+            fi
+          done
+
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            ARCHES="amd64 arm64 386 arm"
+          else
+            ARCHES="amd64 arm64"
+          fi
+          echo "building: $ARCHES"
+
+          for arch in $ARCHES; do
+            export GOOS=linux GOARCH="$arch"
+            case "$arch" in arm) export GOARM=6 ;; *) unset GOARM ;; esac
+            go build -buildvcs=false -ldflags="$LDFLAGS" \
+              -o "../server-prebuilt/patchmon-server-linux-${arch}" ./cmd/server
+          done
+          ls -la ../server-prebuilt
+
+      - name: Upload server binaries
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: server-binaries
+          path: server-prebuilt/
+
   build-server:
     name: Build server image
-    needs: build-agents
+    needs: [build-agents, build-server-binaries]
     runs-on: ubuntu-latest
+    # id-token/attestations are scoped to this job rather than the workflow so
+    # `build-agents` cannot mint a Sigstore token. They are needed by the
+    # attest-* steps at the end of this job.
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: write
+      id-token: write
+      attestations: write
     # Hoist the Harbor-secret presence check to a job-level env var.
     # GitHub Actions does not allow the `secrets` context in step-level `if:`
     # expressions for some trigger types (you'll see
@@ -97,6 +225,12 @@ jobs:
     # a plain string "true"/"false" which step-level `if:` CAN read via env.
     env:
       HAS_HARBOR: ${{ secrets.HARBOR_USERNAME != '' && secrets.HARBOR_TOKEN != '' }}
+      # Mirrors the `push:` expression on the GHCR build step below. The
+      # attestation steps must not run when nothing was pushed, because
+      # build-push-action still emits a digest for a build that stayed local
+      # and `push-to-registry: true` would then fail against a digest the
+      # registry has never seen.
+      PUSHED: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'workflow_dispatch' || inputs.push == 'true') }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -117,35 +251,17 @@ jobs:
         with:
           token: ${{ github.token }}
 
-      - name: Fetch community counts
-        id: social
-        # Bakes the current GitHub/Discord/YouTube/LinkedIn counts into the
-        # binary so the nav, login footer and setup wizard are accurate as of
-        # the release. patchmon.net/socialstats is public and unauthenticated,
-        # so this works on forks with no secrets configured.
-        #
-        # Never fails the build: an unreachable endpoint leaves the outputs
-        # empty and the server keeps its compiled-in defaults, while a
-        # deliberate 0 from the endpoint hides that number instead.
-        continue-on-error: true
-        run: |
-          for platform in github discord youtube linkedin; do
-            count="$(curl -fsS --max-time 10 --retry 2 --retry-delay 2 \
-              "https://patchmon.net/socialstats/${platform}" 2>/dev/null || true)"
-            count="$(printf '%s' "$count" | tr -dc '0-9')"
-            if [ -z "$count" ]; then
-              echo "::notice::no count for ${platform}; keeping compiled-in default"
-            else
-              echo "${platform}=${count}" >> "$GITHUB_OUTPUT"
-              echo "${platform}: ${count}"
-            fi
-          done
-
       - name: Download agent binaries
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: agent-binaries
           path: agents-prebuilt/
+
+      - name: Download server binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: server-binaries
+          path: server-prebuilt/
 
       - name: Log in to container registry (GHCR)
         if: github.event_name != 'pull_request_target'
@@ -154,18 +270,6 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Log in to Harbor
-        # Skip when HARBOR_USERNAME/HARBOR_TOKEN aren't set (forks, test repos,
-        # contributor PRs from forks). The Harbor push step below also guards
-        # on the same env, so the workflow still succeeds — it just doesn't
-        # publish to Harbor.
-        if: env.HAS_HARBOR == 'true'
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
-        with:
-          registry: ${{ env.HARBOR_REGISTRY }}
-          username: ${{ secrets.HARBOR_USERNAME }}
-          password: ${{ secrets.HARBOR_TOKEN }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
@@ -191,24 +295,18 @@ jobs:
             type=edge,branch=main
             type=raw,value=edge,enable=${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
 
+      # Harbor is staging only: PR previews and the `main` edge build. Releases
+      # go to GHCR alone, hence the ref_type gate here and on every Harbor step
+      # below. Any future Harbor name needs a project prefix; Harbor rejects a
+      # single-segment name with `400 invalid repository name`.
       - name: Extract metadata (tags, labels) for Harbor
         id: meta-harbor
-        if: env.HAS_HARBOR == 'true'
+        if: env.HAS_HARBOR == 'true' && github.ref_type != 'tag'
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051
         with:
-          # Release tag pushes publish to `cr.dev.patchmon.cloud/patchmon-server`.
-          # PR and edge builds publish to the `/pr/` staging namespace
-          # (`cr.dev.patchmon.cloud/pr/patchmon-server`) so production pulls
-          # never accidentally resolve to an in-flight build.
-          images: |
-            name=${{ env.HARBOR_REGISTRY }}/patchmon-server,enable=${{ github.ref_type == 'tag' }}
-            name=${{ env.HARBOR_REGISTRY }}/pr/patchmon-server,enable=${{ github.ref_type != 'tag' }}
-          flavor: |
-            latest=auto
+          images: ${{ env.HARBOR_REGISTRY }}/pr/patchmon-server
+          # No `type=semver` or `latest=auto`: both only emit on a tag ref.
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
             type=edge,branch=main
             type=raw,value=edge,enable=${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
             type=ref,event=pr,prefix=pr-
@@ -221,12 +319,6 @@ jobs:
           context: .
           file: docker/server.Dockerfile
           platforms: linux/amd64,linux/arm64
-          build-args: |
-            VERSION=${{ steps.ctx.outputs.version }}
-            GITHUB_STARS=${{ steps.social.outputs.github }}
-            DISCORD_MEMBERS=${{ steps.social.outputs.discord }}
-            YOUTUBE_SUBSCRIBERS=${{ steps.social.outputs.youtube }}
-            LINKEDIN_FOLLOWERS=${{ steps.social.outputs.linkedin }}
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -239,23 +331,122 @@ jobs:
           # See: https://github.com/PatchMon/PatchMon/issues/679
           outputs: type=image,compression=gzip,force-compression=true
 
-      - name: Build and push server image to Harbor (PRs, main, and tags)
+      # ---------------------------------------------------------------------
+      # SBOM and build provenance.
+      #
+      # The SBOM is a CRA essential requirement (Annex I Part II point 1:
+      # components documented in a commonly used machine-readable format).
+      # The provenance attestation is not itself mandated by the CRA but backs
+      # Annex I Part II point 7, secure distribution of updates.
+      #
+      # These are Sigstore statements bound to the image digest and stored as
+      # OCI referrers. They are deliberately NOT BuildKit's own
+      # `provenance: mode=max`, which adds attestation manifests to the image
+      # index and surfaces them as `unknown/unknown` platform entries. That is
+      # the same manifest-shape change that broke Podman <5.7 in #679, so both
+      # the GHCR build above and the Harbor build below keep `provenance: false`
+      # and the pull path is untouched.
+      #
+      # Attached to GHCR always, and to Harbor (2.15.0, which has the OCI
+      # referrers API) on the `main` edge build, the only Harbor push that is
+      # not a PR. Attestations also land in the GitHub attestation store, so
+      # `gh attestation verify` works against any copy of the image whose
+      # digest is unchanged, whatever registry it came from.
+      #
+      # PR builds are deliberately excluded via PUSHED even though they do
+      # push to Harbor's /pr/ namespace: signing throwaway images built from
+      # unreviewed fork code produces attestations that are noise at best.
+      # ---------------------------------------------------------------------
+      - name: Resolve image names
+        id: img
+        if: env.PUSHED == 'true'
+        # `github.repository` is `PatchMon/PatchMon`, and the attest-* actions
+        # reject a mixed-case subject-name. The GHCR build step above never
+        # hits this because docker/metadata-action lowercases internally.
+        #
+        # REGISTRY and HARBOR_REGISTRY come from the workflow-level env block.
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          echo "ghcr=${REGISTRY}/$(echo "${REPO}" | tr '[:upper:]' '[:lower:]')-server" >> "$GITHUB_OUTPUT"
+          echo "harbor=${HARBOR_REGISTRY}/pr/patchmon-server" >> "$GITHUB_OUTPUT"
+
+      # Source-side SBOM. This is not redundant with the image scan below:
+      # the React frontend is bundled by Vite and then compiled into the Go
+      # binary with //go:embed, so once it is inside the image the npm
+      # dependency tree is gone and no cataloguer can recover it. npm
+      # workspaces keep the only lockfile at the repo root.
+      - name: Generate source SBOM
+        if: env.PUSHED == 'true' && steps.build.outputs.digest != ''
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: sbom-source.cdx.json
+          upload-artifact: false
+
+      # Image SBOM: Alpine base packages plus the Go module graph of the
+      # server binary and the 10 bundled agent binaries (Go buildinfo survives
+      # `-s -w`). Syft resolves a multi-arch index to linux/amd64; the module
+      # and package sets do not differ by arch here.
+      - name: Generate image SBOM
+        if: env.PUSHED == 'true' && steps.build.outputs.digest != ''
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ steps.img.outputs.ghcr }}@${{ steps.build.outputs.digest }}
+          format: cyclonedx-json
+          output-file: sbom-image.cdx.json
+          upload-artifact: false
+
+      - name: Attest build provenance (GHCR)
+        if: env.PUSHED == 'true' && steps.build.outputs.digest != ''
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.img.outputs.ghcr }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest image SBOM (GHCR)
+        if: env.PUSHED == 'true' && steps.build.outputs.digest != ''
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-name: ${{ steps.img.outputs.ghcr }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: sbom-image.cdx.json
+          push-to-registry: true
+
+      # Also kept as a plain artifact so an SBOM can be pulled without going
+      # through the registry referrers API.
+      - name: Upload SBOMs
+        if: env.PUSHED == 'true' && steps.build.outputs.digest != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sbom-server-${{ steps.ctx.outputs.version }}
+          path: |
+            sbom-image.cdx.json
+            sbom-source.cdx.json
+
+      # Both Harbor steps run last, login included. A failing step ends the job
+      # and skips everything after it whatever its `if:` says, so a Harbor
+      # problem here cannot cost the GHCR image or its SBOM and attestations.
+      - name: Log in to Harbor
+        # Also skipped when HARBOR_USERNAME/HARBOR_TOKEN aren't set, so forks
+        # and test repos fall through to a GHCR-only build.
+        if: env.HAS_HARBOR == 'true' && github.ref_type != 'tag'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ${{ env.HARBOR_REGISTRY }}
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_TOKEN }}
+
+      - name: Build and push server image to Harbor (PRs and main only)
         id: build-harbor
-        # Only run when Harbor credentials are set and metadata-action produced
-        # at least one tag. Forks / test repos simply skip this step; GHCR push
-        # above still happens.
-        if: env.HAS_HARBOR == 'true' && steps.meta-harbor.outputs.tags != ''
+        if: env.HAS_HARBOR == 'true' && github.ref_type != 'tag' && steps.meta-harbor.outputs.tags != ''
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: .
           file: docker/server.Dockerfile
           platforms: linux/amd64,linux/arm64
-          build-args: |
-            VERSION=${{ steps.ctx.outputs.version }}
-            GITHUB_STARS=${{ steps.social.outputs.github }}
-            DISCORD_MEMBERS=${{ steps.social.outputs.discord }}
-            YOUTUBE_SUBSCRIBERS=${{ steps.social.outputs.youtube }}
-            LINKEDIN_FOLLOWERS=${{ steps.social.outputs.linkedin }}
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
           tags: ${{ steps.meta-harbor.outputs.tags }}
           labels: ${{ steps.meta-harbor.outputs.labels }}
@@ -280,6 +471,28 @@ jobs:
           # break Podman <5.7 and Docker without the containerd image store.
           # See: https://github.com/PatchMon/PatchMon/issues/679
           outputs: type=image,compression=gzip,force-compression=true
+
+      - name: Attest build provenance (Harbor)
+        if: env.PUSHED == 'true' && env.HAS_HARBOR == 'true' && steps.build-harbor.outputs.digest != ''
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.img.outputs.harbor }}
+          subject-digest: ${{ steps.build-harbor.outputs.digest }}
+          push-to-registry: true
+
+      # Reuses the SBOM scanned from the GHCR image rather than pulling the
+      # Harbor one again. The two are separate build-push-action invocations
+      # from the same context with the same build args, so the digests can
+      # differ but the component set cannot. Guarded on the GHCR digest as
+      # well, because that is what produced the file.
+      - name: Attest image SBOM (Harbor)
+        if: env.PUSHED == 'true' && env.HAS_HARBOR == 'true' && steps.build-harbor.outputs.digest != '' && steps.build.outputs.digest != ''
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-name: ${{ steps.img.outputs.harbor }}
+          subject-digest: ${{ steps.build-harbor.outputs.digest }}
+          sbom-path: sbom-image.cdx.json
+          push-to-registry: true
 
       # Locate a previous image comment by its marker so a re-push updates it
       # instead of appending another one. `synchronize` is a trigger, so
@@ -329,3 +542,103 @@ jobs:
                 image: ${{ env.HARBOR_REGISTRY }}/pr/patchmon-server@${{ steps.build-harbor.outputs.digest }}
             ```
 
+
+  # Release artefacts. Runs only on a tag, and takes its binaries from the two
+  # build jobs above rather than the release page, so there is no cross-workflow
+  # race over which assets exist yet.
+  release-assets:
+    name: Publish release binaries, checksums and provenance
+    needs: [build-agents, build-server-binaries]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      # Generated before the binaries land in dist/ so the scan covers the
+      # source tree only and does not re-catalogue the built artefacts.
+      - name: Generate source SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: sbom-source.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Download agent binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: agent-binaries
+          path: dist/
+
+      - name: Download server binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: server-binaries
+          path: dist/
+
+      - name: Verify binaries
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          expected=14
+          found=$(ls patchmon-* | wc -l)
+          if [ "$found" -ne "$expected" ]; then
+            echo "::error::expected ${expected} binaries, found ${found}"
+            ls -la
+            exit 1
+          fi
+
+          for f in patchmon-*; do
+            chmod +x "$f"
+            case "$f" in
+              *windows*) pattern="PE32|MS Windows" ;;
+              *)         pattern="ELF" ;;
+            esac
+            if ! file "$f" | grep -qE "$pattern"; then
+              echo "::error::${f} is not the expected binary format: $(file "$f")"
+              exit 1
+            fi
+            # CGO is off everywhere, so anything dynamically linked is a
+            # regression that would break on older distributions.
+            if file "$f" | grep -q "dynamically linked"; then
+              echo "::error::${f} is dynamically linked"
+              exit 1
+            fi
+          done
+          file patchmon-*
+
+      # Proves the binaries actually execute, not merely that they are the
+      # right shape. Only the native arch can run on the runner.
+      - name: Smoke-test the native binaries
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          ./patchmon-agent-linux-amd64 --version
+          ./patchmon-agent-linux-amd64 --help > /dev/null
+          echo "agent linux/amd64 runs"
+
+      - name: Generate SHA256SUMS
+        working-directory: dist
+        run: |
+          sha256sum patchmon-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attest binary provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: 'dist/patchmon-*'
+
+      - name: Upload binaries, checksums and SBOM to release
+        uses: softprops/action-gh-release@b25b93d384199fc0fc8c2e126b2d937a0cbeb2ae
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            dist/patchmon-*
+            dist/SHA256SUMS
+            sbom-source.cdx.json

@@ -83,7 +83,7 @@
 					{
 						"name": "include",
 						"in": "query",
-						"description": "Comma-separated. Supported: stats (adds updates_count, security_updates_count, total_packages, needs_reboot, os_type, os_version, last_update, status, reporting_state, update_state). reporting_state is one of 'reporting' | 'overdue' | 'stale'. update_state is one of 'up_to_date' | 'updates_pending' | 'security_required'.",
+						"description": "Comma-separated. Supported: stats (adds updates_count, security_updates_count, total_packages, needs_reboot, os_type, os_version, last_update, status, effective_status, reporting_state, update_state). status is the stored provisioning lifecycle value, 'pending' before the first check-in and 'active' after it; it never becomes 'inactive'. effective_status is the value the web UI displays and is one of 'pending' | 'active' | 'inactive', where 'inactive' means an active host has not reported for more than twice the configured update interval. reporting_state is one of 'reporting' | 'overdue' | 'stale'. update_state is one of 'up_to_date' | 'updates_pending' | 'security_required'.",
 						"schema": { "type": "string" }
 					}
 				],
@@ -109,6 +109,7 @@
 											"os_version": "22.04",
 											"last_update": "2025-03-01T12:00:00Z",
 											"status": "active",
+											"effective_status": "active",
 											"reporting_state": "reporting",
 											"update_state": "security_required"
 										}
@@ -820,7 +821,7 @@
 			"get": {
 				"tags": ["GetHomepage"],
 				"summary": "Get homepage widget statistics",
-				"description": "Returns widget statistics for GetHomepage dashboard (total hosts, outdated packages, security updates, OS distribution, etc.). Requires Basic Auth with GetHomepage credentials.",
+				"description": "Returns widget statistics for GetHomepage dashboard (total hosts, outdated packages, security updates, OS distribution, etc.). The host counters match the equivalent cards on the PatchMon dashboard: total_hosts counts every host, including ones created but not yet enrolled. Requires Basic Auth with GetHomepage credentials.",
 				"security": [{ "basicAuth": [] }],
 				"responses": {
 					"200": {

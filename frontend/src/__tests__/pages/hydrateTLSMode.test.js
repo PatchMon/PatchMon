@@ -1,10 +1,14 @@
 /**
- * Unit tests for hydrateTLSMode, which maps a stored SMTP destination config
- * back onto the TLS mode dropdown when an existing channel is reopened.
+ * Unit tests for hydrateTLSMode and hydrateAllowInsecureAuth, which map a
+ * stored SMTP destination config back onto the TLS controls when an existing
+ * channel is reopened.
  */
 
 import { describe, expect, it } from "vitest";
-import { hydrateTLSMode } from "../../pages/settings/AlertChannels";
+import {
+	hydrateAllowInsecureAuth,
+	hydrateTLSMode,
+} from "../../pages/settings/AlertChannels";
 
 describe("hydrateTLSMode", () => {
 	it("defaults to starttls when there is no config", () => {
@@ -40,5 +44,31 @@ describe("hydrateTLSMode", () => {
 		// a falsy-but-absent value.
 		expect(hydrateTLSMode({ use_tls: undefined })).toBe("auto");
 		expect(hydrateTLSMode({ smtp_host: "mail.example.com" })).toBe("auto");
+	});
+});
+
+describe("hydrateAllowInsecureAuth", () => {
+	it("returns false when there is no config", () => {
+		expect(hydrateAllowInsecureAuth(null)).toBe(false);
+		expect(hydrateAllowInsecureAuth(undefined)).toBe(false);
+		expect(hydrateAllowInsecureAuth("")).toBe(false);
+		expect(hydrateAllowInsecureAuth(0)).toBe(false);
+	});
+
+	it("returns false when the field is absent, as on older rows", () => {
+		expect(hydrateAllowInsecureAuth({})).toBe(false);
+		expect(hydrateAllowInsecureAuth({ tls_mode: "none" })).toBe(false);
+	});
+
+	it("returns true only on an exact boolean true", () => {
+		expect(hydrateAllowInsecureAuth({ allow_insecure_auth: true })).toBe(true);
+		expect(hydrateAllowInsecureAuth({ allow_insecure_auth: false })).toBe(
+			false,
+		);
+		expect(hydrateAllowInsecureAuth({ allow_insecure_auth: "true" })).toBe(
+			false,
+		);
+		expect(hydrateAllowInsecureAuth({ allow_insecure_auth: 1 })).toBe(false);
+		expect(hydrateAllowInsecureAuth({ allow_insecure_auth: null })).toBe(false);
 	});
 });

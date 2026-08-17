@@ -229,25 +229,33 @@ const AlertSettings = () => {
 
 	const bulkUpdateMutation = useMutation({
 		mutationFn: (configs) => alertsAPI.bulkUpdateAlertConfig(configs),
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["alert-config"] });
+		onSuccess: async () => {
+			// Await the refetch before dropping local state. isDirty here is
+			// derived by comparing local to server, so clearing it while the
+			// cache still held pre-save values would re-hydrate the form from
+			// them, then wedge it dirty against the values that arrive after.
+			await queryClient.invalidateQueries({ queryKey: ["alert-config"] });
+			// Now that the cache is fresh, dropping local state lets the effect
+			// re-hydrate unconditionally, including any value the server
+			// normalised on the way in.
+			setLocalConfigs(null);
 			toast.success("Settings applied");
 		},
 		onError: (err) =>
 			toast.error(err.response?.data?.error || "Failed to apply"),
 	});
 
-	useEffect(() => {
-		if (alertConfigs && Array.isArray(alertConfigs)) {
-			setLocalConfigs(alertConfigs.map((c) => ({ ...c })));
-		}
-	}, [alertConfigs]);
-
 	const isDirty =
 		localConfigs &&
 		alertConfigs &&
 		(localConfigs.length !== alertConfigs.length ||
 			localConfigs.some((lc, i) => !configsEqual(lc, alertConfigs[i])));
+
+	// Never hydrate over unsaved edits: a refetch would otherwise discard them.
+	useEffect(() => {
+		if (!alertConfigs || !Array.isArray(alertConfigs) || isDirty) return;
+		setLocalConfigs(alertConfigs.map((c) => ({ ...c })));
+	}, [alertConfigs, isDirty]);
 
 	useEffect(() => {
 		if (!isDirty) return;

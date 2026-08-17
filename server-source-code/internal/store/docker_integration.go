@@ -122,6 +122,11 @@ func mapToJSON(m interface{}) []byte {
 
 // ReceiveDockerData processes and stores Docker data from an agent.
 func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payload *DockerReceivePayload) (*DockerReceiveResult, error) {
+	// Strip NUL before anything touches a query parameter. The handler has
+	// already run the canonical docker-hash check by this point, so cleaning
+	// here cannot cause a hash mismatch.
+	sanitizeDockerPayload(payload)
+
 	d := s.db.DB(ctx)
 	now := time.Now().UTC()
 	nowPg := pgtime.From(now)

@@ -284,7 +284,8 @@ func (m *APTManager) parseDEB822Sources(filename string) ([]models.Repository, e
 
 			parts := strings.SplitN(line, ":", 2)
 			if len(parts) == 2 {
-				key := strings.TrimSpace(parts[0])
+				// Field names are case-insensitive per sources.list(5)
+				key := strings.ToLower(strings.TrimSpace(parts[0]))
 				value := strings.TrimSpace(parts[1])
 				currentEntry[key] = value
 			}
@@ -300,20 +301,21 @@ func (m *APTManager) parseDEB822Sources(filename string) ([]models.Repository, e
 	return repositories, scanner.Err()
 }
 
-// processDEB822Entry processes a single DEB822 repository entry
+// processDEB822Entry processes a single DEB822 repository entry.
+// Keys are lower-cased by parseDEB822Sources.
 func (m *APTManager) processDEB822Entry(entry map[string]string) []models.Repository {
 	var repositories []models.Repository
 
 	// Check if explicitly disabled (Enabled: no)
 	// Per sources.list(5), Enabled defaults to yes if not specified
-	enabled := entry["Enabled"]
+	enabled := strings.ToLower(entry["enabled"])
 	isEnabled := enabled != "no" && enabled != "false"
 
-	types := entry["Types"]
-	uris := entry["URIs"]
-	suites := entry["Suites"]
-	components := entry["Components"]
-	name := entry["X-Repolib-Name"]
+	types := entry["types"]
+	uris := entry["uris"]
+	suites := entry["suites"]
+	components := entry["components"]
+	name := entry["x-repolib-name"]
 
 	if uris == "" || suites == "" {
 		return repositories

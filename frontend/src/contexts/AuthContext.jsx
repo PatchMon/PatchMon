@@ -8,6 +8,7 @@ import {
 import { flushSync } from "react-dom";
 import { AUTH_PHASES, isAuthPhase } from "../constants/authPhases";
 import { isCorsError } from "../utils/api";
+import { fetchWithSessionRefresh } from "../utils/sessionRefresh";
 
 // Development-only logging to prevent error details exposure in production
 const isDev = import.meta.env.DEV;
@@ -61,7 +62,7 @@ export const AuthProvider = ({ children }) => {
 					Authorization: `Bearer ${authToken}`,
 				};
 			}
-			const response = await fetch(
+			const response = await fetchWithSessionRefresh(
 				"/api/v1/permissions/user-permissions",
 				fetchOptions,
 			);
@@ -100,7 +101,10 @@ export const AuthProvider = ({ children }) => {
 			if (authToken) {
 				fetchOptions.headers = { Authorization: `Bearer ${authToken}` };
 			}
-			const response = await fetch("/api/v1/me/context", fetchOptions);
+			const response = await fetchWithSessionRefresh(
+				"/api/v1/me/context",
+				fetchOptions,
+			);
 			if (response.ok) {
 				const data = await response.json();
 				if (data?.tenant) {
@@ -191,7 +195,7 @@ export const AuthProvider = ({ children }) => {
 
 			try {
 				// First, try to validate via API using httpOnly cookies
-				const response = await fetch("/api/v1/auth/profile", {
+				const response = await fetchWithSessionRefresh("/api/v1/auth/profile", {
 					credentials: "include",
 					signal: abortController.signal,
 				});
@@ -270,7 +274,7 @@ export const AuthProvider = ({ children }) => {
 
 	const refetchUser = useCallback(async () => {
 		try {
-			const response = await fetch("/api/v1/auth/profile", {
+			const response = await fetchWithSessionRefresh("/api/v1/auth/profile", {
 				credentials: "include",
 			});
 			if (response.ok) {
@@ -449,7 +453,10 @@ export const AuthProvider = ({ children }) => {
 			if (token) {
 				fetchOptions.headers.Authorization = `Bearer ${token}`;
 			}
-			const response = await fetch("/api/v1/auth/profile", fetchOptions);
+			const response = await fetchWithSessionRefresh(
+				"/api/v1/auth/profile",
+				fetchOptions,
+			);
 
 			const data = await response.json();
 
@@ -537,7 +544,7 @@ export const AuthProvider = ({ children }) => {
 			if (token) {
 				fetchOptions.headers.Authorization = `Bearer ${token}`;
 			}
-			const response = await fetch(
+			const response = await fetchWithSessionRefresh(
 				"/api/v1/auth/change-password",
 				fetchOptions,
 			);
@@ -603,12 +610,15 @@ export const AuthProvider = ({ children }) => {
 			if (token) {
 				headers.Authorization = `Bearer ${token}`;
 			}
-			const response = await fetch("/api/v1/release-notes-acceptance/accept", {
-				method: "POST",
-				headers,
-				credentials: "include", // Include cookies for OIDC users
-				body: JSON.stringify({ version }),
-			});
+			const response = await fetchWithSessionRefresh(
+				"/api/v1/release-notes-acceptance/accept",
+				{
+					method: "POST",
+					headers,
+					credentials: "include", // Include cookies for OIDC users
+					body: JSON.stringify({ version }),
+				},
+			);
 
 			const data = await response.json();
 

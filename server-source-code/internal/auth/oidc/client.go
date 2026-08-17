@@ -37,9 +37,11 @@ type UserInfo struct {
 	GivenName     string
 	FamilyName    string
 	EmailVerified bool
-	Groups        []string
-	Picture       string
-	IDToken       string
+	// For logs only; empty when EmailVerified is true.
+	EmailVerifiedReason string
+	Groups              []string
+	Picture             string
+	IDToken             string
 }
 
 // Client wraps the OIDC provider and OAuth2 config.
@@ -216,12 +218,29 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 			}
 			userInfoClaims["sub"] = oidcUserInfo.Subject
 			userInfoClaims["email"] = oidcUserInfo.Email
-			userInfoClaims["email_verified"] = oidcUserInfo.EmailVerified
+			// Positive only: go-oidc decodes a missing claim to false, and
+			// absent must stay distinguishable from denied.
+			if oidcUserInfo.EmailVerified {
+				userInfoClaims["email_verified"] = true
+			}
 			userInfoClaims["profile"] = oidcUserInfo.Profile
 			var extraClaims map[string]interface{}
 			if err := oidcUserInfo.Claims(&extraClaims); err == nil {
 				for k, v := range extraClaims {
 					userInfoClaims[k] = v
+				}
+			} else {
+				// No raw view, so fail closed rather than read as absent.
+				userInfoClaims["email_verified"] = oidcUserInfo.EmailVerified
+			}
+			// encoding/json is case-insensitive, the merge above is not, so a
+			// non-canonical key would read as absent and lose a denial.
+			if _, ok := userInfoClaims["email_verified"]; !ok {
+				for k, v := range extraClaims {
+					if strings.EqualFold(k, "email_verified") {
+						userInfoClaims["email_verified"] = v
+						break
+					}
 				}
 			}
 		}
@@ -230,12 +249,13 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 	idClaims := make(map[string]interface{})
 	_ = idToken.Claims(&idClaims)
 
-	userInfo.Email = getStringClaim(userInfoClaims, idClaims, "email")
+	email, emailFromIDToken := lookupStringClaim(userInfoClaims, idClaims, "email")
+	userInfo.Email = email
 	if userInfo.Email == "" {
 		return nil, errors.New("oidc: no email in UserInfo or id_token")
 	}
 
-	userInfo.EmailVerified = getBoolClaim(userInfoClaims, idClaims, "email_verified")
+	userInfo.EmailVerified, userInfo.EmailVerifiedReason = resolveEmailVerified(userInfoClaims, idClaims, emailFromIDToken, c.cfg.IssuerURL)
 	userInfo.Name = getStringClaim(userInfoClaims, idClaims, "name")
 	if userInfo.Name == "" {
 		userInfo.Name = getStringClaim(userInfoClaims, idClaims, "preferred_username")
@@ -388,52 +408,122 @@ func fetchMicrosoftGraphPhotoDataURL(ctx context.Context, token *oauth2.Token) (
 }
 
 func getStringClaim(primary, fallback map[string]interface{}, key string) string {
-	if v, ok := primary[key]; ok && v != nil {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	if v, ok := fallback[key]; ok && v != nil {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
+	v, _ := lookupStringClaim(primary, fallback, key)
+	return v
 }
 
-// getBoolClaim reads a boolean claim, tolerating the string and numeric
-// encodings real providers emit.
-//
-// Only v.(bool) was accepted before. email_verified now gates login, so a
-// provider sending "true" as a JSON string (some Keycloak configurations) or 1
-// would have every email-matched login rejected with "Email not verified at
-// identity provider". Being liberal about the ENCODING is safe; being liberal
-// about a MISSING claim would not be, so absent still means false.
-//
-// Note this does not help Microsoft Entra, which omits email_verified
-// altogether. That needs an explicit per-provider trust setting rather than a
-// decoding change, and is called out in the operator guide.
-func getBoolClaim(primary, fallback map[string]interface{}, key string) bool {
-	for _, claims := range []map[string]interface{}{primary, fallback} {
+// Empty counts as absent. Arrays are the ADFS encoding; strings return verbatim
+// because a padded value may already be stored against an account.
+func lookupStringClaim(primary, fallback map[string]interface{}, key string) (value string, fromFallback bool) {
+	for i, claims := range []map[string]interface{}{primary, fallback} {
 		v, ok := claims[key]
 		if !ok || v == nil {
 			continue
 		}
 		switch t := v.(type) {
-		case bool:
-			return t
 		case string:
-			switch strings.ToLower(strings.TrimSpace(t)) {
-			case "true", "1", "yes":
-				return true
-			case "false", "0", "no", "":
-				return false
+			if strings.TrimSpace(t) != "" {
+				return t, i == 1
 			}
-		case float64: // encoding/json decodes all JSON numbers as float64
-			return t != 0
+		case []interface{}:
+			for _, item := range t {
+				s, ok := item.(string)
+				if !ok {
+					continue
+				}
+				if s = strings.TrimSpace(s); s != "" {
+					return s, i == 1
+				}
+			}
 		}
 	}
-	return false
+	return "", false
+}
+
+// lookupBoolClaim reports a boolean claim's value and whether it was found in a
+// form it could decode. An undecodable value counts as not found, so resolution
+// continues to the fallback map. Tolerates the string and numeric encodings real
+// providers emit, not just v.(bool).
+func lookupBoolClaim(primary, fallback map[string]interface{}, key string) (value, found bool) {
+	for _, claims := range []map[string]interface{}{primary, fallback} {
+		v, ok := claims[key]
+		if !ok || v == nil {
+			continue
+		}
+		if b, ok := decodeBoolClaim(v); ok {
+			return b, true
+		}
+		// Same ADFS array encoding lookupStringClaim handles.
+		if arr, ok := v.([]interface{}); ok {
+			for _, item := range arr {
+				if b, ok := decodeBoolClaim(item); ok {
+					return b, true
+				}
+			}
+		}
+	}
+	return false, false
+}
+
+func decodeBoolClaim(v interface{}) (value, ok bool) {
+	switch t := v.(type) {
+	case bool:
+		return t, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(t)) {
+		case "true", "1", "yes":
+			return true, true
+		case "false", "0", "no", "":
+			return false, true
+		}
+	case float64: // encoding/json decodes all JSON numbers as float64
+		return t != 0, true
+	}
+	return false, false
+}
+
+// resolveEmailVerified reports whether the IdP asserted the email is verified,
+// and why not when it did not. Gates account linking and auto-creation, so an
+// absent assertion fails closed.
+//
+// xms_edov is Entra's equivalent, consulted only when email_verified is absent:
+// an explicit false is a denial and is never overridden. It is accepted only
+// from a Microsoft issuer, because an IdP with user-controlled claim mapping
+// could otherwise forge it, and only from the signature-verified ID token.
+// emailFromFallback makes the map that supplied the email win, so an unsigned
+// UserInfo assertion cannot override a signed denial in the ID token.
+func resolveEmailVerified(primary, fallback map[string]interface{}, emailFromFallback bool, issuerURL string) (bool, string) {
+	first, second := primary, fallback
+	if emailFromFallback {
+		first, second = fallback, primary
+	}
+	if v, found := lookupBoolClaim(first, second, "email_verified"); found {
+		if v {
+			return true, ""
+		}
+		return false, "provider sent email_verified=false"
+	}
+
+	_, edovInIDToken := lookupBoolClaim(fallback, nil, "xms_edov")
+	_, edovInUserInfo := lookupBoolClaim(primary, nil, "xms_edov")
+
+	if !isMicrosoftIdentityIssuer(issuerURL) {
+		if edovInIDToken || edovInUserInfo {
+			return false, "xms_edov was sent but is only honoured from a Microsoft identity platform issuer, and this issuer is not one"
+		}
+		return false, "provider sent no email_verified claim"
+	}
+	if edovInIDToken {
+		v, _ := lookupBoolClaim(fallback, nil, "xms_edov")
+		if v {
+			return true, ""
+		}
+		return false, "provider sent xms_edov=false"
+	}
+	if edovInUserInfo {
+		return false, "xms_edov was sent in the UserInfo response but is only honoured from the ID token; add it as an ID token optional claim"
+	}
+	return false, "provider sent neither email_verified nor xms_edov"
 }
 
 // extractGroups extracts group names from claims (groups or ak_groups for Authentik).

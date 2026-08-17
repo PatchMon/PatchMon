@@ -1,18 +1,14 @@
 package compliance
 
 import (
-	"archive/zip"
 	"bufio"
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -101,12 +97,13 @@ func (s *OpenSCAPScanner) GetContentFilePath() string {
 }
 
 // GetContentPackageVersion returns the SSG content version
-// First checks for GitHub-installed version, then falls back to package manager
+// First checks the marker written by a server sync, then falls back to the
+// package manager version.
 func (s *OpenSCAPScanner) GetContentPackageVersion() string {
-	// First check for GitHub-installed version marker
-	githubVersion := s.getInstalledSSGVersion()
-	if githubVersion != "" {
-		return githubVersion
+	// The marker is written by UpgradeSSGContentFromServer and is authoritative:
+	// server-synced content supersedes whatever the distro package registered.
+	if marker := s.getInstalledSSGVersion(); marker != "" {
+		return marker
 	}
 
 	// Fall back to package manager version
@@ -260,13 +257,8 @@ func (s *OpenSCAPScanner) GetScannerDetails() *models.ComplianceScannerDetails {
 	mismatchWarning := ""
 	if contentFile != "" && s.osInfo.Version != "" {
 		baseName := filepath.Base(contentFile)
-		osVersion := strings.ReplaceAll(s.osInfo.Version, ".", "")
-		majorVersion := strings.Split(s.osInfo.Version, ".")[0]
-		contentOSName := s.getContentOSName()
 		// Match if file contains full version (e.g. 2204) or distro+major (e.g. rhel9, almalinux9)
-		versionMatch := strings.Contains(baseName, osVersion) ||
-			strings.Contains(baseName, contentOSName+majorVersion)
-		if !versionMatch {
+		if !s.contentFileMatchesOSVersion(baseName) {
 			contentMismatch = true
 			mismatchWarning = fmt.Sprintf("Content file %s may not match OS version %s.", baseName, s.osInfo.Version)
 		}
@@ -278,9 +270,8 @@ func (s *OpenSCAPScanner) GetScannerDetails() *models.ComplianceScannerDetails {
 	profiles := s.DiscoverProfiles()
 
 	contentPackage := fmt.Sprintf("ssg-base %s", contentVersion)
-	githubVersion := s.getInstalledSSGVersion()
-	if githubVersion != "" {
-		contentPackage = fmt.Sprintf("SSG %s (server)", githubVersion)
+	if marker := s.getInstalledSSGVersion(); marker != "" {
+		contentPackage = fmt.Sprintf("SSG %s (server)", marker)
 	}
 
 	return &models.ComplianceScannerDetails{
@@ -314,148 +305,42 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 		"NEEDRESTART_SUSPEND=1",
 	)
 
+	var scannerErr error
 	switch s.osInfo.Family {
 	case "debian":
-		// Ubuntu/Debian - always update and upgrade to get latest content
-		s.logger.Info("Installing/upgrading OpenSCAP on Debian-based system...")
-
-		// Update package cache first (with timeout)
-		updateCmd := exec.CommandContext(ctx, "apt-get", "update", "-qq")
-		updateCmd.Env = nonInteractiveEnv
-		if err := updateCmd.Run(); err != nil {
-			// Ignore errors on update - non-critical
-			_ = err
-		}
-
-		// Build package list - openscap-common is required for Ubuntu 24.04+
-		packages := []string{"openscap-scanner", "openscap-common"}
-
-		// SSG content: ssg-base + ssg-debderived provide Ubuntu content; on Debian we need ssg-debian for ssg-debian10/11/12/13-ds.xml
-		ssgPackages := []string{"ssg-debderived", "ssg-base"}
-		if s.osInfo.Name == "debian" {
-			ssgPackages = append(ssgPackages, "ssg-debian")
-		}
-
-		// Install core OpenSCAP packages first
-		installArgs := append([]string{"install", "-y", "-qq",
-			"-o", "Dpkg::Options::=--force-confdef",
-			"-o", "Dpkg::Options::=--force-confold"}, packages...)
-		installCmd := exec.CommandContext(ctx, "apt-get", installArgs...)
-		installCmd.Env = nonInteractiveEnv
-		output, err := installCmd.CombinedOutput()
-		if err != nil {
-			if ctx.Err() == context.DeadlineExceeded {
-				s.logger.Warn("OpenSCAP installation timed out after 5 minutes")
-				return fmt.Errorf("installation timed out after 5 minutes")
-			}
-			s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to install OpenSCAP core packages")
-			// Truncate output for error message
-			outputStr := string(output)
-			if len(outputStr) > 500 {
-				outputStr = outputStr[:500] + "... (truncated)"
-			}
-			return fmt.Errorf("failed to install OpenSCAP: %w - %s", err, outputStr)
-		}
-		s.logger.Info("OpenSCAP core packages installed successfully")
-
-		// Try to install SSG content packages (best effort - may fail on Ubuntu 24.04+)
-		ssgArgs := append([]string{"install", "-y", "-qq",
-			"-o", "Dpkg::Options::=--force-confdef",
-			"-o", "Dpkg::Options::=--force-confold"}, ssgPackages...)
-		ssgCmd := exec.CommandContext(ctx, "apt-get", ssgArgs...)
-		ssgCmd.Env = nonInteractiveEnv
-		ssgOutput, ssgErr := ssgCmd.CombinedOutput()
-		if ssgErr != nil {
-			s.logger.WithField("output", logutil.Sanitize(string(ssgOutput))).Warn("SSG content packages not available or failed to install. CIS scanning may have limited functionality.")
-		} else {
-			s.logger.Info("SSG content packages installed successfully")
-
-			// Explicitly upgrade to ensure we have the latest SCAP content
-			upgradePkgs := []string{"ssg-base", "ssg-debderived"}
-			if s.osInfo.Name == "debian" {
-				upgradePkgs = append(upgradePkgs, "ssg-debian")
-			}
-			upgradeCmd := exec.CommandContext(ctx, "apt-get", append([]string{"install", "--only-upgrade", "-y", "-qq",
-				"-o", "Dpkg::Options::=--force-confdef",
-				"-o", "Dpkg::Options::=--force-confold"}, upgradePkgs...)...)
-			upgradeCmd.Env = nonInteractiveEnv
-			upgradeOutput, upgradeErr := upgradeCmd.CombinedOutput()
-			if upgradeErr != nil {
-				s.logger.WithField("output", logutil.Sanitize(string(upgradeOutput))).Debug("Package upgrade returned non-zero (may already be latest)")
-			} else {
-				s.logger.Info("SCAP content packages upgraded to latest version")
-			}
-		}
-
+		scannerErr = s.installDebian(ctx, nonInteractiveEnv)
 	case "rhel":
-		// RHEL/CentOS/Rocky/Alma/Fedora
-		s.logger.Info("Installing/upgrading OpenSCAP on RHEL-based system...")
-		var installCmd *exec.Cmd
-		if _, err := exec.LookPath("dnf"); err == nil {
-			installCmd = exec.CommandContext(ctx, "dnf", "install", "-y", "-q", "openscap-scanner", "scap-security-guide")
-		} else {
-			installCmd = exec.CommandContext(ctx, "yum", "install", "-y", "-q", "openscap-scanner", "scap-security-guide")
-		}
-		output, err := installCmd.CombinedOutput()
-		if err != nil {
-			if ctx.Err() == context.DeadlineExceeded {
-				s.logger.Warn("OpenSCAP installation timed out after 5 minutes")
-				return fmt.Errorf("installation timed out after 5 minutes")
-			}
-			s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to install OpenSCAP")
-			outputStr := string(output)
-			if len(outputStr) > 500 {
-				outputStr = outputStr[:500] + "... (truncated)"
-			}
-			return fmt.Errorf("failed to install OpenSCAP: %w - %s", err, outputStr)
-		}
-
+		scannerErr = s.installRHEL(ctx)
 	case "suse":
-		// SLES/openSUSE
-		s.logger.Info("Installing/upgrading OpenSCAP on SUSE-based system...")
-		installCmd := exec.CommandContext(ctx, "zypper", "--non-interactive", "install", "openscap-utils", "scap-security-guide")
-		output, err := installCmd.CombinedOutput()
-		if err != nil {
-			if ctx.Err() == context.DeadlineExceeded {
-				s.logger.Warn("OpenSCAP installation timed out after 5 minutes")
-				return fmt.Errorf("installation timed out after 5 minutes")
-			}
-			s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to install OpenSCAP")
-			outputStr := string(output)
-			if len(outputStr) > 500 {
-				outputStr = outputStr[:500] + "... (truncated)"
-			}
-			return fmt.Errorf("failed to install OpenSCAP: %w - %s", err, outputStr)
-		}
-
+		scannerErr = s.installSUSE(ctx)
 	default:
-		return fmt.Errorf("unsupported OS family: %s (OS: %s)", s.osInfo.Family, s.osInfo.Name)
-	}
-
-	s.logger.Info("OpenSCAP installed/upgraded successfully")
-
-	// On Debian 12+, if no content file or content doesn't match OS version (e.g. only ssg-debian11 on Debian 13), try GitHub SSG
-	if s.osInfo.Family == "debian" && s.osInfo.Name == "debian" {
-		ver := s.osInfo.Version
-		major := strings.Split(ver, ".")[0]
-		majorInt, _ := strconv.Atoi(major)
-		if majorInt >= 12 {
-			contentFile := s.getContentFile()
-			needGitHub := contentFile == ""
-			if contentFile != "" && major != "" {
-				base := filepath.Base(contentFile)
-				needGitHub = !strings.Contains(base, "debian"+major)
-			}
-			if needGitHub {
-				s.logger.Info("Debian SCAP content missing or version mismatch, attempting download from ComplianceAsCode GitHub...")
-				if err := s.UpgradeSSGContent(); err != nil {
-					s.logger.WithError(err).Warn("Failed to install SSG content from GitHub; ensure ssg-debian package is available for your Debian version")
-				} else {
-					s.logger.Info("SSG content installed from GitHub successfully")
-				}
-			}
+		// Alpine, Arch and FreeBSD land here. Alpine does package an openscap
+		// apk, but no SSG datastream exists for any of the three, on the distro
+		// or on the PatchMon server, so a scanner would have nothing to scan
+		// against. Say that rather than emit a bare family name.
+		platform := strings.TrimSpace(s.osInfo.Name + " " + s.osInfo.Version)
+		if platform == "" {
+			platform = "this platform (no /etc/os-release)"
 		}
+		return fmt.Errorf("compliance scanning is not supported on %s: no SCAP content is published for it", platform)
 	}
+
+	if scannerErr != nil {
+		// A failed package transaction is only fatal when it leaves no scanner
+		// behind. Where oscap ended up present anyway, the content steps below
+		// and the caller's server sync can still complete the install.
+		if _, lookErr := exec.LookPath(oscapBinary); lookErr != nil {
+			return scannerErr
+		}
+		s.logger.WithError(scannerErr).Warn("Package install reported a failure but the oscap binary is present; continuing")
+	} else {
+		s.logger.Info("OpenSCAP installed/upgraded successfully")
+	}
+
+	// Distro packages often ship no datastream for the running release (Debian 13
+	// with only ssg-debian11, Ubuntu 24.04 with none at all). The PatchMon server
+	// serves the correct one, so the caller carries on to the server sync rather
+	// than the agent sourcing content itself.
 
 	// Re-check availability after installation
 	s.checkAvailability()
@@ -479,6 +364,207 @@ func (s *OpenSCAPScanner) EnsureInstalled() error {
 	return nil
 }
 
+// truncateOutput trims command output to a length usable in an error message.
+//
+// Sanitised, not just truncated: this string is embedded in a returned error
+// that callers log and the UI renders, so it carries the same log-injection
+// risk as the adjacent log field.
+func truncateOutput(b []byte) string {
+	out := logutil.Sanitize(string(b))
+	if len(out) > 500 {
+		return out[:500] + "... (truncated)"
+	}
+	return out
+}
+
+// aptCandidate reports whether apt has an installable candidate for pkg.
+//
+// The OpenSCAP package names changed between releases: bookworm and noble ship
+// openscap-scanner plus openscap-common, while buster and jammy only ever
+// provided libopenscap8, and bullseye has neither. Asking the archive is the
+// only way to pick the right set without a release table that goes stale. A
+// name apt does not know prints nothing at all; a name it knows but cannot
+// install prints "(none)".
+func aptCandidate(ctx context.Context, env []string, pkg string) bool {
+	cmd := exec.CommandContext(ctx, "apt-cache", "policy", pkg)
+	cmd.Env = env
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return policyHasCandidate(string(out))
+}
+
+// policyHasCandidate parses `apt-cache policy` output.
+func policyHasCandidate(out string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "Candidate:") {
+			continue
+		}
+		v := strings.TrimSpace(strings.TrimPrefix(line, "Candidate:"))
+		return v != "" && v != "(none)"
+	}
+	return false
+}
+
+// debianScannerSets lists the package sets that provide the oscap binary, most
+// current first.
+var debianScannerSets = [][]string{
+	{"openscap-scanner", "openscap-common"}, // Debian 12+, Ubuntu 24.04+
+	{"libopenscap8"},                        // Debian 10, Ubuntu up to 22.04
+}
+
+// debianScannerSet returns the first set whose members are all installable, or
+// nil when the archive provides no scanner at all.
+func debianScannerSet(available func(string) bool) []string {
+	for _, set := range debianScannerSets {
+		ok := true
+		for _, p := range set {
+			if !available(p) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return set
+		}
+	}
+	return nil
+}
+
+// aptAvailable filters pkgs down to those apt can install.
+func aptAvailable(ctx context.Context, env []string, pkgs []string) []string {
+	out := make([]string, 0, len(pkgs))
+	for _, p := range pkgs {
+		if aptCandidate(ctx, env, p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// aptInstall runs a non-interactive install, optionally restricted to upgrades.
+func aptInstall(ctx context.Context, env []string, onlyUpgrade bool, pkgs ...string) ([]byte, error) {
+	args := []string{"install", "-y", "-qq",
+		"-o", "Dpkg::Options::=--force-confdef",
+		"-o", "Dpkg::Options::=--force-confold"}
+	if onlyUpgrade {
+		args = append(args, "--only-upgrade")
+	}
+	cmd := exec.CommandContext(ctx, "apt-get", append(args, pkgs...)...)
+	cmd.Env = env
+	return cmd.CombinedOutput()
+}
+
+// installDebian installs the scanner and, separately and best effort, the SSG
+// content packages. The two are separate transactions because content is
+// recoverable from the PatchMon server and the scanner is not.
+func (s *OpenSCAPScanner) installDebian(ctx context.Context, env []string) error {
+	s.logger.Info("Installing/upgrading OpenSCAP on Debian-based system...")
+
+	updateCmd := exec.CommandContext(ctx, "apt-get", "update", "-qq")
+	updateCmd.Env = env
+	if err := updateCmd.Run(); err != nil {
+		// Ignore errors on update - non-critical
+		_ = err
+	}
+
+	packages := debianScannerSet(func(p string) bool { return aptCandidate(ctx, env, p) })
+	if packages == nil {
+		// Debian 11 is the live case: openscap was removed before bullseye
+		// released. Worded as "none found" rather than "none exists" because
+		// aptCandidate also returns false when apt-cache itself cannot answer,
+		// and the apt-get update above deliberately ignores its own failure.
+		return fmt.Errorf("found no installable OpenSCAP package for %s %s (looked for openscap-scanner with openscap-common, then libopenscap8); "+
+			"on Debian 11 there is none to find, otherwise check that the package cache is current and the mirrors are reachable",
+			s.osInfo.Name, s.osInfo.Version)
+	}
+
+	output, err := aptInstall(ctx, env, false, packages...)
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			s.logger.Warn("OpenSCAP installation timed out after 5 minutes")
+			return fmt.Errorf("installation timed out after 5 minutes")
+		}
+		s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to install OpenSCAP core packages")
+		return fmt.Errorf("failed to install OpenSCAP: %w - %s", err, truncateOutput(output))
+	}
+	s.logger.WithField("packages", strings.Join(packages, " ")).Info("OpenSCAP core packages installed successfully")
+
+	// ssg-base and ssg-debderived carry Ubuntu content; Debian needs ssg-debian
+	// for ssg-debian10/11/12/13-ds.xml. Ubuntu packages none of them.
+	ssgPackages := []string{"ssg-debderived", "ssg-base"}
+	if s.osInfo.Name == "debian" {
+		ssgPackages = append(ssgPackages, "ssg-debian")
+	}
+	ssgPackages = aptAvailable(ctx, env, ssgPackages)
+	if len(ssgPackages) == 0 {
+		s.logger.Info("No SSG content packages in this archive; content will be synced from the PatchMon server")
+		return nil
+	}
+
+	ssgOutput, ssgErr := aptInstall(ctx, env, false, ssgPackages...)
+	if ssgErr != nil {
+		s.logger.WithField("output", logutil.Sanitize(string(ssgOutput))).Warn("SSG content packages failed to install. CIS scanning may have limited functionality.")
+		return nil
+	}
+	s.logger.Info("SSG content packages installed successfully")
+
+	upgradeOutput, upgradeErr := aptInstall(ctx, env, true, ssgPackages...)
+	if upgradeErr != nil {
+		s.logger.WithField("output", logutil.Sanitize(string(upgradeOutput))).Debug("Package upgrade returned non-zero (may already be latest)")
+	} else {
+		s.logger.Info("SCAP content packages upgraded to latest version")
+	}
+	return nil
+}
+
+func (s *OpenSCAPScanner) installRHEL(ctx context.Context) error {
+	s.logger.Info("Installing/upgrading OpenSCAP on RHEL-based system...")
+
+	pm := "yum"
+	if _, err := exec.LookPath("dnf"); err == nil {
+		pm = "dnf"
+	}
+
+	output, err := exec.CommandContext(ctx, pm, "install", "-y", "-q", "openscap-scanner").CombinedOutput()
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			s.logger.Warn("OpenSCAP installation timed out after 5 minutes")
+			return fmt.Errorf("installation timed out after 5 minutes")
+		}
+		s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to install OpenSCAP")
+		return fmt.Errorf("failed to install OpenSCAP: %w - %s", err, truncateOutput(output))
+	}
+
+	ssgOutput, ssgErr := exec.CommandContext(ctx, pm, "install", "-y", "-q", "scap-security-guide").CombinedOutput()
+	if ssgErr != nil {
+		s.logger.WithField("output", logutil.Sanitize(string(ssgOutput))).Warn("scap-security-guide not available; content will be synced from the PatchMon server")
+	}
+	return nil
+}
+
+func (s *OpenSCAPScanner) installSUSE(ctx context.Context) error {
+	s.logger.Info("Installing/upgrading OpenSCAP on SUSE-based system...")
+
+	output, err := exec.CommandContext(ctx, "zypper", "--non-interactive", "install", "openscap-utils").CombinedOutput()
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			s.logger.Warn("OpenSCAP installation timed out after 5 minutes")
+			return fmt.Errorf("installation timed out after 5 minutes")
+		}
+		s.logger.WithError(err).WithField("output", logutil.Sanitize(string(output))).Warn("Failed to install OpenSCAP")
+		return fmt.Errorf("failed to install OpenSCAP: %w - %s", err, truncateOutput(output))
+	}
+
+	ssgOutput, ssgErr := exec.CommandContext(ctx, "zypper", "--non-interactive", "install", "scap-security-guide").CombinedOutput()
+	if ssgErr != nil {
+		s.logger.WithField("output", logutil.Sanitize(string(ssgOutput))).Warn("scap-security-guide not available; content will be synced from the PatchMon server")
+	}
+	return nil
+}
+
 // checkContentCompatibility checks if the SCAP content is compatible with the OS version
 func (s *OpenSCAPScanner) checkContentCompatibility() {
 	contentFile := s.getContentFile()
@@ -498,17 +584,33 @@ func (s *OpenSCAPScanner) checkContentCompatibility() {
 	}).Debug("Checking SCAP content compatibility")
 
 	// Check if content file matches OS version (SSG uses major version, e.g. ssg-rhel9 for 9.x)
-	contentOSName := s.getContentOSName()
-	majorVersion := strings.Split(s.osInfo.Version, ".")[0]
-	osVersion := strings.ReplaceAll(s.osInfo.Version, ".", "")
-	versionMatch := strings.Contains(baseName, osVersion) ||
-		strings.Contains(baseName, contentOSName+majorVersion)
-	if !versionMatch {
+	if !s.contentFileMatchesOSVersion(baseName) {
 		s.logger.WithFields(logrus.Fields{
 			"os_version":   s.osInfo.Version,
 			"content_file": baseName,
 		}).Warn("SCAP content may not match OS version - scan results may show many 'notapplicable' rules. Consider updating ssg-base package.")
 	}
+}
+
+// contentFileMatchesOSVersion reports whether a datastream file name belongs to
+// this OS version, accepting any of the product name variants for the distro.
+func (s *OpenSCAPScanner) contentFileMatchesOSVersion(baseName string) bool {
+	if strings.Contains(baseName, strings.ReplaceAll(s.osInfo.Version, ".", "")) {
+		return true
+	}
+
+	majorVersion := strings.Split(s.osInfo.Version, ".")[0]
+	contentOSName := s.getContentOSName()
+	names := contentOSNameVariants(contentOSName)
+	if contentOSName != s.osInfo.Name {
+		names = append(names, contentOSNameVariants(s.osInfo.Name)...)
+	}
+	for _, name := range names {
+		if strings.Contains(baseName, name+majorVersion) {
+			return true
+		}
+	}
+	return false
 }
 
 // SSGContentDownloader abstracts the ability to download SSG content from the PatchMon server.
@@ -577,32 +679,20 @@ func (s *OpenSCAPScanner) UpgradeSSGContentFromServer(downloader SSGContentDownl
 // pickSSGFile selects the best datastream file for this OS from the available server files.
 func (s *OpenSCAPScanner) pickSSGFile(available []string) string {
 	contentOSName := s.getContentOSName()
-	major := strings.Split(s.osInfo.Version, ".")[0]
-
-	candidates := []string{
-		fmt.Sprintf("ssg-%s%s-ds.xml", contentOSName, strings.ReplaceAll(s.osInfo.Version, ".", "")),
-		fmt.Sprintf("ssg-%s%s-ds.xml", contentOSName, major),
-		fmt.Sprintf("ssg-%s-ds.xml", contentOSName),
-	}
 
 	avail := make(map[string]bool, len(available))
 	for _, f := range available {
 		avail[f] = true
 	}
 
-	for _, c := range candidates {
+	for _, c := range ssgFileCandidates(contentOSName, s.osInfo.Version) {
 		if avail[c] {
 			return c
 		}
 	}
 
 	if contentOSName != s.osInfo.Name {
-		fallbacks := []string{
-			fmt.Sprintf("ssg-%s%s-ds.xml", s.osInfo.Name, strings.ReplaceAll(s.osInfo.Version, ".", "")),
-			fmt.Sprintf("ssg-%s%s-ds.xml", s.osInfo.Name, major),
-			fmt.Sprintf("ssg-%s-ds.xml", s.osInfo.Name),
-		}
-		for _, c := range fallbacks {
+		for _, c := range ssgFileCandidates(s.osInfo.Name, s.osInfo.Version) {
 			if avail[c] {
 				return c
 			}
@@ -612,320 +702,40 @@ func (s *OpenSCAPScanner) pickSSGFile(available []string) string {
 	return ""
 }
 
-// UpgradeSSGContent upgrades the SCAP Security Guide content from GitHub releases (legacy fallback).
-func (s *OpenSCAPScanner) UpgradeSSGContent() error {
-	s.logger.Info("Upgrading SCAP Security Guide content from GitHub (fallback)...")
-
-	if err := s.installSSGFromGitHub(); err != nil {
-		s.logger.WithError(err).Warn("Failed to install SSG from GitHub")
-		return err
+// contentOSNameVariants returns the SSG product names to try for an OS name, in
+// preference order. A few distributions ship a datastream whose product name is
+// not their os-release ID: Rocky's scap-security-guide package provides
+// ssg-rl9-ds.xml, and SUSE's products are sle12/sle15, not sles12/sles15.
+func contentOSNameVariants(osName string) []string {
+	switch osName {
+	case "rocky":
+		return []string{osName, "rl"}
+	case "sles":
+		return []string{osName, "sle"}
+	case "alma":
+		return []string{osName, "almalinux"}
+	case "opensuse-leap":
+		return []string{osName, "opensuse"}
 	}
-
-	s.checkAvailability()
-	s.checkContentCompatibility()
-
-	newVersion := s.getInstalledSSGVersion()
-	s.logger.WithField("version", newVersion).Info("SSG content upgrade completed")
-
-	return nil
+	return []string{osName}
 }
 
-// installSSGFromGitHub downloads and installs SSG content from GitHub releases
-func (s *OpenSCAPScanner) installSSGFromGitHub() error {
-	// Latest stable version - update this periodically
-	const ssgVersion = "0.1.79"
-	const ssgURL = "https://github.com/ComplianceAsCode/content/releases/download/v" + ssgVersion + "/scap-security-guide-" + ssgVersion + ".zip"
+// ssgFileCandidates returns the datastream filenames to try for an OS name and
+// version, in preference order.
+func ssgFileCandidates(osName, version string) []string {
+	compact := strings.ReplaceAll(version, ".", "")
+	major := strings.Split(version, ".")[0]
 
-	s.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
-		"version": ssgVersion,
-		"url":     ssgURL,
-	})).Info("Downloading SSG from GitHub...")
-
-	// Create temp directory
-	tmpDir, err := os.MkdirTemp("", "ssg-upgrade-")
-	if err != nil {
-		return fmt.Errorf("failed to create temp directory: %w", err)
+	variants := contentOSNameVariants(osName)
+	candidates := make([]string, 0, len(variants)*3)
+	for _, name := range variants {
+		candidates = append(candidates,
+			fmt.Sprintf("ssg-%s%s-ds.xml", name, compact),
+			fmt.Sprintf("ssg-%s%s-ds.xml", name, major),
+			fmt.Sprintf("ssg-%s-ds.xml", name),
+		)
 	}
-	defer func() {
-		if err := os.RemoveAll(tmpDir); err != nil {
-			// Log cleanup errors but don't fail
-			_ = err
-		}
-	}()
-
-	zipPath := filepath.Join(tmpDir, "ssg.zip")
-
-	// Download the zip file
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
-	if err := s.downloadFile(ctx, ssgURL, zipPath); err != nil {
-		return fmt.Errorf("failed to download SSG: %w", err)
-	}
-
-	s.logger.Info("Extracting SSG content...")
-
-	// Extract the zip file
-	extractDir := filepath.Join(tmpDir, "extracted")
-	if err := s.extractZip(zipPath, extractDir); err != nil {
-		return fmt.Errorf("failed to extract SSG: %w", err)
-	}
-
-	// Find the content directory in the extracted files
-	contentSrcDir := filepath.Join(extractDir, "scap-security-guide-"+ssgVersion)
-	if _, err := os.Stat(contentSrcDir); os.IsNotExist(err) {
-		// Try without version suffix
-		entries, _ := os.ReadDir(extractDir)
-		for _, e := range entries {
-			if e.IsDir() && strings.HasPrefix(e.Name(), "scap-security-guide") {
-				contentSrcDir = filepath.Join(extractDir, e.Name())
-				break
-			}
-		}
-	}
-
-	// Ensure target directory exists
-	targetDir := scapContentDir
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return fmt.Errorf("failed to create content directory: %w", err)
-	}
-
-	// Copy all datastream files (ssg-*-ds.xml) to the target directory.
-	// Search recursively so we find files in build/ or any subdir (release zip layout varies).
-	s.logger.WithField("target", targetDir).Info("Installing SSG content files...")
-
-	xmlFiles := s.findDatastreamFiles(contentSrcDir)
-	if len(xmlFiles) == 0 {
-		s.logger.Warn("No ssg-*-ds.xml files found in release zip; trying nightly build...")
-		return s.installSSGFromNightly(tmpDir, targetDir)
-	}
-
-	copiedCount := 0
-	for _, src := range xmlFiles {
-		baseName := filepath.Base(src)
-		dst := filepath.Join(targetDir, baseName)
-		if err := s.copyFile(src, dst); err != nil {
-			s.logger.WithError(err).WithField("file", baseName).Warn("Failed to copy content file")
-		} else {
-			copiedCount++
-		}
-	}
-
-	if copiedCount == 0 {
-		return fmt.Errorf("no SSG content files were installed")
-	}
-
-	s.logger.WithField("files_installed", copiedCount).Info("SSG content files installed successfully")
-
-	// Create a version marker file
-	versionFile := filepath.Join(targetDir, ".ssg-version")
-	if err := os.WriteFile(versionFile, []byte(ssgVersion+"\n"), 0644); err != nil {
-		return fmt.Errorf("failed to write version marker: %w", err)
-	}
-
-	return nil
-}
-
-// findDatastreamFiles returns paths to all ssg-*-ds.xml files under dir (recursive).
-func (s *OpenSCAPScanner) findDatastreamFiles(dir string) []string {
-	var out []string
-	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		base := filepath.Base(path)
-		if strings.HasPrefix(base, "ssg-") && strings.HasSuffix(base, "-ds.xml") {
-			out = append(out, path)
-		}
-		return nil
-	})
-	return out
-}
-
-// installSSGFromNightly downloads the ComplianceAsCode nightly build (pre-built datastreams) and installs them.
-func (s *OpenSCAPScanner) installSSGFromNightly(tmpDir, targetDir string) error {
-	const nightlyURL = "https://nightly.link/ComplianceAsCode/content/workflows/nightly_build/master/Nightly%20Build.zip"
-	s.logger.Info("Downloading SSG from nightly build...")
-
-	zipPath := filepath.Join(tmpDir, "ssg-nightly.zip")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-
-	if err := s.downloadFile(ctx, nightlyURL, zipPath); err != nil {
-		return fmt.Errorf("failed to download nightly SSG: %w", err)
-	}
-
-	nightlyExtract := filepath.Join(tmpDir, "nightly-extracted")
-	if err := s.extractZip(zipPath, nightlyExtract); err != nil {
-		return fmt.Errorf("failed to extract nightly SSG: %w", err)
-	}
-
-	// Nightly zip may have top-level dir like "content-master" or flat ssg-*-ds.xml
-	contentSrcDir := nightlyExtract
-	entries, _ := os.ReadDir(nightlyExtract)
-	if len(entries) == 1 && entries[0].IsDir() {
-		contentSrcDir = filepath.Join(nightlyExtract, entries[0].Name())
-	}
-
-	xmlFiles := s.findDatastreamFiles(contentSrcDir)
-	if len(xmlFiles) == 0 {
-		return fmt.Errorf("no ssg-*-ds.xml files found in nightly build")
-	}
-
-	copiedCount := 0
-	for _, src := range xmlFiles {
-		baseName := filepath.Base(src)
-		dst := filepath.Join(targetDir, baseName)
-		if err := s.copyFile(src, dst); err != nil {
-			s.logger.WithError(err).WithField("file", baseName).Warn("Failed to copy content file")
-		} else {
-			copiedCount++
-		}
-	}
-	if copiedCount == 0 {
-		return fmt.Errorf("no SSG content files were installed from nightly")
-	}
-
-	versionFile := filepath.Join(targetDir, ".ssg-version")
-	_ = os.WriteFile(versionFile, []byte("nightly\n"), 0644)
-	s.logger.WithField("files_installed", copiedCount).Info("SSG content from nightly build installed successfully")
-	return nil
-}
-
-// downloadFile downloads a file from a URL
-func (s *OpenSCAPScanner) downloadFile(ctx context.Context, url, destPath string) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return err
-	}
-
-	client := &http.Client{
-		Timeout: 5 * time.Minute,
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			// Log cleanup errors but don't fail
-			_ = err
-		}
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP error: %s", resp.Status)
-	}
-
-	out, err := os.Create(destPath)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := out.Close(); err != nil {
-			// Log cleanup errors but don't fail
-			_ = err
-		}
-	}()
-
-	_, err = io.Copy(out, resp.Body)
-	return err
-}
-
-// extractZip extracts a zip file to a directory
-func (s *OpenSCAPScanner) extractZip(zipPath, destDir string) error {
-	r, err := zip.OpenReader(zipPath)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := r.Close(); err != nil {
-			// Log cleanup errors but don't fail
-			_ = err
-		}
-	}()
-
-	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return err
-	}
-
-	for _, f := range r.File {
-		fpath := filepath.Join(destDir, f.Name)
-
-		// Check for ZipSlip vulnerability
-		if !strings.HasPrefix(fpath, filepath.Clean(destDir)+string(os.PathSeparator)) {
-			return fmt.Errorf("invalid file path: %s", fpath)
-		}
-
-		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(fpath, f.Mode()); err != nil {
-				return fmt.Errorf("failed to create directory: %w", err)
-			}
-			continue
-		}
-
-		if err := os.MkdirAll(filepath.Dir(fpath), 0755); err != nil {
-			return err
-		}
-
-		outFile, err := os.OpenFile(fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
-		if err != nil {
-			return err
-		}
-
-		rc, err := f.Open()
-		if err != nil {
-			if closeErr := outFile.Close(); closeErr != nil {
-				_ = closeErr
-			}
-			return err
-		}
-
-		_, err = io.Copy(outFile, rc)
-		if closeErr := outFile.Close(); closeErr != nil {
-			_ = closeErr
-		}
-		if closeErr := rc.Close(); closeErr != nil {
-			_ = closeErr
-		}
-
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// copyFile copies a file from src to dst
-func (s *OpenSCAPScanner) copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := in.Close(); err != nil {
-			_ = err
-		}
-	}()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := out.Close(); err != nil {
-			_ = err
-		}
-	}()
-
-	_, err = io.Copy(out, in)
-	if err != nil {
-		return err
-	}
-
-	return out.Chmod(0644)
+	return candidates
 }
 
 // getInstalledSSGVersion reads the version from the marker file
@@ -1088,15 +898,23 @@ func (s *OpenSCAPScanner) getContentFile() string {
 	// Get the base distribution name for content file lookup
 	contentOSName := s.getContentOSName()
 
-	// Build possible content file names
-	patterns := []string{
-		fmt.Sprintf("ssg-%s%s-ds.xml", contentOSName, strings.ReplaceAll(s.osInfo.Version, ".", "")),
-		fmt.Sprintf("ssg-%s%s-ds.xml", contentOSName, strings.Split(s.osInfo.Version, ".")[0]),
-		fmt.Sprintf("ssg-%s-ds.xml", contentOSName),
+	if path := s.findContentFile(contentOSName); path != "" {
+		return path
 	}
 
-	// Check each pattern
-	for _, pattern := range patterns {
+	// If still not found and we normalized to a base distribution, try the original OS name as fallback
+	if contentOSName != s.osInfo.Name {
+		if path := s.findContentFile(s.osInfo.Name); path != "" {
+			return path
+		}
+	}
+
+	return ""
+}
+
+// findContentFile looks on disk for a datastream belonging to one OS name.
+func (s *OpenSCAPScanner) findContentFile(osName string) string {
+	for _, pattern := range ssgFileCandidates(osName, s.osInfo.Version) {
 		path := filepath.Join(scapContentDir, pattern)
 		if _, err := os.Stat(path); err == nil {
 			return path
@@ -1104,27 +922,10 @@ func (s *OpenSCAPScanner) getContentFile() string {
 	}
 
 	// Try to find any matching file; when multiple exist, prefer the one that matches OS version
-	matches, err := filepath.Glob(filepath.Join(scapContentDir, fmt.Sprintf("ssg-%s*-ds.xml", contentOSName)))
-	if err == nil && len(matches) > 0 {
-		return s.bestContentMatch(matches, contentOSName)
-	}
-
-	// If still not found and we normalized to a base distribution, try the original OS name as fallback
-	if contentOSName != s.osInfo.Name {
-		patterns = []string{
-			fmt.Sprintf("ssg-%s%s-ds.xml", s.osInfo.Name, strings.ReplaceAll(s.osInfo.Version, ".", "")),
-			fmt.Sprintf("ssg-%s%s-ds.xml", s.osInfo.Name, strings.Split(s.osInfo.Version, ".")[0]),
-			fmt.Sprintf("ssg-%s-ds.xml", s.osInfo.Name),
-		}
-		for _, pattern := range patterns {
-			path := filepath.Join(scapContentDir, pattern)
-			if _, err := os.Stat(path); err == nil {
-				return path
-			}
-		}
-		matches, err := filepath.Glob(filepath.Join(scapContentDir, fmt.Sprintf("ssg-%s*-ds.xml", s.osInfo.Name)))
+	for _, name := range contentOSNameVariants(osName) {
+		matches, err := filepath.Glob(filepath.Join(scapContentDir, fmt.Sprintf("ssg-%s*-ds.xml", name)))
 		if err == nil && len(matches) > 0 {
-			return s.bestContentMatch(matches, s.osInfo.Name)
+			return s.bestContentMatch(matches, name)
 		}
 	}
 

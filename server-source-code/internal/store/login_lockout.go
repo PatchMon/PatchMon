@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
-	"fmt"
+	"crypto/sha256"
+	"encoding/hex"
 	"strconv"
+	"strings"
 	"time"
 
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
@@ -51,9 +53,17 @@ func (s *LoginLockoutStore) limits(ctx context.Context) (int, time.Duration) {
 	return s.maxAttempts, s.lockoutDuration
 }
 
-// Identifier returns the lockout key identifier (IP + username).
+// Identifier returns the lockout key identifier (IP + hashed username).
+//
+// The username is hashed rather than embedded, because a failed attempt for a
+// username that does not exist still creates a Redis key: interpolating the raw
+// value would let an unauthenticated caller store a key as large as the request
+// body limit allows. It is lowercased and trimmed first because the user lookup
+// matches with LOWER(), so admin/Admin/ADMIN are one account and must share one
+// counter rather than getting a fresh allowance each.
 func (s *LoginLockoutStore) Identifier(clientIP, username string) string {
-	return fmt.Sprintf("%s|%s", clientIP, username)
+	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(username))))
+	return clientIP + "|" + hex.EncodeToString(sum[:16])
 }
 
 // IsLocked returns whether the identifier is locked and remaining seconds.

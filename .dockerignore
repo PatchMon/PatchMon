@@ -37,6 +37,8 @@
 **/*.prof
 **/patchmon-server
 **/patchmon-server-*
+# Prebuilt server binaries are the image's payload; the rule above would drop them.
+!server-prebuilt/patchmon-server-linux-*
 # Exclude agent binaries from agents/ (they're copied from agents-prebuilt/ instead)
 # but keep agents/ scripts (install, remove, etc.)
 agents/patchmon-agent-*

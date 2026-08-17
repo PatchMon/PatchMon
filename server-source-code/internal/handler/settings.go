@@ -253,6 +253,14 @@ func (h *SettingsHandler) isDiscordProperlyConfigured(s *models.Settings) bool {
 	return err == nil
 }
 
+// resolvedConfigFor resolves config from a freshly read settings row rather than h.resolved.
+func (h *SettingsHandler) resolvedConfigFor(ctx context.Context, s *models.Settings) *config.ResolvedConfig {
+	if h.cfg == nil {
+		return h.resolved
+	}
+	return config.ResolveConfig(ctx, h.cfg, s)
+}
+
 // GetLoginSettings handles GET /settings/login-settings (public, used by login screen and first-time admin setup).
 // Includes has_admin_users and oidc fields for first-time setup flow (replaces /auth/check-admin-users).
 func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Request) {
@@ -293,6 +301,7 @@ func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Reques
 				"autoCreateUsers":  false,
 				"canBypassWelcome": false,
 			},
+			"password_policy": resolvePasswordPolicy(h.resolvedConfigFor(r.Context(), nil)),
 		})
 		return
 	}
@@ -349,6 +358,7 @@ func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Reques
 			"autoCreateUsers":  s.OidcAutoCreateUsers,
 			"canBypassWelcome": canBypassWelcome,
 		},
+		"password_policy": resolvePasswordPolicy(h.resolvedConfigFor(r.Context(), s)),
 	})
 }
 
@@ -483,7 +493,7 @@ func buildEnvironmentVariables(cfg *config.Config, resolved *config.ResolvedConf
 		{Category: "Server", Key: "PORT", EffectiveValue: strconv.Itoa(cfg.Port), EffectiveSource: source(env("PORT"), "", "3001"), EnvValue: env("PORT"), DBValue: "", DefaultValue: "3001", Editable: false, Conflict: false, Description: "Backend API port; configure via .env"},
 		{Category: "Server", Key: "APP_ENV", EffectiveValue: cfg.Env, EffectiveSource: source(env("APP_ENV"), "", envDefault("NODE_ENV", "production")), EnvValue: env("APP_ENV"), DBValue: "", DefaultValue: "production", Editable: false, Conflict: false, Description: "Environment mode (production/development)"},
 		{Category: "Server", Key: "TIMEZONE", EffectiveValue: resolved.Timezone, EffectiveSource: source(envTzOrTimezone(), dbStr(s.Timezone), "UTC"), EnvValue: envTzOrTimezone(), DBValue: dbStr(s.Timezone), DefaultValue: "UTC", Editable: true, Conflict: envTzOrTimezone() != "" && s.Timezone != nil && *s.Timezone != "", Description: "IANA timezone (e.g. America/New_York, Europe/London)"},
-		{Category: "Logging", Key: "ENABLE_LOGGING", EffectiveValue: enableLoggingStr, EffectiveSource: source(env("ENABLE_LOGGING"), dbBool(s.EnableLogging), "false"), EnvValue: env("ENABLE_LOGGING"), DBValue: dbBool(s.EnableLogging), DefaultValue: "false", Editable: true, Conflict: env("ENABLE_LOGGING") != "" && s.EnableLogging != nil, Description: "Enable backend logging to stdout"},
+		{Category: "Logging", Key: "ENABLE_LOGGING", EffectiveValue: enableLoggingStr, EffectiveSource: source(env("ENABLE_LOGGING"), dbBool(s.EnableLogging), "true"), EnvValue: env("ENABLE_LOGGING"), DBValue: dbBool(s.EnableLogging), DefaultValue: "true", Editable: true, Conflict: env("ENABLE_LOGGING") != "" && s.EnableLogging != nil, Description: "Enable backend logging to stdout"},
 		{Category: "Logging", Key: "LOG_LEVEL", EffectiveValue: logLevelEffective, EffectiveSource: source(env("LOG_LEVEL"), dbStr(s.LogLevel), "info"), EnvValue: env("LOG_LEVEL"), DBValue: dbStr(s.LogLevel), DefaultValue: "info", Editable: true, Conflict: env("LOG_LEVEL") != "" && s.LogLevel != nil && *s.LogLevel != "", Description: "Log level: debug, info, warn, error"},
 		{Category: "Authentication", Key: "MAX_LOGIN_ATTEMPTS", EffectiveValue: strconv.Itoa(resolved.MaxLoginAttempts), EffectiveSource: source(env("MAX_LOGIN_ATTEMPTS"), dbInt(s.MaxLoginAttempts), strconv.Itoa(cfg.MaxLoginAttempts)), EnvValue: env("MAX_LOGIN_ATTEMPTS"), DBValue: dbInt(s.MaxLoginAttempts), DefaultValue: "5", Editable: true, Conflict: env("MAX_LOGIN_ATTEMPTS") != "" && s.MaxLoginAttempts != nil, Description: "Max failed login attempts before lockout"},
 		{Category: "Authentication", Key: "LOCKOUT_DURATION_MINUTES", EffectiveValue: strconv.Itoa(resolved.LockoutDurationMin), EffectiveSource: source(env("LOCKOUT_DURATION_MINUTES"), dbInt(s.LockoutDurationMinutes), "15"), EnvValue: env("LOCKOUT_DURATION_MINUTES"), DBValue: dbInt(s.LockoutDurationMinutes), DefaultValue: "15", Editable: true, Conflict: env("LOCKOUT_DURATION_MINUTES") != "" && s.LockoutDurationMinutes != nil, Description: "Lockout duration in minutes"},
@@ -621,7 +631,24 @@ func (h *SettingsHandler) UpdateEnvironmentConfig(w http.ResponseWriter, r *http
 	}
 	h.invalidateContextCaches(r.Context())
 	slog.Debug("env config update saved", "key", key, "settings_id", s.ID)
-	JSON(w, http.StatusOK, map[string]string{"message": "Saved. Restart the application for changes to take effect."})
+	msg := "Saved. The new value is in effect."
+	if startupOnlyConfigKeys[key] {
+		msg = "Saved. Restart the application for this change to take effect."
+	}
+	JSON(w, http.StatusOK, map[string]string{"message": msg})
+}
+
+// startupOnlyConfigKeys are wired into middleware or the logger when the process
+// boots, so a saved value sits unused until a restart. Everything else resolves
+// per request through ConfigResolver, whose cache this handler has just
+// invalidated, and so applies immediately.
+var startupOnlyConfigKeys = map[string]bool{
+	"CORS_ORIGIN":                 true,
+	"ENABLE_LOGGING":              true,
+	"LOG_LEVEL":                   true,
+	"ENABLE_HSTS":                 true,
+	"TRUST_PROXY":                 true,
+	"DB_TRANSACTION_LONG_TIMEOUT": true,
 }
 
 func orEmpty(s, fallback string) string {

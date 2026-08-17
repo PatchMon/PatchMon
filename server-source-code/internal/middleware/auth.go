@@ -21,6 +21,22 @@ const UserIDKey contextKey = "user_id"
 const UserRoleKey contextKey = "user_role"
 const SessionIDKey contextKey = "session_id"
 
+// UserActivityHeader marks a request as the direct result of a person using the
+// UI. Only these requests slide the inactivity window. The frontend polls several
+// endpoints on a timer, so treating every authenticated request as activity meant
+// an unattended browser tab kept its own session alive indefinitely and
+// SESSION_INACTIVITY_TIMEOUT_MINUTES never fired.
+const UserActivityHeader = "X-User-Activity"
+
+// userActivity reports whether the caller says this request came from a real
+// interaction. It is a hint about the caller's own session and nothing more: a
+// client that always sent it would only be keeping alive a session it already
+// holds the cookie for. The timeout itself is still checked on every request, so
+// a client that never sends it simply times out.
+func userActivity(r *http.Request) bool {
+	return r.Header.Get(UserActivityHeader) == "1"
+}
+
 // Auth returns a middleware that validates JWT and sets user context.
 // When sessionsStore and resolved are provided and sessionID is in the token,
 // validates session inactivity timeout and updates last_activity.
@@ -101,8 +117,10 @@ func AuthWithSessionCheck(cfg *config.Config, sessionsStore *store.SessionsStore
 					}
 				}
 
-				if err := sessionsStore.UpdateActivity(r.Context(), sessionID); err != nil {
-					slog.Error("auth: failed to update session activity", "session_id", sessionID, "error", err)
+				if userActivity(r) {
+					if err := sessionsStore.UpdateActivity(r.Context(), sessionID); err != nil {
+						slog.Error("auth: failed to update session activity", "session_id", sessionID, "error", err)
+					}
 				}
 			}
 

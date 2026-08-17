@@ -1,5 +1,12 @@
 import { Check, ChevronDown, Edit2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { anchorVertically, clampHorizontally } from "../utils/popoverPosition";
+
+// Roughly one option row, used only to decide whether the list would rather
+// open upwards. The rendered height is capped by maxHeight either way.
+const OPTION_HEIGHT = 36;
+const LIST_PADDING = 8;
+const MIN_DROPDOWN_WIDTH = 200;
 
 const InlineMultiGroupEdit = ({
 	value = [], // Array of group IDs
@@ -18,6 +25,7 @@ const InlineMultiGroupEdit = ({
 		top: 0,
 		left: 0,
 		width: 0,
+		maxHeight: 240,
 	});
 	const dropdownRef = useRef(null);
 	const buttonRef = useRef(null);
@@ -38,15 +46,19 @@ const InlineMultiGroupEdit = ({
 
 	// Calculate dropdown position
 	const calculateDropdownPosition = useCallback(() => {
-		if (buttonRef.current) {
-			const rect = buttonRef.current.getBoundingClientRect();
-			setDropdownPosition({
-				top: rect.bottom + window.scrollY + 4,
-				left: rect.left + window.scrollX,
-				width: rect.width,
-			});
-		}
-	}, []);
+		if (!buttonRef.current) return;
+		const rect = buttonRef.current.getBoundingClientRect();
+		const width = Math.max(rect.width, MIN_DROPDOWN_WIDTH);
+		const desiredHeight =
+			Math.max(options.length, 1) * OPTION_HEIGHT + LIST_PADDING;
+		const { top, maxHeight } = anchorVertically(rect, desiredHeight);
+		setDropdownPosition({
+			top,
+			left: clampHorizontally(rect.left, width),
+			width,
+			maxHeight,
+		});
+	}, [options.length]);
 
 	// Close dropdown when clicking outside
 	useEffect(() => {
@@ -60,11 +72,13 @@ const InlineMultiGroupEdit = ({
 			calculateDropdownPosition();
 			document.addEventListener("mousedown", handleClickOutside);
 			window.addEventListener("resize", calculateDropdownPosition);
-			window.addEventListener("scroll", calculateDropdownPosition);
+			// Capture phase so a scroll inside the table, not just the window,
+			// keeps the dropdown pinned to its trigger.
+			window.addEventListener("scroll", calculateDropdownPosition, true);
 			return () => {
 				document.removeEventListener("mousedown", handleClickOutside);
 				window.removeEventListener("resize", calculateDropdownPosition);
-				window.removeEventListener("scroll", calculateDropdownPosition);
+				window.removeEventListener("scroll", calculateDropdownPosition, true);
 			};
 		}
 	}, [isOpen, calculateDropdownPosition]);
@@ -171,12 +185,12 @@ const InlineMultiGroupEdit = ({
 
 						{isOpen && (
 							<div
-								className="fixed z-50 bg-white dark:bg-secondary-800 border border-secondary-300 dark:border-secondary-600 rounded-md shadow-lg max-h-60 overflow-auto"
+								className="fixed z-50 bg-white dark:bg-secondary-800 border border-secondary-300 dark:border-secondary-600 rounded-md shadow-lg overflow-auto"
 								style={{
 									top: `${dropdownPosition.top}px`,
 									left: `${dropdownPosition.left}px`,
 									width: `${dropdownPosition.width}px`,
-									minWidth: "200px",
+									maxHeight: `${Math.min(dropdownPosition.maxHeight, 240)}px`,
 								}}
 							>
 								<div className="py-1">

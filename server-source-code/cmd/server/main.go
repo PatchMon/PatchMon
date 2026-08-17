@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -21,6 +22,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/redis"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/server"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/ssgcontent"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/hibiken/asynq"
@@ -157,6 +159,8 @@ func main() {
 		r := config.ResolveConfig(context.Background(), cfg, s)
 		return r.AgentReportsRetentionDays
 	}
+	warnIfSSGContentUnusable(cfg.SSGContentDir, slog)
+
 	queueMux := queue.Mux(queue.MuxOpts{
 		Registry:                     registry,
 		DB:                           db,
@@ -297,4 +301,39 @@ func main() {
 		slog.Error("shutdown", "error", err)
 	}
 	slog.Info("server stopped")
+}
+
+// warnIfSSGContentUnusable surfaces an SSG content directory the server cannot
+// serve from, at startup. Agents have no source for this content other than the
+// server, so a directory that is empty, unreadable, or holds datastreams whose
+// release cannot be determined silently disables compliance content updates
+// fleet-wide. Better to say so in the logs than to let operators find out from
+// stale SSG versions weeks later.
+func warnIfSSGContentUnusable(dir string, log *slog.Logger) {
+	if dir == "" {
+		log.Warn("SSG content directory is not configured; compliance content updates are unavailable", "env", "SSG_CONTENT_DIR")
+		return
+	}
+
+	// Load-bearing despite the discarded result: Files reports nil for an
+	// unreadable directory and for an empty one alike, and those want different
+	// warnings.
+	if _, err := os.ReadDir(dir); err != nil {
+		log.Warn("SSG content directory is unreadable; compliance content updates are unavailable", "dir", dir, "error", err)
+		return
+	}
+
+	// Deliberately the same view of the directory the serving code takes, so this
+	// check cannot pass on content the handlers would not recognise.
+	if len(ssgcontent.Files(dir)) == 0 {
+		log.Warn("SSG content directory contains no datastream files; compliance content updates are unavailable", "dir", dir)
+		return
+	}
+
+	// Datastreams alone are not enough: everything downstream keys off the
+	// release they belong to, so content whose version cannot be resolved is
+	// content agents will never be offered.
+	if ssgcontent.Version(dir) == "" {
+		log.Warn("SSG content version could not be determined; compliance content updates are unavailable", "dir", dir)
+	}
 }

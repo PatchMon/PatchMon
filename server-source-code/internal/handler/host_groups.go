@@ -163,13 +163,14 @@ func (h *HostGroupsHandler) GetHosts(w http.ResponseWriter, r *http.Request) {
 	}
 	hostsList, _ := h.hosts.GetByIDs(r.Context(), hostIDs)
 	groupsByHost, _ := h.hosts.GetHostGroupsForHosts(r.Context(), hostIDs)
+	staleCutoff := h.hosts.StaleCutoff(r.Context())
 	hosts := make([]map[string]interface{}, 0, len(hostsList))
 	for _, host := range hostsList {
 		groups := groupsByHost[host.ID]
 		if groups == nil {
 			groups = []models.HostGroup{}
 		}
-		hosts = append(hosts, hostToResponse(&host, groups))
+		hosts = append(hosts, hostToResponse(&host, groups, staleCutoff))
 	}
 	JSON(w, http.StatusOK, hosts)
 }

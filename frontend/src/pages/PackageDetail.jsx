@@ -26,6 +26,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import PatchWizard from "../components/PatchWizard";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
+import { usePageRefresh } from "../hooks/usePageRefresh";
 import { formatRelativeTime, packagesAPI } from "../utils/api";
 
 function formatRepoName(name) {
@@ -118,8 +119,6 @@ const PackageDetail = () => {
 		queryKey: ["package", decodedPackageId],
 		queryFn: () =>
 			packagesAPI.getById(decodedPackageId).then((res) => res.data),
-		staleTime: 5 * 60 * 1000,
-		refetchOnWindowFocus: false,
 		enabled: !!decodedPackageId,
 	});
 
@@ -128,7 +127,6 @@ const PackageDetail = () => {
 		data: hostsData,
 		isLoading: isLoadingHosts,
 		error: hostsError,
-		refetch: refetchHosts,
 	} = useQuery({
 		queryKey: [
 			"package-hosts",
@@ -148,8 +146,6 @@ const PackageDetail = () => {
 				})
 				.then((res) => res.data),
 		placeholderData: keepPreviousData,
-		staleTime: 5 * 60 * 1000,
-		refetchOnWindowFocus: false,
 		enabled: !!decodedPackageId,
 	});
 
@@ -212,10 +208,16 @@ const PackageDetail = () => {
 		navigate(`/hosts/${hostId}`);
 	};
 
-	const handleRefresh = () => {
-		refetchPackage();
-		refetchHosts();
-	};
+	const packageRefreshKeys = useMemo(
+		() => [
+			["package", decodedPackageId],
+			["package-hosts", decodedPackageId],
+			["package-activity", decodedPackageId],
+		],
+		[decodedPackageId],
+	);
+	const { refresh: handleRefresh, isRefreshing } =
+		usePageRefresh(packageRefreshKeys);
 
 	if (isLoadingPackage) {
 		return (
@@ -301,14 +303,12 @@ const PackageDetail = () => {
 				</div>
 				<button
 					type="button"
-					onClick={handleRefresh}
-					disabled={isLoadingPackage || isLoadingHosts}
+					onClick={() => handleRefresh()}
+					disabled={isRefreshing}
 					className="btn-outline flex items-center gap-2 text-sm sm:text-base self-start sm:self-auto"
 				>
 					<RefreshCw
-						className={`h-4 w-4 ${
-							isLoadingPackage || isLoadingHosts ? "animate-spin" : ""
-						}`}
+						className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
 					/>
 					Refresh
 				</button>

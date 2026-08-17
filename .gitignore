@@ -113,6 +113,7 @@ frontend/.vite/
 agents/*.log
 agents/patchmon-agent-*
 agents-prebuilt/
+server-prebuilt/
 agent-source-code/patchmon-agent-*
 __pycache__/
 *.py[cod]

@@ -30,7 +30,16 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import PatchWizard from "../components/PatchWizard";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
+import { usePageRefresh } from "../hooks/usePageRefresh";
 import { dashboardAPI, packagesAPI } from "../utils/api";
+
+// The table, the stat cards and the host filter are three separate queries.
+const PACKAGES_REFRESH_KEYS = [
+	["packages"],
+	["dashboardStats"],
+	["packagesHostStats"],
+	["packageCategories"],
+];
 
 const PACKAGES_PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
 
@@ -95,13 +104,14 @@ const Packages = () => {
 		};
 	}, [searchTerm]);
 
-	// Handle host filter from URL parameter
+	// The URL is the source of truth for these two filters. Each effect depends
+	// on its own param so writing one cannot reset the other.
+	const hostParam = searchParams.get("host");
+	const filterParam = searchParams.get("filter");
+
 	useEffect(() => {
-		const hostParam = searchParams.get("host");
-		if (hostParam) {
-			setHostFilter(hostParam);
-		}
-	}, [searchParams]);
+		setHostFilter(hostParam || "all");
+	}, [hostParam]);
 
 	// Column configuration
 	const [columnConfig, setColumnConfig] = useState(() => {
@@ -168,16 +178,17 @@ const Packages = () => {
 		}
 	};
 
-	// Handle URL filter parameters
 	useEffect(() => {
-		const filter = searchParams.get("filter");
-		if (filter === "outdated") {
+		if (filterParam === "outdated") {
 			setCategoryFilter("all");
 			setUpdateStatusFilter("needs-updates");
-		} else if (filter === "security" || filter === "security-updates") {
+		} else if (
+			filterParam === "security" ||
+			filterParam === "security-updates"
+		) {
 			setUpdateStatusFilter("security-updates");
 			setCategoryFilter("all");
-		} else if (filter === "regular") {
+		} else if (filterParam === "regular") {
 			setUpdateStatusFilter("regular-updates");
 			setCategoryFilter("all");
 		} else {
@@ -185,14 +196,13 @@ const Packages = () => {
 			setUpdateStatusFilter("all-packages");
 			setCategoryFilter("all");
 		}
-	}, [searchParams]);
+	}, [filterParam]);
 
 	const {
 		data: packagesResponse,
 		isLoading,
 		error,
 		refetch,
-		isFetching,
 	} = useQuery({
 		queryKey: [
 			"packages",
@@ -234,7 +244,6 @@ const Packages = () => {
 		},
 		placeholderData: keepPreviousData,
 		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
-		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
 
 	// Extract packages from the response and normalise the data structure
@@ -259,24 +268,20 @@ const Packages = () => {
 	const endIndex = Math.min(startIndex + packages.length, totalPackages);
 
 	// Fetch dashboard stats for card counts (consistent with homepage)
-	const { data: dashboardStats, refetch: refetchDashboardStats } = useQuery({
+	const { data: dashboardStats } = useQuery({
 		queryKey: ["dashboardStats"],
 		queryFn: () => dashboardAPI.getStats().then((res) => res.data),
-		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
-		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
 
 	const { data: categories = [] } = useQuery({
 		queryKey: ["packageCategories"],
 		queryFn: () => packagesAPI.getCategories().then((res) => res.data),
 		staleTime: 5 * 60 * 1000,
-		refetchOnWindowFocus: false,
 	});
 
-	// Handle refresh - refetch all related data
-	const handleRefresh = async () => {
-		await Promise.all([refetch(), refetchDashboardStats()]);
-	};
+	const { refresh: handleRefresh, isRefreshing } = usePageRefresh(
+		PACKAGES_REFRESH_KEYS,
+	);
 
 	// Post-submit UX for the Patch all wizard. The wizard now owns the server
 	// call; this handler only routes the user to the right place afterwards.
@@ -346,8 +351,17 @@ const Packages = () => {
 				.then((res) => res.data),
 		enabled: isHostScoped,
 		staleTime: 60 * 1000,
-		refetchOnWindowFocus: false,
 	});
+
+	const selectHostFilter = (value) => {
+		const next = new URLSearchParams(searchParams);
+		if (value && value !== "all") {
+			next.set("host", value);
+		} else {
+			next.delete("host");
+		}
+		setSearchParams(next, { replace: true });
+	};
 
 	const clearHostFilter = () => {
 		setHostFilter("all");
@@ -651,7 +665,7 @@ const Packages = () => {
 	}
 
 	return (
-		<div className="min-h-0 flex flex-col md:h-[calc(100vh-7rem)] md:overflow-hidden">
+		<div className="min-h-0 flex flex-col md:h-[calc(100vh-var(--app-main-inset))] md:overflow-hidden">
 			{/* Page Header */}
 			<div className="flex items-center justify-between mb-6">
 				<div>
@@ -726,15 +740,15 @@ const Packages = () => {
 						)}
 					<button
 						type="button"
-						onClick={handleRefresh}
-						disabled={isFetching}
+						onClick={() => handleRefresh()}
+						disabled={isRefreshing}
 						className="btn-outline flex items-center gap-2"
 						title="Refresh packages and statistics data"
 					>
 						<RefreshCw
-							className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`}
+							className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
 						/>
-						{isFetching ? "Refreshing..." : "Refresh"}
+						{isRefreshing ? "Refreshing..." : "Refresh"}
 					</button>
 				</div>
 			</div>
@@ -747,7 +761,23 @@ const Packages = () => {
 					isHostScoped ? "sm:grid-cols-3" : "sm:grid-cols-4 lg:grid-cols-5"
 				}`}
 			>
-				<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
+				<button
+					type="button"
+					onClick={() => {
+						setUpdateStatusFilter("all-packages");
+						setCategoryFilter("all");
+						setSearchTerm("");
+						const next = new URLSearchParams(searchParams);
+						next.delete("filter");
+						setSearchParams(next, { replace: true });
+					}}
+					className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 text-left w-full min-h-[44px]"
+					title={
+						isHostScoped
+							? "Click to show all of this host's packages"
+							: "Click to show all packages"
+					}
+				>
 					<div className="flex items-center">
 						<Package className="h-5 w-5 text-primary-600 mr-2" />
 						<div>
@@ -759,10 +789,10 @@ const Packages = () => {
 							</p>
 						</div>
 					</div>
-				</div>
+				</button>
 
 				{!isHostScoped && (
-					<div className="card p-4 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200">
+					<div className="card p-4">
 						<div className="flex items-center">
 							<Package className="h-5 w-5 text-blue-600 mr-2" />
 							<div>
@@ -929,7 +959,7 @@ const Packages = () => {
 							<div className="sm:w-48">
 								<select
 									value={hostFilter}
-									onChange={(e) => setHostFilter(e.target.value)}
+									onChange={(e) => selectHostFilter(e.target.value)}
 									className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white"
 								>
 									<option value="all">All Hosts</option>
@@ -1423,6 +1453,10 @@ const ColumnSettingsModal = ({
 		setDraggedIndex(null);
 	};
 
+	const handleDragEnd = () => {
+		setDraggedIndex(null);
+	};
+
 	return (
 		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
 			<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 w-full max-w-md">
@@ -1450,6 +1484,7 @@ const ColumnSettingsModal = ({
 							onDragStart={(e) => handleDragStart(e, index)}
 							onDragOver={handleDragOver}
 							onDrop={(e) => handleDrop(e, index)}
+							onDragEnd={handleDragEnd}
 							className={`flex items-center justify-between p-3 border rounded-lg cursor-move w-full ${
 								draggedIndex === index
 									? "opacity-50"

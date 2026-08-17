@@ -24,12 +24,15 @@ inputs:
 outputs:
   version:
     description: >
-      MAJOR.MINOR.PATCH on a release tag. On branch and PR builds, the next
-      patch as a pre-release (2.0.3-rc.61) so edge sorts above the last release
-      and below the next one.
+      MAJOR.MINOR.PATCH on a release tag, and the tag verbatim on a
+      pre-release tag (2.1.3-rc.1). On branch and PR builds, the upcoming
+      version as a pre-release (2.0.3-rc.61) so edge sorts above the last
+      release and below the next one.
     value: ${{ steps.resolve.outputs.version }}
   is-release:
-    description: '"true" when building a vX.Y.Z release tag'
+    description: >
+      "true" only when building a vX.Y.Z release tag. A pre-release tag is
+      false, which is what skips the release-notes fetch.
     value: ${{ steps.resolve.outputs.is-release }}
 
 runs:
@@ -59,6 +62,10 @@ runs:
         if printf '%s' "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
           IS_RELEASE=true
           VERSION="${TAG#v}"
+        elif printf '%s' "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.]+$'; then
+          # IS_RELEASE stays false so notes are skipped: releaseNotesFileRe in
+          # internal/handler/release_notes.go matches only bare MAJOR.MINOR.PATCH.
+          VERSION="${TAG#v}"
         else
           # Branch or PR build. Report the NEXT patch version as a pre-release:
           # last tag v2.0.2 plus 61 commits becomes 2.0.3-rc.61.
@@ -77,27 +84,38 @@ runs:
           # The counter is commit distance, not github.run_number, so rebuilding
           # the same commit yields the same version. It resets at each tag, which
           # is safe because the core bumps at the same moment.
-          BASE_TAG="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
-          if [ -z "$BASE_TAG" ]; then
+          BASE_TAG_RAW="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          if [ -z "$BASE_TAG_RAW" ]; then
             # describe walks history to find the nearest tag, so it needs both
             # the tags and the ancestry. Fetching tags into a shallow clone is
             # not enough; unshallow first.
             git fetch --unshallow --tags --quiet origin 2>/dev/null \
               || git fetch --tags --quiet origin 2>/dev/null || true
-            BASE_TAG="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
+            BASE_TAG_RAW="$(git describe --tags --abbrev=0 2>/dev/null || true)"
           fi
+          BASE_TAG="${BASE_TAG_RAW#v}"
 
-          if printf '%s' "$BASE_TAG" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            MAJOR="${BASE_TAG%%.*}"
-            REST="${BASE_TAG#*.}"
+          # describe returns v2.1.3-rc.1 in preference to the v2.1.2 behind it,
+          # so strip any pre-release suffix before the numeric parse.
+          BASE_CORE="${BASE_TAG%%-*}"
+
+          if printf '%s' "$BASE_CORE" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            MAJOR="${BASE_CORE%%.*}"
+            REST="${BASE_CORE#*.}"
             MINOR="${REST%%.*}"
             PATCH="${REST#*.}"
-            DISTANCE="$(git rev-list --count "v${BASE_TAG}..HEAD" 2>/dev/null || echo 0)"
+            DISTANCE="$(git rev-list --count "${BASE_TAG_RAW}..HEAD" 2>/dev/null || echo 0)"
             # Zero distance means we are sitting on the tagged commit without a
             # tag ref build (e.g. a re-run of main at release time). rc.0 would
             # be misleading, so fall back to the tag itself.
             if [ "$DISTANCE" -eq 0 ]; then
               VERSION="$BASE_TAG"
+            elif [ "$BASE_TAG" != "$BASE_CORE" ]; then
+              # The upcoming release is the base's own core, so don't bump the
+              # patch. Extend the identifier rather than replacing it, or the
+              # distance collides with the rc tag one commit later:
+              # 2.1.3-rc.1 < 2.1.3-rc.1.4 < 2.1.3-rc.2 < 2.1.3 (semver 11.4).
+              VERSION="${BASE_TAG}.${DISTANCE}"
             else
               VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))-rc.${DISTANCE}"
             fi

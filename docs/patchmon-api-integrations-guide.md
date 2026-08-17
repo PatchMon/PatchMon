@@ -474,7 +474,7 @@ Each `mappings` entry has two parts:
 
 | Field | Type | Description | Included by default |
 |-------|------|-------------|---------------------|
-| `total_hosts` | Number | Total active hosts in PatchMon | Yes |
+| `total_hosts` | Number | Total hosts in PatchMon, matching the Total Hosts card on the dashboard | Yes |
 | `hosts_needing_updates` | Number | Hosts with at least one outdated package | Yes |
 | `security_updates` | Number | Total security updates available across all hosts | Yes |
 | `up_to_date_hosts` | Number | Hosts with zero outdated packages | No |
@@ -1568,13 +1568,6 @@ DEBUG=true ./proxmox_auto_enroll.sh
 HOST_PREFIX="prod-" ./proxmox_auto_enroll.sh
 ```
 
-#### Include Stopped Containers
-
-```bash
-# Also process stopped containers (enrollment only, agent install fails)
-SKIP_STOPPED=false ./proxmox_auto_enroll.sh
-```
-
 #### Force Install Mode (Broken Packages)
 
 If containers have broken packages (CloudPanel, WHM, cPanel, etc.) that block `apt-get`:
@@ -1738,7 +1731,6 @@ All configuration can be set via environment variables:
 | `CURL_FLAGS` | `-s` | Curl options | `-sk` (for self-signed SSL) |
 | `DRY_RUN` | `false` | Preview mode (no changes) | `true`/`false` |
 | `HOST_PREFIX` | `""` | Prefix for host names | `proxmox-`, `prod-`, etc. |
-| `SKIP_STOPPED` | `true` | Skip stopped containers | `true`/`false` |
 | `FORCE_INSTALL` | `false` | Bypass broken packages | `true`/`false` |
 | `DEBUG` | `false` | Enable debug logging | `true`/`false` |
 
@@ -1754,7 +1746,6 @@ AUTO_ENROLLMENT_SECRET="${AUTO_ENROLLMENT_SECRET:-your_secret_here}"
 CURL_FLAGS="${CURL_FLAGS:--s}"
 DRY_RUN="${DRY_RUN:-false}"
 HOST_PREFIX="${HOST_PREFIX:-}"
-SKIP_STOPPED="${SKIP_STOPPED:-true}"
 FORCE_INSTALL="${FORCE_INSTALL:-false}"
 ```
 
@@ -3186,7 +3177,8 @@ Content-Type: application/json
 | `kernelVersion` | string | No | Running kernel version |
 | `installedKernelVersion` | string | No | Installed (on-disk) kernel version |
 | `selinuxStatus` | string | No | SELinux status (`enabled`, `disabled`, or `permissive`) |
-| `systemUptime` | string | No | System uptime |
+| `systemUptime` | string | No | System uptime. Inside a container (Proxmox LXC, Docker) this is the container's own uptime, not the host's |
+| `bootTime` | string | No | Boot instant as a UTC ISO 8601 timestamp. Lets the UI tick uptime live between reports |
 | `loadAverage` | array | No | Load average values |
 | `machineId` | string | No | Machine ID |
 | `needsReboot` | boolean | No | Whether a reboot is required |
@@ -3995,6 +3987,9 @@ GET /api/v1/api/hosts?hostgroup=Production&include=stats
       "os_version": "24.04 LTS",
       "last_update": "2026-02-12T10:30:00.000Z",
       "status": "active",
+      "effective_status": "active",
+      "reporting_state": "reporting",
+      "update_state": "security_required",
       "needs_reboot": false,
       "updates_count": 15,
       "security_updates_count": 3,
@@ -4021,13 +4016,53 @@ GET /api/v1/api/hosts?hostgroup=Production&include=stats
 | `hosts[].os_type` | string | Operating system type (only with `include=stats`) |
 | `hosts[].os_version` | string | Operating system version (only with `include=stats`) |
 | `hosts[].last_update` | string (ISO 8601) | Timestamp of last agent update (only with `include=stats`) |
-| `hosts[].status` | string | Host status, e.g. `active`, `pending` (only with `include=stats`) |
+| `hosts[].status` | string | Enrolment lifecycle state, `pending` or `active` (only with `include=stats`). See "Which status field should I use?" below |
+| `hosts[].effective_status` | string | The status the web interface displays: `pending`, `active` or `inactive` (only with `include=stats`) |
+| `hosts[].reporting_state` | string | Report freshness: `reporting`, `overdue` or `stale` (only with `include=stats`) |
+| `hosts[].update_state` | string | Patch position: `up_to_date`, `updates_pending` or `security_required` (only with `include=stats`) |
 | `hosts[].needs_reboot` | boolean | Whether a reboot is pending (only with `include=stats`) |
 | `hosts[].updates_count` | integer | Number of packages needing updates (only with `include=stats`) |
 | `hosts[].security_updates_count` | integer | Number of security updates available (only with `include=stats`) |
 | `hosts[].total_packages` | integer | Total installed packages (only with `include=stats`) |
 | `total` | integer | Total number of hosts returned |
 | `filtered_by_groups` | array | Groups used for filtering (only present when filtering) |
+
+##### Which status field should I use?
+
+The response carries four status-like fields because they answer four different
+questions. Picking the wrong one is the most common source of confusion when an
+integration disagrees with what the web interface shows.
+
+| Field | Question it answers | Values |
+|-------|--------------------|--------|
+| `status` | Has this host finished enrolling? | `pending` until the first check-in, then `active` for ever |
+| `effective_status` | What does the web interface show for this host? | `pending`, `active`, `inactive` |
+| `reporting_state` | How fresh is this host's data? | `reporting`, `overdue`, `stale` |
+| `update_state` | Does this host need patching? | `up_to_date`, `updates_pending`, `security_required` |
+
+Two points worth knowing:
+
+- **`status` never becomes `inactive`.** It records how far a host got through
+  enrolment, not whether it is alive. Once a host has checked in once, it stays
+  `active` until you delete it, even if it never reports again. If you are
+  looking for "is this host still talking to PatchMon", use `effective_status`
+  or `reporting_state`.
+- **`effective_status` is calculated when you make the request**, from
+  `last_update` and the Update Interval configured in Settings. A host reads as
+  `inactive` once it has been silent for more than twice that interval, which is
+  exactly the rule the web interface applies. `reporting_state` uses the same
+  clock but splits the middle out: `overdue` covers one to two intervals of
+  silence, and `stale` is past two.
+
+The `pending` case is the one place the two disagree on purpose. A host that was
+created but never checked in stays `pending` in `effective_status`, because
+"never finished enrolling" is more useful than "went quiet", whilst
+`reporting_state` reports it as `stale`.
+
+> `effective_status` was added in PatchMon 2.0.3. On earlier versions the
+> endpoint returns only `status`, and you can reproduce the web interface value
+> yourself by comparing `last_update` against twice your configured Update
+> Interval.
 
 ---
 

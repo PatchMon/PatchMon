@@ -46,12 +46,18 @@ func (s *DashboardStore) withWorkMem(ctx context.Context, fn func(q *db.Queries)
 // Whether the last job succeeded does not enter into it, so a host that patched
 // cleanly and then stopped checking in belongs here, while one whose run failed
 // but is still reporting does not.
-func updateStatusSegments(upToDate, needsUpdates, notReporting int) []map[string]interface{} {
-	return []map[string]interface{}{
+func updateStatusSegments(upToDate, needsUpdates, notReporting, awaitingData int) []map[string]interface{} {
+	segments := []map[string]interface{}{
 		{"name": "Up to date", "filter": "upToDate", "count": upToDate},
 		{"name": "Needs updates", "filter": "needsUpdates", "count": needsUpdates},
 		{"name": "Not reporting", "filter": "inactive", "count": notReporting},
 	}
+	// Only surfaced when it applies. A fleet where every host has reported
+	// should not carry a permanent empty segment.
+	if awaitingData > 0 {
+		segments = append(segments, map[string]interface{}{"name": "Awaiting data", "filter": "awaitingData", "count": awaitingData})
+	}
+	return segments
 }
 
 // GetStats returns dashboard statistics matching Node backend structure for frontend compatibility.
@@ -120,9 +126,16 @@ func (s *DashboardStore) GetStats(ctx context.Context) (map[string]interface{}, 
 	totalUsers := int(stats.Column9)
 	totalRepos := int(stats.Column10)
 
-	upToDateHosts := totalHosts - hostsNeedingUpdates
+	// Derived from hosts we hold package data for, not from every host. A host
+	// that has never reported packages is unknown, not healthy, and folding it
+	// into "up to date" reports silence as good news.
+	upToDateHosts := int(stats.HostsWithPackageData) - hostsNeedingUpdates
 	if upToDateHosts < 0 {
 		upToDateHosts = 0
+	}
+	awaitingDataHosts := totalHosts - int(stats.HostsWithPackageData)
+	if awaitingDataHosts < 0 {
+		awaitingDataHosts = 0
 	}
 
 	osDistribution := make([]map[string]interface{}, len(osRows))
@@ -133,7 +146,7 @@ func (s *DashboardStore) GetStats(ctx context.Context) (map[string]interface{}, 
 		}
 	}
 
-	updateStatusDistribution := updateStatusSegments(upToDateHosts, hostsNeedingUpdates, erroredHosts)
+	updateStatusDistribution := updateStatusSegments(upToDateHosts, hostsNeedingUpdates, erroredHosts, awaitingDataHosts)
 
 	regularUpdates := totalOutdatedPackages - securityUpdates
 	if regularUpdates < 0 {
@@ -181,9 +194,15 @@ func (s *DashboardStore) GetHomepageStats(ctx context.Context) (map[string]inter
 
 	totalHosts := int(stats.TotalHosts)
 	hostsNeedingUpdates := int(stats.HostsNeedingUpdates)
-	upToDateHosts := totalHosts - hostsNeedingUpdates
+	// Same rule as the dashboard card: only hosts we hold package data for can
+	// be called up to date.
+	upToDateHosts := int(stats.HostsWithPackageData) - hostsNeedingUpdates
 	if upToDateHosts < 0 {
 		upToDateHosts = 0
+	}
+	awaitingDataHosts := totalHosts - int(stats.HostsWithPackageData)
+	if awaitingDataHosts < 0 {
+		awaitingDataHosts = 0
 	}
 
 	osRows, _ := d.Queries.GetOSDistributionByTypeAndVersion(ctx)
@@ -221,6 +240,7 @@ func (s *DashboardStore) GetHomepageStats(ctx context.Context) (map[string]inter
 		"total_repos":                 int(stats.TotalRepos),
 		"hosts_needing_updates":       hostsNeedingUpdates,
 		"up_to_date_hosts":            upToDateHosts,
+		"awaiting_data_hosts":         awaitingDataHosts,
 		"security_updates":            int(stats.SecurityUpdates),
 		"hosts_with_security_updates": int(stats.HostsWithSecurityUpdates),
 		"recent_updates_24h":          int(stats.RecentUpdates24h),
@@ -415,8 +435,8 @@ func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsLis
 
 	updateIntervalMinutes := UpdateIntervalMinutes(ctx, s)
 	now := time.Now()
-	staleThreshold := pgtime.From(now.Add(-time.Duration(updateIntervalMinutes*2) * time.Minute))
-	overdueThreshold := pgtime.From(now.Add(-time.Duration(updateIntervalMinutes) * time.Minute))
+	staleThreshold := pgtime.From(StaleCutoff(now, updateIntervalMinutes))
+	overdueThreshold := pgtime.From(OverdueCutoff(now, updateIntervalMinutes))
 	arg := db.GetHostsWithCountsParams{
 		SelectedIds:      params.SelectedIDs,
 		StaleThreshold:   staleThreshold,
@@ -692,12 +712,7 @@ func (s *DashboardStore) UpdateIntervalMinutesOrDefault(ctx context.Context) int
 // conservative fallback. It is a helper so the list and count endpoints use
 // exactly the same stale/down thresholds.
 func UpdateIntervalMinutes(ctx context.Context, s *DashboardStore) int {
-	if settings, _ := s.getSettings(ctx); settings != nil {
-		if settings.UpdateInterval > 0 {
-			return settings.UpdateInterval
-		}
-	}
-	return 60
+	return UpdateIntervalMinutesFromDB(ctx, s.db)
 }
 
 // GetHostDetail returns host detail with packages and history for dashboard (matches Node structure).
@@ -738,7 +753,10 @@ func (s *DashboardStore) GetHostDetail(ctx context.Context, hostID string, histo
 		"id": host.ID, "machine_id": host.MachineID, "friendly_name": host.FriendlyName,
 		"hostname": host.Hostname, "ip": host.IP, "gateway_ip": host.GatewayIP,
 		"os_type": host.OSType, "os_version": host.OSVersion, "architecture": host.Architecture,
-		"last_update": host.LastUpdate, "status": host.Status, "api_id": host.ApiID,
+		"last_update": host.LastUpdate, "status": host.Status,
+		"effective_status": EffectiveStatus(host.Status, host.LastUpdate,
+			StaleCutoff(time.Now(), UpdateIntervalMinutes(ctx, s))),
+		"api_id":        host.ApiID,
 		"agent_version": host.AgentVersion, "auto_update": host.AutoUpdate, "notes": host.Notes,
 		"system_uptime": host.SystemUptime, "boot_time": host.BootTime, "needs_reboot": host.NeedsReboot,
 		"reboot_reason":  host.RebootReason,
@@ -752,6 +770,10 @@ func (s *DashboardStore) GetHostDetail(ctx context.Context, hostID string, histo
 		"dns_servers": dnsServers, "network_interfaces": networkInterfaces,
 		"disk_details": diskDetails, "load_average": loadAverage,
 		"host_group_memberships": hg, "primary_interface": host.PrimaryInterface,
+		// Until the agent checks in, os_type is "unknown", so the install
+		// command the UI offers can only come from the platform picked at
+		// creation time.
+		"expected_platform": host.ExpectedPlatform,
 	}
 
 	stats, _ := d.Queries.GetHostPackageStats(ctx, hostID)

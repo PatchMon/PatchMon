@@ -95,7 +95,7 @@ func parseCSVQuery(value string, maxItems int) ([]string, bool) {
 
 func validHostsListFilter(filter string) bool {
 	switch filter {
-	case "", "needsUpdates", "inactive", "upToDate", "stale", "selected", "offline":
+	case "", "needsUpdates", "inactive", "upToDate", "awaitingData", "stale", "selected", "offline":
 		return true
 	default:
 		return false

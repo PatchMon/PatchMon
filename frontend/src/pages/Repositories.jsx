@@ -27,7 +27,12 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { usePageRefresh } from "../hooks/usePageRefresh";
 import { dashboardAPI, repositoryAPI } from "../utils/api";
+
+// The summary cards read from their own query, so refreshing the table alone
+// left the counts above it unchanged.
+const REPOSITORIES_REFRESH_KEYS = [["repositories"], ["repository-stats"]];
 
 const REPOSITORIES_PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
 const REPOSITORIES_DEFAULT_PAGE_SIZE = 50;
@@ -145,13 +150,15 @@ const Repositories = () => {
 		data: repositoriesResponse,
 		isLoading,
 		error,
-		refetch,
-		isFetching,
 	} = useQuery({
 		queryKey: ["repositories", repoQueryParams],
 		queryFn: () => repositoryAPI.list(repoQueryParams).then((res) => res.data),
 		placeholderData: keepPreviousData,
 	});
+
+	const { refresh: refreshRepositories, isRefreshing } = usePageRefresh(
+		REPOSITORIES_REFRESH_KEYS,
+	);
 	const repositories = repositoriesResponse?.items || [];
 	const totalRepositories = repositoriesResponse?.total || 0;
 	const totalPages = Math.max(1, Math.ceil(totalRepositories / pageSize));
@@ -332,7 +339,7 @@ const Repositories = () => {
 	}
 
 	return (
-		<div className="min-h-screen flex flex-col">
+		<div className="min-h-[calc(100vh-var(--app-main-inset))] flex flex-col">
 			{/* Delete Confirmation Modal */}
 			{deleteModalData && (
 				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -422,15 +429,15 @@ const Repositories = () => {
 				<div className="flex items-center gap-3">
 					<button
 						type="button"
-						onClick={() => refetch()}
-						disabled={isFetching}
+						onClick={() => refreshRepositories()}
+						disabled={isRefreshing}
 						className="btn-outline flex items-center gap-2"
 						title="Refresh repositories data"
 					>
 						<RefreshCw
-							className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`}
+							className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
 						/>
-						{isFetching ? "Refreshing..." : "Refresh"}
+						{isRefreshing ? "Refreshing..." : "Refresh"}
 					</button>
 				</div>
 			</div>
@@ -985,6 +992,10 @@ const ColumnSettingsModal = ({
 		setDraggedIndex(null);
 	};
 
+	const handleDragEnd = () => {
+		setDraggedIndex(null);
+	};
+
 	return (
 		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
 			<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 w-full max-w-md">
@@ -1012,6 +1023,7 @@ const ColumnSettingsModal = ({
 							onDragStart={(e) => handleDragStart(e, index)}
 							onDragOver={handleDragOver}
 							onDrop={(e) => handleDrop(e, index)}
+							onDragEnd={handleDragEnd}
 							className="flex items-center justify-between p-3 bg-secondary-50 dark:bg-secondary-700 rounded-lg cursor-move hover:bg-secondary-100 dark:hover:bg-secondary-600 transition-colors w-full"
 						>
 							<div className="flex items-center gap-3">

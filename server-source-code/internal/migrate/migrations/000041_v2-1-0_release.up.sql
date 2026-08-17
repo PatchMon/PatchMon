@@ -1,12 +1,12 @@
--- v2.0.3 release migration (consolidated).
+-- v2.1.0 release migration (consolidated).
 --
 -- Combines what was previously a chain of 7 separate migrations
 -- (host_section_hashes, patch_run_stall_timeout_minutes, agent_reports,
 -- agent_reports_retention_days, host_packages_security_partial_index,
 -- host_package_count_indexes, package_stats_mat_view) into a single
--- atomic migration. v2.0.3 has not been published; no production
+-- atomic migration. v2.1.0 has not been published; no production
 -- database is on any intermediate state, so squashing the in-development
--- migrations into one is safe and keeps the upgrade path 2.0.2 → 2.0.3
+-- migrations into one is safe and keeps the upgrade path 2.0.2 → 2.1.0
 -- a single transaction for operators.
 --
 -- Sections, in order:
@@ -111,7 +111,7 @@ CREATE INDEX IF NOT EXISTS idx_update_history_host_id_timestamp
 -- index maintenance cost per ping insert.
 DROP INDEX IF EXISTS idx_update_history_host_id;
 
--- An earlier revision of THIS migration (v2.0.3 was never published, so this
+-- An earlier revision of THIS migration (v2.1.0 was never published, so this
 -- only ever reached development and preview databases) created
 -- idx_update_history_timestamp_for_retention (timestamp), which is an exact
 -- duplicate of idx_update_history_timestamp from 000001. It is no longer
@@ -150,7 +150,7 @@ DROP INDEX IF EXISTS idx_update_history_timestamp_for_retention;
 -- seconds to ~20s on NVMe, and can reach minutes on slow LXC or spinning
 -- disk. The server does not serve during migrations, so operators upgrading
 -- a large install should expect a startup pause; this is called out in the
--- 2.0.3 release notes. A crash mid-build leaves the dirty flag set and
+-- 2.1.0 release notes. A crash mid-build leaves the dirty flag set and
 -- needs the documented schema_migrations recovery.
 --
 -- If a future deployment has tens of millions of security-flagged rows, a

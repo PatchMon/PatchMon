@@ -1,6 +1,6 @@
 import { Activity, Package, RotateCcw, Wifi, WifiOff } from "lucide-react";
 import { formatRelativeTime } from "../utils/api";
-import { deriveReportingStateByTime } from "../utils/hostStatus";
+import { deriveReportingState } from "../utils/hostStatus";
 import Tooltip from "./ui/Tooltip";
 
 /**
@@ -97,9 +97,12 @@ const HostStatusPills = ({
 		? formatRelativeTime(host.last_update)
 		: "never";
 
+	const wsLoaded = wsStatus !== undefined && wsStatus !== null;
+	const wsConnectedOrUnknown = !wsLoaded || wsStatus.connected === true;
+
 	// ---------- WS pill ----------
 	let wsPill = null;
-	if (wsStatus !== undefined && wsStatus !== null) {
+	if (wsLoaded) {
 		const connected = !!wsStatus.connected;
 		const secure = !!wsStatus.secure;
 		const disconnectedSeconds = wsStatus.disconnected_seconds_ago;
@@ -165,9 +168,9 @@ const HostStatusPills = ({
 	}
 
 	// ---------- Reporting pill ----------
-	// Computed purely from last_update + the configured agent update interval
-	// — not from the backend's pre-computed reportingState/isStale. This is
-	// the single source of truth so the pill always agrees with the operator's
+	// Computed from last_update + the configured agent update interval — not
+	// from the backend's pre-computed reportingState/isStale. This is the
+	// single source of truth so the pill always agrees with the operator's
 	// configured threshold regardless of which API path served the host record
 	// or how the backend's SQL CASE happens to evaluate.
 	//
@@ -175,26 +178,33 @@ const HostStatusPills = ({
 	// "overdue" range (×1 to ×2 of the interval). While `wsStatus` is still
 	// loading, treat it as "assume connected" so a healthy host doesn't briefly
 	// flicker through "Stale" before the WS payload arrives.
-	const reportingState = deriveReportingStateByTime(
-		host.last_update,
+	//
+	// A host that has never reported short-circuits to "awaiting": its
+	// last_update is seeded at creation, so the time comparison alone would
+	// read a host added seconds ago as reporting.
+	const reportingState = deriveReportingState(
+		host,
+		wsConnectedOrUnknown,
 		updateIntervalMinutes,
 	);
-	const wsLoaded = wsStatus !== undefined && wsStatus !== null;
-	const wsConnectedOrUnknown = !wsLoaded || wsStatus.connected === true;
+	const neverReported = reportingState === "awaiting";
 
 	let reportingVariant = "success";
 	let reportingLabel = "Reporting";
 	let reportingTooltip = `Agent reported recently. Last update: ${lastUpdateRel}.`;
-	if (reportingState !== "reporting") {
-		if (wsConnectedOrUnknown) {
-			reportingVariant = "warning";
-			reportingLabel = "Overdue";
-			reportingTooltip = `Agent has not pushed a report yet but the WebSocket is still connected, so this is likely transient. Last update: ${lastUpdateRel}.`;
-		} else {
-			reportingVariant = "danger";
-			reportingLabel = "Stale";
-			reportingTooltip = `Agent has not reported and the WebSocket is disconnected. Last update: ${lastUpdateRel}.`;
-		}
+	if (neverReported) {
+		reportingVariant = "neutral";
+		reportingLabel = "Awaiting report";
+		reportingTooltip =
+			"This host has been added but its agent has not sent a report yet. Install and start the agent on the host to begin monitoring.";
+	} else if (reportingState === "overdue") {
+		reportingVariant = "warning";
+		reportingLabel = "Overdue";
+		reportingTooltip = `Agent has not pushed a report yet but the WebSocket is still connected, so this is likely transient. Last update: ${lastUpdateRel}.`;
+	} else if (reportingState === "stale") {
+		reportingVariant = "danger";
+		reportingLabel = "Stale";
+		reportingTooltip = `Agent has not reported and the WebSocket is disconnected. Last update: ${lastUpdateRel}.`;
 	}
 	const reportingPill = (
 		<Pill
@@ -235,7 +245,15 @@ const HostStatusPills = ({
 	let updatesVariant = "success";
 	let updatesLabel = "Up to date";
 	let updatesTooltip = "All packages up to date.";
-	if (updateState === "security_required" || securityCount > 0) {
+	if (neverReported && securityCount === 0 && updatesCount === 0) {
+		// Zero packages known is not the same as zero updates outstanding.
+		// Claiming "Up to date" for a host that has never sent an inventory
+		// would be the most misleading pill on the page.
+		updatesVariant = "neutral";
+		updatesLabel = "No package data";
+		updatesTooltip =
+			"Package data will appear once the agent sends its first report.";
+	} else if (updateState === "security_required" || securityCount > 0) {
 		updatesVariant = "danger";
 		updatesLabel = "Security patches required";
 		updatesTooltip = `${securityCount} security update${securityCount === 1 ? "" : "s"} available.`;

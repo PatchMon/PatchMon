@@ -85,20 +85,24 @@ const AgentUpdatesTab = () => {
 	});
 	const serverUrl = serverUrlData?.server_url || window.location.origin;
 
-	// Update form data when settings are loaded
+	// Built once and used for both the displayed text and the copy button. JSX
+	// collapses a multi-line literal to whitespace-separated words, which used
+	// to put a space inside the URL of the command shown on screen.
+	const windowsRemoveCommand = (extraArgs = "") =>
+		`Invoke-WebRequest -Uri "${serverUrl}/api/v1/hosts/remove?os=windows" -UseBasicParsing -OutFile "$env:TEMP\\patchmon-remove.ps1"; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-remove.ps1"${extraArgs}`;
+
+	// Hydrate the form from the server, but never over unsaved edits: any
+	// refetch (returning to the tab, a sibling tab's save, a reconnect) would
+	// otherwise discard whatever the user had typed.
 	useEffect(() => {
-		if (settings) {
-			const newFormData = {
-				updateInterval: settings.update_interval || 60,
-				autoUpdate: settings.auto_update || false,
-				packageCacheRefreshMode:
-					settings.package_cache_refresh_mode || "always",
-				packageCacheRefreshMaxAge: settings.package_cache_refresh_max_age || 60,
-			};
-			setFormData(newFormData);
-			setIsDirty(false);
-		}
-	}, [settings]);
+		if (!settings || isDirty) return;
+		setFormData({
+			updateInterval: settings.update_interval || 60,
+			autoUpdate: settings.auto_update || false,
+			packageCacheRefreshMode: settings.package_cache_refresh_mode || "always",
+			packageCacheRefreshMaxAge: settings.package_cache_refresh_max_age || 60,
+		});
+	}, [settings, isDirty]);
 
 	// Update settings mutation
 	const updateSettingsMutation = useMutation({
@@ -694,19 +698,13 @@ const AgentUpdatesTab = () => {
 											</div>
 											<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
 												<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1 break-all overflow-x-auto">
-													$script = Invoke-WebRequest -Uri "{serverUrl}
-													/api/v1/hosts/remove?os=windows " -UseBasicParsing;
-													$script.Content | Out-File -FilePath
-													"$env:TEMP\patchmon-remove.ps1" -Encoding utf8;
-													powershell.exe -ExecutionPolicy Bypass -File
-													"$env:TEMP\patchmon-remove.ps1"
+													{windowsRemoveCommand()}
 												</div>
 												<button
 													type="button"
 													onClick={async () => {
 														try {
-															const cmd = `$script = Invoke-WebRequest -Uri "${serverUrl}/api/v1/hosts/remove?os=windows" -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-remove.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-remove.ps1"`;
-															await copyToClipboard(cmd);
+															await copyToClipboard(windowsRemoveCommand());
 															showToast(
 																"Standard removal command copied!",
 																"success",
@@ -730,19 +728,15 @@ const AgentUpdatesTab = () => {
 											</div>
 											<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
 												<div className="bg-red-100 dark:bg-red-800 rounded p-2 font-mono text-xs flex-1 break-all overflow-x-auto">
-													$script = Invoke-WebRequest -Uri "{serverUrl}
-													/api/v1/hosts/remove?os=windows " -UseBasicParsing;
-													$script.Content | Out-File -FilePath
-													"$env:TEMP\patchmon-remove.ps1" -Encoding utf8;
-													powershell.exe -ExecutionPolicy Bypass -File
-													"$env:TEMP\patchmon-remove.ps1" -RemoveAll -Force
+													{windowsRemoveCommand(" -RemoveAll -Force")}
 												</div>
 												<button
 													type="button"
 													onClick={async () => {
 														try {
-															const cmd = `$script = Invoke-WebRequest -Uri "${serverUrl}/api/v1/hosts/remove?os=windows" -UseBasicParsing; $script.Content | Out-File -FilePath "$env:TEMP\\patchmon-remove.ps1" -Encoding utf8; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\\patchmon-remove.ps1" -RemoveAll -Force`;
-															await copyToClipboard(cmd);
+															await copyToClipboard(
+																windowsRemoveCommand(" -RemoveAll -Force"),
+															);
 															showToast(
 																"Complete removal command copied!",
 																"success",

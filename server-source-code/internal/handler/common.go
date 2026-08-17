@@ -17,17 +17,41 @@ func hostFromRequest(r *http.Request) string {
 	return strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
 }
 
+// passwordPolicy is the client-side validation shape shared with the login and
+// first-time setup screens.
+type passwordPolicy struct {
+	MinLength        int  `json:"min_length"`
+	RequireUppercase bool `json:"require_uppercase"`
+	RequireLowercase bool `json:"require_lowercase"`
+	RequireNumber    bool `json:"require_number"`
+	RequireSpecial   bool `json:"require_special"`
+}
+
+// resolvePasswordPolicy reads the policy from resolved config, falling back to
+// the built-in defaults when no config resolves.
+func resolvePasswordPolicy(resolved *config.ResolvedConfig) passwordPolicy {
+	p := passwordPolicy{
+		MinLength:        8,
+		RequireUppercase: true,
+		RequireLowercase: true,
+		RequireNumber:    true,
+		RequireSpecial:   true,
+	}
+	if resolved != nil {
+		p.MinLength = resolved.PasswordMinLength
+		p.RequireUppercase = resolved.PasswordRequireUppercase
+		p.RequireLowercase = resolved.PasswordRequireLowercase
+		p.RequireNumber = resolved.PasswordRequireNumber
+		p.RequireSpecial = resolved.PasswordRequireSpecial
+	}
+	return p
+}
+
 // ValidatePasswordPolicy checks password against resolved config. Returns descriptive error.
 func ValidatePasswordPolicy(resolved *config.ResolvedConfig, password string) error {
-	minLen := 8
-	needUpper, needLower, needNum, needSpecial := true, true, true, true
-	if resolved != nil {
-		minLen = resolved.PasswordMinLength
-		needUpper = resolved.PasswordRequireUppercase
-		needLower = resolved.PasswordRequireLowercase
-		needNum = resolved.PasswordRequireNumber
-		needSpecial = resolved.PasswordRequireSpecial
-	}
+	policy := resolvePasswordPolicy(resolved)
+	minLen := policy.MinLength
+	needUpper, needLower, needNum, needSpecial := policy.RequireUppercase, policy.RequireLowercase, policy.RequireNumber, policy.RequireSpecial
 	if len(password) < minLen {
 		return fmt.Errorf("password must be at least %d characters", minLen)
 	}

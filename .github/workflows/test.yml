@@ -39,6 +39,7 @@ jobs:
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
           go-version-file: "server-source-code/go.mod"
+          cache-dependency-path: "server-source-code/go.sum"
 
       - name: Download dependencies
         working-directory: server-source-code
@@ -53,7 +54,7 @@ jobs:
         run: go tool cover -html=coverage.out -o coverage.html
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: coverage-report
           path: server-source-code/coverage.html
@@ -82,6 +83,7 @@ jobs:
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
           go-version-file: "server-source-code/go.mod"
+          cache-dependency-path: "server-source-code/go.sum"
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9
@@ -113,6 +115,7 @@ jobs:
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
           go-version-file: "server-source-code/go.mod"
+          cache-dependency-path: "server-source-code/go.sum"
 
       - name: Check formatting
         working-directory: server-source-code
@@ -148,6 +151,7 @@ jobs:
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
           go-version-file: "server-source-code/go.mod"
+          cache-dependency-path: "server-source-code/go.sum"
 
       - name: Verify server source structure
         run: |
@@ -173,6 +177,7 @@ jobs:
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
           go-version-file: "agent-source-code/go.mod"
+          cache-dependency-path: "agent-source-code/go.sum"
 
       - name: Download dependencies
         working-directory: agent-source-code
@@ -187,7 +192,7 @@ jobs:
         run: go tool cover -html=coverage.out -o coverage.html
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: agent-coverage-report
           path: agent-source-code/coverage.html
@@ -203,6 +208,7 @@ jobs:
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
           go-version-file: "agent-source-code/go.mod"
+          cache-dependency-path: "agent-source-code/go.sum"
 
       - name: Check formatting
         working-directory: agent-source-code
@@ -225,6 +231,7 @@ jobs:
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
           go-version-file: "agent-source-code/go.mod"
+          cache-dependency-path: "agent-source-code/go.sum"
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9
@@ -243,9 +250,432 @@ jobs:
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
         with:
           go-version-file: "agent-source-code/go.mod"
+          cache-dependency-path: "agent-source-code/go.sum"
 
       - name: Build
         working-directory: agent-source-code
         env:
           CGO_ENABLED: 0
         run: go build -buildvcs=false -o patchmon-agent ./cmd/patchmon-agent
+
+  # Everything above runs with the default GOOS, so nothing behind
+  # //go:build windows is ever compiled: service_windows.go,
+  # updatedir_windows.go, sysproc_windows.go and windows_patch.go used to reach
+  # their first compile in agent-release.yml, i.e. after a tag already existed.
+  # This job is the cheap gate that closes that hole on every PR.
+  agent-windows-crosscompile:
+    name: Agent Cross-Compile (windows)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: "agent-source-code/go.mod"
+          cache-dependency-path: "agent-source-code/go.sum"
+
+      - name: Build for windows/${{ matrix.goarch }}
+        working-directory: agent-source-code
+        env:
+          GOOS: windows
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: go build -buildvcs=false -o patchmon-agent.exe ./cmd/patchmon-agent
+
+      # go vet type-checks _test.go files too, so this also catches a Windows
+      # test that no longer compiles against the code it tests.
+      - name: Vet for windows/${{ matrix.goarch }}
+        working-directory: agent-source-code
+        env:
+          GOOS: windows
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: go vet ./...
+
+      # Proves the Windows test binaries compile and link without needing a
+      # Windows host. `go test ./...` cannot be used for this: it would build
+      # each binary and then fail trying to exec a PE on Linux, so the packages
+      # are compiled with -c and the output discarded.
+      - name: Compile Windows test binaries
+        working-directory: agent-source-code
+        env:
+          GOOS: windows
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go list ./... | while read -r pkg; do
+            go test -c -o /dev/null "$pkg" || exit 1
+          done
+
+  agent-windows-lint:
+    name: Agent Lint (windows build tags)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: "agent-source-code/go.mod"
+          cache-dependency-path: "agent-source-code/go.sum"
+
+      # The default agent-lint job lints the Linux view of the tree. errcheck
+      # and staticcheck have never seen the Windows-only files.
+      - name: Run golangci-lint with GOOS=windows
+        uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9
+        env:
+          GOOS: windows
+          GOARCH: amd64
+        with:
+          version: latest
+          working-directory: agent-source-code
+
+  # Runs the agent on a real Windows host: unit tests compiled for Windows, the
+  # embedded PowerShell executed for real, the .exe exercised as a CLI, and the
+  # service installed the same way patchmon_install_windows.ps1 installs it.
+  agent-windows:
+    name: Agent Tests (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Set up Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
+        with:
+          go-version-file: "agent-source-code/go.mod"
+          cache-dependency-path: "agent-source-code/go.sum"
+
+      - name: Download dependencies
+        working-directory: agent-source-code
+        run: go mod download
+
+      # PATCHMON_WINDOWS_INTEGRATION is unset here, so the live-PowerShell tests
+      # skip and this stays a fast unit-test pass.
+      - name: Run unit tests
+        working-directory: agent-source-code
+        run: go test -race -count=1 ./...
+
+      # Separate pass, without -race: these shell out to PowerShell and to the
+      # Windows Update COM API, so they are I/O bound and slow enough already.
+      - name: Run live PowerShell collector tests
+        working-directory: agent-source-code
+        env:
+          PATCHMON_WINDOWS_INTEGRATION: "1"
+        run: go test -count=1 -timeout 30m -v ./internal/packages/... ./internal/winexec/... ./internal/repositories/... ./internal/system/...
+
+      - name: Build agent binary
+        working-directory: agent-source-code
+        env:
+          CGO_ENABLED: 0
+        run: go build -buildvcs=false -o patchmon-agent.exe ./cmd/patchmon-agent
+
+      # A panic on startup still exits non-zero, but a Cobra usage error does
+      # too, so both the exit code and the output are checked.
+      - name: Smoke test the CLI
+        working-directory: agent-source-code
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $failed = $false
+
+          function Invoke-Agent {
+              param([string[]]$AgentArgs, [string]$Must)
+
+              Write-Host "--- patchmon-agent.exe $($AgentArgs -join ' ')" -ForegroundColor Cyan
+              $out = & .\patchmon-agent.exe @AgentArgs 2>&1 | Out-String
+              $code = $LASTEXITCODE
+              Write-Host $out
+
+              if ($code -ne 0) {
+                  Write-Host "::error::'$($AgentArgs -join ' ')' exited with $code"
+                  $script:failed = $true
+              }
+              if ($out -match 'panic:|runtime error:|goroutine \d+ \[running\]') {
+                  Write-Host "::error::'$($AgentArgs -join ' ')' panicked"
+                  $script:failed = $true
+              }
+              if ($Must -and $out -notmatch $Must) {
+                  Write-Host "::error::'$($AgentArgs -join ' ')' output did not match /$Must/"
+                  $script:failed = $true
+              }
+          }
+
+          Invoke-Agent -AgentArgs @('--help')    -Must 'PatchMon Agent'
+          Invoke-Agent -AgentArgs @('--version')
+          Invoke-Agent -AgentArgs @('config', '--help')
+          Invoke-Agent -AgentArgs @('report', '--help')
+          Invoke-Agent -AgentArgs @('serve', '--help')
+
+          if ($failed) { exit 1 }
+          Write-Host "CLI smoke test passed" -ForegroundColor Green
+
+      # diagnostics reaches out to the configured server, so it is expected to
+      # report failures against an unreachable host. What is being tested is
+      # that it runs its Windows collectors and exits rather than panicking.
+      - name: Write agent config and run diagnostics
+        working-directory: agent-source-code
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'C:\ProgramData\PatchMon' | Out-Null
+
+          # .invalid is reserved by RFC 2606 and cannot resolve, so nothing
+          # leaves the runner.
+          @'
+          patchmon_server: https://patchmon-ci.invalid
+          api_version: v1
+          credentials_file: C:\ProgramData\PatchMon\credentials.yml
+          log_file: C:\ProgramData\PatchMon\patchmon-agent.log
+          update_interval: 60
+          log_level: debug
+          '@ | Set-Content -Path 'C:\ProgramData\PatchMon\config.yml' -Encoding UTF8
+
+          @'
+          api_id: ci-smoke-test
+          api_key: ci-smoke-test-key
+          '@ | Set-Content -Path 'C:\ProgramData\PatchMon\credentials.yml' -Encoding UTF8
+
+          $ErrorActionPreference = 'Continue'
+          $out = & .\patchmon-agent.exe diagnostics 2>&1 | Out-String
+          Write-Host $out
+
+          if ($out -match 'panic:|runtime error:|goroutine \d+ \[running\]') {
+              Write-Host "::error::diagnostics panicked"
+              exit 1
+          }
+          Write-Host "diagnostics completed without panicking" -ForegroundColor Green
+
+      # service_windows.go has never been executed by CI. This installs the
+      # service exactly as patchmon_install_windows.ps1 does, so a regression in
+      # the SCM handshake or in runServiceLoop's startup path fails here rather
+      # than on a customer's host.
+      - name: Service lifecycle test
+        working-directory: agent-source-code
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $serviceName = 'PatchMonAgent'
+          $servicePath = (Resolve-Path '.\patchmon-agent.exe').Path
+          $installDir  = 'C:\Program Files\PatchMon'
+
+          # New-Service records the path at creation time, so the binary has to
+          # live somewhere stable, mirroring the real install location.
+          New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+          Copy-Item $servicePath -Destination (Join-Path $installDir 'patchmon-agent.exe') -Force
+          $servicePath = Join-Path $installDir 'patchmon-agent.exe'
+
+          New-Service -Name $serviceName `
+              -BinaryPathName "`"$servicePath`" serve" `
+              -DisplayName 'PatchMon Agent' `
+              -Description 'PatchMon Agent - CI lifecycle test' `
+              -StartupType Automatic `
+              -ErrorAction Stop | Out-Null
+          Write-Host "Service created" -ForegroundColor Green
+
+          $svc = Get-Service -Name $serviceName
+          if ($svc.Status -ne 'Stopped') {
+              Write-Host "::error::newly created service is $($svc.Status), expected Stopped"
+              exit 1
+          }
+
+          # Start-Service blocks until the SCM handshake completes, so a service
+          # that never reports Running fails here rather than timing out later.
+          Start-Service -Name $serviceName -ErrorAction Stop
+          if ((Get-Service -Name $serviceName).Status -ne 'Running') {
+              Write-Host "::error::service did not reach Running"
+              exit 1
+          }
+          Write-Host "Service started" -ForegroundColor Green
+
+          # runServiceLoop sleeps 5s, then retries credential loading up to 3
+          # times at 2s intervals, so a crash caused by config handling shows up
+          # around the 11 second mark. Watching for 30s covers it with margin
+          # and catches an SCM-level restart loop.
+          foreach ($i in 1..6) {
+              Start-Sleep -Seconds 5
+              $status = (Get-Service -Name $serviceName).Status
+              Write-Host "  t+$($i * 5)s: $status"
+              if ($status -ne 'Running') {
+                  Write-Host "::error::service dropped to $status after $($i * 5)s; it is crash-looping"
+                  exit 1
+              }
+          }
+          Write-Host "Service stayed up for 30s" -ForegroundColor Green
+
+          # Exercises the svc.Stop branch of Execute(), including the 10s
+          # graceful-shutdown wait.
+          Stop-Service -Name $serviceName -Force -ErrorAction Stop
+          if ((Get-Service -Name $serviceName).Status -ne 'Stopped') {
+              Write-Host "::error::service did not stop cleanly"
+              exit 1
+          }
+          Write-Host "Service stopped cleanly" -ForegroundColor Green
+
+      - name: Dump agent log and event log
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $log = 'C:\ProgramData\PatchMon\patchmon-agent.log'
+          if (Test-Path $log) {
+              Write-Host "===== patchmon-agent.log =====" -ForegroundColor Cyan
+              Get-Content $log -Tail 200
+          } else {
+              Write-Host "no agent log at $log"
+          }
+
+          # Get-EventLog does not exist in PowerShell 7, which is what `shell:
+          # pwsh` runs, so this uses Get-WinEvent.
+          #
+          # -FilterHashtable is deliberately not used. It resolves ProviderName
+          # while building the query and fails with "The parameter is incorrect"
+          # when that provider has never written to the log, which is the normal
+          # case here: runWindowsService opens its event source but never
+          # registers one. -ErrorAction SilentlyContinue does not suppress that,
+          # because it happens before any record is emitted. Filtering
+          # client-side costs a little more and simply prints nothing when there
+          # is nothing to print, which is what a diagnostic step needs to do.
+          function Show-Events {
+              param([string]$Log, [scriptblock]$Filter, [int]$Keep)
+
+              try {
+                  $events = Get-WinEvent -LogName $Log -MaxEvents 500 -ErrorAction Stop |
+                      Where-Object $Filter | Select-Object -First $Keep
+              } catch {
+                  Write-Host "could not read the $Log log: $($_.Exception.Message)"
+                  return
+              }
+              if ($events) {
+                  $events | Format-List TimeCreated, LevelDisplayName, Message | Out-String -Width 400 | Write-Host
+              } else {
+                  Write-Host "no matching events in the $Log log"
+              }
+          }
+
+          Write-Host "===== Application event log (PatchMonAgent) =====" -ForegroundColor Cyan
+          Show-Events -Log Application -Keep 50 -Filter { $_.ProviderName -eq 'PatchMonAgent' }
+
+          Write-Host "===== Service Control Manager, PatchMon only =====" -ForegroundColor Cyan
+          Show-Events -Log System -Keep 20 -Filter {
+              $_.ProviderName -eq 'Service Control Manager' -and $_.Message -match 'PatchMon'
+          }
+
+      - name: Remove service
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          if (Get-Service -Name 'PatchMonAgent' -ErrorAction SilentlyContinue) {
+              Stop-Service -Name 'PatchMonAgent' -Force -ErrorAction SilentlyContinue
+              Start-Sleep -Seconds 2
+              sc.exe delete 'PatchMonAgent' | Out-Null
+              Write-Host "Service removed"
+          }
+
+  # The installer and uninstaller are real .ps1 files, so unlike the scripts
+  # embedded in Go they can be checked statically.
+  powershell-scripts:
+    name: PowerShell Scripts (install/remove)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Parse-check every .ps1
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $failed = $false
+
+          Get-ChildItem -Path 'server-source-code/internal/agents' -Filter '*.ps1' -Recurse | ForEach-Object {
+              $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errors) | Out-Null
+              if ($errors -and $errors.Count -gt 0) {
+                  $failed = $true
+                  foreach ($e in $errors) {
+                      Write-Host "::error file=$($_.FullName),line=$($e.Extent.StartLineNumber)::$($e.Message)"
+                  }
+              } else {
+                  Write-Host "OK  $($_.Name)" -ForegroundColor Green
+              }
+          }
+
+          if ($failed) { exit 1 }
+
+      - name: Run PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -SkipPublisherCheck
+
+          # PSAvoidUsingWriteHost is excluded: console output is the entire
+          # point of an installer, and it alone accounts for ~90 hits across
+          # the two scripts, which buries everything worth reading.
+          $results = Invoke-ScriptAnalyzer -Path 'server-source-code/internal/agents' -Recurse `
+                                           -ExcludeRule PSAvoidUsingWriteHost
+
+          # Only Error severity fails the build. Warnings are surfaced because
+          # they catch dead code (an assigned-but-never-read variable, an
+          # unused parameter), which is how a half-finished code path looks.
+          $errors = $results | Where-Object { $_.Severity -eq 'Error' }
+          $warnings = $results | Where-Object { $_.Severity -ne 'Error' }
+
+          if ($warnings) {
+              Write-Host "PSScriptAnalyzer warnings ($($warnings.Count)):" -ForegroundColor Yellow
+              # Out-String -Width stops the runner's narrow console truncating
+              # the message column to uselessness.
+              $warnings | Select-Object RuleName, ScriptName, Line, Message |
+                  Format-Table -AutoSize | Out-String -Width 400 | Write-Host
+          }
+
+          if ($errors) {
+              $errors | ForEach-Object {
+                  Write-Host "::error file=$($_.ScriptPath),line=$($_.Line)::$($_.RuleName): $($_.Message)"
+              }
+              exit 1
+          }
+          Write-Host "PSScriptAnalyzer found no errors" -ForegroundColor Green
+
+      # serviceName is a Go constant in version_update.go, asserted by
+      # TestServiceNameIsDeclaredOnce, but the installer carries its own copy.
+      # Stop-Service in the update script runs with -ErrorAction
+      # SilentlyContinue, so a drift between the two fails silently and the
+      # update then copies over a locked image.
+      - name: Check the service name agrees across installer and agent
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = 'PatchMonAgent'
+          $failed = $false
+
+          $goConst = Select-String -Path 'agent-source-code/cmd/patchmon-agent/commands/version_update.go' `
+                                   -Pattern 'const serviceName = "([^"]+)"'
+          if (-not $goConst) {
+              Write-Host "::error::could not find the serviceName constant in version_update.go"
+              exit 1
+          }
+          $goValue = $goConst.Matches[0].Groups[1].Value
+          if ($goValue -ne $expected) {
+              Write-Host "::error::Go serviceName is '$goValue', expected '$expected'"
+              $failed = $true
+          }
+
+          foreach ($script in 'patchmon_install_windows.ps1', 'patchmon_remove_windows.ps1') {
+              $path = "server-source-code/internal/agents/$script"
+              if (-not (Select-String -Path $path -Pattern "\`$serviceName\s*=\s*[`"']$expected[`"']" -Quiet)) {
+                  Write-Host "::error file=$path::does not declare `$serviceName = '$expected'"
+                  $failed = $true
+              }
+          }
+
+          if ($failed) { exit 1 }
+          Write-Host "Service name is consistent across the agent and both scripts" -ForegroundColor Green

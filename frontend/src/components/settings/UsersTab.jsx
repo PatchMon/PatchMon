@@ -92,16 +92,14 @@ const UsersTab = () => {
 		queryFn: () => settingsAPI.get().then((res) => res.data),
 	});
 
-	// Update signup form data when settings are loaded
+	// Never hydrate over unsaved edits: a refetch would otherwise discard them.
 	useEffect(() => {
-		if (settings) {
-			setSignupFormData({
-				signupEnabled: settings.signup_enabled === true,
-				defaultUserRole: settings.default_user_role || "user",
-			});
-			setIsSignupDirty(false);
-		}
-	}, [settings]);
+		if (!settings || isSignupDirty) return;
+		setSignupFormData({
+			signupEnabled: settings.signup_enabled === true,
+			defaultUserRole: settings.default_user_role || "user",
+		});
+	}, [settings, isSignupDirty]);
 
 	// Delete user mutation
 	const deleteUserMutation = useMutation({

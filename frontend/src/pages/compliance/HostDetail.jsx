@@ -19,12 +19,17 @@ const ComplianceHostDetail = () => {
 	const queryClient = useQueryClient();
 	const toast = useToast();
 
+	// Set when a scan is triggered and honoured until the server reports it as
+	// active, mirroring the pendingScans window on the Compliance overview.
+	const [pendingScanAt, setPendingScanAt] = useState(null);
+
 	const triggerScanMutation = useMutation({
 		mutationFn: () => complianceAPI.triggerScan(id, { profile_type: "all" }),
 		onSuccess: (response) => {
 			const msg = response?.data?.message || "Compliance scan triggered";
 			const jobId = response?.data?.job_id || response?.data?.jobId;
 			toast.success(jobId ? `${msg} - Job ID: ${jobId}` : msg);
+			setPendingScanAt(Date.now());
 			queryClient.invalidateQueries({ queryKey: ["compliance-latest", id] });
 			queryClient.invalidateQueries({ queryKey: ["compliance-active-scans"] });
 		},
@@ -33,6 +38,37 @@ const ComplianceHostDetail = () => {
 			toast.error(`Failed to start scan: ${errorMsg}`);
 		},
 	});
+
+	const { data: activeScansData } = useQuery({
+		queryKey: ["compliance-active-scans"],
+		queryFn: () => complianceAPI.getActiveScans().then((res) => res.data),
+		staleTime: 30 * 1000,
+		refetchInterval: (query) => {
+			if (pendingScanAt !== null) return 5000;
+			const active = query.state?.data?.activeScans?.length > 0;
+			return active ? 30000 : 120000;
+		},
+	});
+
+	const hasRunningScan = (activeScansData?.activeScans || []).some(
+		(scan) => scan.hostId === id,
+	);
+
+	useEffect(() => {
+		if (pendingScanAt === null) return;
+		if (hasRunningScan) {
+			setPendingScanAt(null);
+			return;
+		}
+		const timer = setTimeout(
+			() => setPendingScanAt(null),
+			Math.max(60000 - (Date.now() - pendingScanAt), 0),
+		);
+		return () => clearTimeout(timer);
+	}, [pendingScanAt, hasRunningScan]);
+
+	const scanInFlight =
+		triggerScanMutation.isPending || hasRunningScan || pendingScanAt !== null;
 
 	// Fetch host details
 	const {
@@ -79,7 +115,7 @@ const ComplianceHostDetail = () => {
 
 	if (isLoading) {
 		return (
-			<div className="flex items-center justify-center min-h-screen">
+			<div className="flex items-center justify-center min-h-[calc(100vh-var(--app-main-inset))]">
 				<RefreshCw className="h-8 w-8 animate-spin text-secondary-400" />
 			</div>
 		);
@@ -131,24 +167,24 @@ const ComplianceHostDetail = () => {
 								<button
 									type="button"
 									onClick={() => triggerScanMutation.mutate()}
-									disabled={
-										triggerScanMutation.isPending || !ws_status?.connected
-									}
-									className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+									disabled={scanInFlight || !ws_status?.connected}
+									className="inline-flex items-center gap-1.5 px-3 py-1.5 min-h-[44px] sm:min-h-0 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
 									title={
 										!ws_status?.connected
 											? "Host is disconnected"
-											: triggerScanMutation.isPending
-												? "Scan in progress…"
-												: "Run compliance scan now"
+											: hasRunningScan
+												? "A compliance scan is already running on this host. Cancel it from Security Compliance."
+												: scanInFlight
+													? "A scan has just been queued for this host"
+													: "Run compliance scan now"
 									}
 								>
-									{triggerScanMutation.isPending ? (
+									{scanInFlight ? (
 										<RefreshCw className="h-4 w-4 animate-spin" />
 									) : (
 										<Play className="h-4 w-4" />
 									)}
-									{triggerScanMutation.isPending ? "Scanning…" : "Run Scan"}
+									{scanInFlight ? "Scanning…" : "Run Scan"}
 								</button>
 							</div>
 							<p className="mt-1 text-sm text-secondary-600 dark:text-white">

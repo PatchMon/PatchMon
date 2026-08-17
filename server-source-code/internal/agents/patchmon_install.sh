@@ -465,6 +465,17 @@ elif command -v pacman >/dev/null 2>&1; then
     echo ""
     info "Installing curl..."
     install_pacman_packages curl
+    # checkupdates (pacman-contrib, plus fakeroot at runtime) gives fresher
+    # update data than the agent's pacman -Qu fallback. Matched on command name
+    # rather than package name, so install_pacman_packages is not used here.
+    # Best-effort: a stale keyring or unreachable mirror must not fail the
+    # install, because the agent works without these.
+    if ! command_exists checkupdates || ! command_exists fakeroot; then
+        info "Installing pacman-contrib and fakeroot (optional, improves update detection)..."
+        if ! pacman -S --noconfirm --needed pacman-contrib fakeroot; then
+            warning "Could not install pacman-contrib/fakeroot; the agent will fall back to pacman -Qu"
+        fi
+    fi
 elif command -v apk >/dev/null 2>&1; then
     # Alpine Linux
     info "Detected apk (Alpine Linux)"
@@ -678,7 +689,9 @@ fi
 # Step 5: Setup service for WebSocket connection
 # Note: The service will automatically send an initial report on startup (see serve.go)
 # Detect init system and create appropriate service
-if command -v systemctl >/dev/null 2>&1; then
+# /run/systemd/system exists only when systemd is the running init. The
+# systemctl binary alone is also present when systemd is merely installed.
+if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
     # Systemd is available
     info "Setting up systemd service..."
     

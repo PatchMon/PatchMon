@@ -345,6 +345,12 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 		}
 	}
 
+	// Strip NUL and invalid UTF-8 before anything touches a query parameter.
+	// Postgres cannot store either, and one bad byte from one Windows host
+	// aborts that host's whole report. See sanitizeReportPayload for why this
+	// sits here and not at the decode boundary.
+	sanitizeReportPayload(payload)
+
 	// Deterministic ordering eliminates cross-transaction lock-order
 	// inversion that caused 40P01 deadlocks. See sortReportInputs.
 	sortReportInputs(payload)

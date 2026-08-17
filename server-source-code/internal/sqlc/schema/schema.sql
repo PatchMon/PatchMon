@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS settings (
     oidc_readonly_group TEXT,
     oidc_user_group TEXT,
     oidc_enforce_https BOOLEAN NOT NULL DEFAULT true,
+    oidc_trust_unverified_email BOOLEAN NOT NULL DEFAULT false,
     max_login_attempts INTEGER,
     lockout_duration_minutes INTEGER,
     session_inactivity_timeout_minutes INTEGER,
@@ -594,6 +595,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_compliance_scans_host_profile_completed
 ON compliance_scans (host_id, profile_id)
 WHERE status = 'completed';
 
+-- Serves the stalled-scan sweep and its matching read paths (ListActiveComplianceScans,
+-- ListStalledComplianceScansWithDetails). Predicate mirrors those queries' WHERE clause
+-- exactly so the partial index is provably usable; see migration 000046.
+CREATE INDEX IF NOT EXISTS idx_compliance_scans_stalled
+ON compliance_scans (started_at)
+WHERE status = 'running' OR (completed_at IS NULL AND status != 'failed');
+
 -- compliance_rules
 CREATE TABLE IF NOT EXISTS compliance_rules (
     id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
@@ -814,7 +822,7 @@ CREATE TABLE IF NOT EXISTS scheduled_report_runs (
 -- couple of minutes (see TypePackageStatsRefresh). Declared here so sqlc
 -- can resolve column references in queries that join against it; the
 -- authoritative definition lives in
--- migrations/000041_v2-0-3_release.up.sql.
+-- migrations/000041_v2-1-0_release.up.sql.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_package_stats AS
 SELECT
     hp.package_id,
