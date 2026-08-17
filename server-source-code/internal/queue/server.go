@@ -112,6 +112,7 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	mux.Handle(TypeRefreshIntegrationStatus, wrap(TypeRefreshIntegrationStatus, NewRefreshIntegrationStatusHandler(registry, db, opts.PoolCache, log)))
 	mux.Handle(TypeDockerInventoryRefresh, wrap(TypeDockerInventoryRefresh, NewDockerInventoryRefreshHandler(registry, db, opts.PoolCache, log)))
 	mux.Handle(TypeUpdateAgent, wrap(TypeUpdateAgent, NewUpdateAgentHandler(registry, db, opts.PoolCache, log)))
+	mux.Handle(TypeRebootHost, wrap(TypeRebootHost, NewRebootHostHandler(registry, db, log)))
 	dbResolver := &hostctx.DBResolver{Default: db}
 	mux.Handle(TypeHostStatusMonitor, wrap(TypeHostStatusMonitor, NewHostStatusMonitorHandler(db, opts.PoolCache, registry, opts.Emit, log)))
 	mux.Handle(TypeUpdateThresholdMonitor, wrap(TypeUpdateThresholdMonitor, NewUpdateThresholdMonitorHandler(db, opts.PoolCache, opts.Emit, log)))
