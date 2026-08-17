@@ -34,6 +34,7 @@ import {
 	Trash2,
 	Wifi,
 	WifiOff,
+	Wrench,
 	X,
 } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
@@ -43,7 +44,9 @@ import HostStatusPills from "../components/HostStatusPills";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import InlineToggle from "../components/InlineToggle";
+import PatchWizard from "../components/PatchWizard";
 import Tooltip from "../components/ui/Tooltip";
+import { useAuth } from "../contexts/AuthContext";
 import { usePageRefresh } from "../hooks/usePageRefresh";
 import { useTick } from "../hooks/useTick";
 import {
@@ -146,6 +149,8 @@ const Hosts = () => {
 	);
 	const [showBulkAssignModal, setShowBulkAssignModal] = useState(false);
 	const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+	const [showBulkPatchModal, setShowBulkPatchModal] = useState(false);
+	const { canManageHosts } = useAuth();
 	const [bulkFetchReportMessage, setBulkFetchReportMessage] = useState({
 		text: "",
 		type: "success", // "success" or "error"
@@ -876,6 +881,27 @@ const Hosts = () => {
 	const handleBulkFetchReport = () => {
 		bulkFetchReportMutation.mutate(selectedHosts);
 	};
+
+	// Hosts the bulk patch flow can actually target. Windows hosts are excluded
+	// because the agent does not patch them; the wizard would also drop them,
+	// but we filter here so the button reflects reality before opening it.
+	const bulkPatchablePresetHosts = useMemo(
+		() =>
+			(hosts || [])
+				.filter(
+					(h) =>
+						selectedHosts.includes(h.id) &&
+						!(h.os_type || "").toLowerCase().includes("windows"),
+				)
+				.map((h) => ({
+					id: h.id,
+					friendly_name: h.friendly_name,
+					hostname: h.hostname,
+				})),
+		[hosts, selectedHosts],
+	);
+	const bulkPatchSkippedCount =
+		selectedHosts.length - bulkPatchablePresetHosts.length;
 
 	// Resolve selected host IDs for filter=selected (from URL or state)
 	const selectedHostIdsForFilter = useMemo(() => {
@@ -1973,6 +1999,30 @@ const Hosts = () => {
 									<span className="hidden sm:inline">Fetch Reports</span>
 									<span className="sm:hidden">Fetch</span>
 								</button>
+								{canManageHosts() && (
+									<button
+										type="button"
+										onClick={() => setShowBulkPatchModal(true)}
+										disabled={bulkPatchablePresetHosts.length === 0}
+										className="btn-outline flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 min-h-[44px] text-xs sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+										title={
+											bulkPatchablePresetHosts.length === 0
+												? "No patchable hosts selected (Windows hosts cannot be patched via PatchMon)"
+												: bulkPatchSkippedCount > 0
+													? `Patch all available updates on ${bulkPatchablePresetHosts.length} host${bulkPatchablePresetHosts.length !== 1 ? "s" : ""} (${bulkPatchSkippedCount} Windows host${bulkPatchSkippedCount !== 1 ? "s" : ""} will be skipped)`
+													: "Patch all available updates on the selected hosts"
+										}
+									>
+										<Wrench className="h-4 w-4 flex-shrink-0" />
+										<span className="hidden sm:inline">
+											Patch Selected
+											{bulkPatchSkippedCount > 0
+												? ` (${bulkPatchablePresetHosts.length})`
+												: ""}
+										</span>
+										<span className="sm:hidden">Patch</span>
+									</button>
+								)}
 								<button
 									type="button"
 									onClick={() => setShowBulkAssignModal(true)}
@@ -2728,6 +2778,23 @@ const Hosts = () => {
 					onClose={() => setShowBulkDeleteModal(false)}
 					onDelete={handleBulkDelete}
 					isLoading={bulkDeleteMutation.isPending}
+				/>
+			)}
+
+			{/* Bulk Patch Wizard (patch_all across multiple hosts) */}
+			{showBulkPatchModal && bulkPatchablePresetHosts.length > 0 && (
+				<PatchWizard
+					isOpen={showBulkPatchModal}
+					onClose={() => setShowBulkPatchModal(false)}
+					mode="trigger"
+					patchType="patch_all"
+					lockHosts
+					presetHosts={bulkPatchablePresetHosts}
+					onSuccess={() => {
+						setShowBulkPatchModal(false);
+						queryClient.invalidateQueries({ queryKey: ["patching-runs"] });
+						queryClient.invalidateQueries({ queryKey: ["patching-dashboard"] });
+					}}
 				/>
 			)}
 
