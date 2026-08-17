@@ -65,8 +65,9 @@ UPDATE settings SET
     package_cache_refresh_max_age = $59,
     oidc_trust_unverified_email = $60,
     oidc_local_auth_fallback = $61,
-    apt_disable_retries = $62
-WHERE id = $63;
+    apt_disable_retries = $62,
+    prometheus_enabled = $63
+WHERE id = $64;
 
 -- name: UpdateSettingsConfig :exec
 UPDATE settings SET
