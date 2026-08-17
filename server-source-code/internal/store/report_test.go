@@ -192,7 +192,7 @@ func TestBuildHostPackagesPayload_LinuxAndWindowsMixed(t *testing.T) {
 		"windows-update": "pkg-uuid-windows",
 	}
 
-	raw, err := buildHostPackagesPayload(hostID, pkgs, nameToID, nil, nil, nil)
+	raw, err := buildHostPackagesPayload(hostID, pkgs, nameToID, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildHostPackagesPayload: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestBuildHostPackagesPayload_SourceRepoResolved(t *testing.T) {
 	nameToID := map[string]string{"a-pkg": "p1", "b-pkg": "p2", "c-pkg": "p3"}
 	reposByName := map[string]string{"baseos": "repo-uuid-1"}
 
-	raw, err := buildHostPackagesPayload("h1", pkgs, nameToID, reposByName, nil, nil)
+	raw, err := buildHostPackagesPayload("h1", pkgs, nameToID, reposByName, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildHostPackagesPayload: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestBuildHostPackagesPayload_SourceRepoResolved(t *testing.T) {
 // garbage rows.
 func TestBuildHostPackagesPayload_MissingPackageIDFails(t *testing.T) {
 	pkgs := []ReportPackage{{Name: "missing", CurrentVersion: "1"}}
-	_, err := buildHostPackagesPayload("h1", pkgs, map[string]string{}, nil, nil, nil)
+	_, err := buildHostPackagesPayload("h1", pkgs, map[string]string{}, nil, nil, nil, nil)
 	if err == nil {
 		t.Fatalf("expected error when nameToID is missing the package, got nil")
 	}
