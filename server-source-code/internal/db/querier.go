@@ -176,6 +176,7 @@ type Querier interface {
 	CreateSession(ctx context.Context, arg CreateSessionParams) error
 	CreateTrustedDevice(ctx context.Context, arg CreateTrustedDeviceParams) error
 	CreateUser(ctx context.Context, arg CreateUserParams) error
+	CreateUserApiToken(ctx context.Context, arg CreateUserApiTokenParams) (CreateUserApiTokenRow, error)
 	DeleteAlert(ctx context.Context, id string) error
 	DeleteAlertsByIDs(ctx context.Context, dollar_1 []string) error
 	DeleteAutoEnrollmentToken(ctx context.Context, id string) error
@@ -226,6 +227,7 @@ type Querier interface {
 	DeleteRunningComplianceScansByHost(ctx context.Context, hostID string) error
 	DeleteScheduledReport(ctx context.Context, id string) error
 	DeleteUser(ctx context.Context, id string) error
+	DeleteUserApiToken(ctx context.Context, id string) error
 	DeleteVolume(ctx context.Context, id string) error
 	DisableTfa(ctx context.Context, id string) error
 	ExistsByUsernameOrEmail(ctx context.Context, arg ExistsByUsernameOrEmailParams) (bool, error)
@@ -430,6 +432,7 @@ type Querier interface {
 	GetUpdateHistory(ctx context.Context, arg GetUpdateHistoryParams) ([]GetUpdateHistoryRow, error)
 	GetUpdateHistoryDaily(ctx context.Context, arg GetUpdateHistoryDailyParams) ([]GetUpdateHistoryDailyRow, error)
 	GetUpdateTrends(ctx context.Context, timestamp pgtype.Timestamp) ([]GetUpdateTrendsRow, error)
+	GetUserApiTokenByHash(ctx context.Context, tokenHash string) (GetUserApiTokenByHashRow, error)
 	GetUserByDiscordID(ctx context.Context, discordID *string) (User, error)
 	GetUserByDiscordIDOrEmail(ctx context.Context, arg GetUserByDiscordIDOrEmailParams) (User, error)
 	GetUserByEmail(ctx context.Context, lower string) (User, error)
@@ -533,6 +536,7 @@ type Querier interface {
 	ListSystemStatisticsByDateRange(ctx context.Context, arg ListSystemStatisticsByDateRangeParams) ([]SystemStatistic, error)
 	ListTrustedDevicesForUser(ctx context.Context, userID string) ([]UserTrustedDevice, error)
 	ListUpdateHistoryByDateRange(ctx context.Context, arg ListUpdateHistoryByDateRangeParams) ([]ListUpdateHistoryByDateRangeRow, error)
+	ListUserApiTokens(ctx context.Context, userID string) ([]ListUserApiTokensRow, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]User, error)
 	ListVolumes(ctx context.Context, arg ListVolumesParams) ([]DockerVolume, error)
 	// User-initiated cancel from StopRun. Deliberately does NOT touch shell_output
@@ -656,6 +660,7 @@ type Querier interface {
 	UpdateTfaEnabled(ctx context.Context, arg UpdateTfaEnabledParams) error
 	UpdateTfaSecret(ctx context.Context, arg UpdateTfaSecretParams) error
 	UpdateUser(ctx context.Context, arg UpdateUserParams) error
+	UpdateUserApiTokenLastUsed(ctx context.Context, id string) error
 	UpdateUserDiscordLink(ctx context.Context, arg UpdateUserDiscordLinkParams) error
 	UpdateUserDiscordProfile(ctx context.Context, arg UpdateUserDiscordProfileParams) error
 	UpdateUserDiscordUnlink(ctx context.Context, id string) error
