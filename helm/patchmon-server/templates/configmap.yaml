@@ -1,0 +1,18 @@
+{{- if .Values.configMap.create -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "patchmon.configMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "patchmon.labels" . | nindent 4 }}
+  {{- with .Values.configMap.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  CORS_ORIGIN: {{ .Values.server.env.corsOrigin | quote }}
+  SERVER_HOST: {{ .Values.server.env.serverHost | quote }}
+  SERVER_PORT: {{ .Values.server.env.serverPort | quote }}
+  SERVER_PROTOCOL: {{ .Values.server.env.serverProtocol | quote }}
+{{- end }}
