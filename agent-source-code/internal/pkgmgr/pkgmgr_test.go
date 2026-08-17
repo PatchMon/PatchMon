@@ -138,6 +138,7 @@ func TestDetectUnchangedForSupportedPlatforms(t *testing.T) {
 		{"FreeBSD under rc.d with a minimal PATH", host{goos: "freebsd", uname: "FreeBSD", paths: map[string]fs.FileMode{"/usr/sbin/pkg": exec}}, "pkg"},
 		{"FreeBSD with pkg on PATH", host{goos: "freebsd", uname: "FreeBSD", bins: []string{"pkg"}}, "pkg"},
 		{"pfSense", host{goos: "freebsd", uname: "FreeBSD", paths: map[string]fs.FileMode{"/usr/local/sbin/pkg": exec}}, "pkg"},
+		{"OpenBSD", host{goos: "openbsd", uname: "OpenBSD", bins: []string{"pkg_info"}}, "pkg_info"},
 		{"Windows", host{goos: "windows"}, "windows"},
 	}
 	for _, tc := range cases {

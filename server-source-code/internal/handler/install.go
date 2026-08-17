@@ -105,6 +105,9 @@ func inferHostOS(expectedPlatform *string, osType string) string {
 		if strings.Contains(ep, "freebsd") || strings.Contains(ep, "pfsense") {
 			return "freebsd"
 		}
+		if strings.Contains(ep, "openbsd") {
+			return "openbsd"
+		}
 		return "linux"
 	}
 	if osType != "" {
@@ -114,6 +117,9 @@ func inferHostOS(expectedPlatform *string, osType string) string {
 		}
 		if strings.Contains(reported, "freebsd") || strings.Contains(reported, "pfsense") {
 			return "freebsd"
+		}
+		if strings.Contains(reported, "openbsd") {
+			return "openbsd"
 		}
 		return "linux"
 	}
@@ -175,7 +181,7 @@ func (h *InstallHandler) ServeInstall(w http.ResponseWriter, r *http.Request) {
 		architecture = ""
 	}
 	osParam := r.URL.Query().Get("os")
-	if osParam != "linux" && osParam != "freebsd" && osParam != "windows" {
+	if osParam != "linux" && osParam != "freebsd" && osParam != "openbsd" && osParam != "windows" {
 		osParam = inferHostOS(host.ExpectedPlatform, host.OSType)
 	}
 	hostIDValue := ""
@@ -1005,9 +1011,9 @@ func (h *InstallHandler) ServeAgentVersion(w http.ResponseWriter, r *http.Reques
 		osParam = inferHostOS(host.ExpectedPlatform, host.OSType)
 	}
 
-	validOss := map[string]bool{"linux": true, "freebsd": true, "windows": true}
+	validOss := map[string]bool{"linux": true, "freebsd": true, "openbsd": true, "windows": true}
 	if !validOss[osParam] {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid os. Must be one of: linux, freebsd, windows"})
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid os. Must be one of: linux, freebsd, openbsd, windows"})
 		return
 	}
 
@@ -1149,9 +1155,9 @@ func (h *InstallHandler) ServeAgentDownload(w http.ResponseWriter, r *http.Reque
 		osParam = inferHostOS(host.ExpectedPlatform, host.OSType)
 	}
 
-	validOss := map[string]bool{"linux": true, "freebsd": true, "windows": true}
+	validOss := map[string]bool{"linux": true, "freebsd": true, "openbsd": true, "windows": true}
 	if !validOss[osParam] {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid os. Must be one of: linux, freebsd, windows"})
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid os. Must be one of: linux, freebsd, openbsd, windows"})
 		return
 	}
 
