@@ -293,6 +293,20 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 		}
 	}
 
+	// Remove containers no longer reported by the agent.
+	if len(payload.Containers) > 0 {
+		reportedContainerIDs := make([]string, 0, len(payload.Containers))
+		for _, c := range payload.Containers {
+			reportedContainerIDs = append(reportedContainerIDs, c.ContainerID)
+		}
+		if err := d.Queries.DeleteStaleContainers(ctx, db.DeleteStaleContainersParams{
+			HostID:       hostID,
+			ContainerIds: reportedContainerIDs,
+		}); err != nil {
+			return nil, err
+		}
+	}
+
 	// 4. Process volumes
 	for _, v := range payload.Volumes {
 		scope := v.Scope
@@ -334,6 +348,20 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 	}
 	result.VolumesReceived = len(payload.Volumes)
 
+	// Remove volumes no longer reported by the agent.
+	if len(payload.Volumes) > 0 {
+		reportedVolumeIDs := make([]string, 0, len(payload.Volumes))
+		for _, v := range payload.Volumes {
+			reportedVolumeIDs = append(reportedVolumeIDs, v.VolumeID)
+		}
+		if err := d.Queries.DeleteStaleVolumes(ctx, db.DeleteStaleVolumesParams{
+			HostID:    hostID,
+			VolumeIds: reportedVolumeIDs,
+		}); err != nil {
+			return nil, err
+		}
+	}
+
 	// 5. Process networks
 	for _, n := range payload.Networks {
 		scope := n.Scope
@@ -366,6 +394,20 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 		}
 	}
 	result.NetworksReceived = len(payload.Networks)
+
+	// Remove networks no longer reported by the agent.
+	if len(payload.Networks) > 0 {
+		reportedNetworkIDs := make([]string, 0, len(payload.Networks))
+		for _, n := range payload.Networks {
+			reportedNetworkIDs = append(reportedNetworkIDs, n.NetworkID)
+		}
+		if err := d.Queries.DeleteStaleNetworks(ctx, db.DeleteStaleNetworksParams{
+			HostID:     hostID,
+			NetworkIds: reportedNetworkIDs,
+		}); err != nil {
+			return nil, err
+		}
+	}
 
 	// 6. Process updates (need to resolve image_id UUID from repository+current_tag+image_id)
 	for _, u := range payload.Updates {
