@@ -161,6 +161,17 @@ func (d *Detector) getFreeBSDInfo() (osType, osVersion string, err error) {
 	return osType, osVersion, nil
 }
 
+// gopsutil returns DisplayVersion as PlatformVersion, and it is absent before
+// Server 2022, so 2016 and 2019 LTSC need the ReleaseId fallback.
+func resolveWindowsOSVersion(platformVersion, releaseID, kernelVersion string) string {
+	for _, v := range []string{platformVersion, releaseID, kernelVersion} {
+		if v != "" {
+			return v
+		}
+	}
+	return "Unknown"
+}
+
 // DetectOS detects the operating system and version using /etc/os-release
 func (d *Detector) DetectOS() (osType, osVersion string, err error) {
 	// Check for Windows first (uses gopsutil)
@@ -171,11 +182,7 @@ func (d *Detector) DetectOS() (osType, osVersion string, err error) {
 		if infoErr != nil {
 			return "Windows", "Unknown", nil
 		}
-		osVer := info.PlatformVersion
-		if osVer == "" {
-			osVer = "Unknown"
-		}
-		return "Windows", osVer, nil
+		return "Windows", resolveWindowsOSVersion(info.PlatformVersion, windowsReleaseID(), info.KernelVersion), nil
 	}
 	// Check for FreeBSD first (doesn't have /etc/os-release)
 	if d.isFreeBSD() {
