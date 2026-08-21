@@ -70,6 +70,105 @@ func agentHostKeyCallback() ssh.HostKeyCallback {
 	return ssh.InsecureIgnoreHostKey()
 }
 
+// syncIntegrationStatus reconciles config.yml with the integration state the
+// server reports at startup.
+//
+// Compliance is three-state on the server (disabled / on-demand / enabled) but
+// only two-state in the integrations map, so the boolean alone cannot say
+// whether scans are scheduled. It is synced from compliance_mode, and the
+// boolean is used only for a server too old to send that field.
+func syncIntegrationStatus(integrationResp *models.IntegrationStatusResponse) {
+	configUpdated := false
+	serverComplianceMode, serverSentComplianceMode := config.ParseComplianceMode(integrationResp.ComplianceMode)
+	if integrationResp.ComplianceMode != "" && !serverSentComplianceMode {
+		logger.WithField("compliance_mode", logutil.Sanitize(integrationResp.ComplianceMode)).
+			Warn("Unknown compliance mode from server, keeping local compliance configuration")
+	}
+
+	for integrationName, serverEnabled := range integrationResp.Integrations {
+		// The boolean cannot express on-demand, so compliance is left to the
+		// mode whenever the server sends one. A mode that failed to parse is
+		// skipped here too: falling back to the boolean would write the
+		// scheduled state this whole change exists to stop writing.
+		if integrationName == "compliance" && integrationResp.ComplianceMode != "" {
+			continue
+		}
+		configEnabled := cfgManager.IsIntegrationEnabled(integrationName)
+		if serverEnabled != configEnabled {
+			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
+				"integration":  integrationName,
+				"config_value": configEnabled,
+				"server_value": serverEnabled,
+			})).Info("Integration status differs, updating config.yml")
+
+			if err := cfgManager.SetIntegrationEnabled(integrationName, serverEnabled); err != nil {
+				logger.WithError(err).Warn("Failed to save integration status to config.yml")
+			} else {
+				configUpdated = true
+				logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
+					"integration": integrationName,
+					"enabled":     serverEnabled,
+				})).Info("Updated integration status in config.yml")
+			}
+		}
+	}
+
+	// Sync the compliance mode from server (when server sends one)
+	if serverSentComplianceMode {
+		configMode := cfgManager.GetComplianceMode()
+		if serverComplianceMode != configMode {
+			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
+				"config_value": string(configMode),
+				"server_value": string(serverComplianceMode),
+			})).Info("Compliance mode differs, updating config.yml")
+
+			if err := cfgManager.SetComplianceMode(serverComplianceMode); err != nil {
+				logger.WithError(err).Warn("Failed to save compliance mode to config.yml")
+			} else {
+				configUpdated = true
+				logger.WithField("mode", string(serverComplianceMode)).Info("Updated compliance mode in config.yml")
+			}
+		}
+	}
+
+	// Sync compliance scanner toggles from server (when server sends them)
+	if integrationResp.ComplianceOpenscapEnabled != nil || integrationResp.ComplianceDockerBenchEnabled != nil {
+		configOpenscap := cfgManager.GetComplianceOpenscapEnabled()
+		configDockerBench := cfgManager.GetComplianceDockerBenchEnabled()
+		serverOpenscap := configOpenscap
+		serverDockerBench := configDockerBench
+		if integrationResp.ComplianceOpenscapEnabled != nil {
+			serverOpenscap = *integrationResp.ComplianceOpenscapEnabled
+		}
+		if integrationResp.ComplianceDockerBenchEnabled != nil {
+			serverDockerBench = *integrationResp.ComplianceDockerBenchEnabled
+		}
+		if serverOpenscap != configOpenscap || serverDockerBench != configDockerBench {
+			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
+				"config_openscap": configOpenscap, "server_openscap": serverOpenscap,
+				"config_docker_bench": configDockerBench, "server_docker_bench": serverDockerBench,
+			})).Info("Compliance scanner toggles differ, updating config.yml")
+			if err := cfgManager.SetComplianceScanners(serverOpenscap, serverDockerBench); err != nil {
+				logger.WithError(err).Warn("Failed to save compliance scanner toggles to config.yml")
+			} else {
+				configUpdated = true
+				logger.Info("Updated compliance scanner toggles in config.yml")
+			}
+		}
+	}
+
+	if configUpdated {
+		// Reload config so in-memory state matches the updated file
+		if err := cfgManager.LoadConfig(); err != nil {
+			logger.WithError(err).Warn("Failed to reload config after integration update")
+		} else {
+			logger.Info("Config reloaded, integration settings will be applied")
+		}
+	} else {
+		logger.Debug("Integration status matches config, no update needed")
+	}
+}
+
 // runServiceLoop is the main service loop. stopCh signals shutdown (nil = run forever on Unix)
 func runServiceLoop(stopCh <-chan struct{}) error {
 	// Starting on defaults when the file is present but unparseable means an
@@ -143,64 +242,7 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 	// Fetch integration status from server and sync with config.yml
 	logger.Info("Syncing integration status from server...")
 	if integrationResp, err := httpClient.GetIntegrationStatus(ctx); err == nil && integrationResp.Success {
-		configUpdated := false
-		for integrationName, serverEnabled := range integrationResp.Integrations {
-			configEnabled := cfgManager.IsIntegrationEnabled(integrationName)
-			if serverEnabled != configEnabled {
-				logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
-					"integration":  integrationName,
-					"config_value": configEnabled,
-					"server_value": serverEnabled,
-				})).Info("Integration status differs, updating config.yml")
-
-				if err := cfgManager.SetIntegrationEnabled(integrationName, serverEnabled); err != nil {
-					logger.WithError(err).Warn("Failed to save integration status to config.yml")
-				} else {
-					configUpdated = true
-					logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
-						"integration": integrationName,
-						"enabled":     serverEnabled,
-					})).Info("Updated integration status in config.yml")
-				}
-			}
-		}
-
-		// Sync compliance scanner toggles from server (when server sends them)
-		if integrationResp.ComplianceOpenscapEnabled != nil || integrationResp.ComplianceDockerBenchEnabled != nil {
-			configOpenscap := cfgManager.GetComplianceOpenscapEnabled()
-			configDockerBench := cfgManager.GetComplianceDockerBenchEnabled()
-			serverOpenscap := configOpenscap
-			serverDockerBench := configDockerBench
-			if integrationResp.ComplianceOpenscapEnabled != nil {
-				serverOpenscap = *integrationResp.ComplianceOpenscapEnabled
-			}
-			if integrationResp.ComplianceDockerBenchEnabled != nil {
-				serverDockerBench = *integrationResp.ComplianceDockerBenchEnabled
-			}
-			if serverOpenscap != configOpenscap || serverDockerBench != configDockerBench {
-				logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
-					"config_openscap": configOpenscap, "server_openscap": serverOpenscap,
-					"config_docker_bench": configDockerBench, "server_docker_bench": serverDockerBench,
-				})).Info("Compliance scanner toggles differ, updating config.yml")
-				if err := cfgManager.SetComplianceScanners(serverOpenscap, serverDockerBench); err != nil {
-					logger.WithError(err).Warn("Failed to save compliance scanner toggles to config.yml")
-				} else {
-					configUpdated = true
-					logger.Info("Updated compliance scanner toggles in config.yml")
-				}
-			}
-		}
-
-		if configUpdated {
-			// Reload config so in-memory state matches the updated file
-			if err := cfgManager.LoadConfig(); err != nil {
-				logger.WithError(err).Warn("Failed to reload config after integration update")
-			} else {
-				logger.Info("Config reloaded, integration settings will be applied")
-			}
-		} else {
-			logger.Debug("Integration status matches config, no update needed")
-		}
+		syncIntegrationStatus(integrationResp)
 	} else if err != nil {
 		logger.WithError(err).Warn("Failed to fetch integration status from server, using config values")
 	}
