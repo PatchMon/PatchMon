@@ -23,8 +23,8 @@ const (
 	agentGzipSweepInterval = time.Hour
 )
 
-// singleflight is what bounds concurrent compressors: one per binary, and the
-// set of binaries is a fixed compile-time map, so the shared heap cannot spike.
+// singleflight is what bounds concurrent compressors: one per binary version,
+// over a servable set fixed at compile time in util.agentBinaryNames.
 var (
 	agentGzipCache   sync.Map
 	agentGzipGroup   singleflight.Group
@@ -95,7 +95,10 @@ func lookupAgentGzip(binaryPath string, info os.FileInfo) ([]byte, bool) {
 }
 
 func buildAgentGzip(binaryPath string, info os.FileInfo, f *os.File) ([]byte, error) {
-	v, err, _ := agentGzipGroup.Do(binaryPath, func() (interface{}, error) {
+	// Keying on the path alone would let a follower that stat'd a replaced binary
+	// receive the leader's pre-replacement bytes.
+	key := fmt.Sprintf("%s|%d|%d", binaryPath, info.ModTime().UnixNano(), info.Size())
+	v, err, _ := agentGzipGroup.Do(key, func() (interface{}, error) {
 		if data, ok := lookupAgentGzip(binaryPath, info); ok {
 			return data, nil
 		}
@@ -117,7 +120,10 @@ func buildAgentGzip(binaryPath string, info os.FileInfo, f *os.File) ([]byte, er
 			return nil, closeErr
 		}
 
-		entry := &agentGzipEntry{data: buf.Bytes(), modTime: info.ModTime(), size: info.Size()}
+		compressed := make([]byte, buf.Len())
+		copy(compressed, buf.Bytes())
+
+		entry := &agentGzipEntry{data: compressed, modTime: info.ModTime(), size: info.Size()}
 		entry.lastAccess.Store(time.Now().UnixNano())
 		agentGzipCache.Store(binaryPath, entry)
 		agentGzipFills.Add(1)
@@ -190,6 +196,7 @@ func serveAgentBinary(w http.ResponseWriter, r *http.Request, binaryPath string,
 	}
 
 	w.Header().Set("Content-Encoding", "gzip")
+	w.Header().Set("Accept-Ranges", "none")
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.Header().Set("Last-Modified", info.ModTime().UTC().Format(http.TimeFormat))
 	w.WriteHeader(http.StatusOK)

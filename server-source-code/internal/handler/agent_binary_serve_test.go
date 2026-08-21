@@ -443,3 +443,52 @@ func TestServeAgentBinaryCachedResponseCarriesContentLength(t *testing.T) {
 		t.Fatalf("read %d bytes, Content-Length said %d", len(wire), resp.ContentLength)
 	}
 }
+
+func TestServeAgentBinaryGzipRefusesRangeResumption(t *testing.T) {
+	path, _ := compressibleBinary(t, 128*1024)
+	srv := binaryServer(t, path)
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Accept-Encoding", "gzip")
+
+	client := &http.Client{Transport: &http.Transport{DisableCompression: true}}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if got := resp.Header.Get("Accept-Ranges"); got != "none" {
+		t.Fatalf("Accept-Ranges = %q, want none so a resume cannot splice identity bytes into a gzip stream", got)
+	}
+}
+
+func TestCachedGzipDoesNotRetainSpareCapacity(t *testing.T) {
+	path, _ := compressibleBinary(t, 1024*1024)
+	srv := binaryServer(t, path)
+	defer srv.Close()
+
+	resp, err := srv.Client().Get(srv.URL)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	v, ok := agentGzipCache.Load(path)
+	if !ok {
+		t.Fatal("entry was not cached")
+	}
+	entry, ok := v.(*agentGzipEntry)
+	if !ok {
+		t.Fatal("unexpected cache value type")
+	}
+	if cap(entry.data) != len(entry.data) {
+		t.Fatalf("cached slice retains %d bytes of spare capacity above its %d byte length",
+			cap(entry.data)-len(entry.data), len(entry.data))
+	}
+}
