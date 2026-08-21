@@ -4125,6 +4125,36 @@ Downloads the latest agent binary from the PatchMon server and performs an in-pl
 
 > **Note:** In normal operation, the agent auto-updates when the server signals a new version. You only need to run `update-agent` manually when auto-update is disabled or if you want to force an immediate update.
 
+##### Windows: Agents Stuck on 2.0.2
+
+On Windows the running `patchmon-agent.exe` is locked by the Service Control Manager, so it cannot be overwritten in place. Agents on 2.1.0 and later handle this by delegating the replacement and the service restart to a detached helper, and self-update works normally.
+
+Agents on 2.0.2 and earlier do not have that helper. Because the agent performing the update is the old binary itself, it cannot upgrade itself and keeps failing with:
+
+```
+Error: failed to replace executable (permission denied): rename
+C:\Program Files\PatchMon\patchmon-agent.exe.new ->
+C:\Program Files\PatchMon\patchmon-agent.exe: Access is denied.
+```
+
+Upgrading a newer server does not clear this, because the fix lives in the agent binary that cannot be installed. Replace the binary once by hand and self-update works from then on:
+
+```powershell
+# 1. Stop the service
+Stop-Service PatchMonAgent
+
+# 2. Replace C:\Program Files\PatchMon\patchmon-agent.exe with the current
+#    Windows agent (amd64 or arm64 to match the host), keeping the same filename
+
+# 3. Start the service
+Start-Service PatchMonAgent
+
+# 4. Confirm the new version
+& 'C:\Program Files\PatchMon\patchmon-agent.exe' --version
+```
+
+Configuration and credentials live in `C:\ProgramData\PatchMon\`, not alongside the binary, so the host keeps its identity and does not need re-enrolling.
+
 ---
 
 #### `--version`: Print Version
