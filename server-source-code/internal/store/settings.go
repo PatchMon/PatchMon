@@ -152,6 +152,18 @@ func (s *SettingsStore) UpdateConfigKey(ctx context.Context, settingsID, key str
 			return fmt.Errorf("%s requires a string value", key)
 		}
 		arg.AgentUpdateBodyLimit = &v
+	case "COMPLIANCE_BODY_LIMIT":
+		v, ok := toStr(value)
+		if !ok {
+			return fmt.Errorf("%s requires a string value", key)
+		}
+		arg.ComplianceBodyLimit = &v
+	case "AGENT_PING_BODY_LIMIT":
+		v, ok := toStr(value)
+		if !ok {
+			return fmt.Errorf("%s requires a string value", key)
+		}
+		arg.AgentPingBodyLimit = &v
 	case "DB_TRANSACTION_LONG_TIMEOUT":
 		v, ok := toInt32(value)
 		if !ok {

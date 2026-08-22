@@ -120,6 +120,7 @@ type Config struct {
 	// Body limits (bytes)
 	JSONBodyLimitBytes        int64
 	AgentUpdateBodyLimitBytes int64
+	ComplianceBodyLimitBytes  int64
 	// AgentPingBodyLimitBytes caps /hosts/ping bodies. Worst case is ~3-4 KB
 	// of hashes + metrics; 8 KiB gives headroom without letting an attacker
 	// abuse the cheap ping endpoint as a payload sink.
@@ -311,6 +312,7 @@ func Load() (*Config, error) {
 		PasswordRequireSpecial:      getEnv("PASSWORD_REQUIRE_SPECIAL", "true") != "false",
 		JSONBodyLimitBytes:          getEnvBytes("JSON_BODY_LIMIT", 5),
 		AgentUpdateBodyLimitBytes:   getEnvBytes("AGENT_UPDATE_BODY_LIMIT", 5),
+		ComplianceBodyLimitBytes:    getEnvBytes("COMPLIANCE_BODY_LIMIT", 20),
 		AgentPingBodyLimitBytes:     getEnvBytesKBDefault("AGENT_PING_BODY_LIMIT", 8),
 		RedisTLSCA:                  getEnv("REDIS_TLS_CA", ""),
 		Timezone:                    getEnv("TZ", getEnv("TIMEZONE", "UTC")),
@@ -445,10 +447,10 @@ func getEnvBytes(key string, defaultMB int) int64 {
 	}
 	s = strings.TrimSpace(s)
 	v, err := strconv.ParseInt(s, 10, 64)
-	if err != nil || v < 1 {
+	if err != nil {
 		return int64(defaultMB) * 1024 * 1024
 	}
-	return v * mult
+	return scaleBodyLimit(v, mult, int64(defaultMB)*1024*1024)
 }
 
 // getEnvBytesKBDefault parses size strings like getEnvBytes but defaults to
@@ -473,8 +475,8 @@ func getEnvBytesKBDefault(key string, defaultKB int) int64 {
 	}
 	s = strings.TrimSpace(s)
 	v, err := strconv.ParseInt(s, 10, 64)
-	if err != nil || v < 1 {
+	if err != nil {
 		return int64(defaultKB) * 1024
 	}
-	return v * mult
+	return scaleBodyLimit(v, mult, int64(defaultKB)*1024)
 }

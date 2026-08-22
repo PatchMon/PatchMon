@@ -108,6 +108,8 @@ CREATE TABLE IF NOT EXISTS settings (
     enable_hsts BOOLEAN,
     json_body_limit TEXT,
     agent_update_body_limit TEXT,
+    compliance_body_limit TEXT,
+    agent_ping_body_limit TEXT,
     db_transaction_long_timeout INTEGER,
     cors_origin TEXT,
     enable_logging BOOLEAN,

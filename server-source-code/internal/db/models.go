@@ -642,6 +642,8 @@ type Setting struct {
 	EnableHsts                      *bool            `json:"enable_hsts"`
 	JsonBodyLimit                   *string          `json:"json_body_limit"`
 	AgentUpdateBodyLimit            *string          `json:"agent_update_body_limit"`
+	ComplianceBodyLimit             *string          `json:"compliance_body_limit"`
+	AgentPingBodyLimit              *string          `json:"agent_ping_body_limit"`
 	DbTransactionLongTimeout        *int32           `json:"db_transaction_long_timeout"`
 	CorsOrigin                      *string          `json:"cors_origin"`
 	EnableLogging                   *bool            `json:"enable_logging"`

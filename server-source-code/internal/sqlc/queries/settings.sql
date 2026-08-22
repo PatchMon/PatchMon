@@ -102,5 +102,7 @@ UPDATE settings SET
     password_rate_limit_max = COALESCE($31, password_rate_limit_max),
     auth_browser_session_cookies = COALESCE($32, auth_browser_session_cookies),
     patch_run_stall_timeout_minutes = COALESCE($33, patch_run_stall_timeout_minutes),
-    agent_reports_retention_days = COALESCE($34, agent_reports_retention_days)
-WHERE id = $35;
+    agent_reports_retention_days = COALESCE($34, agent_reports_retention_days),
+    compliance_body_limit = COALESCE($35, compliance_body_limit),
+    agent_ping_body_limit = COALESCE($36, agent_ping_body_limit)
+WHERE id = $37;

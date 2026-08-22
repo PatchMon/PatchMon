@@ -657,6 +657,8 @@ The `server.env.*` keys map directly to the environment variables the PatchMon b
 | `LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) | `info` |
 | `JSON_BODY_LIMIT` | Max JSON body size | `5mb` |
 | `AGENT_UPDATE_BODY_LIMIT` | Max agent update body size | `5mb` |
+| `COMPLIANCE_BODY_LIMIT` | Max compliance scan result body size | `20mb` |
+| `AGENT_PING_BODY_LIMIT` | Max agent ping body size | `8kb` |
 | `TZ` | IANA timezone for log timestamps | `UTC` |
 
 > **Tip:** Many of these can be changed later from the Settings UI without a restart of the whole cluster. See Settings in the web UI.
@@ -1469,9 +1471,10 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers off;
 
-    # Allow large agent reports (packages, Docker inventory) through the proxy.
-    # The server also enforces its own JSON_BODY_LIMIT / AGENT_UPDATE_BODY_LIMIT.
-    client_max_body_size 20m;
+    # Allow large agent reports (packages, Docker inventory, compliance scan
+    # results) through the proxy. The server also enforces its own limits: see
+    # JSON_BODY_LIMIT, AGENT_UPDATE_BODY_LIMIT and COMPLIANCE_BODY_LIMIT.
+    client_max_body_size 25m;
 
     location / {
         proxy_pass http://127.0.0.1:3000;
@@ -1753,7 +1756,7 @@ Open **Hosts → <a host> → SSH Terminal**. The terminal should connect and ec
 | `wss://` URLs try `http://` inside the agent install script | `X-Forwarded-Proto` missing or wrong | Explicitly set to `$scheme` (Nginx) / default in Caddy + Traefik |
 | Browser console: "CORS policy" errors | `CORS_ORIGIN` does not match the URL in the address bar | Set `CORS_ORIGIN=https://patchmon.example.com` exactly. To allow more than one origin, comma-separate with no spaces, e.g. `CORS_ORIGIN=https://patchmon.example.com,https://patchmon.internal.lan` |
 | Login works but nothing loads | API requests going to a different origin | Send all traffic (API + SPA) to the same hostname/port |
-| Sudden 413 Request Entity Too Large | Proxy body limit smaller than agent report | `client_max_body_size 20m;` (Nginx) or equivalent |
+| Sudden 413 Request Entity Too Large | Proxy body limit smaller than agent report or compliance scan result | `client_max_body_size 25m;` (Nginx) or equivalent |
 | Agent page shows "offline" but agent logs say connected | Reverse proxy is not sending `X-Forwarded-For`, or `TRUST_PROXY=false` was set explicitly | Ensure the reverse proxy adds `X-Forwarded-For` and leave `TRUST_PROXY` at its default of `true` |
 
 ---
@@ -2428,6 +2431,8 @@ Accepted suffixes: `b`, `kb`, `mb`, `gb`. Examples: `10mb`, `512kb`.
 |----------|---------|----------|-------------|
 | `JSON_BODY_LIMIT` | `5mb` | No | Maximum size of JSON request bodies for standard API endpoints (user management, settings, host actions, etc.). |
 | `AGENT_UPDATE_BODY_LIMIT` | `5mb` | No | Maximum size of request bodies on agent check-in and package reporting endpoints. Increase this if agents managing a very large number of packages hit the limit. |
+| `COMPLIANCE_BODY_LIMIT` | `20mb` | No | Maximum size of request bodies on the compliance scan result endpoint. OpenSCAP results are large: a 900-rule profile can produce well over 10 MB, and a single submission may carry both an OpenSCAP and a Docker Bench scan. |
+| `AGENT_PING_BODY_LIMIT` | `8kb` | No | Maximum size of agent ping bodies. An unsuffixed value is read as KB here, so `16` means 16 KB. |
 
 ---
 
@@ -6458,8 +6463,16 @@ PatchMon caps JSON request bodies to protect against memory exhaustion. Two sepa
 |---------|---------|---------------|
 | `JSON_BODY_LIMIT` | `5` (MB) | Every non-agent JSON endpoint (UI API, settings, etc.). |
 | `AGENT_UPDATE_BODY_LIMIT` | `5` (MB) | `POST /api/v1/hosts/update` only: the agent report payload. |
+| `COMPLIANCE_BODY_LIMIT` | `20` (MB) | `POST /api/v1/compliance/scans` only: OpenSCAP and Docker Bench results. |
+| `AGENT_PING_BODY_LIMIT` | `8` (KB) | `POST /api/v1/hosts/ping` only. |
 
-Both are integers **in megabytes**. A host with thousands of packages + Docker + compliance data can breach the 5 MB default; bump this env var on those installations.
+An unsuffixed value is read as **megabytes**, except `AGENT_PING_BODY_LIMIT`, where it is read as kilobytes. You can also write the unit explicitly, e.g. `20mb`. Any value above 256 MB, or one that is not a positive number, is ignored and the default applies. That ceiling is a guard against a mistyped value, not a recommendation: the server ships with a 256 MB memory limit, so a request anywhere near it will exhaust memory.
+
+A host with thousands of packages + Docker can breach the 5 MB agent report default. Compliance is the more common cause of a breach: a 900-rule OpenSCAP profile carries roughly 14 KB of description and remediation text per rule, so results comfortably exceed 10 MB, and one submission can carry an OpenSCAP scan and a Docker Bench scan together. When the compliance limit is the one being hit, the agent log names it:
+
+```
+compliance data request failed with status 413: Scan results exceed the 20mb COMPLIANCE_BODY_LIMIT...
+```
 
 #### Fix
 
@@ -6468,7 +6481,10 @@ Raise the limits in `.env`:
 ```
 JSON_BODY_LIMIT=10
 AGENT_UPDATE_BODY_LIMIT=8
+COMPLIANCE_BODY_LIMIT=32
 ```
+
+All four are also editable from **Settings > Environment** in the web UI, which takes effect without a restart.
 
 Restart:
 
@@ -6476,10 +6492,10 @@ Restart:
 docker compose restart server
 ```
 
-If you are fronting PatchMon with Nginx, also raise its limit, otherwise Nginx 413s before the server sees the body:
+If you are fronting PatchMon with Nginx, also raise its limit, otherwise Nginx 413s before the server sees the body. It must be at least as large as the biggest PatchMon limit:
 
 ```nginx
-client_max_body_size 16m;
+client_max_body_size 32m;
 ```
 
 ### 8. Slow Queries / Database Pressure
@@ -6615,7 +6631,7 @@ Log in with local credentials, fix the OIDC config, and flip it back.
 |--------|-----------------|
 | `DATABASE_URL`, `REDIS_*`, `JWT_SECRET`, `SESSION_SECRET` | `docker compose restart server` |
 | `CORS_ORIGIN`, `TRUST_PROXY`, `ENABLE_HSTS` | `docker compose restart server` |
-| `JSON_BODY_LIMIT`, `AGENT_UPDATE_BODY_LIMIT` | `docker compose restart server` |
+| `JSON_BODY_LIMIT`, `AGENT_UPDATE_BODY_LIMIT`, `COMPLIANCE_BODY_LIMIT`, `AGENT_PING_BODY_LIMIT` | `docker compose restart server` |
 | `OIDC_*` | `docker compose restart server` |
 | Postgres config change (custom `postgresql.conf`) | `docker compose restart database` (then wait for health) |
 | Redis password change | `docker compose up -d redis server` (both) |
