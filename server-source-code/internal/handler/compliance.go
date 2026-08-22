@@ -2,7 +2,9 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -115,6 +117,27 @@ func (rl *scanRateLimiter) allow(key string) bool {
 }
 
 var scanSubmitLimiter = newScanRateLimiter(10, time.Minute)
+
+// A body limit cannot bound this: complianceResultItem is 192 bytes of struct
+// per 3 bytes of "{}," on the wire, so 20 MB decodes to over 1 GB.
+const maxComplianceObjects = 50000
+
+func countJSONObjects(b []byte) int {
+	n, inString, escaped := 0, false, false
+	for _, c := range b {
+		switch {
+		case escaped:
+			escaped = false
+		case inString && c == '\\':
+			escaped = true
+		case c == '"':
+			inString = !inString
+		case !inString && c == '{':
+			n++
+		}
+	}
+	return n
+}
 
 // Agent scan payload (matches agent CompliancePayload / nested scans)
 type complianceScanPayload struct {
@@ -284,8 +307,28 @@ func (h *ComplianceHandler) ReceiveScans(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			JSON(w, http.StatusRequestEntityTooLarge, map[string]string{
+				"error": fmt.Sprintf("Scan results exceed the %s COMPLIANCE_BODY_LIMIT. Raise it in Settings then Environment, and raise the body size limit on any reverse proxy in front of PatchMon.", formatBytesEnv(tooLarge.Limit)),
+			})
+			return
+		}
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Could not read request body"})
+		return
+	}
+
+	if n := countJSONObjects(raw); n > maxComplianceObjects {
+		JSON(w, http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("Scan payload contains %d JSON objects, above the %d limit. A single scan should carry one result per rule.", n, maxComplianceObjects),
+		})
+		return
+	}
+
 	var payload complianceScanPayload
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+	if err := json.Unmarshal(raw, &payload); err != nil {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
 		return
 	}

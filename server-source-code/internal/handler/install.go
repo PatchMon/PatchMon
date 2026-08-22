@@ -728,6 +728,13 @@ func (h *InstallHandler) ServeUpdate(w http.ResponseWriter, r *http.Request) {
 
 	var payload store.ReportPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			h.rejectUpdate(w, r, host.ID, "full", nil, http.StatusRequestEntityTooLarge,
+				fmt.Sprintf("Report exceeds the %s AGENT_UPDATE_BODY_LIMIT. Raise it in Settings > Environment, and raise the body size limit on any reverse proxy in front of PatchMon.", formatBytesEnv(tooLarge.Limit)),
+				updateStart)
+			return
+		}
 		h.rejectUpdate(w, r, host.ID, "full", nil, http.StatusBadRequest, "Invalid request body", updateStart)
 		return
 	}

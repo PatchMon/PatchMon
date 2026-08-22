@@ -316,7 +316,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		r.Get("/hosts/integrations", integrationsHandler.AgentGetIntegrationStatus)
 		r.Post("/integrations/docker", integrationsHandler.ReceiveDockerData)
 		r.Post("/hosts/integration-status", integrationsHandler.ReceiveIntegrationStatus)
-		r.Post("/compliance/scans", complianceHandler.ReceiveScans)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent), middleware.BodyLimitFor(cfgResolver, func(rc *config.ResolvedConfig) int64 { return rc.ComplianceBodyLimitBytes })).Post("/compliance/scans", complianceHandler.ReceiveScans)
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Get("/compliance/ssg-version", complianceHandler.AgentSSGVersion)
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Get("/compliance/ssg-content/{filename}", complianceHandler.SSGContent)
 		// Patching agent output (API key auth)
