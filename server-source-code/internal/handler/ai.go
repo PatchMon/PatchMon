@@ -104,7 +104,7 @@ type UpdateSettingsRequest struct {
 }
 
 var allowedProviders = map[string]bool{
-	"openrouter": true, "anthropic": true, "openai": true, "gemini": true,
+	"openrouter": true, "orcarouter": true, "anthropic": true, "openai": true, "gemini": true,
 }
 
 // UpdateSettings updates AI settings (admin only).
