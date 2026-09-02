@@ -1002,11 +1002,10 @@ func (s *OpenSCAPScanner) GetAvailableProfiles() []string {
 	return profiles
 }
 
-// getProfileID returns the full profile ID for this OS (from static mapping).
+// getProfileID returns the full profile ID for this OS.
 func (s *OpenSCAPScanner) getProfileID(profileName string) string {
-	// If it's already a full XCCDF profile ID, use it directly
-	if strings.HasPrefix(profileName, "xccdf_") {
-		return profileName
+	if profileName == "" {
+		return ""
 	}
 
 	// Get the base distribution name for profile lookup
@@ -1024,7 +1023,37 @@ func (s *OpenSCAPScanner) getProfileID(profileName string) string {
 			}
 		}
 	}
-	return ""
+
+	// DiscoverProfiles exposes the portion after "_profile_" as the API ID, so a
+	// short ID the content actually advertises resolves to that profile's XCCDF
+	// ID. Anything else stays unresolved and the caller reports "not available".
+	return resolveDiscoveredProfileID(profileName, s.DiscoverProfiles())
+}
+
+// resolveDiscoveredProfileID maps a requested profile ID -- either the short API
+// ID or the full XCCDF ID -- back to the XCCDF ID of the discovered profile that
+// advertised it. IDs that are not in the discovered list resolve to "" so an
+// unknown profile never reaches getProfileIDFromContent's generic fallback and
+// silently runs (and potentially remediates) a different profile. Duplicate
+// matches with conflicting XCCDF IDs are ambiguous and also resolve to "".
+func resolveDiscoveredProfileID(profileName string, profiles []models.ScanProfileInfo) string {
+	if profileName == "" {
+		return ""
+	}
+	resolved := ""
+	for _, p := range profiles {
+		if p.XCCDFId == "" {
+			continue
+		}
+		if p.ID != profileName && p.XCCDFId != profileName {
+			continue
+		}
+		if resolved != "" && resolved != p.XCCDFId {
+			return ""
+		}
+		resolved = p.XCCDFId
+	}
+	return resolved
 }
 
 // getProfileIDFromContent resolves the profile ID actually present in the content file.
