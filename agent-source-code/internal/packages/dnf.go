@@ -140,6 +140,8 @@ func (m *DNFManager) GetPackages() ([]models.Package, error) {
 	m.logger.Debug("Getting upgradable packages...")
 	checkCmd, cancelCheck := boundedCommand(networkCollectorTimeout, packageManager, "check-update")
 	defer cancelCheck()
+	// Keep the column layout stable regardless of the system locale.
+	checkCmd.Env = append(os.Environ(), "LANG=C")
 	checkOutput, checkErr := checkCmd.Output()
 	if checkErr != nil {
 		// check-update exit codes: 0 none, 100 updates available, anything
@@ -265,6 +267,10 @@ func (m *DNFManager) getSecurityPackages(packageManager string) map[string]bool 
 	runUpdateInfo := func(subcommand string) ([]byte, error) {
 		cmd, cancel := boundedCommand(networkCollectorTimeout, packageManager, "updateinfo", "list", subcommand)
 		defer cancel()
+		// Force a stable locale: the severity column is locale-translated
+		// (e.g. "Moderate/Sec." becomes "Sécurité/niveau modéré." in French),
+		// which shifts the fixed-width fields this parser reads.
+		cmd.Env = append(os.Environ(), "LANG=C")
 		return cmd.Output()
 	}
 
