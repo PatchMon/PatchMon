@@ -25,20 +25,28 @@ func (q *Queries) CountComplianceScansByHost(ctx context.Context, hostID string)
 const countComplianceScansHistory = `-- name: CountComplianceScansHistory :one
 SELECT COUNT(*)
 FROM compliance_scans cs
+JOIN hosts h ON h.id = cs.host_id
 JOIN compliance_profiles cp ON cp.id = cs.profile_id
 WHERE ($1::text IS NULL OR cs.status = $1)
   AND ($2::text IS NULL OR cs.host_id = $2)
   AND ($3::text IS NULL OR cp.type = $3)
+  AND ($4::text IS NULL OR h.friendly_name ILIKE '%' || $4 || '%' OR h.hostname ILIKE '%' || $4 || '%' OR cp.name ILIKE '%' || $4 || '%')
 `
 
 type CountComplianceScansHistoryParams struct {
 	Status      *string `json:"status"`
 	HostID      *string `json:"host_id"`
 	ProfileType *string `json:"profile_type"`
+	Search      *string `json:"search"`
 }
 
 func (q *Queries) CountComplianceScansHistory(ctx context.Context, arg CountComplianceScansHistoryParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countComplianceScansHistory, arg.Status, arg.HostID, arg.ProfileType)
+	row := q.db.QueryRow(ctx, countComplianceScansHistory,
+		arg.Status,
+		arg.HostID,
+		arg.ProfileType,
+		arg.Search,
+	)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -718,6 +726,7 @@ JOIN compliance_profiles cp ON cp.id = cs.profile_id
 WHERE ($3::text IS NULL OR cs.status = $3)
   AND ($4::text IS NULL OR cs.host_id = $4)
   AND ($5::text IS NULL OR cp.type = $5)
+  AND ($6::text IS NULL OR h.friendly_name ILIKE '%' || $6 || '%' OR h.hostname ILIKE '%' || $6 || '%' OR cp.name ILIKE '%' || $6 || '%')
 ORDER BY cs.started_at DESC
 LIMIT $1 OFFSET $2
 `
@@ -728,6 +737,7 @@ type ListComplianceScansHistoryParams struct {
 	Status      *string `json:"status"`
 	HostID      *string `json:"host_id"`
 	ProfileType *string `json:"profile_type"`
+	Search      *string `json:"search"`
 }
 
 type ListComplianceScansHistoryRow struct {
@@ -757,6 +767,7 @@ func (q *Queries) ListComplianceScansHistory(ctx context.Context, arg ListCompli
 		arg.Status,
 		arg.HostID,
 		arg.ProfileType,
+		arg.Search,
 	)
 	if err != nil {
 		return nil, err

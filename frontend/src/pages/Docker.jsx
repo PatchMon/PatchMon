@@ -19,8 +19,14 @@ import {
 } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
+import { useToast } from "../contexts/ToastContext";
+import { usePageRefresh } from "../hooks/usePageRefresh";
 import api, { formatError } from "../utils/api";
 import { generateRegistryLink, getSourceDisplayName } from "../utils/docker";
+
+// Every tab's data plus the stat cards live under this prefix, so one key
+// covers the lot. The per-tab dispatch this replaces never refreshed the cards.
+const DOCKER_REFRESH_KEYS = [["docker"]];
 
 const VALID_DOCKER_TABS = [
 	"stacks",
@@ -33,6 +39,7 @@ const VALID_DOCKER_TABS = [
 
 const Docker = () => {
 	const queryClient = useQueryClient();
+	const toast = useToast();
 	const [searchParams] = useSearchParams();
 	const location = useLocation();
 	const [searchTerm, setSearchTerm] = useState("");
@@ -40,6 +47,8 @@ const Docker = () => {
 	const [activeTab, setActiveTab] = useState(
 		VALID_DOCKER_TABS.includes(urlTab) ? urlTab : "stacks",
 	);
+	const { refresh: refreshDocker, isRefreshing } =
+		usePageRefresh(DOCKER_REFRESH_KEYS);
 
 	// Sync tab only on actual URL navigation (not in-page tab clicks)
 	useEffect(() => {
@@ -71,11 +80,7 @@ const Docker = () => {
 	});
 
 	// Fetch containers
-	const {
-		data: containersData,
-		isLoading: containersLoading,
-		refetch: refetchContainers,
-	} = useQuery({
+	const { data: containersData, isLoading: containersLoading } = useQuery({
 		queryKey: ["docker", "containers", statusFilter],
 		queryFn: async () => {
 			const params = new URLSearchParams();
@@ -88,11 +93,7 @@ const Docker = () => {
 	});
 
 	// Fetch images
-	const {
-		data: imagesData,
-		isLoading: imagesLoading,
-		refetch: refetchImages,
-	} = useQuery({
+	const { data: imagesData, isLoading: imagesLoading } = useQuery({
 		queryKey: ["docker", "images", sourceFilter],
 		queryFn: async () => {
 			const params = new URLSearchParams();
@@ -165,12 +166,12 @@ const Docker = () => {
 			return response.data;
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries(["docker", "containers"]);
-			queryClient.invalidateQueries(["docker", "dashboard"]);
+			queryClient.invalidateQueries({ queryKey: ["docker", "containers"] });
+			queryClient.invalidateQueries({ queryKey: ["docker", "dashboard"] });
 			setDeleteContainerModal(null);
 		},
 		onError: (error) => {
-			alert(
+			toast.error(
 				`Failed to delete container: ${error.response?.data?.error || error.message}`,
 			);
 		},
@@ -183,12 +184,12 @@ const Docker = () => {
 			return response.data;
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries(["docker", "images"]);
-			queryClient.invalidateQueries(["docker", "dashboard"]);
+			queryClient.invalidateQueries({ queryKey: ["docker", "images"] });
+			queryClient.invalidateQueries({ queryKey: ["docker", "dashboard"] });
 			setDeleteImageModal(null);
 		},
 		onError: (error) => {
-			alert(
+			toast.error(
 				`Failed to delete image: ${error.response?.data?.error || error.message}`,
 			);
 		},
@@ -201,12 +202,12 @@ const Docker = () => {
 			return response.data;
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries(["docker", "volumes"]);
-			queryClient.invalidateQueries(["docker", "dashboard"]);
+			queryClient.invalidateQueries({ queryKey: ["docker", "volumes"] });
+			queryClient.invalidateQueries({ queryKey: ["docker", "dashboard"] });
 			setDeleteVolumeModal(null);
 		},
 		onError: (error) => {
-			alert(
+			toast.error(
 				`Failed to delete volume: ${error.response?.data?.error || error.message}`,
 			);
 		},
@@ -219,12 +220,12 @@ const Docker = () => {
 			return response.data;
 		},
 		onSuccess: () => {
-			queryClient.invalidateQueries(["docker", "networks"]);
-			queryClient.invalidateQueries(["docker", "dashboard"]);
+			queryClient.invalidateQueries({ queryKey: ["docker", "networks"] });
+			queryClient.invalidateQueries({ queryKey: ["docker", "dashboard"] });
 			setDeleteNetworkModal(null);
 		},
 		onError: (error) => {
-			alert(
+			toast.error(
 				`Failed to delete network: ${error.response?.data?.error || error.message}`,
 			);
 		},
@@ -241,7 +242,8 @@ const Docker = () => {
 				(c) =>
 					(c.name || "").toLowerCase().includes(term) ||
 					(c.image_name || "").toLowerCase().includes(term) ||
-					c.host?.friendly_name?.toLowerCase().includes(term),
+					c.host?.friendly_name?.toLowerCase().includes(term) ||
+					c.host?.hostname?.toLowerCase().includes(term),
 			);
 		}
 
@@ -383,7 +385,8 @@ const Docker = () => {
 			filtered = filtered.filter(
 				(v) =>
 					(v.name || "").toLowerCase().includes(term) ||
-					v.hosts?.friendly_name?.toLowerCase().includes(term),
+					v.hosts?.friendly_name?.toLowerCase().includes(term) ||
+					v.hosts?.hostname?.toLowerCase().includes(term),
 			);
 		}
 
@@ -435,7 +438,8 @@ const Docker = () => {
 			filtered = filtered.filter(
 				(n) =>
 					(n.name || "").toLowerCase().includes(term) ||
-					n.hosts?.friendly_name?.toLowerCase().includes(term),
+					n.hosts?.friendly_name?.toLowerCase().includes(term) ||
+					n.hosts?.hostname?.toLowerCase().includes(term),
 			);
 		}
 
@@ -572,7 +576,7 @@ const Docker = () => {
 	};
 
 	return (
-		<div className="space-y-6 md:h-[calc(100vh-7rem)] md:flex md:flex-col md:overflow-hidden">
+		<div className="space-y-6 md:h-[calc(100vh-var(--app-main-inset))] md:flex md:flex-col md:overflow-hidden">
 			<div className="flex items-center justify-between">
 				<div>
 					<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
@@ -585,20 +589,14 @@ const Docker = () => {
 				<div className="flex items-center gap-3">
 					<button
 						type="button"
-						onClick={() => {
-							// Trigger refresh based on active tab
-							if (activeTab === "stacks") refetchContainers();
-							else if (activeTab === "containers") refetchContainers();
-							else if (activeTab === "images") refetchImages();
-							else if (activeTab === "volumes") refetchVolumes();
-							else if (activeTab === "networks") refetchNetworks();
-							else if (activeTab === "hosts") refetchHosts();
-							else window.location.reload();
-						}}
+						onClick={() => refreshDocker()}
+						disabled={isRefreshing}
 						className="btn-outline flex items-center justify-center p-2"
 						title="Refresh data"
 					>
-						<RefreshCw className="h-4 w-4" />
+						<RefreshCw
+							className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
+						/>
 					</button>
 				</div>
 			</div>
@@ -726,6 +724,7 @@ const Docker = () => {
 									setActiveTab(tab.id);
 									setSearchTerm("");
 									setUpdatesFilter("all"); // Reset updates filter when switching tabs
+									setStatusFilter("all");
 									setSortField(
 										tab.id === "containers"
 											? "status"
@@ -855,7 +854,7 @@ const Docker = () => {
 							</div>
 						) : (
 							<StacksView
-								containers={containersData?.containers || []}
+								containers={filteredContainers}
 								getStatusBadge={getStatusBadge}
 							/>
 						))}
@@ -2484,7 +2483,8 @@ function StacksView({ containers, getStatusBadge }) {
 																	</td>
 																	<td className="px-4 py-2 whitespace-nowrap">
 																		<span className="text-sm text-secondary-500 dark:text-secondary-400 font-mono">
-																			{container.image}
+																			{container.image_name}:
+																			{container.image_tag}
 																		</span>
 																	</td>
 																	<td />

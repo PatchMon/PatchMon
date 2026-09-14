@@ -25,7 +25,7 @@ func NewUCSManager(logger *logrus.Logger, cacheRefresh CacheRefreshConfig) *UCSM
 }
 
 // GetPackages returns installed packages on a UCS host via the underlying apt layer.
-func (m *UCSManager) GetPackages() []models.Package {
+func (m *UCSManager) GetPackages() ([]models.Package, error) {
 	return m.aptManager.GetPackages()
 }
 

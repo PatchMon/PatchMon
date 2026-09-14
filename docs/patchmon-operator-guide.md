@@ -10,7 +10,7 @@ This is the deployment, configuration, and maintenance guide for PatchMon operat
 ## Table of Contents
 
 - [Chapter 1: Installing PatchMon Server on Docker](#installing-patchmon-server-on-docker)
-- [Chapter 2: Installing PatchMon on Kubernetes with Helm](#installing-patchmon-on-kubernetes-helm)
+- [Chapter 2: Installing PatchMon on Kubernetes](#installing-patchmon-on-kubernetes-helm)
 - [Chapter 3: Reverse Proxy Examples](#reverse-proxy-examples)
 - [Chapter 4: First-Time Admin Setup](#first-time-admin-setup)
 - [Chapter 5: PatchMon Environment Variables Reference](#patchmon-environment-variables-reference)
@@ -23,6 +23,7 @@ This is the deployment, configuration, and maintenance guide for PatchMon operat
 - [Chapter 12: Server Troubleshooting](#server-troubleshooting)
 - [Chapter 13: Agent Troubleshooting](#agent-troubleshooting)
 - [Chapter 14: Errors on Dashboard After Proxmox Community Update](#errors-on-dashboard-after-proxmox-community-update)
+- [Chapter 15: Verifying Release Artefacts (SBOM and Provenance)](#verifying-release-artefacts)
 
 ---
 
@@ -37,7 +38,7 @@ PatchMon runs as a single container backed by three supporting services. The Pat
 | `server` | `ghcr.io/patchmon/patchmon-server` | PatchMon application (API + frontend + migrations) |
 | `database` | `postgres:17-alpine` | Primary data store |
 | `redis` | `redis:7-alpine` | Background job queues (asynq) |
-| `guacd` | `guacamole/guacd:1.5.5` | RDP gateway (required for in-browser RDP) |
+| `guacd` | `guacamole/guacd:1.6.0` | RDP gateway (required for in-browser RDP) |
 
 All four services communicate over an isolated internal Docker network (`patchmon-internal`). Only the `server` port is exposed to the host.
 
@@ -124,6 +125,8 @@ You can check the startup logs at any time with:
 docker compose logs -f server
 ```
 
+> **Upgrading from 2.0.2 or earlier?** `ENABLE_LOGGING` used to default to `false`, and with it off the server wrote no application logs at all, which made every "check the logs" step in this guide useless. From 2.0.3 it defaults to `true`. If you explicitly set `ENABLE_LOGGING=false` in your `.env`, or turned logging off in **Settings > Environment**, that choice is preserved and you will still see no logs.
+
 ---
 
 ### Container Image
@@ -160,7 +163,7 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
-      - "3000:3000"
+      - "${PORT:-3000}:${PORT:-3000}"
     networks:
       - patchmon-internal
     depends_on:
@@ -191,7 +194,7 @@ services:
       - patchmon-internal
 
   guacd:
-    image: guacamole/guacd:1.5.5
+    image: guacamole/guacd:1.6.0
     restart: unless-stopped
     networks:
       - patchmon-internal
@@ -261,6 +264,16 @@ docker compose up -d
 ```
 
 Check the [GitHub releases page](https://github.com/PatchMon/PatchMon/releases) for version-specific changes and migration notes before upgrading.
+
+#### Why the newest version can take a day to appear
+
+Publishing a release and announcing it to running instances are two separate steps.
+
+Your instance checks for a newer server version once a day, and that check reads a value we only update after a release has been through our phased rollout. So for roughly the first 24 hours after a new version appears on GitHub, it is normal for PatchMon to keep showing an older version as the latest available, and for the `server_update` alert not to have fired yet. Nothing is wrong with your install. It will pick the new version up on a following daily check.
+
+The delay is deliberate. Releasing in phases means a version is running in the wild for a while before every instance is told about it, so any problem is caught before the whole community is prompted to upgrade.
+
+If you would rather not wait, pull the new image whenever you like. The version check only controls the notification, never your ability to upgrade.
 
 ---
 
@@ -333,9 +346,16 @@ Update `SERVER_PORT` in your `.env` to match if agents need to reach the server 
 
 ---
 
-## Chapter 2: Installing PatchMon on Kubernetes with Helm {#installing-patchmon-on-kubernetes-helm}
+## Chapter 2: Installing PatchMon on Kubernetes {#installing-patchmon-on-kubernetes-helm}
 
 ### Overview
+
+There are two ways to run PatchMon on Kubernetes:
+
+- **The community Helm chart**, covered by most of this chapter. Best if you want values-driven configuration and upgrades handled for you.
+- **Plain manifests**, covered by [Deploying with plain manifests](#deploying-with-plain-manifests). Best if you deploy with Argo CD or Flux, or you simply want to see and own every object. This is also the route to follow on k3s.
+
+Either way, read the "Important: PatchMon 2.0 architecture" note below first, because it explains what changed from the 1.4.x Node.js stack.
 
 The community Helm chart for PatchMon deploys the server on any Kubernetes 1.19+ cluster. It is maintained in a separate repository:
 
@@ -380,7 +400,7 @@ If your version of the chart still ships with separate backend and frontend depl
 | Server | `ghcr.io/patchmon/patchmon-server` | `2.0.0` |
 | Database | `docker.io/postgres` | `17-alpine` |
 | Redis | `docker.io/redis` | `7-alpine` |
-| guacd (RDP sidecar, optional) | `docker.io/guacamole/guacd` | `1.5.5` |
+| guacd (RDP sidecar, optional) | `docker.io/guacamole/guacd` | `1.6.0` |
 
 #### Available tags (server image)
 
@@ -633,10 +653,12 @@ The `server.env.*` keys map directly to the environment variables the PatchMon b
 | `CORS_ORIGIN` | Allowed origin for CORS (must match the URL users type in their browser; comma-separate with no spaces to allow multiple, e.g. `https://patchmon.example.com,https://patchmon.internal.lan`) | `http://localhost:3000` |
 | `ENABLE_HSTS` | Enable HSTS header for HTTPS | `false` |
 | `TRUST_PROXY` | Trust proxy headers when behind an Ingress controller | `true` |
-| `ENABLE_LOGGING` | Enable structured logging to stdout | `false` |
+| `ENABLE_LOGGING` | Enable structured logging to stdout | `true` |
 | `LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) | `info` |
 | `JSON_BODY_LIMIT` | Max JSON body size | `5mb` |
 | `AGENT_UPDATE_BODY_LIMIT` | Max agent update body size | `5mb` |
+| `COMPLIANCE_BODY_LIMIT` | Max compliance scan result body size | `20mb` |
+| `AGENT_PING_BODY_LIMIT` | Max agent ping body size | `8kb` |
 | `TZ` | IANA timezone for log timestamps | `UTC` |
 
 > **Tip:** Many of these can be changed later from the Settings UI without a restart of the whole cluster. See Settings in the web UI.
@@ -671,7 +693,7 @@ guacd:
   enabled: true
   image:
     repository: guacamole/guacd
-    tag: "1.5.5"
+    tag: "1.6.0"
 ```
 
 > **Verify against the latest chart.** `guacd` support was added after the original 1.4.x chart; if your chart version does not include a `guacd.enabled` option, you can deploy it as a separate Deployment and Service in the same namespace and set `GUACD_ADDRESS` to its ClusterIP hostname.
@@ -743,6 +765,8 @@ helm upgrade patchmon oci://ghcr.io/ruthlessbeat200/charts/patchmon \
 
 Check the [chart releases page](https://github.com/RuTHlessBEat200/PatchMon-helm/releases) and the [PatchMon releases page](https://github.com/PatchMon/PatchMon/releases) before upgrading.
 
+> **Note:** For about the first 24 hours after a release is published, PatchMon may still report an older version as the latest available. That is expected and is part of our phased rollout. See [Why the newest version can take a day to appear](#why-the-newest-version-can-take-a-day-to-appear) in the Docker chapter.
+
 ---
 
 ### Uninstalling
@@ -771,7 +795,7 @@ This changes every image pull to use the specified registry:
 - `registry.example.com/postgres:17-alpine`
 - `registry.example.com/redis:7-alpine`
 - `registry.example.com/patchmon/patchmon-server:2.0.0`
-- `registry.example.com/guacamole/guacd:1.5.5` (when RDP is enabled)
+- `registry.example.com/guacamole/guacd:1.6.0` (when RDP is enabled)
 
 #### Horizontal Pod Autoscaling
 
@@ -816,6 +840,478 @@ server:
 ```
 
 The client secret should live in a Kubernetes Secret and be mounted as `OIDC_CLIENT_SECRET`, not set inline.
+
+---
+
+### Deploying with plain manifests {#deploying-with-plain-manifests}
+
+If you deploy through Argo CD or Flux, or you would rather own every object yourself, you can skip Helm entirely. The manifests below are a complete, working stack: PostgreSQL, Redis, the PatchMon server, a Service, and an Ingress.
+
+They are written for k3s with [Longhorn](https://longhorn.io/) storage and the built-in Traefik Ingress controller, because that is a common self-hosted combination, but they work on any cluster once you change `storageClassName` and `ingressClassName` to suit.
+
+> **Read the volume note before you deploy.** The single most common mistake when writing PostgreSQL manifests by hand costs you your database on the first redeploy. It is explained in [The PostgreSQL data directory](#the-postgresql-data-directory) below, and the manifests here already account for it.
+
+#### 1. Create the namespace and secrets
+
+```bash
+kubectl create namespace patchmon
+
+kubectl create secret generic patchmon-secrets \
+  --namespace patchmon \
+  --from-literal=JWT_SECRET="$(openssl rand -hex 64)" \
+  --from-literal=SESSION_SECRET="$(openssl rand -hex 64)" \
+  --from-literal=AI_ENCRYPTION_KEY="$(openssl rand -hex 64)" \
+  --from-literal=POSTGRES_PASSWORD="$(openssl rand -hex 32)" \
+  --from-literal=REDIS_PASSWORD="$(openssl rand -hex 32)"
+```
+
+If you keep your manifests in Git, do not commit these in plain text. Use [Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets), [SOPS](https://github.com/getsops/sops), or the [External Secrets Operator](https://external-secrets.io/) instead. The keys above are consumed as environment variables, so keep the names exactly as written.
+
+#### 2. Apply the manifests
+
+Save this as `patchmon.yaml`, change `patchmon.example.com` to your own hostname in both the ConfigMap and the Ingress, and apply it.
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: patchmon-config
+  namespace: patchmon
+data:
+  # Must match exactly the URL your users open PatchMon on.
+  CORS_ORIGIN: "https://patchmon.example.com"
+  POSTGRES_HOST: "patchmon-db"
+  POSTGRES_USER: "patchmon_user"
+  POSTGRES_DB: "patchmon_db"
+  REDIS_HOST: "patchmon-redis"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  PORT: "3000"
+  # Required when running behind an Ingress controller.
+  TRUST_PROXY: "true"
+  TZ: "UTC"
+---
+# ------------------------------------------------------------------ PostgreSQL
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: patchmon-db-data
+  namespace: patchmon
+  annotations:
+    # Keeps Argo CD from ever pruning or deleting the database volume.
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 8Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: patchmon-db
+  namespace: patchmon
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: patchmon-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: patchmon-db
+  namespace: patchmon
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  replicas: 1
+  # Never run two PostgreSQL pods against one ReadWriteOnce volume.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: patchmon-db
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: patchmon-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: patchmon-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: patchmon-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: patchmon-secrets
+                  key: POSTGRES_PASSWORD
+            # Do not change these two settings without reading
+            # "The PostgreSQL data directory" below.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: db-data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" -h localhost
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: db-data
+          persistentVolumeClaim:
+            claimName: patchmon-db-data
+---
+# ----------------------------------------------------------------------- Redis
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: patchmon-redis-data
+  namespace: patchmon
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: patchmon-redis
+  namespace: patchmon
+spec:
+  selector:
+    app.kubernetes.io/name: patchmon-redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: patchmon-redis
+  namespace: patchmon
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: patchmon-redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: patchmon-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command: ["sh", "-c", "redis-server --requirepass \"$REDIS_PASSWORD\""]
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: patchmon-secrets
+                  key: REDIS_PASSWORD
+          ports:
+            - name: redis
+              containerPort: 6379
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - redis-cli --no-auth-warning -a "$REDIS_PASSWORD" ping
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: patchmon-redis-data
+---
+# ---------------------------------------------------------------------- Server
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: patchmon-server
+  namespace: patchmon
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: patchmon-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: patchmon-server
+    spec:
+      # Stable identity for the agent presence registry. Keep this, and give
+      # each server process a distinct value if several share one Redis.
+      hostname: patchmon-server
+      containers:
+        - name: server
+          image: ghcr.io/patchmon/patchmon-server:latest
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: patchmon-config
+            - secretRef:
+                name: patchmon-secrets
+          env:
+            # $(VAR) resolves against the envFrom entries above, so this
+            # assembles the URL from the ConfigMap and Secret values.
+            - name: DATABASE_URL
+              value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):5432/$(POSTGRES_DB)"
+          startupProbe:
+            tcpSocket:
+              port: http
+            # The first start applies the schema migrations.
+            failureThreshold: 40
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 30
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: patchmon-server
+  namespace: patchmon
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: patchmon-server
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+# --------------------------------------------------------------------- Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: patchmon
+  namespace: patchmon
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: patchmon.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: patchmon-server
+                port:
+                  name: http
+  tls:
+    - hosts:
+        - patchmon.example.com
+      secretName: patchmon-tls
+```
+
+```bash
+kubectl apply -f patchmon.yaml
+kubectl get pods -n patchmon -w
+```
+
+The server pod may restart once or twice on a brand new cluster while it waits for PostgreSQL and cluster DNS to come up. That is expected and it recovers on its own. Watch the migrations apply:
+
+```bash
+kubectl logs -n patchmon deploy/patchmon-server -f
+```
+
+Then open your hostname and complete the [first-time admin setup](#first-time-admin-setup).
+
+#### The PostgreSQL data directory {#the-postgresql-data-directory}
+
+This is the detail worth getting right, and it is the reason a hand-written PostgreSQL manifest can appear to work perfectly and still lose its data on the next deploy.
+
+The `postgres` image stores its data in `PGDATA`, which defaults to `/var/lib/postgresql/data`. The obvious instinct is to mount your volume at the parent, `/var/lib/postgresql`, and let the data directory sit inside it. **That does not work.** The image declares `VOLUME /var/lib/postgresql/data`, and containerd honours image volumes by mounting a scratch directory over that exact path. Your persistent volume ends up underneath it, and `PGDATA` lands in the scratch directory instead:
+
+```
+/var/lib/postgresql       <- your PersistentVolumeClaim
+/var/lib/postgresql/data  <- a per-container scratch directory, mounted on top
+```
+
+That scratch directory is keyed by container ID. It is created empty and destroyed with the container, so every redeploy, and every container restart from a failed probe or an out-of-memory kill, hands PostgreSQL an empty `PGDATA`. `initdb` runs again and you get a brand new empty database, while your persistent volume holds nothing but an empty `data` directory.
+
+Mounting the volume at `/var/lib/postgresql/data` fixes that, but introduces a second problem on block storage such as Longhorn or Ceph. A freshly formatted ext4 volume already contains a `lost+found` directory, and `initdb` refuses to use a directory that is not empty:
+
+```
+initdb: error: directory "/var/lib/postgresql/data" exists but is not empty
+initdb: detail: It contains a lost+found directory, perhaps due to it being a mount point.
+initdb: hint: Using a mount point directly as the data directory is not recommended.
+```
+
+So mount the volume at `/var/lib/postgresql/data` **and** point `PGDATA` at a subdirectory of it, exactly as the manifests above do:
+
+```yaml
+env:
+  - name: PGDATA
+    value: /var/lib/postgresql/data/pgdata
+volumeMounts:
+  - name: db-data
+    mountPath: /var/lib/postgresql/data
+```
+
+Redis needs no equivalent treatment. Its image declares `VOLUME /data` and the manifest mounts at `/data` exactly, so the explicit mount takes precedence.
+
+To confirm your own deployment is correct, check that only one filesystem is mounted under the data directory:
+
+```bash
+kubectl exec -n patchmon deploy/patchmon-db -- grep postgresql /proc/mounts
+```
+
+One line means the volume is mounted correctly. Two lines means a scratch directory is sitting on top of your data, and the database will not survive a redeploy.
+
+#### Notes for Argo CD
+
+- **Sync waves.** The database and Redis carry `argocd.argoproj.io/sync-wave: "0"` and the server carries `"1"`, so the data services settle before the server starts. Without this the server crash-loops a few times on the first sync before recovering.
+- **Protect the volumes.** Both PVCs carry `argocd.argoproj.io/sync-options: Prune=false,Delete=false`, so removing the manifest from Git, or deleting the Argo CD Application, does not take the database with it.
+- **Never sync a PVC with Replace.** `Replace=true`, and the "Replace" option on a manual sync, delete and recreate the object. On a StorageClass with the default `Delete` reclaim policy, that destroys the volume and its data.
+
+#### Optional: in-browser RDP
+
+The server reaches Windows hosts over RDP through a `guacd` sidecar. It is only needed for that feature. To enable it, add the Deployment and Service below, then set `GUACD_ADDRESS: "patchmon-guacd:4822"` in the ConfigMap.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: patchmon-guacd
+  namespace: patchmon
+spec:
+  selector:
+    app.kubernetes.io/name: patchmon-guacd
+  ports:
+    - name: guacd
+      port: 4822
+      targetPort: 4822
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: patchmon-guacd
+  namespace: patchmon
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: patchmon-guacd
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: patchmon-guacd
+    spec:
+      containers:
+        - name: guacd
+          image: guacamole/guacd:1.6.0
+          ports:
+            - name: guacd
+              containerPort: 4822
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            tcpSocket:
+              port: 4822
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+```
+
+#### Ingress controllers other than Traefik
+
+Traefik proxies WebSockets without extra configuration, so the Ingress above needs no annotations. On NGINX Ingress you must raise the timeouts, or agent connections, SSH terminals, and live patch streams will drop about every 30 seconds:
+
+```yaml
+metadata:
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "86400"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "86400"
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+```
+
+See [Reverse proxy examples](#reverse-proxy-examples) for the full list of WebSocket endpoints to verify.
 
 ---
 
@@ -866,6 +1362,8 @@ Response is `healthy` (plain text) or a JSON structure when the `Accept: applica
 | Ingress returns 404 / 502 | Ingress misconfigured or points at wrong port | All traffic should go to `server:3000` |
 | WebSocket connections drop every ~30s | Ingress default read timeout too short | Set `proxy-read-timeout: "86400"` |
 | `secret ... not found` | Required Secret not created before install | Create the Secret or set `secret.create: true` |
+| Database is empty again after every redeploy, and the setup wizard reappears | Hand-written manifests mounting the volume at `/var/lib/postgresql` instead of at `PGDATA` | See [The PostgreSQL data directory](#the-postgresql-data-directory) |
+| `initdb: error: directory ... exists but is not empty` | Volume mounted straight at `PGDATA` on block storage, which contains `lost+found` | Set `PGDATA` to a subdirectory of the mount. See [The PostgreSQL data directory](#the-postgresql-data-directory) |
 | CORS errors in browser | `CORS_ORIGIN` doesn't match the URL users see | Set it to the exact URL from the Ingress host. If the chart exposes more than one Ingress host, comma-separate them with no spaces, e.g. `https://patchmon.example.com,https://patchmon.internal.lan` |
 
 ---
@@ -881,6 +1379,7 @@ Response is `healthy` (plain text) or a JSON structure when the `Accept: applica
 ### See also
 
 - [Installing PatchMon Server on Docker](#installing-patchmon-server-on-docker): the officially supported deployment method
+- [Deploying with plain manifests](#deploying-with-plain-manifests): the full YAML stack for k3s, Argo CD, and Flux
 - [Reverse proxy examples](#reverse-proxy-examples): Nginx, Caddy, Traefik snippets
 - [PatchMon Environment Variables Reference](#patchmon-environment-variables-reference): every variable the server reads
 - [First-time admin setup](#first-time-admin-setup): what to do once the pod is running
@@ -972,9 +1471,10 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers off;
 
-    # Allow large agent reports (packages, Docker inventory) through the proxy.
-    # The server also enforces its own JSON_BODY_LIMIT / AGENT_UPDATE_BODY_LIMIT.
-    client_max_body_size 20m;
+    # Allow large agent reports (packages, Docker inventory, compliance scan
+    # results) through the proxy. The server also enforces its own limits: see
+    # JSON_BODY_LIMIT, AGENT_UPDATE_BODY_LIMIT and COMPLIANCE_BODY_LIMIT.
+    client_max_body_size 40m;
 
     location / {
         proxy_pass http://127.0.0.1:3000;
@@ -1256,7 +1756,7 @@ Open **Hosts → <a host> → SSH Terminal**. The terminal should connect and ec
 | `wss://` URLs try `http://` inside the agent install script | `X-Forwarded-Proto` missing or wrong | Explicitly set to `$scheme` (Nginx) / default in Caddy + Traefik |
 | Browser console: "CORS policy" errors | `CORS_ORIGIN` does not match the URL in the address bar | Set `CORS_ORIGIN=https://patchmon.example.com` exactly. To allow more than one origin, comma-separate with no spaces, e.g. `CORS_ORIGIN=https://patchmon.example.com,https://patchmon.internal.lan` |
 | Login works but nothing loads | API requests going to a different origin | Send all traffic (API + SPA) to the same hostname/port |
-| Sudden 413 Request Entity Too Large | Proxy body limit smaller than agent report | `client_max_body_size 20m;` (Nginx) or equivalent |
+| Sudden 413 Request Entity Too Large | Proxy body limit smaller than agent report or compliance scan result | `client_max_body_size 40m;` (Nginx) or equivalent |
 | Agent page shows "offline" but agent logs say connected | Reverse proxy is not sending `X-Forwarded-For`, or `TRUST_PROXY=false` was set explicitly | Ensure the reverse proxy adds `X-Forwarded-For` and leave `TRUST_PROXY` at its default of `true` |
 
 ---
@@ -1284,7 +1784,7 @@ This page walks through every step so you know what to expect.
 Before starting the wizard, PatchMon must already be running. You should be able to open `http://localhost:3000` (or your configured URL) in a browser and see the wizard's welcome screen. If you don't, check:
 
 - [Installing PatchMon Server on Docker](#installing-patchmon-server-on-docker): for Docker deployments
-- [Installing PatchMon on Kubernetes with Helm](#installing-patchmon-on-kubernetes-helm): for Kubernetes deployments
+- [Installing PatchMon on Kubernetes](#installing-patchmon-on-kubernetes-helm): for Kubernetes deployments, with Helm or plain manifests
 - [Reverse proxy examples](#reverse-proxy-examples): if you're behind Nginx, Caddy, Traefik, or NPM
 
 ---
@@ -1412,7 +1912,7 @@ This step is hidden if the server's login-settings response includes `show_newsl
 
 ### Step 5: Get in Touch
 
-The final screen lists community and support links: Discord, GitHub, documentation, and the public roadmap. Click **Access Dashboard** to finish setup.
+The final screen lists community and support links: Discord, GitHub, documentation, the feature roadmap, and bug reporting. Feature requests go to the feedback portal; bugs go to GitHub Issues. Click **Access Dashboard** to finish setup.
 
 #### What happens when you finish
 
@@ -1542,11 +2042,12 @@ General HTTP server and network settings.
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `PORT` | `3000` | No | TCP port the server listens on. |
+| `PORT` | `3000` | No | TCP port the server listens on. In the Docker Compose stack the published port mapping follows this value, so you only need to update `CORS_ORIGIN` to match. |
 | `APP_ENV` | `production` | No | Runtime environment. Accepted values: `production`, `development`. `NODE_ENV` is also read as a backward-compatibility alias; `APP_ENV` takes precedence when both are set. |
 | `CORS_ORIGIN` | `http://localhost:3000` | No | Allowed CORS origin(s). Must match the exact URL you use to access PatchMon in your browser (protocol, hostname, and port; no path, no trailing slash). To allow multiple origins, separate them with a comma and no spaces (e.g. `https://patchmon.example.com,https://patchmon.internal.lan`). |
 | `ENABLE_HSTS` | `false` | No | When `true`, the server adds an `HTTP Strict Transport Security` header to responses. Enable this only when PatchMon is served over HTTPS. |
 | `TRUST_PROXY` | `true` | No | When `true`, the server trusts `X-Forwarded-For` / `X-Forwarded-Proto` and related headers from a reverse proxy (Traefik, Caddy, nginx, NPM, etc.). Required for accurate client IP detection, correct rate limiting, and OIDC's HTTPS check when TLS is terminated at the proxy. Default is `true` because the officially supported deployment is Docker behind a reverse proxy; set to `false` explicitly only if PatchMon is exposed directly to the internet without a proxy. |
+| `TRUSTED_PROXY_RANGES` | (empty) | No | Comma-separated CIDRs or bare IPs of the reverse proxies in front of PatchMon, for example `10.0.0.0/8,172.16.0.0/12`. Used together with `TRUST_PROXY` to work out the real client IP from `X-Forwarded-For`, which drives rate limiting, login lockout, and audit logging. Leave it empty when there is a single reverse proxy, which is the usual setup: PatchMon then uses the address your proxy appended to the header, which a client cannot forge. Set it only when proxies are chained (for example Cloudflare in front of Nginx Proxy Manager), listing the intermediate hops so the original client IP is resolved rather than your CDN's egress address. Configured via environment only, and shown read-only in the settings UI, because widening it would allow clients to spoof their own IP. |
 
 **Production example:**
 
@@ -1602,23 +2103,41 @@ Settings for JWT tokens, browser sessions, account lockout, two-factor authentic
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
 | `JWT_SECRET` | _(none)_ | **Yes** | See [Required Variables](#1-required-variables). |
-| `JWT_EXPIRES_IN` | `1h` | No | How long an access token is valid. Accepts duration strings: `30m`, `1h`, `2h`, `1d`. Shorter values are more secure but require more frequent token refreshes. |
+| `JWT_EXPIRES_IN` | `1h` | No | How long an access token is valid. Accepts duration strings: `30m`, `1h`, `2h`, `1d`. The web interface renews the token automatically in the background, so a short value is not visible to signed-in users; it only controls how quickly a stolen token becomes useless. |
 | `AUTH_BROWSER_SESSION_COOKIES` | `false` | No | When set to `true`, the `token` and `refresh_token` cookies are issued without a `Max-Age` attribute, making them session cookies that are cleared when the browser is closed rather than persisting across browser restarts. |
 
 #### Account Lockout
 
-Lockout is applied per user account after repeated failed login attempts.
+Lockout is applied per combination of client IP address and the username that was typed, after repeated failed login attempts. Usernames that do not exist are counted too, so a lockout can be reached for a name that was never an account. That is deliberate: it means the point at which a lockout starts no longer reveals which usernames are real.
+
+Because the counter is per username, a lockout does not stop an attacker who tries a different username each time. The protection against that is the auth rate limit (`AUTH_RATE_LIMIT_MAX` and `AUTH_RATE_LIMIT_WINDOW_MS`), which is applied per client IP address across all sign-in attempts.
+
+Usernames are matched case-insensitively, and the lockout counter follows the same rule, so `admin` and `Admin` are one account with one shared allowance rather than two.
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `MAX_LOGIN_ATTEMPTS` | `5` | No | Number of consecutive failed login attempts before the account is temporarily locked. |
-| `LOCKOUT_DURATION_MINUTES` | `15` | No | How long (in minutes) an account stays locked after exceeding `MAX_LOGIN_ATTEMPTS`. |
+| `MAX_LOGIN_ATTEMPTS` | `5` | No | Number of consecutive failed attempts against one username, from one client IP address, before further attempts on that combination are refused. |
+| `LOCKOUT_DURATION_MINUTES` | `15` | No | How long (in minutes) that combination stays locked after exceeding `MAX_LOGIN_ATTEMPTS`. |
+
+Every rejected sign-in is written to the server log at `warn` level, so it is visible at the default `LOG_LEVEL` without switching to `debug`. See [Failed Login Attempts in the Log](#failed-login-attempts-in-the-log).
 
 #### Session Inactivity
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `SESSION_INACTIVITY_TIMEOUT_MINUTES` | `30` | No | Minutes of inactivity before a user session is automatically invalidated. Each authenticated request resets the timer. |
+| `SESSION_INACTIVITY_TIMEOUT_MINUTES` | `30` | No | Minutes without user activity before a session is invalidated and the browser returns to the login screen. Set to `0` to disable the inactivity timeout entirely. |
+
+"Activity" means someone actually using the interface: clicking, typing, scrolling, moving the
+pointer, or switching back to the tab. Pages that refresh data on a timer do not count, so a
+browser left open on an unattended machine still times out.
+
+The timer is enforced by the server and evaluated when the next request arrives, so a session that
+has been idle past the limit ends at the next click or background refresh rather than at the exact
+second the limit passes. Signing out, or an administrator revoking the session, ends it immediately
+either way.
+
+This setting is independent of `JWT_EXPIRES_IN`. Access tokens are renewed in the background for as
+long as the session stays active, so a value larger than `JWT_EXPIRES_IN` works as expected.
 
 #### Two-Factor Authentication (TFA)
 
@@ -1655,6 +2174,20 @@ Redis is used for background job queues (asynq), bootstrap tokens, and TFA locko
 | `REDIS_TLS_CA` | _(none)_ | No | Path to a custom CA certificate file for verifying the Redis TLS connection. Only used when `REDIS_TLS=true`. |
 | `REDIS_CONNECT_TIMEOUT_MS` | `60000` | No | Milliseconds to wait when establishing a new connection to Redis before timing out. |
 | `REDIS_COMMAND_TIMEOUT_MS` | `60000` | No | Milliseconds to wait for a Redis command to complete before timing out. |
+
+**Required Redis permissions when using ACLs:**
+
+If you set `REDIS_USER` and restrict that user with an ACL command allowlist, the user must be able to run server-side Lua scripts. Rate limiting evaluates a small script so that a counter and its expiry are set together, which stops a dropped expiry stranding a client on HTTP 429 indefinitely.
+
+Grant at least:
+
+```
+ACL SETUSER patchmon on >yourpassword ~* +@read +@write +@keyspace +eval +evalsha +script
+```
+
+Without `+eval` and `+evalsha`, rate limiting fails. Sign-in and password endpoints deliberately fail closed when the rate limiter is unavailable, so the visible symptom is `503 Service temporarily unavailable` on login rather than a rate limiting warning. If you see that after tightening an ACL, check these permissions first.
+
+Redis users with no ACL restrictions, and deployments using `REDIS_PASSWORD` alone, need no change.
 
 **Generating a secure Redis password:**
 
@@ -1709,9 +2242,10 @@ Rules applied when a user sets or changes a local account password. These do not
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `ENABLE_LOGGING` | `false` | No | When `true`, enables structured application logging to stdout. Set to `true` in production to capture request and error logs. |
+| `ENABLE_LOGGING` | `true` | No | Structured application logging to stdout. **Setting this to `false` silences the server completely.** Not reduced logging: none at all, which leaves every instruction in this guide that asks you to check the server logs with nothing to show. Changed in 2.0.3; it previously defaulted to `false`. An explicit `false`, in either `.env` or **Settings > Environment**, is still honoured. |
 | `LOG_LEVEL` | `info` | No | Minimum log level to output. Accepted values: `debug`, `info`, `warn`, `error`. Must be one of these exact strings. The server will fail to start if an invalid value is provided. |
-| `ENABLE_PPROF` | `false` | No | When `true`, exposes Go pprof profiling endpoints. For diagnostics only. Do not enable in production unless actively investigating a performance issue. |
+| `ENABLE_PPROF` | `false` | No | When `true`, serves Go pprof profiling endpoints on a separate loopback-only listener (see `PPROF_PORT`). For diagnostics only. Do not enable in production unless actively investigating a performance issue. |
+| `PPROF_PORT` | `6060` | No | Port for the profiling listener when `ENABLE_PPROF=true`. Binds to `127.0.0.1` only, so nothing needs opening in a firewall or reverse proxy. |
 | `MEMSTATS_INTERVAL_SEC` | `60` | No | How often (in seconds) the server logs Go runtime memory statistics when profiling is active. Only relevant when `ENABLE_PPROF=true`. |
 
 **Log level guide:**
@@ -1722,6 +2256,49 @@ Rules applied when a user sets or changes a local account password. These do not
 | `info` | Normal production operation |
 | `warn` | Quieter production operation; only non-critical issues and errors |
 | `error` | Minimal output; critical errors only |
+
+#### Failed Login Attempts in the Log
+
+Every rejected sign-in produces exactly one `warn` line, so it appears at the default `LOG_LEVEL` and at `warn`. A successful sign-in produces one `info` line.
+
+```json
+{"time":"2026-08-13T18:22:41Z","level":"WARN","msg":"login failed","reason":"user_not_found","username":"hackerman","ip":"203.0.113.9","user_agent":"curl/8.7.1"}
+```
+
+`username` and `user_agent` are whatever the client sent, truncated, and are recorded exactly as received. `username` is omitted when the client sent none. `ip` is the client address resolved through `TRUST_PROXY` and `TRUSTED_PROXY_RANGES`, so get those right or every attempt will appear to come from your reverse proxy.
+
+`"locked": true` is added when that particular attempt is the one that triggered the lockout. The `reason` still describes what was actually wrong, so counting a reason across your logs stays accurate.
+
+The `reason` field distinguishes the failure:
+
+| Reason | Meaning |
+|---|---|
+| `user_not_found` | No account matches the username or email that was typed |
+| `invalid_password` | The account exists and the password was wrong |
+| `account_disabled` | The account exists but is deactivated |
+| `no_password_set` | The account has no local password, typically SSO-only |
+| `locked_out` | Refused on arrival because a lockout from earlier attempts is still in force |
+| `missing_credentials` | The request omitted the username or the password |
+| `username_too_long` | The submitted username exceeded 254 characters and was rejected before any lookup |
+| `malformed_request` | The request body was not valid JSON |
+| `local_auth_disabled` | A password sign-in was attempted while the instance is SSO-only |
+| `invalid_tfa_code` | The password was accepted but the two-factor code was wrong |
+| `tfa_locked_out` | Refused on arrival because a two-factor lockout from earlier wrong codes is still in force |
+| `tfa_token_malformed` | The submitted two-factor code was not six alphanumeric characters |
+| `tfa_ticket_invalid` | The two-factor step was reached without a valid, unexpired ticket from the password step |
+| `tfa_user_ineligible` | The ticket resolved to an account that is inactive or has no two-factor enrolled |
+
+A failed lookup caused by the database being unreachable is **not** reported as `user_not_found`. It is logged separately at `error` level as `auth login lookup failed`, and it does not consume a lockout attempt, so a database problem cannot lock out the people retrying a correct password.
+
+To watch sign-in activity on a Docker install:
+
+```bash
+docker compose logs -f server | grep -E '"msg":"login (failed|succeeded)"'
+```
+
+That grep assumes JSON output, which is what a production install emits. Setting `APP_ENV=development` switches the logger to plain text, where the same lines read `msg="login failed"`.
+
+Nothing is logged when `ENABLE_LOGGING=false`, and these lines are suppressed if `LOG_LEVEL` is set to `error`.
 
 ---
 
@@ -1740,6 +2317,7 @@ OpenID Connect configuration for Single Sign-On. When `OIDC_ENABLED=true`, the f
 | `OIDC_REDIRECT_URI` | _(none)_ | If OIDC enabled | The callback URL registered in your identity provider. Must be: `https://your-patchmon-url/api/v1/auth/oidc/callback` |
 | `OIDC_SCOPES` | `openid email profile groups` | No | Space-separated list of OAuth scopes to request. The `groups` scope is required for group-to-role mapping to work. |
 | `OIDC_ENFORCE_HTTPS` | `true` | No | When `true` (the default), the server rejects OIDC configurations using a non-HTTPS issuer URL. Set to `false` only in a local development environment with a non-TLS identity provider. |
+| `OIDC_TRUST_UNVERIFIED_EMAIL` | `false` | No | When `true`, PatchMon links and creates accounts even if the identity provider does not confirm the email address is verified. This reduces account-takeover protection, so only enable it if your provider cannot assert verification. See [The verified email requirement](#the-verified-email-requirement). Also settable in **Settings > OIDC**, but only when OIDC itself is configured in the UI rather than through environment variables. |
 
 #### User Provisioning
 
@@ -1814,7 +2392,7 @@ Settings for SCAP Security Guide content used by the compliance scanning feature
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `SSG_CONTENT_DIR` | `./ssg-content` | No | Path to the directory containing SCAP Security Guide content (`.xml` datastream files). The compliance scanner reads SCAP profiles from this directory. When running in Docker, mount your SSG content to this path. |
+| `SSG_CONTENT_DIR` | `./ssg-content` | No | Path to the directory holding SCAP Security Guide datastream files (`ssg-*-ds.xml`), which agents download from. The official image already contains this content at `/app/ssg-content` and sets this variable for you, so leave it alone unless you are deliberately supplying your own content. If you do supply your own, put the `ssg-*-ds.xml` datastreams in the directory and the server works out which SCAP Security Guide release they belong to by reading them, so no separate version file is needed. This relies on the datastreams declaring a release in the form `0.1.81`, which official ComplianceAsCode releases do. If you build your own content, or use a vendor build whose release is labelled some other way, add a `.ssg-version` file to the directory containing just that version string. Compliance Settings tells you if the release could not be determined, and until it is resolved, hosts cannot update their content. **Do not mount an empty volume at this path.** Doing so hides the bundled content and leaves every host in your fleet unable to update its compliance content. |
 
 ---
 
@@ -1829,6 +2407,20 @@ Configuration for the Guacamole daemon (`guacd`) that powers in-browser RDP sess
 
 ---
 
+### Patching
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `PATCH_RUN_STALL_TIMEOUT_MIN` | `30` | No | Minutes a patch run can stay in `running` state before the periodic cleanup (every 10 minutes) marks it as `timed_out`. Minimum `5`; values below 5 are clamped at startup with a warning. Also editable via Settings → Environment in the web UI; the env var still wins if set. Changes made in the UI take effect on the next cleanup sweep without a restart. |
+
+### Reporting
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `AGENT_REPORTS_RETENTION_DAYS` | `30` | No | Days to retain Agent Activity rows (every ping, full report, partial report, Docker upload, and compliance scan submission writes one row). The daily cleanup sweep at 02:00 deletes anything older. Range `7`..`365`; values outside the range are clamped at startup with a warning. Also editable via Settings → Environment in the web UI; the env var still wins if set. Changes made in the UI take effect on the next cleanup sweep without a restart. |
+
+---
+
 ### 12. Body Limits
 
 Maximum sizes for request bodies accepted by the API. Increase these only if you encounter HTTP 413 errors caused by legitimate large payloads.
@@ -1839,6 +2431,10 @@ Accepted suffixes: `b`, `kb`, `mb`, `gb`. Examples: `10mb`, `512kb`.
 |----------|---------|----------|-------------|
 | `JSON_BODY_LIMIT` | `5mb` | No | Maximum size of JSON request bodies for standard API endpoints (user management, settings, host actions, etc.). |
 | `AGENT_UPDATE_BODY_LIMIT` | `5mb` | No | Maximum size of request bodies on agent check-in and package reporting endpoints. Increase this if agents managing a very large number of packages hit the limit. |
+| `COMPLIANCE_BODY_LIMIT` | `20mb` | No | Maximum size of request bodies on the compliance scan result endpoint. OpenSCAP results are large: a 900-rule profile can produce well over 10 MB, and a single submission may carry both an OpenSCAP and a Docker Bench scan. |
+| `AGENT_PING_BODY_LIMIT` | `8kb` | No | Maximum size of agent ping bodies. An unsuffixed value is read as KB here, so `16` means 16 KB. |
+
+> **Suffixes:** `b`, `kb` and `mb` are accepted. `gb` parses but every `gb` value exceeds the 32 MB ceiling and is reduced to it, so there is no reason to use it.
 
 ---
 
@@ -2027,8 +2623,11 @@ Create a new OAuth2 / OIDC application in your Identity Provider with the follow
 | **Scopes** | `openid`, `email`, `profile`, `groups` |
 | **Grant type** | Authorization Code |
 | **Token endpoint auth** | Client Secret (Basic) |
+| **ID token signing** | An asymmetric algorithm: `RS256` (or `RS384`, `RS512`, `ES256`, `ES384`, `ES512`, `PS256`, `PS384`, `PS512`, `EdDSA`) |
 
 After creating the application, note the **Client ID** and **Client Secret** as you'll need both.
+
+> **Important: PatchMon cannot accept HS256-signed ID tokens.** PatchMon validates ID tokens against the public keys published at your IdP's JWKS endpoint, so the token must be signed asymmetrically with a certificate or key pair. Symmetric HMAC signing (`HS256`, `HS384`, `HS512`), where the client secret doubles as the signing key, is rejected. Most identity providers use `RS256` by default, but Authentik does not unless you tell it to. See the Authentik note below.
 
 > **Tip:** If you plan to use group-based role mapping, ensure your IdP includes the `groups` claim in the ID token. In Authentik, this is enabled by default. In Keycloak, you may need to add a "Group Membership" mapper to the client scope.
 
@@ -2036,6 +2635,8 @@ After creating the application, note the **Client ID** and **Client Secret** as 
 
 **Authentik:**
 - Create an OAuth2/OIDC Provider, then create an Application linked to it
+- **Set a Signing Key on the provider.** This is required and is the single most common cause of a failed Authentik setup. Open the provider, expand **Advanced protocol settings**, and set **Signing Key** to a certificate, for example the built-in `authentik Self-signed Certificate`. If **Signing Key** is left empty, Authentik signs ID tokens symmetrically with the client secret using `HS256`, which PatchMon rejects. Every login then fails with a generic "Authentication failed" message on the login page
+- **Replace the default `email` scope mapping.** Authentik's stock mapping always reports the address as unverified, which PatchMon rejects from 2.1.0 onwards. See [The verified email requirement](#the-verified-email-requirement)
 - Issuer URL format: `https://auth.example.com/application/o/patchmon/`
 - Groups are included via the `groups` or `ak_groups` claim (both are supported)
 
@@ -2047,6 +2648,7 @@ After creating the application, note the **Client ID** and **Client Secret** as 
 **Okta / Azure AD:**
 - Create an OIDC Web Application
 - Ensure groups are included in the ID token claims
+- **Entra ID only:** it does not send `email_verified`, which PatchMon requires from 2.1.0 onwards for account linking and auto-creation. Add the `xms_edov` optional claim instead. See [The verified email requirement](#the-verified-email-requirement)
 
 ---
 
@@ -2096,6 +2698,7 @@ OIDC_SYNC_ROLES=false
 | `OIDC_SESSION_TTL` | `600` | Seconds the OIDC login state is valid. If the user takes longer than this at the IdP, the session expires and they must try again |
 | `OIDC_POST_LOGOUT_URI` | `<CORS_ORIGIN>/login` | Where to redirect after a logout. Defaults to the PatchMon login page |
 | `OIDC_ENFORCE_HTTPS` | `true` | When `true`, enforces HTTPS on OIDC login and callback routes. Set to `false` only for local development |
+| `OIDC_TRUST_UNVERIFIED_EMAIL` | `false` | When `true`, waives the verified-email requirement for account linking and auto-creation. Reduces account-takeover protection |
 | `OIDC_SYNC_ROLES` | `false` | When `true`, the user's role is updated on every login based on current group membership. When `false`, roles are managed locally in PatchMon and OIDC login does not change them |
 
 > **Note on `APP_ENV`:** PatchMon reads `APP_ENV` to determine the runtime environment (e.g. `production`). `NODE_ENV` is accepted as a backward-compatibility alias but `APP_ENV` is preferred.
@@ -2147,7 +2750,7 @@ You only need to define the groups you intend to use. Any variables left unset a
 
 ### Step 4 - Restart PatchMon
 
-After updating your `.env` file, restart the server so it discovers your OIDC provider on startup:
+After updating your `.env` file, restart the server so it picks up your OIDC configuration:
 
 ```bash
 # Docker
@@ -2160,7 +2763,7 @@ docker compose up -d --force-recreate patchmon-server
 sudo systemctl restart <your-domain>
 ```
 
-Check the logs to confirm OIDC initialised:
+This check needs `ENABLE_LOGGING=true`, which is the default from 2.0.3. If you have set `ENABLE_LOGGING=false`, or you are on 2.0.2 or earlier where `false` was the default, the server writes no logs at all and the commands below return nothing regardless of whether OIDC loaded. Keep `LOG_LEVEL` at `info` or lower too, since the confirmation line is logged at info level.
 
 ```bash
 # Docker
@@ -2170,15 +2773,27 @@ docker compose logs patchmon-server | grep -i oidc
 journalctl -u <your-domain> | grep -i oidc
 ```
 
-You should see:
+You should see a line confirming SSO is enabled, containing the message `OIDC SSO enabled; provider discovery is deferred to the first login attempt` along with the issuer and client ID that were loaded.
+
+**PatchMon does not contact your identity provider at startup.** Provider discovery (the request to `.well-known/openid-configuration`) is deliberately deferred until the first login attempt, so a temporarily unreachable IdP cannot stop the server from booting. This line therefore confirms only that your four required variables were read and that the SSO button will appear. It does not prove your IdP is reachable or that your provider is configured correctly. The first login attempt is what tests that, and any failure is logged at that point.
+
+The surrounding format depends on `APP_ENV`. In production, which is the default, logs are JSON:
+
+```json
+{"time":"2026-08-12T20:34:34.526Z","level":"INFO","msg":"OIDC SSO enabled; provider discovery is deferred to the first login attempt","version":"2.0.3","port":3000,"issuer":"https://auth.example.com/application/o/patchmon/","client_id":"patchmon","source":"environment variables"}
+```
+
+With `APP_ENV` set to anything else, the same record is printed as plain text:
 
 ```
-Discovering OIDC configuration from: https://auth.example.com/...
-OIDC Issuer discovered: https://auth.example.com/...
-OIDC client initialized successfully
+time=2026-08-12T20:34:34.526Z level=INFO msg="OIDC SSO enabled; provider discovery is deferred to the first login attempt" version=2.0.3 port=3000 issuer=https://auth.example.com/application/o/patchmon/ client_id=patchmon source="environment variables"
 ```
 
-If you see `OIDC is enabled but missing required configuration`, double-check your environment variables.
+The `source` field tells you which configuration won: `environment variables` or `database settings`. If you edited SSO settings in the web UI but see `environment variables`, your `.env` is overriding them.
+
+If you see `OIDC is enabled but missing required config: ...`, one or more of the four required variables is empty. If you see `OIDC is partially configured via env vars but SSO is disabled`, you have set some but not all of them.
+
+> **Note:** Releases before 2.0.3 logged nothing at all on a successful OIDC configuration. If you are on 2.0.2 or older, an empty `grep -i oidc` is expected and does not mean OIDC failed to load. Check whether the SSO button appears on the login page instead.
 
 ---
 
@@ -2229,7 +2844,86 @@ The following is **only synced when `OIDC_SYNC_ROLES=true`:**
 
 #### Account Linking
 
-If a local PatchMon user already exists with the same email as the OIDC user, PatchMon will automatically link the accounts, but only if the email is marked as **verified** by the IdP. This prevents account takeover via unverified emails.
+If a local PatchMon user already exists with the same email as the OIDC user, PatchMon will automatically link the accounts, but only if the IdP marks that email as verified. See [The verified email requirement](#the-verified-email-requirement) below, which applies to new accounts too, not only to linking.
+
+#### The Verified Email Requirement {#the-verified-email-requirement}
+
+*Applies from PatchMon 2.1.0.*
+
+When PatchMon cannot recognise you by a subject it has already stored, the email address is the only thing deciding who you are. Trusting an unverified one would let anyone who can set their own email address at your IdP sign in as an existing PatchMon user. So in that situation PatchMon requires the IdP to state that the address is verified, by sending an `email_verified` claim set to `true`.
+
+This applies in two cases:
+
+- **Linking to an existing local account** by matching email.
+- **Creating a new account** on first login when `OIDC_AUTO_CREATE_USERS=true`.
+
+It does not apply once an account is linked. After a successful first login PatchMon stores the IdP's subject identifier, matches on that from then on, and the email claim stops being the deciding factor.
+
+**If the claim is missing, PatchMon treats it as not verified.** Several identity providers do not send it by default, and two common ones need configuration:
+
+##### Authentik
+
+Authentik's stock `authentik default OAuth Mapping: OpenID 'email'` scope mapping returns `email_verified: False` unconditionally, because Authentik does not track per-user email verification. Every login therefore fails until you replace that mapping:
+
+1. Sign in to Authentik as an administrator.
+2. Go to **Customisation** > **Property Mappings**.
+3. Select **Create**, then choose **Scope Mapping**.
+4. Fill it in as follows:
+   - **Name:** `authentik main OAuth Mapping: OpenID verified 'email'`
+   - **Scope name:** `email`
+   - **Description:** `Verified Email address`
+   - **Expression:**
+
+     ```python
+     return {
+         "email": request.user.email,
+         "email_verified": True
+     }
+     ```
+
+5. Select **Create**.
+6. Open the OAuth2 provider you configured for PatchMon and select **Edit**.
+7. Expand **Advanced protocol settings** and scroll to **Scopes**.
+8. Remove `authentik default OAuth Mapping: OpenID 'email'`.
+9. Add the mapping you created in step 4.
+10. Sign in to PatchMon again.
+
+By making this change you are asserting that the email addresses in your Authentik directory are trustworthy. That is a reasonable statement for a directory you control and populate yourself. It is not reasonable if users can self-register with an arbitrary address.
+
+##### Microsoft Entra ID
+
+Entra ID does not send `email_verified` at all, and there is no way to make it. Adding `email` as an optional claim does not help, because that supplies the address and not the verification signal.
+
+Instead, **from PatchMon 2.1.2, add the `xms_edov` optional claim.** This is Microsoft's own "Email Domain Owner Verified" signal, introduced in response to nOAuth, which is the same account-takeover-by-email-spoofing attack this requirement exists to prevent. PatchMon reads it when `email_verified` is absent, so no security setting has to be relaxed.
+
+1. In the Microsoft Entra admin centre, open your app registration.
+2. Go to **Manage** > **Token configuration** > **Add optional claim**.
+3. Select token type **ID**, then add `xms_edov`. If the portal marks it unrecognised, add it by editing the manifest instead: find the `optionalClaims` object and add `xms_edov` to the `idToken` array.
+4. Sign in to PatchMon again.
+
+On older PatchMon versions, or if you would rather not configure the claim, leave `OIDC_AUTO_CREATE_USERS` off and link accounts by having each user sign in once while a matching local account exists, or use the opt-in below.
+
+##### If your provider cannot assert verification at all
+
+*Available from PatchMon 2.1.2.*
+
+Some directories genuinely have no notion of a verified email address. For those, set **Trust unverified email** in **Settings > OIDC**, or `OIDC_TRUST_UNVERIFIED_EMAIL=true` in the environment. It is off by default.
+
+> **Set it in the same place you configured OIDC itself.** PatchMon takes its whole OIDC configuration from one source or the other, never a mix: if any of `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI`, `OIDC_SCOPES` or `OIDC_ENABLED` is set in the environment, every OIDC setting comes from the environment and the values in **Settings > OIDC** are ignored. So if you configured OIDC through environment variables, the toggle in the UI will appear to save but have no effect, and you must set `OIDC_TRUST_UNVERIFIED_EMAIL=true` instead. If you configured OIDC in the UI, setting only `OIDC_TRUST_UNVERIFIED_EMAIL` in the environment does nothing, and you must use the toggle. This applies to every OIDC setting, not just this one.
+
+Be clear about what this does. With it on, anyone who can set their own email address at your identity provider can sign in as an existing PatchMon user with that address. It is only reasonable when you control who can change addresses in your directory. Every login it permits is recorded in the server log at warn level, so a relaxed deployment stays visible:
+
+```
+oidc accepting unverified email: trust_unverified_email is enabled
+```
+
+Prefer a real fix where one exists: the Authentik scope mapping above, or `xms_edov` for Entra.
+
+##### Other providers
+
+Keycloak, Okta and Google Workspace all send `email_verified` correctly with their default configuration and need no change.
+
+To check what your IdP actually sends, decode the ID token at [jwt.io](https://jwt.io) after a login attempt, or read the rejection in the server log (see [Troubleshooting](#troubleshooting)).
 
 ---
 
@@ -2268,6 +2962,8 @@ OIDC_USER_GROUP=PatchMon Users
 OIDC_SYNC_ROLES=true
 ```
 
+> **Reminder:** On the Authentik side, the provider's **Signing Key** (under **Advanced protocol settings**) must be set to a certificate. Leaving it empty makes Authentik sign ID tokens with `HS256`, which PatchMon rejects, and every login will fail with "Authentication failed".
+
 #### Keycloak
 
 ```bash
@@ -2293,23 +2989,76 @@ OIDC_SYNC_ROLES=true
 
 #### OIDC Not Initialising
 
-**Logs show:** `OIDC is enabled but missing required configuration`
+**Logs show:** `OIDC is enabled but missing required config: ...`
 
-All four required variables must be set: `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI`. Check for typos or empty values.
+All four required variables must be set: `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI`. Check for typos or empty values. A related message, `OIDC is partially configured via env vars but SSO is disabled`, means some but not all of the four are set.
+
+#### Login Fails with "no email in UserInfo or id_token"
+
+**Logs show:** `oidc exchange failed` with `error: oidc: no email in UserInfo or id_token`, whilst the login page shows a generic "Authentication failed".
+
+Fixed in 2.1.3. Two separate defects produced the same message. ADFS sends single-valued claims as a JSON array (`"email": ["user@example.com"]`) in the ID token, and PatchMon only accepted a plain string. Separately, any provider whose UserInfo endpoint returns no email caused that empty value to hide a perfectly good email in the ID token. PatchMon now accepts the array form in the ID token and treats an empty value as missing, so it falls through correctly.
+
+If you are on 2.1.3 or later and still see this, your provider is genuinely not sending an email address. Check that the `email` scope is requested and that the claim is mapped on the provider side, then decode the ID token at [jwt.io](https://jwt.io) after a login attempt to confirm what arrives. PatchMon reads only the standard `email` claim; there is no claim mapping setting, and `upn` is not used as a substitute.
+
+A related but distinct failure logs `oidc: fetch userinfo: oidc: failed to decode userinfo` instead. That means your provider returned an array (or another non-string type) for a field in its **UserInfo** response rather than in the ID token. That response is decoded before PatchMon sees it, so the array handling above does not apply. Have the provider return plain strings from `/userinfo`, or map the claim into the ID token instead.
+
+#### No OIDC Lines in the Startup Logs
+
+On a healthy configuration, PatchMon 2.0.3 and later logs `OIDC SSO enabled; provider discovery is deferred to the first login attempt` at startup. It does **not** contact your identity provider at startup, so there are never any discovery or connection messages to look for.
+
+An empty `grep -i oidc` has four possible causes, and only the last one is a problem with your SSO configuration:
+
+- **Logging is off.** `ENABLE_LOGGING` defaults to `true` from 2.0.3, but an explicit `false` in `.env` or **Settings > Environment** is still honoured, and it was the default on earlier releases. With logging disabled the server writes nothing at all, so this check tells you nothing
+- **`LOG_LEVEL` is above `info`.** The confirmation line is logged at info level, so `warn` or `error` hides it
+- **You are on 2.0.2 or older.** A correct configuration logged nothing at all on those releases
+- **Your configuration did not resolve.** Check for `missing required config` or `partially configured` in the same output
+
+If logging is off and you would rather not turn it on, check whether the SSO button appears on the login page instead. That is driven by the same resolved configuration.
+
+You may also see a second OIDC line warning that role sync cannot grant superadmin. That is unrelated to whether SSO loaded and is covered under Step 3.
 
 #### SSO Button Not Appearing
 
-The button only appears if OIDC is both enabled (`OIDC_ENABLED=true`) **and** successfully initialised. Check server logs for OIDC errors. Common causes:
+The button appears when all four required variables resolve to non-empty values (from environment variables, or from Settings in the web UI). Because PatchMon does not contact your IdP until someone actually logs in, an unreachable or misconfigured IdP does **not** hide the button. If the button is missing, the problem is in your configuration values rather than your IdP:
 
-- PatchMon cannot reach the IdP (DNS / firewall issue)
-- Issuer URL is incorrect
-- IdP's `.well-known/openid-configuration` endpoint is not accessible
+- One of the four required variables is empty or misspelled. Check the startup logs for `missing required config` or `partially configured`
+- `OIDC_ENABLED` is not `true` and no OIDC settings have been saved in the web UI
+- The client secret was saved in the web UI but cannot be decrypted, which is logged as `OIDC client secret could not be decrypted; treating OIDC as unconfigured`. This usually means your encryption key changed. Re-enter and save the secret
 
 #### "Authentication Failed" After Redirect
 
-- Verify the **Redirect URI** in your IdP matches `OIDC_REDIRECT_URI` exactly (including trailing slashes)
-- Ensure cookies are not being blocked (OIDC uses httpOnly cookies for session state)
-- Check that your IdP supports PKCE (PatchMon uses S256 code challenge)
+This is the generic error for any failure during the token exchange, after your IdP has sent the user back to PatchMon. **Check the server logs for the line beginning `oidc exchange failed`, which contains the specific reason.** Common causes:
+
+- **Your IdP is signing ID tokens with HS256.** The log contains `unexpected signature algorithm "HS256"`. PatchMon only accepts asymmetrically signed tokens. In Authentik, open the OAuth2/OIDC provider, expand **Advanced protocol settings**, and set **Signing Key** to a certificate such as `authentik Self-signed Certificate`. An empty Signing Key is what causes this
+- The **Redirect URI** in your IdP does not match `OIDC_REDIRECT_URI` exactly (including trailing slashes)
+- Cookies are being blocked (OIDC uses httpOnly cookies for session state)
+- Your IdP does not support PKCE (PatchMon uses the S256 code challenge)
+
+#### "Unable to sign in with this account" After a Successful IdP Login
+
+You signed in at your IdP, it sent you back, and PatchMon refused you. The token exchange worked, so this is not the error above. **Check the server logs**, where one of these lines gives the reason:
+
+| Log line | Meaning | Fix |
+|----------|---------|-----|
+| `oidc login rejected: unverified email claim` | Your IdP sent neither `email_verified` nor `xms_edov`. From 2.1.0 PatchMon requires one of these when it has to identify you by email. Affects Authentik and Microsoft Entra ID out of the box | [The verified email requirement](#the-verified-email-requirement) |
+| `oidc accepting unverified email: trust_unverified_email is enabled` | Not an error. Records that a login was allowed through with an unverified address because the opt-in is on | Expected if you enabled it deliberately. If not, turn it off in **Settings > OIDC** |
+| `oidc user not found and auto-create disabled` | No PatchMon account matches, and `OIDC_AUTO_CREATE_USERS` is off | Create the user in PatchMon first, or set `OIDC_AUTO_CREATE_USERS=true` |
+
+A deactivated account is a different case and shows **"Account disabled"** rather than this message, logged as `oidc login inactive user`.
+
+If your logs show nothing at all, raise `LOG_LEVEL` to `debug` and try again.
+
+#### "Failed to reach the OIDC provider" When Clicking the SSO Button
+
+You get this immediately on clicking the SSO button, before your IdP's login page ever appears. The browser shows it as a bare JSON response rather than a styled error page, and the logs show `oidc auth url failed`.
+
+PatchMon fetches your IdP's discovery document (`.well-known/openid-configuration`) on the first login attempt rather than at startup, so problems reaching or validating that document surface at this point:
+
+- PatchMon cannot reach the IdP from inside the container (DNS, firewall, or network policy)
+- `OIDC_ISSUER_URL` is wrong. It must not include `.well-known/openid-configuration`, which PatchMon appends itself
+- The issuer URL in the discovery document does not match `OIDC_ISSUER_URL`. For Authentik, the trailing slash matters
+- The IdP's TLS certificate is not trusted by the PatchMon container
 
 #### "Session Expired" Error
 
@@ -2319,8 +3068,7 @@ The OIDC login state has a configurable window (default 600 seconds via `OIDC_SE
 
 - Check that the `groups` scope is included in `OIDC_SCOPES`
 - Verify your IdP is including groups in the ID token (not just the access token)
-- Check server logs as they show which groups were received: `OIDC groups found: [...]`
-- If logs show `No groups found in OIDC token`, configure your IdP to include the groups claim
+- If the logs show `oidc no groups in token`, your IdP sent no groups at all. Configure it to include the groups claim. In Authentik this means adding a Scope Mapping that emits `groups`
 - Group matching is case-insensitive, so `patchmon admins` matches `PatchMon Admins`
 
 #### OIDC Banners / Restrictions Appearing When They Shouldn't
@@ -2625,13 +3373,14 @@ You'll see this if OIDC environment variables were set in `.env` before the UI w
 
 #### The "Sign in with Microsoft" button doesn't appear on the login page
 
-The button only shows when OIDC is both **enabled** and **successfully initialised** at runtime. Most common causes:
+The button shows when OIDC is enabled and all four required values are present. PatchMon does not contact Entra until someone actually clicks the button, so an egress firewall blocking `login.microsoftonline.com` will **not** hide it. Most common causes:
 
-- **Issuer URL is wrong:** it must end in `/v2.0`. Double-check for typos in the tenant GUID.
 - **Client Secret is empty or wrong:** the label will say "Not set". Re-enter it and click **Save** next to the secret field.
-- **PatchMon cannot reach `login.microsoftonline.com`:** an egress firewall or proxy is blocking it.
+- **Issuer URL, Client ID or Redirect URI is empty.** Any one of the four being blank disables SSO.
 
-Check the server logs; search for `oidc`:
+If the button appears but login fails, the problem is Entra connectivity or configuration instead. A blocked `login.microsoftonline.com` gives "Failed to reach the OIDC provider" on clicking the button, and a wrong issuer URL (it must end in `/v2.0`, so check the tenant GUID for typos) gives the same.
+
+Check the server logs; search for `oidc`. This needs `ENABLE_LOGGING=true`, which is the default from 2.0.3:
 
 ```bash
 # Docker
@@ -2802,7 +3551,7 @@ curl -s "https://patchmon.example.com/api/v1/hosts/install?os=freebsd" \
 **Windows one-liner** (elevated PowerShell, single line):
 
 ```powershell
-$r = Invoke-WebRequest -Uri "https://patchmon.example.com/api/v1/hosts/install?os=windows" -Headers @{"X-API-ID"="patchmon_a1b2c3d4"; "X-API-KEY"="<64-char-key>"} -UseBasicParsing; $r.Content | Set-Content "$env:TEMP\patchmon-install.ps1" -Encoding UTF8; & "$env:TEMP\patchmon-install.ps1"
+Invoke-WebRequest -Uri "https://patchmon.example.com/api/v1/hosts/install?os=windows" -Headers @{"X-API-ID"="patchmon_a1b2c3d4"; "X-API-KEY"="<64-char-key>"} -UseBasicParsing -OutFile "$env:TEMP\patchmon-install.ps1"; & "$env:TEMP\patchmon-install.ps1"
 ```
 
 Click **Copy command**. The wizard advances to **Step 5: Connection** automatically.
@@ -2852,6 +3601,8 @@ The installer will:
 8. Start the service, which opens the WebSocket and sends the initial system report.
 
 On a clean host with a working network, the whole process takes 10–30 seconds.
+
+> **openSUSE and SLES:** the installer detects `zypper` and completes successfully, but package inventory on SUSE-family hosts is **coming soon**. The agent has no zypper backend yet, so step 8 fails with `unsupported package manager: unknown` and the host stays on "Waiting for initial system report" rather than becoming active. A successful install on these systems does not mean the host is being monitored. Follow and vote for zypper support at [feedback.patchmon.net](https://feedback.patchmon.net/b/feature-requests/posts/post_01kyza53c0fzst214afbr1qn9a).
 
 #### Step 6: Watch the "Waiting for Connection" Screen
 
@@ -3089,7 +3840,7 @@ patchmon-agent [command] [flags]
 | `config set-api` | Configure API credentials and server URL | Yes |
 | `check-version` | Check if an agent update is available | Yes |
 | `update-agent` | Download and install the latest agent version | Yes |
-| `version` | Print the agent version | No |
+| `--version` | Print the agent version. A flag, not a subcommand | No |
 
 #### Global Flags
 
@@ -3381,21 +4132,51 @@ Downloads the latest agent binary from the PatchMon server and performs an in-pl
 
 > **Note:** In normal operation, the agent auto-updates when the server signals a new version. You only need to run `update-agent` manually when auto-update is disabled or if you want to force an immediate update.
 
+##### Windows: Agents Stuck on 2.0.2
+
+On Windows the running `patchmon-agent.exe` is locked by the Service Control Manager, so it cannot be overwritten in place. Agents on 2.1.0 and later handle this by delegating the replacement and the service restart to a detached helper, and self-update works normally.
+
+Agents on 2.0.2 and earlier do not have that helper. Because the agent performing the update is the old binary itself, it cannot upgrade itself and keeps failing with:
+
+```
+Error: failed to replace executable (permission denied): rename
+C:\Program Files\PatchMon\patchmon-agent.exe.new ->
+C:\Program Files\PatchMon\patchmon-agent.exe: Access is denied.
+```
+
+Upgrading a newer server does not clear this, because the fix lives in the agent binary that cannot be installed. Replace the binary once by hand and self-update works from then on:
+
+```powershell
+# 1. Stop the service
+Stop-Service PatchMonAgent
+
+# 2. Replace C:\Program Files\PatchMon\patchmon-agent.exe with the current
+#    Windows agent (amd64 or arm64 to match the host), keeping the same filename
+
+# 3. Start the service
+Start-Service PatchMonAgent
+
+# 4. Confirm the new version
+& 'C:\Program Files\PatchMon\patchmon-agent.exe' --version
+```
+
+Configuration and credentials live in `C:\ProgramData\PatchMon\`, not alongside the binary, so the host keeps its identity and does not need re-enrolling.
+
 ---
 
-#### `version`: Print Version
+#### `--version`: Print Version
 
 ```bash
-patchmon-agent version
-# or
 patchmon-agent --version
 ```
 
 Prints the agent version:
 
 ```
-PatchMon Agent v1.5.0
+patchmon-agent version 2.0.2
 ```
+
+There is no `version` subcommand. `patchmon-agent version` returns `Error: unknown command "version"`.
 
 This does not require root access.
 
@@ -3670,7 +4451,21 @@ patchmon-agent config show
 
 - **Service won't start.** Check the latest application-log entries: `Get-WinEvent -LogName Application -MaxEvents 20 | Where-Object ProviderName -like '*PatchMon*'`. Common causes: missing `credentials.yml`, stale `skip_ssl_verify` setting after a server cert change, firewall blocking outbound 443/WSS.
 - **ARM64 device showing x64 in `Get-ComputerInfo`.** If you ran an older (pre-2.0.0) installer the amd64 binary may be installed and running under x64 emulation. Re-run the latest install script; it detects `PROCESSOR_ARCHITEW6432=ARM64` and swaps in the native `patchmon-agent-windows-arm64.exe`.
-- **SmartScreen / Defender blocking the `.exe`.** The binary is unsigned as of v2.0.0. Use `Unblock-File 'C:\Program Files\PatchMon\patchmon-agent.exe'` or authorise it via Windows Security → Virus & threat protection → Allowed threats. Code-signing is planned for a future release.
+- **SmartScreen / Defender blocking the `.exe`.** The binary is unsigned as of v2.0.0, so real-time protection can quarantine it or hold it open while it scans. Use `Unblock-File 'C:\Program Files\PatchMon\patchmon-agent.exe'` or authorise it via Windows Security → Virus & threat protection → Allowed threats. Code-signing is planned for a future release.
+- **Install fails with `Program 'patchmon-agent.exe' failed to run: Access is denied`.** Same cause as the bullet above, hit during installation rather than afterwards. Since v2.1.1 the installer clears the download marker itself, waits up to 10 seconds for a scanner to release the freshly written binary, and then prints the recovery steps rather than a bare PowerShell stack. If it still fails, work through them in order:
+
+  ```powershell
+  # 1. Was it quarantined?
+  Get-MpThreat | Select-Object -Last 5
+
+  # 2. Clear the download marker
+  Unblock-File 'C:\Program Files\PatchMon\patchmon-agent.exe'
+
+  # 3. Still blocked? Exclude the install directory, then re-run the installer
+  Add-MpPreference -ExclusionPath 'C:\Program Files\PatchMon'
+  ```
+
+  Re-running the install script is safe. On a machine managed by AppLocker or WDAC, an unsigned binary in `C:\Program Files\PatchMon` may be blocked by policy instead, which no exclusion will fix; check with `Get-AppLockerPolicy -Effective -Xml`.
 - **TLS errors against the PatchMon server.** Windows 10 pre-1903 defaults to TLS 1.0/1.1; the installer explicitly enables TLS 1.2 at the session level. For older hosts, update the .NET Framework or set the registry keys documented by Microsoft in the `SchUseStrongCrypto` KB article.
 
 ### Viewing Logs
@@ -3892,7 +4687,7 @@ sudo systemctl restart patchmon-agent  # restart to apply changes
 The agent checks for updates in two ways:
 
 1. **After each report**: the agent queries the server for the latest version and updates automatically if one is available
-2. **Server-initiated**: the server can push an `update_notification` or `update_agent` command via WebSocket
+2. **Server-initiated**: the server can push an `update_agent` command via WebSocket
 
 When an update is detected:
 1. The new binary is downloaded from the PatchMon server
@@ -3970,10 +4765,11 @@ curl -s https://patchmon.example.com/api/v1/hosts/remove | sudo sh
 
 ```powershell
 $ProgressPreference = 'SilentlyContinue'
-irm https://patchmon.example.com/api/v1/hosts/remove?os=windows | iex
+Invoke-WebRequest https://patchmon.example.com/api/v1/hosts/remove?os=windows -UseBasicParsing -OutFile "$env:TEMP\patchmon-remove.ps1"
+powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\patchmon-remove.ps1"
 ```
 
-(Or download first, inspect, then run: `irm ... -OutFile remove.ps1; .\remove.ps1`.)
+`-OutFile` writes the script to disk byte for byte. Piping the response through `iex` makes Windows PowerShell 5.1 decode it as text first, which is a common source of parser errors.
 
 The Linux/FreeBSD script handles everything:
 - Stops the service (systemd, OpenRC, or crontab)
@@ -4097,9 +4893,9 @@ sudo patchmon-agent config show
 sudo patchmon-agent report
 ```
 
-#### Agent Shows "Offline" in PatchMon
+#### Agent's WS Pill is Red in PatchMon
 
-The agent's WebSocket connection is down.
+The agent's WebSocket connection is down and has been disconnected for longer than the `host_down` threshold (default 30 seconds). Note: this pill alone does **not** mean the host is offline — check the **Reporting** pill too. If Reporting is green, the host is alive and pushing reports, but the real-time control channel is unavailable.
 
 ```bash
 # Check if the service is running
@@ -4186,7 +4982,7 @@ sudo journalctl -u patchmon-agent --since "30 minutes ago" --no-pager
 
 ```bash
 # Check current version
-patchmon-agent version
+patchmon-agent --version
 
 # Check if update is available
 sudo patchmon-agent check-version
@@ -4360,7 +5156,8 @@ curl -s https://patchmon.example.com/api/v1/hosts/remove | sudo REMOVE_BACKUPS=1
 
 ```powershell
 $ProgressPreference = 'SilentlyContinue'
-irm https://patchmon.example.com/api/v1/hosts/remove?os=windows | iex
+Invoke-WebRequest https://patchmon.example.com/api/v1/hosts/remove?os=windows -UseBasicParsing -OutFile "$env:TEMP\patchmon-remove.ps1"
+powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\patchmon-remove.ps1"
 ```
 
 Or download first, inspect, then run:
@@ -4602,6 +5399,23 @@ On Linux, these files are owned by root and set to `600` permissions (read/write
 | **Credentials** | Linux: `/etc/patchmon/credentials.yml`  Windows: `C:\ProgramData\PatchMon\credentials.yml` | API ID and API Key for host authentication |
 | **Log File** | Linux: `/etc/patchmon/logs/patchmon-agent.log`  Windows: `C:\ProgramData\PatchMon\patchmon-agent.log` | Agent log output |
 | **Cron File** | `/etc/cron.d/patchmon-agent` | Scheduled reporting (fallback for non-systemd systems) |
+
+#### Quoting Windows paths
+
+YAML treats a backslash inside **double** quotes as the start of an escape sequence, so a double-quoted Windows path is either rejected or silently altered. `"C:\ProgramData\PatchMon\credentials.yml"` fails to parse, because `\c` is not a valid escape. `"C:\ProgramData\PatchMon\Notes"` is worse: it parses, but `\N` is a valid escape and becomes a control character, so the path you get is not the path you wrote.
+
+Use single quotes, or no quotes at all, for any value containing a backslash:
+
+```yaml
+credentials_file: 'C:\ProgramData\PatchMon\credentials.yml'
+log_file: C:\ProgramData\PatchMon\patchmon-agent.log
+```
+
+If `config.yml` cannot be parsed, the agent **service** refuses to start rather than falling back to its built-in defaults, and writes the parse error to the agent log. This is deliberate: an agent running on defaults has no server URL, so it reports nothing, and its first save would overwrite your file with those defaults. One-off commands such as `report` and `ping`, including the cron fallback on hosts without systemd, still run, but they will fail against that empty server URL.
+
+The same applies to a `config.yml` that is present but empty, which is what a write interrupted by a full disk or a power cut leaves behind.
+
+To recover, repair the file, or run `patchmon-agent config set-api <API_ID> <API_KEY> <SERVER_URL>` (`patchmon-agent.exe` on Windows) to write a fresh one. Note that this writes a complete new file, so any other settings the old one held are lost.
 
 ### Full Configuration Reference
 
@@ -4915,7 +5729,7 @@ For these reasons, `rdp-proxy-enabled` **cannot be toggled from the PatchMon UI 
 
 ##### Prerequisites
 
-- The PatchMon **server** must have `guacd` available (the default Docker Compose stack includes `guacamole/guacd:1.5.5` as a sidecar).
+- The PatchMon **server** must have `guacd` available (the default Docker Compose stack includes `guacamole/guacd:1.6.0` as a sidecar).
 - The **Windows host** must have Remote Desktop enabled.
 - The PatchMon agent must be installed on the Windows host.
 - PatchMon only needs RDP listening on `localhost:3389` on the Windows host. You do not need to expose RDP publicly.
@@ -5019,7 +5833,7 @@ The agent updates `config.yml` automatically in several scenarios. These are in-
 | **Agent startup** | `update_interval`, `report_offset` | Agent fetches the current interval from the server. If it differs from config, the agent updates config.yml. |
 | **Agent startup** | `integrations.docker`, `integrations.compliance` | Agent fetches integration status from the server. If it differs from config, the agent updates config.yml. |
 | **WebSocket: `settings_update`** | `update_interval`, `report_offset` | Server pushes a new interval. Agent saves it and recalculates the report offset. |
-| **WebSocket: `integration_toggle`** | `integrations.*` (except SSH/RDP proxy) | Server pushes a toggle for Docker or compliance. Agent saves the change and restarts the relevant service. |
+| **WebSocket: `apply_config`** | `integrations.docker`, `integrations.compliance.enabled`, `integrations.compliance.openscap_enabled`, `integrations.compliance.docker_bench_enabled` | Toggling an integration in the UI is staged, not sent. The server holds it as a pending change until you press **Apply** on the host detail page, then pushes the whole integration block in one message. The agent saves it to config.yml and restarts itself. |
 
 #### Agent-Calculated Updates
 
@@ -5227,16 +6041,18 @@ A stock `docker-compose.yml` deployment runs four containers on the `patchmon-in
 
 | Service | Image | Port (exposed) | Depends on |
 |---------|-------|----------------|-----------|
-| `server` | `ghcr.io/patchmon/patchmon-server:latest` | `3000:3000` | `database`, `redis`, `guacd` |
+| `server` | `ghcr.io/patchmon/patchmon-server:latest` | `${PORT:-3000}:${PORT:-3000}` | `database`, `redis`, `guacd` |
 | `database` | `postgres:17-alpine` | not exposed | n/a |
 | `redis` | `redis:7-alpine` | not exposed | n/a |
-| `guacd` | `guacamole/guacd:1.5.5` | not exposed | n/a |
+| `guacd` | `guacamole/guacd:1.6.0` | not exposed | n/a |
 
-The `server` container embeds the Go HTTP server, the frontend, the queue worker, and the migration runner. No separate migration job is needed. In front of it you typically run Nginx / Traefik / Caddy / Cloudflare that terminates TLS and forwards to `server:3000`.
+The `server` container embeds the Go HTTP server, the frontend, the queue worker, and the migration runner. No separate migration job is needed. In front of it you typically run Nginx / Traefik / Caddy / Cloudflare that terminates TLS and forwards to `server:3000`, or to whichever port you set `PORT` to.
 
 ### Gathering Diagnostic Info
 
 Before attempting any fix, capture the current state of the stack. These commands are safe and non-destructive.
+
+> **If the server logs look empty, check `ENABLE_LOGGING`.** It defaults to `true` from 2.0.3, but an explicit `false` silences the server completely, and `false` was the default on 2.0.2 and earlier. With it off, `docker compose logs server` shows container lifecycle output and nothing from PatchMon itself, so do not read anything into the silence.
 
 ```bash
 # In the directory where your docker-compose.yml lives
@@ -5335,48 +6151,107 @@ or
 
 PatchMon uses `golang-migrate` with embedded SQL files. On every server start, the server runs pending migrations before opening its HTTP listener. A **dirty** state means a previous migration started and crashed mid-way. The `schema_migrations` table records the version but the `dirty` column is `true`.
 
-#### Fix: Stuck on Dirty
+From v2.1.1 onwards the server prints the recovery SQL for you, naming the database and the exact statement to run, so in most cases you can follow that block instead of working it out by hand:
 
-PatchMon ships a standalone `migrate` binary alongside the server binary. Use it to inspect and unstick the migration state.
-
-```bash
-# 1. Stop the server so nothing is writing
-docker compose stop server
-
-# 2. Open a shell inside a fresh server container (database keeps running)
-docker compose run --rm --entrypoint /bin/sh server
-
-# Inside the container:
-migrate version
-# prints: Version: 42 (dirty: true)
-
-# 3. Review what migration 42 did -- read the SQL file if you have the source
-#    (in the image, migrations are embedded -- you may need to check the repo)
-
-# 4. Manually fix the partial change in Postgres if needed, then force-reset:
-migrate force 42           # tells migrate the schema is at 42, not dirty
-migrate up                 # re-run from 42 onwards (idempotent if SQL is safe)
-
-exit
-docker compose up -d server
+```
+[migrate] Migration 42 did not complete on database "patchmon_db", so it is marked dirty and
+[migrate] no further migrations will run against it until that marker is cleared.
+...
+[migrate]   UPDATE schema_migrations SET version = 41, dirty = false;
 ```
 
-> **Only use `migrate force`** after you've verified the schema is actually consistent with version N. Forcing onto an inconsistent schema hides the problem until the next migration.
+One exception: if the dirty version is `1`, there is no earlier version to rewind to. Run `DELETE FROM schema_migrations;` instead, which clears the migration marker only and touches no application data, then let the server re-run migrations from the beginning. The server prints this variant automatically.
+
+#### Fix: Stuck on Dirty
+
+When the server logs report `Dirty database version N. Fix and force version.`, the simplest path is to connect directly to Postgres, confirm whether the migration's actual work landed, and either mark the version clean or rewind one step so the migration re-runs. PatchMon's migrations are written to be idempotent, so re-running a clean migration is safe.
+
+The example below uses the v2.0.2 dirty-30 case (migration `000030_v1-5-0_compliance_scan_dedup`, which adds the partial unique index `idx_compliance_scans_host_profile_completed`). Substitute the version number from your own log line.
+
+##### 1. Connect to the database
+
+**Community script (Proxmox LXC, bare-metal Postgres):**
+
+```bash
+sudo -u postgres psql -d patchmon_db
+```
+
+**Docker:**
+
+```bash
+docker compose exec database psql -U patchmon_user -d patchmon_db
+```
+
+(Use whatever `POSTGRES_USER` / `POSTGRES_DB` you have set in `.env`. The defaults are `patchmon_user` / `patchmon_db`. Note the compose service is named `database`, not `postgres`.)
+
+##### 2. Check what actually migrated
+
+```sql
+-- Current migration state. Should show version=30, dirty=t
+SELECT * FROM schema_migrations;
+
+-- Did migration 30 finish creating its index?
+SELECT indexname FROM pg_indexes
+WHERE indexname = 'idx_compliance_scans_host_profile_completed';
+```
+
+##### 3. Pick one of these
+
+**A. Index exists.** Migration 30's work is already done. This is the most common case, and the failure was usually a connection blip after the DDL had already committed. Mark the row clean and let migrations continue from 31:
+
+```sql
+UPDATE schema_migrations SET dirty = false WHERE version = 30;
+```
+
+**B. Index does NOT exist.** Migration 30 died before the `CREATE INDEX` ran. Roll the marker back to 29 and let PatchMon re-run 30 cleanly on the next boot:
+
+```sql
+UPDATE schema_migrations SET dirty = false, version = 29;
+```
+
+##### 4. Restart PatchMon
+
+After updating `schema_migrations`, exit psql and restart:
+
+- **Community script (LXC):** reboot the container, or `sudo systemctl restart patchmon-server` and tail the log with `sudo journalctl -u patchmon-server -f`.
+- **Docker:** `docker compose down && docker compose up -d`, then `docker compose logs -f server`.
+
+You should see migrations advance through 31, 32, 33, then `server starting`.
+
+#### Fix: Stuck on Dirty 42 After Upgrading to v2.1.0
+
+v2.1.0 shipped a migration (`000042`) that failed on a small number of installs with:
+
+```
+cannot set path in scalar (22023)
+```
+
+This happens when the `host_down` row in `alert_config` stores its `metadata` as the JSON value `null` rather than an empty object, which the migration did not allow for. The migration rolls back cleanly when it fails, so nothing is half-applied, but the database is left dirty at 42 and the server crash-loops.
+
+**Upgrade to v2.1.1 or later first.** The migration is fixed there and handles that value correctly. Rewinding on v2.1.0 will just fail the same way on the next boot.
+
+Once you are on the fixed image, connect to the database as shown above and rewind one step:
+
+```sql
+UPDATE schema_migrations SET version = 41, dirty = false;
+```
+
+Then restart. Migration 42 re-runs and succeeds.
+
+> **Only mark a migration clean** after you've verified the schema is actually consistent. Forcing onto an inconsistent schema hides the problem until the next migration.
 
 #### Fix: Run Migrations Manually
 
-The server runs migrations automatically at startup, so you normally never need to run them by hand. If you do (e.g. scripted rollout, debugging):
+The server runs migrations automatically at startup, so you normally never need to run them by hand.
 
-```bash
-# Up (apply all pending)
-docker compose run --rm --entrypoint migrate server up
+The Docker image does not ship a separate migration tool. Migrations are embedded in the server binary and there is no `migrate` command inside the container, so drive them by restarting the server and reading its logs, and inspect or adjust state with SQL as shown above:
 
-# Down one step (rollback the most recent migration)
-docker compose run --rm --entrypoint migrate server down
-
-# Show current version
-docker compose run --rm --entrypoint migrate server version
+```sql
+-- Show current version
+SELECT * FROM schema_migrations;
 ```
+
+If you are building from source, `make build-migrate` in `server-source-code/` produces a standalone `migrate` CLI supporting `up`, `down`, `force VERSION`, and `version`. It needs `DATABASE_URL` set and is not part of any released image.
 
 ### 3. "CORS Error" in the Browser
 
@@ -5425,7 +6300,7 @@ You can also set `CORS_ORIGIN` in **Settings → Server → CORS_ORIGIN** via th
 
 #### Symptoms
 
-- Agents check in via HTTP reports (host turns "Active") but show **Offline** in the Hosts list.
+- Agents check in via HTTP reports (the **Reporting** pill is green) but the **WS** pill is red in the Hosts list.
 - Agent log shows repeated `websocket: bad handshake` or reconnection loops.
 - The "Waiting for Connection" screen after enrolment gets past **Waiting** to **Connected** slowly or never.
 
@@ -5590,8 +6465,18 @@ PatchMon caps JSON request bodies to protect against memory exhaustion. Two sepa
 |---------|---------|---------------|
 | `JSON_BODY_LIMIT` | `5` (MB) | Every non-agent JSON endpoint (UI API, settings, etc.). |
 | `AGENT_UPDATE_BODY_LIMIT` | `5` (MB) | `POST /api/v1/hosts/update` only: the agent report payload. |
+| `COMPLIANCE_BODY_LIMIT` | `20` (MB) | `POST /api/v1/compliance/scans` only: OpenSCAP and Docker Bench results. |
+| `AGENT_PING_BODY_LIMIT` | `8` (KB) | `POST /api/v1/hosts/ping` only. |
 
-Both are integers **in megabytes**. A host with thousands of packages + Docker + compliance data can breach the 5 MB default; bump this env var on those installations.
+An unsuffixed value is read as **megabytes**, except `AGENT_PING_BODY_LIMIT`, where it is read as kilobytes. You can also write the unit explicitly, e.g. `20mb`.
+
+No limit can be set above **32 MB**. A larger value is reduced to 32 MB rather than rejected, so an existing setting keeps working after an upgrade. A value that is not a positive number (blank, zero, negative, or not a size at all) is ignored and the default applies. The 32 MB ceiling exists because the server runs under a 256 MB memory limit and a single request is several times its own size once decoded.
+
+A host with thousands of packages + Docker can breach the 5 MB agent report default. Compliance is the more common cause of a breach: a 900-rule OpenSCAP profile carries roughly 14 KB of description and remediation text per rule, so results comfortably exceed 10 MB, and one submission can carry an OpenSCAP scan and a Docker Bench scan together. When the compliance limit is the one being hit, the agent log names it:
+
+```
+compliance data request failed with status 413: Scan results exceed the 20mb COMPLIANCE_BODY_LIMIT...
+```
 
 #### Fix
 
@@ -5600,7 +6485,10 @@ Raise the limits in `.env`:
 ```
 JSON_BODY_LIMIT=10
 AGENT_UPDATE_BODY_LIMIT=8
+COMPLIANCE_BODY_LIMIT=32
 ```
+
+`32` is the highest value accepted. All four are also editable from **Settings > Environment** in the web UI, which takes effect without a restart.
 
 Restart:
 
@@ -5608,10 +6496,10 @@ Restart:
 docker compose restart server
 ```
 
-If you are fronting PatchMon with Nginx, also raise its limit, otherwise Nginx 413s before the server sees the body:
+If you are fronting PatchMon with Nginx, also raise its limit, otherwise Nginx 413s before the server sees the body. It must be at least as large as the biggest PatchMon limit:
 
 ```nginx
-client_max_body_size 16m;
+client_max_body_size 40m;
 ```
 
 ### 8. Slow Queries / Database Pressure
@@ -5747,7 +6635,7 @@ Log in with local credentials, fix the OIDC config, and flip it back.
 |--------|-----------------|
 | `DATABASE_URL`, `REDIS_*`, `JWT_SECRET`, `SESSION_SECRET` | `docker compose restart server` |
 | `CORS_ORIGIN`, `TRUST_PROXY`, `ENABLE_HSTS` | `docker compose restart server` |
-| `JSON_BODY_LIMIT`, `AGENT_UPDATE_BODY_LIMIT` | `docker compose restart server` |
+| `JSON_BODY_LIMIT`, `AGENT_UPDATE_BODY_LIMIT`, `COMPLIANCE_BODY_LIMIT`, `AGENT_PING_BODY_LIMIT` | `docker compose restart server` |
 | `OIDC_*` | `docker compose restart server` |
 | Postgres config change (custom `postgresql.conf`) | `docker compose restart database` (then wait for health) |
 | Redis password change | `docker compose up -d redis server` (both) |
@@ -5798,7 +6686,8 @@ The `diagnostics` output includes system info, configuration status, network rea
 | Symptom | Likely cause | Jump to |
 |---------|--------------|---------|
 | Host shows **Pending** in the UI, never flips to Active | Agent not running, or first report never delivered | [Host shows Pending](#host-shows-pending) |
-| Host shows **Offline** in the UI | WebSocket is down (service crashed or network dropped) | [Host shows Offline](#host-shows-offline) |
+| Host's **WS** pill is red in the UI | WebSocket is down past the `host_down` threshold (service crashed or network dropped) | [Host WS pill is red](#host-ws-pill-is-red) |
+| Host's **Reporting** pill is red ("Stale") | Agent hasn't pushed reports *and* WebSocket is disconnected — host may be down or unreachable | [Host Reporting pill is Stale](#host-reporting-pill-is-stale) |
 | Agent **won't start** | Bad `config.yml`, bad credentials, port/permission issue | [Agent won't start](#agent-wont-start) |
 | Agent **can't reach server**: DNS failure | DNS resolution broken on host | [Cannot reach server: DNS](#cannot-reach-server--dns) |
 | Agent **can't reach server**: TLS / cert | CA not trusted or certificate invalid | [Cannot reach server: TLS](#cannot-reach-server--tls) |
@@ -5830,9 +6719,9 @@ sudo patchmon-agent report      # force an immediate report
 
 **Full details:** [Managing the PatchMon Agent: Agent Shows "Pending" in PatchMon](#agent-shows-pending-in-patchmon).
 
-### Host Shows Offline
+### Host WS Pill is Red
 
-The host sent at least one report in the past, but its WebSocket is currently disconnected.
+The host sent at least one report in the past, but its WebSocket has been disconnected for longer than the `host_down` threshold (default 30 seconds, configurable in **Reporting → Alert Lifecycle**). The host may still be alive — check the **Reporting** pill: if it's green, the agent is pushing HTTP reports normally and only the real-time control channel is unavailable.
 
 **Quick checks:**
 
@@ -5846,9 +6735,34 @@ sudo journalctl -u patchmon-agent -n 50 --no-pager
 - **Service stopped or crashed**: `sudo systemctl restart patchmon-agent` and watch the logs for the underlying error.
 - **Reverse proxy not forwarding WebSocket upgrade headers**: see [Server Troubleshooting: Agent Can't Connect Over WebSocket](#server-troubleshooting).
 - **NAT / load balancer timing out idle connections**: raise the proxy's idle timeout to at least 65 s. The agent sends WebSocket pings every 30 s.
-- **Temporary network blip**: the agent auto-reconnects with exponential backoff. Wait 60 s and re-check.
+- **Temporary network blip**: the agent auto-reconnects with exponential backoff. Wait 60 s and re-check. The WS pill goes amber for the grace window, then red.
 
-**Full details:** [Managing the PatchMon Agent: Agent Shows "Offline" in PatchMon](#agent-shows-offline-in-patchmon).
+**Full details:** [Managing the PatchMon Agent: Agent's WS Pill is Red in PatchMon](#agents-ws-pill-is-red-in-patchmon).
+
+### Host Reporting Pill is Stale
+
+The agent hasn't pushed an HTTP report within its update interval **and** the WebSocket is also disconnected. This is the strongest indicator that the host is genuinely unreachable (as opposed to just losing the real-time channel).
+
+**Quick checks:**
+
+```bash
+# From the affected host (if you can reach it):
+sudo systemctl status patchmon-agent
+sudo patchmon-agent ping
+sudo patchmon-agent report       # force an immediate report
+
+# From another host:
+ping <host-ip>
+ssh <host>                       # confirm host is alive
+```
+
+**Common causes:**
+
+- **Host is genuinely down** (powered off, kernel panic, hardware fault). Check console / hypervisor.
+- **Network partition** between the host and the PatchMon server. Verify outbound HTTPS to the server URL still works.
+- **Agent service stopped without WebSocket disconnect notice** (e.g. host was suspended). `sudo systemctl restart patchmon-agent` once it's reachable.
+
+If the host *is* online but only the **Reporting** pill is red while WS is also red, run `sudo patchmon-agent report` to push a fresh report and the pill should flip back to green.
 
 ### Agent Won't Start
 
@@ -5966,7 +6880,7 @@ The agent log contains `update failed`, `hash mismatch`, `binary verification fa
 **Diagnose:**
 
 ```bash
-sudo patchmon-agent version
+sudo patchmon-agent --version
 sudo patchmon-agent check-version
 ls -la /etc/patchmon/.last_update_timestamp
 ls -la /usr/local/bin/patchmon-agent.backup.*
@@ -6113,7 +7027,7 @@ sudo journalctl -u patchmon-agent --since "1 hour ago" --no-pager \
 sudo tail -n 200 /etc/patchmon/logs/patchmon-agent.log \
   > /tmp/patchmon-log.txt 2>&1
 sudo patchmon-agent config show > /tmp/patchmon-config.txt 2>&1
-sudo patchmon-agent version >> /tmp/patchmon-config.txt
+sudo patchmon-agent --version >> /tmp/patchmon-config.txt
 uname -a >> /tmp/patchmon-config.txt
 ```
 
@@ -6173,3 +7087,138 @@ This is caused by a stale `VITE_API_URL` variable in the frontend environment fi
 ### Not seeing the fix?
 
 This issue is resolved in versions ≥ 1.4.2. If you're still on an older version, upgrading to the latest is the preferred fix.
+
+---
+
+## Chapter 15: Verifying Release Artefacts (SBOM and Provenance) {#verifying-release-artefacts}
+
+### Overview
+
+Every PatchMon release publishes a software bill of materials (SBOM) and a signed build provenance attestation. Together these let you answer two questions before you deploy:
+
+- **What is inside this build?** The SBOM lists the components and their versions.
+- **Where did this build come from?** The provenance attestation is a signed statement, produced inside the GitHub Actions run that built the artefact, binding the artefact to the exact source commit and workflow that produced it.
+
+The SBOM is required of us under the EU Cyber Resilience Act (Annex I, Part II). The provenance attestation is not mandated by that regulation, but it is what most supply chain reviews ask for, so we publish both.
+
+You do not need any of this to run PatchMon. It matters if you are subject to supply chain policy, are completing a security questionnaire, or simply want to confirm that the image you pulled is the one we built.
+
+### What is published
+
+| Artefact | Where |
+|----------|-------|
+| Build provenance for the server image | Attached to the image in GHCR, and in the GitHub attestation store |
+| SBOM for the server image | Attached to the image in GHCR, and in the GitHub attestation store |
+| Build provenance for release binaries | GitHub attestation store |
+| `SHA256SUMS` | Release assets on the GitHub release page |
+| `sbom-source.cdx.json` | Release assets on the GitHub release page |
+
+SBOMs are CycloneDX JSON.
+
+### Prerequisites
+
+A GitHub CLI recent enough to have the `gh attestation` command set:
+
+```bash
+gh attestation verify --help
+```
+
+If that command is not recognised, update the CLI.
+
+Verification does not require you to be signed in to anything, and does not require the image to be pulled first.
+
+### Verifying the container image
+
+```bash
+gh attestation verify \
+  oci://ghcr.io/patchmon/patchmon-server:2.0.3 \
+  --repo PatchMon/PatchMon
+```
+
+Replace `2.0.3` with the version you are deploying. A successful run prints the source commit and the workflow that built the image. A failure means the image was not built by our pipeline from our repository, and you should not deploy it.
+
+To pin by digest instead of tag, which is what we recommend in production because a tag can be moved:
+
+```bash
+gh attestation verify \
+  oci://ghcr.io/patchmon/patchmon-server@sha256:<digest> \
+  --repo PatchMon/PatchMon
+```
+
+### Verifying release binaries
+
+Download the binary you need plus `SHA256SUMS` from the release page, then:
+
+```bash
+# Confirm the download is intact
+sha256sum -c SHA256SUMS --ignore-missing
+
+# Confirm it came from our pipeline
+gh attestation verify ./patchmon-agent-linux-amd64 --repo PatchMon/PatchMon
+```
+
+The checksum check catches a truncated or corrupted download. The attestation check is the one that proves origin, so run both.
+
+### Getting the SBOM
+
+The simplest route is the release page: download `sbom-source.cdx.json` from the release assets.
+
+To pull the image SBOM out of the registry instead:
+
+```bash
+gh attestation download \
+  oci://ghcr.io/patchmon/patchmon-server:2.0.3 \
+  --repo PatchMon/PatchMon
+```
+
+That writes a Sigstore bundle. The SBOM is the `predicate` field inside the signed payload:
+
+```bash
+jq -r '.dsseEnvelope.payload' <bundle-file> | base64 -d | jq '.predicate' > sbom.cdx.json
+```
+
+Both SBOMs are also kept as build artefacts on the Actions run that produced the release, under the name `sbom-server-<version>`, for as long as GitHub retains them.
+
+### Why there are two SBOMs
+
+You need both to see the whole picture, because neither one is complete on its own.
+
+- **`sbom-image.cdx.json`** is generated by scanning the built container image. It covers the Alpine base packages and the Go module graph of the server binary and the bundled agent binaries.
+- **`sbom-source.cdx.json`** is generated by scanning the source tree. It covers the npm dependency tree.
+
+The npm tree does not appear in the image scan. The web interface is bundled by Vite and then compiled directly into the Go binary, so by the time it reaches the image there is no npm metadata left for a scanner to find. Scanning the source tree is the only way to enumerate those dependencies.
+
+One component is in neither file: the SCAP security policy content used for compliance scanning is downloaded from the ComplianceAsCode project during the image build. It is data rather than a package, so it carries no metadata for a scanner to catalogue. The version is fixed per release by the `SSG_VERSION` build argument.
+
+### Verifying an image you have already pulled
+
+Verification works against a digest, so you can check an image that is already on the host:
+
+```bash
+docker image inspect ghcr.io/patchmon/patchmon-server:2.0.3 \
+  --format '{{index .RepoDigests 0}}'
+```
+
+Feed the resulting `name@sha256:...` value to `gh attestation verify` with the `oci://` prefix.
+
+### Troubleshooting
+
+**"no attestations found"**
+
+Attestations start with the release in which this chapter first appeared. Earlier releases have none, and this is expected rather than a sign of tampering. Check the release notes for the first version that carries them.
+
+The `edge` tag is built from the main branch and does carry attestations, but the tag moves with every merge, so verify `edge` by digest rather than by tag.
+
+**Verification fails on an image from a mirror or a private registry**
+
+The attestation is bound to the image digest, not to its location, so a straight copy still verifies. A mirror that re-compresses or rebuilds layers changes the digest and verification will correctly fail. Verify against GHCR, then copy by digest.
+
+**Verifying a copy held in your own registry**
+
+Attestations are recorded in the GitHub attestation store as well as being attached to the image, so verification does not depend on where the image is stored. A copy mirrored into your own registry verifies normally, provided it was copied by digest. Point `gh attestation verify` at your own reference with the `oci://` prefix.
+
+### See also
+
+- Chapter 1: Installing PatchMon Server on Docker
+- Chapter 8: Installing the PatchMon Agent
+- Our security policy and vulnerability reporting process: `SECURITY.md` in the repository

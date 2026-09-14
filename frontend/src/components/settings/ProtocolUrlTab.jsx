@@ -32,19 +32,18 @@ const ProtocolUrlTab = () => {
 		staleTime: 0, // Always fetch fresh data
 	});
 
-	// Update form data when settings are loaded
+	// Hydrate the form from the server, but never over unsaved edits: any
+	// refetch (returning to the tab, a sibling tab's save, a reconnect) would
+	// otherwise discard whatever the user had typed.
 	useEffect(() => {
-		if (settings) {
-			const newFormData = {
-				serverProtocol: settings.server_protocol || "http",
-				serverHost: settings.server_host || "localhost",
-				serverPort: settings.server_port || 3001,
-				ignoreSslSelfSigned: settings.ignore_ssl_self_signed === true,
-			};
-			setFormData(newFormData);
-			setIsDirty(false);
-		}
-	}, [settings]);
+		if (!settings || isDirty) return;
+		setFormData({
+			serverProtocol: settings.server_protocol || "http",
+			serverHost: settings.server_host || "localhost",
+			serverPort: settings.server_port || 3001,
+			ignoreSslSelfSigned: settings.ignore_ssl_self_signed === true,
+		});
+	}, [settings, isDirty]);
 
 	// Update settings mutation
 	const updateSettingsMutation = useMutation({
@@ -66,8 +65,8 @@ const ProtocolUrlTab = () => {
 			if (data?.settings) {
 				queryClient.setQueryData(["settings"], data.settings);
 			}
-			queryClient.invalidateQueries(["settings"]);
-			queryClient.invalidateQueries(["serverUrl"]);
+			queryClient.invalidateQueries({ queryKey: ["settings"] });
+			queryClient.invalidateQueries({ queryKey: ["serverUrl"] });
 			setIsDirty(false);
 			setErrors({});
 		},

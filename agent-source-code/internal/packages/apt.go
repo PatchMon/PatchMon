@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -44,7 +44,7 @@ func (m *APTManager) detectPackageManager() string {
 }
 
 // GetPackages gets package information for APT-based systems
-func (m *APTManager) GetPackages() []models.Package {
+func (m *APTManager) GetPackages() ([]models.Package, error) {
 	// Determine package manager
 	packageManager := m.detectPackageManager()
 
@@ -53,7 +53,8 @@ func (m *APTManager) GetPackages() []models.Package {
 		(m.cacheRefresh.Mode == "if_stale" && m.isCacheStale(m.cacheRefresh.MaxAge))
 	if shouldRefresh {
 		m.logger.WithField("mode", m.cacheRefresh.Mode).Debug("Refreshing package cache")
-		updateCmd := exec.Command(packageManager, "update", "-qq")
+		updateCmd, cancel := boundedCommand(networkCollectorTimeout, packageManager, "update", "-qq")
+		defer cancel()
 		if err := updateCmd.Run(); err != nil {
 			m.logger.WithError(err).WithField("manager", packageManager).Warn("Failed to update package lists")
 		}
@@ -67,6 +68,8 @@ func (m *APTManager) GetPackages() []models.Package {
 	var (
 		installedPackages  map[string]models.Package
 		upgradablePackages []models.Package
+		installedErr       error
+		upgradableErr      error
 	)
 
 	var wg sync.WaitGroup
@@ -75,12 +78,12 @@ func (m *APTManager) GetPackages() []models.Package {
 	go func() {
 		defer wg.Done()
 		m.logger.Debug("Getting installed packages...")
-		installedCmd := exec.Command("dpkg-query", "-W", "-f", "${Package} ${Version} ${Description}\n")
+		installedCmd, cancel := boundedCommand(collectorTimeout, "dpkg-query", "-W", "-f", "${Package} ${Version} ${Description}\n")
+		defer cancel()
 		installedCmd.Env = append(os.Environ(), "LANG=C")
 		out, err := installedCmd.Output()
 		if err != nil {
-			m.logger.WithError(err).Warn("Failed to get installed packages")
-			installedPackages = make(map[string]models.Package)
+			installedErr = commandError("dpkg-query", err)
 			return
 		}
 		installedPackages = m.parseInstalledPackages(string(out))
@@ -90,12 +93,12 @@ func (m *APTManager) GetPackages() []models.Package {
 	go func() {
 		defer wg.Done()
 		m.logger.Debug("Getting upgradable packages...")
-		upgradeCmd := exec.Command(packageManager, "-s", "-o", "Debug::NoLocking=1", "upgrade")
+		upgradeCmd, cancel := boundedCommand(collectorTimeout, packageManager, "-s", "-o", "Debug::NoLocking=1", "upgrade")
+		defer cancel()
 		upgradeCmd.Env = append(os.Environ(), "LANG=C")
 		out, err := upgradeCmd.Output()
 		if err != nil {
-			m.logger.WithError(err).Warn("Failed to get upgrade simulation")
-			upgradablePackages = []models.Package{}
+			upgradableErr = commandError(packageManager+" upgrade simulation", err)
 			return
 		}
 		upgradablePackages = m.parseAPTUpgrade(string(out))
@@ -104,13 +107,22 @@ func (m *APTManager) GetPackages() []models.Package {
 
 	wg.Wait()
 
+	// An empty result reads as "fully patched" with no alert, because the report
+	// itself succeeded. Fail the whole report instead.
+	if installedErr != nil {
+		return nil, installedErr
+	}
+	if upgradableErr != nil {
+		return nil, upgradableErr
+	}
+
 	// Merge and deduplicate packages (pass full installed packages to preserve descriptions)
 	packages := CombinePackageData(installedPackages, upgradablePackages)
 
 	// Enrich packages with repository attribution
 	m.enrichWithRepoAttribution(packages)
 
-	return packages
+	return packages, nil
 }
 
 // enrichWithRepoAttribution populates SourceRepository for each package by running
@@ -187,7 +199,8 @@ func (m *APTManager) enrichWithRepoAttribution(packages []models.Package) {
 					}()
 					batch := names[br.start:br.end]
 					args := append([]string{"policy"}, batch...)
-					cmd := exec.Command("apt-cache", args...)
+					cmd, cancel := boundedCommand(collectorTimeout, "apt-cache", args...)
+					defer cancel()
 					cmd.Env = env
 					output, err := cmd.Output()
 					if err != nil {
@@ -363,6 +376,21 @@ func (m *APTManager) isCacheStale(maxAgeMinutes int) bool {
 	return true
 }
 
+// aptInstRe matches one "Inst" line of an apt/apt-get upgrade simulation:
+//
+//	Inst linux-generic [6.8.0-136.136] (6.8.0-137.137 Ubuntu:24.04/noble-updates [amd64]) []
+//	Inst linux-image-6.8.0-137-generic (6.8.0-137.137 Ubuntu:24.04/noble-updates [amd64])
+//
+// The [current] group is optional and its position is what identifies it. apt
+// omits it for packages being pulled in fresh (a new kernel ABI, say), and the
+// trailing architecture field is bracketed too, so scanning for "the first
+// [...] field" picks up [amd64] on those lines and reports it as the installed
+// version. Some lines also end in a bare [], which a scan happily absorbs.
+// The trailing group is the origin list, which is the only part that may be
+// searched for the security pocket: the package name is on the same line and
+// 43 packages in Debian main contain "security" in their name.
+var aptInstRe = regexp.MustCompile(`^Inst\s+(\S+)\s+(?:\[([^\]]*)\]\s+)?\(([^\s)]+)([^)]*)`)
+
 // parseAPTUpgrade parses apt/apt-get upgrade simulation output
 func (m *APTManager) parseAPTUpgrade(output string) []models.Package {
 	var packages []models.Package
@@ -376,57 +404,29 @@ func (m *APTManager) parseAPTUpgrade(output string) []models.Package {
 			continue
 		}
 
-		// Parse the line: Inst package [current_version] (new_version source)
-		fields := slices.Collect(strings.FieldsSeq(line))
-		if len(fields) < 4 {
-			m.logger.WithField("line", line).Debug("Skipping 'Inst' line due to insufficient fields")
+		match := aptInstRe.FindStringSubmatch(line)
+		if match == nil {
+			m.logger.WithField("line", line).Debug("Skipping unparseable 'Inst' line")
+			continue
+		}
+		packageName, currentVersion, availableVersion := match[1], match[2], match[3]
+		origins := match[4]
+
+		// No current version means apt is installing this package rather than
+		// upgrading it, so there is nothing on the host to be out of date.
+		// Reporting it would inflate the outdated count past what
+		// `apt list --upgradable` shows.
+		if currentVersion == "" || availableVersion == "" {
 			continue
 		}
 
-		packageName := fields[1]
-
-		// Extract current version (in brackets)
-		var currentVersion string
-		for i, field := range fields {
-			if strings.HasPrefix(field, "[") && strings.HasSuffix(field, "]") {
-				currentVersion = strings.Trim(field, "[]")
-				break
-			} else if after, found := strings.CutPrefix(field, "["); found {
-				// Multi-word version, continue until we find the closing bracket
-				versionParts := []string{after}
-				for j := i + 1; j < len(fields); j++ {
-					if strings.HasSuffix(fields[j], "]") {
-						versionParts = append(versionParts, strings.TrimSuffix(fields[j], "]"))
-						break
-					}
-					versionParts = append(versionParts, fields[j])
-				}
-				currentVersion = strings.Join(versionParts, " ")
-				break
-			}
-		}
-
-		// Extract available version (in parentheses)
-		var availableVersion string
-		for _, field := range fields {
-			if after, found := strings.CutPrefix(field, "("); found {
-				availableVersion = after
-				break
-			}
-		}
-
-		// Check if it's a security update
-		isSecurityUpdate := strings.Contains(strings.ToLower(line), "security")
-
-		if packageName != "" && currentVersion != "" && availableVersion != "" {
-			packages = append(packages, models.Package{
-				Name:             packageName,
-				CurrentVersion:   currentVersion,
-				AvailableVersion: availableVersion,
-				NeedsUpdate:      true,
-				IsSecurityUpdate: isSecurityUpdate,
-			})
-		}
+		packages = append(packages, models.Package{
+			Name:             packageName,
+			CurrentVersion:   currentVersion,
+			AvailableVersion: availableVersion,
+			NeedsUpdate:      true,
+			IsSecurityUpdate: strings.Contains(strings.ToLower(origins), "security"),
+		})
 	}
 
 	return packages

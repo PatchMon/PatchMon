@@ -37,7 +37,7 @@ const AiSettings = () => {
 	const updateMutation = useMutation({
 		mutationFn: (data) => aiAPI.updateSettings(data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["aiSettings"]);
+			queryClient.invalidateQueries({ queryKey: ["aiSettings"] });
 			setApiKeyInput("");
 		},
 	});

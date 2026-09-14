@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agents"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/clientip"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
@@ -552,23 +553,13 @@ func mustRand(n int) []byte {
 	return b
 }
 
+// clientIPFromRequest returns the client IP resolved by the RealIP middleware.
+//
+// It must not read X-Forwarded-For directly: enrolment IP allowlists built on
+// the client-supplied leftmost entry could be bypassed by sending the header.
 func clientIPFromRequest(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.Index(xff, ","); i > 0 {
-			xff = strings.TrimSpace(xff[:i])
-		} else {
-			xff = strings.TrimSpace(xff)
-		}
-		if xff != "" {
-			if host, _, err := net.SplitHostPort(xff); err == nil {
-				return host
-			}
-			return xff
-		}
-	}
-	host, _, _ := net.SplitHostPort(r.RemoteAddr)
-	if host != "" {
-		return host
+	if ip := clientip.FromRequest(r); ip != "" {
+		return ip
 	}
 	return r.RemoteAddr
 }
@@ -681,41 +672,70 @@ func (h *AutoEnrollmentHandler) ServeScript(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	shebang := "#!/bin/sh"
-	if scriptType == "proxmox-lxc" {
-		shebang = "#!/bin/bash"
-	}
-	envBlock := shebang + "\n# PatchMon Auto-Enrollment Configuration (Auto-generated)\n" +
-		"export PATCHMON_URL=\"" + serverURL + "\"\n" +
-		"export AUTO_ENROLLMENT_KEY=\"" + token.TokenKey + "\"\n" +
-		"export AUTO_ENROLLMENT_SECRET=\"" + tokenSecret + "\"\n" +
-		"export CURL_FLAGS=\"" + curlFlags + "\"\n" +
-		"export FORCE_INSTALL=\"" + map[bool]string{true: "true", false: "false"}[forceInstall] + "\"\n\n"
-
-	scriptStr := string(script)
-	scriptStr = strings.ReplaceAll(scriptStr, "\r\n", "\n")
-	scriptStr = strings.ReplaceAll(scriptStr, "\r", "\n")
-	if strings.HasPrefix(scriptStr, "#!") {
-		scriptStr = "#" + scriptStr[1:]
-	}
-	// Remove the configuration section (between # ===== CONFIGURATION ===== and # ===== COLOR OUTPUT =====)
-	configStart := strings.Index(scriptStr, "# ===== CONFIGURATION =====")
-	colorStart := strings.Index(scriptStr, "# ===== COLOR OUTPUT =====")
-	if configStart >= 0 && colorStart > configStart {
-		scriptStr = scriptStr[:configStart] + scriptStr[colorStart:]
-	}
-
 	out := bytes.Buffer{}
-	out.WriteString(envBlock)
-	out.WriteString(scriptStr)
+	out.WriteString(buildEnrollmentScript(script, scriptType, enrollmentScriptEnv{
+		ServerURL:    serverURL,
+		TokenKey:     token.TokenKey,
+		TokenSecret:  tokenSecret,
+		CurlFlags:    curlFlags,
+		ForceInstall: forceInstall,
+	}))
 
-	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", "inline; filename=\""+scriptType+"_auto_enroll.sh\"")
 	// Prevent caching of URLs containing token credentials in query parameters.
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(out.Bytes())
+}
+
+// enrollmentScriptEnv is the set of values the server injects into a served
+// enrolment script.
+type enrollmentScriptEnv struct {
+	ServerURL    string
+	TokenKey     string
+	TokenSecret  string
+	CurlFlags    string
+	ForceInstall bool
+}
+
+// buildEnrollmentScript prepends an exported configuration header to the
+// embedded script.
+//
+// The script's own configuration block is left intact: every variable there is
+// VAR="${VAR:-default}" and this header runs first, so an injected value wins
+// and an uninjected one keeps its default.
+func buildEnrollmentScript(script []byte, scriptType string, env enrollmentScriptEnv) string {
+	shebang := "#!/bin/sh"
+	if scriptType == "proxmox-lxc" {
+		shebang = "#!/bin/bash"
+	}
+
+	forceInstall := "false"
+	if env.ForceInstall {
+		forceInstall = "true"
+	}
+
+	envBlock := shebang + "\n# PatchMon Auto-Enrollment Configuration (Auto-generated)\n" +
+		"export PATCHMON_URL=\"" + env.ServerURL + "\"\n" +
+		"export AUTO_ENROLLMENT_KEY=\"" + env.TokenKey + "\"\n" +
+		"export AUTO_ENROLLMENT_SECRET=\"" + env.TokenSecret + "\"\n" +
+		"export CURL_FLAGS=\"" + env.CurlFlags + "\"\n" +
+		"export FORCE_INSTALL=\"" + forceInstall + "\"\n\n"
+
+	body := string(script)
+	body = strings.ReplaceAll(body, "\r\n", "\n")
+	body = strings.ReplaceAll(body, "\r", "\n")
+	// The embedded script carries its own shebang; comment it out so the one
+	// above is the only interpreter line. Prepend rather than replace: the old
+	// form was "#" + body[1:], which overwrote the leading "#" with a "#" and
+	// so left the shebang exactly as it was.
+	if strings.HasPrefix(body, "#!") {
+		body = "#" + body
+	}
+
+	return envBlock + body
 }
 
 func generateEnrollmentCredentials() (tokenKey, tokenSecret, hashedSecret string, err error) {

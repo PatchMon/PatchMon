@@ -1,12 +1,12 @@
 # Development stage - run with go run, source can be volume-mounted for live reload
 FROM golang:1.26-alpine AS development
 
-RUN apk add --no-cache git ca-certificates tzdata curl node npm
+RUN apk add --no-cache git ca-certificates tzdata curl nodejs npm
 
 WORKDIR /app
 
-# Copy agent scripts and binaries (same layout as production; run `make build-all-for-docker` in agent-source-code if agents-prebuilt is missing)
-COPY agents ./agents/
+# Copy agent binaries (run `make build-all-for-docker` in agent-source-code if agents-prebuilt is missing).
+# Scripts are not copied: they are go:embed'ed into the server binary.
 COPY --chmod=755 agents-prebuilt/patchmon-agent-* ./agents/
 
 # Build frontend for embed
@@ -14,7 +14,7 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm install --ignore-scripts --legacy-peer-deps 2>/dev/null || true
 COPY frontend/ ./
-RUN npm run build 2>/dev/null || mkdir -p dist && echo '<!DOCTYPE html><html><body>Build frontend first</body></html>' > dist/index.html
+RUN npm run build
 
 WORKDIR /app/server
 COPY server-source-code/ ./
@@ -32,48 +32,15 @@ ENV AGENTS_DIR=/app/agents
 ENV PORT=3000
 CMD ["go", "run", "./cmd/server"]
 
-# Frontend builder stage for production
-FROM dhi.io/node:22-debian13-dev AS frontend-builder
-
-WORKDIR /app/frontend
-
-COPY frontend/package*.json ./
-
-RUN echo "=== Starting npm install ===" &&\
-    npm cache clean --force &&\
-    rm -rf node_modules ~/.npm /root/.npm package-lock.json &&\
-    echo "=== npm install ===" &&\
-    npm install --ignore-scripts --legacy-peer-deps --no-audit --force &&\
-    echo "=== npm install completed ===" &&\
-    npm cache clean --force
-
-COPY frontend/ ./
-
-RUN npm run build
-
-# Build stage - server (runs on amd64, cross-compiles for target platform)
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
-
-RUN apk add --no-cache git ca-certificates tzdata
-
-WORKDIR /app
-
-# Copy server source
-COPY server-source-code/ ./server/
-# Copy built frontend into embed directory
-COPY --from=frontend-builder /app/frontend/dist ./server/cmd/server/static/frontend/dist
-
-WORKDIR /app/server
-
-ARG TARGETOS
-ARG TARGETARCH
-RUN go mod download && \
-    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -buildvcs=false -ldflags="-s -w" -o /app/patchmon-server ./cmd/server
-
 # SSG content stage — download ComplianceAsCode datastream files at build time.
 # Pass --build-arg SSG_VERSION=0.1.80 to pin a specific version; otherwise
 # the latest GitHub release is resolved automatically.
-FROM alpine:3.23 AS ssg-content
+#
+# Pinned to $BUILDPLATFORM for the same reason as frontend-builder: the payload
+# is ssg-*-ds.xml datastream files, which are architecture-independent. Left
+# unpinned, this stage downloaded and unpacked the same ~30s archive once per
+# target platform, and did the unpacking under QEMU for the non-native one.
+FROM --platform=$BUILDPLATFORM alpine:3.23 AS ssg-content
 ARG SSG_VERSION=""
 # Use shell variable VER to avoid Docker ARG substitution in the wget URL.
 # Docker substitutes ${SSG_VERSION} at parse time; when empty, the URL would be
@@ -103,14 +70,17 @@ FROM dhi.io/alpine-base:3.23
 
 WORKDIR /app
 
-# Copy binary (migrations and frontend are embedded in the binary)
-COPY --from=builder /app/patchmon-server ./
+# Prebuilt by CI or by docker/build.sh, the same way agents-prebuilt/ is. The
+# version, community counts, frontend and release notes are all baked in at
+# compile time, so this image and the release assets are the same binary.
+ARG TARGETARCH
+COPY --chmod=755 server-prebuilt/patchmon-server-linux-${TARGETARCH} ./patchmon-server
 
 # Copy SSG content (SCAP datastream files for compliance scanning)
 COPY --from=ssg-content /ssg-content ./ssg-content/
 
-# Copy agent scripts and binaries to /app/agents (in-image, read-only; no volume)
-COPY agents ./agents/
+# Copy agent binaries to /app/agents (in-image, read-only; no volume).
+# Scripts are not copied: they are go:embed'ed into the server binary.
 COPY --chmod=755 agents-prebuilt/patchmon-agent-* ./agents/
 
 # Entrypoint starts server (no volume copy; agents served from image)

@@ -40,7 +40,7 @@ func pingServer() (*models.PingResponse, error) {
 	// Create client and ping
 	httpClient := client.New(cfgManager, logger)
 	ctx := context.Background()
-	response, err := httpClient.Ping(ctx)
+	response, err := httpClient.Ping(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("connectivity test failed: %w", err)
 	}

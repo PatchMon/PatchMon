@@ -38,7 +38,10 @@ ORDER BY hgm.host_id, hg.name;
 DELETE FROM host_group_memberships WHERE host_id = $1;
 
 -- name: InsertHostGroupMembership :exec
-INSERT INTO host_group_memberships (id, host_id, host_group_id) VALUES ($1, $2, $3);
+-- ON CONFLICT: callers may pass the same group id twice, and the delete has
+-- already run by then.
+INSERT INTO host_group_memberships (id, host_id, host_group_id) VALUES ($1, $2, $3)
+ON CONFLICT (host_id, host_group_id) DO NOTHING;
 
 -- name: HostInHostGroup :one
 SELECT EXISTS (

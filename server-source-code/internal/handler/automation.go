@@ -1,11 +1,15 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/go-chi/chi/v5"
@@ -19,6 +23,23 @@ type AutomationHandler struct {
 	registry    *agentregistry.Registry
 	settings    *store.SettingsStore
 	alertConfig *store.AlertConfigStore
+	cfg         *config.Config
+}
+
+// WithConfig wires the process config.
+func (h *AutomationHandler) WithConfig(cfg *config.Config) *AutomationHandler {
+	h.cfg = cfg
+	return h
+}
+
+// adminModeGuard returns true (and writes a 403) when AdminMode is active.
+// Queue totals are process-wide, so they are not shown per context.
+func (h *AutomationHandler) adminModeGuard(w http.ResponseWriter) bool {
+	if h.cfg != nil && h.cfg.AdminMode {
+		Error(w, http.StatusForbidden, "Automation is not available in managed mode")
+		return true
+	}
+	return false
 }
 
 // NewAutomationHandler creates a new automation handler.
@@ -65,6 +86,69 @@ func (h *AutomationHandler) getQueueStats(queueName string) QueueStats {
 	}
 }
 
+// completedPageSize bounds the single page read to find the newest completion.
+const completedPageSize = 100
+
+// latestCompletedTask returns the most recently completed task on a queue, or
+// nil if there are none.
+//
+// Asynq keeps completed tasks in a sorted set scored by retention expiry and
+// ListCompletedTasks returns them in ascending score order, so the first page
+// holds the OLDEST retained completion, not the newest. Reading page one made
+// "Last Run" freeze at whatever completed first and stay there until retention
+// evicted it, while the total-runs counter kept climbing.
+func (h *AutomationHandler) latestCompletedTask(queueName string) *asynq.TaskInfo {
+	info, err := h.inspector.GetQueueInfo(queueName)
+	if err != nil || info.Completed == 0 {
+		return nil
+	}
+
+	lastPage := lastCompletedPage(info.Completed, completedPageSize)
+	tasks, err := h.inspector.ListCompletedTasks(queueName,
+		asynq.PageSize(completedPageSize), asynq.Page(lastPage))
+	if err != nil {
+		return nil
+	}
+	if len(tasks) == 0 && lastPage > 1 {
+		// The set shrank between the count and the read; fall back to page one
+		// rather than reporting "never run".
+		tasks, err = h.inspector.ListCompletedTasks(queueName, asynq.PageSize(completedPageSize))
+		if err != nil {
+			return nil
+		}
+	}
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	return newestByCompletedAt(tasks)
+}
+
+// lastCompletedPage returns the 1-based page holding the highest-scored
+// entries for a set of the given size.
+func lastCompletedPage(completed, pageSize int) int {
+	if completed <= 0 || pageSize <= 0 {
+		return 1
+	}
+	return (completed + pageSize - 1) / pageSize
+}
+
+// newestByCompletedAt picks the latest completion from a page. The set is
+// scored by expiry rather than completion time, so tasks carrying different
+// retentions can interleave and position alone is not enough.
+func newestByCompletedAt(tasks []*asynq.TaskInfo) *asynq.TaskInfo {
+	var newest *asynq.TaskInfo
+	for _, t := range tasks {
+		if t == nil {
+			continue
+		}
+		if newest == nil || t.CompletedAt.After(newest.CompletedAt) {
+			newest = t
+		}
+	}
+	return newest
+}
+
 // getQueueLastRunInfo returns lastRun, lastRunTs, and status from Asynq/Redis for a queue.
 // Checks completed, active, retry, and archived tasks to reflect exact queue state.
 func (h *AutomationHandler) getQueueLastRunInfo(queueName string) (lastRun string, lastRunTs int64, status string) {
@@ -72,9 +156,8 @@ func (h *AutomationHandler) getQueueLastRunInfo(queueName string) (lastRun strin
 		return "Never", 0, "Never run"
 	}
 
-	// 1. Completed tasks (most recent first) - only present when Retention is set
-	if tasks, err := h.inspector.ListCompletedTasks(queueName, asynq.PageSize(1)); err == nil && len(tasks) > 0 {
-		t := tasks[0]
+	// 1. Completed tasks - only present when Retention is set
+	if t := h.latestCompletedTask(queueName); t != nil {
 		lastRunTs = t.CompletedAt.UnixMilli()
 		lastRun = t.CompletedAt.Format("1/2/2006, 3:04:05 PM")
 		if t.LastErr != "" {
@@ -124,6 +207,9 @@ func (h *AutomationHandler) getQueueLastRunInfo(queueName string) (lastRun strin
 
 // Overview handles GET /automation/overview.
 func (h *AutomationHandler) Overview(w http.ResponseWriter, r *http.Request) {
+	if h.adminModeGuard(w) {
+		return
+	}
 	queues := []string{
 		queue.QueueVersionUpdateCheck,
 		queue.QueueSessionCleanup,
@@ -175,7 +261,8 @@ func (h *AutomationHandler) Overview(w http.ResponseWriter, r *http.Request) {
 		{"Alert Cleanup", queue.QueueAlertCleanup, "Cleans up old alerts based on retention policies and auto-resolves expired alerts", "Daily at 3 AM"},
 		{"Host Status Monitor", queue.QueueHostStatus, "Monitors host status and creates alerts when hosts go offline", "Every 5 minutes"},
 		{"Compliance Scan Cleanup", queue.QueueComplianceScanCleanup, "Automatically terminates compliance scans running over 3 hours", "Daily at 1 AM"},
-		{"Patch Run Cleanup", queue.QueuePatchRunCleanup, "Automatically cancels patch runs stuck in running state for over 30 minutes", "Daily at 12:30 AM"},
+		{"Patch Run Cleanup", queue.QueuePatchRunCleanup, "Marks patch runs stuck in running state for over PATCH_RUN_STALL_TIMEOUT_MIN minutes as timed_out", "Every 10 minutes"},
+		{"Agent Reports Cleanup", queue.QueueAgentReportsCleanup, "Deletes Agent Activity rows older than AGENT_REPORTS_RETENTION_DAYS", "Daily at 2 AM"},
 		{"SSG Content Update Check", queue.QueueSSGUpdateCheck, "Checks for outdated SSG compliance content on hosts and queues upgrades", "Daily at 5 AM"},
 	}
 
@@ -213,6 +300,9 @@ func (h *AutomationHandler) Overview(w http.ResponseWriter, r *http.Request) {
 
 // Stats handles GET /automation/stats.
 func (h *AutomationHandler) Stats(w http.ResponseWriter, r *http.Request) {
+	if h.adminModeGuard(w) {
+		return
+	}
 	queues := []string{
 		queue.QueueVersionUpdateCheck,
 		queue.QueueSessionCleanup,
@@ -225,6 +315,7 @@ func (h *AutomationHandler) Stats(w http.ResponseWriter, r *http.Request) {
 		queue.QueueHostStatus,
 		queue.QueueComplianceScanCleanup,
 		queue.QueuePatchRunCleanup,
+		queue.QueueAgentReportsCleanup,
 		queue.QueueSSGUpdateCheck,
 	}
 
@@ -241,6 +332,9 @@ func (h *AutomationHandler) Stats(w http.ResponseWriter, r *http.Request) {
 
 // Jobs handles GET /automation/jobs/:queueName.
 func (h *AutomationHandler) Jobs(w http.ResponseWriter, r *http.Request) {
+	if h.adminModeGuard(w) {
+		return
+	}
 	queueName := chi.URLParam(r, "queueName")
 	limit := parseIntQuery(r, "limit", 10)
 	if limit > 50 {
@@ -259,6 +353,7 @@ func (h *AutomationHandler) Jobs(w http.ResponseWriter, r *http.Request) {
 		queue.QueueHostStatus:            true,
 		queue.QueueComplianceScanCleanup: true,
 		queue.QueuePatchRunCleanup:       true,
+		queue.QueueAgentReportsCleanup:   true,
 		queue.QueueSSGUpdateCheck:        true,
 	}
 	if !validQueues[queueName] {
@@ -277,8 +372,13 @@ func (h *AutomationHandler) Jobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Queues are shared across contexts; only list this one's tasks.
+	callerHost := hostctx.TenantHostKey(r.Context())
 	formatted := make([]map[string]interface{}, 0, len(tasks))
 	for _, t := range tasks {
+		if !taskBelongsToContext(t.Payload, callerHost) {
+			continue
+		}
 		status := "completed"
 		if t.LastErr != "" {
 			status = "failed"
@@ -346,7 +446,9 @@ func (h *AutomationHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 			info, err = h.queueClient.Enqueue(t)
 		}
 	case "agent-collection":
-		apiIds := h.registry.GetConnectedApiIDs()
+		// Scoped to the caller's context: an unscoped fan-out would trigger a
+		// collection across every other context's agents on this process.
+		apiIds := h.registry.GetConnectedApiIDs(hostctx.TenantHostKey(r.Context()))
 		if len(apiIds) == 0 {
 			JSON(w, http.StatusOK, map[string]interface{}{
 				"success": true,
@@ -396,6 +498,12 @@ func (h *AutomationHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	case "patch-run-cleanup":
 		var t *asynq.Task
 		t, err = queue.NewPatchRunCleanupTask(host)
+		if err == nil {
+			info, err = h.queueClient.Enqueue(t)
+		}
+	case "agent-reports-cleanup":
+		var t *asynq.Task
+		t, err = queue.NewAgentReportsCleanupTask(host)
 		if err == nil {
 			info, err = h.queueClient.Enqueue(t)
 		}
@@ -452,4 +560,19 @@ func (h *AutomationHandler) ComplianceScanCleanup(w http.ResponseWriter, r *http
 			"message": "Compliance scan cleanup triggered successfully",
 		},
 	})
+}
+
+// taskBelongsToContext reports whether a task was raised by the given context.
+// A payload with no host predates multi-context routing and belongs to default.
+func taskBelongsToContext(payload []byte, callerHost string) bool {
+	if len(payload) == 0 {
+		return callerHost == ""
+	}
+	var p struct {
+		Host string `json:"host"`
+	}
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return callerHost == ""
+	}
+	return strings.EqualFold(strings.TrimSpace(p.Host), strings.TrimSpace(callerHost))
 }

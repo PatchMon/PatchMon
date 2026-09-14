@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 // Package represents a software package
 type Package struct {
 	Name             string `json:"name"`
@@ -32,10 +34,15 @@ type Repository struct {
 
 // SystemInfo represents system information
 type SystemInfo struct {
-	KernelVersion string    `json:"kernelVersion"`
-	SELinuxStatus string    `json:"selinuxStatus"`
-	SystemUptime  string    `json:"systemUptime"`
-	LoadAverage   []float64 `json:"loadAverage"`
+	KernelVersion string `json:"kernelVersion"`
+	SELinuxStatus string `json:"selinuxStatus"`
+	SystemUptime  string `json:"systemUptime"`
+	// BootTime is the host's boot instant (UTC). Shipped alongside the
+	// pre-formatted SystemUptime so newer servers can compute live uptime
+	// from now() - boot_time without waiting for the next agent report.
+	// Nil when collection failed; the SystemUptime fallback still works.
+	BootTime    *time.Time `json:"bootTime,omitempty"`
+	LoadAverage []float64  `json:"loadAverage"`
 }
 
 // HardwareInfo represents hardware information
@@ -83,33 +90,111 @@ type NetworkAddress struct {
 
 // ReportPayload represents the data sent to the server
 type ReportPayload struct {
-	Packages               []Package          `json:"packages"`
-	Repositories           []Repository       `json:"repositories"`
-	OSType                 string             `json:"osType"`
-	OSVersion              string             `json:"osVersion"`
-	Hostname               string             `json:"hostname"`
-	IP                     string             `json:"ip"`
-	Architecture           string             `json:"architecture"`
-	AgentVersion           string             `json:"agentVersion"`
-	MachineID              string             `json:"machineId"`
-	KernelVersion          string             `json:"kernelVersion"`
-	InstalledKernelVersion string             `json:"installedKernelVersion,omitempty"`
-	SELinuxStatus          string             `json:"selinuxStatus"`
-	SystemUptime           string             `json:"systemUptime"`
-	LoadAverage            []float64          `json:"loadAverage"`
-	CPUModel               string             `json:"cpuModel"`
-	CPUCores               int                `json:"cpuCores"`
-	RAMInstalled           float64            `json:"ramInstalled"`
-	SwapSize               float64            `json:"swapSize"`
-	DiskDetails            []DiskInfo         `json:"diskDetails"`
-	GatewayIP              string             `json:"gatewayIp"`
-	DNSServers             []string           `json:"dnsServers"`
-	NetworkInterfaces      []NetworkInterface `json:"networkInterfaces"`
-	ExecutionTime          float64            `json:"executionTime"` // Collection time in seconds
-	NeedsReboot            bool               `json:"needsReboot"`
-	RebootReason           string             `json:"rebootReason,omitempty"`
-	PackageManager         string             `json:"packageManager,omitempty"`
+	Packages               []Package    `json:"packages"`
+	Repositories           []Repository `json:"repositories"`
+	OSType                 string       `json:"osType"`
+	OSVersion              string       `json:"osVersion"`
+	Hostname               string       `json:"hostname"`
+	IP                     string       `json:"ip"`
+	Architecture           string       `json:"architecture"`
+	AgentVersion           string       `json:"agentVersion"`
+	MachineID              string       `json:"machineId"`
+	KernelVersion          string       `json:"kernelVersion"`
+	InstalledKernelVersion string       `json:"installedKernelVersion,omitempty"`
+	SELinuxStatus          string       `json:"selinuxStatus"`
+	SystemUptime           string       `json:"systemUptime"`
+	// BootTime mirrors SystemInfo.BootTime — the host boot instant (UTC).
+	// Newer servers persist this so the UI can render live uptime; older
+	// servers ignore the field, leaving SystemUptime as the source.
+	BootTime          *time.Time         `json:"bootTime,omitempty"`
+	LoadAverage       []float64          `json:"loadAverage"`
+	CPUModel          string             `json:"cpuModel"`
+	CPUCores          int                `json:"cpuCores"`
+	RAMInstalled      float64            `json:"ramInstalled"`
+	SwapSize          float64            `json:"swapSize"`
+	DiskDetails       []DiskInfo         `json:"diskDetails"`
+	GatewayIP         string             `json:"gatewayIp"`
+	DNSServers        []string           `json:"dnsServers"`
+	NetworkInterfaces []NetworkInterface `json:"networkInterfaces"`
+	ExecutionTime     float64            `json:"executionTime"` // Collection time in seconds
+	NeedsReboot       bool               `json:"needsReboot"`
+	RebootReason      string             `json:"rebootReason,omitempty"`
+	PackageManager    string             `json:"packageManager,omitempty"`
+	// Sections, when set, restricts which top-level blocks the server
+	// processes. Empty/absent means "full report" for backwards compatibility.
+	Sections []string `json:"sections,omitempty"`
+	// Hashes carries the agent-computed canonical hashes for each section
+	// included in the payload. Server validates against its own canonical
+	// hash and stores them so the next ping can hash-gate.
+	Hashes ReportHashes `json:"hashes,omitempty"`
+	// AgentExecutionMs is the wall-clock time in milliseconds the agent
+	// spent collecting the data shipped in this report. Used by the server's
+	// Agent Activity feed; older servers ignore it.
+	AgentExecutionMs *int `json:"agentExecutionMs,omitempty"`
 }
+
+// ReportHashes is the four "main report" canonical hashes the agent ships
+// alongside a (possibly partial) /hosts/update payload.
+type ReportHashes struct {
+	PackagesHash   string `json:"packagesHash,omitempty"`
+	ReposHash      string `json:"reposHash,omitempty"`
+	InterfacesHash string `json:"interfacesHash,omitempty"`
+	HostnameHash   string `json:"hostnameHash,omitempty"`
+}
+
+// PingHashes carries the agent's per-section content hashes on a check-in.
+// All 64-char lowercase hex (SHA-256). Empty == "agent has nothing to hash"
+// which the server treats as a mismatch (will request a full report).
+type PingHashes struct {
+	PackagesHash   string `json:"packagesHash,omitempty"`
+	ReposHash      string `json:"reposHash,omitempty"`
+	InterfacesHash string `json:"interfacesHash,omitempty"`
+	HostnameHash   string `json:"hostnameHash,omitempty"`
+	DockerHash     string `json:"dockerHash,omitempty"`
+	ComplianceHash string `json:"complianceHash,omitempty"`
+}
+
+// PingMetrics carries volatile metrics shipped on every check-in. Pointer
+// fields preserve "agent did not collect" semantics.
+type PingMetrics struct {
+	CPUCores     *int       `json:"cpuCores,omitempty"`
+	CPUModel     *string    `json:"cpuModel,omitempty"`
+	RAMInstalled *float64   `json:"ramInstalled,omitempty"`
+	SwapSize     *float64   `json:"swapSize,omitempty"`
+	DiskDetails  []DiskInfo `json:"diskDetails,omitempty"`
+	SystemUptime *string    `json:"systemUptime,omitempty"`
+	// BootTime, when non-nil, is the host's boot instant (UTC). Lets the
+	// server / UI compute live uptime as now() - boot_time and avoids the
+	// stale-pre-formatted-string drift between reports.
+	BootTime     *time.Time `json:"bootTime,omitempty"`
+	LoadAverage  []float64  `json:"loadAverage,omitempty"`
+	NeedsReboot  *bool      `json:"needsReboot,omitempty"`
+	RebootReason *string    `json:"rebootReason,omitempty"`
+}
+
+// PingRequest is the agent's check-in body. All fields optional.
+type PingRequest struct {
+	Hashes       PingHashes  `json:"hashes,omitempty"`
+	Metrics      PingMetrics `json:"metrics,omitempty"`
+	AgentVersion string      `json:"agentVersion,omitempty"`
+	// AgentExecutionMs is the wall-clock time in milliseconds the agent
+	// spent collecting the data shipped in this ping. Used by the server's
+	// Agent Activity feed; older servers ignore it.
+	AgentExecutionMs *int `json:"agentExecutionMs,omitempty"`
+}
+
+// Section identifiers used in PingResponse.RequestFull and
+// ReportPayload.Sections. Closed set; do not extend without server-side
+// validation update.
+const (
+	SectionPackages   = "packages"
+	SectionRepos      = "repos"
+	SectionInterfaces = "interfaces"
+	SectionHostname   = "hostname"
+	SectionMetrics    = "metrics"
+	SectionDocker     = "docker"
+	SectionCompliance = "compliance"
+)
 
 // PingResponse represents server ping response
 type PingResponse struct {
@@ -119,6 +204,17 @@ type PingResponse struct {
 	AgentStartup  bool               `json:"agentStartup,omitempty"`
 	Integrations  map[string]bool    `json:"integrations,omitempty"` // Server-side integration enable states
 	CrontabUpdate *CrontabUpdateInfo `json:"crontabUpdate,omitempty"`
+	// HashGate is the server's capability marker for hash-gated check-in
+	// (v2.0.3+). Pre-2.0.3 servers ignore the ping body entirely and answer
+	// 200 without this field, which is otherwise indistinguishable from
+	// "nothing changed" — see serverSupportsHashGate. The exact "hashGate"
+	// JSON key is a client/server contract; do not rename it.
+	HashGate bool `json:"hashGate,omitempty"`
+	// RequestFull lists the section identifiers (subset of the closed
+	// SectionXxx constants) whose stored server-side hash differs from
+	// what the agent shipped. Empty array == nothing changed, agent stays
+	// quiet. Only meaningful when HashGate is true.
+	RequestFull []string `json:"requestFull,omitempty"`
 }
 
 // UpdateResponse represents server update response

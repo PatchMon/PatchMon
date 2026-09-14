@@ -20,7 +20,7 @@ var agentSemverRe = regexp.MustCompile(`^\d+\.\d+\.\d+`)
 
 // ProcessAgentUpdate runs the agent version check: binary version + DNS latest, then create/resolve alerts.
 // Called by the version-update-check queue job.
-// The Go server reads the agent binary version by executing patchmon-agent (same as Agent Version tab in Settings).
+// Uses the same bundled-binary version as the Agent Version tab in Settings.
 func ProcessAgentUpdate(ctx context.Context, d *database.DB, agentsDir string, tenantHost string, emit *notifications.Emitter, log *slog.Logger) error {
 	enabled, err := IsAlertsEnabled(ctx, d)
 	if err != nil || !enabled {

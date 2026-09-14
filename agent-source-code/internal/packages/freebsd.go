@@ -68,7 +68,8 @@ func (m *FreeBSDManager) getPkgPackages() ([]models.Package, error) {
 
 	// Get installed packages with repo info: pkg query -a '%n\t%v\t%R'
 	m.logger.Debug("Getting installed packages with pkg query...")
-	queryCmd := exec.Command(pkgPath, "query", "-a", "%n\t%v\t%R")
+	queryCmd, cancelQuery := boundedCommand(collectorTimeout, pkgPath, "query", "-a", "%n\t%v\t%R")
+	defer cancelQuery()
 	queryOutput, err := queryCmd.Output()
 
 	installedPackages := make(map[string]string)
@@ -77,7 +78,8 @@ func (m *FreeBSDManager) getPkgPackages() ([]models.Package, error) {
 	if err != nil {
 		m.logger.WithError(err).Warn("Failed to get installed packages via pkg query, falling back to pkg info")
 		// Fallback to pkg info
-		infoCmd := exec.Command(pkgPath, "info")
+		infoCmd, cancelInfo := boundedCommand(collectorTimeout, pkgPath, "info")
+		defer cancelInfo()
 		infoOutput, infoErr := infoCmd.Output()
 		if infoErr != nil {
 			m.logger.WithError(infoErr).Warn("Failed to get installed packages")
@@ -91,7 +93,8 @@ func (m *FreeBSDManager) getPkgPackages() ([]models.Package, error) {
 
 	// Get upgradable packages: pkg upgrade -n
 	m.logger.Debug("Checking for package upgrades...")
-	upgradeCmd := exec.Command(pkgPath, "upgrade", "-n")
+	upgradeCmd, cancelUpgrade := boundedCommand(networkCollectorTimeout, pkgPath, "upgrade", "-n")
+	defer cancelUpgrade()
 	upgradeOutput, err := upgradeCmd.Output()
 
 	var upgradablePackages []models.Package
@@ -265,13 +268,17 @@ func (m *FreeBSDManager) markSecurityVulnerabilities(packages []models.Package) 
 	m.logger.Debug("Running pkg audit to check for vulnerabilities...")
 
 	// First update the vulnerability database
-	fetchCmd := exec.Command(pkgPath, "audit", "-F")
+	// Downloads the VuXML database, so it can block indefinitely on a host
+	// whose egress to the mirror is silently dropped.
+	fetchCmd, cancelFetch := boundedCommand(networkCollectorTimeout, pkgPath, "audit", "-F")
+	defer cancelFetch()
 	if err := fetchCmd.Run(); err != nil {
 		m.logger.WithError(err).Debug("Failed to fetch vulnerability database (may require root)")
 	}
 
 	// Run the audit
-	auditCmd := exec.Command(pkgPath, "audit")
+	auditCmd, cancelAudit := boundedCommand(collectorTimeout, pkgPath, "audit")
+	defer cancelAudit()
 	auditOutput, err := auditCmd.CombinedOutput()
 
 	if err != nil {
@@ -336,7 +343,9 @@ func (m *FreeBSDManager) getFreeBSDUpdates() *models.Package {
 
 	// Run freebsd-update fetch (requires root, will fail gracefully otherwise)
 	// We use fetch with --not-running-from-cron to avoid emails
-	cmd := exec.Command("freebsd-update", "fetch", "--not-running-from-cron")
+	// Same exposure as pkg audit -F: reaches update.freebsd.org.
+	cmd, cancelFetchBase := boundedCommand(networkCollectorTimeout, "freebsd-update", "fetch", "--not-running-from-cron")
+	defer cancelFetchBase()
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
@@ -363,7 +372,8 @@ func (m *FreeBSDManager) getFreeBSDUpdates() *models.Package {
 		m.logger.Debug("FreeBSD base system updates available")
 
 		// Get current FreeBSD version
-		versionCmd := exec.Command("freebsd-version")
+		versionCmd, cancelVersion := boundedCommand(collectorTimeout, "freebsd-version")
+		defer cancelVersion()
 		versionOutput, err := versionCmd.Output()
 		currentVersion := "Unknown"
 		if err == nil {

@@ -191,3 +191,59 @@ func (q *Queries) UpdateComplianceRule(ctx context.Context, arg UpdateCompliance
 	)
 	return err
 }
+
+const upsertComplianceRule = `-- name: UpsertComplianceRule :one
+INSERT INTO compliance_rules (id, profile_id, rule_ref, title, description, rationale, severity, section, remediation)
+VALUES (
+    $1,
+    $2,
+    $3,
+    COALESCE($4::text, $3),
+    $5::text,
+    $6::text,
+    $7::text,
+    $8::text,
+    $9::text
+)
+ON CONFLICT (profile_id, rule_ref) DO UPDATE SET
+    title = COALESCE($4::text, compliance_rules.title),
+    description = COALESCE(EXCLUDED.description, compliance_rules.description),
+    severity = COALESCE(EXCLUDED.severity, compliance_rules.severity),
+    section = COALESCE(EXCLUDED.section, compliance_rules.section),
+    remediation = COALESCE(EXCLUDED.remediation, compliance_rules.remediation)
+RETURNING id
+`
+
+type UpsertComplianceRuleParams struct {
+	ID          string  `json:"id"`
+	ProfileID   string  `json:"profile_id"`
+	RuleRef     string  `json:"rule_ref"`
+	Title       *string `json:"title"`
+	Description *string `json:"description"`
+	Rationale   *string `json:"rationale"`
+	Severity    *string `json:"severity"`
+	Section     *string `json:"section"`
+	Remediation *string `json:"remediation"`
+}
+
+// Metadata columns are COALESCE-guarded so a submission omitting a field does
+// not blank a stored value.
+//
+// title reads the raw parameter, not EXCLUDED: the column is NOT NULL so the
+// INSERT arm supplies a rule_ref fallback, which EXCLUDED would already hold.
+func (q *Queries) UpsertComplianceRule(ctx context.Context, arg UpsertComplianceRuleParams) (string, error) {
+	row := q.db.QueryRow(ctx, upsertComplianceRule,
+		arg.ID,
+		arg.ProfileID,
+		arg.RuleRef,
+		arg.Title,
+		arg.Description,
+		arg.Rationale,
+		arg.Severity,
+		arg.Section,
+		arg.Remediation,
+	)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}

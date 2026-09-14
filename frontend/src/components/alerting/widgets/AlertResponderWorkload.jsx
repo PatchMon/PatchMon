@@ -79,7 +79,9 @@ const AlertResponderWorkload = ({ alerts, users }) => {
 									key={responder.id}
 									className="flex flex-col gap-0.5 cursor-pointer rounded px-1 -mx-1 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors text-left w-full"
 									onClick={() =>
-										navigate(`/reporting?tab=alerts&assignment=${responder.id}`)
+										navigate(
+											`/reporting?tab=alerts&status=open&assignment=${encodeURIComponent(responder.id)}`,
+										)
 									}
 								>
 									<div className="flex items-center justify-between">

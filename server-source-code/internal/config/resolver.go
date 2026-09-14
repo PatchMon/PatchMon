@@ -15,13 +15,16 @@ import (
 // ResolvedConfig holds the effective configuration after merging env, DB, and defaults.
 // Env takes priority over DB, which takes priority over code defaults.
 type ResolvedConfig struct {
-	CORSOrigin                  string
-	EnableLogging               bool
-	LogLevel                    string
-	MaxLoginAttempts            int
-	LockoutDurationMin          int
-	EnableHSTS                  bool
-	TrustProxy                  bool
+	CORSOrigin         string
+	EnableLogging      bool
+	LogLevel           string
+	MaxLoginAttempts   int
+	LockoutDurationMin int
+	EnableHSTS         bool
+	TrustProxy         bool
+	// TrustedProxyRanges is env-only (no DB override): allowing it to be edited from
+	// the settings UI would let an admin widen it and restore XFF spoofing.
+	TrustedProxyRanges          []string
 	RateLimitWindowMs           int
 	RateLimitMax                int
 	AuthRateLimitWindowMs       int
@@ -37,9 +40,13 @@ type ResolvedConfig struct {
 	PasswordRequireSpecial      bool
 	JSONBodyLimitBytes          int64
 	AgentUpdateBodyLimitBytes   int64
+	AgentPingBodyLimitBytes     int64
+	ComplianceBodyLimitBytes    int64
 	Timezone                    string
 	DefaultUserRole             string
 	SessionInactivityTimeoutMin int
+	PatchRunStallTimeoutMin     int
+	AgentReportsRetentionDays   int
 	TfaMaxRememberSessions      int
 	DBTransactionLongTimeout    int
 	JwtExpiresIn                string
@@ -63,6 +70,7 @@ func ResolveConfig(ctx context.Context, cfg *Config, settings *models.Settings) 
 	out.LockoutDurationMin = resolveInt("LOCKOUT_DURATION_MINUTES", settings.LockoutDurationMinutes, cfg.LockoutDurationMin)
 	out.EnableHSTS = resolveBool("ENABLE_HSTS", settings.EnableHSTS, cfg.EnableHSTS)
 	out.TrustProxy = resolveBool("TRUST_PROXY", settings.TrustProxy, cfg.TrustProxy)
+	out.TrustedProxyRanges = cfg.TrustedProxyRanges
 	out.RateLimitWindowMs = resolveInt("RATE_LIMIT_WINDOW_MS", settings.RateLimitWindowMs, cfg.RateLimitWindowMs)
 	out.RateLimitMax = resolveInt("RATE_LIMIT_MAX", settings.RateLimitMax, cfg.RateLimitMax)
 	out.AuthRateLimitWindowMs = resolveInt("AUTH_RATE_LIMIT_WINDOW_MS", settings.AuthRateLimitWindowMs, cfg.AuthRateLimitWindowMs)
@@ -78,9 +86,20 @@ func ResolveConfig(ctx context.Context, cfg *Config, settings *models.Settings) 
 	out.PasswordRequireSpecial = resolveBool("PASSWORD_REQUIRE_SPECIAL", settings.PasswordRequireSpecial, cfg.PasswordRequireSpecial)
 	out.JSONBodyLimitBytes = resolveBodyLimit("JSON_BODY_LIMIT", settings.JSONBodyLimit, cfg.JSONBodyLimitBytes)
 	out.AgentUpdateBodyLimitBytes = resolveBodyLimit("AGENT_UPDATE_BODY_LIMIT", settings.AgentUpdateBodyLimit, cfg.AgentUpdateBodyLimitBytes)
+	out.ComplianceBodyLimitBytes = resolveBodyLimit("COMPLIANCE_BODY_LIMIT", settings.ComplianceBodyLimit, cfg.ComplianceBodyLimitBytes)
+	// Unsuffixed values mean KiB here, matching AGENT_PING_BODY_LIMIT's env
+	// parsing. Sharing resolveBodyLimit would read a bare "8" as 8 MiB.
+	out.AgentPingBodyLimitBytes = resolveBodyLimitKB("AGENT_PING_BODY_LIMIT", settings.AgentPingBodyLimit, cfg.AgentPingBodyLimitBytes)
 	out.Timezone = resolveTimezone(settings.Timezone, cfg.Timezone)
 	out.DefaultUserRole = resolveString("DEFAULT_USER_ROLE", strPtr(settings.DefaultUserRole), cfg.DefaultUserRole)
 	out.SessionInactivityTimeoutMin = resolveInt("SESSION_INACTIVITY_TIMEOUT_MINUTES", settings.SessionInactivityTimeoutMinutes, cfg.SessionInactivityTimeoutMin)
+	// Clamp to the same minimum the env-loader enforces (see config.Load).
+	// A sub-5-minute stall window kills patch runs that are still
+	// legitimately starting on slow hosts.
+	out.PatchRunStallTimeoutMin = clampPatchRunStall(resolveInt("PATCH_RUN_STALL_TIMEOUT_MIN", settings.PatchRunStallTimeoutMinutes, cfg.PatchRunStallTimeoutMin))
+	// Re-clamp at every resolve so a DB-edited value below the floor (or
+	// above the ceiling) can't bypass the env-loader's safety bounds.
+	out.AgentReportsRetentionDays = clampAgentReportsRetentionDays(resolveInt("AGENT_REPORTS_RETENTION_DAYS", settings.AgentReportsRetentionDays, cfg.AgentReportsRetentionDays))
 	out.TfaMaxRememberSessions = resolveInt("TFA_MAX_REMEMBER_SESSIONS", settings.TfaMaxRememberSessions, cfg.TfaMaxRememberSessions)
 	out.DBTransactionLongTimeout = resolveInt("DB_TRANSACTION_LONG_TIMEOUT", settings.DBTransactionLongTimeout, cfg.DBTransactionLongTimeout)
 	out.JwtExpiresIn = resolveString("JWT_EXPIRES_IN", settings.JwtExpiresIn, cfg.JWTExpiresIn)
@@ -100,6 +119,7 @@ func resolveFromEnvAndDefaults(cfg *Config) *ResolvedConfig {
 		LockoutDurationMin:          cfg.LockoutDurationMin,
 		EnableHSTS:                  cfg.EnableHSTS,
 		TrustProxy:                  cfg.TrustProxy,
+		TrustedProxyRanges:          cfg.TrustedProxyRanges,
 		RateLimitWindowMs:           cfg.RateLimitWindowMs,
 		RateLimitMax:                cfg.RateLimitMax,
 		AuthRateLimitWindowMs:       cfg.AuthRateLimitWindowMs,
@@ -115,9 +135,13 @@ func resolveFromEnvAndDefaults(cfg *Config) *ResolvedConfig {
 		PasswordRequireSpecial:      cfg.PasswordRequireSpecial,
 		JSONBodyLimitBytes:          cfg.JSONBodyLimitBytes,
 		AgentUpdateBodyLimitBytes:   cfg.AgentUpdateBodyLimitBytes,
+		AgentPingBodyLimitBytes:     cfg.AgentPingBodyLimitBytes,
+		ComplianceBodyLimitBytes:    cfg.ComplianceBodyLimitBytes,
 		Timezone:                    validateTimezone(cfg.Timezone),
 		DefaultUserRole:             cfg.DefaultUserRole,
 		SessionInactivityTimeoutMin: cfg.SessionInactivityTimeoutMin,
+		PatchRunStallTimeoutMin:     clampPatchRunStall(cfg.PatchRunStallTimeoutMin),
+		AgentReportsRetentionDays:   clampAgentReportsRetentionDays(cfg.AgentReportsRetentionDays),
 		TfaMaxRememberSessions:      cfg.TfaMaxRememberSessions,
 		DBTransactionLongTimeout:    cfg.DBTransactionLongTimeout,
 		JwtExpiresIn:                cfg.JWTExpiresIn,
@@ -126,6 +150,30 @@ func resolveFromEnvAndDefaults(cfg *Config) *ResolvedConfig {
 		TfaLockoutDurationMin:       cfg.TfaLockoutDurationMin,
 		TfaRememberMeExpiresIn:      cfg.TfaRememberMeExpiresIn,
 	}
+}
+
+// clampPatchRunStall enforces the same 5-minute floor as the env loader.
+// Used at every resolve call so DB-edited values can't shrink below the
+// safe minimum even after restart.
+func clampPatchRunStall(v int) int {
+	if v < 5 {
+		return 5
+	}
+	return v
+}
+
+// clampAgentReportsRetentionDays enforces the 7..365 day window the env
+// loader applies. Re-clamped at every resolve so a DB-edited value can't
+// bypass the bounds even after restart. Mirrors the validator in
+// store.UpdateConfigKey for symmetric three-layer validation.
+func clampAgentReportsRetentionDays(v int) int {
+	if v < 7 {
+		return 7
+	}
+	if v > 365 {
+		return 365
+	}
+	return v
 }
 
 func resolveInt(envKey string, dbVal *int, defaultVal int) int {
@@ -190,10 +238,62 @@ func parseBodyLimit(s string, fallback int64) int64 {
 	}
 	s = strings.TrimSpace(s)
 	v, err := strconv.ParseInt(s, 10, 64)
-	if err != nil || v < 1 {
+	if err != nil {
 		return fallback
 	}
+	return scaleBodyLimit(v, mult, fallback)
+}
+
+// Without this bound a value large enough to overflow int64 wraps negative,
+// and BodyLimitFor reads a non-positive limit as "no limit at all".
+const maxBodyLimitBytes int64 = 32 * 1024 * 1024
+
+// Over-range values clamp rather than fall back: the settings UI used to offer
+// 50mb, so falling back would drop those installs to the default on upgrade.
+func scaleBodyLimit(v, mult, fallback int64) int64 {
+	if v < 1 {
+		return fallback
+	}
+	if v > maxBodyLimitBytes/mult {
+		return maxBodyLimitBytes
+	}
 	return v * mult
+}
+
+func resolveBodyLimitKB(envKey string, dbVal *string, defaultBytes int64) int64 {
+	if v := os.Getenv(envKey); v != "" {
+		return parseBodyLimitKB(strings.TrimSpace(v), defaultBytes)
+	}
+	if dbVal != nil && *dbVal != "" {
+		return parseBodyLimitKB(*dbVal, defaultBytes)
+	}
+	return defaultBytes
+}
+
+func parseBodyLimitKB(s string, fallback int64) int64 {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if s == "" {
+		return fallback
+	}
+	var mult int64 = 1024
+	if strings.HasSuffix(s, "kb") {
+		s = strings.TrimSuffix(s, "kb")
+	} else if strings.HasSuffix(s, "mb") {
+		mult = 1024 * 1024
+		s = strings.TrimSuffix(s, "mb")
+	} else if strings.HasSuffix(s, "gb") {
+		mult = 1024 * 1024 * 1024
+		s = strings.TrimSuffix(s, "gb")
+	} else if strings.HasSuffix(s, "b") {
+		mult = 1
+		s = strings.TrimSuffix(s, "b")
+	}
+	s = strings.TrimSpace(s)
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return scaleBodyLimit(v, mult, fallback)
 }
 
 func strPtr(s string) *string {

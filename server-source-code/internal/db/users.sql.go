@@ -425,7 +425,7 @@ func (q *Queries) GetUserByOidcSub(ctx context.Context, oidcSub *string) (User, 
 
 const getUserByOidcSubOrEmail = `-- name: GetUserByOidcSubOrEmail :one
 SELECT id, username, email, password_hash, role, is_active, last_login, created_at, updated_at, tfa_backup_codes, tfa_enabled, tfa_secret, first_name, last_name, theme_preference, color_theme, ui_preferences, oidc_sub, oidc_provider, avatar_url, discord_id, discord_username, discord_avatar, discord_linked_at, newsletter_subscribed, newsletter_subscribed_at FROM users
-WHERE oidc_sub = $1 OR LOWER(email) = LOWER($2)
+WHERE oidc_sub = $1 OR (LOWER(email) = LOWER($2) AND $2 != '')
 ORDER BY CASE WHEN oidc_sub = $1 THEN 0 ELSE 1 END
 LIMIT 1
 `
@@ -435,6 +435,10 @@ type GetUserByOidcSubOrEmailParams struct {
 	Lower   string  `json:"lower"`
 }
 
+// The "$2 != ”" guard mirrors GetUserByDiscordIDOrEmail. Without it an IdP
+// asserting an empty email participates in the email branch, which is junk
+// input rather than a takeover (the oidc_sub cross-check blocks a second such
+// login) but should not reach account matching at all.
 func (q *Queries) GetUserByOidcSubOrEmail(ctx context.Context, arg GetUserByOidcSubOrEmailParams) (User, error) {
 	row := q.db.QueryRow(ctx, getUserByOidcSubOrEmail, arg.OidcSub, arg.Lower)
 	var i User
@@ -661,6 +665,20 @@ UPDATE users SET newsletter_subscribed = true, newsletter_subscribed_at = NOW(),
 
 func (q *Queries) SetNewsletterSubscribed(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, setNewsletterSubscribed, id)
+	return err
+}
+
+const updateLastLogin = `-- name: UpdateLastLogin :exec
+UPDATE users SET last_login = $1 WHERE id = $2
+`
+
+type UpdateLastLoginParams struct {
+	LastLogin pgtype.Timestamp `json:"last_login"`
+	ID        string           `json:"id"`
+}
+
+func (q *Queries) UpdateLastLogin(ctx context.Context, arg UpdateLastLoginParams) error {
+	_, err := q.db.Exec(ctx, updateLastLogin, arg.LastLogin, arg.ID)
 	return err
 }
 

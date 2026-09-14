@@ -77,6 +77,9 @@ type CompliancePayload struct {
 	MachineID    string `json:"machine_id"`
 	AgentVersion string `json:"agent_version"`
 	ScanType     string `json:"scan_type,omitempty"`
+	// ComplianceHash is the agent-computed canonical hash for the
+	// compliance payload. Server validates and persists for hash-gating.
+	ComplianceHash string `json:"compliance_hash,omitempty"`
 }
 
 // ComplianceResponse represents the response from the compliance endpoint

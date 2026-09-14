@@ -3,7 +3,9 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
@@ -27,6 +29,118 @@ const (
 	// decommissioned or permanently unreachable agents.
 	maxScanRequeueAttempts = 30 // ~30 minutes at 1-minute intervals
 )
+
+type complianceScannerStatusPayload struct {
+	Components  map[string]string `json:"components"`
+	ScannerInfo struct {
+		OpenSCAPAvailable    *bool `json:"openscap_available"`
+		DockerBenchAvailable *bool `json:"docker_bench_available"`
+	} `json:"scanner_info"`
+}
+
+// ValidateComplianceScanReadiness checks scanner state the agent has already reported.
+// Unknown or absent scanner status is allowed so older agents are not blocked.
+func ValidateComplianceScanReadiness(scannerStatus []byte, profileType string, profileID *string, openscapEnabled, dockerBenchEnabled bool) error {
+	requested := requestedComplianceScanners(profileType, profileID)
+	if len(requested) == 0 {
+		if openscapEnabled {
+			requested = append(requested, "openscap")
+		}
+		if dockerBenchEnabled {
+			requested = append(requested, "docker-bench")
+		}
+		if len(requested) == 0 {
+			return fmt.Errorf("no compliance scanners are enabled for this host")
+		}
+	}
+
+	for _, scanner := range requested {
+		switch scanner {
+		case "openscap":
+			if !openscapEnabled {
+				return fmt.Errorf("OpenSCAP scanner is disabled for this host")
+			}
+		case "docker-bench":
+			if !dockerBenchEnabled {
+				return fmt.Errorf("docker-bench scanner is disabled for this host")
+			}
+		}
+	}
+
+	status, ok := parseComplianceScannerStatus(scannerStatus)
+	if !ok {
+		return nil
+	}
+	for _, scanner := range requested {
+		if componentStatus, blocked := blockedScannerStatus(status, scanner); blocked {
+			return fmt.Errorf("%s scanner is %s", scannerDisplayName(scanner), componentStatus)
+		}
+	}
+	return nil
+}
+
+func requestedComplianceScanners(profileType string, profileID *string) []string {
+	if profileID != nil && strings.TrimSpace(*profileID) == "docker-bench" {
+		return []string{"docker-bench"}
+	}
+
+	switch strings.TrimSpace(profileType) {
+	case "openscap":
+		return []string{"openscap"}
+	case "docker-bench":
+		return []string{"docker-bench"}
+	case "", "all":
+		return nil
+	default:
+		return []string{"openscap"}
+	}
+}
+
+func parseComplianceScannerStatus(raw []byte) (complianceScannerStatusPayload, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return complianceScannerStatusPayload{}, false
+	}
+	var status complianceScannerStatusPayload
+	if err := json.Unmarshal(raw, &status); err != nil {
+		return complianceScannerStatusPayload{}, false
+	}
+	return status, true
+}
+
+func blockedScannerStatus(status complianceScannerStatusPayload, scanner string) (string, bool) {
+	if status.Components != nil {
+		if value, ok := status.Components[scanner]; ok {
+			normalized := strings.ToLower(strings.TrimSpace(value))
+			if normalized != "" && normalized != "ready" {
+				return normalized, true
+			}
+			return "", false
+		}
+	}
+
+	switch scanner {
+	case "openscap":
+		if status.ScannerInfo.OpenSCAPAvailable != nil && !*status.ScannerInfo.OpenSCAPAvailable {
+			return "unavailable", true
+		}
+	case "docker-bench":
+		if status.ScannerInfo.DockerBenchAvailable != nil && !*status.ScannerInfo.DockerBenchAvailable {
+			return "unavailable", true
+		}
+	}
+	return "", false
+}
+
+func scannerDisplayName(scanner string) string {
+	switch scanner {
+	case "openscap":
+		return "OpenSCAP"
+	case "docker-bench":
+		return "Docker Bench"
+	default:
+		return scanner
+	}
+}
 
 // RunScanHandler handles run_scan jobs.
 type RunScanHandler struct {
@@ -59,8 +173,21 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 		return err
 	}
 
-	// Resolve per-context DB when Host is in payload (multi-host mode).
+	// Resolve per-context DB and put it on ctx so DBProvider-backed stores
+	// (h.compliance) resolve to the same database.
 	d := resolveDBFromPayload(ctx, t.Payload(), h.db, h.poolCache)
+	if d != nil {
+		ctx = hostctx.WithDB(ctx, d)
+	}
+	// Workers carry no context entry, so TenantKey would build unprefixed Redis
+	// keys and never match the ones the HTTP side writes.
+	//
+	// Only Host is set, which is all TenantKey needs. Nothing reachable from a
+	// worker reads the quota or module fields; if that changes, populate them
+	// from the registry, since a nil MaxHosts or Modules fails open.
+	if p.Host != "" {
+		ctx = hostctx.WithEntry(ctx, &hostctx.Entry{Host: p.Host})
+	}
 	taskID, _ := asynq.GetTaskID(ctx)
 	retryCount, _ := asynq.GetRetryCount(ctx)
 	attempt := int32(retryCount + 1)
@@ -144,6 +271,19 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 		}
 	}
 
+	if err == nil {
+		if readinessErr := ValidateComplianceScanReadiness(host.ComplianceScannerStatus, effectiveProfileType, p.ProfileID, openscapEnabled, dockerBenchEnabled); readinessErr != nil {
+			h.log.Warn("run_scan: scanner not ready", "host_id", p.HostID, "error", readinessErr)
+			if taskID != "" && d != nil {
+				msg := readinessErr.Error()
+				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{
+					JobID: taskID, ErrorMessage: &msg,
+				})
+			}
+			return nil
+		}
+	}
+
 	profileID := ""
 	if p.ProfileID != nil {
 		profileID = *p.ProfileID
@@ -192,18 +332,24 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	profilesToUse := []string{}
 	if effectiveProfileType == "all" || effectiveProfileType == "openscap" {
 		prof, err := h.compliance.GetOrCreateProfile(ctx, "OpenSCAP Scan", "openscap")
-		if err == nil {
+		if err != nil {
+			h.log.Warn("run_scan: could not resolve OpenSCAP profile", "host_id", p.HostID, "error", err)
+		} else {
 			profilesToUse = append(profilesToUse, prof.ID)
 		}
 	}
 	if effectiveProfileType == "all" || effectiveProfileType == "docker-bench" {
 		prof, err := h.compliance.GetOrCreateProfile(ctx, "Docker Bench Security", "docker-bench")
-		if err == nil {
+		if err != nil {
+			h.log.Warn("run_scan: could not resolve Docker Bench profile", "host_id", p.HostID, "error", err)
+		} else {
 			profilesToUse = append(profilesToUse, prof.ID)
 		}
 	}
 	for _, profileID := range profilesToUse {
-		_ = h.compliance.CreateRunningScan(ctx, p.HostID, profileID)
+		if err := h.compliance.CreateRunningScan(ctx, p.HostID, profileID); err != nil {
+			h.log.Warn("run_scan: could not record running scan", "host_id", p.HostID, "profile_id", profileID, "error", err)
+		}
 	}
 
 	if taskID != "" && d != nil {
@@ -217,16 +363,18 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 type InstallComplianceToolsHandler struct {
 	registry   *agentregistry.Registry
 	db         *database.DB
+	poolCache  *hostctx.PoolCache
 	rdb        *redis.Client
 	redisCache *hostctx.RedisCache
 	log        *slog.Logger
 }
 
 // NewInstallComplianceToolsHandler creates an install_compliance_tools handler.
-func NewInstallComplianceToolsHandler(registry *agentregistry.Registry, db *database.DB, rdb *redis.Client, redisCache *hostctx.RedisCache, log *slog.Logger) *InstallComplianceToolsHandler {
+func NewInstallComplianceToolsHandler(registry *agentregistry.Registry, db *database.DB, poolCache *hostctx.PoolCache, rdb *redis.Client, redisCache *hostctx.RedisCache, log *slog.Logger) *InstallComplianceToolsHandler {
 	return &InstallComplianceToolsHandler{
 		registry:   registry,
 		db:         db,
+		poolCache:  poolCache,
 		rdb:        rdb,
 		redisCache: redisCache,
 		log:        log,
@@ -239,6 +387,7 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return err
 	}
+	d := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
 
 	// Resolve Redis from payload.Host when set; fall back to system rdb.
 	rdb := h.rdb
@@ -251,14 +400,14 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 	retryCount, _ := asynq.GetRetryCount(ctx)
 	attempt := int32(retryCount + 1)
 
-	if h.db != nil && taskID != "" && retryCount == 0 {
-		host, err := h.db.Queries.GetHostByApiID(ctx, p.ApiID)
+	if d != nil && taskID != "" && retryCount == 0 {
+		host, err := d.Queries.GetHostByApiID(ctx, p.ApiID)
 		var hostID *string
 		if err == nil {
 			hostID = &host.ID
 		}
 		apiIDPtr := &p.ApiID
-		_ = h.db.Queries.InsertJobHistory(ctx, db.InsertJobHistoryParams{
+		_ = d.Queries.InsertJobHistory(ctx, db.InsertJobHistoryParams{
 			ID:            uuid.New().String(),
 			JobID:         taskID,
 			QueueName:     QueueCompliance,
@@ -272,8 +421,8 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 
 	if !h.registry.IsConnected(p.ApiID) {
 		msg := "Agent is not connected. Cannot run install."
-		if taskID != "" && h.db != nil {
-			_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
+		if taskID != "" && d != nil {
+			_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
 		}
 		h.log.Warn("install_compliance_tools: agent not connected", "api_id", p.ApiID)
 		return nil
@@ -282,15 +431,15 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 	msg := map[string]interface{}{"type": "install_scanner"}
 	if err := h.registry.SendJSON(p.ApiID, msg); err != nil {
 		errMsg := "Failed to send install_scanner command to agent"
-		if taskID != "" && h.db != nil {
-			_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
+		if taskID != "" && d != nil {
+			_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
 		}
 		return err
 	}
 
 	if rdb == nil {
-		if taskID != "" && h.db != nil {
-			_ = h.db.Queries.UpdateJobHistoryCompleted(ctx, taskID)
+		if taskID != "" && d != nil {
+			_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
 		}
 		h.log.Info("install_compliance_tools: sent (no Redis for polling)", "host_id", p.HostID)
 		return nil
@@ -306,8 +455,8 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 		select {
 		case <-ctx.Done():
 			errMsg := "Job cancelled (context cancelled)"
-			if taskID != "" && h.db != nil {
-				_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
+			if taskID != "" && d != nil {
+				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
 			}
 			return ctx.Err()
 		default:
@@ -317,8 +466,8 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 		if cancelled != "" {
 			_ = rdb.Del(ctx, cancelKey).Err()
 			errMsg := "Cancelled by user"
-			if taskID != "" && h.db != nil {
-				_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
+			if taskID != "" && d != nil {
+				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
 			}
 			return nil
 		}
@@ -332,14 +481,14 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 			_ = json.Unmarshal([]byte(raw), &data)
 			switch data.Status {
 			case "ready":
-				if taskID != "" && h.db != nil {
-					_ = h.db.Queries.UpdateJobHistoryCompleted(ctx, taskID)
+				if taskID != "" && d != nil {
+					_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
 				}
 				h.log.Info("install_compliance_tools: completed", "host_id", p.HostID)
 				return nil
 			case "partial":
-				if taskID != "" && h.db != nil {
-					_ = h.db.Queries.UpdateJobHistoryCompleted(ctx, taskID)
+				if taskID != "" && d != nil {
+					_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
 				}
 				h.log.Info("install_compliance_tools: completed (partial)", "host_id", p.HostID)
 				return nil
@@ -348,8 +497,8 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 				if errMsg == "" {
 					errMsg = "Agent reported error"
 				}
-				if taskID != "" && h.db != nil {
-					_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
+				if taskID != "" && d != nil {
+					_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
 				}
 				return nil
 			}
@@ -359,8 +508,8 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 		select {
 		case <-ctx.Done():
 			errMsg := "Job cancelled (context cancelled)"
-			if taskID != "" && h.db != nil {
-				_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
+			if taskID != "" && d != nil {
+				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
 			}
 			return ctx.Err()
 		case <-pollTimer.C:
@@ -368,8 +517,8 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 	}
 
 	errMsg := "Install timed out after 5 minutes"
-	if taskID != "" && h.db != nil {
-		_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
+	if taskID != "" && d != nil {
+		_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
 	}
 	h.log.Warn("install_compliance_tools: timeout", "host_id", p.HostID)
 	return nil

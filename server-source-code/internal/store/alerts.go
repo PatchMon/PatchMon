@@ -10,6 +10,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -65,34 +66,6 @@ func rowToUserRef(id, username, email *string, firstName, lastName *string) *Use
 	return u
 }
 
-func listAlertsRowToAlertWithDetails(r db.ListAlertsRow, latestMap map[string]db.GetLatestAlertHistoryForAlertsRow) AlertWithDetails {
-	a := AlertWithDetails{
-		Alert: models.Alert{
-			ID:               r.ID,
-			Type:             r.Type,
-			Severity:         r.Severity,
-			Title:            r.Title,
-			Message:          r.Message,
-			Metadata:         models.JSON(r.Metadata),
-			IsActive:         r.IsActive,
-			AssignedToUserID: r.AssignedToUserID,
-			ResolvedAt:       pgTimePtrToTime(r.ResolvedAt),
-			ResolvedByUserID: r.ResolvedByUserID,
-			CreatedAt:        pgTime(r.CreatedAt),
-			UpdatedAt:        pgTime(r.UpdatedAt),
-		},
-		UsersAssigned: rowToUserRef(r.AssignedUserID, r.AssignedUsername, r.AssignedEmail, r.AssignedFirstName, r.AssignedLastName),
-	}
-	if l, ok := latestMap[r.ID]; ok {
-		a.CurrentState = &CurrentState{
-			Action:    l.Action,
-			User:      rowToUserRef(l.UserIDVal, l.Username, l.Email, l.FirstName, l.LastName),
-			Timestamp: pgTime(l.CreatedAt),
-		}
-	}
-	return a
-}
-
 func getAlertByIDRowToAlertWithDetails(r db.GetAlertByIDRow, latest *db.ListAlertHistoryByAlertIDRow) AlertWithDetails {
 	a := AlertWithDetails{
 		Alert: models.Alert{
@@ -128,89 +101,137 @@ func pgTimePtrToTime(t pgtype.Timestamp) *time.Time {
 	return nil
 }
 
-func listAlertsAssignedToRowToAlertWithDetails(r db.ListAlertsAssignedToRow, latestMap map[string]db.GetLatestAlertHistoryForAlertsRow) AlertWithDetails {
-	a := AlertWithDetails{
-		Alert: models.Alert{
-			ID:               r.ID,
-			Type:             r.Type,
-			Severity:         r.Severity,
-			Title:            r.Title,
-			Message:          r.Message,
-			Metadata:         models.JSON(r.Metadata),
-			IsActive:         r.IsActive,
-			AssignedToUserID: r.AssignedToUserID,
-			ResolvedAt:       pgTimePtrToTime(r.ResolvedAt),
-			ResolvedByUserID: r.ResolvedByUserID,
-			CreatedAt:        pgTime(r.CreatedAt),
-			UpdatedAt:        pgTime(r.UpdatedAt),
-		},
-		UsersAssigned: rowToUserRef(r.AssignedUserID, r.AssignedUsername, r.AssignedEmail, r.AssignedFirstName, r.AssignedLastName),
+// List returns every alert, optionally restricted to one assignee. Includes
+// inactive (resolved) alerts. Callers that render a page of alerts should use
+// ListFiltered instead — this unbounded form exists for the overview widgets
+// and the scheduled report renderer, which aggregate over the whole set.
+func (s *AlertsStore) List(ctx context.Context, assignedToUserID *string) ([]AlertWithDetails, error) {
+	p := AlertListParams{}
+	if assignedToUserID != nil {
+		p.Assignment = *assignedToUserID
 	}
-	if l, ok := latestMap[r.ID]; ok {
-		a.CurrentState = &CurrentState{
-			Action:    l.Action,
-			User:      rowToUserRef(l.UserIDVal, l.Username, l.Email, l.FirstName, l.LastName),
-			Timestamp: pgTime(l.CreatedAt),
-		}
-	}
-	return a
+	alerts, _, err := s.ListFiltered(ctx, p)
+	return alerts, err
 }
 
-// List returns alerts with optional assigned-to filter. Include inactive (resolved) alerts.
-func (s *AlertsStore) List(ctx context.Context, assignedToUserID *string) ([]AlertWithDetails, error) {
+// ListFiltered returns a filtered, sorted page of alerts plus the total
+// number of alerts matching the filters (ignoring the page window). When
+// p.Limit is zero every match is returned and the total is simply the row
+// count, so the COUNT query is skipped.
+func (s *AlertsStore) ListFiltered(ctx context.Context, p AlertListParams) ([]AlertWithDetails, int, error) {
 	d := s.db.DB(ctx)
-	ids := []string{}
-	var latestMap map[string]db.GetLatestAlertHistoryForAlertsRow
 
-	if assignedToUserID != nil && *assignedToUserID != "" {
-		rows, err := d.Queries.ListAlertsAssignedTo(ctx, assignedToUserID)
-		if err != nil {
-			return nil, err
+	total := 0
+	if p.Limit > 0 {
+		countSQL, countArgs := countAlertsSQL(p)
+		if err := d.RawQueryRow(ctx, countSQL, countArgs...).Scan(&total); err != nil {
+			return nil, 0, err
 		}
-		if len(rows) == 0 {
-			return nil, nil
+		if total == 0 {
+			return []AlertWithDetails{}, 0, nil
 		}
-		for _, r := range rows {
-			ids = append(ids, r.ID)
-		}
-		latestRows, err := d.Queries.GetLatestAlertHistoryForAlerts(ctx, ids)
-		if err != nil {
-			return nil, err
-		}
-		latestMap = make(map[string]db.GetLatestAlertHistoryForAlertsRow)
-		for _, l := range latestRows {
-			latestMap[l.AlertID] = l
-		}
-		out := make([]AlertWithDetails, len(rows))
-		for i, r := range rows {
-			out[i] = listAlertsAssignedToRowToAlertWithDetails(r, latestMap)
-		}
-		return out, nil
 	}
 
-	rows, err := d.Queries.ListAlerts(ctx)
+	listSQL, listArgs := listAlertsSQL(p)
+	rows, err := d.Raw(ctx, listSQL, listArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	out := []AlertWithDetails{}
+	for rows.Next() {
+		a, err := scanAlertWithDetails(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	if p.Limit <= 0 {
+		total = len(out)
+	}
+	return out, total, nil
+}
+
+// scanAlertWithDetails decodes one row of listAlertsSQL. Column order must
+// stay in step with the SELECT list there.
+func scanAlertWithDetails(rows pgx.Rows) (AlertWithDetails, error) {
+	var (
+		a                 AlertWithDetails
+		metadata          []byte
+		resolvedAt        *time.Time
+		createdAt         time.Time
+		updatedAt         time.Time
+		assignedUserID    *string
+		assignedUsername  *string
+		assignedEmail     *string
+		assignedFirstName *string
+		assignedLastName  *string
+		historyAction     *string
+		historyCreatedAt  *time.Time
+		historyUserID     *string
+		historyUsername   *string
+		historyEmail      *string
+		historyFirstName  *string
+		historyLastName   *string
+		severityRank      int
+	)
+
+	if err := rows.Scan(
+		&a.ID, &a.Type, &a.Severity, &a.Title, &a.Message, &metadata, &a.IsActive,
+		&a.AssignedToUserID, &resolvedAt, &a.ResolvedByUserID, &createdAt, &updatedAt,
+		&assignedUserID, &assignedUsername, &assignedEmail, &assignedFirstName, &assignedLastName,
+		&historyAction, &historyCreatedAt, &historyUserID, &historyUsername, &historyEmail,
+		&historyFirstName, &historyLastName,
+		&severityRank,
+	); err != nil {
+		return AlertWithDetails{}, err
+	}
+
+	a.Metadata = models.JSON(metadata)
+	a.ResolvedAt = resolvedAt
+	a.CreatedAt = createdAt
+	a.UpdatedAt = updatedAt
+	a.UsersAssigned = rowToUserRef(assignedUserID, assignedUsername, assignedEmail, assignedFirstName, assignedLastName)
+
+	if historyAction != nil {
+		state := &CurrentState{
+			Action: *historyAction,
+			User:   rowToUserRef(historyUserID, historyUsername, historyEmail, historyFirstName, historyLastName),
+		}
+		if historyCreatedAt != nil {
+			state.Timestamp = *historyCreatedAt
+		}
+		a.CurrentState = state
+	}
+
+	return a, nil
+}
+
+// DistinctTypes returns the alert types currently present in the table, for
+// the Alerts page type filter. The paginated list can no longer derive them
+// from the rows it holds.
+func (s *AlertsStore) DistinctTypes(ctx context.Context) ([]string, error) {
+	d := s.db.DB(ctx)
+	rows, err := d.Raw(ctx, "SELECT DISTINCT type FROM alerts WHERE type IS NOT NULL AND type <> '' ORDER BY type")
 	if err != nil {
 		return nil, err
 	}
-	if len(rows) == 0 {
-		return nil, nil
+	defer rows.Close()
+
+	out := []string{}
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
 	}
-	for _, r := range rows {
-		ids = append(ids, r.ID)
-	}
-	latestRows, err := d.Queries.GetLatestAlertHistoryForAlerts(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-	latestMap = make(map[string]db.GetLatestAlertHistoryForAlertsRow)
-	for _, l := range latestRows {
-		latestMap[l.AlertID] = l
-	}
-	out := make([]AlertWithDetails, len(rows))
-	for i, r := range rows {
-		out[i] = listAlertsRowToAlertWithDetails(r, latestMap)
-	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // GetByID returns an alert by ID.

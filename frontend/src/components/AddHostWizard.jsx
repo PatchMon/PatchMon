@@ -11,6 +11,8 @@ import {
 	hostGroupsAPI,
 	settingsAPI,
 } from "../utils/api";
+import { invalidateHostScope } from "../utils/queryScopes";
+import ModalPortal from "./ui/ModalPortal";
 
 const STEPS = [
 	{ key: 1, label: "Choose OS" },
@@ -112,7 +114,11 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 			const curlInsecure = includeSslBypass ? " -k" : "";
 			return `${sslBlock}curl.exe${curlInsecure} -s -H "X-API-ID: ${createdHost?.api_id}" -H "X-API-KEY: ${plaintextApiKey}" -o "$env:TEMP\\patchmon-install.ps1" "${installUrl}"; if ($LASTEXITCODE -eq 0) { & "$env:TEMP\\patchmon-install.ps1" } else { Write-Error "curl failed with exit code $LASTEXITCODE" }`;
 		}
-		return `${sslBlock}$r = Invoke-WebRequest -Uri "${installUrl}" -Headers @{"X-API-ID"="${createdHost?.api_id}"; "X-API-KEY"="${plaintextApiKey}"} -UseBasicParsing; $r.Content | Set-Content "$env:TEMP\\patchmon-install.ps1" -Encoding UTF8; & "$env:TEMP\\patchmon-install.ps1"`;
+		// -OutFile writes the response bytes straight to disk. Reading
+		// $r.Content instead makes Windows PowerShell 5.1 decode the body
+		// through the Windows ANSI code page, which corrupts every non-ASCII
+		// character in the script.
+		return `${sslBlock}Invoke-WebRequest -Uri "${installUrl}" -Headers @{"X-API-ID"="${createdHost?.api_id}"; "X-API-KEY"="${plaintextApiKey}"} -UseBasicParsing -OutFile "$env:TEMP\\patchmon-install.ps1"; & "$env:TEMP\\patchmon-install.ps1"`;
 	};
 
 	const getShellCommand = (force) => {
@@ -139,8 +145,8 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 				const status = wsResult.data;
 				if (status?.connected && connectionStage === "waiting") {
 					setConnectionStage("connected");
-					queryClient.invalidateQueries(["host", createdHost.id]);
-					queryClient.invalidateQueries(["hosts"]);
+					queryClient.invalidateQueries({ queryKey: ["host", createdHost.id] });
+					invalidateHostScope(queryClient);
 				}
 				if (
 					status?.connected &&
@@ -207,8 +213,8 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 				state: { fromWizard: true, apiKey: plaintextApiKey },
 			});
 			setTimeout(() => {
-				queryClient.invalidateQueries(["host", createdHost.id]);
-				queryClient.invalidateQueries(["hosts"]);
+				queryClient.invalidateQueries({ queryKey: ["host", createdHost.id] });
+				invalidateHostScope(queryClient);
 			}, 2000);
 		}, 300);
 	}, [
@@ -269,8 +275,9 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 				document.body.appendChild(ta);
 				ta.focus();
 				ta.select();
-				document.execCommand("copy");
+				const successful = document.execCommand("copy");
 				document.body.removeChild(ta);
+				if (!successful) throw new Error("Copy command failed");
 			}
 			setStep(4);
 		} catch (_err) {
@@ -316,8 +323,8 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 		</div>
 	);
 
-	return (
-		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+	const modal = (
+		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120] p-4">
 			<div className="bg-white dark:bg-secondary-800 rounded-lg p-4 sm:p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
 				<div className="flex justify-between items-center mb-2">
 					<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
@@ -724,6 +731,8 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 };
 
 export default AddHostWizard;

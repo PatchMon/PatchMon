@@ -459,32 +459,3 @@ func (s *DockerBenchScanner) EnsureInstalled() error {
 	s.logger.Info("Docker Bench image pulled successfully")
 	return nil
 }
-
-// Cleanup removes the Docker Bench image to free up space
-func (s *DockerBenchScanner) Cleanup() error {
-	if !s.available {
-		s.logger.Debug("Docker not available, nothing to clean up")
-		return nil
-	}
-
-	s.logger.Info("Removing Docker Bench for Security image...")
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	// Remove the image
-	removeCmd := exec.CommandContext(ctx, dockerBinary, "rmi", dockerBenchImage)
-	output, err := removeCmd.CombinedOutput()
-	if err != nil {
-		// Image might not exist, which is fine
-		if strings.Contains(string(output), "No such image") {
-			s.logger.Debug("Docker Bench image already removed")
-			return nil
-		}
-		s.logger.WithError(err).WithField("output", string(output)).Warn("Failed to remove Docker Bench image")
-		return fmt.Errorf("failed to remove Docker Bench image: %w", err)
-	}
-
-	s.logger.Info("Docker Bench image removed successfully")
-	return nil
-}

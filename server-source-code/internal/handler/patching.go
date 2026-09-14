@@ -373,6 +373,7 @@ func (h *PatchingHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	statusCounts := map[string]int{
 		"queued": 0, "running": 0, "completed": 0, "failed": 0, "cancelled": 0,
+		"timed_out": 0, "agent_disconnected": 0,
 		"pending_validation": 0, "pending_approval": 0, "validated": 0,
 	}
 	for k, v := range byStatus {
@@ -385,6 +386,8 @@ func (h *PatchingHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		"completed":          statusCounts["completed"],
 		"failed":             statusCounts["failed"],
 		"cancelled":          statusCounts["cancelled"],
+		"timed_out":          statusCounts["timed_out"],
+		"agent_disconnected": statusCounts["agent_disconnected"],
 		"pending_validation": statusCounts["pending_validation"],
 		"pending_approval":   statusCounts["pending_approval"],
 		"validated":          statusCounts["validated"],
@@ -656,9 +659,17 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. Mark the validation run as "approved" (terminal - preserved with its output).
-	if err := h.patchRuns.MarkValidationApproved(r.Context(), validationID, approvedBy); err != nil {
+	//
+	// The serialisation point: the Go-side status check above is racy, so two
+	// concurrent approvals both pass it and only one moves a row here.
+	applied, err := h.patchRuns.MarkValidationApproved(r.Context(), validationID, approvedBy)
+	if err != nil {
 		h.log.Error("patching: mark validation approved error", "error", err)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to approve validation run"})
+		return
+	}
+	if !applied {
+		JSON(w, http.StatusConflict, map[string]string{"error": "This run has already been approved or is no longer awaiting approval"})
 		return
 	}
 
@@ -683,6 +694,12 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := h.queueClient.Enqueue(task, enqueueOpts...); err != nil {
 		h.log.Error("patching: enqueue approve error", "error", err)
+		// The run row is already committed; without this it sits queued forever
+		// with no task behind it.
+		if _, cancelErr := h.patchRuns.Cancel(r.Context(), newRunID, "Failed to queue patch run"); cancelErr != nil {
+			h.log.Error("patching: failed to cancel orphaned run after enqueue error",
+				"run_id", newRunID, "error", cancelErr)
+		}
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to queue approved patch"})
 		return
 	}

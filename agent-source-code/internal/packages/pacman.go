@@ -2,6 +2,7 @@ package packages
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"os/exec"
 	"regexp"
@@ -178,8 +179,8 @@ func (m *PacmanManager) getForeignPackages() map[string]installedPkg {
 // getUpgradablePackages runs checkupdates and returns parsed packages.
 func (m *PacmanManager) getUpgradablePackages() ([]models.Package, error) {
 	if _, err := lookPath("checkupdates"); err != nil {
-		m.logger.WithError(err).Error("checkupdates not found (pacman-contrib not installed)")
-		return nil, err
+		m.logger.WithError(err).Warn("checkupdates not found (pacman-contrib not installed), falling back to pacman -Qu")
+		return m.getUpgradableFromLocalDB()
 	}
 
 	upgradeCmd := runCommand("checkupdates")
@@ -198,6 +199,31 @@ func (m *PacmanManager) getUpgradablePackages() ([]models.Package, error) {
 
 	pkgs := m.parseCheckUpdate(string(upgradeOutput))
 	return pkgs, nil
+}
+
+// getUpgradableFromLocalDB lists upgradable packages from the local sync
+// database, for hosts without checkupdates available.
+//
+// Output is the same "name oldver -> newver" form checkupdates produces, so it
+// reuses the same parser. Results are only as fresh as the last database
+// refresh, whereas checkupdates syncs into a temporary database of its own.
+func (m *PacmanManager) getUpgradableFromLocalDB() ([]models.Package, error) {
+	cmd := runCommand("pacman", "-Qu")
+	output, err := cmd.Output()
+	if err != nil {
+		// -Qu exits 1 both when nothing is upgradable and on a genuine failure,
+		// so the exit code alone cannot tell them apart. Only a real failure
+		// writes to stderr. Without that check a broken package database is
+		// reported as "no updates available", which is worse than an error
+		// because it looks like a healthy host.
+		var exitErr *exec.ExitError
+		if isExitCode(err, 1) && errors.As(err, &exitErr) && len(bytes.TrimSpace(exitErr.Stderr)) == 0 {
+			return []models.Package{}, nil
+		}
+		return nil, commandError("pacman -Qu", err)
+	}
+
+	return m.parseCheckUpdate(string(output)), nil
 }
 
 // parseCheckUpdate parses checkupdates output

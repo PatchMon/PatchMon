@@ -1,4 +1,6 @@
 import axios from "axios";
+import { requestTokenRefresh } from "./sessionRefresh";
+import { consumeInteraction } from "./userActivity";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "/api/v1";
 
@@ -42,6 +44,12 @@ api.interceptors.request.use(
 		}
 		config.headers["X-Device-ID"] = deviceId;
 
+		// Only requests that follow a real interaction slide the session
+		// inactivity window. Background polling deliberately goes unmarked.
+		if (consumeInteraction()) {
+			config.headers["X-User-Activity"] = "1";
+		}
+
 		return config;
 	},
 	(error) => {
@@ -49,24 +57,55 @@ api.interceptors.request.use(
 	},
 );
 
+// Endpoints whose own 401 means "these credentials are bad", not "this token
+// aged out", so retrying them behind a refresh would be pointless.
+const isSessionEndpoint = (url) =>
+	url.includes("/auth/login") ||
+	url.includes("/auth/refresh") ||
+	url.includes("/auth/logout");
+
 // Response interceptor
 api.interceptors.response.use(
 	(response) => response,
-	(error) => {
-		if (error.response?.status === 401) {
-			// Don't redirect if we're on the login page or if it's a TFA-related error
-			const currentPath = window.location.pathname;
-			const requestUrl = error.config?.url || "";
-			const isTfaError =
-				requestUrl.includes("/verify-tfa") || requestUrl.includes("/tfa/");
+	async (error) => {
+		if (error.response?.status !== 401) return Promise.reject(error);
 
-			if (currentPath !== "/login" && !isTfaError) {
-				// Dispatch event for AuthContext to handle - avoids race with React updates
-				// that could trigger ErrorBoundary "Something went wrong" before redirect
-				localStorage.removeItem("user");
-				window.dispatchEvent(new CustomEvent("auth:session-expired"));
+		// Don't redirect if we're on the login page or if it's a TFA-related error
+		const currentPath = window.location.pathname;
+		const config = error.config;
+		const requestUrl = config?.url || "";
+		const isTfaError =
+			requestUrl.includes("/verify-tfa") || requestUrl.includes("/tfa/");
+
+		if (currentPath === "/login" || isTfaError) {
+			return Promise.reject(error);
+		}
+
+		// Access tokens expire on a fixed schedule regardless of use, so most 401s
+		// here are an aged-out token rather than a dead session. Trade it for a
+		// fresh one and replay once; the session itself is only gone if that fails.
+		if (
+			config &&
+			!config._sessionRefreshAttempted &&
+			!isSessionEndpoint(requestUrl)
+		) {
+			config._sessionRefreshAttempted = true;
+			try {
+				await requestTokenRefresh();
+				return await api(config);
+			} catch (refreshError) {
+				// Only a 401 proves the session is gone. A network drop, a 5xx, or a
+				// rate limiter that is failing closed says nothing about the session,
+				// and signing the user out over it would turn a blip into a logout.
+				const status = refreshError?.response?.status;
+				if (status && status !== 401) return Promise.reject(error);
 			}
 		}
+
+		// Dispatch event for AuthContext to handle - avoids race with React updates
+		// that could trigger ErrorBoundary "Something went wrong" before redirect
+		localStorage.removeItem("user");
+		window.dispatchEvent(new CustomEvent("auth:session-expired"));
 		return Promise.reject(error);
 	},
 );
@@ -74,10 +113,17 @@ api.interceptors.response.use(
 // Dashboard API
 export const dashboardAPI = {
 	getStats: () => api.get("/dashboard/stats"),
+	getNavigationStats: () => api.get("/dashboard/navigation-stats"),
 	getHosts: (params = {}) => {
 		const queryString = new URLSearchParams(params).toString();
 		return api.get(`/dashboard/hosts${queryString ? `?${queryString}` : ""}`);
 	},
+	getHostOptions: (params = {}) => api.get("/hosts/options", { params }),
+	// Cheap host counts for the sidebar / navbar widgets — runs as a single
+	// COUNT query against `hosts`, returns sub-millisecond. Lets the
+	// sidebar drop its full-list fetch.
+	getHostCounts: () => api.get("/dashboard/host-counts"),
+	getHostFilterOptions: () => api.get("/dashboard/host-filter-options"),
 	getPackages: () => api.get("/dashboard/packages"),
 	getHostDetail: (hostId, params = {}) => {
 		const queryString = new URLSearchParams(params).toString();
@@ -89,7 +135,24 @@ export const dashboardAPI = {
 		const url = `/dashboard/hosts/${hostId}/queue${queryString ? `?${queryString}` : ""}`;
 		return api.get(url);
 	},
+	getHostActivity: (hostId, params = {}) => {
+		// Drop empty values so we don't end up with `?type=&status=` noise on the wire.
+		const filtered = Object.entries(params).reduce((acc, [key, value]) => {
+			if (value === undefined || value === null || value === "") return acc;
+			if (Array.isArray(value)) {
+				if (value.length === 0) return acc;
+				acc[key] = value.join(",");
+				return acc;
+			}
+			acc[key] = value;
+			return acc;
+		}, {});
+		const queryString = new URLSearchParams(filtered).toString();
+		const url = `/dashboard/hosts/${hostId}/activity${queryString ? `?${queryString}` : ""}`;
+		return api.get(url);
+	},
 	getHostWsStatus: (hostId) => api.get(`/dashboard/hosts/${hostId}/ws-status`),
+	getWsStatusSummary: () => api.get("/ws/status/summary"),
 	getWsStatusByApiId: (apiId) => api.get(`/ws/status/${apiId}`),
 	getPackageTrends: (params = {}) => {
 		const queryString = new URLSearchParams(params).toString();
@@ -110,7 +173,7 @@ export const dashboardAPI = {
 // Admin Hosts API (for management interface)
 export const adminHostsAPI = {
 	create: (data) => api.post("/hosts/create", data),
-	list: () => api.get("/hosts/admin/list"),
+	list: (params = {}) => api.get("/hosts/admin/list", { params }),
 	delete: (hostId) => api.delete(`/hosts/${hostId}`),
 	deleteBulk: (hostIds) => api.delete("/hosts/bulk", { data: { hostIds } }),
 	regenerateCredentials: (hostId) =>
@@ -535,8 +598,13 @@ export const rdpAPI = {
 export const authAPI = {
 	login: (username, password) =>
 		api.post("/auth/login", { username, password }),
-	verifyTfa: (username, token, remember_me = false) =>
-		api.post("/auth/verify-tfa", { username, token, remember_me }),
+	verifyTfa: (username, token, remember_me = false, tfa_ticket = "") =>
+		api.post("/auth/verify-tfa", {
+			username,
+			token,
+			remember_me,
+			tfa_ticket,
+		}),
 	signup: (username, email, password, firstName, lastName) =>
 		api.post("/auth/signup", {
 			username,
@@ -546,6 +614,9 @@ export const authAPI = {
 			lastName,
 		}),
 	subscribeNewsletter: () => api.post("/auth/subscribe-newsletter"),
+	// Carries X-User-Activity when the user has interacted since the last beat.
+	// The auth middleware does the work; the response body is empty.
+	heartbeat: () => api.post("/auth/heartbeat"),
 };
 
 // TFA API
@@ -584,6 +655,51 @@ export const formatRelativeTime = (date) => {
 	if (minutes > 0) return `${prefix}${minutes} min${suffix}`;
 	if (future) return "in a few seconds";
 	return "just now";
+};
+
+/**
+ * Format live uptime computed from a boot timestamp.
+ *
+ * Renders strings matching the agent's existing uptime format:
+ *   - ">= 1 day"       -> "X days, Y hours, Z minutes"
+ *   - ">= 1 hour"      -> "Y hours, Z minutes"
+ *   - "< 1 hour"       -> "Z minutes"
+ *   - "< 1 minute"     -> "0 minutes"
+ *
+ * Returns "" when bootTimeIso is null/undefined/empty/unparseable so the
+ * caller can fall back to the stored host.system_uptime string.
+ *
+ * Pure function: takes nowMs as an argument (defaults to Date.now()) so the
+ * caller can pass an externally-tracked tick value and useMemo can actually
+ * memoize.
+ *
+ * @param {string|null|undefined} bootTimeIso - ISO 8601 / RFC 3339 timestamp
+ * @param {number} [nowMs=Date.now()] - Reference "now" in ms since epoch
+ * @returns {string}
+ */
+export const formatLiveUptime = (bootTimeIso, nowMs = Date.now()) => {
+	if (!bootTimeIso) return "";
+	const bootMs = Date.parse(bootTimeIso);
+	if (Number.isNaN(bootMs)) return "";
+
+	// Clamp to 0 if the boot time is in the future (clock skew).
+	const diffMs = Math.max(0, nowMs - bootMs);
+	const totalMinutes = Math.floor(diffMs / 60000);
+	const days = Math.floor(totalMinutes / 1440);
+	const hours = Math.floor((totalMinutes % 1440) / 60);
+	const minutes = totalMinutes % 60;
+
+	if (days > 0) {
+		return `${days} day${days === 1 ? "" : "s"}, ${hours} hour${
+			hours === 1 ? "" : "s"
+		}, ${minutes} minute${minutes === 1 ? "" : "s"}`;
+	}
+	if (hours > 0) {
+		return `${hours} hour${hours === 1 ? "" : "s"}, ${minutes} minute${
+			minutes === 1 ? "" : "s"
+		}`;
+	}
+	return `${minutes} minute${minutes === 1 ? "" : "s"}`;
 };
 
 // Search API
@@ -627,6 +743,7 @@ export const alertsAPI = {
 		return api.get(url);
 	},
 	getAlertStats: () => api.get("/alerts/stats"),
+	getAlertTypes: () => api.get("/alerts/types"),
 	getAlert: (id) => api.get(`/alerts/${id}`),
 	getAlertHistory: (id) => api.get(`/alerts/${id}/history`),
 	getAvailableActions: () => api.get("/alerts/actions"),
@@ -665,6 +782,7 @@ export const notificationsAPI = {
 	listDeliveryLog: (params = {}) =>
 		api.get("/notifications/delivery-log", { params }),
 	test: (data) => api.post("/notifications/test", data),
+	testSMTP: (id) => api.post(`/notifications/destinations/${id}/test-smtp`, {}),
 	listScheduledReports: () => api.get("/notifications/scheduled-reports"),
 	createScheduledReport: (data) =>
 		api.post("/notifications/scheduled-reports", data),

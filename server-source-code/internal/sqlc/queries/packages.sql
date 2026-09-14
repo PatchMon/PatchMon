@@ -13,64 +13,30 @@ JOIN host_packages hp ON hp.package_id = p.id AND hp.needs_update = true
 JOIN hosts h ON h.id = hp.host_id
 ORDER BY p.name;
 
--- name: ListPackages :many
-SELECT p.id, p.name, p.description, p.category, p.latest_version, p.created_at
-FROM packages p
-WHERE (sqlc.narg('search')::text IS NULL OR p.name ILIKE '%' || sqlc.narg('search') || '%' OR p.description ILIKE '%' || sqlc.narg('search') || '%')
-AND (sqlc.narg('category')::text IS NULL OR p.category = sqlc.narg('category'))
-AND (
-    sqlc.narg('host_id')::text IS NULL
-    AND sqlc.narg('needs_update')::text IS NULL
-    AND sqlc.narg('is_security_update')::text IS NULL
-    AND sqlc.narg('repository_id')::text IS NULL
-    OR EXISTS (
-        SELECT 1 FROM host_packages hp
-        WHERE hp.package_id = p.id
-        AND (sqlc.narg('host_id')::text IS NULL OR hp.host_id = sqlc.narg('host_id'))
-        AND (sqlc.narg('needs_update')::text IS NULL OR (sqlc.narg('needs_update') = 'true' AND hp.needs_update = true))
-        AND (sqlc.narg('is_security_update')::text IS NULL OR (sqlc.narg('is_security_update') = 'true' AND hp.needs_update = true AND hp.is_security_update = true))
-        AND (sqlc.narg('repository_id')::text IS NULL OR hp.source_repository_id = sqlc.narg('repository_id'))
-    )
-)
-ORDER BY p.name ASC
-LIMIT sqlc.arg('limit') OFFSET sqlc.arg('offset');
+-- ListPackages and CountPackages are intentionally NOT defined here.
+-- They live as raw SQL builders in internal/store/packages_list_sql.go.
+--
+-- Why hand-rolled rather than sqlc:
+--   1. ORDER BY needs a CASE-WHEN-per-sort-key dance to stay parameterised,
+--      which forces a full sort over the entire filtered CTE before LIMIT
+--      can fire — defeats any index-ordered scan + LIMIT pushdown.
+--      Building "ORDER BY <whitelisted column> <dir>" in Go lets the
+--      planner drive output from the existing btree on packages(name)
+--      (and similar) for typical queries, killing the parallel-sort path
+--      that blows Docker's default /dev/shm.
+--   2. The host_packages EXISTS / NOT EXISTS branches are only relevant
+--      when the corresponding filter param is set; emitting them
+--      conditionally in Go produces a much tighter predicate that the
+--      planner can prune cheaply.
+-- Per-package counters still come from mv_package_stats (refreshed every
+-- ~2 min by an asynq scheduler — see TypePackageStatsRefresh) so we avoid
+-- per-request aggregation over host_packages.
 
--- name: CountPackages :one
-SELECT COUNT(*)::int FROM packages p
-WHERE (sqlc.narg('search')::text IS NULL OR p.name ILIKE '%' || sqlc.narg('search') || '%' OR p.description ILIKE '%' || sqlc.narg('search') || '%')
-AND (sqlc.narg('category')::text IS NULL OR p.category = sqlc.narg('category'))
-AND (
-    sqlc.narg('host_id')::text IS NULL
-    AND sqlc.narg('needs_update')::text IS NULL
-    AND sqlc.narg('is_security_update')::text IS NULL
-    AND sqlc.narg('repository_id')::text IS NULL
-    OR EXISTS (
-        SELECT 1 FROM host_packages hp
-        WHERE hp.package_id = p.id
-        AND (sqlc.narg('host_id')::text IS NULL OR hp.host_id = sqlc.narg('host_id'))
-        AND (sqlc.narg('needs_update')::text IS NULL OR (sqlc.narg('needs_update') = 'true' AND hp.needs_update = true))
-        AND (sqlc.narg('is_security_update')::text IS NULL OR (sqlc.narg('is_security_update') = 'true' AND hp.needs_update = true AND hp.is_security_update = true))
-        AND (sqlc.narg('repository_id')::text IS NULL OR hp.source_repository_id = sqlc.narg('repository_id'))
-    )
-);
-
--- name: GetHostPackageStatsByPackageIDs :many
-SELECT package_id, COUNT(*)::int as cnt FROM host_packages
-WHERE package_id = ANY($1::text[])
-AND (sqlc.narg('host_id')::text IS NULL OR host_id = sqlc.narg('host_id'))
-GROUP BY package_id;
-
--- name: GetUpdatesCountByPackageIDs :many
-SELECT package_id, COUNT(*)::int as cnt FROM host_packages
-WHERE package_id = ANY($1::text[]) AND needs_update = true
-AND (sqlc.narg('host_id')::text IS NULL OR host_id = sqlc.narg('host_id'))
-GROUP BY package_id;
-
--- name: GetSecurityCountByPackageIDs :many
-SELECT package_id, COUNT(*)::int as cnt FROM host_packages
-WHERE package_id = ANY($1::text[]) AND needs_update = true AND is_security_update = true
-AND (sqlc.narg('host_id')::text IS NULL OR host_id = sqlc.narg('host_id'))
-GROUP BY package_id;
+-- (Removed) GetHostPackageStatsByPackageIDs / GetUpdatesCountByPackageIDs /
+-- GetSecurityCountByPackageIDs — superseded by mv_package_stats. The
+-- per-package counters returned to the Packages list page now come from
+-- ListPackages itself (which joins the matview), so the previous
+-- per-id aggregate round-trips are no longer needed.
 
 -- name: GetHostPackagesWithHostsByPackageID :many
 SELECT hp.id, hp.host_id, hp.package_id, hp.current_version, hp.available_version,
@@ -94,13 +60,22 @@ AND (sqlc.narg('search')::text IS NULL OR h.friendly_name ILIKE '%' || sqlc.narg
 AND (sqlc.narg('needs_update')::bool IS NULL OR hp.needs_update = sqlc.narg('needs_update'));
 
 -- name: GetHostRefsForPackageIDs :many
-SELECT hp.package_id, h.id as host_id, h.friendly_name, h.os_type,
-    hp.current_version, hp.available_version, hp.needs_update, hp.is_security_update
-FROM host_packages hp
-JOIN hosts h ON h.id = hp.host_id
-WHERE hp.package_id = ANY($1::text[])
-AND (sqlc.narg('host_id')::text IS NULL OR hp.host_id = sqlc.narg('host_id'))
-ORDER BY hp.needs_update DESC, h.friendly_name;
+WITH ranked_refs AS (
+    SELECT hp.package_id, h.id as host_id, h.friendly_name, h.os_type,
+        hp.current_version, hp.available_version, hp.needs_update, hp.is_security_update,
+        row_number() OVER (
+            PARTITION BY hp.package_id
+            ORDER BY hp.needs_update DESC, h.friendly_name ASC, h.id ASC
+        ) AS rn
+    FROM host_packages hp
+    JOIN hosts h ON h.id = hp.host_id
+    WHERE hp.package_id = ANY($1::text[])
+    AND (sqlc.narg('host_id')::text IS NULL OR hp.host_id = sqlc.narg('host_id'))
+)
+SELECT package_id, host_id, friendly_name, os_type, current_version, available_version, needs_update, is_security_update
+FROM ranked_refs
+WHERE rn <= 10
+ORDER BY package_id, needs_update DESC, friendly_name ASC;
 
 -- name: GetSourceReposByPackageIDs :many
 SELECT DISTINCT hp.package_id, r.id as repo_id, r.name as repo_name, r.url as repo_url, r.repo_type

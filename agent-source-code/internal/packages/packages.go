@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 
+	"patchmon-agent/internal/textsan"
 	"patchmon-agent/pkg/models"
 
 	"github.com/sirupsen/logrus"
@@ -58,24 +59,34 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 
 	m.logger.WithField("package_manager", packageManager).Debug("Detected package manager")
 
+	var (
+		pkgs []models.Package
+		err  error
+	)
 	switch packageManager {
 	case "windows":
-		return m.winManager.GetPackages(), nil
+		pkgs = m.winManager.GetPackages()
 	case "ucs":
-		return m.ucsManager.GetPackages(), nil
+		pkgs, err = m.ucsManager.GetPackages()
 	case "apt":
-		return m.aptManager.GetPackages(), nil
+		pkgs, err = m.aptManager.GetPackages()
 	case "dnf", "yum":
-		return m.dnfManager.GetPackages(), nil
+		pkgs, err = m.dnfManager.GetPackages()
 	case "apk":
-		return m.apkManager.GetPackages(), nil
+		pkgs, err = m.apkManager.GetPackages()
 	case "pacman":
-		return m.pacmanManager.GetPackages()
+		pkgs, err = m.pacmanManager.GetPackages()
 	case "pkg":
-		return m.freebsdManager.GetPackages()
+		pkgs, err = m.freebsdManager.GetPackages()
 	default:
 		return nil, fmt.Errorf("unsupported package manager: %s", packageManager)
 	}
+	if err != nil {
+		return nil, err
+	}
+	// Cleaning here, at the single collection choke point, keeps the canonical
+	// hash and the report payload consistent — both are derived downstream.
+	return textsan.CleanPackages(pkgs), nil
 }
 
 // DetectPackageManager detects which package manager is available on the system.
@@ -172,7 +183,10 @@ func CombinePackageData(installedPackages map[string]models.Package, upgradableP
 	packages := make([]models.Package, 0)
 	upgradableMap := make(map[string]bool)
 
-	// First, add upgradable packages, merging in description and repo from installed if available
+	// Deduplicated by name: a multilib host lists glibc.i686 and glibc.x86_64
+	// separately and arch-stripping collapses both, which aborts the server's
+	// bulk upsert. A security update outranks a plain one.
+	upgradableIdx := make(map[string]int, len(upgradablePackages))
 	for _, pkg := range upgradablePackages {
 		if installed, ok := installedPackages[pkg.Name]; ok {
 			if installed.Description != "" {
@@ -182,7 +196,14 @@ func CombinePackageData(installedPackages map[string]models.Package, upgradableP
 				pkg.SourceRepository = installed.SourceRepository
 			}
 		}
+		if i, seen := upgradableIdx[pkg.Name]; seen {
+			if pkg.IsSecurityUpdate && !packages[i].IsSecurityUpdate {
+				packages[i] = pkg
+			}
+			continue
+		}
 		packages = append(packages, pkg)
+		upgradableIdx[pkg.Name] = len(packages) - 1
 		upgradableMap[pkg.Name] = true
 	}
 

@@ -12,3 +12,11 @@ linters:
     - misspell
     - revive
     # - gosec
+
+  exclusions:
+    rules:
+      # SA4023 here is a non-Windows build artefact: the stub can only return non-nil.
+      - path: cmd/patchmon-agent/commands/(serve|version_update)\.go
+        linters:
+          - staticcheck
+        text: SA4023

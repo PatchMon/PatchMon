@@ -1,0 +1,147 @@
+name: Discord Activity
+
+on:
+  issues:
+    types: [opened]
+  pull_request_target:
+    types: [closed]
+
+permissions: {}
+
+jobs:
+  issue-opened:
+    name: Post the new issue to Discord
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'issues' &&
+      github.event.issue.user.login != 'renovate[bot]' &&
+      github.event.issue.user.login != 'dependabot[bot]'
+    steps:
+      - name: Send the webhook
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_ACTIVITY_WEBHOOK }}
+          NUMBER: ${{ github.event.issue.number }}
+          TITLE: ${{ github.event.issue.title }}
+          URL: ${{ github.event.issue.html_url }}
+          BODY: ${{ github.event.issue.body }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+          AVATAR: ${{ github.event.issue.user.avatar_url }}
+          CREATED_AT: ${{ github.event.issue.created_at }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${WEBHOOK}" ]; then
+            echo "::warning::DISCORD_ACTIVITY_WEBHOOK is not set — skipping the Discord post."
+            exit 0
+          fi
+
+          payload="$(jq -n \
+            --arg number "$NUMBER" \
+            --arg title "${TITLE:-}" \
+            --arg url "$URL" \
+            --arg body "${BODY:-}" \
+            --arg author "$AUTHOR" \
+            --arg avatar "${AVATAR:-}" \
+            --arg ts "$CREATED_AT" \
+            --arg repo "$REPO" \
+            '(($title | if length > 200 then .[0:200] + "…" else . end)) as $t
+             | ($body | gsub("\r"; "") | sub("\\s+$"; "")) as $b0
+             | (if ($b0 | length) > 600 then $b0[0:600] + "…" else $b0 end) as $b
+             | {
+                 username: "PatchMon",
+                 allowed_mentions: { parse: [] },
+                 content: "New issue opened by \($author)",
+                 embeds: [{
+                   author: { name: $author, url: "https://github.com/\($author)", icon_url: $avatar },
+                   title: "#\($number) \($t)",
+                   url: $url,
+                   description: (if ($b | length) > 0 then $b else "*No description provided.*" end),
+                   color: 2328118,
+                   timestamp: $ts,
+                   footer: { text: $repo }
+                 }]
+               }')"
+
+          curl --silent --show-error --fail \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --connect-timeout 10 --max-time 30 --retry 2 --retry-connrefused \
+            --data "$payload" \
+            "$WEBHOOK"
+          echo "Posted issue #${NUMBER} to Discord"
+
+  pr-merged:
+    name: Post the merged PR to Discord
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.user.login != 'renovate[bot]' &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
+    steps:
+      - name: Send the webhook
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_ACTIVITY_WEBHOOK }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          TITLE: ${{ github.event.pull_request.title }}
+          URL: ${{ github.event.pull_request.html_url }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          MERGER: ${{ github.event.pull_request.merged_by.login }}
+          AVATAR: ${{ github.event.pull_request.merged_by.avatar_url }}
+          COMMITS: ${{ github.event.pull_request.commits }}
+          ADDITIONS: ${{ github.event.pull_request.additions }}
+          DELETIONS: ${{ github.event.pull_request.deletions }}
+          FILES: ${{ github.event.pull_request.changed_files }}
+          MERGED_AT: ${{ github.event.pull_request.merged_at }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${WEBHOOK}" ]; then
+            echo "::warning::DISCORD_ACTIVITY_WEBHOOK is not set — skipping the Discord post."
+            exit 0
+          fi
+
+          payload="$(jq -n \
+            --arg number "$NUMBER" \
+            --arg title "${TITLE:-}" \
+            --arg url "$URL" \
+            --arg author "$AUTHOR" \
+            --arg merger "$MERGER" \
+            --arg avatar "${AVATAR:-}" \
+            --arg commits "$COMMITS" \
+            --arg additions "$ADDITIONS" \
+            --arg deletions "$DELETIONS" \
+            --arg files "$FILES" \
+            --arg ts "$MERGED_AT" \
+            --arg repo "$REPO" \
+            '(($title | if length > 200 then .[0:200] + "…" else . end)) as $t
+             | {
+                 username: "PatchMon",
+                 allowed_mentions: { parse: [] },
+                 content: "Merged into main",
+                 embeds: [{
+                   author: { name: $merger, url: "https://github.com/\($merger)", icon_url: $avatar },
+                   title: "#\($number) \($t)",
+                   url: $url,
+                   description: "Opened by **\($author)**, merged by **\($merger)**.",
+                   color: 9001701,
+                   fields: [
+                     { name: "Commits", value: $commits, inline: true },
+                     { name: "Files", value: $files, inline: true },
+                     { name: "Changes", value: "+\($additions) / -\($deletions)", inline: true }
+                   ],
+                   timestamp: $ts,
+                   footer: { text: $repo }
+                 }]
+               }')"
+
+          curl --silent --show-error --fail \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --connect-timeout 10 --max-time 30 --retry 2 --retry-connrefused \
+            --data "$payload" \
+            "$WEBHOOK"
+          echo "Posted PR #${NUMBER} to Discord"

@@ -70,13 +70,17 @@ func TestDNFManager_parseUpgradablePackages(t *testing.T) {
 			input: `kernel.x86_64                     5.14.0-284.30.1.el9_2           baseos
 systemd.x86_64                    252-14.el9_2.2                  baseos`,
 			pkgMgr: "dnf",
+			// Arch-stripped keys, matching what parseInstalledPackages
+			// actually emits. The previous fixture used "kernel.x86_64",
+			// a shape that parser can never produce, which masked the
+			// name mismatch between the two parsers.
 			installedPackages: map[string]models.Package{
-				"kernel.x86_64": {
-					Name:           "kernel.x86_64",
+				"kernel": {
+					Name:           "kernel",
 					CurrentVersion: "5.14.0-284.30.1.el9_1",
 				},
-				"systemd.x86_64": {
-					Name:           "systemd.x86_64",
+				"systemd": {
+					Name:           "systemd",
 					CurrentVersion: "252-14.el9_2.1",
 				},
 			},

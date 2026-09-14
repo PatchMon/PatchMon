@@ -9,12 +9,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"patchmon-agent/internal/client"
@@ -28,7 +31,15 @@ import (
 const (
 	serverTimeout       = 30 * time.Second
 	versionCheckTimeout = 10 * time.Second // Shorter timeout for version checks
+
+	downloadHeaderTimeout = 30 * time.Second
+	downloadStallTimeout  = 60 * time.Second
+	downloadMaxTimeout    = 30 * time.Minute
 )
+
+// agentVersionOutputRe parses the version out of `patchmon-agent --version`,
+// which cobra renders as "patchmon-agent version 2.0.3-rc.137".
+var agentVersionOutputRe = regexp.MustCompile(`(?i)(?:PatchMon Agent v|patchmon-agent version |patchmon-agent v|version )?([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)`)
 
 // ServerVersionResponse represents the response from the server when checking for version updates
 type ServerVersionResponse struct {
@@ -114,7 +125,16 @@ func checkVersion() error {
 	return nil
 }
 
+// Without this, a report goroutine and the WebSocket loop can both download and
+// rename over the same live binary.
+var updateInFlight atomic.Bool
+
 func updateAgent() error {
+	if !updateInFlight.CompareAndSwap(false, true) {
+		return fmt.Errorf("update skipped: another update is already in progress")
+	}
+	defer updateInFlight.Store(false)
+
 	logger.Info("Updating agent...")
 
 	// Check if we recently updated to prevent update loops
@@ -208,48 +228,75 @@ func updateAgent() error {
 	}
 	logger.WithField("path", backupPath).Info("Backup saved")
 
-	// Write new version to temporary file (reuse the temp file we already created for version check)
+	// Write new version to temporary file.
+	// On Windows the temp file must have an .exe extension so CreateProcess can execute it
+	// for the validation step, and we place it in the system temp dir to avoid writing
+	// into the locked install directory.
 	tempPath := executablePath + ".new"
+	if runtime.GOOS == "windows" {
+		dir, dirErr := secureUpdateDir()
+		if dirErr != nil {
+			return fmt.Errorf("failed to prepare update directory: %w", dirErr)
+		}
+		tempPath = filepath.Join(dir, fmt.Sprintf("patchmon-agent-update-%d.exe", time.Now().UnixNano()))
+	}
 	if err := os.WriteFile(tempPath, newAgentData, 0755); err != nil {
 		return fmt.Errorf("failed to write new agent: %w", err)
 	}
 
-	// Verify the new executable works and check its version
+	// Verify the new executable works and check its version.
+	// Bounded: this contacts the server, and a hang here strands the host with
+	// the backup taken and the replacement not yet renamed into place.
 	logger.Debug("Validating new executable...")
-	testCmd := exec.Command(tempPath, "check-version")
+	testCtx, testCancel := context.WithTimeout(context.Background(), serverTimeout+30*time.Second)
+	testCmd := exec.CommandContext(testCtx, tempPath, "check-version")
 	testCmd.Env = os.Environ() // Preserve environment variables
-	if err := testCmd.Run(); err != nil {
+	testErr := testCmd.Run()
+	testCancel()
+	if testErr != nil {
 		if removeErr := os.Remove(tempPath); removeErr != nil {
 			logger.WithError(removeErr).Warn("Failed to remove temporary file after validation failure")
 		}
-		return fmt.Errorf("new agent executable is invalid: %w", err)
+		return fmt.Errorf("new agent executable is invalid: %w", testErr)
 	}
 	logger.Debug("New executable validation passed")
 
-	// Verify the downloaded binary version matches expected version
-	// This prevents issues where wrong binary might be downloaded
+	// Verify the downloaded binary version matches expected version.
+	// The binary only exposes --version (cobra's version flag); there is no
+	// "version" subcommand, and asking for one silently skipped this check.
 	logger.Debug("Verifying downloaded binary version...")
-	versionCmd := exec.Command(tempPath, "version")
+	versionCtx, versionCancel := context.WithTimeout(context.Background(), versionCheckTimeout)
+	versionCmd := exec.CommandContext(versionCtx, tempPath, "--version")
 	versionCmd.Env = os.Environ()
-	versionOutput, err := versionCmd.Output()
-	if err == nil {
-		// Try to extract version from output (format: "PatchMon Agent v1.3.4" or "1.3.4")
-		versionStr := strings.TrimSpace(string(versionOutput))
-		// Remove "PatchMon Agent v" prefix if present
-		versionStr = strings.TrimPrefix(versionStr, "PatchMon Agent v")
-		versionStr = strings.TrimPrefix(versionStr, "v")
-		versionStr = strings.TrimSpace(versionStr)
+	versionOutput, versionErr := versionCmd.CombinedOutput()
+	versionCancel()
+	if versionErr == nil {
+		versionStr := ""
+		if m := agentVersionOutputRe.FindStringSubmatch(string(versionOutput)); len(m) >= 2 {
+			versionStr = m[1]
+		}
 
-		if versionStr != "" && versionStr != newVersion {
+		switch {
+		case versionStr == "":
+			logger.Debug("Could not parse version from downloaded binary (non-critical)")
+		case versionStr != newVersion:
 			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 				"expected": newVersion,
 				"actual":   versionStr,
 			})).Warn("Downloaded binary version mismatch - this may indicate server issue, but proceeding")
-		} else if versionStr == newVersion {
+			// Prefer what the binary reports over what the server advertised.
+			newVersion = versionStr
+		default:
 			logger.WithField("version", versionStr).Debug("Downloaded binary version verified")
 		}
 	} else {
-		logger.WithError(err).Debug("Could not verify binary version (non-critical)")
+		logger.WithError(versionErr).Debug("Could not verify binary version (non-critical)")
+	}
+
+	// Windows: os.Rename cannot overwrite a running .exe (file locked by SCM).
+	// Delegate the replacement and restart to a detached PowerShell script.
+	if runtime.GOOS == "windows" {
+		return updateAgentWindows(executablePath, tempPath, newVersion)
 	}
 
 	// Replace current executable atomically
@@ -296,6 +343,90 @@ func updateAgent() error {
 	// Note: os.Exit terminates the process, so the return below is unreachable
 	os.Exit(0)
 	return nil // Unreachable, but satisfies function signature
+}
+
+// serviceName is the Windows service name. Declared here rather than in the
+// windows-only file because the update path builds PowerShell referencing it
+// from code that compiles on every platform, and a second literal would drift.
+const serviceName = "PatchMonAgent"
+
+// psQuote escapes a value for use inside a single-quoted PowerShell string.
+// PowerShell escapes a quote by doubling it. Without this, an install path
+// containing an apostrophe, which is legal on Windows, closes the literal and
+// the rest of the path is parsed as code.
+func psQuote(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
+}
+
+// updateAgentWindows handles the Windows-specific update path.
+//
+// On Windows, os.Rename cannot overwrite a running executable because the SCM
+// holds an open handle on it. Instead we:
+//  1. Keep the verified new binary in the system temp dir (already written there).
+//  2. Write a self-deleting PowerShell script that stops the service, copies the
+//     new binary into place, and restarts the service.
+//  3. Launch that script detached so it outlives this process.
+//  4. Exit immediately — the script takes over.
+func updateAgentWindows(executablePath, tempPath, newVersion string) error {
+	dir, err := secureUpdateDir()
+	if err != nil {
+		_ = os.Remove(tempPath)
+		return fmt.Errorf("failed to prepare update directory: %w", err)
+	}
+	psScriptPath := filepath.Join(dir, fmt.Sprintf("patchmon-update-%d.ps1", time.Now().UnixNano()))
+
+	// Start-Service runs from finally so a failed copy cannot leave the host
+	// with the service stopped and the old binary still in place. Copy-Item is
+	// also retried, because Stop-Service returns when the SCM reports stopped,
+	// which is not always when the image handle has been released.
+	psScript := fmt.Sprintf(`$ErrorActionPreference = 'SilentlyContinue'
+Start-Sleep -Seconds 2
+Stop-Service -Name '%s' -Force -ErrorAction SilentlyContinue
+try {
+    $copied = $false
+    for ($i = 0; $i -lt 10 -and -not $copied; $i++) {
+        Start-Sleep -Seconds 2
+        try {
+            Copy-Item -Path '%s' -Destination '%s' -Force -ErrorAction Stop
+            $copied = $true
+        } catch {
+            # Image still locked; retry.
+        }
+    }
+} finally {
+    Start-Service -Name '%s'
+    Remove-Item -Path '%s' -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+}
+`, serviceName, psQuote(tempPath), psQuote(executablePath), serviceName, psQuote(tempPath))
+
+	if err := os.WriteFile(psScriptPath, []byte(psScript), 0600); err != nil {
+		_ = os.Remove(tempPath)
+		return fmt.Errorf("failed to write Windows update script: %w", err)
+	}
+
+	markRecentUpdate()
+
+	logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
+		"new_version": newVersion,
+		"script":      psScriptPath,
+	})).Info("Launching Windows update script (stop service → replace binary → start service)...")
+
+	cmd := exec.Command("powershell",
+		"-NonInteractive", "-WindowStyle", "Hidden",
+		"-ExecutionPolicy", "Bypass",
+		"-File", psScriptPath)
+	cmd.SysProcAttr = sysProcAttrForDetach()
+	if err := cmd.Start(); err != nil {
+		_ = os.Remove(tempPath)
+		_ = os.Remove(psScriptPath)
+		return fmt.Errorf("failed to launch Windows update script: %w", err)
+	}
+
+	logger.Info("Windows update script launched — exiting to allow service replacement")
+	time.Sleep(500 * time.Millisecond)
+	os.Exit(0)
+	return nil // unreachable
 }
 
 // getServerVersionInfo fetches version information from the PatchMon server
@@ -368,6 +499,20 @@ func getServerVersionInfo() (*ServerVersionInfo, error) {
 	return &versionInfo, nil
 }
 
+type stallReader struct {
+	r     io.Reader
+	timer *time.Timer
+	idle  time.Duration
+}
+
+func (s *stallReader) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	if n > 0 {
+		s.timer.Reset(s.idle)
+	}
+	return n, err
+}
+
 // getLatestBinaryFromServer fetches the latest binary information from the PatchMon server
 func getLatestBinaryFromServer() (*ServerVersionResponse, error) {
 	cfgManager := config.New()
@@ -386,7 +531,7 @@ func getLatestBinaryFromServer() (*ServerVersionResponse, error) {
 	platform := getPlatform()
 	url := fmt.Sprintf("%s/api/v1/hosts/agent/download?arch=%s&os=%s", cfg.PatchmonServer, architecture, platform)
 
-	ctx, cancel := context.WithTimeout(context.Background(), serverTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), downloadMaxTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -398,20 +543,33 @@ func getLatestBinaryFromServer() (*ServerVersionResponse, error) {
 	req.Header.Set("X-API-ID", credentials.APIID)
 	req.Header.Set("X-API-KEY", credentials.APIKey)
 
-	// Operator-gated insecure TLS for lab/air-gapped deployments.
-	// WARNING: This is dangerous for binary downloads even with hash verification!
-	httpClient := http.DefaultClient
-	if cfg.SkipSSLVerify || client.IsSkipSSLVerifyEnvSet() {
-		logger.Warn("TLS verification disabled for binary download")
-		httpClient = &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true,
-				},
-			},
-		}
+	// Leave Accept-Encoding unset so the transport negotiates gzip and unwraps it
+	// for us; setting it by hand would hand back a compressed body we then hash.
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		// Setting DialContext silently disables HTTP/2 unless this is set.
+		ForceAttemptHTTP2:     true,
+		TLSHandshakeTimeout:   30 * time.Second,
+		ResponseHeaderTimeout: downloadHeaderTimeout,
 	}
 
+	// Operator-gated insecure TLS for lab/air-gapped deployments.
+	// WARNING: This is dangerous for binary downloads even with hash verification!
+	if cfg.SkipSSLVerify || client.IsSkipSSLVerifyEnvSet() {
+		logger.Warn("TLS verification disabled for binary download")
+		transport.TLSClientConfig = &tls.Config{
+			InsecureSkipVerify: true,
+		}
+	}
+	defer transport.CloseIdleConnections()
+
+	httpClient := &http.Client{Transport: transport}
+
+	started := time.Now()
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
@@ -426,14 +584,28 @@ func getLatestBinaryFromServer() (*ServerVersionResponse, error) {
 		return nil, fmt.Errorf("server returned status %d", resp.StatusCode)
 	}
 
+	var stalled atomic.Bool
+	stallTimer := time.AfterFunc(downloadStallTimeout, func() {
+		stalled.Store(true)
+		cancel()
+	})
+	defer stallTimer.Stop()
+
 	// SECURITY: Limit binary download size to prevent DoS attacks
 	// Max 100MB should be more than enough for the agent binary
 	const maxBinarySize = 100 * 1024 * 1024
-	limitedReader := io.LimitReader(resp.Body, maxBinarySize+1)
+	limitedReader := io.LimitReader(&stallReader{
+		r:     resp.Body,
+		timer: stallTimer,
+		idle:  downloadStallTimeout,
+	}, maxBinarySize+1)
 
 	// Read the binary data with size limit
 	binaryData, err := io.ReadAll(limitedReader)
 	if err != nil {
+		if stalled.Load() {
+			return nil, fmt.Errorf("download stalled: no data received for %s after %d bytes", downloadStallTimeout, len(binaryData))
+		}
 		return nil, fmt.Errorf("failed to read binary data: %w", err)
 	}
 
@@ -441,6 +613,12 @@ func getLatestBinaryFromServer() (*ServerVersionResponse, error) {
 	if int64(len(binaryData)) > maxBinarySize {
 		return nil, fmt.Errorf("binary size exceeds maximum allowed (%d MB)", maxBinarySize/(1024*1024))
 	}
+
+	logger.WithFields(map[string]interface{}{
+		"bytes":      len(binaryData),
+		"elapsed_ms": time.Since(started).Milliseconds(),
+		"compressed": resp.Uncompressed,
+	}).Info("Agent binary downloaded")
 
 	// Calculate hash
 	hash := fmt.Sprintf("%x", sha256.Sum256(binaryData))
@@ -547,6 +725,9 @@ func cleanupOldBackups(executablePath string) {
 // checkRecentUpdate checks if we updated recently to prevent update loops
 func checkRecentUpdate() error {
 	updateMarkerPath := "/etc/patchmon/.last_update_timestamp"
+	if runtime.GOOS == "windows" {
+		updateMarkerPath = `C:\ProgramData\PatchMon\.last_update_timestamp`
+	}
 
 	// Check if marker file exists
 	info, err := os.Stat(updateMarkerPath)
@@ -572,10 +753,17 @@ func checkRecentUpdate() error {
 // markRecentUpdate creates a timestamp file to mark that we just updated
 func markRecentUpdate() {
 	updateMarkerPath := "/etc/patchmon/.last_update_timestamp"
+	markerDir := "/etc/patchmon"
+	if runtime.GOOS == "windows" {
+		updateMarkerPath = `C:\ProgramData\PatchMon\.last_update_timestamp`
+		markerDir = `C:\ProgramData\PatchMon`
+	}
 
-	// SECURITY: Ensure directory exists with restrictive permissions
-	if err := os.MkdirAll("/etc/patchmon", 0700); err != nil {
-		logger.WithError(err).Debug("Could not create /etc/patchmon directory (non-critical)")
+	// SECURITY: restrictive on Unix. On Windows the mode is not applied, so
+	// the marker directory inherits the ProgramData ACL; it is a hint used to
+	// damp update loops, not a trust boundary.
+	if err := os.MkdirAll(markerDir, 0700); err != nil {
+		logger.WithError(err).Debug("Could not create patchmon directory (non-critical)")
 		return
 	}
 
@@ -600,6 +788,46 @@ func markRecentUpdate() {
 func restartService(_ string, _ string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+
+	// Windows: stop and start the service via a detached PowerShell script.
+	// This branch is a safety net; the primary Windows update path goes through
+	// updateAgentWindows() before restartService is ever called.
+	if runtime.GOOS == "windows" {
+		dir, dirErr := secureUpdateDir()
+		if dirErr != nil {
+			logger.WithError(dirErr).Error("Failed to prepare update directory for restart script")
+			os.Exit(0)
+			return nil
+		}
+		psScriptPath := filepath.Join(dir, fmt.Sprintf("patchmon-restart-%d.ps1", time.Now().UnixNano()))
+		psScript := fmt.Sprintf(`$ErrorActionPreference = 'SilentlyContinue'
+Start-Sleep -Seconds 2
+Stop-Service -Name '%s' -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+Start-Service -Name '%s'
+Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+`, serviceName, serviceName)
+		if err := os.WriteFile(psScriptPath, []byte(psScript), 0600); err != nil {
+			logger.WithError(err).Error("Failed to write Windows restart script")
+			os.Exit(0)
+			return nil
+		}
+		cmd := exec.Command("powershell",
+			"-NonInteractive", "-WindowStyle", "Hidden",
+			"-ExecutionPolicy", "Bypass",
+			"-File", psScriptPath)
+		cmd.SysProcAttr = sysProcAttrForDetach()
+		if err := cmd.Start(); err != nil {
+			_ = os.Remove(psScriptPath)
+			logger.WithError(err).Error("Failed to start Windows restart script")
+			os.Exit(0)
+			return nil
+		}
+		logger.Info("Windows restart script launched, exiting...")
+		time.Sleep(500 * time.Millisecond)
+		os.Exit(0)
+		return nil
+	}
 
 	// FreeBSD / pfSense: use service patchmon_agent restart (rc.d)
 	if runtime.GOOS == "freebsd" {

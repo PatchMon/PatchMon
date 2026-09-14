@@ -148,11 +148,17 @@ const SettingsLayout = ({ children }) => {
 					icon: Wrench,
 				});
 			}
-			serverItems.push({
-				name: "Environment",
-				href: "/settings/environment",
-				icon: Variable,
-			});
+			// Environment exposes process-level configuration. Hidden in managed
+			// deployments, matching Server URL, Server Version and Metrics. The
+			// endpoint already filters to TIMEZONE server-side when AdminMode is
+			// on; this keeps the navigation consistent with that.
+			if (!isAdminMode) {
+				serverItems.push({
+					name: "Environment",
+					href: "/settings/environment",
+					icon: Variable,
+				});
+			}
 			// Custom branding (logo/favicon upload) is a Plus-tier feature
 			// (module key "custom_branding").
 			{

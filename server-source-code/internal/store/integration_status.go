@@ -77,6 +77,26 @@ func (s *IntegrationStatusStore) SetComplianceInstallJob(ctx context.Context, ho
 	return rdb.Set(ctx, key, jobID, time.Duration(complianceInstallJobTTL)*time.Second).Err()
 }
 
+// ClearInstallEvents drops the stored install_events for a host's integration,
+// leaving the rest of the status blob alone.
+//
+// Called when a new install is queued. Without it the previous install's
+// terminal event survives in Redis, and the first poll of the new job reports
+// that older run's outcome as if it were this one's. The blob is not cleared
+// wholesale because the agent's periodic availability report legitimately owns
+// the other fields.
+func (s *IntegrationStatusStore) ClearInstallEvents(ctx context.Context, apiID, integrationName string) error {
+	current, err := s.Get(ctx, apiID, integrationName)
+	if err != nil || current == nil {
+		return err
+	}
+	if _, ok := current["install_events"]; !ok {
+		return nil
+	}
+	current["install_events"] = []interface{}{}
+	return s.Set(ctx, apiID, integrationName, current)
+}
+
 // GetComplianceInstallJob returns the install job ID for a host.
 func (s *IntegrationStatusStore) GetComplianceInstallJob(ctx context.Context, hostID string) (string, error) {
 	rdb := s.rdb.RDB(ctx)

@@ -1,4 +1,9 @@
-# Ensures the approved-for-build label exists for fork PR Docker builds.
+# Ensures the repository's process labels exist.
+#
+# `approved-for-build` gates Docker builds for fork PRs. The rest support the
+# issue-routing flow: features are tracked on feedback.patchmon.net, bugs stay
+# here, and PRs that arrive without an accepted feature request get parked
+# rather than closed.
 name: Ensure labels
 
 on:
@@ -14,28 +19,61 @@ jobs:
       contents: read
       issues: write
     steps:
-      - name: Create approved-for-build label
+      - name: Ensure process labels exist
         uses: actions/github-script@v7
         with:
           script: |
-            try {
-              await github.rest.issues.getLabel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                name: 'approved-for-build'
-              });
-              console.log('Label approved-for-build already exists');
-            } catch (e) {
-              if (e.status === 404) {
-                await github.rest.issues.createLabel({
+            const labels = [
+              {
+                name: 'approved-for-build',
+                description: 'Maintainer-approved: run Docker build and push to Harbor for this fork PR',
+                color: '0E8A16'
+              },
+              {
+                name: 'moved-to-feedback',
+                description: 'Imported to feedback.patchmon.net — tracked there from now on',
+                color: '5319E7'
+              },
+              {
+                name: 'needs-triage',
+                description: 'Not yet reviewed by a maintainer',
+                color: 'FBCA04'
+              },
+              {
+                name: 'deferred-stability-phase',
+                description: 'Parked while we focus on stability — will be revisited, not rejected',
+                color: 'D93F0B'
+              },
+              {
+                name: 'needs-accepted-request',
+                description: 'Feature PR with no accepted request on feedback.patchmon.net',
+                color: 'D93F0B'
+              },
+              {
+                name: 'documentation',
+                description: 'Documentation only',
+                color: '0075CA'
+              }
+            ];
+
+            for (const label of labels) {
+              try {
+                await github.rest.issues.getLabel({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  name: 'approved-for-build',
-                  description: 'Maintainer-approved: run Docker build and push to Harbor for this fork PR',
-                  color: '0E8A16'
+                  name: label.name
                 });
-                console.log('Created label approved-for-build');
-              } else {
-                throw e;
+                console.log(`Label ${label.name} already exists`);
+              } catch (e) {
+                if (e.status === 404) {
+                  await github.rest.issues.createLabel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    ...label
+                  });
+                  console.log(`Created label ${label.name}`);
+                } else {
+                  throw e;
+                }
               }
             }

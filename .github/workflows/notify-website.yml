@@ -1,0 +1,25 @@
+name: Rebuild website docs
+
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+concurrency:
+  group: notify-website
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    if: github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh api repos/PatchMon/patchmon.net-site/dispatches \
+            -f event_type=docs-updated \
+            -f "client_payload[docs_ref]=${TAG}"
+          echo "Asked the website to rebuild its docs from ${TAG}." >> "$GITHUB_STEP_SUMMARY"

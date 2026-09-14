@@ -32,49 +32,6 @@ func (q *Queries) CountHostsForPackage(ctx context.Context, arg CountHostsForPac
 	return column_1, err
 }
 
-const countPackages = `-- name: CountPackages :one
-SELECT COUNT(*)::int FROM packages p
-WHERE ($1::text IS NULL OR p.name ILIKE '%' || $1 || '%' OR p.description ILIKE '%' || $1 || '%')
-AND ($2::text IS NULL OR p.category = $2)
-AND (
-    $3::text IS NULL
-    AND $4::text IS NULL
-    AND $5::text IS NULL
-    AND $6::text IS NULL
-    OR EXISTS (
-        SELECT 1 FROM host_packages hp
-        WHERE hp.package_id = p.id
-        AND ($3::text IS NULL OR hp.host_id = $3)
-        AND ($4::text IS NULL OR ($4 = 'true' AND hp.needs_update = true))
-        AND ($5::text IS NULL OR ($5 = 'true' AND hp.needs_update = true AND hp.is_security_update = true))
-        AND ($6::text IS NULL OR hp.source_repository_id = $6)
-    )
-)
-`
-
-type CountPackagesParams struct {
-	Search           *string `json:"search"`
-	Category         *string `json:"category"`
-	HostID           *string `json:"host_id"`
-	NeedsUpdate      *string `json:"needs_update"`
-	IsSecurityUpdate *string `json:"is_security_update"`
-	RepositoryID     *string `json:"repository_id"`
-}
-
-func (q *Queries) CountPackages(ctx context.Context, arg CountPackagesParams) (int32, error) {
-	row := q.db.QueryRow(ctx, countPackages,
-		arg.Search,
-		arg.Category,
-		arg.HostID,
-		arg.NeedsUpdate,
-		arg.IsSecurityUpdate,
-		arg.RepositoryID,
-	)
-	var column_1 int32
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const deletePackagesByIDs = `-- name: DeletePackagesByIDs :exec
 DELETE FROM packages WHERE id = ANY($1::text[])
 `
@@ -150,44 +107,9 @@ func (q *Queries) GetHostPackageStatsByHostIDs(ctx context.Context, dollar_1 []s
 	return items, nil
 }
 
-const getHostPackageStatsByPackageIDs = `-- name: GetHostPackageStatsByPackageIDs :many
-SELECT package_id, COUNT(*)::int as cnt FROM host_packages
-WHERE package_id = ANY($1::text[])
-AND ($2::text IS NULL OR host_id = $2)
-GROUP BY package_id
-`
-
-type GetHostPackageStatsByPackageIDsParams struct {
-	Column1 []string `json:"column_1"`
-	HostID  *string  `json:"host_id"`
-}
-
-type GetHostPackageStatsByPackageIDsRow struct {
-	PackageID string `json:"package_id"`
-	Cnt       int32  `json:"cnt"`
-}
-
-func (q *Queries) GetHostPackageStatsByPackageIDs(ctx context.Context, arg GetHostPackageStatsByPackageIDsParams) ([]GetHostPackageStatsByPackageIDsRow, error) {
-	rows, err := q.db.Query(ctx, getHostPackageStatsByPackageIDs, arg.Column1, arg.HostID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetHostPackageStatsByPackageIDsRow
-	for rows.Next() {
-		var i GetHostPackageStatsByPackageIDsRow
-		if err := rows.Scan(&i.PackageID, &i.Cnt); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getHostPackagesWithHostsByPackageID = `-- name: GetHostPackagesWithHostsByPackageID :many
+
+
 SELECT hp.id, hp.host_id, hp.package_id, hp.current_version, hp.available_version,
     hp.needs_update, hp.is_security_update, hp.last_checked,
     hp.source_repository_id,
@@ -223,6 +145,30 @@ type GetHostPackagesWithHostsByPackageIDRow struct {
 	HostNeedsReboot    *bool            `json:"host_needs_reboot"`
 }
 
+// ListPackages and CountPackages are intentionally NOT defined here.
+// They live as raw SQL builders in internal/store/packages_list_sql.go.
+//
+// Why hand-rolled rather than sqlc:
+//  1. ORDER BY needs a CASE-WHEN-per-sort-key dance to stay parameterised,
+//     which forces a full sort over the entire filtered CTE before LIMIT
+//     can fire — defeats any index-ordered scan + LIMIT pushdown.
+//     Building "ORDER BY <whitelisted column> <dir>" in Go lets the
+//     planner drive output from the existing btree on packages(name)
+//     (and similar) for typical queries, killing the parallel-sort path
+//     that blows Docker's default /dev/shm.
+//  2. The host_packages EXISTS / NOT EXISTS branches are only relevant
+//     when the corresponding filter param is set; emitting them
+//     conditionally in Go produces a much tighter predicate that the
+//     planner can prune cheaply.
+//
+// Per-package counters still come from mv_package_stats (refreshed every
+// ~2 min by an asynq scheduler — see TypePackageStatsRefresh) so we avoid
+// per-request aggregation over host_packages.
+// (Removed) GetHostPackageStatsByPackageIDs / GetUpdatesCountByPackageIDs /
+// GetSecurityCountByPackageIDs — superseded by mv_package_stats. The
+// per-package counters returned to the Packages list page now come from
+// ListPackages itself (which joins the matview), so the previous
+// per-id aggregate round-trips are no longer needed.
 func (q *Queries) GetHostPackagesWithHostsByPackageID(ctx context.Context, packageID string) ([]GetHostPackagesWithHostsByPackageIDRow, error) {
 	rows, err := q.db.Query(ctx, getHostPackagesWithHostsByPackageID, packageID)
 	if err != nil {
@@ -263,13 +209,22 @@ func (q *Queries) GetHostPackagesWithHostsByPackageID(ctx context.Context, packa
 }
 
 const getHostRefsForPackageIDs = `-- name: GetHostRefsForPackageIDs :many
-SELECT hp.package_id, h.id as host_id, h.friendly_name, h.os_type,
-    hp.current_version, hp.available_version, hp.needs_update, hp.is_security_update
-FROM host_packages hp
-JOIN hosts h ON h.id = hp.host_id
-WHERE hp.package_id = ANY($1::text[])
-AND ($2::text IS NULL OR hp.host_id = $2)
-ORDER BY hp.needs_update DESC, h.friendly_name
+WITH ranked_refs AS (
+    SELECT hp.package_id, h.id as host_id, h.friendly_name, h.os_type,
+        hp.current_version, hp.available_version, hp.needs_update, hp.is_security_update,
+        row_number() OVER (
+            PARTITION BY hp.package_id
+            ORDER BY hp.needs_update DESC, h.friendly_name ASC, h.id ASC
+        ) AS rn
+    FROM host_packages hp
+    JOIN hosts h ON h.id = hp.host_id
+    WHERE hp.package_id = ANY($1::text[])
+    AND ($2::text IS NULL OR hp.host_id = $2)
+)
+SELECT package_id, host_id, friendly_name, os_type, current_version, available_version, needs_update, is_security_update
+FROM ranked_refs
+WHERE rn <= 10
+ORDER BY package_id, needs_update DESC, friendly_name ASC
 `
 
 type GetHostRefsForPackageIDsParams struct {
@@ -372,43 +327,6 @@ func (q *Queries) GetPendingUpdateCountsPerHost(ctx context.Context) ([]GetPendi
 	return items, nil
 }
 
-const getSecurityCountByPackageIDs = `-- name: GetSecurityCountByPackageIDs :many
-SELECT package_id, COUNT(*)::int as cnt FROM host_packages
-WHERE package_id = ANY($1::text[]) AND needs_update = true AND is_security_update = true
-AND ($2::text IS NULL OR host_id = $2)
-GROUP BY package_id
-`
-
-type GetSecurityCountByPackageIDsParams struct {
-	Column1 []string `json:"column_1"`
-	HostID  *string  `json:"host_id"`
-}
-
-type GetSecurityCountByPackageIDsRow struct {
-	PackageID string `json:"package_id"`
-	Cnt       int32  `json:"cnt"`
-}
-
-func (q *Queries) GetSecurityCountByPackageIDs(ctx context.Context, arg GetSecurityCountByPackageIDsParams) ([]GetSecurityCountByPackageIDsRow, error) {
-	rows, err := q.db.Query(ctx, getSecurityCountByPackageIDs, arg.Column1, arg.HostID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetSecurityCountByPackageIDsRow
-	for rows.Next() {
-		var i GetSecurityCountByPackageIDsRow
-		if err := rows.Scan(&i.PackageID, &i.Cnt); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const getSourceReposByPackageIDs = `-- name: GetSourceReposByPackageIDs :many
 SELECT DISTINCT hp.package_id, r.id as repo_id, r.name as repo_name, r.url as repo_url, r.repo_type
 FROM host_packages hp
@@ -447,43 +365,6 @@ func (q *Queries) GetSourceReposByPackageIDs(ctx context.Context, arg GetSourceR
 			&i.RepoUrl,
 			&i.RepoType,
 		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getUpdatesCountByPackageIDs = `-- name: GetUpdatesCountByPackageIDs :many
-SELECT package_id, COUNT(*)::int as cnt FROM host_packages
-WHERE package_id = ANY($1::text[]) AND needs_update = true
-AND ($2::text IS NULL OR host_id = $2)
-GROUP BY package_id
-`
-
-type GetUpdatesCountByPackageIDsParams struct {
-	Column1 []string `json:"column_1"`
-	HostID  *string  `json:"host_id"`
-}
-
-type GetUpdatesCountByPackageIDsRow struct {
-	PackageID string `json:"package_id"`
-	Cnt       int32  `json:"cnt"`
-}
-
-func (q *Queries) GetUpdatesCountByPackageIDs(ctx context.Context, arg GetUpdatesCountByPackageIDsParams) ([]GetUpdatesCountByPackageIDsRow, error) {
-	rows, err := q.db.Query(ctx, getUpdatesCountByPackageIDs, arg.Column1, arg.HostID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetUpdatesCountByPackageIDsRow
-	for rows.Next() {
-		var i GetUpdatesCountByPackageIDsRow
-		if err := rows.Scan(&i.PackageID, &i.Cnt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -660,85 +541,6 @@ func (q *Queries) ListOrphanedPackages(ctx context.Context) ([]ListOrphanedPacka
 			&i.Description,
 			&i.Category,
 			&i.LatestVersion,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listPackages = `-- name: ListPackages :many
-SELECT p.id, p.name, p.description, p.category, p.latest_version, p.created_at
-FROM packages p
-WHERE ($1::text IS NULL OR p.name ILIKE '%' || $1 || '%' OR p.description ILIKE '%' || $1 || '%')
-AND ($2::text IS NULL OR p.category = $2)
-AND (
-    $3::text IS NULL
-    AND $4::text IS NULL
-    AND $5::text IS NULL
-    AND $6::text IS NULL
-    OR EXISTS (
-        SELECT 1 FROM host_packages hp
-        WHERE hp.package_id = p.id
-        AND ($3::text IS NULL OR hp.host_id = $3)
-        AND ($4::text IS NULL OR ($4 = 'true' AND hp.needs_update = true))
-        AND ($5::text IS NULL OR ($5 = 'true' AND hp.needs_update = true AND hp.is_security_update = true))
-        AND ($6::text IS NULL OR hp.source_repository_id = $6)
-    )
-)
-ORDER BY p.name ASC
-LIMIT $8 OFFSET $7
-`
-
-type ListPackagesParams struct {
-	Search           *string `json:"search"`
-	Category         *string `json:"category"`
-	HostID           *string `json:"host_id"`
-	NeedsUpdate      *string `json:"needs_update"`
-	IsSecurityUpdate *string `json:"is_security_update"`
-	RepositoryID     *string `json:"repository_id"`
-	Offset           int32   `json:"offset"`
-	Limit            int32   `json:"limit"`
-}
-
-type ListPackagesRow struct {
-	ID            string           `json:"id"`
-	Name          string           `json:"name"`
-	Description   *string          `json:"description"`
-	Category      *string          `json:"category"`
-	LatestVersion *string          `json:"latest_version"`
-	CreatedAt     pgtype.Timestamp `json:"created_at"`
-}
-
-func (q *Queries) ListPackages(ctx context.Context, arg ListPackagesParams) ([]ListPackagesRow, error) {
-	rows, err := q.db.Query(ctx, listPackages,
-		arg.Search,
-		arg.Category,
-		arg.HostID,
-		arg.NeedsUpdate,
-		arg.IsSecurityUpdate,
-		arg.RepositoryID,
-		arg.Offset,
-		arg.Limit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListPackagesRow
-	for rows.Next() {
-		var i ListPackagesRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Name,
-			&i.Description,
-			&i.Category,
-			&i.LatestVersion,
-			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

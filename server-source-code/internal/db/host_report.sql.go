@@ -7,6 +7,8 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const bulkInsertHostPackages = `-- name: BulkInsertHostPackages :exec
@@ -137,17 +139,28 @@ type BulkUpsertPackagesRow struct {
 //
 // The DO UPDATE WHERE clause skips no-op updates: when the agent reports the
 // same description/category/latest_version that's already stored, no row
-// update happens, no dead tuple is created, and no FOR NO KEY UPDATE row
-// lock is taken. Steady-state production workloads with mostly-stable package
-// catalogues see ~95% of upsert calls become no-ops, drastically reducing
-// WAL volume, vacuum pressure, AND the lock-conflict surface that produced
-// the deadlocks.
+// update happens and no dead tuple is created. Steady-state production
+// workloads with mostly-stable package catalogues see ~95% of upsert calls
+// become no-ops, drastically reducing WAL volume and vacuum pressure.
+//
+// It does NOT avoid the row lock: the ON CONFLICT arbiter takes its
+// FOR NO KEY UPDATE lock on the conflicting tuple BEFORE evaluating this
+// WHERE, and holds it to end of transaction whether or not the update
+// fires. Deadlock freedom comes from the sorted lock acquisition above, not
+// from this clause.
 //
 // The UNION ALL fallback returns (id, name) for input rows that did NOT fire
-// DO UPDATE (i.e. the values are unchanged), so the caller's name → id map
-// is complete regardless of whether each row was newly inserted, updated, or
-// left unchanged. This is required: BulkInsertHostPackages depends on
-// knowing the package_id for every input package.
+// DO UPDATE (i.e. the values are unchanged), covering the single-threaded
+// case where every input name resolves to an id.
+//
+// It is NOT complete under concurrency. The ON CONFLICT arbiter re-reads the
+// conflicting row outside the statement snapshot, so it can see a row another
+// transaction committed after this statement began; if that row's values are
+// identical the skip-no-op WHERE suppresses RETURNING, while the fallback
+// SELECT still reads `packages` at the (older) statement snapshot and cannot
+// see the row either. That name is then absent from the result. The caller
+// MUST detect missing names and resolve them with GetPackageIDsByNames, which
+// runs as a separate statement and therefore takes a fresh snapshot.
 //
 // The DO UPDATE intentionally touches only NON-KEY columns
 // (description / category / latest_version / updated_at). The row lock taken
@@ -208,23 +221,80 @@ func (q *Queries) GetPackageByName(ctx context.Context, name string) (Package, e
 	return i, err
 }
 
+const getPackageIDsByNames = `-- name: GetPackageIDsByNames :many
+SELECT id, name FROM packages WHERE name = ANY($1::text[])
+`
+
+type GetPackageIDsByNamesRow struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// Off-fast-path resolver for names BulkUpsertPackages could not return (see
+// the concurrency note there). Issued as its own statement so it reads at a
+// fresh snapshot and observes rows committed by concurrent reports. Takes no
+// row locks. The caller only runs this when a name is actually missing.
+//
+// REQUIRES READ COMMITTED. Only under READ COMMITTED does a new statement take
+// a new snapshot; at REPEATABLE READ or SERIALIZABLE this reuses the
+// transaction snapshot, resolves nothing, and the race it exists to close
+// silently returns. The pool sets no TxOptions, so the server default applies
+// — do not raise it without revisiting this.
+func (q *Queries) GetPackageIDsByNames(ctx context.Context, names []string) ([]GetPackageIDsByNamesRow, error) {
+	rows, err := q.db.Query(ctx, getPackageIDsByNames, names)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetPackageIDsByNamesRow
+	for rows.Next() {
+		var i GetPackageIDsByNamesRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertUpdateHistory = `-- name: InsertUpdateHistory :exec
-INSERT INTO update_history (id, host_id, packages_count, security_count, total_packages, payload_size_kb, execution_time, timestamp, status, error_message)
-VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9)
+INSERT INTO update_history (
+    id, host_id, packages_count, security_count, total_packages,
+    payload_size_kb, execution_time, timestamp, status, error_message,
+    report_type, sections_sent, sections_unchanged, agent_execution_ms
+)
+VALUES (
+    $1, $2, $3, $4, $5,
+    $6, $7, NOW(), $8, $9,
+    $10, $11, $12, $13
+)
 `
 
 type InsertUpdateHistoryParams struct {
-	ID            string   `json:"id"`
-	HostID        string   `json:"host_id"`
-	PackagesCount int32    `json:"packages_count"`
-	SecurityCount int32    `json:"security_count"`
-	TotalPackages *int32   `json:"total_packages"`
-	PayloadSizeKb *float64 `json:"payload_size_kb"`
-	ExecutionTime *float64 `json:"execution_time"`
-	Status        string   `json:"status"`
-	ErrorMessage  *string  `json:"error_message"`
+	ID                string   `json:"id"`
+	HostID            string   `json:"host_id"`
+	PackagesCount     int32    `json:"packages_count"`
+	SecurityCount     int32    `json:"security_count"`
+	TotalPackages     *int32   `json:"total_packages"`
+	PayloadSizeKb     *float64 `json:"payload_size_kb"`
+	ExecutionTime     *float64 `json:"execution_time"`
+	Status            string   `json:"status"`
+	ErrorMessage      *string  `json:"error_message"`
+	ReportType        string   `json:"report_type"`
+	SectionsSent      []string `json:"sections_sent"`
+	SectionsUnchanged []string `json:"sections_unchanged"`
+	AgentExecutionMs  *int32   `json:"agent_execution_ms"`
 }
 
+// Persists a single agent activity row for the per-host Agent Activity feed.
+// report_type discriminates 'full' / 'partial' / 'ping' / 'docker' / 'compliance'.
+// sections_sent / sections_unchanged drive the "Updated / Skipped" chip pair in
+// the UI (legacy rows pre-000043 stay at the column defaults so the UI shows
+// "—" for them). agent_execution_ms is the agent-side data-collection time
+// shipped on the wire; nullable for older agents.
 func (q *Queries) InsertUpdateHistory(ctx context.Context, arg InsertUpdateHistoryParams) error {
 	_, err := q.db.Exec(ctx, insertUpdateHistory,
 		arg.ID,
@@ -236,6 +306,10 @@ func (q *Queries) InsertUpdateHistory(ctx context.Context, arg InsertUpdateHisto
 		arg.ExecutionTime,
 		arg.Status,
 		arg.ErrorMessage,
+		arg.ReportType,
+		arg.SectionsSent,
+		arg.SectionsUnchanged,
+		arg.AgentExecutionMs,
 	)
 	return err
 }
@@ -258,46 +332,70 @@ UPDATE hosts SET
     ram_installed = COALESCE($10::double precision, ram_installed),
     swap_size = COALESCE($11::double precision, swap_size),
     disk_details = COALESCE($12::jsonb, disk_details),
-    gateway_ip = $13,
+    gateway_ip = COALESCE($13::text, gateway_ip),
     dns_servers = COALESCE($14::jsonb, dns_servers),
     network_interfaces = COALESCE($15::jsonb, network_interfaces),
     kernel_version = COALESCE($16::text, kernel_version),
     installed_kernel_version = COALESCE($17::text, installed_kernel_version),
     selinux_status = COALESCE($18::text, selinux_status),
     system_uptime = COALESCE($19::text, system_uptime),
-    load_average = COALESCE($20::jsonb, load_average),
-    needs_reboot = COALESCE($21::boolean, needs_reboot),
-    reboot_reason = $22,
-    package_manager = COALESCE($23::text, package_manager),
+    boot_time = COALESCE($20::timestamptz, boot_time),
+    load_average = COALESCE($21::jsonb, load_average),
+    needs_reboot = COALESCE($22::boolean, needs_reboot),
+    -- reboot_reason is only rewritten when this report also carries
+    -- needs_reboot. A hash-gated partial report never carries either (the ping
+    -- metrics path owns both fields), and reboot_reason has no COALESCE guard
+    -- of its own, so without this CASE a partial would NULL out a reason the
+    -- ping had just written correctly.
+    -- Second arm: a report asserting needs_reboot without a reason must not
+    -- blank a stored one; clearing the flag still clears both.
+    reboot_reason = CASE
+        WHEN $22::boolean IS NULL THEN reboot_reason
+        WHEN $22::boolean IS TRUE
+             AND $23::text IS NULL THEN reboot_reason
+        ELSE $23::text
+    END,
+    package_manager = COALESCE($24::text, package_manager),
+    packages_hash = COALESCE($25::text, packages_hash),
+    repos_hash = COALESCE($26::text, repos_hash),
+    interfaces_hash = COALESCE($27::text, interfaces_hash),
+    hostname_hash = COALESCE($28::text, hostname_hash),
+    last_full_report_at = COALESCE($29::timestamp, last_full_report_at),
     awaiting_post_patch_report_run_id = NULL
-WHERE id = $24
+WHERE id = $30
 `
 
 type UpdateHostFromReportParams struct {
-	MachineID              *string  `json:"machine_id"`
-	OsType                 *string  `json:"os_type"`
-	OsVersion              *string  `json:"os_version"`
-	Hostname               *string  `json:"hostname"`
-	Ip                     *string  `json:"ip"`
-	Architecture           *string  `json:"architecture"`
-	AgentVersion           *string  `json:"agent_version"`
-	CpuModel               *string  `json:"cpu_model"`
-	CpuCores               *int32   `json:"cpu_cores"`
-	RamInstalled           *float64 `json:"ram_installed"`
-	SwapSize               *float64 `json:"swap_size"`
-	DiskDetails            []byte   `json:"disk_details"`
-	GatewayIp              *string  `json:"gateway_ip"`
-	DnsServers             []byte   `json:"dns_servers"`
-	NetworkInterfaces      []byte   `json:"network_interfaces"`
-	KernelVersion          *string  `json:"kernel_version"`
-	InstalledKernelVersion *string  `json:"installed_kernel_version"`
-	SelinuxStatus          *string  `json:"selinux_status"`
-	SystemUptime           *string  `json:"system_uptime"`
-	LoadAverage            []byte   `json:"load_average"`
-	NeedsReboot            *bool    `json:"needs_reboot"`
-	RebootReason           *string  `json:"reboot_reason"`
-	PackageManager         *string  `json:"package_manager"`
-	ID                     string   `json:"id"`
+	MachineID              *string            `json:"machine_id"`
+	OsType                 *string            `json:"os_type"`
+	OsVersion              *string            `json:"os_version"`
+	Hostname               *string            `json:"hostname"`
+	Ip                     *string            `json:"ip"`
+	Architecture           *string            `json:"architecture"`
+	AgentVersion           *string            `json:"agent_version"`
+	CpuModel               *string            `json:"cpu_model"`
+	CpuCores               *int32             `json:"cpu_cores"`
+	RamInstalled           *float64           `json:"ram_installed"`
+	SwapSize               *float64           `json:"swap_size"`
+	DiskDetails            []byte             `json:"disk_details"`
+	GatewayIp              *string            `json:"gateway_ip"`
+	DnsServers             []byte             `json:"dns_servers"`
+	NetworkInterfaces      []byte             `json:"network_interfaces"`
+	KernelVersion          *string            `json:"kernel_version"`
+	InstalledKernelVersion *string            `json:"installed_kernel_version"`
+	SelinuxStatus          *string            `json:"selinux_status"`
+	SystemUptime           *string            `json:"system_uptime"`
+	BootTime               pgtype.Timestamptz `json:"boot_time"`
+	LoadAverage            []byte             `json:"load_average"`
+	NeedsReboot            *bool              `json:"needs_reboot"`
+	RebootReason           *string            `json:"reboot_reason"`
+	PackageManager         *string            `json:"package_manager"`
+	PackagesHash           *string            `json:"packages_hash"`
+	ReposHash              *string            `json:"repos_hash"`
+	InterfacesHash         *string            `json:"interfaces_hash"`
+	HostnameHash           *string            `json:"hostname_hash"`
+	LastFullReportAt       pgtype.Timestamp   `json:"last_full_report_at"`
+	ID                     string             `json:"id"`
 }
 
 // Host report/update flow (agent sends package and system info)
@@ -322,10 +420,16 @@ func (q *Queries) UpdateHostFromReport(ctx context.Context, arg UpdateHostFromRe
 		arg.InstalledKernelVersion,
 		arg.SelinuxStatus,
 		arg.SystemUptime,
+		arg.BootTime,
 		arg.LoadAverage,
 		arg.NeedsReboot,
 		arg.RebootReason,
 		arg.PackageManager,
+		arg.PackagesHash,
+		arg.ReposHash,
+		arg.InterfacesHash,
+		arg.HostnameHash,
+		arg.LastFullReportAt,
 		arg.ID,
 	)
 	return err

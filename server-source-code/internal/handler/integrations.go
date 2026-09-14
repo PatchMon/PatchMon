@@ -22,16 +22,21 @@ type IntegrationsHandler struct {
 	integrationStatus *store.IntegrationStatusStore
 	db                database.DBProvider
 	notify            *notifications.Emitter
+	reports           *store.ReportStore
 }
 
 // NewIntegrationsHandler creates a new integrations handler.
-func NewIntegrationsHandler(hosts *store.HostsStore, docker *store.DockerStore, integrationStatus *store.IntegrationStatusStore, db database.DBProvider, notify *notifications.Emitter) *IntegrationsHandler {
+// reports is optional; when non-nil the docker endpoint records an Agent
+// Activity row for every inbound payload so the per-host timeline shows
+// integration cycles alongside report and ping cycles.
+func NewIntegrationsHandler(hosts *store.HostsStore, docker *store.DockerStore, integrationStatus *store.IntegrationStatusStore, db database.DBProvider, notify *notifications.Emitter, reports *store.ReportStore) *IntegrationsHandler {
 	return &IntegrationsHandler{
 		hosts:             hosts,
 		docker:            docker,
 		integrationStatus: integrationStatus,
 		db:                db,
 		notify:            notify,
+		reports:           reports,
 	}
 }
 
@@ -109,6 +114,63 @@ type dockerPayloadReq struct {
 	Updates    []dockerImageUpdateReq `json:"updates"`
 	Hostname   string                 `json:"hostname"`
 	MachineID  string                 `json:"machine_id"`
+	// DockerHash is the agent-computed canonical hash for the docker
+	// payload. Optional — when present, server validates and persists it
+	// so the next ping can hash-gate the docker section.
+	DockerHash string `json:"docker_hash,omitempty"`
+}
+
+// canonicalDockerHashFromReq derives the canonical hash inputs from the
+// agent's wire payload by mapping each top-level slice through the wire-shape
+// types accepted by CanonicalDockerHash.
+func canonicalDockerHashFromReq(p *dockerPayloadReq) (string, error) {
+	in := DockerHashInput{
+		Containers: make([]DockerWireContainer, len(p.Containers)),
+		Images:     make([]DockerWireImage, len(p.Images)),
+		Volumes:    make([]DockerWireVolume, len(p.Volumes)),
+		Networks:   make([]DockerWireNetwork, len(p.Networks)),
+		Updates:    make([]DockerWireImageUpdate, len(p.Updates)),
+	}
+	for i, c := range p.Containers {
+		in.Containers[i] = DockerWireContainer{
+			ContainerID:     c.ContainerID,
+			Name:            c.Name,
+			ImageRepository: c.ImageRepository,
+			ImageTag:        c.ImageTag,
+			ImageID:         c.ImageID,
+			Status:          c.Status,
+			State:           c.State,
+		}
+	}
+	for i, img := range p.Images {
+		in.Images[i] = DockerWireImage{
+			Repository: img.Repository,
+			Tag:        img.Tag,
+			ImageID:    img.ImageID,
+			Digest:     img.Digest,
+			SizeBytes:  img.SizeBytes,
+		}
+	}
+	for i, v := range p.Volumes {
+		in.Volumes[i] = DockerWireVolume{
+			VolumeID: v.VolumeID,
+			Name:     v.Name,
+			Driver:   v.Driver,
+			Scope:    v.Scope,
+		}
+	}
+	for i, n := range p.Networks {
+		in.Networks[i] = DockerWireNetwork{
+			NetworkID: n.NetworkID,
+			Name:      n.Name,
+			Driver:    n.Driver,
+			Scope:     n.Scope,
+		}
+	}
+	for i, u := range p.Updates {
+		in.Updates[i] = DockerWireImageUpdate(u)
+	}
+	return CanonicalDockerHash(in)
 }
 
 type dockerResponse struct {
@@ -203,6 +265,7 @@ func convertDockerPayloadToStore(p *dockerPayloadReq) *store.DockerReceivePayloa
 
 // ReceiveDockerData handles POST /api/v1/integrations/docker (agent endpoint, API key auth).
 func (h *IntegrationsHandler) ReceiveDockerData(w http.ResponseWriter, r *http.Request) {
+	dockerStart := time.Now()
 	defer func() {
 		if err := recover(); err != nil {
 			slog.Error("integrations docker handler panic", "error", err, "stack", string(debug.Stack()))
@@ -239,12 +302,33 @@ func (h *IntegrationsHandler) ReceiveDockerData(w http.ResponseWriter, r *http.R
 		"containers", len(payload.Containers), "images", len(payload.Images),
 		"volumes", len(payload.Volumes), "networks", len(payload.Networks), "updates", len(payload.Updates))
 
+	// Verify the agent's canonical docker hash if present. Mismatch means
+	// the agent's canonicalisation diverged from ours — surface immediately
+	// rather than silently storing a hash the next ping will reject.
+	computedHash, hashErr := canonicalDockerHashFromReq(&payload)
+	if hashErr != nil {
+		slog.Error("failed to compute canonical docker hash", "error", hashErr, "host_id", host.ID)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to validate Docker payload"})
+		return
+	}
+	if payload.DockerHash != "" && computedHash != payload.DockerHash {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "docker hash mismatch"})
+		return
+	}
+
 	storePayload := convertDockerPayloadToStore(&payload)
 	result, err := h.docker.ReceiveDockerData(r.Context(), host.ID, storePayload)
 	if err != nil {
 		slog.Error("failed to process docker data", "error", err, "host_id", host.ID)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to process Docker data"})
 		return
+	}
+
+	// Persist the canonical hash so the next ping can hash-gate the docker
+	// section. If the call fails we log but do not fail the request — data
+	// landed; the worst case is an extra docker upload next cycle.
+	if err := h.hosts.UpdateDockerHash(r.Context(), host.ID, computedHash); err != nil {
+		slog.Error("failed to persist docker hash", "error", err, "host_id", host.ID)
 	}
 
 	// Emit notification events for container status transitions.
@@ -309,6 +393,30 @@ func (h *IntegrationsHandler) ReceiveDockerData(w http.ResponseWriter, r *http.R
 				"updates_found": result.UpdatesFound,
 			},
 		})
+	}
+
+	// Record one Agent Activity row for the docker integration cycle. The
+	// docker section ALWAYS counts as "Updated" here — the agent only POSTs
+	// to this endpoint when the server's last ping flagged docker as stale,
+	// so by definition fresh data arrived.
+	if h.reports != nil {
+		procSec := time.Since(dockerStart).Seconds()
+		var payloadKb *float64
+		if r.ContentLength > 0 {
+			v := float64(r.ContentLength) / 1024.0
+			payloadKb = &v
+		}
+		if err := h.reports.InsertActivityRow(r.Context(), store.AgentActivityInsert{
+			HostID:            host.ID,
+			ReportType:        "docker",
+			SectionsSent:      []string{"docker"},
+			SectionsUnchanged: []string{},
+			PayloadSizeKb:     payloadKb,
+			ServerProcessing:  &procSec,
+			Status:            "success",
+		}); err != nil {
+			slog.Warn("docker: failed to record agent activity row", "host_id", host.ID, "error", err)
+		}
 	}
 
 	JSON(w, http.StatusOK, dockerResponse{
@@ -376,8 +484,28 @@ func (h *IntegrationsHandler) ReceiveIntegrationStatus(w http.ResponseWriter, r 
 	if statusData["components"] == nil {
 		statusData["components"] = map[string]interface{}{}
 	}
-	if statusData["install_events"] == nil {
+
+	// Two agent callers write this blob. runInstallScanner reports per-step
+	// install progress and carries install_events; reportIntegrationStatus
+	// reports overall availability and never sets the field, which omitempty
+	// then drops from the payload. Because this handler replaces the stored
+	// value wholesale, the second caller used to erase the first caller's
+	// progress. The compliance panel polls request-status while an install
+	// runs, which triggers exactly that caller, so watching the progress bar
+	// was what wiped it: every step stayed on "Waiting..." to the end.
+	//
+	// A nil slice means the key was absent from the JSON, so keep what is
+	// already stored. An explicitly empty array still clears, which is how a
+	// caller signals "no events".
+	if payload.InstallEvents == nil {
 		statusData["install_events"] = []interface{}{}
+		if h.integrationStatus != nil {
+			if prev, err := h.integrationStatus.Get(r.Context(), apiID, payload.Integration); err == nil && prev != nil {
+				if prevEvents, ok := prev["install_events"]; ok && prevEvents != nil {
+					statusData["install_events"] = prevEvents
+				}
+			}
+		}
 	}
 
 	if h.integrationStatus != nil {

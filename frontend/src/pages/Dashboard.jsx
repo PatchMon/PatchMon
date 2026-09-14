@@ -31,6 +31,7 @@ import {
 import {
 	AlertTriangle,
 	CheckCircle,
+	ChevronRight,
 	Eye,
 	EyeOff,
 	Folder,
@@ -82,6 +83,7 @@ import {
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { useToast } from "../contexts/ToastContext";
+import { usePageRefresh } from "../hooks/usePageRefresh";
 import {
 	adminUsersAPI,
 	alertsAPI,
@@ -105,6 +107,27 @@ ChartJS.register(
 	PointElement,
 	Title,
 );
+
+// Hosts-page filter for the not-reporting card. The server-side `inactive`
+// filter resolves to the same "active host, silent past 2x the update interval"
+// set the card counts, so the count and the resulting list always agree. The
+// update-status chart reaches the same list through the `filter` its segment
+// carries, rather than through this constant.
+const ERRORED_HOSTS_FILTER = "inactive";
+
+// Every monitoring query the dashboard renders. Card layout and preferences are
+// deliberately absent: refreshing the data must not reshuffle a layout the user
+// is part-way through editing.
+const DASHBOARD_REFRESH_KEYS = [
+	["dashboardStats"],
+	["packageTrends"],
+	["dashboardRecentUsers"],
+	["dashboardRecentCollection"],
+	["compliance-dashboard"],
+	["patching-dashboard"],
+	["alerts"],
+	["alert-stats"],
+];
 
 // Drag-to-resize handle on the right edge of a card in edit mode
 const CARD_RESIZE_PIXELS_PER_COLUMN = 40;
@@ -268,11 +291,14 @@ const Dashboard = () => {
 	};
 
 	const handleErroredHostsClick = () => {
-		navigate("/hosts?filter=inactive");
+		navigate(`/hosts?filter=${ERRORED_HOSTS_FILTER}`);
 	};
 
 	const handleOfflineHostsClick = () => {
-		navigate("/hosts?filter=offline");
+		// "Offline" was a conflated label in the legacy UI; the new vocabulary
+		// is "stale" (overdue + WS down). The Hosts page also legacy-redirects
+		// `?filter=offline` to `?filter=stale` for any old bookmarks.
+		navigate("/hosts?filter=stale");
 	};
 
 	// New navigation handlers for top cards
@@ -331,21 +357,13 @@ const Dashboard = () => {
 		if (elements.length > 0 && stats?.charts?.updateStatusDistribution) {
 			const elementIndex = elements[0].index;
 			const statusItem = stats.charts.updateStatusDistribution[elementIndex];
-			if (!statusItem?.name) return;
 
-			const statusName = statusItem.name;
-			// Map status names to filter parameters
-			let filter = "";
-			if (statusName.toLowerCase().includes("needs updates")) {
-				filter = "needsUpdates";
-			} else if (statusName.toLowerCase().includes("up to date")) {
-				filter = "upToDate";
-			} else if (statusName.toLowerCase().includes("stale")) {
-				filter = "stale";
-			}
-
-			if (filter) {
-				navigate(`/hosts?filter=${filter}`, { replace: true });
+			// The segment carries the filter it links to. Deriving it from the
+			// display label instead breaks silently the moment a segment is
+			// renamed: no branch matches, no filter is applied, and the click
+			// lands on an unfiltered host list that looks like it worked.
+			if (statusItem?.filter) {
+				navigate(`/hosts?filter=${statusItem.filter}`, { replace: true });
 			}
 		}
 	};
@@ -367,10 +385,11 @@ const Dashboard = () => {
 	};
 
 	// Helper function to format the update interval threshold
+	// The server serialises this as update_interval, not updateInterval.
 	const formatUpdateIntervalThreshold = () => {
-		if (!settings?.updateInterval) return "24 hours";
+		if (!settings?.update_interval) return "24 hours";
 
-		const intervalMinutes = settings.updateInterval;
+		const intervalMinutes = settings.update_interval;
 		const thresholdMinutes = intervalMinutes * 2; // 2x the update interval
 
 		if (thresholdMinutes < 60) {
@@ -397,13 +416,15 @@ const Dashboard = () => {
 		isLoading,
 		error,
 		refetch,
-		isFetching,
 	} = useQuery({
 		queryKey: ["dashboardStats"],
 		queryFn: () => dashboardAPI.getStats().then((res) => res.data),
-		staleTime: 5 * 60 * 1000, // Data stays fresh for 5 minutes
-		refetchOnWindowFocus: false, // Don't refetch when window regains focus
 	});
+
+	// The header button refreshes the whole screen, not just this query.
+	const { refresh: refreshDashboard, isRefreshing } = usePageRefresh(
+		DASHBOARD_REFRESH_KEYS,
+	);
 
 	// Package trends data query
 	const {
@@ -422,8 +443,11 @@ const Dashboard = () => {
 			}
 			return dashboardAPI.getPackageTrends(params).then((res) => res.data);
 		},
-		staleTime: 5 * 60 * 1000, // 5 minutes
-		refetchOnWindowFocus: false,
+		// Deliberately above the 60s default. This aggregates up to a year of
+		// system_statistics with no server-side cache, and the series is
+		// day-granular, so refetching it on every remount past a minute costs a
+		// lot and can change nothing. The Refresh button still forces it.
+		staleTime: 5 * 60 * 1000,
 	});
 
 	// Fetch user's dashboard preferences (must be fetched before recentUsers query)
@@ -467,7 +491,6 @@ const Dashboard = () => {
 		queryKey: ["compliance-dashboard"],
 		queryFn: () => complianceAPI.getDashboard().then((res) => res.data),
 		staleTime: 60 * 1000,
-		refetchOnWindowFocus: false,
 		enabled:
 			has_view_hosts &&
 			is_any_compliance_card_enabled &&
@@ -1267,21 +1290,21 @@ const Dashboard = () => {
 								{stats.cards.offlineHosts > 0 ? (
 									<>
 										<h3 className="text-sm font-medium text-warning-800">
-											{stats.cards.offlineHosts} host
-											{stats.cards.offlineHosts > 1 ? "s" : ""} offline/stale
+											{stats.cards.offlineHosts} stale host
+											{stats.cards.offlineHosts > 1 ? "s" : ""}
 										</h3>
 										<p className="text-sm text-warning-700 mt-1">
-											These hosts haven't reported in{" "}
-											{formatUpdateIntervalThreshold() * 3}+ minutes.
+											These hosts haven't reported in over{" "}
+											{formatUpdateIntervalThreshold()}.
 										</p>
 									</>
 								) : (
 									<>
 										<h3 className="text-sm font-medium text-success-800">
-											All hosts are online
+											All hosts are reporting
 										</h3>
 										<p className="text-sm text-success-700 mt-1">
-											No hosts are offline or stale.
+											No hosts are stale.
 										</p>
 									</>
 								)}
@@ -1332,17 +1355,7 @@ const Dashboard = () => {
 
 			case "updateStatus":
 				return (
-					<button
-						type="button"
-						className="card p-4 sm:p-6 cursor-pointer hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow duration-200 w-full text-left h-full flex flex-col"
-						onClick={handleUpdateStatusClick}
-						onKeyDown={(e) => {
-							if (e.key === "Enter" || e.key === " ") {
-								e.preventDefault();
-								handleUpdateStatusClick();
-							}
-						}}
-					>
+					<div className="card p-4 sm:p-6 w-full h-full flex flex-col">
 						<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4 flex-shrink-0">
 							Update Status
 						</h3>
@@ -1354,7 +1367,15 @@ const Dashboard = () => {
 								/>
 							</div>
 						</div>
-					</button>
+						<button
+							type="button"
+							onClick={handleUpdateStatusClick}
+							className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 min-h-[44px] sm:min-h-0 text-sm font-medium text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 hover:underline flex-shrink-0"
+						>
+							View hosts needing updates
+							<ChevronRight className="h-4 w-4" />
+						</button>
+					</div>
 				);
 
 			case "packagePriority":
@@ -1697,9 +1718,9 @@ const Dashboard = () => {
 								</div>
 								<div
 									className="text-xs text-secondary-500 dark:text-white/70 truncate"
-									title="Online"
+									title="Reporting"
 								>
-									Online
+									Reporting
 								</div>
 								<div className="text-[10px] sm:text-xs text-secondary-400 dark:text-white/60 truncate">
 									{onlineHosts}/{stats.cards.totalHosts}
@@ -1963,6 +1984,12 @@ const Dashboard = () => {
 			},
 		},
 		onClick: handleUpdateStatusChartClick,
+		onHover: (event, elements) => {
+			const target = event.native?.target;
+			if (target) {
+				target.style.cursor = elements.length > 0 ? "pointer" : "default";
+			}
+		},
 	};
 
 	const packagePriorityChartOptions = {
@@ -2298,7 +2325,7 @@ const Dashboard = () => {
 				backgroundColor: [
 					"#10B981", // Green - Up to date
 					"#F59E0B", // Yellow - Needs updates
-					"#EF4444", // Red - Errored
+					"#EF4444", // Red - Not reporting
 				],
 				borderWidth: 0,
 			},
@@ -2343,13 +2370,13 @@ const Dashboard = () => {
 					</button>
 					<button
 						type="button"
-						onClick={() => refetch()}
-						disabled={isFetching}
+						onClick={() => refreshDashboard()}
+						disabled={isRefreshing}
 						className="btn-outline flex items-center gap-2 min-h-[44px] min-w-[44px] justify-center"
 						title="Refresh dashboard data"
 					>
 						<RefreshCw
-							className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`}
+							className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
 						/>
 					</button>
 				</div>

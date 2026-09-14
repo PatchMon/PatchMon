@@ -31,6 +31,7 @@ import DiscordIcon from "../components/DiscordIcon";
 import { FORM_INPUT_CLASS } from "../components/FormInput";
 import { useAuth } from "../contexts/AuthContext";
 import { THEME_PRESETS, useColorTheme } from "../contexts/ColorThemeContext";
+import { useConfirm } from "../contexts/ConfirmContext";
 import { useSettings } from "../contexts/SettingsContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { useToast } from "../contexts/ToastContext";
@@ -1077,7 +1078,7 @@ const TfaTab = () => {
 	const disableMutation = useMutation({
 		mutationFn: (data) => tfaAPI.disable(data).then((res) => res.data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["tfaStatus"]);
+			queryClient.invalidateQueries({ queryKey: ["tfaStatus"] });
 			setSetupStep("status");
 			setMessage({
 				type: "success",
@@ -1515,7 +1516,7 @@ const TfaTab = () => {
 								type="button"
 								onClick={() => {
 									setSetupStep("status");
-									queryClient.invalidateQueries(["tfaStatus"]);
+									queryClient.invalidateQueries({ queryKey: ["tfaStatus"] });
 								}}
 								className="btn-primary w-full sm:w-auto"
 							>
@@ -1579,6 +1580,7 @@ const TfaTab = () => {
 
 // Sessions Tab Component
 const SessionsTab = () => {
+	const confirm = useConfirm();
 	const [message, setMessage] = useState({ type: "", text: "" });
 
 	// Fetch user sessions
@@ -1652,20 +1654,25 @@ const SessionsTab = () => {
 		return "Just now";
 	};
 
-	const handleRevokeSession = (sessionId) => {
-		if (window.confirm("Are you sure you want to revoke this session?")) {
-			revokeSessionMutation.mutate(sessionId);
-		}
+	const handleRevokeSession = async (sessionId) => {
+		const confirmed = await confirm({
+			title: "Revoke session",
+			subtitle: "The device using it will be signed out",
+			message: "Are you sure you want to revoke this session?",
+			confirmLabel: "Revoke session",
+		});
+		if (confirmed) revokeSessionMutation.mutate(sessionId);
 	};
 
-	const handleRevokeAllSessions = () => {
-		if (
-			window.confirm(
+	const handleRevokeAllSessions = async () => {
+		const confirmed = await confirm({
+			title: "Revoke all other sessions",
+			subtitle: "You will stay signed in on this device",
+			message:
 				"Are you sure you want to revoke all other sessions? This will log you out of all other devices.",
-			)
-		) {
-			revokeAllSessionsMutation.mutate();
-		}
+			confirmLabel: "Revoke all",
+		});
+		if (confirmed) revokeAllSessionsMutation.mutate();
 	};
 
 	return (
@@ -1822,6 +1829,7 @@ const SessionsTab = () => {
 // active sessions — they persist across logouts and exist solely to skip MFA
 // on this browser until natural expiry or explicit revocation.
 const TrustedDevicesTab = () => {
+	const confirm = useConfirm();
 	const [message, setMessage] = useState({ type: "", text: "" });
 
 	const {
@@ -1864,24 +1872,26 @@ const TrustedDevicesTab = () => {
 		},
 	});
 
-	const handleRevoke = (id) => {
-		if (
-			window.confirm(
+	const handleRevoke = async (id) => {
+		const confirmed = await confirm({
+			title: "Forget this device",
+			subtitle: "It will need your authentication code next time",
+			message:
 				"Forget this device? You'll need to enter your authentication code on it next time you sign in.",
-			)
-		) {
-			revokeMutation.mutate(id);
-		}
+			confirmLabel: "Forget device",
+		});
+		if (confirmed) revokeMutation.mutate(id);
 	};
 
-	const handleRevokeAll = () => {
-		if (
-			window.confirm(
+	const handleRevokeAll = async () => {
+		const confirmed = await confirm({
+			title: "Forget all trusted devices",
+			subtitle: "Every device will need your authentication code",
+			message:
 				"Forget all trusted devices? You'll need to enter your authentication code on every device next time you sign in.",
-			)
-		) {
-			revokeAllMutation.mutate();
-		}
+			confirmLabel: "Forget all devices",
+		});
+		if (confirmed) revokeAllMutation.mutate();
 	};
 
 	const devices = devicesData?.trusted_devices || [];

@@ -5,17 +5,14 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
-	"net/smtp"
 	"net/url"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -23,6 +20,7 @@ import (
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/mailer"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/google/uuid"
@@ -144,6 +142,60 @@ func isSlackIncomingWebhookURL(raw string) bool {
 	return strings.HasPrefix(u.Path, "/services/")
 }
 
+// slackCompatibleTokenRe matches the opaque IDs Mattermost and Rocket.Chat place
+// after /hooks/, which are long and unpunctuated unlike routing words such as the
+// "catch" in a Zapier catch hook.
+var slackCompatibleTokenRe = regexp.MustCompile(`^[A-Za-z0-9_-]{15,}$`)
+
+// genericIngestHosts are automation platforms whose incoming URLs are shaped like
+// a chat webhook but whose users build rules against the structured body. They
+// answer 2xx to anything, so mis-detecting one fails silently.
+var genericIngestHosts = map[string]bool{
+	"automation.atlassian.com": true,
+	"automation.codebarrel.io": true,
+}
+
+// isSlackCompatibleWebhookURL matches self-hosted receivers that speak the Slack
+// incoming-webhook payload format, chiefly Mattermost and Rocket.Chat. They run on
+// arbitrary domains, so the only stable signal is a "/hooks/" segment followed by
+// one or two opaque tokens. Nothing before "hooks" is constrained, so an instance
+// behind a subpath proxy still matches. A miss is safe rather than fatal: the
+// generic body also carries a top-level text.
+func isSlackCompatibleWebhookURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || genericIngestHosts[strings.ToLower(u.Hostname())] {
+		return false
+	}
+	// EscapedPath keeps %2F inside a segment instead of decoding it into a separator.
+	segs := strings.Split(strings.Trim(u.EscapedPath(), "/"), "/")
+	for i, s := range segs {
+		if !strings.EqualFold(s, "hooks") {
+			continue
+		}
+		rest := segs[i+1:]
+		if len(rest) == 0 || len(rest) > 2 {
+			return false
+		}
+		for _, tok := range rest {
+			if !slackCompatibleTokenRe.MatchString(tok) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// webhookHostForLog returns just the host of a webhook URL. The path carries the
+// secret token, so it must never reach a log line.
+func webhookHostForLog(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return "unparseable"
+	}
+	return u.Host
+}
+
 func truncateUTF8(s string, maxRunes int) string {
 	if maxRunes <= 0 {
 		return ""
@@ -183,6 +235,33 @@ func nocMetaStr(m map[string]interface{}, key string) string {
 		return s
 	}
 	return fmt.Sprint(v)
+}
+
+// nocFormatHostDownThreshold renders the host_down alert threshold for human
+// readers. Prefers `threshold_seconds` (added with the four-pill UI redesign,
+// alert_config metadata.threshold semantics moved to seconds with a 30s
+// default); falls back to legacy `threshold_minutes` for backwards-compat
+// metadata. Returns an empty string when neither is set.
+func nocFormatHostDownThreshold(m map[string]interface{}) string {
+	if secs := nocMetaStr(m, "threshold_seconds"); secs != "" && secs != "0" {
+		// nocMetaStr returns the JSON value via fmt.Sprint, so a JSON number
+		// becomes "30" or "30.0". Cheap parse, ignore failures.
+		var n int
+		if _, err := fmt.Sscanf(secs, "%d", &n); err == nil && n > 0 {
+			if n < 60 {
+				return fmt.Sprintf("%d seconds", n)
+			}
+			minutes := n / 60
+			if minutes == 1 {
+				return "1 minute"
+			}
+			return fmt.Sprintf("%d minutes", minutes)
+		}
+	}
+	if mins := nocMetaStr(m, "threshold_minutes"); mins != "" && mins != "0" {
+		return mins + " minutes"
+	}
+	return ""
 }
 
 // nocMetaStrSlice extracts a []string from metadata (stored as []interface{} after JSON round-trip).
@@ -308,8 +387,8 @@ func buildNOCFields(p notifications.NotificationDeliverPayload) []map[string]int
 		if lastUpdate := nocMetaStr(m, "last_update"); lastUpdate != "" {
 			addField("Last Seen", lastUpdate, true)
 		}
-		if threshold := nocMetaStr(m, "threshold_minutes"); threshold != "" && threshold != "0" {
-			addField("Threshold", threshold+" minutes", true)
+		if threshold := nocFormatHostDownThreshold(m); threshold != "" {
+			addField("Threshold", threshold, true)
 		}
 		if reason := nocMetaStr(m, "disconnect_reason"); reason != "" {
 			addField("Disconnect", reason, true)
@@ -317,7 +396,7 @@ func buildNOCFields(p notifications.NotificationDeliverPayload) []map[string]int
 
 	case p.EventType == "host_recovered":
 		addField("Host", nocMetaStr(m, "host_name"), true)
-		addField("Status", "🟢 RECOVERED", true)
+		addField("Status", "🟢 AGENT RECOVERED", true)
 
 	case p.EventType == "server_update" || p.EventType == "agent_update":
 		addField("Current Version", nocMetaStr(m, "current_version"), true)
@@ -370,6 +449,11 @@ func discordWebhookBody(p notifications.NotificationDeliverPayload) ([]byte, err
 
 // slackTextMaxRunes stays under Slack incoming-webhook message size limits with headroom.
 const slackTextMaxRunes = 12000
+
+// genericFallbackTextMaxRunes bounds the text added to the generic scheduled-report
+// body, whose html and csv fields already carry the report in full. The generic
+// notification body has no such duplication and keeps the full slackTextMaxRunes.
+const genericFallbackTextMaxRunes = 2000
 
 // buildSlackNOCFields creates human-readable Slack mrkdwn lines per event type.
 func buildSlackNOCFields(p notifications.NotificationDeliverPayload) string {
@@ -450,14 +534,14 @@ func buildSlackNOCFields(p notifications.NotificationDeliverPayload) string {
 		addLine("Host", nocMetaStr(m, "host_name"))
 		addLine("Severity", severityEmoji(p.Severity)+" "+strings.ToUpper(p.Severity))
 		addLine("Last Seen", nocMetaStr(m, "last_update"))
-		if t := nocMetaStr(m, "threshold_minutes"); t != "" && t != "0" {
-			addLine("Threshold", t+" minutes")
+		if t := nocFormatHostDownThreshold(m); t != "" {
+			addLine("Threshold", t)
 		}
 		addLine("Disconnect", nocMetaStr(m, "disconnect_reason"))
 
 	case p.EventType == "host_recovered":
 		addLine("Host", nocMetaStr(m, "host_name"))
-		addLine("Status", "🟢 RECOVERED")
+		addLine("Status", "🟢 AGENT RECOVERED")
 
 	case p.EventType == "server_update" || p.EventType == "agent_update":
 		addLine("Current Version", nocMetaStr(m, "current_version"))
@@ -471,6 +555,15 @@ func buildSlackNOCFields(p notifications.NotificationDeliverPayload) string {
 }
 
 func slackIncomingWebhookBody(p notifications.NotificationDeliverPayload) ([]byte, error) {
+	out := map[string]interface{}{
+		"text":       slackIncomingWebhookText(p),
+		"username":   "PatchMon",
+		"icon_emoji": ":bell:",
+	}
+	return json.Marshal(out)
+}
+
+func slackIncomingWebhookText(p notifications.NotificationDeliverPayload) string {
 	var sb strings.Builder
 	sev := strings.TrimSpace(p.Severity)
 	if sev == "" {
@@ -505,13 +598,7 @@ func slackIncomingWebhookBody(p notifications.NotificationDeliverPayload) ([]byt
 		sb.WriteString("|🔗 View in PatchMon>\n")
 	}
 
-	text := truncateUTF8(sb.String(), slackTextMaxRunes)
-	out := map[string]interface{}{
-		"text":       text,
-		"username":   "PatchMon",
-		"icon_emoji": ":bell:",
-	}
-	return json.Marshal(out)
+	return truncateUTF8(sb.String(), slackTextMaxRunes)
 }
 
 // stripScheduledReportHTML removes tags (including script blocks) for a short Discord-friendly excerpt.
@@ -566,6 +653,30 @@ func discordScheduledReportWebhookBody(subject, html, csv string) ([]byte, error
 }
 
 func slackScheduledReportWebhookBody(subject, html, csv string) ([]byte, error) {
+	out := map[string]interface{}{
+		"text":       slackScheduledReportText(subject, html, csv),
+		"username":   "PatchMon",
+		"icon_emoji": ":bar_chart:",
+	}
+	return json.Marshal(out)
+}
+
+// genericScheduledReportText is the short preview carried by the generic body for
+// receivers that require a non-empty text. It omits the CSV block rather than
+// truncating into it, which would leave an unterminated code fence.
+func genericScheduledReportText(subject, html string) string {
+	subj := strings.TrimSpace(subject)
+	if subj == "" {
+		subj = "(no subject)"
+	}
+	body := stripScheduledReportHTML(html)
+	if body == "" {
+		body = "No HTML body in this delivery"
+	}
+	return truncateUTF8("PatchMon scheduled report: "+subj+"\n\n"+body, genericFallbackTextMaxRunes)
+}
+
+func slackScheduledReportText(subject, html, csv string) string {
 	var sb strings.Builder
 	sb.WriteString("*PatchMon · scheduled report*\n*")
 	subj := strings.TrimSpace(subject)
@@ -586,13 +697,7 @@ func slackScheduledReportWebhookBody(subject, html, csv string) ([]byte, error) 
 		sb.WriteString(cv)
 		sb.WriteString("\n```\n")
 	}
-	text := truncateUTF8(sb.String(), slackTextMaxRunes)
-	out := map[string]interface{}{
-		"text":       text,
-		"username":   "PatchMon",
-		"icon_emoji": ":bar_chart:",
-	}
-	return json.Marshal(out)
+	return truncateUTF8(sb.String(), slackTextMaxRunes)
 }
 
 type emailConfig struct {
@@ -601,8 +706,16 @@ type emailConfig struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	From     string `json:"from"`
+	FromName string `json:"from_name"`
 	To       string `json:"to"`
-	UseTLS   bool   `json:"use_tls"`
+	// UseTLS is the legacy boolean preserved for backward compatibility on rows
+	// written before TLSMode existed. New code should set TLSMode and let
+	// mailer.ResolveMode pick the effective policy.
+	UseTLS  *bool  `json:"use_tls"`
+	TLSMode string `json:"tls_mode"`
+	// AllowInsecureAuth permits PLAIN auth over cleartext. Only meaningful
+	// with tls_mode=none; see mailer.Config.AllowInsecureAuth.
+	AllowInsecureAuth bool `json:"allow_insecure_auth"`
 }
 
 func (h *NotificationDeliverHandler) sendWebhook(ctx context.Context, plain string, p notifications.NotificationDeliverPayload) error {
@@ -615,10 +728,13 @@ func (h *NotificationDeliverHandler) sendWebhook(ctx context.Context, plain stri
 	}
 	var b []byte
 	var err error
+	format := "generic"
 	switch {
 	case isDiscordWebhookURL(cfg.URL):
+		format = "discord"
 		b, err = discordWebhookBody(p)
-	case isSlackIncomingWebhookURL(cfg.URL):
+	case isSlackIncomingWebhookURL(cfg.URL), isSlackCompatibleWebhookURL(cfg.URL):
+		format = "slack_compatible"
 		b, err = slackIncomingWebhookBody(p)
 	default:
 		body := map[string]interface{}{
@@ -631,6 +747,7 @@ func (h *NotificationDeliverHandler) sendWebhook(ctx context.Context, plain stri
 				"id":   p.ReferenceID,
 			},
 			"metadata": p.Metadata,
+			"text":     slackIncomingWebhookText(p),
 		}
 		if link := nocMetaStr(p.Metadata, "app_link"); link != "" {
 			body["app_link"] = link
@@ -639,6 +756,17 @@ func (h *NotificationDeliverHandler) sendWebhook(ctx context.Context, plain stri
 	}
 	if err != nil {
 		return err
+	}
+	if h.log != nil {
+		// Host only, never the path: the token in a webhook URL is a secret.
+		h.log.Debug("webhook dispatch",
+			"destination_id", p.DestinationID,
+			"event_type", p.EventType,
+			"format", format,
+			"host", webhookHostForLog(cfg.URL),
+			"body_bytes", len(b),
+			"signed", cfg.SigningSecret != "",
+		)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.URL, bytes.NewReader(b))
 	if err != nil {
@@ -721,7 +849,9 @@ func buildEmailHTML(p notifications.NotificationDeliverPayload) string {
 	case p.EventType == "host_down":
 		addRow("Host", nocMetaStr(m, "host_name"))
 		addRow("Last Seen", nocMetaStr(m, "last_update"))
-		addRow("Threshold", nocMetaStr(m, "threshold_minutes")+" minutes")
+		if t := nocFormatHostDownThreshold(m); t != "" {
+			addRow("Threshold", t)
+		}
 
 	case p.EventType == "host_recovered":
 		addRow("Host", nocMetaStr(m, "host_name"))
@@ -756,83 +886,34 @@ func (h *NotificationDeliverHandler) sendEmail(ctx context.Context, plain string
 		cfg.SMTPPort = 587
 	}
 	subject := fmt.Sprintf("[%s] %s", strings.ToUpper(p.Severity), p.Title)
-	// Sanitize subject to prevent SMTP header injection via \r\n in host names / alert titles.
-	subject = strings.NewReplacer("\r", "", "\n", "").Replace(subject)
-	html := buildEmailHTML(p)
-	msg := []byte(fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\n\r\n%s",
-		cfg.From, cfg.To, subject, html))
-	addr := cfg.SMTPHost + ":" + strconv.Itoa(cfg.SMTPPort)
-	var auth smtp.Auth
-	if cfg.Username != "" {
-		auth = smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.SMTPHost)
-	}
-	tlsCfg := &tls.Config{ServerName: cfg.SMTPHost, MinVersion: tls.VersionTLS12}
+	htmlBody := buildEmailHTML(p)
 
-	// Plain TCP first, then:
-	// - use_tls=true and server offers STARTTLS: upgrade with STARTTLS (typical 587)
-	// - use_tls=true and no STARTTLS: retry with implicit TLS (e.g. wrong host/port 465 on 25/587)
-	// - use_tls=false: never call StartTLS even if the server advertises it (e.g. local relay)
-	c, conn, err := func() (*smtp.Client, net.Conn, error) {
-		plainConn, dialErr := net.DialTimeout("tcp", addr, 30*time.Second)
-		if dialErr != nil {
-			return nil, nil, dialErr
+	mode := mailer.ResolveMode(cfg.TLSMode, cfg.UseTLS, cfg.SMTPPort)
+	mc := mailer.Config{
+		Host:     cfg.SMTPHost,
+		Port:     cfg.SMTPPort,
+		Username: cfg.Username,
+		Password: cfg.Password,
+		From:     cfg.From,
+		FromName: cfg.FromName,
+		TLSMode:  mode,
+		// Only honoured for tls_mode=none; mailer.validate() rejects the
+		// combination when this is false.
+		AllowInsecureAuth: cfg.AllowInsecureAuth,
+	}
+	if err := mailer.Send(ctx, mc, mailer.Message{To: cfg.To, Subject: subject, HTMLBody: htmlBody}); err != nil {
+		var se *mailer.SendError
+		if errors.As(err, &se) && h.log != nil {
+			h.log.Warn("smtp send failed",
+				"stage", string(se.Stage),
+				"host", cfg.SMTPHost,
+				"port", cfg.SMTPPort,
+				"tls_mode", string(mode),
+				"error", se.Err)
 		}
-		client, clientErr := smtp.NewClient(plainConn, cfg.SMTPHost)
-		if clientErr != nil {
-			_ = plainConn.Close()
-			return nil, nil, clientErr
-		}
-		startTLS, _ := client.Extension("STARTTLS")
-		if startTLS && cfg.UseTLS {
-			if tlsErr := client.StartTLS(tlsCfg); tlsErr != nil {
-				_ = client.Close()
-				return nil, nil, tlsErr
-			}
-			return client, plainConn, nil
-		}
-		if cfg.UseTLS && !startTLS {
-			_ = client.Close()
-			tlsConn, tlsErr := tls.DialWithDialer(&net.Dialer{Timeout: 30 * time.Second}, "tcp", addr, tlsCfg)
-			if tlsErr != nil {
-				return nil, nil, tlsErr
-			}
-			client, clientErr = smtp.NewClient(tlsConn, cfg.SMTPHost)
-			if clientErr != nil {
-				_ = tlsConn.Close()
-				return nil, nil, clientErr
-			}
-			return client, tlsConn, nil
-		}
-		return client, plainConn, nil
-	}()
-	if err != nil {
 		return err
 	}
-	defer func() { _ = conn.Close() }()
-	defer func() { _ = c.Close() }()
-
-	if auth != nil {
-		if ok, _ := c.Extension("AUTH"); ok {
-			if err := c.Auth(auth); err != nil {
-				return err
-			}
-		}
-	}
-	if err := c.Mail(cfg.From); err != nil {
-		return err
-	}
-	if err := c.Rcpt(cfg.To); err != nil {
-		return err
-	}
-	w, err := c.Data()
-	if err != nil {
-		return err
-	}
-	_, err = w.Write(msg)
-	if err != nil {
-		return err
-	}
-	return w.Close()
+	return nil
 }
 
 // ntfyConfig holds the configuration for an ntfy destination.
@@ -942,13 +1023,13 @@ func buildNtfyMessage(p notifications.NotificationDeliverPayload) string {
 		addLine("Host", nocMetaStr(m, "host_name"))
 		addLine("Severity", strings.ToUpper(p.Severity))
 		addLine("Last seen", nocMetaStr(m, "last_update"))
-		if t := nocMetaStr(m, "threshold_minutes"); t != "" && t != "0" {
-			addLine("Threshold", t+" minutes")
+		if t := nocFormatHostDownThreshold(m); t != "" {
+			addLine("Threshold", t)
 		}
 		addLine("Disconnect", nocMetaStr(m, "disconnect_reason"))
 	case p.EventType == "host_recovered":
 		addLine("Host", nocMetaStr(m, "host_name"))
-		addLine("Status", "RECOVERED")
+		addLine("Status", "AGENT RECOVERED")
 	case p.EventType == "server_update" || p.EventType == "agent_update":
 		addLine("Current version", nocMetaStr(m, "current_version"))
 		addLine("Available version", nocMetaStr(m, "latest_version"))

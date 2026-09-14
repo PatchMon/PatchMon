@@ -20,8 +20,9 @@ const copyToClipboard = async (text) => {
 		document.body.appendChild(textArea);
 		textArea.focus();
 		textArea.select();
-		document.execCommand("copy");
+		const successful = document.execCommand("copy");
 		document.body.removeChild(textArea);
+		if (!successful) throw new Error("Copy command failed");
 	} catch {
 		prompt("Copy this text:", text);
 	}

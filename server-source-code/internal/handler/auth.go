@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"log/slog"
 
+	"github.com/PatchMon/PatchMon/server-source-code/internal/clientip"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
@@ -19,6 +21,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -34,6 +37,7 @@ type AuthHandler struct {
 	settings               *store.SettingsStore
 	tfaLockout             *store.TfaLockoutStore
 	loginLockout           *store.LoginLockoutStore
+	pendingLogin           *store.PendingLoginStore
 	releaseNotesAcceptance *store.ReleaseNotesAcceptanceStore
 	db                     database.DBProvider
 	notify                 *notifications.Emitter
@@ -42,6 +46,22 @@ type AuthHandler struct {
 	// (such as can_manage_billing) alongside the user response. Wired via
 	// WithPermissions to avoid threading it through the constructor signature.
 	permissions *store.PermissionsStore
+	// Resolves the calling context's own settings; `resolved` is startup-only.
+	cfgResolver *hostctx.ConfigResolver
+}
+
+// WithConfigResolver wires the per-context config resolver.
+func (h *AuthHandler) WithConfigResolver(r *hostctx.ConfigResolver) *AuthHandler {
+	h.cfgResolver = r
+	return h
+}
+
+// resolvedFor returns the effective config for ctx's context.
+func (h *AuthHandler) resolvedFor(ctx context.Context) *config.ResolvedConfig {
+	if rc := h.cfgResolver.Resolve(ctx); rc != nil {
+		return rc
+	}
+	return h.resolved
 }
 
 // WithPermissions attaches a PermissionsStore to the handler. Returns the handler
@@ -52,8 +72,8 @@ func (h *AuthHandler) WithPermissions(p *store.PermissionsStore) *AuthHandler {
 }
 
 // NewAuthHandler creates a new auth handler.
-func NewAuthHandler(cfg *config.Config, resolved *config.ResolvedConfig, users *store.UsersStore, sessions *store.SessionsStore, trustedDevices *store.TrustedDevicesStore, settings *store.SettingsStore, tfaLockout *store.TfaLockoutStore, loginLockout *store.LoginLockoutStore, releaseNotesAcceptance *store.ReleaseNotesAcceptanceStore, db database.DBProvider, notify *notifications.Emitter, log *slog.Logger) *AuthHandler {
-	return &AuthHandler{cfg: cfg, resolved: resolved, users: users, sessions: sessions, trustedDevices: trustedDevices, settings: settings, tfaLockout: tfaLockout, loginLockout: loginLockout, releaseNotesAcceptance: releaseNotesAcceptance, db: db, notify: notify, log: log}
+func NewAuthHandler(cfg *config.Config, resolved *config.ResolvedConfig, users *store.UsersStore, sessions *store.SessionsStore, trustedDevices *store.TrustedDevicesStore, settings *store.SettingsStore, tfaLockout *store.TfaLockoutStore, loginLockout *store.LoginLockoutStore, pendingLogin *store.PendingLoginStore, releaseNotesAcceptance *store.ReleaseNotesAcceptanceStore, db database.DBProvider, notify *notifications.Emitter, log *slog.Logger) *AuthHandler {
+	return &AuthHandler{cfg: cfg, resolved: resolved, users: users, sessions: sessions, trustedDevices: trustedDevices, settings: settings, tfaLockout: tfaLockout, loginLockout: loginLockout, pendingLogin: pendingLogin, releaseNotesAcceptance: releaseNotesAcceptance, db: db, notify: notify, log: log}
 }
 
 // DeviceTrustCookieName is the HttpOnly cookie carrying the raw trust token.
@@ -147,11 +167,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		h.log.Debug("auth request", "method", r.Method, "path", r.URL.Path)
 	}
 	if h.cfg.OidcEnabled && h.cfg.OidcDisableLocalAuth {
+		h.logLoginFailure(r, "local_auth_disabled", "", "")
 		Error(w, http.StatusForbidden, "Local authentication is disabled. Please use SSO.")
 		return
 	}
 	var req LoginRequest
 	if err := decodeJSON(r, &req); err != nil {
+		h.logLoginFailure(r, "malformed_request", "", "")
 		if h.log != nil {
 			h.log.Debug("auth login invalid body", "error", err)
 		}
@@ -159,6 +181,14 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Username == "" || req.Password == "" {
+		h.logLoginFailure(r, "missing_credentials", req.Username, "")
+		Error(w, http.StatusBadRequest, "username and password required")
+		return
+	}
+	// No real identifier approaches this. Rejecting here keeps an oversized body
+	// out of the user lookup and out of the lockout key.
+	if len(req.Username) > maxLoginIdentifierBytes {
+		h.logLoginFailure(r, "username_too_long", "", "", "length", len(req.Username))
 		Error(w, http.StatusBadRequest, "username and password required")
 		return
 	}
@@ -170,37 +200,60 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if h.loginLockout != nil {
 		identifier := h.loginLockout.Identifier(h.clientIP(r), req.Username)
 		if locked, remainingSec := h.loginLockout.IsLocked(r.Context(), identifier); locked {
-			w.Header().Set("Retry-After", strconv.Itoa(remainingSec))
-			JSON(w, http.StatusTooManyRequests, map[string]interface{}{
-				"message":           "Too many failed login attempts. Try again later.",
-				"remaining_seconds": remainingSec,
-			})
+			h.logLoginFailure(r, "locked_out", req.Username, "")
+			writeLoginLockedResponse(w, remainingSec)
 			return
 		}
 	}
 
 	user, err := h.users.GetByUsernameOrEmail(r.Context(), req.Username)
 	if err != nil {
-		if h.log != nil {
-			h.log.Debug("auth login user not found", "identifier", req.Username, "err", err.Error())
+		// A DB failure is not a wrong username. Counting it would let an outage
+		// lock out the very people retrying a correct password.
+		if !errors.Is(err, pgx.ErrNoRows) {
+			if h.log != nil {
+				h.log.Error("auth login lookup failed", "ip", h.clientIP(r), "error", err)
+			}
+			Error(w, http.StatusUnauthorized, "Invalid credentials")
+			return
 		}
+		// An unknown username consumes an attempt too, so that a 429 is reachable
+		// for names that do not exist and stops being an "account exists" signal.
+		// Deliberately no notification event: the username is unbounded attacker
+		// input and each distinct guess would write a row.
+		if h.loginLockout != nil {
+			identifier := h.loginLockout.Identifier(h.clientIP(r), req.Username)
+			if _, locked := h.loginLockout.RecordFailedAttempt(r.Context(), identifier); locked {
+				h.logLoginFailure(r, "user_not_found", req.Username, "", "locked", true)
+				writeLoginLockedResponse(w, h.lockoutRemaining(r.Context(), identifier))
+				return
+			}
+		}
+		h.logLoginFailure(r, "user_not_found", req.Username, "")
 		Error(w, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
 	if h.log != nil {
 		h.log.Debug("auth login user found", "user_id", user.ID, "username", user.Username, "is_active", user.IsActive, "has_password", user.PasswordHash != nil)
 	}
+	// These two branches consume an attempt as well. If they did not, the absence
+	// of a lockout would identify exactly the accounts that are disabled or
+	// SSO-only, now that unknown usernames do lock out.
 	if !user.IsActive {
-		if h.log != nil {
-			h.log.Debug("auth login account disabled", "user_id", user.ID)
+		if locked := h.recordLoginFailure(w, r, req.Username); locked {
+			h.logLoginFailure(r, "account_disabled", req.Username, user.ID, "locked", true)
+			return
 		}
+		h.logLoginFailure(r, "account_disabled", req.Username, user.ID)
 		Error(w, http.StatusUnauthorized, "Account is disabled")
 		return
 	}
 	if user.PasswordHash == nil {
-		if h.log != nil {
-			h.log.Debug("auth login no password hash", "user_id", user.ID, "reason", "oidc_only_or_missing")
+		if locked := h.recordLoginFailure(w, r, req.Username); locked {
+			h.logLoginFailure(r, "no_password_set", req.Username, user.ID, "locked", true)
+			return
 		}
+		h.logLoginFailure(r, "no_password_set", req.Username, user.ID)
 		Error(w, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
@@ -233,18 +286,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 						})
 					}
 				}
-				_, remainingSec := h.loginLockout.IsLocked(r.Context(), identifier)
-				if remainingSec <= 0 {
-					remainingSec = 900 // fallback 15 min
-					if h.resolved != nil {
-						remainingSec = h.resolved.LockoutDurationMin * 60
-					}
-				}
-				w.Header().Set("Retry-After", strconv.Itoa(remainingSec))
-				JSON(w, http.StatusTooManyRequests, map[string]interface{}{
-					"message":           "Too many failed login attempts. Try again later.",
-					"remaining_seconds": remainingSec,
-				})
+				h.logLoginFailure(r, "invalid_password", req.Username, user.ID, "locked", true)
+				writeLoginLockedResponse(w, h.lockoutRemaining(r.Context(), identifier))
 				return
 			}
 		}
@@ -268,18 +311,9 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 		}
+		h.logLoginFailure(r, "invalid_password", req.Username, user.ID)
 		if h.log != nil {
-			hashPrefix := hash
-			if len(hash) > 10 {
-				hashPrefix = hash[:10] + "..."
-			}
-			h.log.Debug("auth login bcrypt failed",
-				"username", req.Username,
-				"user_id", user.ID,
-				"hash_len", len(hash),
-				"hash_prefix", hashPrefix,
-				"bcrypt_err", err.Error(),
-			)
+			h.log.Debug("auth login bcrypt failed", "user_id", user.ID, "hash_len", len(hash), "bcrypt_err", err.Error())
 		}
 		Error(w, http.StatusUnauthorized, "Invalid credentials")
 		return
@@ -292,7 +326,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.log != nil {
-		h.log.Debug("auth login success", "user_id", user.ID, "username", user.Username)
+		attrs := []any{"user_id", user.ID, "username", user.Username, "ip", h.clientIP(r)}
+		if host := hostctx.TenantHostKey(r.Context()); host != "" {
+			attrs = append(attrs, "host", host)
+		}
+		h.log.Info("login succeeded", attrs...)
 	}
 
 	// TFA check: if enabled, require TFA verification unless a valid device-trust
@@ -301,10 +339,27 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if user.TfaEnabled {
 		td := h.hasValidDeviceTrust(r, user.ID)
 		if td == nil {
+			// Single-use proof the password was verified; VerifyTfa requires it.
+			if h.pendingLogin == nil {
+				if h.log != nil {
+					h.log.Error("auth: pending-login store not configured, cannot start TFA")
+				}
+				Error(w, http.StatusInternalServerError, "Unable to start two-factor verification")
+				return
+			}
+			ticket, err := h.pendingLogin.Create(r.Context(), user.ID)
+			if err != nil {
+				if h.log != nil {
+					h.log.Error("auth: failed to issue pending-login ticket", "user_id", user.ID, "error", err)
+				}
+				Error(w, http.StatusInternalServerError, "Unable to start two-factor verification")
+				return
+			}
 			JSON(w, http.StatusOK, map[string]interface{}{
 				"message":     "TFA verification required",
 				"requiresTfa": true,
 				"username":    user.Username,
+				"tfaTicket":   ticket,
 			})
 			return
 		}
@@ -322,6 +377,8 @@ type VerifyTfaRequest struct {
 	Username   string `json:"username"`
 	Token      string `json:"token"`
 	RememberMe bool   `json:"remember_me"` // frontend sends snake_case
+	// Single-use proof of the first factor, issued by Login.
+	TfaTicket string `json:"tfa_ticket"`
 }
 
 // VerifyTfa handles POST /auth/verify-tfa.
@@ -332,17 +389,37 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Token = strings.ToUpper(strings.TrimSpace(req.Token))
-	if req.Username == "" || len(req.Token) != 6 {
-		Error(w, http.StatusBadRequest, "Username and 6-character token required")
+	if len(req.Token) != 6 {
+		Error(w, http.StatusBadRequest, "6-character token required")
 		return
 	}
 	if !util.TokenRegex.MatchString(req.Token) {
+		h.logLoginFailure(r, "tfa_token_malformed", "", "")
 		Error(w, http.StatusBadRequest, "Token must be 6 alphanumeric characters")
 		return
 	}
 
-	user, err := h.users.GetByUsernameOrEmail(r.Context(), req.Username)
+	// Consumed whether or not the code is correct, so a captured ticket cannot
+	// be replayed. The user comes from the ticket, never from the request body.
+	if h.pendingLogin == nil {
+		if h.log != nil {
+			h.log.Error("auth: pending-login store not configured, refusing TFA verification")
+		}
+		Error(w, http.StatusInternalServerError, "Two-factor verification unavailable")
+		return
+	}
+	userID, err := h.pendingLogin.Consume(r.Context(), req.TfaTicket)
+	if err != nil {
+		// The username is whatever the client typed; the trusted identity comes
+		// from the ticket, which is exactly what failed here.
+		h.logLoginFailure(r, "tfa_ticket_invalid", "", "", "claimed_username", truncateForLog(req.Username, 64))
+		Error(w, http.StatusUnauthorized, "Login session expired, please sign in again")
+		return
+	}
+
+	user, err := h.users.GetByID(r.Context(), userID)
 	if err != nil || user == nil || !user.IsActive || !user.TfaEnabled || user.TfaSecret == nil {
+		h.logLoginFailure(r, "tfa_user_ineligible", "", userID)
 		Error(w, http.StatusUnauthorized, "Invalid credentials or TFA not enabled")
 		return
 	}
@@ -350,6 +427,7 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 	if h.tfaLockout != nil {
 		locked, _ := h.tfaLockout.IsTFALocked(r.Context(), user.ID)
 		if locked {
+			h.logLoginFailure(r, "tfa_locked_out", user.Username, user.ID)
 			Error(w, http.StatusTooManyRequests, "Too many failed TFA attempts. Please try again later.")
 			return
 		}
@@ -375,10 +453,12 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 		if h.tfaLockout != nil {
 			attempts, locked := h.tfaLockout.RecordFailedAttempt(r.Context(), user.ID)
 			if locked {
+				h.logLoginFailure(r, "invalid_tfa_code", user.Username, user.ID, "locked", true)
 				Error(w, http.StatusTooManyRequests, "Too many failed TFA attempts. Please try again later.")
 				return
 			}
-			remaining := h.getMaxTfaAttempts() - attempts
+			h.logLoginFailure(r, "invalid_tfa_code", user.Username, user.ID)
+			remaining := h.getMaxTfaAttempts(r.Context()) - attempts
 			if remaining < 0 {
 				remaining = 0
 			}
@@ -388,6 +468,7 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		h.logLoginFailure(r, "invalid_tfa_code", user.Username, user.ID)
 		Error(w, http.StatusUnauthorized, "Invalid verification code")
 		return
 	}
@@ -399,29 +480,42 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 	h.completeLogin(w, r, user, req.RememberMe)
 }
 
-// setAuthCookiesWithRemember sets cookies; rememberMe uses 30-day refresh token.
-// useLax forces SameSite=Lax (required for OIDC redirects from IdP).
-// browserSessionCookies: when true, both cookies use MaxAge 0 (session cookies) so they are not
-// persisted to disk and are dropped when the browser session ends (close all windows / quit).
-func setAuthCookiesWithRemember(w http.ResponseWriter, r *http.Request, accessToken, refreshToken string, tokenMaxAge int64, rememberMe bool, env string, useLax bool, browserSessionCookies bool) {
-	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
-	sameSite := http.SameSiteLaxMode
+func cookieSameSite(env string, useLax, secure bool) http.SameSite {
 	if !useLax && env == "production" && secure {
-		sameSite = http.SameSiteStrictMode
+		return http.SameSiteStrictMode
 	}
-	tokenCookieMaxAge := int(tokenMaxAge)
+	return http.SameSiteLaxMode
+}
+
+// setAccessCookie writes the access-token cookie. Shared by login and by
+// /auth/refresh. Refresh passes useLax=false: the Lax relaxation exists for the
+// IdP redirect chain at login time, and a refresh is an ordinary same-origin XHR
+// that has no need of it.
+func setAccessCookie(w http.ResponseWriter, r *http.Request, accessToken string, tokenMaxAge int64, env string, useLax, browserSessionCookies bool) {
+	secure := isSecureRequest(r)
+	maxAge := int(tokenMaxAge)
 	if browserSessionCookies {
-		tokenCookieMaxAge = 0
+		maxAge = 0
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     "token",
 		Value:    accessToken,
 		Path:     "/",
-		MaxAge:   tokenCookieMaxAge,
+		MaxAge:   maxAge,
 		HttpOnly: true,
 		Secure:   secure && env == "production",
-		SameSite: sameSite,
+		SameSite: cookieSameSite(env, useLax, secure),
 	})
+}
+
+// setAuthCookiesWithRemember sets cookies; rememberMe uses 30-day refresh token.
+// useLax forces SameSite=Lax (required for OIDC redirects from IdP).
+// browserSessionCookies: when true, both cookies use MaxAge 0 (session cookies) so they are not
+// persisted to disk and are dropped when the browser session ends (close all windows / quit).
+func setAuthCookiesWithRemember(w http.ResponseWriter, r *http.Request, accessToken, refreshToken string, tokenMaxAge int64, rememberMe bool, env string, useLax bool, browserSessionCookies bool) {
+	secure := isSecureRequest(r)
+	sameSite := cookieSameSite(env, useLax, secure)
+	setAccessCookie(w, r, accessToken, tokenMaxAge, env, useLax, browserSessionCookies)
 	refreshMaxAge := 7 * 24 * 3600 // 7 days
 	if rememberMe {
 		refreshMaxAge = 30 * 24 * 3600 // 30 days
@@ -442,13 +536,18 @@ func setAuthCookiesWithRemember(w http.ResponseWriter, r *http.Request, accessTo
 
 // completeLogin creates tokens, optionally creates session for remember-me, sets cookies, returns JSON.
 func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, user *models.User, rememberMe bool) {
-	expiresIn := h.getJwtExpiresInSeconds()
+	expiresIn := h.getJwtExpiresInSeconds(r.Context())
+
+	// Losing a timestamp is not a reason to fail an otherwise valid sign-in.
+	if err := h.users.UpdateLastLogin(r.Context(), user.ID, time.Now()); err != nil && h.log != nil {
+		h.log.Error("failed to record last login", "user_id", user.ID, "error", err)
+	}
 
 	refreshExpSec := int64(7 * 24 * 3600)
 	if rememberMe {
 		refreshExpSec = 30 * 24 * 3600
 	}
-	refreshToken, _ := h.createToken(user.ID, user.Role, refreshExpSec, "")
+	refreshToken, _ := h.createRefreshToken(user.ID, user.Role, refreshExpSec)
 
 	// Always create/reuse a session so it shows in the active sessions list.
 	// Session reuse is keyed on X-Device-ID (stable across IP/UA changes).
@@ -471,7 +570,7 @@ func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, user
 	// Mint a device-trust token when the user asked to skip MFA on this device.
 	var trustExpiresAt time.Time
 	if rememberMe && user.TfaEnabled && h.trustedDevices != nil {
-		trustDuration := parseTfaRememberDuration(h.getTfaRememberMeExpiresIn())
+		trustDuration := parseTfaRememberDuration(h.getTfaRememberMeExpiresIn(r.Context()))
 		trustExpiresAt = time.Now().Add(trustDuration)
 		rawToken, tokenHash, genErr := store.GenerateTrustToken()
 		if genErr != nil {
@@ -498,7 +597,7 @@ func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, user
 		}
 	}
 
-	accessToken, err := h.createToken(user.ID, user.Role, expiresIn, sessionID)
+	accessToken, err := h.createAccessToken(user.ID, user.Role, sessionID, expiresIn)
 	if err != nil {
 		if h.log != nil {
 			h.log.Error("auth token creation failed", "user_id", user.ID, "error", err)
@@ -509,7 +608,7 @@ func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, user
 
 	expiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second).Format(time.RFC3339)
 
-	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, rememberMe, h.cfg.Env, false, h.authBrowserSessionCookies())
+	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, rememberMe, h.cfg.Env, false, h.authBrowserSessionCookies(r.Context()))
 
 	// Emit user_login event
 	if h.notify != nil {
@@ -561,40 +660,108 @@ func buildDeviceLabel(ua string) string {
 	return browser + " on " + os
 }
 
+// clientIP returns the IP used for login lockout and session audit records.
+//
+// When TRUST_PROXY is on, the RealIP middleware has already resolved
+// X-Forwarded-For into RemoteAddr; when it is off, RemoteAddr is the raw peer.
+// Either way RemoteAddr is the correct source, and reading the header here
+// would reintroduce lockout evasion via a client-supplied leftmost entry.
 func (h *AuthHandler) clientIP(r *http.Request) string {
-	if h.resolved != nil && !h.resolved.TrustProxy {
-		host, _, _ := strings.Cut(r.RemoteAddr, ":")
-		if host != "" {
-			return host
-		}
-		return r.RemoteAddr
-	}
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if idx := strings.Index(xff, ","); idx != -1 {
-			return strings.TrimSpace(xff[:idx])
-		}
-		return strings.TrimSpace(xff)
-	}
-	host, _, _ := strings.Cut(r.RemoteAddr, ":")
-	if host != "" {
-		return host
+	if ip := clientip.FromRequest(r); ip != "" {
+		return ip
 	}
 	return r.RemoteAddr
 }
 
-// authBrowserSessionCookies returns whether to use session-only cookies (env -> DB -> default).
-func (h *AuthHandler) authBrowserSessionCookies() bool {
+// maxLoginIdentifierBytes caps the username accepted at sign-in. 254 is the
+// practical maximum length of an email address, and usernames are shorter.
+const maxLoginIdentifierBytes = 254
+
+// truncateForLog bounds unauthenticated input before it reaches the log.
+func truncateForLog(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return strings.ToValidUTF8(s[:max], "") + "..."
+}
+
+// logLoginFailure records a rejected sign-in at Warn, so it is visible at the
+// default log level rather than only under LOG_LEVEL=debug. One line per
+// rejected request; extra carries any additional slog attributes.
+func (h *AuthHandler) logLoginFailure(r *http.Request, reason, username, userID string, extra ...any) {
+	if h.log == nil {
+		return
+	}
+	attrs := []any{
+		"reason", reason,
+		"ip", h.clientIP(r),
+		"user_agent", truncateForLog(r.UserAgent(), 200),
+	}
+	if username != "" {
+		attrs = append(attrs, "username", truncateForLog(username, 64))
+	}
+	if userID != "" {
+		attrs = append(attrs, "user_id", userID)
+	}
+	if host := hostctx.TenantHostKey(r.Context()); host != "" {
+		attrs = append(attrs, "host", host)
+	}
+	h.log.Warn("login failed", append(attrs, extra...)...)
+}
+
+// recordLoginFailure counts an attempt against the lockout for branches that
+// reject before a password is ever checked, and writes the 429 itself when that
+// attempt is the one that trips it. Returning 401 on the trip and only 429 on
+// the request after would make the lockout arrive a request later than it does
+// for an unknown username, which is the enumeration signal this exists to close.
+func (h *AuthHandler) recordLoginFailure(w http.ResponseWriter, r *http.Request, username string) (handled bool) {
+	if h.loginLockout == nil {
+		return false
+	}
+	identifier := h.loginLockout.Identifier(h.clientIP(r), username)
+	if _, locked := h.loginLockout.RecordFailedAttempt(r.Context(), identifier); !locked {
+		return false
+	}
+	writeLoginLockedResponse(w, h.lockoutRemaining(r.Context(), identifier))
+	return true
+}
+
+// lockoutRemaining returns seconds left on a lockout, falling back to the
+// configured duration when Redis cannot supply a TTL.
+func (h *AuthHandler) lockoutRemaining(ctx context.Context, identifier string) int {
+	if h.loginLockout == nil {
+		return 0
+	}
+	if _, remainingSec := h.loginLockout.IsLocked(ctx, identifier); remainingSec > 0 {
+		return remainingSec
+	}
 	if h.resolved != nil {
-		return h.resolved.AuthBrowserSessionCookies
+		return h.resolvedFor(ctx).LockoutDurationMin * 60
+	}
+	return 900
+}
+
+func writeLoginLockedResponse(w http.ResponseWriter, remainingSec int) {
+	w.Header().Set("Retry-After", strconv.Itoa(remainingSec))
+	JSON(w, http.StatusTooManyRequests, map[string]interface{}{
+		"message":           "Too many failed login attempts. Try again later.",
+		"remaining_seconds": remainingSec,
+	})
+}
+
+// authBrowserSessionCookies returns whether to use session-only cookies (env -> DB -> default).
+func (h *AuthHandler) authBrowserSessionCookies(ctx context.Context) bool {
+	if rc := h.resolvedFor(ctx); rc != nil {
+		return rc.AuthBrowserSessionCookies
 	}
 	return h.cfg.AuthBrowserSessionCookies
 }
 
 // getJwtExpiresInSeconds returns JWT access token expiry in seconds (resolved from env -> DB -> default).
-func (h *AuthHandler) getJwtExpiresInSeconds() int64 {
+func (h *AuthHandler) getJwtExpiresInSeconds(ctx context.Context) int64 {
 	s := h.cfg.JWTExpiresIn
-	if h.resolved != nil && h.resolved.JwtExpiresIn != "" {
-		s = h.resolved.JwtExpiresIn
+	if rc := h.resolvedFor(ctx); rc != nil && rc.JwtExpiresIn != "" {
+		s = rc.JwtExpiresIn
 	}
 	return parseJwtExpiresInSeconds(s)
 }
@@ -605,17 +772,17 @@ func parseJwtExpiresInSeconds(s string) int64 {
 }
 
 // getTfaRememberMeExpiresIn returns TFA remember-me duration string (resolved from env -> DB -> default).
-func (h *AuthHandler) getTfaRememberMeExpiresIn() string {
-	if h.resolved != nil && h.resolved.TfaRememberMeExpiresIn != "" {
-		return h.resolved.TfaRememberMeExpiresIn
+func (h *AuthHandler) getTfaRememberMeExpiresIn(ctx context.Context) string {
+	if rc := h.resolvedFor(ctx); rc != nil && rc.TfaRememberMeExpiresIn != "" {
+		return rc.TfaRememberMeExpiresIn
 	}
 	return h.cfg.TfaRememberMeExpiresIn
 }
 
 // getMaxTfaAttempts returns max TFA attempts before lockout (resolved from env -> DB -> default).
-func (h *AuthHandler) getMaxTfaAttempts() int {
-	if h.resolved != nil && h.resolved.MaxTfaAttempts > 0 {
-		return h.resolved.MaxTfaAttempts
+func (h *AuthHandler) getMaxTfaAttempts(ctx context.Context) int {
+	if rc := h.resolvedFor(ctx); rc != nil && rc.MaxTfaAttempts > 0 {
+		return rc.MaxTfaAttempts
 	}
 	return h.cfg.MaxTfaAttempts
 }
@@ -644,9 +811,9 @@ func parseTfaRememberDuration(s string) time.Duration {
 // CompleteOidcLogin creates tokens, sets cookies (SameSite=Lax for IdP redirects), and redirects to success.
 // Used by OIDC callback after successful authentication.
 func (h *AuthHandler) CompleteOidcLogin(w http.ResponseWriter, r *http.Request, user *models.User) {
-	expiresIn := h.getJwtExpiresInSeconds()
+	expiresIn := h.getJwtExpiresInSeconds(r.Context())
 	refreshExpSec := int64(7 * 24 * 3600)
-	refreshToken, _ := h.createToken(user.ID, user.Role, refreshExpSec, "")
+	refreshToken, _ := h.createRefreshToken(user.ID, user.Role, refreshExpSec)
 	var sessionID string
 	fingerprint := util.GenerateDeviceFingerprint(r)
 	deviceID := r.Header.Get("X-Device-ID")
@@ -658,7 +825,7 @@ func (h *AuthHandler) CompleteOidcLogin(w http.ResponseWriter, r *http.Request, 
 	} else if sess != nil {
 		sessionID = sess.ID
 	}
-	accessToken, err := h.createToken(user.ID, user.Role, expiresIn, sessionID)
+	accessToken, err := h.createAccessToken(user.ID, user.Role, sessionID, expiresIn)
 	if err != nil {
 		if h.log != nil {
 			h.log.Error("oidc token creation failed", "user_id", user.ID, "error", err)
@@ -666,7 +833,7 @@ func (h *AuthHandler) CompleteOidcLogin(w http.ResponseWriter, r *http.Request, 
 		http.Redirect(w, r, "/login?error=Authentication+failed", http.StatusFound)
 		return
 	}
-	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, false, h.cfg.Env, true, h.authBrowserSessionCookies())
+	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, false, h.cfg.Env, true, h.authBrowserSessionCookies(r.Context()))
 
 	// Emit user_login event for OIDC login
 	if h.notify != nil {
@@ -700,9 +867,9 @@ func (h *AuthHandler) CompleteOidcLogin(w http.ResponseWriter, r *http.Request, 
 // CompleteDiscordLogin creates tokens, sets cookies, and redirects to /?discord=success.
 // Used by Discord OAuth callback after successful authentication.
 func (h *AuthHandler) CompleteDiscordLogin(w http.ResponseWriter, r *http.Request, user *models.User) {
-	expiresIn := h.getJwtExpiresInSeconds()
+	expiresIn := h.getJwtExpiresInSeconds(r.Context())
 	refreshExpSec := int64(7 * 24 * 3600)
-	refreshToken, _ := h.createToken(user.ID, user.Role, refreshExpSec, "")
+	refreshToken, _ := h.createRefreshToken(user.ID, user.Role, refreshExpSec)
 	var sessionID string
 	fingerprint := util.GenerateDeviceFingerprint(r)
 	deviceID := r.Header.Get("X-Device-ID")
@@ -714,7 +881,7 @@ func (h *AuthHandler) CompleteDiscordLogin(w http.ResponseWriter, r *http.Reques
 	} else if sess != nil {
 		sessionID = sess.ID
 	}
-	accessToken, err := h.createToken(user.ID, user.Role, expiresIn, sessionID)
+	accessToken, err := h.createAccessToken(user.ID, user.Role, sessionID, expiresIn)
 	if err != nil {
 		if h.log != nil {
 			h.log.Error("discord token creation failed", "user_id", user.ID, "error", err)
@@ -722,7 +889,7 @@ func (h *AuthHandler) CompleteDiscordLogin(w http.ResponseWriter, r *http.Reques
 		http.Redirect(w, r, "/login?error=Authentication+failed", http.StatusFound)
 		return
 	}
-	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, false, h.cfg.Env, true, h.authBrowserSessionCookies())
+	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, false, h.cfg.Env, true, h.authBrowserSessionCookies(r.Context()))
 
 	// Emit user_login event for Discord login
 	if h.notify != nil {
@@ -765,10 +932,55 @@ func clearAuthCookies(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: "refresh_token", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: secure})
 }
 
-func (h *AuthHandler) createToken(userID, role string, expSec int64, sessionID string) (string, error) {
+// Refresh tokens are stored against the session row, never accepted as bearer.
+const (
+	tokenTypeAccess  = "access"
+	tokenTypeRefresh = "refresh"
+)
+
+// sessionID is mandatory: the middleware gates its whole session-validity
+// block on the claim being present, so a token without one is unrevocable.
+func (h *AuthHandler) createAccessToken(userID, role, sessionID string, expSec int64) (string, error) {
+	if sessionID == "" {
+		return "", errors.New("refusing to mint a session-less access token")
+	}
+	return h.createToken(userID, role, expSec, sessionID, tokenTypeAccess)
+}
+
+func (h *AuthHandler) createRefreshToken(userID, role string, expSec int64) (string, error) {
+	return h.createToken(userID, role, expSec, "", tokenTypeRefresh)
+}
+
+// Used by first-run admin setup and signup, which log the new user straight in.
+func (h *AuthHandler) issueSessionTokens(r *http.Request, u *models.User, expiresIn, refreshExpSec int64) (accessToken, refreshToken string, err error) {
+	refreshToken, err = h.createRefreshToken(u.ID, u.Role, refreshExpSec)
+	if err != nil {
+		return "", "", err
+	}
+	sess, err := h.sessions.CreateOrReuseSession(
+		r.Context(), u.ID, refreshToken, "",
+		h.clientIP(r), r.UserAgent(),
+		util.GenerateDeviceFingerprint(r), r.Header.Get("X-Device-ID"),
+		time.Now().Add(time.Duration(refreshExpSec)*time.Second), false, nil,
+	)
+	if err != nil {
+		return "", "", err
+	}
+	if sess == nil {
+		return "", "", errors.New("session creation returned no session")
+	}
+	accessToken, err = h.createAccessToken(u.ID, u.Role, sess.ID, expiresIn)
+	if err != nil {
+		return "", "", err
+	}
+	return accessToken, refreshToken, nil
+}
+
+func (h *AuthHandler) createToken(userID, role string, expSec int64, sessionID, tokenType string) (string, error) {
 	claims := jwt.MapClaims{
 		"sub":  userID,
 		"role": role,
+		"typ":  tokenType,
 		"exp":  time.Now().Add(time.Duration(expSec) * time.Second).Unix(),
 		"iat":  time.Now().Unix(),
 	}
@@ -1067,7 +1279,7 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "Current password is required")
 		return
 	}
-	if err := ValidatePasswordPolicy(h.resolved, req.NewPassword); err != nil {
+	if err := ValidatePasswordPolicy(h.resolvedFor(r.Context()), req.NewPassword); err != nil {
 		Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -1133,6 +1345,102 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 	clearAuthCookies(w, r)
 	JSON(w, http.StatusOK, map[string]string{"message": "Logged out"})
+}
+
+// Heartbeat handles POST /auth/heartbeat. It exists purely so the UI has
+// something cheap to call that carries X-User-Activity: the auth middleware does
+// the session lookup, the inactivity check and the last_activity write, so this
+// body has nothing left to do. Pages differ in what they poll, and some poll
+// nothing at all, so without a dedicated beat a user reading a screen would be
+// logged out mid-read on those pages.
+func (h *AuthHandler) Heartbeat(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Refresh handles POST /auth/refresh. It swaps the refresh_token cookie for a
+// fresh access token on the same session.
+//
+// Without this the access token's lifetime was the real session length: it is
+// absolute from login, no amount of use extended it, and any
+// SESSION_INACTIVITY_TIMEOUT_MINUTES longer than JWT_EXPIRES_IN was unreachable.
+//
+// The refresh token is deliberately not rotated. It is bound to the session row,
+// which several tabs share, and rotating it would make whichever tab lost the
+// race log the user out.
+func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
+	if h.log != nil {
+		h.log.Debug("auth request", "method", r.Method, "path", r.URL.Path)
+	}
+	deny := func(msg string) {
+		clearAuthCookies(w, r)
+		Error(w, http.StatusUnauthorized, msg)
+	}
+
+	c, err := r.Cookie("refresh_token")
+	if err != nil || c.Value == "" {
+		deny("Missing refresh token")
+		return
+	}
+
+	claims := jwt.MapClaims{}
+	t, err := jwt.ParseWithClaims(c.Value, &claims, func(_ *jwt.Token) (interface{}, error) {
+		return []byte(h.cfg.JWTSecret), nil
+	}, jwt.WithValidMethods([]string{"HS256"}))
+	if err != nil || !t.Valid {
+		deny("Invalid refresh token")
+		return
+	}
+	// An access token presented here would otherwise be accepted as a refresh
+	// token, letting a leaked one outlive its own expiry.
+	if typ, _ := claims["typ"].(string); typ != tokenTypeRefresh {
+		deny("Invalid refresh token")
+		return
+	}
+	userID, _ := claims["sub"].(string)
+	if userID == "" {
+		deny("Invalid refresh token")
+		return
+	}
+
+	// GetByRefreshToken already filters on is_revoked and expires_at, so a logged
+	// out or reaped session cannot be refreshed.
+	sess, err := h.sessions.GetByRefreshToken(r.Context(), c.Value)
+	if err != nil || sess == nil || sess.UserID != userID {
+		deny("Session expired")
+		return
+	}
+
+	// Same rule the middleware applies, for the same reason: a refresh is not user
+	// activity, so it must not resurrect a session that has already gone idle.
+	rc := h.resolvedFor(r.Context())
+	if rc != nil && rc.SessionInactivityTimeoutMin > 0 &&
+		time.Since(sess.LastActivity) > time.Duration(rc.SessionInactivityTimeoutMin)*time.Minute {
+		if err := h.sessions.RevokeByID(r.Context(), sess.ID, sess.UserID); err != nil && h.log != nil {
+			h.log.Error("refresh: failed to revoke inactive session", "session_id", sess.ID, "error", err)
+		}
+		deny("Session expired due to inactivity")
+		return
+	}
+
+	user, err := h.users.GetByID(r.Context(), userID)
+	if err != nil || user == nil || !user.IsActive {
+		deny("Session expired")
+		return
+	}
+
+	expiresIn := h.getJwtExpiresInSeconds(r.Context())
+	// Role comes from the database, not the refresh token, so a demotion takes
+	// effect on the next refresh rather than at the end of the refresh window.
+	accessToken, err := h.createAccessToken(user.ID, user.Role, sess.ID, expiresIn)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to refresh session")
+		return
+	}
+
+	setAccessCookie(w, r, accessToken, expiresIn, h.cfg.Env, false, h.authBrowserSessionCookies(r.Context()))
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"expires_at": time.Now().Add(time.Duration(expiresIn) * time.Second).Format(time.RFC3339),
+	})
 }
 
 // parseUserAgent extracts browser, OS, and device from user agent string.
@@ -1313,7 +1621,7 @@ func (h *AuthHandler) SetupAdmin(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "All fields are required")
 		return
 	}
-	if err := ValidatePasswordPolicy(h.resolved, req.Password); err != nil {
+	if err := ValidatePasswordPolicy(h.resolvedFor(r.Context()), req.Password); err != nil {
 		Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -1353,11 +1661,17 @@ func (h *AuthHandler) SetupAdmin(w http.ResponseWriter, r *http.Request) {
 	AutoSubscribeIfHosted(h.cfg != nil && h.cfg.AdminMode, h.users, h.log, u)
 
 	expiresIn := int64(3600)
-	accessToken, _ := h.createToken(u.ID, u.Role, expiresIn, "")
-	refreshToken, _ := h.createToken(u.ID, u.Role, 7*24*3600, "")
+	accessToken, refreshToken, err := h.issueSessionTokens(r, u, expiresIn, 7*24*3600)
+	if err != nil {
+		if h.log != nil {
+			h.log.Error("admin setup session creation failed", "user_id", u.ID, "error", err)
+		}
+		Error(w, http.StatusInternalServerError, "Failed to create session")
+		return
+	}
 	expiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second).Format(time.RFC3339)
 
-	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, false, h.cfg.Env, false, h.authBrowserSessionCookies())
+	setAuthCookiesWithRemember(w, r, accessToken, refreshToken, expiresIn, false, h.cfg.Env, false, h.authBrowserSessionCookies(r.Context()))
 
 	JSON(w, http.StatusCreated, map[string]interface{}{
 		"message":       "Admin user created successfully",
@@ -1398,7 +1712,7 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "Username must be at least 3 characters")
 		return
 	}
-	if err := ValidatePasswordPolicy(h.resolved, req.Password); err != nil {
+	if err := ValidatePasswordPolicy(h.resolvedFor(r.Context()), req.Password); err != nil {
 		Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -1411,7 +1725,7 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 
 	role := s.DefaultUserRole
 	if role == "" && h.resolved != nil {
-		role = h.resolved.DefaultUserRole
+		role = h.resolvedFor(r.Context()).DefaultUserRole
 	}
 	if role == "" {
 		role = "user"
@@ -1439,7 +1753,14 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	}
 	AutoSubscribeIfHosted(h.cfg != nil && h.cfg.AdminMode, h.users, h.log, u)
 
-	accessToken, _ := h.createToken(u.ID, u.Role, 3600, "")
+	accessToken, _, err := h.issueSessionTokens(r, u, 3600, 7*24*3600)
+	if err != nil {
+		if h.log != nil {
+			h.log.Error("signup session creation failed", "user_id", u.ID, "error", err)
+		}
+		Error(w, http.StatusInternalServerError, "Failed to create session")
+		return
+	}
 
 	JSON(w, http.StatusCreated, map[string]interface{}{
 		"message": "Account created successfully",

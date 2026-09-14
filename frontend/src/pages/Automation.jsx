@@ -73,8 +73,17 @@ const Automation = () => {
 		if (queue?.includes("compliance-scan-cleanup"))
 			return "compliance-scan-cleanup";
 		if (queue?.includes("patch-run-cleanup")) return "patch-run-cleanup";
+		if (queue?.includes("agent-reports-cleanup"))
+			return "agent-reports-cleanup";
 		if (queue?.includes("ssg-update-check")) return "ssg-update-check";
 		return null;
+	};
+
+	// triggeringJob is null when idle, so an unmapped queue would compare
+	// null === null and render every row as permanently spinning.
+	const isTriggering = (queue) => {
+		const jobType = getJobTypeForQueue(queue);
+		return jobType !== null && triggeringJob === jobType;
 	};
 
 	const getStatusBadge = (status) => {
@@ -408,8 +417,15 @@ const Automation = () => {
 				endpoint = "/compliance/scans/cleanup";
 			} else if (jobType === "patch-run-cleanup") {
 				endpoint = "/automation/trigger/patch-run-cleanup";
+			} else if (jobType === "agent-reports-cleanup") {
+				endpoint = "/automation/trigger/agent-reports-cleanup";
 			} else if (jobType === "ssg-update-check") {
 				endpoint = "/automation/trigger/ssg-update-check";
+			}
+
+			if (!endpoint) {
+				toast.error(`No manual trigger available for ${jobType}`);
+				return;
 			}
 
 			const response = await api.post(endpoint, data);
@@ -644,15 +660,11 @@ const Automation = () => {
 														);
 														if (jobType) triggerManualJob(jobType);
 													}}
-													disabled={
-														triggeringJob ===
-														getJobTypeForQueue(automation.queue)
-													}
+													disabled={isTriggering(automation.queue)}
 													className="inline-flex items-center justify-center w-8 h-8 border border-transparent rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200 flex-shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
 													title="Run Now"
 												>
-													{triggeringJob ===
-													getJobTypeForQueue(automation.queue) ? (
+													{isTriggering(automation.queue) ? (
 														<span className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full" />
 													) : (
 														<Play className="h-4 w-4" />
@@ -773,15 +785,11 @@ const Automation = () => {
 																);
 																if (jobType) triggerManualJob(jobType);
 															}}
-															disabled={
-																triggeringJob ===
-																getJobTypeForQueue(automation.queue)
-															}
+															disabled={isTriggering(automation.queue)}
 															className="inline-flex items-center justify-center w-6 h-6 border border-transparent rounded text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
 															title="Run Now"
 														>
-															{triggeringJob ===
-															getJobTypeForQueue(automation.queue) ? (
+															{isTriggering(automation.queue) ? (
 																<span className="animate-spin h-3 w-3 border-2 border-white border-t-transparent rounded-full" />
 															) : (
 																<Play className="h-3 w-3" />

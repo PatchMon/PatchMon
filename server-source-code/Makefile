@@ -5,7 +5,35 @@ MIGRATE_BINARY := migrate
 BUILD_DIR := .
 # Output dir for multi-arch builds (e.g. ../backend for non-Docker use)
 BUILD_OUT_DIR ?= $(BUILD_DIR)
-LDFLAGS := -ldflags "-s -w"
+# The git tag is the single source of truth for the version; nothing in the
+# repo declares it. `--abbrev=0` yields the bare nearest tag (e.g. v2.0.2)
+# rather than v2.0.2-60-gABC: util.CompareVersions parses dot-separated ints
+# and silently treats any suffix as 0, so "2.0.2-60-gABC" would compare as
+# 2.0.0 and make every dev instance think an update is available.
+#
+# Override to test the update path deliberately:  make run VERSION=2.0.1
+VERSION ?= $(patsubst v%,%,$(shell git describe --tags --abbrev=0 2>/dev/null))
+VERSION_PKG := github.com/PatchMon/PatchMon/server-source-code/internal/config
+VERSION_X := $(if $(strip $(VERSION)),-X $(VERSION_PKG).DefaultVersion=$(strip $(VERSION)))
+
+# Community counts shown in the nav, login footer and setup wizard. The build
+# pipeline reads them from https://patchmon.net/socialstats/<platform> and
+# passes them in; see internal/social. Deliberately not fetched here, so
+# `make build` never touches the network. Empty values are normal and make the
+# handler fall back to its compiled-in defaults.
+SOCIAL_PKG := github.com/PatchMon/PatchMon/server-source-code/internal/social
+GITHUB_STARS ?=
+DISCORD_MEMBERS ?=
+YOUTUBE_SUBSCRIBERS ?=
+LINKEDIN_FOLLOWERS ?=
+SOCIAL_X := $(if $(strip $(GITHUB_STARS)),-X $(SOCIAL_PKG).GitHubStars=$(strip $(GITHUB_STARS))) \
+	$(if $(strip $(DISCORD_MEMBERS)),-X $(SOCIAL_PKG).DiscordMembers=$(strip $(DISCORD_MEMBERS))) \
+	$(if $(strip $(YOUTUBE_SUBSCRIBERS)),-X $(SOCIAL_PKG).YouTubeSubscribers=$(strip $(YOUTUBE_SUBSCRIBERS))) \
+	$(if $(strip $(LINKEDIN_FOLLOWERS)),-X $(SOCIAL_PKG).LinkedInFollowers=$(strip $(LINKEDIN_FOLLOWERS)))
+
+LDFLAGS := -ldflags "-s -w $(VERSION_X) $(SOCIAL_X)"
+# Dev builds keep symbols for debugging, so they take the injected flags alone.
+DEV_LDFLAGS := $(if $(strip $(VERSION_X)$(SOCIAL_X)),-ldflags "$(VERSION_X) $(SOCIAL_X)")
 BUILD_FLAGS := -buildvcs=false
 GO_CMD ?= $(shell command -v go 2>/dev/null || echo go)
 GOLANGCI_LINT_CMD ?= $(shell command -v golangci-lint 2>/dev/null || echo golangci-lint)
@@ -29,7 +57,7 @@ sqlc-generate:
 
 build:
 	@echo "Building $(BINARY)..."
-	@$(GO_CMD) build -buildvcs=false -o $(BINARY) ./cmd/server
+	@$(GO_CMD) build -buildvcs=false $(DEV_LDFLAGS) -o $(BINARY) ./cmd/server
 
 build-migrate:
 	@echo "Building $(MIGRATE_BINARY)..."
@@ -93,14 +121,18 @@ run: build
 run-pprof: build
 	ENABLE_PPROF=true ./$(BINARY)
 
-# Fetch heap profile (server must be running with pprof on port 3001)
+# Fetch heap profile. pprof listens on its own loopback-only port (PPROF_PORT,
+# default 6060), not the main API port. For a remote server, tunnel first:
+#   ssh -L $(PPROF_PORT):127.0.0.1:$(PPROF_PORT) <host>
+PPROF_PORT ?= 6060
+
 profile-heap:
-	@curl -s "http://localhost:3001/debug/pprof/heap" -o heap.prof
+	@curl -s "http://127.0.0.1:$(PPROF_PORT)/debug/pprof/heap" -o heap.prof
 	@echo "Saved to heap.prof. View with: go tool pprof -http=:8080 heap.prof"
 
 # Fetch allocs profile
 profile-allocs:
-	@curl -s "http://localhost:3001/debug/pprof/allocs" -o allocs.prof
+	@curl -s "http://127.0.0.1:$(PPROF_PORT)/debug/pprof/allocs" -o allocs.prof
 	@echo "Saved to allocs.prof"
 
 # Database migrations (requires DATABASE_URL)

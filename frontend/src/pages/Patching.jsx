@@ -24,7 +24,7 @@ import {
 	X,
 	XCircle,
 } from "lucide-react";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
 	Link,
 	useLocation,
@@ -46,10 +46,12 @@ import TierBadge from "../components/TierBadge";
 import UpgradeRequiredContent from "../components/UpgradeRequiredContent";
 import { getRequiredTier } from "../constants/tiers";
 import { useAuth } from "../contexts/AuthContext";
+import { useConfirm } from "../contexts/ConfirmContext";
 import { useSettings } from "../contexts/SettingsContext";
 import { useToast } from "../contexts/ToastContext";
 import { adminHostsAPI, formatDate, hostGroupsAPI } from "../utils/api";
 import { patchingAPI } from "../utils/patchingApi";
+import { hasExtraDependencies } from "../utils/patchRun";
 
 const PATCHING_TABS = [
 	{ id: "overview", label: "Overview", icon: LayoutDashboard },
@@ -119,7 +121,15 @@ const Patching = () => {
 	});
 
 	const { data: runsData } = useQuery({
-		queryKey: ["patching-runs", runsFilterStatus, runsFilterType, runsPage],
+		// runsLimit is in the key because the queryFn uses it; without it,
+		// changing page size on page 1 serves the cached result.
+		queryKey: [
+			"patching-runs",
+			runsFilterStatus,
+			runsFilterType,
+			runsPage,
+			runsLimit,
+		],
 		queryFn: () =>
 			patchingAPI.getRuns({
 				...(runsFilterStatus ? { status: runsFilterStatus } : {}),
@@ -536,11 +546,11 @@ const Patching = () => {
 					lockPackages
 					presetHosts={approveWizardRuns.map((r) => r.host)}
 					validationRunIds={approveWizardRuns.map((r) => r.runId)}
-					packagesByHost={Object.fromEntries(
-						approveWizardRuns.map((r) => [r.host.id, r.packageNames]),
+					packagesByRun={Object.fromEntries(
+						approveWizardRuns.map((r) => [r.runId, r.packageNames]),
 					)}
-					patchTypeByHost={Object.fromEntries(
-						approveWizardRuns.map((r) => [r.host.id, r.patchType]),
+					patchTypeByRun={Object.fromEntries(
+						approveWizardRuns.map((r) => [r.runId, r.patchType]),
 					)}
 					onSuccess={handleApproveWizardSuccess}
 				/>
@@ -564,6 +574,8 @@ const STATUS_OPTIONS = [
 	{ value: "completed", label: "Completed" },
 	{ value: "failed", label: "Failed" },
 	{ value: "cancelled", label: "Cancelled" },
+	{ value: "timed_out", label: "Timed out" },
+	{ value: "agent_disconnected", label: "Agent disconnected" },
 ];
 
 const TYPE_OPTIONS = [
@@ -929,10 +941,7 @@ function RunsTab({
 								const isApprovable = approvableStatuses.has(run.status);
 								const isSelectedForDelete = selectedRunIds.has(run.id);
 								const isSelectedForApprove = selectedApproveIds.has(run.id);
-								const hasExtraDeps =
-									run.status === "validated" &&
-									run.packages_affected?.length >
-										(run.package_names?.length || 1);
+								const hasExtraDeps = hasExtraDependencies(run);
 								const hostLabel =
 									run.hosts?.friendly_name ||
 									run.hosts?.hostname ||
@@ -1147,10 +1156,7 @@ function RunsTab({
 										const isSelectedForApprove = selectedApproveIds.has(run.id);
 										const isSelected =
 											isSelectedForDelete || isSelectedForApprove;
-										const hasExtraDeps =
-											run.status === "validated" &&
-											run.packages_affected?.length >
-												(run.package_names?.length || 1);
+										const hasExtraDeps = hasExtraDependencies(run);
 										const hostLabel =
 											run.hosts?.friendly_name ||
 											run.hosts?.hostname ||
@@ -1327,6 +1333,7 @@ const delay_type_labels = {
 function PoliciesTab() {
 	const queryClient = useQueryClient();
 	const toast = useToast();
+	const confirm = useConfirm();
 	const { settings } = useSettings();
 	const orgTimezone = settings?.timezone || "UTC";
 	const [showModal, setShowModal] = useState(false);
@@ -1351,8 +1358,11 @@ function PoliciesTab() {
 	});
 
 	const { data: hostsData } = useQuery({
-		queryKey: ["hosts-list"],
-		queryFn: () => adminHostsAPI.list().then((res) => res.data),
+		// Distinct key: other pages cache the default first-page response under
+		// "hosts-list", and the exclusion picker intersects this with group
+		// membership, so a truncated page renders as "nothing left to exclude".
+		queryKey: ["hosts-list", "all"],
+		queryFn: () => adminHostsAPI.list({ all: true }).then((res) => res.data),
 	});
 	const hosts = hostsData?.data || [];
 
@@ -1548,11 +1558,13 @@ function PoliciesTab() {
 													</button>
 													<button
 														type="button"
-														onClick={() => {
+														onClick={async () => {
 															if (
-																window.confirm(
-																	`Delete policy "${policy.name}"?`,
-																)
+																await confirm({
+																	title: "Delete policy",
+																	message: `Delete the patching policy "${policy.name}"?`,
+																	confirmLabel: "Delete policy",
+																})
 															)
 																deleteMutation.mutate(policy.id);
 														}}
@@ -1732,7 +1744,11 @@ function PolicyAssignments({ policy, hosts, hostGroups, onUpdate }) {
 	const [addTargetId, setAddTargetId] = useState("");
 	const [addExclusionHostId, setAddExclusionHostId] = useState("");
 
-	const { data: fullPolicy } = useQuery({
+	const {
+		data: fullPolicy,
+		isPending: policyPending,
+		isError: policyError,
+	} = useQuery({
 		queryKey: ["patching-policy", policy.id],
 		queryFn: () => patchingAPI.getPolicyById(policy.id),
 		enabled: !!policy.id,
@@ -1805,6 +1821,30 @@ function PolicyAssignments({ policy, hosts, hostGroups, onUpdate }) {
 		const g = hostGroups.find((x) => x.id === a.target_id);
 		return g?.name || a.target_id;
 	};
+
+	const assignedGroupIds = useMemo(
+		() =>
+			new Set(
+				assignments
+					.filter((a) => a.target_type === "host_group")
+					.map((a) => a.target_id),
+			),
+		[assignments],
+	);
+
+	// An exclusion only has meaning against a group assignment, so the picker
+	// offers members of the assigned groups that are not already excluded.
+	const excludableHosts = useMemo(() => {
+		if (assignedGroupIds.size === 0) return [];
+		const excludedHostIds = new Set(exclusions.map((e) => e.host_id));
+		return hosts.filter(
+			(h) =>
+				!excludedHostIds.has(h.id) &&
+				(h.host_group_memberships || []).some((m) =>
+					assignedGroupIds.has(m?.host_groups?.id ?? m?.id),
+				),
+		);
+	}, [hosts, exclusions, assignedGroupIds]);
 
 	return (
 		<div className="px-4 pb-4 pt-3 bg-secondary-50 dark:bg-secondary-900/50 border-t border-secondary-200 dark:border-secondary-600">
@@ -1908,28 +1948,49 @@ function PolicyAssignments({ policy, hosts, hostGroups, onUpdate }) {
 						))}
 					</ul>
 				)}
-				<div className="flex flex-wrap items-center gap-2">
-					<select
-						value={addExclusionHostId}
-						onChange={(e) => setAddExclusionHostId(e.target.value)}
-						className="rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white text-sm px-2 py-1 min-w-[160px]"
-					>
-						<option value="">Select host to exclude...</option>
-						{hosts.map((h) => (
-							<option key={h.id} value={h.id}>
-								{h.friendly_name || h.hostname || h.id}
+				{policyPending ? (
+					<p className="text-sm text-secondary-500 dark:text-secondary-400">
+						Loading assignments...
+					</p>
+				) : policyError ? (
+					<p className="text-sm text-danger-600 dark:text-danger-400">
+						Could not load this policy's assignments.
+					</p>
+				) : assignedGroupIds.size === 0 ? (
+					<p className="text-sm text-secondary-500 dark:text-secondary-400">
+						Assign a host group to this policy before excluding hosts from it.
+					</p>
+				) : (
+					<div className="flex flex-wrap items-center gap-2">
+						<select
+							value={addExclusionHostId}
+							onChange={(e) => setAddExclusionHostId(e.target.value)}
+							disabled={excludableHosts.length === 0}
+							className="rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white text-sm px-2 py-1 min-w-[160px] disabled:opacity-50 disabled:cursor-not-allowed"
+						>
+							<option value="">
+								{excludableHosts.length === 0
+									? "No hosts left to exclude"
+									: "Select host to exclude..."}
 							</option>
-						))}
-					</select>
-					<button
-						type="button"
-						onClick={() => addExclusionHostId && addExclusionMutation.mutate()}
-						disabled={!addExclusionHostId || addExclusionMutation.isPending}
-						className="btn-outline text-sm py-1"
-					>
-						Exclude host
-					</button>
-				</div>
+							{excludableHosts.map((h) => (
+								<option key={h.id} value={h.id}>
+									{h.friendly_name || h.hostname || h.id}
+								</option>
+							))}
+						</select>
+						<button
+							type="button"
+							onClick={() =>
+								addExclusionHostId && addExclusionMutation.mutate()
+							}
+							disabled={!addExclusionHostId || addExclusionMutation.isPending}
+							className="btn-outline text-sm py-1 disabled:opacity-50 disabled:cursor-not-allowed"
+						>
+							Exclude host
+						</button>
+					</div>
+				)}
 			</div>
 		</div>
 	);

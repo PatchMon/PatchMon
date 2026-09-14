@@ -114,6 +114,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: "server-source-code/go.mod"
+          cache-dependency-path: "server-source-code/go.sum"
 
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest

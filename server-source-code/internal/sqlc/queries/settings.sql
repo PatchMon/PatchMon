@@ -62,8 +62,9 @@ UPDATE settings SET
     favicon_content_type = $56,
     compliance_scan_interval = $57,
     package_cache_refresh_mode = $58,
-    package_cache_refresh_max_age = $59
-WHERE id = $60;
+    package_cache_refresh_max_age = $59,
+    oidc_trust_unverified_email = $60
+WHERE id = $61;
 
 -- name: UpdateSettingsConfig :exec
 UPDATE settings SET
@@ -99,5 +100,9 @@ UPDATE settings SET
     agent_rate_limit_max = COALESCE($29, agent_rate_limit_max),
     password_rate_limit_window_ms = COALESCE($30, password_rate_limit_window_ms),
     password_rate_limit_max = COALESCE($31, password_rate_limit_max),
-    auth_browser_session_cookies = COALESCE($32, auth_browser_session_cookies)
-WHERE id = $33;
+    auth_browser_session_cookies = COALESCE($32, auth_browser_session_cookies),
+    patch_run_stall_timeout_minutes = COALESCE($33, patch_run_stall_timeout_minutes),
+    agent_reports_retention_days = COALESCE($34, agent_reports_retention_days),
+    compliance_body_limit = COALESCE($35, compliance_body_limit),
+    agent_ping_body_limit = COALESCE($36, agent_ping_body_limit)
+WHERE id = $37;

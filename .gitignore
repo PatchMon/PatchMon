@@ -93,7 +93,6 @@ temp/
 .DS_Store?
 ._*
 Thumbs.db
-build.sh
 
 # Legacy Node.js backend (replaced by server-source-code/)
 backend/
@@ -112,6 +111,7 @@ frontend/.vite/
 agents/*.log
 agents/patchmon-agent-*
 agents-prebuilt/
+server-prebuilt/
 agent-source-code/patchmon-agent-*
 __pycache__/
 *.py[cod]

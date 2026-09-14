@@ -34,30 +34,30 @@ $serviceName = "PatchMonAgent"
 # Functions
 function Write-Info {
     param([string]$Message)
-    Write-Host "ℹ️  $Message" -ForegroundColor Cyan
+    Write-Host "[i] $Message" -ForegroundColor Cyan
 }
 
 function Write-Success {
     param([string]$Message)
-    Write-Host "✅ $Message" -ForegroundColor Green
+    Write-Host "[OK] $Message" -ForegroundColor Green
 }
 
 function Write-Warn {
     param([string]$Message)
-    Write-Host "⚠️  $Message" -ForegroundColor Yellow
+    Write-Host "[!] $Message" -ForegroundColor Yellow
 }
 
 function Write-Error-Msg {
     param([string]$Message)
-    Write-Host "❌ ERROR: $Message" -ForegroundColor Red
+    Write-Host "[X] ERROR: $Message" -ForegroundColor Red
 }
 
 Write-Host ""
-Write-Info "🗑️  Starting PatchMon Agent Removal..."
+Write-Info "Starting PatchMon Agent Removal..."
 Write-Host ""
 
 # Step 1: Stop and remove Windows Service
-Write-Info "🛑 Stopping PatchMon service..."
+Write-Info "Stopping PatchMon service..."
 $serviceStopped = $false
 
 try {
@@ -71,11 +71,11 @@ try {
             # Verify it stopped
             $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
             if ($service.Status -eq "Running") {
-                Write-Warn "⚠️  Service is STILL RUNNING after stop command! Attempting force stop..."
+                Write-Warn "Service is STILL RUNNING after stop command! Attempting force stop..."
                 & sc.exe stop $serviceName | Out-Null
                 Start-Sleep -Seconds 2
             } else {
-                Write-Success "✓ Service stopped successfully"
+                Write-Success "Service stopped successfully"
             }
             $serviceStopped = $true
         } else {
@@ -91,9 +91,9 @@ try {
         # Verify service was removed
         $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
         if (-not $service) {
-            Write-Success "✓ Service removed successfully"
+            Write-Success "Service removed successfully"
         } else {
-            Write-Warn "⚠️  Service still exists after deletion attempt"
+            Write-Warn "Service still exists after deletion attempt"
         }
     } else {
         Write-Info "Windows Service not found"
@@ -103,7 +103,7 @@ try {
 }
 
 # Step 2: Stop any running agent processes
-Write-Info "🔄 Stopping any running PatchMon processes..."
+Write-Info "Stopping any running PatchMon processes..."
 $processes = Get-Process -Name "patchmon-agent" -ErrorAction SilentlyContinue
 if ($processes) {
     Write-Warn "Found $($processes.Count) running PatchMon process(es), stopping them..."
@@ -113,16 +113,16 @@ if ($processes) {
     # Verify they stopped
     $remaining = Get-Process -Name "patchmon-agent" -ErrorAction SilentlyContinue
     if ($remaining) {
-        Write-Warn "⚠️  Some processes are still running after stop command"
+        Write-Warn "Some processes are still running after stop command"
     } else {
-        Write-Success "✓ All processes stopped"
+        Write-Success "All processes stopped"
     }
 } else {
     Write-Info "No running PatchMon processes found"
 }
 
 # Step 3: Remove agent binary
-Write-Info "📄 Removing agent binaries..."
+Write-Info "Removing agent binaries..."
 $binaryRemoved = $false
 
 $binaryPath = Join-Path $InstallPath "patchmon-agent.exe"
@@ -135,7 +135,7 @@ if (Test-Path $binaryPath) {
             Start-Sleep -Seconds 3
         }
         Remove-Item -Path $binaryPath -Force -ErrorAction Stop
-        Write-Success "✓ Binary removed"
+        Write-Success "Binary removed"
         $binaryRemoved = $true
     } catch {
         Write-Warn "Failed to remove binary: $_"
@@ -160,14 +160,14 @@ if ($binaryRemoved) {
 }
 
 # Step 4: Remove from PATH
-Write-Info "🗑️  Removing PatchMon from system PATH..."
+Write-Info "Removing PatchMon from system PATH..."
 try {
     $currentPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::Machine)
     if ($currentPath -like "*$InstallPath*") {
         Write-Warn "Removing PatchMon from system PATH..."
         $newPath = ($currentPath -split ';' | Where-Object { $_ -ne $InstallPath }) -join ';'
         [Environment]::SetEnvironmentVariable("Path", $newPath, [EnvironmentVariableTarget]::Machine)
-        Write-Success "✓ Removed from PATH"
+        Write-Success "Removed from PATH"
     } else {
         Write-Info "PatchMon not found in system PATH"
     }
@@ -176,14 +176,14 @@ try {
 }
 
 # Step 5: Remove installation directory (if empty or RemoveAll)
-Write-Info "📁 Checking installation directory..."
+Write-Info "Checking installation directory..."
 if (Test-Path $InstallPath) {
     $items = Get-ChildItem -Path $InstallPath -ErrorAction SilentlyContinue
     if ($items.Count -eq 0 -or $RemoveAll) {
         Write-Warn "Removing installation directory: $InstallPath"
         try {
             Remove-Item -Path $InstallPath -Recurse -Force -ErrorAction Stop
-            Write-Success "✓ Installation directory removed"
+            Write-Success "Installation directory removed"
         } catch {
             Write-Warn "Failed to remove installation directory: $_"
             Write-Warn "You may need to manually delete: $InstallPath"
@@ -197,12 +197,12 @@ if (Test-Path $InstallPath) {
 
 # Step 6: Remove configuration files (optional)
 if ($RemoveConfig) {
-    Write-Info "📋 Removing configuration files..."
+    Write-Info "Removing configuration files..."
     if (Test-Path $ConfigPath) {
         Write-Warn "Removing configuration directory: $ConfigPath"
         try {
             Remove-Item -Path $ConfigPath -Recurse -Force -ErrorAction Stop
-            Write-Success "✓ Configuration directory removed"
+            Write-Success "Configuration directory removed"
         } catch {
             Write-Warn "Failed to remove configuration directory: $_"
             Write-Warn "You may need to manually delete: $ConfigPath"
@@ -211,7 +211,7 @@ if ($RemoveConfig) {
         Write-Info "Configuration directory not found"
     }
 } else {
-    Write-Info "📋 Configuration files preserved (use -RemoveConfig to remove)"
+    Write-Info "Configuration files preserved (use -RemoveConfig to remove)"
     if (Test-Path $ConfigPath) {
         Write-Host "   Location: $ConfigPath" -ForegroundColor Gray
     }
@@ -219,13 +219,13 @@ if ($RemoveConfig) {
 
 # Step 7: Remove log files (optional)
 if ($RemoveLogs) {
-    Write-Info "📝 Removing log files..."
+    Write-Info "Removing log files..."
     $logPath = Join-Path $ConfigPath "patchmon-agent.log"
     if (Test-Path $logPath) {
         Write-Warn "Removing log file: $logPath"
         try {
             Remove-Item -Path $logPath -Force -ErrorAction Stop
-            Write-Success "✓ Log file removed"
+            Write-Success "Log file removed"
         } catch {
             Write-Warn "Failed to remove log file: $_"
         }
@@ -240,12 +240,12 @@ if ($RemoveLogs) {
         $logBackups | Remove-Item -Force -ErrorAction SilentlyContinue
     }
 } else {
-    Write-Info "📝 Log files preserved (use -RemoveLogs to remove)"
+    Write-Info "Log files preserved (use -RemoveLogs to remove)"
 }
 
 # Step 8: Clean up backup files in config directory (if RemoveConfig or RemoveAll)
 if ($RemoveConfig -or $RemoveAll) {
-    Write-Info "🧹 Checking for backup files..."
+    Write-Info "Checking for backup files..."
     $backupFiles = @()
 
     if (Test-Path $ConfigPath) {
@@ -255,7 +255,7 @@ if ($RemoveConfig -or $RemoveAll) {
     if ($backupFiles.Count -gt 0) {
         Write-Warn "Removing $($backupFiles.Count) backup file(s)..."
         $backupFiles | Remove-Item -Force -ErrorAction SilentlyContinue
-        Write-Success "✓ Backup files removed"
+        Write-Success "Backup files removed"
     } else {
         Write-Info "No backup files found"
     }
@@ -266,18 +266,18 @@ Write-Host ""
 Write-Success "Removal process complete!"
 Write-Host ""
 Write-Info "Summary of actions taken:"
-Write-Host "  • Windows Service: Stopped and removed" -ForegroundColor Gray
-Write-Host "  • Agent binaries: Removed" -ForegroundColor Gray
-Write-Host "  • System PATH: Updated" -ForegroundColor Gray
+Write-Host "  - Windows Service: Stopped and removed" -ForegroundColor Gray
+Write-Host "  - Agent binaries: Removed" -ForegroundColor Gray
+Write-Host "  - System PATH: Updated" -ForegroundColor Gray
 if ($RemoveConfig) {
-    Write-Host "  • Configuration files: Removed" -ForegroundColor Gray
+    Write-Host "  - Configuration files: Removed" -ForegroundColor Gray
 } else {
-    Write-Host "  • Configuration files: Preserved" -ForegroundColor Gray
+    Write-Host "  - Configuration files: Preserved" -ForegroundColor Gray
 }
 if ($RemoveLogs) {
-    Write-Host "  • Log files: Removed" -ForegroundColor Gray
+    Write-Host "  - Log files: Removed" -ForegroundColor Gray
 } else {
-    Write-Host "  • Log files: Preserved" -ForegroundColor Gray
+    Write-Host "  - Log files: Preserved" -ForegroundColor Gray
 }
 
 if (-not $RemoveAll) {

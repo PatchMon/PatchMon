@@ -86,7 +86,8 @@ PatchMon uses a lightweight agent model:
 - Proxmox LXC Auto-Enrollment Guide
 - PatchMon Environment Variables Reference
 - [Metrics and Telemetry](#metrics-and-telemetry)
-- [Roadmap & Issues](https://github.com/orgs/PatchMon/projects/2)
+- [Feature Roadmap](https://feedback.patchmon.net/roadmap) (request and vote on features)
+- [Report a Bug](https://github.com/PatchMon/PatchMon/issues) (bugs are tracked in GitHub, not the feedback portal)
 - [YouTube](https://www.youtube.com/@patchmonTV)
 - [Discord Community](https://patchmon.net/discord)
 - [GitHub Repository](https://github.com/PatchMon/PatchMon)
@@ -267,7 +268,7 @@ Groups are the primary way to organise hosts for patching policies, alert routin
 
 Controls how and when PatchMon agents talk to the server and update themselves:
 
-- **Update interval**: how often agents send a full report (default: 60 minutes); hosts with the WebSocket channel open pick up interval changes live.
+- **Update interval**: how often agents perform a check-in (default: 60 minutes); hosts with the WebSocket channel open pick up interval changes live. From v2.0.3 each tick is a hash-gated check-in: the agent ships content hashes per section, and the server only requests full content for sections whose hash has changed. Steady-state cycles are a few KB instead of a few MB.
 - **Auto-update behaviour**: global on/off for automatic agent binary updates. Per-host overrides live on the host detail page.
 - **Signup enabled**: whether the first-time setup wizard still serves the initial-admin endpoint.
 
@@ -642,9 +643,14 @@ The top of the page has four main areas:
 
 - **Friendly name** (large heading), editable inline.
 - **Hostname** and **IP** underneath, both editable inline (clicking shows a text field; Enter to save, Esc to cancel).
-- **Status chips**: Active / Pending / Inactive / Error, and a coloured WebSocket badge (**WSS** green for secure, **WS** amber for plaintext, **Offline** red).
-- **Reboot required** chip when the agent has detected pending-reboot flags (e.g. `/var/run/reboot-required`, kernel updates).
+- **Status pills** (four independent indicators, each with a hover tooltip explaining what it means):
+  - **WS** — WebSocket control channel state. Green when connected, amber while disconnected within the configured grace window, red once the grace window elapses. The grace window is the `host_down` alert threshold (default 30 seconds, see [Per-alert-type configuration](#per-alert-type-configuration)).
+  - **Reporting** — agent report freshness. Grey ("Awaiting report") until the agent sends its very first report, then green when the agent has reported within its update interval, amber when overdue but the WebSocket is still connected (agent is alive, just hasn't pushed yet), red ("Stale") when overdue *and* the WebSocket is also disconnected.
+  - **Reboot pending** — only shown when the host has flagged a pending reboot (e.g. `/var/run/reboot-required`, kernel updates).
+  - **Updates** — grey "No package data" until the first report arrives, then green "Up to date", amber "Updates pending" (non-security only), red "Security patches required" when one or more security updates are available.
 - **Uptime** and **Last updated** relative timestamps.
+
+**Suspended machines catch up on their own.** A laptop or VM does not run its report timer while it is asleep, so it wakes up with an amber Reporting pill (red, while it was still asleep and its WebSocket was down). When an agent connects and the host has not reported within its update interval, the server asks it for a fresh report within the following minute, so the pill clears without anyone pressing **Fetch Report**. The same applies to a host that was powered off, or cut off by a network outage. Hosts that keep reporting on schedule are unaffected.
 
 If there's a pending patch run awaiting a fresh post-patch report, you'll see an **Awaiting inventory report** chip that links to the run.
 
@@ -668,7 +674,7 @@ Four clickable cards:
 - **Security Updates** → **Packages** filtered to this host with only security updates.
 - **Repos** → opens **Repositories** filtered to this host.
 
-Use these as quick jump-offs to the fleet-wide pages with the host pre-selected.
+Use these as quick jump-offs, with the host pre-selected. The **Packages** page you land on stays scoped to that host: its heading names the host, its own summary cards count only that host, and a **Clear filter** button widens it back out to the whole fleet.
 
 ### The Tab Strip
 
@@ -681,8 +687,7 @@ The tab strip is context-aware. Some tabs only appear under certain conditions:
 | **Host Info** | Yes | Default landing tab. |
 | **Network** | Yes | |
 | **System** | Yes | |
-| **Package Reports** | Yes | Historical inventory snapshots. |
-| **Agent Queue** | Yes | Background jobs for this host. |
+| **Agent Activity** | Yes | Unified timeline of agent comm cycles (ping, full report, partial report, Docker, compliance) and outbound queue jobs. Replaces the separate Package Reports and Agent Queue tabs from earlier releases. |
 | **Notes** | Yes | Free-text notes. |
 | **Integrations** | Yes | Per-host Docker / Compliance toggles. |
 | **Reporting** | Conditional | Hidden when global alerts are off. |
@@ -736,27 +741,26 @@ Hardware and OS specifics collected on each report:
 
 This tab is read-only. All values come from the agent report.
 
-### Package Reports
+### Agent Activity
 
-Paginated history of package inventory snapshots the agent has sent. Useful for:
+Unified timeline of every agent comm cycle for this host. Each row is one of:
 
-- Auditing when a package was installed, removed, or upgraded.
-- Comparing two reports to understand what a patch run changed.
-- Proving a package state at a given date to an auditor.
+- **Ping**: hash-gated check-in (every cycle, even when nothing changed).
+- **Full / Partial**: `/hosts/update` with the full inventory or just the sections the server flagged as stale.
+- **Docker / Compliance**: integration-specific submissions.
+- **Job**: outbound queue jobs the server sent to the agent (fetch report, patch run, integration setup, etc.).
 
-Each row shows the report timestamp, total packages, outdated count, security count, and a link to expand the full per-package diff.
+The four queue stat cards (Waiting / Active / Delayed / Failed) sit above the table and reflect in-flight server-to-agent jobs. The auto-refresh interval is 30 seconds.
 
-### Agent Queue
+Each report row also shows section chips: green "Updated" chips for sections the agent shipped fresh data for this cycle, and muted "Skipped" chips for sections the server already had a matching hash for. Use this tab to:
 
-Live view of the background jobs queued for this host (fetch report, patch commands, compliance scans, integration config syncs, agent updates, etc.). The tab auto-refreshes every 30 seconds. You see:
+- Confirm a host is actively checking in (look for recent `Ping` rows).
+- Audit when a package, repo, network interface, or hostname change last propagated.
+- Trace a "my Fetch Report click didn't do anything" complaint by following the job row through `Waiting → Active → Completed` (or `Failed` with the error message).
 
-- **Waiting**: queued but not yet picked up.
-- **Active**: currently running.
-- **Delayed**: scheduled for later.
-- **Failed**: error state with the last error message.
-- **Job History**: recently completed jobs with timestamps and outcome.
+Retention is governed by the `AGENT_REPORTS_RETENTION_DAYS` environment variable (default 30 days, range 7..365). The daily cleanup sweep at 02:00 deletes anything older. See the operator guide for tuning details.
 
-Use this tab to trace a "my Fetch Report click didn't do anything" complaint.
+> Earlier releases split this view across two tabs (Package Reports and Agent Queue). Bookmarks against the old `?tab=history` and `?tab=queue` query params redirect to `?tab=activity`.
 
 ### Notes
 
@@ -795,10 +799,10 @@ The **Refresh Status** button at the top right of the tab asks the agent to repo
 
 Host-scoped overrides for alerting. The tab is hidden when global alerts are disabled in **Settings**.
 
-Primary feature: **Host Down Alerts** with three states:
+Primary feature: **Host Agent Down Alerts** with three states:
 
 - **Inherit from global settings** (default).
-- **Enabled**: always create alerts when this host goes offline, regardless of global defaults.
+- **Enabled**: always create alerts when this host's agent goes down, regardless of global defaults.
 - **Disabled**: never create alerts for this host even if the global setting is on.
 
 Use the Disabled override for hosts that are expected to be intermittent (dev laptops, ephemeral CI runners) so they don't spam your alert channels.
@@ -874,7 +878,7 @@ Quick reference for the most-asked "how do I…" questions:
 | Trigger an immediate report | Page header → **Fetch Report** |
 | Force the agent to self-update | **Host Info** tab → **Update Now** |
 | Open a shell in the browser | **Terminal** tab |
-| See what the agent is doing right now | **Agent Queue** tab |
+| See what the agent is doing right now | **Agent Activity** tab |
 | Change which host groups the host is in | **Host Info** tab → **Host Groups** field (or the Hosts table inline edit) |
 | Turn Docker monitoring on / off | **Integrations** tab → **Docker** toggle, then **Apply** in header |
 | Run CIS scans | **Integrations** tab → **Compliance** selector → **Enabled** or **On-Demand** |
@@ -885,7 +889,7 @@ Quick reference for the most-asked "how do I…" questions:
 
 ### Mobile Layout
 
-On smaller screens, the tab strip is replaced with stacked cards (**Host Information**, **Network**, **System**, **Package Reports**, and so on). The action buttons collapse into an icon row. Some dense sections (for example the Integrations mode selector) show a **Manage in Integrations tab** shortcut.
+On smaller screens, the tab strip is replaced with stacked cards (**Host Information**, **Network**, **System**, **Agent Activity**, and so on). The action buttons collapse into an icon row. Some dense sections (for example the Integrations mode selector) show a **Manage in Integrations tab** shortcut.
 
 All data shown on mobile is the same as on desktop; only the layout changes.
 
@@ -1084,17 +1088,31 @@ The Dashboard's **Outdated Packages** card and the Host Detail cards use these q
 
 ### Summary Cards
 
-Five cards at the top of the page summarise what you're looking at:
+The heading tells you what the cards are counting, and the cards always match it.
+
+Arriving without a host filter, the heading reads **Packages on all Hosts** and five cards summarise your whole fleet:
 
 | Card | Meaning | Click behaviour |
 |------|---------|-----------------|
-| **Packages** | Unique package names currently in the list | – |
+| **Packages** | Unique package names across the fleet | – |
 | **Installations** | Sum of per-host installs across all listed packages | – |
 | **Outdated Packages** | Packages with at least one host needing an update | Filters to **Packages Needing Updates** |
 | **Security Packages** | Packages with at least one host needing a security update | Filters to **Security Updates Only** |
 | **Outdated Hosts** | Distinct hosts that appear in the "needs update" side of those packages | Jumps to **Hosts** filtered to hosts needing updates |
 
-The **Packages** and **Installations** figures reflect the current filter set; the **Outdated Hosts** card jumps you out to the Hosts page rather than filtering in-place.
+Arriving with a host filter, for example by clicking **Outdated Packages** on a Host Detail page, the heading reads **Packages for <host> Host** and carries a **Clear filter** button that returns you to the fleet view. Three cards are shown, and every figure counts that host alone:
+
+| Card | Meaning | Click behaviour |
+|------|---------|-----------------|
+| **Packages** | Packages installed on this host | – |
+| **Outdated Packages** | Packages on this host needing an update | Filters to this host's packages needing updates |
+| **Security Packages** | Packages on this host needing a security update | Filters to this host's security updates |
+
+**Installations** and **Outdated Hosts** are hidden when a host filter is active. Both are fleet measures: on a single host each package is installed exactly once, so Installations would only restate Packages, and Outdated Hosts is not a per-host figure at all.
+
+The **Outdated Packages** and **Security Packages** cards keep whatever host filter is active, so clicking them narrows the list rather than resetting your scope. The **Outdated Hosts** card jumps you out to the Hosts page rather than filtering in-place.
+
+> **Note:** the fleet-wide figures come from a periodic statistics snapshot rather than a live query, so shortly after an agent reports they can trail the table by a few minutes. The host-scoped figures are read live and always agree with the list beneath them.
 
 ### The Filter Toolbar
 
@@ -1182,7 +1200,7 @@ Both flows route you into the Patching chapter. See the patch-run pages there fo
 
 ### The Outdated Packages Dashboard Card
 
-The Dashboard shows a **Outdated Packages** card near the top of the Cards layout (the actual position depends on your personal dashboard customisation). The number shown is the fleet-wide count of packages with at least one host needing an update, which is the same figure as the **Outdated Packages** card on the Packages page.
+The Dashboard shows a **Outdated Packages** card near the top of the Cards layout (the actual position depends on your personal dashboard customisation). The number shown is the fleet-wide count of packages with at least one host needing an update, which is the same figure as the **Outdated Packages** card on the Packages page when that page is not filtered to a single host.
 
 Clicking the Dashboard card navigates to `/packages?filter=outdated`, which:
 
@@ -1434,7 +1452,9 @@ The server moves a run through these statuses, visible as badges in the Runs & H
 | `completed` | The run finished successfully. The persisted `shell_output` is now authoritative. |
 | `dry_run_completed` | A dry-run finished successfully (terminal state for dry-runs that aren't turned into a real run). |
 | `failed` | The run finished with a non-zero exit status or the host reported an error. |
-| `cancelled` | The run was stopped by an operator (via **Stop Run**) or deleted before execution. |
+| `cancelled` | The run was stopped by an operator clicking **Stop Run** (or deleted before execution). The cancel is applied authoritatively in the database first; if the agent is connected the server also sends a courtesy `patch_run_stop` so the running subprocess is interrupted. With this ordering, an offline or unresponsive agent can't leave the row stuck in `running`. |
+| `timed_out` | The periodic patch-run cleanup found this run still in `running` state past the configured stall timeout (`PATCH_RUN_STALL_TIMEOUT_MIN`, default 30 minutes) and marked it as timed out. The cleanup sweep runs every 10 minutes. |
+| `agent_disconnected` | The agent's WebSocket dropped while this run was `running`. The server marks every in-flight run for that host as `agent_disconnected` so the row doesn't sit at `running` indefinitely. If the agent reconnects and posts a late `completed` / `failed` / `cancelled` for the same run, the server will update the row to that final state. |
 
 #### 2. Patch Policy
 
@@ -1480,6 +1500,7 @@ The agent chooses the patching back-end by detecting the host's package manager.
 | `pacman` | Arch Linux, Manjaro | Yes |
 | `pkg` | FreeBSD 13+ (plus `freebsd-update` for the base system on `patch_all`) | Yes |
 | `apk` | Alpine Linux | **No.** The agent reports `apk` inventory but rejects patch runs with `package manager "apk" not supported for patching (apt, dnf, yum, pkg, pacman required)`. Alpine hosts are visible in PatchMon and get compliance scans, but patch runs on them fail on the agent side. |
+| `zypper` | openSUSE Leap, openSUSE Tumbleweed, SLES | **No, and no inventory either. Coming soon.** The installer detects zypper and completes, and the agent detects the OS correctly, but the agent has no zypper backend. Package collection therefore fails with `unsupported package manager: unknown` and the host never completes its first report, so it sits at "Waiting for initial system report". Follow and vote for zypper support at [feedback.patchmon.net](https://feedback.patchmon.net/b/feature-requests/posts/post_01kyza53c0fzst214afbr1qn9a). |
 | Windows Update Agent (WUA) + WinGet | Windows 10/11, Server 2019/2022/2025 | Yes (separate path) |
 
 > **Note:** The 2.0 release notes describe Linux patching generally. If you need to patch Alpine hosts, track the package manager roadmap or use your existing Alpine tooling until `apk` support lands.
@@ -1519,7 +1540,7 @@ The end-to-end flow for a single `patch_all` run is:
 3. The browser calls `POST /patching/trigger` with `patch_type=patch_all`. Because `patch_all` cannot be dry-run, the run starts in `pending_approval` if you ticked "Submit for approval", or goes straight to `queued` otherwise.
 4. The server inserts a `patch_runs` row, snapshots the effective policy onto it, and enqueues a `run_patch` task on the `patching` asynq queue. If the policy introduces a delay, asynq schedules the task for the future and the run status shows `scheduled`.
 5. When the task dequeues, the server sends a `run_patch` WebSocket message to the agent connected for that host.
-6. The agent flips the run to `running`, calls `apt-get upgrade -y` (or the equivalent for the OS), and streams stdout/stderr back over `POST /patching/runs/{id}/output` in short chunks.
+6. The agent flips the run to `running`, calls `apt-get --with-new-pkgs upgrade -y` (or the equivalent for the OS), and streams stdout/stderr back over `POST /patching/runs/{id}/output` in short chunks. On Debian and Ubuntu, `--with-new-pkgs` lets the upgrade install packages it does not already have, which is what a kernel ABI bump needs. Without it apt holds those upgrades back and they would keep reappearing as outdated after every run.
 7. The server fans each chunk out to any browsers subscribed to `GET /patching/runs/{id}/stream`, and persists the combined output to the database.
 8. On success the agent sends a final `completed` stage with the authoritative shell output. The server marks the run `completed`, emits a `patch_run_completed` notification, and flags the host as "awaiting post-patch report" so the next inventory sync can update the package status.
 9. The Run Detail page swaps the green **Live** pill for a subtle **Awaiting inventory report** pill, then for **New report received** once the agent sends its next scheduled inventory report and the system knows the on-host packages reflect reality.
@@ -1594,7 +1615,7 @@ What happens next on the server:
 - If the policy introduces a delay, the task is scheduled for the future and the run is shown as `scheduled` in Runs & History. Otherwise it goes straight to `queued`.
 - The browser deep-links into the **Run Detail** page so you can watch the live terminal.
 
-> **Note:** `patch_all` cannot be dry-run. The agent's bulk-upgrade path (`apt-get upgrade`, `dnf upgrade`, `pkg upgrade`, `pacman -Syu`) does not support a reliable simulation mode. If you want a dry-run, patch specific packages instead.
+> **Note:** `patch_all` cannot be dry-run. The agent's bulk-upgrade path (`apt-get --with-new-pkgs upgrade`, `dnf upgrade`, `pkg upgrade`, `pacman -Syu`) does not support a reliable simulation mode. If you want a dry-run, patch specific packages instead.
 
 ---
 
@@ -2677,6 +2698,8 @@ The per-host **default profile** setting (Host Detail → Integrations → Compl
 
 Any host OS not listed has no SSG datastream available and OpenSCAP scans will be skipped on it. The scanner is still "available" in the integrations metadata if `oscap` is installed; it just has nothing to evaluate.
 
+> **SLES and OpenSUSE:** the datastreams above ship with the server and the agent already maps SUSE-family hosts to the right profiles, but these rows are not usable yet in practice. SUSE hosts cannot complete enrolment because the agent has no zypper backend (see the package manager table earlier in this guide), so they never reach the point of running a scan. These profiles become available once zypper support lands.
+
 **Default per-host state:** OpenSCAP is **enabled by default** on every host that has compliance turned on. This is controlled by the `compliance_openscap_enabled` host flag, defaulted to `true` in 1.4.2 and preserved on upgrade.
 
 #### 2. Docker Bench for Security
@@ -2733,7 +2756,7 @@ This is one of the most important architectural changes in 2.0 for compliance.
 
 In 1.x and earlier, each agent fetched SCAP Security Guide (SSG) content from GitHub at scan time. That required every agent to have outbound access to `github.com`, created occasional transient failures when GitHub was unavailable, and allowed agents to drift to different SSG versions depending on when they last pulled.
 
-In 2.0, SSG and CIS benchmarking content is **bundled with the server binary at build time** and served from a single `SSG_CONTENT_DIR` on the server. Agents now fetch content from the server itself, via two new endpoints:
+In 2.0, SSG and CIS benchmarking content is **bundled into the server image at build time** and served from a single `SSG_CONTENT_DIR` on the server. Agents now fetch content from the server itself, via two new endpoints:
 
 - `GET /api/v1/compliance/ssg-version`, returns the SSG version string and the list of `ssg-*-ds.xml` files available.
 - `GET /api/v1/compliance/ssg-content/{filename}`, streams a specific datastream file to the agent.
@@ -2742,9 +2765,10 @@ Both endpoints accept agent API-key authentication.
 
 #### What this means operationally
 
-- **No external network calls at scan time.** Agents in air-gapped environments no longer need GitHub access; they need server access, which they already had for heartbeats.
+- **No external network calls at scan time.** The server is the only place an agent gets SSG content from. Agents never contact `github.com` for it under any circumstance, so air-gapped fleets need nothing beyond the server access they already had for heartbeats.
 - **One SSG version across the fleet.** Every agent gets the same content bundle. The Compliance Settings page shows the active version and the list of content files under **OpenSCAP Content**.
-- **Version-pinned scanning.** Because the server binary ships with the content, upgrading the server is the way to get new SSG rules. You can also trigger a per-host `UpgradeSSG` job (Host Detail → Integrations → Compliance) to push the current server-bundled version to that host.
+- **Version-pinned scanning.** Because the image ships with the content, upgrading the server is the way to get new SSG rules. Hosts pick the new version up automatically on the daily content check, and you can push it to a single host sooner with the API call described under "Upgrading SSG content on a host".
+- **A server with no content fails loudly.** If the content directory is empty, for example because a volume was mounted over it, the server logs a warning at startup, Compliance Settings reports the content as unavailable, and agents are told so explicitly rather than quietly falling back to some other source.
 
 #### Where to see the active version
 
@@ -2988,18 +3012,46 @@ Compliance scanning on a host needs OpenSCAP (`oscap` binary) installed and the 
 2. On next Apply Pending Config, the agent receives the new integration state and reports that the scanner is not installed.
 3. From the Host Detail Compliance tab, click **Install Scanner**. The UI calls `POST /api/v1/compliance/install-scanner/{hostId}`.
 4. The server enqueues an install task. The worker sends an install message to the agent.
-5. The agent installs `openscap-scanner` (via `apt` / `dnf`) and downloads SSG content from the server via `GET /api/v1/compliance/ssg-content/{filename}`. Progress events are reported back to Redis and surfaced in the UI via `GET /compliance/install-job/{hostId}`, which returns the current state (`waiting`, `active`, `completed`) plus a per-step message and progress percent.
+5. The agent installs the OpenSCAP scanner with the host's own package manager, then downloads SSG content from the server via `GET /api/v1/compliance/ssg-content/{filename}`. Progress events are reported back to Redis and surfaced in the UI via `GET /compliance/install-job/{hostId}`, which returns the current state plus a per-step message and progress percent. The states are `none` (no install has been requested), `waiting`, `active`, `completed`, `failed`, and `unknown` when the job can no longer be found. A `failed` state also carries an `error` field with the reason.
 6. When the install completes, the Run Scan button becomes active.
+
+The scanner package name is not the same on every release, so the agent asks the archive which one it has rather than assuming. Debian 12 and newer, and Ubuntu 24.04 and newer, provide `openscap-scanner` plus `openscap-common`; Debian 10 and Ubuntu 22.04 provide `libopenscap8` instead. RHEL-family hosts use `openscap-scanner` and SUSE hosts use `openscap-utils`.
+
+Content is handled separately from the scanner, and a host that gets one without the other is not a failure. Ubuntu packages no SSG content at all, so on Ubuntu the datastream always comes from the PatchMon server. The install only fails outright when the host ends up with no working `oscap` binary.
 
 Install can be cancelled mid-flight from the same UI via `POST /api/v1/compliance/install-scanner/{hostId}/cancel`.
 
+#### Platforms where the scanner cannot be installed
+
+Some supported PatchMon hosts cannot run compliance scanning at all, because the platform publishes no OpenSCAP package, no SCAP content, or neither. On most of these the install reports the reason in plain terms. The exception is Amazon Linux 2, where the failure surfaces as raw `yum` output:
+
+| Platform | Reason |
+|----------|--------|
+| Debian 11 (bullseye) | OpenSCAP was removed from the archive before bullseye released, so no package provides `oscap` |
+| Amazon Linux 2 | The amzn2 repositories carry neither `openscap-scanner` nor `scap-security-guide` |
+| Alpine Linux | No SCAP datastream is published for Alpine, so a scanner would have nothing to scan against |
+| Arch Linux | OpenSCAP is available only from the AUR, and no datastream is published |
+| FreeBSD | No OpenSCAP port and no datastream |
+| Windows | The agent has no compliance integration on Windows |
+
+Everything else in the supported matrix can install the scanner: Debian 10, 12, 13 and 14, Ubuntu 22.04 and 24.04, the RHEL family (Rocky, AlmaLinux, CentOS Stream, Oracle Linux, Fedora, Amazon Linux 2023), and openSUSE.
+
+On Debian 10 the install succeeds but the results are not useful. PatchMon ships no Debian 10 datastream, so the host falls back to the very old content in buster's own `ssg-debian` package, and every rule comes back as "not applicable" because the content targets an earlier Debian release. Treat compliance scanning on Debian 10 as unavailable in practice.
+
+If the status panel shows **Partial Installation**, some scanners are present and others are not. A common case is a host running Docker, where Docker Bench is ready but OpenSCAP is missing, so scans return Docker Bench results only and the scanner panel reports "No SCAP content found". The same button appears in that state, labelled **Retry install**, and installs whatever is missing.
+
 #### Upgrading SSG content on a host
 
-When the server is upgraded to a newer PatchMon version with newer bundled SSG content, existing hosts may still have older content cached locally. To force an upgrade:
+When the server is upgraded to a newer PatchMon version with newer bundled SSG content, existing hosts may still have older content cached locally.
 
-1. Host Detail → Integrations → Compliance → **Upgrade SSG Content**. The UI calls `POST /api/v1/compliance/upgrade-ssg/{hostId}`.
-2. The server enqueues an `ssg_upgrade` task. The agent downloads the latest `ssg-*-ds.xml` files from the server.
-3. Poll the upgrade job via `GET /api/v1/compliance/ssg-upgrade-job/{hostId}`: the UI shows `waiting`, `active`, or `completed` with a message.
+You do not normally need to do anything. A daily check compares each host's reported SSG version against the version bundled with the server and pushes an upgrade to any host that is behind, so the fleet converges on its own within a day of a server upgrade.
+
+To push it to one host sooner:
+
+1. Call `POST /api/v1/compliance/upgrade-ssg/{hostId}` (requires the `can_manage_compliance` permission). The server enqueues an `ssg_upgrade` task and the agent downloads the current `ssg-*-ds.xml` for its OS from the server.
+2. Poll `GET /api/v1/compliance/ssg-upgrade-job/{hostId}` for `waiting`, `active`, or `completed` with a message.
+
+Re-running **Install Scanner** from Host Detail also re-syncs content from the server as part of the install.
 
 The Compliance Settings page always shows the currently-active server-side SSG version under **OpenSCAP Content → SSG *x.y.z***.
 
@@ -3078,13 +3130,12 @@ The Never scanned card is clickable, it toggles a filter on the **Hosts** tab to
 
 #### Six charts
 
-The Overview tab grid has six charts:
+The Overview tab grid has five charts:
 
 - **Failures by Severity**: stacked doughnut of critical / high / medium / low failed rules across the fleet. Clicking a slice deep-links into the Scan Results tab filtered to that severity.
 - **OpenSCAP Distribution**: split of pass / fail rules across OpenSCAP scans.
 - **Compliance Profiles**: pie of scans by profile type (OpenSCAP vs Docker Bench). Clicking drills into the matching filter.
 - **Last Scan Age**: distribution of when hosts were last scanned (today / this week / this month / older).
-- **Compliance Trend**: placeholder today; reserved for the trends view.
 - **Host Compliance Status**: bar chart of hosts by Compliant / Warning / Critical / Never Scanned.
 
 All charts refetch every 2 minutes (or every 30 seconds when there's at least one active scan) so the dashboard stays useful for an operator who leaves the page open during a rollout.
@@ -3231,7 +3282,7 @@ Auto-remediation was introduced in 1.4.0 ("Optional auto-remediation of failed r
 
 ### Trends Over Time
 
-`GET /api/v1/compliance/trends/{hostId}?days=30` returns the host's scan history as a time series: `completed_at`, `score`, `profile_name`, `profile_type` for each scan in the window. The UI uses this to render the **Compliance Trend** panel on the Overview tab (currently a placeholder waiting for rendering updates) and to show trend lines on Compliance Host Detail.
+`GET /api/v1/compliance/trends/{hostId}?days=30` returns the host's scan history as a time series: `completed_at`, `score`, `profile_name`, `profile_type` for each scan in the window. The UI uses this to show trend lines on Compliance Host Detail.
 
 The API supports `days` between 1 and 365. Typical use is the default 30 days for day-to-day monitoring, or 365 when writing an annual compliance report.
 
@@ -3308,8 +3359,8 @@ The following alert types fire from the server code in 2.0. Each can be individu
 
 | Type | Category | Fired when |
 |------|----------|-----------|
-| `host_down` | host | A host has not reported within 3× its `update_interval`, or its agent WebSocket disconnects |
-| `host_recovered` | host | A previously-down host starts reporting again or its WebSocket reconnects |
+| `host_down` | host | The host's agent WebSocket has been disconnected for longer than the `host_down` threshold (default 30 seconds, configurable in **Reporting → Alert Lifecycle**), or the host has not reported within that threshold during a periodic check. Displayed as **Host Agent Down**. |
+| `host_recovered` | host | A previously-down host's agent reconnects or its agent starts reporting again. Displayed as **Host Agent Recovered**. |
 | `host_enrolled` | host | A new host is successfully enrolled |
 | `host_deleted` | host | A host is removed from the inventory |
 | `host_security_updates_exceeded` | security | A host has more security updates than the configured threshold |
@@ -3365,15 +3416,27 @@ The **Alerts** tab supports four filters in addition to a free-text search box:
 | Filter | Values |
 |--------|--------|
 | **Severity** | `All Severities`, `Informational`, `Warning`, `Error`, `Critical` |
-| **Type** | `All Types` or any alert type present in the current result set |
+| **Type** | `All Types` or any alert type that exists in your alert history |
 | **Status** | `All Status`, `Open`, `Acknowledged`, `Investigating`, `Escalated`, `Silenced`, `Done`, `Resolved` |
-| **Assignment** | `All Assignments`, `Assigned to me`, `Assigned`, `Unassigned` |
+| **Assignment** | `All Assignments`, `Assigned to me`, `Assigned`, `Unassigned`, or a specific responder |
 
 Filters persist in the URL (`?tab=alerts&severity=critical&status=open`), so you can deep-link directly to a filtered view. The severity cards in the header also highlight when a filter is active.
 
+Filtering and searching are applied by the server across every alert, not just the alerts on the page you are looking at, so a search always returns matches from the whole history. The search box waits briefly after you stop typing before it runs, so results settle rather than flickering on every keystroke.
+
 #### Sorting
 
-Three columns in the alerts table are sortable by clicking the header: **Severity**, **Type**, and **Created**. The arrow icon next to the column header indicates the current sort direction.
+Three columns in the alerts table are sortable by clicking the header: **Severity**, **Type**, and **Created**. The arrow icon next to the column header indicates the current sort direction. Sorting is applied across the whole filtered set, so the first page always shows the true top of the sort.
+
+#### Pagination
+
+The alerts table is paginated. Below the table you will find:
+
+- **Rows per page**: 25, 50, 100, or 200. Your choice is remembered in the browser.
+- A count of the rows shown and the total number of alerts matching the current filters.
+- Previous and next page controls, with the current page number.
+
+Changing a filter, the search text, the sort, or the page size returns you to page one. Any row selection is cleared when you change page or filter, so a bulk action can only ever apply to alerts you can see.
 
 ### Alert lifecycle
 
@@ -3425,7 +3488,7 @@ Select one or more alerts using the checkboxes in the **Alerts** tab to reveal a
 
 Bulk updates stream through the same history recording as individual actions. Deleting an alert does not leave a history trail; use a resolution action if you want to keep the audit record.
 
-The number of selected alerts is shown on the left. Use the checkbox in the table header to select or deselect every visible row.
+The number of selected alerts is shown on the left. Use the checkbox in the table header to select or deselect every row on the current page. Selection does not carry across pages: to act on more alerts at once, raise the rows-per-page setting first.
 
 ### Per-alert-type configuration
 
@@ -3439,7 +3502,7 @@ Each row exposes:
 | **Severity** | Default severity applied to new alerts of this type. |
 | **Alert delay** | Seconds to wait before delivering the outbound notification. If a cancelling counterpart event (e.g. `host_recovered` for `host_down`) fires within the delay window, the notification is suppressed. Useful for flappy hosts. |
 | **Frequency** | For periodic checks only (`host_down`, `host_security_updates_exceeded`, `host_pending_updates_exceeded`). Minutes between checks. |
-| **Threshold** | For threshold alerts only (`host_security_updates_exceeded`, `host_pending_updates_exceeded`). Numeric threshold above which an alert fires. |
+| **Threshold** | For threshold alerts. Numeric threshold above which an alert fires. Units depend on the alert type: `host_security_updates_exceeded` and `host_pending_updates_exceeded` use a *count* (number of pending updates); `host_down` uses *seconds* (how long the agent's WebSocket can be disconnected before the alert fires). The `host_down` row shows a `sec` suffix to make this explicit; default is 30 seconds. |
 | **Auto-assign** | Toggle plus user picker: any new alert of this type is assigned to the chosen user automatically. |
 | **Retention** | Days to keep alerts of this type before cleanup. Empty = never auto-clean. |
 | **Auto-resolve** | Days after which active alerts auto-resolve if no one touches them. |
@@ -3471,7 +3534,7 @@ Admins and superadmins bypass these checks. Regular users without `can_manage_al
 - [Notification Destinations](#notification-destinations)
 - [Notification Routes and Delivery Log](#notification-routes-and-delivery-log)
 - [Scheduled Reports](#scheduled-reports)
-- Host Down and Host Recovered Alerts
+- Host Agent Down and Host Agent Recovered Alerts
 
 ---
 
@@ -3491,7 +3554,7 @@ PatchMon 2.0 ships four destination channel types. The list is fixed in the serv
 
 | Channel | Value | What it does |
 |---------|-------|--------------|
-| **Webhook** | `webhook` | HTTP POST of a JSON payload to any URL. Generic by default; Discord and Slack webhook URLs are auto-detected and formatted with the appropriate rich payload. |
+| **Webhook** | `webhook` | HTTP POST of a JSON payload to any URL. Generic by default; Discord, Slack, Mattermost and Rocket.Chat webhook URLs are auto-detected and formatted with the appropriate rich payload. |
 | **Email** | `email` | SMTP delivery to one or more recipients, with HTML body and an optional attachment for scheduled reports. |
 | **ntfy** | `ntfy` | Push notification via [ntfy.sh](https://ntfy.sh) or a self-hosted ntfy server. |
 | **Internal Alerts** | `internal` | Built-in destination that drops events into the **Alerts** tab. You cannot create or delete this one; it is created automatically and can only be enabled or disabled. |
@@ -3516,12 +3579,16 @@ A successfully-created destination shows up in the destinations table with its c
 
 #### Webhook
 
-Pick this for **generic JSON webhooks, Discord, or Slack**. Discord and Slack URLs are auto-detected and sent rich payloads; other URLs receive a generic JSON body.
+Pick this for **generic JSON webhooks, Discord, Slack, Mattermost or Rocket.Chat**. Discord, Slack, Mattermost and Rocket.Chat URLs are auto-detected and sent rich payloads; other URLs receive a generic JSON body.
 
 | Field | Required | Notes |
 |-------|:--------:|-------|
-| **Webhook URL** | Yes | Full HTTPS URL. Discord: `https://discord.com/api/webhooks/...`. Slack: `https://hooks.slack.com/services/...`. Generic: any endpoint that accepts `POST` with `Content-Type: application/json`. |
+| **Webhook URL** | Yes | Full HTTPS URL. Discord: `https://discord.com/api/webhooks/...`. Slack: `https://hooks.slack.com/services/...`. Mattermost: `https://your-mattermost/hooks/...`. Generic: any endpoint that accepts `POST` with `Content-Type: application/json`. |
 | **Signing secret** | No | Optional HMAC secret. When set, each webhook is signed with SHA-256 over the payload; the signature is sent in a header so the receiver can verify authenticity. |
+
+> **Mattermost and Rocket.Chat.** Both are self-hosted on your own domain, so PatchMon cannot detect them by hostname. It detects them by the `/hooks/<token>` path that both use for incoming webhooks, and sends the Slack-compatible payload they expect. A URL such as `https://chat.example.com/hooks/xxxgeneratedkeyxxx` is matched, and so is one behind a subpath proxy, for example `https://example.com/mattermost/hooks/xxxgeneratedkeyxxx`. The match requires one or two long opaque tokens after `/hooks/`, so an automation platform that happens to use a `/hooks/` path for routing (a Zapier catch hook, for example) is not mistaken for a chat server and keeps the generic body. Jira and Confluence automation URLs on `automation.atlassian.com` are excluded by name, because they are shaped like a chat webhook but are consumed as structured data.
+
+The generic JSON body also carries a top-level `text` key, alongside the structured `event_type`, `severity`, `title`, `message`, `reference` and `metadata` fields. Receivers that read the structured fields are unaffected, and any receiver that requires a `text` key works without extra configuration. Note that `text` is formatted in Slack-style markdown, so it contains `*bold*` markers and Slack link syntax such as `<https://…|View in PatchMon>`; a receiver that renders it as literal text will show that markup. On scheduled reports the `text` key is a short preview only, because the full report is already present in the `html` and `csv` fields.
 
 #### Email (SMTP)
 
@@ -3533,7 +3600,43 @@ Pick this for **generic JSON webhooks, Discord, or Slack**. Discord and Slack UR
 | **Password** | No | SMTP auth password. Stored encrypted. |
 | **From** | Yes | Envelope + header `From` address, e.g. `patchmon@example.com`. Must be accepted by the relay. |
 | **To** | Yes | Comma-separated list of recipients. |
-| **Use TLS** | No | On by default. STARTTLS on port 587, implicit TLS on 465. Disable only for on-prem relays without TLS. |
+| **TLS mode** | Yes | Choose how the SMTP transport secures the connection. See **TLS modes** below. Defaults to **STARTTLS** for new destinations. |
+
+##### TLS modes
+
+PatchMon offers four TLS modes on every email destination. Pick the one your relay actually supports rather than leaving it on **Auto**, so a misconfigured server fails closed instead of silently downgrading to plaintext.
+
+- **STARTTLS (recommended).** PatchMon connects in plaintext on the SMTP port (typically 587) and then requires the server to advertise `STARTTLS`. The connection is upgraded to TLS before any credentials or message body are sent. If the server does not advertise `STARTTLS`, PatchMon refuses to send and reports the failure. This is the right choice for the vast majority of modern relays (Microsoft 365, Google Workspace, SendGrid, Postmark, Mailgun, Amazon SES on port 587, and most on-prem mail servers).
+- **Implicit TLS / SSL.** PatchMon opens a TLS connection from the very first byte, with no plaintext handshake. The default port for this mode is 465. Use it when your relay only accepts TLS on a dedicated port and does not support `STARTTLS`. Some legacy or appliance-based servers only offer this mode.
+- **None (insecure).** Cleartext SMTP, no TLS at any stage. If a username or password is set on the destination, PatchMon refuses to send unless you also tick **Send credentials over an unencrypted connection**, because authenticating in cleartext puts the credentials on the wire. See **Authenticated relays without TLS** below. Use this mode only for trusted internal relays on a private network where TLS is genuinely unavailable.
+- **Auto.** Legacy opportunistic mode kept for backward compatibility. PatchMon tries `STARTTLS` first and falls back to implicit TLS on the same host and port if `STARTTLS` is not advertised. Existing destinations that were saved before the explicit modes were added load as **Auto** so they keep working unchanged. Open the destination, pick **STARTTLS** or **Implicit TLS / SSL** explicitly once you have confirmed which one your relay supports, and save. New destinations should not be configured as **Auto**.
+
+##### Authenticated relays without TLS
+
+Some internal relays require SMTP AUTH but do not offer TLS at all. By default PatchMon refuses that combination, because PLAIN authentication over cleartext puts the username and password on the wire in a form anyone on the network path can read.
+
+If the relay is on a network you trust and you accept that trade-off, set **TLS mode** to **None (insecure)** and tick **Send credentials over an unencrypted connection** on the destination. PatchMon then authenticates in cleartext for that destination only.
+
+Points worth knowing before you enable it:
+
+- The setting is per destination, not global. Other email destinations are unaffected.
+- It applies only in **None (insecure)** mode. In **STARTTLS**, **Implicit TLS / SSL**, and **Auto** it is ignored, so it can never weaken a mode that does use TLS.
+- It is off by default, including on every destination that already exists.
+- Anyone able to observe traffic between PatchMon and the relay can read the credentials. Use a dedicated relay account with no privileges beyond sending mail, and never reuse a password from elsewhere.
+- The preferred fix remains enabling STARTTLS on the relay, even with a self-signed or internal CA certificate.
+
+> Port and mode are independent. The port field is just the TCP port to connect to; the TLS mode controls how the connection is secured. The defaults (587 for STARTTLS, 465 for implicit TLS) match the conventional ports, but you can override the port if your relay listens elsewhere.
+
+##### Send test email
+
+Saved email destinations have a **Send test email** button next to the standard **Test** action. Unlike **Test**, which enqueues a synthetic notification through the worker, **Send test email** performs a synchronous live SMTP probe directly from the API request and reports the result inline:
+
+- On success the toast confirms delivery and the recipients should receive a short test message.
+- On failure PatchMon reports which stage of the SMTP exchange failed: `validate` (the configuration is rejected before any network activity, for example a missing host, or a username set with TLS mode **None** without the cleartext credentials opt-in), `dial` (the TCP connection or implicit TLS handshake could not be established), `starttls` (the server did not advertise `STARTTLS` in the chosen mode), `auth` (the relay rejected the credentials), or `send` (the relay accepted the session but rejected the recipients or message). The toast includes the underlying error message returned by the relay.
+
+This is the fastest way to diagnose a TLS or auth misconfiguration without trawling through server logs. The probe respects the same `can_manage_notifications` permission as editing the destination.
+
+> The probe always uses the **last saved** configuration, not what is currently on screen. Save the destination before testing, otherwise you are testing the previous settings. This matters most when you have just ticked **Send credentials over an unencrypted connection**: until you save, the probe still fails at the `validate` stage.
 
 #### ntfy
 
@@ -3736,6 +3839,7 @@ If all five retries fail, the delivery row stays at the last `failed` state. The
 | `connect: connection refused` / `i/o timeout` | Destination host is unreachable from the PatchMon server. Check firewall / network. |
 | `authentication failed` / `535 5.7.8` | Wrong SMTP credentials or token. Re-edit the destination and re-enter. |
 | `400 Bad Request` from Discord/Slack webhook | Webhook URL is wrong, revoked, or the rich payload is malformed for a customised Slack app. |
+| `webhook status 400` from Mattermost or Rocket.Chat | The webhook was deleted or the token is wrong, or the target channel no longer exists. Re-copy the URL from the integration page. Versions before 2.1.3 returned this for every delivery regardless of the URL; upgrade if you are on an older release. |
 | `403 Forbidden` from ntfy | Topic requires auth you have not provided, or token is expired. |
 | `destination disabled` | Someone disabled the destination between enqueue and delivery. Re-enable and re-trigger. |
 
@@ -3748,6 +3852,26 @@ Duplicates suppressed by the 2-minute dedup window do **not** appear in the deli
 1. The destination is enabled.
 2. No route has been deleted.
 3. The per-minute rate cap is not being exceeded upstream. 60 messages/minute is per-destination.
+
+#### Diagnosing a webhook with `LOG_LEVEL=debug`
+
+The delivery log records the outcome of a delivery, not how it was built. To see which payload format a webhook destination actually received, set `LOG_LEVEL` to `debug` (**Settings > Environment**, or the `LOG_LEVEL` env var). Every webhook delivery then writes one line:
+
+```
+level=DEBUG msg="webhook dispatch" destination_id=... event_type=host_down
+  format=slack_compatible host=chat.example.com body_bytes=229 signed=true
+```
+
+| Field | Meaning |
+|-------|---------|
+| `format` | `discord`, `slack_compatible` or `generic`. This is the payload shape that was sent, so it tells you whether auto-detection recognised your receiver. |
+| `host` | Host of the destination URL. The path is deliberately omitted because it carries the webhook's secret token. |
+| `body_bytes` | Size of the JSON body, useful when a receiver enforces a size limit. |
+| `signed` | Whether an HMAC signature header was attached. |
+
+If `format` is `generic` for a chat server you expected to be recognised, the URL is not on a `/hooks/<token>` path. The delivery still works, because the generic body carries a `text` key, but the message will be less richly formatted. The destination form shows the same detection result before you save.
+
+Debug level is verbose across the whole server, so turn it back to `info` once you have the answer.
 
 ### App links in notifications
 
@@ -4096,7 +4220,7 @@ RDP is provided under the **remote_access** capability module.
 
 Key components:
 
-- **`guacd`**: Apache Guacamole's daemon, shipped as a sidecar container in PatchMon's Docker Compose (`guacamole/guacd:1.5.5`). Runs on `4822/tcp` inside the `patchmon-internal` network. No public ports.
+- **`guacd`**: Apache Guacamole's daemon, shipped as a sidecar container in PatchMon's Docker Compose (`guacamole/guacd:1.6.0`). Runs on `4822/tcp` inside the `patchmon-internal` network. No public ports.
 - **PatchMon server**: acts as the Guacamole WebSocket tunnel endpoint and owns the RDP ticket store. It asks the host's agent to set up a local TCP proxy, then hands that proxy to `guacd`.
 - **Agent proxy**: on receiving `rdp_proxy` over its WebSocket, the agent opens a local TCP bridge and forwards bytes between PatchMon and `localhost:3389` on the Windows host. Requires `integrations.rdp-proxy-enabled: true` in the agent config.
 - **Windows host**: runs the standard Windows RDP service on `127.0.0.1:3389` (bound to localhost via the agent; no inbound exposure needed).

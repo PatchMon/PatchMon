@@ -7,6 +7,7 @@
 import { useQuery } from "@tanstack/react-query";
 import {
 	BookOpen,
+	Bug,
 	CreditCard,
 	Github,
 	Globe,
@@ -22,7 +23,9 @@ import DiscordIcon from "./DiscordIcon";
 const ICON_MAP = {
 	discord: DiscordIcon,
 	github: Github,
-	github_issues: Github,
+	// Bug, not Github: this sits next to the repo link in the login footer and
+	// the two were indistinguishable when both rendered the same GitHub mark.
+	github_issues: Bug,
 	email: Mail,
 	linkedin: FaLinkedin,
 	youtube: FaYoutube,
@@ -183,6 +186,7 @@ export const LoginCommunityLinks = () => {
 		"linkedin",
 		"youtube",
 		"roadmap",
+		"github_issues",
 		"docs",
 		"website",
 	];
@@ -234,9 +238,15 @@ export const LoginCommunityLinks = () => {
 							</span>
 						)}
 						{!link.stat &&
-							["roadmap", "docs", "website", "buymeacoffee"].includes(
-								link.id,
-							) && <span className="sr-only">{link.label}</span>}
+							[
+								"roadmap",
+								"github_issues",
+								"docs",
+								"website",
+								"buymeacoffee",
+							].includes(link.id) && (
+								<span className="sr-only">{link.label}</span>
+							)}
 					</a>
 				);
 			})}

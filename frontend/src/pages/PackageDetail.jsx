@@ -1,4 +1,8 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	keepPreviousData,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import {
 	AlertTriangle,
 	ArrowLeft,
@@ -17,11 +21,12 @@ import {
 	Square,
 	Wrench,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import PatchWizard from "../components/PatchWizard";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
+import { usePageRefresh } from "../hooks/usePageRefresh";
 import { formatRelativeTime, packagesAPI } from "../utils/api";
 
 function formatRepoName(name) {
@@ -57,6 +62,19 @@ const PackageDetail = () => {
 	// every row and would disable the whole table on a single click.
 	const [patchingHostId, setPatchingHostId] = useState(null);
 
+	// Debounce search for backend (avoid refetch on every keystroke)
+	const [debouncedSearch, setDebouncedSearch] = useState("");
+	const searchDebounceRef = useRef(null);
+	useEffect(() => {
+		if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+		searchDebounceRef.current = setTimeout(() => {
+			setDebouncedSearch(searchTerm.trim());
+		}, 400);
+		return () => {
+			if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+		};
+	}, [searchTerm]);
+
 	// Shared post-submit handler for both per-host and multi-host wizards.
 	// The wizard owns the server call; we only deal with UX after.
 	const handlePatchWizardSuccess = (mode, info) => {
@@ -82,7 +100,7 @@ const PackageDetail = () => {
 			return;
 		}
 		const immediate = runs.filter((r) => r.immediate);
-		if (mode === "patch" && immediate.length === 1) {
+		if (mode === "patch" && !info?.deferred && immediate.length === 1) {
 			navigate(`/patching/runs/${immediate[0].runId}`);
 			return;
 		}
@@ -101,8 +119,6 @@ const PackageDetail = () => {
 		queryKey: ["package", decodedPackageId],
 		queryFn: () =>
 			packagesAPI.getById(decodedPackageId).then((res) => res.data),
-		staleTime: 5 * 60 * 1000,
-		refetchOnWindowFocus: false,
 		enabled: !!decodedPackageId,
 	});
 
@@ -111,12 +127,11 @@ const PackageDetail = () => {
 		data: hostsData,
 		isLoading: isLoadingHosts,
 		error: hostsError,
-		refetch: refetchHosts,
 	} = useQuery({
 		queryKey: [
 			"package-hosts",
 			decodedPackageId,
-			searchTerm,
+			debouncedSearch,
 			currentPage,
 			pageSize,
 			onlyPending,
@@ -124,14 +139,13 @@ const PackageDetail = () => {
 		queryFn: () =>
 			packagesAPI
 				.getHosts(decodedPackageId, {
-					search: searchTerm,
+					search: debouncedSearch,
 					page: currentPage,
 					limit: pageSize,
 					...(onlyPending ? { needsUpdate: true } : {}),
 				})
 				.then((res) => res.data),
-		staleTime: 5 * 60 * 1000,
-		refetchOnWindowFocus: false,
+		placeholderData: keepPreviousData,
 		enabled: !!decodedPackageId,
 	});
 
@@ -157,11 +171,17 @@ const PackageDetail = () => {
 		selectedHostIds.has(h.hostId),
 	);
 
+	// Reset to first page when the search changes
+	// biome-ignore lint/correctness/useExhaustiveDependencies: intentionally reset when the debounced search changes
+	useEffect(() => {
+		setCurrentPage(1);
+	}, [debouncedSearch]);
+
 	// Reset selection when filter / search / page changes - the visible set changed
 	// biome-ignore lint/correctness/useExhaustiveDependencies: intentionally reset when these change
 	useEffect(() => {
 		setSelectedHostIds(new Set());
-	}, [searchTerm, currentPage, pageSize, onlyPending, decodedPackageId]);
+	}, [debouncedSearch, currentPage, pageSize, onlyPending, decodedPackageId]);
 
 	const toggleHost = (hostId) => {
 		setSelectedHostIds((prev) => {
@@ -188,10 +208,16 @@ const PackageDetail = () => {
 		navigate(`/hosts/${hostId}`);
 	};
 
-	const handleRefresh = () => {
-		refetchPackage();
-		refetchHosts();
-	};
+	const packageRefreshKeys = useMemo(
+		() => [
+			["package", decodedPackageId],
+			["package-hosts", decodedPackageId],
+			["package-activity", decodedPackageId],
+		],
+		[decodedPackageId],
+	);
+	const { refresh: handleRefresh, isRefreshing } =
+		usePageRefresh(packageRefreshKeys);
 
 	if (isLoadingPackage) {
 		return (
@@ -277,14 +303,12 @@ const PackageDetail = () => {
 				</div>
 				<button
 					type="button"
-					onClick={handleRefresh}
-					disabled={isLoadingPackage || isLoadingHosts}
+					onClick={() => handleRefresh()}
+					disabled={isRefreshing}
 					className="btn-outline flex items-center gap-2 text-sm sm:text-base self-start sm:self-auto"
 				>
 					<RefreshCw
-						className={`h-4 w-4 ${
-							isLoadingPackage || isLoadingHosts ? "animate-spin" : ""
-						}`}
+						className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
 					/>
 					Refresh
 				</button>
@@ -432,10 +456,7 @@ const PackageDetail = () => {
 									type="text"
 									placeholder="Search hosts..."
 									value={searchTerm}
-									onChange={(e) => {
-										setSearchTerm(e.target.value);
-										setCurrentPage(1);
-									}}
+									onChange={(e) => setSearchTerm(e.target.value)}
 									className="w-full pl-10 pr-4 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white placeholder-secondary-500 dark:placeholder-secondary-400 text-sm sm:text-base"
 								/>
 							</div>
@@ -491,7 +512,7 @@ const PackageDetail = () => {
 								<div className="text-center py-8">
 									<Server className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
 									<p className="text-secondary-500 dark:text-white">
-										{searchTerm
+										{debouncedSearch
 											? "No hosts match your search"
 											: onlyPending
 												? "All hosts are up to date for this package"
@@ -965,6 +986,7 @@ const PackageDetail = () => {
 					restrictHostIds={selectedHostIds}
 					onSuccess={(mode, info) => {
 						handlePatchWizardSuccess(mode, info);
+						if (info?.deferred) return;
 						if (
 							!(mode === "patch" && (info?.runs || []).some((r) => r.immediate))
 						) {

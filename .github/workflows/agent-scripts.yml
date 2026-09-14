@@ -1,0 +1,95 @@
+name: Agent scripts
+
+# The agent scripts must exist exactly once, in server-source-code/internal/agents/,
+# where go:embed compiles them into the server binary.
+#
+# They used to exist twice, with a second copy at agents/ that the Dockerfile
+# put into the image. Because loadScript reads AGENTS_DIR before falling back
+# to the embed, that second copy is what Docker actually served, and it silently
+# went stale: fixes merged into internal/agents/ reached bare-metal installs but
+# not Docker ones.
+#
+# A pre-commit hook guarded that and never fired, because lefthook is not
+# installed on a normal developer machine and a missing binary fails open. This
+# runs in CI instead, where it cannot be skipped by an absent tool or
+# --no-verify.
+
+on:
+  push:
+    paths:
+      - 'agents/**'
+      - 'server-source-code/internal/agents/**'
+      - 'docker/server.Dockerfile'
+      - '.github/workflows/agent-scripts.yml'
+  pull_request:
+    paths:
+      - 'agents/**'
+      - 'server-source-code/internal/agents/**'
+      - 'docker/server.Dockerfile'
+      - '.github/workflows/agent-scripts.yml'
+
+jobs:
+  single-source:
+    name: Scripts have a single source
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: No duplicate agent scripts outside the embedded directory
+        run: |
+          set -euo pipefail
+
+          embedded="server-source-code/internal/agents"
+
+          # Anything tracked under agents/ reintroduces the duplicate. The agent
+          # binaries there are gitignored build artefacts and are supplied to the
+          # image from agents-prebuilt/, so a tracked file is always a mistake.
+          if duplicates="$(git ls-files agents/ 2>/dev/null)" && [ -n "$duplicates" ]; then
+            echo "::error::Tracked files found under agents/. Agent scripts belong only in ${embedded}/,"
+            echo "::error::where go:embed compiles them into the binary. A copy under agents/ is served"
+            echo "::error::instead of the embed in Docker (AGENTS_DIR) and will drift silently."
+            echo "$duplicates" | sed 's/^/  /'
+            exit 1
+          fi
+
+          # The Dockerfile must not reintroduce the copy either.
+          if grep -qE '^[[:space:]]*COPY[[:space:]]+agents[[:space:]]' docker/server.Dockerfile; then
+            echo "::error::docker/server.Dockerfile copies agents/ into the image. Scripts are embedded;"
+            echo "::error::only the prebuilt binaries should be copied, from agents-prebuilt/."
+            exit 1
+          fi
+
+          # A script that exists nowhere is as broken as one that exists twice.
+          missing=0
+          for f in patchmon_install.sh patchmon_remove.sh direct_host_auto_enroll.sh proxmox_auto_enroll.sh; do
+            if [ ! -f "${embedded}/${f}" ]; then
+              echo "::error::${embedded}/${f} is missing"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+
+          echo "Agent scripts have a single source in ${embedded}/"
+
+      - name: Scripts are syntactically valid
+        run: |
+          set -euo pipefail
+          embedded="server-source-code/internal/agents"
+
+          # patchmon_install.sh and patchmon_remove.sh are #!/bin/sh, so check
+          # them with dash rather than bash: bash accepts constructs dash does
+          # not, and these run on hosts with no bash at all.
+          sudo apt-get update -qq && sudo apt-get install -y -qq dash >/dev/null
+
+          for f in "${embedded}"/*.sh; do
+            interp="$(head -1 "$f")"
+            case "$interp" in
+              *bash) bash -n "$f" && echo "ok (bash -n): $f" ;;
+              *)     dash -n "$f" && echo "ok (dash -n): $f" ;;
+            esac
+          done

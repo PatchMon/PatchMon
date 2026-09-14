@@ -7,6 +7,7 @@ import {
 	Globe,
 	Lock,
 	Package,
+	RefreshCw,
 	RotateCcw,
 	Search,
 	Server,
@@ -14,6 +15,7 @@ import {
 	ShieldOff,
 	Trash2,
 	Unlock,
+	X,
 } from "lucide-react";
 
 import {
@@ -113,7 +115,7 @@ const RepositoryDetail = () => {
 	const getPackageStatusBadge = (stats) => {
 		if ((stats?.securityUpdates || 0) > 0) {
 			return (
-				<span className="badge-danger flex items-center gap-1">
+				<span className="badge-danger flex items-center gap-1 w-fit">
 					<Shield className="h-3 w-3" />
 					Security Update
 				</span>
@@ -123,6 +125,19 @@ const RepositoryDetail = () => {
 			return <span className="badge-warning">Update Available</span>;
 		}
 		return <span className="badge-success">Up to Date</span>;
+	};
+
+	const getRebootBadge = (host) => {
+		if (!host.needs_reboot) return null;
+		return (
+			<span
+				className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-warning-100 text-warning-800 dark:bg-warning-900 dark:text-warning-200"
+				title="Reboot required"
+			>
+				<RotateCcw className="h-3 w-3" />
+				Required
+			</span>
+		);
 	};
 
 	const hosts = repository?.host_repositories || [];
@@ -172,8 +187,8 @@ const RepositoryDetail = () => {
 	const updateRepositoryMutation = useMutation({
 		mutationFn: (data) => repositoryAPI.update(repositoryId, data),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["repository", repositoryId]);
-			queryClient.invalidateQueries(["repositories"]);
+			queryClient.invalidateQueries({ queryKey: ["repository", repositoryId] });
+			queryClient.invalidateQueries({ queryKey: ["repositories"] });
 			setEditMode(false);
 		},
 	});
@@ -182,7 +197,7 @@ const RepositoryDetail = () => {
 	const deleteRepositoryMutation = useMutation({
 		mutationFn: () => repositoryAPI.delete(repositoryId),
 		onSuccess: () => {
-			queryClient.invalidateQueries(["repositories"]);
+			queryClient.invalidateQueries({ queryKey: ["repositories"] });
 			navigate("/repositories");
 		},
 	});
@@ -192,7 +207,7 @@ const RepositoryDetail = () => {
 			name: repository.name,
 			description: repository.description || "",
 			is_active: repository.is_active,
-			priority: repository.priority || "",
+			priority: repository.priority ?? "",
 		});
 		setEditMode(true);
 	};
@@ -222,27 +237,31 @@ const RepositoryDetail = () => {
 	if (isLoading) {
 		return (
 			<div className="flex items-center justify-center h-64">
-				<div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+				<RefreshCw className="h-8 w-8 animate-spin text-primary-600" />
 			</div>
 		);
 	}
 
 	if (error) {
 		return (
-			<div className="space-y-6">
-				<div className="flex items-center gap-4">
+			<div className="space-y-4 sm:space-y-6">
+				<div className="flex items-center gap-3">
 					<Link
 						to="/repositories"
-						className="btn-outline flex items-center gap-2"
+						className="inline-flex items-center justify-center -ml-2 min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 md:ml-0 text-secondary-500 hover:text-secondary-700 dark:text-white dark:hover:text-secondary-200"
+						aria-label="Back to repositories"
+						title="Back to Repositories"
 					>
-						<ArrowLeft className="h-4 w-4" />
-						Back to Repositories
+						<ArrowLeft className="h-5 w-5" />
 					</Link>
+					<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
+						Repository
+					</h1>
 				</div>
-				<div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+				<div className="bg-danger-50 dark:bg-danger-900/20 border border-danger-200 dark:border-danger-800 rounded-lg p-4">
 					<div className="flex items-center">
-						<AlertTriangle className="h-5 w-5 text-red-400 mr-2" />
-						<span className="text-red-700 dark:text-red-300">
+						<AlertTriangle className="h-5 w-5 text-danger-400 mr-2 flex-shrink-0" />
+						<span className="text-danger-700 dark:text-danger-300">
 							Failed to load repository: {error.message}
 						</span>
 					</div>
@@ -253,15 +272,19 @@ const RepositoryDetail = () => {
 
 	if (!repository) {
 		return (
-			<div className="space-y-6">
-				<div className="flex items-center gap-4">
+			<div className="space-y-4 sm:space-y-6">
+				<div className="flex items-center gap-3">
 					<Link
 						to="/repositories"
-						className="btn-outline flex items-center gap-2"
+						className="inline-flex items-center justify-center -ml-2 min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 md:ml-0 text-secondary-500 hover:text-secondary-700 dark:text-white dark:hover:text-secondary-200"
+						aria-label="Back to repositories"
+						title="Back to Repositories"
 					>
-						<ArrowLeft className="h-4 w-4" />
-						Back to Repositories
+						<ArrowLeft className="h-5 w-5" />
 					</Link>
+					<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white">
+						Repository
+					</h1>
 				</div>
 				<div className="text-center py-12">
 					<Database className="mx-auto h-12 w-12 text-secondary-400" />
@@ -277,38 +300,64 @@ const RepositoryDetail = () => {
 	}
 
 	return (
-		<div className="space-y-6">
+		<div className="space-y-4 sm:space-y-6">
 			{/* Delete Confirmation Modal */}
 			{showDeleteModal && (
-				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-					<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 max-w-md w-full mx-4">
-						<div className="flex items-center mb-4">
-							<AlertTriangle className="h-6 w-6 text-red-500 mr-3" />
-							<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
-								Delete Repository
-							</h3>
+				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+					<button
+						type="button"
+						onClick={cancelDelete}
+						className="fixed inset-0 cursor-default"
+						aria-label="Close modal"
+						disabled={deleteRepositoryMutation.isPending}
+					/>
+					<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 relative z-10">
+						<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
+							<div className="flex items-center justify-between gap-3">
+								<div className="flex items-center gap-3 min-w-0">
+									<div className="w-10 h-10 bg-danger-100 dark:bg-danger-900 rounded-full flex items-center justify-center flex-shrink-0">
+										<AlertTriangle className="h-5 w-5 text-danger-600 dark:text-danger-400" />
+									</div>
+									<div className="min-w-0">
+										<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+											Delete Repository
+										</h3>
+										<p className="text-sm text-secondary-600 dark:text-white">
+											This action cannot be undone
+										</p>
+									</div>
+								</div>
+								<button
+									type="button"
+									onClick={cancelDelete}
+									className="p-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-700 text-secondary-400 hover:text-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
+									aria-label="Close"
+									disabled={deleteRepositoryMutation.isPending}
+								>
+									<X className="h-5 w-5" />
+								</button>
+							</div>
 						</div>
-						<div className="mb-6">
-							<p className="text-secondary-700 dark:text-white mb-2">
+						<div className="px-6 py-4">
+							<p className="text-secondary-700 dark:text-white">
 								Are you sure you want to delete{" "}
-								<strong>"{repository?.name}"</strong>?
+								<span className="font-semibold">"{repository?.name}"</span>?
 							</p>
 							{repository?.host_repositories?.length > 0 && (
-								<p className="text-amber-600 dark:text-amber-400 text-sm">
-									⚠️ This repository is currently assigned to{" "}
-									{repository.host_repositories.length} host
-									{repository.host_repositories.length !== 1 ? "s" : ""}.
-								</p>
+								<div className="mt-3 p-3 bg-danger-50 dark:bg-danger-900 border border-danger-200 dark:border-danger-700 rounded-md">
+									<p className="text-sm text-danger-800 dark:text-danger-200">
+										<strong>Warning:</strong> This repository is currently
+										assigned to {repository.host_repositories.length} host
+										{repository.host_repositories.length !== 1 ? "s" : ""}.
+									</p>
+								</div>
 							)}
-							<p className="text-red-600 dark:text-red-400 text-sm mt-2">
-								This action cannot be undone.
-							</p>
 						</div>
-						<div className="flex gap-3 justify-end">
+						<div className="px-6 py-4 border-t border-secondary-200 dark:border-secondary-600 flex justify-end gap-3">
 							<button
 								type="button"
 								onClick={cancelDelete}
-								className="px-4 py-2 text-secondary-600 dark:text-white hover:text-secondary-800 dark:hover:text-secondary-200 transition-colors"
+								className="btn-outline"
 								disabled={deleteRepositoryMutation.isPending}
 							>
 								Cancel
@@ -316,7 +365,7 @@ const RepositoryDetail = () => {
 							<button
 								type="button"
 								onClick={confirmDelete}
-								className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+								className="btn-danger disabled:opacity-50 disabled:cursor-not-allowed"
 								disabled={deleteRepositoryMutation.isPending}
 							>
 								{deleteRepositoryMutation.isPending
@@ -329,44 +378,41 @@ const RepositoryDetail = () => {
 			)}
 
 			{/* Header */}
-			<div className="flex items-center justify-between">
-				<div className="flex items-center gap-4">
+			<div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 pb-4 border-b border-secondary-200 dark:border-secondary-600">
+				<div className="flex items-start gap-3 min-w-0">
 					<Link
 						to="/repositories"
-						className="btn-outline flex items-center gap-2"
+						className="inline-flex items-center justify-center -ml-2 min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 md:ml-0 md:mt-1 flex-shrink-0 text-secondary-500 hover:text-secondary-700 dark:text-white dark:hover:text-secondary-200"
+						aria-label="Back to repositories"
+						title="Back to Repositories"
 					>
-						<ArrowLeft className="h-4 w-4" />
-						Back
+						<ArrowLeft className="h-5 w-5" />
 					</Link>
-					<div>
-						<div className="flex items-center gap-3">
-							{repository.isSecure ? (
-								<Lock className="h-6 w-6 text-green-600" />
-							) : (
-								<Unlock className="h-6 w-6 text-orange-600" />
-							)}
-							<h1 className="text-2xl font-bold text-secondary-900 dark:text-white">
-								{repository.name}
-							</h1>
-							<span
-								className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-									repository.is_active
-										? "bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300"
-										: "bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-300"
-								}`}
-							>
-								{repository.is_active ? "Active" : "Inactive"}
-							</span>
-						</div>
+					<div className="flex items-center gap-3 flex-wrap min-w-0">
+						{repository.isSecure ? (
+							<Lock className="h-6 w-6 text-success-600 flex-shrink-0" />
+						) : (
+							<Unlock className="h-6 w-6 text-warning-600 flex-shrink-0" />
+						)}
+						<h1 className="text-2xl font-semibold text-secondary-900 dark:text-white truncate">
+							{repository.name}
+						</h1>
+						<span
+							className={
+								repository.is_active ? "badge-success" : "badge-danger"
+							}
+						>
+							{repository.is_active ? "Active" : "Inactive"}
+						</span>
 					</div>
 				</div>
-				<div className="flex items-center gap-2">
+				<div className="flex items-center gap-2 flex-wrap w-full md:w-auto md:flex-shrink-0">
 					{editMode ? (
 						<>
 							<button
 								type="button"
 								onClick={handleCancel}
-								className="btn-outline"
+								className="btn-outline min-h-[44px] md:min-h-0 whitespace-nowrap"
 								disabled={updateRepositoryMutation.isPending}
 							>
 								Cancel
@@ -374,7 +420,7 @@ const RepositoryDetail = () => {
 							<button
 								type="button"
 								onClick={handleSave}
-								className="btn-primary"
+								className="btn-primary min-h-[44px] md:min-h-0 whitespace-nowrap"
 								disabled={updateRepositoryMutation.isPending}
 							>
 								{updateRepositoryMutation.isPending
@@ -387,7 +433,7 @@ const RepositoryDetail = () => {
 							<button
 								type="button"
 								onClick={handleDelete}
-								className="btn-outline border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20 dark:hover:border-red-700 flex items-center gap-2"
+								className="btn-outline border-danger-200 text-danger-600 hover:bg-danger-50 hover:border-danger-300 dark:border-danger-800 dark:text-danger-400 dark:hover:bg-danger-900/20 dark:hover:border-danger-700 flex items-center gap-2 min-h-[44px] md:min-h-0 whitespace-nowrap"
 								disabled={deleteRepositoryMutation.isPending}
 							>
 								<Trash2 className="h-4 w-4" />
@@ -396,9 +442,10 @@ const RepositoryDetail = () => {
 							<button
 								type="button"
 								onClick={handleEdit}
-								className="btn-primary"
+								className="btn-primary min-h-[44px] md:min-h-0 whitespace-nowrap"
 							>
-								Edit Repository
+								<span className="hidden sm:inline">Edit Repository</span>
+								<span className="sm:hidden">Edit</span>
 							</button>
 						</>
 					)}
@@ -521,7 +568,7 @@ const RepositoryDetail = () => {
 										Repository Type
 									</span>
 									<p className="text-secondary-900 dark:text-white mt-1">
-										{repository.repoType}
+										{repository.repo_type}
 									</p>
 								</div>
 							</div>
@@ -533,18 +580,22 @@ const RepositoryDetail = () => {
 									<div className="flex items-center mt-1">
 										{repository.isSecure ? (
 											<>
-												<Shield className="h-4 w-4 text-green-600 mr-2" />
-												<span className="text-green-600">Secure (HTTPS)</span>
+												<Shield className="h-4 w-4 text-success-700 dark:text-success-400 mr-2" />
+												<span className="text-success-700 dark:text-success-400">
+													Secure (HTTPS)
+												</span>
 											</>
 										) : (
 											<>
-												<ShieldOff className="h-4 w-4 text-orange-600 mr-2" />
-												<span className="text-orange-600">Insecure (HTTP)</span>
+												<ShieldOff className="h-4 w-4 text-warning-700 dark:text-warning-400 mr-2" />
+												<span className="text-warning-700 dark:text-warning-400">
+													Insecure (HTTP)
+												</span>
 											</>
 										)}
 									</div>
 								</div>
-								{repository.priority && (
+								{repository.priority != null && (
 									<div>
 										<span className="text-sm font-medium text-secondary-500 dark:text-white">
 											Priority
@@ -621,93 +672,145 @@ const RepositoryDetail = () => {
 						</div>
 					) : (
 						<>
-							<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
-								<thead className="bg-secondary-50 dark:bg-secondary-700">
-									<tr>
-										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-											Host
-										</th>
-										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-											Operating System
-										</th>
-										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-											Last Checked
-										</th>
-										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-											Last Update
-										</th>
-										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
-											Reboot Required
-										</th>
-									</tr>
-								</thead>
-								<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
-									{filteredAndPaginatedHosts.map((hostRepo) => (
-										<tr
-											key={hostRepo.id}
-											className="hover:bg-secondary-50 dark:hover:bg-secondary-700 cursor-pointer transition-colors"
-											onClick={() => handleHostClick(hostRepo.hosts.id)}
-										>
-											<td className="px-6 py-4 whitespace-nowrap">
-												<div className="flex items-center">
-													<div
-														className={`w-2 h-2 rounded-full mr-3 ${
-															hostRepo.hosts.status === "active"
-																? "bg-success-500"
-																: hostRepo.hosts.status === "pending"
-																	? "bg-warning-500"
-																	: "bg-danger-500"
-														}`}
-													/>
-													<Server className="h-5 w-5 text-secondary-400 mr-3" />
-													<div>
-														<div className="text-sm font-medium text-secondary-900 dark:text-white">
-															{hostRepo.hosts.friendly_name ||
-																hostRepo.hosts.hostname}
+							{/* Desktop table */}
+							<div className="hidden md:block">
+								<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
+									<thead className="bg-secondary-50 dark:bg-secondary-700">
+										<tr>
+											<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+												Host
+											</th>
+											<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+												Operating System
+											</th>
+											<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+												Last Checked
+											</th>
+											<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+												Last Update
+											</th>
+											<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+												Reboot Required
+											</th>
+										</tr>
+									</thead>
+									<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
+										{filteredAndPaginatedHosts.map((hostRepo) => (
+											<tr
+												key={hostRepo.id}
+												className="hover:bg-secondary-50 dark:hover:bg-secondary-700 cursor-pointer transition-colors"
+												onClick={() => handleHostClick(hostRepo.hosts.id)}
+											>
+												<td className="px-6 py-4 whitespace-nowrap">
+													<div className="flex items-center">
+														<div
+															className={`w-2 h-2 rounded-full mr-3 ${
+																hostRepo.hosts.status === "active"
+																	? "bg-success-500"
+																	: hostRepo.hosts.status === "pending"
+																		? "bg-warning-500"
+																		: "bg-danger-500"
+															}`}
+														/>
+														<Server className="h-5 w-5 text-secondary-400 mr-3" />
+														<div>
+															<div className="text-sm font-medium text-secondary-900 dark:text-white">
+																{hostRepo.hosts.friendly_name ||
+																	hostRepo.hosts.hostname}
+															</div>
+															{hostRepo.hosts.friendly_name &&
+																hostRepo.hosts.hostname && (
+																	<div className="text-sm text-secondary-500 dark:text-white">
+																		{hostRepo.hosts.hostname}
+																	</div>
+																)}
 														</div>
-														{hostRepo.hosts.friendly_name &&
-															hostRepo.hosts.hostname && (
-																<div className="text-sm text-secondary-500 dark:text-white">
-																	{hostRepo.hosts.hostname}
-																</div>
-															)}
 													</div>
+												</td>
+												<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
+													{hostRepo.hosts.os_type} {hostRepo.hosts.os_version}
+												</td>
+												<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500 dark:text-white">
+													{hostRepo.last_checked
+														? formatRelativeTime(hostRepo.last_checked)
+														: "Never"}
+												</td>
+												<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500 dark:text-white">
+													{hostRepo.hosts.last_update
+														? formatRelativeTime(hostRepo.hosts.last_update)
+														: "Never"}
+												</td>
+												<td className="px-6 py-4 whitespace-nowrap">
+													{getRebootBadge(hostRepo.hosts) || (
+														<span className="text-sm text-secondary-500 dark:text-white">
+															No
+														</span>
+													)}
+												</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</div>
+
+							{/* Mobile cards */}
+							<div className="md:hidden divide-y divide-secondary-200 dark:divide-secondary-600">
+								{filteredAndPaginatedHosts.map((hostRepo) => (
+									<button
+										type="button"
+										key={hostRepo.id}
+										className="w-full text-left p-4 hover:bg-secondary-50 dark:hover:bg-secondary-700 cursor-pointer transition-colors min-h-[44px]"
+										onClick={() => handleHostClick(hostRepo.hosts.id)}
+									>
+										<div className="flex items-start justify-between gap-2 mb-2">
+											<div className="flex items-center min-w-0">
+												<div
+													className={`w-2 h-2 rounded-full mr-2 flex-shrink-0 ${
+														hostRepo.hosts.status === "active"
+															? "bg-success-500"
+															: hostRepo.hosts.status === "pending"
+																? "bg-warning-500"
+																: "bg-danger-500"
+													}`}
+												/>
+												<Server className="h-4 w-4 text-secondary-400 mr-2 flex-shrink-0" />
+												<div className="min-w-0">
+													<div className="text-sm font-medium text-secondary-900 dark:text-white truncate">
+														{hostRepo.hosts.friendly_name ||
+															hostRepo.hosts.hostname}
+													</div>
+													{hostRepo.hosts.friendly_name &&
+														hostRepo.hosts.hostname && (
+															<div className="text-xs text-secondary-500 dark:text-secondary-400 truncate">
+																{hostRepo.hosts.hostname}
+															</div>
+														)}
 												</div>
-											</td>
-											<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
-												{hostRepo.hosts.os_type} {hostRepo.hosts.os_version}
-											</td>
-											<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500 dark:text-white">
+											</div>
+											<div className="flex-shrink-0">
+												{getRebootBadge(hostRepo.hosts)}
+											</div>
+										</div>
+										<div className="text-xs text-secondary-500 dark:text-secondary-400">
+											{hostRepo.hosts.os_type} {hostRepo.hosts.os_version}
+										</div>
+										<div className="flex items-center justify-between gap-2 mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+											<span>
+												Checked:{" "}
 												{hostRepo.last_checked
 													? formatRelativeTime(hostRepo.last_checked)
 													: "Never"}
-											</td>
-											<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500 dark:text-white">
+											</span>
+											<span>
+												Updated:{" "}
 												{hostRepo.hosts.last_update
 													? formatRelativeTime(hostRepo.hosts.last_update)
 													: "Never"}
-											</td>
-											<td className="px-6 py-4 whitespace-nowrap">
-												{hostRepo.hosts.needs_reboot ? (
-													<span
-														className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
-														title={
-															hostRepo.hosts.reboot_reason || "Reboot required"
-														}
-													>
-														<RotateCcw className="h-3 w-3" />
-														Required
-													</span>
-												) : (
-													<span className="text-sm text-secondary-500 dark:text-white">
-														No
-													</span>
-												)}
-											</td>
-										</tr>
-									))}
-								</tbody>
-							</table>
+											</span>
+										</div>
+									</button>
+								))}
+							</div>
 
 							{/* Pagination */}
 							{totalPages > 1 && (
@@ -788,7 +891,7 @@ const RepositoryDetail = () => {
 				<div className="overflow-x-auto">
 					{packagesLoading ? (
 						<div className="flex items-center justify-center py-12">
-							<div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+							<RefreshCw className="h-8 w-8 animate-spin text-primary-600" />
 						</div>
 					) : packages.length === 0 ? (
 						<div className="text-center py-8">

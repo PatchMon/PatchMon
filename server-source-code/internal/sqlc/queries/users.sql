@@ -20,8 +20,12 @@ ORDER BY CASE WHEN discord_id = $1 THEN 0 ELSE 1 END
 LIMIT 1;
 
 -- name: GetUserByOidcSubOrEmail :one
+-- The "$2 != ''" guard mirrors GetUserByDiscordIDOrEmail. Without it an IdP
+-- asserting an empty email participates in the email branch, which is junk
+-- input rather than a takeover (the oidc_sub cross-check blocks a second such
+-- login) but should not reach account matching at all.
 SELECT * FROM users
-WHERE oidc_sub = $1 OR LOWER(email) = LOWER($2)
+WHERE oidc_sub = $1 OR (LOWER(email) = LOWER($2) AND $2 != '')
 ORDER BY CASE WHEN oidc_sub = $1 THEN 0 ELSE 1 END
 LIMIT 1;
 
@@ -59,6 +63,9 @@ DELETE FROM users WHERE id = $1;
 
 -- name: UpdatePassword :exec
 UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2;
+
+-- name: UpdateLastLogin :exec
+UPDATE users SET last_login = $1 WHERE id = $2;
 
 -- name: CreateUser :exec
 INSERT INTO users (
