@@ -30,6 +30,24 @@ type ReportBranding struct {
 	LogoLightURL string // full URL to light logo, empty if unset
 }
 
+// resolveHostGroupIDs expands a list of host group IDs into the de-duplicated
+// set of host IDs that belong to any of them, so report sections can scope
+// their host lists to the groups selected in the report definition.
+func resolveHostGroupIDs(ctx context.Context, d *database.DB, groupIDs []string) (map[string]struct{}, error) {
+	groupsStore := store.NewHostGroupsStore(d)
+	ids := make(map[string]struct{})
+	for _, gid := range groupIDs {
+		hostIDs, err := groupsStore.GetHostIDs(ctx, gid)
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range hostIDs {
+			ids[id] = struct{}{}
+		}
+	}
+	return ids, nil
+}
+
 // BuildScheduledReport produces HTML and CSV for a scheduled report.
 func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string, defJSON []byte, branding ReportBranding) (subject string, html string, csvOut string, err error) {
 	var def ReportDefinition
@@ -204,6 +222,17 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 		case "hosts_offline":
 			body.WriteString(sectionHeader("Host Status"))
 			hosts, e := d.Queries.ListHosts(ctx)
+			if e == nil && len(def.HostGroupIDs) > 0 {
+				if groupHostIDs, ge := resolveHostGroupIDs(ctx, d, def.HostGroupIDs); ge == nil {
+					filtered := hosts[:0]
+					for _, h := range hosts {
+						if _, ok := groupHostIDs[h.ID]; ok {
+							filtered = append(filtered, h)
+						}
+					}
+					hosts = filtered
+				}
+			}
 			if e == nil && len(hosts) > 0 {
 				body.WriteString(tableOpen([]string{"Host", "Status", "Last Seen"}))
 				n := 0
@@ -287,7 +316,17 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 			// Pull as wide a page as the store allows so the report
 			// covers the whole fleet at typical sizes. We then sort +
 			// truncate to `top` below.
-			hostsData, e := dashStore.GetHostsWithCounts(ctx, store.HostsListParams{Limit: store.HostsListMaxLimit})
+			listParams := store.HostsListParams{Limit: store.HostsListMaxLimit}
+			if len(def.HostGroupIDs) > 0 {
+				if groupHostIDs, ge := resolveHostGroupIDs(ctx, d, def.HostGroupIDs); ge == nil {
+					selected := make([]string, 0, len(groupHostIDs))
+					for id := range groupHostIDs {
+						selected = append(selected, id)
+					}
+					listParams.SelectedIDs = selected
+				}
+			}
+			hostsData, e := dashStore.GetHostsWithCounts(ctx, listParams)
 			if e == nil && hostsData != nil && len(hostsData.Items) > 0 {
 				items := hostsData.Items
 				// Sort by updates count descending
