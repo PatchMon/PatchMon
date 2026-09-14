@@ -552,6 +552,15 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 				body.WriteString(`<p style="color:#64748b;font-size:14px;">No package data available.</p>`)
 			}
 
+		case "vulnerable_hosts":
+			body.WriteString(sectionHeader("Vulnerable / Outdated Hosts"))
+			pkgStore := store.NewPackagesStore(d)
+			pkgs, e := pkgStore.ListNeedingUpdates(ctx)
+			if e == nil {
+				body.WriteString(buildVulnerableHostsTable(pkgs, groupHostIDs, top, baseURL, esc, cw))
+			} else {
+				body.WriteString(`<p style="color:#64748b;font-size:14px;">No package data available.</p>`)
+			}
 		default:
 			fmt.Fprintf(&body, `<p style="color:#94a3b8;font-size:14px;"><em>Unknown section: %s</em></p>`, esc(sec))
 		}
@@ -749,4 +758,105 @@ func criticalColor(count int) string {
 		return "#16a34a"
 	}
 	return "#dc2626"
+}
+
+// hostPendingUpdates aggregates, for one host, the packages it still needs
+// to install and whether any of them is a security update.
+type hostPendingUpdates struct {
+	hostID   string
+	name     string
+	hasSec   bool
+	packages []string
+}
+
+// groupPackagesByHost inverts the package -> affected-hosts shape returned by
+// PackagesStore.ListNeedingUpdates into a host -> pending-packages shape, so
+// callers can render "what does each host still need" instead of "which
+// hosts need this package". If groupFilter is non-nil, only host IDs present
+// in it are kept.
+func groupPackagesByHost(pkgs []map[string]interface{}, groupFilter map[string]struct{}) []hostPendingUpdates {
+	byHost := make(map[string]*hostPendingUpdates)
+	order := make([]string, 0)
+
+	for _, p := range pkgs {
+		pkgName, _ := p["name"].(string)
+		pkgIsSec, _ := p["isSecurityUpdate"].(bool)
+		hosts, _ := p["affectedHosts"].([]map[string]interface{})
+		for _, h := range hosts {
+			hostID, _ := h["hostId"].(string)
+			if hostID == "" {
+				continue
+			}
+			if groupFilter != nil {
+				if _, ok := groupFilter[hostID]; !ok {
+					continue
+				}
+			}
+			info, ok := byHost[hostID]
+			if !ok {
+				name, _ := h["friendlyName"].(string)
+				if name == "" {
+					name = hostID
+				}
+				info = &hostPendingUpdates{hostID: hostID, name: name}
+				byHost[hostID] = info
+				order = append(order, hostID)
+			}
+			hostIsSec, _ := h["isSecurityUpdate"].(bool)
+			if pkgIsSec || hostIsSec {
+				info.hasSec = true
+			}
+			info.packages = append(info.packages, pkgName)
+		}
+	}
+
+	result := make([]hostPendingUpdates, 0, len(order))
+	for _, id := range order {
+		result = append(result, *byHost[id])
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].hasSec != result[j].hasSec {
+			return result[i].hasSec
+		}
+		return len(result[i].packages) > len(result[j].packages)
+	})
+	return result
+}
+
+// buildVulnerableHostsTable renders the "Vulnerable / Outdated Hosts" table:
+// one row per host, its status (Vulnerable if it has a pending security
+// update, Outdated otherwise), and the names of its pending packages.
+func buildVulnerableHostsTable(pkgs []map[string]interface{}, groupFilter map[string]struct{}, top int, baseURL string, esc func(string) string, cw *csv.Writer) string {
+	hosts := groupPackagesByHost(pkgs, groupFilter)
+	if len(hosts) == 0 {
+		return `<p style="color:#64748b;font-size:14px;">No hosts with pending updates.</p>`
+	}
+
+	var sb strings.Builder
+	sb.WriteString(tableOpen([]string{"Host", "Status", "Pending Updates"}))
+	n := 0
+	for _, h := range hosts {
+		if n >= top {
+			break
+		}
+		status := "warning"
+		if h.hasSec {
+			status = "critical"
+		}
+		pkgList := strings.Join(h.packages, ", ")
+		if len(h.packages) > 10 {
+			pkgList = strings.Join(h.packages[:10], ", ") + fmt.Sprintf(" … +%d more", len(h.packages)-10)
+		}
+		hostLink := esc(h.name)
+		if baseURL != "" {
+			hostLink = fmt.Sprintf(`<a href="%s/hosts/%s" style="color:#2563eb;text-decoration:none;">%s</a>`, esc(baseURL), esc(h.hostID), esc(h.name))
+		}
+		sb.WriteString(tableRow([]string{hostLink, statusBadgeHTML(status), esc(pkgList)}, n%2 == 1))
+		if cw != nil {
+			_ = cw.Write([]string{"vulnerable_host", h.name, pkgList})
+		}
+		n++
+	}
+	sb.WriteString(`</table>`)
+	return sb.String()
 }
