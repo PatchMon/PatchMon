@@ -48,6 +48,49 @@ func resolveHostGroupIDs(ctx context.Context, d *database.DB, groupIDs []string)
 	return ids, nil
 }
 
+// alertHostID extracts the "host_id" key from an alert's Metadata JSON, if
+// present. Alerts that aren't tied to a specific host (e.g. system-wide
+// ones) return "", and callers should treat that as "always in scope"
+// rather than filtering it out.
+func alertHostID(a store.AlertWithDetails) string {
+	if len(a.Metadata) == 0 {
+		return ""
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(a.Metadata, &m); err != nil {
+		return ""
+	}
+	if id, ok := m["host_id"].(string); ok {
+		return id
+	}
+	return ""
+}
+
+// scopePackagesToHostGroup filters the affectedHosts of each package
+// (the shape returned by PackagesStore.ListNeedingUpdates) down to hosts
+// present in groupHostIDs, recomputes affectedHostsCount to match, and
+// drops packages left with no affected hosts in scope.
+func scopePackagesToHostGroup(pkgs []map[string]interface{}, groupHostIDs map[string]struct{}) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(pkgs))
+	for _, p := range pkgs {
+		hosts, _ := p["affectedHosts"].([]map[string]interface{})
+		filtered := make([]map[string]interface{}, 0, len(hosts))
+		for _, h := range hosts {
+			hostID, _ := h["hostId"].(string)
+			if _, ok := groupHostIDs[hostID]; ok {
+				filtered = append(filtered, h)
+			}
+		}
+		if len(filtered) == 0 {
+			continue
+		}
+		p["affectedHosts"] = filtered
+		p["affectedHostsCount"] = len(filtered)
+		result = append(result, p)
+	}
+	return result
+}
+
 // BuildScheduledReport produces HTML and CSV for a scheduled report.
 func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string, defJSON []byte, branding ReportBranding) (subject string, html string, csvOut string, err error) {
 	var def ReportDefinition
@@ -73,11 +116,27 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 	complianceStore := store.NewComplianceStore(d)
 	patchStore := store.NewPatchRunsStore(d)
 
+	// Host-group scope, resolved once and reused by every section below
+	// instead of re-querying per section. groupHostIDs is nil when the
+	// report isn't scoped to any group; groupHostIDList is its []string
+	// form for APIs that want a slice rather than a set.
+	var groupHostIDs map[string]struct{}
+	var groupHostIDList []string
+	if len(def.HostGroupIDs) > 0 {
+		if resolved, ge := resolveHostGroupIDs(ctx, d, def.HostGroupIDs); ge == nil {
+			groupHostIDs = resolved
+			groupHostIDList = make([]string, 0, len(resolved))
+			for id := range resolved {
+				groupHostIDList = append(groupHostIDList, id)
+			}
+		}
+	}
+
 	for _, sec := range def.Sections {
 		switch sec {
 		case "executive_summary":
 			body.WriteString(sectionHeader("Executive Summary"))
-			dash, e := complianceStore.GetDashboard(ctx)
+			dash, e := complianceStore.GetDashboard(ctx, groupHostIDList)
 			if e == nil {
 				body.WriteString(`<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">`)
 				body.WriteString(`<tr>`)
@@ -90,7 +149,7 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 				_ = cw.Write([]string{"executive_summary", "total_hosts", fmt.Sprintf("%d", dash.Summary.TotalHosts)})
 				_ = cw.Write([]string{"executive_summary", "average_score", fmt.Sprintf("%.1f", dash.Summary.AverageScore)})
 			}
-			total, byStatus, _, _, e := patchStore.GetDashboard(ctx)
+			total, byStatus, _, _, e := patchStore.GetDashboard(ctx, groupHostIDList)
 			if e == nil {
 				body.WriteString(`<h3 style="color:#0f172a;font-size:15px;font-weight:600;margin:16px 0 8px;">Patching Overview</h3>`)
 				body.WriteString(`<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;"><tr>`)
@@ -110,7 +169,7 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 
 		case "compliance_summary":
 			body.WriteString(sectionHeader("Compliance Summary"))
-			dash, e := complianceStore.GetDashboard(ctx)
+			dash, e := complianceStore.GetDashboard(ctx, groupHostIDList)
 			if e == nil {
 				body.WriteString(`<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;"><tr>`)
 				writeKPICard(&body, fmt.Sprintf("%d", dash.Summary.TotalPassedRules), "Passed Rules", "#16a34a")
@@ -161,7 +220,7 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 
 		case "recent_patch_runs":
 			body.WriteString(sectionHeader("Recent Patch Runs"))
-			_, _, recent, _, e := patchStore.GetDashboard(ctx)
+			_, _, recent, _, e := patchStore.GetDashboard(ctx, groupHostIDList)
 			if e == nil && len(recent) > 0 {
 				body.WriteString(tableOpen([]string{"Host", "Status", "Type", "Package", "Started", "Completed"}))
 				n := 0
@@ -222,16 +281,14 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 		case "hosts_offline":
 			body.WriteString(sectionHeader("Host Status"))
 			hosts, e := d.Queries.ListHosts(ctx)
-			if e == nil && len(def.HostGroupIDs) > 0 {
-				if groupHostIDs, ge := resolveHostGroupIDs(ctx, d, def.HostGroupIDs); ge == nil {
-					filtered := hosts[:0]
-					for _, h := range hosts {
-						if _, ok := groupHostIDs[h.ID]; ok {
-							filtered = append(filtered, h)
-						}
+			if e == nil && groupHostIDs != nil {
+				filtered := hosts[:0]
+				for _, h := range hosts {
+					if _, ok := groupHostIDs[h.ID]; ok {
+						filtered = append(filtered, h)
 					}
-					hosts = filtered
 				}
+				hosts = filtered
 			}
 			if e == nil && len(hosts) > 0 {
 				body.WriteString(tableOpen([]string{"Host", "Status", "Last Seen"}))
@@ -264,23 +321,56 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 			body.WriteString(sectionHeader("Open Alerts"))
 			alertsStore := store.NewAlertsStore(d)
 
-			// Stats summary
-			stats, e := alertsStore.GetStats(ctx)
-			if e == nil {
-				body.WriteString(`<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;"><tr>`)
-				writeKPICard(&body, fmt.Sprintf("%d", stats["total"]), "Total Open", "#6366f1")
-				writeKPICard(&body, fmt.Sprintf("%d", stats["critical"]), "Critical", criticalColor(stats["critical"]))
-				writeKPICard(&body, fmt.Sprintf("%d", stats["error"]), "Error", criticalColor(stats["error"]))
-				writeKPICard(&body, fmt.Sprintf("%d", stats["warning"]), "Warning", "#d97706")
-				body.WriteString(`</tr></table>`)
-
-				for k, v := range stats {
-					_ = cw.Write([]string{"open_alerts", k, fmt.Sprintf("%d", v)})
+			// Fetch the list first and scope it to the report's host groups
+			// (alerts not tied to any specific host, e.g. system-wide ones,
+			// are always kept). The stats summary below is then computed
+			// from this same list rather than a separate unscoped query, so
+			// it can never disagree with the table.
+			alerts, e := alertsStore.List(ctx, nil)
+			if e == nil && groupHostIDs != nil {
+				filtered := alerts[:0]
+				for _, a := range alerts {
+					hostID := alertHostID(a)
+					if hostID == "" {
+						filtered = append(filtered, a)
+						continue
+					}
+					if _, ok := groupHostIDs[hostID]; ok {
+						filtered = append(filtered, a)
+					}
 				}
+				alerts = filtered
 			}
 
-			// Active alerts list
-			alerts, e := alertsStore.List(ctx, nil)
+			if e == nil {
+				total, critical, errorCount, warning := 0, 0, 0, 0
+				for _, a := range alerts {
+					if !a.IsActive {
+						continue
+					}
+					total++
+					switch strings.ToLower(a.Severity) {
+					case "critical":
+						critical++
+					case "error":
+						errorCount++
+					case "warning":
+						warning++
+					}
+				}
+				body.WriteString(`<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;"><tr>`)
+				writeKPICard(&body, fmt.Sprintf("%d", total), "Total Open", "#6366f1")
+				writeKPICard(&body, fmt.Sprintf("%d", critical), "Critical", criticalColor(critical))
+				writeKPICard(&body, fmt.Sprintf("%d", errorCount), "Error", criticalColor(errorCount))
+				writeKPICard(&body, fmt.Sprintf("%d", warning), "Warning", "#d97706")
+				body.WriteString(`</tr></table>`)
+
+				_ = cw.Write([]string{"open_alerts", "total", fmt.Sprintf("%d", total)})
+				_ = cw.Write([]string{"open_alerts", "critical", fmt.Sprintf("%d", critical)})
+				_ = cw.Write([]string{"open_alerts", "error", fmt.Sprintf("%d", errorCount)})
+				_ = cw.Write([]string{"open_alerts", "warning", fmt.Sprintf("%d", warning)})
+			}
+
 			if e == nil && len(alerts) > 0 {
 				body.WriteString(tableOpen([]string{"Severity", "Title", "Created", "Assigned To"}))
 				n := 0
@@ -317,14 +407,8 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 			// covers the whole fleet at typical sizes. We then sort +
 			// truncate to `top` below.
 			listParams := store.HostsListParams{Limit: store.HostsListMaxLimit}
-			if len(def.HostGroupIDs) > 0 {
-				if groupHostIDs, ge := resolveHostGroupIDs(ctx, d, def.HostGroupIDs); ge == nil {
-					selected := make([]string, 0, len(groupHostIDs))
-					for id := range groupHostIDs {
-						selected = append(selected, id)
-					}
-					listParams.SelectedIDs = selected
-				}
+			if groupHostIDList != nil {
+				listParams.SelectedIDs = groupHostIDList
 			}
 			hostsData, e := dashStore.GetHostsWithCounts(ctx, listParams)
 			if e == nil && hostsData != nil && len(hostsData.Items) > 0 {
@@ -406,6 +490,9 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 			body.WriteString(sectionHeader("Top Outdated Security Packages"))
 			pkgStore := store.NewPackagesStore(d)
 			pkgs, e := pkgStore.ListNeedingUpdates(ctx)
+			if e == nil && groupHostIDs != nil {
+				pkgs = scopePackagesToHostGroup(pkgs, groupHostIDs)
+			}
 			if e == nil && len(pkgs) > 0 {
 				// Filter to security updates and sort by affected hosts count
 				var secPkgs []map[string]interface{}

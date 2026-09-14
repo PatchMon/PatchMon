@@ -254,19 +254,33 @@ WHERE pr.status IN ('queued', 'running', 'pending_validation', 'pending_approval
 ORDER BY pr.created_at ASC;
 
 -- name: CountPatchRunsTotal :one
-SELECT COUNT(*) FROM patch_runs WHERE (dry_run = false OR dry_run IS NULL);
+-- host_ids is an optional scope: an empty array means "all hosts".
+SELECT COUNT(*) FROM patch_runs
+WHERE (dry_run = false OR dry_run IS NULL)
+  AND (cardinality(sqlc.arg('host_ids')::text[]) = 0 OR host_id = ANY(sqlc.arg('host_ids')::text[]));
 
 -- name: ListPatchRunsByStatus :many
-SELECT status, COUNT(*)::int AS count FROM patch_runs WHERE (dry_run = false OR dry_run IS NULL) OR status IN ('pending_validation', 'pending_approval', 'validated') GROUP BY status;
+-- host_ids is an optional scope: an empty array means "all hosts".
+SELECT status, COUNT(*)::int AS count FROM patch_runs
+WHERE ((dry_run = false OR dry_run IS NULL) OR status IN ('pending_validation', 'pending_approval', 'validated'))
+  AND (cardinality(sqlc.arg('host_ids')::text[]) = 0 OR host_id = ANY(sqlc.arg('host_ids')::text[]))
+GROUP BY status;
 
 -- name: ListRecentPatchRuns :many
+-- host_ids is an optional scope: an empty array means "all hosts" (the
+-- historical, unscoped behaviour); a non-empty array restricts results to
+-- patch runs on those hosts only, e.g. for a report scoped to host groups.
 SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE (pr.dry_run = false OR pr.dry_run IS NULL)
+  AND (
+    cardinality(sqlc.arg('host_ids')::text[]) = 0
+    OR pr.host_id = ANY(sqlc.arg('host_ids')::text[])
+  )
 ORDER BY pr.created_at DESC
-LIMIT $1;
+LIMIT sqlc.arg('row_limit');
 
 -- name: ListPatchRunsByPackage :many
 SELECT pr.id, pr.host_id, pr.completed_at, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname

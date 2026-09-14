@@ -159,8 +159,10 @@ SELECT id, hostname, friendly_name, compliance_enabled, compliance_on_demand_onl
 FROM hosts;
 
 -- name: CountUnscannedHosts :one
+-- host_ids is an optional scope: an empty array means "all hosts".
 SELECT COUNT(*) FROM hosts h
-WHERE NOT EXISTS (SELECT 1 FROM compliance_scans cs WHERE cs.host_id = h.id);
+WHERE NOT EXISTS (SELECT 1 FROM compliance_scans cs WHERE cs.host_id = h.id)
+  AND (cardinality(sqlc.arg('host_ids')::text[]) = 0 OR h.id = ANY(sqlc.arg('host_ids')::text[]));
 
 -- name: SetHostAwaitingPostPatchReport :exec
 UPDATE hosts SET awaiting_post_patch_report_run_id = $1, updated_at = NOW() WHERE id = $2;
