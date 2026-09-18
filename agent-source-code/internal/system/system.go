@@ -294,13 +294,42 @@ func (d *Detector) GetHostname() (string, error) {
 	return info.Hostname, nil
 }
 
-// GetIPAddress gets the primary IP address using network interfaces
+// selectPrimaryIPAddress gets the primary IPv4 address
+// or IPv6 address as fallback
+func selectPrimaryIPAddress(ips []net.IP) string {
+	var ipv6Fallback string
+
+	for _, ip := range ips {
+		if ip == nil || ip.IsLoopback() {
+			continue
+		}
+
+		// Preserve existing behaviour: prefer usable IPv4 addresses.
+		if ip.To4() != nil && ip.IsGlobalUnicast() {
+			return ip.String()
+		}
+
+		// Use a globally usable IPv6 address as fallback.
+		// IsGlobalUnicast includes ULA addresses but excludes
+		// link-local, loopback and multicast addresses.
+		if ip.To16() != nil && ip.IsGlobalUnicast() && ipv6Fallback == "" {
+			ipv6Fallback = ip.String()
+		}
+	}
+
+	return ipv6Fallback
+}
+
+// GetIPAddress gets the primary IP address using network interfaces.
+// IPv4 is preferred for backwards compatibility; IPv6 is used as fallback.
 func (d *Detector) GetIPAddress() string {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		d.logger.WithError(err).Warn("Failed to get network interfaces")
 		return ""
 	}
+
+	var ips []net.IP
 
 	for _, iface := range interfaces {
 		// Skip loopback and down interfaces
@@ -315,14 +344,12 @@ func (d *Detector) GetIPAddress() string {
 
 		for _, addr := range addrs {
 			if ipnet, ok := addr.(*net.IPNet); ok {
-				if ipnet.IP.To4() != nil && !ipnet.IP.IsLoopback() {
-					return ipnet.IP.String()
-				}
+				ips = append(ips, ipnet.IP)
 			}
 		}
 	}
 
-	return ""
+	return selectPrimaryIPAddress(ips)
 }
 
 // GetKernelVersion gets the kernel version
