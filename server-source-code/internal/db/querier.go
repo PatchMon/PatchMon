@@ -362,6 +362,7 @@ type Querier interface {
 	GetImagesByIDs(ctx context.Context, dollar_1 []string) ([]DockerImage, error)
 	GetImagesBySource(ctx context.Context) ([]GetImagesBySourceRow, error)
 	GetLatestCompletedScans(ctx context.Context) ([]GetLatestCompletedScansRow, error)
+	GetLatestCompletedScansByHostAllTypes(ctx context.Context, hostID string) ([]GetLatestCompletedScansByHostAllTypesRow, error)
 	GetLatestCompletedScansByProfile(ctx context.Context, profileID string) ([]GetLatestCompletedScansByProfileRow, error)
 	GetLatestComplianceScanByHost(ctx context.Context, hostID string) (GetLatestComplianceScanByHostRow, error)
 	GetLatestComplianceScanByHostAndType(ctx context.Context, arg GetLatestComplianceScanByHostAndTypeParams) (GetLatestComplianceScanByHostAndTypeRow, error)

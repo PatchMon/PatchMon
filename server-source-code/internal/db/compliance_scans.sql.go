@@ -336,6 +336,67 @@ func (q *Queries) GetLatestCompletedScans(ctx context.Context) ([]GetLatestCompl
 	return items, nil
 }
 
+const getLatestCompletedScansByHostAllTypes = `-- name: GetLatestCompletedScansByHostAllTypes :many
+SELECT DISTINCT ON (cp.type)
+       cs.id, cs.host_id, cs.profile_id, cs.completed_at, cs.passed, cs.failed,
+       cs.warnings, cs.skipped, cs.not_applicable, cs.score, cs.total_rules,
+       cp.name as profile_name, cp.type as profile_type
+FROM compliance_scans cs
+JOIN compliance_profiles cp ON cp.id = cs.profile_id
+WHERE cs.host_id = $1 AND cs.status = 'completed'
+ORDER BY cp.type, cs.completed_at DESC
+`
+
+type GetLatestCompletedScansByHostAllTypesRow struct {
+	ID            string           `json:"id"`
+	HostID        string           `json:"host_id"`
+	ProfileID     string           `json:"profile_id"`
+	CompletedAt   pgtype.Timestamp `json:"completed_at"`
+	Passed        int32            `json:"passed"`
+	Failed        int32            `json:"failed"`
+	Warnings      int32            `json:"warnings"`
+	Skipped       int32            `json:"skipped"`
+	NotApplicable int32            `json:"not_applicable"`
+	Score         *float64         `json:"score"`
+	TotalRules    int32            `json:"total_rules"`
+	ProfileName   string           `json:"profile_name"`
+	ProfileType   string           `json:"profile_type"`
+}
+
+func (q *Queries) GetLatestCompletedScansByHostAllTypes(ctx context.Context, hostID string) ([]GetLatestCompletedScansByHostAllTypesRow, error) {
+	rows, err := q.db.Query(ctx, getLatestCompletedScansByHostAllTypes, hostID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetLatestCompletedScansByHostAllTypesRow
+	for rows.Next() {
+		var i GetLatestCompletedScansByHostAllTypesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.HostID,
+			&i.ProfileID,
+			&i.CompletedAt,
+			&i.Passed,
+			&i.Failed,
+			&i.Warnings,
+			&i.Skipped,
+			&i.NotApplicable,
+			&i.Score,
+			&i.TotalRules,
+			&i.ProfileName,
+			&i.ProfileType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getLatestCompletedScansByProfile = `-- name: GetLatestCompletedScansByProfile :many
 SELECT cs.id, cs.host_id, cs.profile_id, cs.completed_at, cs.passed, cs.failed,
        cs.warnings, cs.skipped, cs.not_applicable, cs.score, cs.total_rules,
