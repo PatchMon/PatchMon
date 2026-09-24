@@ -165,3 +165,13 @@ JOIN compliance_profiles cp ON cp.id = cs.profile_id
 WHERE cs.host_id = $1 AND cs.status = 'completed' AND cp.type = $2
 ORDER BY cs.completed_at DESC
 LIMIT 1;
+
+-- name: GetLatestCompletedScansByHostAllTypes :many
+SELECT DISTINCT ON (cp.type)
+       cs.id, cs.host_id, cs.profile_id, cs.completed_at, cs.passed, cs.failed,
+       cs.warnings, cs.skipped, cs.not_applicable, cs.score, cs.total_rules,
+       cp.name as profile_name, cp.type as profile_type
+FROM compliance_scans cs
+JOIN compliance_profiles cp ON cp.id = cs.profile_id
+WHERE cs.host_id = $1 AND cs.status = 'completed'
+ORDER BY cp.type, cs.completed_at DESC;
