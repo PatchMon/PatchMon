@@ -90,7 +90,9 @@ const Login = () => {
 				console.error("Failed to check login settings:", error);
 				// Default to disabled on error for security
 				setSignupEnabled(false);
-				setShowGithubVersionOnLogin(true); // Default to showing on error
+				// Never query GitHub without the server's go-ahead
+				// (DISABLE_GITHUB_VERSION_ON_LOGIN / UI toggle).
+				setShowGithubVersionOnLogin(false);
 			}
 		};
 		checkLoginSettings();

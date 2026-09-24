@@ -122,10 +122,16 @@ func (h *SettingsHandler) VersionCurrent(version string) http.HandlerFunc {
 		if s.LastUpdateCheck != nil {
 			lastCheck = s.LastUpdateCheck.Format(time.RFC3339)
 		}
+		// With DISABLE_VERSION_CHECK the stored result is from before the switch
+		// and can no longer be refreshed, so don't keep announcing it.
+		latest, updateAvailable := s.LatestVersion, s.UpdateAvailable
+		if util.VersionCheckDisabled() {
+			latest, updateAvailable = nil, false
+		}
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"version":             version,
-			"latest_version":      s.LatestVersion,
-			"is_update_available": s.UpdateAvailable,
+			"latest_version":      latest,
+			"is_update_available": updateAvailable,
 			"last_update_check":   lastCheck,
 			"buildDate":           time.Now().UTC().Format(time.RFC3339),
 			"environment":         "production",
@@ -145,6 +151,23 @@ func (h *SettingsHandler) VersionCheckUpdates(currentVersion string) http.Handle
 		s, err := h.settings.GetFirst(ctx)
 		if err != nil {
 			Error(w, http.StatusBadRequest, "Settings not found")
+			return
+		}
+
+		// DISABLE_VERSION_CHECK: report nothing rather than the stale cached
+		// result, and don't record a check that did not happen.
+		if util.VersionCheckDisabled() {
+			var lastCheck interface{}
+			if s.LastUpdateCheck != nil {
+				lastCheck = s.LastUpdateCheck.Format(time.RFC3339)
+			}
+			JSON(w, http.StatusOK, map[string]interface{}{
+				"currentVersion":    currentVersion,
+				"latestVersion":     nil,
+				"isUpdateAvailable": false,
+				"lastUpdateCheck":   lastCheck,
+				"latestRelease":     nil,
+			})
 			return
 		}
 
@@ -237,7 +260,7 @@ func (h *SettingsHandler) AIStatus(w http.ResponseWriter, r *http.Request) {
 
 // isDiscordProperlyConfigured returns true only when Discord OAuth is enabled and has valid Client ID + decryptable secret.
 func (h *SettingsHandler) isDiscordProperlyConfigured(s *models.Settings) bool {
-	if s == nil || !s.DiscordOAuthEnabled {
+	if s == nil || !s.DiscordOAuthEnabled || !discordAuthEnabled(h.cfg) {
 		return false
 	}
 	if s.DiscordClientID == nil || *s.DiscordClientID == "" {
@@ -283,7 +306,10 @@ func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Reques
 		if h.cfg != nil && (h.cfg.AdminMode || h.cfg.RegistryDatabaseURL != "") {
 			showGithubVersionFallback = false
 		}
-		showNewsletter := h.cfg == nil || !h.cfg.AdminMode
+		if !githubVersionOnLoginAllowed(h.cfg) {
+			showGithubVersionFallback = false
+		}
+		showNewsletter := newsletterEnabled(h.cfg)
 		adminMode := h.cfg != nil && h.cfg.AdminMode
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"signup_enabled":               false,
@@ -331,8 +357,11 @@ func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Reques
 	if h.cfg != nil && (h.cfg.AdminMode || h.cfg.RegistryDatabaseURL != "") {
 		showGithubVersion = false
 	}
+	if !githubVersionOnLoginAllowed(h.cfg) {
+		showGithubVersion = false
+	}
 
-	showNewsletter := h.cfg == nil || !h.cfg.AdminMode
+	showNewsletter := newsletterEnabled(h.cfg)
 	adminMode := h.cfg != nil && h.cfg.AdminMode
 	signupEnabled := s.SignupEnabled
 	if h.cfg != nil && h.cfg.AdminMode {
@@ -667,10 +696,16 @@ func (h *SettingsHandler) GetPublic(w http.ResponseWriter, r *http.Request) {
 		// No settings row — resolve timezone from env/config defaults (no DB value).
 		adminMode := h.cfg != nil && h.cfg.AdminMode
 		JSON(w, http.StatusOK, map[string]interface{}{
-			"auto_update":    false,
-			"alerts_enabled": true,
-			"timezone":       config.ResolveTimezone(nil, h.cfg),
-			"admin_mode":     adminMode,
+			"auto_update":                     false,
+			"alerts_enabled":                  true,
+			"timezone":                        config.ResolveTimezone(nil, h.cfg),
+			"admin_mode":                      adminMode,
+			"show_donate":                     showDonate(h.cfg),
+			"discord_auth_enabled":            discordAuthEnabled(h.cfg),
+			"telemetry_enabled":               telemetryEnabled(h.cfg),
+			"version_check_enabled":           !util.VersionCheckDisabled(),
+			"github_version_on_login_allowed": githubVersionOnLoginAllowed(h.cfg),
+			"newsletter_enabled":              newsletterEnabled(h.cfg),
 		})
 		return
 	}
@@ -681,14 +716,20 @@ func (h *SettingsHandler) GetPublic(w http.ResponseWriter, r *http.Request) {
 
 	adminMode := h.cfg != nil && h.cfg.AdminMode
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"auto_update":    s.AutoUpdate,
-		"alerts_enabled": s.AlertsEnabled,
-		"logo_dark":      s.LogoDark,
-		"logo_light":     s.LogoLight,
-		"favicon":        s.Favicon,
-		"updated_at":     s.UpdatedAt,
-		"timezone":       timezone,
-		"admin_mode":     adminMode,
+		"auto_update":                     s.AutoUpdate,
+		"alerts_enabled":                  s.AlertsEnabled,
+		"logo_dark":                       s.LogoDark,
+		"logo_light":                      s.LogoLight,
+		"favicon":                         s.Favicon,
+		"updated_at":                      s.UpdatedAt,
+		"timezone":                        timezone,
+		"admin_mode":                      adminMode,
+		"show_donate":                     showDonate(h.cfg),
+		"discord_auth_enabled":            discordAuthEnabled(h.cfg),
+		"telemetry_enabled":               telemetryEnabled(h.cfg),
+		"version_check_enabled":           !util.VersionCheckDisabled(),
+		"github_version_on_login_allowed": githubVersionOnLoginAllowed(h.cfg),
+		"newsletter_enabled":              newsletterEnabled(h.cfg),
 		// Exposed publicly so every authenticated user viewing hosts can render
 		// the Reporting pill correctly (green/amber/red boundary is computed as
 		// multiples of update_interval). Non-sensitive — just the agent

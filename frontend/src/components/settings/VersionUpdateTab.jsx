@@ -8,10 +8,17 @@ import {
 	ExternalLink,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { useSettings } from "../../contexts/SettingsContext";
 import { formatDate, settingsAPI, versionAPI } from "../../utils/api";
 
 const VersionUpdateTab = () => {
 	const queryClient = useQueryClient();
+	const { settings: publicSettings } = useSettings();
+	// Env switches that override the UI (DISABLE_VERSION_CHECK,
+	// DISABLE_GITHUB_VERSION_ON_LOGIN).
+	const versionCheckDisabled = publicSettings?.version_check_enabled === false;
+	const githubOnLoginLocked =
+		publicSettings?.github_version_on_login_allowed === false;
 
 	// Fetch current settings
 	const { data: settings, isLoading: settingsLoading } = useQuery({
@@ -115,6 +122,12 @@ const VersionUpdateTab = () => {
 				</h3>
 				<p className="text-sm text-secondary-600 dark:text-white mb-6">
 					Current server version and latest updates from GitHub repository.
+					{versionCheckDisabled && (
+						<span className="block mt-1 text-amber-600 dark:text-amber-400">
+							Online version check is disabled on this server
+							(DISABLE_VERSION_CHECK).
+						</span>
+					)}
 					{versionInfo.checking && (
 						<span className="ml-2 text-blue-600 dark:text-blue-400">
 							🔄 Checking for updates...
@@ -136,6 +149,11 @@ const VersionUpdateTab = () => {
 								When enabled, the login screen will display the latest GitHub
 								release version and release notes information.
 							</p>
+							{githubOnLoginLocked && (
+								<p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+									Disabled on this server (DISABLE_GITHUB_VERSION_ON_LOGIN).
+								</p>
+							)}
 						</div>
 						<button
 							type="button"
@@ -146,17 +164,26 @@ const VersionUpdateTab = () => {
 									showGithubVersionOnLogin: newValue,
 								});
 							}}
-							disabled={settingsLoading || updateSettingsMutation.isPending}
+							disabled={
+								githubOnLoginLocked ||
+								settingsLoading ||
+								updateSettingsMutation.isPending
+							}
 							className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-md border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+								!githubOnLoginLocked &&
 								settings?.show_github_version_on_login !== false
 									? "bg-primary-600"
 									: "bg-secondary-300 dark:bg-secondary-600"
-							} ${settingsLoading || updateSettingsMutation.isPending ? "opacity-50 cursor-not-allowed" : ""}`}
+							} ${githubOnLoginLocked || settingsLoading || updateSettingsMutation.isPending ? "opacity-50 cursor-not-allowed" : ""}`}
 							role="switch"
-							aria-checked={settings?.show_github_version_on_login !== false}
+							aria-checked={
+								!githubOnLoginLocked &&
+								settings?.show_github_version_on_login !== false
+							}
 						>
 							<span
 								className={`pointer-events-none inline-block h-5 w-5 transform rounded-md bg-white shadow ring-0 transition duration-200 ease-in-out ${
+									!githubOnLoginLocked &&
 									settings?.show_github_version_on_login !== false
 										? "translate-x-5"
 										: "translate-x-0"

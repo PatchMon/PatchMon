@@ -1,10 +1,26 @@
 package util
 
 import (
+	"errors"
 	"net"
 	"strconv"
 	"strings"
+	"sync/atomic"
 )
+
+// ErrVersionCheckDisabled is returned by LookupVersionFromDNS when
+// DISABLE_VERSION_CHECK is set.
+var ErrVersionCheckDisabled = errors.New("version check disabled")
+
+var versionCheckDisabled atomic.Bool
+
+// SetVersionCheckDisabled turns the upstream DNS version lookup off (or on).
+// Every caller goes through LookupVersionFromDNS, so this is the single place
+// that guarantees no query reaches *.vcheck.patchmon.net.
+func SetVersionCheckDisabled(disabled bool) { versionCheckDisabled.Store(disabled) }
+
+// VersionCheckDisabled reports whether the upstream version lookup is off.
+func VersionCheckDisabled() bool { return versionCheckDisabled.Load() }
 
 // CompareVersions compares two semantic versions.
 // Returns 1 if v1 > v2, -1 if v1 < v2, 0 if equal.
@@ -128,6 +144,9 @@ func parseVersionParts(v string) []int {
 
 // LookupVersionFromDNS performs a DNS TXT lookup and returns the first record as version string.
 func LookupVersionFromDNS(domain string) (string, error) {
+	if versionCheckDisabled.Load() {
+		return "", ErrVersionCheckDisabled
+	}
 	records, err := net.LookupTXT(domain)
 	if err != nil || len(records) == 0 {
 		return "", err

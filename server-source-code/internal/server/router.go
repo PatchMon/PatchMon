@@ -148,7 +148,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		oidcHandler = handler.NewOidcHandler(cfg, resolvedPtr, resolved, oidcClient, valid, store.NewOidcSessionStore(redisResolver), usersStore, authHandler, settingsStore, enc, log)
 	}
 	var discordHandler *handler.DiscordHandler
-	if rdb != nil {
+	if discordAuthActive(cfg, rdb) {
 		discordHandler = handler.NewDiscordHandler(cfg, resolved, settingsStore, usersStore, store.NewDiscordSessionStore(redisResolver), dashboardPrefsStore, authHandler, enc, log)
 	}
 	tfaHandler := handler.NewTfaHandler(usersStore, store.NewSessionsStore(dbProvider), trustedDevicesStore, dbProvider, notifyEmit, log)
@@ -734,6 +734,14 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	}
 
 	return r, guacdProc
+}
+
+// discordAuthActive reports whether the Discord handler is created. When it is
+// not, discordHandler stays nil and every /auth/discord route registration is
+// skipped, so with DISABLE_DISCORD_AUTH nothing can trigger a request to
+// discord.com.
+func discordAuthActive(cfg *config.Config, rdb *redisclient.Client) bool {
+	return rdb != nil && (cfg == nil || !cfg.DisableDiscordAuth)
 }
 
 func healthHandler(db *database.DB, rdb *redisclient.Client) http.HandlerFunc {

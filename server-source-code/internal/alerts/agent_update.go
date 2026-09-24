@@ -3,6 +3,7 @@ package alerts
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -33,7 +34,9 @@ func ProcessAgentUpdate(ctx context.Context, d *database.DB, agentsDir string, t
 
 	// Latest version from DNS
 	latest, dnsErr := util.LookupVersionFromDNS(agentVersionDNS)
-	if dnsErr != nil {
+	if errors.Is(dnsErr, util.ErrVersionCheckDisabled) {
+		log.Debug("agent_update: version check disabled")
+	} else if dnsErr != nil {
 		log.Warn("agent_update: DNS lookup failed", "error", dnsErr)
 	} else if latest != "" {
 		latest = strings.TrimSpace(strings.Trim(latest, "\"'"))

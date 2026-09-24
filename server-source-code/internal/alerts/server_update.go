@@ -3,6 +3,7 @@ package alerts
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -30,7 +31,9 @@ func ProcessServerUpdate(ctx context.Context, db *database.DB, serverVersion str
 
 	// DNS lookup for latest version
 	latest, dnsErr := util.LookupVersionFromDNS(serverVersionDNS)
-	if dnsErr != nil {
+	if errors.Is(dnsErr, util.ErrVersionCheckDisabled) {
+		log.Debug("server_update: version check disabled")
+	} else if dnsErr != nil {
 		log.Warn("server_update: DNS lookup failed", "error", dnsErr)
 	} else if latest != "" {
 		latest = strings.TrimSpace(strings.Trim(latest, "\"'"))
@@ -39,10 +42,11 @@ func ProcessServerUpdate(ctx context.Context, db *database.DB, serverVersion str
 		}
 	}
 
-	// Persist to settings (so /version/current shows fresh data)
+	// Persist to settings (so /version/current shows fresh data). With the check
+	// disabled nothing was checked, so last_update_check must not move.
 	settingsStore := store.NewSettingsStore(db)
 	s, err := settingsStore.GetFirst(ctx)
-	if err == nil && (serverVersion != "" || latest != "") {
+	if err == nil && !errors.Is(dnsErr, util.ErrVersionCheckDisabled) && (serverVersion != "" || latest != "") {
 		now := time.Now()
 		s.LastUpdateCheck = &now
 		if latest != "" {

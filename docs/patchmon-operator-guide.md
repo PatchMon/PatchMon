@@ -2013,6 +2013,7 @@ This means: if a variable is set in `.env`, editing it in **Settings → Environ
 15. [Agent Binary Overrides](#15-agent-binary-overrides)
 16. [Telemetry](#16-telemetry)
 17. [File Loading](#17-file-loading)
+18. [Privacy and Outbound Connections](#18-privacy-and-outbound-connections)
 
 ---
 
@@ -2503,6 +2504,7 @@ PatchMon can send anonymous usage heartbeats (version, host count, rough OS dist
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
 | `METRICS_API_URL` | _(none)_ | No | Override the upstream metrics endpoint. Leave empty to send to the default PatchMon telemetry service. Set to an internal URL to collect telemetry privately. |
+| `DISABLE_TELEMETRY` | `false` | No | When `true`, no metrics are ever sent (neither the daily job nor **Send now**), regardless of the UI toggle. See [Privacy and Outbound Connections](#18-privacy-and-outbound-connections). |
 
 ---
 
@@ -2512,6 +2514,34 @@ PatchMon can send anonymous usage heartbeats (version, host count, rough OS dist
 |----------|---------|----------|-------------|
 | `ENV_FILE` | `.env` | No | Path to the `.env` file the server reads at startup. If the file does not exist at the given path, startup continues silently and only actual process environment variables are used. |
 | `FRONTEND_URL` | _(none)_ | No | Optional alias used by OIDC when computing `OIDC_POST_LOGOUT_URI`. If set and `OIDC_POST_LOGOUT_URI` is not set, the post-logout redirect defaults to `<FRONTEND_URL>/login`. Otherwise the server falls back to `<CORS_ORIGIN>/login`. Most deployments can ignore this; set `CORS_ORIGIN` correctly and it's not needed. |
+
+---
+
+### 18. Privacy and Outbound Connections
+
+These switches hide community / donate buttons and stop the traffic PatchMon sends to the internet on its own. Each one is independent. None of them affects integrations you configure yourself (AI providers, alert channels such as Slack, Discord webhooks or ntfy, SMTP, OIDC).
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `HIDE_SOCIAL_LINKS` | `false` | No | When `true`, hides the Discord, GitHub, LinkedIn and YouTube buttons in the top bar, on the login page and in the setup wizard. Documentation, roadmap, bug report, email and website links stay visible. |
+| `HIDE_DONATE_BUTTONS` | `false` | No | When `true`, hides the Buy Me a Coffee / membership buttons in the top bar, setup wizard and release notes dialog. They are always hidden when `ADMIN_MODE=on`. |
+| `DISABLE_DISCORD_AUTH` | `false` | No | When `true`, Discord login and account linking are turned off: the `/auth/discord` endpoints are not registered, so the server never contacts `discord.com`. The login button, the profile link and **Settings → Discord Auth** are hidden. Discord alert webhooks are unaffected. Users who sign in only with Discord have no password and cannot log in while it is set; give them a password first. |
+| `DISABLE_TELEMETRY` | `false` | No | When `true`, no anonymous metrics are sent to `metrics.patchmon.cloud` (or `METRICS_API_URL`); the metrics endpoints return 403 and **Settings → Metrics** is hidden. |
+| `DISABLE_VERSION_CHECK` | `false` | No | When `true`, the server makes no DNS TXT lookups of `server.vcheck.patchmon.net` / `agent.vcheck.patchmon.net`. New server and agent releases are then no longer detected or announced. |
+| `DISABLE_GITHUB_VERSION_ON_LOGIN` | `false` | No | When `true`, the login page never queries `api.github.com` for the latest release, overriding the toggle under **Settings → Server Version**. |
+| `DISABLE_NEWSLETTER` | `false` | No | When `true`, every newsletter sign-up (setup wizard, release notes dialog, profile, automatic enrolment) is removed and the endpoints return 403; nothing is posted to the PatchMon marketing list. |
+
+To run PatchMon without any automatic outbound traffic:
+
+```bash
+HIDE_SOCIAL_LINKS=true
+HIDE_DONATE_BUTTONS=true
+DISABLE_DISCORD_AUTH=true
+DISABLE_TELEMETRY=true
+DISABLE_VERSION_CHECK=true
+DISABLE_GITHUB_VERSION_ON_LOGIN=true
+DISABLE_NEWSLETTER=true
+```
 
 ---
 

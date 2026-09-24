@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -99,7 +100,7 @@ func (h *AgentVersionHandler) GetVersionInfo(w http.ResponseWriter, r *http.Requ
 		if v, err := h.getLatestVersionFromDNS(ctx); err == nil {
 			h.upstreamVersion = v
 			h.lastChecked = &now
-		} else {
+		} else if !errors.Is(err, util.ErrVersionCheckDisabled) {
 			h.log.Warn("agent version: upstream DNS lookup failed, falling back to bundled binary version", "domain", agentDNSDomain, "error", err)
 		}
 	}
@@ -230,7 +231,9 @@ func (h *AgentVersionHandler) CheckForUpdates(w http.ResponseWriter, r *http.Req
 	v, err := h.getLatestVersionFromDNS(ctx)
 	now := time.Now()
 	if err != nil {
-		h.log.Warn("agent version: DNS check failed", "domain", agentDNSDomain, "error", err)
+		if !errors.Is(err, util.ErrVersionCheckDisabled) {
+			h.log.Warn("agent version: DNS check failed", "domain", agentDNSDomain, "error", err)
+		}
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"latestVersion":   h.currentVersion,
 			"upstreamVersion": h.upstreamVersion,
