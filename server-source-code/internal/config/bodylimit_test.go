@@ -89,7 +89,7 @@ func TestResolveBodyLimit_StoredValueAboveCeilingClamps(t *testing.T) {
 	}
 }
 
-func TestLoad_ComplianceBodyLimitDefault(t *testing.T) {
+func TestLoad_BodyLimitDefaults(t *testing.T) {
 	t.Setenv("ENV_FILE", "/nonexistent")
 	t.Setenv("DATABASE_URL", "postgresql://localhost/test")
 	t.Setenv("JWT_SECRET", "test-secret")

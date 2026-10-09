@@ -121,10 +121,7 @@ type Config struct {
 	JSONBodyLimitBytes        int64
 	AgentUpdateBodyLimitBytes int64
 	ComplianceBodyLimitBytes  int64
-	// AgentPingBodyLimitBytes caps /hosts/ping bodies. Worst case is ~3-4 KB
-	// of hashes + metrics; 8 KiB gives headroom without letting an attacker
-	// abuse the cheap ping endpoint as a payload sink.
-	AgentPingBodyLimitBytes int64
+	AgentPingBodyLimitBytes   int64
 	// Redis (env only)
 	RedisTLSCA string
 	// Timezone
