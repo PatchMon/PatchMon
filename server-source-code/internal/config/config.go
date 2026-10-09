@@ -313,7 +313,7 @@ func Load() (*Config, error) {
 		JSONBodyLimitBytes:          getEnvBytes("JSON_BODY_LIMIT", 5),
 		AgentUpdateBodyLimitBytes:   getEnvBytes("AGENT_UPDATE_BODY_LIMIT", 5),
 		ComplianceBodyLimitBytes:    getEnvBytes("COMPLIANCE_BODY_LIMIT", 20),
-		AgentPingBodyLimitBytes:     getEnvBytesKBDefault("AGENT_PING_BODY_LIMIT", 8),
+		AgentPingBodyLimitBytes:     getEnvBytesKBDefault("AGENT_PING_BODY_LIMIT", 64),
 		RedisTLSCA:                  getEnv("REDIS_TLS_CA", ""),
 		Timezone:                    getEnv("TZ", getEnv("TIMEZONE", "UTC")),
 		DefaultUserRole:             getEnv("DEFAULT_USER_ROLE", "user"),

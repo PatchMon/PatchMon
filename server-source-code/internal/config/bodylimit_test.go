@@ -104,6 +104,9 @@ func TestLoad_ComplianceBodyLimitDefault(t *testing.T) {
 	if cfg.AgentUpdateBodyLimitBytes != 5*1024*1024 {
 		t.Errorf("AgentUpdateBodyLimitBytes = %d, want %d", cfg.AgentUpdateBodyLimitBytes, 5*1024*1024)
 	}
+	if cfg.AgentPingBodyLimitBytes != 64*1024 {
+		t.Errorf("AgentPingBodyLimitBytes = %d, want %d", cfg.AgentPingBodyLimitBytes, 64*1024)
+	}
 }
 
 func TestParseBodyLimit_OverRangeClamps(t *testing.T) {
