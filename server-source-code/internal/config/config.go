@@ -425,29 +425,7 @@ func getEnvInt(key string, defaultVal int) int {
 // getEnvBytes parses size strings like "5mb", "2mb", "1gb" into bytes.
 // defaultMB is used when env is empty or parse fails.
 func getEnvBytes(key string, defaultMB int) int64 {
-	s := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
-	if s == "" {
-		return int64(defaultMB) * 1024 * 1024
-	}
-	var mult int64 = 1024 * 1024
-	if strings.HasSuffix(s, "kb") {
-		mult = 1024
-		s = strings.TrimSuffix(s, "kb")
-	} else if strings.HasSuffix(s, "mb") {
-		s = strings.TrimSuffix(s, "mb")
-	} else if strings.HasSuffix(s, "gb") {
-		mult = 1024 * 1024 * 1024
-		s = strings.TrimSuffix(s, "gb")
-	} else if strings.HasSuffix(s, "b") {
-		mult = 1
-		s = strings.TrimSuffix(s, "b")
-	}
-	s = strings.TrimSpace(s)
-	v, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
-		return int64(defaultMB) * 1024 * 1024
-	}
-	return scaleBodyLimit(v, mult, int64(defaultMB)*1024*1024)
+	return parseBodyLimit(os.Getenv(key), int64(defaultMB)*1024*1024)
 }
 
 // getEnvBytesKBDefault parses size strings like getEnvBytes but defaults to
@@ -456,24 +434,5 @@ func getEnvBytes(key string, defaultMB int) int64 {
 // silently shrink to KB if a future caller forgets which helper they're
 // invoking.
 func getEnvBytesKBDefault(key string, defaultKB int) int64 {
-	s := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
-	if s == "" {
-		return int64(defaultKB) * 1024
-	}
-	var mult int64 = 1024
-	if strings.HasSuffix(s, "kb") {
-		s = strings.TrimSuffix(s, "kb")
-	} else if strings.HasSuffix(s, "mb") {
-		mult = 1024 * 1024
-		s = strings.TrimSuffix(s, "mb")
-	} else if strings.HasSuffix(s, "b") {
-		mult = 1
-		s = strings.TrimSuffix(s, "b")
-	}
-	s = strings.TrimSpace(s)
-	v, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
-		return int64(defaultKB) * 1024
-	}
-	return scaleBodyLimit(v, mult, int64(defaultKB)*1024)
+	return parseBodyLimitKB(os.Getenv(key), int64(defaultKB)*1024)
 }
