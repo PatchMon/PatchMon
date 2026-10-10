@@ -460,7 +460,7 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 				scanCtx, scanCancel := context.WithCancel(context.Background())
 				queued := &queuedComplianceScan{cancel: scanCancel}
 				complianceScanCancelMu.Lock()
-				complianceScanQueued = queued
+				complianceScanQueued[queued] = struct{}{}
 				complianceScanCancelMu.Unlock()
 				go func(msg wsMsg, ctx context.Context, cancel context.CancelFunc) {
 					complianceScanCancelMu.Lock()
@@ -474,7 +474,15 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 						if complianceScanRunning.CompareAndSwap(false, true) {
 							break
 						}
-						time.Sleep(500 * time.Millisecond)
+						select {
+						case <-ctx.Done():
+							complianceScanCancelMu.Lock()
+							delete(complianceScanQueued, queued)
+							complianceScanCancelMu.Unlock()
+							logger.Info("Compliance scan was cancelled before it started")
+							return
+						case <-time.After(500 * time.Millisecond):
+						}
 					}
 					if !complianceScanRunning.Load() {
 						complianceScanRunning.Store(true)
@@ -493,9 +501,7 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 
 					defer cancel()
 					complianceScanCancelMu.Lock()
-					if complianceScanQueued == queued {
-						complianceScanQueued = nil
-					}
+					delete(complianceScanQueued, queued)
 					if ctx.Err() != nil {
 						complianceScanCancelMu.Unlock()
 						logger.Info("Compliance scan was cancelled before it started")
@@ -533,9 +539,9 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 				complianceScanCancelMu.Lock()
 				cancelFn := complianceScanCancel
 				complianceScanCancel = nil
-				if complianceScanQueued != nil {
-					complianceScanQueued.cancel()
-					complianceScanQueued = nil
+				for q := range complianceScanQueued {
+					q.cancel()
+					delete(complianceScanQueued, q)
 					if cancelFn == nil {
 						cancelFn = func() {}
 					}
@@ -1340,8 +1346,8 @@ var complianceScanCancel context.CancelFunc
 
 type queuedComplianceScan struct{ cancel context.CancelFunc }
 
-// complianceScanQueued holds an on-demand scan waiting for the running slot, so a cancel sent right after the trigger still reaches it.
-var complianceScanQueued *queuedComplianceScan
+// complianceScanQueued holds on-demand scans waiting for the running slot, so a cancel sent right after a trigger still reaches them.
+var complianceScanQueued = map[*queuedComplianceScan]struct{}{}
 var complianceScanCancelMu sync.Mutex
 var complianceScanSource string
 

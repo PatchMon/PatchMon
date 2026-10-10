@@ -1334,7 +1334,7 @@ func (h *ComplianceHandler) GetInstallJobStatus(w http.ResponseWriter, r *http.R
 				status = "active"
 			case "archived":
 				status = "failed"
-				resp["error"] = "The agent was not connected, so the install could not start. Click Install Scanner to try again."
+				resp["error"] = "The install could not be started on the agent. Check that it is connected, then click Install Scanner to try again."
 			default:
 				status = raw
 			}
