@@ -1075,11 +1075,24 @@ const HostDetail = () => {
 	const applyPendingConfigMutation = useMutation({
 		mutationFn: () =>
 			adminHostsAPI.applyPendingConfig(hostId).then((res) => res.data),
-		onSuccess: () => {
+		onSuccess: (data) => {
 			queryClient.invalidateQueries({
 				queryKey: ["host-integrations", hostId],
 			});
 			refetchIntegrations();
+			if (data?.scannerInstallQueued) {
+				setComplianceInstallJob({
+					status: "waiting",
+					progress: 0,
+					message: "Waiting for the agent to restart",
+					install_events: [],
+					error: null,
+				});
+				toast.success(
+					"Configuration applied. OpenSCAP will be installed once the agent has restarted.",
+				);
+				return;
+			}
 			toast.success(
 				"Configuration applied. Agent will update config.yml and restart.",
 			);

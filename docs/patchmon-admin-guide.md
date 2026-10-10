@@ -3009,10 +3009,10 @@ After a successful bulk scan, the modal auto-closes after three seconds and each
 
 Compliance scanning on a host needs OpenSCAP (`oscap` binary) installed and the SSG content available locally. The first time you enable compliance on a host, the scanner usually isn't there yet. PatchMon handles this with an install job.
 
-1. Enable **compliance mode** on the host (set to `On-Demand` or `Enabled`).
-2. On next Apply Pending Config, the agent receives the new integration state and reports that the scanner is not installed.
-3. From the Host Detail Compliance tab, click **Install Scanner**. The UI calls `POST /api/v1/compliance/install-scanner/{hostId}`.
-4. The server enqueues an install task. The worker sends an install message to the agent.
+1. Enable **compliance mode** on the host (set to `On-Demand` or `Enabled`) with OpenSCAP ticked, and click **Apply**.
+2. The agent saves the new settings and restarts. Because compliance with OpenSCAP has just been switched on, the server also queues an install job that starts about 30 seconds later, once the agent has reconnected. The Compliance tab shows it as waiting until then.
+3. If that install fails, or the agent was not back in time, click **Install Scanner** (or **Retry install**) on the Host Detail Compliance tab. The UI calls `POST /api/v1/compliance/install-scanner/{hostId}`. Hosts that already had compliance enabled before an upgrade also need this button once.
+4. Either way the server enqueues an install task, and the worker sends an install message to the agent.
 5. The agent installs the OpenSCAP scanner with the host's own package manager, then downloads SSG content from the server via `GET /api/v1/compliance/ssg-content/{filename}`. Progress events are reported back to Redis and surfaced in the UI via `GET /compliance/install-job/{hostId}`, which returns the current state plus a per-step message and progress percent. The states are `none` (no install has been requested), `waiting`, `active`, `completed`, `failed`, and `unknown` when the job can no longer be found. A `failed` state also carries an `error` field with the reason.
 6. When the install completes, the Run Scan button becomes active.
 
