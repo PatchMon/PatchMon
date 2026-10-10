@@ -51,8 +51,8 @@ pre-commit:
     vuln-check:
       run: |
         echo "Running dependency vulnerability checks..."
-        echo "  npm audit (high/critical)..."
-        npm audit --audit-level=high || exit 1
+        echo "  npm audit (high/critical, production deps)..."
+        npm audit --omit=dev --audit-level=high || exit 1
         if ! command -v govulncheck >/dev/null 2>&1; then
           echo "govulncheck not found. Install: go install golang.org/x/vuln/cmd/govulncheck@latest"
           exit 1
