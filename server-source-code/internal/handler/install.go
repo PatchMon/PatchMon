@@ -412,6 +412,7 @@ func (h *InstallHandler) ServePing(w http.ResponseWriter, r *http.Request) {
 		default:
 			var tooLarge *http.MaxBytesError
 			if errors.As(err, &tooLarge) {
+				slog.Warn("ping: body exceeded AGENT_PING_BODY_LIMIT", "host_id", checkin.ID, "limit_bytes", tooLarge.Limit)
 				JSON(w, http.StatusRequestEntityTooLarge, map[string]string{
 					"error": fmt.Sprintf("Check-in exceeds the %s AGENT_PING_BODY_LIMIT. Raise it in Settings then Environment. A host with many mounted volumes can need this.", formatBytesEnv(tooLarge.Limit)),
 				})
@@ -737,6 +738,7 @@ func (h *InstallHandler) ServeUpdate(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
+			slog.Warn("update: body exceeded AGENT_UPDATE_BODY_LIMIT", "host_id", host.ID, "limit_bytes", tooLarge.Limit)
 			h.rejectUpdate(w, r, host.ID, "full", nil, http.StatusRequestEntityTooLarge,
 				fmt.Sprintf("Report exceeds the %s AGENT_UPDATE_BODY_LIMIT. Raise it in Settings then Environment, and raise the body size limit on any reverse proxy in front of PatchMon.", formatBytesEnv(tooLarge.Limit)),
 				updateStart)

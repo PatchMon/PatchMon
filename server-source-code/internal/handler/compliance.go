@@ -311,6 +311,7 @@ func (h *ComplianceHandler) ReceiveScans(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
+			slog.Warn("compliance: body exceeded COMPLIANCE_BODY_LIMIT", "host_id", host.ID, "limit_bytes", tooLarge.Limit)
 			JSON(w, http.StatusRequestEntityTooLarge, map[string]string{
 				"error": fmt.Sprintf("Scan results exceed the %s COMPLIANCE_BODY_LIMIT. Raise it in Settings then Environment, and raise the body size limit on any reverse proxy in front of PatchMon.", formatBytesEnv(tooLarge.Limit)),
 			})
