@@ -89,7 +89,37 @@ func TestResolveBodyLimit_StoredValueAboveCeilingClamps(t *testing.T) {
 	}
 }
 
-func TestLoad_ComplianceBodyLimitDefault(t *testing.T) {
+func TestEnvAndDBPathsAgreeOnEverySuffix(t *testing.T) {
+	const kbFallback = 64 * 1024
+	const mbFallback = 5 * 1024 * 1024
+
+	for _, in := range []string{
+		"", "0", "-5", "abc", "512b", "8kb", "64kb", "128kb",
+		"1mb", "20mb", "32mb", "33mb", "1gb", "2gb",
+	} {
+		t.Setenv("PROBE_KB", in)
+		if env, db := getEnvBytesKBDefault("PROBE_KB", 64), parseBodyLimitKB(in, kbFallback); env != db {
+			t.Errorf("KB path %q: env = %d, db = %d, want equal", in, env, db)
+		}
+		t.Setenv("PROBE_MB", in)
+		if env, db := getEnvBytes("PROBE_MB", 5), parseBodyLimit(in, mbFallback); env != db {
+			t.Errorf("MB path %q: env = %d, db = %d, want equal", in, env, db)
+		}
+	}
+}
+
+// The operator guide states every gb value is reduced to the ceiling.
+func TestGigabyteClampsOnBothPaths(t *testing.T) {
+	t.Setenv("PROBE_KB", "1gb")
+	if got := getEnvBytesKBDefault("PROBE_KB", 64); got != maxBodyLimitBytes {
+		t.Errorf("env KB path 1gb = %d, want a clamp to %d", got, maxBodyLimitBytes)
+	}
+	if got := parseBodyLimitKB("1gb", 64*1024); got != maxBodyLimitBytes {
+		t.Errorf("db KB path 1gb = %d, want a clamp to %d", got, maxBodyLimitBytes)
+	}
+}
+
+func TestLoad_BodyLimitDefaults(t *testing.T) {
 	t.Setenv("ENV_FILE", "/nonexistent")
 	t.Setenv("DATABASE_URL", "postgresql://localhost/test")
 	t.Setenv("JWT_SECRET", "test-secret")
@@ -103,6 +133,9 @@ func TestLoad_ComplianceBodyLimitDefault(t *testing.T) {
 	}
 	if cfg.AgentUpdateBodyLimitBytes != 5*1024*1024 {
 		t.Errorf("AgentUpdateBodyLimitBytes = %d, want %d", cfg.AgentUpdateBodyLimitBytes, 5*1024*1024)
+	}
+	if cfg.AgentPingBodyLimitBytes != 64*1024 {
+		t.Errorf("AgentPingBodyLimitBytes = %d, want %d", cfg.AgentPingBodyLimitBytes, 64*1024)
 	}
 }
 

@@ -658,7 +658,7 @@ The `server.env.*` keys map directly to the environment variables the PatchMon b
 | `JSON_BODY_LIMIT` | Max JSON body size | `5mb` |
 | `AGENT_UPDATE_BODY_LIMIT` | Max agent update body size | `5mb` |
 | `COMPLIANCE_BODY_LIMIT` | Max compliance scan result body size | `20mb` |
-| `AGENT_PING_BODY_LIMIT` | Max agent ping body size | `8kb` |
+| `AGENT_PING_BODY_LIMIT` | Max agent ping body size | `64kb` |
 | `TZ` | IANA timezone for log timestamps | `UTC` |
 
 > **Tip:** Many of these can be changed later from the Settings UI without a restart of the whole cluster. See Settings in the web UI.
@@ -2432,7 +2432,7 @@ Accepted suffixes: `b`, `kb`, `mb`, `gb`. Examples: `10mb`, `512kb`.
 | `JSON_BODY_LIMIT` | `5mb` | No | Maximum size of JSON request bodies for standard API endpoints (user management, settings, host actions, etc.). |
 | `AGENT_UPDATE_BODY_LIMIT` | `5mb` | No | Maximum size of request bodies on agent check-in and package reporting endpoints. Increase this if agents managing a very large number of packages hit the limit. |
 | `COMPLIANCE_BODY_LIMIT` | `20mb` | No | Maximum size of request bodies on the compliance scan result endpoint. OpenSCAP results are large: a 900-rule profile can produce well over 10 MB, and a single submission may carry both an OpenSCAP and a Docker Bench scan. |
-| `AGENT_PING_BODY_LIMIT` | `8kb` | No | Maximum size of agent ping bodies. An unsuffixed value is read as KB here, so `16` means 16 KB. |
+| `AGENT_PING_BODY_LIMIT` | `64kb` | No | Maximum size of agent ping bodies. An unsuffixed value is read as KB here, so `16` means 16 KB. Kubernetes nodes need the headroom: every CSI volume is mounted twice with long paths, so a node with a dozen persistent volumes can exceed 8 KB. |
 
 > **Suffixes:** `b`, `kb` and `mb` are accepted. `gb` parses but every `gb` value exceeds the 32 MB ceiling and is reduced to it, so there is no reason to use it.
 
@@ -6459,14 +6459,14 @@ docker compose exec server env | grep REDIS_
 
 #### Cause
 
-PatchMon caps JSON request bodies to protect against memory exhaustion. Two separate limits apply:
+PatchMon caps JSON request bodies to protect against memory exhaustion. Four separate limits apply:
 
 | Env var | Default | What it caps |
 |---------|---------|---------------|
 | `JSON_BODY_LIMIT` | `5` (MB) | Every non-agent JSON endpoint (UI API, settings, etc.). |
 | `AGENT_UPDATE_BODY_LIMIT` | `5` (MB) | `POST /api/v1/hosts/update` only: the agent report payload. |
 | `COMPLIANCE_BODY_LIMIT` | `20` (MB) | `POST /api/v1/compliance/scans` only: OpenSCAP and Docker Bench results. |
-| `AGENT_PING_BODY_LIMIT` | `8` (KB) | `POST /api/v1/hosts/ping` only. |
+| `AGENT_PING_BODY_LIMIT` | `64` (KB) | `POST /api/v1/hosts/ping` only. |
 
 An unsuffixed value is read as **megabytes**, except `AGENT_PING_BODY_LIMIT`, where it is read as kilobytes. You can also write the unit explicitly, e.g. `20mb`.
 

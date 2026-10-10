@@ -410,6 +410,13 @@ func (h *InstallHandler) ServePing(w http.ResponseWriter, r *http.Request) {
 			// Treat as legacy heartbeat.
 			hasBody = false
 		default:
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				JSON(w, http.StatusRequestEntityTooLarge, map[string]string{
+					"error": fmt.Sprintf("Check-in exceeds the %s AGENT_PING_BODY_LIMIT. Raise it in Settings then Environment. A host with many mounted volumes can need this.", formatBytesEnv(tooLarge.Limit)),
+				})
+				return
+			}
 			JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
 			return
 		}

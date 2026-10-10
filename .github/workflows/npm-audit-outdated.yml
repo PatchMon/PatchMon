@@ -40,10 +40,16 @@ jobs:
 
       - name: Run npm audit
         run: |
-          # Fail only on high/critical; moderate/low are reported but do not fail
-          npm audit --audit-level=high
+          # Fail only on high/critical in deps that ship; moderate/low are
+          # reported but do not fail. Dev-only advisories are reported by the
+          # step below without failing the job.
+          npm audit --omit=dev --audit-level=high
         env:
           npm_config_audit_level: high
+
+      - name: Report dev-only advisories (never fails)
+        if: always()
+        run: npm audit || true
 
   outdated:
     name: Outdated packages
