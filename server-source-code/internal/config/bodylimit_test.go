@@ -108,9 +108,7 @@ func TestEnvAndDBPathsAgreeOnEverySuffix(t *testing.T) {
 	}
 }
 
-// The operator guide states every gb value is reduced to the ceiling. It was
-// false for the KB-flavoured env path, which had no gb branch and fell back to
-// the default instead.
+// The operator guide states every gb value is reduced to the ceiling.
 func TestGigabyteClampsOnBothPaths(t *testing.T) {
 	t.Setenv("PROBE_KB", "1gb")
 	if got := getEnvBytesKBDefault("PROBE_KB", 64); got != maxBodyLimitBytes {
