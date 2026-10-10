@@ -4,6 +4,7 @@ package hardware
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -110,6 +111,12 @@ func (m *Manager) getSwapSize() float64 {
 	return float64(swapInfo.Total) / (1024 * 1024 * 1024)
 }
 
+// kubelet mounts every CSI volume twice, at the driver's stable globalmount and
+// again under each consuming pod; dropping the pod path keeps one entry per volume.
+func isPodVolumeMount(mountpoint string) bool {
+	return strings.Contains(mountpoint, "/volumes/kubernetes.io~")
+}
+
 // getDiskDetails gets disk information
 func (m *Manager) getDiskDetails() []models.DiskInfo {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -130,6 +137,10 @@ func (m *Manager) getDiskDetails() []models.DiskInfo {
 		if partition.Fstype == "tmpfs" || partition.Fstype == "devtmpfs" ||
 			partition.Fstype == "proc" || partition.Fstype == "sysfs" ||
 			partition.Fstype == "devpts" || partition.Fstype == "squashfs" {
+			continue
+		}
+
+		if isPodVolumeMount(partition.Mountpoint) {
 			continue
 		}
 
