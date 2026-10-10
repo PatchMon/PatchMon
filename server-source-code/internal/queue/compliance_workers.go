@@ -329,6 +329,15 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 		return nil
 	}
 
+	if h.integrationStatus != nil && h.integrationStatus.IsComplianceScanCancelled(ctx, p.HostID) {
+		h.log.Info("run_scan: cancelled after dispatch, recalling scan", "api_id", p.ApiID, "host_id", p.HostID)
+		_ = h.registry.SendJSON(p.ApiID, map[string]interface{}{"type": "compliance_scan_cancel"})
+		if taskID != "" && d != nil {
+			_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
+		}
+		return nil
+	}
+
 	profilesToUse := []string{}
 	if effectiveProfileType == "all" || effectiveProfileType == "openscap" {
 		prof, err := h.compliance.GetOrCreateProfile(ctx, "OpenSCAP Scan", "openscap")
@@ -349,6 +358,11 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	for _, profileID := range profilesToUse {
 		if err := h.compliance.CreateRunningScan(ctx, p.HostID, profileID); err != nil {
 			h.log.Warn("run_scan: could not record running scan", "host_id", p.HostID, "profile_id", profileID, "error", err)
+		}
+	}
+	if h.integrationStatus != nil && h.integrationStatus.IsComplianceScanCancelled(ctx, p.HostID) {
+		if _, err := h.compliance.CancelActiveScans(ctx, p.HostID); err != nil {
+			h.log.Warn("run_scan: could not cancel placeholders after late cancel", "host_id", p.HostID, "error", err)
 		}
 	}
 

@@ -165,3 +165,21 @@ JOIN compliance_profiles cp ON cp.id = cs.profile_id
 WHERE cs.host_id = $1 AND cs.status = 'completed' AND cp.type = $2
 ORDER BY cs.completed_at DESC
 LIMIT 1;
+
+-- name: CancelActiveComplianceScansByHost :execrows
+UPDATE compliance_scans
+SET status = 'cancelled', completed_at = NOW(), error_message = $2, updated_at = NOW()
+WHERE host_id = $1
+  AND (status = 'running' OR (completed_at IS NULL AND status != 'failed'));
+
+-- name: GetRemediationProfileNameByHost :one
+SELECT cp.name
+FROM compliance_scans cs
+JOIN compliance_profiles cp ON cp.id = cs.profile_id
+WHERE cs.host_id = sqlc.arg('host_id') AND cs.status = 'completed' AND cp.type = 'openscap'
+ORDER BY EXISTS (
+    SELECT 1 FROM compliance_results cr
+    JOIN compliance_rules ru ON ru.id = cr.rule_id
+    WHERE cr.scan_id = cs.id AND ru.rule_ref = sqlc.arg('rule_ref')::text
+) DESC, cs.completed_at DESC
+LIMIT 1;

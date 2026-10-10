@@ -2922,17 +2922,18 @@ A scan can be cancelled while it is running. Unlike patch runs, there is no "Sto
 
 1. On the **Hosts** tab, find the row with the blue "Scanning…" indicator.
 2. Click the red **StopCircle** button in the **Run** column. The UI calls `POST /api/v1/compliance/cancel/{hostId}`.
-3. A toast confirms "Cancel request sent for *host*".
+3. A toast confirms "Scan cancelled for *host*", and the scan leaves **Scans in Progress** straight away.
 
 #### What cancel actually does
 
-The `CancelScan` handler on the server does three things:
+The `CancelScan` handler on the server does four things:
 
 1. **Removes any queued `run_scan` task from asynq**, so a scan that hasn't yet reached the agent won't start.
 2. **Sets a `compliance_scan_cancel` flag in Redis** for this host, so if the worker picks up the task between DeleteTask and the agent message, the worker sees the cancel flag and skips execution.
-3. **Sends a `compliance_scan_cancel` WebSocket message to the agent**, so an already-running scan is interrupted at the process level.
+3. **Marks the host's running scan records as cancelled**, so the dashboard stops showing them as running without waiting for the agent. They appear in the **History** tab with the status **Cancelled**.
+4. **Sends a `compliance_scan_cancel` WebSocket message to the agent**, so an already-running scan is interrupted at the process level.
 
-If the agent is connected and busy scanning, it receives the cancel, terminates the OpenSCAP / Docker Bench subprocess, and submits whatever partial results it has. The scan record is marked cancelled.
+If the agent is connected and busy scanning, it receives the cancel and terminates the OpenSCAP / Docker Bench subprocess. If the scan had already finished and its results reach the server after the cancel, they are kept as a normal completed scan.
 
 If the agent is offline, only the queue-level cancel applies: the scan won't run when the agent reconnects because the task has already been removed from the queue.
 
@@ -3121,10 +3122,12 @@ Across the top of every Compliance page view sit five identical cards:
 | Card | What it counts | Derived from |
 |---|---|---|
 | Total hosts | `total_hosts + unscanned`: every host with compliance visibility, scanned or not | `summary.total_hosts` + `summary.unscanned` |
-| Compliant | Hosts whose latest scan score is **≥ 80%** | `summary.hosts_compliant` |
-| Warning | Hosts whose latest scan score is between **60% and 79%** | `summary.hosts_warning` |
-| Critical | Hosts whose latest scan score is **< 60%** | `summary.hosts_critical` |
+| Compliant | Hosts whose latest scans all score **≥ 80%** | `summary.hosts_compliant` |
+| Warning | Hosts whose worst latest scan scores between **60% and 79%**, or scores lower but has **no failed rules** | `summary.hosts_warning` |
+| Critical | Hosts with a latest scan scoring **< 60%** that has **at least one failed rule** | `summary.hosts_critical` |
 | Never scanned | Hosts that have never successfully submitted a scan | `summary.unscanned` |
+
+A host is placed by its worst scan, so a host with a compliant OpenSCAP scan and a low Docker Bench scan counts as Warning or Critical. Warnings lower the score but never make a host Critical on their own: a Docker Bench scan that reports only warnings is counted as Warning, however low its score. The status icon in the **Hosts** tab uses the same rule.
 
 The Never scanned card is clickable, it toggles a filter on the **Hosts** tab to show only never-scanned hosts, which is the fastest way to find coverage gaps.
 
@@ -3210,7 +3213,7 @@ The benchmark's rationale for why this rule exists, why it matters, what risk it
 The right column contains two panels that help operators act on a failure:
 
 - **What the fix does**: a short plain-English explanation of the remediation, derived heuristically from the remediation text (for example, "This fix will update file permissions or ownership…" when the script uses `chmod` / `chown`; "This fix will update SSH daemon configuration…" when the script touches `/etc/ssh`). This is UI scaffolding, not audit-grade. Always read the actual remediation script below.
-- **Remediation**: the exact script the scanner would run. For OpenSCAP rules this is the shell fix pulled from SSG. For Docker Bench it's the benchmark-prescribed command. A **Copy** button copies the script to your clipboard so you can paste into a change ticket or runbook.
+- **Remediation**: the exact script the scanner would run. For OpenSCAP rules this is the shell fix pulled from SSG, with the benchmark's variables (password age, `umask`, history length and so on) filled in with the values of the profile the host was scanned against. Results stored by an older agent show these scripts on one line with blank values; update the agent and run a new scan to refresh them. For Docker Bench it's the benchmark-prescribed command. A **Copy** button copies the script to your clipboard so you can paste into a change ticket or runbook.
 
 If the benchmark doesn't ship a remediation script (common for high-level "document this" rules), the panel reads "No remediation steps available."
 
@@ -3252,8 +3255,8 @@ Fix a single failed rule without running a full scan.
 1. Open **Compliance Host Detail** for the host.
 2. In the Scan Results table, expand a failed rule.
 3. Click **Remediate this rule**.
-4. The UI calls `POST /api/v1/compliance/remediate/{hostId}` with `{ "rule_id": "<rule-ref>" }`. The server validates that the agent is connected and sends a `remediate_rule` WebSocket message to the agent.
-5. The agent runs `oscap xccdf eval --remediate --rule <rule>` against the SSG datastream, that runs OpenSCAP's targeted remediation script for just that one rule.
+4. The UI calls `POST /api/v1/compliance/remediate/{hostId}` with `{ "rule_id": "<rule-ref>" }`. The server validates that the agent is connected and sends a `remediate_rule` WebSocket message to the agent, including the OpenSCAP profile the rule was last scanned under.
+5. The agent runs `oscap xccdf eval --profile <profile> --remediate --rule <rule>` against the SSG datastream, that runs OpenSCAP's targeted remediation script for just that one rule. The profile matches the scan that reported the failure (for example the Debian `standard` profile or `cis_level2_server`), and falls back to `level1_server` when the host has no completed OpenSCAP scan.
 6. The UI shows a toast "Remediation triggered". The next scan (manual or scheduled) should show that rule flipping from Fail to Pass if the fix was successful.
 
 Per-rule remediation is limited to OpenSCAP rules today. Docker Bench does not ship executable remediation scripts in the benchmark. The UI greys out the Remediate button on Docker Bench rules for this reason.

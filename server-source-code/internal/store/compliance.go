@@ -683,3 +683,37 @@ func (s *ComplianceStore) CreateRunningScan(ctx context.Context, hostID, profile
 	})
 	return err
 }
+
+// ScanCancelledMessage is the error_message recorded on scans the user cancels.
+const ScanCancelledMessage = "Scan cancelled by user"
+
+// CancelActiveScans moves every running scan for a host to the cancelled state.
+func (s *ComplianceStore) CancelActiveScans(ctx context.Context, hostID string) (int64, error) {
+	d := s.db.DB(ctx)
+	msg := ScanCancelledMessage
+	n, err := d.Queries.CancelActiveComplianceScansByHost(ctx, db.CancelActiveComplianceScansByHostParams{
+		HostID:       hostID,
+		ErrorMessage: &msg,
+	})
+	if err != nil {
+		return 0, err
+	}
+	if n > 0 {
+		invalidateDashboardCache(ctx)
+	}
+	return n, nil
+}
+
+// GetRemediationProfileName returns the agent-reported OpenSCAP profile of the
+// host's latest scan, preferring one that evaluated ruleRef; "" if none.
+func (s *ComplianceStore) GetRemediationProfileName(ctx context.Context, hostID, ruleRef string) (string, error) {
+	d := s.db.DB(ctx)
+	name, err := d.Queries.GetRemediationProfileNameByHost(ctx, db.GetRemediationProfileNameByHostParams{
+		HostID:  hostID,
+		RuleRef: ruleRef,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return name, err
+}

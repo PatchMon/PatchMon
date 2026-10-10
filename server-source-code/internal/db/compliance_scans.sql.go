@@ -11,6 +11,26 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cancelActiveComplianceScansByHost = `-- name: CancelActiveComplianceScansByHost :execrows
+UPDATE compliance_scans
+SET status = 'cancelled', completed_at = NOW(), error_message = $2, updated_at = NOW()
+WHERE host_id = $1
+  AND (status = 'running' OR (completed_at IS NULL AND status != 'failed'))
+`
+
+type CancelActiveComplianceScansByHostParams struct {
+	HostID       string  `json:"host_id"`
+	ErrorMessage *string `json:"error_message"`
+}
+
+func (q *Queries) CancelActiveComplianceScansByHost(ctx context.Context, arg CancelActiveComplianceScansByHostParams) (int64, error) {
+	result, err := q.db.Exec(ctx, cancelActiveComplianceScansByHost, arg.HostID, arg.ErrorMessage)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countComplianceScansByHost = `-- name: CountComplianceScansByHost :one
 SELECT COUNT(*) FROM compliance_scans WHERE host_id = $1
 `
@@ -579,6 +599,31 @@ func (q *Queries) GetRecentComplianceScans(ctx context.Context) ([]GetRecentComp
 		return nil, err
 	}
 	return items, nil
+}
+
+const getRemediationProfileNameByHost = `-- name: GetRemediationProfileNameByHost :one
+SELECT cp.name
+FROM compliance_scans cs
+JOIN compliance_profiles cp ON cp.id = cs.profile_id
+WHERE cs.host_id = $1 AND cs.status = 'completed' AND cp.type = 'openscap'
+ORDER BY EXISTS (
+    SELECT 1 FROM compliance_results cr
+    JOIN compliance_rules ru ON ru.id = cr.rule_id
+    WHERE cr.scan_id = cs.id AND ru.rule_ref = $2::text
+) DESC, cs.completed_at DESC
+LIMIT 1
+`
+
+type GetRemediationProfileNameByHostParams struct {
+	HostID  string `json:"host_id"`
+	RuleRef string `json:"rule_ref"`
+}
+
+func (q *Queries) GetRemediationProfileNameByHost(ctx context.Context, arg GetRemediationProfileNameByHostParams) (string, error) {
+	row := q.db.QueryRow(ctx, getRemediationProfileNameByHost, arg.HostID, arg.RuleRef)
+	var name string
+	err := row.Scan(&name)
+	return name, err
 }
 
 const listActiveComplianceScans = `-- name: ListActiveComplianceScans :many

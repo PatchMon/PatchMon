@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -1137,15 +1138,24 @@ func (h *ComplianceHandler) CancelScan(w http.ResponseWriter, r *http.Request) {
 	if h.integrationStatus != nil {
 		_ = h.integrationStatus.SetComplianceScanCancel(r.Context(), hostID)
 	}
+	var sendErr error
 	if h.registry.IsConnected(host.ApiID) {
-		if err := h.registry.SendJSON(host.ApiID, map[string]interface{}{"type": "compliance_scan_cancel"}); err != nil {
-			Error(w, http.StatusServiceUnavailable, "Failed to send cancel to agent")
-			return
-		}
+		sendErr = h.registry.SendJSON(host.ApiID, map[string]interface{}{"type": "compliance_scan_cancel"})
+	}
+	cancelled, err := h.complianceStore.CancelActiveScans(r.Context(), hostID)
+	if err != nil {
+		slog.Error("compliance cancel: failed to mark scans cancelled", "error", err, "host_id", hostID)
+		Error(w, http.StatusInternalServerError, "Failed to cancel scan")
+		return
+	}
+	if sendErr != nil {
+		Error(w, http.StatusServiceUnavailable, "Failed to send cancel to agent")
+		return
 	}
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"success": true,
-		"message": "Scan cancel sent",
+		"success":        true,
+		"message":        "Scan cancel sent",
+		"scansCancelled": cancelled,
 	})
 }
 
@@ -1558,6 +1568,14 @@ func (h *ComplianceHandler) authenticateAgent(w http.ResponseWriter, r *http.Req
 	return true
 }
 
+var agentProfileIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_.\-]{1,256}$`)
+
+// isAgentProfileID mirrors the agent's validateProfileID; the agent drops the
+// whole remediate_rule message when profile_id fails it.
+func isAgentProfileID(s string) bool {
+	return agentProfileIDPattern.MatchString(s)
+}
+
 // RemediateRule handles POST /compliance/remediate/:hostId.
 func (h *ComplianceHandler) RemediateRule(w http.ResponseWriter, r *http.Request) {
 	hostID := chi.URLParam(r, "hostId")
@@ -1581,7 +1599,15 @@ func (h *ComplianceHandler) RemediateRule(w http.ResponseWriter, r *http.Request
 		Error(w, http.StatusServiceUnavailable, "Agent is not connected")
 		return
 	}
-	if err := h.registry.SendJSON(host.ApiID, map[string]interface{}{"type": "remediate_rule", "rule_id": req.RuleID}); err != nil {
+	msg := map[string]interface{}{"type": "remediate_rule", "rule_id": req.RuleID}
+	profileName, err := h.complianceStore.GetRemediationProfileName(r.Context(), hostID, req.RuleID)
+	if err != nil {
+		slog.Warn("compliance remediate: profile lookup failed", "error", err, "host_id", hostID)
+	}
+	if isAgentProfileID(profileName) {
+		msg["profile_id"] = profileName
+	}
+	if err := h.registry.SendJSON(host.ApiID, msg); err != nil {
 		Error(w, http.StatusServiceUnavailable, "Failed to send remediate command")
 		return
 	}
