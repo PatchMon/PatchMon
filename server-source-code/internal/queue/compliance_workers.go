@@ -434,12 +434,29 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 		})
 	}
 
+	cancelKey := workerTenantKey(p.Host, complianceInstallCancelPrefix+taskID)
+	if rdb != nil {
+		if cancelled, _ := rdb.Get(ctx, cancelKey).Result(); cancelled != "" {
+			_ = rdb.Del(ctx, cancelKey).Err()
+			errMsg := "Cancelled by user"
+			if taskID != "" && d != nil {
+				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
+			}
+			return nil
+		}
+	}
+
 	if !h.registry.IsConnected(p.ApiID) {
 		msg := "Agent is not connected. Cannot run install."
+		maxRetry, _ := asynq.GetMaxRetry(ctx)
 		if taskID != "" && d != nil {
-			_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
+			if retryCount >= maxRetry {
+				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
+			} else {
+				_ = d.Queries.UpdateJobHistoryDelayed(ctx, taskID)
+			}
 		}
-		h.log.Warn("install_compliance_tools: agent not connected", "api_id", p.ApiID)
+		h.log.Warn("install_compliance_tools: agent not connected", "api_id", p.ApiID, "attempt", attempt)
 		return errors.New(msg)
 	}
 
@@ -461,7 +478,6 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 	}
 
 	statusKey := workerTenantKey(p.Host, "integration_status:"+p.ApiID+":compliance")
-	cancelKey := workerTenantKey(p.Host, complianceInstallCancelPrefix+taskID)
 	deadline := time.Now().Add(complianceInstallTimeout)
 	pollTimer := time.NewTimer(compliancePollInterval)
 	defer pollTimer.Stop()

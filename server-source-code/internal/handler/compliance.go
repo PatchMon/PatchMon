@@ -1227,6 +1227,9 @@ func (h *ComplianceHandler) CancelInstall(w http.ResponseWriter, r *http.Request
 		return
 	}
 	_ = h.integrationStatus.SetComplianceInstallCancel(r.Context(), jobID)
+	if h.queueInspector != nil {
+		_ = h.queueInspector.DeleteTask(queue.QueueCompliance, jobID)
+	}
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
 		"message": "Cancel requested",
