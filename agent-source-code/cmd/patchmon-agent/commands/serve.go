@@ -558,13 +558,13 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 				}()
 			case "remediate_rule":
 				logger.WithField("rule_id", logutil.Sanitize(m.ruleID)).Info("Remediating single rule...")
-				go func(ruleID string) {
-					if err := remediateSingleRule(ruleID); err != nil {
+				go func(ruleID, profileID string) {
+					if err := remediateSingleRule(ruleID, profileID); err != nil {
 						logger.WithError(err).WithField("rule_id", logutil.Sanitize(ruleID)).Warn("remediate_rule failed")
 					} else {
 						logger.WithField("rule_id", logutil.Sanitize(ruleID)).Info("Single rule remediation completed")
 					}
-				}(m.ruleID)
+				}(m.ruleID, m.profileID)
 			case "docker_image_scan":
 				logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 					"image_name":      m.imageName,
@@ -914,7 +914,7 @@ func runInstallScanner() error {
 }
 
 // remediateSingleRule remediates a single failed compliance rule
-func remediateSingleRule(ruleID string) error {
+func remediateSingleRule(ruleID, profileID string) error {
 	if ruleID == "" {
 		return fmt.Errorf("rule ID is required")
 	}
@@ -927,15 +927,16 @@ func remediateSingleRule(ruleID string) error {
 		return fmt.Errorf("compliance scanning not available on this system")
 	}
 
-	// Run scan with remediation for just this rule
-	// Use level1_server as the default profile - it contains most common rules
-	// The --rule flag will filter to just the specified rule
+	if profileID == "" {
+		profileID = "level1_server"
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	options := &models.ComplianceScanOptions{
-		ProfileID:         "level1_server", // Use default CIS Level 1 Server profile
-		RuleID:            ruleID,          // Filter to this specific rule
+		ProfileID:         profileID,
+		RuleID:            ruleID,
 		EnableRemediation: true,
 	}
 
@@ -1863,8 +1864,12 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 				logger.WithError(err).WithField("rule_id", logutil.Sanitize(payload.RuleID)).Warn("Invalid rule ID in remediate_rule message")
 				continue
 			}
+			if err := validateProfileID(payload.ProfileID); err != nil {
+				logger.WithError(err).WithField("profile_id", logutil.Sanitize(payload.ProfileID)).Warn("Invalid profile ID in remediate_rule message")
+				continue
+			}
 			logger.WithField("rule_id", logutil.Sanitize(payload.RuleID)).Info("remediate_rule received")
-			dispatchWSMessage(out, wsMsg{kind: "remediate_rule", ruleID: payload.RuleID})
+			dispatchWSMessage(out, wsMsg{kind: "remediate_rule", ruleID: payload.RuleID, profileID: payload.ProfileID})
 		case "docker_image_scan":
 			// Validate Docker image and container names to prevent command injection
 			if err := validateDockerImageName(payload.ImageName); err != nil {
