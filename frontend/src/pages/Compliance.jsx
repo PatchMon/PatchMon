@@ -486,7 +486,7 @@ const Compliance = () => {
 	const filteredScans =
 		recent_scans?.filter((scan) => {
 			if (profileTypeFilter === "all") return true;
-			return scan.compliance_profiles?.type === profileTypeFilter;
+			return scan.profile?.type === profileTypeFilter;
 		}) || [];
 
 	const _filteredWorstHosts =
