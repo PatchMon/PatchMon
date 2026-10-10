@@ -457,7 +457,12 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					"profile_id":         m.profileID,
 					"enable_remediation": m.enableRemediation,
 				})).Info("Running on-demand compliance scan...")
-				go func(msg wsMsg) {
+				scanCtx, scanCancel := context.WithCancel(context.Background())
+				queued := &queuedComplianceScan{cancel: scanCancel}
+				complianceScanCancelMu.Lock()
+				complianceScanQueued = queued
+				complianceScanCancelMu.Unlock()
+				go func(msg wsMsg, ctx context.Context, cancel context.CancelFunc) {
 					complianceScanCancelMu.Lock()
 					if complianceScanSource == "scheduled" && complianceScanCancel != nil {
 						complianceScanCancel()
@@ -486,8 +491,16 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 						complianceScanRunning.Store(false)
 					}()
 
-					ctx, cancel := context.WithCancel(context.Background())
+					defer cancel()
 					complianceScanCancelMu.Lock()
+					if complianceScanQueued == queued {
+						complianceScanQueued = nil
+					}
+					if ctx.Err() != nil {
+						complianceScanCancelMu.Unlock()
+						logger.Info("Compliance scan was cancelled before it started")
+						return
+					}
 					complianceScanCancel = cancel
 					complianceScanCancelMu.Unlock()
 					defer func() {
@@ -515,11 +528,18 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 							logger.Info("On-demand compliance scan completed successfully")
 						}
 					}
-				}(m)
+				}(m, scanCtx, scanCancel)
 			case "compliance_scan_cancel":
 				complianceScanCancelMu.Lock()
 				cancelFn := complianceScanCancel
 				complianceScanCancel = nil
+				if complianceScanQueued != nil {
+					complianceScanQueued.cancel()
+					complianceScanQueued = nil
+					if cancelFn == nil {
+						cancelFn = func() {}
+					}
+				}
 				complianceScanCancelMu.Unlock()
 				if cancelFn != nil {
 					cancelFn()
@@ -1317,6 +1337,11 @@ var globalWsWriteMu sync.Mutex
 
 var complianceScanRunning atomic.Bool
 var complianceScanCancel context.CancelFunc
+
+type queuedComplianceScan struct{ cancel context.CancelFunc }
+
+// complianceScanQueued holds an on-demand scan waiting for the running slot, so a cancel sent right after the trigger still reaches it.
+var complianceScanQueued *queuedComplianceScan
 var complianceScanCancelMu sync.Mutex
 var complianceScanSource string
 
@@ -3006,6 +3031,10 @@ func runComplianceScanWithOptions(ctx context.Context, options *models.Complianc
 		}
 		sendComplianceProgress("failed", profileName, "Scan failed", 0, err.Error())
 		return fmt.Errorf("compliance scan failed: %w", err)
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		sendComplianceProgress("cancelled", profileName, "Scan cancelled", 0, "")
+		return ctx.Err()
 	}
 
 	// Send progress: parsing

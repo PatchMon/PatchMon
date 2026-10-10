@@ -1148,15 +1148,17 @@ func (h *ComplianceHandler) CancelScan(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to cancel scan")
 		return
 	}
-	if sendErr != nil {
-		Error(w, http.StatusServiceUnavailable, "Failed to send cancel to agent")
-		return
-	}
-	JSON(w, http.StatusOK, map[string]interface{}{
+	resp := map[string]interface{}{
 		"success":        true,
 		"message":        "Scan cancel sent",
 		"scansCancelled": cancelled,
-	})
+	}
+	if sendErr != nil {
+		slog.Warn("compliance cancel: failed to notify agent", "error", sendErr, "host_id", hostID)
+		resp["message"] = "Scan cancelled; the agent could not be notified and may still finish it"
+		resp["agentNotified"] = false
+	}
+	JSON(w, http.StatusOK, resp)
 }
 
 // InstallScanner handles POST /compliance/install-scanner/:hostId.

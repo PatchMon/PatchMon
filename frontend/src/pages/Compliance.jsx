@@ -373,7 +373,13 @@ const Compliance = () => {
 	const cancelScanMutation = useMutation({
 		mutationFn: ({ hostId }) => complianceAPI.cancelScan(hostId),
 		onSuccess: (response, { hostId, hostName }) => {
-			toast.success(`Scan cancelled for ${hostName || "host"}`);
+			if (response?.data?.agentNotified === false) {
+				toast.warning(
+					`Scan cancelled for ${hostName || "host"}, but the agent could not be reached and may still finish it`,
+				);
+			} else {
+				toast.success(`Scan cancelled for ${hostName || "host"}`);
+			}
 			const shownActive = [...prevActiveScanIds.current.values()].includes(
 				hostId,
 			);

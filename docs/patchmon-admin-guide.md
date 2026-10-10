@@ -2933,7 +2933,9 @@ The `CancelScan` handler on the server does four things:
 3. **Marks the host's running scan records as cancelled**, so the dashboard stops showing them as running without waiting for the agent. They appear in the **History** tab with the status **Cancelled**.
 4. **Sends a `compliance_scan_cancel` WebSocket message to the agent**, so an already-running scan is interrupted at the process level.
 
-If the agent is connected and busy scanning, it receives the cancel and terminates the OpenSCAP / Docker Bench subprocess. If the scan had already finished and its results reach the server after the cancel, they are kept as a normal completed scan.
+If the agent is connected and busy scanning, it receives the cancel, terminates the OpenSCAP / Docker Bench subprocess and uploads nothing, so a cancelled scan does not also appear as a failed scan or raise a scan-failed alert. A cancel that arrives while the scan is still waiting to start on the agent stops it before it begins. If the scan had already finished and its results reach the server after the cancel, they are kept as a normal completed scan.
+
+If the server cannot deliver the message to a connected agent, the scan records are still marked cancelled and the toast warns that the agent could not be reached and may still finish the scan.
 
 If the agent is offline, only the queue-level cancel applies: the scan won't run when the agent reconnects because the task has already been removed from the queue.
 
