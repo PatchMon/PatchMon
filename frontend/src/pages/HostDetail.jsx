@@ -2137,7 +2137,7 @@ const HostDetail = () => {
 													<div className="space-y-3 max-h-80 overflow-y-auto pr-2">
 														{host.disk_details.map((disk, index) => (
 															<div
-																key={disk.name || `disk-${index}`}
+																key={`${disk.name ?? ""}-${disk.mountpoint ?? index}`}
 																className="bg-secondary-50 dark:bg-secondary-700 p-3 rounded-lg"
 															>
 																<div className="flex items-center gap-2 mb-2">
@@ -3302,7 +3302,7 @@ const HostDetail = () => {
 													<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-80 overflow-y-auto pr-2">
 														{host.disk_details.map((disk, index) => (
 															<div
-																key={disk.name || `disk-${index}`}
+																key={`${disk.name ?? ""}-${disk.mountpoint ?? index}`}
 																className="bg-secondary-50 dark:bg-secondary-700 p-3 rounded-lg"
 															>
 																<div className="flex items-center gap-2 mb-2">
