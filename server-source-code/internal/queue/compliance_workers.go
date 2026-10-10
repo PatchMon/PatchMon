@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -439,7 +440,7 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 			_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
 		}
 		h.log.Warn("install_compliance_tools: agent not connected", "api_id", p.ApiID)
-		return nil
+		return errors.New(msg)
 	}
 
 	msg := map[string]interface{}{"type": "install_scanner"}

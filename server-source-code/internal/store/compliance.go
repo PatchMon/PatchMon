@@ -586,15 +586,6 @@ type SectionCount struct {
 // GetLatestScansByType returns the latest scan per profile type for a host.
 func (s *ComplianceStore) GetLatestScansByType(ctx context.Context, hostID string) (LatestScansByType, error) {
 	d := s.db.DB(ctx)
-	// Filter status = 'completed' in SQL (GetLatestCompletedScansByHostAllTypes)
-	// rather than pulling a fixed-size window of recent rows and filtering in
-	// Go. The reaper (UpdateStalledComplianceScans) closes stalled scans with
-	// status = 'failed' but also stamps a fresh completed_at, so those rows
-	// can outrank genuinely-latest completed scans in a completed_at-ordered
-	// window once enough closures accumulate — the previous approach
-	// (ListComplianceScansByHost, top 100 rows, filtered here) could silently
-	// drop the true latest completed scan once its host/profile-type had more
-	// than ~100 reaper closures ahead of it.
 	scans, err := d.Queries.GetLatestCompletedScansByHostAllTypes(ctx, hostID)
 	if err != nil {
 		return nil, err

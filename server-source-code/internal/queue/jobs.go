@@ -105,7 +105,7 @@ func NewInstallComplianceToolsTask(hostID, apiID, host string) (*asynq.Task, err
 	if err != nil {
 		return nil, err
 	}
-	return asynq.NewTask(TypeInstallComplianceTools, payload, asynq.Queue(QueueCompliance), asynq.MaxRetry(2)), nil
+	return asynq.NewTask(TypeInstallComplianceTools, payload, asynq.Queue(QueueCompliance), asynq.MaxRetry(2), asynq.Retention(time.Hour)), nil
 }
 
 // SSGUpgradePayload is the payload for per-host ssg_upgrade jobs.
