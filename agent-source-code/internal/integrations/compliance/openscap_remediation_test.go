@@ -104,6 +104,16 @@ func TestCleanRemediationText(t *testing.T) {
 			want: "if [ -f x ] && true; then\n    cat <<< \"$y\" >> f\n  fi",
 		},
 		{
+			name: "missing value is visible, not blank",
+			in:   `x='<sub idref="xccdf_org.ssgproject.content_value_var_missing"/>'`,
+			want: "x='UNRESOLVED:var_missing'",
+		},
+		{
+			name: "control and bidi characters stripped",
+			in:   "echo a&#27;[2J\u202eb\u2066c\td",
+			want: "echo a[2Jbc\td",
+		},
+		{
 			name: "crlf normalised",
 			in:   "a\r\nb",
 			want: "a\nb",

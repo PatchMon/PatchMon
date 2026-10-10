@@ -1956,12 +1956,23 @@ func extractXCCDFValues(contents ...string) map[string]string {
 // run: placeholders resolved, markup removed, line breaks kept.
 func cleanRemediationText(text string, values map[string]string) string {
 	text = xccdfSubPattern.ReplaceAllStringFunc(text, func(tag string) string {
-		return values[xccdfSubPattern.FindStringSubmatch(tag)[1]]
+		idref := xccdfSubPattern.FindStringSubmatch(tag)[1]
+		if v, ok := values[idref]; ok {
+			return v
+		}
+		return "UNRESOLVED:" + strings.TrimPrefix(idref, "xccdf_org.ssgproject.content_value_")
 	})
 	text = xmlTagPattern.ReplaceAllString(text, "")
 	text = html.UnescapeString(text)
 	text = strings.ReplaceAll(text, "\r\n", "\n")
-	return strings.Trim(text, " \t\r\n")
+	text = strings.Map(func(r rune) rune {
+		if (r < 0x20 && r != '\n' && r != '\t') || r == 0x7f ||
+			(r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) {
+			return -1
+		}
+		return r
+	}, text)
+	return strings.Trim(text, " \t\n")
 }
 
 // cleanXMLText removes HTML/XML tags and cleans up whitespace
