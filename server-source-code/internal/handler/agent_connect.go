@@ -41,7 +41,7 @@ func NewAgentConnectHandler(db database.DBProvider, queueClient *asynq.Client, q
 }
 
 func expediteComplianceScan(queueClient *asynq.Client, queueInspector *asynq.Inspector, apiID, hostID string, log *slog.Logger) {
-	taskID := "compliance-scan-" + hostID
+	taskID := queue.RunScanTaskID(hostID)
 	info, err := queueInspector.GetTaskInfo(queue.QueueCompliance, taskID)
 	if err != nil || (info.State != asynq.TaskStateScheduled && info.State != asynq.TaskStatePending) {
 		return

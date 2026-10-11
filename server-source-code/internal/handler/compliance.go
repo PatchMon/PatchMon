@@ -1029,7 +1029,7 @@ func (h *ComplianceHandler) TriggerScan(w http.ResponseWriter, r *http.Request) 
 		Error(w, http.StatusInternalServerError, "Failed to create scan task")
 		return
 	}
-	info, err := h.queueClient.Enqueue(task)
+	info, err := h.enqueueScan(task, hostID)
 	if errors.Is(err, asynq.ErrTaskIDConflict) {
 		Error(w, http.StatusConflict, "A scan is already queued or running on this host")
 		return
@@ -1103,7 +1103,7 @@ func (h *ComplianceHandler) TriggerBulkScan(w http.ResponseWriter, r *http.Reque
 			skipped++
 			continue
 		}
-		if _, err := h.queueClient.Enqueue(task); err != nil {
+		if _, err := h.enqueueScan(task, hostID); err != nil {
 			skipped++
 			continue
 		}
@@ -1136,8 +1136,7 @@ func (h *ComplianceHandler) CancelScan(w http.ResponseWriter, r *http.Request) {
 	}
 	// Remove queued run_scan job so it won't run when agent connects
 	if h.queueInspector != nil {
-		taskID := "compliance-scan-" + hostID
-		_ = h.queueInspector.DeleteTask(queue.QueueCompliance, taskID)
+		_ = h.queueInspector.DeleteTask(queue.QueueCompliance, queue.RunScanTaskID(hostID))
 	}
 	// Set cancel flag so worker won't re-queue if it runs before DeleteTask propagates
 	if h.integrationStatus != nil {
@@ -1431,6 +1430,23 @@ func (h *ComplianceHandler) installInProgress(ctx context.Context, hostID, apiID
 	}
 	status, _ := installStatusAwaitingAgent(info.CompletedAt, time.Now())
 	return status == "active"
+}
+
+// enqueueScan replaces a dead run_scan task: an archived task keeps its fixed
+// task ID and would otherwise block the host's scans until the archive expires.
+func (h *ComplianceHandler) enqueueScan(task *asynq.Task, hostID string) (*asynq.TaskInfo, error) {
+	info, err := h.queueClient.Enqueue(task)
+	if !errors.Is(err, asynq.ErrTaskIDConflict) || h.queueInspector == nil {
+		return info, err
+	}
+	existing, ierr := h.queueInspector.GetTaskInfo(queue.QueueCompliance, queue.RunScanTaskID(hostID))
+	if ierr != nil || existing.State != asynq.TaskStateArchived {
+		return info, err
+	}
+	if derr := h.queueInspector.DeleteTask(queue.QueueCompliance, existing.ID); derr != nil {
+		return info, err
+	}
+	return h.queueClient.Enqueue(task)
 }
 
 const installAgentReportWindow = 20 * time.Minute

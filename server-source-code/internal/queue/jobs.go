@@ -78,6 +78,9 @@ type RunScanPayload struct {
 	RequeueCount         int     `json:"requeue_count,omitempty"`
 }
 
+// RunScanTaskID is the fixed task ID that deduplicates a host's scans.
+func RunScanTaskID(hostID string) string { return "compliance-scan-" + hostID }
+
 // NewRunScanTask creates a run_scan task. Use TaskID for deduplication: compliance-scan-{hostId}.
 func NewRunScanTask(p RunScanPayload) (*asynq.Task, error) {
 	payload, err := json.Marshal(p)
@@ -87,7 +90,7 @@ func NewRunScanTask(p RunScanPayload) (*asynq.Task, error) {
 	opts := []asynq.Option{
 		asynq.Queue(QueueCompliance),
 		asynq.MaxRetry(10),
-		asynq.TaskID("compliance-scan-" + p.HostID),
+		asynq.TaskID(RunScanTaskID(p.HostID)),
 	}
 	return asynq.NewTask(TypeRunScan, payload, opts...), nil
 }
