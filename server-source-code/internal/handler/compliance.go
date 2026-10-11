@@ -1138,7 +1138,7 @@ func (h *ComplianceHandler) CancelScan(w http.ResponseWriter, r *http.Request) {
 	if h.integrationStatus != nil {
 		_ = h.integrationStatus.SetComplianceScanCancel(r.Context(), hostID)
 	}
-	var sendErr error
+	sendErr := agentregistry.ErrNotConnected
 	if h.registry.IsConnected(host.ApiID) {
 		sendErr = h.registry.SendJSON(host.ApiID, map[string]interface{}{"type": "compliance_scan_cancel"})
 	}
