@@ -1246,7 +1246,7 @@ PatchMon's Proxmox Auto-Enrollment feature enables you to automatically discover
 #### What It Does
 
 - **Automatically discovers** running LXC containers on Proxmox hosts
-- **Bulk enrolls** containers into PatchMon without manual intervention  
+- **Enrolls** containers into PatchMon without manual intervention  
 - **Installs agents** inside each container automatically
 - **Assigns to host groups** based on token configuration
 - **Tracks enrollment** with full audit logging
@@ -1318,7 +1318,7 @@ PatchMon's Proxmox Auto-Enrollment feature enables you to automatically discover
 
 3. **For each container**, the script:
    - Gathers hostname, IP address, OS information, machine ID
-   - Calls PatchMon API to create host entry
+   - Calls PatchMon API to create host entry. If the machine ID is already enrolled, the container is skipped and must be removed in PatchMon before it can be enrolled again
    - Receives unique `api_id` and `api_key` for that container
    - Uses `pct exec` to enter the container
    - Installs curl if missing
@@ -1527,6 +1527,8 @@ Monitor the output:
 - Green `[SUCCESS]` = Container enrolled and agent installed
 - Yellow `[WARN]` = Container skipped (already enrolled or stopped)
 - Red `[ERROR]` = Failure (check troubleshooting section)
+
+The script carries on past a failed container. It finishes with a summary showing `Successfully Enrolled`, `Skipped` and `Failed` counts, and exits non-zero if any container failed. If a container fails because of an interrupted dpkg, the script offers to fix it and retry; the prompt works when the script is piped through `bash` and defaults to no when no terminal is available.
 
 #### Step 5: Verify in PatchMon
 
@@ -2298,41 +2300,6 @@ resource "null_resource" "patchmon_enrollment" {
 }
 ```
 
-#### Bulk API Enrollment
-
-For very large deployments (100+ containers), use the bulk API endpoint directly:
-
-```bash
-#!/bin/bash
-# bulk_enroll.sh
-
-# Gather all container info
-containers_json=$(pct list | tail -n +2 | while read -r line; do
-  vmid=$(echo "$line" | awk '{print $1}')
-  name=$(echo "$line" | awk '{print $3}')
-  
-  echo "{\"friendly_name\":\"$name\",\"machine_id\":\"proxmox-lxc-$vmid\"}"
-done | jq -s '.')
-
-# Send bulk enrollment request
-curl -X POST \
-  -H "X-Auto-Enrollment-Key: $AUTO_ENROLLMENT_KEY" \
-  -H "X-Auto-Enrollment-Secret: $AUTO_ENROLLMENT_SECRET" \
-  -H "Content-Type: application/json" \
-  -d "{\"hosts\":$containers_json}" \
-  "$PATCHMON_URL/api/v1/auto-enrollment/enroll/bulk"
-```
-
-**Benefits:**
-- Single API call for all containers
-- Faster for 50+ containers
-- Partial success supported (individual failures don't block others)
-
-**Limitations:**
-- Max 50 hosts per request
-- Does not install agents (must be done separately)
-- Less detailed error reporting per host
-
 #### Webhook-Triggered Enrollment
 
 Trigger enrollment from PatchMon webhook (requires custom setup):
@@ -2547,62 +2514,19 @@ curl "https://patchmon.example.com/api/v1/auto-enrollment/script?type=proxmox-lx
 
 **Error Responses:**
 
-> **Note:** The API does not perform duplicate host checks. Duplicate prevention is handled client-side by the enrollment script, which checks for an existing agent configuration inside each container before calling the API.
+`409 Conflict` - A host with the same `machine_id` and the same name is already enrolled (the name comparison ignores case). Nothing is created and no credentials are issued. The enrolment scripts treat this as "already enrolled" and skip the host. Requests that omit `machine_id` are never deduplicated:
+```json
+{
+  "error": "Host already enrolled",
+  "friendly_name": "webserver"
+}
+```
 
 `429 Too Many Requests` - Rate limit exceeded:
 ```json
 {
   "error": "Rate limit exceeded",
   "message": "Maximum 100 hosts per day allowed for this token"
-}
-```
-
-##### Bulk Enroll Hosts
-
-**Endpoint:** `POST /api/v1/auto-enrollment/enroll/bulk`
-
-**Request:**
-```json
-{
-  "hosts": [
-    {
-      "friendly_name": "webserver",
-      "machine_id": "proxmox-lxc-100-abc123"
-    },
-    {
-      "friendly_name": "database",
-      "machine_id": "proxmox-lxc-101-def456"
-    }
-  ]
-}
-```
-
-**Limits:**
-- Minimum: 1 host
-- Maximum: 50 hosts per request
-
-**Response:** `201 Created`
-```json
-{
-  "message": "Bulk enrollment completed: 2 succeeded, 0 failed, 0 skipped",
-  "results": {
-    "success": [
-      {
-        "id": "uuid",
-        "friendly_name": "webserver",
-        "api_id": "patchmon_abc123",
-        "api_key": "def456"
-      },
-      {
-        "id": "uuid",
-        "friendly_name": "database",
-        "api_id": "patchmon_ghi789",
-        "api_key": "jkl012"
-      }
-    ],
-    "failed": [],
-    "skipped": []
-  }
 }
 ```
 
@@ -2669,7 +2593,7 @@ A: Ubuntu, Debian, CentOS, RHEL, Rocky Linux, AlmaLinux, Alpine Linux. Any distr
 A: Minimal. The script download is ~15KB, agent installation is ~50-100KB per container. Total: ~1-2MB for 10 containers.
 
 **Q: Can I run enrollment in parallel for faster processing?**  
-A: Not recommended. The script processes containers sequentially to avoid overwhelming the PatchMon server. For 100+ containers, consider the bulk API endpoint.
+A: Not recommended. The script processes containers sequentially to avoid overwhelming the PatchMon server. For large estates, run the script on each Proxmox host in turn.
 
 **Q: Does enrollment restart containers?**  
 A: No, containers remain running. The agent is installed without reboots or service disruptions.
@@ -3087,9 +3011,11 @@ Content-Type: application/json
 | `401` | `Invalid token secret` | Secret does not match |
 | `401` | `Token expired` | Token has passed its expiration date |
 | `403` | `IP address not authorized for this token` | Client IP not in `allowed_ip_ranges` |
+| `409` | `Host already enrolled` | A host with the same `machine_id` and name already exists; the body also carries that host's `friendly_name` |
 | `429` | `Rate limit exceeded` | Token's `max_hosts_per_day` limit reached |
+| `429` | `Too many requests. Try again later.` | Per-IP agent rate limit hit (`AGENT_RATE_LIMIT_MAX` per `AGENT_RATE_LIMIT_WINDOW_MS`, 1000 per minute by default); the body uses a `message` key and a `Retry-After` header is set |
 
-> **Duplicate handling:** The API does not perform server-side duplicate host checks. Duplicate prevention is handled client-side by the enrollment script, which checks for an existing agent configuration (`/etc/patchmon/config.yml`) inside each container before calling the API.
+> **Duplicate handling:** When `machine_id` is supplied, the server looks for an existing host with the same machine ID and the same name (compared case-insensitively) and returns `409 Conflict` instead of creating a second record. Matching on both means cloned containers that share one `/etc/machine-id` but carry different names still enrol as separate hosts. No credentials are generated for a rejected request. Requests without a `machine_id` are never deduplicated. The enrolment scripts treat a `409` as an already enrolled host and move on.
 
 ### Host Management Endpoints
 
