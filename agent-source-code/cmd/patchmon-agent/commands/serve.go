@@ -70,6 +70,105 @@ func agentHostKeyCallback() ssh.HostKeyCallback {
 	return ssh.InsecureIgnoreHostKey()
 }
 
+// syncIntegrationStatus reconciles config.yml with the integration state the
+// server reports at startup.
+//
+// Compliance is three-state on the server (disabled / on-demand / enabled) but
+// only two-state in the integrations map, so the boolean alone cannot say
+// whether scans are scheduled. It is synced from compliance_mode, and the
+// boolean is used only for a server too old to send that field.
+func syncIntegrationStatus(integrationResp *models.IntegrationStatusResponse) {
+	configUpdated := false
+	serverComplianceMode, serverSentComplianceMode := config.ParseComplianceMode(integrationResp.ComplianceMode)
+	if integrationResp.ComplianceMode != "" && !serverSentComplianceMode {
+		logger.WithField("compliance_mode", logutil.Sanitize(integrationResp.ComplianceMode)).
+			Warn("Unknown compliance mode from server, keeping local compliance configuration")
+	}
+
+	for integrationName, serverEnabled := range integrationResp.Integrations {
+		// The boolean cannot express on-demand, so compliance is left to the
+		// mode whenever the server sends one. A mode that failed to parse is
+		// skipped here too: falling back to the boolean would write the
+		// scheduled state this whole change exists to stop writing.
+		if integrationName == "compliance" && integrationResp.ComplianceMode != "" {
+			continue
+		}
+		configEnabled := cfgManager.IsIntegrationEnabled(integrationName)
+		if serverEnabled != configEnabled {
+			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
+				"integration":  integrationName,
+				"config_value": configEnabled,
+				"server_value": serverEnabled,
+			})).Info("Integration status differs, updating config.yml")
+
+			if err := cfgManager.SetIntegrationEnabled(integrationName, serverEnabled); err != nil {
+				logger.WithError(err).Warn("Failed to save integration status to config.yml")
+			} else {
+				configUpdated = true
+				logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
+					"integration": integrationName,
+					"enabled":     serverEnabled,
+				})).Info("Updated integration status in config.yml")
+			}
+		}
+	}
+
+	// Sync the compliance mode from server (when server sends one)
+	if serverSentComplianceMode {
+		configMode := cfgManager.GetComplianceMode()
+		if serverComplianceMode != configMode {
+			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
+				"config_value": string(configMode),
+				"server_value": string(serverComplianceMode),
+			})).Info("Compliance mode differs, updating config.yml")
+
+			if err := cfgManager.SetComplianceMode(serverComplianceMode); err != nil {
+				logger.WithError(err).Warn("Failed to save compliance mode to config.yml")
+			} else {
+				configUpdated = true
+				logger.WithField("mode", string(serverComplianceMode)).Info("Updated compliance mode in config.yml")
+			}
+		}
+	}
+
+	// Sync compliance scanner toggles from server (when server sends them)
+	if integrationResp.ComplianceOpenscapEnabled != nil || integrationResp.ComplianceDockerBenchEnabled != nil {
+		configOpenscap := cfgManager.GetComplianceOpenscapEnabled()
+		configDockerBench := cfgManager.GetComplianceDockerBenchEnabled()
+		serverOpenscap := configOpenscap
+		serverDockerBench := configDockerBench
+		if integrationResp.ComplianceOpenscapEnabled != nil {
+			serverOpenscap = *integrationResp.ComplianceOpenscapEnabled
+		}
+		if integrationResp.ComplianceDockerBenchEnabled != nil {
+			serverDockerBench = *integrationResp.ComplianceDockerBenchEnabled
+		}
+		if serverOpenscap != configOpenscap || serverDockerBench != configDockerBench {
+			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
+				"config_openscap": configOpenscap, "server_openscap": serverOpenscap,
+				"config_docker_bench": configDockerBench, "server_docker_bench": serverDockerBench,
+			})).Info("Compliance scanner toggles differ, updating config.yml")
+			if err := cfgManager.SetComplianceScanners(serverOpenscap, serverDockerBench); err != nil {
+				logger.WithError(err).Warn("Failed to save compliance scanner toggles to config.yml")
+			} else {
+				configUpdated = true
+				logger.Info("Updated compliance scanner toggles in config.yml")
+			}
+		}
+	}
+
+	if configUpdated {
+		// Reload config so in-memory state matches the updated file
+		if err := cfgManager.LoadConfig(); err != nil {
+			logger.WithError(err).Warn("Failed to reload config after integration update")
+		} else {
+			logger.Info("Config reloaded, integration settings will be applied")
+		}
+	} else {
+		logger.Debug("Integration status matches config, no update needed")
+	}
+}
+
 // runServiceLoop is the main service loop. stopCh signals shutdown (nil = run forever on Unix)
 func runServiceLoop(stopCh <-chan struct{}) error {
 	// Starting on defaults when the file is present but unparseable means an
@@ -143,64 +242,7 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 	// Fetch integration status from server and sync with config.yml
 	logger.Info("Syncing integration status from server...")
 	if integrationResp, err := httpClient.GetIntegrationStatus(ctx); err == nil && integrationResp.Success {
-		configUpdated := false
-		for integrationName, serverEnabled := range integrationResp.Integrations {
-			configEnabled := cfgManager.IsIntegrationEnabled(integrationName)
-			if serverEnabled != configEnabled {
-				logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
-					"integration":  integrationName,
-					"config_value": configEnabled,
-					"server_value": serverEnabled,
-				})).Info("Integration status differs, updating config.yml")
-
-				if err := cfgManager.SetIntegrationEnabled(integrationName, serverEnabled); err != nil {
-					logger.WithError(err).Warn("Failed to save integration status to config.yml")
-				} else {
-					configUpdated = true
-					logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
-						"integration": integrationName,
-						"enabled":     serverEnabled,
-					})).Info("Updated integration status in config.yml")
-				}
-			}
-		}
-
-		// Sync compliance scanner toggles from server (when server sends them)
-		if integrationResp.ComplianceOpenscapEnabled != nil || integrationResp.ComplianceDockerBenchEnabled != nil {
-			configOpenscap := cfgManager.GetComplianceOpenscapEnabled()
-			configDockerBench := cfgManager.GetComplianceDockerBenchEnabled()
-			serverOpenscap := configOpenscap
-			serverDockerBench := configDockerBench
-			if integrationResp.ComplianceOpenscapEnabled != nil {
-				serverOpenscap = *integrationResp.ComplianceOpenscapEnabled
-			}
-			if integrationResp.ComplianceDockerBenchEnabled != nil {
-				serverDockerBench = *integrationResp.ComplianceDockerBenchEnabled
-			}
-			if serverOpenscap != configOpenscap || serverDockerBench != configDockerBench {
-				logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
-					"config_openscap": configOpenscap, "server_openscap": serverOpenscap,
-					"config_docker_bench": configDockerBench, "server_docker_bench": serverDockerBench,
-				})).Info("Compliance scanner toggles differ, updating config.yml")
-				if err := cfgManager.SetComplianceScanners(serverOpenscap, serverDockerBench); err != nil {
-					logger.WithError(err).Warn("Failed to save compliance scanner toggles to config.yml")
-				} else {
-					configUpdated = true
-					logger.Info("Updated compliance scanner toggles in config.yml")
-				}
-			}
-		}
-
-		if configUpdated {
-			// Reload config so in-memory state matches the updated file
-			if err := cfgManager.LoadConfig(); err != nil {
-				logger.WithError(err).Warn("Failed to reload config after integration update")
-			} else {
-				logger.Info("Config reloaded, integration settings will be applied")
-			}
-		} else {
-			logger.Debug("Integration status matches config, no update needed")
-		}
+		syncIntegrationStatus(integrationResp)
 	} else if err != nil {
 		logger.WithError(err).Warn("Failed to fetch integration status from server, using config values")
 	}
@@ -415,7 +457,12 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					"profile_id":         m.profileID,
 					"enable_remediation": m.enableRemediation,
 				})).Info("Running on-demand compliance scan...")
-				go func(msg wsMsg) {
+				scanCtx, scanCancel := context.WithCancel(context.Background())
+				queued := &queuedComplianceScan{cancel: scanCancel}
+				complianceScanCancelMu.Lock()
+				complianceScanQueued[queued] = struct{}{}
+				complianceScanCancelMu.Unlock()
+				go func(msg wsMsg, ctx context.Context, cancel context.CancelFunc) {
 					complianceScanCancelMu.Lock()
 					if complianceScanSource == "scheduled" && complianceScanCancel != nil {
 						complianceScanCancel()
@@ -427,7 +474,15 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 						if complianceScanRunning.CompareAndSwap(false, true) {
 							break
 						}
-						time.Sleep(500 * time.Millisecond)
+						select {
+						case <-ctx.Done():
+							complianceScanCancelMu.Lock()
+							delete(complianceScanQueued, queued)
+							complianceScanCancelMu.Unlock()
+							logger.Info("Compliance scan was cancelled before it started")
+							return
+						case <-time.After(500 * time.Millisecond):
+						}
 					}
 					if !complianceScanRunning.Load() {
 						complianceScanRunning.Store(true)
@@ -444,8 +499,14 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 						complianceScanRunning.Store(false)
 					}()
 
-					ctx, cancel := context.WithCancel(context.Background())
+					defer cancel()
 					complianceScanCancelMu.Lock()
+					delete(complianceScanQueued, queued)
+					if ctx.Err() != nil {
+						complianceScanCancelMu.Unlock()
+						logger.Info("Compliance scan was cancelled before it started")
+						return
+					}
 					complianceScanCancel = cancel
 					complianceScanCancelMu.Unlock()
 					defer func() {
@@ -473,11 +534,18 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 							logger.Info("On-demand compliance scan completed successfully")
 						}
 					}
-				}(m)
+				}(m, scanCtx, scanCancel)
 			case "compliance_scan_cancel":
 				complianceScanCancelMu.Lock()
 				cancelFn := complianceScanCancel
 				complianceScanCancel = nil
+				for q := range complianceScanQueued {
+					q.cancel()
+					delete(complianceScanQueued, q)
+					if cancelFn == nil {
+						cancelFn = func() {}
+					}
+				}
 				complianceScanCancelMu.Unlock()
 				if cancelFn != nil {
 					cancelFn()
@@ -506,8 +574,13 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					}
 				}()
 			case "install_scanner":
+				if !startInstallScanner(m.jobID) {
+					logger.Info("Install scanner already running; it will report its outcome")
+					break
+				}
 				logger.Info("Install scanner requested (OpenSCAP + SSG)...")
 				go func() {
+					defer finishInstallScanner()
 					if err := runInstallScanner(); err != nil {
 						logger.WithError(err).Warn("install_scanner failed")
 					} else {
@@ -516,13 +589,13 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 				}()
 			case "remediate_rule":
 				logger.WithField("rule_id", logutil.Sanitize(m.ruleID)).Info("Remediating single rule...")
-				go func(ruleID string) {
-					if err := remediateSingleRule(ruleID); err != nil {
+				go func(ruleID, profileID string) {
+					if err := remediateSingleRule(ruleID, profileID); err != nil {
 						logger.WithError(err).WithField("rule_id", logutil.Sanitize(ruleID)).Warn("remediate_rule failed")
 					} else {
 						logger.WithField("rule_id", logutil.Sanitize(ruleID)).Info("Single rule remediation completed")
 					}
-				}(m.ruleID)
+				}(m.ruleID, m.profileID)
 			case "docker_image_scan":
 				logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 					"image_name":      m.imageName,
@@ -669,6 +742,83 @@ func sendComplianceSetupStatus(httpClient *client.Client, status, message string
 	logger.Info("Updated compliance status sent to backend")
 }
 
+var (
+	installScannerMu      sync.Mutex
+	installScannerRunning bool
+	installScannerResend  bool
+	installScannerJobID   string
+	lastInstallOutcome    atomic.Pointer[models.IntegrationSetupStatus]
+)
+
+// startInstallScanner claims the single install slot; a request that loses hands
+// the running install its job, and asks for the outcome to be re-reported to it.
+func startInstallScanner(jobID string) bool {
+	installScannerMu.Lock()
+	defer installScannerMu.Unlock()
+	installScannerJobID = jobID
+	if installScannerRunning {
+		installScannerResend = true
+		return false
+	}
+	installScannerRunning = true
+	lastInstallOutcome.Store(nil)
+	return true
+}
+
+// finishInstallScanner holds the slot until every requested re-report is sent, so
+// a stale outcome can never land after a newer install has started.
+func finishInstallScanner() {
+	for {
+		installScannerMu.Lock()
+		if !installScannerResend {
+			installScannerRunning = false
+			installScannerMu.Unlock()
+			return
+		}
+		installScannerResend = false
+		installScannerMu.Unlock()
+
+		last := lastInstallOutcome.Load()
+		if last == nil {
+			continue
+		}
+		resend := *last
+		resend.InstallJobID = currentInstallJobID()
+		payload := &resend
+		httpClient := client.New(cfgManager, logger)
+		send := func() error { return httpClient.SendIntegrationSetupStatus(context.Background(), payload) }
+		if err := retrySend(installStatusSendAttempts, installStatusRetryDelay, send); err != nil {
+			logger.WithError(err).Warn("Failed to re-report install status to server")
+		}
+	}
+}
+
+func currentInstallJobID() string {
+	installScannerMu.Lock()
+	defer installScannerMu.Unlock()
+	return installScannerJobID
+}
+
+const (
+	installStatusSendAttempts = 3
+	installStatusRetryDelay   = 2 * time.Second
+)
+
+// retrySend retries send with doubling delays; the server's install job waits
+// for the final status, so losing it records a successful install as failed.
+func retrySend(attempts int, delay time.Duration, send func() error) error {
+	var err error
+	for i := range attempts {
+		if err = send(); err == nil {
+			return nil
+		}
+		if i < attempts-1 {
+			time.Sleep(delay << i)
+		}
+	}
+	return err
+}
+
 // runInstallScanner installs OpenSCAP and SSG content (apt/dnf install, update SSG) and reports status via HTTP
 // Sends granular install events so the frontend can display real-time progress.
 func runInstallScanner() error {
@@ -688,14 +838,28 @@ func runInstallScanner() error {
 	}
 
 	sendStatus := func(overallStatus, message string, scannerInfo *models.ComplianceScannerDetails) {
-		_ = httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
+		payload := &models.IntegrationSetupStatus{
 			Integration:   "compliance",
 			Enabled:       enabled,
 			Status:        overallStatus,
 			Message:       message,
 			InstallEvents: events,
 			ScannerInfo:   scannerInfo,
-		})
+		}
+		send := func() error {
+			payload.InstallJobID = currentInstallJobID()
+			return httpClient.SendIntegrationSetupStatus(ctx, payload)
+		}
+		if overallStatus == "installing" {
+			_ = send()
+			return
+		}
+		final := *payload
+		final.InstallEvents = slices.Clone(events)
+		lastInstallOutcome.Store(&final)
+		if err := retrySend(installStatusSendAttempts, installStatusRetryDelay, send); err != nil {
+			logger.WithError(err).Warn("Failed to report final install status to server")
+		}
 	}
 
 	// Step 1: Detect OS
@@ -872,7 +1036,7 @@ func runInstallScanner() error {
 }
 
 // remediateSingleRule remediates a single failed compliance rule
-func remediateSingleRule(ruleID string) error {
+func remediateSingleRule(ruleID, profileID string) error {
 	if ruleID == "" {
 		return fmt.Errorf("rule ID is required")
 	}
@@ -885,15 +1049,16 @@ func remediateSingleRule(ruleID string) error {
 		return fmt.Errorf("compliance scanning not available on this system")
 	}
 
-	// Run scan with remediation for just this rule
-	// Use level1_server as the default profile - it contains most common rules
-	// The --rule flag will filter to just the specified rule
+	if profileID == "" {
+		profileID = "level1_server"
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	options := &models.ComplianceScanOptions{
-		ProfileID:         "level1_server", // Use default CIS Level 1 Server profile
-		RuleID:            ruleID,          // Filter to this specific rule
+		ProfileID:         profileID,
+		RuleID:            ruleID,
 		EnableRemediation: true,
 	}
 
@@ -1147,13 +1312,14 @@ type wsMsg struct {
 	packageCacheRefreshMode   string
 	packageCacheRefreshMaxAge int
 	version                   string
-	profileType               string                 // For compliance_scan: openscap, docker-bench, all
-	profileID                 string                 // For compliance_scan: specific XCCDF profile ID
-	enableRemediation         bool                   // For compliance_scan: enable auto-remediation
-	fetchRemoteResources      bool                   // For compliance_scan: fetch remote resources
-	openscapEnabled           *bool                  // For compliance_scan: per-host OpenSCAP scanner toggle
-	dockerBenchEnabled        *bool                  // For compliance_scan: per-host Docker Bench scanner toggle
-	ruleID                    string                 // For remediate_rule: specific rule ID to remediate
+	profileType               string // For compliance_scan: openscap, docker-bench, all
+	profileID                 string // For compliance_scan: specific XCCDF profile ID
+	enableRemediation         bool   // For compliance_scan: enable auto-remediation
+	fetchRemoteResources      bool   // For compliance_scan: fetch remote resources
+	openscapEnabled           *bool  // For compliance_scan: per-host OpenSCAP scanner toggle
+	dockerBenchEnabled        *bool  // For compliance_scan: per-host Docker Bench scanner toggle
+	ruleID                    string // For remediate_rule: specific rule ID to remediate
+	jobID                     string
 	imageName                 string                 // For docker_image_scan: Docker image to scan
 	containerName             string                 // For docker_image_scan: Docker container to scan
 	scanAllImages             bool                   // For docker_image_scan: scan all images on system
@@ -1274,6 +1440,11 @@ var globalWsWriteMu sync.Mutex
 
 var complianceScanRunning atomic.Bool
 var complianceScanCancel context.CancelFunc
+
+type queuedComplianceScan struct{ cancel context.CancelFunc }
+
+// complianceScanQueued holds on-demand scans waiting for the running slot, so a cancel sent right after a trigger still reaches them.
+var complianceScanQueued = map[*queuedComplianceScan]struct{}{}
 var complianceScanCancelMu sync.Mutex
 var complianceScanSource string
 
@@ -1680,10 +1851,11 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 			OpenSCAPEnabled           *bool                  `json:"openscap_enabled"`       // For compliance_scan: per-host toggle
 			DockerBenchEnabled        *bool                  `json:"docker_bench_enabled"`   // For compliance_scan: per-host toggle
 			RuleID                    string                 `json:"rule_id"`                // For remediate_rule: specific rule to remediate
-			ImageName                 string                 `json:"image_name"`             // For docker_image_scan: Docker image to scan
-			ContainerName             string                 `json:"container_name"`         // For docker_image_scan: container to scan
-			ScanAllImages             bool                   `json:"scan_all_images"`        // For docker_image_scan: scan all images
-			Config                    map[string]interface{} `json:"config"`                 // For apply_config: full config to apply
+			JobID                     string                 `json:"job_id"`
+			ImageName                 string                 `json:"image_name"`      // For docker_image_scan: Docker image to scan
+			ContainerName             string                 `json:"container_name"`  // For docker_image_scan: container to scan
+			ScanAllImages             bool                   `json:"scan_all_images"` // For docker_image_scan: scan all images
+			Config                    map[string]interface{} `json:"config"`          // For apply_config: full config to apply
 			// SSH proxy fields
 			SessionID  string `json:"session_id"`  // SSH proxy session ID
 			Host       string `json:"host"`        // SSH proxy target host
@@ -1814,15 +1986,19 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 			logger.Info("upgrade_ssg sent to message channel")
 		case "install_scanner":
 			logger.Info("install_scanner received from WebSocket")
-			dispatchWSMessage(out, wsMsg{kind: "install_scanner"})
+			dispatchWSMessage(out, wsMsg{kind: "install_scanner", jobID: payload.JobID})
 		case "remediate_rule":
 			// Validate rule ID to prevent command injection
 			if err := validateRuleID(payload.RuleID); err != nil {
 				logger.WithError(err).WithField("rule_id", logutil.Sanitize(payload.RuleID)).Warn("Invalid rule ID in remediate_rule message")
 				continue
 			}
+			if err := validateProfileID(payload.ProfileID); err != nil {
+				logger.WithError(err).WithField("profile_id", logutil.Sanitize(payload.ProfileID)).Warn("Invalid profile ID in remediate_rule message")
+				continue
+			}
 			logger.WithField("rule_id", logutil.Sanitize(payload.RuleID)).Info("remediate_rule received")
-			dispatchWSMessage(out, wsMsg{kind: "remediate_rule", ruleID: payload.RuleID})
+			dispatchWSMessage(out, wsMsg{kind: "remediate_rule", ruleID: payload.RuleID, profileID: payload.ProfileID})
 		case "docker_image_scan":
 			// Validate Docker image and container names to prevent command injection
 			if err := validateDockerImageName(payload.ImageName); err != nil {
@@ -2959,6 +3135,10 @@ func runComplianceScanWithOptions(ctx context.Context, options *models.Complianc
 		}
 		sendComplianceProgress("failed", profileName, "Scan failed", 0, err.Error())
 		return fmt.Errorf("compliance scan failed: %w", err)
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		sendComplianceProgress("cancelled", profileName, "Scan cancelled", 0, "")
+		return ctx.Err()
 	}
 
 	// Send progress: parsing

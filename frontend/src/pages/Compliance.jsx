@@ -49,6 +49,7 @@ import { useTheme } from "../contexts/ThemeContext";
 import { useToast } from "../contexts/ToastContext";
 import { adminHostsAPI, settingsAPI } from "../utils/api";
 import { complianceAPI } from "../utils/complianceApi";
+import { hostComplianceStatus } from "../utils/complianceStatus";
 import {
 	deriveReportingStateByTime,
 	hasNeverReported,
@@ -167,7 +168,8 @@ const Compliance = () => {
 	});
 	const [bulkScanResult, setBulkScanResult] = useState(null);
 	const [pendingScans, setPendingScans] = useState([]); // Hosts where scan was triggered but not yet in database
-	const prevActiveScanIds = useRef(new Set());
+	const prevActiveScanIds = useRef(new Map());
+	const cancelledHostIds = useRef(new Set());
 	const [profileTypeFilter, setProfileTypeFilter] = useState(() => {
 		const urlProfileType = searchParams.get("profile_type");
 		if (urlProfileType && ["openscap", "docker-bench"].includes(urlProfileType))
@@ -223,23 +225,28 @@ const Compliance = () => {
 	// Track active scans and notify when they complete
 	useEffect(() => {
 		const activeScans = activeScansData?.activeScans || [];
-		const currentIds = new Set(activeScans.map((s) => s.id));
+		const current = new Map(activeScans.map((s) => [s.id, s.hostId]));
 		const activeHostIds = new Set(activeScans.map((s) => s.hostId));
 
-		// Find scans that were active before but are now gone (completed)
-		for (const prevId of prevActiveScanIds.current) {
-			if (!currentIds.has(prevId)) {
-				// A scan completed - refresh dashboard data
-				queryClient.invalidateQueries({ queryKey: ["compliance-dashboard"] });
-				toast.success("Compliance scan completed");
-				break; // Only show one notification per batch
-			}
+		let finished = false;
+		let completed = false;
+		for (const [prevId, prevHostId] of prevActiveScanIds.current) {
+			if (current.has(prevId)) continue;
+			finished = true;
+			if (!cancelledHostIds.current.has(prevHostId)) completed = true;
+		}
+		if (finished) {
+			queryClient.invalidateQueries({ queryKey: ["compliance-dashboard"] });
+			if (completed) toast.success("Compliance scan completed");
+		}
+		for (const hostId of cancelledHostIds.current) {
+			if (!activeHostIds.has(hostId)) cancelledHostIds.current.delete(hostId);
 		}
 
 		// Remove pending scans that now appear as real active scans
 		setPendingScans((prev) => prev.filter((p) => !activeHostIds.has(p.hostId)));
 
-		prevActiveScanIds.current = currentIds;
+		prevActiveScanIds.current = current;
 	}, [activeScansData, queryClient, toast]);
 
 	// Check if pending scans have completed (scan records appear in dashboard)
@@ -302,6 +309,9 @@ const Compliance = () => {
 			const { success, failed } = response.data.summary || {};
 
 			// Track triggered hosts as pending scans for immediate UI feedback
+			for (const t of response.data.triggered || []) {
+				cancelledHostIds.current.delete(t.hostId);
+			}
 			if (response.data.triggered?.length > 0) {
 				const newPending = response.data.triggered.map((t) => ({
 					id: `pending-${t.hostId}`,
@@ -338,6 +348,7 @@ const Compliance = () => {
 		mutationFn: ({ hostId }) =>
 			complianceAPI.triggerScan(hostId, { profile_type: "all" }),
 		onSuccess: (_, { hostId, hostName }) => {
+			cancelledHostIds.current.delete(hostId);
 			queryClient.invalidateQueries({ queryKey: ["compliance-active-scans"] });
 			setPendingScans((prev) => [
 				...prev,
@@ -361,9 +372,24 @@ const Compliance = () => {
 
 	const cancelScanMutation = useMutation({
 		mutationFn: ({ hostId }) => complianceAPI.cancelScan(hostId),
-		onSuccess: (_, { hostName }) => {
-			toast.success(`Cancel request sent for ${hostName || "host"}`);
+		onSuccess: (response, { hostId, hostName }) => {
+			if (response?.data?.agentNotified === false) {
+				toast.warning(
+					`Scan cancelled for ${hostName || "host"}, but the agent could not be reached and may still finish it`,
+				);
+			} else {
+				toast.success(`Scan cancelled for ${hostName || "host"}`);
+			}
+			const shownActive = [...prevActiveScanIds.current.values()].includes(
+				hostId,
+			);
+			if (response?.data?.scansCancelled > 0 || shownActive) {
+				cancelledHostIds.current.add(hostId);
+			}
+			setPendingScans((prev) => prev.filter((p) => p.hostId !== hostId));
 			queryClient.invalidateQueries({ queryKey: ["compliance-active-scans"] });
+			queryClient.invalidateQueries({ queryKey: ["compliance-dashboard"] });
+			queryClient.invalidateQueries({ queryKey: ["compliance-scan-history"] });
 		},
 		onError: (error, { hostName }) => {
 			const errorMsg = error.response?.data?.error || error.message;
@@ -466,7 +492,7 @@ const Compliance = () => {
 	const filteredScans =
 		recent_scans?.filter((scan) => {
 			if (profileTypeFilter === "all") return true;
-			return scan.compliance_profiles?.type === profileTypeFilter;
+			return scan.profile?.type === profileTypeFilter;
 		}) || [];
 
 	const _filteredWorstHosts =
@@ -499,6 +525,17 @@ const Compliance = () => {
 		const params = new URLSearchParams(searchParams);
 		params.delete("profile_type");
 		setSearchParams(params, { replace: true });
+	};
+
+	const openHostScanResults = (row, status) => {
+		const bothScanners =
+			row.compliance_openscap_enabled && row.compliance_docker_bench_enabled;
+		setScanResultsFilters({
+			status,
+			host_id: row.host_id,
+			profile_type: bothScanners ? row.score_scan_type || "" : "",
+		});
+		setActiveTab("scan-results");
 	};
 
 	const allHosts = hostsData?.hosts || [];
@@ -808,14 +845,21 @@ const Compliance = () => {
 															{row.friendly_name || row.hostname || " -"}
 														</Link>
 													</td>
-													<td className="px-4 py-2 whitespace-nowrap">
+													<td
+														className="px-4 py-2 whitespace-nowrap"
+														title={
+															row.score != null
+																? `${{ compliant: "Compliant", warning: "Warning", critical: "Critical" }[hostComplianceStatus(row)]}${row.score_profile_name ? ` · ${row.score_profile_name}` : ""} (${Math.round(row.score)}%)`
+																: undefined
+														}
+													>
 														{row.score != null ? (
-															Number(row.score) >= 80 ? (
+															hostComplianceStatus(row) === "compliant" ? (
 																<ShieldCheck
 																	className="h-5 w-5 text-green-600 dark:text-green-400"
 																	title="Compliant"
 																/>
-															) : Number(row.score) >= 60 ? (
+															) : hostComplianceStatus(row) === "warning" ? (
 																<AlertTriangle
 																	className="h-5 w-5 text-yellow-600 dark:text-yellow-400"
 																	title="Warning"
@@ -866,13 +910,7 @@ const Compliance = () => {
 														{row.passed != null ? (
 															<button
 																type="button"
-																onClick={() => {
-																	setScanResultsFilters({
-																		status: "pass",
-																		host_id: row.host_id,
-																	});
-																	setActiveTab("scan-results");
-																}}
+																onClick={() => openHostScanResults(row, "pass")}
 																className="text-green-600 dark:text-green-400 hover:underline font-medium tabular-nums"
 																title="View passing rules for this host"
 															>
@@ -886,13 +924,7 @@ const Compliance = () => {
 														{row.failed != null ? (
 															<button
 																type="button"
-																onClick={() => {
-																	setScanResultsFilters({
-																		status: "fail",
-																		host_id: row.host_id,
-																	});
-																	setActiveTab("scan-results");
-																}}
+																onClick={() => openHostScanResults(row, "fail")}
 																className="text-red-600 dark:text-red-400 hover:underline font-medium tabular-nums"
 																title="View failing rules for this host"
 															>
@@ -906,13 +938,9 @@ const Compliance = () => {
 														{row.skipped != null ? (
 															<button
 																type="button"
-																onClick={() => {
-																	setScanResultsFilters({
-																		status: "skipped",
-																		host_id: row.host_id,
-																	});
-																	setActiveTab("scan-results");
-																}}
+																onClick={() =>
+																	openHostScanResults(row, "skipped")
+																}
 																className="text-secondary-600 dark:text-white hover:underline font-medium tabular-nums"
 																title="View skipped/N/A rules for this host"
 															>

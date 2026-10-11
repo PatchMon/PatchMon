@@ -418,7 +418,9 @@ ORDER BY
   CASE COALESCE(crules.severity, 'unknown')
     WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4
     ELSE 5
-  END
+  END,
+  crules.rule_ref,
+  cr.id
 LIMIT $2 OFFSET $3
 `
 

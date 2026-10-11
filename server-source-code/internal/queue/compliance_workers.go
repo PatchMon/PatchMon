@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -24,6 +25,7 @@ const (
 	complianceInstallTimeout      = 5 * time.Minute
 	compliancePollInterval        = 2 * time.Second
 	complianceScanRetryDelay      = 1 * time.Minute
+	complianceInstallRetryDelay   = 30 * time.Second
 	// maxScanRequeueAttempts limits how many times a run_scan job will be
 	// re-queued when the agent is offline, preventing infinite loops for
 	// decommissioned or permanently unreachable agents.
@@ -148,19 +150,17 @@ type RunScanHandler struct {
 	db                *database.DB
 	poolCache         *hostctx.PoolCache
 	compliance        *store.ComplianceStore
-	queueClient       *asynq.Client
 	integrationStatus *store.IntegrationStatusStore
 	log               *slog.Logger
 }
 
 // NewRunScanHandler creates a run_scan handler.
-func NewRunScanHandler(registry *agentregistry.Registry, db *database.DB, poolCache *hostctx.PoolCache, compliance *store.ComplianceStore, queueClient *asynq.Client, integrationStatus *store.IntegrationStatusStore, log *slog.Logger) *RunScanHandler {
+func NewRunScanHandler(registry *agentregistry.Registry, db *database.DB, poolCache *hostctx.PoolCache, compliance *store.ComplianceStore, integrationStatus *store.IntegrationStatusStore, log *slog.Logger) *RunScanHandler {
 	return &RunScanHandler{
 		registry:          registry,
 		db:                db,
 		poolCache:         poolCache,
 		compliance:        compliance,
-		queueClient:       queueClient,
 		integrationStatus: integrationStatus,
 		log:               log,
 	}
@@ -170,7 +170,7 @@ func NewRunScanHandler(registry *agentregistry.Registry, db *database.DB, poolCa
 func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	var p RunScanPayload
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
-		return err
+		return fmt.Errorf("decode run_scan payload: %v: %w", err, asynq.SkipRetry)
 	}
 
 	// Resolve per-context DB and put it on ctx so DBProvider-backed stores
@@ -219,9 +219,9 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 			}
 			return nil
 		}
-		if p.RequeueCount >= maxScanRequeueAttempts {
+		if scanRetriesExhausted(ctx) {
 			h.log.Warn("run_scan: agent offline, max re-queue attempts reached - giving up",
-				"api_id", p.ApiID, "host_id", p.HostID, "attempts", p.RequeueCount)
+				"api_id", p.ApiID, "host_id", p.HostID)
 			if taskID != "" && d != nil {
 				msg := "Agent remained offline after maximum retry attempts"
 				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{
@@ -230,20 +230,11 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 			}
 			return nil
 		}
-		h.log.Info("run_scan: agent offline, re-queuing", "api_id", p.ApiID, "attempt", p.RequeueCount+1)
+		h.log.Info("run_scan: agent offline, will retry", "api_id", p.ApiID)
 		if taskID != "" && d != nil {
 			_ = d.Queries.UpdateJobHistoryDelayed(ctx, taskID)
 		}
-		p.RequeueCount++
-		nextTask, err := NewRunScanTask(p)
-		if err != nil {
-			return err
-		}
-		_, err = h.queueClient.Enqueue(nextTask, asynq.ProcessIn(complianceScanRetryDelay))
-		if err != nil {
-			return err
-		}
-		return nil
+		return fmt.Errorf("agent offline: %w", ErrRetryLater)
 	}
 
 	openscapEnabled := true
@@ -308,8 +299,8 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 			}
 			return nil
 		}
-		h.log.Warn("run_scan: write failed", "api_id", p.ApiID, "error", err, "attempt", p.RequeueCount+1)
-		if p.RequeueCount >= maxScanRequeueAttempts {
+		h.log.Warn("run_scan: write failed", "api_id", p.ApiID, "error", err)
+		if scanRetriesExhausted(ctx) {
 			h.log.Warn("run_scan: write failed, max re-queue attempts reached - giving up",
 				"api_id", p.ApiID, "host_id", p.HostID)
 			if taskID != "" && d != nil {
@@ -323,9 +314,15 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 		if taskID != "" && d != nil {
 			_ = d.Queries.UpdateJobHistoryDelayed(ctx, taskID)
 		}
-		p.RequeueCount++
-		nextTask, _ := NewRunScanTask(p)
-		_, _ = h.queueClient.Enqueue(nextTask, asynq.ProcessIn(complianceScanRetryDelay))
+		return fmt.Errorf("send to agent: %w", ErrRetryLater)
+	}
+
+	if h.integrationStatus != nil && h.integrationStatus.IsComplianceScanCancelled(ctx, p.HostID) {
+		h.log.Info("run_scan: cancelled after dispatch, recalling scan", "api_id", p.ApiID, "host_id", p.HostID)
+		_ = h.registry.SendJSON(p.ApiID, map[string]interface{}{"type": "compliance_scan_cancel"})
+		if taskID != "" && d != nil {
+			_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
+		}
 		return nil
 	}
 
@@ -349,6 +346,11 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	for _, profileID := range profilesToUse {
 		if err := h.compliance.CreateRunningScan(ctx, p.HostID, profileID); err != nil {
 			h.log.Warn("run_scan: could not record running scan", "host_id", p.HostID, "profile_id", profileID, "error", err)
+		}
+	}
+	if h.integrationStatus != nil && h.integrationStatus.IsComplianceScanCancelled(ctx, p.HostID) {
+		if _, err := h.compliance.CancelActiveScans(ctx, p.HostID); err != nil {
+			h.log.Warn("run_scan: could not cancel placeholders after late cancel", "host_id", p.HostID, "error", err)
 		}
 	}
 
@@ -419,16 +421,33 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 		})
 	}
 
-	if !h.registry.IsConnected(p.ApiID) {
-		msg := "Agent is not connected. Cannot run install."
-		if taskID != "" && d != nil {
-			_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
+	cancelKey := workerTenantKey(p.Host, complianceInstallCancelPrefix+taskID)
+	if rdb != nil {
+		if cancelled, _ := rdb.Get(ctx, cancelKey).Result(); cancelled != "" {
+			_ = rdb.Del(ctx, cancelKey).Err()
+			errMsg := "Cancelled by user"
+			if taskID != "" && d != nil {
+				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
+			}
+			return nil
 		}
-		h.log.Warn("install_compliance_tools: agent not connected", "api_id", p.ApiID)
-		return nil
 	}
 
-	msg := map[string]interface{}{"type": "install_scanner"}
+	if !h.registry.IsConnected(p.ApiID) {
+		msg := "Agent is not connected. Cannot run install."
+		maxRetry, _ := asynq.GetMaxRetry(ctx)
+		if taskID != "" && d != nil {
+			if retryCount >= maxRetry {
+				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
+			} else {
+				_ = d.Queries.UpdateJobHistoryDelayed(ctx, taskID)
+			}
+		}
+		h.log.Info("install_compliance_tools: agent not connected", "api_id", p.ApiID, "attempt", attempt)
+		return fmt.Errorf("%s: %w", msg, ErrRetryLater)
+	}
+
+	msg := map[string]interface{}{"type": "install_scanner", "job_id": taskID}
 	if err := h.registry.SendJSON(p.ApiID, msg); err != nil {
 		errMsg := "Failed to send install_scanner command to agent"
 		if taskID != "" && d != nil {
@@ -446,7 +465,6 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 	}
 
 	statusKey := workerTenantKey(p.Host, "integration_status:"+p.ApiID+":compliance")
-	cancelKey := workerTenantKey(p.Host, complianceInstallCancelPrefix+taskID)
 	deadline := time.Now().Add(complianceInstallTimeout)
 	pollTimer := time.NewTimer(compliancePollInterval)
 	defer pollTimer.Stop()
@@ -474,31 +492,16 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 
 		raw, err := rdb.Get(ctx, statusKey).Result()
 		if err == nil {
-			var data struct {
-				Status  string `json:"status"`
-				Message string `json:"message"`
-			}
-			_ = json.Unmarshal([]byte(raw), &data)
-			switch data.Status {
-			case "ready":
-				if taskID != "" && d != nil {
-					_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
-				}
-				h.log.Info("install_compliance_tools: completed", "host_id", p.HostID)
-				return nil
-			case "partial":
-				if taskID != "" && d != nil {
-					_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
-				}
-				h.log.Info("install_compliance_tools: completed (partial)", "host_id", p.HostID)
-				return nil
-			case "error":
-				errMsg := data.Message
-				if errMsg == "" {
-					errMsg = "Agent reported error"
+			if finished, failure := InstallOutcome(raw, taskID); finished {
+				if failure == "" {
+					if taskID != "" && d != nil {
+						_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
+					}
+					h.log.Info("install_compliance_tools: completed", "host_id", p.HostID)
+					return nil
 				}
 				if taskID != "" && d != nil {
-					_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
+					_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &failure})
 				}
 				return nil
 			}
@@ -522,4 +525,60 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 	}
 	h.log.Warn("install_compliance_tools: timeout", "host_id", p.HostID)
 	return nil
+}
+
+// InstallOutcome reads install_events and their job tag, never the status field,
+// which the agent's availability report also writes and can predate this install.
+func InstallOutcome(raw, jobID string) (finished bool, failure string) {
+	var data struct {
+		InstallJobID  string `json:"install_job_id"`
+		InstallEvents []struct {
+			Step    string `json:"step"`
+			Status  string `json:"status"`
+			Message string `json:"message"`
+		} `json:"install_events"`
+	}
+	if json.Unmarshal([]byte(raw), &data) != nil {
+		return false, ""
+	}
+	if !InstallEventsMatchJob(data.InstallJobID, jobID) {
+		return false, ""
+	}
+	firstFailure := ""
+	for _, e := range data.InstallEvents {
+		if e.Step == "complete" {
+			switch e.Status {
+			case "done":
+				return true, ""
+			case "failed":
+				if firstFailure == "" {
+					firstFailure = e.Message
+				}
+				if firstFailure == "" {
+					firstFailure = "Agent reported error"
+				}
+				return true, firstFailure
+			}
+			continue
+		}
+		if e.Status == "failed" && e.Message != "" && firstFailure == "" {
+			firstFailure = e.Message
+		}
+	}
+	return false, ""
+}
+
+// InstallEventsMatchJob reports whether events tagged eventsJobID belong to jobID.
+// Agents that predate job tagging send no ID, and their events are accepted.
+func InstallEventsMatchJob(eventsJobID, jobID string) bool {
+	return eventsJobID == "" || jobID == "" || eventsJobID == jobID
+}
+
+// ErrRetryLater marks an expected, retryable condition such as an offline agent.
+var ErrRetryLater = errors.New("retry later")
+
+func scanRetriesExhausted(ctx context.Context) bool {
+	retried, _ := asynq.GetRetryCount(ctx)
+	maxRetry, ok := asynq.GetMaxRetry(ctx)
+	return !ok || retried >= maxRetry
 }
