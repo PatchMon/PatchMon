@@ -1290,7 +1290,7 @@ func (h *HostsHandler) ApplyPendingConfig(w http.ResponseWriter, r *http.Request
 	}
 
 	installQueued := false
-	if openscapNewlyEnabled(host, complianceEnabled, openscapEnabled) {
+	if openscapNewlyEnabled(host, complianceEnabled, openscapEnabled) && openscapInstallSupported(host) {
 		installQueued = h.queueScannerInstall(r, host)
 	}
 
@@ -1307,6 +1307,19 @@ const scannerInstallDelay = 30 * time.Second
 func openscapNewlyEnabled(before *models.Host, complianceEnabled, openscapEnabled bool) bool {
 	return complianceEnabled && openscapEnabled &&
 		(!before.ComplianceEnabled || !before.ComplianceOpenscapEnabled)
+}
+
+// openscapInstallSupported skips platforms the agent cannot install OpenSCAP on.
+// SUSE reports "unknown", so this must stay a deny-list.
+func openscapInstallSupported(host *models.Host) bool {
+	if host.PackageManager == nil {
+		return true
+	}
+	switch *host.PackageManager {
+	case "windows", "pkg", "apk", "pacman":
+		return false
+	}
+	return true
 }
 
 func (h *HostsHandler) queueScannerInstall(r *http.Request, host *models.Host) bool {

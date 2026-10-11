@@ -29,3 +29,29 @@ func TestOpenscapNewlyEnabled(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenscapInstallSupported(t *testing.T) {
+	pm := func(s string) *string { return &s }
+	tests := []struct {
+		name string
+		pm   *string
+		want bool
+	}{
+		{name: "not reported yet", want: true},
+		{name: "debian family", pm: pm("apt"), want: true},
+		{name: "rhel family", pm: pm("dnf"), want: true},
+		{name: "older rhel", pm: pm("yum"), want: true},
+		{name: "suse reports unknown", pm: pm("unknown"), want: true},
+		{name: "windows", pm: pm("windows"), want: false},
+		{name: "freebsd", pm: pm("pkg"), want: false},
+		{name: "alpine", pm: pm("apk"), want: false},
+		{name: "arch", pm: pm("pacman"), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := openscapInstallSupported(&models.Host{PackageManager: tt.pm}); got != tt.want {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
