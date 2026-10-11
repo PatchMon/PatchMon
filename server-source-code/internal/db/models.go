@@ -438,15 +438,20 @@ type Package struct {
 }
 
 type PatchPolicy struct {
-	ID             string           `json:"id"`
-	Name           string           `json:"name"`
-	Description    *string          `json:"description"`
-	PatchDelayType string           `json:"patch_delay_type"`
-	DelayMinutes   *int32           `json:"delay_minutes"`
-	FixedTimeUtc   *string          `json:"fixed_time_utc"`
-	Timezone       *string          `json:"timezone"`
-	CreatedAt      pgtype.Timestamp `json:"created_at"`
-	UpdatedAt      pgtype.Timestamp `json:"updated_at"`
+	ID                 string           `json:"id"`
+	Name               string           `json:"name"`
+	Description        *string          `json:"description"`
+	PatchDelayType     string           `json:"patch_delay_type"`
+	DelayMinutes       *int32           `json:"delay_minutes"`
+	FixedTimeUtc       *string          `json:"fixed_time_utc"`
+	Timezone           *string          `json:"timezone"`
+	AutoReboot         bool             `json:"auto_reboot"`
+	AutoPatchEnabled   bool             `json:"auto_patch_enabled"`
+	AutoPatchDays      *string          `json:"auto_patch_days"`
+	AutoPatchTime      *string          `json:"auto_patch_time"`
+	AutoPatchLastRunAt pgtype.Timestamp `json:"auto_patch_last_run_at"`
+	CreatedAt          pgtype.Timestamp `json:"created_at"`
+	UpdatedAt          pgtype.Timestamp `json:"updated_at"`
 }
 
 type PatchPolicyAssignment struct {
