@@ -505,31 +505,16 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 
 		raw, err := rdb.Get(ctx, statusKey).Result()
 		if err == nil {
-			var data struct {
-				Status  string `json:"status"`
-				Message string `json:"message"`
-			}
-			_ = json.Unmarshal([]byte(raw), &data)
-			switch data.Status {
-			case "ready":
-				if taskID != "" && d != nil {
-					_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
-				}
-				h.log.Info("install_compliance_tools: completed", "host_id", p.HostID)
-				return nil
-			case "partial":
-				if taskID != "" && d != nil {
-					_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
-				}
-				h.log.Info("install_compliance_tools: completed (partial)", "host_id", p.HostID)
-				return nil
-			case "error":
-				errMsg := data.Message
-				if errMsg == "" {
-					errMsg = "Agent reported error"
+			if finished, failure := installOutcome(raw); finished {
+				if failure == "" {
+					if taskID != "" && d != nil {
+						_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
+					}
+					h.log.Info("install_compliance_tools: completed", "host_id", p.HostID)
+					return nil
 				}
 				if taskID != "" && d != nil {
-					_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &errMsg})
+					_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &failure})
 				}
 				return nil
 			}
@@ -553,4 +538,41 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 	}
 	h.log.Warn("install_compliance_tools: timeout", "host_id", p.HostID)
 	return nil
+}
+
+// installOutcome reads only install_events: the status field is also written by
+// the agent's availability report and can predate this install.
+func installOutcome(raw string) (finished bool, failure string) {
+	var data struct {
+		InstallEvents []struct {
+			Step    string `json:"step"`
+			Status  string `json:"status"`
+			Message string `json:"message"`
+		} `json:"install_events"`
+	}
+	if json.Unmarshal([]byte(raw), &data) != nil {
+		return false, ""
+	}
+	firstFailure := ""
+	for _, e := range data.InstallEvents {
+		if e.Step == "complete" {
+			switch e.Status {
+			case "done":
+				return true, ""
+			case "failed":
+				if firstFailure == "" {
+					firstFailure = e.Message
+				}
+				if firstFailure == "" {
+					firstFailure = "Agent reported error"
+				}
+				return true, firstFailure
+			}
+			continue
+		}
+		if e.Status == "failed" && e.Message != "" && firstFailure == "" {
+			firstFailure = e.Message
+		}
+	}
+	return false, ""
 }
