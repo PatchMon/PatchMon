@@ -171,22 +171,58 @@ if command -v rc-service >/dev/null 2>&1; then
     fi
 fi
 
+# Check for FreeBSD rc.d service
+IS_FREEBSD=0
+if [ "$(uname -s 2>/dev/null)" = "FreeBSD" ]; then
+    IS_FREEBSD=1
+    RCD_SCRIPT="/usr/local/etc/rc.d/patchmon_agent"
+    if [ -f "$RCD_SCRIPT" ]; then
+        warning "Stopping FreeBSD rc.d service..."
+        if command -v service >/dev/null 2>&1; then
+            service patchmon_agent onestop >/dev/null 2>&1 || true
+        else
+            "$RCD_SCRIPT" onestop >/dev/null 2>&1 || true
+        fi
+        rm -f "$RCD_SCRIPT"
+        success "rc.d service removed"
+        SERVICE_STOPPED=1
+    fi
+    # An orphaned daemon(8) supervisor would respawn the agent after it is killed
+    pkill -f '^(daemon: |/usr/sbin/daemon ).*patchmon-agent' 2>/dev/null || true
+    rm -f /var/run/patchmon_agent.pid
+    if command -v sysrc >/dev/null 2>&1; then
+        sysrc -x patchmon_agent_enable >/dev/null 2>&1 || true
+    fi
+    for _rc_conf in /etc/rc.conf /etc/rc.conf.local; do
+        if [ -f "$_rc_conf" ] && grep -q '^[[:space:]]*patchmon_agent_enable=' "$_rc_conf"; then
+            _rc_tmp=$(mktemp)
+            grep -v '^[[:space:]]*patchmon_agent_enable=' "$_rc_conf" > "$_rc_tmp" || true
+            cat "$_rc_tmp" > "$_rc_conf"
+            rm -f "$_rc_tmp"
+            info "Removed patchmon_agent_enable from $_rc_conf"
+        fi
+    done
+fi
+
 # Stop any remaining running processes (legacy or manual starts)
 info "🔍 Checking for running PatchMon processes..."
-if pgrep -f "patchmon-agent" >/dev/null; then
-    PROCESS_COUNT=$(pgrep -f "patchmon-agent" | wc -l | tr -d ' ')
+# Anchored on the executable so journalctl/tail/ssh commands that mention the agent are left alone;
+# busybox pgrep -x compares argv[0] rather than the process name, so -x alone is not portable
+AGENT_PROC_RE='^([^ ]*/)?patchmon-agent( |$)'
+if pgrep -f "$AGENT_PROC_RE" >/dev/null; then
+    PROCESS_COUNT=$(pgrep -f "$AGENT_PROC_RE" | wc -l | tr -d ' ')
     warning "Found $PROCESS_COUNT running PatchMon process(es)"
     
     # Show process details
     if [ "$SILENT_MODE" -eq 0 ]; then
         info "Process details:"
-        ps aux | grep "[p]atchmon-agent" | while IFS= read -r line; do
+        pgrep -lf "$AGENT_PROC_RE" | while IFS= read -r line; do
             echo "   $line"
         done
     fi
     
     warning "Sending SIGTERM to all patchmon-agent processes..."
-    if pkill -f "patchmon-agent" 2>/dev/null; then
+    if pkill -f "$AGENT_PROC_RE" 2>/dev/null; then
         success "✓ Sent SIGTERM signal"
     else
         warning "Failed to send SIGTERM (processes may have already stopped)"
@@ -195,13 +231,13 @@ if pgrep -f "patchmon-agent" >/dev/null; then
     sleep 2
     
     # Check if processes still exist
-    if pgrep -f "patchmon-agent" >/dev/null; then
-        REMAINING=$(pgrep -f "patchmon-agent" | wc -l | tr -d ' ')
+    if pgrep -f "$AGENT_PROC_RE" >/dev/null; then
+        REMAINING=$(pgrep -f "$AGENT_PROC_RE" | wc -l | tr -d ' ')
         warning "⚠️  $REMAINING process(es) still running! Sending SIGKILL..."
-        pkill -9 -f "patchmon-agent" 2>/dev/null || true
+        pkill -9 -f "$AGENT_PROC_RE" 2>/dev/null || true
         sleep 1
         
-        if pgrep -f "patchmon-agent" >/dev/null; then
+        if pgrep -f "$AGENT_PROC_RE" >/dev/null; then
             warning "⚠️  CRITICAL: Processes still running after SIGKILL!"
         else
             success "✓ All processes terminated"
@@ -417,6 +453,15 @@ if [ -f "/etc/init.d/patchmon-agent" ]; then
     REMAINING_FILES=$((REMAINING_FILES + 1))
 fi
 
+if [ "$IS_FREEBSD" -eq 1 ]; then
+    if [ -f "/usr/local/etc/rc.d/patchmon_agent" ]; then
+        REMAINING_FILES=$((REMAINING_FILES + 1))
+    fi
+    if grep -q '^[[:space:]]*patchmon_agent_enable=' /etc/rc.conf /etc/rc.conf.local 2>/dev/null; then
+        REMAINING_FILES=$((REMAINING_FILES + 1))
+    fi
+fi
+
 if [ -d "/etc/patchmon" ]; then
     REMAINING_FILES=$((REMAINING_FILES + 1))
 fi
@@ -442,7 +487,7 @@ if [ "$SILENT_MODE" -eq 0 ]; then
     echo ""
     printf "%b\n" "${GREEN}📋 Removal Summary:${NC}"
     echo "   • Agent binaries: Removed"
-    echo "   • System services: Removed (systemd/OpenRC)"
+    echo "   • System services: Removed (systemd/OpenRC/FreeBSD rc.d)"
     echo "   • Configuration files: Removed"
     echo "   • Log files: Removed"
     echo "   • Crontab entries: Removed"
