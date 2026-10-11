@@ -31,15 +31,18 @@ func TestRetrySend(t *testing.T) {
 func TestInstallScannerSlot(t *testing.T) {
 	t.Cleanup(func() {
 		installScannerMu.Lock()
-		installScannerRunning, installScannerResend = false, false
+		installScannerRunning, installScannerResend, installScannerJobID = false, false, ""
 		installScannerMu.Unlock()
 		lastInstallOutcome.Store(nil)
 	})
-	if !startInstallScanner() {
+	if !startInstallScanner("job-a") {
 		t.Fatal("first install should take the slot")
 	}
-	if startInstallScanner() {
+	if startInstallScanner("job-b") {
 		t.Fatal("second install must not run alongside the first")
+	}
+	if got := currentInstallJobID(); got != "job-b" {
+		t.Fatalf("running install should report to the newest job, got %q", got)
 	}
 	if !installScannerResend {
 		t.Fatal("dropped install should request a re-report")
@@ -48,7 +51,7 @@ func TestInstallScannerSlot(t *testing.T) {
 	if installScannerRunning || installScannerResend {
 		t.Fatalf("slot should be free and the re-report consumed, running=%v resend=%v", installScannerRunning, installScannerResend)
 	}
-	if !startInstallScanner() {
+	if !startInstallScanner("job-c") {
 		t.Fatal("slot should be reusable after finishing")
 	}
 	finishInstallScanner()

@@ -33,7 +33,7 @@ func TestSetKeepingInstallEvents(t *testing.T) {
 	s, _ := newIntegrationStatusStore(t)
 	ctx := context.Background()
 
-	install := map[string]interface{}{"status": "installing", "install_events": []interface{}{
+	install := map[string]interface{}{"status": "installing", "install_job_id": "job-1", "install_events": []interface{}{
 		map[string]interface{}{"step": "detect_os", "status": "done"},
 		map[string]interface{}{"step": "complete", "status": "done"},
 	}}
@@ -46,16 +46,16 @@ func TestSetKeepingInstallEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := s.Get(ctx, "api-1", "compliance")
-	if got["status"] != "partial" || len(installSteps(t, got)) != 2 || len(installSteps(t, stored)) != 2 {
-		t.Fatalf("availability report should keep install events, got %v", got)
+	if got["status"] != "partial" || len(installSteps(t, got)) != 2 || len(installSteps(t, stored)) != 2 || got["install_job_id"] != "job-1" {
+		t.Fatalf("availability report should keep install events and their job, got %v", got)
 	}
 
 	if err := s.ClearInstallEvents(ctx, "api-1", "compliance"); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = s.Get(ctx, "api-1", "compliance")
-	if got["status"] != "partial" || len(installSteps(t, got)) != 0 {
-		t.Fatalf("clear should empty only install events, got %v", got)
+	if _, tagged := got["install_job_id"]; got["status"] != "partial" || len(installSteps(t, got)) != 0 || tagged {
+		t.Fatalf("clear should drop only install events and their job, got %v", got)
 	}
 }
 

@@ -23,10 +23,12 @@ func TestInstallOutcome(t *testing.T) {
 		{name: "no content uses complete message", raw: `{"install_events":[{"step":"sync_ssg","status":"done"},{"step":"complete","status":"failed","message":"no SCAP content found"}]}`, wantFinished: true, wantFailure: "no SCAP content found"},
 		{name: "failed without messages", raw: `{"install_events":[{"step":"complete","status":"failed"}]}`, wantFinished: true, wantFailure: "Agent reported error"},
 		{name: "malformed", raw: `not json`},
+		{name: "another job's events are ignored", raw: `{"install_job_id":"job-0","install_events":[{"step":"complete","status":"done"}]}`},
+		{name: "this job's events count", raw: `{"install_job_id":"job-1","install_events":[{"step":"complete","status":"done"}]}`, wantFinished: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			finished, failure := InstallOutcome(tt.raw)
+			finished, failure := InstallOutcome(tt.raw, "job-1")
 			if finished != tt.wantFinished || failure != tt.wantFailure {
 				t.Fatalf("got (%v, %q), want (%v, %q)", finished, failure, tt.wantFinished, tt.wantFailure)
 			}

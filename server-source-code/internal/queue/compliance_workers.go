@@ -460,7 +460,7 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 		return errors.New(msg)
 	}
 
-	msg := map[string]interface{}{"type": "install_scanner"}
+	msg := map[string]interface{}{"type": "install_scanner", "job_id": taskID}
 	if err := h.registry.SendJSON(p.ApiID, msg); err != nil {
 		errMsg := "Failed to send install_scanner command to agent"
 		if taskID != "" && d != nil {
@@ -505,7 +505,7 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 
 		raw, err := rdb.Get(ctx, statusKey).Result()
 		if err == nil {
-			if finished, failure := InstallOutcome(raw); finished {
+			if finished, failure := InstallOutcome(raw, taskID); finished {
 				if failure == "" {
 					if taskID != "" && d != nil {
 						_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
@@ -542,8 +542,9 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 
 // InstallOutcome reads only install_events: the status field is also written by
 // the agent's availability report and can predate this install.
-func InstallOutcome(raw string) (finished bool, failure string) {
+func InstallOutcome(raw, jobID string) (finished bool, failure string) {
 	var data struct {
+		InstallJobID  string `json:"install_job_id"`
 		InstallEvents []struct {
 			Step    string `json:"step"`
 			Status  string `json:"status"`
@@ -551,6 +552,9 @@ func InstallOutcome(raw string) (finished bool, failure string) {
 		} `json:"install_events"`
 	}
 	if json.Unmarshal([]byte(raw), &data) != nil {
+		return false, ""
+	}
+	if !InstallEventsMatchJob(data.InstallJobID, jobID) {
 		return false, ""
 	}
 	firstFailure := ""
@@ -575,4 +579,10 @@ func InstallOutcome(raw string) (finished bool, failure string) {
 		}
 	}
 	return false, ""
+}
+
+// InstallEventsMatchJob reports whether events tagged eventsJobID belong to jobID.
+// Agents that predate job tagging send no ID, and their events are accepted.
+func InstallEventsMatchJob(eventsJobID, jobID string) bool {
+	return eventsJobID == "" || jobID == "" || eventsJobID == jobID
 }

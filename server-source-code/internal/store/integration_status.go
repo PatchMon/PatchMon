@@ -95,6 +95,7 @@ func (s *IntegrationStatusStore) ClearInstallEvents(ctx context.Context, apiID, 
 			return nil, false
 		}
 		current["install_events"] = []interface{}{}
+		delete(current, "install_job_id")
 		return current, true
 	})
 }
@@ -114,6 +115,9 @@ func (s *IntegrationStatusStore) SetKeepingInstallEvents(ctx context.Context, ap
 		next["install_events"] = []interface{}{}
 		if prev, ok := current["install_events"]; ok && prev != nil {
 			next["install_events"] = prev
+		}
+		if prev, ok := current["install_job_id"]; ok {
+			next["install_job_id"] = prev
 		}
 		stored = next
 		return next, true

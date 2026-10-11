@@ -1367,7 +1367,8 @@ func (h *ComplianceHandler) GetInstallJobStatus(w http.ResponseWriter, r *http.R
 				if msg, ok := live["message"].(string); ok && msg != "" {
 					resp["message"] = msg
 				}
-				if evts, ok := live["install_events"].([]interface{}); ok && len(evts) > 0 {
+				eventsJobID, _ := live["install_job_id"].(string)
+				if evts, ok := live["install_events"].([]interface{}); ok && len(evts) > 0 && queue.InstallEventsMatchJob(eventsJobID, jobID) {
 					resp["install_events"] = evts
 					if mapped, reason, ok := installJobStatusFromEvents(evts); ok {
 						awaitingAgent = false
@@ -1422,7 +1423,8 @@ func (h *ComplianceHandler) installInProgress(ctx context.Context, hostID, apiID
 		return false
 	}
 	if live, _ := h.integrationStatus.Get(ctx, apiID, "compliance"); live != nil {
-		if evts, ok := live["install_events"].([]interface{}); ok {
+		eventsJobID, _ := live["install_job_id"].(string)
+		if evts, ok := live["install_events"].([]interface{}); ok && queue.InstallEventsMatchJob(eventsJobID, jobID) {
 			if _, _, finished := installJobStatusFromEvents(evts); finished {
 				return false
 			}

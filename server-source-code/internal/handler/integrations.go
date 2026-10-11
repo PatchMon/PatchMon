@@ -446,6 +446,7 @@ type integrationStatusReq struct {
 	Components    map[string]interface{}   `json:"components"`
 	ScannerInfo   interface{}              `json:"scanner_info"`
 	InstallEvents []map[string]interface{} `json:"install_events"`
+	InstallJobID  string                   `json:"install_job_id"`
 }
 
 // ReceiveIntegrationStatus handles POST /hosts/integration-status (agent reports integration setup status).
@@ -492,6 +493,9 @@ func (h *IntegrationsHandler) ReceiveIntegrationStatus(w http.ResponseWriter, r 
 	// so they don't wipe a running install's progress.
 	if payload.InstallEvents != nil {
 		statusData["install_events"] = payload.InstallEvents
+		if payload.InstallJobID != "" {
+			statusData["install_job_id"] = payload.InstallJobID
+		}
 	}
 
 	if h.integrationStatus != nil {
@@ -504,7 +508,7 @@ func (h *IntegrationsHandler) ReceiveIntegrationStatus(w http.ResponseWriter, r 
 	}
 
 	if payload.Integration == "compliance" && payload.InstallEvents != nil {
-		h.recordInstallOutcome(r.Context(), host.ID, payload.InstallEvents)
+		h.recordInstallOutcome(r.Context(), host.ID, payload.InstallJobID, payload.InstallEvents)
 	}
 
 	if payload.Integration == "compliance" {
@@ -563,20 +567,20 @@ func (h *IntegrationsHandler) AgentGetIntegrationStatus(w http.ResponseWriter, r
 
 // recordInstallOutcome settles the install's job_history row when the agent
 // finishes after the install worker has stopped waiting.
-func (h *IntegrationsHandler) recordInstallOutcome(ctx context.Context, hostID string, events interface{}) {
+func (h *IntegrationsHandler) recordInstallOutcome(ctx context.Context, hostID, eventsJobID string, events interface{}) {
 	if h.jobHistory == nil || h.integrationStatus == nil {
-		return
-	}
-	raw, err := json.Marshal(map[string]interface{}{"install_events": events})
-	if err != nil {
-		return
-	}
-	finished, failure := queue.InstallOutcome(string(raw))
-	if !finished {
 		return
 	}
 	jobID, err := h.integrationStatus.GetComplianceInstallJob(ctx, hostID)
 	if err != nil || jobID == "" {
+		return
+	}
+	raw, err := json.Marshal(map[string]interface{}{"install_job_id": eventsJobID, "install_events": events})
+	if err != nil {
+		return
+	}
+	finished, failure := queue.InstallOutcome(string(raw), jobID)
+	if !finished {
 		return
 	}
 	if err := h.jobHistory.RecordOutcome(ctx, jobID, failure); err != nil {

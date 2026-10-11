@@ -574,7 +574,7 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					}
 				}()
 			case "install_scanner":
-				if !startInstallScanner() {
+				if !startInstallScanner(m.jobID) {
 					logger.Info("Install scanner already running; it will report its outcome")
 					break
 				}
@@ -746,14 +746,16 @@ var (
 	installScannerMu      sync.Mutex
 	installScannerRunning bool
 	installScannerResend  bool
+	installScannerJobID   string
 	lastInstallOutcome    atomic.Pointer[models.IntegrationSetupStatus]
 )
 
-// startInstallScanner claims the single install slot; a request that loses asks
-// the running install to re-report its outcome, since that job may have missed it.
-func startInstallScanner() bool {
+// startInstallScanner claims the single install slot; a request that loses hands
+// the running install its job, and asks for the outcome to be re-reported to it.
+func startInstallScanner(jobID string) bool {
 	installScannerMu.Lock()
 	defer installScannerMu.Unlock()
+	installScannerJobID = jobID
 	if installScannerRunning {
 		installScannerResend = true
 		return false
@@ -776,16 +778,25 @@ func finishInstallScanner() {
 		installScannerResend = false
 		installScannerMu.Unlock()
 
-		payload := lastInstallOutcome.Load()
-		if payload == nil {
+		last := lastInstallOutcome.Load()
+		if last == nil {
 			continue
 		}
+		resend := *last
+		resend.InstallJobID = currentInstallJobID()
+		payload := &resend
 		httpClient := client.New(cfgManager, logger)
 		send := func() error { return httpClient.SendIntegrationSetupStatus(context.Background(), payload) }
 		if err := retrySend(installStatusSendAttempts, installStatusRetryDelay, send); err != nil {
 			logger.WithError(err).Warn("Failed to re-report install status to server")
 		}
 	}
+}
+
+func currentInstallJobID() string {
+	installScannerMu.Lock()
+	defer installScannerMu.Unlock()
+	return installScannerJobID
 }
 
 const (
@@ -835,7 +846,10 @@ func runInstallScanner() error {
 			InstallEvents: events,
 			ScannerInfo:   scannerInfo,
 		}
-		send := func() error { return httpClient.SendIntegrationSetupStatus(ctx, payload) }
+		send := func() error {
+			payload.InstallJobID = currentInstallJobID()
+			return httpClient.SendIntegrationSetupStatus(ctx, payload)
+		}
 		if overallStatus == "installing" {
 			_ = send()
 			return
@@ -1298,13 +1312,14 @@ type wsMsg struct {
 	packageCacheRefreshMode   string
 	packageCacheRefreshMaxAge int
 	version                   string
-	profileType               string                 // For compliance_scan: openscap, docker-bench, all
-	profileID                 string                 // For compliance_scan: specific XCCDF profile ID
-	enableRemediation         bool                   // For compliance_scan: enable auto-remediation
-	fetchRemoteResources      bool                   // For compliance_scan: fetch remote resources
-	openscapEnabled           *bool                  // For compliance_scan: per-host OpenSCAP scanner toggle
-	dockerBenchEnabled        *bool                  // For compliance_scan: per-host Docker Bench scanner toggle
-	ruleID                    string                 // For remediate_rule: specific rule ID to remediate
+	profileType               string // For compliance_scan: openscap, docker-bench, all
+	profileID                 string // For compliance_scan: specific XCCDF profile ID
+	enableRemediation         bool   // For compliance_scan: enable auto-remediation
+	fetchRemoteResources      bool   // For compliance_scan: fetch remote resources
+	openscapEnabled           *bool  // For compliance_scan: per-host OpenSCAP scanner toggle
+	dockerBenchEnabled        *bool  // For compliance_scan: per-host Docker Bench scanner toggle
+	ruleID                    string // For remediate_rule: specific rule ID to remediate
+	jobID                     string
 	imageName                 string                 // For docker_image_scan: Docker image to scan
 	containerName             string                 // For docker_image_scan: Docker container to scan
 	scanAllImages             bool                   // For docker_image_scan: scan all images on system
@@ -1836,10 +1851,11 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 			OpenSCAPEnabled           *bool                  `json:"openscap_enabled"`       // For compliance_scan: per-host toggle
 			DockerBenchEnabled        *bool                  `json:"docker_bench_enabled"`   // For compliance_scan: per-host toggle
 			RuleID                    string                 `json:"rule_id"`                // For remediate_rule: specific rule to remediate
-			ImageName                 string                 `json:"image_name"`             // For docker_image_scan: Docker image to scan
-			ContainerName             string                 `json:"container_name"`         // For docker_image_scan: container to scan
-			ScanAllImages             bool                   `json:"scan_all_images"`        // For docker_image_scan: scan all images
-			Config                    map[string]interface{} `json:"config"`                 // For apply_config: full config to apply
+			JobID                     string                 `json:"job_id"`
+			ImageName                 string                 `json:"image_name"`      // For docker_image_scan: Docker image to scan
+			ContainerName             string                 `json:"container_name"`  // For docker_image_scan: container to scan
+			ScanAllImages             bool                   `json:"scan_all_images"` // For docker_image_scan: scan all images
+			Config                    map[string]interface{} `json:"config"`          // For apply_config: full config to apply
 			// SSH proxy fields
 			SessionID  string `json:"session_id"`  // SSH proxy session ID
 			Host       string `json:"host"`        // SSH proxy target host
@@ -1970,7 +1986,7 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 			logger.Info("upgrade_ssg sent to message channel")
 		case "install_scanner":
 			logger.Info("install_scanner received from WebSocket")
-			dispatchWSMessage(out, wsMsg{kind: "install_scanner"})
+			dispatchWSMessage(out, wsMsg{kind: "install_scanner", jobID: payload.JobID})
 		case "remediate_rule":
 			// Validate rule ID to prevent command injection
 			if err := validateRuleID(payload.RuleID); err != nil {
