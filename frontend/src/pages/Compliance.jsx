@@ -834,7 +834,14 @@ const Compliance = () => {
 															{row.friendly_name || row.hostname || " -"}
 														</Link>
 													</td>
-													<td className="px-4 py-2 whitespace-nowrap">
+													<td
+														className="px-4 py-2 whitespace-nowrap"
+														title={
+															row.score != null
+																? `${{ compliant: "Compliant", warning: "Warning", critical: "Critical" }[hostComplianceStatus(row)]}${row.score_profile_name ? ` · ${row.score_profile_name}` : ""} (${Math.round(row.score)}%)`
+																: undefined
+														}
+													>
 														{row.score != null ? (
 															hostComplianceStatus(row) === "compliant" ? (
 																<ShieldCheck

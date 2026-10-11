@@ -52,6 +52,33 @@ type hostComplianceStatus struct {
 	status   string
 	score    float64
 	scanType string
+	scan     db.GetLatestCompletedScansRow
+}
+
+// worstScanPerHost picks, per host, the latest scan of each type that rates worst;
+// it sets the host's status, and the hosts table shows its numbers.
+func worstScanPerHost(latestScans []db.GetLatestCompletedScansRow, profileTypes map[string]string) map[string]hostComplianceStatus {
+	out := make(map[string]hostComplianceStatus)
+	for _, sc := range latestScans {
+		score := 0.0
+		if sc.Score != nil {
+			score = *sc.Score
+		}
+		scanType := profileTypes[sc.ProfileID]
+		if scanType == "" {
+			scanType = "unknown"
+		}
+		candidate := hostComplianceStatus{
+			status:   classifyComplianceScan(score, int(sc.Failed)),
+			score:    score,
+			scanType: scanType,
+			scan:     sc,
+		}
+		if current, ok := out[sc.HostID]; !ok || candidate.worseThan(current) {
+			out[sc.HostID] = candidate
+		}
+	}
+	return out
 }
 
 func (h hostComplianceStatus) worseThan(other hostComplianceStatus) bool {
@@ -130,6 +157,7 @@ type ComplianceDashboardHost struct {
 	Failed            *int       `json:"failed"`
 	Skipped           *int       `json:"skipped"`
 	Score             *float64   `json:"score"`
+	ScoreProfileName  *string    `json:"score_profile_name"`
 	ComplianceStatus  *string    `json:"compliance_status"`
 	ScannerStatus     string     `json:"scanner_status"`
 	ComplianceMode    string     `json:"compliance_mode"`
@@ -243,25 +271,7 @@ func (s *ComplianceStore) GetDashboard(ctx context.Context) (*ComplianceDashboar
 		}
 	}
 
-	hostStatuses := make(map[string]hostComplianceStatus)
-	for _, sc := range latestScans {
-		score := 0.0
-		if sc.Score != nil {
-			score = *sc.Score
-		}
-		scanType := profileTypes[sc.ProfileID]
-		if scanType == "" {
-			scanType = "unknown"
-		}
-		candidate := hostComplianceStatus{
-			status:   classifyComplianceScan(score, int(sc.Failed)),
-			score:    score,
-			scanType: scanType,
-		}
-		if current, ok := hostStatuses[sc.HostID]; !ok || candidate.worseThan(current) {
-			hostStatuses[sc.HostID] = candidate
-		}
-	}
+	hostStatuses := worstScanPerHost(latestScans, profileTypes)
 
 	hostsCompliant := 0
 	hostsWarning := 0
@@ -334,13 +344,20 @@ func (s *ComplianceStore) GetDashboard(ctx context.Context) (*ComplianceDashboar
 			lastScan = &scan.CompletedAt.Time
 		}
 		profileName := scan.ProfileName
-		passed := int(scan.Passed)
-		failed := int(scan.Failed)
-		skipped := int(scan.Skipped) + int(scan.NotApplicable)
+		shown := scan
 		var complianceStatus *string
 		if hs, ok := hostStatuses[h.ID]; ok {
 			st := hs.status
 			complianceStatus = &st
+			shown = hs.scan
+		}
+		passed := int(shown.Passed)
+		failed := int(shown.Failed)
+		skipped := int(shown.Skipped) + int(shown.NotApplicable)
+		var scoreProfileName *string
+		if shown.ProfileName != "" {
+			name := shown.ProfileName
+			scoreProfileName = &name
 		}
 		var scannerStatus string
 		if lastScan != nil {
@@ -367,7 +384,8 @@ func (s *ComplianceStore) GetDashboard(ctx context.Context) (*ComplianceDashboar
 			Passed:             &passed,
 			Failed:             &failed,
 			Skipped:            &skipped,
-			Score:              scan.Score,
+			Score:              shown.Score,
+			ScoreProfileName:   scoreProfileName,
 			ComplianceStatus:   complianceStatus,
 			ScannerStatus:      scannerStatus,
 			ComplianceMode:     complianceMode,

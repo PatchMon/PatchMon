@@ -3127,7 +3127,7 @@ Across the top of every Compliance page view sit five identical cards:
 | Critical | Hosts with a latest scan scoring **< 60%** that has **at least one failed rule** | `summary.hosts_critical` |
 | Never scanned | Hosts that have never successfully submitted a scan | `summary.unscanned` |
 
-A host is placed by its worst scan, so a host with a compliant OpenSCAP scan and a low Docker Bench scan counts as Warning or Critical. Warnings lower the score but never make a host Critical on their own: a Docker Bench scan that reports only warnings is counted as Warning, however low its score. The status icon in the **Hosts** tab uses the same rule.
+A host is placed by its worst scan, so a host with a compliant OpenSCAP scan and a low Docker Bench scan counts as Warning or Critical. Warnings lower the score but never make a host Critical on their own: a Docker Bench scan that reports only warnings is counted as Warning, however low its score. The **Hosts** tab uses the same rule: each row's status icon and its Passed, Failed and Skipped counts come from that worst scan, and hovering the icon names it. **Last activity** still shows the host's most recent scan of any type.
 
 The Never scanned card is clickable, it toggles a filter on the **Hosts** tab to show only never-scanned hosts, which is the fastest way to find coverage gaps.
 
