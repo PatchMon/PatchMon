@@ -1236,6 +1236,7 @@ func (h *ComplianceHandler) CancelInstall(w http.ResponseWriter, r *http.Request
 		return
 	}
 	_ = h.integrationStatus.SetComplianceInstallCancel(r.Context(), jobID)
+	_ = h.integrationStatus.ClearComplianceInstallJob(r.Context(), hostID)
 	if h.queueInspector != nil {
 		_ = h.queueInspector.DeleteTask(queue.QueueCompliance, jobID)
 	}

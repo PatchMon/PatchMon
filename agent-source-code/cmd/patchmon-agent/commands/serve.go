@@ -574,8 +574,13 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					}
 				}()
 			case "install_scanner":
+				if !installScannerRunning.CompareAndSwap(false, true) {
+					logger.Info("Install scanner already running; it will report its outcome")
+					break
+				}
 				logger.Info("Install scanner requested (OpenSCAP + SSG)...")
 				go func() {
+					defer installScannerRunning.Store(false)
 					if err := runInstallScanner(); err != nil {
 						logger.WithError(err).Warn("install_scanner failed")
 					} else {
@@ -737,10 +742,10 @@ func sendComplianceSetupStatus(httpClient *client.Client, status, message string
 	logger.Info("Updated compliance status sent to backend")
 }
 
-// runInstallScanner installs OpenSCAP and SSG content (apt/dnf install, update SSG) and reports status via HTTP
-// Sends granular install events so the frontend can display real-time progress.
+var installScannerRunning atomic.Bool
+
 const (
-	installStatusSendAttempts = 5
+	installStatusSendAttempts = 3
 	installStatusRetryDelay   = 2 * time.Second
 )
 
@@ -759,6 +764,8 @@ func retrySend(attempts int, delay time.Duration, send func() error) error {
 	return err
 }
 
+// runInstallScanner installs OpenSCAP and SSG content (apt/dnf install, update SSG) and reports status via HTTP
+// Sends granular install events so the frontend can display real-time progress.
 func runInstallScanner() error {
 	httpClient := client.New(cfgManager, logger)
 	ctx := context.Background()

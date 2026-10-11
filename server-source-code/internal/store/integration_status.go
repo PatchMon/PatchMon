@@ -167,6 +167,16 @@ func (s *IntegrationStatusStore) update(ctx context.Context, apiID, integrationN
 	return err
 }
 
+// ClearComplianceInstallJob forgets a host's install job, so a cancelled
+// install neither blocks a new one nor receives its outcome.
+func (s *IntegrationStatusStore) ClearComplianceInstallJob(ctx context.Context, hostID string) error {
+	rdb := s.rdb.RDB(ctx)
+	if rdb == nil {
+		return nil
+	}
+	return rdb.Del(ctx, hostctx.TenantKey(ctx, complianceInstallJobPrefix+hostID)).Err()
+}
+
 // GetComplianceInstallJob returns the install job ID for a host.
 func (s *IntegrationStatusStore) GetComplianceInstallJob(ctx context.Context, hostID string) (string, error) {
 	rdb := s.rdb.RDB(ctx)

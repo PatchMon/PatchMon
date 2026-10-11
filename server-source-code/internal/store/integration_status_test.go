@@ -91,3 +91,17 @@ func TestUpdateRetriesOnConcurrentWrite(t *testing.T) {
 		t.Fatalf("concurrent complete event was lost: %v", got)
 	}
 }
+
+func TestClearComplianceInstallJob(t *testing.T) {
+	s, _ := newIntegrationStatusStore(t)
+	ctx := context.Background()
+	if err := s.SetComplianceInstallJob(ctx, "host-1", "job-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ClearComplianceInstallJob(ctx, "host-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.GetComplianceInstallJob(ctx, "host-1"); err != nil || got != "" {
+		t.Fatalf("job should be forgotten, got %q err=%v", got, err)
+	}
+}
