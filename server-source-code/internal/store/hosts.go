@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
@@ -10,6 +11,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // HostsStore provides host access via sqlc.
@@ -164,6 +166,19 @@ func (s *HostsStore) GetByIDs(ctx context.Context, ids []string) ([]models.Host,
 func (s *HostsStore) GetByApiID(ctx context.Context, apiID string) (*models.Host, error) {
 	d := s.db.DB(ctx)
 	h, err := d.Queries.GetHostByApiID(ctx, apiID)
+	if err != nil {
+		return nil, err
+	}
+	return dbHostToModel(h), nil
+}
+
+// GetByMachineIDAndName returns the oldest host matching machine_id and a case-insensitive friendly_name, or nil when none exists.
+func (s *HostsStore) GetByMachineIDAndName(ctx context.Context, machineID, friendlyName string) (*models.Host, error) {
+	d := s.db.DB(ctx)
+	h, err := d.Queries.GetHostByMachineIDAndName(ctx, db.GetHostByMachineIDAndNameParams{MachineID: &machineID, FriendlyName: friendlyName})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -63,6 +63,8 @@ mkdir patchmon && cd patchmon
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/setup-env.sh)"
 ```
 
+If a `.env` already exists, the script keeps it and its secrets. It generates secrets only for keys that are missing or empty, and runs on Linux and macOS.
+
 Once it completes, skip to [step 3](#3-configure-your-access-url).
 
 #### 2. Manual setup (alternative)
@@ -2223,7 +2225,7 @@ Rate limits protect the API from abuse. Limits are applied per IP address, split
 | `RATE_LIMIT_MAX` | `5000` | No | Maximum requests per window for general API endpoints (dashboards, hosts, packages, settings). |
 | `AUTH_RATE_LIMIT_WINDOW_MS` | `600000` | No | Time window for authentication endpoints (login, token refresh) (default: 10 minutes). |
 | `AUTH_RATE_LIMIT_MAX` | `500` | No | Maximum requests per window for authentication endpoints. |
-| `AGENT_RATE_LIMIT_WINDOW_MS` | `60000` | No | Time window for agent check-in and reporting endpoints (default: 1 minute). |
+| `AGENT_RATE_LIMIT_WINDOW_MS` | `60000` | No | Time window for agent check-in, reporting and auto-enrolment endpoints (default: 1 minute). |
 | `AGENT_RATE_LIMIT_MAX` | `1000` | No | Maximum requests per window for agent endpoints. Increase this if you have a large number of agents checking in frequently. |
 | `PASSWORD_RATE_LIMIT_WINDOW_MS` | `900000` | No | Time window for password change and reset operations (default: 15 minutes). |
 | `PASSWORD_RATE_LIMIT_MAX` | `5` | No | Maximum password change attempts per window. Kept deliberately low to limit brute-force attacks on password reset flows. |
@@ -3567,7 +3569,7 @@ curl -s "https://patchmon.example.com/api/v1/hosts/install?os=freebsd" \
 **Windows one-liner** (elevated PowerShell, single line):
 
 ```powershell
-Invoke-WebRequest -Uri "https://patchmon.example.com/api/v1/hosts/install?os=windows" -Headers @{"X-API-ID"="patchmon_a1b2c3d4"; "X-API-KEY"="<64-char-key>"} -UseBasicParsing -OutFile "$env:TEMP\patchmon-install.ps1"; & "$env:TEMP\patchmon-install.ps1"
+Invoke-WebRequest -Uri "https://patchmon.example.com/api/v1/hosts/install?os=windows" -Headers @{"X-API-ID"="patchmon_a1b2c3d4"; "X-API-KEY"="<64-char-key>"} -UseBasicParsing -OutFile "$env:TEMP\patchmon-install.ps1"; Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; & "$env:TEMP\patchmon-install.ps1"
 ```
 
 Click **Copy command**. The wizard advances to **Step 5: Connection** automatically.
@@ -3604,9 +3606,9 @@ The installer will:
 
 1. Verify the system date/time (interactive confirmation when run on a TTY; silent continue when piped).
 2. Detect the package manager (`apt`, `dnf`, `yum`, `zypper`, `pacman`, `apk`, or `pkg`) and install `curl` if missing.
-3. Exchange the bootstrap token for the real `api_id` / `api_key` via `POST /api/v1/hosts/bootstrap/exchange`.
+3. Exchange the bootstrap token for the real `api_id` / `api_key` via `POST /api/v1/hosts/bootstrap/exchange`. On Windows the script checks for Administrator first, so a non-elevated run does not use up the token.
 4. Create `/etc/patchmon/` (Linux/FreeBSD) or `C:\ProgramData\PatchMon\` (Windows) with `config.yml` and `credentials.yml`, both with `0600` / Administrator-only permissions.
-5. Download the matching agent binary from `GET /api/v1/hosts/agent/download?arch=<arch>&os=<os>`.
+5. Download the matching agent binary from `GET /api/v1/hosts/agent/download?arch=<arch>&os=<os>`. If the download fails, the installer restores the previous binary and exits with an error.
 6. Run `patchmon-agent ping` to confirm credentials work.
 7. Register the service:
    - **systemd** on most Linux distros: `/etc/systemd/system/patchmon-agent.service`
@@ -5118,10 +5120,10 @@ The server-provided removal scripts delete everything the installer wrote:
 
 | Artefact (Linux / FreeBSD) | Artefact (Windows) |
 |---|---|
-| Running `patchmon-agent` processes | Running `patchmon-agent.exe` processes |
+| Running `patchmon-agent` processes (only the agent itself, not unrelated processes whose command line mentions it) | Running `patchmon-agent.exe` processes |
 | systemd service + `/etc/systemd/system/patchmon-agent.service` | `PatchMonAgent` Windows Service |
 | OpenRC service + `/etc/init.d/patchmon-agent` | - |
-| FreeBSD rc.d script at `/usr/local/etc/rc.d/patchmon_agent` | - |
+| FreeBSD rc.d script at `/usr/local/etc/rc.d/patchmon_agent`, the `patchmon_agent_enable` line in `/etc/rc.conf` and `/etc/rc.conf.local`, and `/var/run/patchmon_agent.pid` | - |
 | Crontab entries containing `patchmon-agent` | - |
 | Agent binary `/usr/local/bin/patchmon-agent` | `C:\Program Files\PatchMon\` |
 | Configuration directory `/etc/patchmon/` (config, credentials, logs) | `C:\ProgramData\PatchMon\` |
@@ -5258,9 +5260,9 @@ rc-service patchmon-agent status 2>&1 | head -1
 # 1. Stop the service
 service patchmon_agent stop
 
-# 2. Disable auto-start (remove or comment the enable line in rc.conf.local)
+# 2. Disable auto-start (remove the enable line from rc.conf and rc.conf.local)
 sysrc -x patchmon_agent_enable 2>/dev/null || true
-sed -i '' '/patchmon_agent_enable/d' /etc/rc.conf.local 2>/dev/null || true
+sed -i '' '/patchmon_agent_enable/d' /etc/rc.conf /etc/rc.conf.local 2>/dev/null || true
 
 # 3. Remove the rc.d script
 rm -f /usr/local/etc/rc.d/patchmon_agent

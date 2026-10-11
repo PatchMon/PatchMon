@@ -230,7 +230,7 @@ jobs:
       # build-push-action still emits a digest for a build that stayed local
       # and `push-to-registry: true` would then fail against a digest the
       # registry has never seen.
-      PUSHED: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'workflow_dispatch' || inputs.push == 'true') }}
+      PUSHED: ${{ github.event_name != 'pull_request_target' && (github.event_name != 'workflow_dispatch' || inputs.push) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -319,7 +319,7 @@ jobs:
           context: .
           file: docker/server.Dockerfile
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
+          push: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=server
@@ -447,7 +447,7 @@ jobs:
           context: .
           file: docker/server.Dockerfile
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'workflow_dispatch' || inputs.push == 'true' }}
+          push: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
           tags: ${{ steps.meta-harbor.outputs.tags }}
           labels: ${{ steps.meta-harbor.outputs.labels }}
           # Reads the shared cache but deliberately never writes it.

@@ -113,13 +113,13 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 			: "";
 		if (windowsUseCurl) {
 			const curlInsecure = windowsIgnoreSsl ? " -k" : "";
-			return `${sslBlock}curl.exe${curlInsecure} -s -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" -o "$env:TEMP\\patchmon-install.ps1" "${installUrl}"; if ($LASTEXITCODE -eq 0) { & "$env:TEMP\\patchmon-install.ps1" } else { Write-Error "curl failed with exit code $LASTEXITCODE" }`;
+			return `${sslBlock}curl.exe${curlInsecure} -s -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" -o "$env:TEMP\\patchmon-install.ps1" "${installUrl}"; if ($LASTEXITCODE -eq 0) { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; & "$env:TEMP\\patchmon-install.ps1" } else { Write-Error "curl failed with exit code $LASTEXITCODE" }`;
 		}
 		// -OutFile writes the response bytes straight to disk. Reading
 		// $r.Content instead makes Windows PowerShell 5.1 decode the body
 		// through the Windows ANSI code page, which corrupts every non-ASCII
 		// character in the script.
-		return `${sslBlock}Invoke-WebRequest -Uri "${installUrl}" -Headers @{"X-API-ID"="${effectiveApiId}"; "X-API-KEY"="${effectiveApiKey}"} -UseBasicParsing -OutFile "$env:TEMP\\patchmon-install.ps1"; & "$env:TEMP\\patchmon-install.ps1"`;
+		return `${sslBlock}Invoke-WebRequest -Uri "${installUrl}" -Headers @{"X-API-ID"="${effectiveApiId}"; "X-API-KEY"="${effectiveApiKey}"} -UseBasicParsing -OutFile "$env:TEMP\\patchmon-install.ps1"; Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; & "$env:TEMP\\patchmon-install.ps1"`;
 	};
 
 	const getLinuxInstallCommand = () =>

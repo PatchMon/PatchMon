@@ -293,6 +293,7 @@ type Querier interface {
 	GetHomepageStats(ctx context.Context, since pgtype.Timestamp) (GetHomepageStatsRow, error)
 	GetHostByApiID(ctx context.Context, apiID string) (Host, error)
 	GetHostByID(ctx context.Context, id string) (Host, error)
+	GetHostByMachineIDAndName(ctx context.Context, arg GetHostByMachineIDAndNameParams) (Host, error)
 	// Single-row read used on the per-ping hot path. Returns the host's identity
 	// and the six per-section hashes the server compares against incoming agent
 	// hashes.
