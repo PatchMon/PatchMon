@@ -628,6 +628,9 @@ info "Downloading PatchMon agent binary..."
 # Determine the binary filename based on platform and architecture
 BINARY_NAME="patchmon-agent-${PATCHMON_OS}-${ARCHITECTURE}"
 
+# Some minimal installations do not have /usr/local/bin yet.
+mkdir -p /usr/local/bin || error "Cannot create /usr/local/bin for the PatchMon agent"
+
 # Check if agent binary already exists
 if [ -f "/usr/local/bin/patchmon-agent" ]; then
     warning "Agent binary already exists at /usr/local/bin/patchmon-agent"
