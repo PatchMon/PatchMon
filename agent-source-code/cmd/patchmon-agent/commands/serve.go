@@ -574,13 +574,13 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					}
 				}()
 			case "install_scanner":
-				if !installScannerRunning.CompareAndSwap(false, true) {
+				if !startInstallScanner() {
 					logger.Info("Install scanner already running; it will report its outcome")
 					break
 				}
 				logger.Info("Install scanner requested (OpenSCAP + SSG)...")
 				go func() {
-					defer installScannerRunning.Store(false)
+					defer finishInstallScanner()
 					if err := runInstallScanner(); err != nil {
 						logger.WithError(err).Warn("install_scanner failed")
 					} else {
@@ -742,7 +742,51 @@ func sendComplianceSetupStatus(httpClient *client.Client, status, message string
 	logger.Info("Updated compliance status sent to backend")
 }
 
-var installScannerRunning atomic.Bool
+var (
+	installScannerMu      sync.Mutex
+	installScannerRunning bool
+	installScannerResend  bool
+	lastInstallOutcome    atomic.Pointer[models.IntegrationSetupStatus]
+)
+
+// startInstallScanner claims the single install slot; a request that loses asks
+// the running install to re-report its outcome, since that job may have missed it.
+func startInstallScanner() bool {
+	installScannerMu.Lock()
+	defer installScannerMu.Unlock()
+	if installScannerRunning {
+		installScannerResend = true
+		return false
+	}
+	installScannerRunning = true
+	lastInstallOutcome.Store(nil)
+	return true
+}
+
+// finishInstallScanner holds the slot until every requested re-report is sent, so
+// a stale outcome can never land after a newer install has started.
+func finishInstallScanner() {
+	for {
+		installScannerMu.Lock()
+		if !installScannerResend {
+			installScannerRunning = false
+			installScannerMu.Unlock()
+			return
+		}
+		installScannerResend = false
+		installScannerMu.Unlock()
+
+		payload := lastInstallOutcome.Load()
+		if payload == nil {
+			continue
+		}
+		httpClient := client.New(cfgManager, logger)
+		send := func() error { return httpClient.SendIntegrationSetupStatus(context.Background(), payload) }
+		if err := retrySend(installStatusSendAttempts, installStatusRetryDelay, send); err != nil {
+			logger.WithError(err).Warn("Failed to re-report install status to server")
+		}
+	}
+}
 
 const (
 	installStatusSendAttempts = 3
@@ -796,6 +840,9 @@ func runInstallScanner() error {
 			_ = send()
 			return
 		}
+		final := *payload
+		final.InstallEvents = slices.Clone(events)
+		lastInstallOutcome.Store(&final)
 		if err := retrySend(installStatusSendAttempts, installStatusRetryDelay, send); err != nil {
 			logger.WithError(err).Warn("Failed to report final install status to server")
 		}
