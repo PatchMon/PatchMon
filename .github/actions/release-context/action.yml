@@ -20,6 +20,13 @@ inputs:
       matrix. They still need the version but not the notes.
     required: false
     default: 'true'
+  notes-for-prerelease:
+    description: >
+      Set to true to also fetch the release body for a pre-release tag. Only
+      for jobs that publish the notes elsewhere and never build them into a
+      binary.
+    required: false
+    default: 'false'
 
 outputs:
   version:
@@ -47,6 +54,7 @@ runs:
         REF_NAME: ${{ github.ref_name }}
         RELEASE_TAG: ${{ github.event.release.tag_name }}
         FETCH_NOTES: ${{ inputs.fetch-notes }}
+        NOTES_FOR_PRERELEASE: ${{ inputs.notes-for-prerelease }}
       run: |
         set -euo pipefail
 
@@ -136,7 +144,7 @@ runs:
         } >> "$GITHUB_OUTPUT"
         echo "Version: $VERSION (release: $IS_RELEASE)"
 
-        if [ "$IS_RELEASE" != "true" ] || [ "$FETCH_NOTES" != "true" ]; then
+        if [ "$FETCH_NOTES" != "true" ] || { [ "$IS_RELEASE" != "true" ] && [ "$NOTES_FOR_PRERELEASE" != "true" ]; }; then
           exit 0
         fi
 

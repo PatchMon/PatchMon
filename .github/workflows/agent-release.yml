@@ -27,6 +27,7 @@ jobs:
         with:
           token: ${{ github.token }}
           tag: ${{ env.TAG_NAME }}
+          notes-for-prerelease: 'true'
 
       # Idempotent: entries are matched by the exact title "Version X.Y.Z" and
       # updated in place, so a rerun is safe.
