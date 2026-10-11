@@ -22,3 +22,13 @@ func TestRetryTaskState(t *testing.T) {
 		}
 	}
 }
+
+func TestDisplayTaskError(t *testing.T) {
+	waiting := fmt.Errorf("agent offline: %w", ErrRetryLater).Error()
+	if got := DisplayTaskError(waiting); got != "agent offline" {
+		t.Fatalf("retry marker should be dropped, got %q", got)
+	}
+	if got := DisplayTaskError("pq: connection refused"); got != "pq: connection refused" {
+		t.Fatalf("other errors must be shown as is, got %q", got)
+	}
+}

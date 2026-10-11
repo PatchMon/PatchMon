@@ -126,7 +126,8 @@ func GetHostJobs(ctx context.Context, inspector *asynq.Inspector, hostID, apiID 
 		}
 		var errMsg *string
 		if t.LastErr != "" {
-			errMsg = &t.LastErr
+			msg := DisplayTaskError(t.LastErr)
+			errMsg = &msg
 		}
 		row := HostJobRow{
 			ID:            t.ID,
@@ -264,8 +265,18 @@ func ListRunScanTasks(ctx context.Context, inspector *asynq.Inspector) ([]RunSca
 // retryTaskState shows a task waiting out an expected condition, such as an
 // offline agent, as delayed rather than failed.
 func retryTaskState(t *asynq.TaskInfo) string {
-	if strings.HasSuffix(t.LastErr, ErrRetryLater.Error()) {
+	if IsRetryLaterError(t.LastErr) {
 		return "delayed"
 	}
 	return "failed"
+}
+
+// IsRetryLaterError reports whether a task's last error was an expected wait.
+func IsRetryLaterError(lastErr string) bool {
+	return strings.HasSuffix(lastErr, ErrRetryLater.Error())
+}
+
+// DisplayTaskError drops the internal retry marker from a task's last error.
+func DisplayTaskError(lastErr string) string {
+	return strings.TrimSuffix(lastErr, ": "+ErrRetryLater.Error())
 }
