@@ -327,8 +327,8 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Post("/patching/windows-updates/superseded", windowsUpdatesHandler.RemoveSuperseded)
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Get("/patching/windows-updates/approved", windowsUpdatesHandler.GetApprovedGUIDs)
 		// Auto-enrollment (public, token in headers for enroll, query params for script)
-		r.Post("/auto-enrollment/enroll", autoEnrollmentHandler.Enroll)
-		r.Get("/auto-enrollment/script", autoEnrollmentHandler.ServeScript)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Post("/auto-enrollment/enroll", autoEnrollmentHandler.Enroll)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Get("/auto-enrollment/script", autoEnrollmentHandler.ServeScript)
 		// Agent WebSocket (GET with Upgrade: websocket)
 		r.Get("/agents/ws", agentWsHandler.ServeWS)
 		// SSH terminal WebSocket (ticket auth via query param).

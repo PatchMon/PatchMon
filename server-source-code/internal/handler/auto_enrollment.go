@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -26,10 +27,17 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+type enrollHostStore interface {
+	Count(ctx context.Context) (int, error)
+	GetByMachineIDAndName(ctx context.Context, machineID, friendlyName string) (*models.Host, error)
+	Create(ctx context.Context, h *models.Host) error
+	SetHostGroups(ctx context.Context, hostID string, groupIDs []string) error
+}
+
 type AutoEnrollmentHandler struct {
 	tokens     *store.AutoEnrollmentStore
 	hostGroups *store.HostGroupsStore
-	hosts      *store.HostsStore
+	hosts      enrollHostStore
 	settings   *store.SettingsStore
 	log        *slog.Logger
 	cfg        *config.Config
@@ -447,68 +455,9 @@ func (h *AutoEnrollmentHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	apiID := "patchmon_" + hex.EncodeToString(mustRand(8))
-	apiKey := hex.EncodeToString(mustRand(32))
-	apiKeyHash, err := bcrypt.GenerateFromPassword([]byte(apiKey), 10)
-	if err != nil {
-		if h.log != nil {
-			h.log.Error("auto-enrollment bcrypt failed", "error", err)
-		}
-		Error(w, http.StatusInternalServerError, "Failed to generate credentials")
+	host, apiKey, ok := h.createEnrolledHost(ctx, w, req.FriendlyName, req.MachineID, token.DefaultHostGroupID)
+	if !ok {
 		return
-	}
-
-	complianceEnabled := true
-	complianceOnDemandOnly := true
-	if h.settings != nil {
-		if s, _ := h.settings.GetFirst(ctx); s != nil {
-			switch s.DefaultComplianceMode {
-			case "disabled":
-				complianceEnabled = false
-			case "enabled":
-				complianceOnDemandOnly = false
-			default:
-				complianceOnDemandOnly = true
-			}
-		}
-	}
-
-	machineID := req.MachineID
-	if machineID == "" {
-		machineID = "pending-" + uuid.New().String()
-	}
-
-	// Enforce host limit if a package is applied.
-	if entry := hostctx.EntryFromContext(ctx); entry != nil && entry.MaxHosts != nil {
-		count, countErr := h.hosts.Count(ctx)
-		if countErr == nil && count >= *entry.MaxHosts {
-			Error(w, http.StatusForbidden, "Host limit reached for this host's package")
-			return
-		}
-	}
-
-	host := &models.Host{
-		MachineID:              &machineID,
-		FriendlyName:           req.FriendlyName,
-		OSType:                 "unknown",
-		OSVersion:              "unknown",
-		Status:                 "pending",
-		ApiID:                  apiID,
-		ApiKey:                 string(apiKeyHash),
-		DockerEnabled:          false,
-		ComplianceEnabled:      complianceEnabled,
-		ComplianceOnDemandOnly: complianceOnDemandOnly,
-	}
-	if err := h.hosts.Create(ctx, host); err != nil {
-		if h.log != nil {
-			h.log.Error("auto-enrollment create host failed", "error", err)
-		}
-		Error(w, http.StatusInternalServerError, "Failed to enroll host")
-		return
-	}
-
-	if token.DefaultHostGroupID != nil && *token.DefaultHostGroupID != "" {
-		_ = h.hosts.SetHostGroups(ctx, host.ID, []string{*token.DefaultHostGroupID})
 	}
 
 	if err := h.tokens.IncrementHostsCreated(ctx, token.ID); err != nil {
@@ -537,12 +486,98 @@ func (h *AutoEnrollmentHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 		"host": map[string]interface{}{
 			"id":            host.ID,
 			"friendly_name": host.FriendlyName,
-			"api_id":        apiID,
+			"api_id":        host.ApiID,
 			"api_key":       apiKey,
 			"host_group":    hostGroup,
 			"status":        host.Status,
 		},
 	})
+}
+
+func (h *AutoEnrollmentHandler) createEnrolledHost(ctx context.Context, w http.ResponseWriter, friendlyName, machineID string, defaultGroupID *string) (*models.Host, string, bool) {
+	if machineID != "" && !strings.HasPrefix(machineID, "pending-") {
+		existing, err := h.hosts.GetByMachineIDAndName(ctx, machineID, friendlyName)
+		if err != nil {
+			if h.log != nil {
+				h.log.Error("auto-enrollment machine_id lookup failed", "error", err)
+			}
+			Error(w, http.StatusInternalServerError, "Failed to enroll host")
+			return nil, "", false
+		}
+		if existing != nil {
+			if h.log != nil {
+				h.log.Info("Auto-enrollment skipped, host already enrolled", "friendly_name", existing.FriendlyName, "host_id", existing.ID)
+			}
+			JSON(w, http.StatusConflict, map[string]string{
+				"error":         "Host already enrolled",
+				"friendly_name": existing.FriendlyName,
+			})
+			return nil, "", false
+		}
+	}
+
+	apiID := "patchmon_" + hex.EncodeToString(mustRand(8))
+	apiKey := hex.EncodeToString(mustRand(32))
+	apiKeyHash, err := bcrypt.GenerateFromPassword([]byte(apiKey), 10)
+	if err != nil {
+		if h.log != nil {
+			h.log.Error("auto-enrollment bcrypt failed", "error", err)
+		}
+		Error(w, http.StatusInternalServerError, "Failed to generate credentials")
+		return nil, "", false
+	}
+
+	complianceEnabled := true
+	complianceOnDemandOnly := true
+	if h.settings != nil {
+		if s, _ := h.settings.GetFirst(ctx); s != nil {
+			switch s.DefaultComplianceMode {
+			case "disabled":
+				complianceEnabled = false
+			case "enabled":
+				complianceOnDemandOnly = false
+			default:
+				complianceOnDemandOnly = true
+			}
+		}
+	}
+
+	if machineID == "" {
+		machineID = "pending-" + uuid.New().String()
+	}
+
+	if entry := hostctx.EntryFromContext(ctx); entry != nil && entry.MaxHosts != nil {
+		count, countErr := h.hosts.Count(ctx)
+		if countErr == nil && count >= *entry.MaxHosts {
+			Error(w, http.StatusForbidden, "Host limit reached for this host's package")
+			return nil, "", false
+		}
+	}
+
+	host := &models.Host{
+		MachineID:              &machineID,
+		FriendlyName:           friendlyName,
+		OSType:                 "unknown",
+		OSVersion:              "unknown",
+		Status:                 "pending",
+		ApiID:                  apiID,
+		ApiKey:                 string(apiKeyHash),
+		DockerEnabled:          false,
+		ComplianceEnabled:      complianceEnabled,
+		ComplianceOnDemandOnly: complianceOnDemandOnly,
+	}
+	if err := h.hosts.Create(ctx, host); err != nil {
+		if h.log != nil {
+			h.log.Error("auto-enrollment create host failed", "error", err)
+		}
+		Error(w, http.StatusInternalServerError, "Failed to enroll host")
+		return nil, "", false
+	}
+
+	if defaultGroupID != nil && *defaultGroupID != "" {
+		_ = h.hosts.SetHostGroups(ctx, host.ID, []string{*defaultGroupID})
+	}
+	return host, apiKey, true
 }
 
 func mustRand(n int) []byte {
