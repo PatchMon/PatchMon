@@ -4,7 +4,7 @@ set -eo pipefail  # Exit on error, pipe failures (removed -u as we handle unset 
 # Trap to catch errors only (not normal exits)
 trap 'echo "[ERROR] Script failed at line $LINENO with exit code $?"' ERR
 
-SCRIPT_VERSION="2.0.0"
+SCRIPT_VERSION="2.1.0"
 echo "[DEBUG] Script Version: $SCRIPT_VERSION ($(date +%Y-%m-%d\ %H:%M:%S))"
 
 # =============================================================================
@@ -42,9 +42,25 @@ NC='\033[0m' # No Color
 # ===== LOGGING FUNCTIONS =====
 info() { echo -e "${GREEN}[INFO]${NC} $1"; return 0; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; return 0; }
-error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+error() { echo -e "${RED}[ERROR]${NC} $1" >&2; return 0; }
+fatal() { echo -e "${RED}[ERROR]${NC} $1" >&2; exit 1; }
 success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; return 0; }
 debug() { [[ "${DEBUG:-false}" == "true" ]] && echo -e "${BLUE}[DEBUG]${NC} $1" || true; return 0; }
+
+# Under "curl | bash" stdin is the script itself, so a prompt must read the terminal directly
+ask_yes_no() {
+    local reply=""
+    if [[ -t 0 ]]; then
+        read -r -n 1 -p "$1" reply || true
+    elif (exec </dev/tty) 2>/dev/null; then
+        read -r -n 1 -p "$1" reply </dev/tty || true
+    else
+        warn "$1 no terminal available, assuming no"
+        return 1
+    fi
+    echo ""
+    [[ "$reply" =~ ^[Yy]$ ]]
+}
 
 # ===== BANNER =====
 cat << "EOF"
@@ -66,22 +82,22 @@ echo ""
 info "Validating configuration..."
 
 if [[ -z "$AUTO_ENROLLMENT_KEY" ]] || [[ -z "$AUTO_ENROLLMENT_SECRET" ]]; then
-    error "AUTO_ENROLLMENT_KEY and AUTO_ENROLLMENT_SECRET must be set"
+    fatal "AUTO_ENROLLMENT_KEY and AUTO_ENROLLMENT_SECRET must be set"
 fi
 
 if [[ -z "$PATCHMON_URL" ]]; then
-    error "PATCHMON_URL must be set"
+    fatal "PATCHMON_URL must be set"
 fi
 
 # Check if running on Proxmox
 if ! command -v pct &> /dev/null; then
-    error "This script must run on a Proxmox host (pct command not found)"
+    fatal "This script must run on a Proxmox host (pct command not found)"
 fi
 
 # Check for required commands
 for cmd in curl jq; do
     if ! command -v $cmd &> /dev/null; then
-        error "Required command '$cmd' not found. Please install it first."
+        fatal "Required command '$cmd' not found. Please install it first."
     fi
 done
 
@@ -92,7 +108,8 @@ echo ""
 
 # ===== DISCOVER LXC CONTAINERS =====
 info "Discovering LXC containers..."
-lxc_list=$(pct list | tail -n +2)  # Skip header
+# Only VMID and Status are positional; Name shifts when the Lock column is populated
+lxc_list=$(pct list 2>/dev/null | awk 'NR > 1 && $1 ~ /^[0-9]+$/ {print $1, $2}') || fatal "Could not list LXC containers (pct list failed)"
 
 if [[ -z "$lxc_list" ]]; then
     warn "No LXC containers found on this Proxmox host"
@@ -100,7 +117,7 @@ if [[ -z "$lxc_list" ]]; then
 fi
 
 # Count containers
-total_containers=$(echo "$lxc_list" | wc -l)
+total_containers=$(printf '%s\n' "$lxc_list" | wc -l | tr -d ' ')
 info "Found $total_containers LXC container(s)"
 echo ""
 
@@ -119,11 +136,10 @@ info "Statistics initialized"
 
 # ===== PROCESS CONTAINERS =====
 info "Starting container processing loop..."
-while IFS= read -r line; do
-    info "[DEBUG] Read line from lxc_list"
-    vmid=$(echo "$line" | awk '{print $1}')
-    status=$(echo "$line" | awk '{print $2}')
-    name=$(echo "$line" | awk '{print $3}')
+while read -r vmid status; do
+    [[ -n "$vmid" ]] || continue
+    name=$(pct config "$vmid" 2>/dev/null | sed -n 's/^hostname:[[:space:]]*//p' || true)
+    [[ -n "$name" ]] || name="ct$vmid"
 
     info "Processing LXC $vmid: $name (status: $status)"
 
@@ -225,33 +241,38 @@ while IFS= read -r line; do
 
     # Call PatchMon auto-enrollment API
     info "  Enrolling $friendly_name in PatchMon..."
-    
+
+    enroll_payload=$(jq -n \
+        --arg friendly_name "$friendly_name" \
+        --arg machine_id "$machine_id" \
+        --arg vmid "$vmid" \
+        --arg proxmox_node "$(hostname)" \
+        --arg ip_address "$ip_address" \
+        --arg os_info "$os_info" \
+        '{friendly_name: $friendly_name, machine_id: $machine_id, metadata: {vmid: $vmid, proxmox_node: $proxmox_node, ip_address: $ip_address, os_info: $os_info}}')
+
     response=$(curl $CURL_FLAGS -X POST \
         -H "X-Auto-Enrollment-Key: $AUTO_ENROLLMENT_KEY" \
         -H "X-Auto-Enrollment-Secret: $AUTO_ENROLLMENT_SECRET" \
         -H "Content-Type: application/json" \
-        -d "{
-            \"friendly_name\": \"$friendly_name\",
-            \"machine_id\": \"$machine_id\",
-            \"metadata\": {
-                \"vmid\": \"$vmid\",
-                \"proxmox_node\": \"$(hostname)\",
-                \"ip_address\": \"$ip_address\",
-                \"os_info\": \"$os_info\"
-            }
-        }" \
+        -d "$enroll_payload" \
         "$PATCHMON_URL/api/v1/auto-enrollment/enroll" \
-        -w "\n%{http_code}" 2>&1)
+        -w "\n%{http_code}" 2>&1) || true
 
     http_code=$(echo "$response" | tail -n 1)
     body=$(echo "$response" | sed '$d')
 
     if [[ "$http_code" == "201" ]]; then
-        api_id=$(echo "$body" | jq -r '.host.api_id' 2>/dev/null || echo "")
-        api_key=$(echo "$body" | jq -r '.host.api_key' 2>/dev/null || echo "")
+        api_id=$(echo "$body" | jq -r '.host.api_id // empty' 2>/dev/null || echo "")
+        api_key=$(echo "$body" | jq -r '.host.api_key // empty' 2>/dev/null || echo "")
 
         if [[ -z "$api_id" ]] || [[ -z "$api_key" ]]; then
-            error "  Failed to parse API credentials from response"
+            error "  ✗ Failed to parse API credentials from the enrolment response for $friendly_name"
+            failed_containers["$vmid"]="$friendly_name|Could not parse API credentials|$body"
+            ((failed_count++)) || true
+            echo ""
+            sleep 1
+            continue
         fi
 
         info "  ✓ Host enrolled successfully: $api_id"
@@ -264,6 +285,7 @@ while IFS= read -r line; do
             info "  Installing curl in container..."
             
             # Detect package manager and install curl
+            curl_install_rc=0
             curl_install_output=$(timeout 60 pct exec "$vmid" -- sh -c "
                 if command -v apt-get >/dev/null 2>&1; then
                     export DEBIAN_FRONTEND=noninteractive
@@ -278,11 +300,16 @@ while IFS= read -r line; do
                     echo 'ERROR: No supported package manager found'
                     exit 1
                 fi
-            " 2>&1 </dev/null) || true
+            " 2>&1 </dev/null) || curl_install_rc=$?
             
-            if [[ "$curl_install_output" == *"ERROR: No supported package manager"* ]]; then
-                warn "  ✗ Could not install curl - no supported package manager found"
-                failed_containers["$vmid"]="$friendly_name|No package manager for curl|$curl_install_output"
+            if [[ $curl_install_rc -ne 0 ]]; then
+                if [[ "$curl_install_output" == *"ERROR: No supported package manager"* ]]; then
+                    warn "  ✗ Could not install curl - no supported package manager found"
+                    failed_containers["$vmid"]="$friendly_name|No package manager for curl|$curl_install_output"
+                else
+                    warn "  ✗ Could not install curl in $friendly_name (exit: $curl_install_rc)"
+                    failed_containers["$vmid"]="$friendly_name|curl installation failed (exit $curl_install_rc)|$curl_install_output"
+                fi
                 ((failed_count++)) || true
                 echo ""
                 sleep 1
@@ -350,7 +377,9 @@ while IFS= read -r line; do
         fi
 
     elif [[ "$http_code" == "409" ]]; then
-        warn "  ⊘ Host $friendly_name already enrolled - skipping"
+        existing_name=$(echo "$body" | jq -r '.friendly_name // empty' 2>/dev/null || true)
+        warn "  ⊘ $friendly_name is already enrolled in PatchMon${existing_name:+ as '$existing_name'}; skipping"
+        warn "    Remove the host in PatchMon before it can be enrolled again"
         ((skipped_count++)) || true
     elif [[ "$http_code" == "429" ]]; then
         error "  ✗ Rate limit exceeded - maximum hosts per day reached"
@@ -388,7 +417,11 @@ if [[ ${#failed_containers[@]} -gt 0 ]]; then
     echo ""
     
     for vmid in "${!failed_containers[@]}"; do
-        IFS='|' read -r name reason output <<< "${failed_containers[$vmid]}"
+        entry="${failed_containers[$vmid]}"
+        name="${entry%%|*}"
+        entry="${entry#*|}"
+        reason="${entry%%|*}"
+        output="${entry#*|}"
         
         warn "Container $vmid: $name"
         info "  Reason: $reason"
@@ -425,11 +458,7 @@ if [[ ${#dpkg_error_containers[@]} -gt 0 ]]; then
     done
     echo ""
     
-    # Ask user if they want to fix dpkg errors
-    read -p "Would you like to fix dpkg errors and retry installation? (y/N): " -n 1 -r
-    echo ""
-    
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
+    if ask_yes_no "Would you like to fix dpkg errors and retry installation? (y/N): "; then
         echo ""
         info "Starting dpkg recovery process..."
         echo ""
@@ -442,9 +471,10 @@ if [[ ${#dpkg_error_containers[@]} -gt 0 ]]; then
             info "Fixing dpkg in container $vmid ($name)..."
             
             # Run dpkg --configure -a
-            dpkg_output=$(timeout 60 pct exec "$vmid" -- dpkg --configure -a 2>&1 </dev/null || true)
+            dpkg_rc=0
+            dpkg_output=$(timeout 60 pct exec "$vmid" -- dpkg --configure -a 2>&1 </dev/null) || dpkg_rc=$?
             
-            if [[ $? -eq 0 ]]; then
+            if [[ $dpkg_rc -eq 0 ]]; then
                 info "  ✓ dpkg fixed successfully"
                 
                 # Retry agent installation
@@ -473,7 +503,7 @@ if [[ ${#dpkg_error_containers[@]} -gt 0 ]]; then
                     warn "  ✗ Agent installation still failed (exit: $install_exit_code)"
                 fi
             else
-                warn "  ✗ Failed to fix dpkg in $name"
+                warn "  ✗ Failed to fix dpkg in $name (exit: $dpkg_rc)"
                 info "  dpkg output: $dpkg_output"
             fi
             
@@ -493,4 +523,3 @@ fi
 
 info "Auto-enrollment complete! ✓"
 exit 0
-
