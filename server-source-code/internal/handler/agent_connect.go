@@ -30,7 +30,7 @@ func NewAgentConnectHandler(db database.DBProvider, queueClient *asynq.Client, q
 			host, err := d.Queries.GetHostByApiID(ctx, apiID)
 			if err == nil {
 				if queueInspector != nil {
-					expediteComplianceScan(queueClient, queueInspector, apiID, host.ID, log)
+					expediteComplianceScan(queueInspector, apiID, host.ID, log)
 				}
 				requestCatchUpReport(ctx, db, queueClient, apiID, host.Status, host.LastUpdate, log)
 			}
@@ -40,20 +40,13 @@ func NewAgentConnectHandler(db database.DBProvider, queueClient *asynq.Client, q
 	}
 }
 
-func expediteComplianceScan(queueClient *asynq.Client, queueInspector *asynq.Inspector, apiID, hostID string, log *slog.Logger) {
+func expediteComplianceScan(queueInspector *asynq.Inspector, apiID, hostID string, log *slog.Logger) {
 	taskID := queue.RunScanTaskID(hostID)
 	info, err := queueInspector.GetTaskInfo(queue.QueueCompliance, taskID)
-	if err != nil || (info.State != asynq.TaskStateScheduled && info.State != asynq.TaskStatePending) {
+	if err != nil || (info.State != asynq.TaskStateScheduled && info.State != asynq.TaskStateRetry) {
 		return
 	}
-	_ = queueInspector.DeleteTask(queue.QueueCompliance, taskID)
-	task, err := queue.NewRunScanTask(queue.RunScanPayload{
-		HostID: hostID, ApiID: apiID, ProfileType: "all",
-	})
-	if err != nil {
-		return
-	}
-	if _, err := queueClient.Enqueue(task, asynq.ProcessIn(0)); err == nil {
+	if err := queueInspector.RunTask(queue.QueueCompliance, taskID); err == nil {
 		log.Info("agent connect: expedited queued compliance scan", "api_id", apiID, "host_id", hostID)
 	}
 }

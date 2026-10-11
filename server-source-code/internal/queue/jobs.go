@@ -75,7 +75,6 @@ type RunScanPayload struct {
 	ProfileID            *string `json:"profile_id,omitempty"`
 	EnableRemediation    bool    `json:"enable_remediation"`
 	FetchRemoteResources bool    `json:"fetch_remote_resources"`
-	RequeueCount         int     `json:"requeue_count,omitempty"`
 }
 
 // RunScanTaskID is the fixed task ID that deduplicates a host's scans.
@@ -89,7 +88,7 @@ func NewRunScanTask(p RunScanPayload) (*asynq.Task, error) {
 	}
 	opts := []asynq.Option{
 		asynq.Queue(QueueCompliance),
-		asynq.MaxRetry(10),
+		asynq.MaxRetry(maxScanRequeueAttempts),
 		asynq.TaskID(RunScanTaskID(p.HostID)),
 	}
 	return asynq.NewTask(TypeRunScan, payload, opts...), nil

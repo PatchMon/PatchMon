@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -39,7 +40,9 @@ func (h *loggingHandlerImpl) ProcessTask(ctx context.Context, t *asynq.Task) err
 	}
 	h.log.Debug("async task started", "type", h.taskType, "payload", payload)
 	err := h.inner.ProcessTask(ctx, t)
-	if err != nil {
+	if errors.Is(err, ErrRetryLater) {
+		h.log.Info("async task will retry", "type", h.taskType, "reason", err)
+	} else if err != nil {
 		h.log.Error("async task failed", "type", h.taskType, "error", err, "payload", payload)
 	} else {
 		h.log.Debug("async task completed", "type", h.taskType)
@@ -47,10 +50,18 @@ func (h *loggingHandlerImpl) ProcessTask(ctx context.Context, t *asynq.Task) err
 	return err
 }
 
+func retryDelay(n int, err error, t *asynq.Task) time.Duration {
+	if t.Type() == TypeRunScan {
+		return complianceScanRetryDelay
+	}
+	return asynq.DefaultRetryDelayFunc(n, err, t)
+}
+
 // NewServer creates an Asynq server with registered handlers.
 func NewServer(opts asynq.RedisClientOpt, registry *agentregistry.Registry, db *database.DB, log *slog.Logger) *asynq.Server {
 	srv := asynq.NewServer(opts, asynq.Config{
-		Concurrency: 10,
+		Concurrency:    10,
+		RetryDelayFunc: retryDelay,
 		Queues: map[string]int{
 			QueueAgentCommands:               3,
 			QueueHostStatus:                  3,
@@ -136,7 +147,7 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	if opts.RDB != nil {
 		integrationStatusStore = store.NewIntegrationStatusStore(&hostctx.RedisResolver{Default: opts.RDB})
 	}
-	mux.Handle(TypeRunScan, wrap(TypeRunScan, NewRunScanHandler(registry, db, opts.PoolCache, complianceStore, opts.QueueClient, integrationStatusStore, log)))
+	mux.Handle(TypeRunScan, wrap(TypeRunScan, NewRunScanHandler(registry, db, opts.PoolCache, complianceStore, integrationStatusStore, log)))
 	mux.Handle(TypeInstallComplianceTools, wrap(TypeInstallComplianceTools, NewInstallComplianceToolsHandler(registry, db, opts.PoolCache, opts.RDB, opts.RedisCache, log)))
 	patchRunsStore := store.NewPatchRunsStore(&hostctx.DBResolver{Default: db})
 	mux.Handle(TypeRunPatch, wrap(TypeRunPatch, NewRunPatchHandler(registry, patchRunsStore, opts.PoolCache, opts.QueueClient, log)))

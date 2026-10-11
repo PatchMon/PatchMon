@@ -2994,7 +2994,7 @@ The modal lets you:
 3. Tick the hosts you want to include (or **Select All**).
 4. Click **Scan N Hosts**.
 
-The UI sends one `POST /api/v1/compliance/trigger/bulk` request with the full host list. The server enqueues one `run_scan` task per host. Hosts that are offline are still queued. They scan as soon as they reconnect and the worker dequeues their task (or the task is cleaned up if the queue drops it before reconnection).
+The UI sends one `POST /api/v1/compliance/trigger/bulk` request with the full host list. The server enqueues one `run_scan` task per host. Hosts that are offline are still queued. The server retries each offline host's scan once a minute for up to 30 minutes, and runs it straight away when the agent reconnects, keeping the chosen profile. If the agent stays offline past that, the job is recorded as failed and the host can be scanned again at any time.
 
 The modal shows a results banner:
 

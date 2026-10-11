@@ -1,8 +1,12 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
 	"github.com/alicebob/miniredis/v2"
@@ -42,5 +46,37 @@ func TestEnqueueScanReplacesArchivedTask(t *testing.T) {
 	}
 	if info.State != asynq.TaskStatePending {
 		t.Fatalf("new scan should be pending, got %v", info.State)
+	}
+}
+
+func TestExpediteComplianceScanKeepsPayload(t *testing.T) {
+	mr := miniredis.RunT(t)
+	opt := asynq.RedisClientOpt{Addr: mr.Addr()}
+	client := asynq.NewClient(opt)
+	inspector := asynq.NewInspector(opt)
+	t.Cleanup(func() { _ = client.Close(); _ = inspector.Close() })
+
+	hostID := "8ab66de3-b7ef-45f1-bcc9-105075f77623"
+	profile := "xccdf_org.ssgproject.content_profile_cis_level2_server"
+	task, err := queue.NewRunScanTask(queue.RunScanPayload{HostID: hostID, ApiID: "api", ProfileType: "openscap", ProfileID: &profile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Enqueue(task, asynq.ProcessIn(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	expediteComplianceScan(inspector, "api", hostID, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	info, err := inspector.GetTaskInfo(queue.QueueCompliance, queue.RunScanTaskID(hostID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.State != asynq.TaskStatePending {
+		t.Fatalf("scan should run now, got %v", info.State)
+	}
+	var p queue.RunScanPayload
+	if err := json.Unmarshal(info.Payload, &p); err != nil || p.ProfileID == nil || *p.ProfileID != profile || p.ProfileType != "openscap" {
+		t.Fatalf("expedited scan lost its profile: %+v", p)
 	}
 }

@@ -149,19 +149,17 @@ type RunScanHandler struct {
 	db                *database.DB
 	poolCache         *hostctx.PoolCache
 	compliance        *store.ComplianceStore
-	queueClient       *asynq.Client
 	integrationStatus *store.IntegrationStatusStore
 	log               *slog.Logger
 }
 
 // NewRunScanHandler creates a run_scan handler.
-func NewRunScanHandler(registry *agentregistry.Registry, db *database.DB, poolCache *hostctx.PoolCache, compliance *store.ComplianceStore, queueClient *asynq.Client, integrationStatus *store.IntegrationStatusStore, log *slog.Logger) *RunScanHandler {
+func NewRunScanHandler(registry *agentregistry.Registry, db *database.DB, poolCache *hostctx.PoolCache, compliance *store.ComplianceStore, integrationStatus *store.IntegrationStatusStore, log *slog.Logger) *RunScanHandler {
 	return &RunScanHandler{
 		registry:          registry,
 		db:                db,
 		poolCache:         poolCache,
 		compliance:        compliance,
-		queueClient:       queueClient,
 		integrationStatus: integrationStatus,
 		log:               log,
 	}
@@ -171,7 +169,7 @@ func NewRunScanHandler(registry *agentregistry.Registry, db *database.DB, poolCa
 func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	var p RunScanPayload
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
-		return err
+		return fmt.Errorf("decode run_scan payload: %v: %w", err, asynq.SkipRetry)
 	}
 
 	// Resolve per-context DB and put it on ctx so DBProvider-backed stores
@@ -220,9 +218,9 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 			}
 			return nil
 		}
-		if p.RequeueCount >= maxScanRequeueAttempts {
+		if scanRetriesExhausted(ctx) {
 			h.log.Warn("run_scan: agent offline, max re-queue attempts reached - giving up",
-				"api_id", p.ApiID, "host_id", p.HostID, "attempts", p.RequeueCount)
+				"api_id", p.ApiID, "host_id", p.HostID)
 			if taskID != "" && d != nil {
 				msg := "Agent remained offline after maximum retry attempts"
 				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{
@@ -231,20 +229,11 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 			}
 			return nil
 		}
-		h.log.Info("run_scan: agent offline, re-queuing", "api_id", p.ApiID, "attempt", p.RequeueCount+1)
+		h.log.Info("run_scan: agent offline, will retry", "api_id", p.ApiID)
 		if taskID != "" && d != nil {
 			_ = d.Queries.UpdateJobHistoryDelayed(ctx, taskID)
 		}
-		p.RequeueCount++
-		nextTask, err := NewRunScanTask(p)
-		if err != nil {
-			return err
-		}
-		_, err = h.queueClient.Enqueue(nextTask, asynq.ProcessIn(complianceScanRetryDelay))
-		if err != nil {
-			return err
-		}
-		return nil
+		return fmt.Errorf("agent offline: %w", ErrRetryLater)
 	}
 
 	openscapEnabled := true
@@ -309,8 +298,8 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 			}
 			return nil
 		}
-		h.log.Warn("run_scan: write failed", "api_id", p.ApiID, "error", err, "attempt", p.RequeueCount+1)
-		if p.RequeueCount >= maxScanRequeueAttempts {
+		h.log.Warn("run_scan: write failed", "api_id", p.ApiID, "error", err)
+		if scanRetriesExhausted(ctx) {
 			h.log.Warn("run_scan: write failed, max re-queue attempts reached - giving up",
 				"api_id", p.ApiID, "host_id", p.HostID)
 			if taskID != "" && d != nil {
@@ -324,10 +313,7 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 		if taskID != "" && d != nil {
 			_ = d.Queries.UpdateJobHistoryDelayed(ctx, taskID)
 		}
-		p.RequeueCount++
-		nextTask, _ := NewRunScanTask(p)
-		_, _ = h.queueClient.Enqueue(nextTask, asynq.ProcessIn(complianceScanRetryDelay))
-		return nil
+		return fmt.Errorf("send to agent: %w", ErrRetryLater)
 	}
 
 	if h.integrationStatus != nil && h.integrationStatus.IsComplianceScanCancelled(ctx, p.HostID) {
@@ -456,8 +442,8 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 				_ = d.Queries.UpdateJobHistoryDelayed(ctx, taskID)
 			}
 		}
-		h.log.Warn("install_compliance_tools: agent not connected", "api_id", p.ApiID, "attempt", attempt)
-		return errors.New(msg)
+		h.log.Info("install_compliance_tools: agent not connected", "api_id", p.ApiID, "attempt", attempt)
+		return fmt.Errorf("%s: %w", msg, ErrRetryLater)
 	}
 
 	msg := map[string]interface{}{"type": "install_scanner", "job_id": taskID}
@@ -540,8 +526,8 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 	return nil
 }
 
-// InstallOutcome reads only install_events: the status field is also written by
-// the agent's availability report and can predate this install.
+// InstallOutcome reads install_events and their job tag, never the status field,
+// which the agent's availability report also writes and can predate this install.
 func InstallOutcome(raw, jobID string) (finished bool, failure string) {
 	var data struct {
 		InstallJobID  string `json:"install_job_id"`
@@ -585,4 +571,13 @@ func InstallOutcome(raw, jobID string) (finished bool, failure string) {
 // Agents that predate job tagging send no ID, and their events are accepted.
 func InstallEventsMatchJob(eventsJobID, jobID string) bool {
 	return eventsJobID == "" || jobID == "" || eventsJobID == jobID
+}
+
+// ErrRetryLater marks an expected, retryable condition such as an offline agent.
+var ErrRetryLater = errors.New("retry later")
+
+func scanRetriesExhausted(ctx context.Context) bool {
+	retried, _ := asynq.GetRetryCount(ctx)
+	maxRetry, ok := asynq.GetMaxRetry(ctx)
+	return !ok || retried >= maxRetry
 }

@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/hibiken/asynq"
@@ -162,13 +163,19 @@ func GetHostJobs(ctx context.Context, inspector *asynq.Inspector, hostID, apiID 
 		hostPending, n1 := filterByApiID(pending)
 		hostActive, n2 := filterByApiID(active)
 		hostScheduled, n3 := filterByApiID(scheduled)
-		hostRetry, n4 := filterByApiID(retry)
+		hostRetry, _ := filterByApiID(retry)
 		hostCompleted, _ := filterByApiID(completed)
 
 		data.Waiting += n1
 		data.Active += n2
 		data.Delayed += n3
-		data.Failed += n4
+		for _, t := range hostRetry {
+			if retryTaskState(t) == "delayed" {
+				data.Delayed++
+			} else {
+				data.Failed++
+			}
+		}
 
 		for _, t := range hostActive {
 			appendTask(queueName, t, "active")
@@ -180,7 +187,7 @@ func GetHostJobs(ctx context.Context, inspector *asynq.Inspector, hostID, apiID 
 			appendTask(queueName, t, "delayed")
 		}
 		for _, t := range hostRetry {
-			appendTask(queueName, t, "failed")
+			appendTask(queueName, t, retryTaskState(t))
 		}
 		for _, t := range hostCompleted {
 			appendTask(queueName, t, "completed")
@@ -252,4 +259,13 @@ func ListRunScanTasks(ctx context.Context, inspector *asynq.Inspector) ([]RunSca
 		appendTask(t, "pending")
 	}
 	return out, nil
+}
+
+// retryTaskState shows a task waiting out an expected condition, such as an
+// offline agent, as delayed rather than failed.
+func retryTaskState(t *asynq.TaskInfo) string {
+	if strings.HasSuffix(t.LastErr, ErrRetryLater.Error()) {
+		return "delayed"
+	}
+	return "failed"
 }
