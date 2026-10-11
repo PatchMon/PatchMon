@@ -598,7 +598,7 @@ SELECT cs.id, cs.host_id, cs.profile_id, cs.started_at, cs.completed_at, cs.stat
 FROM compliance_scans cs
 JOIN hosts h ON h.id = cs.host_id
 JOIN compliance_profiles cp ON cp.id = cs.profile_id
-ORDER BY cs.completed_at DESC NULLS LAST
+ORDER BY cs.completed_at DESC NULLS LAST, cs.started_at DESC, cs.id
 LIMIT 10
 `
 
@@ -750,7 +750,7 @@ SELECT cs.id, cs.host_id, cs.profile_id, cs.started_at, cs.completed_at, cs.stat
 FROM compliance_scans cs
 JOIN compliance_profiles cp ON cp.id = cs.profile_id
 WHERE cs.host_id = $1
-ORDER BY cs.completed_at DESC NULLS LAST
+ORDER BY cs.completed_at DESC NULLS LAST, cs.started_at DESC, cs.id
 LIMIT $2 OFFSET $3
 `
 
@@ -833,7 +833,7 @@ WHERE ($3::text IS NULL OR cs.status = $3)
   AND ($4::text IS NULL OR cs.host_id = $4)
   AND ($5::text IS NULL OR cp.type = $5)
   AND ($6::text IS NULL OR h.friendly_name ILIKE '%' || $6 || '%' OR h.hostname ILIKE '%' || $6 || '%' OR cp.name ILIKE '%' || $6 || '%')
-ORDER BY cs.started_at DESC
+ORDER BY cs.started_at DESC, cs.id
 LIMIT $1 OFFSET $2
 `
 
