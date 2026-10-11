@@ -158,6 +158,7 @@ type ComplianceDashboardHost struct {
 	Skipped           *int       `json:"skipped"`
 	Score             *float64   `json:"score"`
 	ScoreProfileName  *string    `json:"score_profile_name"`
+	ScoreScanType     *string    `json:"score_scan_type"`
 	ComplianceStatus  *string    `json:"compliance_status"`
 	ScannerStatus     string     `json:"scanner_status"`
 	ComplianceMode    string     `json:"compliance_mode"`
@@ -354,10 +355,14 @@ func (s *ComplianceStore) GetDashboard(ctx context.Context) (*ComplianceDashboar
 		passed := int(shown.Passed)
 		failed := int(shown.Failed)
 		skipped := int(shown.Skipped) + int(shown.NotApplicable)
-		var scoreProfileName *string
+		var scoreProfileName, scoreScanType *string
 		if shown.ProfileName != "" {
 			name := shown.ProfileName
 			scoreProfileName = &name
+		}
+		if hs, ok := hostStatuses[h.ID]; ok && hs.scanType != "unknown" {
+			scanType := hs.scanType
+			scoreScanType = &scanType
 		}
 		var scannerStatus string
 		if lastScan != nil {
@@ -386,6 +391,7 @@ func (s *ComplianceStore) GetDashboard(ctx context.Context) (*ComplianceDashboar
 			Skipped:            &skipped,
 			Score:              shown.Score,
 			ScoreProfileName:   scoreProfileName,
+			ScoreScanType:      scoreScanType,
 			ComplianceStatus:   complianceStatus,
 			ScannerStatus:      scannerStatus,
 			ComplianceMode:     complianceMode,

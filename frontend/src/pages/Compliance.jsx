@@ -527,6 +527,21 @@ const Compliance = () => {
 		setSearchParams(params, { replace: true });
 	};
 
+	const openHostScanResults = (row, status) => {
+		setScanResultsFilters({ status, host_id: row.host_id });
+		if (
+			row.score_scan_type &&
+			row.compliance_openscap_enabled &&
+			row.compliance_docker_bench_enabled
+		) {
+			const params = new URLSearchParams(searchParams);
+			params.set("tab", "scan-results");
+			params.set("profile_type", row.score_scan_type);
+			setSearchParams(params, { replace: true });
+		}
+		setActiveTab("scan-results");
+	};
+
 	const allHosts = hostsData?.hosts || [];
 
 	const handleToggleHost = (hostId) => {
@@ -899,13 +914,7 @@ const Compliance = () => {
 														{row.passed != null ? (
 															<button
 																type="button"
-																onClick={() => {
-																	setScanResultsFilters({
-																		status: "pass",
-																		host_id: row.host_id,
-																	});
-																	setActiveTab("scan-results");
-																}}
+																onClick={() => openHostScanResults(row, "pass")}
 																className="text-green-600 dark:text-green-400 hover:underline font-medium tabular-nums"
 																title="View passing rules for this host"
 															>
@@ -919,13 +928,7 @@ const Compliance = () => {
 														{row.failed != null ? (
 															<button
 																type="button"
-																onClick={() => {
-																	setScanResultsFilters({
-																		status: "fail",
-																		host_id: row.host_id,
-																	});
-																	setActiveTab("scan-results");
-																}}
+																onClick={() => openHostScanResults(row, "fail")}
 																className="text-red-600 dark:text-red-400 hover:underline font-medium tabular-nums"
 																title="View failing rules for this host"
 															>
@@ -939,13 +942,9 @@ const Compliance = () => {
 														{row.skipped != null ? (
 															<button
 																type="button"
-																onClick={() => {
-																	setScanResultsFilters({
-																		status: "skipped",
-																		host_id: row.host_id,
-																	});
-																	setActiveTab("scan-results");
-																}}
+																onClick={() =>
+																	openHostScanResults(row, "skipped")
+																}
 																className="text-secondary-600 dark:text-white hover:underline font-medium tabular-nums"
 																title="View skipped/N/A rules for this host"
 															>
