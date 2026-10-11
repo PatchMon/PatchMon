@@ -1322,6 +1322,8 @@ func (h *ComplianceHandler) GetInstallJobStatus(w http.ResponseWriter, r *http.R
 	resp["jobId"] = jobID
 
 	status := "unknown"
+	var dispatchedAt time.Time
+	awaitingAgent := false
 	if h.queueInspector != nil {
 		info, err := h.queueInspector.GetTaskInfo(queue.QueueCompliance, jobID)
 		if err == nil {
@@ -1333,6 +1335,8 @@ func (h *ComplianceHandler) GetInstallJobStatus(w http.ResponseWriter, r *http.R
 				status = "active"
 			case "completed":
 				status = "completed"
+				awaitingAgent = true
+				dispatchedAt = info.CompletedAt
 			case "retry":
 				status = "active"
 			case "archived":
@@ -1357,6 +1361,7 @@ func (h *ComplianceHandler) GetInstallJobStatus(w http.ResponseWriter, r *http.R
 				if evts, ok := live["install_events"].([]interface{}); ok && len(evts) > 0 {
 					resp["install_events"] = evts
 					if mapped, reason, ok := installJobStatusFromEvents(evts); ok {
+						awaitingAgent = false
 						resp["status"] = mapped
 						if mapped == "failed" {
 							// live["message"] is the last resort only: the
@@ -1377,8 +1382,26 @@ func (h *ComplianceHandler) GetInstallJobStatus(w http.ResponseWriter, r *http.R
 			}
 		}
 	}
+	if awaitingAgent {
+		st, errMsg := installStatusAwaitingAgent(dispatchedAt, time.Now())
+		resp["status"] = st
+		if errMsg != "" {
+			resp["error"] = errMsg
+		}
+	}
 
 	JSON(w, http.StatusOK, resp)
+}
+
+const installAgentReportWindow = 20 * time.Minute
+
+// installStatusAwaitingAgent covers the gap between the queue handing the
+// install to the agent and the agent reporting its final step.
+func installStatusAwaitingAgent(dispatchedAt, now time.Time) (status, errMsg string) {
+	if !dispatchedAt.IsZero() && now.Sub(dispatchedAt) < installAgentReportWindow {
+		return "active", ""
+	}
+	return "failed", "The agent did not report the install finishing. Check the agent log, then click Install Scanner to try again."
 }
 
 // UpgradeSSG handles POST /compliance/upgrade-ssg/:hostId.
