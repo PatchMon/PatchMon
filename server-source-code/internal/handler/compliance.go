@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1029,6 +1030,10 @@ func (h *ComplianceHandler) TriggerScan(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	info, err := h.queueClient.Enqueue(task)
+	if errors.Is(err, asynq.ErrTaskIDConflict) {
+		Error(w, http.StatusConflict, "A scan is already queued or running on this host")
+		return
+	}
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to enqueue scan")
 		return
@@ -1175,6 +1180,10 @@ func (h *ComplianceHandler) InstallScanner(w http.ResponseWriter, r *http.Reques
 	host, err := h.hostsStore.GetByID(r.Context(), hostID)
 	if err != nil || host == nil {
 		Error(w, http.StatusNotFound, "Host not found")
+		return
+	}
+	if h.installInProgress(r.Context(), hostID, host.ApiID) {
+		Error(w, http.StatusConflict, "An install is already running on this host. Cancel it first to start another.")
 		return
 	}
 	task, err := queue.NewInstallComplianceToolsTask(hostID, host.ApiID, hostFromRequest(r))
@@ -1391,6 +1400,36 @@ func (h *ComplianceHandler) GetInstallJobStatus(w http.ResponseWriter, r *http.R
 	}
 
 	JSON(w, http.StatusOK, resp)
+}
+
+func (h *ComplianceHandler) installInProgress(ctx context.Context, hostID, apiID string) bool {
+	if h.queueInspector == nil || h.integrationStatus == nil {
+		return false
+	}
+	jobID, _ := h.integrationStatus.GetComplianceInstallJob(ctx, hostID)
+	if jobID == "" {
+		return false
+	}
+	info, err := h.queueInspector.GetTaskInfo(queue.QueueCompliance, jobID)
+	if err != nil {
+		return false
+	}
+	switch info.State.String() {
+	case "pending", "scheduled", "active", "retry":
+		return true
+	case "completed":
+	default:
+		return false
+	}
+	if live, _ := h.integrationStatus.Get(ctx, apiID, "compliance"); live != nil {
+		if evts, ok := live["install_events"].([]interface{}); ok {
+			if _, _, finished := installJobStatusFromEvents(evts); finished {
+				return false
+			}
+		}
+	}
+	status, _ := installStatusAwaitingAgent(info.CompletedAt, time.Now())
+	return status == "active"
 }
 
 const installAgentReportWindow = 20 * time.Minute
