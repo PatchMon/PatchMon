@@ -4988,7 +4988,12 @@ const HostDetail = () => {
 											to="/compliance"
 											state={{
 												complianceTab: "scan-results",
-												scanResultsFilters: { status: "pass", host_id: hostId },
+												scanResultsFilters: {
+													status: "pass",
+													host_id: hostId,
+													profile_type:
+														complianceLatest.compliance_profiles?.type || "",
+												},
 											}}
 											className="card p-4 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
 											title="View passing rules for this host"
@@ -5009,7 +5014,12 @@ const HostDetail = () => {
 											to="/compliance"
 											state={{
 												complianceTab: "scan-results",
-												scanResultsFilters: { status: "fail", host_id: hostId },
+												scanResultsFilters: {
+													status: "fail",
+													host_id: hostId,
+													profile_type:
+														complianceLatest.compliance_profiles?.type || "",
+												},
 											}}
 											className="card p-4 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
 											title="View failing rules for this host"
@@ -5033,6 +5043,8 @@ const HostDetail = () => {
 												scanResultsFilters: {
 													status: "skipped",
 													host_id: hostId,
+													profile_type:
+														complianceLatest.compliance_profiles?.type || "",
 												},
 											}}
 											className="card p-4 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"

@@ -528,17 +528,13 @@ const Compliance = () => {
 	};
 
 	const openHostScanResults = (row, status) => {
-		setScanResultsFilters({ status, host_id: row.host_id });
-		if (
-			row.score_scan_type &&
-			row.compliance_openscap_enabled &&
-			row.compliance_docker_bench_enabled
-		) {
-			const params = new URLSearchParams(searchParams);
-			params.set("tab", "scan-results");
-			params.set("profile_type", row.score_scan_type);
-			setSearchParams(params, { replace: true });
-		}
+		const bothScanners =
+			row.compliance_openscap_enabled && row.compliance_docker_bench_enabled;
+		setScanResultsFilters({
+			status,
+			host_id: row.host_id,
+			profile_type: bothScanners ? row.score_scan_type || "" : "",
+		});
 		setActiveTab("scan-results");
 	};
 
