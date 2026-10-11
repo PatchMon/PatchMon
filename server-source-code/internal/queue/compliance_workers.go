@@ -505,7 +505,7 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 
 		raw, err := rdb.Get(ctx, statusKey).Result()
 		if err == nil {
-			if finished, failure := installOutcome(raw); finished {
+			if finished, failure := InstallOutcome(raw); finished {
 				if failure == "" {
 					if taskID != "" && d != nil {
 						_ = d.Queries.UpdateJobHistoryCompleted(ctx, taskID)
@@ -540,9 +540,9 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 	return nil
 }
 
-// installOutcome reads only install_events: the status field is also written by
+// InstallOutcome reads only install_events: the status field is also written by
 // the agent's availability report and can predate this install.
-func installOutcome(raw string) (finished bool, failure string) {
+func InstallOutcome(raw string) (finished bool, failure string) {
 	var data struct {
 		InstallEvents []struct {
 			Step    string `json:"step"`

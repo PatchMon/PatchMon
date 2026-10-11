@@ -26,7 +26,7 @@ func TestInstallOutcome(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			finished, failure := installOutcome(tt.raw)
+			finished, failure := InstallOutcome(tt.raw)
 			if finished != tt.wantFinished || failure != tt.wantFailure {
 				t.Fatalf("got (%v, %q), want (%v, %q)", finished, failure, tt.wantFinished, tt.wantFailure)
 			}

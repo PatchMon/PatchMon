@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 )
@@ -23,14 +25,16 @@ type IntegrationsHandler struct {
 	db                database.DBProvider
 	notify            *notifications.Emitter
 	reports           *store.ReportStore
+	jobHistory        *store.JobHistoryStore
 }
 
 // NewIntegrationsHandler creates a new integrations handler.
 // reports is optional; when non-nil the docker endpoint records an Agent
 // Activity row for every inbound payload so the per-host timeline shows
 // integration cycles alongside report and ping cycles.
-func NewIntegrationsHandler(hosts *store.HostsStore, docker *store.DockerStore, integrationStatus *store.IntegrationStatusStore, db database.DBProvider, notify *notifications.Emitter, reports *store.ReportStore) *IntegrationsHandler {
+func NewIntegrationsHandler(hosts *store.HostsStore, docker *store.DockerStore, integrationStatus *store.IntegrationStatusStore, db database.DBProvider, notify *notifications.Emitter, reports *store.ReportStore, jobHistory *store.JobHistoryStore) *IntegrationsHandler {
 	return &IntegrationsHandler{
+		jobHistory:        jobHistory,
 		hosts:             hosts,
 		docker:            docker,
 		integrationStatus: integrationStatus,
@@ -472,44 +476,35 @@ func (h *IntegrationsHandler) ReceiveIntegrationStatus(w http.ResponseWriter, r 
 	}
 
 	statusData := map[string]interface{}{
-		"integration":    payload.Integration,
-		"enabled":        payload.Enabled,
-		"status":         payload.Status,
-		"message":        payload.Message,
-		"components":     payload.Components,
-		"scanner_info":   payload.ScannerInfo,
-		"install_events": payload.InstallEvents,
-		"timestamp":      time.Now().UTC().Format(time.RFC3339),
+		"integration":  payload.Integration,
+		"enabled":      payload.Enabled,
+		"status":       payload.Status,
+		"message":      payload.Message,
+		"components":   payload.Components,
+		"scanner_info": payload.ScannerInfo,
+		"timestamp":    time.Now().UTC().Format(time.RFC3339),
 	}
 	if statusData["components"] == nil {
 		statusData["components"] = map[string]interface{}{}
 	}
 
-	// Two agent callers write this blob. runInstallScanner reports per-step
-	// install progress and carries install_events; reportIntegrationStatus
-	// reports overall availability and never sets the field, which omitempty
-	// then drops from the payload. Because this handler replaces the stored
-	// value wholesale, the second caller used to erase the first caller's
-	// progress. The compliance panel polls request-status while an install
-	// runs, which triggers exactly that caller, so watching the progress bar
-	// was what wiped it: every step stayed on "Waiting..." to the end.
-	//
-	// A nil slice means the key was absent from the JSON, so keep what is
-	// already stored. An explicitly empty array still clears, which is how a
-	// caller signals "no events".
-	if payload.InstallEvents == nil {
-		statusData["install_events"] = []interface{}{}
-		if h.integrationStatus != nil {
-			if prev, err := h.integrationStatus.Get(r.Context(), apiID, payload.Integration); err == nil && prev != nil {
-				if prevEvents, ok := prev["install_events"]; ok && prevEvents != nil {
-					statusData["install_events"] = prevEvents
-				}
-			}
-		}
+	// Availability reports omit install_events (nil here); keep the stored ones
+	// so they don't wipe a running install's progress.
+	if payload.InstallEvents != nil {
+		statusData["install_events"] = payload.InstallEvents
 	}
 
 	if h.integrationStatus != nil {
-		_ = h.integrationStatus.Set(r.Context(), apiID, payload.Integration, statusData)
+		if stored, err := h.integrationStatus.SetKeepingInstallEvents(r.Context(), apiID, payload.Integration, statusData); err == nil {
+			statusData = stored
+		}
+	}
+	if _, ok := statusData["install_events"]; !ok {
+		statusData["install_events"] = []interface{}{}
+	}
+
+	if payload.Integration == "compliance" && payload.InstallEvents != nil {
+		h.recordInstallOutcome(r.Context(), host.ID, payload.InstallEvents)
 	}
 
 	if payload.Integration == "compliance" {
@@ -564,4 +559,27 @@ func (h *IntegrationsHandler) AgentGetIntegrationStatus(w http.ResponseWriter, r
 		"compliance_openscap_enabled":     host.ComplianceOpenscapEnabled,
 		"compliance_docker_bench_enabled": host.ComplianceDockerBenchEnabled,
 	})
+}
+
+// recordInstallOutcome settles the install's job_history row when the agent
+// finishes after the install worker has stopped waiting.
+func (h *IntegrationsHandler) recordInstallOutcome(ctx context.Context, hostID string, events interface{}) {
+	if h.jobHistory == nil || h.integrationStatus == nil {
+		return
+	}
+	raw, err := json.Marshal(map[string]interface{}{"install_events": events})
+	if err != nil {
+		return
+	}
+	finished, failure := queue.InstallOutcome(string(raw))
+	if !finished {
+		return
+	}
+	jobID, err := h.integrationStatus.GetComplianceInstallJob(ctx, hostID)
+	if err != nil || jobID == "" {
+		return
+	}
+	if err := h.jobHistory.RecordOutcome(ctx, jobID, failure); err != nil {
+		slog.Warn("compliance install: failed to record outcome", "error", err, "host_id", hostID)
+	}
 }
