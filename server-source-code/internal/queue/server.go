@@ -51,8 +51,11 @@ func (h *loggingHandlerImpl) ProcessTask(ctx context.Context, t *asynq.Task) err
 }
 
 func retryDelay(n int, err error, t *asynq.Task) time.Duration {
-	if t.Type() == TypeRunScan {
+	switch t.Type() {
+	case TypeRunScan:
 		return complianceScanRetryDelay
+	case TypeInstallComplianceTools:
+		return complianceInstallRetryDelay
 	}
 	return asynq.DefaultRetryDelayFunc(n, err, t)
 }

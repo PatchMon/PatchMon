@@ -23,7 +23,7 @@ const catchUpJitterWindow = 60 * time.Second
 // NewAgentConnectHandler returns an OnAgentConnect callback that resolves host_down
 // alerts when an agent's WebSocket reconnects, expedites any queued compliance
 // scan for that host, and pulls a report from a host that has missed its cadence.
-func NewAgentConnectHandler(db database.DBProvider, queueClient *asynq.Client, queueInspector *asynq.Inspector, emit *notifications.Emitter, log *slog.Logger) OnAgentConnect {
+func NewAgentConnectHandler(db database.DBProvider, queueClient *asynq.Client, queueInspector *asynq.Inspector, integrationStatus *store.IntegrationStatusStore, emit *notifications.Emitter, log *slog.Logger) OnAgentConnect {
 	return func(ctx context.Context, apiID string) {
 		d := db.DB(ctx)
 		if queueClient != nil {
@@ -31,6 +31,7 @@ func NewAgentConnectHandler(db database.DBProvider, queueClient *asynq.Client, q
 			if err == nil {
 				if queueInspector != nil {
 					expediteComplianceScan(queueInspector, apiID, host.ID, log)
+					expediteScannerInstall(ctx, queueInspector, integrationStatus, apiID, host.ID, log)
 				}
 				requestCatchUpReport(ctx, db, queueClient, apiID, host.Status, host.LastUpdate, log)
 			}
@@ -48,6 +49,23 @@ func expediteComplianceScan(queueInspector *asynq.Inspector, apiID, hostID strin
 	}
 	if err := queueInspector.RunTask(queue.QueueCompliance, taskID); err == nil {
 		log.Info("agent connect: expedited queued compliance scan", "api_id", apiID, "host_id", hostID)
+	}
+}
+
+func expediteScannerInstall(ctx context.Context, queueInspector *asynq.Inspector, integrationStatus *store.IntegrationStatusStore, apiID, hostID string, log *slog.Logger) {
+	if integrationStatus == nil {
+		return
+	}
+	jobID, err := integrationStatus.GetComplianceInstallJob(ctx, hostID)
+	if err != nil || jobID == "" {
+		return
+	}
+	info, err := queueInspector.GetTaskInfo(queue.QueueCompliance, jobID)
+	if err != nil || (info.State != asynq.TaskStateScheduled && info.State != asynq.TaskStateRetry) {
+		return
+	}
+	if err := queueInspector.RunTask(queue.QueueCompliance, jobID); err == nil {
+		log.Info("agent connect: expedited queued scanner install", "api_id", apiID, "host_id", hostID)
 	}
 }
 

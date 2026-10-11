@@ -25,6 +25,7 @@ const (
 	complianceInstallTimeout      = 5 * time.Minute
 	compliancePollInterval        = 2 * time.Second
 	complianceScanRetryDelay      = 1 * time.Minute
+	complianceInstallRetryDelay   = 30 * time.Second
 	// maxScanRequeueAttempts limits how many times a run_scan job will be
 	// re-queued when the agent is offline, preventing infinite loops for
 	// decommissioned or permanently unreachable agents.
