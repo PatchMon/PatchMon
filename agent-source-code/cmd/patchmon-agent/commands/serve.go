@@ -739,6 +739,26 @@ func sendComplianceSetupStatus(httpClient *client.Client, status, message string
 
 // runInstallScanner installs OpenSCAP and SSG content (apt/dnf install, update SSG) and reports status via HTTP
 // Sends granular install events so the frontend can display real-time progress.
+const (
+	installStatusSendAttempts = 5
+	installStatusRetryDelay   = 2 * time.Second
+)
+
+// retrySend retries send with doubling delays; the server's install job waits
+// for the final status, so losing it records a successful install as failed.
+func retrySend(attempts int, delay time.Duration, send func() error) error {
+	var err error
+	for i := range attempts {
+		if err = send(); err == nil {
+			return nil
+		}
+		if i < attempts-1 {
+			time.Sleep(delay << i)
+		}
+	}
+	return err
+}
+
 func runInstallScanner() error {
 	httpClient := client.New(cfgManager, logger)
 	ctx := context.Background()
@@ -756,14 +776,22 @@ func runInstallScanner() error {
 	}
 
 	sendStatus := func(overallStatus, message string, scannerInfo *models.ComplianceScannerDetails) {
-		_ = httpClient.SendIntegrationSetupStatus(ctx, &models.IntegrationSetupStatus{
+		payload := &models.IntegrationSetupStatus{
 			Integration:   "compliance",
 			Enabled:       enabled,
 			Status:        overallStatus,
 			Message:       message,
 			InstallEvents: events,
 			ScannerInfo:   scannerInfo,
-		})
+		}
+		send := func() error { return httpClient.SendIntegrationSetupStatus(ctx, payload) }
+		if overallStatus == "installing" {
+			_ = send()
+			return
+		}
+		if err := retrySend(installStatusSendAttempts, installStatusRetryDelay, send); err != nil {
+			logger.WithError(err).Warn("Failed to report final install status to server")
+		}
 	}
 
 	// Step 1: Detect OS
