@@ -182,6 +182,11 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - patchmon-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 5s
+      retries: 7
 
   redis:
     image: redis:7-alpine
@@ -192,12 +197,23 @@ services:
       - redis_data:/data
     networks:
       - patchmon-internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 7
 
   guacd:
     image: guacamole/guacd:1.6.0
     restart: unless-stopped
     networks:
       - patchmon-internal
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 4822 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 volumes:
   postgres_data:
