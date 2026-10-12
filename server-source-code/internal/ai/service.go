@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"unicode"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
@@ -216,8 +217,7 @@ func (s *Service) GetCompletion(settings *models.Settings, input, context string
 const maxCompletionLen = 200
 
 func unwrapCompletion(s string) string {
-	s = strings.Trim(s, "`")
-	if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') && s[len(s)-1] == s[0] {
+	if len(s) >= 2 && (s[0] == '`' || s[0] == '"' || s[0] == '\'') && s[len(s)-1] == s[0] {
 		return s[1 : len(s)-1]
 	}
 	return s
@@ -228,27 +228,39 @@ func normaliseCompletion(input, response string) string {
 	if i := strings.IndexAny(out, "\r\n"); i >= 0 {
 		out = out[:i]
 	}
-	out = strings.TrimRight(out, " \t")
-	if strings.HasPrefix(strings.TrimSpace(out), "```") {
+	out = strings.TrimLeft(strings.TrimRight(out, " \t"), " \t")
+	if strings.HasPrefix(out, "```") {
 		return ""
 	}
-	out = unwrapCompletion(strings.TrimLeft(out, " \t"))
-	var suffix string
-	switch trimmedInput := strings.TrimRight(input, " "); {
-	case strings.HasPrefix(out, input):
-		suffix = out[len(input):]
-	case trimmedInput != input && strings.HasPrefix(out, trimmedInput+" "):
-		suffix = strings.TrimLeft(out[len(trimmedInput):], " ")
-	default:
-		return ""
+	suffix, ok := completionSuffix(input, out)
+	if !ok {
+		suffix, ok = completionSuffix(input, strings.TrimRight(unwrapCompletion(out), " \t"))
 	}
-	if strings.HasSuffix(input, " ") {
-		suffix = strings.TrimLeft(suffix, " ")
-	}
-	if len(suffix) > maxCompletionLen {
+	if !ok || len(suffix) > maxCompletionLen || strings.IndexFunc(suffix, unsafeCompletionRune) >= 0 {
 		return ""
 	}
 	return suffix
+}
+
+func unsafeCompletionRune(r rune) bool {
+	return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029'
+}
+
+func completionSuffix(input, out string) (string, bool) {
+	trimmedInput := strings.TrimRight(input, " \t")
+	var suffix string
+	switch {
+	case strings.HasPrefix(out, input):
+		suffix = out[len(input):]
+	case trimmedInput != input && strings.HasPrefix(out, trimmedInput+" "):
+		suffix = out[len(trimmedInput):]
+	default:
+		return "", false
+	}
+	if trimmedInput != input {
+		suffix = strings.TrimLeft(suffix, " \t")
+	}
+	return suffix, true
 }
 
 func (s *Service) callAI(settings *models.Settings, prompt string, opts *callOptions, systemPrompt, context string, history []Message) (string, error) {

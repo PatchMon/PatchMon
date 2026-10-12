@@ -189,10 +189,23 @@ func TestNormaliseCompletion(t *testing.T) {
 		{"systemctl rest", "sudo systemctl restart", ""},
 		{"ls", "```bash\nls -la\n```", ""},
 		{"ls", "ls " + strings.Repeat("x", 300), ""},
+		{"ls", "ls -la `pwd`", " -la `pwd`"},
+		{"echo `da", "echo `date`", "te`"},
+		{"echo \"a", "echo \"ab\"", "b\""},
+		{"ls  ", "ls -la", "-la"},
+		{"ls\t", "ls -la", "-la"},
+		{"ls é", "ls é.txt", ".txt"},
+		{"ls", "ls -la\x1b[2J", ""},
+		{"Systemctl rest", "systemctl restart", ""},
+		{"ls", "`ls -la `", " -la"},
+		{"ls", "ls -la\u202e", ""},
+		{"systemctl rest", "`\"systemctl restart\"`", ""},
 	}
 	for _, c := range cases {
-		if got := normaliseCompletion(c.input, c.response); got != c.want {
-			t.Errorf("normaliseCompletion(%q, %q) = %q, want %q", c.input, c.response, got, c.want)
-		}
+		t.Run(c.input+"|"+c.response, func(t *testing.T) {
+			if got := normaliseCompletion(c.input, c.response); got != c.want {
+				t.Errorf("normaliseCompletion(%q, %q) = %q, want %q", c.input, c.response, got, c.want)
+			}
+		})
 	}
 }
