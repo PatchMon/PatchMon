@@ -2426,6 +2426,8 @@ Once the **Docker integration** is enabled on one or more hosts, PatchMon aggreg
 
 This page is a guided tour of `/docker` (the fleet view), `/docker/hosts/:id` (per-host view), and the detail pages for containers, images, volumes, and networks.
 
+Each Docker report from a host replaces that host's containers, volumes and networks, so anything removed on the host disappears from PatchMon on the next report. If the agent cannot read one of these lists from Docker, the previous entries are kept rather than cleared. Images are shared between hosts and are removed by the daily inventory cleanup once no container uses them.
+
 **Module required:** `docker`. Plans without the module show a tier-badge prompt on the Docker tab and the `/docker` routes. Contact your PatchMon administrator to enable it.
 
 **Permission required:** `can_view_hosts` to view the inventory; `can_manage_hosts` to delete Docker resources from the UI.
