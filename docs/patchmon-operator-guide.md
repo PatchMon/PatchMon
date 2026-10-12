@@ -668,7 +668,7 @@ The `server.env.*` keys map directly to the environment variables the PatchMon b
 
 | Key | Description | Default |
 |-----|-------------|---------|
-| `CORS_ORIGIN` | Allowed origin for CORS (must match the URL users type in their browser; comma-separate with no spaces to allow multiple, e.g. `https://patchmon.example.com,https://patchmon.internal.lan`) | `http://localhost:3000` |
+| `CORS_ORIGIN` | Browser origin(s) allowed to use PatchMon; must match the URL users type in their browser. Comma-separate to allow more than one, e.g. `https://patchmon.example.com,https://patchmon.internal.lan` | `http://localhost:3000` |
 | `ENABLE_HSTS` | Enable HSTS header for HTTPS | `false` |
 | `TRUST_PROXY` | Trust proxy headers when behind an Ingress controller | `true` |
 | `ENABLE_LOGGING` | Enable structured logging to stdout | `true` |
@@ -2062,7 +2062,7 @@ General HTTP server and network settings.
 |----------|---------|----------|-------------|
 | `PORT` | `3000` | No | TCP port the server listens on. In the Docker Compose stack the published port mapping follows this value, so you only need to update `CORS_ORIGIN` to match. |
 | `APP_ENV` | `production` | No | Runtime environment. Accepted values: `production`, `development`. `NODE_ENV` is also read as a backward-compatibility alias; `APP_ENV` takes precedence when both are set. |
-| `CORS_ORIGIN` | `http://localhost:3000` | No | Allowed CORS origin(s). Must match the exact URL you use to access PatchMon in your browser (protocol, hostname, and port; no path, no trailing slash). To allow multiple origins, separate them with a comma and no spaces (e.g. `https://patchmon.example.com,https://patchmon.internal.lan`). |
+| `CORS_ORIGIN` | `http://localhost:3000` | No | Browser origin(s) allowed to use PatchMon. Each entry is the URL users type in their browser (protocol, hostname and port; no path). Separate multiple origins with commas, e.g. `https://patchmon.example.com,https://patchmon.internal.lan`. Spaces around commas, a trailing slash and upper-case letters are tolerated. Agents and the install script are checked too, so the hostname in your Server URL must also appear here. |
 | `ENABLE_HSTS` | `false` | No | When `true`, the server adds an `HTTP Strict Transport Security` header to responses. Enable this only when PatchMon is served over HTTPS. |
 | `TRUST_PROXY` | `true` | No | When `true`, the server trusts `X-Forwarded-For` / `X-Forwarded-Proto` and related headers from a reverse proxy (Traefik, Caddy, nginx, NPM, etc.). Required for accurate client IP detection, correct rate limiting, and OIDC's HTTPS check when TLS is terminated at the proxy. Default is `true` because the officially supported deployment is Docker behind a reverse proxy; set to `false` explicitly only if PatchMon is exposed directly to the internet without a proxy. |
 | `TRUSTED_PROXY_RANGES` | (empty) | No | Comma-separated CIDRs or bare IPs of the reverse proxies in front of PatchMon, for example `10.0.0.0/8,172.16.0.0/12`. Used together with `TRUST_PROXY` to work out the real client IP from `X-Forwarded-For`, which drives rate limiting, login lockout, and audit logging. Leave it empty when there is a single reverse proxy, which is the usual setup: PatchMon then uses the address your proxy appended to the header, which a client cannot forge. Set it only when proxies are chained (for example Cloudflare in front of Nginx Proxy Manager), listing the intermediate hops so the original client IP is resolved rather than your CDN's egress address. Configured via environment only, and shown read-only in the settings UI, because widening it would allow clients to spoof their own IP. |
@@ -3682,9 +3682,18 @@ Symptoms: `curl: (60) SSL certificate problem` on Linux, or `Could not establish
 
 > Do not use `skip_ssl_verify` in production. It disables TLS verification entirely and exposes the agent to man-in-the-middle attacks. See the [Agent Configuration Reference](#agent-config-yml-reference) for more on `skip_ssl_verify`.
 
-#### 3. "CORS error" in the browser (wizard-side only)
+#### 3. "CORS error" in the browser, or the install script reports a rejected URL
 
 The wizard itself calls `/api/v1/hosts/install` and `/api/v1/ws/status/{apiId}` from your browser. If either fails with a CORS error, your server's `CORS_ORIGIN` env var does not match the URL you are accessing PatchMon with.
+
+The install script and agent are checked the same way, so a Server URL whose hostname is not in `CORS_ORIGIN` is rejected. The install script then stops with:
+
+```
+ERROR: The PatchMon server rejected the URL this host used (host_mismatch). The hostname in Settings > Server URL must be listed in CORS_ORIGIN.
+Server response: {"code":"host_mismatch","error":"Host not allowed. ..."}
+```
+
+The code is `cors_mismatch` instead when PatchMon sits behind a reverse proxy. On Windows the same message is shown by the PowerShell installer. Either change **Settings → Server URL** to a URL whose hostname is already in `CORS_ORIGIN`, or add that URL to `CORS_ORIGIN`. The web UI warns you when the two do not match.
 
 Fix: set `CORS_ORIGIN` in the server `.env` to the **exact origin** (protocol + host + port) the browser uses. For example:
 
@@ -3692,7 +3701,7 @@ Fix: set `CORS_ORIGIN` in the server `.env` to the **exact origin** (protocol + 
 CORS_ORIGIN=https://patchmon.example.com
 ```
 
-If users reach PatchMon from more than one URL (e.g. an external domain and an internal LAN address), comma-separate the values with no spaces:
+If users reach PatchMon from more than one URL (e.g. an external domain and an internal LAN address), comma-separate the values:
 
 ```
 CORS_ORIGIN=https://patchmon.example.com,https://patchmon.internal.lan
@@ -3722,7 +3731,7 @@ ERROR: Failed to fetch credentials. Bootstrap token may have expired.
 Please request a new installation script.
 ```
 
-Go back to **Step 4** of the wizard and click **Copy command** again. This reuses the same host record but mints a fresh token.
+The script prints the server's response between those two lines, which tells an expired token apart from any other rejection. If the script instead says the server rejected the URL this host used, the token is fine: see section 3 above. Go back to **Step 4** of the wizard and click **Copy command** again. This reuses the same host record but mints a fresh token.
 
 #### 6. Installer aborts on clock skew
 
@@ -6280,23 +6289,23 @@ If you are building from source, `make build-migrate` in `server-source-code/` p
 
 #### Cause
 
-`CORS_ORIGIN` does not match the URL the user's browser is hitting. `CORS_ORIGIN` accepts a single origin or a comma-separated list of origins (no spaces between entries), and each entry must be the exact origin the browser uses (protocol + host + port, no path, no trailing slash). Common mismatches:
+`CORS_ORIGIN` does not match the URL the user's browser is hitting. `CORS_ORIGIN` accepts a single origin or a comma-separated list of origins, and each entry must be the origin the browser uses (protocol + host + port, no path). Spaces around commas, a trailing slash and upper-case letters are tolerated. Common mismatches:
 
 - `.env` has `CORS_ORIGIN=http://localhost:3000` but users access PatchMon at `https://patchmon.example.com`.
 - `CORS_ORIGIN=https://patchmon.example.com` but users access via `https://patchmon.example.com:8443`.
-- Trailing slash in `CORS_ORIGIN` (`https://patchmon.example.com/`). Strip the slash.
+- An entry without a scheme (`patchmon.example.com` instead of `https://patchmon.example.com`). The server logs a warning at startup and the Settings UI refuses to save it.
 - PatchMon is reached from more than one URL (e.g. an external domain and an internal LAN address) but only one is listed.
 
 #### Fix
 
-Set `CORS_ORIGIN` to the **exact origin** the browser uses (protocol + host + port, no path, no trailing slash):
+Set `CORS_ORIGIN` to the **exact origin** the browser uses (protocol + host + port, no path):
 
 ```
 # .env
 CORS_ORIGIN=https://patchmon.example.com
 ```
 
-For multiple allowed origins (e.g. staging and production share a database during migration, or users reach PatchMon on both an external and internal URL), comma-separate them with no spaces between entries:
+For multiple allowed origins (e.g. staging and production share a database during migration, or users reach PatchMon on both an external and internal URL), comma-separate them:
 
 ```
 CORS_ORIGIN=https://patchmon.example.com,https://staging.patchmon.example.com
@@ -6312,7 +6321,7 @@ docker compose restart server
 
 #### Alternative: Settings UI
 
-You can also set `CORS_ORIGIN` in **Settings → Server → CORS_ORIGIN** via the UI. If both the env var and the UI value are set, the env wins and the Settings UI shows a "Conflict" flag. Pick one source of truth.
+You can also set `CORS_ORIGIN` in **Settings → Server → CORS_ORIGIN** via the UI. If both the env var and the UI value are set, the env wins and the Settings UI shows a "Conflict" flag. Pick one source of truth. The UI refuses values that are not origins, such as a bare hostname without `https://`.
 
 ### 4. Agent Can't Connect Over WebSocket
 

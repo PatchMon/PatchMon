@@ -51,6 +51,9 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	settingsStore := store.NewSettingsStore(dbProvider)
 	settings, _ := settingsStore.GetFirst(ctx)
 	resolved := config.ResolveConfig(ctx, cfg, settings)
+	if err := middleware.ValidateOrigins(resolved.CORSOrigin); err != nil && log != nil {
+		log.Warn("CORS_ORIGIN contains an entry that is not an origin", "error", err)
+	}
 
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Recovery(log))
@@ -493,6 +496,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/settings/environment", settingsHandler.GetEnvironmentConfig)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Patch("/settings/environment/{key}", settingsHandler.UpdateEnvironmentConfig)
 			r.Get("/settings/public", settingsHandler.GetPublic)
+			r.With(middleware.RequireAnyPermission(permissionsStore, "can_manage_hosts", "can_manage_settings")).Get("/settings/server-url/cors-check", settingsHandler.ServerURLCORSCheck)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/metrics", metricsHandler.Get)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Put("/metrics", metricsHandler.Update)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Post("/metrics/regenerate-id", metricsHandler.RegenerateID)

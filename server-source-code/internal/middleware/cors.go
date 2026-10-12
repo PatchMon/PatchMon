@@ -1,56 +1,51 @@
 package middleware
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
 	"strings"
 )
 
-// OriginResolver returns the allowed origin for a request when in multi-host mode.
-// When ok is true, the returned origin is used; when false, the static CORS_ORIGIN is used.
+// OriginResolver returns the allowed origin for a request in multi-context mode.
+// When ok is false the configured CORS_ORIGIN list applies.
 type OriginResolver func(r *http.Request) (origin string, ok bool)
 
-// CORS returns a middleware that sets CORS headers and enforces origin restrictions.
-//
-// When dynamicResolver is non-nil and returns (origin, true), that origin is used for the request
-// (e.g. per-host: scheme + "://" + X-Forwarded-Host). When it returns ("", false), the static
-// origin string is used (single-host or fallback).
-//
-// In addition to standard CORS header validation, it checks X-Forwarded-Host
-// (set by the nginx reverse proxy for browser requests) against the allowed
-// origins. This blocks access from disallowed hostnames even when the browser
-// treats the request as same-origin (frontend proxy -> backend).
-//
-// Internal requests (health checks, agent connections) that bypass nginx
-// won't have X-Forwarded-Host and are not affected.
+const (
+	corsAllowMethods = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+	corsAllowHeaders = "Content-Type, Authorization, X-API-ID, X-API-KEY, X-Device-ID"
+)
+
+type originSet struct {
+	origins  []string
+	hosts    map[string]bool
+	wildcard bool
+}
+
+func newOriginSet(origins []string) originSet {
+	return originSet{origins: origins, hosts: buildAllowedHosts(origins), wildcard: hasWildcard(origins)}
+}
+
+// CORS sets the CORS response headers and rejects requests whose host
+// (X-Forwarded-Host, else Host) is outside CORS_ORIGIN.
 func CORS(origin string, dynamicResolver OriginResolver) func(http.Handler) http.Handler {
-	origins := parseOrigins(origin)
-	allowedHosts := buildAllowedHosts(origins)
-	wildcard := hasWildcard(origins)
+	static := newOriginSet(ParseOrigins(origin))
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			var effectiveOrigins []string
-			var effectiveAllowedHosts map[string]bool
-			effectiveWildcard := wildcard
-
+			set := static
 			if dynamicResolver != nil {
 				if dynOrigin, ok := dynamicResolver(r); ok && dynOrigin != "" {
-					effectiveOrigins = []string{dynOrigin}
-					effectiveAllowedHosts = buildAllowedHosts(effectiveOrigins)
-					effectiveWildcard = false
+					set = newOriginSet(ParseOrigins(dynOrigin))
 				}
-			}
-			if len(effectiveOrigins) == 0 {
-				effectiveOrigins = origins
-				effectiveAllowedHosts = allowedHosts
 			}
 
 			reqOrigin := r.Header.Get("Origin")
-
 			allowOrigin := ""
-			for _, o := range effectiveOrigins {
+			for _, o := range set.origins {
 				if o == "*" {
 					allowOrigin = "*"
 					break
@@ -61,63 +56,26 @@ func CORS(origin string, dynamicResolver OriginResolver) func(http.Handler) http
 				}
 			}
 
-			// Enforce allowed hosts via X-Forwarded-Host on all requests when present.
-			// Blocks access from disallowed URLs before the login page loads.
-			// Internal requests (health checks, agents) have no X-Forwarded-Host and pass through.
-			if !effectiveWildcard {
-				if fwdHost := r.Header.Get("X-Forwarded-Host"); fwdHost != "" {
-					if !effectiveAllowedHosts[strings.ToLower(fwdHost)] {
-						// Set CORS headers so the browser allows the client to read this 403.
-						reflectOrigin := reqOrigin
-						if reflectOrigin == "" {
-							reflectOrigin = EffectiveOrigin(r, fwdHost)
-						}
-						if reflectOrigin != "" {
-							w.Header().Set("Access-Control-Allow-Origin", reflectOrigin)
-						}
-						w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-						w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-ID, X-API-KEY, X-Device-ID")
-						w.Header().Set("Access-Control-Allow-Credentials", "true")
-						w.Header().Set("Content-Type", "application/json")
-						w.WriteHeader(http.StatusForbidden)
-						_, _ = w.Write([]byte(`{"error":"CORS_ORIGIN mismatch. Access this app via the URL configured in CORS_ORIGIN (.env or Database settings).","code":"cors_mismatch"}`))
-						return
+			if fwd := forwardedHost(r); fwd != "" {
+				if !set.allowsForwarded(fwd) {
+					reflectOrigin := reqOrigin
+					if reflectOrigin == "" {
+						reflectOrigin = EffectiveOrigin(r, fwd)
 					}
+					rejectHost(w, reflectOrigin, "CORS_ORIGIN mismatch. Access this app via the URL configured in CORS_ORIGIN (.env or Database settings).", "cors_mismatch")
+					return
 				}
+			} else if !set.allowsDirect(r.Host) {
+				rejectHost(w, "", "Host not allowed. Access this app via the URL configured in CORS_ORIGIN (.env or Database settings).", "host_mismatch")
+				return
 			}
 
-			// Enforce allowed hosts via Host header for direct access (no reverse proxy).
-			// When X-Forwarded-Host is present, the check above already handles enforcement.
-			// Internal requests (health checks, agents) typically connect to localhost/IP directly,
-			// so skip enforcement for loopback addresses.
-			if !effectiveWildcard && r.Header.Get("X-Forwarded-Host") == "" {
-				host := strings.ToLower(r.Host)
-				if host != "" && !isLoopback(host) && !effectiveAllowedHosts[host] {
-					// Also check without port for default ports
-					hostname := host
-					if idx := strings.LastIndex(host, ":"); idx != -1 {
-						hostname = host[:idx]
-					}
-					if !effectiveAllowedHosts[hostname] {
-						w.Header().Set("Content-Type", "application/json")
-						w.WriteHeader(http.StatusForbidden)
-						_, _ = w.Write([]byte(`{"error":"Host not allowed. Access this app via the URL configured in CORS_ORIGIN (.env or Database settings).","code":"host_mismatch"}`))
-						return
-					}
-				}
-			}
-
-			// When wildcard is configured, keep the literal "*" as the origin.
-			// Browsers will block credentialed requests with wildcard origin (per spec),
-			// which is the correct security behavior — wildcard mode should not
-			// allow credentialed cross-origin access from arbitrary sites.
 			if allowOrigin != "" {
 				w.Header().Set("Access-Control-Allow-Origin", allowOrigin)
 			}
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-ID, X-API-KEY, X-Device-ID")
-			// Only send Allow-Credentials when a specific origin is set; the wildcard + credentials
-			// combination is rejected by browsers per the CORS spec.
+			w.Header().Set("Access-Control-Allow-Methods", corsAllowMethods)
+			w.Header().Set("Access-Control-Allow-Headers", corsAllowHeaders)
+			// Browsers reject wildcard + credentials, so only a specific origin gets credentials.
 			if allowOrigin != "" && allowOrigin != "*" {
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 			}
@@ -128,20 +86,132 @@ func CORS(origin string, dynamicResolver OriginResolver) func(http.Handler) http
 				return
 			}
 
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), corsOriginSetKey{}, set)))
 		})
 	}
 }
 
-func parseOrigins(origin string) []string {
-	parts := strings.Split(origin, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if s := strings.TrimSpace(p); s != "" {
-			out = append(out, s)
+type corsOriginSetKey struct{}
+
+func (s originSet) allowsForwarded(hostPort string) bool {
+	return s.wildcard || hostAllowed(s.hosts, hostPort)
+}
+
+func (s originSet) allowsDirect(hostPort string) bool {
+	return s.wildcard || hostPort == "" || isLoopback(hostPort) || hostAllowed(s.hosts, hostPort) || s.hosts[hostnameOf(strings.ToLower(hostPort))]
+}
+
+// CORSAllowsHost reports whether the CORS middleware would accept hostPort for a
+// request arriving like r; it is false when the middleware did not run.
+func CORSAllowsHost(r *http.Request, hostPort string) bool {
+	set, ok := r.Context().Value(corsOriginSetKey{}).(originSet)
+	if !ok {
+		return false
+	}
+	if forwardedHost(r) != "" {
+		return set.allowsForwarded(hostPort)
+	}
+	return set.allowsDirect(hostPort)
+}
+
+func rejectHost(w http.ResponseWriter, reflectOrigin, msg, code string) {
+	if reflectOrigin != "" {
+		w.Header().Set("Access-Control-Allow-Origin", reflectOrigin)
+		w.Header().Set("Access-Control-Allow-Methods", corsAllowMethods)
+		w.Header().Set("Access-Control-Allow-Headers", corsAllowHeaders)
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Vary", "Origin")
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg, "code": code})
+}
+
+// Rightmost entry: an appending proxy puts its own value after whatever the
+// client sent, as with X-Forwarded-For, so anything further left is untrusted.
+func forwardedHost(r *http.Request) string {
+	parts := strings.Split(r.Header.Get("X-Forwarded-Host"), ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		if p := strings.TrimSpace(parts[i]); p != "" {
+			return p
 		}
 	}
+	return ""
+}
+
+func hostAllowed(hosts map[string]bool, hostPort string) bool {
+	h := strings.ToLower(strings.TrimSpace(hostPort))
+	if h == "" {
+		return false
+	}
+	if hosts[h] {
+		return true
+	}
+	name, port := splitHostPort(h)
+	return (port == "80" || port == "443") && hosts[name]
+}
+
+func hostnameOf(hostPort string) string {
+	name, _ := splitHostPort(hostPort)
+	return name
+}
+
+func splitHostPort(hostPort string) (string, string) {
+	port := ""
+	if i := strings.LastIndex(hostPort, ":"); i != -1 && !strings.Contains(hostPort[i:], "]") {
+		port = hostPort[i+1:]
+		hostPort = hostPort[:i]
+	}
+	return strings.TrimSuffix(strings.TrimPrefix(hostPort, "["), "]"), port
+}
+
+// ParseOrigins splits a CORS_ORIGIN value into trimmed, lower-cased origins with
+// any path and default port removed; "*" and entries that are not URLs are kept as is.
+func ParseOrigins(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if p != "*" {
+			if u, err := url.Parse(p); err == nil && u.Scheme != "" && u.Host != "" {
+				p = normalisedOrigin(u)
+			}
+		}
+		out = append(out, p)
+	}
 	return out
+}
+
+func normalisedOrigin(u *url.URL) string {
+	scheme := strings.ToLower(u.Scheme)
+	host := strings.ToLower(u.Host)
+	if port := u.Port(); (scheme == "http" && port == "80") || (scheme == "https" && port == "443") {
+		host = strings.ToLower(u.Hostname())
+		if strings.Contains(host, ":") {
+			host = "[" + host + "]"
+		}
+	}
+	return scheme + "://" + host
+}
+
+// ValidateOrigins reports the first CORS_ORIGIN entry that is neither "*" nor
+// an http(s) origin without path, query, fragment or credentials.
+func ValidateOrigins(value string) error {
+	for _, p := range strings.Split(value, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" || p == "*" {
+			continue
+		}
+		u, err := url.Parse(p)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+			u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+			return fmt.Errorf("CORS_ORIGIN entry %q is not an origin; use scheme://host[:port], for example https://patchmon.example.com", p)
+		}
+	}
+	return nil
 }
 
 func hasWildcard(origins []string) bool {
@@ -149,7 +219,6 @@ func hasWildcard(origins []string) bool {
 }
 
 // EffectiveOrigin derives an origin URL from the request and host.
-// Used for CORS headers and for dynamic per-host origin resolution.
 func EffectiveOrigin(r *http.Request, host string) string {
 	if host == "" {
 		return ""
@@ -163,10 +232,8 @@ func EffectiveOrigin(r *http.Request, host string) string {
 	return scheme + "://" + host
 }
 
-// buildAllowedHosts extracts host[:port] from each origin URL.
-// E.g. "http://patchmon-local:3000" -> "patchmon-local:3000".
-// Also adds hostname without port when using default ports (80, 443) so nginx $host works.
-// Nginx $host omits the port for default ports (e.g. "patchmon-local.local" for HTTPS).
+// buildAllowedHosts maps each origin's host[:port] to true. Origins on a
+// default port also allow the bare hostname, which is what nginx $host sends.
 func buildAllowedHosts(origins []string) map[string]bool {
 	m := make(map[string]bool)
 	for _, o := range origins {
@@ -177,32 +244,15 @@ func buildAllowedHosts(origins []string) map[string]bool {
 		if err != nil || u.Host == "" {
 			continue
 		}
-		host := strings.ToLower(u.Host)
-		m[host] = true
-		hostname := strings.ToLower(u.Hostname())
-		port := u.Port()
-		// Nginx $host omits port for default ports. Add hostname for http:80 and https:443.
-		if port == "" || port == "80" || port == "443" {
-			m[hostname] = true
+		m[strings.ToLower(u.Host)] = true
+		if port := u.Port(); port == "" || port == "80" || port == "443" {
+			m[strings.ToLower(u.Hostname())] = true
 		}
 	}
 	return m
 }
 
-// isLoopback returns true if the host (with or without port) is a loopback address.
-// This allows internal health checks and agent connections that bypass the proxy.
 func isLoopback(hostPort string) bool {
-	host := hostPort
-	if idx := strings.LastIndex(hostPort, ":"); idx != -1 {
-		// Handle IPv6 [::1]:port
-		if strings.Contains(hostPort, "]") {
-			host = strings.TrimPrefix(hostPort[:strings.Index(hostPort, "]")+1], "[")
-			host = strings.TrimSuffix(host, "]")
-		} else {
-			host = hostPort[:idx]
-		}
-	}
-	host = strings.TrimPrefix(host, "[")
-	host = strings.TrimSuffix(host, "]")
-	return host == "localhost" || host == "127.0.0.1" || host == "::1" || strings.HasPrefix(host, "127.")
+	h := hostnameOf(strings.ToLower(hostPort))
+	return h == "localhost" || h == "::1" || strings.HasPrefix(h, "127.")
 }

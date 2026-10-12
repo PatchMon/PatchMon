@@ -11,6 +11,7 @@ import {
 	settingsAPI,
 } from "../utils/api";
 import { invalidateHostScope } from "../utils/queryScopes";
+import ServerUrlCorsWarning from "./ServerUrlCorsWarning";
 import ModalPortal from "./ui/ModalPortal";
 
 const STEPS = [
@@ -570,6 +571,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 								: ""}
 							. After copying, the wizard will wait for the connection.
 						</p>
+						<ServerUrlCorsWarning enabled={isOpen} />
 						{platform === "windows" && (
 							<div className="flex flex-wrap items-center gap-4">
 								<label className="flex items-center gap-2 cursor-pointer">

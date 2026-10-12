@@ -16,6 +16,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
@@ -85,6 +86,41 @@ func (h *SettingsHandler) GetServerURL(w http.ResponseWriter, r *http.Request) {
 		url = "http://localhost:3001"
 	}
 	JSON(w, http.StatusOK, map[string]string{"server_url": url})
+}
+
+type serverURLCORSCheckResponse struct {
+	ServerURL string `json:"server_url"`
+	Allowed   bool   `json:"allowed"`
+	Reason    string `json:"reason"`
+}
+
+// ServerURLCORSCheck handles GET /settings/server-url/cors-check.
+func (h *SettingsHandler) ServerURLCORSCheck(w http.ResponseWriter, r *http.Request) {
+	s, err := h.settings.GetFirst(r.Context())
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to load settings")
+		return
+	}
+	serverURL := s.ServerURL
+	if serverURL == "" {
+		serverURL = "http://localhost:3001"
+	}
+	JSON(w, http.StatusOK, checkServerURLCORS(r, serverURL))
+}
+
+func checkServerURLCORS(r *http.Request, serverURL string) serverURLCORSCheckResponse {
+	resp := serverURLCORSCheckResponse{ServerURL: serverURL}
+	if validateServerURL(serverURL) != nil {
+		resp.Reason = "server_url_invalid"
+		return resp
+	}
+	u, _ := url.Parse(serverURL)
+	if !middleware.CORSAllowsHost(r, u.Host) {
+		resp.Reason = "host_not_in_cors_origin"
+		return resp
+	}
+	resp.Allowed = true
+	return resp
 }
 
 // GetCurrentURL handles GET /settings/current-url (public). Returns the effective URL from X-Forwarded-* or Host.
@@ -486,7 +522,7 @@ func buildEnvironmentVariables(cfg *config.Config, resolved *config.ResolvedConf
 		{Category: "Database", Key: "DB_CONNECT_TIMEOUT", EffectiveValue: strconv.Itoa(cfg.DBConnectTimeout), EffectiveSource: source(env("DB_CONNECT_TIMEOUT"), "", "10"), EnvValue: env("DB_CONNECT_TIMEOUT"), DBValue: "", DefaultValue: "10", Editable: false, Conflict: false, Description: "Connect timeout (seconds); startup only - configure via .env"},
 		{Category: "Database", Key: "PM_DB_CONN_MAX_ATTEMPTS", EffectiveValue: strconv.Itoa(cfg.DBConnMaxAttempts), EffectiveSource: source(env("PM_DB_CONN_MAX_ATTEMPTS"), "", "30"), EnvValue: env("PM_DB_CONN_MAX_ATTEMPTS"), DBValue: "", DefaultValue: "30", Editable: false, Conflict: false, Description: "Retry attempts at startup; configure via .env"},
 		{Category: "Database", Key: "PM_DB_CONN_WAIT_INTERVAL", EffectiveValue: strconv.Itoa(cfg.DBConnWaitInterval), EffectiveSource: source(env("PM_DB_CONN_WAIT_INTERVAL"), "", "2"), EnvValue: env("PM_DB_CONN_WAIT_INTERVAL"), DBValue: "", DefaultValue: "2", Editable: false, Conflict: false, Description: "Seconds between connection retries; configure via .env"},
-		{Category: "Server", Key: "CORS_ORIGIN", EffectiveValue: corsEffective, EffectiveSource: corsSource, EnvValue: env("CORS_ORIGIN"), DBValue: dbStr(s.CorsOrigin), DefaultValue: "http://localhost:3000", Editable: true, Conflict: env("CORS_ORIGIN") != "" && s.CorsOrigin != nil && *s.CorsOrigin != "", Description: "Allowed origin for CORS (frontend URL). Comma-separated for multiple origins. Requires a server restart to take effect."},
+		{Category: "Server", Key: "CORS_ORIGIN", EffectiveValue: corsEffective, EffectiveSource: corsSource, EnvValue: env("CORS_ORIGIN"), DBValue: dbStr(s.CorsOrigin), DefaultValue: "http://localhost:3000", Editable: true, Conflict: env("CORS_ORIGIN") != "" && s.CorsOrigin != nil && *s.CorsOrigin != "", Description: "Browser origin(s) allowed to use PatchMon, e.g. https://patchmon.example.com. Comma-separated for multiple origins. Requires a server restart to take effect."},
 		{Category: "Server", Key: "ENABLE_HSTS", EffectiveValue: boolStr(resolved.EnableHSTS), EffectiveSource: source(env("ENABLE_HSTS"), dbBool(s.EnableHSTS), "false"), EnvValue: env("ENABLE_HSTS"), DBValue: dbBool(s.EnableHSTS), DefaultValue: "false", Editable: true, Conflict: env("ENABLE_HSTS") != "" && s.EnableHSTS != nil, Description: "Enable HSTS header for HTTPS"},
 		{Category: "Server", Key: "TRUST_PROXY", EffectiveValue: trustProxyStr, EffectiveSource: source(env("TRUST_PROXY"), dbBool(s.TrustProxy), "true"), EnvValue: env("TRUST_PROXY"), DBValue: dbBool(s.TrustProxy), DefaultValue: "true", Editable: false, Conflict: env("TRUST_PROXY") != "" && s.TrustProxy != nil, Description: "Trust proxy headers (X-Forwarded-Proto / X-Forwarded-For) from a reverse proxy. Read once at startup and applied process-wide, so it describes the deployment rather than a single context; configure via .env. Default true; set to false only if PatchMon is exposed directly to the internet without a proxy."},
 		{Category: "Server", Key: "TRUSTED_PROXY_RANGES", EffectiveValue: strings.Join(cfg.TrustedProxyRanges, ", "), EffectiveSource: source(env("TRUSTED_PROXY_RANGES"), "", ""), EnvValue: env("TRUSTED_PROXY_RANGES"), DBValue: "", DefaultValue: "(empty)", Editable: false, Conflict: false, Description: "Comma-separated CIDRs or IPs of reverse proxies in front of PatchMon, used to resolve the real client IP from X-Forwarded-For. Leave empty for a single proxy; set it when proxies are chained (e.g. Cloudflare in front of NPM). Env only, and deliberately not editable here: widening it would allow X-Forwarded-For spoofing."},
@@ -619,6 +655,17 @@ func (h *SettingsHandler) UpdateEnvironmentConfig(w http.ResponseWriter, r *http
 	if req.Value == nil {
 		Error(w, http.StatusBadRequest, "Value is required")
 		return
+	}
+	if key == "CORS_ORIGIN" {
+		v, ok := req.Value.(string)
+		if !ok {
+			Error(w, http.StatusBadRequest, "CORS_ORIGIN requires a string value")
+			return
+		}
+		if err := middleware.ValidateOrigins(v); err != nil {
+			Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	slog.Debug("env config update", "key", key, "value", req.Value)
 	s, err := h.settings.GetFirst(r.Context())

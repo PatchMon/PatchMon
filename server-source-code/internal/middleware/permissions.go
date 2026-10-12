@@ -3,6 +3,7 @@ package middleware
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
@@ -10,6 +11,11 @@ import (
 
 // RequirePermission returns middleware that checks the user has the given permission.
 func RequirePermission(perm string, permissions *store.PermissionsStore) func(http.Handler) http.Handler {
+	return RequireAnyPermission(permissions, perm)
+}
+
+// RequireAnyPermission returns middleware that checks the user has at least one of perms.
+func RequireAnyPermission(permissions *store.PermissionsStore, perms ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			role, _ := r.Context().Value(UserRoleKey).(string)
@@ -22,7 +28,7 @@ func RequirePermission(perm string, permissions *store.PermissionsStore) func(ht
 				writeJSONError(w, http.StatusForbidden, "Access denied")
 				return
 			}
-			if !hasPermission(p, perm) {
+			if !slices.ContainsFunc(perms, func(perm string) bool { return hasPermission(p, perm) }) {
 				writeJSONError(w, http.StatusForbidden, "Insufficient permissions")
 				return
 			}

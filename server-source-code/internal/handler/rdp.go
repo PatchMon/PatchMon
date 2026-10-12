@@ -75,7 +75,7 @@ func NewRDPHandler(
 		permissions:    permissions,
 		registry:       registry,
 		guacdAddress:   guacdAddress,
-		allowedOrigins: parseAllowedOrigins(corsOrigin),
+		allowedOrigins: middleware.ParseOrigins(corsOrigin),
 		originResolver: originResolver,
 		log:            log,
 		db:             db,
@@ -97,17 +97,6 @@ func (h *RDPHandler) userCanUseRemoteAccess(ctx context.Context, user *models.Us
 	return perm != nil && perm.CanUseRemoteAccess && perm.CanViewHosts, nil
 }
 
-// parseAllowedOrigins splits the CORS_ORIGIN config value into individual origins.
-func parseAllowedOrigins(corsOrigin string) []string {
-	var origins []string
-	for _, part := range strings.Split(corsOrigin, ",") {
-		if s := strings.TrimSpace(part); s != "" {
-			origins = append(origins, s)
-		}
-	}
-	return origins
-}
-
 // isOriginAllowed checks whether the request Origin matches the effective CORS origins.
 func (h *RDPHandler) isOriginAllowed(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
@@ -118,7 +107,7 @@ func (h *RDPHandler) isOriginAllowed(r *http.Request) bool {
 	effectiveOrigins := h.allowedOrigins
 	if h.originResolver != nil {
 		if dynamicOrigin, ok := h.originResolver(r); ok && dynamicOrigin != "" {
-			effectiveOrigins = []string{dynamicOrigin}
+			effectiveOrigins = middleware.ParseOrigins(dynamicOrigin)
 		}
 	}
 	for _, allowed := range effectiveOrigins {
