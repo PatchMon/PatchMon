@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 )
 
 func TestWithConnectTimeout(t *testing.T) {
@@ -22,7 +24,7 @@ func TestWithConnectTimeout(t *testing.T) {
 
 func outageCache(host string) *PoolCache {
 	reg := &Registry{byHost: map[string]*Entry{host: {Host: host, DatabaseURL: "postgresql://u:p@127.0.0.1:1/d"}}}
-	return NewPoolCache(reg, nil, 0, nil)
+	return NewPoolCache(reg, &config.Config{DBConnectTimeout: 1}, 0, nil)
 }
 
 func TestGetOrCreateHonoursContextWhileLocked(t *testing.T) {
@@ -44,11 +46,24 @@ func TestGetOrCreateHonoursContextWhileLocked(t *testing.T) {
 
 func TestGetOrCreateCachesFailure(t *testing.T) {
 	pc := outageCache("a.example")
-	boom := errors.New("boom")
-	_ = pc.recordFailure("a.example", boom)
-	if _, err := pc.GetOrCreate(stdctx.Background(), "a.example"); !errors.Is(err, boom) {
-		t.Fatalf("want cached failure, got %v", err)
+	_, first := pc.GetOrCreate(stdctx.Background(), "a.example")
+	if first == nil {
+		t.Fatal("expected the unreachable database to fail")
 	}
+	start := time.Now()
+	if _, err := pc.GetOrCreate(stdctx.Background(), "a.example"); err != first {
+		t.Fatalf("want the cached failure %v, got %v", first, err)
+	}
+	if time.Since(start) > 100*time.Millisecond {
+		t.Fatal("cached failure was not served immediately")
+	}
+
+	pc.Evict("a.example")
+	if err := pc.recentFailure("a.example"); err != nil {
+		t.Fatalf("Evict must clear the cached failure, got %v", err)
+	}
+
+	boom := errors.New("boom")
 
 	pc.mu.Lock()
 	pc.failures["a.example"] = failedEntry{err: boom, until: time.Now().Add(-time.Second)}

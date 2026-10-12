@@ -177,9 +177,12 @@ func (c *PoolCache) GetOrCreate(ctx stdctx.Context, host string) (*database.DB, 
 	if log == nil {
 		log = slog.Default()
 	}
-	connectTimeout := 10
-	if c.cfg != nil && c.cfg.DBConnectTimeout > 0 {
-		connectTimeout = c.cfg.DBConnectTimeout
+	connectTimeout := c.cfg.DBConnectTimeout
+	if connectTimeout <= 0 {
+		connectTimeout = 10
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	// Migrations run outside the global lock - only the per-host lock is held.
 	if err := migrate.Run(withConnectTimeout(entry.DatabaseURL, connectTimeout), log); err != nil {
@@ -227,4 +230,5 @@ func (c *PoolCache) Evict(host string) {
 		}
 		delete(c.entries, key)
 	}
+	delete(c.failures, key)
 }
