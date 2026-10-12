@@ -431,33 +431,7 @@ func (d *Detector) collectKernelsFromDpkg() []string {
 		return nil
 	}
 
-	var kernels []string
-	metaPackages := make(map[string]bool)
-
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-
-		// Look for installed kernel image packages
-		if fields[0] == "ii" && strings.HasPrefix(fields[1], "linux-image-") {
-			pkgName := fields[1]
-			version := strings.TrimPrefix(pkgName, "linux-image-")
-			// Ubuntu ships linux-image-unsigned-<release>-<flavour> alongside
-			// the signed build; both name the same kernel.
-			version = strings.TrimPrefix(version, "unsigned-")
-
-			if isKernelMetaPackage(version) {
-				metaPackages[pkgName] = true
-			} else {
-				// This is an actual kernel package with version
-				kernels = append(kernels, version)
-			}
-		}
-	}
-
+	kernels, metaPackages := parseDpkgKernelList(string(output))
 	if len(kernels) > 0 {
 		return kernels
 	}
@@ -470,6 +444,41 @@ func (d *Detector) collectKernelsFromDpkg() []string {
 	}
 
 	return kernels
+}
+
+// parseDpkgKernelList extracts installed kernel releases and kernel
+// meta-package names from dpkg -l output.
+func parseDpkgKernelList(output string) ([]string, map[string]bool) {
+	var kernels []string
+	metaPackages := make(map[string]bool)
+
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+
+		// Look for installed kernel image packages
+		if fields[0] == "ii" && strings.HasPrefix(fields[1], "linux-image-") {
+			pkgName := fields[1]
+			version := strings.TrimPrefix(pkgName, "linux-image-")
+			// Ubuntu ships linux-image-unsigned-<release>-<flavour> alongside
+			// the signed build; both name the same kernel.
+			version = strings.TrimPrefix(version, "unsigned-")
+			if i := strings.IndexByte(version, ':'); i != -1 {
+				version = version[:i]
+			}
+
+			if isKernelMetaPackage(version) {
+				metaPackages[pkgName] = true
+			} else {
+				// This is an actual kernel package with version
+				kernels = append(kernels, version)
+			}
+		}
+	}
+
+	return kernels, metaPackages
 }
 
 // isKernelMetaPackage identifies meta-packages (generic, virtual, lowlatency,

@@ -2,6 +2,7 @@ package system
 
 import (
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/sirupsen/logrus"
@@ -400,6 +401,56 @@ func TestRaspberryPiRebootDecision(t *testing.T) {
 			"ubuntu clears after reboot", "5.15.0-100-generic",
 			[]string{"5.15.0-91-generic", "5.15.0-100-generic", "5.15.0-101-lowlatency"},
 			"5.15.0-100-generic", false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			latest := d.selectLatestKernel(tt.candidates, kernelFlavour(tt.running))
+			if latest != tt.wantLatest {
+				t.Errorf("latest for running %q = %q, want %q", tt.running, latest, tt.wantLatest)
+			}
+			if stale := kernelIsOutdated(tt.running, latest); stale != tt.wantStale {
+				t.Errorf("kernelIsOutdated(%q, %q) = %v, want %v", tt.running, latest, stale, tt.wantStale)
+			}
+		})
+	}
+}
+
+func TestDpkgKernelsOnMultiarchPi(t *testing.T) {
+	d := &Detector{logger: newTestLogger()}
+
+	dpkgOutput := `Desired=Unknown/Install/Remove/Purge/Hold
+||/ Name                                 Version                                  Architecture Description
++++-====================================-========================================-============-================================
+ii  linux-image-6.18.39+rpt-rpi-v6       1:6.18.39-1+rpt1                         armhf        Linux 6.18.39 for Raspberry Pi v6, Raspberry Pi
+ii  linux-image-6.18.39+rpt-rpi-v7       1:6.18.39-1+rpt1                         armhf        Linux 6.18.39 for Raspberry Pi v7, Raspberry Pi
+ii  linux-image-6.18.39+rpt-rpi-v8:arm64 1:6.18.39-1+rpt1                         arm64        Linux 6.18.39 for Raspberry Pi v8, Raspberry Pi
+`
+
+	kernels, _ := parseDpkgKernelList(dpkgOutput)
+	want := []string{"6.18.39+rpt-rpi-v6", "6.18.39+rpt-rpi-v7", "6.18.39+rpt-rpi-v8"}
+	if strings.Join(kernels, " ") != strings.Join(want, " ") {
+		t.Errorf("parseDpkgKernelList kernels = %q, want %q", kernels, want)
+	}
+
+	tests := []struct {
+		name       string
+		running    string
+		candidates []string
+		wantLatest string
+		wantStale  bool
+	}{
+		{"1116 32-bit userland on v8 kernel", "6.18.39+rpt-rpi-v8", kernels, "6.18.39+rpt-rpi-v8", false},
+		{"armhf v7 unaffected", "6.18.39+rpt-rpi-v7", kernels, "6.18.39+rpt-rpi-v7", false},
+		{
+			"newer foreign-arch v8 still flagged", "6.18.31+rpt-rpi-v8",
+			func() []string {
+				k, _ := parseDpkgKernelList("ii  linux-image-6.18.31+rpt-rpi-v8:arm64 1 arm64 x\n" +
+					"ii  linux-image-6.18.39+rpt-rpi-v8:arm64 1 arm64 x\n")
+				return k
+			}(),
+			"6.18.39+rpt-rpi-v8", true,
 		},
 	}
 
