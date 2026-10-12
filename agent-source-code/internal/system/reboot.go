@@ -513,3 +513,54 @@ func (d *Detector) resolveMetaPackage(metaPkg string) string {
 
 	return ""
 }
+
+// ExecuteReboot schedules a system reboot. delayMinutes is clamped to [0, 60]
+// to bound the operator surprise window. delayMinutes=0 reboots immediately.
+// The shutdown command is fire-and-forget — we do not wait for it to complete
+// because the process gets killed by the reboot itself. The function returns
+// once shutdown has been scheduled (or returns the error from spawning it).
+//
+// On Linux/BSD it shells out to `shutdown -r +N` so that any running tty
+// users see the broadcast wall and the system passes through normal
+// signal-everyone -> stop-services -> reboot ordering. On Windows it uses
+// `shutdown /r /t <seconds>`.
+//
+// Reason is appended to the broadcast so logs/wall messages explain why the
+// host is rebooting. Empty reason falls back to a generic string.
+func (d *Detector) ExecuteReboot(delayMinutes int, reason string) error {
+	if delayMinutes < 0 {
+		delayMinutes = 0
+	}
+	if delayMinutes > 60 {
+		delayMinutes = 60
+	}
+	if strings.TrimSpace(reason) == "" {
+		reason = "Triggered by PatchMon"
+	}
+
+	if runtime.GOOS == "windows" {
+		// /r reboot, /t seconds, /c comment (max 512 chars; truncate defensively)
+		comment := reason
+		if len(comment) > 500 {
+			comment = comment[:500]
+		}
+		cmd := exec.Command("shutdown", "/r", "/t", strconv.Itoa(delayMinutes*60), "/c", comment)
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("shutdown /r failed to start: %w", err)
+		}
+		d.logger.WithField("delay_minutes", delayMinutes).WithField("reason", logutil.Sanitize(reason)).Info("Reboot scheduled via shutdown /r")
+		return nil
+	}
+
+	// Linux/BSD: shutdown -r accepts "+N" minutes or "now".
+	timeArg := "+" + strconv.Itoa(delayMinutes)
+	if delayMinutes == 0 {
+		timeArg = "now"
+	}
+	cmd := exec.Command("shutdown", "-r", timeArg, reason)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("shutdown -r %s failed to start: %w", timeArg, err)
+	}
+	d.logger.WithField("delay_minutes", delayMinutes).WithField("reason", logutil.Sanitize(reason)).Info("Reboot scheduled via shutdown -r")
+	return nil
+}
