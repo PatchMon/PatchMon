@@ -755,6 +755,7 @@ CREATE TABLE IF NOT EXISTS alert_config (
     metadata JSONB,
     category TEXT NOT NULL DEFAULT 'general',
     check_interval_minutes INTEGER,
+    reminder_interval_hours INTEGER,
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP(3) NOT NULL
 );

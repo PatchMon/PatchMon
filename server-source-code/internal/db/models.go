@@ -35,26 +35,27 @@ type AlertAction struct {
 }
 
 type AlertConfig struct {
-	ID                   string           `json:"id"`
-	AlertType            string           `json:"alert_type"`
-	IsEnabled            bool             `json:"is_enabled"`
-	DefaultSeverity      string           `json:"default_severity"`
-	AutoAssignEnabled    bool             `json:"auto_assign_enabled"`
-	AutoAssignUserID     *string          `json:"auto_assign_user_id"`
-	AutoAssignRule       *string          `json:"auto_assign_rule"`
-	AutoAssignConditions []byte           `json:"auto_assign_conditions"`
-	RetentionDays        *int32           `json:"retention_days"`
-	AutoResolveAfterDays *int32           `json:"auto_resolve_after_days"`
-	CleanupResolvedOnly  bool             `json:"cleanup_resolved_only"`
-	NotificationEnabled  bool             `json:"notification_enabled"`
-	EscalationEnabled    bool             `json:"escalation_enabled"`
-	EscalationAfterHours *int32           `json:"escalation_after_hours"`
-	AlertDelaySeconds    *int32           `json:"alert_delay_seconds"`
-	Metadata             []byte           `json:"metadata"`
-	Category             string           `json:"category"`
-	CheckIntervalMinutes *int32           `json:"check_interval_minutes"`
-	CreatedAt            pgtype.Timestamp `json:"created_at"`
-	UpdatedAt            pgtype.Timestamp `json:"updated_at"`
+	ID                    string           `json:"id"`
+	AlertType             string           `json:"alert_type"`
+	IsEnabled             bool             `json:"is_enabled"`
+	DefaultSeverity       string           `json:"default_severity"`
+	AutoAssignEnabled     bool             `json:"auto_assign_enabled"`
+	AutoAssignUserID      *string          `json:"auto_assign_user_id"`
+	AutoAssignRule        *string          `json:"auto_assign_rule"`
+	AutoAssignConditions  []byte           `json:"auto_assign_conditions"`
+	RetentionDays         *int32           `json:"retention_days"`
+	AutoResolveAfterDays  *int32           `json:"auto_resolve_after_days"`
+	CleanupResolvedOnly   bool             `json:"cleanup_resolved_only"`
+	NotificationEnabled   bool             `json:"notification_enabled"`
+	EscalationEnabled     bool             `json:"escalation_enabled"`
+	EscalationAfterHours  *int32           `json:"escalation_after_hours"`
+	AlertDelaySeconds     *int32           `json:"alert_delay_seconds"`
+	Metadata              []byte           `json:"metadata"`
+	Category              string           `json:"category"`
+	CheckIntervalMinutes  *int32           `json:"check_interval_minutes"`
+	ReminderIntervalHours *int32           `json:"reminder_interval_hours"`
+	CreatedAt             pgtype.Timestamp `json:"created_at"`
+	UpdatedAt             pgtype.Timestamp `json:"updated_at"`
 }
 
 type AlertHistory struct {

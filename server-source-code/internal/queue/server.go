@@ -171,6 +171,11 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 // 3 minutes gives a comfortable margin over the 2-minute schedule.
 const packageStatsRefreshUniqueWindow = 3 * time.Minute
 
+const (
+	updateThresholdUniqueWindow = 2 * time.Minute
+	updateThresholdRetention    = 24 * time.Hour
+)
+
 // minutesToCron converts an interval in minutes to a cron expression.
 // For intervals that divide evenly into 60, it uses */N syntax.
 // For other intervals, it falls back to the most frequent safe schedule.
@@ -198,25 +203,16 @@ func minutesToCron(minutes int) string {
 }
 
 // NewScheduler creates a scheduler with periodic tasks registered.
-// If db is non-nil, check intervals for periodic alert monitors are read from the
-// alert_config table. Changes to the interval take effect on the next server restart.
+// If db is non-nil, the host_down check interval is read from alert_config at startup.
+// The update threshold monitor ticks every minute and applies each context's own intervals.
 func NewScheduler(opts asynq.RedisClientOpt, db *database.DB, log *slog.Logger) (*asynq.Scheduler, error) {
 	scheduler := asynq.NewScheduler(opts, nil)
 
 	// Resolve configurable intervals from alert_config, falling back to defaults.
 	ctx := context.Background()
-	hostDownInterval := 5   // default: every 5 minutes
-	thresholdInterval := 30 // default: every 30 minutes
+	hostDownInterval := 5 // default: every 5 minutes
 	if db != nil {
 		hostDownInterval = alerts.CheckIntervalMinutes(ctx, db, "host_down", hostDownInterval)
-		// Both threshold types share a single scheduler entry; use the smaller configured value.
-		secInterval := alerts.CheckIntervalMinutes(ctx, db, "host_security_updates_exceeded", thresholdInterval)
-		pendInterval := alerts.CheckIntervalMinutes(ctx, db, "host_pending_updates_exceeded", thresholdInterval)
-		if secInterval < pendInterval {
-			thresholdInterval = secInterval
-		} else {
-			thresholdInterval = pendInterval
-		}
 	}
 
 	hostStatusTask := asynq.NewTask(TypeHostStatusMonitor, nil)
@@ -305,7 +301,11 @@ func NewScheduler(opts asynq.RedisClientOpt, db *database.DB, log *slog.Logger) 
 	}
 
 	updateThresholdTask := asynq.NewTask(TypeUpdateThresholdMonitor, nil)
-	if _, err := scheduler.Register(minutesToCron(thresholdInterval), updateThresholdTask, asynq.Queue(QueueUpdateThresholdMonitor), asynq.Retention(AutomationRetention)); err != nil {
+	if _, err := scheduler.Register("* * * * *", updateThresholdTask,
+		asynq.Queue(QueueUpdateThresholdMonitor),
+		asynq.Unique(updateThresholdUniqueWindow),
+		asynq.MaxRetry(0),
+		asynq.Retention(updateThresholdRetention)); err != nil {
 		return nil, err
 	}
 
@@ -323,7 +323,6 @@ func NewScheduler(opts asynq.RedisClientOpt, db *database.DB, log *slog.Logger) 
 
 	log.Info("scheduler: registered all automation tasks",
 		"host_down_interval_min", hostDownInterval,
-		"update_threshold_interval_min", thresholdInterval,
 	)
 	return scheduler, nil
 }

@@ -76,6 +76,11 @@ const PERIODIC_ALERT_TYPES = [
 	"host_pending_updates_exceeded",
 ];
 
+const REMINDER_ALERT_TYPES = [
+	"host_security_updates_exceeded",
+	"host_pending_updates_exceeded",
+];
+
 const getThreshold = (c) => {
 	if (!c?.metadata) return "";
 	const m =
@@ -99,6 +104,7 @@ const configsEqual = (a, b) => {
 		"escalation_after_hours",
 		"alert_delay_seconds",
 		"check_interval_minutes",
+		"reminder_interval_hours",
 	];
 	if (
 		!fields.every((f) => {
@@ -275,6 +281,7 @@ const AlertSettings = () => {
 				"escalation_after_hours",
 				"alert_delay_seconds",
 				"check_interval_minutes",
+				"reminder_interval_hours",
 			].includes(field)
 		) {
 			v = null;
@@ -306,6 +313,7 @@ const AlertSettings = () => {
 				escalation_after_hours: c.escalation_after_hours ?? null,
 				alert_delay_seconds: c.alert_delay_seconds ?? null,
 				check_interval_minutes: c.check_interval_minutes ?? null,
+				reminder_interval_hours: c.reminder_interval_hours ?? null,
 				metadata: c.metadata || null,
 			})),
 		);
@@ -418,6 +426,7 @@ const AlertSettings = () => {
 									<th className={`${TH} w-28`}>Severity</th>
 									<th className={`${TH} w-28`}>Alert delay</th>
 									<th className={`${TH} w-28`}>Frequency</th>
+									<th className={`${TH} w-28`}>Reminder</th>
 									<th className={`${TH} w-24`}>Threshold</th>
 									<th className={`${TH} min-w-[180px]`}>Auto-assign</th>
 									<th className={`${TH} w-28`}>Retention</th>
@@ -433,7 +442,7 @@ const AlertSettings = () => {
 											className="bg-secondary-100 dark:bg-secondary-700 cursor-pointer hover:bg-secondary-200 dark:hover:bg-secondary-600 transition-colors"
 											onClick={() => toggleCategory(category)}
 										>
-											<td colSpan={9} className="px-3 py-2">
+											<td colSpan={10} className="px-3 py-2">
 												<div className="flex items-center gap-2">
 													{isCollapsed ? (
 														<ChevronRight className="h-4 w-4 text-secondary-500 dark:text-secondary-400 shrink-0" />
@@ -560,6 +569,43 @@ const AlertSettings = () => {
 																		<span className="text-xs text-secondary-400">
 																			min
 																		</span>
+																	</div>
+																)}
+															</td>
+															<td className={TD}>
+																{off ||
+																!REMINDER_ALERT_TYPES.includes(c.alert_type) ? (
+																	<span className="text-secondary-400">-</span>
+																) : (
+																	<div>
+																		<div className="flex items-center gap-1">
+																			<input
+																				type="number"
+																				min={0}
+																				className={INPUT_SM}
+																				value={c.reminder_interval_hours ?? ""}
+																				placeholder="0"
+																				onChange={(e) =>
+																					handleFieldChange(
+																						c.alert_type,
+																						"reminder_interval_hours",
+																						e.target.value
+																							? Number.parseInt(
+																									e.target.value,
+																									10,
+																								)
+																							: null,
+																					)
+																				}
+																				disabled={dis}
+																			/>
+																			<span className="text-xs text-secondary-400">
+																				h
+																			</span>
+																		</div>
+																		<p className="mt-0.5 text-xs text-secondary-400">
+																			0 = no reminders
+																		</p>
 																	</div>
 																)}
 															</td>
