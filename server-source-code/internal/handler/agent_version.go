@@ -182,9 +182,9 @@ func (h *AgentVersionHandler) ServeAgentDownload(w http.ResponseWriter, r *http.
 	if osParam == "" {
 		osParam = "linux"
 	}
-	validOss := map[string]bool{"linux": true, "freebsd": true, "windows": true}
+	validOss := map[string]bool{"linux": true, "freebsd": true, "openbsd": true, "windows": true}
 	if !validOss[osParam] {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid os. Must be one of: linux, freebsd, windows"})
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid os. Must be one of: linux, freebsd, openbsd, windows"})
 		return
 	}
 	binaryName, supported := util.AgentBinaryName(osParam, architecture)

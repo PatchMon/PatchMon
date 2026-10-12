@@ -154,8 +154,21 @@ if [ -z "$PATCHMON_URL" ] || [ -z "$API_ID" ] || [ -z "$API_KEY" ]; then
     error "Missing required parameters. This script should be called via the PatchMon web interface."
 fi
 
-# Default PATCHMON_OS to linux if not set (backward compatibility when os param not in URL)
-PATCHMON_OS="${PATCHMON_OS:-linux}"
+# Always verify OS via uname -s to catch cases where the server defaulted to linux
+# (e.g. when ?os= was not passed in the install URL on an OpenBSD or FreeBSD host)
+os_raw=$(uname -s 2>/dev/null || echo "unknown")
+case "$os_raw" in
+    "OpenBSD")
+        PATCHMON_OS="openbsd"
+        ;;
+    "FreeBSD")
+        PATCHMON_OS="freebsd"
+        ;;
+    *)
+        # Trust the server-provided value; fall back to linux
+        PATCHMON_OS="${PATCHMON_OS:-linux}"
+        ;;
+esac
 
 # Auto-detect architecture if not explicitly set
 if [ -z "$ARCHITECTURE" ]; then
@@ -163,7 +176,7 @@ if [ -z "$ARCHITECTURE" ]; then
     
     # Map architecture to supported values
     case "$arch_raw" in
-        "x86_64")
+        "x86_64"|"amd64")
             ARCHITECTURE="amd64"
             ;;
         "i386"|"i686")
