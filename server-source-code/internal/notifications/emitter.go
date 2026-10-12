@@ -138,7 +138,7 @@ func (e *Emitter) emit(ctx context.Context, d *database.DB, tenantHost string, e
 			recoveryGen = e.recoveryGeneration(ctx, tenantHost, cancelKey)
 			if !e.claimPending(ctx, tenantHost, ev.Type, eventRefID(ev), emittedAt, alertDelay+pendingGrace) {
 				if e.log != nil {
-					e.log.Debug("notifications: delayed event skipped, already recovered", "event_type", sanitizeLogValue(ev.Type), "ref", sanitizeLogValue(eventRefID(ev)))
+					e.log.Debug("notifications: delayed event skipped, recovered or already pending", "event_type", sanitizeLogValue(ev.Type), "ref", sanitizeLogValue(eventRefID(ev)))
 				}
 				return
 			}
@@ -490,6 +490,13 @@ end
 var claimPendingScript = redis.NewScript(luaNewer + `
 local rec = redis.call('GET', KEYS[2])
 if rec and newer(rec, ARGV[1]) then return 0 end
+if ARGV[3] == '1' then
+	local p = redis.call('GET', KEYS[1])
+	if p and not (rec and newer(rec, p)) then
+		if redis.call('PTTL', KEYS[1]) < tonumber(ARGV[2]) then redis.call('PEXPIRE', KEYS[1], ARGV[2]) end
+		return 0
+	end
+end
 redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
 return 1
 `)
@@ -511,7 +518,10 @@ return 1
 
 const recoveryRaceTTL = 10 * time.Minute
 
-// claimPending marks a delayed notification pending; false means the ref already recovered after emittedAt.
+// onePerOutage lists delayed event types whose recovery is recorded without an alert row, so a pending marker always clears.
+var onePerOutage = map[string]bool{"host_down": true}
+
+// claimPending marks a delayed notification pending; false means the ref recovered after emittedAt or this outage is already pending.
 func (e *Emitter) claimPending(ctx context.Context, tenantHost, eventType, refID string, emittedAt int64, ttl time.Duration) bool {
 	if e == nil || e.rdb == nil || refID == "" {
 		return true
@@ -520,7 +530,11 @@ func (e *Emitter) claimPending(ctx context.Context, tenantHost, eventType, refID
 		tenantRedisKey(tenantHost, pendingKeyFor(eventType, refID)),
 		tenantRedisKey(tenantHost, cancelKeyFor(eventType, refID)),
 	}
-	n, err := claimPendingScript.Run(ctx, e.rdb, keys, strconv.FormatInt(emittedAt, 10), ttl.Milliseconds()).Int()
+	single := "0"
+	if onePerOutage[eventType] {
+		single = "1"
+	}
+	n, err := claimPendingScript.Run(ctx, e.rdb, keys, strconv.FormatInt(emittedAt, 10), ttl.Milliseconds(), single).Int()
 	if err != nil {
 		if e.log != nil {
 			e.log.Debug("notifications: claim pending failed", "event_type", sanitizeLogValue(eventType), "error", sanitizeLogValue(err.Error()))
@@ -578,6 +592,9 @@ func (e *Emitter) RecordRecovery(ctx context.Context, tenantHost, eventType, ref
 }
 
 func (e *Emitter) recordRecovery(ctx context.Context, tenantHost, eventType, refID string, at time.Time, force bool) {
+	if at.IsZero() {
+		return
+	}
 	keys := []string{
 		tenantRedisKey(tenantHost, pendingKeyFor(eventType, refID)),
 		tenantRedisKey(tenantHost, cancelKeyFor(eventType, refID)),

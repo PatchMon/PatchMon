@@ -277,3 +277,58 @@ func TestRecordRecovery_NeverMovesBackwards(t *testing.T) {
 		t.Fatal("a recovery older than the outage cancelled it")
 	}
 }
+
+func TestClaimPending_OneNotificationPerOutage(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	e := NewEmitter(nil, rdb, nil)
+	ctx := context.Background()
+	base := time.Now()
+	ttl := time.Minute + pendingGrace
+
+	e.mustClaim(t, "", "h1", base.UnixNano(), ttl)
+	mr.FastForward(20 * time.Hour)
+	for i := 1; i <= 3; i++ {
+		if e.claimPending(ctx, "", "host_down", "h1", base.Add(time.Duration(i)*2*time.Minute).UnixNano(), ttl) {
+			t.Fatalf("periodic re-emit %d during the same outage was enqueued again", i)
+		}
+	}
+	if got := mr.TTL(pendingKeyFor("host_down", "h1")); got < ttl-time.Second {
+		t.Errorf("re-emit during the outage did not extend the pending marker: TTL %v", got)
+	}
+
+	e.CancelPending(ctx, "", "host_down", map[string]time.Time{"h1": base.Add(10 * time.Minute)})
+	if !e.claimPending(ctx, "", "host_down", "h1", base.Add(11*time.Minute).UnixNano(), ttl) {
+		t.Fatal("a new outage after the recovery was not enqueued")
+	}
+}
+
+func TestClaimPending_OtherTypesStillReemit(t *testing.T) {
+	t.Parallel()
+	e, _ := newTestEmitter(t)
+	ctx := context.Background()
+	base := time.Now()
+	for i := 0; i < 2; i++ {
+		if !e.claimPending(ctx, "", "host_security_updates_exceeded", "h1", base.Add(time.Duration(i)*time.Minute).UnixNano(), time.Hour) {
+			t.Fatalf("claim %d for a type whose counterpart needs an alert row was refused", i)
+		}
+	}
+}
+
+func TestClaimPending_StaleMarkerAfterRecoveryDoesNotBlock(t *testing.T) {
+	t.Parallel()
+	e, rdb := newTestEmitter(t)
+	ctx := context.Background()
+	base := time.Now()
+	if err := rdb.Set(ctx, pendingKeyFor("host_down", "h1"), strconv.FormatInt(base.UnixNano(), 10), time.Hour).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := rdb.Set(ctx, cancelKeyFor("host_down", "h1"), strconv.FormatInt(base.Add(time.Second).UnixNano(), 10), time.Hour).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !e.claimPending(ctx, "", "host_down", "h1", base.Add(2*time.Second).UnixNano(), time.Hour) {
+		t.Fatal("a marker left behind by an already recovered outage blocked the next outage")
+	}
+}

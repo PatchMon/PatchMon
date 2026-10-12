@@ -196,7 +196,7 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 		}
 	}
 
-	if emit != nil && len(recovered) > 0 && cfg.AlertDelaySeconds != nil && *cfg.AlertDelaySeconds > 0 {
+	if emit != nil && len(recovered) > 0 {
 		emit.CancelPending(ctx, tenantHost, "host_down", recovered)
 	}
 
@@ -286,13 +286,21 @@ func OnDisconnect(ctx context.Context, d *database.DB, apiID string, tenantHost 
 // Called by the agent WebSocket connect handler.
 func OnConnect(ctx context.Context, d *database.DB, apiID string, tenantHost string, emit *notifications.Emitter, log *slog.Logger) {
 	connectedAt := time.Now()
-	enabled, err := IsAlertsEnabled(ctx, d)
-	if err != nil || !enabled {
+	host, err := d.Queries.GetHostByApiID(ctx, apiID)
+	if err != nil {
 		return
 	}
 
-	host, err := d.Queries.GetHostByApiID(ctx, apiID)
-	if err != nil {
+	if emit != nil {
+		if downCfg, _ := GetConfigForType(ctx, d, "host_down"); downCfg != nil && downCfg.AlertDelaySeconds != nil && *downCfg.AlertDelaySeconds > 0 {
+			emit.RecordRecovery(ctx, tenantHost, "host_down", host.ID, connectedAt)
+		} else {
+			emit.CancelPending(ctx, tenantHost, "host_down", map[string]time.Time{host.ID: connectedAt})
+		}
+	}
+
+	enabled, err := IsAlertsEnabled(ctx, d)
+	if err != nil || !enabled {
 		return
 	}
 
@@ -325,11 +333,6 @@ func OnConnect(ctx context.Context, d *database.DB, apiID string, tenantHost str
 	// Emit host_recovered when resolving an active host_down alert (recovery from tracked down state).
 	// If host_down is disabled, emit as a standalone "host up" signal on WebSocket connect.
 	if emit != nil {
-		if downCfg, _ := GetConfigForType(ctx, d, "host_down"); downCfg != nil && downCfg.AlertDelaySeconds != nil && *downCfg.AlertDelaySeconds > 0 {
-			emit.RecordRecovery(ctx, tenantHost, "host_down", host.ID, connectedAt)
-		} else {
-			emit.CancelPending(ctx, tenantHost, "host_down", map[string]time.Time{host.ID: connectedAt})
-		}
 		hn := hostDisplayNameFromRow(host)
 		if hadAlert {
 			emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
