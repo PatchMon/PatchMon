@@ -515,8 +515,7 @@ type Querier interface {
 	// patch_policy_exclusions
 	ListPatchPolicyExclusions(ctx context.Context, patchPolicyID string) ([]ListPatchPolicyExclusionsRow, error)
 	// The 'status' filter accepts an exact status value. The pseudo-value
-	// 'active' matches any in-flight run (queued, pending_validation or running) so UI widgets
-	// that aggregate those two states can link to a single filter.
+	// 'active' matches the in-flight runs that block a host: queued, pending_validation, running.
 	ListPatchRuns(ctx context.Context, arg ListPatchRunsParams) ([]ListPatchRunsRow, error)
 	ListPatchRunsByPackage(ctx context.Context, arg ListPatchRunsByPackageParams) ([]ListPatchRunsByPackageRow, error)
 	ListPatchRunsByStatus(ctx context.Context, hostIds []string) ([]ListPatchRunsByStatusRow, error)
@@ -648,7 +647,6 @@ type Querier interface {
 	// Allow-list, not deny-list: agent credentials must not be able to start a
 	// scheduled, pending_approval or approved run. agent_disconnected lets a recovering agent unwedge the row.
 	UpdatePatchRunStarted(ctx context.Context, id string) error
-	UpdatePatchRunStatus(ctx context.Context, arg UpdatePatchRunStatusParams) error
 	// Agent streams progress chunks during the run, then sends the final authoritative
 	// output on the terminal stage; REPLACE (not append) so the final record is never
 	// a duplicate of the streamed progress.

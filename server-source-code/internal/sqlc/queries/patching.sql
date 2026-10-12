@@ -124,13 +124,9 @@ UPDATE patch_runs SET status = 'cancelled', error_message = $2, completed_at = N
 WHERE id = $1
   AND status NOT IN ('cancelled','timed_out','completed','failed','validated','dry_run_completed');
 
--- name: UpdatePatchRunStatus :exec
-UPDATE patch_runs SET status = $2, updated_at = NOW() WHERE id = $1;
-
 -- name: ListPatchRuns :many
 -- The 'status' filter accepts an exact status value. The pseudo-value
--- 'active' matches any in-flight run (queued, pending_validation or running) so UI widgets
--- that aggregate those two states can link to a single filter.
+-- 'active' matches the in-flight runs that block a host: queued, pending_validation, running.
 SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id

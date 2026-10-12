@@ -745,8 +745,7 @@ type ListPatchRunsRow struct {
 }
 
 // The 'status' filter accepts an exact status value. The pseudo-value
-// 'active' matches any in-flight run (queued, pending_validation or running) so UI widgets
-// that aggregate those two states can link to a single filter.
+// 'active' matches the in-flight runs that block a host: queued, pending_validation, running.
 func (q *Queries) ListPatchRuns(ctx context.Context, arg ListPatchRunsParams) ([]ListPatchRunsRow, error) {
 	rows, err := q.db.Query(ctx, listPatchRuns,
 		arg.HostID,
@@ -2069,20 +2068,6 @@ WHERE id = $1
 // scheduled, pending_approval or approved run. agent_disconnected lets a recovering agent unwedge the row.
 func (q *Queries) UpdatePatchRunStarted(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, updatePatchRunStarted, id)
-	return err
-}
-
-const updatePatchRunStatus = `-- name: UpdatePatchRunStatus :exec
-UPDATE patch_runs SET status = $2, updated_at = NOW() WHERE id = $1
-`
-
-type UpdatePatchRunStatusParams struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
-}
-
-func (q *Queries) UpdatePatchRunStatus(ctx context.Context, arg UpdatePatchRunStatusParams) error {
-	_, err := q.db.Exec(ctx, updatePatchRunStatus, arg.ID, arg.Status)
 	return err
 }
 

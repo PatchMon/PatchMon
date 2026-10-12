@@ -511,12 +511,6 @@ func (s *PatchRunsStore) MarkDispatched(ctx context.Context, id string) error {
 	return err
 }
 
-// UpdateStatus updates patch run status (e.g. for re-queuing when agent offline).
-func (s *PatchRunsStore) UpdateStatus(ctx context.Context, id, status string) error {
-	d := s.db.DB(ctx)
-	return d.Queries.UpdatePatchRunStatus(ctx, db.UpdatePatchRunStatusParams{ID: id, Status: status})
-}
-
 // Cancel transitions a patch run to the cancelled terminal state on a
 // user-initiated stop. Returns the number of rows affected; zero means another
 // caller already terminated the run (status guard). Deliberately does NOT
