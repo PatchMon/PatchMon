@@ -115,8 +115,7 @@ func (m *DNFManager) GetPackages() ([]models.Package, error) {
 		listCmd, cancelList = boundedCommand(collectorTimeout, packageManager, "list", "--installed")
 	}
 	defer cancelList()
-	// OPTIMIZATION: Set minimal environment to reduce overhead
-	listCmd.Env = append(os.Environ(), "LANG=C")
+	listCmd.Env = messagesCEnv(os.Environ())
 	installedOutput, err := listCmd.Output()
 	if err != nil {
 		// An empty inventory reads as "fully patched" in the UI. Fail instead.
@@ -140,6 +139,7 @@ func (m *DNFManager) GetPackages() ([]models.Package, error) {
 	m.logger.Debug("Getting upgradable packages...")
 	checkCmd, cancelCheck := boundedCommand(networkCollectorTimeout, packageManager, "check-update")
 	defer cancelCheck()
+	checkCmd.Env = messagesCEnv(os.Environ())
 	checkOutput, checkErr := checkCmd.Output()
 	if checkErr != nil {
 		// check-update exit codes: 0 none, 100 updates available, anything
@@ -202,7 +202,7 @@ func (m *DNFManager) enrichWithRepoAttribution(packages []models.Package) {
 		}
 	}
 	defer cancel()
-	cmd.Env = append(os.Environ(), "LANG=C")
+	cmd.Env = messagesCEnv(os.Environ())
 
 	output, err := cmd.Output()
 	if err != nil {
@@ -265,6 +265,7 @@ func (m *DNFManager) getSecurityPackages(packageManager string) map[string]bool 
 	runUpdateInfo := func(subcommand string) ([]byte, error) {
 		cmd, cancel := boundedCommand(networkCollectorTimeout, packageManager, "updateinfo", "list", subcommand)
 		defer cancel()
+		cmd.Env = messagesCEnv(os.Environ())
 		return cmd.Output()
 	}
 
@@ -280,7 +281,13 @@ func (m *DNFManager) getSecurityPackages(packageManager string) map[string]bool 
 		return securityPackages
 	}
 
-	// Parse the output to extract package names
+	securityPackages = m.parseSecurityPackages(updateInfoOutput)
+	m.logger.WithField("count", len(securityPackages)).Info("Security packages identified")
+	return securityPackages
+}
+
+func (m *DNFManager) parseSecurityPackages(updateInfoOutput []byte) map[string]bool {
+	securityPackages := make(map[string]bool)
 	scanner := bufio.NewScanner(strings.NewReader(string(updateInfoOutput)))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -320,8 +327,33 @@ func (m *DNFManager) getSecurityPackages(packageManager string) map[string]bool 
 		}
 	}
 
-	m.logger.WithField("count", len(securityPackages)).Info("Security packages identified")
 	return securityPackages
+}
+
+// yum 3 runs on Python 2 and crashes on non-ASCII metadata under a C LC_CTYPE, so only
+// LC_MESSAGES is forced; LC_ALL would override it and is folded into LC_CTYPE instead.
+func messagesCEnv(src []string) []string {
+	env := make([]string, 0, len(src)+2)
+	var lcAll string
+	for _, kv := range src {
+		if v, ok := strings.CutPrefix(kv, "LC_ALL="); ok {
+			lcAll = v
+		}
+	}
+	for _, kv := range src {
+		switch {
+		case strings.HasPrefix(kv, "LC_ALL="),
+			strings.HasPrefix(kv, "LANGUAGE="),
+			strings.HasPrefix(kv, "LC_MESSAGES="),
+			lcAll != "" && strings.HasPrefix(kv, "LC_CTYPE="):
+			continue
+		}
+		env = append(env, kv)
+	}
+	if lcAll != "" {
+		env = append(env, "LC_CTYPE="+lcAll)
+	}
+	return append(env, "LC_MESSAGES=C")
 }
 
 // extractBasePackageName extracts the base package name from a package string
@@ -407,6 +439,7 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 			} else {
 				getCurrentCmd, cancelCurrent = boundedCommand(collectorTimeout, packageManager, "list", "--installed", packageName)
 			}
+			getCurrentCmd.Env = messagesCEnv(os.Environ())
 			getCurrentOutput, err := getCurrentCmd.Output()
 			// Released immediately rather than deferred: this runs once per
 			// upgradable package, so a deferred cancel would accumulate.
