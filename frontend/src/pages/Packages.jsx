@@ -28,6 +28,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import PatchWizard from "../components/PatchWizard";
+import ModalPortal from "../components/ui/ModalPortal";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import { usePageRefresh } from "../hooks/usePageRefresh";
@@ -1317,44 +1318,46 @@ const Packages = () => {
 
 			{/* Description Modal */}
 			{descriptionModal && (
-				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-					<button
-						type="button"
-						onClick={() => setDescriptionModal(null)}
-						className="fixed inset-0 cursor-default"
-						aria-label="Close modal"
-					/>
-					<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-lg w-full mx-4 relative z-10">
-						<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
-							<div className="flex items-center justify-between">
-								<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
-									{descriptionModal.packageName}
-								</h3>
+				<ModalPortal>
+					<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120]">
+						<button
+							type="button"
+							onClick={() => setDescriptionModal(null)}
+							className="fixed inset-0 cursor-default"
+							aria-label="Close modal"
+						/>
+						<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-lg w-full mx-4 relative z-10">
+							<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
+								<div className="flex items-center justify-between">
+									<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+										{descriptionModal.packageName}
+									</h3>
+									<button
+										type="button"
+										onClick={() => setDescriptionModal(null)}
+										className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
+									>
+										<X className="h-5 w-5" />
+									</button>
+								</div>
+							</div>
+							<div className="px-6 py-4">
+								<p className="text-sm text-secondary-700 dark:text-white whitespace-pre-wrap">
+									{descriptionModal.description}
+								</p>
+							</div>
+							<div className="px-6 py-4 border-t border-secondary-200 dark:border-secondary-600 flex justify-end">
 								<button
 									type="button"
 									onClick={() => setDescriptionModal(null)}
-									className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
+									className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700"
 								>
-									<X className="h-5 w-5" />
+									Close
 								</button>
 							</div>
 						</div>
-						<div className="px-6 py-4">
-							<p className="text-sm text-secondary-700 dark:text-white whitespace-pre-wrap">
-								{descriptionModal.description}
-							</p>
-						</div>
-						<div className="px-6 py-4 border-t border-secondary-200 dark:border-secondary-600 flex justify-end">
-							<button
-								type="button"
-								onClick={() => setDescriptionModal(null)}
-								className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700"
-							>
-								Close
-							</button>
-						</div>
 					</div>
-				</div>
+				</ModalPortal>
 			)}
 
 			{/* Flow 3: Patch selected packages across chosen hosts.
@@ -1457,8 +1460,8 @@ const ColumnSettingsModal = ({
 		setDraggedIndex(null);
 	};
 
-	return (
-		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+	const modal = (
+		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120]">
 			<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 w-full max-w-md">
 				<div className="flex justify-between items-center mb-4">
 					<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
@@ -1538,6 +1541,8 @@ const ColumnSettingsModal = ({
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 };
 
 export default Packages;

@@ -24,6 +24,7 @@ import {
 	settingsAPI,
 } from "../../utils/api";
 import { isRenderableAvatarSrc } from "../../utils/avatar";
+import ModalPortal from "../ui/ModalPortal";
 
 const UsersTab = () => {
 	const confirm = useConfirm();
@@ -828,8 +829,8 @@ const AddUserModal = ({ isOpen, onClose, onUserCreated, roles }) => {
 
 	if (!isOpen) return null;
 
-	return (
-		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+	const modal = (
+		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120]">
 			<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 w-full max-w-md">
 				<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
 					Add New User
@@ -998,6 +999,8 @@ const AddUserModal = ({ isOpen, onClose, onUserCreated, roles }) => {
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 };
 
 // Edit User Modal Component
@@ -1076,8 +1079,8 @@ const EditUserModal = ({
 
 	if (!isOpen || !user) return null;
 
-	return (
-		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+	const modal = (
+		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120]">
 			<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 w-full max-w-md">
 				<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
 					Edit User
@@ -1241,6 +1244,8 @@ const EditUserModal = ({
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 };
 
 // Reset Password Modal Component
@@ -1291,8 +1296,8 @@ const ResetPasswordModal = ({
 
 	if (!isOpen) return null;
 
-	return (
-		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+	const modal = (
+		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[120]">
 			<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 w-full max-w-md">
 				<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4">
 					Reset Password for {user.username}
@@ -1386,6 +1391,8 @@ const ResetPasswordModal = ({
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 };
 
 export default UsersTab;

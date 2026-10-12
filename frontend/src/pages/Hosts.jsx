@@ -43,6 +43,7 @@ import HostStatusPills from "../components/HostStatusPills";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import InlineToggle from "../components/InlineToggle";
+import ModalPortal from "../components/ui/ModalPortal";
 import Tooltip from "../components/ui/Tooltip";
 import { usePageRefresh } from "../hooks/usePageRefresh";
 import { useTick } from "../hooks/useTick";
@@ -2744,63 +2745,65 @@ const Hosts = () => {
 
 			{/* Auto-Update Confirmation Dialog */}
 			{autoUpdateDialog.show && (
-				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-					<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
-						<div className="p-6">
-							<div className="flex items-start gap-4">
-								<div className="flex-shrink-0 w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
-									<AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-								</div>
-								<div className="flex-1">
-									<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
-										Global Auto-Updates Disabled
-									</h3>
-									<p className="mt-2 text-sm text-secondary-600 dark:text-white">
-										The master auto-update setting is currently{" "}
-										<strong>disabled</strong> in Settings &gt; Agent Updates.
-									</p>
-									<p className="mt-2 text-sm text-secondary-600 dark:text-white">
-										Enabling auto-update for{" "}
-										<strong>{autoUpdateDialog.hostName}</strong> won't take
-										effect until global auto-updates are enabled.
-									</p>
+				<ModalPortal>
+					<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120]">
+						<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
+							<div className="p-6">
+								<div className="flex items-start gap-4">
+									<div className="flex-shrink-0 w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+										<AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+									</div>
+									<div className="flex-1">
+										<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
+											Global Auto-Updates Disabled
+										</h3>
+										<p className="mt-2 text-sm text-secondary-600 dark:text-white">
+											The master auto-update setting is currently{" "}
+											<strong>disabled</strong> in Settings &gt; Agent Updates.
+										</p>
+										<p className="mt-2 text-sm text-secondary-600 dark:text-white">
+											Enabling auto-update for{" "}
+											<strong>{autoUpdateDialog.hostName}</strong> won't take
+											effect until global auto-updates are enabled.
+										</p>
+									</div>
 								</div>
 							</div>
-						</div>
-						<div className="bg-secondary-50 dark:bg-secondary-700/50 px-6 py-4 flex flex-col sm:flex-row gap-3 sm:justify-end">
-							<button
-								type="button"
-								onClick={() =>
-									setAutoUpdateDialog({
-										show: false,
-										hostId: null,
-										hostName: null,
-									})
-								}
-								className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-								onClick={handleEnableHostOnly}
-								className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
-							>
-								Enable Host Only
-							</button>
-							<button
-								type="button"
-								onClick={handleEnableBoth}
-								disabled={enableGlobalAutoUpdateMutation.isPending}
-								className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								{enableGlobalAutoUpdateMutation.isPending
-									? "Enabling..."
-									: "Enable Both"}
-							</button>
+							<div className="bg-secondary-50 dark:bg-secondary-700/50 px-6 py-4 flex flex-col sm:flex-row gap-3 sm:justify-end">
+								<button
+									type="button"
+									onClick={() =>
+										setAutoUpdateDialog({
+											show: false,
+											hostId: null,
+											hostName: null,
+										})
+									}
+									className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
+								>
+									Cancel
+								</button>
+								<button
+									type="button"
+									onClick={handleEnableHostOnly}
+									className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
+								>
+									Enable Host Only
+								</button>
+								<button
+									type="button"
+									onClick={handleEnableBoth}
+									disabled={enableGlobalAutoUpdateMutation.isPending}
+									className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									{enableGlobalAutoUpdateMutation.isPending
+										? "Enabling..."
+										: "Enable Both"}
+								</button>
+							</div>
 						</div>
 					</div>
-				</div>
+				</ModalPortal>
 			)}
 		</div>
 	);
@@ -2841,8 +2844,8 @@ const BulkAssignModal = ({
 		});
 	};
 
-	return (
-		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+	const modal = (
+		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120]">
 			<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 w-full max-w-md">
 				<div className="flex justify-between items-center mb-4">
 					<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
@@ -2933,6 +2936,8 @@ const BulkAssignModal = ({
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 };
 
 // Bulk Delete Modal Component
@@ -2952,8 +2957,8 @@ const BulkDeleteModal = ({
 		onDelete();
 	};
 
-	return (
-		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+	const modal = (
+		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120]">
 			<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4">
 				<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
 					<div className="flex items-center justify-between">
@@ -3024,6 +3029,8 @@ const BulkDeleteModal = ({
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 };
 
 // Column Settings Modal Component
@@ -3058,8 +3065,8 @@ const ColumnSettingsModal = ({
 		setDraggedIndex(null);
 	};
 
-	return (
-		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+	const modal = (
+		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120] p-4">
 			<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-lg w-full max-h-[85vh] flex flex-col">
 				{/* Header */}
 				<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600 flex-shrink-0">
@@ -3153,6 +3160,8 @@ const ColumnSettingsModal = ({
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 };
 
 export default Hosts;

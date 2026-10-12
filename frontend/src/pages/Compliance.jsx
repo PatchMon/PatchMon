@@ -45,6 +45,7 @@ import {
 	OpenSCAPDistributionDoughnut,
 } from "../components/compliance/widgets";
 import { getDoughnutOptions } from "../components/compliance/widgets/chartOptions";
+import ModalPortal from "../components/ui/ModalPortal";
 import { useTheme } from "../contexts/ThemeContext";
 import { useToast } from "../contexts/ToastContext";
 import { adminHostsAPI, settingsAPI } from "../utils/api";
@@ -1004,209 +1005,213 @@ const Compliance = () => {
 
 			{/* Bulk Scan Modal */}
 			{showBulkScanModal && (
-				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-					<div className="bg-secondary-800 rounded-lg border border-secondary-700 w-full max-w-2xl max-h-[80vh] overflow-hidden">
-						{/* Modal Header */}
-						<div className="flex items-center justify-between p-4 border-b border-secondary-700">
-							<h2 className="text-lg font-semibold text-white">
-								Bulk Compliance Scan
-							</h2>
-							<button
-								onClick={() => {
-									setShowBulkScanModal(false);
-									setBulkScanResult(null);
-								}}
-								className="text-white hover:text-white"
-							>
-								<X className="h-5 w-5" />
-							</button>
-						</div>
-
-						{/* Modal Body */}
-						<div className="p-4 space-y-4 max-h-[60vh] overflow-y-auto">
-							{/* Scan Options */}
-							<div className="space-y-3">
-								<h3 className="text-sm font-medium text-white">Scan Options</h3>
-								<div className="flex flex-wrap gap-4">
-									<div className="flex-1 min-w-[200px]">
-										<label className="block text-xs text-white mb-1">
-											Profile Type
-										</label>
-										<select
-											value={bulkScanOptions.profileType}
-											onChange={(e) =>
-												setBulkScanOptions((prev) => ({
-													...prev,
-													profileType: e.target.value,
-												}))
-											}
-											className="w-full px-3 py-2 bg-secondary-700 border border-secondary-600 rounded-lg text-white text-sm"
-										>
-											<option value="all">All Profiles</option>
-											<option value="openscap">OpenSCAP Only</option>
-											<option value="docker-bench">Docker Bench Only</option>
-										</select>
-									</div>
-									<div className="flex items-center gap-2">
-										<input
-											type="checkbox"
-											id="enableRemediation"
-											checked={bulkScanOptions.enableRemediation}
-											onChange={(e) =>
-												setBulkScanOptions((prev) => ({
-													...prev,
-													enableRemediation: e.target.checked,
-												}))
-											}
-											className="w-4 h-4 rounded bg-secondary-700 border-secondary-600"
-										/>
-										<label
-											htmlFor="enableRemediation"
-											className="text-sm text-white"
-										>
-											Enable Remediation
-										</label>
-									</div>
-								</div>
-							</div>
-
-							{/* Host Selection */}
-							<div className="space-y-3">
-								<div className="flex items-center justify-between">
-									<h3 className="text-sm font-medium text-white">
-										Select Hosts ({selectedHosts.length} of {allHosts.length})
-									</h3>
-									<button
-										onClick={handleSelectAll}
-										className="text-xs text-primary-400 hover:text-primary-300"
-									>
-										{selectedHosts.length === allHosts.length
-											? "Deselect All"
-											: "Select All"}
-									</button>
-								</div>
-								<div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[200px] overflow-y-auto">
-									{allHosts.map((host) => {
-										const reportingState = hasNeverReported(host)
-											? "awaiting"
-											: deriveReportingStateByTime(
-													host.last_update,
-													updateIntervalMinutes,
-												);
-										const dotVariant =
-											reportingState === "awaiting"
-												? {
-														className: "bg-secondary-400",
-														label: "Awaiting first report",
-													}
-												: reportingState === "reporting"
-													? {
-															className: "bg-success-500",
-															label: "Reporting",
-														}
-													: reportingState === "overdue"
-														? {
-																className: "bg-warning-500",
-																label: "Overdue",
-															}
-														: {
-																className: "bg-danger-500",
-																label: "Not reporting",
-															};
-										return (
-											<label
-												key={host.id}
-												className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors ${
-													selectedHosts.includes(host.id)
-														? "bg-primary-900/30 border border-primary-700"
-														: "bg-secondary-700/50 border border-secondary-600 hover:border-secondary-500"
-												}`}
-											>
-												<input
-													type="checkbox"
-													checked={selectedHosts.includes(host.id)}
-													onChange={() => handleToggleHost(host.id)}
-													className="w-4 h-4 rounded bg-secondary-700 border-secondary-600"
-												/>
-												<div className="flex-1 min-w-0">
-													<p className="text-sm font-medium text-white truncate">
-														{host.friendly_name || host.hostname}
-													</p>
-													<p className="text-xs text-white truncate">
-														{host.hostname}
-													</p>
-												</div>
-												<div
-													className={`w-2 h-2 rounded-full flex-shrink-0 ${dotVariant.className}`}
-													title={dotVariant.label}
-												/>
-												<span className="sr-only">{dotVariant.label}</span>
-											</label>
-										);
-									})}
-								</div>
-							</div>
-
-							{/* Results */}
-							{bulkScanResult && (
-								<div
-									className={`p-3 rounded-lg ${bulkScanResult.summary?.failed > 0 ? "bg-yellow-900/30 border border-yellow-700" : "bg-green-900/30 border border-green-700"}`}
+				<ModalPortal>
+					<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120]">
+						<div className="bg-secondary-800 rounded-lg border border-secondary-700 w-full max-w-2xl max-h-[80vh] overflow-hidden">
+							{/* Modal Header */}
+							<div className="flex items-center justify-between p-4 border-b border-secondary-700">
+								<h2 className="text-lg font-semibold text-white">
+									Bulk Compliance Scan
+								</h2>
+								<button
+									onClick={() => {
+										setShowBulkScanModal(false);
+										setBulkScanResult(null);
+									}}
+									className="text-white hover:text-white"
 								>
-									<p
-										className={`text-sm font-medium ${bulkScanResult.summary?.failed > 0 ? "text-yellow-300" : "text-green-300"}`}
-									>
-										{bulkScanResult.message}
-									</p>
-									{bulkScanResult.failed?.length > 0 && (
-										<div className="mt-2 text-xs text-yellow-400">
-											<p>Failed hosts:</p>
-											<ul className="list-disc list-inside">
-												{bulkScanResult.failed.map((f) => (
-													<li key={`failed-${f.hostName}`}>
-														{f.hostName}: {f.error}
-													</li>
-												))}
-											</ul>
-										</div>
-									)}
-								</div>
-							)}
-						</div>
+									<X className="h-5 w-5" />
+								</button>
+							</div>
 
-						{/* Modal Footer */}
-						<div className="flex items-center justify-end gap-3 p-4 border-t border-secondary-700">
-							<button
-								onClick={() => {
-									setShowBulkScanModal(false);
-									setBulkScanResult(null);
-								}}
-								className="px-4 py-2 text-white hover:text-white transition-colors"
-							>
-								Cancel
-							</button>
-							<button
-								onClick={handleBulkScan}
-								disabled={
-									selectedHosts.length === 0 || bulkScanMutation.isPending
-								}
-								className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 disabled:bg-secondary-600 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
-							>
-								{bulkScanMutation.isPending ? (
-									<>
-										<RefreshCw className="h-4 w-4 animate-spin" />
-										Triggering...
-									</>
-								) : (
-									<>
-										<Play className="h-4 w-4" />
-										Scan {selectedHosts.length} Host
-										{selectedHosts.length !== 1 ? "s" : ""}
-									</>
+							{/* Modal Body */}
+							<div className="p-4 space-y-4 max-h-[60vh] overflow-y-auto">
+								{/* Scan Options */}
+								<div className="space-y-3">
+									<h3 className="text-sm font-medium text-white">
+										Scan Options
+									</h3>
+									<div className="flex flex-wrap gap-4">
+										<div className="flex-1 min-w-[200px]">
+											<label className="block text-xs text-white mb-1">
+												Profile Type
+											</label>
+											<select
+												value={bulkScanOptions.profileType}
+												onChange={(e) =>
+													setBulkScanOptions((prev) => ({
+														...prev,
+														profileType: e.target.value,
+													}))
+												}
+												className="w-full px-3 py-2 bg-secondary-700 border border-secondary-600 rounded-lg text-white text-sm"
+											>
+												<option value="all">All Profiles</option>
+												<option value="openscap">OpenSCAP Only</option>
+												<option value="docker-bench">Docker Bench Only</option>
+											</select>
+										</div>
+										<div className="flex items-center gap-2">
+											<input
+												type="checkbox"
+												id="enableRemediation"
+												checked={bulkScanOptions.enableRemediation}
+												onChange={(e) =>
+													setBulkScanOptions((prev) => ({
+														...prev,
+														enableRemediation: e.target.checked,
+													}))
+												}
+												className="w-4 h-4 rounded bg-secondary-700 border-secondary-600"
+											/>
+											<label
+												htmlFor="enableRemediation"
+												className="text-sm text-white"
+											>
+												Enable Remediation
+											</label>
+										</div>
+									</div>
+								</div>
+
+								{/* Host Selection */}
+								<div className="space-y-3">
+									<div className="flex items-center justify-between">
+										<h3 className="text-sm font-medium text-white">
+											Select Hosts ({selectedHosts.length} of {allHosts.length})
+										</h3>
+										<button
+											onClick={handleSelectAll}
+											className="text-xs text-primary-400 hover:text-primary-300"
+										>
+											{selectedHosts.length === allHosts.length
+												? "Deselect All"
+												: "Select All"}
+										</button>
+									</div>
+									<div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[200px] overflow-y-auto">
+										{allHosts.map((host) => {
+											const reportingState = hasNeverReported(host)
+												? "awaiting"
+												: deriveReportingStateByTime(
+														host.last_update,
+														updateIntervalMinutes,
+													);
+											const dotVariant =
+												reportingState === "awaiting"
+													? {
+															className: "bg-secondary-400",
+															label: "Awaiting first report",
+														}
+													: reportingState === "reporting"
+														? {
+																className: "bg-success-500",
+																label: "Reporting",
+															}
+														: reportingState === "overdue"
+															? {
+																	className: "bg-warning-500",
+																	label: "Overdue",
+																}
+															: {
+																	className: "bg-danger-500",
+																	label: "Not reporting",
+																};
+											return (
+												<label
+													key={host.id}
+													className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors ${
+														selectedHosts.includes(host.id)
+															? "bg-primary-900/30 border border-primary-700"
+															: "bg-secondary-700/50 border border-secondary-600 hover:border-secondary-500"
+													}`}
+												>
+													<input
+														type="checkbox"
+														checked={selectedHosts.includes(host.id)}
+														onChange={() => handleToggleHost(host.id)}
+														className="w-4 h-4 rounded bg-secondary-700 border-secondary-600"
+													/>
+													<div className="flex-1 min-w-0">
+														<p className="text-sm font-medium text-white truncate">
+															{host.friendly_name || host.hostname}
+														</p>
+														<p className="text-xs text-white truncate">
+															{host.hostname}
+														</p>
+													</div>
+													<div
+														className={`w-2 h-2 rounded-full flex-shrink-0 ${dotVariant.className}`}
+														title={dotVariant.label}
+													/>
+													<span className="sr-only">{dotVariant.label}</span>
+												</label>
+											);
+										})}
+									</div>
+								</div>
+
+								{/* Results */}
+								{bulkScanResult && (
+									<div
+										className={`p-3 rounded-lg ${bulkScanResult.summary?.failed > 0 ? "bg-yellow-900/30 border border-yellow-700" : "bg-green-900/30 border border-green-700"}`}
+									>
+										<p
+											className={`text-sm font-medium ${bulkScanResult.summary?.failed > 0 ? "text-yellow-300" : "text-green-300"}`}
+										>
+											{bulkScanResult.message}
+										</p>
+										{bulkScanResult.failed?.length > 0 && (
+											<div className="mt-2 text-xs text-yellow-400">
+												<p>Failed hosts:</p>
+												<ul className="list-disc list-inside">
+													{bulkScanResult.failed.map((f) => (
+														<li key={`failed-${f.hostName}`}>
+															{f.hostName}: {f.error}
+														</li>
+													))}
+												</ul>
+											</div>
+										)}
+									</div>
 								)}
-							</button>
+							</div>
+
+							{/* Modal Footer */}
+							<div className="flex items-center justify-end gap-3 p-4 border-t border-secondary-700">
+								<button
+									onClick={() => {
+										setShowBulkScanModal(false);
+										setBulkScanResult(null);
+									}}
+									className="px-4 py-2 text-white hover:text-white transition-colors"
+								>
+									Cancel
+								</button>
+								<button
+									onClick={handleBulkScan}
+									disabled={
+										selectedHosts.length === 0 || bulkScanMutation.isPending
+									}
+									className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 disabled:bg-secondary-600 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors"
+								>
+									{bulkScanMutation.isPending ? (
+										<>
+											<RefreshCw className="h-4 w-4 animate-spin" />
+											Triggering...
+										</>
+									) : (
+										<>
+											<Play className="h-4 w-4" />
+											Scan {selectedHosts.length} Host
+											{selectedHosts.length !== 1 ? "s" : ""}
+										</>
+									)}
+								</button>
+							</div>
 						</div>
 					</div>
-				</div>
+				</ModalPortal>
 			)}
 
 			{/* ==================== OVERVIEW TAB ==================== */}
