@@ -611,6 +611,9 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 	if body.ScheduleOverride == "immediate" {
 		delayMs = 0
 	}
+	if delayMs == 0 {
+		runAt = time.Now()
+	}
 
 	var policyID, policyNamePtr *string
 	var policySnap []byte
@@ -958,6 +961,9 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	// Manual schedule override: "immediate" bypasses policy delay
 	if body.ScheduleOverride == "immediate" {
 		delayMs = 0
+	}
+	if delayMs == 0 {
+		runAt = time.Now()
 	}
 
 	patchRunID := uuid.New().String()
