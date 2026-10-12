@@ -4371,10 +4371,12 @@ Four providers are supported in 2.0, each with a curated list of models:
 
 | Provider | Default model | Additional models |
 |----------|---------------|-------------------|
-| **OpenRouter** | `anthropic/claude-3.5-sonnet` | Claude 3 Haiku, GPT-4o, GPT-4o Mini, Gemini Pro 1.5, Llama 3.1 70B |
-| **Anthropic** | `claude-sonnet-4-20250514` | Claude 3.5 Sonnet, Claude 3.5 Haiku |
+| **OpenRouter** | `anthropic/claude-sonnet-5.5` | Claude Haiku 5.5, GPT-4o, GPT-4o Mini, Gemini 2.5 Flash, Llama 3.1 70B |
+| **Anthropic** | `claude-sonnet-5-5` | Claude Opus 5.5, Claude Haiku 5.5 |
 | **OpenAI** | `gpt-4o-mini` | GPT-4o, GPT-4 Turbo |
-| **Google Gemini** | `gemini-1.5-flash` | Gemini 1.5 Pro, Gemini 2.0 Flash (experimental) |
+| **Google Gemini** | `gemini-2.5-flash-lite` | Gemini 2.5 Flash, Gemini 2.5 Pro |
+
+If a saved model has since been retired by its provider, PatchMon uses that provider's default model instead, so the assistant keeps working without you re-saving the settings.
 
 Pick one provider per PatchMon deployment. To change providers, edit the AI settings. The API key is cleared automatically when you switch, and you'll be asked to enter a new one for the new provider.
 

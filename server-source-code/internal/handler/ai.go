@@ -81,9 +81,13 @@ func (h *AIHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 		apiKeyInvalid = !apiKeyValid
 	}
 
-	aiModel := s.AiModel
 	if s.AiProvider == "" {
 		s.AiProvider = "openrouter"
+	}
+	aiModel := s.AiModel
+	if aiModel != nil {
+		resolved := ai.ResolveModel(s.AiProvider, *aiModel)
+		aiModel = &resolved
 	}
 
 	JSON(w, http.StatusOK, map[string]interface{}{
