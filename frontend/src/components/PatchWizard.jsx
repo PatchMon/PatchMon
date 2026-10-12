@@ -26,6 +26,7 @@ import { useToast } from "../contexts/ToastContext";
 import { formatDate, packagesAPI } from "../utils/api";
 import { patchingAPI, pollDryRunUntilDone } from "../utils/patchingApi";
 import { extraDependencies } from "../utils/patchRun";
+import ModalPortal from "./ui/ModalPortal";
 
 const DRY_RUN_PACKAGE_LIMIT = 5;
 const VALIDATION_CONCURRENCY = 5;
@@ -1021,8 +1022,8 @@ export default function PatchWizard({
 	// step to show — then it's effectively a plain confirm dialog.
 	const showStepIndicator = steps.length > 1;
 
-	return (
-		<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+	const modal = (
+		<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120]">
 			<button
 				type="button"
 				onClick={() => !isPatching && !isValidating && handleClose()}
@@ -2298,4 +2299,6 @@ export default function PatchWizard({
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 }
