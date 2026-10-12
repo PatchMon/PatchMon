@@ -404,6 +404,8 @@ docker compose logs redis
 
 Verify that `REDIS_PASSWORD` in your `.env` is set. The Redis container uses this value in its startup command (`--requirepass`).
 
+At startup the server logs a `connecting to redis` line whose `addr` field shows the Redis address it resolved (for example `redis:6379`), and the same address appears in the `[fatal] redis` line if the connection fails. If it shows `localhost:6379`, `REDIS_HOST` is not reaching the `server` container: check the variable is set in `.env` (or the service's `environment:` block) and recreate the container.
+
 #### Server exits straight after "[migrate] applied successfully"
 
 The server stopped on a fatal startup error, most often Redis being unreachable or rejecting `REDIS_PASSWORD`. Fatal startup errors are always printed to the container output as a line starting `[fatal]`, even when `ENABLE_LOGGING=false`, so check `docker compose logs server` for it.

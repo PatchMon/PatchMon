@@ -80,11 +80,13 @@ func main() {
 	warnDBPoolUndersized(ctx, cfg, store.NewHostsStore(db), slog)
 
 	rdb := redis.NewClient()
+	redisAddr := rdb.Options().Addr
+	slog.Info("connecting to redis", "addr", redisAddr, "db", rdb.Options().DB)
 	if err := redis.Ping(ctx, rdb); err != nil {
-		fatal(slog, "redis", err)
+		fatal(slog, "redis "+redisAddr, err)
 	}
 	defer func() { _ = redis.Close(rdb) }()
-	slog.Info("redis connected")
+	slog.Info("redis connected", "addr", redisAddr)
 
 	var ctxRegistry *hostctx.Registry
 	var poolCache *hostctx.PoolCache
