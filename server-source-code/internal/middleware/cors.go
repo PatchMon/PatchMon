@@ -28,8 +28,8 @@ func newOriginSet(origins []string) originSet {
 	return originSet{origins: origins, hosts: buildAllowedHosts(origins), wildcard: hasWildcard(origins)}
 }
 
-// CORS sets the CORS response headers and rejects browser requests whose host
-// (X-Forwarded-Host, else Host) is outside CORS_ORIGIN; agents and API clients are exempt.
+// CORS sets the CORS response headers and rejects requests whose host
+// (X-Forwarded-Host, else Host) is outside CORS_ORIGIN.
 func CORS(origin string, dynamicResolver OriginResolver) func(http.Handler) http.Handler {
 	static := newOriginSet(ParseOrigins(origin))
 
@@ -55,7 +55,7 @@ func CORS(origin string, dynamicResolver OriginResolver) func(http.Handler) http
 				}
 			}
 
-			if !set.wildcard && isBrowserRequest(r) {
+			if !set.wildcard {
 				if fwd := forwardedHost(r); fwd != "" {
 					if !hostAllowed(set.hosts, fwd) {
 						reflectOrigin := reqOrigin
@@ -103,14 +103,6 @@ func rejectHost(w http.ResponseWriter, reflectOrigin, msg, code string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg, "code": code})
-}
-
-// Sec-Fetch-Mode is only sent to HTTPS and localhost, so plain-HTTP browsers are
-// recognised by Origin, Referer or an HTML navigation; agents and scripts send none.
-func isBrowserRequest(r *http.Request) bool {
-	h := r.Header
-	return h.Get("Sec-Fetch-Mode") != "" || h.Get("Origin") != "" || h.Get("Referer") != "" ||
-		strings.Contains(h.Get("Accept"), "text/html")
 }
 
 // Rightmost entry: an appending proxy puts its own value after whatever the
