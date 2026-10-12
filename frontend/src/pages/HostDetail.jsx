@@ -44,13 +44,7 @@ import React, {
 	useRef,
 	useState,
 } from "react";
-import {
-	Link,
-	useLocation,
-	useNavigate,
-	useParams,
-	useSearchParams,
-} from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import HostStatusPills from "../components/HostStatusPills";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
@@ -65,6 +59,7 @@ import ModalPortal from "../components/ui/ModalPortal";
 import { getRequiredTier } from "../constants/tiers";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
+import { useHostDetailTab } from "../hooks/useHostDetailTab";
 import { usePageRefresh } from "../hooks/usePageRefresh";
 import { useTick } from "../hooks/useTick";
 import {
@@ -121,7 +116,6 @@ const HostDetail = () => {
 	const { hostId } = useParams();
 	const navigate = useNavigate();
 	const location = useLocation();
-	const [searchParams, setSearchParams] = useSearchParams();
 	const queryClient = useQueryClient();
 	const toast = useToast();
 	const { canManageHosts, hasModule } = useAuth();
@@ -130,7 +124,7 @@ const HostDetail = () => {
 	// Get plaintext API key from navigation state (only available immediately after host creation)
 	const plaintextApiKey = location.state?.apiKey;
 	const [showDeleteModal, setShowDeleteModal] = useState(false);
-	const [activeTab, setActiveTab] = useState("host");
+	const [activeTab, handleTabChange] = useHostDetailTab();
 	const [dockerSubTab, setDockerSubTab] = useState("containers");
 	const [patchingRunsSortField, setPatchingRunsSortField] =
 		useState("created_at");
@@ -321,95 +315,6 @@ const HostDetail = () => {
 		queryFn: () => hostGroupsAPI.list().then((res) => res.data),
 		staleTime: 5 * 60 * 1000, // 5 minutes - data stays fresh longer
 	});
-
-	// Tab change handler. Mirror "activity" into ?tab= so the new merged tab is
-	// shareable. Other tabs continue to use location-state navigation only — we
-	// don't want to churn the URL across the dozen pre-existing tabs.
-	const handleTabChange = (tabName) => {
-		setActiveTab(tabName);
-		if (tabName === "activity") {
-			setSearchParams(
-				(prev) => {
-					const next = new URLSearchParams(prev);
-					next.set("tab", "activity");
-					return next;
-				},
-				{ replace: true },
-			);
-		} else if (searchParams.get("tab")) {
-			// Leaving the activity tab — drop the legacy/active tab param so
-			// downstream filter params aren't carried over to other tabs.
-			setSearchParams(
-				(prev) => {
-					const next = new URLSearchParams(prev);
-					next.delete("tab");
-					for (const key of [
-						"direction",
-						"type",
-						"status",
-						"since",
-						"q",
-						"page",
-					]) {
-						next.delete(key);
-					}
-					return next;
-				},
-				{ replace: true },
-			);
-		}
-	};
-
-	// Open requested tab when navigating with state (e.g. from Compliance page link)
-	useEffect(() => {
-		const requestedTab = location.state?.tab;
-		const allowed = [
-			"host",
-			"network",
-			"system",
-			"activity",
-			"notes",
-			"integrations",
-			"reporting",
-			"docker",
-			"compliance",
-			"terminal",
-			"rdp",
-		];
-		if (!requestedTab) return;
-		// Legacy redirects: the old "Package Reports" and "Agent Queue" tabs were
-		// merged into a single "Agent Activity" tab in v2.0.3. Bookmarks shared
-		// in tickets / Slack should still land on something useful.
-		if (requestedTab === "history" || requestedTab === "queue") {
-			setActiveTab("activity");
-			return;
-		}
-		if (allowed.includes(requestedTab)) {
-			setActiveTab(requestedTab);
-		}
-	}, [location.state?.tab]);
-
-	// URL-driven tab redirects: handle ?tab=history and ?tab=queue arriving via
-	// direct links (not just from in-app navigation state). Rewrite the param so
-	// the URL reflects the canonical tab id.
-	useEffect(() => {
-		const urlTab = searchParams.get("tab");
-		if (urlTab === "history" || urlTab === "queue") {
-			setActiveTab("activity");
-			setSearchParams(
-				(prev) => {
-					const next = new URLSearchParams(prev);
-					next.set("tab", "activity");
-					return next;
-				},
-				{ replace: true },
-			);
-			return;
-		}
-		if (urlTab === "activity") {
-			setActiveTab("activity");
-		}
-	}, [searchParams, setSearchParams]);
 
 	// Auto-show credentials modal for new/pending hosts (skip if just arrived from Add Host wizard)
 	useEffect(() => {
