@@ -101,13 +101,12 @@ func (s originSet) allowsDirect(hostPort string) bool {
 	return s.wildcard || hostPort == "" || isLoopback(hostPort) || hostAllowed(s.hosts, hostPort) || s.hosts[hostnameOf(strings.ToLower(hostPort))]
 }
 
-// CORSAllowsHost reports whether the CORS middleware would accept a request for
-// hostPort arriving the same way as r (proxied or direct), using the origin set
-// it applied to r. It returns true when the middleware did not run.
+// CORSAllowsHost reports whether the CORS middleware would accept hostPort for a
+// request arriving like r; it is false when the middleware did not run.
 func CORSAllowsHost(r *http.Request, hostPort string) bool {
 	set, ok := r.Context().Value(corsOriginSetKey{}).(originSet)
 	if !ok {
-		return true
+		return false
 	}
 	if forwardedHost(r) != "" {
 		return set.allowsForwarded(hostPort)
