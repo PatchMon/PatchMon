@@ -38,7 +38,7 @@ SELECT COUNT(*) FROM patch_runs
 WHERE ($1::text = '' OR host_id = $1)
   AND (
     $2::text = ''
-    OR ($2::text = 'active' AND status IN ('queued', 'running'))
+    OR ($2::text = 'active' AND status IN ('queued', 'pending_validation', 'running'))
     OR ($2::text <> 'active' AND status = $2)
   )
   AND ($3::text = '' OR patch_type = $3)
@@ -700,7 +700,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
   AND (
     $2::text = ''
-    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR ($2::text <> 'active' AND pr.status = $2)
   )
   AND ($3::text = '' OR pr.patch_type = $3)
@@ -745,7 +745,7 @@ type ListPatchRunsRow struct {
 }
 
 // The 'status' filter accepts an exact status value. The pseudo-value
-// 'active' matches any in-flight run (queued or running) so UI widgets
+// 'active' matches any in-flight run (queued, pending_validation or running) so UI widgets
 // that aggregate those two states can link to a single filter.
 func (q *Queries) ListPatchRuns(ctx context.Context, arg ListPatchRunsParams) ([]ListPatchRunsRow, error) {
 	rows, err := q.db.Query(ctx, listPatchRuns,
@@ -894,7 +894,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
   AND (
     $2::text = ''
-    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR ($2::text <> 'active' AND pr.status = $2)
   )
   AND ($3::text = '' OR pr.patch_type = $3)
@@ -998,7 +998,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
   AND (
     $2::text = ''
-    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR ($2::text <> 'active' AND pr.status = $2)
   )
   AND ($3::text = '' OR pr.patch_type = $3)
@@ -1102,7 +1102,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
   AND (
     $2::text = ''
-    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR ($2::text <> 'active' AND pr.status = $2)
   )
   AND ($3::text = '' OR pr.patch_type = $3)
@@ -1206,7 +1206,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
   AND (
     $2::text = ''
-    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR ($2::text <> 'active' AND pr.status = $2)
   )
   AND ($3::text = '' OR pr.patch_type = $3)
@@ -1310,7 +1310,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
   AND (
     $2::text = ''
-    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR ($2::text <> 'active' AND pr.status = $2)
   )
   AND ($3::text = '' OR pr.patch_type = $3)
@@ -1414,7 +1414,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
   AND (
     $2::text = ''
-    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR ($2::text <> 'active' AND pr.status = $2)
   )
   AND ($3::text = '' OR pr.patch_type = $3)
@@ -1518,7 +1518,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
   AND (
     $2::text = ''
-    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR ($2::text <> 'active' AND pr.status = $2)
   )
   AND ($3::text = '' OR pr.patch_type = $3)
@@ -1830,6 +1830,24 @@ func (q *Queries) MarkValidationApproved(ctx context.Context, arg MarkValidation
 	return result.RowsAffected(), nil
 }
 
+const requeuePatchRun = `-- name: RequeuePatchRun :execrows
+UPDATE patch_runs SET status = $2, updated_at = NOW()
+WHERE id = $1 AND status IN ('queued', 'pending_validation')
+`
+
+type RequeuePatchRunParams struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+}
+
+func (q *Queries) RequeuePatchRun(ctx context.Context, arg RequeuePatchRunParams) (int64, error) {
+	result, err := q.db.Exec(ctx, requeuePatchRun, arg.ID, arg.Status)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setPatchRunPolicySnapshot = `-- name: SetPatchRunPolicySnapshot :exec
 UPDATE patch_runs SET policy_id = $2, policy_name = $3, policy_snapshot = $4, updated_at = NOW() WHERE id = $1
 `
@@ -2043,13 +2061,12 @@ const updatePatchRunStarted = `-- name: UpdatePatchRunStarted :exec
 UPDATE patch_runs SET status = 'running', started_at = NOW(), completed_at = NULL,
     shell_output = '', packages_affected = NULL, error_message = NULL, updated_at = NOW()
 WHERE id = $1
-  AND status NOT IN ('cancelled','timed_out','completed','failed','validated','dry_run_completed')
+  AND status IN ('queued','pending_validation','running','agent_disconnected')
 `
 
 // Clear dry-run output fields so real-run output starts fresh.
-// Status guard prevents an in-flight agent message from clobbering an
-// already-terminated run (cancelled/timed_out/etc.). agent_disconnected is
-// intentionally NOT in the guard so a recovering agent can unwedge the row.
+// Allow-list, not deny-list: agent credentials must not be able to start a
+// scheduled, pending_approval or approved run. agent_disconnected lets a recovering agent unwedge the row.
 func (q *Queries) UpdatePatchRunStarted(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, updatePatchRunStarted, id)
 	return err

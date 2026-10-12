@@ -1,3 +1,5 @@
+LOCK TABLE patch_runs IN SHARE ROW EXCLUSIVE MODE;
+
 UPDATE patch_runs
 SET status = 'scheduled', updated_at = (NOW() AT TIME ZONE 'UTC')
 WHERE status = 'queued'
@@ -15,7 +17,7 @@ WITH ranked AS (
     SELECT id,
            ROW_NUMBER() OVER (
                PARTITION BY host_id
-               ORDER BY (status = 'running') DESC, updated_at DESC, created_at DESC, id
+               ORDER BY (status = 'running') DESC, (status = 'queued') DESC, updated_at DESC, created_at DESC, id
            ) AS rn
     FROM patch_runs
     WHERE status IN ('queued', 'pending_validation', 'running')

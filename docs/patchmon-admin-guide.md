@@ -1757,7 +1757,7 @@ Another operator already approved or deleted the run while you were looking at i
 
 #### "A patch run is already queued or in progress on this host"
 
-PatchMon allows one queued, validating or running patch run per host at a time, because package managers lock while they work and a second run would fail on the lock. Wait for the current run to finish, or stop or delete it, then start the new one; in a multi-host wizard, busy hosts are reported as failed and the other hosts go ahead. Runs waiting for a policy window show as **Scheduled** and do not block the host. If the host is still busy when the window arrives, the scheduled run is cancelled with the reason "Skipped: another patch run was in progress on this host when the scheduled window arrived". Runs that are not dispatched to the agent within 24 hours of becoming due (for example because the host stayed offline) are marked **Timed out** by the cleanup sweep, so they never block a host indefinitely.
+PatchMon allows one queued, validating or running patch run per host at a time, because package managers lock while they work and a second run would fail on the lock. The blocking run is listed under the **Active** status filter in Runs & History. Wait for it to finish, or stop or delete it, then start the new one; in a multi-host wizard, busy hosts are reported as failed and the other hosts go ahead. Runs waiting for a policy window show as **Scheduled** and do not block the host. If the host is still busy when the window arrives, the scheduled run is cancelled with the reason "Skipped: another patch run was in progress on this host when the scheduled window arrived". Runs that are not dispatched to the agent within 24 hours of becoming due (for example because the host stayed offline) are marked **Timed out** by the cleanup sweep, so they never block a host indefinitely.
 
 ---
 
@@ -2008,7 +2008,7 @@ From the left sidebar, click **Patching** and switch to the **Runs & History** t
 
 Deep-link filters are also supported via URL parameters:
 
-- `/patching?tab=runs&status=active`: queued + running
+- `/patching?tab=runs&status=active`: queued, pending validation and running (the runs that block a new run on the host)
 - `/patching?tab=runs&status=failed`: only failed runs
 - `/patching?tab=runs&status=completed`: only completed runs
 - `/patching?tab=runs&status=pending_approval&type=patch_all`: combined filter
@@ -2045,7 +2045,7 @@ The runs list is sorted by `created_at` descending by default, with newest runs 
 
 Two filters are available above the table:
 
-- **Status**: `All`, `Active (queued + running)`, `Queued`, `Pending validation`, `Pending approval`, `Validated (awaiting approval)`, `Approved`, `Scheduled`, `Running`, `Completed`, `Failed`, `Cancelled`.
+- **Status**: `All`, `Active (queued, validating or running)`, `Queued`, `Pending validation`, `Pending approval`, `Validated (awaiting approval)`, `Approved`, `Scheduled`, `Running`, `Completed`, `Failed`, `Cancelled`.
 - **Type**: `All`, `Patch all`, `Patch package`.
 
 Filters reset the pagination to page 1. Click **Clear filters** to remove both. The selected filters are also encoded in the URL, so you can bookmark or share a filtered view.

@@ -515,7 +515,7 @@ type Querier interface {
 	// patch_policy_exclusions
 	ListPatchPolicyExclusions(ctx context.Context, patchPolicyID string) ([]ListPatchPolicyExclusionsRow, error)
 	// The 'status' filter accepts an exact status value. The pseudo-value
-	// 'active' matches any in-flight run (queued or running) so UI widgets
+	// 'active' matches any in-flight run (queued, pending_validation or running) so UI widgets
 	// that aggregate those two states can link to a single filter.
 	ListPatchRuns(ctx context.Context, arg ListPatchRunsParams) ([]ListPatchRunsRow, error)
 	ListPatchRunsByPackage(ctx context.Context, arg ListPatchRunsByPackageParams) ([]ListPatchRunsByPackageRow, error)
@@ -561,6 +561,7 @@ type Querier interface {
 	// only one of them updates a row here, and the loser must be told so rather
 	// than going on to create a second patch run and enqueue a second task.
 	MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) (int64, error)
+	RequeuePatchRun(ctx context.Context, arg RequeuePatchRunParams) (int64, error)
 	RevokeAllSessionsForUser(ctx context.Context, userID string) error
 	RevokeAllSessionsForUserExcept(ctx context.Context, arg RevokeAllSessionsForUserExceptParams) error
 	RevokeAllTrustedDevicesForUser(ctx context.Context, userID string) error
@@ -644,9 +645,8 @@ type Querier interface {
 	UpdatePatchRunProgress(ctx context.Context, arg UpdatePatchRunProgressParams) error
 	UpdatePatchRunScheduledAt(ctx context.Context, arg UpdatePatchRunScheduledAtParams) error
 	// Clear dry-run output fields so real-run output starts fresh.
-	// Status guard prevents an in-flight agent message from clobbering an
-	// already-terminated run (cancelled/timed_out/etc.). agent_disconnected is
-	// intentionally NOT in the guard so a recovering agent can unwedge the row.
+	// Allow-list, not deny-list: agent credentials must not be able to start a
+	// scheduled, pending_approval or approved run. agent_disconnected lets a recovering agent unwedge the row.
 	UpdatePatchRunStarted(ctx context.Context, id string) error
 	UpdatePatchRunStatus(ctx context.Context, arg UpdatePatchRunStatusParams) error
 	// Agent streams progress chunks during the run, then sends the final authoritative

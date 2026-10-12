@@ -179,6 +179,9 @@ func TestActiveRunMigrationPreparesDataBeforeIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	up := string(b)
+	if !strings.HasPrefix(up, "LOCK TABLE patch_runs IN SHARE ROW EXCLUSIVE MODE;") {
+		t.Error("up migration must lock patch_runs first so an older instance cannot insert a duplicate before the index exists")
+	}
 	idx := strings.Index(up, "CREATE UNIQUE INDEX")
 	for _, step := range []string{
 		"SET status = 'scheduled'",
@@ -189,5 +192,17 @@ func TestActiveRunMigrationPreparesDataBeforeIndex(t *testing.T) {
 		if at < 0 || at > idx {
 			t.Errorf("up migration must run %q before creating the index", step)
 		}
+	}
+}
+
+func TestAgentAndRequeueTransitionsAreAllowListed(t *testing.T) {
+	src := loadPatchingQueries(t)
+	started := namedQuery(t, src, "UpdatePatchRunStarted")
+	if !strings.Contains(started, "status IN ('queued','pending_validation','running','agent_disconnected')") {
+		t.Errorf("UpdatePatchRunStarted must allow-list the statuses an agent may start, got:\n%s", started)
+	}
+	requeue := namedQuery(t, src, "RequeuePatchRun")
+	if !strings.Contains(requeue, "status IN ('queued', 'pending_validation')") {
+		t.Errorf("RequeuePatchRun must only touch runs still awaiting dispatch, got:\n%s", requeue)
 	}
 }

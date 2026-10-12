@@ -752,7 +752,14 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 			return nil
 		}
 
-		_ = h.patchRuns.UpdateStatus(ctx, p.PatchRunID, status)
+		requeued, err := h.patchRuns.Requeue(ctx, p.PatchRunID, status)
+		if err != nil {
+			return err
+		}
+		if !requeued {
+			h.log.Info("run_patch: run status changed, dropping task", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
+			return nil
+		}
 
 		// Use a deterministic retry task ID so only one retry can exist at a time
 		// and the delete handler can cancel it.

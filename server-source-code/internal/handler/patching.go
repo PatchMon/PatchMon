@@ -191,7 +191,12 @@ func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := h.patchRuns.UpdateOutput(r.Context(), patchRunID, host.OSType, body.Stage, body.Output, body.ErrorMessage); err != nil {
+	err = h.patchRuns.UpdateOutput(r.Context(), patchRunID, host.OSType, body.Stage, body.Output, body.ErrorMessage)
+	if errors.Is(err, store.ErrHostHasActivePatchRun) {
+		h.log.Warn("patching: started report ignored, another patch run is active on this host", "patch_run_id", patchRunID)
+		err = nil
+	}
+	if err != nil {
 		h.log.Error("patching: failed to update output", "patch_run_id", patchRunID, "error", err)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to save patch output"})
 		return

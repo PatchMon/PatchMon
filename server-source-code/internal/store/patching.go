@@ -392,10 +392,7 @@ func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, osType, stage, ou
 	d := s.db.DB(ctx)
 	switch stage {
 	case "started":
-		if err := mapActiveRunConflict(d.Queries.UpdatePatchRunStarted(ctx, id)); !errors.Is(err, ErrHostHasActivePatchRun) {
-			return err
-		}
-		return nil
+		return mapActiveRunConflict(d.Queries.UpdatePatchRunStarted(ctx, id))
 	case "progress":
 		if output == "" {
 			return nil
@@ -494,6 +491,17 @@ func (s *PatchRunsStore) SkipScheduledRun(ctx context.Context, id, reason string
 	d := s.db.DB(ctx)
 	_, err := d.Queries.SkipScheduledPatchRun(ctx, db.SkipScheduledPatchRunParams{ID: id, ErrorMessage: &reason})
 	return err
+}
+
+// Requeue resets a run awaiting an offline agent; false means it left the
+// awaiting-dispatch states and its task must be dropped.
+func (s *PatchRunsStore) Requeue(ctx context.Context, id, status string) (bool, error) {
+	d := s.db.DB(ctx)
+	n, err := d.Queries.RequeuePatchRun(ctx, db.RequeuePatchRunParams{ID: id, Status: status})
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // MarkDispatched moves a run to running only if it is still awaiting dispatch.

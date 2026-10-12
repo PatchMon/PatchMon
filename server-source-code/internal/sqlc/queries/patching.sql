@@ -41,13 +41,12 @@ SELECT * FROM patch_runs WHERE id = $1;
 
 -- name: UpdatePatchRunStarted :exec
 -- Clear dry-run output fields so real-run output starts fresh.
--- Status guard prevents an in-flight agent message from clobbering an
--- already-terminated run (cancelled/timed_out/etc.). agent_disconnected is
--- intentionally NOT in the guard so a recovering agent can unwedge the row.
+-- Allow-list, not deny-list: agent credentials must not be able to start a
+-- scheduled, pending_approval or approved run. agent_disconnected lets a recovering agent unwedge the row.
 UPDATE patch_runs SET status = 'running', started_at = NOW(), completed_at = NULL,
     shell_output = '', packages_affected = NULL, error_message = NULL, updated_at = NOW()
 WHERE id = $1
-  AND status NOT IN ('cancelled','timed_out','completed','failed','validated','dry_run_completed');
+  AND status IN ('queued','pending_validation','running','agent_disconnected');
 
 -- name: ActivateScheduledPatchRun :execrows
 UPDATE patch_runs SET status = 'queued', updated_at = NOW()
@@ -56,6 +55,10 @@ WHERE id = $1 AND status = 'scheduled';
 -- name: SkipScheduledPatchRun :execrows
 UPDATE patch_runs SET status = 'cancelled', error_message = $2, completed_at = NOW(), updated_at = NOW()
 WHERE id = $1 AND status = 'scheduled';
+
+-- name: RequeuePatchRun :execrows
+UPDATE patch_runs SET status = $2, updated_at = NOW()
+WHERE id = $1 AND status IN ('queued', 'pending_validation');
 
 -- name: MarkPatchRunDispatched :execrows
 UPDATE patch_runs SET status = 'running', updated_at = NOW()
@@ -126,7 +129,7 @@ UPDATE patch_runs SET status = $2, updated_at = NOW() WHERE id = $1;
 
 -- name: ListPatchRuns :many
 -- The 'status' filter accepts an exact status value. The pseudo-value
--- 'active' matches any in-flight run (queued or running) so UI widgets
+-- 'active' matches any in-flight run (queued, pending_validation or running) so UI widgets
 -- that aggregate those two states can link to a single filter.
 SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
 FROM patch_runs pr
@@ -135,7 +138,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE (sqlc.arg('host_id')::text = '' OR pr.host_id = sqlc.arg('host_id'))
   AND (
     sqlc.arg('status')::text = ''
-    OR (sqlc.arg('status')::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR (sqlc.arg('status')::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR (sqlc.arg('status')::text <> 'active' AND pr.status = sqlc.arg('status'))
   )
   AND (sqlc.arg('patch_type')::text = '' OR pr.patch_type = sqlc.arg('patch_type'))
@@ -150,7 +153,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE (sqlc.arg('host_id')::text = '' OR pr.host_id = sqlc.arg('host_id'))
   AND (
     sqlc.arg('status')::text = ''
-    OR (sqlc.arg('status')::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR (sqlc.arg('status')::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR (sqlc.arg('status')::text <> 'active' AND pr.status = sqlc.arg('status'))
   )
   AND (sqlc.arg('patch_type')::text = '' OR pr.patch_type = sqlc.arg('patch_type'))
@@ -165,7 +168,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE (sqlc.arg('host_id')::text = '' OR pr.host_id = sqlc.arg('host_id'))
   AND (
     sqlc.arg('status')::text = ''
-    OR (sqlc.arg('status')::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR (sqlc.arg('status')::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR (sqlc.arg('status')::text <> 'active' AND pr.status = sqlc.arg('status'))
   )
   AND (sqlc.arg('patch_type')::text = '' OR pr.patch_type = sqlc.arg('patch_type'))
@@ -180,7 +183,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE (sqlc.arg('host_id')::text = '' OR pr.host_id = sqlc.arg('host_id'))
   AND (
     sqlc.arg('status')::text = ''
-    OR (sqlc.arg('status')::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR (sqlc.arg('status')::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR (sqlc.arg('status')::text <> 'active' AND pr.status = sqlc.arg('status'))
   )
   AND (sqlc.arg('patch_type')::text = '' OR pr.patch_type = sqlc.arg('patch_type'))
@@ -195,7 +198,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE (sqlc.arg('host_id')::text = '' OR pr.host_id = sqlc.arg('host_id'))
   AND (
     sqlc.arg('status')::text = ''
-    OR (sqlc.arg('status')::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR (sqlc.arg('status')::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR (sqlc.arg('status')::text <> 'active' AND pr.status = sqlc.arg('status'))
   )
   AND (sqlc.arg('patch_type')::text = '' OR pr.patch_type = sqlc.arg('patch_type'))
@@ -210,7 +213,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE (sqlc.arg('host_id')::text = '' OR pr.host_id = sqlc.arg('host_id'))
   AND (
     sqlc.arg('status')::text = ''
-    OR (sqlc.arg('status')::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR (sqlc.arg('status')::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR (sqlc.arg('status')::text <> 'active' AND pr.status = sqlc.arg('status'))
   )
   AND (sqlc.arg('patch_type')::text = '' OR pr.patch_type = sqlc.arg('patch_type'))
@@ -225,7 +228,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE (sqlc.arg('host_id')::text = '' OR pr.host_id = sqlc.arg('host_id'))
   AND (
     sqlc.arg('status')::text = ''
-    OR (sqlc.arg('status')::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR (sqlc.arg('status')::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR (sqlc.arg('status')::text <> 'active' AND pr.status = sqlc.arg('status'))
   )
   AND (sqlc.arg('patch_type')::text = '' OR pr.patch_type = sqlc.arg('patch_type'))
@@ -240,7 +243,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE (sqlc.arg('host_id')::text = '' OR pr.host_id = sqlc.arg('host_id'))
   AND (
     sqlc.arg('status')::text = ''
-    OR (sqlc.arg('status')::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR (sqlc.arg('status')::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR (sqlc.arg('status')::text <> 'active' AND pr.status = sqlc.arg('status'))
   )
   AND (sqlc.arg('patch_type')::text = '' OR pr.patch_type = sqlc.arg('patch_type'))
@@ -252,7 +255,7 @@ SELECT COUNT(*) FROM patch_runs
 WHERE (sqlc.arg('host_id')::text = '' OR host_id = sqlc.arg('host_id'))
   AND (
     sqlc.arg('status')::text = ''
-    OR (sqlc.arg('status')::text = 'active' AND status IN ('queued', 'running'))
+    OR (sqlc.arg('status')::text = 'active' AND status IN ('queued', 'pending_validation', 'running'))
     OR (sqlc.arg('status')::text <> 'active' AND status = sqlc.arg('status'))
   )
   AND (sqlc.arg('patch_type')::text = '' OR patch_type = sqlc.arg('patch_type'));
