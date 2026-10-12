@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 
 	"patchmon-agent/pkg/models"
@@ -36,19 +35,21 @@ func NewDNFManager(logger *logrus.Logger) *DNFManager {
 // Only these are stripped. Splitting on a dot unconditionally would mangle
 // real names that contain one, e.g. python3.11.
 var rpmArchSuffixes = map[string]bool{
-	"x86_64":  true,
-	"i686":    true,
-	"i586":    true,
-	"i386":    true,
-	"noarch":  true,
-	"aarch64": true,
-	"arm64":   true,
-	"armv7hl": true,
-	"ppc64le": true,
-	"ppc64":   true,
-	"s390x":   true,
-	"riscv64": true,
-	"src":     true,
+	"x86_64":      true,
+	"x86_64_v2":   true,
+	"i686":        true,
+	"i586":        true,
+	"i386":        true,
+	"noarch":      true,
+	"aarch64":     true,
+	"arm64":       true,
+	"armv7hl":     true,
+	"ppc64le":     true,
+	"ppc64":       true,
+	"s390x":       true,
+	"riscv64":     true,
+	"loongarch64": true,
+	"src":         true,
 }
 
 // An RPM EVR is "[epoch:]version-release": it always starts with a digit
@@ -368,10 +369,8 @@ func (m *DNFManager) extractBasePackageName(packageString string) string {
 }
 
 func startsWithVersion(s string) bool {
-	if i := strings.Index(s, ":"); i > 0 {
-		if _, err := strconv.Atoi(s[:i]); err == nil {
-			s = s[i+1:]
-		}
+	if i := strings.Index(s, ":"); i > 0 && strings.Trim(s[:i], "0123456789") == "" {
+		s = s[i+1:]
 	}
 	return s != "" && s[0] >= '0' && s[0] <= '9'
 }

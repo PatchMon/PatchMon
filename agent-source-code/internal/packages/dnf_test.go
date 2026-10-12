@@ -188,6 +188,11 @@ func TestDNFManager_extractBasePackageName(t *testing.T) {
 			expected: "tar",
 		},
 		{
+			name:     "x86_64_v2 arch",
+			input:    "java-17-openjdk-17.0.1-1.el10.x86_64_v2",
+			expected: "java-17-openjdk",
+		},
+		{
 			name:     "amazon linux kernel",
 			input:    "kernel-5.10.29-27.128.amzn2.aarch64",
 			expected: "kernel",
