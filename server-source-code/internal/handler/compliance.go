@@ -599,7 +599,7 @@ func (h *ComplianceHandler) ListProfiles(w http.ResponseWriter, r *http.Request)
 
 // GetDashboard returns the compliance dashboard.
 func (h *ComplianceHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
-	dash, err := h.complianceStore.GetDashboard(r.Context())
+	dash, err := h.complianceStore.GetDashboard(r.Context(), nil)
 	if err != nil {
 		slog.Error("compliance dashboard failed", "error", err)
 		Error(w, http.StatusInternalServerError, "Failed to fetch dashboard data")

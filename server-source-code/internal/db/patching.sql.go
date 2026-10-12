@@ -45,11 +45,13 @@ func (q *Queries) CountPatchRuns(ctx context.Context, arg CountPatchRunsParams) 
 }
 
 const countPatchRunsTotal = `-- name: CountPatchRunsTotal :one
-SELECT COUNT(*) FROM patch_runs WHERE (dry_run = false OR dry_run IS NULL)
+SELECT COUNT(*) FROM patch_runs
+WHERE (dry_run = false OR dry_run IS NULL)
+  AND ($1::text[] IS NULL OR host_id = ANY($1::text[]))
 `
 
-func (q *Queries) CountPatchRunsTotal(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, countPatchRunsTotal)
+func (q *Queries) CountPatchRunsTotal(ctx context.Context, hostIds []string) (int64, error) {
+	row := q.db.QueryRow(ctx, countPatchRunsTotal, hostIds)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -840,7 +842,10 @@ func (q *Queries) ListPatchRunsByPackage(ctx context.Context, arg ListPatchRunsB
 }
 
 const listPatchRunsByStatus = `-- name: ListPatchRunsByStatus :many
-SELECT status, COUNT(*)::int AS count FROM patch_runs WHERE (dry_run = false OR dry_run IS NULL) OR status IN ('pending_validation', 'pending_approval', 'validated') GROUP BY status
+SELECT status, COUNT(*)::int AS count FROM patch_runs
+WHERE ((dry_run = false OR dry_run IS NULL) OR status IN ('pending_validation', 'pending_approval', 'validated'))
+  AND ($1::text[] IS NULL OR host_id = ANY($1::text[]))
+GROUP BY status
 `
 
 type ListPatchRunsByStatusRow struct {
@@ -848,8 +853,8 @@ type ListPatchRunsByStatusRow struct {
 	Count  int32  `json:"count"`
 }
 
-func (q *Queries) ListPatchRunsByStatus(ctx context.Context) ([]ListPatchRunsByStatusRow, error) {
-	rows, err := q.db.Query(ctx, listPatchRunsByStatus)
+func (q *Queries) ListPatchRunsByStatus(ctx context.Context, hostIds []string) ([]ListPatchRunsByStatusRow, error) {
+	rows, err := q.db.Query(ctx, listPatchRunsByStatus, hostIds)
 	if err != nil {
 		return nil, err
 	}
@@ -1602,9 +1607,18 @@ FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE (pr.dry_run = false OR pr.dry_run IS NULL)
+  AND (
+    $1::text[] IS NULL
+    OR pr.host_id = ANY($1::text[])
+  )
 ORDER BY pr.created_at DESC
-LIMIT $1
+LIMIT $2
 `
+
+type ListRecentPatchRunsParams struct {
+	HostIds  []string `json:"host_ids"`
+	RowLimit int32    `json:"row_limit"`
+}
 
 type ListRecentPatchRunsRow struct {
 	ID                  string           `json:"id"`
@@ -1634,8 +1648,8 @@ type ListRecentPatchRunsRow struct {
 	TriggeredByUsername *string          `json:"triggered_by_username"`
 }
 
-func (q *Queries) ListRecentPatchRuns(ctx context.Context, limit int32) ([]ListRecentPatchRunsRow, error) {
-	rows, err := q.db.Query(ctx, listRecentPatchRuns, limit)
+func (q *Queries) ListRecentPatchRuns(ctx context.Context, arg ListRecentPatchRunsParams) ([]ListRecentPatchRunsRow, error) {
+	rows, err := q.db.Query(ctx, listRecentPatchRuns, arg.HostIds, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}

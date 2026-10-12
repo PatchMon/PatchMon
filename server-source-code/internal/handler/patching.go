@@ -365,7 +365,7 @@ func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Reques
 
 // Dashboard returns GET /patching/dashboard.
 func (h *PatchingHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
-	total, byStatus, recent, active, err := h.patchRuns.GetDashboard(r.Context())
+	total, byStatus, recent, active, err := h.patchRuns.GetDashboard(r.Context(), nil)
 	if err != nil {
 		h.log.Error("patching: dashboard error", "error", err)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load patching dashboard"})

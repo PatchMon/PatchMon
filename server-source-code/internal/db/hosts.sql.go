@@ -64,10 +64,11 @@ func (q *Queries) CountHosts(ctx context.Context) (int64, error) {
 const countUnscannedHosts = `-- name: CountUnscannedHosts :one
 SELECT COUNT(*) FROM hosts h
 WHERE NOT EXISTS (SELECT 1 FROM compliance_scans cs WHERE cs.host_id = h.id)
+  AND ($1::text[] IS NULL OR h.id = ANY($1::text[]))
 `
 
-func (q *Queries) CountUnscannedHosts(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, countUnscannedHosts)
+func (q *Queries) CountUnscannedHosts(ctx context.Context, hostIds []string) (int64, error) {
+	row := q.db.QueryRow(ctx, countUnscannedHosts, hostIds)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
