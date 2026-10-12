@@ -17,6 +17,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/hibiken/asynq"
+	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -84,6 +85,12 @@ func (e *Emitter) EmitEvent(ctx context.Context, d *database.DB, tenantHost stri
 }
 
 func (e *Emitter) emit(ctx context.Context, d *database.DB, tenantHost string, ev Event) {
+	if target, ok := cancelPairs[ev.Type]; ok {
+		if refID := eventRefID(ev); refID != "" {
+			e.CancelPending(ctx, tenantHost, target, map[string]time.Time{refID: time.Now()})
+		}
+	}
+
 	routes, err := d.Queries.ListNotificationRoutesForEvent(ctx, ev.Type)
 	if err != nil {
 		if e.log != nil {
@@ -97,7 +104,11 @@ func (e *Emitter) emit(ctx context.Context, d *database.DB, tenantHost string, e
 
 	// Check alert_config: if the event type is explicitly disabled, skip all notifications.
 	var alertDelay time.Duration
-	if cfg, err := d.Queries.GetAlertConfigByType(ctx, ev.Type); err == nil {
+	cfg, err := d.Queries.GetAlertConfigByType(ctx, ev.Type)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) && e.log != nil {
+		e.log.Debug("notifications: alert config lookup failed, sending without delay", "event_type", sanitizeLogValue(ev.Type), "error", sanitizeLogValue(err.Error()))
+	}
+	if err == nil {
 		if !cfg.IsEnabled {
 			if e.log != nil {
 				e.log.Debug("notifications: event type disabled in alert lifecycle", "event_type", ev.Type)
@@ -113,12 +124,14 @@ func (e *Emitter) emit(ctx context.Context, d *database.DB, tenantHost string, e
 	// Inject app_link into metadata so formatters can render clickable links.
 	ev.Metadata = e.injectAppLink(ctx, d, ev)
 
-	// If this event cancels a delayed counterpart (e.g. host_recovered cancels host_down),
-	// set a cancel key so the delayed notification is suppressed when it processes.
-	if e.rdb != nil {
-		if cancel := cancelKeyForEvent(ev); cancel != "" {
-			ttl := 10 * time.Minute // keep cancel key long enough to outlive any delay
-			_ = e.rdb.Set(ctx, tenantRedisKey(tenantHost, cancel), "1", ttl).Err()
+	var cancelKey, recoveryGen string
+	var emittedAt int64
+	if alertDelay > 0 {
+		cancelKey = delayedCancelKey(ev)
+		emittedAt = time.Now().UnixNano()
+		if cancelKey != "" {
+			recoveryGen = e.recoveryGeneration(ctx, tenantHost, cancelKey)
+			e.markPending(ctx, tenantHost, ev.Type, eventRefID(ev), emittedAt, alertDelay+pendingGrace)
 		}
 	}
 
@@ -171,7 +184,7 @@ func (e *Emitter) emit(ctx context.Context, d *database.DB, tenantHost string, e
 		if !matchRulesOK(row.MatchRules, ev.Metadata, ev.Type) {
 			continue
 		}
-		fp := fingerprint(ev, row.DestinationID)
+		fp := fingerprint(ev, row.DestinationID, recoveryGen)
 		if e.rdb != nil && !e.tryDedup(tenantHost, fp) {
 			continue
 		}
@@ -197,13 +210,8 @@ func (e *Emitter) emit(ctx context.Context, d *database.DB, tenantHost string, e
 		}
 		if alertDelay > 0 {
 			payload.Delayed = true
-			payload.CancelKey = delayedCancelKey(ev)
-			// Clear any stale cancel key from a previous cycle so it doesn't
-			// suppress this new delayed notification. If the counterpart event
-			// fires *after* this enqueue it will set a fresh key.
-			if e.rdb != nil && payload.CancelKey != "" {
-				_ = e.rdb.Del(ctx, tenantRedisKey(tenantHost, payload.CancelKey)).Err()
-			}
+			payload.CancelKey = cancelKey
+			payload.EmittedAt = emittedAt
 		}
 		task, err := NewNotificationDeliverTask(payload)
 		if err != nil {
@@ -237,7 +245,7 @@ func (e *Emitter) EnqueueToDestination(ctx context.Context, d *database.DB, tena
 	if !dest.Enabled {
 		return ErrDestinationDisabled
 	}
-	fp := fingerprint(ev, destinationID)
+	fp := fingerprint(ev, destinationID, "")
 	if e.rdb != nil && !e.tryDedup(tenantHost, fp) {
 		return nil
 	}
@@ -383,9 +391,12 @@ func intFromInterface(v interface{}) int {
 	}
 }
 
-func fingerprint(ev Event, destinationID string) string {
+func fingerprint(ev Event, destinationID, recoveryGen string) string {
 	bucket := time.Now().Unix() / 120
 	raw := fmt.Sprintf("%s|%s|%s|%d", ev.Type, ev.ReferenceID, destinationID, bucket)
+	if recoveryGen != "" {
+		raw += "|" + recoveryGen
+	}
 	h := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(h[:])
 }
@@ -433,41 +444,111 @@ var cancelPairs = map[string]string{
 	"host_pending_updates_resolved":  "host_pending_updates_exceeded",
 }
 
-// cancelKeyForEvent returns the Redis cancel key to set when this event fires,
-// suppressing a delayed counterpart. Returns "" if this event doesn't cancel anything.
-func cancelKeyForEvent(ev Event) string {
-	target, ok := cancelPairs[ev.Type]
-	if !ok {
-		return ""
+const pendingGrace = 10 * time.Minute
+
+func eventRefID(ev Event) string {
+	if ev.ReferenceID != "" {
+		return ev.ReferenceID
 	}
-	// Use reference_id (host ID) to scope cancellation to the specific resource.
-	refID := ev.ReferenceID
-	if refID == "" {
-		refID = metadataString(ev.Metadata, "host_id")
-	}
-	if refID == "" {
-		return ""
-	}
-	return fmt.Sprintf("notif:cancel:%s:%s", target, refID)
+	return metadataString(ev.Metadata, "host_id")
 }
 
-// delayedCancelKey returns the Redis key that, if set, means this delayed notification should be suppressed.
+func cancelKeyFor(eventType, refID string) string {
+	return fmt.Sprintf("notif:cancel:%s:%s", eventType, refID)
+}
+
+func pendingKeyFor(eventType, refID string) string {
+	return fmt.Sprintf("notif:pending:%s:%s", eventType, refID)
+}
+
+// delayedCancelKey returns the Redis key whose value, a recovery timestamp, suppresses this delayed notification.
 func delayedCancelKey(ev Event) string {
-	refID := ev.ReferenceID
-	if refID == "" {
-		refID = metadataString(ev.Metadata, "host_id")
-	}
+	refID := eventRefID(ev)
 	if refID == "" {
 		return ""
 	}
-	return fmt.Sprintf("notif:cancel:%s:%s", ev.Type, refID)
+	return cancelKeyFor(ev.Type, refID)
 }
 
-// IsDelayedCancelled checks if a delayed notification has been cancelled by a counterpart event.
-func IsDelayedCancelled(rdb *redis.Client, tenantHost, cancelKey string) bool {
+func (e *Emitter) markPending(ctx context.Context, tenantHost, eventType, refID string, emittedAt int64, ttl time.Duration) {
+	if e == nil || e.rdb == nil || refID == "" {
+		return
+	}
+	_ = e.rdb.Set(ctx, tenantRedisKey(tenantHost, pendingKeyFor(eventType, refID)), strconv.FormatInt(emittedAt, 10), ttl).Err()
+}
+
+func (e *Emitter) recoveryGeneration(ctx context.Context, tenantHost, cancelKey string) string {
+	if e == nil || e.rdb == nil {
+		return ""
+	}
+	val, err := e.rdb.Get(ctx, tenantRedisKey(tenantHost, cancelKey)).Result()
+	if err != nil {
+		return ""
+	}
+	return val
+}
+
+// CancelPending records a recovery time for each ref that has a pending delayed notification.
+func (e *Emitter) CancelPending(ctx context.Context, tenantHost, eventType string, recoveredAt map[string]time.Time) {
+	if e == nil || e.rdb == nil || len(recoveredAt) == 0 {
+		return
+	}
+	refIDs := make([]string, 0, len(recoveredAt))
+	for id := range recoveredAt {
+		refIDs = append(refIDs, id)
+	}
+	pipe := e.rdb.Pipeline()
+	ttls := make([]*redis.DurationCmd, len(refIDs))
+	current := make([]*redis.StringCmd, len(refIDs))
+	for i, id := range refIDs {
+		ttls[i] = pipe.PTTL(ctx, tenantRedisKey(tenantHost, pendingKeyFor(eventType, id)))
+		current[i] = pipe.Get(ctx, tenantRedisKey(tenantHost, cancelKeyFor(eventType, id)))
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		if e.log != nil {
+			e.log.Debug("notifications: pending lookup failed", "event_type", sanitizeLogValue(eventType), "error", sanitizeLogValue(err.Error()))
+		}
+		return
+	}
+	set := e.rdb.Pipeline()
+	queued := 0
+	for i, id := range refIDs {
+		ttl, err := ttls[i].Result()
+		if err != nil || ttl <= 0 {
+			continue
+		}
+		at := recoveredAt[id].UnixNano()
+		if prev, err := current[i].Int64(); err == nil && prev >= at {
+			continue
+		}
+		set.Set(ctx, tenantRedisKey(tenantHost, cancelKeyFor(eventType, id)), strconv.FormatInt(at, 10), ttl+pendingGrace)
+		queued++
+	}
+	if queued == 0 {
+		return
+	}
+	if _, err := set.Exec(ctx); err != nil && e.log != nil {
+		e.log.Debug("notifications: cancel pending failed", "event_type", sanitizeLogValue(eventType), "error", sanitizeLogValue(err.Error()))
+	}
+}
+
+// IsDelayedCancelled reports whether the resource recovered after this delayed notification
+// was emitted. A zero emittedAt comes from a payload queued before recovery timestamps existed.
+func IsDelayedCancelled(rdb *redis.Client, tenantHost, cancelKey string, emittedAt int64) bool {
 	if rdb == nil || cancelKey == "" {
 		return false
 	}
 	val, err := rdb.Get(context.Background(), tenantRedisKey(tenantHost, cancelKey)).Result()
-	return err == nil && val == "1"
+	if err != nil || val == "" {
+		return false
+	}
+	if emittedAt == 0 {
+		return true
+	}
+	recoveredAt, err := strconv.ParseInt(val, 10, 64)
+	return err == nil && recoveredAt > emittedAt
+}
+
+func sanitizeLogValue(s string) string {
+	return strings.NewReplacer("\n", " ", "\r", " ").Replace(s)
 }
