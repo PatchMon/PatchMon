@@ -18,6 +18,11 @@ func TestAdvisoryIDRe(t *testing.T) {
 		{"centos", "CESA-2025:0001", true},
 		{"oracle dash separator", "ELSA-2025-1234", true},
 		{"fedora style", "FEDORA-2025:9999", true},
+		{"fedora hex", "FEDORA-2026-044e56d9ff", true},
+		{"fedora hex leading letter", "FEDORA-2026-abc1234567", true},
+		{"amazon linux 2", "ALAS2-2023-1957", true},
+		{"amazon linux 2023", "ALAS2023-2024-512", true},
+		{"dnf5 header", "Name", false},
 
 		{"summary header", "Updates", false},
 		{"metadata header", "Last", false},
