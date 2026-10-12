@@ -116,6 +116,7 @@ func (d *Integration) Collect(ctx context.Context) (*models.IntegrationData, err
 		d.logger.WithError(err).Warn("Failed to collect containers")
 	} else {
 		dockerData.Containers = containers
+		dockerData.Collected = append(dockerData.Collected, "containers")
 		d.logger.WithField("count", len(containers)).Info("Collected containers")
 	}
 
@@ -125,6 +126,7 @@ func (d *Integration) Collect(ctx context.Context) (*models.IntegrationData, err
 		d.logger.WithError(err).Warn("Failed to collect images")
 	} else {
 		dockerData.Images = images
+		dockerData.Collected = append(dockerData.Collected, "images")
 		d.logger.WithField("count", len(images)).Info("Collected images")
 	}
 
@@ -134,6 +136,7 @@ func (d *Integration) Collect(ctx context.Context) (*models.IntegrationData, err
 		d.logger.WithError(err).Warn("Failed to collect volumes")
 	} else {
 		dockerData.Volumes = volumes
+		dockerData.Collected = append(dockerData.Collected, "volumes")
 		d.logger.WithField("count", len(volumes)).Info("Collected volumes")
 	}
 
@@ -143,6 +146,7 @@ func (d *Integration) Collect(ctx context.Context) (*models.IntegrationData, err
 		d.logger.WithError(err).Warn("Failed to collect networks")
 	} else {
 		dockerData.Networks = networks
+		dockerData.Collected = append(dockerData.Collected, "networks")
 		d.logger.WithField("count", len(networks)).Info("Collected networks")
 	}
 
