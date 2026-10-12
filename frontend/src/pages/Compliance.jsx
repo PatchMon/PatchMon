@@ -48,6 +48,7 @@ import { getDoughnutOptions } from "../components/compliance/widgets/chartOption
 import ModalPortal from "../components/ui/ModalPortal";
 import { useTheme } from "../contexts/ThemeContext";
 import { useToast } from "../contexts/ToastContext";
+import { useTabParam } from "../hooks/useTabParam";
 import { adminHostsAPI, settingsAPI } from "../utils/api";
 import { complianceAPI } from "../utils/complianceApi";
 import { hostComplianceStatus } from "../utils/complianceStatus";
@@ -137,30 +138,45 @@ const Compliance = () => {
 	});
 
 	const [scanResultsFilters, setScanResultsFilters] = useState(null);
+	useTabParam(activeTab);
 
-	// Sync tab and filters on actual URL navigation (not in-page tab clicks)
+	const urlTab = searchParams.get("tab");
 	useEffect(() => {
-		const params = new URLSearchParams(location.search);
-		const tab = params.get("tab");
-		if (tab && COMPLIANCE_TABS.some((t) => t.id === tab)) {
-			setActiveTab(tab);
+		if (urlTab && COMPLIANCE_TABS.some((t) => t.id === urlTab)) {
+			setActiveTab(urlTab);
 		}
-		const profileType = params.get("profile_type");
-		if (profileType && ["openscap", "docker-bench"].includes(profileType)) {
-			setProfileTypeFilter(profileType);
+	}, [urlTab]);
+
+	const urlProfileType = searchParams.get("profile_type");
+	useEffect(() => {
+		if (
+			urlProfileType &&
+			["openscap", "docker-bench"].includes(urlProfileType)
+		) {
+			setProfileTypeFilter(urlProfileType);
 		}
-	}, [location.search]);
+	}, [urlProfileType]);
 
 	// Handle tab navigation and filters from external links (e.g. host compliance cards)
+	const requestedTab = location.state?.complianceTab;
+	const requestedFilters = location.state?.scanResultsFilters;
 	useEffect(() => {
-		const requested = location.state?.complianceTab;
-		if (requested && COMPLIANCE_TABS.some((t) => t.id === requested)) {
-			setActiveTab(requested);
+		if (requestedTab && COMPLIANCE_TABS.some((t) => t.id === requestedTab)) {
+			setActiveTab(requestedTab);
+			// Must also write the URL, or useTabParam's write of the previous tab wins and the two loop.
+			setSearchParams(
+				(prev) => {
+					const next = new URLSearchParams(prev);
+					next.set("tab", requestedTab);
+					return next;
+				},
+				{ replace: true },
+			);
 		}
-		if (location.state?.scanResultsFilters) {
-			setScanResultsFilters(location.state.scanResultsFilters);
+		if (requestedFilters) {
+			setScanResultsFilters(requestedFilters);
 		}
-	}, [location.state?.complianceTab, location.state?.scanResultsFilters]);
+	}, [requestedTab, requestedFilters, setSearchParams]);
 	const [showBulkScanModal, setShowBulkScanModal] = useState(false);
 	const [selectedHosts, setSelectedHosts] = useState([]);
 	const [bulkScanOptions, setBulkScanOptions] = useState({

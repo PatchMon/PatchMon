@@ -43,6 +43,7 @@ import { getRequiredTier } from "../constants/tiers";
 import { useAuth } from "../contexts/AuthContext";
 import { useConfirm } from "../contexts/ConfirmContext";
 import { useToast } from "../contexts/ToastContext";
+import { searchWithoutTab, useTabParam } from "../hooks/useTabParam";
 import {
 	adminUsersAPI,
 	alertsAPI,
@@ -153,18 +154,22 @@ const Reporting = () => {
 		};
 	}, [searchTerm]);
 
-	// Sync tab and filters on actual URL navigation (not in-page tab clicks)
+	useTabParam(activeTab);
+
 	useEffect(() => {
-		const params = new URLSearchParams(location.search);
-		const tab = params.get("tab");
-		if (tab && VALID_TABS.has(tab)) {
-			setActiveTab(tab);
+		if (urlTab && VALID_TABS.has(urlTab)) {
+			setActiveTab(urlTab);
 		}
+	}, [urlTab]);
+
+	const filterSearch = searchWithoutTab(location.search);
+	useEffect(() => {
+		const params = new URLSearchParams(filterSearch);
 		setSeverityFilter(params.get("severity") || "all");
 		setStatusFilter(params.get("status") || "all");
 		setTypeFilter(params.get("type") || "all");
 		setAssignmentFilter(params.get("assignment") || "all");
-	}, [location.search]);
+	}, [filterSearch]);
 
 	const tabs = [
 		{ id: "overview", name: "Overview", icon: LayoutDashboard },

@@ -38,6 +38,7 @@ import { useGlobalRefresh } from "../hooks/usePageRefresh";
 import { alertsAPI, dashboardAPI, settingsAPI, versionAPI } from "../utils/api";
 import { isRenderableAvatarSrc } from "../utils/avatar";
 import { resolveLogoPath } from "../utils/logoPaths";
+import { isNavChildActive } from "../utils/navActive";
 import { prefetchRoute } from "../utils/routePrefetch";
 import BuyMeACoffeeIcon from "./BuyMeACoffeeIcon";
 import { useCommunityLinks } from "./CommunityLinks";
@@ -957,9 +958,11 @@ const Layout = ({ children }) => {
 																							<Link
 																								to={child.href}
 																								className={`text-sm py-2 px-2 rounded transition-colors min-h-[44px] flex items-center gap-2 ${
-																									location.pathname +
-																										location.search ===
-																									child.href
+																									isNavChildActive(
+																										location,
+																										subItem,
+																										child,
+																									)
 																										? "text-primary-600 dark:text-primary-400 font-medium"
 																										: "text-secondary-500 dark:text-white hover:text-secondary-900 dark:hover:text-primary-400"
 																								}`}
@@ -1444,9 +1447,11 @@ const Layout = ({ children }) => {
 																								<Link
 																									to={child.href}
 																									className={`text-[13px] py-1 px-2 rounded transition-colors flex items-center gap-2 ${
-																										location.pathname +
-																											location.search ===
-																										child.href
+																										isNavChildActive(
+																											location,
+																											subItem,
+																											child,
+																										)
 																											? "text-primary-600 dark:text-primary-400 font-medium"
 																											: "text-secondary-500 dark:text-white hover:text-secondary-900 dark:hover:text-primary-400"
 																									}`}
