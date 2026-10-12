@@ -152,10 +152,11 @@ type thresholdDecision struct {
 	resolve  bool
 }
 
-func decideThreshold(count, threshold int, hasAlert, entered, reminderDue bool) thresholdDecision {
+func decideThreshold(count, threshold int, hasAlert, silenced, entered, reminderDue bool) thresholdDecision {
 	if count <= threshold {
 		return thresholdDecision{resolve: hasAlert}
 	}
+	reminderDue = reminderDue && (!hasAlert || !silenced)
 	return thresholdDecision{
 		touch:    hasAlert,
 		notify:   (entered && !hasAlert) || reminderDue,
@@ -175,10 +176,13 @@ func exceededHostIDs(hostRows []db.Host, countByHost map[string]db.GetPendingUpd
 
 func evaluateThreshold(ctx context.Context, d *database.DB, tenantHost string, emit *notifications.Emitter, chk dueThresholdCheck, hostRows []db.Host, countByHost map[string]db.GetPendingUpdateCountsPerHostRow, now time.Time) (int, bool, error) {
 	threshold := parseThreshold(chk.cfg, chk.defaultThreshold)
-	alertsByHostID := buildAlertsByHostID(ctx, d, chk.alertType)
+	alertsByHostID, err := activeAlertsByHostID(ctx, d, chk.alertType)
+	if err != nil {
+		return 0, false, err
+	}
 
 	exceeded := exceededHostIDs(hostRows, countByHost, chk.count, threshold)
-	synced, err := emit.SyncConditions(ctx, tenantHost, chk.alertType, exceeded, reminderInterval(chk.cfg), now)
+	synced, err := emit.SyncConditions(ctx, tenantHost, chk.alertType, exceeded, reminderInterval(chk.cfg), silencedHostIDs(alertsByHostID), now)
 	if err != nil {
 		return 0, false, err
 	}
@@ -201,9 +205,10 @@ func evaluateThreshold(ctx context.Context, d *database.DB, tenantHost string, e
 		}
 		n := chk.count(countByHost[host.ID])
 		hostName := hostDisplayName(host)
-		alertID, hasAlert := alertsByHostID[host.ID]
+		active, hasAlert := alertsByHostID[host.ID]
+		alertID := active.id
 
-		decision := decideThreshold(n, threshold, hasAlert, isNew[host.ID], remind[host.ID])
+		decision := decideThreshold(n, threshold, hasAlert, active.silenced, isNew[host.ID], remind[host.ID])
 		if decision.touch {
 			_ = d.Queries.UpdateAlert(ctx, alertID)
 		}
@@ -285,22 +290,37 @@ func thresholdInterval(cfg *store.AlertConfigWithUser) time.Duration {
 	return time.Duration(minutes) * time.Minute
 }
 
-// buildAlertsByHostID returns a map of host_id → alert_id for active alerts of the given type.
-func buildAlertsByHostID(ctx context.Context, d *database.DB, alertType string) map[string]string {
-	m := make(map[string]string)
-	activeAlerts, _ := d.Queries.ListActiveAlertsByType(ctx, alertType)
-	for _, a := range activeAlerts {
+type activeThresholdAlert struct {
+	id       string
+	silenced bool
+}
+
+func activeAlertsByHostID(ctx context.Context, d *database.DB, alertType string) (map[string]activeThresholdAlert, error) {
+	rows, err := store.NewAlertsStore(d).ActiveByTypeWithState(ctx, alertType)
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]activeThresholdAlert, len(rows))
+	for _, a := range rows {
 		var meta map[string]interface{}
 		if len(a.Metadata) > 0 {
 			_ = json.Unmarshal(a.Metadata, &meta)
 		}
-		if meta != nil {
-			if hid, ok := meta["host_id"].(string); ok {
-				m[hid] = a.ID
-			}
+		if hid, ok := meta["host_id"].(string); ok {
+			m[hid] = activeThresholdAlert{id: a.ID, silenced: store.IsSilencedState(a.Action)}
 		}
 	}
-	return m
+	return m, nil
+}
+
+func silencedHostIDs(alerts map[string]activeThresholdAlert) []string {
+	ids := make([]string, 0)
+	for hid, a := range alerts {
+		if a.silenced {
+			ids = append(ids, hid)
+		}
+	}
+	return ids
 }
 
 // parseThreshold extracts the threshold value from alert config metadata JSONB.

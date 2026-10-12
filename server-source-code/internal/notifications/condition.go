@@ -63,8 +63,11 @@ func (e *Emitter) ReleaseCheck(ctx context.Context, tenantHost, name string) {
 var syncConditionScript = redis.NewScript(`
 local now = tonumber(ARGV[1])
 local remind = tonumber(ARGV[3])
+local first = 5 + tonumber(ARGV[4])
+local held = {}
+for i = 5, first - 1 do held[ARGV[i]] = true end
 local current = {}
-for i = 4, #ARGV do current[ARGV[i]] = true end
+for i = first, #ARGV do current[ARGV[i]] = true end
 local cleared = {}
 for _, id in ipairs(redis.call('HKEYS', KEYS[1])) do
 	if not current[id] then
@@ -74,11 +77,11 @@ for _, id in ipairs(redis.call('HKEYS', KEYS[1])) do
 end
 local added = {}
 local reminded = {}
-for i = 4, #ARGV do
+for i = first, #ARGV do
 	local id = ARGV[i]
 	if redis.call('HSETNX', KEYS[1], id, ARGV[1]) == 1 then
 		table.insert(added, id)
-	elseif remind > 0 then
+	elseif remind > 0 and not held[id] then
 		local last = tonumber(redis.call('HGET', KEYS[1], id))
 		if last and now - last >= remind then
 			redis.call('HSET', KEYS[1], id, ARGV[1])
@@ -86,7 +89,7 @@ for i = 4, #ARGV do
 		end
 	end
 end
-if #ARGV > 3 then redis.call('PEXPIRE', KEYS[1], ARGV[2]) end
+if #ARGV >= first then redis.call('PEXPIRE', KEYS[1], ARGV[2]) end
 return {added, cleared, reminded}
 `)
 
@@ -97,7 +100,8 @@ type ConditionSync struct {
 }
 
 // SyncConditions records who is in the condition and reports entries, exits, and reminders due after remindEvery.
-func (e *Emitter) SyncConditions(ctx context.Context, tenantHost, eventType string, active []string, remindEvery time.Duration, now time.Time) (ConditionSync, error) {
+// Refs in hold are never reported as reminders and keep their last-notified time.
+func (e *Emitter) SyncConditions(ctx context.Context, tenantHost, eventType string, active []string, remindEvery time.Duration, hold []string, now time.Time) (ConditionSync, error) {
 	if e == nil || e.rdb == nil {
 		return ConditionSync{Entered: active}, nil
 	}
@@ -106,8 +110,11 @@ func (e *Emitter) SyncConditions(ctx context.Context, tenantHost, eventType stri
 		remindMs = max((remindEvery - checkDueSlack).Milliseconds(), 1)
 	}
 	key := tenantRedisKey(tenantHost, conditionKey(eventType))
-	args := make([]interface{}, 0, len(active)+3)
-	args = append(args, strconv.FormatInt(now.UnixMilli(), 10), conditionStoreTTL.Milliseconds(), remindMs)
+	args := make([]interface{}, 0, len(active)+len(hold)+4)
+	args = append(args, strconv.FormatInt(now.UnixMilli(), 10), conditionStoreTTL.Milliseconds(), remindMs, len(hold))
+	for _, id := range hold {
+		args = append(args, id)
+	}
 	for _, id := range active {
 		args = append(args, id)
 	}

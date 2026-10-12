@@ -70,7 +70,7 @@ func TestSyncConditions_OncePerOccurrence(t *testing.T) {
 
 	sync := func(active ...string) ([]string, []string) {
 		t.Helper()
-		r, err := e.SyncConditions(ctx, "", typ, active, 0, now)
+		r, err := e.SyncConditions(ctx, "", typ, active, 0, nil, now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -107,14 +107,14 @@ func TestSyncConditions_ScopedPerContextAndType(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 
-	if _, err := e.SyncConditions(ctx, "a.example.com", "host_security_updates_exceeded", []string{"h1"}, 0, now); err != nil {
+	if _, err := e.SyncConditions(ctx, "a.example.com", "host_security_updates_exceeded", []string{"h1"}, 0, nil, now); err != nil {
 		t.Fatal(err)
 	}
-	r, _ := e.SyncConditions(ctx, "b.example.com", "host_security_updates_exceeded", []string{"h1"}, 0, now)
+	r, _ := e.SyncConditions(ctx, "b.example.com", "host_security_updates_exceeded", []string{"h1"}, 0, nil, now)
 	if !slices.Equal(r.Entered, []string{"h1"}) {
 		t.Fatalf("context b suppressed by context a: %v", r.Entered)
 	}
-	r, _ = e.SyncConditions(ctx, "a.example.com", "host_pending_updates_exceeded", []string{"h1"}, 0, now)
+	r, _ = e.SyncConditions(ctx, "a.example.com", "host_pending_updates_exceeded", []string{"h1"}, 0, nil, now)
 	if !slices.Equal(r.Entered, []string{"h1"}) {
 		t.Fatalf("pending updates suppressed by security updates: %v", r.Entered)
 	}
@@ -131,9 +131,9 @@ func TestClearConditions_NextOccurrenceNotifies(t *testing.T) {
 	now := time.Now()
 	typ := "host_pending_updates_exceeded"
 
-	_, _ = e.SyncConditions(ctx, "", typ, []string{"h1"}, 0, now)
+	_, _ = e.SyncConditions(ctx, "", typ, []string{"h1"}, 0, nil, now)
 	e.ClearConditions(ctx, "", typ)
-	r, _ := e.SyncConditions(ctx, "", typ, []string{"h1"}, 0, now)
+	r, _ := e.SyncConditions(ctx, "", typ, []string{"h1"}, 0, nil, now)
 	if !slices.Equal(r.Entered, []string{"h1"}) {
 		t.Fatalf("after clearing, entered = %v", r.Entered)
 	}
@@ -146,9 +146,9 @@ func TestForgetConditions_RefEntersAgain(t *testing.T) {
 	now := time.Now()
 	typ := "host_security_updates_exceeded"
 
-	_, _ = e.SyncConditions(ctx, "", typ, []string{"h1", "h2"}, 0, now)
+	_, _ = e.SyncConditions(ctx, "", typ, []string{"h1", "h2"}, 0, nil, now)
 	e.ForgetConditions(ctx, "", typ, []string{"h2"})
-	r, _ := e.SyncConditions(ctx, "", typ, []string{"h1", "h2"}, 0, now)
+	r, _ := e.SyncConditions(ctx, "", typ, []string{"h1", "h2"}, 0, nil, now)
 	if !slices.Equal(r.Entered, []string{"h2"}) || len(r.Left) != 0 {
 		t.Fatalf("after forgetting h2: entered %v, left %v", r.Entered, r.Left)
 	}
@@ -169,7 +169,7 @@ func TestConditionHelpers_NoRedis(t *testing.T) {
 	if !e.ClaimCheckDue(ctx, "", "x", time.Hour, time.Now()) {
 		t.Fatal("nil emitter must not block the check")
 	}
-	r, err := e.SyncConditions(ctx, "", "x", []string{"h1"}, time.Hour, time.Now())
+	r, err := e.SyncConditions(ctx, "", "x", []string{"h1"}, time.Hour, nil, time.Now())
 	if err != nil || !slices.Equal(r.Entered, []string{"h1"}) || r.Left != nil || r.Reminded != nil {
 		t.Fatalf("nil emitter sync = %+v %v", r, err)
 	}
@@ -204,7 +204,7 @@ func TestSyncConditions_Reminders(t *testing.T) {
 
 	sync := func(at time.Duration, active ...string) ConditionSync {
 		t.Helper()
-		r, err := e.SyncConditions(ctx, "", typ, active, every, base.Add(at))
+		r, err := e.SyncConditions(ctx, "", typ, active, every, nil, base.Add(at))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -234,7 +234,7 @@ func TestSyncConditions_Reminders(t *testing.T) {
 	if r := sync(8*time.Hour+time.Minute, "h1", "h2"); !slices.Equal(r.Entered, []string{"h1"}) || len(r.Reminded) != 0 {
 		t.Fatalf("re-occurrence must notify immediately, not as a reminder: %+v", r)
 	}
-	if r, _ := e.SyncConditions(ctx, "", typ, []string{"h1", "h2"}, 0, base.Add(48*time.Hour)); len(r.Reminded) != 0 {
+	if r, _ := e.SyncConditions(ctx, "", typ, []string{"h1", "h2"}, 0, nil, base.Add(48*time.Hour)); len(r.Reminded) != 0 {
 		t.Fatalf("reminders sent after being switched off: %+v", r)
 	}
 }
@@ -246,13 +246,61 @@ func TestRewindConditions_UndeliveredReminderRetriedAsReminder(t *testing.T) {
 	base := time.Now()
 	typ := "host_security_updates_exceeded"
 
-	_, _ = e.SyncConditions(ctx, "", typ, []string{"h1"}, time.Hour, base)
+	_, _ = e.SyncConditions(ctx, "", typ, []string{"h1"}, time.Hour, nil, base)
 	e.RewindConditions(ctx, "", typ, []string{"h1"})
-	r, _ := e.SyncConditions(ctx, "", typ, []string{"h1"}, time.Hour, base.Add(time.Minute))
+	r, _ := e.SyncConditions(ctx, "", typ, []string{"h1"}, time.Hour, nil, base.Add(time.Minute))
 	if len(r.Entered) != 0 || !slices.Equal(r.Reminded, []string{"h1"}) {
 		t.Fatalf("rewound reminder: %+v", r)
 	}
-	if r, _ := e.SyncConditions(ctx, "", typ, []string{"h1"}, time.Hour, base.Add(2*time.Minute)); len(r.Reminded) != 0 {
+	if r, _ := e.SyncConditions(ctx, "", typ, []string{"h1"}, time.Hour, nil, base.Add(2*time.Minute)); len(r.Reminded) != 0 {
 		t.Fatalf("delivered retry did not reset the reminder clock: %+v", r)
+	}
+}
+
+func TestSyncConditions_HeldRefsKeepTheirClock(t *testing.T) {
+	t.Parallel()
+	e, _ := newTestEmitter(t)
+	ctx := context.Background()
+	base := time.Date(2026, 10, 12, 10, 0, 0, 0, time.UTC)
+	typ := "host_security_updates_exceeded"
+	every := 4 * time.Hour
+	at := func(d time.Duration, hold ...string) []string {
+		t.Helper()
+		r, err := e.SyncConditions(ctx, "", typ, []string{"h1"}, every, hold, base.Add(d))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r.Reminded
+	}
+
+	at(0)
+	if got := at(5*time.Hour, "h1"); len(got) != 0 {
+		t.Fatalf("held ref reminded: %v", got)
+	}
+	if got := at(6*time.Hour, "h1"); len(got) != 0 {
+		t.Fatalf("held ref reminded: %v", got)
+	}
+	if got := at(6*time.Hour + 30*time.Minute); !slices.Equal(got, []string{"h1"}) {
+		t.Fatalf("released ref overdue since 4h not reminded at the next check: %v", got)
+	}
+	if got := at(7 * time.Hour); len(got) != 0 {
+		t.Fatalf("reminder repeated straight after release: %v", got)
+	}
+}
+
+func TestSyncConditions_HoldNeverBlocksEntryOrExit(t *testing.T) {
+	t.Parallel()
+	e, _ := newTestEmitter(t)
+	ctx := context.Background()
+	now := time.Now()
+	typ := "host_security_updates_exceeded"
+
+	r, _ := e.SyncConditions(ctx, "", typ, []string{"h1"}, time.Hour, []string{"h1"}, now)
+	if !slices.Equal(r.Entered, []string{"h1"}) {
+		t.Fatalf("held new exceedance not entered: %+v", r)
+	}
+	r, _ = e.SyncConditions(ctx, "", typ, nil, time.Hour, []string{"h1"}, now.Add(time.Minute))
+	if !slices.Equal(r.Left, []string{"h1"}) {
+		t.Fatalf("held host that cleared did not leave: %+v", r)
 	}
 }
