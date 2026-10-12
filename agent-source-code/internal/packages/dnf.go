@@ -115,7 +115,6 @@ func (m *DNFManager) GetPackages() ([]models.Package, error) {
 		listCmd, cancelList = boundedCommand(collectorTimeout, packageManager, "list", "--installed")
 	}
 	defer cancelList()
-	// OPTIMIZATION: Set minimal environment to reduce overhead
 	listCmd.Env = messagesCEnv(os.Environ())
 	installedOutput, err := listCmd.Output()
 	if err != nil {
@@ -336,20 +335,22 @@ func (m *DNFManager) parseSecurityPackages(updateInfoOutput []byte) map[string]b
 func messagesCEnv(src []string) []string {
 	env := make([]string, 0, len(src)+2)
 	var lcAll string
-	hasCtype := false
+	for _, kv := range src {
+		if v, ok := strings.CutPrefix(kv, "LC_ALL="); ok {
+			lcAll = v
+		}
+	}
 	for _, kv := range src {
 		switch {
-		case strings.HasPrefix(kv, "LC_ALL="):
-			lcAll = strings.TrimPrefix(kv, "LC_ALL=")
+		case strings.HasPrefix(kv, "LC_ALL="),
+			strings.HasPrefix(kv, "LANGUAGE="),
+			strings.HasPrefix(kv, "LC_MESSAGES="),
+			lcAll != "" && strings.HasPrefix(kv, "LC_CTYPE="):
 			continue
-		case strings.HasPrefix(kv, "LANGUAGE="), strings.HasPrefix(kv, "LC_MESSAGES="):
-			continue
-		case strings.HasPrefix(kv, "LC_CTYPE="):
-			hasCtype = true
 		}
 		env = append(env, kv)
 	}
-	if lcAll != "" && !hasCtype {
+	if lcAll != "" {
 		env = append(env, "LC_CTYPE="+lcAll)
 	}
 	return append(env, "LC_MESSAGES=C")

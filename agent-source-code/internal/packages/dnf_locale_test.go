@@ -43,9 +43,14 @@ func TestMessagesCEnv(t *testing.T) {
 			want: []string{"LANG=fr_FR.UTF-8", "LC_CTYPE=fr_FR.UTF-8", "LC_MESSAGES=C"},
 		},
 		{
-			name: "existing LC_CTYPE wins over LC_ALL",
-			src:  []string{"LC_ALL=fr_FR.UTF-8", "LC_CTYPE=de_DE.UTF-8"},
-			want: []string{"LC_CTYPE=de_DE.UTF-8", "LC_MESSAGES=C"},
+			name: "LC_ALL replaces an existing LC_CTYPE",
+			src:  []string{"LC_ALL=fr_FR.UTF-8", "LC_CTYPE=C"},
+			want: []string{"LC_CTYPE=fr_FR.UTF-8", "LC_MESSAGES=C"},
+		},
+		{
+			name: "LC_CTYPE kept when LC_ALL is unset",
+			src:  []string{"LC_CTYPE=de_DE.UTF-8", "LANG=C"},
+			want: []string{"LC_CTYPE=de_DE.UTF-8", "LANG=C", "LC_MESSAGES=C"},
 		},
 		{
 			name: "LANGUAGE and LC_MESSAGES are replaced",
