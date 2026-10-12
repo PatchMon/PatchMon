@@ -120,3 +120,18 @@ func TestScopeAlertsToHostGroup(t *testing.T) {
 		t.Fatalf("empty group kept host alerts: %v", got)
 	}
 }
+
+func TestScopePackagesToHostGroupRecomputesSecurityFlag(t *testing.T) {
+	pkgs := []map[string]interface{}{{
+		"name":             "openssl",
+		"isSecurityUpdate": true,
+		"affectedHosts": []map[string]interface{}{
+			{"hostId": "in", "isSecurityUpdate": false},
+			{"hostId": "out", "isSecurityUpdate": true},
+		},
+	}}
+	got := scopePackagesToHostGroup(pkgs, map[string]struct{}{"in": {}})
+	if len(got) != 1 || got[0]["isSecurityUpdate"] != false {
+		t.Fatalf("security flag not recomputed for the scoped hosts: %v", got)
+	}
+}

@@ -82,10 +82,14 @@ func scopePackagesToHostGroup(pkgs []map[string]interface{}, groupHostIDs map[st
 	for _, p := range pkgs {
 		hosts, _ := p["affectedHosts"].([]map[string]interface{})
 		filtered := make([]map[string]interface{}, 0, len(hosts))
+		isSecurity := false
 		for _, h := range hosts {
 			hostID, _ := h["hostId"].(string)
 			if _, ok := groupHostIDs[hostID]; ok {
 				filtered = append(filtered, h)
+				if sec, _ := h["isSecurityUpdate"].(bool); sec {
+					isSecurity = true
+				}
 			}
 		}
 		if len(filtered) == 0 {
@@ -93,6 +97,7 @@ func scopePackagesToHostGroup(pkgs []map[string]interface{}, groupHostIDs map[st
 		}
 		p["affectedHosts"] = filtered
 		p["affectedHostsCount"] = len(filtered)
+		p["isSecurityUpdate"] = isSecurity
 		result = append(result, p)
 	}
 	return result
@@ -333,12 +338,11 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 			}
 
 			if e == nil {
-				total, critical, errorCount, warning := 0, 0, 0, 0
+				total, critical, errorCount, warning, informational := 0, 0, 0, 0, 0
 				for _, a := range alerts {
-					if !a.IsActive {
+					if !a.IsActive || a.ResolvedAt != nil {
 						continue
 					}
-					total++
 					switch strings.ToLower(a.Severity) {
 					case "critical":
 						critical++
@@ -346,7 +350,12 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 						errorCount++
 					case "warning":
 						warning++
+					case "informational":
+						informational++
+					default:
+						continue
 					}
+					total++
 				}
 				body.WriteString(`<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;"><tr>`)
 				writeKPICard(&body, fmt.Sprintf("%d", total), "Total Open", "#6366f1")
@@ -359,6 +368,7 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 				_ = cw.Write([]string{"open_alerts", "critical", fmt.Sprintf("%d", critical)})
 				_ = cw.Write([]string{"open_alerts", "error", fmt.Sprintf("%d", errorCount)})
 				_ = cw.Write([]string{"open_alerts", "warning", fmt.Sprintf("%d", warning)})
+				_ = cw.Write([]string{"open_alerts", "informational", fmt.Sprintf("%d", informational)})
 			}
 
 			if e == nil && len(alerts) > 0 {
