@@ -342,8 +342,8 @@ func (h *AIHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
-	req.Input = strings.TrimSpace(req.Input)
-	if len(req.Input) < 2 || len(req.Input) > 500 {
+	req.Input = strings.TrimLeft(req.Input, " \t")
+	if len(strings.TrimSpace(req.Input)) < 2 || len(req.Input) > 500 {
 		Error(w, http.StatusBadRequest, "input must be 2-500 characters")
 		return
 	}

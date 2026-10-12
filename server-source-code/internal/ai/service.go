@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
@@ -131,15 +131,28 @@ Guidelines:
 - If you're unsure, say so rather than guessing
 - Focus on Linux/Unix system administration topics`
 
-	systemPromptCompletion = `You are a terminal command completion assistant. Given the current command being typed and recent terminal context, suggest the most likely command completion.
+	systemPromptCompletion = `You complete shell commands as the user types them, like a terminal autocomplete.
 
-Guidelines:
-- Only respond with the completion text (what comes after the cursor)
-- If multiple completions are possible, choose the most common/useful one
-- Keep completions practical and safe
-- Do not include explanations, just the completion
-- If no good completion exists, respond with an empty string
-- Consider the terminal history for context`
+You receive the text typed so far inside <typed> tags, and sometimes recent terminal output for context. Reply with the single most likely complete command line: it must start with the typed text exactly as typed, character for character, followed by the completion.
+
+Rules:
+- Reply with the command line only, on one line. No explanation, no quotes, no backticks, no code blocks.
+- Never change, fix or reorder the typed text; only add to the end of it.
+- If the typed text ends partway through a word, finish that word.
+- Prefer the most common, safe usage on Linux servers. Never suggest destructive commands (such as rm -rf /, mkfs or dd to a disk) unless the typed text already leads there.
+- If there is no sensible completion, reply with the typed text unchanged.
+
+Examples:
+<typed>systemctl rest</typed>
+systemctl restart
+<typed>docker ps </typed>
+docker ps -a
+<typed>journalctl -u nginx</typed>
+journalctl -u nginx -f
+<typed>ssh</typed>
+ssh-keygen
+<typed>apt list --upgr</typed>
+apt list --upgradable`
 )
 
 // Service provides AI assistance and completion.
@@ -188,23 +201,66 @@ func (s *Service) GetAssistance(settings *models.Settings, question, context str
 
 // GetCompletion returns a command completion suggestion.
 func (s *Service) GetCompletion(settings *models.Settings, input, context string) (string, error) {
-	if len(input) < 2 {
+	if len(strings.TrimSpace(input)) < 2 {
 		return "", nil
 	}
-	prompt := `Current command being typed: "` + input + `"
-Complete this command. Only respond with the remaining text to add, nothing else.`
-
-	response, err := s.callAI(settings, prompt, &callOptions{
+	response, err := s.callAI(settings, "<typed>"+input+"</typed>", &callOptions{
 		maxTokens:   100,
-		temperature: 0.3,
+		temperature: 0.2,
 	}, systemPromptCompletion, context, nil)
 	if err != nil {
 		return "", err
 	}
-	// Clean up: remove quotes, newlines
-	trimmed := strings.TrimSpace(response)
-	trimmed = regexp.MustCompile(`^["']|["']$`).ReplaceAllString(trimmed, "")
-	return trimmed, nil
+	return normaliseCompletion(input, response), nil
+}
+
+const maxCompletionLen = 200
+
+func unwrapCompletion(s string) string {
+	if len(s) >= 2 && (s[0] == '`' || s[0] == '"' || s[0] == '\'') && s[len(s)-1] == s[0] {
+		return s[1 : len(s)-1]
+	}
+	return s
+}
+
+func normaliseCompletion(input, response string) string {
+	out := strings.TrimLeft(response, "\r\n")
+	if i := strings.IndexAny(out, "\r\n"); i >= 0 {
+		out = out[:i]
+	}
+	out = strings.TrimLeft(strings.TrimRight(out, " \t"), " \t")
+	if strings.HasPrefix(out, "```") {
+		return ""
+	}
+	suffix, ok := completionSuffix(input, out)
+	if !ok {
+		suffix, ok = completionSuffix(input, strings.TrimRight(unwrapCompletion(out), " \t"))
+	}
+	if !ok || len(suffix) > maxCompletionLen || strings.IndexFunc(suffix, unsafeCompletionRune) >= 0 {
+		return ""
+	}
+	return suffix
+}
+
+func unsafeCompletionRune(r rune) bool {
+	return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029'
+}
+
+func completionSuffix(input, out string) (string, bool) {
+	trimmedInput := strings.TrimRight(input, " \t")
+	var suffix string
+	switch {
+	case strings.HasPrefix(out, input):
+		suffix = out[len(input):]
+	case trimmedInput != input && strings.HasPrefix(out, trimmedInput+" "):
+		suffix = out[len(trimmedInput):]
+	default:
+		return "", false
+	}
+	if trimmedInput != input {
+		suffix = strings.TrimLeft(suffix, " \t")
+	}
+	return suffix, true
 }
 
 func (s *Service) callAI(settings *models.Settings, prompt string, opts *callOptions, systemPrompt, context string, history []Message) (string, error) {

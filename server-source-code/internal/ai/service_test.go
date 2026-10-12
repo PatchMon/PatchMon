@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -169,5 +170,42 @@ func TestCallOpenRouterOmitsTemperatureForClaude(t *testing.T) {
 		if _, got := body["temperature"]; got != want {
 			t.Errorf("%s: temperature sent = %v, want %v", model, got, want)
 		}
+	}
+}
+
+func TestNormaliseCompletion(t *testing.T) {
+	cases := []struct{ input, response, want string }{
+		{"systemctl rest", "systemctl restart", "art"},
+		{"systemctl rest", "systemctl restart\n\nThis restarts a service.", "art"},
+		{"journalctl -u nginx", "journalctl -u nginx -f", " -f"},
+		{"ssh", "ssh-keygen", "-keygen"},
+		{"docker ps ", "docker ps -a", "-a"},
+		{"docker ps ", "docker ps  -a", "-a"},
+		{"systemctl rest", "`systemctl restart`", "art"},
+		{"systemctl rest", "\"systemctl restart\"", "art"},
+		{"git commit -", `git commit -m ""`, `m ""`},
+		{"ls -l", "ls -l", ""},
+		{"systemctl rest", "art", ""},
+		{"systemctl rest", "sudo systemctl restart", ""},
+		{"ls", "```bash\nls -la\n```", ""},
+		{"ls", "ls " + strings.Repeat("x", 300), ""},
+		{"ls", "ls -la `pwd`", " -la `pwd`"},
+		{"echo `da", "echo `date`", "te`"},
+		{"echo \"a", "echo \"ab\"", "b\""},
+		{"ls  ", "ls -la", "-la"},
+		{"ls\t", "ls -la", "-la"},
+		{"ls é", "ls é.txt", ".txt"},
+		{"ls", "ls -la\x1b[2J", ""},
+		{"Systemctl rest", "systemctl restart", ""},
+		{"ls", "`ls -la `", " -la"},
+		{"ls", "ls -la\u202e", ""},
+		{"systemctl rest", "`\"systemctl restart\"`", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.input+"|"+c.response, func(t *testing.T) {
+			if got := normaliseCompletion(c.input, c.response); got != c.want {
+				t.Errorf("normaliseCompletion(%q, %q) = %q, want %q", c.input, c.response, got, c.want)
+			}
+		})
 	}
 }
