@@ -735,6 +735,7 @@ const Hosts = () => {
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["settings"] });
 			queryClient.invalidateQueries({ queryKey: ["serverUrl"] });
+			queryClient.invalidateQueries({ queryKey: ["serverUrlCorsCheck"] });
 		},
 	});
 

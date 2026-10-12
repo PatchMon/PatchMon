@@ -3,6 +3,7 @@ import { AlertCircle, CheckCircle, Save, Server } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { settingsAPI } from "../../utils/api";
 import { FORM_INPUT_CLASS } from "../FormInput";
+import ServerUrlCorsWarning from "../ServerUrlCorsWarning";
 
 const ProtocolUrlTab = () => {
 	const protocolId = useId();
@@ -67,6 +68,7 @@ const ProtocolUrlTab = () => {
 			}
 			queryClient.invalidateQueries({ queryKey: ["settings"] });
 			queryClient.invalidateQueries({ queryKey: ["serverUrl"] });
+			queryClient.invalidateQueries({ queryKey: ["serverUrlCorsCheck"] });
 			setIsDirty(false);
 			setErrors({});
 		},
@@ -256,6 +258,10 @@ const ProtocolUrlTab = () => {
 								</p>
 							)}
 						</div>
+					</div>
+
+					<div className="mt-4">
+						<ServerUrlCorsWarning />
 					</div>
 
 					<div className="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-md">
