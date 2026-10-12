@@ -174,7 +174,6 @@ func (q *Queries) DeleteImageUpdatesByImageID(ctx context.Context, imageID strin
 }
 
 const deleteImagesByIDs = `-- name: DeleteImagesByIDs :exec
-
 DELETE FROM docker_images WHERE id = ANY($1::text[])
 `
 
@@ -202,9 +201,6 @@ type DeleteStaleContainersParams struct {
 	ContainerIds []string `json:"container_ids"`
 }
 
-// Removes containers for a host that were not present in the most recent
-// Docker report. Callers must only invoke this when the report actually
-// contained container data, to avoid wiping inventory on an empty/partial report.
 func (q *Queries) DeleteStaleContainers(ctx context.Context, arg DeleteStaleContainersParams) error {
 	_, err := q.db.Exec(ctx, deleteStaleContainers, arg.HostID, arg.ContainerIds)
 	return err
@@ -226,7 +222,6 @@ func (q *Queries) DeleteStaleNetworks(ctx context.Context, arg DeleteStaleNetwor
 }
 
 const deleteStaleVolumes = `-- name: DeleteStaleVolumes :exec
-
 DELETE FROM docker_volumes
 WHERE host_id = $1 AND NOT (volume_id = ANY($2::text[]))
 `

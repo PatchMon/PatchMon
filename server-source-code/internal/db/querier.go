@@ -227,9 +227,6 @@ type Querier interface {
 	DeleteRolePermissions(ctx context.Context, role string) error
 	DeleteRunningComplianceScansByHost(ctx context.Context, hostID string) error
 	DeleteScheduledReport(ctx context.Context, id string) error
-	// Removes containers for a host that were not present in the most recent
-	// Docker report. Callers must only invoke this when the report actually
-	// contained container data, to avoid wiping inventory on an empty/partial report.
 	DeleteStaleContainers(ctx context.Context, arg DeleteStaleContainersParams) error
 	DeleteStaleNetworks(ctx context.Context, arg DeleteStaleNetworksParams) error
 	DeleteStaleVolumes(ctx context.Context, arg DeleteStaleVolumesParams) error

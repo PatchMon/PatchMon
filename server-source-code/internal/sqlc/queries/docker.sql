@@ -50,13 +50,9 @@ WHERE NOT EXISTS (SELECT 1 FROM docker_containers dc WHERE dc.image_id = di.id);
 DELETE FROM docker_containers WHERE id = ANY($1::text[]);
 
 -- name: DeleteImagesByIDs :exec
-
 DELETE FROM docker_images WHERE id = ANY($1::text[]);
 
 -- name: DeleteStaleContainers :exec
--- Removes containers for a host that were not present in the most recent
--- Docker report. Callers must only invoke this when the report actually
--- contained container data, to avoid wiping inventory on an empty/partial report.
 DELETE FROM docker_containers
 WHERE host_id = $1 AND NOT (container_id = ANY(sqlc.arg(container_ids)::text[]));
 
@@ -159,7 +155,6 @@ AND (sqlc.narg('search')::text IS NULL OR name ILIKE '%' || sqlc.narg('search') 
 DELETE FROM docker_volumes WHERE id = $1;
 
 -- name: DeleteStaleVolumes :exec
-
 DELETE FROM docker_volumes
 WHERE host_id = $1 AND NOT (volume_id = ANY(sqlc.arg(volume_ids)::text[]));
 

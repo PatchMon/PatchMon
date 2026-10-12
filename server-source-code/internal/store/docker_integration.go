@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
@@ -18,6 +19,12 @@ type DockerReceivePayload struct {
 	Volumes    []DockerReceiveVolume
 	Networks   []DockerReceiveNetwork
 	Updates    []DockerReceiveImageUpdate
+	Collected  []string
+}
+
+// An empty list from an agent that does not send Collected may be a failed collection, so it must not prune.
+func (p *DockerReceivePayload) reconciles(kind string, reported int) bool {
+	return reported > 0 || slices.Contains(p.Collected, kind)
 }
 
 type DockerReceiveContainer struct {
@@ -293,8 +300,7 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 		}
 	}
 
-	// Remove containers no longer reported by the agent.
-	if len(payload.Containers) > 0 {
+	if payload.reconciles("containers", len(payload.Containers)) {
 		reportedContainerIDs := make([]string, 0, len(payload.Containers))
 		for _, c := range payload.Containers {
 			reportedContainerIDs = append(reportedContainerIDs, c.ContainerID)
@@ -348,8 +354,7 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 	}
 	result.VolumesReceived = len(payload.Volumes)
 
-	// Remove volumes no longer reported by the agent.
-	if len(payload.Volumes) > 0 {
+	if payload.reconciles("volumes", len(payload.Volumes)) {
 		reportedVolumeIDs := make([]string, 0, len(payload.Volumes))
 		for _, v := range payload.Volumes {
 			reportedVolumeIDs = append(reportedVolumeIDs, v.VolumeID)
@@ -395,8 +400,7 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 	}
 	result.NetworksReceived = len(payload.Networks)
 
-	// Remove networks no longer reported by the agent.
-	if len(payload.Networks) > 0 {
+	if payload.reconciles("networks", len(payload.Networks)) {
 		reportedNetworkIDs := make([]string, 0, len(payload.Networks))
 		for _, n := range payload.Networks {
 			reportedNetworkIDs = append(reportedNetworkIDs, n.NetworkID)

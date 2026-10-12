@@ -116,6 +116,7 @@ type dockerPayloadReq struct {
 	Volumes    []dockerVolumeReq      `json:"volumes"`
 	Networks   []dockerNetworkReq     `json:"networks"`
 	Updates    []dockerImageUpdateReq `json:"updates"`
+	Collected  []string               `json:"collected"`
 	Hostname   string                 `json:"hostname"`
 	MachineID  string                 `json:"machine_id"`
 	// DockerHash is the agent-computed canonical hash for the docker
@@ -193,6 +194,7 @@ func convertDockerPayloadToStore(p *dockerPayloadReq) *store.DockerReceivePayloa
 		Volumes:    make([]store.DockerReceiveVolume, len(p.Volumes)),
 		Networks:   make([]store.DockerReceiveNetwork, len(p.Networks)),
 		Updates:    make([]store.DockerReceiveImageUpdate, len(p.Updates)),
+		Collected:  p.Collected,
 	}
 	for i, c := range p.Containers {
 		out.Containers[i] = store.DockerReceiveContainer{
