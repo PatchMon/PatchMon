@@ -141,14 +141,12 @@ type Querier interface {
 	CountNetworks(ctx context.Context, arg CountNetworksParams) (int32, error)
 	CountNetworksByHostID(ctx context.Context, hostID string) (int32, error)
 	CountPatchRuns(ctx context.Context, arg CountPatchRunsParams) (int64, error)
-	// host_ids is an optional scope: an empty array means "all hosts".
 	CountPatchRunsTotal(ctx context.Context, hostIds []string) (int64, error)
 	CountRepositories(ctx context.Context) (int32, error)
 	CountRepositoriesForList(ctx context.Context, arg CountRepositoriesForListParams) (int32, error)
 	CountSecureRepositories(ctx context.Context) (int32, error)
 	CountSuperadmins(ctx context.Context) (int64, error)
 	CountTfaRememberSessionsByUser(ctx context.Context, userID string) (int64, error)
-	// host_ids is an optional scope: an empty array means "all hosts".
 	CountUnscannedHosts(ctx context.Context, hostIds []string) (int64, error)
 	CountUpdateHistory(ctx context.Context, hostID string) (int32, error)
 	CountUsers(ctx context.Context) (int64, error)
@@ -516,7 +514,6 @@ type Querier interface {
 	// that aggregate those two states can link to a single filter.
 	ListPatchRuns(ctx context.Context, arg ListPatchRunsParams) ([]ListPatchRunsRow, error)
 	ListPatchRunsByPackage(ctx context.Context, arg ListPatchRunsByPackageParams) ([]ListPatchRunsByPackageRow, error)
-	// host_ids is an optional scope: an empty array means "all hosts".
 	ListPatchRunsByStatus(ctx context.Context, hostIds []string) ([]ListPatchRunsByStatusRow, error)
 	ListPatchRunsOrderByCompletedAt(ctx context.Context, arg ListPatchRunsOrderByCompletedAtParams) ([]ListPatchRunsOrderByCompletedAtRow, error)
 	ListPatchRunsOrderByCompletedAtAsc(ctx context.Context, arg ListPatchRunsOrderByCompletedAtAscParams) ([]ListPatchRunsOrderByCompletedAtAscRow, error)
@@ -525,9 +522,6 @@ type Querier interface {
 	ListPatchRunsOrderByStartedAtAsc(ctx context.Context, arg ListPatchRunsOrderByStartedAtAscParams) ([]ListPatchRunsOrderByStartedAtAscRow, error)
 	ListPatchRunsOrderByStatus(ctx context.Context, arg ListPatchRunsOrderByStatusParams) ([]ListPatchRunsOrderByStatusRow, error)
 	ListPatchRunsOrderByStatusDesc(ctx context.Context, arg ListPatchRunsOrderByStatusDescParams) ([]ListPatchRunsOrderByStatusDescRow, error)
-	// host_ids is an optional scope: an empty array means "all hosts" (the
-	// historical, unscoped behaviour); a non-empty array restricts results to
-	// patch runs on those hosts only, e.g. for a report scoped to host groups.
 	ListRecentPatchRuns(ctx context.Context, arg ListRecentPatchRunsParams) ([]ListRecentPatchRunsRow, error)
 	ListRepositories(ctx context.Context, arg ListRepositoriesParams) ([]ListRepositoriesRow, error)
 	ListRoles(ctx context.Context) ([]RolePermission, error)

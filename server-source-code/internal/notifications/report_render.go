@@ -30,9 +30,6 @@ type ReportBranding struct {
 	LogoLightURL string // full URL to light logo, empty if unset
 }
 
-// resolveHostGroupIDs expands a list of host group IDs into the de-duplicated
-// set of host IDs that belong to any of them, so report sections can scope
-// their host lists to the groups selected in the report definition.
 func resolveHostGroupIDs(ctx context.Context, d *database.DB, groupIDs []string) (map[string]struct{}, error) {
 	groupsStore := store.NewHostGroupsStore(d)
 	ids := make(map[string]struct{})
@@ -48,10 +45,6 @@ func resolveHostGroupIDs(ctx context.Context, d *database.DB, groupIDs []string)
 	return ids, nil
 }
 
-// alertHostID extracts the "host_id" key from an alert's Metadata JSON, if
-// present. Alerts that aren't tied to a specific host (e.g. system-wide
-// ones) return "", and callers should treat that as "always in scope"
-// rather than filtering it out.
 func alertHostID(a store.AlertWithDetails) string {
 	if len(a.Metadata) == 0 {
 		return ""
@@ -66,10 +59,24 @@ func alertHostID(a store.AlertWithDetails) string {
 	return ""
 }
 
-// scopePackagesToHostGroup filters the affectedHosts of each package
-// (the shape returned by PackagesStore.ListNeedingUpdates) down to hosts
-// present in groupHostIDs, recomputes affectedHostsCount to match, and
-// drops packages left with no affected hosts in scope.
+// Host-less alerts are dropped except release notices: user events can name accounts outside the group.
+func scopeAlertsToHostGroup(alerts []store.AlertWithDetails, groupHostIDs map[string]struct{}) []store.AlertWithDetails {
+	filtered := make([]store.AlertWithDetails, 0, len(alerts))
+	for _, a := range alerts {
+		hostID := alertHostID(a)
+		if hostID == "" {
+			if a.Type == "server_update" || a.Type == "agent_update" {
+				filtered = append(filtered, a)
+			}
+			continue
+		}
+		if _, ok := groupHostIDs[hostID]; ok {
+			filtered = append(filtered, a)
+		}
+	}
+	return filtered
+}
+
 func scopePackagesToHostGroup(pkgs []map[string]interface{}, groupHostIDs map[string]struct{}) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(pkgs))
 	for _, p := range pkgs {
@@ -116,19 +123,18 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 	complianceStore := store.NewComplianceStore(d)
 	patchStore := store.NewPatchRunsStore(d)
 
-	// Host-group scope, resolved once and reused by every section below
-	// instead of re-querying per section. groupHostIDs is nil when the
-	// report isn't scoped to any group; groupHostIDList is its []string
-	// form for APIs that want a slice rather than a set.
+	// nil means unscoped; a non-nil empty list (empty or deleted group) must match no hosts.
 	var groupHostIDs map[string]struct{}
 	var groupHostIDList []string
 	if len(def.HostGroupIDs) > 0 {
-		if resolved, ge := resolveHostGroupIDs(ctx, d, def.HostGroupIDs); ge == nil {
-			groupHostIDs = resolved
-			groupHostIDList = make([]string, 0, len(resolved))
-			for id := range resolved {
-				groupHostIDList = append(groupHostIDList, id)
-			}
+		resolved, ge := resolveHostGroupIDs(ctx, d, def.HostGroupIDs)
+		if ge != nil {
+			return "", "", "", fmt.Errorf("resolve report host groups: %w", ge)
+		}
+		groupHostIDs = resolved
+		groupHostIDList = make([]string, 0, len(resolved))
+		for id := range resolved {
+			groupHostIDList = append(groupHostIDList, id)
 		}
 	}
 
@@ -321,25 +327,9 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 			body.WriteString(sectionHeader("Open Alerts"))
 			alertsStore := store.NewAlertsStore(d)
 
-			// Fetch the list first and scope it to the report's host groups
-			// (alerts not tied to any specific host, e.g. system-wide ones,
-			// are always kept). The stats summary below is then computed
-			// from this same list rather than a separate unscoped query, so
-			// it can never disagree with the table.
 			alerts, e := alertsStore.List(ctx, nil)
 			if e == nil && groupHostIDs != nil {
-				filtered := alerts[:0]
-				for _, a := range alerts {
-					hostID := alertHostID(a)
-					if hostID == "" {
-						filtered = append(filtered, a)
-						continue
-					}
-					if _, ok := groupHostIDs[hostID]; ok {
-						filtered = append(filtered, a)
-					}
-				}
-				alerts = filtered
+				alerts = scopeAlertsToHostGroup(alerts, groupHostIDs)
 			}
 
 			if e == nil {
@@ -408,6 +398,7 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 			// truncate to `top` below.
 			listParams := store.HostsListParams{Limit: store.HostsListMaxLimit}
 			if groupHostIDList != nil {
+				listParams.Filter = "selected"
 				listParams.SelectedIDs = groupHostIDList
 			}
 			hostsData, e := dashStore.GetHostsWithCounts(ctx, listParams)

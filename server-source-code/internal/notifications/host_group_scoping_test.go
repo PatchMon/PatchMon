@@ -83,3 +83,40 @@ func TestAlertHostID(t *testing.T) {
 		})
 	}
 }
+
+func TestScopeAlertsToHostGroup(t *testing.T) {
+	alert := func(id, typ, meta string) store.AlertWithDetails {
+		a := store.AlertWithDetails{}
+		a.ID, a.Type = id, typ
+		if meta != "" {
+			a.Metadata = models.JSON(meta)
+		}
+		return a
+	}
+	alerts := []store.AlertWithDetails{
+		alert("in-group", "host_down", `{"host_id":"h1"}`),
+		alert("other-group", "host_down", `{"host_id":"h9"}`),
+		alert("server-release", "server_update", ""),
+		alert("agent-release", "agent_update", `{}`),
+		alert("login", "user_login_failed", `{"username":"someone"}`),
+	}
+
+	got := scopeAlertsToHostGroup(alerts, map[string]struct{}{"h1": {}})
+	var ids []string
+	for _, a := range got {
+		ids = append(ids, a.ID)
+	}
+	want := []string{"in-group", "server-release", "agent-release"}
+	if len(ids) != len(want) {
+		t.Fatalf("scopeAlertsToHostGroup() = %v, want %v", ids, want)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Fatalf("scopeAlertsToHostGroup() = %v, want %v", ids, want)
+		}
+	}
+
+	if got := scopeAlertsToHostGroup(alerts[:2], map[string]struct{}{}); len(got) != 0 {
+		t.Fatalf("empty group kept host alerts: %v", got)
+	}
+}

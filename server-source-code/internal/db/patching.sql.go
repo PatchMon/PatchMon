@@ -47,10 +47,9 @@ func (q *Queries) CountPatchRuns(ctx context.Context, arg CountPatchRunsParams) 
 const countPatchRunsTotal = `-- name: CountPatchRunsTotal :one
 SELECT COUNT(*) FROM patch_runs
 WHERE (dry_run = false OR dry_run IS NULL)
-  AND (cardinality($1::text[]) = 0 OR host_id = ANY($1::text[]))
+  AND ($1::text[] IS NULL OR host_id = ANY($1::text[]))
 `
 
-// host_ids is an optional scope: an empty array means "all hosts".
 func (q *Queries) CountPatchRunsTotal(ctx context.Context, hostIds []string) (int64, error) {
 	row := q.db.QueryRow(ctx, countPatchRunsTotal, hostIds)
 	var count int64
@@ -845,7 +844,7 @@ func (q *Queries) ListPatchRunsByPackage(ctx context.Context, arg ListPatchRunsB
 const listPatchRunsByStatus = `-- name: ListPatchRunsByStatus :many
 SELECT status, COUNT(*)::int AS count FROM patch_runs
 WHERE ((dry_run = false OR dry_run IS NULL) OR status IN ('pending_validation', 'pending_approval', 'validated'))
-  AND (cardinality($1::text[]) = 0 OR host_id = ANY($1::text[]))
+  AND ($1::text[] IS NULL OR host_id = ANY($1::text[]))
 GROUP BY status
 `
 
@@ -854,7 +853,6 @@ type ListPatchRunsByStatusRow struct {
 	Count  int32  `json:"count"`
 }
 
-// host_ids is an optional scope: an empty array means "all hosts".
 func (q *Queries) ListPatchRunsByStatus(ctx context.Context, hostIds []string) ([]ListPatchRunsByStatusRow, error) {
 	rows, err := q.db.Query(ctx, listPatchRunsByStatus, hostIds)
 	if err != nil {
@@ -1610,7 +1608,7 @@ LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE (pr.dry_run = false OR pr.dry_run IS NULL)
   AND (
-    cardinality($1::text[]) = 0
+    $1::text[] IS NULL
     OR pr.host_id = ANY($1::text[])
   )
 ORDER BY pr.created_at DESC
@@ -1650,9 +1648,6 @@ type ListRecentPatchRunsRow struct {
 	TriggeredByUsername *string          `json:"triggered_by_username"`
 }
 
-// host_ids is an optional scope: an empty array means "all hosts" (the
-// historical, unscoped behaviour); a non-empty array restricts results to
-// patch runs on those hosts only, e.g. for a report scoped to host groups.
 func (q *Queries) ListRecentPatchRuns(ctx context.Context, arg ListRecentPatchRunsParams) ([]ListRecentPatchRunsRow, error) {
 	rows, err := q.db.Query(ctx, listRecentPatchRuns, arg.HostIds, arg.RowLimit)
 	if err != nil {

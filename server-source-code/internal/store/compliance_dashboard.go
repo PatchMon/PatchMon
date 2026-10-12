@@ -155,16 +155,10 @@ type ComplianceDashboardProfileTypeStat struct {
 }
 
 // GetDashboard returns the compliance dashboard data (matches legacy structure).
-// GetDashboard returns the fleet-wide compliance dashboard. hostIDs is an
-// optional scope: nil or empty means "all hosts" (the historical, unscoped
-// behaviour, and the only shape that is cached); a non-empty slice
-// restricts every figure in the returned dashboard to those hosts only,
-// e.g. for a report scoped to host groups. Scoped calls bypass the cache,
-// since the cache is keyed per tenant only and mixing scoped/unscoped
-// results under the same key would serve the wrong data.
+// nil hostIDs is unscoped; any non-nil slice (even empty) scopes and bypasses the cache.
 func (s *ComplianceStore) GetDashboard(ctx context.Context, hostIDs []string) (*ComplianceDashboard, error) {
 	d := s.db.DB(ctx)
-	scoped := len(hostIDs) > 0
+	scoped := hostIDs != nil
 	cacheKey := hostctx.TenantHostKey(ctx)
 	if !scoped {
 		dashboardCacheMu.Lock()
@@ -175,10 +169,6 @@ func (s *ComplianceStore) GetDashboard(ctx context.Context, hostIDs []string) (*
 		}
 		dashboardCacheMu.Unlock()
 	}
-	if hostIDs == nil {
-		hostIDs = []string{}
-	}
-
 	latestScans, err := d.Queries.GetLatestCompletedScans(ctx)
 	if err != nil {
 		return nil, err

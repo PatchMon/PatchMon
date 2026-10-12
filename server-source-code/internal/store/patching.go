@@ -771,16 +771,9 @@ func (s *PatchRunsStore) ListActive(ctx context.Context) ([]db.ListActivePatchRu
 }
 
 // GetDashboard returns dashboard summary: total count, by status, recent runs, active runs.
-// GetDashboard returns fleet-wide patch run stats. hostIDs is an optional
-// scope: nil or empty means "all hosts" (the historical, unscoped
-// behaviour); a non-empty slice restricts total/byStatus/recent to those
-// hosts only, e.g. for a report scoped to host groups. active is never
-// scoped by hostIDs (it is not currently rendered per-group anywhere).
+// nil hostIDs is unscoped; a non-nil slice (even empty) scopes total, byStatus and recent.
 func (s *PatchRunsStore) GetDashboard(ctx context.Context, hostIDs []string) (total int64, byStatus map[string]int, recent []db.ListRecentPatchRunsRow, active []db.ListActivePatchRunsRow, err error) {
 	d := s.db.DB(ctx)
-	if hostIDs == nil {
-		hostIDs = []string{}
-	}
 	total, err = d.Queries.CountPatchRunsTotal(ctx, hostIDs)
 	if err != nil {
 		return 0, nil, nil, nil, err
