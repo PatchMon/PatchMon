@@ -2687,7 +2687,7 @@ OIDC_REDIRECT_URI=https://patchmon.example.com/api/v1/auth/oidc/callback
 | Variable | Description |
 |----------|-------------|
 | `OIDC_ENABLED` | Set to `true` to enable OIDC |
-| `OIDC_ISSUER_URL` | Your IdP's issuer / discovery URL |
+| `OIDC_ISSUER_URL` | Your IdP's issuer URL (a trailing `/.well-known/openid-configuration` is removed automatically) |
 | `OIDC_CLIENT_ID` | Client ID from your IdP application |
 | `OIDC_CLIENT_SECRET` | Client secret from your IdP application |
 | `OIDC_REDIRECT_URI` | Must match exactly what you configured in your IdP |
@@ -3074,9 +3074,36 @@ You get this immediately on clicking the SSO button, before your IdP's login pag
 PatchMon fetches your IdP's discovery document (`.well-known/openid-configuration`) on the first login attempt rather than at startup, so problems reaching or validating that document surface at this point:
 
 - PatchMon cannot reach the IdP from inside the container (DNS, firewall, or network policy)
-- `OIDC_ISSUER_URL` is wrong. It must not include `.well-known/openid-configuration`, which PatchMon appends itself
+- `OIDC_ISSUER_URL` is wrong. Use the issuer URL, not the discovery document URL. If you do paste the full URL ending in `/.well-known/openid-configuration`, PatchMon removes that suffix before discovery
 - The issuer URL in the discovery document does not match `OIDC_ISSUER_URL`. For Authentik, the trailing slash matters
-- The IdP's TLS certificate is not trusted by the PatchMon container
+- The IdP's TLS certificate is not trusted by the PatchMon container. The log ends in `x509: certificate signed by unknown authority`. See the next section
+
+#### IdP Certificate Signed by an Internal CA
+
+If your identity provider's certificate is issued by a private or internal certificate authority, the PatchMon server does not trust it, and the first login attempt fails with `Failed to reach the OIDC provider`. The log line reads:
+
+```text
+oidc auth url failed ... tls: failed to verify certificate: x509: certificate signed by unknown authority
+```
+
+PatchMon has no option to skip certificate verification for OIDC. Make the server trust your CA instead.
+
+**Docker.** Mount your CA certificate (PEM format) into the `server` container and point `SSL_CERT_FILE` at it:
+
+```yaml
+services:
+  server:
+    environment:
+      SSL_CERT_FILE: /etc/patchmon/internal-ca.pem
+    volumes:
+      - ./internal-ca.pem:/etc/patchmon/internal-ca.pem:ro
+```
+
+Then recreate the container with `docker compose up -d`. The server reads the file the first time it opens a TLS connection, so a restart is needed whenever you change it. If you have several CA certificates, either concatenate them into one PEM file or mount them into a directory and set `SSL_CERT_DIR` to that directory instead.
+
+On the stock PatchMon image the system CA bundle in `/etc/ssl/certs` is still loaded alongside your file, so public certificates (for example your notification destinations) keep working. Do **not** mount your CA over `/etc/ssl/certs/ca-certificates.crt`: that replaces the public bundle, and every outbound connection to a publicly signed service will then fail with the same `unknown authority` error.
+
+**Native or LXC installs.** Add the CA to the operating system's trust store (on Debian and Ubuntu, copy it to `/usr/local/share/ca-certificates/` with a `.crt` extension and run `update-ca-certificates`), then restart the PatchMon service.
 
 #### "Session Expired" Error
 
