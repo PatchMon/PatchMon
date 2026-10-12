@@ -176,6 +176,9 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	// Resolve per-context DB and put it on ctx so DBProvider-backed stores
 	// (h.compliance) resolve to the same database.
 	ctx, d := resolveDBFromPayload(ctx, t.Payload(), h.db, h.poolCache)
+	if h.poolCache != nil && strings.TrimSpace(p.Host) != "" && hostctx.TenantHostKey(ctx) == "" {
+		return fmt.Errorf("run_scan: database for %q not available", p.Host)
+	}
 	if d != nil {
 		ctx = hostctx.WithDB(ctx, d)
 	}
