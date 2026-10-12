@@ -237,6 +237,7 @@ fetch_credentials() {
 
     if [ -z "$CREDS" ] || echo "$CREDS" | grep -q '"error"'; then
         echo "ERROR: Failed to fetch credentials. Bootstrap token may have expired."
+        [ -n "$CREDS" ] && echo "Server response: $CREDS"
         echo "Please request a new installation script."
         exit 1
     fi

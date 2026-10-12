@@ -51,6 +51,9 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	settingsStore := store.NewSettingsStore(dbProvider)
 	settings, _ := settingsStore.GetFirst(ctx)
 	resolved := config.ResolveConfig(ctx, cfg, settings)
+	if err := middleware.ValidateOrigins(resolved.CORSOrigin); err != nil && log != nil {
+		log.Warn("CORS_ORIGIN contains an entry that is not an origin", "error", err)
+	}
 
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Recovery(log))
