@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -676,6 +677,41 @@ func NewRunPatchHandler(registry *agentregistry.Registry, patchRuns *store.Patch
 	return &RunPatchHandler{registry: registry, patchRuns: patchRuns, poolCache: poolCache, queueClient: queueClient, log: log}
 }
 
+const scheduledRunSkippedReason = "Skipped: another patch run was in progress on this host when the scheduled window arrived"
+
+type scheduledRunStore interface {
+	GetByID(ctx context.Context, id string) (*db.GetPatchRunByIDRow, error)
+	ActivateScheduledRun(ctx context.Context, id string) (bool, error)
+	SkipScheduledRun(ctx context.Context, id, reason string) error
+}
+
+// activateIfScheduled turns a scheduled run whose window has arrived into an
+// active one. It reports false when the task must not be dispatched.
+func activateIfScheduled(ctx context.Context, runs scheduledRunStore, log *slog.Logger, p RunPatchPayload) (bool, error) {
+	run, err := runs.GetByID(ctx, p.PatchRunID)
+	if err != nil {
+		return false, err
+	}
+	if run == nil || run.Status != "scheduled" {
+		return true, nil
+	}
+	activated, err := runs.ActivateScheduledRun(ctx, p.PatchRunID)
+	if errors.Is(err, store.ErrHostHasActivePatchRun) {
+		if skipErr := runs.SkipScheduledRun(ctx, p.PatchRunID, scheduledRunSkippedReason); skipErr != nil {
+			return false, skipErr
+		}
+		log.Info("run_patch: host busy when scheduled window arrived, skipped run", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !activated {
+		log.Info("run_patch: scheduled run changed before activation, dropping task", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
+	}
+	return activated, nil
+}
+
 // ProcessTask implements asynq.Handler.
 func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	var p RunPatchPayload
@@ -689,6 +725,11 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 	}
 	if rd != nil {
 		ctx = hostctx.WithDB(hctx, rd)
+	}
+
+	proceed, err := activateIfScheduled(ctx, h.patchRuns, h.log, p)
+	if err != nil || !proceed {
+		return err
 	}
 
 	if !h.registry.IsConnected(p.ApiID) {
@@ -711,7 +752,14 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 			return nil
 		}
 
-		_ = h.patchRuns.UpdateStatus(ctx, p.PatchRunID, status)
+		requeued, err := h.patchRuns.Requeue(ctx, p.PatchRunID, status)
+		if err != nil {
+			return err
+		}
+		if !requeued {
+			h.log.Info("run_patch: run status changed, dropping task", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
+			return nil
+		}
 
 		// Use a deterministic retry task ID so only one retry can exist at a time
 		// and the delete handler can cancel it.
@@ -727,6 +775,19 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 		} else {
 			h.log.Info("run_patch: agent offline, re-queued in 5m", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
 		}
+		return nil
+	}
+
+	run, err := h.patchRuns.GetByID(ctx, p.PatchRunID)
+	if err != nil {
+		return err
+	}
+	if run == nil || (run.Status != "queued" && run.Status != "pending_validation") {
+		status := ""
+		if run != nil {
+			status = run.Status
+		}
+		h.log.Info("run_patch: run no longer awaiting dispatch, dropping task", "api_id", p.ApiID, "patch_run_id", p.PatchRunID, "status", status)
 		return nil
 	}
 
@@ -752,7 +813,9 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 		return err
 	}
 
-	_ = h.patchRuns.UpdateStatus(ctx, p.PatchRunID, "running")
+	if err := h.patchRuns.MarkDispatched(ctx, p.PatchRunID); err != nil {
+		h.log.Warn("run_patch: failed to mark run dispatched", "patch_run_id", p.PatchRunID, "error", err)
+	}
 	h.log.Info("run_patch sent", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
 	return nil
 }

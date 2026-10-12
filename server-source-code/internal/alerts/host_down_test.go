@@ -187,3 +187,42 @@ func TestFormatHostDownThreshold(t *testing.T) {
 		}
 	}
 }
+
+func TestHostDownState_Alive(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	cadenceThreshold := now.Add(-180 * time.Minute)
+
+	live := agentregistry.New()
+	live.Register("api-1", true, "")
+	if got := hostDownState(live, "api-1", now, 30*time.Second, now, cadenceThreshold, 60); !got.alive {
+		t.Error("connected agent should count as alive")
+	}
+
+	dropped := agentregistry.New()
+	dropped.Register("api-1", false, "")
+	dropped.Unregister("api-1")
+	if got := hostDownState(dropped, "api-1", now.Add(5*time.Second), 30*time.Second, now, cadenceThreshold, 60); got.alive || got.down {
+		t.Errorf("agent inside the disconnect grace window must be neither alive nor down: %+v", got)
+	}
+
+	if got := hostDownState(nil, "api-1", now, 30*time.Second, now.Add(-10*time.Minute), cadenceThreshold, 60); !got.alive {
+		t.Error("recently reporting cadence host should count as alive")
+	}
+	if got := hostDownState(nil, "api-1", now, 30*time.Second, now.Add(-10*time.Hour), cadenceThreshold, 60); got.alive {
+		t.Error("stale cadence host must not count as alive")
+	}
+}
+
+func TestHostDownState_CadenceAliveAtIsLastReport(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+	lastUpdate := now.Add(-20 * time.Minute)
+	got := hostDownState(agentregistry.New(), "after-restart", now, 30*time.Second, lastUpdate, now.Add(-180*time.Minute), 60)
+	if !got.alive {
+		t.Fatalf("expected cadence host to count as alive: %+v", got)
+	}
+	if !got.aliveAt.Equal(lastUpdate) {
+		t.Fatalf("cadence liveness must date from the last report, not the sweep: aliveAt=%v lastUpdate=%v", got.aliveAt, lastUpdate)
+	}
+}

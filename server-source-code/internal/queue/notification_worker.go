@@ -57,7 +57,7 @@ func (h *NotificationDeliverHandler) ProcessTask(ctx context.Context, t *asynq.T
 		return err
 	}
 	// If this was a delayed notification, check if it's been cancelled by a counterpart event.
-	if p.Delayed && p.CancelKey != "" && notifications.IsDelayedCancelled(h.rdb, p.Host, p.CancelKey) {
+	if p.Delayed && p.CancelKey != "" && notifications.IsDelayedCancelled(h.rdb, p.Host, p.CancelKey, p.EmittedAt) {
 		if h.log != nil {
 			h.log.Debug("notification_deliver: cancelled by counterpart event", "event_type", p.EventType, "cancel_key", p.CancelKey)
 		}

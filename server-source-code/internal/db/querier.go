@@ -11,6 +11,7 @@ import (
 )
 
 type Querier interface {
+	ActivateScheduledPatchRun(ctx context.Context, id string) (int64, error)
 	// Bulk insert N host_packages rows in a single statement. Replaces the legacy
 	// InsertHostPackage and InsertHostPackageWithWUA per-row inserts — one path
 	// now covers Linux/FreeBSD (all wua_* columns NULL) and Windows (wua_* set).
@@ -514,8 +515,7 @@ type Querier interface {
 	// patch_policy_exclusions
 	ListPatchPolicyExclusions(ctx context.Context, patchPolicyID string) ([]ListPatchPolicyExclusionsRow, error)
 	// The 'status' filter accepts an exact status value. The pseudo-value
-	// 'active' matches any in-flight run (queued or running) so UI widgets
-	// that aggregate those two states can link to a single filter.
+	// 'active' matches the in-flight runs that block a host: queued, pending_validation, running.
 	ListPatchRuns(ctx context.Context, arg ListPatchRunsParams) ([]ListPatchRunsRow, error)
 	ListPatchRunsByPackage(ctx context.Context, arg ListPatchRunsByPackageParams) ([]ListPatchRunsByPackageRow, error)
 	ListPatchRunsByStatus(ctx context.Context, hostIds []string) ([]ListPatchRunsByStatusRow, error)
@@ -543,6 +543,7 @@ type Querier interface {
 	// so progress chunks the agent appended between our read and write are preserved.
 	// Same status guard as UpdatePatchRunCancelled.
 	MarkPatchRunCancelledByUser(ctx context.Context, arg MarkPatchRunCancelledByUserParams) (int64, error)
+	MarkPatchRunDispatched(ctx context.Context, id string) (int64, error)
 	MarkPatchRunsAgentDisconnected(ctx context.Context, arg MarkPatchRunsAgentDisconnectedParams) (int64, error)
 	// Stall sweep. The predicate is deliberately "no activity since", NOT "started
 	// before": every progress chunk the agent streams bumps updated_at (see
@@ -552,11 +553,14 @@ type Querier interface {
 	// every long run timed_out while it was still working and discard the real
 	// outcome the agent later reports.
 	MarkPatchRunsTimedOut(ctx context.Context, arg MarkPatchRunsTimedOutParams) (int64, error)
+	// Keyed on when the run became due, not updated_at: the offline-agent retry bumps updated_at every 5 minutes.
+	MarkUndispatchedPatchRunsTimedOut(ctx context.Context, arg MarkUndispatchedPatchRunsTimedOutParams) (int64, error)
 	// Declared :execrows, not :exec, because the status guard IS the concurrency
 	// control. Two approvals racing both pass the handler's Go-side status check;
 	// only one of them updates a row here, and the loser must be told so rather
 	// than going on to create a second patch run and enqueue a second task.
 	MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) (int64, error)
+	RequeuePatchRun(ctx context.Context, arg RequeuePatchRunParams) (int64, error)
 	RevokeAllSessionsForUser(ctx context.Context, userID string) error
 	RevokeAllSessionsForUserExcept(ctx context.Context, arg RevokeAllSessionsForUserExceptParams) error
 	RevokeAllTrustedDevicesForUser(ctx context.Context, userID string) error
@@ -565,6 +569,7 @@ type Querier interface {
 	SetHostAwaitingPostPatchReport(ctx context.Context, arg SetHostAwaitingPostPatchReportParams) error
 	SetNewsletterSubscribed(ctx context.Context, id string) error
 	SetPatchRunPolicySnapshot(ctx context.Context, arg SetPatchRunPolicySnapshotParams) error
+	SkipScheduledPatchRun(ctx context.Context, arg SkipScheduledPatchRunParams) (int64, error)
 	ToggleHostRepository(ctx context.Context, arg ToggleHostRepositoryParams) error
 	TouchTrustedDeviceLastUsed(ctx context.Context, arg TouchTrustedDeviceLastUsedParams) error
 	UpdateAlert(ctx context.Context, id string) error
@@ -639,11 +644,9 @@ type Querier interface {
 	UpdatePatchRunProgress(ctx context.Context, arg UpdatePatchRunProgressParams) error
 	UpdatePatchRunScheduledAt(ctx context.Context, arg UpdatePatchRunScheduledAtParams) error
 	// Clear dry-run output fields so real-run output starts fresh.
-	// Status guard prevents an in-flight agent message from clobbering an
-	// already-terminated run (cancelled/timed_out/etc.). agent_disconnected is
-	// intentionally NOT in the guard so a recovering agent can unwedge the row.
+	// Allow-list, not deny-list: agent credentials must not be able to start a
+	// scheduled, pending_approval or approved run. agent_disconnected lets a recovering agent unwedge the row.
 	UpdatePatchRunStarted(ctx context.Context, id string) error
-	UpdatePatchRunStatus(ctx context.Context, arg UpdatePatchRunStatusParams) error
 	// Agent streams progress chunks during the run, then sends the final authoritative
 	// output on the terminal stage; REPLACE (not append) so the final record is never
 	// a duplicate of the streamed progress.

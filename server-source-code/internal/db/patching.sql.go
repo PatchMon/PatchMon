@@ -11,6 +11,19 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const activateScheduledPatchRun = `-- name: ActivateScheduledPatchRun :execrows
+UPDATE patch_runs SET status = 'queued', updated_at = NOW()
+WHERE id = $1 AND status = 'scheduled'
+`
+
+func (q *Queries) ActivateScheduledPatchRun(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, activateScheduledPatchRun, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const clearScheduledAt = `-- name: ClearScheduledAt :exec
 UPDATE patch_runs SET scheduled_at = NULL, updated_at = NOW() WHERE id = $1
 `
@@ -25,7 +38,7 @@ SELECT COUNT(*) FROM patch_runs
 WHERE ($1::text = '' OR host_id = $1)
   AND (
     $2::text = ''
-    OR ($2::text = 'active' AND status IN ('queued', 'running'))
+    OR ($2::text = 'active' AND status IN ('queued', 'pending_validation', 'running'))
     OR ($2::text <> 'active' AND status = $2)
   )
   AND ($3::text = '' OR patch_type = $3)
@@ -452,7 +465,7 @@ SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
-WHERE pr.status IN ('queued', 'running', 'pending_validation', 'pending_approval', 'validated') AND (pr.dry_run = false OR pr.dry_run IS NULL OR pr.status IN ('pending_validation', 'pending_approval', 'validated'))
+WHERE pr.status IN ('scheduled', 'queued', 'running', 'pending_validation', 'pending_approval', 'validated') AND (pr.dry_run = false OR pr.dry_run IS NULL OR pr.status IN ('pending_validation', 'pending_approval', 'validated'))
 ORDER BY pr.created_at ASC
 `
 
@@ -687,7 +700,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
   AND (
     $2::text = ''
-    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR ($2::text <> 'active' AND pr.status = $2)
   )
   AND ($3::text = '' OR pr.patch_type = $3)
@@ -732,8 +745,7 @@ type ListPatchRunsRow struct {
 }
 
 // The 'status' filter accepts an exact status value. The pseudo-value
-// 'active' matches any in-flight run (queued or running) so UI widgets
-// that aggregate those two states can link to a single filter.
+// 'active' matches the in-flight runs that block a host: queued, pending_validation, running.
 func (q *Queries) ListPatchRuns(ctx context.Context, arg ListPatchRunsParams) ([]ListPatchRunsRow, error) {
 	rows, err := q.db.Query(ctx, listPatchRuns,
 		arg.HostID,
@@ -881,7 +893,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
   AND (
     $2::text = ''
-    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR ($2::text <> 'active' AND pr.status = $2)
   )
   AND ($3::text = '' OR pr.patch_type = $3)
@@ -985,7 +997,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
   AND (
     $2::text = ''
-    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR ($2::text <> 'active' AND pr.status = $2)
   )
   AND ($3::text = '' OR pr.patch_type = $3)
@@ -1089,7 +1101,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
   AND (
     $2::text = ''
-    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR ($2::text <> 'active' AND pr.status = $2)
   )
   AND ($3::text = '' OR pr.patch_type = $3)
@@ -1193,7 +1205,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
   AND (
     $2::text = ''
-    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR ($2::text <> 'active' AND pr.status = $2)
   )
   AND ($3::text = '' OR pr.patch_type = $3)
@@ -1297,7 +1309,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
   AND (
     $2::text = ''
-    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR ($2::text <> 'active' AND pr.status = $2)
   )
   AND ($3::text = '' OR pr.patch_type = $3)
@@ -1401,7 +1413,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
   AND (
     $2::text = ''
-    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR ($2::text <> 'active' AND pr.status = $2)
   )
   AND ($3::text = '' OR pr.patch_type = $3)
@@ -1505,7 +1517,7 @@ LEFT JOIN users u ON pr.triggered_by_user_id = u.id
 WHERE ($1::text = '' OR pr.host_id = $1)
   AND (
     $2::text = ''
-    OR ($2::text = 'active' AND pr.status IN ('queued', 'running'))
+    OR ($2::text = 'active' AND pr.status IN ('queued', 'pending_validation', 'running'))
     OR ($2::text <> 'active' AND pr.status = $2)
   )
   AND ($3::text = '' OR pr.patch_type = $3)
@@ -1716,6 +1728,19 @@ func (q *Queries) MarkPatchRunCancelledByUser(ctx context.Context, arg MarkPatch
 	return result.RowsAffected(), nil
 }
 
+const markPatchRunDispatched = `-- name: MarkPatchRunDispatched :execrows
+UPDATE patch_runs SET status = 'running', updated_at = NOW()
+WHERE id = $1 AND status IN ('queued', 'pending_validation')
+`
+
+func (q *Queries) MarkPatchRunDispatched(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, markPatchRunDispatched, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const markPatchRunsAgentDisconnected = `-- name: MarkPatchRunsAgentDisconnected :execrows
 UPDATE patch_runs
 SET status = 'agent_disconnected', error_message = $1, completed_at = NOW(), updated_at = NOW()
@@ -1762,6 +1787,27 @@ func (q *Queries) MarkPatchRunsTimedOut(ctx context.Context, arg MarkPatchRunsTi
 	return result.RowsAffected(), nil
 }
 
+const markUndispatchedPatchRunsTimedOut = `-- name: MarkUndispatchedPatchRunsTimedOut :execrows
+UPDATE patch_runs
+SET status = 'timed_out', error_message = $1, completed_at = NOW(), updated_at = NOW()
+WHERE status IN ('scheduled', 'queued', 'pending_validation')
+  AND COALESCE(scheduled_at, created_at) < $2
+`
+
+type MarkUndispatchedPatchRunsTimedOutParams struct {
+	ErrorMessage *string          `json:"error_message"`
+	DueBefore    pgtype.Timestamp `json:"due_before"`
+}
+
+// Keyed on when the run became due, not updated_at: the offline-agent retry bumps updated_at every 5 minutes.
+func (q *Queries) MarkUndispatchedPatchRunsTimedOut(ctx context.Context, arg MarkUndispatchedPatchRunsTimedOutParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markUndispatchedPatchRunsTimedOut, arg.ErrorMessage, arg.DueBefore)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const markValidationApproved = `-- name: MarkValidationApproved :execrows
 UPDATE patch_runs SET status = 'approved', approved_by_user_id = $2, updated_at = NOW() WHERE id = $1 AND status IN ('validated', 'pending_validation', 'pending_approval')
 `
@@ -1777,6 +1823,24 @@ type MarkValidationApprovedParams struct {
 // than going on to create a second patch run and enqueue a second task.
 func (q *Queries) MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) (int64, error) {
 	result, err := q.db.Exec(ctx, markValidationApproved, arg.ID, arg.ApprovedByUserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const requeuePatchRun = `-- name: RequeuePatchRun :execrows
+UPDATE patch_runs SET status = $2, updated_at = NOW()
+WHERE id = $1 AND status IN ('queued', 'pending_validation')
+`
+
+type RequeuePatchRunParams struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+}
+
+func (q *Queries) RequeuePatchRun(ctx context.Context, arg RequeuePatchRunParams) (int64, error) {
+	result, err := q.db.Exec(ctx, requeuePatchRun, arg.ID, arg.Status)
 	if err != nil {
 		return 0, err
 	}
@@ -1802,6 +1866,24 @@ func (q *Queries) SetPatchRunPolicySnapshot(ctx context.Context, arg SetPatchRun
 		arg.PolicySnapshot,
 	)
 	return err
+}
+
+const skipScheduledPatchRun = `-- name: SkipScheduledPatchRun :execrows
+UPDATE patch_runs SET status = 'cancelled', error_message = $2, completed_at = NOW(), updated_at = NOW()
+WHERE id = $1 AND status = 'scheduled'
+`
+
+type SkipScheduledPatchRunParams struct {
+	ID           string  `json:"id"`
+	ErrorMessage *string `json:"error_message"`
+}
+
+func (q *Queries) SkipScheduledPatchRun(ctx context.Context, arg SkipScheduledPatchRunParams) (int64, error) {
+	result, err := q.db.Exec(ctx, skipScheduledPatchRun, arg.ID, arg.ErrorMessage)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updatePatchPolicy = `-- name: UpdatePatchPolicy :exec
@@ -1978,29 +2060,14 @@ const updatePatchRunStarted = `-- name: UpdatePatchRunStarted :exec
 UPDATE patch_runs SET status = 'running', started_at = NOW(), completed_at = NULL,
     shell_output = '', packages_affected = NULL, error_message = NULL, updated_at = NOW()
 WHERE id = $1
-  AND status NOT IN ('cancelled','timed_out','completed','failed','validated','dry_run_completed')
+  AND status IN ('queued','pending_validation','running','agent_disconnected')
 `
 
 // Clear dry-run output fields so real-run output starts fresh.
-// Status guard prevents an in-flight agent message from clobbering an
-// already-terminated run (cancelled/timed_out/etc.). agent_disconnected is
-// intentionally NOT in the guard so a recovering agent can unwedge the row.
+// Allow-list, not deny-list: agent credentials must not be able to start a
+// scheduled, pending_approval or approved run. agent_disconnected lets a recovering agent unwedge the row.
 func (q *Queries) UpdatePatchRunStarted(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, updatePatchRunStarted, id)
-	return err
-}
-
-const updatePatchRunStatus = `-- name: UpdatePatchRunStatus :exec
-UPDATE patch_runs SET status = $2, updated_at = NOW() WHERE id = $1
-`
-
-type UpdatePatchRunStatusParams struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
-}
-
-func (q *Queries) UpdatePatchRunStatus(ctx context.Context, arg UpdatePatchRunStatusParams) error {
-	_, err := q.db.Exec(ctx, updatePatchRunStatus, arg.ID, arg.Status)
 	return err
 }
 

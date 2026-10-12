@@ -376,16 +376,18 @@ const Patching = () => {
 					type="button"
 					onClick={() => navigate("/patching?tab=runs&status=active")}
 					className="card p-4 hover:shadow-card-hover dark:hover:shadow-card-hover-dark transition-shadow text-left"
-					title="View queued and running runs"
+					title="View queued, validating and running runs"
 				>
 					<div className="flex items-center">
 						<Clock className="h-5 w-5 text-blue-600 mr-2" />
 						<div>
 							<p className="text-sm text-secondary-500 dark:text-white">
-								Queued / Running
+								Active
 							</p>
 							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
-								{(summary.queued ?? 0) + (summary.running ?? 0)}
+								{(summary.queued ?? 0) +
+									(summary.pending_validation ?? 0) +
+									(summary.running ?? 0)}
 							</p>
 						</div>
 					</div>
@@ -564,7 +566,7 @@ const Patching = () => {
 
 const STATUS_OPTIONS = [
 	{ value: "", label: "All statuses" },
-	{ value: "active", label: "Active (queued + running)" },
+	{ value: "active", label: "Active (queued, validating or running)" },
 	{ value: "queued", label: "Queued" },
 	{ value: "pending_validation", label: "Pending validation" },
 	{ value: "pending_approval", label: "Pending approval" },

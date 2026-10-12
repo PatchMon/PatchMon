@@ -57,14 +57,19 @@ const STATUS_MAP = {
 };
 
 /**
- * Status badge for patch runs. For queued runs with scheduled_at, shows a countdown timer.
+ * Status badge for patch runs. For queued or scheduled runs with scheduled_at, shows a countdown timer.
  */
 export function PatchRunStatusBadge({ run }) {
 	const status = run?.status ?? "";
 	const scheduledAt = run?.scheduled_at ?? null;
 
-	if (status === "queued" && scheduledAt) {
-		return <QueuedStatusBadge scheduledAt={scheduledAt} />;
+	if ((status === "queued" || status === "scheduled") && scheduledAt) {
+		return (
+			<QueuedStatusBadge
+				scheduledAt={scheduledAt}
+				label={STATUS_MAP[status].label}
+			/>
+		);
 	}
 
 	const s = STATUS_MAP[status] || {

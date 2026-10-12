@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -40,6 +41,8 @@ var deletablePatchRunStatuses = map[string]bool{
 	"approved":           true,
 	"scheduled":          true,
 }
+
+const activePatchRunMessage = "A patch run is already queued or in progress on this host. Wait for it to finish, or cancel it, before starting another."
 
 // PatchingHandler handles patching endpoints.
 type PatchingHandler struct {
@@ -188,7 +191,12 @@ func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := h.patchRuns.UpdateOutput(r.Context(), patchRunID, host.OSType, body.Stage, body.Output, body.ErrorMessage); err != nil {
+	err = h.patchRuns.UpdateOutput(r.Context(), patchRunID, host.OSType, body.Stage, body.Output, body.ErrorMessage)
+	if errors.Is(err, store.ErrHostHasActivePatchRun) {
+		h.log.Warn("patching: started report ignored, another patch run is active on this host", "patch_run_id", patchRunID)
+		err = nil
+	}
+	if err != nil {
 		h.log.Error("patching: failed to update output", "patch_run_id", patchRunID, "error", err)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to save patch output"})
 		return
@@ -372,7 +380,7 @@ func (h *PatchingHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	statusCounts := map[string]int{
-		"queued": 0, "running": 0, "completed": 0, "failed": 0, "cancelled": 0,
+		"scheduled": 0, "queued": 0, "running": 0, "completed": 0, "failed": 0, "cancelled": 0,
 		"timed_out": 0, "agent_disconnected": 0,
 		"pending_validation": 0, "pending_approval": 0, "validated": 0,
 	}
@@ -381,6 +389,7 @@ func (h *PatchingHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	summary := map[string]interface{}{
 		"total_runs":         total,
+		"scheduled":          statusCounts["scheduled"],
 		"queued":             statusCounts["queued"],
 		"running":            statusCounts["running"],
 		"completed":          statusCounts["completed"],
@@ -658,48 +667,30 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 		approvedBy = &userID
 	}
 
-	// 1. Mark the validation run as "approved" (terminal - preserved with its output).
-	//
-	// The serialisation point: the Go-side status check above is racy, so two
-	// concurrent approvals both pass it and only one moves a row here.
-	applied, err := h.patchRuns.MarkValidationApproved(r.Context(), validationID, approvedBy)
-	if err != nil {
-		h.log.Error("patching: mark validation approved error", "error", err)
-		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to approve validation run"})
-		return
-	}
-	if !applied {
-		JSON(w, http.StatusConflict, map[string]string{"error": "This run has already been approved or is no longer awaiting approval"})
-		return
-	}
-
-	// 2. Create the real patch run linked to the validation.
 	var schedAt *time.Time
 	if delayMs > 0 {
 		schedAt = &runAt
 	}
-	if _, err := h.patchRuns.CreateRun(r.Context(), newRunID, valRun.HostID, jobID, valRun.PatchType, pkgName, pkgNames, valRun.TriggeredByUserID, false, schedAt, policyID, policyNamePtr, policySnap, &store.CreateRunOpts{
-		ValidationRunID:  &validationID,
-		ApprovedByUserID: approvedBy,
-	}); err != nil {
-		h.log.Error("patching: create approved run error", "error", err)
-		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create patch run"})
+	if err := h.patchRuns.ApproveAndCreateRun(r.Context(), validationID, approvedBy, newRunID, valRun.HostID, jobID, valRun.PatchType, pkgName, pkgNames, valRun.TriggeredByUserID, schedAt, policyID, policyNamePtr, policySnap); err != nil {
+		switch {
+		case errors.Is(err, store.ErrValidationNotApprovable):
+			JSON(w, http.StatusConflict, map[string]string{"error": "This run has already been approved or is no longer awaiting approval"})
+		case errors.Is(err, store.ErrHostHasActivePatchRun):
+			JSON(w, http.StatusConflict, map[string]string{"error": activePatchRunMessage})
+		default:
+			h.log.Error("patching: approve and create run error", "error", err)
+			JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create patch run"})
+		}
 		return
 	}
 
-	// 3. Enqueue the task.
 	enqueueOpts := []asynq.Option{}
 	if delayMs > 0 {
 		enqueueOpts = append(enqueueOpts, asynq.ProcessIn(time.Duration(delayMs)*time.Millisecond))
 	}
 	if _, err := h.queueClient.Enqueue(task, enqueueOpts...); err != nil {
 		h.log.Error("patching: enqueue approve error", "error", err)
-		// The run row is already committed; without this it sits queued forever
-		// with no task behind it.
-		if _, cancelErr := h.patchRuns.Cancel(r.Context(), newRunID, "Failed to queue patch run"); cancelErr != nil {
-			h.log.Error("patching: failed to cancel orphaned run after enqueue error",
-				"run_id", newRunID, "error", cancelErr)
-		}
+		h.cancelOrphanedRun(r.Context(), newRunID)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to queue approved patch"})
 		return
 	}
@@ -739,6 +730,14 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 		"validation_run_id": validationID,
 		"run_at":            runAt.UTC().Format(time.RFC3339),
 	})
+}
+
+// cancelOrphanedRun terminates a committed run whose task never reached the
+// queue; left queued it would block every later run on the host.
+func (h *PatchingHandler) cancelOrphanedRun(ctx context.Context, runID string) {
+	if _, err := h.patchRuns.Cancel(context.WithoutCancel(ctx), runID, "Failed to queue patch run"); err != nil {
+		h.log.Error("patching: failed to cancel orphaned run after enqueue error", "run_id", runID, "error", err)
+	}
 }
 
 // RetryValidation handles POST /patching/runs/:id/retry-validation.
@@ -1011,6 +1010,10 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		createOpts = &store.CreateRunOpts{InitialStatus: "pending_approval"}
 	}
 	_, err = h.patchRuns.CreateRun(r.Context(), patchRunID, body.HostID, jobID, body.PatchType, pkgName, pkgNames, triggeredBy, body.DryRun, scheduledAt, policyID, policyNamePtr, policySnapshot, createOpts)
+	if errors.Is(err, store.ErrHostHasActivePatchRun) {
+		JSON(w, http.StatusConflict, map[string]string{"error": activePatchRunMessage})
+		return
+	}
 	if err != nil {
 		h.log.Error("patching: create run error", "error", err)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create patch run"})
@@ -1043,6 +1046,7 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		h.log.Error("patching: create task error", "error", err)
+		h.cancelOrphanedRun(r.Context(), patchRunID)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Patch queue is not available"})
 		return
 	}
@@ -1052,6 +1056,7 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := h.queueClient.Enqueue(task, opts...); err != nil {
 		h.log.Error("patching: enqueue error", "error", err)
+		h.cancelOrphanedRun(r.Context(), patchRunID)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to queue patch"})
 		return
 	}

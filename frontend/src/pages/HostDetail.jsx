@@ -4744,6 +4744,7 @@ const HostDetail = () => {
 										className="rounded-md border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm px-3 py-2"
 									>
 										<option value="">All</option>
+										<option value="scheduled">Scheduled</option>
 										<option value="queued">Queued</option>
 										<option value="running">Running</option>
 										<option value="completed">Completed</option>

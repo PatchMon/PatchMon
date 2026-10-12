@@ -161,6 +161,8 @@ const RunDetail = () => {
 			if (newRunId && newRunId !== id && isImmediate) {
 				navigate(`/patching/runs/${newRunId}`);
 			}
+		} catch (err) {
+			toast.error(err?.response?.data?.error || "Failed to approve patch run");
 		} finally {
 			setApprovingId(null);
 		}
@@ -216,6 +218,9 @@ const RunDetail = () => {
 			const status = data?.status;
 			if (status === "queued" || status === "pending_validation") {
 				return 3000;
+			}
+			if (status === "scheduled") {
+				return 30000;
 			}
 			if (status === "running") {
 				return isStreamOpen ? 5000 : 3000;
@@ -602,11 +607,12 @@ const RunDetail = () => {
 								</SummaryRow>
 							</div>
 
-							{run.status === "queued" && run.scheduled_at && (
-								<SummaryRow label="Scheduled for">
-									{formatDate(run.scheduled_at)}
-								</SummaryRow>
-							)}
+							{(run.status === "queued" || run.status === "scheduled") &&
+								run.scheduled_at && (
+									<SummaryRow label="Scheduled for">
+										{formatDate(run.scheduled_at)}
+									</SummaryRow>
+								)}
 
 							{/* Link to related run (validation ↔ patch) */}
 							{run.validation_run_id && (
@@ -756,17 +762,19 @@ const RunDetail = () => {
 								)}
 							</div>
 							<div className="flex items-center gap-2">
-								{run.status !== "running" && run.status !== "queued" && (
-									<button
-										type="button"
-										onClick={handleCopyOutput}
-										className="btn-outline inline-flex items-center gap-1.5 min-h-[44px]"
-										title="Copy shell output"
-									>
-										<Copy className="h-4 w-4" />
-										<span className="hidden sm:inline">Copy output</span>
-									</button>
-								)}
+								{run.status !== "running" &&
+									run.status !== "queued" &&
+									run.status !== "scheduled" && (
+										<button
+											type="button"
+											onClick={handleCopyOutput}
+											className="btn-outline inline-flex items-center gap-1.5 min-h-[44px]"
+											title="Copy shell output"
+										>
+											<Copy className="h-4 w-4" />
+											<span className="hidden sm:inline">Copy output</span>
+										</button>
+									)}
 							</div>
 						</div>
 						<div className="flex-1 min-h-0 rounded-lg border border-secondary-700 dark:border-secondary-600 bg-[#0d1117] dark:bg-black overflow-hidden shadow-inner">

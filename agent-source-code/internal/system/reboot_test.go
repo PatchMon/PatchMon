@@ -2,6 +2,7 @@ package system
 
 import (
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/sirupsen/logrus"
@@ -117,12 +118,16 @@ func TestKernelFlavour(t *testing.T) {
 		{"5.14.21-150500.55.83-default", "default"},
 		// Issue #647: the Pi 5 and Pi 4 builds are separate kernel lines.
 		{"6.12.47+rpt-rpi-2712", "rpt-rpi"},
-		{"6.12.47+rpt-rpi-v8", "rpt-rpi-v"},
+		{"6.12.47+rpt-rpi-v8", "rpt-rpi-v8"},
+		// Issues #1116 and #1072: v6, v7, v7l and v8 are separate lines too.
+		{"6.18.39+rpt-rpi-v7", "rpt-rpi-v7"},
+		{"6.1.21-v7+", "v7"},
+		{"6.1.21-v7l+", "v7l"},
 		// Arch keeps several lines side by side, all with pkgrel 1.
 		{"6.12.4-arch1-1", "arch"},
 		{"6.12.4-zen1-1", "zen"},
 		{"6.12.4-lts1-1", "lts"},
-		// A release with no labels leaves the line unknown, so every candidate counts.
+		// A release with no labels yields an empty flavour.
 		{"6.12.4", ""},
 		{"", ""},
 	}
@@ -157,7 +162,15 @@ func TestKernelFlavourGrouping(t *testing.T) {
 		{"arch pkgrel bump", "6.12.4-arch1-1", "6.13.1-arch1-2", true},
 		{"unversioned pair", "6.12.4", "6.13.9", true},
 
+		{"pi v8 upgrade", "6.12.47+rpt-rpi-v8", "6.12.62+rpt-rpi-v8", true},
+		{"pi legacy v7 upgrade", "6.1.21-v7+", "6.1.25-v7+", true},
+
 		{"pi 2712 against v8", "6.12.47+rpt-rpi-2712", "6.12.47+rpt-rpi-v8", false},
+		{"1072 pi v7 against v8", "6.18.39+rpt-rpi-v7", "6.18.39+rpt-rpi-v8", false},
+		{"1072 pi v6 against v7", "6.18.39+rpt-rpi-v6", "6.18.39+rpt-rpi-v7", false},
+		{"1116 pi legacy v7 against v8", "6.1.21-v7+", "6.1.21-v8+", false},
+		{"1116 pi legacy v7 against v7l", "6.1.21-v7+", "6.1.21-v7l+", false},
+		{"1116 pi legacy v7 against armv6", "6.1.21-v7+", "6.1.21+", false},
 		{"ubuntu generic against lowlatency", "5.15.0-100-generic", "5.15.0-100-lowlatency", false},
 		{"arch against zen", "6.12.4-arch1-1", "6.12.4-zen1-1", false},
 		{"arch against lts", "6.12.4-arch1-1", "6.12.4-lts1-1", false},
@@ -324,6 +337,131 @@ func TestKernelIsOutdated(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := kernelIsOutdated(tt.running, tt.latest); got != tt.want {
 				t.Errorf("kernelIsOutdated(%q, %q) = %v, want %v", tt.running, tt.latest, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRaspberryPiRebootDecision(t *testing.T) {
+	d := &Detector{logger: newTestLogger()}
+
+	legacyModules := []string{"6.1.21+", "6.1.21-v7+", "6.1.21-v7l+", "6.1.21-v8+"}
+	rptBoot := []string{"6.18.39+rpt-rpi-v6", "6.18.39+rpt-rpi-v7", "6.18.39+rpt-rpi-v8"}
+
+	tests := []struct {
+		name       string
+		running    string
+		candidates []string
+		wantLatest string
+		wantStale  bool
+	}{
+		{"1116 pi 2 legacy v7", "6.1.21-v7+", legacyModules, "6.1.21-v7+", false},
+		{"1116 pi 4 legacy v7l", "6.1.21-v7l+", legacyModules, "6.1.21-v7l+", false},
+		{"1116 pi 3 legacy v8", "6.1.21-v8+", legacyModules, "6.1.21-v8+", false},
+		{"1116 pi zero legacy armv6", "6.1.21+", legacyModules, "6.1.21+", false},
+		{"1072 pi armhf v7", "6.18.39+rpt-rpi-v7", rptBoot, "6.18.39+rpt-rpi-v7", false},
+		{"1072 pi armhf v6", "6.18.39+rpt-rpi-v6", rptBoot, "6.18.39+rpt-rpi-v6", false},
+		{"1072 pi v8", "6.18.39+rpt-rpi-v8", rptBoot, "6.18.39+rpt-rpi-v8", false},
+		{
+			"647 pi 5 ignores newer v8", "6.12.47+rpt-rpi-2712",
+			[]string{"6.12.47+rpt-rpi-2712", "6.12.62+rpt-rpi-v8"},
+			"6.12.47+rpt-rpi-2712", false,
+		},
+		{
+			"newer v7 still flagged", "6.18.39+rpt-rpi-v7",
+			append([]string{"6.18.47+rpt-rpi-v6", "6.18.47+rpt-rpi-v7", "6.18.47+rpt-rpi-v8"}, rptBoot...),
+			"6.18.47+rpt-rpi-v7", true,
+		},
+		{
+			"newer v8 still flagged", "6.12.47+rpt-rpi-v8",
+			[]string{"6.12.47+rpt-rpi-v8", "6.12.62+rpt-rpi-v8", "6.12.62+rpt-rpi-v7", "6.12.62+rpt-rpi-2712"},
+			"6.12.62+rpt-rpi-v8", true,
+		},
+		{
+			"newer legacy v7 still flagged", "6.1.21-v7+",
+			append([]string{"6.1.25+", "6.1.25-v7+", "6.1.25-v7l+", "6.1.25-v8+"}, legacyModules...),
+			"6.1.25-v7+", true,
+		},
+		{
+			"newer legacy armv6 still flagged", "6.1.21+",
+			append([]string{"6.1.25+", "6.1.25-v7+", "6.1.25-v7l+", "6.1.25-v8+"}, legacyModules...),
+			"6.1.25+", true,
+		},
+		{
+			"debian still flagged", "6.12.96+deb13-amd64",
+			[]string{"6.12.96+deb13-amd64", "6.12.101+deb13-amd64"},
+			"6.12.101+deb13-amd64", true,
+		},
+		{
+			"rhel point release still flagged", "5.14.0-427.13.1.el9_4.x86_64",
+			[]string{"5.14.0-427.13.1.el9_4.x86_64", "5.14.0-503.11.1.el9_5.x86_64"},
+			"5.14.0-503.11.1.el9_5.x86_64", true,
+		},
+		{
+			"ubuntu clears after reboot", "5.15.0-100-generic",
+			[]string{"5.15.0-91-generic", "5.15.0-100-generic", "5.15.0-101-lowlatency"},
+			"5.15.0-100-generic", false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			latest := d.selectLatestKernel(tt.candidates, kernelFlavour(tt.running))
+			if latest != tt.wantLatest {
+				t.Errorf("latest for running %q = %q, want %q", tt.running, latest, tt.wantLatest)
+			}
+			if stale := kernelIsOutdated(tt.running, latest); stale != tt.wantStale {
+				t.Errorf("kernelIsOutdated(%q, %q) = %v, want %v", tt.running, latest, stale, tt.wantStale)
+			}
+		})
+	}
+}
+
+func TestDpkgKernelsOnMultiarchPi(t *testing.T) {
+	d := &Detector{logger: newTestLogger()}
+
+	dpkgOutput := `Desired=Unknown/Install/Remove/Purge/Hold
+||/ Name                                 Version                                  Architecture Description
++++-====================================-========================================-============-================================
+ii  linux-image-6.18.39+rpt-rpi-v6       1:6.18.39-1+rpt1                         armhf        Linux 6.18.39 for Raspberry Pi v6, Raspberry Pi
+ii  linux-image-6.18.39+rpt-rpi-v7       1:6.18.39-1+rpt1                         armhf        Linux 6.18.39 for Raspberry Pi v7, Raspberry Pi
+ii  linux-image-6.18.39+rpt-rpi-v8:arm64 1:6.18.39-1+rpt1                         arm64        Linux 6.18.39 for Raspberry Pi v8, Raspberry Pi
+`
+
+	kernels, _ := parseDpkgKernelList(dpkgOutput)
+	want := []string{"6.18.39+rpt-rpi-v6", "6.18.39+rpt-rpi-v7", "6.18.39+rpt-rpi-v8"}
+	if strings.Join(kernels, " ") != strings.Join(want, " ") {
+		t.Errorf("parseDpkgKernelList kernels = %q, want %q", kernels, want)
+	}
+
+	tests := []struct {
+		name       string
+		running    string
+		candidates []string
+		wantLatest string
+		wantStale  bool
+	}{
+		{"1116 32-bit userland on v8 kernel", "6.18.39+rpt-rpi-v8", kernels, "6.18.39+rpt-rpi-v8", false},
+		{"armhf v7 unaffected", "6.18.39+rpt-rpi-v7", kernels, "6.18.39+rpt-rpi-v7", false},
+		{
+			"newer foreign-arch v8 still flagged", "6.18.31+rpt-rpi-v8",
+			func() []string {
+				k, _ := parseDpkgKernelList("ii  linux-image-6.18.31+rpt-rpi-v8:arm64 1 arm64 x\n" +
+					"ii  linux-image-6.18.39+rpt-rpi-v8:arm64 1 arm64 x\n")
+				return k
+			}(),
+			"6.18.39+rpt-rpi-v8", true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			latest := d.selectLatestKernel(tt.candidates, kernelFlavour(tt.running))
+			if latest != tt.wantLatest {
+				t.Errorf("latest for running %q = %q, want %q", tt.running, latest, tt.wantLatest)
+			}
+			if stale := kernelIsOutdated(tt.running, latest); stale != tt.wantStale {
+				t.Errorf("kernelIsOutdated(%q, %q) = %v, want %v", tt.running, latest, stale, tt.wantStale)
 			}
 		})
 	}
