@@ -710,7 +710,7 @@ Quick reference panel for the host's identity and agent settings. Fields include
 - **Host Groups**: coloured multi-select chips. Add or remove groups; changes save on blur.
 - **Operating System**: icon plus OS type and version (detected by the agent).
 - **Agent Version**: version of `patchmon-agent` currently reporting.
-- **Agent Auto-update**: per-host toggle. If global auto-update is disabled, a yellow warning badge is shown with a tooltip pointing to **Settings → Agent Updates**.
+- **Agent Auto-update**: per-host toggle, on by default for new hosts so the global setting alone decides whether agents update. Turn it off to keep a single host on its current agent version. If global auto-update is disabled, a yellow warning badge is shown with a tooltip pointing to **Settings → Agent Updates**.
 - **Force Agent Version Upgrade**: the **Update Now** button sends an immediate upgrade command via WebSocket. Disabled when the agent is offline.
 
 See Managing the PatchMon Agent for what the agent does when it receives an upgrade command.
