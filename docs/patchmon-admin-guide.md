@@ -3789,6 +3789,8 @@ Per-type **Alert delay** in **Alert Lifecycle** applies *before* the route fan-o
 | `host_security_updates_exceeded` | `host_security_updates_resolved` |
 | `host_pending_updates_exceeded` | `host_pending_updates_resolved` |
 
+A delayed `host_down` is sent once per outage: later checks that find the host still down do not queue another notification (an alert resolved by hand while the host is still down is not raised again), and a new outage after the host recovers notifies again.
+
 ### Editing and deleting routes
 
 Each row in **Event Rules** has **Edit** and **Delete** buttons.

@@ -252,13 +252,14 @@ func (q *Queries) GetAlertsToAutoResolve(ctx context.Context, arg GetAlertsToAut
 }
 
 const listActiveAlertsByType = `-- name: ListActiveAlertsByType :many
-SELECT id, type, metadata FROM alerts WHERE type = $1 AND is_active = true
+SELECT id, type, metadata, created_at FROM alerts WHERE type = $1 AND is_active = true
 `
 
 type ListActiveAlertsByTypeRow struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Metadata []byte `json:"metadata"`
+	ID        string           `json:"id"`
+	Type      string           `json:"type"`
+	Metadata  []byte           `json:"metadata"`
+	CreatedAt pgtype.Timestamp `json:"created_at"`
 }
 
 func (q *Queries) ListActiveAlertsByType(ctx context.Context, type_ string) ([]ListActiveAlertsByTypeRow, error) {
@@ -270,7 +271,12 @@ func (q *Queries) ListActiveAlertsByType(ctx context.Context, type_ string) ([]L
 	var items []ListActiveAlertsByTypeRow
 	for rows.Next() {
 		var i ListActiveAlertsByTypeRow
-		if err := rows.Scan(&i.ID, &i.Type, &i.Metadata); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.Metadata,
+			&i.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

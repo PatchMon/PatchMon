@@ -1,6 +1,7 @@
 package alerts
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -224,5 +225,85 @@ func TestHostDownState_CadenceAliveAtIsLastReport(t *testing.T) {
 	}
 	if !got.aliveAt.Equal(lastUpdate) {
 		t.Fatalf("cadence liveness must date from the last report, not the sweep: aliveAt=%v lastUpdate=%v", got.aliveAt, lastUpdate)
+	}
+}
+
+func TestResolvesHostDown_RequiresPositiveEvidence(t *testing.T) {
+	t.Parallel()
+
+	base := time.Now()
+	alertAt := base.Add(time.Second)
+	cadenceThreshold := base.Add(-180 * time.Minute)
+
+	reg := agentregistry.New()
+	reg.Register("dropped", false, "")
+	reg.Unregister("dropped")
+	reg.Register("live", false, "")
+
+	cases := []struct {
+		name       string
+		apiID      string
+		reg        *agentregistry.Registry
+		lastUpdate time.Time
+		want       bool
+	}{
+		{"disconnected inside the grace window", "dropped", reg, base, false},
+		{"live websocket", "live", reg, base.Add(-time.Hour), true},
+		{"cadence host with no report since the alert", "unknown", reg, base, false},
+		{"cadence host that reported after the alert", "unknown", reg, alertAt.Add(time.Minute), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			now := base.Add(10 * time.Second)
+			d := hostDownState(tc.reg, tc.apiID, now, 30*time.Second, tc.lastUpdate, cadenceThreshold, 60)
+			if d.down {
+				t.Fatalf("precondition: host should not be judged down: %+v", d)
+			}
+			if got := resolvesHostDown(d, alertAt); got != tc.want {
+				t.Fatalf("resolvesHostDown = %v, want %v (%+v)", got, tc.want, d)
+			}
+		})
+	}
+}
+
+func TestResolvesHostDown_ReportAfterOutageBeforeDelayedAlertRow(t *testing.T) {
+	t.Parallel()
+
+	outageReport := time.Now().Add(-2 * time.Hour)
+	recoveryReport := time.Now().Add(-90 * time.Second)
+	alertRowCreated := time.Now().Add(-60 * time.Second)
+	meta, _ := json.Marshal(map[string]interface{}{"host_id": "h1", "last_update": outageReport})
+
+	since := hostDownSince(meta, alertRowCreated)
+	d := hostDownState(agentregistry.New(), "unknown", time.Now(), 30*time.Second, recoveryReport, time.Now().Add(-180*time.Minute), 60)
+	if d.down {
+		t.Fatalf("precondition: host should not be judged down: %+v", d)
+	}
+	if !resolvesHostDown(d, since) {
+		t.Fatalf("a report after the outage must resolve the alert even when the delayed alert row was written later (since=%v)", since)
+	}
+	if got := hostDownSince(nil, alertRowCreated); !got.Equal(alertRowCreated) {
+		t.Fatalf("without metadata the alert row time is the baseline, got %v", got)
+	}
+}
+
+func TestResolvesHostDown_SilentHostAfterRestartStaysDown(t *testing.T) {
+	t.Parallel()
+
+	outageReport := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Millisecond)
+	meta, _ := json.Marshal(map[string]interface{}{"host_id": "h1", "last_update": outageReport})
+	since := hostDownSince(meta, time.Now().Add(-time.Minute))
+
+	d := hostDownState(agentregistry.New(), "unknown", time.Now(), 30*time.Second, outageReport, time.Now().Add(-3*time.Hour), 60)
+	if resolvesHostDown(d, since) {
+		t.Fatalf("a host with no report since the outage must not resolve after a restart (%+v)", d)
+	}
+
+	created := time.Now()
+	for _, raw := range []string{`{"last_update":"not-a-time"}`, `{"last_update":"` + created.Add(time.Hour).Format(time.RFC3339Nano) + `"}`} {
+		if got := hostDownSince([]byte(raw), created); !got.Equal(created) {
+			t.Fatalf("%s: want created_at fallback, got %v", raw, got)
+		}
 	}
 }

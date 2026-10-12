@@ -44,6 +44,7 @@ func NewAgentDisconnectHandler(
 		return registry != nil && registry.IsConnected(apiID)
 	}
 	return func(ctx context.Context, apiID string) {
+		disconnectedAt := time.Now()
 		// The WS-derived ctx is typically cancelled the moment we get here.
 		// context.WithTimeout on a cancelled parent is still short-circuited,
 		// so detach via context.Background and re-thread the tenant DB
@@ -59,7 +60,7 @@ func NewAgentDisconnectHandler(
 		if reconnected(apiID) {
 			log.Debug("agent disconnect: agent already reconnected, skipping host_down alert", "api_id", apiID)
 		} else {
-			alerts.OnDisconnect(dbCtx, resolvedDB, apiID, tenantHost, emit, log)
+			alerts.OnDisconnect(dbCtx, resolvedDB, apiID, tenantHost, disconnectedAt, emit, log)
 		}
 
 		if patchRuns == nil || hostsStore == nil {
