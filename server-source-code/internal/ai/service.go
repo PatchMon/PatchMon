@@ -47,6 +47,18 @@ var providers = map[string]struct {
 		},
 		defaultModel: "anthropic/claude-3.5-sonnet",
 	},
+	"orcarouter": {
+		name:    "OrcaRouter",
+		baseURL: "https://api.orcarouter.ai/v1",
+		models: []Model{
+			{ID: "orcarouter/fusion", Name: "OrcaRouter Fusion"},
+			{ID: "orcarouter/free", Name: "OrcaRouter Free"},
+			{ID: "orcarouter/fusion-flash", Name: "OrcaRouter Fusion Flash"},
+			{ID: "orcarouter/fusion-mini", Name: "OrcaRouter Fusion Mini"},
+			{ID: "orcarouter/auto", Name: "OrcaRouter Auto"},
+		},
+		defaultModel: "orcarouter/fusion",
+	},
 	"anthropic": {
 		name:    "Anthropic Claude",
 		baseURL: "https://api.anthropic.com/v1",
@@ -201,6 +213,8 @@ func (s *Service) callAI(settings *models.Settings, prompt string, opts *callOpt
 	switch provider {
 	case "openrouter":
 		return callOpenRouter(apiKey, model, messages, opts)
+	case "orcarouter":
+		return callOrcaRouter(apiKey, model, messages, opts)
 	case "anthropic":
 		return callAnthropic(apiKey, model, messages, opts)
 	case "openai":
@@ -243,6 +257,52 @@ func callOpenRouter(apiKey, model string, messages []Message, opts *callOptions)
 	data, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("OpenRouter API error: %d - %s", resp.StatusCode, string(data))
+	}
+	var out struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return "", err
+	}
+	if len(out.Choices) > 0 {
+		return out.Choices[0].Message.Content, nil
+	}
+	return "", nil
+}
+
+// OrcaRouter (OpenAI-compatible gateway)
+func callOrcaRouter(apiKey, model string, messages []Message, opts *callOptions) (string, error) {
+	cfg := providers["orcarouter"]
+	if model == "" {
+		model = cfg.defaultModel
+	}
+	body := map[string]interface{}{
+		"model":       model,
+		"messages":    messages,
+		"max_tokens":  opts.maxTokens,
+		"temperature": opts.temperature,
+		"stream":      false,
+	}
+	reqBody, _ := json.Marshal(body)
+	req, err := http.NewRequest("POST", cfg.baseURL+"/chat/completions", bytes.NewReader(reqBody))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("OrcaRouter API error: %d - %s", resp.StatusCode, string(data))
 	}
 	var out struct {
 		Choices []struct {
