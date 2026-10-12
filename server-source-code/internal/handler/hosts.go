@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -380,6 +381,10 @@ func (h *HostsHandler) UpdateConnection(w http.ResponseWriter, r *http.Request) 
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		Error(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if req.IP != nil && *req.IP != "" && net.ParseIP(*req.IP) == nil {
+		Error(w, http.StatusBadRequest, "Invalid IP address")
 		return
 	}
 
