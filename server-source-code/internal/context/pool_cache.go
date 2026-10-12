@@ -2,7 +2,10 @@ package context
 
 import (
 	stdctx "context"
+	"fmt"
 	"log/slog"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +20,13 @@ type poolEntry struct {
 	expiresAt time.Time
 }
 
+type failedEntry struct {
+	err   error
+	until time.Time
+}
+
+const failureBackoff = 15 * time.Second
+
 // PoolCache maintains a cache of host -> *database.DB with lazy initialization.
 // On first access: runs migrations, creates pool, caches.
 type PoolCache struct {
@@ -25,7 +35,8 @@ type PoolCache struct {
 	ttl      time.Duration
 	mu       sync.RWMutex
 	entries  map[string]*poolEntry
-	hostMu   sync.Map // per-host *sync.Mutex for migration/pool creation
+	failures map[string]failedEntry
+	hostMu   sync.Map // per-host chan struct{} (capacity 1) for migration/pool creation
 	log      *slog.Logger
 }
 
@@ -40,15 +51,50 @@ func NewPoolCache(registry *Registry, cfg *config.Config, ttlMin int, log *slog.
 		cfg:      cfg,
 		ttl:      ttl,
 		entries:  make(map[string]*poolEntry),
+		failures: make(map[string]failedEntry),
 		log:      log,
 	}
 }
 
-// hostLock returns a per-host mutex so that only requests for the same host
+// hostLock returns a per-host lock so that only requests for the same host
 // block each other during migration/pool creation, not all hosts.
-func (c *PoolCache) hostLock(key string) *sync.Mutex {
-	v, _ := c.hostMu.LoadOrStore(key, &sync.Mutex{})
-	return v.(*sync.Mutex)
+func (c *PoolCache) hostLock(key string) chan struct{} {
+	v, _ := c.hostMu.LoadOrStore(key, make(chan struct{}, 1))
+	return v.(chan struct{})
+}
+
+func (c *PoolCache) recentFailure(key string) error {
+	c.mu.RLock()
+	f, ok := c.failures[key]
+	c.mu.RUnlock()
+	if ok && time.Now().Before(f.until) {
+		return f.err
+	}
+	return nil
+}
+
+func (c *PoolCache) recordFailure(key string, err error) error {
+	c.mu.Lock()
+	c.failures[key] = failedEntry{err: err, until: time.Now().Add(failureBackoff)}
+	c.mu.Unlock()
+	return err
+}
+
+func withConnectTimeout(dsn string, seconds int) string {
+	if seconds <= 0 {
+		return dsn
+	}
+	u, err := url.Parse(dsn)
+	if err != nil || u.Scheme == "" {
+		return dsn
+	}
+	q := u.Query()
+	if q.Get("connect_timeout") != "" {
+		return dsn
+	}
+	q.Set("connect_timeout", strconv.Itoa(seconds))
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // GetOrCreate returns the database for the given host, creating it on first access.
@@ -76,11 +122,23 @@ func (c *PoolCache) GetOrCreate(ctx stdctx.Context, host string) (*database.DB, 
 		return ent.db, nil
 	}
 
+	if err := c.recentFailure(key); err != nil {
+		return nil, err
+	}
+
 	// Slow path: per-host lock for migration/pool creation so that only requests
 	// for the same host block each other, not all hosts.
-	hmu := c.hostLock(key)
-	hmu.Lock()
-	defer hmu.Unlock()
+	hostLock := c.hostLock(key)
+	select {
+	case hostLock <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	defer func() { <-hostLock }()
+
+	if err := c.recentFailure(key); err != nil {
+		return nil, err
+	}
 
 	// Double-check after acquiring per-host lock.
 	c.mu.RLock()
@@ -119,14 +177,24 @@ func (c *PoolCache) GetOrCreate(ctx stdctx.Context, host string) (*database.DB, 
 	if log == nil {
 		log = slog.Default()
 	}
-	// Migrations run outside the global lock - only the per-host mutex is held.
-	if err := migrate.Run(entry.DatabaseURL, log); err != nil {
+	connectTimeout := c.cfg.DBConnectTimeout
+	if connectTimeout <= 0 {
+		connectTimeout = 10
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	// Migrations run outside the global lock - only the per-host lock is held.
+	if err := migrate.Run(withConnectTimeout(entry.DatabaseURL, connectTimeout), log); err != nil {
+		return nil, c.recordFailure(key, fmt.Errorf("migrate: %w", err))
 	}
 
 	db, err := database.NewFromURL(ctx, entry.DatabaseURL, maxConns, minConns, c.cfg)
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			return nil, err
+		}
+		return nil, c.recordFailure(key, err)
 	}
 
 	expiresAt := time.Time{}
@@ -135,6 +203,7 @@ func (c *PoolCache) GetOrCreate(ctx stdctx.Context, host string) (*database.DB, 
 	}
 	c.mu.Lock()
 	c.entries[key] = &poolEntry{db: db, expiresAt: expiresAt}
+	delete(c.failures, key)
 	c.mu.Unlock()
 	return db, nil
 }
@@ -161,4 +230,5 @@ func (c *PoolCache) Evict(host string) {
 		}
 		delete(c.entries, key)
 	}
+	delete(c.failures, key)
 }

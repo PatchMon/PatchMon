@@ -159,7 +159,7 @@ func ReloadHandler(poolCache *PoolCache, redisCache *RedisCache, reloadSecret st
 //
 // That endpoint has been removed deliberately:
 //
-//   - Schema migrations are already run lazily by the per-host mutex in
+//   - Schema migrations are already run lazily under the per-host lock in
 //     PoolCache.GetOrCreate (see pool_cache.go) on the first real
 //     request to a tenant. For a legacy import that means the
 //     provisioner finishes pg_restore, flips the tenant to `active`,
