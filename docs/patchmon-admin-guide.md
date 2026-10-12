@@ -1024,7 +1024,7 @@ Groups are a **selector** across the product. Wherever a workflow asks "which ho
 
 - When you build a patch run, the target picker offers **Host** or **Host group** as the target type.
 - Choosing a host group expands the target to every current member at the time the run is queued.
-- Patch policies (recurring runs) can use a host group as the primary selector, so adding a new host to the group automatically includes it in the next scheduled run.
+- Patch policies can be assigned to a host group, so a host added to the group automatically picks up that policy. The policy decides when a run someone triggers on that host actually executes; it does not start runs on its own.
 
 For the full patching flow, see the Patching chapter.
 
@@ -1773,6 +1773,8 @@ PatchMon allows one queued, validating or running patch run per host at a time, 
 ## Chapter 10: Patch Policies and Scheduling {#patch-policies-and-scheduling}
 
 A **patch policy** controls *when* an approved patch run actually fires on a host. Policies let you carve out maintenance windows, build in a delay for "I might change my mind" runs, or force an immediate execution on anything that matters. Assignments and exclusions let you apply a policy broadly (to a host group) while still carving specific hosts out of it.
+
+A policy never starts a run by itself, and PatchMon has no recurring patch schedule. A policy only affects runs that a user triggers (from the Patching wizard, **Patch all** on a host, or the Packages page): it decides whether each run executes immediately, after a delay, or at the next fixed time. Assigning a policy with a fixed time of 01:00 to a host therefore does nothing until someone queues a run for that host.
 
 This page walks through the policy model, how effective policies are resolved, the Settings UI, and how policies interact with run triggers.
 
