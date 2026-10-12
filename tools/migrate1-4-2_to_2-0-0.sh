@@ -13,7 +13,11 @@ restore_hint() {
   if [[ -n "$STACK_DOWN" && -n "$BACKUP_DIR" ]]; then
     echo "" >&2
     echo "The stack was already stopped and the files may be half replaced. Your originals are in $PWD/$BACKUP_DIR/" >&2
-    echo "Restore with: cp $BACKUP_DIR/docker-compose.yml docker-compose.yml && cp $BACKUP_DIR/.env .env && docker compose up -d" >&2
+    if [[ -f "$BACKUP_DIR/.env" ]]; then
+      echo "Restore with: cp $BACKUP_DIR/docker-compose.yml docker-compose.yml && cp $BACKUP_DIR/.env .env && docker compose up -d" >&2
+    else
+      echo "Restore with: cp $BACKUP_DIR/docker-compose.yml docker-compose.yml && rm -f .env && docker compose up -d" >&2
+    fi
   fi
 }
 
@@ -48,7 +52,7 @@ env_set() {
 
 resolve_project_name() {
   local name="${COMPOSE_PROJECT_NAME:-}"
-  [[ -n "$name" ]] || name=$(grep -E '^COMPOSE_PROJECT_NAME=' .env | head -n1 | cut -d= -f2- | strip_quotes || true)
+  [[ -n "$name" || ! -f .env ]] || name=$(grep -E '^COMPOSE_PROJECT_NAME=' .env | head -n1 | cut -d= -f2- | strip_quotes || true)
   [[ -n "$name" ]] || name=$(sed -nE 's/^name:[[:space:]]*//p' docker-compose.yml | head -n1 | strip_quotes || true)
   [[ -n "$name" ]] || name=$(docker compose config 2>/dev/null | sed -nE 's/^name:[[:space:]]*//p' | head -n1 | strip_quotes || true)
   [[ -n "$name" ]] || name=$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]//g; s/^[-_]*//')
@@ -64,7 +68,6 @@ echo ""
 echo "Compose directory: $PWD"
 
 [ -f docker-compose.yml ] || fail "docker-compose.yml not found in $PWD. Run this from your PatchMon compose directory or pass it as the first argument."
-[ -f .env ] || fail ".env not found in $PWD. Create it before migrating."
 command -v docker >/dev/null 2>&1 || fail "docker is not installed or not on PATH."
 docker compose version >/dev/null 2>&1 || fail "The docker compose plugin is required."
 
@@ -96,11 +99,16 @@ if [[ -e "$BACKUP_DIR" ]]; then
 fi
 mkdir "$BACKUP_DIR"
 cp -p docker-compose.yml "$BACKUP_DIR/docker-compose.yml"
-cp -p .env "$BACKUP_DIR/.env"
-echo "Backed up docker-compose.yml and .env to $BACKUP_DIR/"
-
 OLD_COMPOSE="$BACKUP_DIR/docker-compose.yml"
-OLD_ENV="$BACKUP_DIR/.env"
+if [[ -f .env ]]; then
+  cp -p .env "$BACKUP_DIR/.env"
+  OLD_ENV="$BACKUP_DIR/.env"
+  echo "Backed up docker-compose.yml and .env to $BACKUP_DIR/"
+else
+  OLD_ENV="$STAGE/empty.env"
+  : > "$OLD_ENV"
+  echo "Backed up docker-compose.yml to $BACKUP_DIR/ (no .env found; settings will be read from docker-compose.yml)"
+fi
 NEW_ENV=".env"
 
 echo ""
@@ -114,33 +122,40 @@ echo "Installed the 2.0.0 docker-compose.yml and .env template."
 
 extract_from_compose() {
   local key="$1" val
-  val=$(grep -m1 -E "^[[:space:]]+${key}:[[:space:]]" "$OLD_COMPOSE" 2>/dev/null \
-    | sed "s/.*${key}:[[:space:]]*//" \
-    | sed 's/[[:space:]]*$//' \
+  val=$(grep -m1 -E "^[[:space:]]+(-[[:space:]]+)?${key}(:[[:space:]]|=)" "$OLD_COMPOSE" 2>/dev/null \
+    | sed -E "s/^[[:space:]]+(-[[:space:]]+)?${key}(:[[:space:]]*|=)//" \
+    | sed -E "/^[\"']/! s/[[:space:]]+#.*$//" \
+    | strip_quotes \
     || true)
-  if [[ "$val" == \$\{* ]]; then
+  if [[ "$val" == *\$\{* ]]; then
     val=""
   fi
   echo "$val"
 }
 
-COMPOSE_REDIS_HOST=$(extract_from_compose "REDIS_HOST")
-COMPOSE_REDIS_PORT=$(extract_from_compose "REDIS_PORT")
-COMPOSE_REDIS_DB=$(extract_from_compose "REDIS_DB")
-COMPOSE_POSTGRES_DB=$(extract_from_compose "POSTGRES_DB")
-COMPOSE_POSTGRES_USER=$(extract_from_compose "POSTGRES_USER")
-COMPOSE_POSTGRES_PASSWORD=$(extract_from_compose "POSTGRES_PASSWORD")
+extract_requirepass() {
+  grep -m1 -E '^[[:space:]]+command:.*--requirepass[[:space:]]' "$OLD_COMPOSE" 2>/dev/null \
+    | sed -E "s/.*--requirepass[[:space:]]+(\"([^\"]*)\"|'([^']*)'|([^[:space:]]+)).*/\2\3\4/" \
+    || true
+}
 
 compose_fallback() {
-  case "$1" in
-    REDIS_HOST)        echo "$COMPOSE_REDIS_HOST" ;;
-    REDIS_PORT)        echo "$COMPOSE_REDIS_PORT" ;;
-    REDIS_DB)          echo "$COMPOSE_REDIS_DB" ;;
-    POSTGRES_DB)       echo "$COMPOSE_POSTGRES_DB" ;;
-    POSTGRES_USER)     echo "$COMPOSE_POSTGRES_USER" ;;
-    POSTGRES_PASSWORD) echo "$COMPOSE_POSTGRES_PASSWORD" ;;
-    *)                 echo "" ;;
-  esac
+  local val
+  [[ "$1" == "DATABASE_URL" ]] && return 0
+  val=$(extract_from_compose "$1")
+  if [[ -z "$val" && "$1" == "REDIS_PASSWORD" ]]; then
+    val=$(extract_requirepass)
+    [[ "$val" == *\$* ]] && val=""
+  fi
+  echo "$val"
+}
+
+display_value() {
+  if [[ "$1" =~ (PASSWORD|SECRET|_KEY|TOKEN) ]]; then
+    echo "<hidden>"
+  else
+    echo "$2"
+  fi
 }
 
 echo ""
@@ -176,6 +191,12 @@ while IFS= read -r line || [[ -n "$line" ]]; do
       echo "$old_active" >> "$TMP_ENV"
       continue
     fi
+    fallback_value=$(compose_fallback "$commented_var")
+    if [[ -n "$fallback_value" ]]; then
+      echo "${commented_var}=${fallback_value}" >> "$TMP_ENV"
+      echo "  [compose fallback] ${commented_var}=$(display_value "$commented_var" "$fallback_value")"
+      continue
+    fi
     echo "$line" >> "$TMP_ENV"
     continue
   fi
@@ -193,7 +214,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     echo "$old_env_value" >> "$TMP_ENV"
   elif [[ -n "$fallback_value" ]]; then
     echo "${var_name}=${fallback_value}" >> "$TMP_ENV"
-    echo "  [compose fallback] ${var_name}=${fallback_value}"
+    echo "  [compose fallback] ${var_name}=$(display_value "$var_name" "$fallback_value")"
   else
     echo "$line" >> "$TMP_ENV"
   fi
@@ -248,7 +269,7 @@ echo ""
 echo "Migration complete."
 echo ""
 echo "  $BACKUP_DIR/docker-compose.yml   your old compose file (backup)"
-echo "  $BACKUP_DIR/.env                 your old .env (backup)"
+[[ -f "$BACKUP_DIR/.env" ]] && echo "  $BACKUP_DIR/.env                 your old .env (backup)"
 echo "  docker-compose.yml               new 2.0.0 compose file"
 echo "  .env                             new 2.0.0 .env (values carried over)"
 echo ""

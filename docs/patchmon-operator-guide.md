@@ -289,11 +289,11 @@ PatchMon 2.0.0 replaced the separate `backend` and `frontend` containers with a 
 
 **What the script does**
 
-1. Checks that `docker-compose.yml` and `.env` exist, that Docker and the Compose plugin are installed, and that the compose file still uses the 1.4.2 layout. It stops without changing anything if the stack is already migrated.
+1. Checks that `docker-compose.yml` exists, that Docker and the Compose plugin are installed, and that the compose file still uses the 1.4.2 layout. It stops without changing anything if the stack is already migrated.
 2. Downloads the current `docker/docker-compose.yml` and `docker/env.example` from the `main` branch and checks that they look valid. Because these use the `latest` image tag, you end up on the newest 2.x release rather than exactly 2.0.0. Set `UPSTREAM` to a different raw base URL if you need to pull them from somewhere else.
-3. Copies your `docker-compose.yml` and `.env` into a `backup-1-4-2-<timestamp>/` folder next to them.
+3. Copies your `docker-compose.yml` and `.env` (if you have one) into a `backup-1-4-2-<timestamp>/` folder next to them.
 4. Runs `docker compose down`, then installs the new compose file and `.env` template.
-5. Fills in each variable the new template contains with its value from your old `.env`, falls back to values hard-coded in the old compose file (Redis and Postgres settings) where `.env` had none, and merges `CORS_ORIGIN` and `CORS_ORIGINS` into a single `CORS_ORIGIN`. Variables the 2.x template no longer has are dropped; they remain in the backup folder.
+5. Fills in each variable the new template contains with its value from your old `.env`, falls back to values written directly in the old compose file where `.env` had none (for example `JWT_SECRET`, `CORS_ORIGIN`, the Postgres settings, and the Redis password from either the backend environment or `--requirepass`), and merges `CORS_ORIGIN` and `CORS_ORIGINS` into a single `CORS_ORIGIN`. Variables the 2.x template no longer has are dropped; they remain in the backup folder.
 6. Writes `COMPOSE_PROJECT_NAME` if your project was not called `patchmon`, so the existing data volumes are reused.
 7. If the old `frontend` service was published on a port other than 3000, sets `PORT` to that port.
 
@@ -349,7 +349,7 @@ docker compose exec -T database psql -U patchmon_user -d patchmon_db < patchmon-
 docker compose up -d
 ```
 
-Replace `<project>` with your Compose project name (`patchmon` unless you changed it; `docker volume ls` shows it).
+Replace `<project>` with your Compose project name (`patchmon` unless you changed it; `docker volume ls` shows it). If you had no `.env` before migrating, delete the new one instead of copying it back.
 
 **Clean up**
 
