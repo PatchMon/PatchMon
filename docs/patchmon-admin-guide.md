@@ -2798,7 +2798,7 @@ The top of every compliance view has five status cards: Total hosts, Compliant, 
 A typical ad-hoc scan flows like this:
 
 1. An operator clicks **Run Scan** on a host (either from the Compliance Hosts tab or from the Host Detail page).
-2. The browser calls `POST /compliance/trigger/{hostId}`. The server clears any stale "cancel" flag for this host in Redis, enqueues a `run_scan` task on the `compliance` asynq queue, and returns the job ID.
+2. The browser calls `POST /compliance/trigger/{hostId}`. The server clears any stale "cancel" flag for this host in Redis, enqueues a `run_scan` task on the `compliance` asynq queue, and returns the job ID. If a scan is already queued or running on the host it returns `409` with "A scan is already queued or running on this host".
 3. The task dequeues and sends a `run_scan` WebSocket command to the agent. The server updates the `compliance_scans` record to `running` status as soon as the agent confirms receipt.
 4. The agent runs one or both scanners in sequence. OpenSCAP calls `oscap xccdf eval` against the SSG datastream; Docker Bench calls `docker-bench-security` (bundled with the agent).
 5. Each sub-scan produces structured rule results. The agent batches them into a `CompliancePayload` and submits via `POST /api/v1/compliance/scans`.
@@ -2922,21 +2922,22 @@ A scan can be cancelled while it is running. Unlike patch runs, there is no "Sto
 
 1. On the **Hosts** tab, find the row with the blue "Scanning…" indicator.
 2. Click the red **StopCircle** button in the **Run** column. The UI calls `POST /api/v1/compliance/cancel/{hostId}`.
-3. A toast confirms "Cancel request sent for *host*".
+3. A toast confirms "Scan cancelled for *host*", and the scan leaves **Scans in Progress** straight away.
 
 #### What cancel actually does
 
-The `CancelScan` handler on the server does three things:
+The `CancelScan` handler on the server does four things:
 
 1. **Removes any queued `run_scan` task from asynq**, so a scan that hasn't yet reached the agent won't start.
 2. **Sets a `compliance_scan_cancel` flag in Redis** for this host, so if the worker picks up the task between DeleteTask and the agent message, the worker sees the cancel flag and skips execution.
-3. **Sends a `compliance_scan_cancel` WebSocket message to the agent**, so an already-running scan is interrupted at the process level.
+3. **Marks the host's running scan records as cancelled**, so the dashboard stops showing them as running without waiting for the agent. They appear in the **History** tab with the status **Cancelled**.
+4. **Sends a `compliance_scan_cancel` WebSocket message to the agent**, so an already-running scan is interrupted at the process level.
 
-If the agent is connected and busy scanning, it receives the cancel, terminates the OpenSCAP / Docker Bench subprocess, and submits whatever partial results it has. The scan record is marked cancelled.
+If the agent is connected and busy scanning, it receives the cancel, terminates the OpenSCAP / Docker Bench subprocess and uploads nothing, so a cancelled scan does not also appear as a failed scan or raise a scan-failed alert. A cancel that arrives while the scan is still waiting to start on the agent stops it before it begins. If the scan had already finished and its results reach the server after the cancel, they are kept as a normal completed scan.
 
-If the agent is offline, only the queue-level cancel applies: the scan won't run when the agent reconnects because the task has already been removed from the queue.
+If the agent is offline, or the server cannot deliver the message, the scan records are still marked cancelled and the toast warns that the agent could not be reached and may still finish the scan. A queued scan won't run when the agent reconnects, because the task has already been removed from the queue.
 
-Cancel is idempotent. Calling it on a host with no active scan returns success with "Scan cancel sent".
+Cancel is idempotent. Calling it on a host with no active scan still returns success.
 
 ---
 
@@ -2993,7 +2994,7 @@ The modal lets you:
 3. Tick the hosts you want to include (or **Select All**).
 4. Click **Scan N Hosts**.
 
-The UI sends one `POST /api/v1/compliance/trigger/bulk` request with the full host list. The server enqueues one `run_scan` task per host. Hosts that are offline are still queued. They scan as soon as they reconnect and the worker dequeues their task (or the task is cleaned up if the queue drops it before reconnection).
+The UI sends one `POST /api/v1/compliance/trigger/bulk` request with the full host list. The server enqueues one `run_scan` task per host. Hosts that are offline are still queued. The server retries each offline host's scan once a minute for up to 30 minutes, and runs it straight away when the agent reconnects, keeping the chosen profile. If the agent stays offline past that, the job is recorded as failed and the host can be scanned again at any time.
 
 The modal shows a results banner:
 
@@ -3008,11 +3009,11 @@ After a successful bulk scan, the modal auto-closes after three seconds and each
 
 Compliance scanning on a host needs OpenSCAP (`oscap` binary) installed and the SSG content available locally. The first time you enable compliance on a host, the scanner usually isn't there yet. PatchMon handles this with an install job.
 
-1. Enable **compliance mode** on the host (set to `On-Demand` or `Enabled`).
-2. On next Apply Pending Config, the agent receives the new integration state and reports that the scanner is not installed.
-3. From the Host Detail Compliance tab, click **Install Scanner**. The UI calls `POST /api/v1/compliance/install-scanner/{hostId}`.
-4. The server enqueues an install task. The worker sends an install message to the agent.
-5. The agent installs the OpenSCAP scanner with the host's own package manager, then downloads SSG content from the server via `GET /api/v1/compliance/ssg-content/{filename}`. Progress events are reported back to Redis and surfaced in the UI via `GET /compliance/install-job/{hostId}`, which returns the current state plus a per-step message and progress percent. The states are `none` (no install has been requested), `waiting`, `active`, `completed`, `failed`, and `unknown` when the job can no longer be found. A `failed` state also carries an `error` field with the reason.
+1. Enable **compliance mode** on the host (set to `On-Demand` or `Enabled`) with OpenSCAP ticked, and click **Apply**.
+2. The agent saves the new settings and restarts. Because compliance with OpenSCAP has just been switched on, the server also queues an install job that starts as soon as the agent has restarted and reconnected (or after 30 seconds at the latest). The Compliance tab shows it as waiting until then. Hosts whose package manager can't install OpenSCAP (Windows, FreeBSD, Alpine and Arch) are skipped.
+3. If the agent is not connected yet, the install job waits and retries every 30 seconds, up to twice, and runs straight away when the agent reconnects. While it waits, the host's queue shows it as delayed. If the agent still hasn't connected, it reports a failure. If it fails, click **Install Scanner** (or **Retry install**) on the Host Detail Compliance tab. The UI calls `POST /api/v1/compliance/install-scanner/{hostId}`, which returns `409` while an install is already running on the host; cancel that install first to start another. Hosts that already had compliance enabled before an upgrade also need this button once.
+4. Either way the server enqueues an install task, and the worker sends an install message to the agent.
+5. The agent installs the OpenSCAP scanner with the host's own package manager, then downloads SSG content from the server via `GET /api/v1/compliance/ssg-content/{filename}`. Progress events are reported back to Redis and surfaced in the UI via `GET /compliance/install-job/{hostId}`, which returns the current state plus a per-step message and progress percent. The states are `none` (no install has been requested), `waiting`, `active`, `completed`, `failed`, and `unknown` when the job can no longer be found. The state stays `active` until the agent reports its final step; if it hasn't reported within 20 minutes, the state becomes `failed`. The job history entry is updated from the same final step, including when it arrives after the install worker has stopped waiting. A `failed` state also carries an `error` field with the reason.
 6. When the install completes, the Run Scan button becomes active.
 
 The scanner package name is not the same on every release, so the agent asks the archive which one it has rather than assuming. Debian 12 and newer, and Ubuntu 24.04 and newer, provide `openscap-scanner` plus `openscap-common`; Debian 10 and Ubuntu 22.04 provide `libopenscap8` instead. RHEL-family hosts use `openscap-scanner` and SUSE hosts use `openscap-utils`.
@@ -3121,10 +3122,12 @@ Across the top of every Compliance page view sit five identical cards:
 | Card | What it counts | Derived from |
 |---|---|---|
 | Total hosts | `total_hosts + unscanned`: every host with compliance visibility, scanned or not | `summary.total_hosts` + `summary.unscanned` |
-| Compliant | Hosts whose latest scan score is **≥ 80%** | `summary.hosts_compliant` |
-| Warning | Hosts whose latest scan score is between **60% and 79%** | `summary.hosts_warning` |
-| Critical | Hosts whose latest scan score is **< 60%** | `summary.hosts_critical` |
+| Compliant | Hosts whose latest scans all score **≥ 80%** | `summary.hosts_compliant` |
+| Warning | Hosts whose worst latest scan scores between **60% and 79%**, or scores lower but has **no failed rules** | `summary.hosts_warning` |
+| Critical | Hosts with a latest scan scoring **< 60%** that has **at least one failed rule** | `summary.hosts_critical` |
 | Never scanned | Hosts that have never successfully submitted a scan | `summary.unscanned` |
+
+A host is placed by its worst scan, so a host with a compliant OpenSCAP scan and a low Docker Bench scan counts as Warning or Critical. Warnings lower the score but never make a host Critical on their own: a Docker Bench scan that reports only warnings is counted as Warning, however low its score. The **Hosts** tab uses the same rule: each row's status icon and its Passed, Failed and Skipped counts come from that worst scan, and hovering the icon names it. Clicking a count opens **Scan Results** for that host; on a host that runs both OpenSCAP and Docker Bench it also sets the tab's **Scan Type** filter to the worst scan's type, which you can change back to **All Scan Types**. The Passed, Failed and Skipped cards on a host's **Compliance** tab do the same for the scan they show. **Last activity** still shows the host's most recent scan of any type.
 
 The Never scanned card is clickable, it toggles a filter on the **Hosts** tab to show only never-scanned hosts, which is the fastest way to find coverage gaps.
 
@@ -3210,7 +3213,7 @@ The benchmark's rationale for why this rule exists, why it matters, what risk it
 The right column contains two panels that help operators act on a failure:
 
 - **What the fix does**: a short plain-English explanation of the remediation, derived heuristically from the remediation text (for example, "This fix will update file permissions or ownership…" when the script uses `chmod` / `chown`; "This fix will update SSH daemon configuration…" when the script touches `/etc/ssh`). This is UI scaffolding, not audit-grade. Always read the actual remediation script below.
-- **Remediation**: the exact script the scanner would run. For OpenSCAP rules this is the shell fix pulled from SSG. For Docker Bench it's the benchmark-prescribed command. A **Copy** button copies the script to your clipboard so you can paste into a change ticket or runbook.
+- **Remediation**: the exact script the scanner would run. For OpenSCAP rules this is the shell fix pulled from SSG, with the benchmark's variables (password age, `umask`, history length and so on) filled in with the values of the profile the host was scanned against. Results stored by an older agent show these scripts on one line with blank values; update the agent and run a new scan to refresh them. For Docker Bench it's the benchmark-prescribed command. A **Copy** button copies the script to your clipboard so you can paste into a change ticket or runbook.
 
 If the benchmark doesn't ship a remediation script (common for high-level "document this" rules), the panel reads "No remediation steps available."
 
@@ -3252,8 +3255,8 @@ Fix a single failed rule without running a full scan.
 1. Open **Compliance Host Detail** for the host.
 2. In the Scan Results table, expand a failed rule.
 3. Click **Remediate this rule**.
-4. The UI calls `POST /api/v1/compliance/remediate/{hostId}` with `{ "rule_id": "<rule-ref>" }`. The server validates that the agent is connected and sends a `remediate_rule` WebSocket message to the agent.
-5. The agent runs `oscap xccdf eval --remediate --rule <rule>` against the SSG datastream, that runs OpenSCAP's targeted remediation script for just that one rule.
+4. The UI calls `POST /api/v1/compliance/remediate/{hostId}` with `{ "rule_id": "<rule-ref>" }`. The server validates that the agent is connected and sends a `remediate_rule` WebSocket message to the agent, including the OpenSCAP profile the rule was last scanned under.
+5. The agent runs `oscap xccdf eval --profile <profile> --remediate --rule <rule>` against the SSG datastream, that runs OpenSCAP's targeted remediation script for just that one rule. The profile matches the scan that reported the failure (for example the Debian `standard` profile or `cis_level2_server`), and falls back to `level1_server` when the host has no completed OpenSCAP scan.
 6. The UI shows a toast "Remediation triggered". The next scan (manual or scheduled) should show that rule flipping from Fail to Pass if the fix was successful.
 
 Per-rule remediation is limited to OpenSCAP rules today. Docker Bench does not ship executable remediation scripts in the benchmark. The UI greys out the Remediate button on Docker Bench rules for this reason.

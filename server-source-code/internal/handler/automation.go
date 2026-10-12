@@ -160,7 +160,7 @@ func (h *AutomationHandler) getQueueLastRunInfo(queueName string) (lastRun strin
 	if t := h.latestCompletedTask(queueName); t != nil {
 		lastRunTs = t.CompletedAt.UnixMilli()
 		lastRun = t.CompletedAt.Format("1/2/2006, 3:04:05 PM")
-		if t.LastErr != "" {
+		if t.LastErr != "" && !queue.IsRetryLaterError(t.LastErr) {
 			status = "Failed"
 		} else {
 			status = "Success"
@@ -380,7 +380,7 @@ func (h *AutomationHandler) Jobs(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		status := "completed"
-		if t.LastErr != "" {
+		if t.LastErr != "" && !queue.IsRetryLaterError(t.LastErr) {
 			status = "failed"
 		}
 		formatted = append(formatted, map[string]interface{}{
@@ -388,7 +388,7 @@ func (h *AutomationHandler) Jobs(w http.ResponseWriter, r *http.Request) {
 			"name":         t.Type,
 			"status":       status,
 			"data":         nil,
-			"failedReason": t.LastErr,
+			"failedReason": queue.DisplayTaskError(t.LastErr),
 			"finishedOn":   t.CompletedAt.UnixMilli(),
 			"createdAt":    t.CompletedAt.UnixMilli(),
 			"attemptsMade": t.Retried,

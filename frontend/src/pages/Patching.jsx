@@ -44,6 +44,7 @@ import {
 } from "../components/patching/widgets";
 import TierBadge from "../components/TierBadge";
 import UpgradeRequiredContent from "../components/UpgradeRequiredContent";
+import ModalPortal from "../components/ui/ModalPortal";
 import { getRequiredTier } from "../constants/tiers";
 import { useAuth } from "../contexts/AuthContext";
 import { useConfirm } from "../contexts/ConfirmContext";
@@ -1602,134 +1603,140 @@ function PoliciesTab() {
 
 			{/* Create/Edit Modal */}
 			{showModal && (
-				<div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-					<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
-						<div className="flex items-center justify-between p-4 border-b border-secondary-200 dark:border-secondary-600">
-							<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
-								{editingPolicy ? "Edit policy" : "Create policy"}
-							</h3>
-							<button
-								type="button"
-								onClick={() => setShowModal(false)}
-								className="p-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-700"
-							>
-								<X className="h-5 w-5" />
-							</button>
-						</div>
-						<form onSubmit={handleSubmit} className="p-4 space-y-4">
-							<div>
-								<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
-									Name
-								</label>
-								<input
-									type="text"
-									value={form.name}
-									onChange={(e) =>
-										setForm((f) => ({ ...f, name: e.target.value }))
-									}
-									className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2"
-									required
-								/>
-							</div>
-							<div>
-								<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
-									Description (optional)
-								</label>
-								<input
-									type="text"
-									value={form.description}
-									onChange={(e) =>
-										setForm((f) => ({
-											...f,
-											description: e.target.value,
-										}))
-									}
-									className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2"
-								/>
-							</div>
-							<div>
-								<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
-									Patch delay
-								</label>
-								<select
-									value={form.patch_delay_type}
-									onChange={(e) =>
-										setForm((f) => ({
-											...f,
-											patch_delay_type: e.target.value,
-										}))
-									}
-									className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2"
-								>
-									<option value="immediate">Immediate</option>
-									<option value="delayed">Delayed (run after N minutes)</option>
-									<option value="fixed_time">Fixed time (e.g. 3:00 AM)</option>
-								</select>
-							</div>
-							{form.patch_delay_type === "delayed" && (
-								<div>
-									<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
-										Delay (minutes)
-									</label>
-									<input
-										type="number"
-										min={1}
-										value={form.delay_minutes}
-										onChange={(e) =>
-											setForm((f) => ({
-												...f,
-												delay_minutes: e.target.value,
-											}))
-										}
-										className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2"
-									/>
-								</div>
-							)}
-							{form.patch_delay_type === "fixed_time" && (
-								<div>
-									<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
-										Time (HH:MM)
-									</label>
-									<input
-										type="text"
-										placeholder="03:00"
-										value={form.fixed_time_utc}
-										onChange={(e) =>
-											setForm((f) => ({
-												...f,
-												fixed_time_utc: e.target.value,
-											}))
-										}
-										className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2"
-									/>
-									<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
-										Local time in the organization timezone (
-										<span className="font-medium">{orgTimezone}</span>). Change
-										it under Settings &rarr; General.
-									</p>
-								</div>
-							)}
-							<div className="flex justify-end gap-2 pt-2">
+				<ModalPortal>
+					<div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/50">
+						<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+							<div className="flex items-center justify-between p-4 border-b border-secondary-200 dark:border-secondary-600">
+								<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
+									{editingPolicy ? "Edit policy" : "Create policy"}
+								</h3>
 								<button
 									type="button"
 									onClick={() => setShowModal(false)}
-									className="btn-outline"
+									className="p-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-700"
 								>
-									Cancel
-								</button>
-								<button
-									type="submit"
-									className="btn-primary"
-									disabled={
-										createMutation.isPending || updateMutation.isPending
-									}
-								>
-									{editingPolicy ? "Update" : "Create"}
+									<X className="h-5 w-5" />
 								</button>
 							</div>
-						</form>
+							<form onSubmit={handleSubmit} className="p-4 space-y-4">
+								<div>
+									<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+										Name
+									</label>
+									<input
+										type="text"
+										value={form.name}
+										onChange={(e) =>
+											setForm((f) => ({ ...f, name: e.target.value }))
+										}
+										className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2"
+										required
+									/>
+								</div>
+								<div>
+									<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+										Description (optional)
+									</label>
+									<input
+										type="text"
+										value={form.description}
+										onChange={(e) =>
+											setForm((f) => ({
+												...f,
+												description: e.target.value,
+											}))
+										}
+										className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2"
+									/>
+								</div>
+								<div>
+									<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+										Patch delay
+									</label>
+									<select
+										value={form.patch_delay_type}
+										onChange={(e) =>
+											setForm((f) => ({
+												...f,
+												patch_delay_type: e.target.value,
+											}))
+										}
+										className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2"
+									>
+										<option value="immediate">Immediate</option>
+										<option value="delayed">
+											Delayed (run after N minutes)
+										</option>
+										<option value="fixed_time">
+											Fixed time (e.g. 3:00 AM)
+										</option>
+									</select>
+								</div>
+								{form.patch_delay_type === "delayed" && (
+									<div>
+										<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+											Delay (minutes)
+										</label>
+										<input
+											type="number"
+											min={1}
+											value={form.delay_minutes}
+											onChange={(e) =>
+												setForm((f) => ({
+													...f,
+													delay_minutes: e.target.value,
+												}))
+											}
+											className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2"
+										/>
+									</div>
+								)}
+								{form.patch_delay_type === "fixed_time" && (
+									<div>
+										<label className="block text-sm font-medium text-secondary-700 dark:text-secondary-300 mb-1">
+											Time (HH:MM)
+										</label>
+										<input
+											type="text"
+											placeholder="03:00"
+											value={form.fixed_time_utc}
+											onChange={(e) =>
+												setForm((f) => ({
+													...f,
+													fixed_time_utc: e.target.value,
+												}))
+											}
+											className="w-full rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white px-3 py-2"
+										/>
+										<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-400">
+											Local time in the organization timezone (
+											<span className="font-medium">{orgTimezone}</span>).
+											Change it under Settings &rarr; General.
+										</p>
+									</div>
+								)}
+								<div className="flex justify-end gap-2 pt-2">
+									<button
+										type="button"
+										onClick={() => setShowModal(false)}
+										className="btn-outline"
+									>
+										Cancel
+									</button>
+									<button
+										type="submit"
+										className="btn-primary"
+										disabled={
+											createMutation.isPending || updateMutation.isPending
+										}
+									>
+										{editingPolicy ? "Update" : "Create"}
+									</button>
+								</div>
+							</form>
+						</div>
 					</div>
-				</div>
+				</ModalPortal>
 			)}
 		</div>
 	);

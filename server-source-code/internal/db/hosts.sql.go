@@ -281,6 +281,80 @@ func (q *Queries) GetHostByID(ctx context.Context, id string) (Host, error) {
 	return i, err
 }
 
+const getHostByMachineIDAndName = `-- name: GetHostByMachineIDAndName :one
+SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, boot_time, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id, packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash, last_full_report_at FROM hosts
+WHERE machine_id = $1
+  AND lower(friendly_name) = lower($2)
+ORDER BY created_at ASC
+LIMIT 1
+`
+
+type GetHostByMachineIDAndNameParams struct {
+	MachineID    *string `json:"machine_id"`
+	FriendlyName string  `json:"friendly_name"`
+}
+
+func (q *Queries) GetHostByMachineIDAndName(ctx context.Context, arg GetHostByMachineIDAndNameParams) (Host, error) {
+	row := q.db.QueryRow(ctx, getHostByMachineIDAndName, arg.MachineID, arg.FriendlyName)
+	var i Host
+	err := row.Scan(
+		&i.ID,
+		&i.MachineID,
+		&i.FriendlyName,
+		&i.Ip,
+		&i.OsType,
+		&i.OsVersion,
+		&i.Architecture,
+		&i.LastUpdate,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ApiID,
+		&i.ApiKey,
+		&i.AgentVersion,
+		&i.AutoUpdate,
+		&i.CpuCores,
+		&i.CpuModel,
+		&i.DiskDetails,
+		&i.DnsServers,
+		&i.GatewayIp,
+		&i.Hostname,
+		&i.KernelVersion,
+		&i.InstalledKernelVersion,
+		&i.LoadAverage,
+		&i.NetworkInterfaces,
+		&i.RamInstalled,
+		&i.SelinuxStatus,
+		&i.SwapSize,
+		&i.SystemUptime,
+		&i.BootTime,
+		&i.Notes,
+		&i.NeedsReboot,
+		&i.RebootReason,
+		&i.DockerEnabled,
+		&i.ComplianceEnabled,
+		&i.ComplianceOnDemandOnly,
+		&i.ComplianceOpenscapEnabled,
+		&i.ComplianceDockerBenchEnabled,
+		&i.ComplianceScannerStatus,
+		&i.ComplianceScannerUpdatedAt,
+		&i.ComplianceDefaultProfileID,
+		&i.HostDownAlertsEnabled,
+		&i.ExpectedPlatform,
+		&i.PackageManager,
+		&i.PrimaryInterface,
+		&i.AwaitingPostPatchReportRunID,
+		&i.PackagesHash,
+		&i.ReposHash,
+		&i.InterfacesHash,
+		&i.HostnameHash,
+		&i.DockerHash,
+		&i.ComplianceHash,
+		&i.LastFullReportAt,
+	)
+	return i, err
+}
+
 const getHostCheckin = `-- name: GetHostCheckin :one
 SELECT
     id, api_key, friendly_name, hostname, docker_enabled, compliance_enabled,

@@ -256,6 +256,9 @@ CREATE TABLE IF NOT EXISTS hosts (
     last_full_report_at TIMESTAMP(3)
 );
 
+CREATE INDEX IF NOT EXISTS idx_hosts_machine_id
+    ON hosts (machine_id);
+
 -- dashboard_preferences
 CREATE TABLE IF NOT EXISTS dashboard_preferences (
     id TEXT PRIMARY KEY,

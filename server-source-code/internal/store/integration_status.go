@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
@@ -86,15 +87,98 @@ func (s *IntegrationStatusStore) SetComplianceInstallJob(ctx context.Context, ho
 // wholesale because the agent's periodic availability report legitimately owns
 // the other fields.
 func (s *IntegrationStatusStore) ClearInstallEvents(ctx context.Context, apiID, integrationName string) error {
-	current, err := s.Get(ctx, apiID, integrationName)
-	if err != nil || current == nil {
-		return err
+	return s.update(ctx, apiID, integrationName, func(current map[string]interface{}) (map[string]interface{}, bool) {
+		if current == nil {
+			return nil, false
+		}
+		if _, ok := current["install_events"]; !ok {
+			return nil, false
+		}
+		current["install_events"] = []interface{}{}
+		delete(current, "install_job_id")
+		return current, true
+	})
+}
+
+// SetKeepingInstallEvents stores status, carrying over the stored
+// install_events when status has none, and returns what was stored.
+func (s *IntegrationStatusStore) SetKeepingInstallEvents(ctx context.Context, apiID, integrationName string, status map[string]interface{}) (map[string]interface{}, error) {
+	if _, ok := status["install_events"]; ok {
+		return status, s.Set(ctx, apiID, integrationName, status)
 	}
-	if _, ok := current["install_events"]; !ok {
+	stored := status
+	err := s.update(ctx, apiID, integrationName, func(current map[string]interface{}) (map[string]interface{}, bool) {
+		next := make(map[string]interface{}, len(status)+1)
+		for k, v := range status {
+			next[k] = v
+		}
+		next["install_events"] = []interface{}{}
+		if prev, ok := current["install_events"]; ok && prev != nil {
+			next["install_events"] = prev
+		}
+		if prev, ok := current["install_job_id"]; ok {
+			next["install_job_id"] = prev
+		}
+		stored = next
+		return next, true
+	})
+	return stored, err
+}
+
+const integrationStatusUpdateAttempts = 10
+
+// update applies mutate under WATCH so a concurrent writer can't be overwritten
+// with stale fields.
+func (s *IntegrationStatusStore) update(ctx context.Context, apiID, integrationName string, mutate func(current map[string]interface{}) (map[string]interface{}, bool)) error {
+	rdb := s.rdb.RDB(ctx)
+	if rdb == nil {
 		return nil
 	}
-	current["install_events"] = []interface{}{}
-	return s.Set(ctx, apiID, integrationName, current)
+	key := hostctx.TenantKey(ctx, integrationStatusKeyPrefix+apiID+":"+integrationName)
+	txf := func(tx *redis.Tx) error {
+		var current map[string]interface{}
+		val, err := tx.Get(ctx, key).Result()
+		switch {
+		case err == redis.Nil:
+		case err != nil:
+			return err
+		default:
+			if err := json.Unmarshal([]byte(val), &current); err != nil {
+				return err
+			}
+		}
+		next, write := mutate(current)
+		if !write {
+			return nil
+		}
+		b, err := json.Marshal(next)
+		if err != nil {
+			return err
+		}
+		_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
+			p.Set(ctx, key, b, 0)
+			return nil
+		})
+		return err
+	}
+	var err error
+	for range integrationStatusUpdateAttempts {
+		err = rdb.Watch(ctx, txf, key)
+		if !errors.Is(err, redis.TxFailedErr) {
+			return err
+		}
+	}
+	return err
+}
+
+// ClearComplianceInstallJob forgets a host's install job, so a cancelled
+// install neither blocks a new one nor receives its outcome.
+func (s *IntegrationStatusStore) ClearComplianceInstallJob(ctx context.Context, hostID string) error {
+	rdb := s.rdb.RDB(ctx)
+	if rdb == nil {
+		return nil
+	}
+	return rdb.Del(ctx, hostctx.TenantKey(ctx, complianceInstallJobPrefix+hostID)).Err()
 }
 
 // GetComplianceInstallJob returns the install job ID for a host.

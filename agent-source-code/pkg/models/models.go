@@ -269,10 +269,14 @@ type HostSettingsResponse struct {
 
 // IntegrationStatusResponse represents integration status response from server
 type IntegrationStatusResponse struct {
-	Success                      bool            `json:"success"`
-	Integrations                 map[string]bool `json:"integrations"`
-	ComplianceOpenscapEnabled    *bool           `json:"compliance_openscap_enabled,omitempty"`
-	ComplianceDockerBenchEnabled *bool           `json:"compliance_docker_bench_enabled,omitempty"`
+	Success      bool            `json:"success"`
+	Integrations map[string]bool `json:"integrations"`
+	// ComplianceMode carries the three-state mode ("disabled", "on-demand",
+	// "enabled") that the boolean in Integrations cannot express. Empty when
+	// the server predates the field.
+	ComplianceMode               string `json:"compliance_mode,omitempty"`
+	ComplianceOpenscapEnabled    *bool  `json:"compliance_openscap_enabled,omitempty"`
+	ComplianceDockerBenchEnabled *bool  `json:"compliance_docker_bench_enabled,omitempty"`
 }
 
 // InstallEvent represents a single notable event during scanner installation
@@ -292,6 +296,7 @@ type IntegrationSetupStatus struct {
 	Components    map[string]string         `json:"components,omitempty"` // Component name -> status
 	ScannerInfo   *ComplianceScannerDetails `json:"scanner_info,omitempty"`
 	InstallEvents []InstallEvent            `json:"install_events,omitempty"`
+	InstallJobID  string                    `json:"install_job_id,omitempty"`
 }
 
 // ComplianceScannerDetails contains detailed OpenSCAP scanner information

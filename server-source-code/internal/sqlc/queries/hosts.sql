@@ -30,6 +30,13 @@ DELETE FROM hosts WHERE id = ANY($1::text[]);
 -- name: GetHostByApiID :one
 SELECT * FROM hosts WHERE api_id = $1;
 
+-- name: GetHostByMachineIDAndName :one
+SELECT * FROM hosts
+WHERE machine_id = sqlc.arg('machine_id')
+  AND lower(friendly_name) = lower(sqlc.arg('friendly_name'))
+ORDER BY created_at ASC
+LIMIT 1;
+
 -- name: ListExistingHostApiIDs :many
 SELECT api_id FROM hosts WHERE api_id = ANY($1::text[]);
 

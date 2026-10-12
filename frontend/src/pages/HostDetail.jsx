@@ -61,6 +61,7 @@ import RdpViewer from "../components/RdpViewer";
 import SshTerminal from "../components/SshTerminal";
 import TierBadge from "../components/TierBadge";
 import UpgradeRequiredContent from "../components/UpgradeRequiredContent";
+import ModalPortal from "../components/ui/ModalPortal";
 import { getRequiredTier } from "../constants/tiers";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
@@ -1075,11 +1076,24 @@ const HostDetail = () => {
 	const applyPendingConfigMutation = useMutation({
 		mutationFn: () =>
 			adminHostsAPI.applyPendingConfig(hostId).then((res) => res.data),
-		onSuccess: () => {
+		onSuccess: (data) => {
 			queryClient.invalidateQueries({
 				queryKey: ["host-integrations", hostId],
 			});
 			refetchIntegrations();
+			if (data?.scannerInstallQueued) {
+				setComplianceInstallJob({
+					status: "waiting",
+					progress: 0,
+					message: "Waiting for the agent to restart",
+					install_events: [],
+					error: null,
+				});
+				toast.success(
+					"Configuration applied. OpenSCAP will be installed once the agent has restarted.",
+				);
+				return;
+			}
 			toast.success(
 				"Configuration applied. Agent will update config.yml and restart.",
 			);
@@ -2137,7 +2151,7 @@ const HostDetail = () => {
 													<div className="space-y-3 max-h-80 overflow-y-auto pr-2">
 														{host.disk_details.map((disk, index) => (
 															<div
-																key={disk.name || `disk-${index}`}
+																key={`${disk.name ?? ""}-${disk.mountpoint ?? index}`}
 																className="bg-secondary-50 dark:bg-secondary-700 p-3 rounded-lg"
 															>
 																<div className="flex items-center gap-2 mb-2">
@@ -2708,7 +2722,10 @@ const HostDetail = () => {
 											validate={(value) => {
 												if (
 													value.trim() &&
-													!/^(\d{1,3}\.){3}\d{1,3}$/.test(value.trim())
+													!/^(\d{1,3}\.){3}\d{1,3}$/.test(value.trim()) &&
+													!/^(?=.*:.*:)[0-9a-fA-F:]+(\d{1,3}(\.\d{1,3}){3})?$/.test(
+														value.trim(),
+													)
 												) {
 													return "Invalid IP address format";
 												}
@@ -3302,7 +3319,7 @@ const HostDetail = () => {
 													<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-80 overflow-y-auto pr-2">
 														{host.disk_details.map((disk, index) => (
 															<div
-																key={disk.name || `disk-${index}`}
+																key={`${disk.name ?? ""}-${disk.mountpoint ?? index}`}
 																className="bg-secondary-50 dark:bg-secondary-700 p-3 rounded-lg"
 															>
 																<div className="flex items-center gap-2 mb-2">
@@ -4975,7 +4992,12 @@ const HostDetail = () => {
 											to="/compliance"
 											state={{
 												complianceTab: "scan-results",
-												scanResultsFilters: { status: "pass", host_id: hostId },
+												scanResultsFilters: {
+													status: "pass",
+													host_id: hostId,
+													profile_type:
+														complianceLatest.compliance_profiles?.type || "",
+												},
 											}}
 											className="card p-4 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
 											title="View passing rules for this host"
@@ -4996,7 +5018,12 @@ const HostDetail = () => {
 											to="/compliance"
 											state={{
 												complianceTab: "scan-results",
-												scanResultsFilters: { status: "fail", host_id: hostId },
+												scanResultsFilters: {
+													status: "fail",
+													host_id: hostId,
+													profile_type:
+														complianceLatest.compliance_profiles?.type || "",
+												},
 											}}
 											className="card p-4 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
 											title="View failing rules for this host"
@@ -5020,6 +5047,8 @@ const HostDetail = () => {
 												scanResultsFilters: {
 													status: "skipped",
 													host_id: hostId,
+													profile_type:
+														complianceLatest.compliance_profiles?.type || "",
 												},
 											}}
 											className="card p-4 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
@@ -5739,190 +5768,194 @@ const HostDetail = () => {
 
 			{/* Apply Pending Config Modal */}
 			{showApplyConfigModal && integrationsData?.pending_config_exists && (
-				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-					<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
-						<div className="p-6">
-							<div className="flex items-start gap-4">
-								<div className="flex-shrink-0 w-10 h-10 rounded-full bg-warning-100 dark:bg-warning-900/30 flex items-center justify-center">
-									<Send className="h-5 w-5 text-warning-600 dark:text-warning-400" />
-								</div>
-								<div className="flex-1 min-w-0">
-									<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
-										Apply Pending Configuration
-									</h3>
-									<p className="mt-2 text-sm text-secondary-600 dark:text-white">
-										The following changes will be applied to the agent on{" "}
-										<strong>{host?.friendly_name || host?.hostname}</strong>:
-									</p>
-									<ul className="mt-3 space-y-1.5 text-sm text-secondary-700 dark:text-secondary-300">
-										{(() => {
-											const pending = integrationsData?.pending_config || {};
-											const hasComplianceMode = "compliance_mode" in pending;
-											// Order: Docker, Compliance, Compliance mode, OpenSCAP, Docker Bench
-											const order = [
-												"docker_enabled",
-												"compliance_enabled",
-												"compliance_mode",
-												"compliance_on_demand_only",
-												"compliance_openscap_enabled",
-												"compliance_docker_bench_enabled",
-											];
-											const entries = order
-												.filter((key) => {
-													if (!(key in pending)) return false;
-													// Skip redundant: compliance_enabled/compliance_on_demand_only when compliance_mode present
-													if (
-														hasComplianceMode &&
-														(key === "compliance_enabled" ||
-															key === "compliance_on_demand_only")
-													)
-														return false;
-													return true;
-												})
-												.map((key) => {
-													const val = pending[key];
-													const label =
-														key === "docker_enabled"
-															? "Docker monitoring"
-															: key === "compliance_enabled"
-																? "Compliance scanning"
-																: key === "compliance_mode"
-																	? "Compliance mode"
-																	: key === "compliance_on_demand_only"
-																		? "Compliance schedule"
-																		: key === "compliance_openscap_enabled"
-																			? "OpenSCAP"
-																			: key ===
-																					"compliance_docker_bench_enabled"
-																				? "Docker Bench"
-																				: key;
-													let displayVal;
-													if (key === "compliance_mode") {
-														displayVal =
-															val === "disabled"
-																? "Disabled"
-																: val === "on-demand"
-																	? "On-demand"
-																	: val === "enabled"
-																		? "Scheduled"
-																		: String(val);
-													} else if (key === "compliance_on_demand_only") {
-														displayVal = val ? "On-demand only" : "Scheduled";
-													} else if (typeof val === "boolean") {
-														displayVal = val ? "Enabled" : "Disabled";
-													} else {
-														displayVal = String(val);
-													}
-													return { key, label, displayVal };
-												});
-											return entries.map(({ key, label, displayVal }) => (
-												<li key={key} className="flex items-center gap-2">
-													<CheckCircle className="h-4 w-4 text-warning-500 flex-shrink-0" />
-													<span>
-														{label}: <strong>{displayVal}</strong>
-													</span>
-												</li>
-											));
-										})()}
-									</ul>
-									<p className="mt-4 text-sm text-secondary-600 dark:text-white border-t border-secondary-200 dark:border-secondary-600 pt-4">
-										When applied, the agent&apos;s <strong>config.yml</strong>{" "}
-										will be updated and the{" "}
-										<strong>service will restart</strong> on the host.
-									</p>
+				<ModalPortal>
+					<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120]">
+						<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
+							<div className="p-6">
+								<div className="flex items-start gap-4">
+									<div className="flex-shrink-0 w-10 h-10 rounded-full bg-warning-100 dark:bg-warning-900/30 flex items-center justify-center">
+										<Send className="h-5 w-5 text-warning-600 dark:text-warning-400" />
+									</div>
+									<div className="flex-1 min-w-0">
+										<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
+											Apply Pending Configuration
+										</h3>
+										<p className="mt-2 text-sm text-secondary-600 dark:text-white">
+											The following changes will be applied to the agent on{" "}
+											<strong>{host?.friendly_name || host?.hostname}</strong>:
+										</p>
+										<ul className="mt-3 space-y-1.5 text-sm text-secondary-700 dark:text-secondary-300">
+											{(() => {
+												const pending = integrationsData?.pending_config || {};
+												const hasComplianceMode = "compliance_mode" in pending;
+												// Order: Docker, Compliance, Compliance mode, OpenSCAP, Docker Bench
+												const order = [
+													"docker_enabled",
+													"compliance_enabled",
+													"compliance_mode",
+													"compliance_on_demand_only",
+													"compliance_openscap_enabled",
+													"compliance_docker_bench_enabled",
+												];
+												const entries = order
+													.filter((key) => {
+														if (!(key in pending)) return false;
+														// Skip redundant: compliance_enabled/compliance_on_demand_only when compliance_mode present
+														if (
+															hasComplianceMode &&
+															(key === "compliance_enabled" ||
+																key === "compliance_on_demand_only")
+														)
+															return false;
+														return true;
+													})
+													.map((key) => {
+														const val = pending[key];
+														const label =
+															key === "docker_enabled"
+																? "Docker monitoring"
+																: key === "compliance_enabled"
+																	? "Compliance scanning"
+																	: key === "compliance_mode"
+																		? "Compliance mode"
+																		: key === "compliance_on_demand_only"
+																			? "Compliance schedule"
+																			: key === "compliance_openscap_enabled"
+																				? "OpenSCAP"
+																				: key ===
+																						"compliance_docker_bench_enabled"
+																					? "Docker Bench"
+																					: key;
+														let displayVal;
+														if (key === "compliance_mode") {
+															displayVal =
+																val === "disabled"
+																	? "Disabled"
+																	: val === "on-demand"
+																		? "On-demand"
+																		: val === "enabled"
+																			? "Scheduled"
+																			: String(val);
+														} else if (key === "compliance_on_demand_only") {
+															displayVal = val ? "On-demand only" : "Scheduled";
+														} else if (typeof val === "boolean") {
+															displayVal = val ? "Enabled" : "Disabled";
+														} else {
+															displayVal = String(val);
+														}
+														return { key, label, displayVal };
+													});
+												return entries.map(({ key, label, displayVal }) => (
+													<li key={key} className="flex items-center gap-2">
+														<CheckCircle className="h-4 w-4 text-warning-500 flex-shrink-0" />
+														<span>
+															{label}: <strong>{displayVal}</strong>
+														</span>
+													</li>
+												));
+											})()}
+										</ul>
+										<p className="mt-4 text-sm text-secondary-600 dark:text-white border-t border-secondary-200 dark:border-secondary-600 pt-4">
+											When applied, the agent&apos;s <strong>config.yml</strong>{" "}
+											will be updated and the{" "}
+											<strong>service will restart</strong> on the host.
+										</p>
+									</div>
 								</div>
 							</div>
-						</div>
-						<div className="bg-secondary-50 dark:bg-secondary-700/50 px-6 py-4 flex flex-col sm:flex-row gap-3 sm:justify-end">
-							<button
-								type="button"
-								onClick={() => setShowApplyConfigModal(false)}
-								className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-								onClick={() => {
-									applyPendingConfigMutation.mutate(undefined, {
-										onSuccess: () => setShowApplyConfigModal(false),
-									});
-								}}
-								disabled={
-									applyPendingConfigMutation.isPending || !wsStatus?.connected
-								}
-								className="px-4 py-2 text-sm font-medium text-white bg-warning-600 hover:bg-warning-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-							>
-								{applyPendingConfigMutation.isPending ? (
-									<>
-										<Loader2 className="h-4 w-4 animate-spin" />
-										Applying...
-									</>
-								) : (
-									<>
-										<Send className="h-4 w-4" />
-										Apply
-									</>
-								)}
-							</button>
+							<div className="bg-secondary-50 dark:bg-secondary-700/50 px-6 py-4 flex flex-col sm:flex-row gap-3 sm:justify-end">
+								<button
+									type="button"
+									onClick={() => setShowApplyConfigModal(false)}
+									className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
+								>
+									Cancel
+								</button>
+								<button
+									type="button"
+									onClick={() => {
+										applyPendingConfigMutation.mutate(undefined, {
+											onSuccess: () => setShowApplyConfigModal(false),
+										});
+									}}
+									disabled={
+										applyPendingConfigMutation.isPending || !wsStatus?.connected
+									}
+									className="px-4 py-2 text-sm font-medium text-white bg-warning-600 hover:bg-warning-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+								>
+									{applyPendingConfigMutation.isPending ? (
+										<>
+											<Loader2 className="h-4 w-4 animate-spin" />
+											Applying...
+										</>
+									) : (
+										<>
+											<Send className="h-4 w-4" />
+											Apply
+										</>
+									)}
+								</button>
+							</div>
 						</div>
 					</div>
-				</div>
+				</ModalPortal>
 			)}
 
 			{/* Auto-Update Confirmation Dialog */}
 			{autoUpdateDialog && (
-				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-					<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
-						<div className="p-6">
-							<div className="flex items-start gap-4">
-								<div className="flex-shrink-0 w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
-									<AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-								</div>
-								<div className="flex-1">
-									<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
-										Global Auto-Updates Disabled
-									</h3>
-									<p className="mt-2 text-sm text-secondary-600 dark:text-white">
-										The master auto-update setting is currently{" "}
-										<strong>disabled</strong> in Settings &gt; Agent Updates.
-									</p>
-									<p className="mt-2 text-sm text-secondary-600 dark:text-white">
-										Enabling auto-update for{" "}
-										<strong>{host?.friendly_name || host?.hostname}</strong>{" "}
-										won't take effect until global auto-updates are enabled.
-									</p>
+				<ModalPortal>
+					<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120]">
+						<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
+							<div className="p-6">
+								<div className="flex items-start gap-4">
+									<div className="flex-shrink-0 w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+										<AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+									</div>
+									<div className="flex-1">
+										<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
+											Global Auto-Updates Disabled
+										</h3>
+										<p className="mt-2 text-sm text-secondary-600 dark:text-white">
+											The master auto-update setting is currently{" "}
+											<strong>disabled</strong> in Settings &gt; Agent Updates.
+										</p>
+										<p className="mt-2 text-sm text-secondary-600 dark:text-white">
+											Enabling auto-update for{" "}
+											<strong>{host?.friendly_name || host?.hostname}</strong>{" "}
+											won't take effect until global auto-updates are enabled.
+										</p>
+									</div>
 								</div>
 							</div>
-						</div>
-						<div className="bg-secondary-50 dark:bg-secondary-700/50 px-6 py-4 flex flex-col sm:flex-row gap-3 sm:justify-end">
-							<button
-								type="button"
-								onClick={() => setAutoUpdateDialog(false)}
-								className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-								onClick={handleEnableHostOnly}
-								className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
-							>
-								Enable Host Only
-							</button>
-							<button
-								type="button"
-								onClick={handleEnableBoth}
-								disabled={enableGlobalAutoUpdateMutation.isPending}
-								className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								{enableGlobalAutoUpdateMutation.isPending
-									? "Enabling..."
-									: "Enable Both"}
-							</button>
+							<div className="bg-secondary-50 dark:bg-secondary-700/50 px-6 py-4 flex flex-col sm:flex-row gap-3 sm:justify-end">
+								<button
+									type="button"
+									onClick={() => setAutoUpdateDialog(false)}
+									className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
+								>
+									Cancel
+								</button>
+								<button
+									type="button"
+									onClick={handleEnableHostOnly}
+									className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
+								>
+									Enable Host Only
+								</button>
+								<button
+									type="button"
+									onClick={handleEnableBoth}
+									disabled={enableGlobalAutoUpdateMutation.isPending}
+									className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									{enableGlobalAutoUpdateMutation.isPending
+										? "Enabling..."
+										: "Enable Both"}
+								</button>
+							</div>
 						</div>
 					</div>
-				</div>
+				</ModalPortal>
 			)}
 		</div>
 	);

@@ -325,3 +325,76 @@ func TestBuildPackageUpsertPayload_PreservesOrder(t *testing.T) {
 		t.Fatalf("buildPackageUpsertPayload reordered rows: got %v want %v", got, want)
 	}
 }
+
+func TestExtractIPFromInterface(t *testing.T) {
+	tests := []struct {
+		name              string
+		networkInterfaces string
+		want              string
+	}{
+		{
+			name: "IPv4 only",
+			networkInterfaces: `[
+				{
+					"name": "eth0",
+					"addresses": [
+						{"address": "192.0.2.10", "family": "inet"}
+					]
+				}
+			]`,
+			want: "192.0.2.10",
+		},
+		{
+			name: "IPv6 only prefers global address over link-local",
+			networkInterfaces: `[
+				{
+					"name": "eth0",
+					"addresses": [
+						{"address": "fe80::10", "family": "inet6"},
+						{"address": "2001:db8::10", "family": "inet6"}
+					]
+				}
+			]`,
+			want: "2001:db8::10",
+		},
+		{
+			name: "dual stack prefers IPv4",
+			networkInterfaces: `[
+				{
+					"name": "eth0",
+					"addresses": [
+						{"address": "2001:db8::10", "family": "inet6"},
+						{"address": "192.0.2.10", "family": "inet"}
+					]
+				}
+			]`,
+			want: "192.0.2.10",
+		},
+		{
+			name: "IPv4 link-local falls back to IPv6",
+			networkInterfaces: `[
+				{
+					"name": "eth0",
+					"addresses": [
+						{"address": "169.254.10.20", "family": "inet"},
+						{"address": "2001:db8::10", "family": "inet6"}
+					]
+				}
+			]`,
+			want: "2001:db8::10",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ExtractIPFromInterface(
+				[]byte(tt.networkInterfaces),
+				"eth0",
+			)
+
+			if got != tt.want {
+				t.Fatalf("ExtractIPFromInterface() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

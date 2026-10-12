@@ -5,7 +5,7 @@
 
 set -e
 
-SCRIPT_VERSION="1.0.0"
+SCRIPT_VERSION="1.1.0"
 
 # =============================================================================
 # PatchMon Direct Host Auto-Enrollment Script
@@ -46,6 +46,10 @@ warn() { printf "%b\n" "${YELLOW}[WARN]${NC} $1"; }
 error() { printf "%b\n" "${RED}[ERROR]${NC} $1" >&2; exit 1; }
 success() { printf "%b\n" "${GREEN}[SUCCESS]${NC} $1"; }
 debug() { [ "${DEBUG:-false}" = "true" ] && printf "%b\n" "${BLUE}[DEBUG]${NC} $1" || true; }
+
+json_escape() {
+    printf '%s' "$1" | tr -d '\n\r\t' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
 
 # ===== BANNER =====
 cat << "EOF"
@@ -119,13 +123,30 @@ else
     friendly_name="$hostname"
 fi
 
-# Try to get machine_id (optional, for tracking)
-machine_id=""
-if [ -f /etc/machine-id ]; then
-    machine_id=$(cat /etc/machine-id 2>/dev/null || echo "")
-elif [ -f /var/lib/dbus/machine-id ]; then
-    machine_id=$(cat /var/lib/dbus/machine-id 2>/dev/null || echo "")
-fi
+# Same sources and order as the install script, so the server sees one ID per machine
+get_machine_id() {
+    if [ "$(uname -s 2>/dev/null)" = "FreeBSD" ]; then
+        if [ -f /etc/hostid ]; then
+            cat /etc/hostid
+            return
+        fi
+        _uuid=$(sysctl -n kern.hostuuid 2>/dev/null)
+        if [ -n "$_uuid" ]; then
+            echo "$_uuid"
+            return
+        fi
+        echo "patchmon-freebsd-$(hostname 2>/dev/null)-$(date +%s 2>/dev/null)"
+        return
+    fi
+    if [ -f /etc/machine-id ]; then
+        cat /etc/machine-id
+    elif [ -f /var/lib/dbus/machine-id ]; then
+        cat /var/lib/dbus/machine-id
+    else
+        echo "patchmon-$(cat /sys/class/dmi/id/product_uuid 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null)"
+    fi
+}
+machine_id=$(get_machine_id 2>/dev/null | head -n 1 || echo "")
 
 # Get OS information
 os_info="unknown"
@@ -237,24 +258,13 @@ echo ""
 # ===== ENROLL HOST =====
 info "Enrolling $friendly_name in PatchMon..."
 
-# Build JSON payload
-json_payload=$(cat <<EOF
-{
-    "friendly_name": "$friendly_name",
-    "metadata": {
-        "hostname": "$hostname",
-        "ip_address": "$ip_address",
-        "os_info": "$os_info",
-        "architecture": "$architecture"
-    }
-}
-EOF
-)
-
-# Add machine_id if available
-if [ -n "$machine_id" ]; then
-    json_payload=$(echo "$json_payload" | sed "s/\"friendly_name\"/\"machine_id\": \"$machine_id\",\n    \"friendly_name\"/")
-fi
+json_payload=$(printf '{"friendly_name":"%s","machine_id":"%s","metadata":{"hostname":"%s","ip_address":"%s","os_info":"%s","architecture":"%s"}}' \
+    "$(json_escape "$friendly_name")" \
+    "$(json_escape "$machine_id")" \
+    "$(json_escape "$hostname")" \
+    "$(json_escape "$ip_address")" \
+    "$(json_escape "$os_info")" \
+    "$architecture")
 
 curl_exit=0
 response=$(curl $CURL_FLAGS --show-error -X POST \
@@ -308,6 +318,15 @@ if [ "$http_code" = "201" ]; then
     else
         error "Failed to install agent (exit: $install_exit_code)"
     fi
+elif [ "$http_code" = "409" ]; then
+    existing_name=$(echo "$body" | grep -o '"friendly_name":"[^"]*"' | cut -d'"' -f4 || echo "")
+    if [ -n "$existing_name" ]; then
+        warn "This host is already enrolled in PatchMon as '$existing_name'; skipping"
+    else
+        warn "This host is already enrolled in PatchMon; skipping"
+    fi
+    warn "Remove the host in PatchMon before it can be enrolled again"
+    exit 0
 else
     printf "%b\n" "${RED}[ERROR]${NC} Failed to enroll $friendly_name - HTTP $http_code" >&2
     printf "%b\n" "Response: $body" >&2

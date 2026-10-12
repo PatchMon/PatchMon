@@ -1,6 +1,6 @@
 module github.com/PatchMon/PatchMon/server-source-code
 
-go 1.26.6
+go 1.26.9
 
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0
@@ -20,10 +20,10 @@ require (
 	github.com/swaggo/http-swagger v1.3.4
 	github.com/wwt/guac v1.3.2
 	go.yaml.in/yaml/v3 v3.0.5
-	golang.org/x/crypto v0.54.0
+	golang.org/x/crypto v0.57.0
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/sync v0.22.0
-	golang.org/x/text v0.40.0
+	golang.org/x/sync v0.23.0
+	golang.org/x/text v0.42.0
 )
 
 require (
@@ -55,10 +55,10 @@ require (
 	go.opentelemetry.io/otel/metric v1.39.0 // indirect
 	go.opentelemetry.io/otel/trace v1.39.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
-	golang.org/x/mod v0.38.0 // indirect
-	golang.org/x/net v0.57.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/mod v0.41.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	golang.org/x/tools v0.48.0 // indirect
+	golang.org/x/tools v0.49.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )

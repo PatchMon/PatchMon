@@ -1,6 +1,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
 import {
+	Ban,
 	CheckCircle,
 	ChevronLeft,
 	ChevronRight,
@@ -26,6 +27,12 @@ const STATUS_CONFIG = {
 		label: "Failed",
 		colour: "text-red-600 dark:text-red-400",
 		bg: "bg-red-100 dark:bg-red-900/30",
+	},
+	cancelled: {
+		icon: Ban,
+		label: "Cancelled",
+		colour: "text-secondary-500 dark:text-white",
+		bg: "bg-secondary-100 dark:bg-secondary-700",
 	},
 	running: {
 		icon: RefreshCw,
@@ -126,6 +133,7 @@ const ScanHistoryTab = ({ scanned_hosts }) => {
 						<option value="completed">Completed</option>
 						<option value="failed">Failed</option>
 						<option value="running">Running</option>
+						<option value="cancelled">Cancelled</option>
 					</select>
 
 					<select
@@ -315,6 +323,10 @@ const ScanHistoryTab = ({ scanned_hosts }) => {
 														title={scan.error_message || ""}
 													>
 														{scan.error_message || "Scan failed"}
+													</span>
+												) : scan.status === "cancelled" ? (
+													<span className="text-sm text-secondary-500 dark:text-white">
+														{scan.error_message || "Scan cancelled"}
 													</span>
 												) : (
 													<span className="text-sm text-secondary-400 dark:text-white">

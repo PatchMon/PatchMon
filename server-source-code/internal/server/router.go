@@ -190,7 +190,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	dashboardPrefsHandler := handler.NewDashboardPreferencesHandler(dashboardPrefsStore)
 	dockerHandler := handler.NewDockerHandler(dockerStore)
 	reportStore := store.NewReportStore(dbProvider)
-	integrationsHandler := handler.NewIntegrationsHandler(hostsStore, store.NewDockerStore(dbProvider), integrationStatusStore, dbProvider, notifyEmit, reportStore)
+	integrationsHandler := handler.NewIntegrationsHandler(hostsStore, store.NewDockerStore(dbProvider), integrationStatusStore, dbProvider, notifyEmit, reportStore, store.NewJobHistoryStore(dbProvider))
 	complianceStore := store.NewComplianceStore(dbProvider)
 	complianceHandler := handler.NewComplianceHandler(complianceStore, hostsStore, registry, queueClient, queueInspector, integrationStatusStore, cfg.SSGContentDir, notifyEmit, reportStore)
 	autoEnrollmentStore := store.NewAutoEnrollmentStore(dbProvider)
@@ -225,7 +225,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	var agentWsHandler *handler.AgentWSHandler
 	agentOpts := []handler.AgentWSHandlerOption{
 		handler.WithOnAgentDisconnect(handler.NewAgentDisconnectHandler(dbProvider, hostsStore, patchRunsStore, registry, notifyEmit, log)),
-		handler.WithOnAgentConnect(handler.NewAgentConnectHandler(dbProvider, queueClient, queueInspector, notifyEmit, log)),
+		handler.WithOnAgentConnect(handler.NewAgentConnectHandler(dbProvider, queueClient, queueInspector, integrationStatusStore, notifyEmit, log)),
 	}
 	if rdpHandler != nil {
 		agentOpts = append(agentOpts, handler.WithOnRDPProxyMessage(rdpHandler.HandleRDPProxyMessage))
@@ -327,8 +327,8 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Post("/patching/windows-updates/superseded", windowsUpdatesHandler.RemoveSuperseded)
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Get("/patching/windows-updates/approved", windowsUpdatesHandler.GetApprovedGUIDs)
 		// Auto-enrollment (public, token in headers for enroll, query params for script)
-		r.Post("/auto-enrollment/enroll", autoEnrollmentHandler.Enroll)
-		r.Get("/auto-enrollment/script", autoEnrollmentHandler.ServeScript)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Post("/auto-enrollment/enroll", autoEnrollmentHandler.Enroll)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Get("/auto-enrollment/script", autoEnrollmentHandler.ServeScript)
 		// Agent WebSocket (GET with Upgrade: websocket)
 		r.Get("/agents/ws", agentWsHandler.ServeWS)
 		// SSH terminal WebSocket (ticket auth via query param).

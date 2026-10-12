@@ -931,6 +931,10 @@ func runScheduledComplianceScan() {
 		}
 		return
 	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		logger.Info("Scheduled compliance scan was cancelled")
+		return
+	}
 
 	if integrationData == nil || integrationData.Error != "" {
 		if integrationData != nil {

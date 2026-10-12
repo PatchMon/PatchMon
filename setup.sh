@@ -1,11 +1,5 @@
 #!/bin/bash
-# =============================================================================
-# PatchMon Setup Script — Redirector
-# =============================================================================
-# Native (bare-metal) installation is no longer supported.
-# PatchMon now runs as a single Docker container for security, consistency,
-# and ease of updates.
-# =============================================================================
+# Native installation is no longer supported; this script only points at the Docker routes.
 
 set -e
 
@@ -15,7 +9,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 echo ""
-echo -e "${BOLD}PatchMon — Installation Guide${NC}"
+echo -e "${BOLD}PatchMon Installation Guide${NC}"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
 echo -e "${YELLOW}Native (bare-metal) installation is no longer supported.${NC}"
@@ -31,8 +25,8 @@ echo ""
 echo "  This will:"
 echo "  • Install Docker Engine + Compose if not already present"
 echo "  • Create /opt/patchmon with docker-compose.yml and .env"
-echo "  • Generate all secrets"
-echo "  • Interactively configure your access URL and timezone"
+echo "  • Generate any missing secrets (an existing .env keeps its secrets and settings)"
+echo "  • Ask for your access URL, reverse proxy setting and timezone, even when piped through sudo bash"
 echo "  • Start PatchMon"
 echo ""
 echo -e "${BOLD}Option 2: Already have Docker?${NC}"
@@ -40,6 +34,8 @@ echo ""
 echo -e "  ${CYAN}mkdir patchmon && cd patchmon${NC}"
 echo -e "  ${CYAN}bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/setup-env.sh)\"${NC}"
 echo -e "  ${CYAN}docker compose up -d${NC}"
+echo ""
+echo "  Works on Linux and macOS. Re-running it on an existing .env keeps your secrets."
 echo ""
 echo -e "${BOLD}Option 3: Update an existing installation${NC}"
 echo ""
