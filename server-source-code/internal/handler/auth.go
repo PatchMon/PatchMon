@@ -1658,7 +1658,7 @@ func (h *AuthHandler) SetupAdmin(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to create admin")
 		return
 	}
-	AutoSubscribeIfHosted(h.cfg != nil && h.cfg.AdminMode, h.users, h.log, u)
+	AutoSubscribeIfHosted(r.Context(), h.cfg != nil && h.cfg.AdminMode, h.users, h.log, u)
 
 	expiresIn := int64(3600)
 	accessToken, refreshToken, err := h.issueSessionTokens(r, u, expiresIn, 7*24*3600)
@@ -1751,7 +1751,7 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to create account")
 		return
 	}
-	AutoSubscribeIfHosted(h.cfg != nil && h.cfg.AdminMode, h.users, h.log, u)
+	AutoSubscribeIfHosted(r.Context(), h.cfg != nil && h.cfg.AdminMode, h.users, h.log, u)
 
 	accessToken, _, err := h.issueSessionTokens(r, u, 3600, 7*24*3600)
 	if err != nil {

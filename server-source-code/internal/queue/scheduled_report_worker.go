@@ -38,7 +38,7 @@ func NewScheduledReportsDispatchHandler(defaultDB *database.DB, poolCache *hostc
 	return &ScheduledReportsDispatchHandler{defaultDB: defaultDB, poolCache: poolCache, qc: qc, log: log}
 }
 
-func (h *ScheduledReportsDispatchHandler) resolveDB(ctx context.Context, payload []byte) (context.Context, *database.DB) {
+func (h *ScheduledReportsDispatchHandler) resolveDB(ctx context.Context, payload []byte) (context.Context, *database.DB, error) {
 	return resolveDBFromPayload(ctx, payload, h.defaultDB, h.poolCache)
 }
 
@@ -66,7 +66,10 @@ func (h *ScheduledReportsDispatchHandler) processDB(ctx context.Context, d *data
 func (h *ScheduledReportsDispatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	payload := t.Payload()
 	if len(payload) > 0 {
-		ctx, d := h.resolveDB(ctx, payload)
+		ctx, d, err := h.resolveDB(ctx, payload)
+		if err != nil {
+			return err
+		}
 		h.processDB(ctx, d, tenantHostFromPayload(payload))
 		return nil
 	}
@@ -77,7 +80,7 @@ func (h *ScheduledReportsDispatchHandler) ProcessTask(ctx context.Context, t *as
 	h.processDB(ctx, h.defaultDB, "")
 	hosts := h.poolCache.ListHosts()
 	for _, host := range hosts {
-		hctx, d := resolveDBForHost(ctx, host, nil, h.poolCache)
+		hctx, d, _ := resolveDBForHost(ctx, host, nil, h.poolCache)
 		if d == nil {
 			continue
 		}
@@ -140,10 +143,10 @@ func NewScheduledReportRunHandler(defaultDB *database.DB, poolCache *hostctx.Poo
 	return &ScheduledReportRunHandler{defaultDB: defaultDB, poolCache: poolCache, qc: qc, enc: enc, log: log}
 }
 
-func (h *ScheduledReportRunHandler) resolveDB(ctx context.Context, payload []byte) (context.Context, *database.DB) {
+func (h *ScheduledReportRunHandler) resolveDB(ctx context.Context, payload []byte) (context.Context, *database.DB, error) {
 	var p ScheduledReportRunPayload
 	if len(payload) == 0 || json.Unmarshal(payload, &p) != nil {
-		return ctx, h.defaultDB
+		return ctx, h.defaultDB, nil
 	}
 	return resolveDBForHost(ctx, p.Host, h.defaultDB, h.poolCache)
 }
@@ -154,7 +157,10 @@ func (h *ScheduledReportRunHandler) ProcessTask(ctx context.Context, t *asynq.Ta
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return err
 	}
-	ctx, d := h.resolveDB(ctx, t.Payload())
+	ctx, d, err := h.resolveDB(ctx, t.Payload())
+	if err != nil {
+		return err
+	}
 	rep, err := d.Queries.GetScheduledReportByID(ctx, p.ReportID)
 	if err != nil {
 		return nil

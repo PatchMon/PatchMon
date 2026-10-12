@@ -42,10 +42,10 @@ func NewNotificationDeliverHandler(defaultDB *database.DB, poolCache *hostctx.Po
 	return &NotificationDeliverHandler{defaultDB: defaultDB, poolCache: poolCache, enc: enc, rdb: rdb, log: log}
 }
 
-func (h *NotificationDeliverHandler) resolveDB(ctx context.Context, payload []byte) (context.Context, *database.DB) {
+func (h *NotificationDeliverHandler) resolveDB(ctx context.Context, payload []byte) (context.Context, *database.DB, error) {
 	var p notifications.NotificationDeliverPayload
 	if len(payload) == 0 || json.Unmarshal(payload, &p) != nil {
-		return ctx, h.defaultDB
+		return ctx, h.defaultDB, nil
 	}
 	return resolveDBForHost(ctx, p.Host, h.defaultDB, h.poolCache)
 }
@@ -63,7 +63,10 @@ func (h *NotificationDeliverHandler) ProcessTask(ctx context.Context, t *asynq.T
 		}
 		return nil
 	}
-	ctx, d := h.resolveDB(ctx, t.Payload())
+	ctx, d, err := h.resolveDB(ctx, t.Payload())
+	if err != nil {
+		return err
+	}
 	dest, err := d.Queries.GetNotificationDestinationByID(ctx, p.DestinationID)
 	if err != nil || !dest.Enabled {
 		return nil
