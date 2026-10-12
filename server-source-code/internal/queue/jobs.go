@@ -730,6 +730,19 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 		return nil
 	}
 
+	run, err := h.patchRuns.GetByID(ctx, p.PatchRunID)
+	if err != nil {
+		return err
+	}
+	if run == nil || (run.Status != "queued" && run.Status != "pending_validation") {
+		status := ""
+		if run != nil {
+			status = run.Status
+		}
+		h.log.Info("run_patch: run no longer awaiting dispatch, dropping task", "api_id", p.ApiID, "patch_run_id", p.PatchRunID, "status", status)
+		return nil
+	}
+
 	// Build run_patch payload
 	payload := map[string]interface{}{
 		"type":         "run_patch",
@@ -752,7 +765,9 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 		return err
 	}
 
-	_ = h.patchRuns.UpdateStatus(ctx, p.PatchRunID, "running")
+	if err := h.patchRuns.MarkDispatched(ctx, p.PatchRunID); err != nil {
+		h.log.Warn("run_patch: failed to mark run dispatched", "patch_run_id", p.PatchRunID, "error", err)
+	}
 	h.log.Info("run_patch sent", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
 	return nil
 }

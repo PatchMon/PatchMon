@@ -15,6 +15,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const freeBSDBasePackageName = "freebsd-base"
@@ -240,13 +241,80 @@ type CreateRunOpts struct {
 	InitialStatus string
 }
 
+// ErrHostHasActivePatchRun is returned when a host already has a queued,
+// validating or running patch run; patch_runs_one_active_per_host enforces it.
+var ErrHostHasActivePatchRun = errors.New("host already has an active patch run")
+
+// ErrValidationNotApprovable is returned when the validation run was approved
+// by a concurrent request or is no longer awaiting approval.
+var ErrValidationNotApprovable = errors.New("validation run is no longer awaiting approval")
+
+const activePatchRunIndex = "patch_runs_one_active_per_host"
+
+func mapActiveRunConflict(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == activePatchRunIndex {
+		return ErrHostHasActivePatchRun
+	}
+	return err
+}
+
 // CreateRun creates a new patch run. If id is empty, a new UUID is generated.
 // triggeredByUserID is the user who initiated the run (optional; nil for agent/system).
 // dryRun when true creates a validation-only run with status "pending_validation".
 // scheduledAt is when the patch will run (optional; nil for immediate runs).
 // policyID, policyName, policySnapshot capture the effective policy at trigger time (all optional).
 // opts.InitialStatus, if non-empty, overrides the dry-run-derived status.
+// Returns ErrHostHasActivePatchRun when the host already has an active run.
 func (s *PatchRunsStore) CreateRun(ctx context.Context, id, hostID, jobID, patchType string, packageName *string, packageNames []string, triggeredByUserID *string, dryRun bool, scheduledAt *time.Time, policyID, policyName *string, policySnapshot []byte, opts *CreateRunOpts) (string, error) {
+	params, err := newCreatePatchRunParams(id, hostID, jobID, patchType, packageName, packageNames, triggeredByUserID, dryRun, scheduledAt, policyID, policyName, policySnapshot, opts)
+	if err != nil {
+		return "", err
+	}
+	d := s.db.DB(ctx)
+	if err := d.Queries.CreatePatchRun(ctx, params); err != nil {
+		return params.ID, mapActiveRunConflict(err)
+	}
+	return params.ID, nil
+}
+
+// ApproveAndCreateRun marks the validation run approved and creates the linked
+// execution run in one transaction, so a refused run never consumes the approval.
+// Returns ErrValidationNotApprovable or ErrHostHasActivePatchRun on conflict.
+func (s *PatchRunsStore) ApproveAndCreateRun(ctx context.Context, validationRunID string, approvedByUserID *string, id, hostID, jobID, patchType string, packageName *string, packageNames []string, triggeredByUserID *string, scheduledAt *time.Time, policyID, policyName *string, policySnapshot []byte) error {
+	params, err := newCreatePatchRunParams(id, hostID, jobID, patchType, packageName, packageNames, triggeredByUserID, false, scheduledAt, policyID, policyName, policySnapshot, &CreateRunOpts{
+		ValidationRunID:  &validationRunID,
+		ApprovedByUserID: approvedByUserID,
+	})
+	if err != nil {
+		return err
+	}
+	d := s.db.DB(ctx)
+	tx, err := d.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+	}()
+	q := d.Queries.WithTx(tx)
+	n, err := q.MarkValidationApproved(ctx, db.MarkValidationApprovedParams{
+		ID:               validationRunID,
+		ApprovedByUserID: approvedByUserID,
+	})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrValidationNotApprovable
+	}
+	if err := q.CreatePatchRun(ctx, params); err != nil {
+		return mapActiveRunConflict(err)
+	}
+	return tx.Commit(ctx)
+}
+
+func newCreatePatchRunParams(id, hostID, jobID, patchType string, packageName *string, packageNames []string, triggeredByUserID *string, dryRun bool, scheduledAt *time.Time, policyID, policyName *string, policySnapshot []byte, opts *CreateRunOpts) (db.CreatePatchRunParams, error) {
 	if id == "" {
 		id = uuid.New().String()
 	}
@@ -255,7 +323,7 @@ func (s *PatchRunsStore) CreateRun(ctx context.Context, id, hostID, jobID, patch
 		var err error
 		pkgNames, err = json.Marshal(packageNames)
 		if err != nil {
-			return "", err
+			return db.CreatePatchRunParams{}, err
 		}
 	}
 	status := "queued"
@@ -265,15 +333,13 @@ func (s *PatchRunsStore) CreateRun(ctx context.Context, id, hostID, jobID, patch
 	if opts != nil && opts.InitialStatus != "" {
 		status = opts.InitialStatus
 	}
-	sched := pgtime.FromPtr(scheduledAt)
 	var validationRunID *string
 	var approvedByUserID *string
 	if opts != nil {
 		validationRunID = opts.ValidationRunID
 		approvedByUserID = opts.ApprovedByUserID
 	}
-	d := s.db.DB(ctx)
-	err := d.Queries.CreatePatchRun(ctx, db.CreatePatchRunParams{
+	return db.CreatePatchRunParams{
 		ID:                id,
 		HostID:            hostID,
 		JobID:             jobID,
@@ -284,14 +350,13 @@ func (s *PatchRunsStore) CreateRun(ctx context.Context, id, hostID, jobID, patch
 		ShellOutput:       "",
 		TriggeredByUserID: triggeredByUserID,
 		DryRun:            dryRun,
-		ScheduledAt:       sched,
+		ScheduledAt:       pgtime.FromPtr(scheduledAt),
 		PolicyID:          policyID,
 		PolicyName:        policyName,
 		PolicySnapshot:    policySnapshot,
 		ValidationRunID:   validationRunID,
 		ApprovedByUserID:  approvedByUserID,
-	})
-	return id, err
+	}, nil
 }
 
 // GetByID returns a patch run by ID with host info.
@@ -324,7 +389,10 @@ func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, osType, stage, ou
 	d := s.db.DB(ctx)
 	switch stage {
 	case "started":
-		return d.Queries.UpdatePatchRunStarted(ctx, id)
+		if err := mapActiveRunConflict(d.Queries.UpdatePatchRunStarted(ctx, id)); !errors.Is(err, ErrHostHasActivePatchRun) {
+			return err
+		}
+		return nil
 	case "progress":
 		if output == "" {
 			return nil
@@ -407,6 +475,13 @@ func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, osType, stage, ou
 	}
 }
 
+// MarkDispatched moves a run to running only if it is still awaiting dispatch.
+func (s *PatchRunsStore) MarkDispatched(ctx context.Context, id string) error {
+	d := s.db.DB(ctx)
+	_, err := d.Queries.MarkPatchRunDispatched(ctx, id)
+	return err
+}
+
 // UpdateStatus updates patch run status (e.g. for re-queuing when agent offline).
 func (s *PatchRunsStore) UpdateStatus(ctx context.Context, id, status string) error {
 	d := s.db.DB(ctx)
@@ -442,25 +517,6 @@ func (s *PatchRunsStore) MarkRunsAgentDisconnected(ctx context.Context, hostID, 
 		ErrorMessage: errPtr,
 		HostID:       hostID,
 	})
-}
-
-// MarkValidationApproved marks a validation run as approved (terminal state).
-// The actual patch run is created separately via CreateRun with ValidationRunID set.
-//
-// Returns false when no row moved, which means another approval got there
-// first (or the run left an approvable status). Callers must treat that as a
-// conflict and stop: the status guard in the SQL is the only thing serialising
-// concurrent approvals.
-func (s *PatchRunsStore) MarkValidationApproved(ctx context.Context, id string, approvedByUserID *string) (bool, error) {
-	d := s.db.DB(ctx)
-	n, err := d.Queries.MarkValidationApproved(ctx, db.MarkValidationApprovedParams{
-		ID:               id,
-		ApprovedByUserID: approvedByUserID,
-	})
-	if err != nil {
-		return false, err
-	}
-	return n > 0, nil
 }
 
 // SetPolicySnapshot stores the effective policy snapshot on a run (called at trigger/approve time).

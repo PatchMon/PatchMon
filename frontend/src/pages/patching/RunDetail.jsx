@@ -161,6 +161,8 @@ const RunDetail = () => {
 			if (newRunId && newRunId !== id && isImmediate) {
 				navigate(`/patching/runs/${newRunId}`);
 			}
+		} catch (err) {
+			toast.error(err?.response?.data?.error || "Failed to approve patch run");
 		} finally {
 			setApprovingId(null);
 		}

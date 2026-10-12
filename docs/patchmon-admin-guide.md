@@ -1755,6 +1755,10 @@ sudo patchmon-agent report
 
 Another operator already approved or deleted the run while you were looking at it. Reload Runs & History; the row will now be in `approved` or gone.
 
+#### "A patch run is already queued or in progress on this host"
+
+PatchMon allows one queued (including runs waiting on a policy schedule), validating or running patch run per host at a time, because package managers lock while they work and a second run would fail on the lock. Wait for the current run to finish, or stop or delete it, then start the new one; in a multi-host wizard, busy hosts are reported as failed and the other hosts go ahead.
+
 ---
 
 ### Related Documentation

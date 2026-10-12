@@ -1716,6 +1716,19 @@ func (q *Queries) MarkPatchRunCancelledByUser(ctx context.Context, arg MarkPatch
 	return result.RowsAffected(), nil
 }
 
+const markPatchRunDispatched = `-- name: MarkPatchRunDispatched :execrows
+UPDATE patch_runs SET status = 'running', updated_at = NOW()
+WHERE id = $1 AND status IN ('queued', 'pending_validation')
+`
+
+func (q *Queries) MarkPatchRunDispatched(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, markPatchRunDispatched, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const markPatchRunsAgentDisconnected = `-- name: MarkPatchRunsAgentDisconnected :execrows
 UPDATE patch_runs
 SET status = 'agent_disconnected', error_message = $1, completed_at = NOW(), updated_at = NOW()

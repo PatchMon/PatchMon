@@ -731,6 +731,10 @@ CREATE TABLE IF NOT EXISTS patch_runs (
     updated_at TIMESTAMP(3) NOT NULL
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS patch_runs_one_active_per_host
+    ON patch_runs (host_id)
+    WHERE status IN ('queued', 'pending_validation', 'running');
+
 -- alert_config
 CREATE TABLE IF NOT EXISTS alert_config (
     id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,

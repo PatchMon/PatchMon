@@ -543,6 +543,7 @@ type Querier interface {
 	// so progress chunks the agent appended between our read and write are preserved.
 	// Same status guard as UpdatePatchRunCancelled.
 	MarkPatchRunCancelledByUser(ctx context.Context, arg MarkPatchRunCancelledByUserParams) (int64, error)
+	MarkPatchRunDispatched(ctx context.Context, id string) (int64, error)
 	MarkPatchRunsAgentDisconnected(ctx context.Context, arg MarkPatchRunsAgentDisconnectedParams) (int64, error)
 	// Stall sweep. The predicate is deliberately "no activity since", NOT "started
 	// before": every progress chunk the agent streams bumps updated_at (see

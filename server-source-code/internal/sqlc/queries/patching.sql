@@ -49,6 +49,10 @@ UPDATE patch_runs SET status = 'running', started_at = NOW(), completed_at = NUL
 WHERE id = $1
   AND status NOT IN ('cancelled','timed_out','completed','failed','validated','dry_run_completed');
 
+-- name: MarkPatchRunDispatched :execrows
+UPDATE patch_runs SET status = 'running', updated_at = NOW()
+WHERE id = $1 AND status IN ('queued', 'pending_validation');
+
 -- name: ClearScheduledAt :exec
 UPDATE patch_runs SET scheduled_at = NULL, updated_at = NOW() WHERE id = $1;
 
