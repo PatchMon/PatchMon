@@ -175,18 +175,12 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 
 	// Resolve per-context DB and put it on ctx so DBProvider-backed stores
 	// (h.compliance) resolve to the same database.
-	d := resolveDBFromPayload(ctx, t.Payload(), h.db, h.poolCache)
+	ctx, d := resolveDBFromPayload(ctx, t.Payload(), h.db, h.poolCache)
+	if h.poolCache != nil && strings.TrimSpace(p.Host) != "" && hostctx.TenantHostKey(ctx) == "" {
+		return fmt.Errorf("run_scan: database for %q not available", p.Host)
+	}
 	if d != nil {
 		ctx = hostctx.WithDB(ctx, d)
-	}
-	// Workers carry no context entry, so TenantKey would build unprefixed Redis
-	// keys and never match the ones the HTTP side writes.
-	//
-	// Only Host is set, which is all TenantKey needs. Nothing reachable from a
-	// worker reads the quota or module fields; if that changes, populate them
-	// from the registry, since a nil MaxHosts or Modules fails open.
-	if p.Host != "" {
-		ctx = hostctx.WithEntry(ctx, &hostctx.Entry{Host: p.Host})
 	}
 	taskID, _ := asynq.GetTaskID(ctx)
 	retryCount, _ := asynq.GetRetryCount(ctx)
@@ -389,7 +383,7 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return err
 	}
-	d := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
+	ctx, d := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
 
 	// Resolve Redis from payload.Host when set; fall back to system rdb.
 	rdb := h.rdb

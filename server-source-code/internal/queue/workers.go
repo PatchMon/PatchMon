@@ -34,27 +34,30 @@ const (
 )
 
 // resolveDBFromPayload returns the DB to use: from poolCache when host is in payload, else defaultDB.
-func resolveDBFromPayload(ctx context.Context, payload []byte, defaultDB *database.DB, poolCache *hostctx.PoolCache) *database.DB {
+func resolveDBFromPayload(ctx context.Context, payload []byte, defaultDB *database.DB, poolCache *hostctx.PoolCache) (context.Context, *database.DB) {
 	if len(payload) == 0 || poolCache == nil {
-		return defaultDB
+		return ctx, defaultDB
 	}
 	var p AutomationPayload
 	if err := json.Unmarshal(payload, &p); err == nil {
 		return resolveDBForHost(ctx, p.Host, defaultDB, poolCache)
 	}
-	return defaultDB
+	return ctx, defaultDB
 }
 
 // resolveDBForHost returns the database for a job's context. Workers have no
 // HTTP request, so the host travels in the job payload.
-func resolveDBForHost(ctx context.Context, host string, defaultDB *database.DB, poolCache *hostctx.PoolCache) *database.DB {
+//
+// The returned ctx carries the context's Entry only when its own DB resolved, so caches keyed
+// on TenantHostKey never receive another context's (or the default DB's) data.
+func resolveDBForHost(ctx context.Context, host string, defaultDB *database.DB, poolCache *hostctx.PoolCache) (context.Context, *database.DB) {
 	if poolCache == nil || strings.TrimSpace(host) == "" {
-		return defaultDB
+		return ctx, defaultDB
 	}
 	if resolved, err := poolCache.GetOrCreate(ctx, host); err == nil && resolved != nil {
-		return resolved
+		return hostctx.WithEntry(ctx, &hostctx.Entry{Host: host}), resolved
 	}
-	return defaultDB
+	return ctx, defaultDB
 }
 
 // workerTenantKey prefixes a Redis key with the context domain for multi-context isolation.
@@ -84,11 +87,11 @@ func forEachDB(ctx context.Context, defaultDB *database.DB, poolCache *hostctx.P
 		return
 	}
 	for _, host := range poolCache.ListHosts() {
-		d, err := poolCache.GetOrCreate(ctx, host)
-		if err != nil || d == nil {
+		hctx, d := resolveDBForHost(ctx, host, nil, poolCache)
+		if d == nil {
 			continue
 		}
-		fn(ctx, d, host)
+		fn(hctx, d, host)
 	}
 }
 
@@ -115,7 +118,7 @@ func (h *HostStatusMonitorHandler) ProcessTask(ctx context.Context, t *asynq.Tas
 
 	// Payload has host: single-host or manual trigger with host
 	if len(payload) > 0 {
-		db := resolveDBFromPayload(ctx, payload, h.defaultDB, h.poolCache)
+		ctx, db := resolveDBFromPayload(ctx, payload, h.defaultDB, h.poolCache)
 		alertsCreated, err := alerts.ProcessHostStatusMonitor(ctx, db, tenantHostFromPayload(payload), h.registry, h.emit, h.log)
 		if err != nil {
 			return err
@@ -155,11 +158,11 @@ func (h *HostStatusMonitorHandler) ProcessTask(ctx context.Context, t *asynq.Tas
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			db, err := h.poolCache.GetOrCreate(ctx, host)
-			if err != nil || db == nil {
+			hctx, db := resolveDBForHost(ctx, host, nil, h.poolCache)
+			if db == nil {
 				return
 			}
-			if n, err := alerts.ProcessHostStatusMonitor(ctx, db, host, h.registry, h.emit, h.log); err == nil {
+			if n, err := alerts.ProcessHostStatusMonitor(hctx, db, host, h.registry, h.emit, h.log); err == nil {
 				totalCreated.Add(int64(n))
 			}
 		}()
@@ -189,7 +192,7 @@ func (h *UpdateThresholdMonitorHandler) ProcessTask(ctx context.Context, t *asyn
 
 	// Payload has host: single-host or manual trigger with host
 	if len(payload) > 0 {
-		db := resolveDBFromPayload(ctx, payload, h.defaultDB, h.poolCache)
+		ctx, db := resolveDBFromPayload(ctx, payload, h.defaultDB, h.poolCache)
 		alertsCreated, err := alerts.ProcessUpdateThresholdMonitor(ctx, db, tenantHostFromPayload(payload), h.emit, h.log)
 		if err != nil {
 			return err
@@ -229,11 +232,11 @@ func (h *UpdateThresholdMonitorHandler) ProcessTask(ctx context.Context, t *asyn
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			db, err := h.poolCache.GetOrCreate(ctx, host)
-			if err != nil || db == nil {
+			hctx, db := resolveDBForHost(ctx, host, nil, h.poolCache)
+			if db == nil {
 				return
 			}
-			if n, err := alerts.ProcessUpdateThresholdMonitor(ctx, db, host, h.emit, h.log); err == nil {
+			if n, err := alerts.ProcessUpdateThresholdMonitor(hctx, db, host, h.emit, h.log); err == nil {
 				totalCreated.Add(int64(n))
 			}
 		}()
@@ -259,7 +262,7 @@ func NewSessionCleanupHandler(defaultDB *database.DB, poolCache *hostctx.PoolCac
 // ProcessTask implements asynq.Handler.
 func (h *SessionCleanupHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
 		return d.Queries.DeleteExpiredSessions(ctx)
 	}
 	forEachDB(ctx, h.defaultDB, h.poolCache, func(ctx context.Context, d *database.DB, host string) {
@@ -286,7 +289,7 @@ func NewOrphanedRepoCleanupHandler(defaultDB *database.DB, poolCache *hostctx.Po
 // ProcessTask implements asynq.Handler.
 func (h *OrphanedRepoCleanupHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
 		ctx = hostctx.WithDB(ctx, d)
 		repos := store.NewRepositoriesStore(&hostctx.DBResolver{Default: d})
 		_, count, err := repos.CleanupOrphaned(ctx)
@@ -327,7 +330,7 @@ func NewOrphanedPkgCleanupHandler(defaultDB *database.DB, poolCache *hostctx.Poo
 // ProcessTask implements asynq.Handler.
 func (h *OrphanedPkgCleanupHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
 		return h.cleanupDB(ctx, d)
 	}
 	forEachDB(ctx, h.defaultDB, h.poolCache, func(ctx context.Context, d *database.DB, host string) {
@@ -369,7 +372,7 @@ func NewDockerInvCleanupHandler(defaultDB *database.DB, poolCache *hostctx.PoolC
 // ProcessTask implements asynq.Handler.
 func (h *DockerInvCleanupHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
 		return h.cleanupDB(ctx, d)
 	}
 	forEachDB(ctx, h.defaultDB, h.poolCache, func(ctx context.Context, d *database.DB, host string) {
@@ -429,7 +432,7 @@ func NewSystemStatisticsHandler(defaultDB *database.DB, poolCache *hostctx.PoolC
 // ProcessTask implements asynq.Handler.
 func (h *SystemStatisticsHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
 		return h.collectStats(ctx, d)
 	}
 	forEachDB(ctx, h.defaultDB, h.poolCache, func(ctx context.Context, d *database.DB, host string) {
@@ -474,7 +477,7 @@ func NewVersionUpdateCheckHandler(defaultDB *database.DB, poolCache *hostctx.Poo
 // ProcessTask implements asynq.Handler.
 func (h *VersionUpdateCheckHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
 		th := tenantHostFromPayload(t.Payload())
 		return h.checkVersions(ctx, d, th)
 	}
@@ -510,7 +513,7 @@ func NewComplianceScanCleanupHandler(defaultDB *database.DB, poolCache *hostctx.
 // ProcessTask implements asynq.Handler.
 func (h *ComplianceScanCleanupHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
 		return h.cleanupDB(ctx, d)
 	}
 	forEachDB(ctx, h.defaultDB, h.poolCache, func(ctx context.Context, d *database.DB, host string) {
@@ -556,7 +559,7 @@ func (h *PatchRunCleanupHandler) ProcessTask(ctx context.Context, t *asynq.Task)
 	// fresh per-host would just add N redundant DB hits.
 	stallMin := h.resolveStallTimeoutMin()
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
 		count, err := h.cleanupDB(ctx, d, stallMin)
 		if err != nil {
 			return err
@@ -629,7 +632,7 @@ func NewAgentReportsCleanupHandler(defaultDB *database.DB, poolCache *hostctx.Po
 func (h *AgentReportsCleanupHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	retentionDays := h.resolveRetentionDays()
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
 		count, err := h.cleanupDB(ctx, d, retentionDays)
 		if err != nil {
 			return err
@@ -726,7 +729,7 @@ func NewPackageStatsRefreshHandler(defaultDB *database.DB, poolCache *hostctx.Po
 // ProcessTask implements asynq.Handler.
 func (h *PackageStatsRefreshHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
 		return h.refresh(ctx, d, "")
 	}
 	forEachDB(ctx, h.defaultDB, h.poolCache, func(ctx context.Context, d *database.DB, host string) {
@@ -793,7 +796,7 @@ func NewAlertCleanupHandler(defaultDB *database.DB, poolCache *hostctx.PoolCache
 // ProcessTask implements asynq.Handler.
 func (h *AlertCleanupHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
 		ctx = hostctx.WithDB(ctx, d)
 		return h.cleanupDB(ctx, d)
 	}
