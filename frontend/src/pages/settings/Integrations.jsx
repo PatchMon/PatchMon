@@ -51,6 +51,7 @@ function build_checkmk_csv(hosts, include_additional_fields) {
 			CHECKMK_HOSTNAME_MAX_LENGTH,
 		);
 		const ip = host.ip || "";
+		const isIPv6 = ip.includes(":");
 		const alias = host.friendly_name || host.hostname || hostname;
 		const agent = "cmk-agent";
 		if (include_additional_fields) {
@@ -59,8 +60,8 @@ function build_checkmk_csv(hosts, include_additional_fields) {
 					escape_csv_field(hostname),
 					escape_csv_field(alias),
 					escape_csv_field(""), // Monitored on site
-					escape_csv_field(ip),
-					escape_csv_field(""), // IPv6 address
+					escape_csv_field(isIPv6 ? "" : ip),
+					escape_csv_field(isIPv6 ? ip : ""),
 					escape_csv_field(""), // SNMP community
 					escape_csv_field(""), // Tag: Criticality (e.g. prod, test)
 					escape_csv_field(""), // Tag: Networking Segment

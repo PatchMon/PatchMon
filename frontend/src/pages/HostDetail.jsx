@@ -2721,7 +2721,10 @@ const HostDetail = () => {
 											validate={(value) => {
 												if (
 													value.trim() &&
-													!/^(\d{1,3}\.){3}\d{1,3}$/.test(value.trim())
+													!/^(\d{1,3}\.){3}\d{1,3}$/.test(value.trim()) &&
+													!/^(?=.*:.*:)[0-9a-fA-F:]+(\d{1,3}(\.\d{1,3}){3})?$/.test(
+														value.trim(),
+													)
 												) {
 													return "Invalid IP address format";
 												}
