@@ -287,3 +287,23 @@ func TestResolvesHostDown_ReportAfterOutageBeforeDelayedAlertRow(t *testing.T) {
 		t.Fatalf("without metadata the alert row time is the baseline, got %v", got)
 	}
 }
+
+func TestResolvesHostDown_SilentHostAfterRestartStaysDown(t *testing.T) {
+	t.Parallel()
+
+	outageReport := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Millisecond)
+	meta, _ := json.Marshal(map[string]interface{}{"host_id": "h1", "last_update": outageReport})
+	since := hostDownSince(meta, time.Now().Add(-time.Minute))
+
+	d := hostDownState(agentregistry.New(), "unknown", time.Now(), 30*time.Second, outageReport, time.Now().Add(-3*time.Hour), 60)
+	if resolvesHostDown(d, since) {
+		t.Fatalf("a host with no report since the outage must not resolve after a restart (%+v)", d)
+	}
+
+	created := time.Now()
+	for _, raw := range []string{`{"last_update":"not-a-time"}`, `{"last_update":"` + created.Add(time.Hour).Format(time.RFC3339Nano) + `"}`} {
+		if got := hostDownSince([]byte(raw), created); !got.Equal(created) {
+			t.Fatalf("%s: want created_at fallback, got %v", raw, got)
+		}
+	}
+}
