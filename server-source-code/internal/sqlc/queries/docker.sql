@@ -52,6 +52,10 @@ DELETE FROM docker_containers WHERE id = ANY($1::text[]);
 -- name: DeleteImagesByIDs :exec
 DELETE FROM docker_images WHERE id = ANY($1::text[]);
 
+-- name: DeleteStaleContainers :exec
+DELETE FROM docker_containers
+WHERE host_id = $1 AND NOT (container_id = ANY(sqlc.arg(container_ids)::text[]));
+
 -- name: GetContainersByImageID :many
 SELECT * FROM docker_containers WHERE image_id = $1 AND id != $2 LIMIT 10;
 
@@ -150,6 +154,10 @@ AND (sqlc.narg('search')::text IS NULL OR name ILIKE '%' || sqlc.narg('search') 
 -- name: DeleteVolume :exec
 DELETE FROM docker_volumes WHERE id = $1;
 
+-- name: DeleteStaleVolumes :exec
+DELETE FROM docker_volumes
+WHERE host_id = $1 AND NOT (volume_id = ANY(sqlc.arg(volume_ids)::text[]));
+
 -- name: GetVolumesByHostID :many
 SELECT * FROM docker_volumes WHERE host_id = $1 ORDER BY name ASC;
 
@@ -174,6 +182,10 @@ AND (sqlc.narg('search')::text IS NULL OR name ILIKE '%' || sqlc.narg('search') 
 
 -- name: DeleteNetwork :exec
 DELETE FROM docker_networks WHERE id = $1;
+
+-- name: DeleteStaleNetworks :exec
+DELETE FROM docker_networks
+WHERE host_id = $1 AND NOT (network_id = ANY(sqlc.arg(network_ids)::text[]));
 
 -- name: GetNetworksByHostID :many
 SELECT * FROM docker_networks WHERE host_id = $1 ORDER BY name ASC;

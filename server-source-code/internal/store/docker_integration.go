@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
@@ -18,6 +19,12 @@ type DockerReceivePayload struct {
 	Volumes    []DockerReceiveVolume
 	Networks   []DockerReceiveNetwork
 	Updates    []DockerReceiveImageUpdate
+	Collected  []string
+}
+
+// An empty list from an agent that does not send Collected may be a failed collection, so it must not prune.
+func (p *DockerReceivePayload) reconciles(kind string, reported int) bool {
+	return reported > 0 || slices.Contains(p.Collected, kind)
 }
 
 type DockerReceiveContainer struct {
@@ -293,6 +300,19 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 		}
 	}
 
+	if payload.reconciles("containers", len(payload.Containers)) {
+		reportedContainerIDs := make([]string, 0, len(payload.Containers))
+		for _, c := range payload.Containers {
+			reportedContainerIDs = append(reportedContainerIDs, c.ContainerID)
+		}
+		if err := d.Queries.DeleteStaleContainers(ctx, db.DeleteStaleContainersParams{
+			HostID:       hostID,
+			ContainerIds: reportedContainerIDs,
+		}); err != nil {
+			return nil, err
+		}
+	}
+
 	// 4. Process volumes
 	for _, v := range payload.Volumes {
 		scope := v.Scope
@@ -334,6 +354,19 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 	}
 	result.VolumesReceived = len(payload.Volumes)
 
+	if payload.reconciles("volumes", len(payload.Volumes)) {
+		reportedVolumeIDs := make([]string, 0, len(payload.Volumes))
+		for _, v := range payload.Volumes {
+			reportedVolumeIDs = append(reportedVolumeIDs, v.VolumeID)
+		}
+		if err := d.Queries.DeleteStaleVolumes(ctx, db.DeleteStaleVolumesParams{
+			HostID:    hostID,
+			VolumeIds: reportedVolumeIDs,
+		}); err != nil {
+			return nil, err
+		}
+	}
+
 	// 5. Process networks
 	for _, n := range payload.Networks {
 		scope := n.Scope
@@ -366,6 +399,19 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 		}
 	}
 	result.NetworksReceived = len(payload.Networks)
+
+	if payload.reconciles("networks", len(payload.Networks)) {
+		reportedNetworkIDs := make([]string, 0, len(payload.Networks))
+		for _, n := range payload.Networks {
+			reportedNetworkIDs = append(reportedNetworkIDs, n.NetworkID)
+		}
+		if err := d.Queries.DeleteStaleNetworks(ctx, db.DeleteStaleNetworksParams{
+			HostID:     hostID,
+			NetworkIds: reportedNetworkIDs,
+		}); err != nil {
+			return nil, err
+		}
+	}
 
 	// 6. Process updates (need to resolve image_id UUID from repository+current_tag+image_id)
 	for _, u := range payload.Updates {

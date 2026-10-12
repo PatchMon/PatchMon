@@ -186,3 +186,19 @@ func TestInterfacesHashIncludesAddresses(t *testing.T) {
 		t.Errorf("IP change did not change hash: both %s", hBase)
 	}
 }
+
+func TestDockerHashIgnoresCollected(t *testing.T) {
+	d := models.DockerData{Containers: []models.DockerContainer{{ContainerID: "c1", Name: "a", Status: "running"}}}
+	before, err := DockerHash(&d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Collected = []string{"containers", "images", "volumes", "networks"}
+	after, err := DockerHash(&d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before != after {
+		t.Fatal("Collected must not change the docker hash; the server does not hash it")
+	}
+}

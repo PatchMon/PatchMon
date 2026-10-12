@@ -191,6 +191,51 @@ func (q *Queries) DeleteNetwork(ctx context.Context, id string) error {
 	return err
 }
 
+const deleteStaleContainers = `-- name: DeleteStaleContainers :exec
+DELETE FROM docker_containers
+WHERE host_id = $1 AND NOT (container_id = ANY($2::text[]))
+`
+
+type DeleteStaleContainersParams struct {
+	HostID       string   `json:"host_id"`
+	ContainerIds []string `json:"container_ids"`
+}
+
+func (q *Queries) DeleteStaleContainers(ctx context.Context, arg DeleteStaleContainersParams) error {
+	_, err := q.db.Exec(ctx, deleteStaleContainers, arg.HostID, arg.ContainerIds)
+	return err
+}
+
+const deleteStaleNetworks = `-- name: DeleteStaleNetworks :exec
+DELETE FROM docker_networks
+WHERE host_id = $1 AND NOT (network_id = ANY($2::text[]))
+`
+
+type DeleteStaleNetworksParams struct {
+	HostID     string   `json:"host_id"`
+	NetworkIds []string `json:"network_ids"`
+}
+
+func (q *Queries) DeleteStaleNetworks(ctx context.Context, arg DeleteStaleNetworksParams) error {
+	_, err := q.db.Exec(ctx, deleteStaleNetworks, arg.HostID, arg.NetworkIds)
+	return err
+}
+
+const deleteStaleVolumes = `-- name: DeleteStaleVolumes :exec
+DELETE FROM docker_volumes
+WHERE host_id = $1 AND NOT (volume_id = ANY($2::text[]))
+`
+
+type DeleteStaleVolumesParams struct {
+	HostID    string   `json:"host_id"`
+	VolumeIds []string `json:"volume_ids"`
+}
+
+func (q *Queries) DeleteStaleVolumes(ctx context.Context, arg DeleteStaleVolumesParams) error {
+	_, err := q.db.Exec(ctx, deleteStaleVolumes, arg.HostID, arg.VolumeIds)
+	return err
+}
+
 const deleteVolume = `-- name: DeleteVolume :exec
 DELETE FROM docker_volumes WHERE id = $1
 `

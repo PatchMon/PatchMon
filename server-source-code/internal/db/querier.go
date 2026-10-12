@@ -227,6 +227,9 @@ type Querier interface {
 	DeleteRolePermissions(ctx context.Context, role string) error
 	DeleteRunningComplianceScansByHost(ctx context.Context, hostID string) error
 	DeleteScheduledReport(ctx context.Context, id string) error
+	DeleteStaleContainers(ctx context.Context, arg DeleteStaleContainersParams) error
+	DeleteStaleNetworks(ctx context.Context, arg DeleteStaleNetworksParams) error
+	DeleteStaleVolumes(ctx context.Context, arg DeleteStaleVolumesParams) error
 	DeleteUser(ctx context.Context, id string) error
 	DeleteVolume(ctx context.Context, id string) error
 	DisableTfa(ctx context.Context, id string) error

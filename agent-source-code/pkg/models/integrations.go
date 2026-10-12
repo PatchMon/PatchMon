@@ -108,6 +108,7 @@ type DockerData struct {
 	Networks   []DockerNetwork     `json:"networks,omitempty"`
 	Updates    []DockerImageUpdate `json:"updates"`
 	DaemonInfo *DockerDaemonInfo   `json:"daemon_info,omitempty"`
+	Collected  []string            `json:"collected,omitempty"`
 }
 
 // DockerDaemonInfo represents Docker daemon information

@@ -116,6 +116,7 @@ type dockerPayloadReq struct {
 	Volumes    []dockerVolumeReq      `json:"volumes"`
 	Networks   []dockerNetworkReq     `json:"networks"`
 	Updates    []dockerImageUpdateReq `json:"updates"`
+	Collected  []string               `json:"collected"`
 	Hostname   string                 `json:"hostname"`
 	MachineID  string                 `json:"machine_id"`
 	// DockerHash is the agent-computed canonical hash for the docker
@@ -193,6 +194,7 @@ func convertDockerPayloadToStore(p *dockerPayloadReq) *store.DockerReceivePayloa
 		Volumes:    make([]store.DockerReceiveVolume, len(p.Volumes)),
 		Networks:   make([]store.DockerReceiveNetwork, len(p.Networks)),
 		Updates:    make([]store.DockerReceiveImageUpdate, len(p.Updates)),
+		Collected:  p.Collected,
 	}
 	for i, c := range p.Containers {
 		out.Containers[i] = store.DockerReceiveContainer{
@@ -304,7 +306,7 @@ func (h *IntegrationsHandler) ReceiveDockerData(w http.ResponseWriter, r *http.R
 
 	slog.Info("received docker data from agent", "host", host.FriendlyName, "host_id", host.ID,
 		"containers", len(payload.Containers), "images", len(payload.Images),
-		"volumes", len(payload.Volumes), "networks", len(payload.Networks), "updates", len(payload.Updates))
+		"volumes", len(payload.Volumes), "networks", len(payload.Networks), "updates", len(payload.Updates), "collected", payload.Collected)
 
 	// Verify the agent's canonical docker hash if present. Mismatch means
 	// the agent's canonicalisation diverged from ours — surface immediately
