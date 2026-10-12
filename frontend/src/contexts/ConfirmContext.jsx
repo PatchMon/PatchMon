@@ -9,6 +9,7 @@ import {
 	useState,
 } from "react";
 import { useLocation } from "react-router-dom";
+import ModalPortal from "../components/ui/ModalPortal";
 
 const ConfirmContext = createContext(null);
 
@@ -71,11 +72,13 @@ export function ConfirmProvider({ children }) {
 		<ConfirmContext.Provider value={confirm}>
 			{children}
 			{request && (
-				<ConfirmDialog
-					key={request.id}
-					options={request.options}
-					onSettle={settle}
-				/>
+				<ModalPortal>
+					<ConfirmDialog
+						key={request.id}
+						options={request.options}
+						onSettle={settle}
+					/>
+				</ModalPortal>
 			)}
 		</ConfirmContext.Provider>
 	);
@@ -126,7 +129,7 @@ function ConfirmDialog({ options, onSettle }) {
 
 	return (
 		<div
-			className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120]"
+			className="fixed inset-0 bg-black/50 flex items-center justify-center z-[125]"
 			onKeyDown={handleKeyDown}
 			role="presentation"
 		>

@@ -1,5 +1,6 @@
 import { Heart } from "lucide-react";
 import BuyMeACoffeeIcon from "./BuyMeACoffeeIcon";
+import ModalPortal from "./ui/ModalPortal";
 
 const DONATE_URL = "https://buymeacoffee.com/iby___";
 
@@ -11,8 +12,8 @@ const DonateModal = ({ isOpen, onClose }) => {
 		onClose();
 	};
 
-	return (
-		<div className="fixed inset-0 z-50 overflow-y-auto">
+	const modal = (
+		<div className="fixed inset-0 z-[120] overflow-y-auto">
 			<div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
 				<button
 					type="button"
@@ -86,6 +87,8 @@ const DonateModal = ({ isOpen, onClose }) => {
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 };
 
 export default DonateModal;

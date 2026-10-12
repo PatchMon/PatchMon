@@ -18,6 +18,7 @@ import {
 	X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import ModalPortal from "../components/ui/ModalPortal";
 import {
 	getNextTier,
 	getTier,
@@ -925,9 +926,9 @@ const TierChangeModal = ({
 	const isNoop =
 		currentTierId === targetTier && currentInterval === targetInterval;
 
-	return (
+	const modal = (
 		<div
-			className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60"
+			className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/60"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="tier-change-title"
@@ -1154,6 +1155,8 @@ const TierChangeModal = ({
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 };
 
 // --- Preview panel --------------------------------------------------------

@@ -20,6 +20,7 @@ import {
 	PackageNameList,
 } from "../../components/PackageListDisplay";
 import { PatchRunStatusBadge } from "../../components/PatchRunStatusBadge";
+import ModalPortal from "../../components/ui/ModalPortal";
 import { useToast } from "../../contexts/ToastContext";
 import { formatDate } from "../../utils/api";
 import { buildRunStreamURL, patchingAPI } from "../../utils/patchingApi";
@@ -790,78 +791,80 @@ const RunDetail = () => {
 
 			{/* Stop confirm modal (§9.1 + §9.4 warning badge) */}
 			{stopConfirmOpen && (
-				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-					<button
-						type="button"
-						onClick={() => {
-							if (!stopRunMutation.isPending) setStopConfirmOpen(false);
-						}}
-						className="fixed inset-0 cursor-default"
-						aria-label="Close"
-					/>
-					<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 relative z-10">
-						<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
-							<div className="flex items-center justify-between">
-								<h3 className="text-lg font-medium text-secondary-900 dark:text-white flex items-center gap-3">
-									<span className="w-10 h-10 bg-danger-100 dark:bg-danger-900 rounded-full flex items-center justify-center flex-shrink-0">
-										<AlertTriangle className="h-5 w-5 text-danger-600 dark:text-danger-400" />
-									</span>
-									Stop this patch run?
-								</h3>
+				<ModalPortal>
+					<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4">
+						<button
+							type="button"
+							onClick={() => {
+								if (!stopRunMutation.isPending) setStopConfirmOpen(false);
+							}}
+							className="fixed inset-0 cursor-default"
+							aria-label="Close"
+						/>
+						<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 relative z-10">
+							<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
+								<div className="flex items-center justify-between">
+									<h3 className="text-lg font-medium text-secondary-900 dark:text-white flex items-center gap-3">
+										<span className="w-10 h-10 bg-danger-100 dark:bg-danger-900 rounded-full flex items-center justify-center flex-shrink-0">
+											<AlertTriangle className="h-5 w-5 text-danger-600 dark:text-danger-400" />
+										</span>
+										Stop this patch run?
+									</h3>
+									<button
+										type="button"
+										onClick={() => setStopConfirmOpen(false)}
+										disabled={stopRunMutation.isPending}
+										className="p-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-700 text-secondary-400 hover:text-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+										aria-label="Close dialog"
+									>
+										<X className="h-5 w-5" />
+									</button>
+								</div>
+							</div>
+							<div className="px-6 py-4 space-y-3">
+								<p className="text-sm text-secondary-600 dark:text-white/80">
+									The agent will be asked to interrupt the current command.
+									Partially-installed packages may leave the host in an
+									intermediate state; the agent will report back its final
+									output and an updated inventory when it exits.
+								</p>
+								<div className="p-3 bg-danger-50 dark:bg-danger-900/40 border border-danger-200 dark:border-danger-700 rounded-md">
+									<p className="text-sm text-danger-700 dark:text-danger-300">
+										This action cannot be undone.
+									</p>
+								</div>
+								{stopError && (
+									<div className="p-3 bg-danger-50 dark:bg-danger-900/40 border border-danger-300 dark:border-danger-700 rounded-md text-sm text-danger-700 dark:text-danger-200">
+										{stopError}
+									</div>
+								)}
+							</div>
+							<div className="px-6 py-4 border-t border-secondary-200 dark:border-secondary-600 flex justify-end gap-3">
 								<button
 									type="button"
 									onClick={() => setStopConfirmOpen(false)}
 									disabled={stopRunMutation.isPending}
-									className="p-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-700 text-secondary-400 hover:text-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed"
-									aria-label="Close dialog"
+									className="btn-outline min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed"
 								>
-									<X className="h-5 w-5" />
+									Cancel
+								</button>
+								<button
+									type="button"
+									onClick={handleConfirmStop}
+									disabled={stopRunMutation.isPending}
+									className="btn-danger inline-flex items-center gap-1.5 min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									{stopRunMutation.isPending ? (
+										<RefreshCw className="h-4 w-4 animate-spin" />
+									) : (
+										<Square className="h-4 w-4" />
+									)}
+									{stopRunMutation.isPending ? "Stopping…" : "Stop Run"}
 								</button>
 							</div>
 						</div>
-						<div className="px-6 py-4 space-y-3">
-							<p className="text-sm text-secondary-600 dark:text-white/80">
-								The agent will be asked to interrupt the current command.
-								Partially-installed packages may leave the host in an
-								intermediate state; the agent will report back its final output
-								and an updated inventory when it exits.
-							</p>
-							<div className="p-3 bg-danger-50 dark:bg-danger-900/40 border border-danger-200 dark:border-danger-700 rounded-md">
-								<p className="text-sm text-danger-700 dark:text-danger-300">
-									This action cannot be undone.
-								</p>
-							</div>
-							{stopError && (
-								<div className="p-3 bg-danger-50 dark:bg-danger-900/40 border border-danger-300 dark:border-danger-700 rounded-md text-sm text-danger-700 dark:text-danger-200">
-									{stopError}
-								</div>
-							)}
-						</div>
-						<div className="px-6 py-4 border-t border-secondary-200 dark:border-secondary-600 flex justify-end gap-3">
-							<button
-								type="button"
-								onClick={() => setStopConfirmOpen(false)}
-								disabled={stopRunMutation.isPending}
-								className="btn-outline min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-								onClick={handleConfirmStop}
-								disabled={stopRunMutation.isPending}
-								className="btn-danger inline-flex items-center gap-1.5 min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								{stopRunMutation.isPending ? (
-									<RefreshCw className="h-4 w-4 animate-spin" />
-								) : (
-									<Square className="h-4 w-4" />
-								)}
-								{stopRunMutation.isPending ? "Stopping…" : "Stop Run"}
-							</button>
-						</div>
 					</div>
-				</div>
+				</ModalPortal>
 			)}
 		</div>
 	);

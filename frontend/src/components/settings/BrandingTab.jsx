@@ -3,6 +3,7 @@ import { AlertCircle, Image, RotateCcw, Upload, X } from "lucide-react";
 import { useState } from "react";
 import { settingsAPI } from "../../utils/api";
 import { isLegacyDefaultPath, resolveLogoPath } from "../../utils/logoPaths";
+import ModalPortal from "../ui/ModalPortal";
 
 const BrandingTab = () => {
 	// Logo management state
@@ -519,8 +520,8 @@ const LogoUploadModal = ({
 
 	if (!isOpen) return null;
 
-	return (
-		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+	const modal = (
+		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120]">
 			<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
 				<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
 					<div className="flex items-center justify-between">
@@ -620,6 +621,8 @@ const LogoUploadModal = ({
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 };
 
 export default BrandingTab;

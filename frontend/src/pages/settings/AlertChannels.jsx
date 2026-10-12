@@ -24,6 +24,7 @@ import {
 import { useMemo, useState } from "react";
 import { SiDiscord, SiNtfy } from "react-icons/si";
 import { Link } from "react-router-dom";
+import ModalPortal from "../../components/ui/ModalPortal";
 import { useAuth } from "../../contexts/AuthContext";
 import { useConfirm } from "../../contexts/ConfirmContext";
 import { useToast } from "../../contexts/ToastContext";
@@ -670,9 +671,9 @@ const DestinationModal = ({
 		}
 	};
 
-	return (
+	const modal = (
 		<div
-			className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+			className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120]"
 			onClick={onClose}
 		>
 			<div
@@ -832,6 +833,8 @@ const DestinationModal = ({
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 };
 
 /* ───────────────── Route Modal ───────────────── */
@@ -916,9 +919,9 @@ const RouteModal = ({
 
 	const allEvents = form.event_types.includes("*");
 
-	return (
+	const modal = (
 		<div
-			className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+			className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120]"
 			onClick={onClose}
 		>
 			<div
@@ -1086,6 +1089,8 @@ const RouteModal = ({
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 };
 
 /* ───────────────── Report Modal ───────────────── */
@@ -1197,9 +1202,9 @@ const ReportModal = ({
 		});
 	};
 
-	return (
+	const modal = (
 		<div
-			className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+			className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120]"
 			onClick={onClose}
 		>
 			<div
@@ -1441,6 +1446,8 @@ const ReportModal = ({
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 };
 
 /* ───────────────── Main Page ───────────────── */
