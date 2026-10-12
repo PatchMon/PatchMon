@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 
 	"patchmon-agent/pkg/models"
@@ -36,19 +35,21 @@ func NewDNFManager(logger *logrus.Logger) *DNFManager {
 // Only these are stripped. Splitting on a dot unconditionally would mangle
 // real names that contain one, e.g. python3.11.
 var rpmArchSuffixes = map[string]bool{
-	"x86_64":  true,
-	"i686":    true,
-	"i586":    true,
-	"i386":    true,
-	"noarch":  true,
-	"aarch64": true,
-	"arm64":   true,
-	"armv7hl": true,
-	"ppc64le": true,
-	"ppc64":   true,
-	"s390x":   true,
-	"riscv64": true,
-	"src":     true,
+	"x86_64":      true,
+	"x86_64_v2":   true,
+	"i686":        true,
+	"i586":        true,
+	"i386":        true,
+	"noarch":      true,
+	"aarch64":     true,
+	"arm64":       true,
+	"armv7hl":     true,
+	"ppc64le":     true,
+	"ppc64":       true,
+	"s390x":       true,
+	"riscv64":     true,
+	"loongarch64": true,
+	"src":         true,
 }
 
 // An RPM EVR is "[epoch:]version-release": it always starts with a digit
@@ -57,15 +58,7 @@ var rpmArchSuffixes = map[string]bool{
 // an English word.
 func looksLikeRPMVersion(s string) bool {
 	s = strings.TrimPrefix(s, "*") // yum marks obsoleting packages with a leading *
-	if i := strings.Index(s, ":"); i > 0 {
-		if _, err := strconv.Atoi(s[:i]); err == nil {
-			s = s[i+1:]
-		}
-	}
-	if s == "" || s[0] < '0' || s[0] > '9' {
-		return false
-	}
-	return strings.Contains(s, "-")
+	return startsWithVersion(s) && strings.Contains(s, "-")
 }
 
 // Both parsers must agree: CombinePackageData keys its upgradable set on
@@ -360,31 +353,26 @@ func messagesCEnv(src []string) []string {
 	return append(env, "LC_MESSAGES=C")
 }
 
-// extractBasePackageName extracts the base package name from a package string
-// Handles formats like:
-// - package-name-version-release.arch (from updateinfo)
-// - package-name.arch (from check-update)
+// extractBasePackageName returns the name from name-[epoch:]version-release[.arch]. RPM forbids
+// dashes in version and release, so split from the right; names may contain "-<digit>".
 func (m *DNFManager) extractBasePackageName(packageString string) string {
-	// Remove architecture suffix first (e.g., .x86_64, .noarch)
-	baseName := stripRPMArchSuffix(packageString)
-
-	// If the base name contains a version pattern (starts with a digit after a dash),
-	// extract just the package name part
-	// Format: package-name-version-release
-	// We look for the FIRST dash that's followed by a digit (version starts)
-	// This handles packages with dashes in their names like "glibc-common-2.34-168.el9_6.19"
-	for i := 0; i < len(baseName); i++ {
-		if baseName[i] == '-' && i+1 < len(baseName) {
-			nextChar := baseName[i+1]
-			// Check if the next character is a digit (version starts)
-			if nextChar >= '0' && nextChar <= '9' {
-				// This is the start of version, return everything before this dash
-				return baseName[:i]
-			}
-		}
+	nvr := stripRPMArchSuffix(packageString)
+	rel := strings.LastIndex(nvr, "-")
+	if rel <= 0 {
+		return nvr
 	}
+	ver := strings.LastIndex(nvr[:rel], "-")
+	if ver <= 0 || !startsWithVersion(nvr[ver+1:rel]) {
+		return nvr
+	}
+	return nvr[:ver]
+}
 
-	return baseName
+func startsWithVersion(s string) bool {
+	if i := strings.Index(s, ":"); i > 0 && strings.Trim(s[:i], "0123456789") == "" {
+		s = s[i+1:]
+	}
+	return s != "" && s[0] >= '0' && s[0] <= '9'
 }
 
 // parseUpgradablePackages parses dnf/yum check-update output
@@ -464,9 +452,7 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 		// Only add package if we have both current and available versions
 		// This prevents empty currentVersion errors on the server
 		if packageName != "" && currentVersion != "" && availableVersion != "" {
-			// Extract base package name to check against security packages
-			basePackageName := m.extractBasePackageName(packageName)
-			isSecurityUpdate := securityPackages[basePackageName]
+			isSecurityUpdate := securityPackages[packageName]
 
 			packages = append(packages, models.Package{
 				Name:             packageName,
