@@ -23,11 +23,12 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 	// Steps are captured when the modal opens so mid-session context updates
 	// don't reshape `steps` under the current `stepIndex`. Newsletter signup
 	// is deferred until the user finishes the flow (close / coffee) so we never
-	// refetch profile mid-wizard. The subscribe step is self-hosted only and
-	// omitted when `admin_mode` or already subscribed at open.
+	// refetch profile mid-wizard. The subscribe step is omitted when the server
+	// disallows it (`admin_mode`, DISABLE_NEWSLETTER) or already subscribed.
 	const buildSteps = () => {
 		const showSubscribeStep =
-			!publicSettings?.admin_mode && !user?.newsletter_subscribed;
+			publicSettings?.newsletter_enabled === true &&
+			!user?.newsletter_subscribed;
 		return [
 			"whatsNew",
 			...(showSubscribeStep ? ["subscribe"] : []),
@@ -62,6 +63,8 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 	});
 
 	const isCloudVersion = window.location.hostname.endsWith(".patchmon.cloud");
+	// Server folds ADMIN_MODE and HIDE_DONATE_BUTTONS into show_donate.
+	const showDonate = publicSettings?.show_donate === true;
 
 	const handleAccept = useCallback(async () => {
 		const maybeSubscribe = () => {
@@ -442,7 +445,7 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 										</div>
 									</div>
 
-									{!publicSettings?.admin_mode && (
+									{showDonate && (
 										<div className="border-t border-secondary-200 dark:border-secondary-600 pt-6">
 											<div className="space-y-3">
 												<h3 className="text-base font-medium text-secondary-900 dark:text-white">
@@ -510,7 +513,7 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 					{/* Footer: Personal Note (terminal — fires acceptance) */}
 					{stepKey === "personalNote" && (
 						<div className="bg-secondary-50 dark:bg-secondary-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse sm:items-center sm:gap-3">
-							{publicSettings?.admin_mode ? (
+							{!showDonate ? (
 								<button
 									type="button"
 									onClick={handleClose}

@@ -101,10 +101,12 @@ type MuxOpts struct {
 	PoolCache     *hostctx.PoolCache  // per-host DB pool; nil in single-host mode
 	QueueClient   *asynq.Client
 	ServerVersion string
-	SSGContentDir string
-	Log           *slog.Logger
-	Emit          *notifications.Emitter
-	Enc           *util.Encryption
+	// DisableTelemetry turns the daily metrics-send job into a no-op.
+	DisableTelemetry bool
+	SSGContentDir    string
+	Log              *slog.Logger
+	Emit             *notifications.Emitter
+	Enc              *util.Encryption
 	// GetPatchRunStallTimeoutMin returns the current effective stall timeout
 	// (env -> DB -> default) at sweep time. Lets operators tune via Settings →
 	// Environment without restarting. If nil, the worker falls back to 30.
@@ -154,7 +156,7 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	mux.Handle(TypeInstallComplianceTools, wrap(TypeInstallComplianceTools, NewInstallComplianceToolsHandler(registry, db, opts.PoolCache, opts.RDB, opts.RedisCache, log)))
 	patchRunsStore := store.NewPatchRunsStore(&hostctx.DBResolver{Default: db})
 	mux.Handle(TypeRunPatch, wrap(TypeRunPatch, NewRunPatchHandler(registry, patchRunsStore, opts.PoolCache, opts.QueueClient, log)))
-	mux.Handle(TypeMetricsSend, wrap(TypeMetricsSend, NewMetricsSendHandler(db, opts.PoolCache, opts.ServerVersion, log)))
+	mux.Handle(TypeMetricsSend, wrap(TypeMetricsSend, NewMetricsSendHandler(db, opts.PoolCache, opts.ServerVersion, opts.DisableTelemetry, log)))
 	return mux
 }
 

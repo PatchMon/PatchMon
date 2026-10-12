@@ -2,19 +2,23 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 )
 
-const marketingSubscribeURL = "https://marketing.9.technology/index.php/lists/lq880fhpl44b6/subscribe"
+// marketingSubscribeURL is a var only so tests can point it at a local server.
+var marketingSubscribeURL = "https://marketing.9.technology/index.php/lists/lq880fhpl44b6/subscribe"
+
 const honeypotField = "62f7db5ee090a53e362464fbe0341d7154a992bb"
 
 // MarketingHandler handles marketing-related routes (e.g. newsletter subscribe proxy).
@@ -31,9 +35,22 @@ type SubscribeRequest struct {
 	Email string `json:"email"`
 }
 
+// ErrNewsletterDisabled is returned by SubscribeToList when DISABLE_NEWSLETTER is set.
+var ErrNewsletterDisabled = errors.New("newsletter disabled")
+
+var newsletterDisabled atomic.Bool
+
+// SetNewsletterDisabled turns every newsletter sign-up off (or on). All
+// sign-up paths go through SubscribeToList, so this is the single place that
+// guarantees nothing is posted to the marketing list.
+func SetNewsletterDisabled(disabled bool) { newsletterDisabled.Store(disabled) }
+
 // SubscribeToList POSTs name+email to the configured Listmonk public list URL.
 // Returns nil on 2xx, a wrapped error otherwise.
 func SubscribeToList(ctx context.Context, name, email string) error {
+	if newsletterDisabled.Load() {
+		return ErrNewsletterDisabled
+	}
 	form := url.Values{}
 	form.Set("NAME", name)
 	form.Set("EMAIL", email)
@@ -70,7 +87,7 @@ func SubscribeToList(ctx context.Context, name, email string) error {
 //
 // Call after a successful user insert with a populated u.ID and u.Email.
 func AutoSubscribeIfHosted(adminMode bool, users *store.UsersStore, log *slog.Logger, u *models.User) {
-	if !adminMode || users == nil || u == nil || u.Email == "" {
+	if !adminMode || newsletterDisabled.Load() || users == nil || u == nil || u.Email == "" {
 		return
 	}
 	// Discord auto-creation synthesises `discord_<id>@discord.local` when
@@ -128,6 +145,10 @@ func (h *MarketingHandler) Subscribe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := SubscribeToList(r.Context(), name, email); err != nil {
+		if errors.Is(err, ErrNewsletterDisabled) {
+			Error(w, http.StatusForbidden, "Newsletter is disabled on this server")
+			return
+		}
 		Error(w, http.StatusBadGateway, "Failed to reach marketing service")
 		return
 	}

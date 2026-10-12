@@ -123,6 +123,32 @@ All configuration is managed through the `.env` file.
 
 **For detailed explanations** of each variable (defaults, usage, and examples), see the [PatchMon Environment Variables Reference](https://patchmon.net/docs/patchmon-operator-guide#patchmon-environment-variables-reference) at patchmon.net/docs.
 
+### Social Media, Donate, Discord and Outbound Connection Settings
+
+| Variable | Default | Effect |
+|---|---|---|
+| `HIDE_SOCIAL_LINKS` | `false` | When `true`, hides the Discord, GitHub, LinkedIn and YouTube buttons in the top bar, on the login page and in the setup wizard. |
+| `HIDE_DONATE_BUTTONS` | `false` | When `true`, hides the Buy Me a Coffee / membership buttons in the top bar, setup wizard and release notes dialog. |
+| `DISABLE_DISCORD_AUTH` | `false` | Turns off Discord login and account linking. The `/auth/discord` endpoints are not registered, so the server never contacts discord.com; the login button, profile link and settings page are hidden. Users who sign in only with Discord have no password and cannot log in while it is set; give them a password first. |
+| `DISABLE_TELEMETRY` | `false` | Stops the anonymous telemetry (instance ID, host count, version) sent to `metrics.patchmon.cloud` and hides the Metrics settings page. |
+| `DISABLE_VERSION_CHECK` | `false` | Stops the DNS TXT lookups of `server.vcheck.patchmon.net` / `agent.vcheck.patchmon.net` used to detect new releases. Update notices then no longer appear. |
+| `DISABLE_GITHUB_VERSION_ON_LOGIN` | `false` | Stops the login page from querying `api.github.com` for the latest release, regardless of the toggle under Settings → Server Version. |
+| `DISABLE_NEWSLETTER` | `false` | Removes all newsletter sign-ups (setup wizard, release notes, profile); nothing is posted to the PatchMon marketing list. |
+
+Set them in `.env` and restart the server container. To hide every community button and stop all automatic outbound traffic:
+
+```env
+HIDE_SOCIAL_LINKS=true
+HIDE_DONATE_BUTTONS=true
+DISABLE_DISCORD_AUTH=true
+DISABLE_TELEMETRY=true
+DISABLE_VERSION_CHECK=true
+DISABLE_GITHUB_VERSION_ON_LOGIN=true
+DISABLE_NEWSLETTER=true
+```
+
+Documentation, roadmap, bug report, email and website links are not affected. Discord alert channels (webhooks) are configured separately and are not affected by `DISABLE_DISCORD_AUTH`.
+
 ### Volumes
 
 The compose file creates two Docker volumes:

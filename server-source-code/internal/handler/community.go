@@ -65,6 +65,16 @@ func applyInjectedStat(l *CommunityLink) {
 	}
 }
 
+// socialLinkIDs are the social media links suppressed when HideSocialLinks is
+// on. Support resources (docs, roadmap, bug reports, email, website, billing)
+// are not social buttons and stay visible. The donate link has its own switch.
+var socialLinkIDs = map[string]bool{
+	"discord":  true,
+	"github":   true,
+	"linkedin": true,
+	"youtube":  true,
+}
+
 // CommunityHandler handles community/social links (public).
 type CommunityHandler struct {
 	cfg *config.Config
@@ -84,8 +94,11 @@ func (h *CommunityHandler) GetLinks(w http.ResponseWriter, r *http.Request) {
 	}
 	links := make([]CommunityLink, 0, len(defaultCommunityLinks))
 	for _, l := range defaultCommunityLinks {
-		// Hide donate link in managed/multi-context deployments.
-		if h.cfg != nil && h.cfg.AdminMode && l.ID == "buymeacoffee" {
+		// Hide donate link in managed/multi-context deployments or when disabled.
+		if l.ID == "buymeacoffee" && !showDonate(h.cfg) {
+			continue
+		}
+		if h.cfg != nil && h.cfg.HideSocialLinks && socialLinkIDs[l.ID] {
 			continue
 		}
 		applyInjectedStat(&l)

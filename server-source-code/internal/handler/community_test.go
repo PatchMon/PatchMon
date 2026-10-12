@@ -1,8 +1,12 @@
 package handler
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/social"
 )
 
@@ -92,5 +96,70 @@ func TestApplyInjectedStat_MalformedValueKeepsDefault(t *testing.T) {
 
 	if link.Stat != "2.7K" {
 		t.Errorf("got stat %q, want the compiled-in default to survive", link.Stat)
+	}
+}
+
+func linkIDs(t *testing.T, cfg *config.Config) map[string]bool {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	NewCommunityHandler(cfg).GetLinks(rec, httptest.NewRequest(http.MethodGet, "/community/links", nil))
+	var resp CommunityLinksResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	ids := make(map[string]bool, len(resp.Links))
+	for _, l := range resp.Links {
+		ids[l.ID] = true
+	}
+	return ids
+}
+
+func TestGetLinks_HideSocialLinks(t *testing.T) {
+	ids := linkIDs(t, &config.Config{HideSocialLinks: true})
+	for id := range socialLinkIDs {
+		if ids[id] {
+			t.Errorf("%s: social link returned while HideSocialLinks is on", id)
+		}
+	}
+	for _, id := range []string{"docs", "roadmap", "github_issues", "email", "website"} {
+		if !ids[id] {
+			t.Errorf("%s: support link missing while HideSocialLinks is on", id)
+		}
+	}
+}
+
+func TestGetLinks_ShowSocialLinks(t *testing.T) {
+	ids := linkIDs(t, &config.Config{HideSocialLinks: false})
+	for id := range socialLinkIDs {
+		if !ids[id] {
+			t.Errorf("%s: social link missing while HideSocialLinks is off", id)
+		}
+	}
+}
+
+func TestGetLinks_DonateLink(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *config.Config
+		want bool
+	}{
+		{"hidden by HideDonateButtons", &config.Config{HideDonateButtons: true}, false},
+		{"hidden by AdminMode", &config.Config{AdminMode: true}, false},
+		{"shown when both off", &config.Config{}, true},
+		{"independent of HideSocialLinks", &config.Config{HideSocialLinks: true}, true},
+	}
+	for _, tt := range tests {
+		if got := linkIDs(t, tt.cfg)["buymeacoffee"]; got != tt.want {
+			t.Errorf("%s: buymeacoffee present = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestDiscordAuthEnabled(t *testing.T) {
+	if discordAuthEnabled(&config.Config{DisableDiscordAuth: true}) {
+		t.Error("discordAuthEnabled = true with DisableDiscordAuth set")
+	}
+	if !discordAuthEnabled(&config.Config{}) {
+		t.Error("discordAuthEnabled = false with DisableDiscordAuth unset")
 	}
 }

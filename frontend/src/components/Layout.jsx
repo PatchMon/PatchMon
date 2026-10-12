@@ -1670,97 +1670,101 @@ const Layout = ({ children }) => {
 							</div>
 
 							<div className="flex items-center gap-x-2 sm:gap-x-4 lg:gap-x-6 justify-end flex-shrink-0">
-								{/* Mobile External Links Menu */}
-								<div className="relative md:hidden">
-									<button
-										type="button"
-										onClick={() => setMobileLinksOpen(!mobileLinksOpen)}
-										className="flex items-center justify-center w-10 h-10 bg-gray-50 dark:bg-transparent text-secondary-600 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 rounded-lg transition-colors shadow-sm min-w-[44px] min-h-[44px]"
-										style={{
-											backgroundColor: "var(--button-bg, rgb(249, 250, 251))",
-											backdropFilter: "var(--button-blur, none)",
-											WebkitBackdropFilter: "var(--button-blur, none)",
-										}}
-										aria-label="External links"
-										aria-expanded={mobileLinksOpen}
-									>
-										<Globe className="h-5 w-5" />
-									</button>
-									{mobileLinksOpen && (
-										<>
-											<button
-												type="button"
-												className="fixed inset-0 z-40 bg-transparent border-0 p-0 cursor-default"
-												onClick={() => setMobileLinksOpen(false)}
-												onKeyDown={(e) => {
-													if (e.key === "Enter" || e.key === " ") {
-														e.preventDefault();
-														setMobileLinksOpen(false);
-													}
-												}}
-												aria-label="Close mobile menu"
-											/>
-											<div className="absolute right-0 mt-2 w-64 rounded-lg border border-secondary-200 dark:border-secondary-600 bg-white dark:bg-secondary-800 shadow-lg z-50 max-h-[80vh] overflow-y-auto">
-												<div className="p-2 space-y-1">
-													{communityLinks
-														.filter((l) =>
-															[
-																"github",
-																"discord",
-																"linkedin",
-																"youtube",
-															].includes(l.id),
-														)
-														.map((link) => {
-															const Icon =
-																link.id === "discord"
-																	? DiscordIcon
-																	: link.id === "github"
-																		? Github
-																		: link.id === "linkedin"
-																			? FaLinkedin
-																			: FaYoutube;
-															return (
-																<a
-																	key={link.id}
-																	href={link.url}
-																	target="_blank"
-																	rel="noopener noreferrer"
-																	className="flex items-center gap-3 px-3 py-3 bg-gray-50 dark:bg-gray-800 text-secondary-600 dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors min-h-[44px]"
-																	onClick={() => setMobileLinksOpen(false)}
-																>
-																	<Icon
-																		className={`h-5 w-5 flex-shrink-0 ${
-																			link.id === "discord"
-																				? "text-[#5865F2]"
-																				: link.id === "linkedin"
-																					? "text-[#0077B5]"
-																					: link.id === "youtube"
-																						? "text-[#FF0000]"
-																						: ""
-																		}`}
-																	/>
-																	<span className="text-sm font-medium flex-1">
-																		{link.label}
-																	</span>
-																	{link.stat && (
-																		<div className="flex items-center gap-1">
-																			{link.statLabel === "stars" && (
-																				<Star className="h-4 w-4 fill-current text-yellow-500" />
-																			)}
-																			<span className="text-sm">
-																				{link.stat}
-																			</span>
-																		</div>
-																	)}
-																</a>
-															);
-														})}
+								{/* Mobile External Links Menu — hidden when the server returns no social links (HIDE_SOCIAL_LINKS) */}
+								{communityLinks.some((l) =>
+									["github", "discord", "linkedin", "youtube"].includes(l.id),
+								) && (
+									<div className="relative md:hidden">
+										<button
+											type="button"
+											onClick={() => setMobileLinksOpen(!mobileLinksOpen)}
+											className="flex items-center justify-center w-10 h-10 bg-gray-50 dark:bg-transparent text-secondary-600 dark:text-white hover:bg-gray-100 dark:hover:bg-white/10 rounded-lg transition-colors shadow-sm min-w-[44px] min-h-[44px]"
+											style={{
+												backgroundColor: "var(--button-bg, rgb(249, 250, 251))",
+												backdropFilter: "var(--button-blur, none)",
+												WebkitBackdropFilter: "var(--button-blur, none)",
+											}}
+											aria-label="External links"
+											aria-expanded={mobileLinksOpen}
+										>
+											<Globe className="h-5 w-5" />
+										</button>
+										{mobileLinksOpen && (
+											<>
+												<button
+													type="button"
+													className="fixed inset-0 z-40 bg-transparent border-0 p-0 cursor-default"
+													onClick={() => setMobileLinksOpen(false)}
+													onKeyDown={(e) => {
+														if (e.key === "Enter" || e.key === " ") {
+															e.preventDefault();
+															setMobileLinksOpen(false);
+														}
+													}}
+													aria-label="Close mobile menu"
+												/>
+												<div className="absolute right-0 mt-2 w-64 rounded-lg border border-secondary-200 dark:border-secondary-600 bg-white dark:bg-secondary-800 shadow-lg z-50 max-h-[80vh] overflow-y-auto">
+													<div className="p-2 space-y-1">
+														{communityLinks
+															.filter((l) =>
+																[
+																	"github",
+																	"discord",
+																	"linkedin",
+																	"youtube",
+																].includes(l.id),
+															)
+															.map((link) => {
+																const Icon =
+																	link.id === "discord"
+																		? DiscordIcon
+																		: link.id === "github"
+																			? Github
+																			: link.id === "linkedin"
+																				? FaLinkedin
+																				: FaYoutube;
+																return (
+																	<a
+																		key={link.id}
+																		href={link.url}
+																		target="_blank"
+																		rel="noopener noreferrer"
+																		className="flex items-center gap-3 px-3 py-3 bg-gray-50 dark:bg-gray-800 text-secondary-600 dark:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors min-h-[44px]"
+																		onClick={() => setMobileLinksOpen(false)}
+																	>
+																		<Icon
+																			className={`h-5 w-5 flex-shrink-0 ${
+																				link.id === "discord"
+																					? "text-[#5865F2]"
+																					: link.id === "linkedin"
+																						? "text-[#0077B5]"
+																						: link.id === "youtube"
+																							? "text-[#FF0000]"
+																							: ""
+																			}`}
+																		/>
+																		<span className="text-sm font-medium flex-1">
+																			{link.label}
+																		</span>
+																		{link.stat && (
+																			<div className="flex items-center gap-1">
+																				{link.statLabel === "stars" && (
+																					<Star className="h-4 w-4 fill-current text-yellow-500" />
+																				)}
+																				<span className="text-sm">
+																					{link.stat}
+																				</span>
+																			</div>
+																		)}
+																	</a>
+																);
+															})}
+													</div>
 												</div>
-											</div>
-										</>
-									)}
-								</div>
+											</>
+										)}
+									</div>
+								)}
 
 								{/* Donate Button — hidden when buymeacoffee link is absent (e.g. AdminMode) */}
 								{communityLinks.some((l) => l.id === "buymeacoffee") && (

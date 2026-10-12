@@ -64,7 +64,9 @@ const Profile = () => {
 	const [newsletterLoading, setNewsletterLoading] = useState(false);
 
 	// Self-hosted only — hidden under SaaS/managed (admin_mode === true)
-	const showNewsletterSection = !publicSettings?.admin_mode;
+	// False under admin_mode or DISABLE_NEWSLETTER.
+	const showNewsletterSection = publicSettings?.newsletter_enabled === true;
+	const discordAuthEnabled = publicSettings?.discord_auth_enabled === true;
 	const isNewsletterSubscribed = !!user?.newsletter_subscribed;
 	const newsletterSubscribedAt = user?.newsletter_subscribed_at;
 
@@ -879,113 +881,115 @@ const Profile = () => {
 								</p>
 							</div>
 
-							{/* Discord Connection */}
-							<div className="border border-secondary-200 dark:border-secondary-700 rounded-lg p-4">
-								<div className="flex items-center justify-between">
-									<div className="flex items-center gap-3">
-										<div
-											className="p-2 rounded-lg"
-											style={{ backgroundColor: "#5865F2" }}
-										>
-											<DiscordIcon className="h-5 w-5 text-white" />
+							{/* Discord Connection — absent when DISABLE_DISCORD_AUTH is set */}
+							{discordAuthEnabled && (
+								<div className="border border-secondary-200 dark:border-secondary-700 rounded-lg p-4">
+									<div className="flex items-center justify-between">
+										<div className="flex items-center gap-3">
+											<div
+												className="p-2 rounded-lg"
+												style={{ backgroundColor: "#5865F2" }}
+											>
+												<DiscordIcon className="h-5 w-5 text-white" />
+											</div>
+											<div>
+												<h4 className="font-medium text-secondary-900 dark:text-white">
+													Discord
+												</h4>
+												{user?.discord_id ? (
+													<p className="text-sm text-secondary-500 dark:text-white">
+														{user.discord_username || `ID: ${user.discord_id}`}
+													</p>
+												) : (
+													<p className="text-sm text-secondary-500 dark:text-white">
+														Not connected
+													</p>
+												)}
+											</div>
 										</div>
 										<div>
-											<h4 className="font-medium text-secondary-900 dark:text-white">
-												Discord
-											</h4>
 											{user?.discord_id ? (
-												<p className="text-sm text-secondary-500 dark:text-white">
-													{user.discord_username || `ID: ${user.discord_id}`}
-												</p>
+												<button
+													type="button"
+													onClick={async () => {
+														if (!user?.has_password && !user?.oidc_sub) {
+															setMessage({
+																type: "error",
+																text: "Cannot unlink Discord - you need at least one login method. Set a password first.",
+															});
+															return;
+														}
+														setDiscordUnlinking(true);
+														try {
+															await discordAPI.unlink();
+															setMessage({
+																type: "success",
+																text: "Discord account unlinked.",
+															});
+															window.location.reload();
+														} catch (err) {
+															setMessage({
+																type: "error",
+																text:
+																	err.response?.data?.error ||
+																	"Failed to unlink Discord account.",
+															});
+														} finally {
+															setDiscordUnlinking(false);
+														}
+													}}
+													disabled={
+														discordUnlinking ||
+														(!user?.has_password && !user?.oidc_sub)
+													}
+													className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-red-300 dark:border-red-700 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 disabled:cursor-not-allowed"
+													title={
+														!user?.has_password && !user?.oidc_sub
+															? "Cannot unlink - no other login method available"
+															: ""
+													}
+												>
+													{discordUnlinking ? (
+														<RefreshCw className="h-4 w-4 animate-spin" />
+													) : (
+														<Unlink className="h-4 w-4" />
+													)}
+													Unlink
+												</button>
 											) : (
-												<p className="text-sm text-secondary-500 dark:text-white">
-													Not connected
-												</p>
+												<button
+													type="button"
+													onClick={async () => {
+														setDiscordLinking(true);
+														try {
+															const res = await discordAPI.link();
+															window.location.href = res.data.url;
+														} catch (err) {
+															setMessage({
+																type: "error",
+																text:
+																	err.response?.data?.error ||
+																	"Failed to start Discord linking.",
+															});
+															setDiscordLinking(false);
+														}
+													}}
+													disabled={discordLinking}
+													className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md text-white hover:opacity-90 disabled:opacity-50"
+													style={{ backgroundColor: "#5865F2" }}
+												>
+													{discordLinking ? (
+														<RefreshCw className="h-4 w-4 animate-spin" />
+													) : (
+														<Link2 className="h-4 w-4" />
+													)}
+													Link
+												</button>
 											)}
 										</div>
 									</div>
-									<div>
-										{user?.discord_id ? (
-											<button
-												type="button"
-												onClick={async () => {
-													if (!user?.has_password && !user?.oidc_sub) {
-														setMessage({
-															type: "error",
-															text: "Cannot unlink Discord - you need at least one login method. Set a password first.",
-														});
-														return;
-													}
-													setDiscordUnlinking(true);
-													try {
-														await discordAPI.unlink();
-														setMessage({
-															type: "success",
-															text: "Discord account unlinked.",
-														});
-														window.location.reload();
-													} catch (err) {
-														setMessage({
-															type: "error",
-															text:
-																err.response?.data?.error ||
-																"Failed to unlink Discord account.",
-														});
-													} finally {
-														setDiscordUnlinking(false);
-													}
-												}}
-												disabled={
-													discordUnlinking ||
-													(!user?.has_password && !user?.oidc_sub)
-												}
-												className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-red-300 dark:border-red-700 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 disabled:cursor-not-allowed"
-												title={
-													!user?.has_password && !user?.oidc_sub
-														? "Cannot unlink - no other login method available"
-														: ""
-												}
-											>
-												{discordUnlinking ? (
-													<RefreshCw className="h-4 w-4 animate-spin" />
-												) : (
-													<Unlink className="h-4 w-4" />
-												)}
-												Unlink
-											</button>
-										) : (
-											<button
-												type="button"
-												onClick={async () => {
-													setDiscordLinking(true);
-													try {
-														const res = await discordAPI.link();
-														window.location.href = res.data.url;
-													} catch (err) {
-														setMessage({
-															type: "error",
-															text:
-																err.response?.data?.error ||
-																"Failed to start Discord linking.",
-														});
-														setDiscordLinking(false);
-													}
-												}}
-												disabled={discordLinking}
-												className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md text-white hover:opacity-90 disabled:opacity-50"
-												style={{ backgroundColor: "#5865F2" }}
-											>
-												{discordLinking ? (
-													<RefreshCw className="h-4 w-4 animate-spin" />
-												) : (
-													<Link2 className="h-4 w-4" />
-												)}
-												Link
-											</button>
-										)}
-									</div>
 								</div>
-							</div>
+							)}
 
 							{/* OIDC Connection (read-only) */}
 							{user?.oidc_sub && (

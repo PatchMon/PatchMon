@@ -836,16 +836,22 @@ type MetricsSendHandler struct {
 	defaultDB     *database.DB
 	poolCache     *hostctx.PoolCache
 	serverVersion string
+	disabled      bool
 	log           *slog.Logger
 }
 
-// NewMetricsSendHandler creates a metrics send handler.
-func NewMetricsSendHandler(defaultDB *database.DB, poolCache *hostctx.PoolCache, serverVersion string, log *slog.Logger) *MetricsSendHandler {
-	return &MetricsSendHandler{defaultDB: defaultDB, poolCache: poolCache, serverVersion: serverVersion, log: log}
+// NewMetricsSendHandler creates a metrics send handler. With disabled set
+// (DISABLE_TELEMETRY) the job does nothing.
+func NewMetricsSendHandler(defaultDB *database.DB, poolCache *hostctx.PoolCache, serverVersion string, disabled bool, log *slog.Logger) *MetricsSendHandler {
+	return &MetricsSendHandler{defaultDB: defaultDB, poolCache: poolCache, serverVersion: serverVersion, disabled: disabled, log: log}
 }
 
 // ProcessTask implements asynq.Handler.
 func (h *MetricsSendHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
+	if h.disabled {
+		h.log.Debug("metrics send skipped: telemetry disabled")
+		return nil
+	}
 	forEachDB(ctx, h.defaultDB, h.poolCache, func(ctx context.Context, d *database.DB, host string) {
 		if err := h.sendMetrics(ctx, d, host); err != nil {
 			h.log.Warn("metrics send failed", "host", host, "error", err)

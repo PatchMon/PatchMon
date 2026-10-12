@@ -66,18 +66,18 @@ const SettingsLayout = ({ children }) => {
 				icon: UserCircle,
 			});
 			if (canManageSettings()) {
-				userItems.push(
-					{
+				if (publicSettings?.discord_auth_enabled === true) {
+					userItems.push({
 						name: "Discord Auth",
 						href: "/settings/discord-auth",
 						icon: DiscordIcon,
-					},
-					{
-						name: "OIDC / SSO",
-						href: "/settings/oidc-auth",
-						icon: KeyRound,
-					},
-				);
+					});
+				}
+				userItems.push({
+					name: "OIDC / SSO",
+					href: "/settings/oidc-auth",
+					icon: KeyRound,
+				});
 			}
 			nav.push({
 				section: "User Management",
@@ -178,8 +178,9 @@ const SettingsLayout = ({ children }) => {
 					icon: Code,
 				});
 			}
-			// Metrics is hidden in managed/multi-context deployments.
-			if (!isAdminMode) {
+			// Metrics is hidden in managed/multi-context deployments and when
+			// DISABLE_TELEMETRY is set.
+			if (!isAdminMode && publicSettings?.telemetry_enabled === true) {
 				serverItems.push({
 					name: "Metrics",
 					href: "/settings/metrics",

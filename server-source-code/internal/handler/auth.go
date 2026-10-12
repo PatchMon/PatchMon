@@ -1236,6 +1236,10 @@ func (h *AuthHandler) SubscribeNewsletter(w http.ResponseWriter, r *http.Request
 
 	name := newsletterDisplayName(user)
 	if err := SubscribeToList(r.Context(), name, user.Email); err != nil {
+		if errors.Is(err, ErrNewsletterDisabled) {
+			Error(w, http.StatusForbidden, "Newsletter is disabled on this server")
+			return
+		}
 		if h.log != nil {
 			h.log.Error("newsletter subscribe failed", "user_id", userID, "error", err)
 		}

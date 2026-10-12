@@ -15,6 +15,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/handler"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/logger"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/migrate"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/monitor"
@@ -34,6 +35,8 @@ func main() {
 		_, _ = fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		os.Exit(1)
 	}
+	util.SetVersionCheckDisabled(cfg.DisableVersionCheck)
+	handler.SetNewsletterDisabled(cfg.DisableNewsletter)
 
 	// Bootstrap logger (env-only) for migrations and pre-DB errors
 	bootstrapLog := logger.New(logger.Config{
@@ -169,6 +172,7 @@ func main() {
 		PoolCache:                    poolCache,
 		QueueClient:                  queueClient,
 		ServerVersion:                cfg.Version,
+		DisableTelemetry:             cfg.DisableTelemetry,
 		SSGContentDir:                cfg.SSGContentDir,
 		Log:                          slog,
 		Emit:                         notifyEmit,

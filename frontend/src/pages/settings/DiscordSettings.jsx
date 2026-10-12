@@ -11,10 +11,15 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import DiscordIcon from "../../components/DiscordIcon";
+import { useSettings } from "../../contexts/SettingsContext";
 import { discordAPI } from "../../utils/api";
 
 const DiscordSettings = () => {
 	const queryClient = useQueryClient();
+	const { settings: publicSettings, isLoading: publicSettingsLoading } =
+		useSettings();
+	// DISABLE_DISCORD_AUTH removes the server routes; don't call them.
+	const discordAuthEnabled = publicSettings?.discord_auth_enabled === true;
 	const [showSecret, setShowSecret] = useState(false);
 	const [secretInput, setSecretInput] = useState("");
 	const [showSetupGuide, setShowSetupGuide] = useState(false);
@@ -31,6 +36,7 @@ const DiscordSettings = () => {
 	const { data: settings, isLoading: settingsLoading } = useQuery({
 		queryKey: ["discordSettings"],
 		queryFn: () => discordAPI.getSettings().then((res) => res.data),
+		enabled: discordAuthEnabled,
 	});
 
 	// Sync form from server, but never over unsaved edits: a refetch would
@@ -82,6 +88,26 @@ const DiscordSettings = () => {
 	const handleClearSecret = () => {
 		updateMutation.mutate({ discord_client_secret: "" });
 	};
+
+	// Wait for the public settings: until they arrive discord_auth_enabled is
+	// undefined and the page would briefly claim Discord is disabled.
+	if (publicSettingsLoading) {
+		return (
+			<div className="flex items-center justify-center h-64">
+				<Loader2 className="h-8 w-8 animate-spin text-primary-500" />
+			</div>
+		);
+	}
+
+	if (!discordAuthEnabled) {
+		return (
+			<div className="flex items-center gap-3 p-4 rounded-lg border border-secondary-200 dark:border-secondary-700 text-sm text-secondary-600 dark:text-white">
+				<AlertTriangle className="h-5 w-5 flex-shrink-0 text-yellow-500" />
+				Discord authentication is disabled on this server
+				(DISABLE_DISCORD_AUTH).
+			</div>
+		);
+	}
 
 	if (settingsLoading) {
 		return (

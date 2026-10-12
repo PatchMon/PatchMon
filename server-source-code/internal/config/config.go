@@ -194,6 +194,44 @@ type Config struct {
 	// new usage through to the manager / Stripe. Only meaningful when
 	// AdminMode is on. Auth uses X-Registry-Reload-Secret.
 	ProvisionerURL string
+
+	// Community buttons and outbound connections. Each switch is independent;
+	// see "Privacy and Outbound Connections" in docs/patchmon-operator-guide.md.
+
+	// HideSocialLinks drops the social media links (Discord, GitHub, LinkedIn,
+	// YouTube) from the community links endpoint, so the UI stops rendering
+	// those buttons. Set HIDE_SOCIAL_LINKS=true to enable.
+	HideSocialLinks bool
+
+	// HideDonateButtons hides the donate (Buy Me a Coffee) and membership
+	// buttons in the top bar, setup wizard and release notes dialog. Set
+	// HIDE_DONATE_BUTTONS=true to enable.
+	HideDonateButtons bool
+
+	// DisableDiscordAuth turns off Discord login and account linking entirely:
+	// the /auth/discord routes are not registered, so the server never talks to
+	// discord.com. Set DISABLE_DISCORD_AUTH=true to enable.
+	DisableDiscordAuth bool
+
+	// DisableTelemetry stops the anonymous metrics (instance ID, host count,
+	// version) sent to metrics.patchmon.cloud, both the daily job and the
+	// manual "send now". Set DISABLE_TELEMETRY=true to enable.
+	DisableTelemetry bool
+
+	// DisableVersionCheck stops the DNS TXT lookups against
+	// server.vcheck.patchmon.net / agent.vcheck.patchmon.net used to detect new
+	// server and agent releases. Set DISABLE_VERSION_CHECK=true to enable.
+	DisableVersionCheck bool
+
+	// DisableGithubVersionOnLogin stops the login page from querying
+	// api.github.com for the latest release, overriding the UI toggle.
+	// Set DISABLE_GITHUB_VERSION_ON_LOGIN=true to enable.
+	DisableGithubVersionOnLogin bool
+
+	// DisableNewsletter removes every newsletter sign-up (setup wizard, release
+	// notes, profile, auto-enrolment) so nothing is posted to the marketing
+	// list. Set DISABLE_NEWSLETTER=true to enable.
+	DisableNewsletter bool
 }
 
 // Load reads configuration from environment.
@@ -277,6 +315,14 @@ func Load() (*Config, error) {
 		BillingServiceURL:     getEnv("BILLING_SERVICE_URL", ""),
 		BillingInternalSecret: getEnv("BILLING_INTERNAL_SECRET", ""),
 		ProvisionerURL:        getEnv("PROVISIONER_URL", ""),
+
+		HideSocialLinks:             getEnv("HIDE_SOCIAL_LINKS", "") == "true",
+		HideDonateButtons:           getEnv("HIDE_DONATE_BUTTONS", "") == "true",
+		DisableDiscordAuth:          getEnv("DISABLE_DISCORD_AUTH", "") == "true",
+		DisableTelemetry:            getEnv("DISABLE_TELEMETRY", "") == "true",
+		DisableVersionCheck:         getEnv("DISABLE_VERSION_CHECK", "") == "true",
+		DisableGithubVersionOnLogin: getEnv("DISABLE_GITHUB_VERSION_ON_LOGIN", "") == "true",
+		DisableNewsletter:           getEnv("DISABLE_NEWSLETTER", "") == "true",
 
 		MaxLoginAttempts:   getEnvInt("MAX_LOGIN_ATTEMPTS", 5),
 		LockoutDurationMin: getEnvInt("LOCKOUT_DURATION_MINUTES", 15),
