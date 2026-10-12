@@ -1,6 +1,7 @@
 package alerts
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -263,5 +264,26 @@ func TestResolvesHostDown_RequiresPositiveEvidence(t *testing.T) {
 				t.Fatalf("resolvesHostDown = %v, want %v (%+v)", got, tc.want, d)
 			}
 		})
+	}
+}
+
+func TestResolvesHostDown_ReportAfterOutageBeforeDelayedAlertRow(t *testing.T) {
+	t.Parallel()
+
+	outageReport := time.Now().Add(-2 * time.Hour)
+	recoveryReport := time.Now().Add(-90 * time.Second)
+	alertRowCreated := time.Now().Add(-60 * time.Second)
+	meta, _ := json.Marshal(map[string]interface{}{"host_id": "h1", "last_update": outageReport})
+
+	since := hostDownSince(meta, alertRowCreated)
+	d := hostDownState(agentregistry.New(), "unknown", time.Now(), 30*time.Second, recoveryReport, time.Now().Add(-180*time.Minute), 60)
+	if d.down {
+		t.Fatalf("precondition: host should not be judged down: %+v", d)
+	}
+	if !resolvesHostDown(d, since) {
+		t.Fatalf("a report after the outage must resolve the alert even when the delayed alert row was written later (since=%v)", since)
+	}
+	if got := hostDownSince(nil, alertRowCreated); !got.Equal(alertRowCreated) {
+		t.Fatalf("without metadata the alert row time is the baseline, got %v", got)
 	}
 }

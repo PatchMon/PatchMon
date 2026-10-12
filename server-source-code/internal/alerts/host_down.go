@@ -80,7 +80,7 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 
 	hostDownAlerts, _ := d.Queries.ListActiveAlertsByType(ctx, "host_down")
 	alertsByHostID := make(map[string]string)
-	alertCreatedAt := make(map[string]time.Time)
+	downSince := make(map[string]time.Time)
 	for _, a := range hostDownAlerts {
 		var meta map[string]interface{}
 		if len(a.Metadata) > 0 {
@@ -89,7 +89,7 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 		if meta != nil {
 			if hid, ok := meta["host_id"].(string); ok {
 				alertsByHostID[hid] = a.ID
-				alertCreatedAt[hid] = a.CreatedAt.Time
+				downSince[hid] = hostDownSince(a.Metadata, a.CreatedAt.Time)
 			}
 		}
 	}
@@ -165,7 +165,7 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 			hadAlert := false
 			// Resolve any active host_down alert for this host.
 			if alertID, exists := alertsByHostID[host.ID]; exists {
-				if !resolvesHostDown(decision, alertCreatedAt[host.ID]) {
+				if !resolvesHostDown(decision, downSince[host.ID]) {
 					continue
 				}
 				hadAlert = true
@@ -432,11 +432,11 @@ func hostDownState(
 }
 
 // resolvesHostDown requires positive evidence of recovery: a disconnect still inside the grace window is not one.
-func resolvesHostDown(decision hostDownDecision, alertCreatedAt time.Time) bool {
+func resolvesHostDown(decision hostDownDecision, downSince time.Time) bool {
 	if !decision.alive {
 		return false
 	}
-	return decision.detection == detectionWebsocket || decision.aliveAt.After(alertCreatedAt)
+	return decision.detection == detectionWebsocket || decision.aliveAt.After(downSince)
 }
 
 // formatHostDownThreshold renders the threshold in operator-friendly units:
@@ -464,4 +464,15 @@ func hostDisplayName(host db.Host) string {
 
 func hostDisplayNameFromRow(host db.Host) string {
 	return hostDisplayName(host)
+}
+
+// hostDownSince is the report the outage was judged on, so a later report counts as recovery even if the delayed alert row was written after it.
+func hostDownSince(metadata []byte, createdAt time.Time) time.Time {
+	var meta struct {
+		LastUpdate time.Time `json:"last_update"`
+	}
+	if len(metadata) > 0 && json.Unmarshal(metadata, &meta) == nil && !meta.LastUpdate.IsZero() && meta.LastUpdate.Before(createdAt) {
+		return meta.LastUpdate
+	}
+	return createdAt
 }
