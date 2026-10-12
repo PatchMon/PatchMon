@@ -3508,13 +3508,15 @@ Each row exposes:
 | **Active** | Master switch for this alert type. When off, no alerts of this type are created and no notifications are emitted. |
 | **Severity** | Default severity applied to new alerts of this type. |
 | **Alert delay** | Seconds to wait before delivering the outbound notification. If a cancelling counterpart event (e.g. `host_recovered` for `host_down`) fires within the delay window, the notification is suppressed. Useful for flappy hosts. |
-| **Frequency** | For periodic checks only (`host_down`, `host_security_updates_exceeded`, `host_pending_updates_exceeded`). Minutes between checks. |
+| **Frequency** | For periodic checks only (`host_down`, `host_security_updates_exceeded`, `host_pending_updates_exceeded`). Minutes between checks. Any whole number of minutes is honoured. For the two update-threshold types a change applies from the next check without a restart; for `host_down` it applies after a server restart. |
 | **Threshold** | For threshold alerts. Numeric threshold above which an alert fires. Units depend on the alert type: `host_security_updates_exceeded` and `host_pending_updates_exceeded` use a *count* (number of pending updates); `host_down` uses *seconds* (how long the agent's WebSocket can be disconnected before the alert fires). The `host_down` row shows a `sec` suffix to make this explicit; default is 30 seconds. |
 | **Auto-assign** | Toggle plus user picker: any new alert of this type is assigned to the chosen user automatically. |
 | **Retention** | Days to keep alerts of this type before cleanup. Empty = never auto-clean. |
 | **Auto-resolve** | Days after which active alerts auto-resolve if no one touches them. |
 
 Changes are staged locally. Use the **Apply** button on the top bar to save them, or **Discard** to revert. The browser warns you if you navigate away with unsaved changes.
+
+The update-threshold alerts (`host_security_updates_exceeded`, `host_pending_updates_exceeded`) notify once per host each time the threshold is crossed, whichever destinations the event is routed to. While the host stays above the threshold, later checks send nothing more. Once its count drops to the threshold or below, the next time it goes above the threshold sends a new notification. Switching the alert type off clears every host, so switching it back on notifies again for hosts still above the threshold.
 
 #### Cleanup
 

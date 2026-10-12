@@ -3,17 +3,76 @@ package alerts
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
+	"github.com/jackc/pgx/v5"
 )
 
+const defaultThresholdIntervalMinutes = 30
+
+type thresholdCheck struct {
+	alertType        string
+	resolvedType     string
+	defaultThreshold int
+	count            func(db.GetPendingUpdateCountsPerHostRow) int
+	title            func(host string, n int) string
+	message          func(host string, n, threshold int) string
+	resolvedTitle    func(host string) string
+	resolvedMessage  func(host string, n, threshold int) string
+	resolvedReason   string
+}
+
+var thresholdChecks = []thresholdCheck{
+	{
+		alertType:        "host_security_updates_exceeded",
+		resolvedType:     "host_security_updates_resolved",
+		defaultThreshold: 1,
+		count:            func(c db.GetPendingUpdateCountsPerHostRow) int { return int(c.SecurityCount) },
+		title: func(h string, n int) string {
+			return fmt.Sprintf("Host %s has %d security updates pending", h, n)
+		},
+		message: func(h string, n, t int) string {
+			return fmt.Sprintf("Host \"%s\" has %d pending security updates, exceeding threshold of %d.", h, n, t)
+		},
+		resolvedTitle: func(h string) string { return fmt.Sprintf("Host %s security updates resolved", h) },
+		resolvedMessage: func(h string, n, t int) string {
+			return fmt.Sprintf("Host \"%s\" security update count (%d) is now within threshold (%d).", h, n, t)
+		},
+		resolvedReason: "Security update count fell below threshold",
+	},
+	{
+		alertType:        "host_pending_updates_exceeded",
+		resolvedType:     "host_pending_updates_resolved",
+		defaultThreshold: 10,
+		count:            func(c db.GetPendingUpdateCountsPerHostRow) int { return int(c.PendingCount) },
+		title: func(h string, n int) string {
+			return fmt.Sprintf("Host %s has %d pending updates", h, n)
+		},
+		message: func(h string, n, t int) string {
+			return fmt.Sprintf("Host \"%s\" has %d pending updates, exceeding threshold of %d.", h, n, t)
+		},
+		resolvedTitle: func(h string) string { return fmt.Sprintf("Host %s pending updates resolved", h) },
+		resolvedMessage: func(h string, n, t int) string {
+			return fmt.Sprintf("Host \"%s\" pending update count (%d) is now within threshold (%d).", h, n, t)
+		},
+		resolvedReason: "Pending update count fell below threshold",
+	},
+}
+
+type dueThresholdCheck struct {
+	thresholdCheck
+	cfg *store.AlertConfigWithUser
+}
+
 // ProcessUpdateThresholdMonitor checks per-host pending/security update counts against configured thresholds
-// and emits alert events when thresholds are exceeded or resolved.
+// and emits alert events when thresholds are exceeded or resolved. Each type runs on its own check interval.
 func ProcessUpdateThresholdMonitor(ctx context.Context, d *database.DB, tenantHost string, emit *notifications.Emitter, log *slog.Logger) (int, error) {
 	enabled, err := IsAlertsEnabled(ctx, d)
 	if err != nil || !enabled {
@@ -21,29 +80,36 @@ func ProcessUpdateThresholdMonitor(ctx context.Context, d *database.DB, tenantHo
 		return 0, nil
 	}
 
-	secCfg, err := GetConfigForType(ctx, d, "host_security_updates_exceeded")
-	if err != nil {
-		secCfg = nil
+	now := time.Now()
+	var due []dueThresholdCheck
+	for _, chk := range thresholdChecks {
+		cfg, err := GetConfigForType(ctx, d, chk.alertType)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && !cfg.IsEnabled) {
+			emit.ClearConditions(ctx, tenantHost, chk.alertType)
+			continue
+		}
+		if err != nil {
+			log.Debug("update_threshold: config lookup failed", "alert_type", chk.alertType, "error", err)
+			continue
+		}
+		if !emit.ClaimCheckDue(ctx, tenantHost, chk.alertType, thresholdInterval(cfg), now) {
+			continue
+		}
+		due = append(due, dueThresholdCheck{thresholdCheck: chk, cfg: cfg})
 	}
-	pendCfg, err := GetConfigForType(ctx, d, "host_pending_updates_exceeded")
-	if err != nil {
-		pendCfg = nil
-	}
-
-	// If both configs are nil or disabled, nothing to do.
-	secEnabled := secCfg != nil && secCfg.IsEnabled
-	pendEnabled := pendCfg != nil && pendCfg.IsEnabled
-	if !secEnabled && !pendEnabled {
-		log.Debug("update_threshold: both threshold alerts disabled")
+	if len(due) == 0 {
 		return 0, nil
 	}
 
-	secThreshold := parseThreshold(secCfg, 1)
-	pendThreshold := parseThreshold(pendCfg, 10)
+	release := func() {
+		for _, chk := range due {
+			emit.ReleaseCheck(ctx, tenantHost, chk.alertType)
+		}
+	}
 
-	// Get per-host update counts.
 	counts, err := d.Queries.GetPendingUpdateCountsPerHost(ctx)
 	if err != nil {
+		release()
 		return 0, err
 	}
 	countByHost := make(map[string]db.GetPendingUpdateCountsPerHostRow, len(counts))
@@ -51,120 +117,117 @@ func ProcessUpdateThresholdMonitor(ctx context.Context, d *database.DB, tenantHo
 		countByHost[c.HostID] = c
 	}
 
-	// Load hosts for display names.
 	hostRows, err := d.Queries.ListHosts(ctx)
+	if err != nil {
+		release()
+		return 0, err
+	}
+
+	alertsCreated := 0
+	for _, chk := range due {
+		n, err := evaluateThreshold(ctx, d, tenantHost, emit, chk, hostRows, countByHost, now)
+		if err != nil {
+			emit.ReleaseCheck(ctx, tenantHost, chk.alertType)
+			log.Warn("update_threshold: evaluation failed", "alert_type", chk.alertType, "error", err)
+			continue
+		}
+		alertsCreated += n
+	}
+	return alertsCreated, nil
+}
+
+func evaluateThreshold(ctx context.Context, d *database.DB, tenantHost string, emit *notifications.Emitter, chk dueThresholdCheck, hostRows []db.Host, countByHost map[string]db.GetPendingUpdateCountsPerHostRow, now time.Time) (int, error) {
+	threshold := parseThreshold(chk.cfg, chk.defaultThreshold)
+	alertsByHostID := buildAlertsByHostID(ctx, d, chk.alertType)
+
+	exceeded := make([]string, 0)
+	for _, host := range hostRows {
+		if host.Status == "active" && chk.count(countByHost[host.ID]) > threshold {
+			exceeded = append(exceeded, host.ID)
+		}
+	}
+
+	entered, left, err := emit.SyncConditions(ctx, tenantHost, chk.alertType, exceeded, now)
 	if err != nil {
 		return 0, err
 	}
-	hostMap := make(map[string]db.Host, len(hostRows))
-	for _, h := range hostRows {
-		hostMap[h.ID] = h
+	isNew := make(map[string]bool, len(entered))
+	for _, id := range entered {
+		isNew[id] = true
 	}
-
-	// Build active alert maps for both types.
-	secAlertsByHostID := buildAlertsByHostID(ctx, d, "host_security_updates_exceeded")
-	pendAlertsByHostID := buildAlertsByHostID(ctx, d, "host_pending_updates_exceeded")
+	if len(left) > 0 {
+		recovered := make(map[string]time.Time, len(left))
+		for _, id := range left {
+			recovered[id] = now
+		}
+		emit.CancelPending(ctx, tenantHost, chk.alertType, recovered)
+	}
 
 	alertsStore := store.NewAlertsStore(d)
 	alertsCreated := 0
-
 	for _, host := range hostRows {
 		if host.Status != "active" {
 			continue
 		}
-		c := countByHost[host.ID]
+		n := chk.count(countByHost[host.ID])
 		hostName := hostDisplayName(host)
+		alertID, hasAlert := alertsByHostID[host.ID]
 
-		// Security updates threshold check.
-		if secEnabled {
-			secCount := int(c.SecurityCount)
-			if secCount > secThreshold {
-				alertID, exists := secAlertsByHostID[host.ID]
-				if exists {
-					_ = d.Queries.UpdateAlert(ctx, alertID)
-				} else if emit != nil {
-					severity := DefaultSeverity(secCfg.DefaultSeverity, "warning")
-					title := fmt.Sprintf("Host %s has %d security updates pending", hostName, secCount)
-					msg := fmt.Sprintf("Host \"%s\" has %d pending security updates, exceeding threshold of %d.", hostName, secCount, secThreshold)
-					meta := map[string]interface{}{
-						"host_id":   host.ID,
-						"host_name": hostName,
-						"count":     secCount,
-						"threshold": secThreshold,
-					}
-					emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
-						Type: "host_security_updates_exceeded", Severity: severity, Title: title, Message: msg,
-						ReferenceType: "host", ReferenceID: host.ID,
-						Metadata: meta,
-					})
-					alertsCreated++
-				}
-			} else if alertID, exists := secAlertsByHostID[host.ID]; exists {
-				_ = alertsStore.UpdateResolved(ctx, alertID, nil)
-				_ = alertsStore.RecordHistory(ctx, alertID, nil, "resolved", map[string]interface{}{
-					"resolved_reason": "Security update count fell below threshold",
-					"system_action":   true,
-				})
-				if emit != nil {
-					emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
-						Type:          "host_security_updates_resolved",
-						Severity:      ResolveSeverity(ctx, d, "host_security_updates_resolved", "informational"),
-						Title:         fmt.Sprintf("Host %s security updates resolved", hostName),
-						Message:       fmt.Sprintf("Host \"%s\" security update count (%d) is now within threshold (%d).", hostName, secCount, secThreshold),
-						ReferenceType: "host",
-						ReferenceID:   host.ID,
-						Metadata:      map[string]interface{}{"host_id": host.ID, "host_name": hostName, "count": secCount, "threshold": secThreshold},
-					})
-				}
+		if n > threshold {
+			if hasAlert {
+				_ = d.Queries.UpdateAlert(ctx, alertID)
+				continue
 			}
+			if !isNew[host.ID] || emit == nil {
+				continue
+			}
+			emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
+				Type:          chk.alertType,
+				Severity:      DefaultSeverity(chk.cfg.DefaultSeverity, "warning"),
+				Title:         chk.title(hostName, n),
+				Message:       chk.message(hostName, n, threshold),
+				ReferenceType: "host",
+				ReferenceID:   host.ID,
+				Metadata: map[string]interface{}{
+					"host_id":   host.ID,
+					"host_name": hostName,
+					"count":     n,
+					"threshold": threshold,
+				},
+			})
+			alertsCreated++
+			continue
 		}
 
-		// Pending updates threshold check.
-		if pendEnabled {
-			pendCount := int(c.PendingCount)
-			if pendCount > pendThreshold {
-				alertID, exists := pendAlertsByHostID[host.ID]
-				if exists {
-					_ = d.Queries.UpdateAlert(ctx, alertID)
-				} else if emit != nil {
-					severity := DefaultSeverity(pendCfg.DefaultSeverity, "warning")
-					title := fmt.Sprintf("Host %s has %d pending updates", hostName, pendCount)
-					msg := fmt.Sprintf("Host \"%s\" has %d pending updates, exceeding threshold of %d.", hostName, pendCount, pendThreshold)
-					meta := map[string]interface{}{
-						"host_id":   host.ID,
-						"host_name": hostName,
-						"count":     pendCount,
-						"threshold": pendThreshold,
-					}
-					emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
-						Type: "host_pending_updates_exceeded", Severity: severity, Title: title, Message: msg,
-						ReferenceType: "host", ReferenceID: host.ID,
-						Metadata: meta,
-					})
-					alertsCreated++
-				}
-			} else if alertID, exists := pendAlertsByHostID[host.ID]; exists {
-				_ = alertsStore.UpdateResolved(ctx, alertID, nil)
-				_ = alertsStore.RecordHistory(ctx, alertID, nil, "resolved", map[string]interface{}{
-					"resolved_reason": "Pending update count fell below threshold",
-					"system_action":   true,
-				})
-				if emit != nil {
-					emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
-						Type:          "host_pending_updates_resolved",
-						Severity:      ResolveSeverity(ctx, d, "host_pending_updates_resolved", "informational"),
-						Title:         fmt.Sprintf("Host %s pending updates resolved", hostName),
-						Message:       fmt.Sprintf("Host \"%s\" pending update count (%d) is now within threshold (%d).", hostName, pendCount, pendThreshold),
-						ReferenceType: "host",
-						ReferenceID:   host.ID,
-						Metadata:      map[string]interface{}{"host_id": host.ID, "host_name": hostName, "count": pendCount, "threshold": pendThreshold},
-					})
-				}
-			}
+		if !hasAlert {
+			continue
+		}
+		_ = alertsStore.UpdateResolved(ctx, alertID, nil)
+		_ = alertsStore.RecordHistory(ctx, alertID, nil, "resolved", map[string]interface{}{
+			"resolved_reason": chk.resolvedReason,
+			"system_action":   true,
+		})
+		if emit != nil {
+			emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
+				Type:          chk.resolvedType,
+				Severity:      ResolveSeverity(ctx, d, chk.resolvedType, "informational"),
+				Title:         chk.resolvedTitle(hostName),
+				Message:       chk.resolvedMessage(hostName, n, threshold),
+				ReferenceType: "host",
+				ReferenceID:   host.ID,
+				Metadata:      map[string]interface{}{"host_id": host.ID, "host_name": hostName, "count": n, "threshold": threshold},
+			})
 		}
 	}
-
 	return alertsCreated, nil
+}
+
+func thresholdInterval(cfg *store.AlertConfigWithUser) time.Duration {
+	minutes := defaultThresholdIntervalMinutes
+	if cfg != nil && cfg.CheckIntervalMinutes != nil && *cfg.CheckIntervalMinutes >= 1 {
+		minutes = *cfg.CheckIntervalMinutes
+	}
+	return time.Duration(minutes) * time.Minute
 }
 
 // buildAlertsByHostID returns a map of host_id → alert_id for active alerts of the given type.
