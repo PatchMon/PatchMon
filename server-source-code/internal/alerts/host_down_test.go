@@ -226,3 +226,42 @@ func TestHostDownState_CadenceAliveAtIsLastReport(t *testing.T) {
 		t.Fatalf("cadence liveness must date from the last report, not the sweep: aliveAt=%v lastUpdate=%v", got.aliveAt, lastUpdate)
 	}
 }
+
+func TestResolvesHostDown_RequiresPositiveEvidence(t *testing.T) {
+	t.Parallel()
+
+	base := time.Now()
+	alertAt := base.Add(time.Second)
+	cadenceThreshold := base.Add(-180 * time.Minute)
+
+	reg := agentregistry.New()
+	reg.Register("dropped", false, "")
+	reg.Unregister("dropped")
+	reg.Register("live", false, "")
+
+	cases := []struct {
+		name       string
+		apiID      string
+		reg        *agentregistry.Registry
+		lastUpdate time.Time
+		want       bool
+	}{
+		{"disconnected inside the grace window", "dropped", reg, base, false},
+		{"live websocket", "live", reg, base.Add(-time.Hour), true},
+		{"cadence host with no report since the alert", "unknown", reg, base, false},
+		{"cadence host that reported after the alert", "unknown", reg, alertAt.Add(time.Minute), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			now := base.Add(10 * time.Second)
+			d := hostDownState(tc.reg, tc.apiID, now, 30*time.Second, tc.lastUpdate, cadenceThreshold, 60)
+			if d.down {
+				t.Fatalf("precondition: host should not be judged down: %+v", d)
+			}
+			if got := resolvesHostDown(d, alertAt); got != tc.want {
+				t.Fatalf("resolvesHostDown = %v, want %v (%+v)", got, tc.want, d)
+			}
+		})
+	}
+}

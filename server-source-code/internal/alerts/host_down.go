@@ -80,6 +80,7 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 
 	hostDownAlerts, _ := d.Queries.ListActiveAlertsByType(ctx, "host_down")
 	alertsByHostID := make(map[string]string)
+	alertCreatedAt := make(map[string]time.Time)
 	for _, a := range hostDownAlerts {
 		var meta map[string]interface{}
 		if len(a.Metadata) > 0 {
@@ -88,6 +89,7 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 		if meta != nil {
 			if hid, ok := meta["host_id"].(string); ok {
 				alertsByHostID[hid] = a.ID
+				alertCreatedAt[hid] = a.CreatedAt.Time
 			}
 		}
 	}
@@ -163,6 +165,9 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 			hadAlert := false
 			// Resolve any active host_down alert for this host.
 			if alertID, exists := alertsByHostID[host.ID]; exists {
+				if !resolvesHostDown(decision, alertCreatedAt[host.ID]) {
+					continue
+				}
 				hadAlert = true
 				if cfg.AutoResolveAfterDays == nil {
 					_ = alertsStore.UpdateResolved(ctx, alertID, nil)
@@ -417,6 +422,14 @@ func hostDownState(
 		// No WebSocket information at all for this agent.
 		return cadence
 	}
+}
+
+// resolvesHostDown requires positive evidence of recovery: a disconnect still inside the grace window is not one.
+func resolvesHostDown(decision hostDownDecision, alertCreatedAt time.Time) bool {
+	if !decision.alive {
+		return false
+	}
+	return decision.detection == detectionWebsocket || decision.aliveAt.After(alertCreatedAt)
 }
 
 // formatHostDownThreshold renders the threshold in operator-friendly units:
