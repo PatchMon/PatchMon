@@ -53,6 +53,7 @@ type Event struct {
 	ReferenceType string
 	ReferenceID   string
 	Metadata      map[string]interface{}
+	ObservedAt    time.Time
 }
 
 // EmitForAlert dispatches alert notifications via matching routes.
@@ -85,9 +86,13 @@ func (e *Emitter) EmitEvent(ctx context.Context, d *database.DB, tenantHost stri
 }
 
 func (e *Emitter) emit(ctx context.Context, d *database.DB, tenantHost string, ev Event) {
+	observedAt := ev.ObservedAt
+	if observedAt.IsZero() {
+		observedAt = time.Now()
+	}
 	if target, ok := cancelPairs[ev.Type]; ok {
 		if refID := eventRefID(ev); refID != "" {
-			e.CancelPending(ctx, tenantHost, target, map[string]time.Time{refID: time.Now()})
+			e.CancelPending(ctx, tenantHost, target, map[string]time.Time{refID: observedAt})
 		}
 	}
 
@@ -128,10 +133,15 @@ func (e *Emitter) emit(ctx context.Context, d *database.DB, tenantHost string, e
 	var emittedAt int64
 	if alertDelay > 0 {
 		cancelKey = delayedCancelKey(ev)
-		emittedAt = time.Now().UnixNano()
+		emittedAt = observedAt.UnixNano()
 		if cancelKey != "" {
 			recoveryGen = e.recoveryGeneration(ctx, tenantHost, cancelKey)
-			e.markPending(ctx, tenantHost, ev.Type, eventRefID(ev), emittedAt, alertDelay+pendingGrace)
+			if !e.claimPending(ctx, tenantHost, ev.Type, eventRefID(ev), emittedAt, alertDelay+pendingGrace) {
+				if e.log != nil {
+					e.log.Debug("notifications: delayed event skipped, already recovered", "event_type", sanitizeLogValue(ev.Type), "ref", sanitizeLogValue(eventRefID(ev)))
+				}
+				return
+			}
 		}
 	}
 
@@ -470,11 +480,54 @@ func delayedCancelKey(ev Event) string {
 	return cancelKeyFor(ev.Type, refID)
 }
 
-func (e *Emitter) markPending(ctx context.Context, tenantHost, eventType, refID string, emittedAt int64, ttl time.Duration) {
+const luaNewer = `
+local function newer(a, b)
+	if #a ~= #b then return #a > #b end
+	return a > b
+end
+`
+
+var claimPendingScript = redis.NewScript(luaNewer + `
+local rec = redis.call('GET', KEYS[2])
+if rec and newer(rec, ARGV[1]) then return 0 end
+redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+return 1
+`)
+
+var recordRecoveryScript = redis.NewScript(luaNewer + `
+local pending = redis.call('GET', KEYS[1])
+if not pending and ARGV[3] ~= '1' then return 0 end
+if pending and not newer(ARGV[1], pending) then return 0 end
+local cur = redis.call('GET', KEYS[2])
+if cur and not newer(ARGV[1], cur) then return 0 end
+local ttl = tonumber(ARGV[4])
+if pending then ttl = redis.call('PTTL', KEYS[1]) + tonumber(ARGV[2]) end
+local cttl = redis.call('PTTL', KEYS[2])
+if cttl > ttl then ttl = cttl end
+redis.call('SET', KEYS[2], ARGV[1], 'PX', ttl)
+if pending then redis.call('DEL', KEYS[1]) end
+return 1
+`)
+
+const recoveryRaceTTL = 10 * time.Minute
+
+// claimPending marks a delayed notification pending; false means the ref already recovered after emittedAt.
+func (e *Emitter) claimPending(ctx context.Context, tenantHost, eventType, refID string, emittedAt int64, ttl time.Duration) bool {
 	if e == nil || e.rdb == nil || refID == "" {
-		return
+		return true
 	}
-	_ = e.rdb.Set(ctx, tenantRedisKey(tenantHost, pendingKeyFor(eventType, refID)), strconv.FormatInt(emittedAt, 10), ttl).Err()
+	keys := []string{
+		tenantRedisKey(tenantHost, pendingKeyFor(eventType, refID)),
+		tenantRedisKey(tenantHost, cancelKeyFor(eventType, refID)),
+	}
+	n, err := claimPendingScript.Run(ctx, e.rdb, keys, strconv.FormatInt(emittedAt, 10), ttl.Milliseconds()).Int()
+	if err != nil {
+		if e.log != nil {
+			e.log.Debug("notifications: claim pending failed", "event_type", sanitizeLogValue(eventType), "error", sanitizeLogValue(err.Error()))
+		}
+		return true
+	}
+	return n == 1
 }
 
 func (e *Emitter) recoveryGeneration(ctx context.Context, tenantHost, cancelKey string) string {
@@ -498,37 +551,44 @@ func (e *Emitter) CancelPending(ctx context.Context, tenantHost, eventType strin
 		refIDs = append(refIDs, id)
 	}
 	pipe := e.rdb.Pipeline()
-	ttls := make([]*redis.DurationCmd, len(refIDs))
-	current := make([]*redis.StringCmd, len(refIDs))
+	exists := make([]*redis.IntCmd, len(refIDs))
 	for i, id := range refIDs {
-		ttls[i] = pipe.PTTL(ctx, tenantRedisKey(tenantHost, pendingKeyFor(eventType, id)))
-		current[i] = pipe.Get(ctx, tenantRedisKey(tenantHost, cancelKeyFor(eventType, id)))
+		exists[i] = pipe.Exists(ctx, tenantRedisKey(tenantHost, pendingKeyFor(eventType, id)))
 	}
-	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+	if _, err := pipe.Exec(ctx); err != nil {
 		if e.log != nil {
 			e.log.Debug("notifications: pending lookup failed", "event_type", sanitizeLogValue(eventType), "error", sanitizeLogValue(err.Error()))
 		}
 		return
 	}
-	set := e.rdb.Pipeline()
-	queued := 0
 	for i, id := range refIDs {
-		ttl, err := ttls[i].Result()
-		if err != nil || ttl <= 0 {
-			continue
+		if exists[i].Val() > 0 {
+			e.recordRecovery(ctx, tenantHost, eventType, id, recoveredAt[id], false)
 		}
-		at := recoveredAt[id].UnixNano()
-		if prev, err := current[i].Int64(); err == nil && prev >= at {
-			continue
-		}
-		set.Set(ctx, tenantRedisKey(tenantHost, cancelKeyFor(eventType, id)), strconv.FormatInt(at, 10), ttl+pendingGrace)
-		queued++
 	}
-	if queued == 0 {
+}
+
+// RecordRecovery records a recovery time even when nothing is pending yet, so a delayed
+// notification for a down decision taken before at, but not yet enqueued, is never sent.
+func (e *Emitter) RecordRecovery(ctx context.Context, tenantHost, eventType, refID string, at time.Time) {
+	if e == nil || e.rdb == nil || refID == "" {
 		return
 	}
-	if _, err := set.Exec(ctx); err != nil && e.log != nil {
-		e.log.Debug("notifications: cancel pending failed", "event_type", sanitizeLogValue(eventType), "error", sanitizeLogValue(err.Error()))
+	e.recordRecovery(ctx, tenantHost, eventType, refID, at, true)
+}
+
+func (e *Emitter) recordRecovery(ctx context.Context, tenantHost, eventType, refID string, at time.Time, force bool) {
+	keys := []string{
+		tenantRedisKey(tenantHost, pendingKeyFor(eventType, refID)),
+		tenantRedisKey(tenantHost, cancelKeyFor(eventType, refID)),
+	}
+	forceArg := "0"
+	if force {
+		forceArg = "1"
+	}
+	err := recordRecoveryScript.Run(ctx, e.rdb, keys, strconv.FormatInt(at.UnixNano(), 10), pendingGrace.Milliseconds(), forceArg, recoveryRaceTTL.Milliseconds()).Err()
+	if err != nil && !errors.Is(err, redis.Nil) && e.log != nil {
+		e.log.Debug("notifications: record recovery failed", "event_type", sanitizeLogValue(eventType), "error", sanitizeLogValue(err.Error()))
 	}
 }
 

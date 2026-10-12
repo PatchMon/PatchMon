@@ -2,6 +2,7 @@ package notifications
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -17,6 +18,13 @@ func newTestEmitter(t *testing.T) (*Emitter, *redis.Client) {
 	return NewEmitter(nil, rdb, nil), rdb
 }
 
+func (e *Emitter) mustClaim(t *testing.T, tenantHost, refID string, emittedAt int64, ttl time.Duration) {
+	t.Helper()
+	if !e.claimPending(context.Background(), tenantHost, "host_down", refID, emittedAt, ttl) {
+		t.Fatalf("claim for %s at %d refused", refID, emittedAt)
+	}
+}
+
 func hostDown(hostID string) Event {
 	return Event{Type: "host_down", ReferenceType: "host", ReferenceID: hostID}
 }
@@ -28,7 +36,7 @@ func TestCancelPending_RecoveryWithinWindowCancels(t *testing.T) {
 	base := time.Now()
 
 	emitted := base.UnixNano()
-	e.markPending(ctx, "", "host_down", "h1", emitted, time.Minute)
+	e.mustClaim(t, "", "h1", emitted, time.Minute)
 	key := delayedCancelKey(hostDown("h1"))
 	if IsDelayedCancelled(rdb, "", key, emitted) {
 		t.Fatal("cancelled before any recovery")
@@ -48,14 +56,14 @@ func TestCancelPending_DownUpDownStillAlerts(t *testing.T) {
 	key := delayedCancelKey(hostDown("h1"))
 
 	first := base.UnixNano()
-	e.markPending(ctx, "", "host_down", "h1", first, time.Minute)
+	e.mustClaim(t, "", "h1", first, time.Minute)
 	genBefore := e.recoveryGeneration(ctx, "", key)
 
 	e.CancelPending(ctx, "", "host_down", map[string]time.Time{"h1": base.Add(time.Second)})
 
 	second := base.Add(2 * time.Second).UnixNano()
 	genAfter := e.recoveryGeneration(ctx, "", key)
-	e.markPending(ctx, "", "host_down", "h1", second, time.Minute)
+	e.mustClaim(t, "", "h1", second, time.Minute)
 
 	if !IsDelayedCancelled(rdb, "", key, first) {
 		t.Error("first outage should be cancelled by the recovery")
@@ -76,9 +84,11 @@ func TestCancelPending_ReemitDoesNotClearRecovery(t *testing.T) {
 	key := delayedCancelKey(hostDown("h1"))
 
 	first := base.UnixNano()
-	e.markPending(ctx, "", "host_down", "h1", first, time.Minute)
+	e.mustClaim(t, "", "h1", first, time.Minute)
 	e.CancelPending(ctx, "", "host_down", map[string]time.Time{"h1": base.Add(time.Second)})
-	e.markPending(ctx, "", "host_down", "h1", base.Add(500*time.Millisecond).UnixNano(), time.Minute)
+	if e.claimPending(ctx, "", "host_down", "h1", base.Add(500*time.Millisecond).UnixNano(), time.Minute) {
+		t.Error("a re-emit for a down decision older than the recovery was enqueued")
+	}
 
 	if !IsDelayedCancelled(rdb, "", key, first) {
 		t.Fatal("a later re-emit wiped the recovery recorded for the first outage")
@@ -110,8 +120,8 @@ func TestCancelPending_ScopedPerContext(t *testing.T) {
 	key := delayedCancelKey(hostDown("h1"))
 	emitted := base.UnixNano()
 
-	e.markPending(ctx, "a.example.com", "host_down", "h1", emitted, time.Minute)
-	e.markPending(ctx, "b.example.com", "host_down", "h1", emitted, time.Minute)
+	e.mustClaim(t, "a.example.com", "h1", emitted, time.Minute)
+	e.mustClaim(t, "b.example.com", "h1", emitted, time.Minute)
 	e.CancelPending(ctx, "a.example.com", "host_down", map[string]time.Time{"h1": base.Add(time.Second)})
 
 	if !IsDelayedCancelled(rdb, "a.example.com", key, emitted) {
@@ -150,7 +160,7 @@ func TestCancelPending_RecoveryOlderThanEmitDoesNotCancel(t *testing.T) {
 	key := delayedCancelKey(hostDown("h1"))
 	emitted := base.UnixNano()
 
-	e.markPending(ctx, "", "host_down", "h1", emitted, time.Minute)
+	e.mustClaim(t, "", "h1", emitted, time.Minute)
 	e.CancelPending(ctx, "", "host_down", map[string]time.Time{"h1": base.Add(-20 * time.Minute)})
 
 	if IsDelayedCancelled(rdb, "", key, emitted) {
@@ -166,7 +176,7 @@ func TestCancelPending_NeverMovesRecoveryBackwards(t *testing.T) {
 	key := delayedCancelKey(hostDown("h1"))
 	emitted := base.UnixNano()
 
-	e.markPending(ctx, "", "host_down", "h1", emitted, time.Minute)
+	e.mustClaim(t, "", "h1", emitted, time.Minute)
 	e.CancelPending(ctx, "", "host_down", map[string]time.Time{"h1": base.Add(time.Second)})
 	e.CancelPending(ctx, "", "host_down", map[string]time.Time{"h1": base.Add(-time.Hour)})
 
@@ -186,7 +196,7 @@ func TestCancelPending_SurvivesLateWorker(t *testing.T) {
 	delay := 5 * time.Minute
 	emitted := time.Now().UnixNano()
 
-	e.markPending(ctx, "", "host_down", "h1", emitted, delay+pendingGrace)
+	e.mustClaim(t, "", "h1", emitted, delay+pendingGrace)
 	mr.FastForward(time.Minute)
 	e.CancelPending(ctx, "", "host_down", map[string]time.Time{"h1": time.Now()})
 	mr.FastForward(delay - time.Minute + 6*time.Hour)
@@ -198,5 +208,72 @@ func TestCancelPending_SurvivesLateWorker(t *testing.T) {
 	ttl := mr.TTL(tenantRedisKey("", key))
 	if ttl <= 0 || ttl > delay+2*pendingGrace {
 		t.Fatalf("cancel key TTL %v is not bounded by the delay plus twice the grace", ttl)
+	}
+}
+
+func TestRecordRecovery_ReconnectBeforePendingMarker(t *testing.T) {
+	t.Parallel()
+	e, rdb := newTestEmitter(t)
+	ctx := context.Background()
+	decidedDown := time.Now()
+	connectedAt := decidedDown.Add(50 * time.Millisecond)
+
+	e.RecordRecovery(ctx, "", "host_down", "h1", connectedAt)
+	if e.claimPending(ctx, "", "host_down", "h1", decidedDown.UnixNano(), time.Minute) {
+		t.Error("host reconnected before the pending marker was written, yet the notification was enqueued")
+	}
+	if n, _ := rdb.Exists(ctx, pendingKeyFor("host_down", "h1")).Result(); n != 0 {
+		t.Error("refused claim still left a pending marker")
+	}
+}
+
+func TestRecordRecovery_ReconnectAfterPendingMarker(t *testing.T) {
+	t.Parallel()
+	e, rdb := newTestEmitter(t)
+	ctx := context.Background()
+	decidedDown := time.Now()
+	key := delayedCancelKey(hostDown("h1"))
+
+	e.mustClaim(t, "", "h1", decidedDown.UnixNano(), time.Minute)
+	e.RecordRecovery(ctx, "", "host_down", "h1", decidedDown.Add(time.Second))
+	if !IsDelayedCancelled(rdb, "", key, decidedDown.UnixNano()) {
+		t.Error("reconnect after the pending marker did not cancel the notification")
+	}
+	if n, _ := rdb.Exists(ctx, pendingKeyFor("host_down", "h1")).Result(); n != 0 {
+		t.Error("recovery left the pending marker in place")
+	}
+}
+
+func TestRecordRecovery_NothingPendingIsShortLived(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	e := NewEmitter(nil, rdb, nil)
+
+	e.RecordRecovery(context.Background(), "a.example.com", "host_down", "h1", time.Now())
+	key := tenantRedisKey("a.example.com", delayedCancelKey(hostDown("h1")))
+	if ttl := mr.TTL(key); ttl <= 0 || ttl > recoveryRaceTTL {
+		t.Fatalf("recovery with nothing pending has TTL %v, want (0, %v]", ttl, recoveryRaceTTL)
+	}
+	if mr.Exists(delayedCancelKey(hostDown("h1"))) {
+		t.Fatal("recovery written outside the context prefix")
+	}
+}
+
+func TestRecordRecovery_NeverMovesBackwards(t *testing.T) {
+	t.Parallel()
+	e, rdb := newTestEmitter(t)
+	ctx := context.Background()
+	base := time.Now()
+	key := delayedCancelKey(hostDown("h1"))
+
+	e.RecordRecovery(ctx, "", "host_down", "h1", base)
+	e.RecordRecovery(ctx, "", "host_down", "h1", base.Add(-time.Hour))
+	if got := e.recoveryGeneration(ctx, "", key); got != strconv.FormatInt(base.UnixNano(), 10) {
+		t.Fatalf("recovery moved backwards to %s", got)
+	}
+	if IsDelayedCancelled(rdb, "", key, base.Add(time.Second).UnixNano()) {
+		t.Fatal("a recovery older than the outage cancelled it")
 	}
 }
