@@ -174,3 +174,29 @@ func TestCancelPending_NeverMovesRecoveryBackwards(t *testing.T) {
 		t.Fatal("an older recovery time overwrote a newer one and revived a cancelled notification")
 	}
 }
+
+func TestCancelPending_SurvivesLateWorker(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	e := NewEmitter(nil, rdb, nil)
+	ctx := context.Background()
+	key := delayedCancelKey(hostDown("h1"))
+	delay := 5 * time.Minute
+	emitted := time.Now().UnixNano()
+
+	e.markPending(ctx, "", "host_down", "h1", emitted, delay+pendingGrace)
+	mr.FastForward(time.Minute)
+	e.CancelPending(ctx, "", "host_down", map[string]time.Time{"h1": time.Now()})
+	mr.FastForward(delay - time.Minute + 6*time.Hour)
+
+	if !IsDelayedCancelled(rdb, "", key, emitted) {
+		t.Fatal("worker ran six hours late and the recovery had already expired")
+	}
+
+	ttl := mr.TTL(tenantRedisKey("", key))
+	if ttl <= 0 || ttl > delay+2*pendingGrace {
+		t.Fatalf("cancel key TTL %v is not bounded by the delay plus twice the grace", ttl)
+	}
+}

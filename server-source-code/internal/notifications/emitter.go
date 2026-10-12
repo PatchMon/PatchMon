@@ -444,7 +444,7 @@ var cancelPairs = map[string]string{
 	"host_pending_updates_resolved":  "host_pending_updates_exceeded",
 }
 
-const pendingGrace = 10 * time.Minute
+const pendingGrace = 24 * time.Hour
 
 func eventRefID(ev Event) string {
 	if ev.ReferenceID != "" {
