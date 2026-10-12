@@ -171,7 +171,10 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 // 3 minutes gives a comfortable margin over the 2-minute schedule.
 const packageStatsRefreshUniqueWindow = 3 * time.Minute
 
-const updateThresholdUniqueWindow = 2 * time.Minute
+const (
+	updateThresholdUniqueWindow = 2 * time.Minute
+	updateThresholdRetention    = 24 * time.Hour
+)
 
 // minutesToCron converts an interval in minutes to a cron expression.
 // For intervals that divide evenly into 60, it uses */N syntax.
@@ -301,7 +304,8 @@ func NewScheduler(opts asynq.RedisClientOpt, db *database.DB, log *slog.Logger) 
 	if _, err := scheduler.Register("* * * * *", updateThresholdTask,
 		asynq.Queue(QueueUpdateThresholdMonitor),
 		asynq.Unique(updateThresholdUniqueWindow),
-		asynq.Retention(AutomationRetention)); err != nil {
+		asynq.MaxRetry(0),
+		asynq.Retention(updateThresholdRetention)); err != nil {
 		return nil, err
 	}
 

@@ -85,7 +85,16 @@ func (e *Emitter) EmitEvent(ctx context.Context, d *database.DB, tenantHost stri
 	e.emit(ctx, d, tenantHost, ev)
 }
 
-func (e *Emitter) emit(ctx context.Context, d *database.DB, tenantHost string, ev Event) {
+// EmitEventChecked is EmitEvent, returning false when a matching route was dropped by
+// the rate limit or a lookup or enqueue failure, so the caller can try again later.
+func (e *Emitter) EmitEventChecked(ctx context.Context, d *database.DB, tenantHost string, ev Event) bool {
+	if e == nil || e.qc == nil || d == nil {
+		return true
+	}
+	return e.emit(ctx, d, tenantHost, ev)
+}
+
+func (e *Emitter) emit(ctx context.Context, d *database.DB, tenantHost string, ev Event) bool {
 	observedAt := ev.ObservedAt
 	if observedAt.IsZero() {
 		observedAt = time.Now()
@@ -101,10 +110,10 @@ func (e *Emitter) emit(ctx context.Context, d *database.DB, tenantHost string, e
 		if e.log != nil {
 			e.log.Debug("notifications: list routes failed", "error", err)
 		}
-		return
+		return false
 	}
 	if len(routes) == 0 {
-		return
+		return true
 	}
 
 	// Check alert_config: if the event type is explicitly disabled, skip all notifications.
@@ -118,7 +127,7 @@ func (e *Emitter) emit(ctx context.Context, d *database.DB, tenantHost string, e
 			if e.log != nil {
 				e.log.Debug("notifications: event type disabled in alert lifecycle", "event_type", ev.Type)
 			}
-			return
+			return true
 		}
 		if cfg.AlertDelaySeconds != nil && *cfg.AlertDelaySeconds > 0 {
 			alertDelay = time.Duration(*cfg.AlertDelaySeconds) * time.Second
@@ -140,11 +149,12 @@ func (e *Emitter) emit(ctx context.Context, d *database.DB, tenantHost string, e
 				if e.log != nil {
 					e.log.Debug("notifications: delayed event skipped, recovered or already pending", "event_type", sanitizeLogValue(ev.Type), "ref", sanitizeLogValue(eventRefID(ev)))
 				}
-				return
+				return true
 			}
 		}
 	}
 
+	delivered := true
 	evSev := SeverityRank(ev.Severity)
 	for _, row := range routes {
 		if !row.DestinationEnabled {
@@ -202,6 +212,8 @@ func (e *Emitter) emit(ctx context.Context, d *database.DB, tenantHost string, e
 			if e.log != nil {
 				e.log.Warn("notifications: rate limited", "destination_id", row.DestinationID)
 			}
+			delivered = false
+			e.releaseDedup(tenantHost, fp)
 			continue
 		}
 		payload := NotificationDeliverPayload{
@@ -228,16 +240,23 @@ func (e *Emitter) emit(ctx context.Context, d *database.DB, tenantHost string, e
 			if e.log != nil {
 				e.log.Error("notifications: build task failed", "error", err)
 			}
+			delivered = false
+			e.releaseDedup(tenantHost, fp)
 			continue
 		}
 		enqueueOpts := []asynq.Option{asynq.Queue(QueueNotifications), asynq.MaxRetry(5)}
 		if alertDelay > 0 {
 			enqueueOpts = append(enqueueOpts, asynq.ProcessIn(alertDelay))
 		}
-		if _, err := e.qc.Enqueue(task, enqueueOpts...); err != nil && e.log != nil {
-			e.log.Error("notifications: enqueue failed", "error", err)
+		if _, err := e.qc.Enqueue(task, enqueueOpts...); err != nil {
+			if e.log != nil {
+				e.log.Error("notifications: enqueue failed", "error", err)
+			}
+			delivered = false
+			e.releaseDedup(tenantHost, fp)
 		}
 	}
+	return delivered
 }
 
 // EnqueueToDestination sends one delivery to a destination without a notification route (e.g. UI test).
@@ -429,6 +448,13 @@ func (e *Emitter) tryDedup(tenantHost, fp string) bool {
 		return false
 	}
 	return true
+}
+
+func (e *Emitter) releaseDedup(tenantHost, fp string) {
+	if e.rdb == nil {
+		return
+	}
+	_ = e.rdb.Del(context.Background(), tenantRedisKey(tenantHost, "notif:dedup:"+fp)).Err()
 }
 
 func (e *Emitter) allowRate(tenantHost, destinationID string) bool {

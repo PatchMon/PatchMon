@@ -204,7 +204,7 @@ func (h *UpdateThresholdMonitorHandler) ProcessTask(ctx context.Context, t *asyn
 		if err != nil {
 			return err
 		}
-		h.log.Info("update threshold monitor completed", "alerts_created", alertsCreated)
+		h.logCompleted(int64(alertsCreated))
 		return nil
 	}
 
@@ -214,7 +214,7 @@ func (h *UpdateThresholdMonitorHandler) ProcessTask(ctx context.Context, t *asyn
 		if err != nil {
 			return err
 		}
-		h.log.Info("update threshold monitor completed", "alerts_created", alertsCreated)
+		h.logCompleted(int64(alertsCreated))
 		return nil
 	}
 
@@ -226,7 +226,7 @@ func (h *UpdateThresholdMonitorHandler) ProcessTask(ctx context.Context, t *asyn
 
 	hosts := h.poolCache.ListHosts()
 	if len(hosts) == 0 {
-		h.log.Info("update threshold monitor completed", "alerts_created", totalCreated.Load(), "hosts_processed", 1)
+		h.logCompleted(totalCreated.Load(), "hosts_processed", 1)
 		return nil
 	}
 
@@ -250,8 +250,16 @@ func (h *UpdateThresholdMonitorHandler) ProcessTask(ctx context.Context, t *asyn
 	}
 	wg.Wait()
 
-	h.log.Info("update threshold monitor completed", "alerts_created", totalCreated.Load(), "hosts_processed", len(hosts)+1)
+	h.logCompleted(totalCreated.Load(), "hosts_processed", len(hosts)+1)
 	return nil
+}
+
+func (h *UpdateThresholdMonitorHandler) logCompleted(alertsCreated int64, attrs ...any) {
+	level := slog.LevelDebug
+	if alertsCreated > 0 {
+		level = slog.LevelInfo
+	}
+	h.log.Log(context.Background(), level, "update threshold monitor completed", append([]any{"alerts_created", alertsCreated}, attrs...)...)
 }
 
 // SessionCleanupHandler handles session-cleanup jobs.

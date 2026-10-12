@@ -3516,7 +3516,7 @@ Each row exposes:
 
 Changes are staged locally. Use the **Apply** button on the top bar to save them, or **Discard** to revert. The browser warns you if you navigate away with unsaved changes.
 
-The update-threshold alerts (`host_security_updates_exceeded`, `host_pending_updates_exceeded`) notify once per host each time the threshold is crossed, whichever destinations the event is routed to. While the host stays above the threshold, later checks send nothing more. Once its count drops to the threshold or below, the next time it goes above the threshold sends a new notification. Switching the alert type off clears every host, so switching it back on notifies again for hosts still above the threshold.
+The update-threshold alerts (`host_security_updates_exceeded`, `host_pending_updates_exceeded`) notify once per host each time the threshold is crossed, whichever destinations the event is routed to. While the host stays above the threshold, later checks send nothing more. Once its count drops to the threshold or below, the next time it goes above the threshold sends a new notification. Switching the alert type off, or switching alerts off globally, clears every host, so switching it back on notifies again for hosts still above the threshold. Resolving one of these alerts by hand, or through **Auto-resolve**, does not raise it again while the host is still above the threshold.
 
 #### Cleanup
 

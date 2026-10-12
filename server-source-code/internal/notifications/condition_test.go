@@ -136,6 +136,29 @@ func TestClearConditions_NextOccurrenceNotifies(t *testing.T) {
 	}
 }
 
+func TestForgetConditions_RefEntersAgain(t *testing.T) {
+	t.Parallel()
+	e, _ := newTestEmitter(t)
+	ctx := context.Background()
+	now := time.Now()
+	typ := "host_security_updates_exceeded"
+
+	_, _, _ = e.SyncConditions(ctx, "", typ, []string{"h1", "h2"}, now)
+	e.ForgetConditions(ctx, "", typ, []string{"h2"})
+	entered, left, _ := e.SyncConditions(ctx, "", typ, []string{"h1", "h2"}, now)
+	if !slices.Equal(entered, []string{"h2"}) || len(left) != 0 {
+		t.Fatalf("after forgetting h2: entered %v, left %v", entered, left)
+	}
+}
+
+func TestClaimCheckDue_EmitterWithoutRedisNeverRuns(t *testing.T) {
+	t.Parallel()
+	e := NewEmitter(nil, nil, nil)
+	if e.ClaimCheckDue(context.Background(), "", "x", time.Hour, time.Now()) {
+		t.Fatal("emitter without Redis would evaluate and notify on every tick")
+	}
+}
+
 func TestConditionHelpers_NoRedis(t *testing.T) {
 	t.Parallel()
 	var e *Emitter
@@ -149,4 +172,20 @@ func TestConditionHelpers_NoRedis(t *testing.T) {
 	}
 	e.ReleaseCheck(ctx, "", "x")
 	e.ClearConditions(ctx, "", "x")
+	e.ForgetConditions(ctx, "", "x", []string{"h1"})
+}
+
+func TestReleaseDedup_DroppedDeliveryCanBeRetried(t *testing.T) {
+	t.Parallel()
+	e, _ := newTestEmitter(t)
+	if !e.tryDedup("a.example.com", "fp") {
+		t.Fatal("first attempt deduplicated")
+	}
+	e.releaseDedup("a.example.com", "fp")
+	if !e.tryDedup("a.example.com", "fp") {
+		t.Fatal("retry after a dropped delivery swallowed by dedup")
+	}
+	if e.tryDedup("a.example.com", "fp") {
+		t.Fatal("dedup no longer applies after a successful attempt")
+	}
 }

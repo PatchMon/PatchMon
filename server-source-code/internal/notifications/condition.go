@@ -31,8 +31,11 @@ return 1
 
 // ClaimCheckDue reports whether the named periodic check is due for this context and, if so, records the run.
 func (e *Emitter) ClaimCheckDue(ctx context.Context, tenantHost, name string, every time.Duration, now time.Time) bool {
-	if e == nil || e.rdb == nil {
+	if e == nil {
 		return true
+	}
+	if e.rdb == nil {
+		return false
 	}
 	minGap := every - checkDueSlack
 	if minGap < 0 {
@@ -42,7 +45,7 @@ func (e *Emitter) ClaimCheckDue(ctx context.Context, tenantHost, name string, ev
 	n, err := claimCheckScript.Run(ctx, e.rdb, []string{key}, now.UnixMilli(), minGap.Milliseconds(), (every + checkKeyGrace).Milliseconds()).Int()
 	if err != nil {
 		if e.log != nil {
-			e.log.Debug("alerts: check due lookup failed", "check", sanitizeLogValue(name), "error", sanitizeLogValue(err.Error()))
+			e.log.Warn("alerts: check due lookup failed", "check", sanitizeLogValue(name), "error", sanitizeLogValue(err.Error()))
 		}
 		return false
 	}
@@ -92,6 +95,14 @@ func (e *Emitter) SyncConditions(ctx context.Context, tenantHost, eventType stri
 		return nil, nil, err
 	}
 	return toStrings(res, 0), toStrings(res, 1), nil
+}
+
+// ForgetConditions removes refs from the condition for eventType, so they count as newly entered next time.
+func (e *Emitter) ForgetConditions(ctx context.Context, tenantHost, eventType string, refIDs []string) {
+	if e == nil || e.rdb == nil || len(refIDs) == 0 {
+		return
+	}
+	_ = e.rdb.HDel(ctx, tenantRedisKey(tenantHost, conditionKey(eventType)), refIDs...).Err()
 }
 
 // ClearConditions forgets every reference recorded for eventType, so the next occurrence notifies again.

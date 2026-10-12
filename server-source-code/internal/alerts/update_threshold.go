@@ -76,6 +76,11 @@ type dueThresholdCheck struct {
 func ProcessUpdateThresholdMonitor(ctx context.Context, d *database.DB, tenantHost string, emit *notifications.Emitter, log *slog.Logger) (int, error) {
 	enabled, err := IsAlertsEnabled(ctx, d)
 	if err != nil || !enabled {
+		if err == nil {
+			for _, chk := range thresholdChecks {
+				emit.ClearConditions(ctx, tenantHost, chk.alertType)
+			}
+		}
 		log.Debug("update_threshold: alerts disabled")
 		return 0, nil
 	}
@@ -125,31 +130,58 @@ func ProcessUpdateThresholdMonitor(ctx context.Context, d *database.DB, tenantHo
 
 	alertsCreated := 0
 	for _, chk := range due {
-		n, err := evaluateThreshold(ctx, d, tenantHost, emit, chk, hostRows, countByHost, now)
+		n, retry, err := evaluateThreshold(ctx, d, tenantHost, emit, chk, hostRows, countByHost, now)
 		if err != nil {
-			emit.ReleaseCheck(ctx, tenantHost, chk.alertType)
 			log.Warn("update_threshold: evaluation failed", "alert_type", chk.alertType, "error", err)
-			continue
+		}
+		if err != nil || retry {
+			emit.ReleaseCheck(ctx, tenantHost, chk.alertType)
 		}
 		alertsCreated += n
 	}
 	return alertsCreated, nil
 }
 
-func evaluateThreshold(ctx context.Context, d *database.DB, tenantHost string, emit *notifications.Emitter, chk dueThresholdCheck, hostRows []db.Host, countByHost map[string]db.GetPendingUpdateCountsPerHostRow, now time.Time) (int, error) {
+type thresholdAction int
+
+const (
+	thresholdNone thresholdAction = iota
+	thresholdTouch
+	thresholdNotify
+	thresholdResolve
+)
+
+func decideThreshold(count, threshold int, hasAlert, entered bool) thresholdAction {
+	switch {
+	case count > threshold && hasAlert:
+		return thresholdTouch
+	case count > threshold && entered:
+		return thresholdNotify
+	case count <= threshold && hasAlert:
+		return thresholdResolve
+	default:
+		return thresholdNone
+	}
+}
+
+func exceededHostIDs(hostRows []db.Host, countByHost map[string]db.GetPendingUpdateCountsPerHostRow, count func(db.GetPendingUpdateCountsPerHostRow) int, threshold int) []string {
+	ids := make([]string, 0)
+	for _, host := range hostRows {
+		if host.Status == "active" && count(countByHost[host.ID]) > threshold {
+			ids = append(ids, host.ID)
+		}
+	}
+	return ids
+}
+
+func evaluateThreshold(ctx context.Context, d *database.DB, tenantHost string, emit *notifications.Emitter, chk dueThresholdCheck, hostRows []db.Host, countByHost map[string]db.GetPendingUpdateCountsPerHostRow, now time.Time) (int, bool, error) {
 	threshold := parseThreshold(chk.cfg, chk.defaultThreshold)
 	alertsByHostID := buildAlertsByHostID(ctx, d, chk.alertType)
 
-	exceeded := make([]string, 0)
-	for _, host := range hostRows {
-		if host.Status == "active" && chk.count(countByHost[host.ID]) > threshold {
-			exceeded = append(exceeded, host.ID)
-		}
-	}
-
+	exceeded := exceededHostIDs(hostRows, countByHost, chk.count, threshold)
 	entered, left, err := emit.SyncConditions(ctx, tenantHost, chk.alertType, exceeded, now)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	isNew := make(map[string]bool, len(entered))
 	for _, id := range entered {
@@ -165,6 +197,7 @@ func evaluateThreshold(ctx context.Context, d *database.DB, tenantHost string, e
 
 	alertsStore := store.NewAlertsStore(d)
 	alertsCreated := 0
+	var undelivered []string
 	for _, host := range hostRows {
 		if host.Status != "active" {
 			continue
@@ -173,15 +206,14 @@ func evaluateThreshold(ctx context.Context, d *database.DB, tenantHost string, e
 		hostName := hostDisplayName(host)
 		alertID, hasAlert := alertsByHostID[host.ID]
 
-		if n > threshold {
-			if hasAlert {
-				_ = d.Queries.UpdateAlert(ctx, alertID)
+		switch decideThreshold(n, threshold, hasAlert, isNew[host.ID]) {
+		case thresholdTouch:
+			_ = d.Queries.UpdateAlert(ctx, alertID)
+		case thresholdNotify:
+			if emit == nil {
 				continue
 			}
-			if !isNew[host.ID] || emit == nil {
-				continue
-			}
-			emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
+			ok := emit.EmitEventChecked(ctx, d, tenantHost, notifications.Event{
 				Type:          chk.alertType,
 				Severity:      DefaultSeverity(chk.cfg.DefaultSeverity, "warning"),
 				Title:         chk.title(hostName, n),
@@ -195,31 +227,32 @@ func evaluateThreshold(ctx context.Context, d *database.DB, tenantHost string, e
 					"threshold": threshold,
 				},
 			})
+			if !ok {
+				undelivered = append(undelivered, host.ID)
+				continue
+			}
 			alertsCreated++
-			continue
-		}
-
-		if !hasAlert {
-			continue
-		}
-		_ = alertsStore.UpdateResolved(ctx, alertID, nil)
-		_ = alertsStore.RecordHistory(ctx, alertID, nil, "resolved", map[string]interface{}{
-			"resolved_reason": chk.resolvedReason,
-			"system_action":   true,
-		})
-		if emit != nil {
-			emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
-				Type:          chk.resolvedType,
-				Severity:      ResolveSeverity(ctx, d, chk.resolvedType, "informational"),
-				Title:         chk.resolvedTitle(hostName),
-				Message:       chk.resolvedMessage(hostName, n, threshold),
-				ReferenceType: "host",
-				ReferenceID:   host.ID,
-				Metadata:      map[string]interface{}{"host_id": host.ID, "host_name": hostName, "count": n, "threshold": threshold},
+		case thresholdResolve:
+			_ = alertsStore.UpdateResolved(ctx, alertID, nil)
+			_ = alertsStore.RecordHistory(ctx, alertID, nil, "resolved", map[string]interface{}{
+				"resolved_reason": chk.resolvedReason,
+				"system_action":   true,
 			})
+			if emit != nil {
+				emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
+					Type:          chk.resolvedType,
+					Severity:      ResolveSeverity(ctx, d, chk.resolvedType, "informational"),
+					Title:         chk.resolvedTitle(hostName),
+					Message:       chk.resolvedMessage(hostName, n, threshold),
+					ReferenceType: "host",
+					ReferenceID:   host.ID,
+					Metadata:      map[string]interface{}{"host_id": host.ID, "host_name": hostName, "count": n, "threshold": threshold},
+				})
+			}
 		}
 	}
-	return alertsCreated, nil
+	emit.ForgetConditions(ctx, tenantHost, chk.alertType, undelivered)
+	return alertsCreated, len(undelivered) > 0, nil
 }
 
 func thresholdInterval(cfg *store.AlertConfigWithUser) time.Duration {
