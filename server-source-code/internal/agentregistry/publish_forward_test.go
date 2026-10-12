@@ -84,9 +84,8 @@ func newRecordingRedis(t *testing.T) (*redisclient.Client, func(channel string) 
 	countFor := func(channel string) int {
 		mu.Lock()
 		defer mu.Unlock()
-		ps, ok := subs[channel]
-		if !ok {
-			ps = client.Subscribe(context.Background(), channel)
+		if _, ok := subs[channel]; !ok {
+			ps := client.Subscribe(context.Background(), channel)
 			subs[channel] = ps
 			t.Cleanup(func() { _ = ps.Close() })
 			// Drain in the background, tallying.

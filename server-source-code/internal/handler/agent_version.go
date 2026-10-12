@@ -218,9 +218,7 @@ func (h *AgentVersionHandler) ServeAgentDownload(w http.ResponseWriter, r *http.
 		return
 	}
 	defer func() { _ = f.Close() }()
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, binaryName))
-	http.ServeContent(w, r, binaryName, info.ModTime(), f)
+	serveAgentBinary(w, r, binaryPath, info, f)
 }
 
 // CheckForUpdates refreshes the upstream version from DNS and reports whether

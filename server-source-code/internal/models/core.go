@@ -175,6 +175,8 @@ type Settings struct {
 	EnableHSTS                      *bool      `db:"enable_hsts"`
 	JSONBodyLimit                   *string    `db:"json_body_limit"`
 	AgentUpdateBodyLimit            *string    `db:"agent_update_body_limit"`
+	ComplianceBodyLimit             *string    `db:"compliance_body_limit"`
+	AgentPingBodyLimit              *string    `db:"agent_ping_body_limit"`
 	DBTransactionLongTimeout        *int       `db:"db_transaction_long_timeout"`
 	CorsOrigin                      *string    `db:"cors_origin"`
 	EnableLogging                   *bool      `db:"enable_logging"`

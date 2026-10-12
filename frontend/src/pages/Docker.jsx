@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
+import ModalPortal from "../components/ui/ModalPortal";
 import { useToast } from "../contexts/ToastContext";
 import { usePageRefresh } from "../hooks/usePageRefresh";
 import api, { formatError } from "../utils/api";
@@ -2042,280 +2043,291 @@ const Docker = () => {
 
 			{/* Delete Container Modal */}
 			{deleteContainerModal && (
-				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-					<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 max-w-md w-full mx-4">
-						<div className="flex items-start mb-4">
-							<div className="flex-shrink-0">
-								<AlertTriangle className="h-6 w-6 text-red-600" />
-							</div>
-							<div className="ml-3 flex-1">
-								<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
-									Delete Container
-								</h3>
-								<div className="mt-2 text-sm text-secondary-600 dark:text-white">
-									<p className="mb-2">
-										Are you sure you want to delete this container from the
-										inventory?
-									</p>
-									<div className="bg-secondary-100 dark:bg-secondary-700 p-3 rounded-md">
-										<p className="font-medium text-secondary-900 dark:text-white">
-											{deleteContainerModal.name}
+				<ModalPortal>
+					<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120]">
+						<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 max-w-md w-full mx-4">
+							<div className="flex items-start mb-4">
+								<div className="flex-shrink-0">
+									<AlertTriangle className="h-6 w-6 text-red-600" />
+								</div>
+								<div className="ml-3 flex-1">
+									<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+										Delete Container
+									</h3>
+									<div className="mt-2 text-sm text-secondary-600 dark:text-white">
+										<p className="mb-2">
+											Are you sure you want to delete this container from the
+											inventory?
 										</p>
-										<p className="text-xs text-secondary-600 dark:text-white mt-1">
-											Image: {deleteContainerModal.image_name}:
-											{deleteContainerModal.image_tag}
-										</p>
-										<p className="text-xs text-secondary-600 dark:text-white">
-											Host:{" "}
-											{deleteContainerModal.host?.friendly_name || "Unknown"}
+										<div className="bg-secondary-100 dark:bg-secondary-700 p-3 rounded-md">
+											<p className="font-medium text-secondary-900 dark:text-white">
+												{deleteContainerModal.name}
+											</p>
+											<p className="text-xs text-secondary-600 dark:text-white mt-1">
+												Image: {deleteContainerModal.image_name}:
+												{deleteContainerModal.image_tag}
+											</p>
+											<p className="text-xs text-secondary-600 dark:text-white">
+												Host:{" "}
+												{deleteContainerModal.host?.friendly_name || "Unknown"}
+											</p>
+										</div>
+										<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
+											⚠️ This only removes the container from PatchMon's
+											inventory. It does NOT stop or delete the actual Docker
+											container on the host.
 										</p>
 									</div>
-									<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
-										⚠️ This only removes the container from PatchMon's inventory.
-										It does NOT stop or delete the actual Docker container on
-										the host.
-									</p>
 								</div>
 							</div>
-						</div>
-						<div className="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse gap-3">
-							<button
-								type="button"
-								onClick={() =>
-									deleteContainerMutation.mutate(deleteContainerModal.id)
-								}
-								disabled={deleteContainerMutation.isPending}
-								className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								{deleteContainerMutation.isPending
-									? "Deleting..."
-									: "Delete from Inventory"}
-							</button>
-							<button
-								type="button"
-								onClick={() => setDeleteContainerModal(null)}
-								disabled={deleteContainerMutation.isPending}
-								className="mt-3 w-full inline-flex justify-center rounded-md border border-secondary-300 dark:border-secondary-600 shadow-sm px-4 py-2 bg-white dark:bg-secondary-700 text-base font-medium text-secondary-700 dark:text-secondary-200 hover:bg-secondary-50 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:mt-0 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								Cancel
-							</button>
+							<div className="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse gap-3">
+								<button
+									type="button"
+									onClick={() =>
+										deleteContainerMutation.mutate(deleteContainerModal.id)
+									}
+									disabled={deleteContainerMutation.isPending}
+									className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									{deleteContainerMutation.isPending
+										? "Deleting..."
+										: "Delete from Inventory"}
+								</button>
+								<button
+									type="button"
+									onClick={() => setDeleteContainerModal(null)}
+									disabled={deleteContainerMutation.isPending}
+									className="mt-3 w-full inline-flex justify-center rounded-md border border-secondary-300 dark:border-secondary-600 shadow-sm px-4 py-2 bg-white dark:bg-secondary-700 text-base font-medium text-secondary-700 dark:text-secondary-200 hover:bg-secondary-50 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:mt-0 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									Cancel
+								</button>
+							</div>
 						</div>
 					</div>
-				</div>
+				</ModalPortal>
 			)}
 
 			{/* Delete Image Modal */}
 			{deleteImageModal && (
-				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-					<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 max-w-md w-full mx-4">
-						<div className="flex items-start mb-4">
-							<div className="flex-shrink-0">
-								<AlertTriangle className="h-6 w-6 text-red-600" />
-							</div>
-							<div className="ml-3 flex-1">
-								<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
-									Delete Image
-								</h3>
-								<div className="mt-2 text-sm text-secondary-600 dark:text-white">
-									<p className="mb-2">
-										Are you sure you want to delete this image from the
-										inventory?
-									</p>
-									<div className="bg-secondary-100 dark:bg-secondary-700 p-3 rounded-md">
-										<p className="font-medium text-secondary-900 dark:text-white">
-											{deleteImageModal.repository}:{deleteImageModal.tag}
+				<ModalPortal>
+					<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120]">
+						<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 max-w-md w-full mx-4">
+							<div className="flex items-start mb-4">
+								<div className="flex-shrink-0">
+									<AlertTriangle className="h-6 w-6 text-red-600" />
+								</div>
+								<div className="ml-3 flex-1">
+									<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+										Delete Image
+									</h3>
+									<div className="mt-2 text-sm text-secondary-600 dark:text-white">
+										<p className="mb-2">
+											Are you sure you want to delete this image from the
+											inventory?
 										</p>
-										<p className="text-xs text-secondary-600 dark:text-white mt-1">
-											Source: {deleteImageModal.source}
-										</p>
-										<p className="text-xs text-secondary-600 dark:text-white">
-											Containers using this:{" "}
-											{deleteImageModal._count?.docker_containers || 0}
-										</p>
+										<div className="bg-secondary-100 dark:bg-secondary-700 p-3 rounded-md">
+											<p className="font-medium text-secondary-900 dark:text-white">
+												{deleteImageModal.repository}:{deleteImageModal.tag}
+											</p>
+											<p className="text-xs text-secondary-600 dark:text-white mt-1">
+												Source: {deleteImageModal.source}
+											</p>
+											<p className="text-xs text-secondary-600 dark:text-white">
+												Containers using this:{" "}
+												{deleteImageModal._count?.docker_containers || 0}
+											</p>
+										</div>
+										{deleteImageModal._count?.docker_containers > 0 ? (
+											<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
+												⚠️ Cannot delete: This image is in use by{" "}
+												{deleteImageModal._count.docker_containers}{" "}
+												container(s). Delete the containers first.
+											</p>
+										) : (
+											<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
+												⚠️ This only removes the image from PatchMon's inventory.
+												It does NOT delete the actual Docker image from hosts.
+											</p>
+										)}
 									</div>
-									{deleteImageModal._count?.docker_containers > 0 ? (
-										<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
-											⚠️ Cannot delete: This image is in use by{" "}
-											{deleteImageModal._count.docker_containers} container(s).
-											Delete the containers first.
-										</p>
-									) : (
-										<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
-											⚠️ This only removes the image from PatchMon's inventory.
-											It does NOT delete the actual Docker image from hosts.
-										</p>
-									)}
 								</div>
 							</div>
-						</div>
-						<div className="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse gap-3">
-							<button
-								type="button"
-								onClick={() => deleteImageMutation.mutate(deleteImageModal.id)}
-								disabled={
-									deleteImageMutation.isPending ||
-									deleteImageModal._count?.docker_containers > 0
-								}
-								className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								{deleteImageMutation.isPending
-									? "Deleting..."
-									: "Delete from Inventory"}
-							</button>
-							<button
-								type="button"
-								onClick={() => setDeleteImageModal(null)}
-								disabled={deleteImageMutation.isPending}
-								className="mt-3 w-full inline-flex justify-center rounded-md border border-secondary-300 dark:border-secondary-600 shadow-sm px-4 py-2 bg-white dark:bg-secondary-700 text-base font-medium text-secondary-700 dark:text-secondary-200 hover:bg-secondary-50 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:mt-0 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								Cancel
-							</button>
+							<div className="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse gap-3">
+								<button
+									type="button"
+									onClick={() =>
+										deleteImageMutation.mutate(deleteImageModal.id)
+									}
+									disabled={
+										deleteImageMutation.isPending ||
+										deleteImageModal._count?.docker_containers > 0
+									}
+									className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									{deleteImageMutation.isPending
+										? "Deleting..."
+										: "Delete from Inventory"}
+								</button>
+								<button
+									type="button"
+									onClick={() => setDeleteImageModal(null)}
+									disabled={deleteImageMutation.isPending}
+									className="mt-3 w-full inline-flex justify-center rounded-md border border-secondary-300 dark:border-secondary-600 shadow-sm px-4 py-2 bg-white dark:bg-secondary-700 text-base font-medium text-secondary-700 dark:text-secondary-200 hover:bg-secondary-50 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:mt-0 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									Cancel
+								</button>
+							</div>
 						</div>
 					</div>
-				</div>
+				</ModalPortal>
 			)}
 
 			{/* Delete Volume Modal */}
 			{deleteVolumeModal && (
-				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-					<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 max-w-md w-full mx-4">
-						<div className="flex items-start mb-4">
-							<div className="flex-shrink-0">
-								<AlertTriangle className="h-6 w-6 text-red-600" />
-							</div>
-							<div className="ml-3 flex-1">
-								<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
-									Delete Volume
-								</h3>
-								<div className="mt-2 text-sm text-secondary-600 dark:text-white">
-									<p className="mb-2">
-										Are you sure you want to delete this volume from the
-										inventory?
-									</p>
-									<div className="bg-secondary-100 dark:bg-secondary-700 p-3 rounded-md">
-										<p className="font-medium text-secondary-900 dark:text-white">
-											{deleteVolumeModal.name}
+				<ModalPortal>
+					<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120]">
+						<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 max-w-md w-full mx-4">
+							<div className="flex items-start mb-4">
+								<div className="flex-shrink-0">
+									<AlertTriangle className="h-6 w-6 text-red-600" />
+								</div>
+								<div className="ml-3 flex-1">
+									<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+										Delete Volume
+									</h3>
+									<div className="mt-2 text-sm text-secondary-600 dark:text-white">
+										<p className="mb-2">
+											Are you sure you want to delete this volume from the
+											inventory?
 										</p>
-										<p className="text-xs text-secondary-600 dark:text-white mt-1">
-											Driver: {deleteVolumeModal.driver}
-										</p>
-										<p className="text-xs text-secondary-600 dark:text-white">
-											Host:{" "}
-											{deleteVolumeModal.hosts?.friendly_name ||
-												deleteVolumeModal.hosts?.hostname ||
-												"Unknown"}
-										</p>
-										{deleteVolumeModal.ref_count > 0 && (
-											<p className="text-xs text-secondary-600 dark:text-white">
-												In use by: {deleteVolumeModal.ref_count} container
-												{deleteVolumeModal.ref_count !== 1 ? "s" : ""}
+										<div className="bg-secondary-100 dark:bg-secondary-700 p-3 rounded-md">
+											<p className="font-medium text-secondary-900 dark:text-white">
+												{deleteVolumeModal.name}
 											</p>
-										)}
+											<p className="text-xs text-secondary-600 dark:text-white mt-1">
+												Driver: {deleteVolumeModal.driver}
+											</p>
+											<p className="text-xs text-secondary-600 dark:text-white">
+												Host:{" "}
+												{deleteVolumeModal.hosts?.friendly_name ||
+													deleteVolumeModal.hosts?.hostname ||
+													"Unknown"}
+											</p>
+											{deleteVolumeModal.ref_count > 0 && (
+												<p className="text-xs text-secondary-600 dark:text-white">
+													In use by: {deleteVolumeModal.ref_count} container
+													{deleteVolumeModal.ref_count !== 1 ? "s" : ""}
+												</p>
+											)}
+										</div>
+										<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
+											⚠️ This only removes the volume from PatchMon's inventory.
+											It does NOT delete the actual Docker volume from the host.
+										</p>
 									</div>
-									<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
-										⚠️ This only removes the volume from PatchMon's inventory. It
-										does NOT delete the actual Docker volume from the host.
-									</p>
 								</div>
 							</div>
-						</div>
-						<div className="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse gap-3">
-							<button
-								type="button"
-								onClick={() =>
-									deleteVolumeMutation.mutate(deleteVolumeModal.id)
-								}
-								disabled={deleteVolumeMutation.isPending}
-								className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								{deleteVolumeMutation.isPending
-									? "Deleting..."
-									: "Delete from Inventory"}
-							</button>
-							<button
-								type="button"
-								onClick={() => setDeleteVolumeModal(null)}
-								disabled={deleteVolumeMutation.isPending}
-								className="mt-3 w-full inline-flex justify-center rounded-md border border-secondary-300 dark:border-secondary-600 shadow-sm px-4 py-2 bg-white dark:bg-secondary-700 text-base font-medium text-secondary-700 dark:text-secondary-200 hover:bg-secondary-50 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:mt-0 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								Cancel
-							</button>
+							<div className="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse gap-3">
+								<button
+									type="button"
+									onClick={() =>
+										deleteVolumeMutation.mutate(deleteVolumeModal.id)
+									}
+									disabled={deleteVolumeMutation.isPending}
+									className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									{deleteVolumeMutation.isPending
+										? "Deleting..."
+										: "Delete from Inventory"}
+								</button>
+								<button
+									type="button"
+									onClick={() => setDeleteVolumeModal(null)}
+									disabled={deleteVolumeMutation.isPending}
+									className="mt-3 w-full inline-flex justify-center rounded-md border border-secondary-300 dark:border-secondary-600 shadow-sm px-4 py-2 bg-white dark:bg-secondary-700 text-base font-medium text-secondary-700 dark:text-secondary-200 hover:bg-secondary-50 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:mt-0 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									Cancel
+								</button>
+							</div>
 						</div>
 					</div>
-				</div>
+				</ModalPortal>
 			)}
 
 			{/* Delete Network Modal */}
 			{deleteNetworkModal && (
-				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-					<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 max-w-md w-full mx-4">
-						<div className="flex items-start mb-4">
-							<div className="flex-shrink-0">
-								<AlertTriangle className="h-6 w-6 text-red-600" />
-							</div>
-							<div className="ml-3 flex-1">
-								<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
-									Delete Network
-								</h3>
-								<div className="mt-2 text-sm text-secondary-600 dark:text-white">
-									<p className="mb-2">
-										Are you sure you want to delete this network from the
-										inventory?
-									</p>
-									<div className="bg-secondary-100 dark:bg-secondary-700 p-3 rounded-md">
-										<p className="font-medium text-secondary-900 dark:text-white">
-											{deleteNetworkModal.name}
+				<ModalPortal>
+					<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120]">
+						<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 max-w-md w-full mx-4">
+							<div className="flex items-start mb-4">
+								<div className="flex-shrink-0">
+									<AlertTriangle className="h-6 w-6 text-red-600" />
+								</div>
+								<div className="ml-3 flex-1">
+									<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+										Delete Network
+									</h3>
+									<div className="mt-2 text-sm text-secondary-600 dark:text-white">
+										<p className="mb-2">
+											Are you sure you want to delete this network from the
+											inventory?
 										</p>
-										<p className="text-xs text-secondary-600 dark:text-white mt-1">
-											Driver: {deleteNetworkModal.driver}
-										</p>
-										<p className="text-xs text-secondary-600 dark:text-white">
-											Scope: {deleteNetworkModal.scope}
-										</p>
-										<p className="text-xs text-secondary-600 dark:text-white">
-											Host:{" "}
-											{deleteNetworkModal.hosts?.friendly_name ||
-												deleteNetworkModal.hosts?.hostname ||
-												"Unknown"}
-										</p>
-										{deleteNetworkModal.container_count > 0 && (
-											<p className="text-xs text-secondary-600 dark:text-white">
-												Connected containers:{" "}
-												{deleteNetworkModal.container_count}
+										<div className="bg-secondary-100 dark:bg-secondary-700 p-3 rounded-md">
+											<p className="font-medium text-secondary-900 dark:text-white">
+												{deleteNetworkModal.name}
 											</p>
-										)}
+											<p className="text-xs text-secondary-600 dark:text-white mt-1">
+												Driver: {deleteNetworkModal.driver}
+											</p>
+											<p className="text-xs text-secondary-600 dark:text-white">
+												Scope: {deleteNetworkModal.scope}
+											</p>
+											<p className="text-xs text-secondary-600 dark:text-white">
+												Host:{" "}
+												{deleteNetworkModal.hosts?.friendly_name ||
+													deleteNetworkModal.hosts?.hostname ||
+													"Unknown"}
+											</p>
+											{deleteNetworkModal.container_count > 0 && (
+												<p className="text-xs text-secondary-600 dark:text-white">
+													Connected containers:{" "}
+													{deleteNetworkModal.container_count}
+												</p>
+											)}
+										</div>
+										<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
+											⚠️ This only removes the network from PatchMon's inventory.
+											It does NOT delete the actual Docker network from the
+											host.
+										</p>
 									</div>
-									<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
-										⚠️ This only removes the network from PatchMon's inventory.
-										It does NOT delete the actual Docker network from the host.
-									</p>
 								</div>
 							</div>
-						</div>
-						<div className="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse gap-3">
-							<button
-								type="button"
-								onClick={() =>
-									deleteNetworkMutation.mutate(deleteNetworkModal.id)
-								}
-								disabled={deleteNetworkMutation.isPending}
-								className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								{deleteNetworkMutation.isPending
-									? "Deleting..."
-									: "Delete from Inventory"}
-							</button>
-							<button
-								type="button"
-								onClick={() => setDeleteNetworkModal(null)}
-								disabled={deleteNetworkMutation.isPending}
-								className="mt-3 w-full inline-flex justify-center rounded-md border border-secondary-300 dark:border-secondary-600 shadow-sm px-4 py-2 bg-white dark:bg-secondary-700 text-base font-medium text-secondary-700 dark:text-secondary-200 hover:bg-secondary-50 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:mt-0 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								Cancel
-							</button>
+							<div className="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse gap-3">
+								<button
+									type="button"
+									onClick={() =>
+										deleteNetworkMutation.mutate(deleteNetworkModal.id)
+									}
+									disabled={deleteNetworkMutation.isPending}
+									className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									{deleteNetworkMutation.isPending
+										? "Deleting..."
+										: "Delete from Inventory"}
+								</button>
+								<button
+									type="button"
+									onClick={() => setDeleteNetworkModal(null)}
+									disabled={deleteNetworkMutation.isPending}
+									className="mt-3 w-full inline-flex justify-center rounded-md border border-secondary-300 dark:border-secondary-600 shadow-sm px-4 py-2 bg-white dark:bg-secondary-700 text-base font-medium text-secondary-700 dark:text-secondary-200 hover:bg-secondary-50 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:mt-0 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									Cancel
+								</button>
+							</div>
 						</div>
 					</div>
-				</div>
+				</ModalPortal>
 			)}
 		</div>
 	);

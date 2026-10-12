@@ -43,6 +43,10 @@ func Run(databaseURL string, log *slog.Logger) error {
 
 	m, err := migrate.NewWithSourceInstance("iofs", source, databaseURL)
 	if err != nil {
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			return errors.New("create migrate instance: invalid database URL")
+		}
 		return fmt.Errorf("create migrate instance: %w", err)
 	}
 	defer func() { _, _ = m.Close() }()

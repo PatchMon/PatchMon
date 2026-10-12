@@ -63,6 +63,8 @@ mkdir patchmon && cd patchmon
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/docker/setup-env.sh)"
 ```
 
+If a `.env` already exists, the script keeps it and its secrets. It generates secrets only for keys that are missing or empty, and runs on Linux and macOS.
+
 Once it completes, skip to [step 3](#3-configure-your-access-url).
 
 #### 2. Manual setup (alternative)
@@ -182,6 +184,11 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - patchmon-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 5s
+      retries: 7
 
   redis:
     image: redis:7-alpine
@@ -192,12 +199,23 @@ services:
       - redis_data:/data
     networks:
       - patchmon-internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 7
 
   guacd:
     image: guacamole/guacd:1.6.0
     restart: unless-stopped
     networks:
       - patchmon-internal
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 4822 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 volumes:
   postgres_data:
@@ -650,13 +668,15 @@ The `server.env.*` keys map directly to the environment variables the PatchMon b
 
 | Key | Description | Default |
 |-----|-------------|---------|
-| `CORS_ORIGIN` | Allowed origin for CORS (must match the URL users type in their browser; comma-separate with no spaces to allow multiple, e.g. `https://patchmon.example.com,https://patchmon.internal.lan`) | `http://localhost:3000` |
+| `CORS_ORIGIN` | Browser origin(s) allowed to use PatchMon; must match the URL users type in their browser. Comma-separate to allow more than one, e.g. `https://patchmon.example.com,https://patchmon.internal.lan` | `http://localhost:3000` |
 | `ENABLE_HSTS` | Enable HSTS header for HTTPS | `false` |
 | `TRUST_PROXY` | Trust proxy headers when behind an Ingress controller | `true` |
 | `ENABLE_LOGGING` | Enable structured logging to stdout | `true` |
 | `LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) | `info` |
 | `JSON_BODY_LIMIT` | Max JSON body size | `5mb` |
 | `AGENT_UPDATE_BODY_LIMIT` | Max agent update body size | `5mb` |
+| `COMPLIANCE_BODY_LIMIT` | Max compliance scan result body size | `20mb` |
+| `AGENT_PING_BODY_LIMIT` | Max agent ping body size | `64kb` |
 | `TZ` | IANA timezone for log timestamps | `UTC` |
 
 > **Tip:** Many of these can be changed later from the Settings UI without a restart of the whole cluster. See Settings in the web UI.
@@ -1469,9 +1489,10 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers off;
 
-    # Allow large agent reports (packages, Docker inventory) through the proxy.
-    # The server also enforces its own JSON_BODY_LIMIT / AGENT_UPDATE_BODY_LIMIT.
-    client_max_body_size 20m;
+    # Allow large agent reports (packages, Docker inventory, compliance scan
+    # results) through the proxy. The server also enforces its own limits: see
+    # JSON_BODY_LIMIT, AGENT_UPDATE_BODY_LIMIT and COMPLIANCE_BODY_LIMIT.
+    client_max_body_size 40m;
 
     location / {
         proxy_pass http://127.0.0.1:3000;
@@ -1753,7 +1774,7 @@ Open **Hosts → <a host> → SSH Terminal**. The terminal should connect and ec
 | `wss://` URLs try `http://` inside the agent install script | `X-Forwarded-Proto` missing or wrong | Explicitly set to `$scheme` (Nginx) / default in Caddy + Traefik |
 | Browser console: "CORS policy" errors | `CORS_ORIGIN` does not match the URL in the address bar | Set `CORS_ORIGIN=https://patchmon.example.com` exactly. To allow more than one origin, comma-separate with no spaces, e.g. `CORS_ORIGIN=https://patchmon.example.com,https://patchmon.internal.lan` |
 | Login works but nothing loads | API requests going to a different origin | Send all traffic (API + SPA) to the same hostname/port |
-| Sudden 413 Request Entity Too Large | Proxy body limit smaller than agent report | `client_max_body_size 20m;` (Nginx) or equivalent |
+| Sudden 413 Request Entity Too Large | Proxy body limit smaller than agent report or compliance scan result | `client_max_body_size 40m;` (Nginx) or equivalent |
 | Agent page shows "offline" but agent logs say connected | Reverse proxy is not sending `X-Forwarded-For`, or `TRUST_PROXY=false` was set explicitly | Ensure the reverse proxy adds `X-Forwarded-For` and leave `TRUST_PROXY` at its default of `true` |
 
 ---
@@ -2041,7 +2062,7 @@ General HTTP server and network settings.
 |----------|---------|----------|-------------|
 | `PORT` | `3000` | No | TCP port the server listens on. In the Docker Compose stack the published port mapping follows this value, so you only need to update `CORS_ORIGIN` to match. |
 | `APP_ENV` | `production` | No | Runtime environment. Accepted values: `production`, `development`. `NODE_ENV` is also read as a backward-compatibility alias; `APP_ENV` takes precedence when both are set. |
-| `CORS_ORIGIN` | `http://localhost:3000` | No | Allowed CORS origin(s). Must match the exact URL you use to access PatchMon in your browser (protocol, hostname, and port; no path, no trailing slash). To allow multiple origins, separate them with a comma and no spaces (e.g. `https://patchmon.example.com,https://patchmon.internal.lan`). |
+| `CORS_ORIGIN` | `http://localhost:3000` | No | Browser origin(s) allowed to use PatchMon. Each entry is the URL users type in their browser (protocol, hostname and port; no path). Separate multiple origins with commas, e.g. `https://patchmon.example.com,https://patchmon.internal.lan`. Spaces around commas, a trailing slash and upper-case letters are tolerated. Agents and the install script are checked too, so the hostname in your Server URL must also appear here. |
 | `ENABLE_HSTS` | `false` | No | When `true`, the server adds an `HTTP Strict Transport Security` header to responses. Enable this only when PatchMon is served over HTTPS. |
 | `TRUST_PROXY` | `true` | No | When `true`, the server trusts `X-Forwarded-For` / `X-Forwarded-Proto` and related headers from a reverse proxy (Traefik, Caddy, nginx, NPM, etc.). Required for accurate client IP detection, correct rate limiting, and OIDC's HTTPS check when TLS is terminated at the proxy. Default is `true` because the officially supported deployment is Docker behind a reverse proxy; set to `false` explicitly only if PatchMon is exposed directly to the internet without a proxy. |
 | `TRUSTED_PROXY_RANGES` | (empty) | No | Comma-separated CIDRs or bare IPs of the reverse proxies in front of PatchMon, for example `10.0.0.0/8,172.16.0.0/12`. Used together with `TRUST_PROXY` to work out the real client IP from `X-Forwarded-For`, which drives rate limiting, login lockout, and audit logging. Leave it empty when there is a single reverse proxy, which is the usual setup: PatchMon then uses the address your proxy appended to the header, which a client cannot forge. Set it only when proxies are chained (for example Cloudflare in front of Nginx Proxy Manager), listing the intermediate hops so the original client IP is resolved rather than your CDN's egress address. Configured via environment only, and shown read-only in the settings UI, because widening it would allow clients to spoof their own IP. |
@@ -2204,7 +2225,7 @@ Rate limits protect the API from abuse. Limits are applied per IP address, split
 | `RATE_LIMIT_MAX` | `5000` | No | Maximum requests per window for general API endpoints (dashboards, hosts, packages, settings). |
 | `AUTH_RATE_LIMIT_WINDOW_MS` | `600000` | No | Time window for authentication endpoints (login, token refresh) (default: 10 minutes). |
 | `AUTH_RATE_LIMIT_MAX` | `500` | No | Maximum requests per window for authentication endpoints. |
-| `AGENT_RATE_LIMIT_WINDOW_MS` | `60000` | No | Time window for agent check-in and reporting endpoints (default: 1 minute). |
+| `AGENT_RATE_LIMIT_WINDOW_MS` | `60000` | No | Time window for agent check-in, reporting and auto-enrolment endpoints (default: 1 minute). |
 | `AGENT_RATE_LIMIT_MAX` | `1000` | No | Maximum requests per window for agent endpoints. Increase this if you have a large number of agents checking in frequently. |
 | `PASSWORD_RATE_LIMIT_WINDOW_MS` | `900000` | No | Time window for password change and reset operations (default: 15 minutes). |
 | `PASSWORD_RATE_LIMIT_MAX` | `5` | No | Maximum password change attempts per window. Kept deliberately low to limit brute-force attacks on password reset flows. |
@@ -2408,7 +2429,7 @@ Configuration for the Guacamole daemon (`guacd`) that powers in-browser RDP sess
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `PATCH_RUN_STALL_TIMEOUT_MIN` | `30` | No | Minutes a patch run can stay in `running` state before the periodic cleanup (every 10 minutes) marks it as `timed_out`. Minimum `5`; values below 5 are clamped at startup with a warning. Also editable via Settings → Environment in the web UI; the env var still wins if set. Changes made in the UI take effect on the next cleanup sweep without a restart. |
+| `PATCH_RUN_STALL_TIMEOUT_MIN` | `30` | No | Minutes a patch run can stay in `running` state before the periodic cleanup (every 10 minutes) marks it as `timed_out`. Minimum `5`; values below 5 are clamped at startup with a warning. Also editable via Settings → Environment in the web UI; the env var still wins if set. Changes made in the UI take effect on the next cleanup sweep without a restart. The same sweep also times out runs that were never dispatched within 24 hours of becoming due; that window is fixed. |
 
 ### Reporting
 
@@ -2428,6 +2449,10 @@ Accepted suffixes: `b`, `kb`, `mb`, `gb`. Examples: `10mb`, `512kb`.
 |----------|---------|----------|-------------|
 | `JSON_BODY_LIMIT` | `5mb` | No | Maximum size of JSON request bodies for standard API endpoints (user management, settings, host actions, etc.). |
 | `AGENT_UPDATE_BODY_LIMIT` | `5mb` | No | Maximum size of request bodies on agent check-in and package reporting endpoints. Increase this if agents managing a very large number of packages hit the limit. |
+| `COMPLIANCE_BODY_LIMIT` | `20mb` | No | Maximum size of request bodies on the compliance scan result endpoint. OpenSCAP results are large: a 900-rule profile can produce well over 10 MB, and a single submission may carry both an OpenSCAP and a Docker Bench scan. |
+| `AGENT_PING_BODY_LIMIT` | `64kb` | No | Maximum size of agent ping bodies. An unsuffixed value is read as KB here, so `16` means 16 KB. Kubernetes nodes need the headroom: every CSI volume is mounted twice with long paths, so a node with a dozen persistent volumes can exceed 8 KB. |
+
+> **Suffixes:** `b`, `kb` and `mb` are accepted. `gb` parses but every `gb` value exceeds the 32 MB ceiling and is reduced to it, so there is no reason to use it.
 
 ---
 
@@ -3544,7 +3569,7 @@ curl -s "https://patchmon.example.com/api/v1/hosts/install?os=freebsd" \
 **Windows one-liner** (elevated PowerShell, single line):
 
 ```powershell
-Invoke-WebRequest -Uri "https://patchmon.example.com/api/v1/hosts/install?os=windows" -Headers @{"X-API-ID"="patchmon_a1b2c3d4"; "X-API-KEY"="<64-char-key>"} -UseBasicParsing -OutFile "$env:TEMP\patchmon-install.ps1"; & "$env:TEMP\patchmon-install.ps1"
+Invoke-WebRequest -Uri "https://patchmon.example.com/api/v1/hosts/install?os=windows" -Headers @{"X-API-ID"="patchmon_a1b2c3d4"; "X-API-KEY"="<64-char-key>"} -UseBasicParsing -OutFile "$env:TEMP\patchmon-install.ps1"; Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; & "$env:TEMP\patchmon-install.ps1"
 ```
 
 Click **Copy command**. The wizard advances to **Step 5: Connection** automatically.
@@ -3581,9 +3606,9 @@ The installer will:
 
 1. Verify the system date/time (interactive confirmation when run on a TTY; silent continue when piped).
 2. Detect the package manager (`apt`, `dnf`, `yum`, `zypper`, `pacman`, `apk`, or `pkg`) and install `curl` if missing.
-3. Exchange the bootstrap token for the real `api_id` / `api_key` via `POST /api/v1/hosts/bootstrap/exchange`.
+3. Exchange the bootstrap token for the real `api_id` / `api_key` via `POST /api/v1/hosts/bootstrap/exchange`. On Windows the script checks for Administrator first, so a non-elevated run does not use up the token.
 4. Create `/etc/patchmon/` (Linux/FreeBSD) or `C:\ProgramData\PatchMon\` (Windows) with `config.yml` and `credentials.yml`, both with `0600` / Administrator-only permissions.
-5. Download the matching agent binary from `GET /api/v1/hosts/agent/download?arch=<arch>&os=<os>`.
+5. Download the matching agent binary from `GET /api/v1/hosts/agent/download?arch=<arch>&os=<os>`. If the download fails, the installer restores the previous binary and exits with an error.
 6. Run `patchmon-agent ping` to confirm credentials work.
 7. Register the service:
    - **systemd** on most Linux distros: `/etc/systemd/system/patchmon-agent.service`
@@ -3657,9 +3682,18 @@ Symptoms: `curl: (60) SSL certificate problem` on Linux, or `Could not establish
 
 > Do not use `skip_ssl_verify` in production. It disables TLS verification entirely and exposes the agent to man-in-the-middle attacks. See the [Agent Configuration Reference](#agent-config-yml-reference) for more on `skip_ssl_verify`.
 
-#### 3. "CORS error" in the browser (wizard-side only)
+#### 3. "CORS error" in the browser, or the install script reports a rejected URL
 
 The wizard itself calls `/api/v1/hosts/install` and `/api/v1/ws/status/{apiId}` from your browser. If either fails with a CORS error, your server's `CORS_ORIGIN` env var does not match the URL you are accessing PatchMon with.
+
+The install script and agent are checked the same way, so a Server URL whose hostname is not in `CORS_ORIGIN` is rejected. The install script then stops with:
+
+```
+ERROR: The PatchMon server rejected the URL this host used (host_mismatch). The hostname in Settings > Server URL must be listed in CORS_ORIGIN.
+Server response: {"code":"host_mismatch","error":"Host not allowed. ..."}
+```
+
+The code is `cors_mismatch` instead when PatchMon sits behind a reverse proxy. On Windows the same message is shown by the PowerShell installer. Either change **Settings → Server URL** to a URL whose hostname is already in `CORS_ORIGIN`, or add that URL to `CORS_ORIGIN`. The web UI warns you when the two do not match.
 
 Fix: set `CORS_ORIGIN` in the server `.env` to the **exact origin** (protocol + host + port) the browser uses. For example:
 
@@ -3667,7 +3701,7 @@ Fix: set `CORS_ORIGIN` in the server `.env` to the **exact origin** (protocol + 
 CORS_ORIGIN=https://patchmon.example.com
 ```
 
-If users reach PatchMon from more than one URL (e.g. an external domain and an internal LAN address), comma-separate the values with no spaces:
+If users reach PatchMon from more than one URL (e.g. an external domain and an internal LAN address), comma-separate the values:
 
 ```
 CORS_ORIGIN=https://patchmon.example.com,https://patchmon.internal.lan
@@ -3697,7 +3731,7 @@ ERROR: Failed to fetch credentials. Bootstrap token may have expired.
 Please request a new installation script.
 ```
 
-Go back to **Step 4** of the wizard and click **Copy command** again. This reuses the same host record but mints a fresh token.
+The script prints the server's response between those two lines, which tells an expired token apart from any other rejection. If the script instead says the server rejected the URL this host used, the token is fine: see section 3 above. Go back to **Step 4** of the wizard and click **Copy command** again. This reuses the same host record but mints a fresh token.
 
 #### 6. Installer aborts on clock skew
 
@@ -4124,6 +4158,36 @@ Downloads the latest agent binary from the PatchMon server and performs an in-pl
 - Backup files use `0700` permissions (owner-only)
 
 > **Note:** In normal operation, the agent auto-updates when the server signals a new version. You only need to run `update-agent` manually when auto-update is disabled or if you want to force an immediate update.
+
+##### Windows: Agents Stuck on 2.0.2
+
+On Windows the running `patchmon-agent.exe` is locked by the Service Control Manager, so it cannot be overwritten in place. Agents on 2.1.0 and later handle this by delegating the replacement and the service restart to a detached helper, and self-update works normally.
+
+Agents on 2.0.2 and earlier do not have that helper. Because the agent performing the update is the old binary itself, it cannot upgrade itself and keeps failing with:
+
+```
+Error: failed to replace executable (permission denied): rename
+C:\Program Files\PatchMon\patchmon-agent.exe.new ->
+C:\Program Files\PatchMon\patchmon-agent.exe: Access is denied.
+```
+
+Upgrading a newer server does not clear this, because the fix lives in the agent binary that cannot be installed. Replace the binary once by hand and self-update works from then on:
+
+```powershell
+# 1. Stop the service
+Stop-Service PatchMonAgent
+
+# 2. Replace C:\Program Files\PatchMon\patchmon-agent.exe with the current
+#    Windows agent (amd64 or arm64 to match the host), keeping the same filename
+
+# 3. Start the service
+Start-Service PatchMonAgent
+
+# 4. Confirm the new version
+& 'C:\Program Files\PatchMon\patchmon-agent.exe' --version
+```
+
+Configuration and credentials live in `C:\ProgramData\PatchMon\`, not alongside the binary, so the host keeps its identity and does not need re-enrolling.
 
 ---
 
@@ -5065,10 +5129,10 @@ The server-provided removal scripts delete everything the installer wrote:
 
 | Artefact (Linux / FreeBSD) | Artefact (Windows) |
 |---|---|
-| Running `patchmon-agent` processes | Running `patchmon-agent.exe` processes |
+| Running `patchmon-agent` processes (only the agent itself, not unrelated processes whose command line mentions it) | Running `patchmon-agent.exe` processes |
 | systemd service + `/etc/systemd/system/patchmon-agent.service` | `PatchMonAgent` Windows Service |
 | OpenRC service + `/etc/init.d/patchmon-agent` | - |
-| FreeBSD rc.d script at `/usr/local/etc/rc.d/patchmon_agent` | - |
+| FreeBSD rc.d script at `/usr/local/etc/rc.d/patchmon_agent`, the `patchmon_agent_enable` line in `/etc/rc.conf` and `/etc/rc.conf.local`, and `/var/run/patchmon_agent.pid` | - |
 | Crontab entries containing `patchmon-agent` | - |
 | Agent binary `/usr/local/bin/patchmon-agent` | `C:\Program Files\PatchMon\` |
 | Configuration directory `/etc/patchmon/` (config, credentials, logs) | `C:\ProgramData\PatchMon\` |
@@ -5205,9 +5269,9 @@ rc-service patchmon-agent status 2>&1 | head -1
 # 1. Stop the service
 service patchmon_agent stop
 
-# 2. Disable auto-start (remove or comment the enable line in rc.conf.local)
+# 2. Disable auto-start (remove the enable line from rc.conf and rc.conf.local)
 sysrc -x patchmon_agent_enable 2>/dev/null || true
-sed -i '' '/patchmon_agent_enable/d' /etc/rc.conf.local 2>/dev/null || true
+sed -i '' '/patchmon_agent_enable/d' /etc/rc.conf /etc/rc.conf.local 2>/dev/null || true
 
 # 3. Remove the rc.d script
 rm -f /usr/local/etc/rc.d/patchmon_agent
@@ -6225,23 +6289,23 @@ If you are building from source, `make build-migrate` in `server-source-code/` p
 
 #### Cause
 
-`CORS_ORIGIN` does not match the URL the user's browser is hitting. `CORS_ORIGIN` accepts a single origin or a comma-separated list of origins (no spaces between entries), and each entry must be the exact origin the browser uses (protocol + host + port, no path, no trailing slash). Common mismatches:
+`CORS_ORIGIN` does not match the URL the user's browser is hitting. `CORS_ORIGIN` accepts a single origin or a comma-separated list of origins, and each entry must be the origin the browser uses (protocol + host + port, no path). Spaces around commas, a trailing slash and upper-case letters are tolerated. Common mismatches:
 
 - `.env` has `CORS_ORIGIN=http://localhost:3000` but users access PatchMon at `https://patchmon.example.com`.
 - `CORS_ORIGIN=https://patchmon.example.com` but users access via `https://patchmon.example.com:8443`.
-- Trailing slash in `CORS_ORIGIN` (`https://patchmon.example.com/`). Strip the slash.
+- An entry without a scheme (`patchmon.example.com` instead of `https://patchmon.example.com`). The server logs a warning at startup and the Settings UI refuses to save it.
 - PatchMon is reached from more than one URL (e.g. an external domain and an internal LAN address) but only one is listed.
 
 #### Fix
 
-Set `CORS_ORIGIN` to the **exact origin** the browser uses (protocol + host + port, no path, no trailing slash):
+Set `CORS_ORIGIN` to the **exact origin** the browser uses (protocol + host + port, no path):
 
 ```
 # .env
 CORS_ORIGIN=https://patchmon.example.com
 ```
 
-For multiple allowed origins (e.g. staging and production share a database during migration, or users reach PatchMon on both an external and internal URL), comma-separate them with no spaces between entries:
+For multiple allowed origins (e.g. staging and production share a database during migration, or users reach PatchMon on both an external and internal URL), comma-separate them:
 
 ```
 CORS_ORIGIN=https://patchmon.example.com,https://staging.patchmon.example.com
@@ -6257,7 +6321,7 @@ docker compose restart server
 
 #### Alternative: Settings UI
 
-You can also set `CORS_ORIGIN` in **Settings → Server → CORS_ORIGIN** via the UI. If both the env var and the UI value are set, the env wins and the Settings UI shows a "Conflict" flag. Pick one source of truth.
+You can also set `CORS_ORIGIN` in **Settings → Server → CORS_ORIGIN** via the UI. If both the env var and the UI value are set, the env wins and the Settings UI shows a "Conflict" flag. Pick one source of truth. The UI refuses values that are not origins, such as a bare hostname without `https://`.
 
 ### 4. Agent Can't Connect Over WebSocket
 
@@ -6422,14 +6486,24 @@ docker compose exec server env | grep REDIS_
 
 #### Cause
 
-PatchMon caps JSON request bodies to protect against memory exhaustion. Two separate limits apply:
+PatchMon caps JSON request bodies to protect against memory exhaustion. Four separate limits apply:
 
 | Env var | Default | What it caps |
 |---------|---------|---------------|
 | `JSON_BODY_LIMIT` | `5` (MB) | Every non-agent JSON endpoint (UI API, settings, etc.). |
 | `AGENT_UPDATE_BODY_LIMIT` | `5` (MB) | `POST /api/v1/hosts/update` only: the agent report payload. |
+| `COMPLIANCE_BODY_LIMIT` | `20` (MB) | `POST /api/v1/compliance/scans` only: OpenSCAP and Docker Bench results. |
+| `AGENT_PING_BODY_LIMIT` | `64` (KB) | `POST /api/v1/hosts/ping` only. |
 
-Both are integers **in megabytes**. A host with thousands of packages + Docker + compliance data can breach the 5 MB default; bump this env var on those installations.
+An unsuffixed value is read as **megabytes**, except `AGENT_PING_BODY_LIMIT`, where it is read as kilobytes. You can also write the unit explicitly, e.g. `20mb`.
+
+No limit can be set above **32 MB**. A larger value is reduced to 32 MB rather than rejected, so an existing setting keeps working after an upgrade. A value that is not a positive number (blank, zero, negative, or not a size at all) is ignored and the default applies. The 32 MB ceiling exists because the server runs under a 256 MB memory limit and a single request is several times its own size once decoded.
+
+A host with thousands of packages + Docker can breach the 5 MB agent report default. Compliance is the more common cause of a breach: a 900-rule OpenSCAP profile carries roughly 14 KB of description and remediation text per rule, so results comfortably exceed 10 MB, and one submission can carry an OpenSCAP scan and a Docker Bench scan together. When the compliance limit is the one being hit, the agent log names it:
+
+```
+compliance data request failed with status 413: Scan results exceed the 20mb COMPLIANCE_BODY_LIMIT...
+```
 
 #### Fix
 
@@ -6438,7 +6512,10 @@ Raise the limits in `.env`:
 ```
 JSON_BODY_LIMIT=10
 AGENT_UPDATE_BODY_LIMIT=8
+COMPLIANCE_BODY_LIMIT=32
 ```
+
+`32` is the highest value accepted. All four are also editable from **Settings > Environment** in the web UI, which takes effect without a restart.
 
 Restart:
 
@@ -6446,10 +6523,10 @@ Restart:
 docker compose restart server
 ```
 
-If you are fronting PatchMon with Nginx, also raise its limit, otherwise Nginx 413s before the server sees the body:
+If you are fronting PatchMon with Nginx, also raise its limit, otherwise Nginx 413s before the server sees the body. It must be at least as large as the biggest PatchMon limit:
 
 ```nginx
-client_max_body_size 16m;
+client_max_body_size 40m;
 ```
 
 ### 8. Slow Queries / Database Pressure
@@ -6585,7 +6662,7 @@ Log in with local credentials, fix the OIDC config, and flip it back.
 |--------|-----------------|
 | `DATABASE_URL`, `REDIS_*`, `JWT_SECRET`, `SESSION_SECRET` | `docker compose restart server` |
 | `CORS_ORIGIN`, `TRUST_PROXY`, `ENABLE_HSTS` | `docker compose restart server` |
-| `JSON_BODY_LIMIT`, `AGENT_UPDATE_BODY_LIMIT` | `docker compose restart server` |
+| `JSON_BODY_LIMIT`, `AGENT_UPDATE_BODY_LIMIT`, `COMPLIANCE_BODY_LIMIT`, `AGENT_PING_BODY_LIMIT` | `docker compose restart server` |
 | `OIDC_*` | `docker compose restart server` |
 | Postgres config change (custom `postgresql.conf`) | `docker compose restart database` (then wait for health) |
 | Redis password change | `docker compose up -d redis server` (both) |

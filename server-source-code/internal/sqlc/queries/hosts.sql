@@ -30,6 +30,13 @@ DELETE FROM hosts WHERE id = ANY($1::text[]);
 -- name: GetHostByApiID :one
 SELECT * FROM hosts WHERE api_id = $1;
 
+-- name: GetHostByMachineIDAndName :one
+SELECT * FROM hosts
+WHERE machine_id = sqlc.arg('machine_id')
+  AND lower(friendly_name) = lower(sqlc.arg('friendly_name'))
+ORDER BY created_at ASC
+LIMIT 1;
+
 -- name: ListExistingHostApiIDs :many
 SELECT api_id FROM hosts WHERE api_id = ANY($1::text[]);
 
@@ -160,7 +167,8 @@ FROM hosts;
 
 -- name: CountUnscannedHosts :one
 SELECT COUNT(*) FROM hosts h
-WHERE NOT EXISTS (SELECT 1 FROM compliance_scans cs WHERE cs.host_id = h.id);
+WHERE NOT EXISTS (SELECT 1 FROM compliance_scans cs WHERE cs.host_id = h.id)
+  AND (sqlc.narg('host_ids')::text[] IS NULL OR h.id = ANY(sqlc.narg('host_ids')::text[]));
 
 -- name: SetHostAwaitingPostPatchReport :exec
 UPDATE hosts SET awaiting_post_patch_report_run_id = $1, updated_at = NOW() WHERE id = $2;

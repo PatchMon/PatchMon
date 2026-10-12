@@ -117,6 +117,8 @@ func dbSettingToModel(s db.Setting) models.Settings {
 		EnableHSTS:                      s.EnableHsts,
 		JSONBodyLimit:                   s.JsonBodyLimit,
 		AgentUpdateBodyLimit:            s.AgentUpdateBodyLimit,
+		ComplianceBodyLimit:             s.ComplianceBodyLimit,
+		AgentPingBodyLimit:              s.AgentPingBodyLimit,
 		DBTransactionLongTimeout:        pgInt32ToIntPtr(s.DbTransactionLongTimeout),
 		CorsOrigin:                      s.CorsOrigin,
 		EnableLogging:                   s.EnableLogging,

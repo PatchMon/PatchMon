@@ -17,7 +17,7 @@ SELECT cs.id, cs.host_id, cs.profile_id, cs.started_at, cs.completed_at, cs.stat
 FROM compliance_scans cs
 JOIN compliance_profiles cp ON cp.id = cs.profile_id
 WHERE cs.host_id = $1
-ORDER BY cs.completed_at DESC NULLS LAST
+ORDER BY cs.completed_at DESC NULLS LAST, cs.started_at DESC, cs.id
 LIMIT $2 OFFSET $3;
 
 -- name: CountComplianceScansByHost :one
@@ -75,7 +75,7 @@ WHERE (sqlc.narg('status')::text IS NULL OR cs.status = sqlc.narg('status'))
   AND (sqlc.narg('host_id')::text IS NULL OR cs.host_id = sqlc.narg('host_id'))
   AND (sqlc.narg('profile_type')::text IS NULL OR cp.type = sqlc.narg('profile_type'))
   AND (sqlc.narg('search')::text IS NULL OR h.friendly_name ILIKE '%' || sqlc.narg('search') || '%' OR h.hostname ILIKE '%' || sqlc.narg('search') || '%' OR cp.name ILIKE '%' || sqlc.narg('search') || '%')
-ORDER BY cs.started_at DESC
+ORDER BY cs.started_at DESC, cs.id
 LIMIT $1 OFFSET $2;
 
 -- name: CountComplianceScansHistory :one
@@ -145,7 +145,7 @@ SELECT cs.id, cs.host_id, cs.profile_id, cs.started_at, cs.completed_at, cs.stat
 FROM compliance_scans cs
 JOIN hosts h ON h.id = cs.host_id
 JOIN compliance_profiles cp ON cp.id = cs.profile_id
-ORDER BY cs.completed_at DESC NULLS LAST
+ORDER BY cs.completed_at DESC NULLS LAST, cs.started_at DESC, cs.id
 LIMIT 10;
 
 -- name: GetComplianceScansForTrends :many
@@ -165,3 +165,31 @@ JOIN compliance_profiles cp ON cp.id = cs.profile_id
 WHERE cs.host_id = $1 AND cs.status = 'completed' AND cp.type = $2
 ORDER BY cs.completed_at DESC
 LIMIT 1;
+
+-- name: CancelActiveComplianceScansByHost :execrows
+UPDATE compliance_scans
+SET status = 'cancelled', completed_at = NOW(), error_message = $2, updated_at = NOW()
+WHERE host_id = $1
+  AND (status = 'running' OR (completed_at IS NULL AND status != 'failed'));
+
+-- name: GetRemediationProfileNameByHost :one
+SELECT cp.name
+FROM compliance_scans cs
+JOIN compliance_profiles cp ON cp.id = cs.profile_id
+WHERE cs.host_id = sqlc.arg('host_id') AND cs.status = 'completed' AND cp.type = 'openscap'
+ORDER BY EXISTS (
+    SELECT 1 FROM compliance_results cr
+    JOIN compliance_rules ru ON ru.id = cr.rule_id
+    WHERE cr.scan_id = cs.id AND ru.rule_ref = sqlc.arg('rule_ref')::text
+) DESC, cs.completed_at DESC
+LIMIT 1;
+
+-- name: GetLatestCompletedScansByHostAllTypes :many
+SELECT DISTINCT ON (cp.type)
+       cs.id, cs.host_id, cs.profile_id, cs.completed_at, cs.passed, cs.failed,
+       cs.warnings, cs.skipped, cs.not_applicable, cs.score, cs.total_rules,
+       cp.name as profile_name, cp.type as profile_type
+FROM compliance_scans cs
+JOIN compliance_profiles cp ON cp.id = cs.profile_id
+WHERE cs.host_id = $1 AND cs.status = 'completed'
+ORDER BY cp.type, cs.completed_at DESC;

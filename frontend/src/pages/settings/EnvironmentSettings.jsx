@@ -13,7 +13,9 @@ const sourceLabels = {
 
 const LOG_LEVEL_OPTIONS = ["debug", "info", "warn", "error"];
 
-const BODY_LIMIT_OPTIONS = ["1mb", "2mb", "5mb", "10mb", "20mb", "50mb"];
+const BODY_LIMIT_OPTIONS = ["1mb", "2mb", "5mb", "10mb", "20mb", "32mb"];
+
+const PING_BODY_LIMIT_OPTIONS = ["8kb", "16kb", "32kb", "64kb", "128kb"];
 
 const JWT_EXPIRES_IN_OPTIONS = ["15m", "30m", "1h", "2h", "7d"];
 
@@ -27,7 +29,15 @@ const isBooleanVar = (v) =>
 	v.defaultValue === "true" || v.defaultValue === "false";
 
 const isBodyLimitVar = (v) =>
-	v.key === "JSON_BODY_LIMIT" || v.key === "AGENT_UPDATE_BODY_LIMIT";
+	v.key === "JSON_BODY_LIMIT" ||
+	v.key === "AGENT_UPDATE_BODY_LIMIT" ||
+	v.key === "COMPLIANCE_BODY_LIMIT" ||
+	v.key === "AGENT_PING_BODY_LIMIT";
+
+const getBodyLimitOptions = (v) =>
+	v.key === "AGENT_PING_BODY_LIMIT"
+		? PING_BODY_LIMIT_OPTIONS
+		: BODY_LIMIT_OPTIONS;
 
 const getSelectOptionsForVar = (v) => {
 	switch (v.key) {
@@ -324,13 +334,13 @@ const EnvironmentSettings = () => {
 																onChange={(e) => setEditValue(e.target.value)}
 																className="block w-24 rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-800 px-2 py-1 text-sm"
 															>
-																{BODY_LIMIT_OPTIONS.map((opt) => (
+																{getBodyLimitOptions(v).map((opt) => (
 																	<option key={opt} value={opt}>
 																		{opt}
 																	</option>
 																))}
 																{editValue &&
-																	!BODY_LIMIT_OPTIONS.includes(
+																	!getBodyLimitOptions(v).includes(
 																		editValue.toLowerCase(),
 																	) && (
 																		<option value={editValue}>

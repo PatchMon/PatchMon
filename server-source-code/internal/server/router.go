@@ -51,6 +51,9 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	settingsStore := store.NewSettingsStore(dbProvider)
 	settings, _ := settingsStore.GetFirst(ctx)
 	resolved := config.ResolveConfig(ctx, cfg, settings)
+	if err := middleware.ValidateOrigins(resolved.CORSOrigin); err != nil && log != nil {
+		log.Warn("CORS_ORIGIN contains an entry that is not an origin", "error", err)
+	}
 
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Recovery(log))
@@ -190,7 +193,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	dashboardPrefsHandler := handler.NewDashboardPreferencesHandler(dashboardPrefsStore)
 	dockerHandler := handler.NewDockerHandler(dockerStore)
 	reportStore := store.NewReportStore(dbProvider)
-	integrationsHandler := handler.NewIntegrationsHandler(hostsStore, store.NewDockerStore(dbProvider), integrationStatusStore, dbProvider, notifyEmit, reportStore)
+	integrationsHandler := handler.NewIntegrationsHandler(hostsStore, store.NewDockerStore(dbProvider), integrationStatusStore, dbProvider, notifyEmit, reportStore, store.NewJobHistoryStore(dbProvider))
 	complianceStore := store.NewComplianceStore(dbProvider)
 	complianceHandler := handler.NewComplianceHandler(complianceStore, hostsStore, registry, queueClient, queueInspector, integrationStatusStore, cfg.SSGContentDir, notifyEmit, reportStore)
 	autoEnrollmentStore := store.NewAutoEnrollmentStore(dbProvider)
@@ -225,7 +228,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	var agentWsHandler *handler.AgentWSHandler
 	agentOpts := []handler.AgentWSHandlerOption{
 		handler.WithOnAgentDisconnect(handler.NewAgentDisconnectHandler(dbProvider, hostsStore, patchRunsStore, registry, notifyEmit, log)),
-		handler.WithOnAgentConnect(handler.NewAgentConnectHandler(dbProvider, queueClient, queueInspector, notifyEmit, log)),
+		handler.WithOnAgentConnect(handler.NewAgentConnectHandler(dbProvider, queueClient, queueInspector, integrationStatusStore, notifyEmit, log)),
 	}
 	if rdpHandler != nil {
 		agentOpts = append(agentOpts, handler.WithOnRDPProxyMessage(rdpHandler.HandleRDPProxyMessage))
@@ -316,7 +319,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		r.Get("/hosts/integrations", integrationsHandler.AgentGetIntegrationStatus)
 		r.Post("/integrations/docker", integrationsHandler.ReceiveDockerData)
 		r.Post("/hosts/integration-status", integrationsHandler.ReceiveIntegrationStatus)
-		r.Post("/compliance/scans", complianceHandler.ReceiveScans)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent), middleware.BodyLimitFor(cfgResolver, func(rc *config.ResolvedConfig) int64 { return rc.ComplianceBodyLimitBytes })).Post("/compliance/scans", complianceHandler.ReceiveScans)
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Get("/compliance/ssg-version", complianceHandler.AgentSSGVersion)
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Get("/compliance/ssg-content/{filename}", complianceHandler.SSGContent)
 		// Patching agent output (API key auth)
@@ -327,8 +330,8 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Post("/patching/windows-updates/superseded", windowsUpdatesHandler.RemoveSuperseded)
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Get("/patching/windows-updates/approved", windowsUpdatesHandler.GetApprovedGUIDs)
 		// Auto-enrollment (public, token in headers for enroll, query params for script)
-		r.Post("/auto-enrollment/enroll", autoEnrollmentHandler.Enroll)
-		r.Get("/auto-enrollment/script", autoEnrollmentHandler.ServeScript)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Post("/auto-enrollment/enroll", autoEnrollmentHandler.Enroll)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Get("/auto-enrollment/script", autoEnrollmentHandler.ServeScript)
 		// Agent WebSocket (GET with Upgrade: websocket)
 		r.Get("/agents/ws", agentWsHandler.ServeWS)
 		// SSH terminal WebSocket (ticket auth via query param).
@@ -493,6 +496,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/settings/environment", settingsHandler.GetEnvironmentConfig)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Patch("/settings/environment/{key}", settingsHandler.UpdateEnvironmentConfig)
 			r.Get("/settings/public", settingsHandler.GetPublic)
+			r.With(middleware.RequireAnyPermission(permissionsStore, "can_manage_hosts", "can_manage_settings")).Get("/settings/server-url/cors-check", settingsHandler.ServerURLCORSCheck)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/metrics", metricsHandler.Get)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Put("/metrics", metricsHandler.Update)
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Post("/metrics/regenerate-id", metricsHandler.RegenerateID)

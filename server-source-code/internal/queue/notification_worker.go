@@ -42,18 +42,12 @@ func NewNotificationDeliverHandler(defaultDB *database.DB, poolCache *hostctx.Po
 	return &NotificationDeliverHandler{defaultDB: defaultDB, poolCache: poolCache, enc: enc, rdb: rdb, log: log}
 }
 
-func (h *NotificationDeliverHandler) resolveDB(ctx context.Context, payload []byte) *database.DB {
-	db := h.defaultDB
-	if len(payload) == 0 || h.poolCache == nil {
-		return db
-	}
+func (h *NotificationDeliverHandler) resolveDB(ctx context.Context, payload []byte) (context.Context, *database.DB, error) {
 	var p notifications.NotificationDeliverPayload
-	if err := json.Unmarshal(payload, &p); err == nil && strings.TrimSpace(p.Host) != "" {
-		if resolved, err := h.poolCache.GetOrCreate(ctx, p.Host); err == nil && resolved != nil {
-			db = resolved
-		}
+	if len(payload) == 0 || json.Unmarshal(payload, &p) != nil {
+		return ctx, h.defaultDB, nil
 	}
-	return db
+	return resolveDBForHost(ctx, p.Host, h.defaultDB, h.poolCache)
 }
 
 // ProcessTask implements asynq.Handler.
@@ -63,13 +57,16 @@ func (h *NotificationDeliverHandler) ProcessTask(ctx context.Context, t *asynq.T
 		return err
 	}
 	// If this was a delayed notification, check if it's been cancelled by a counterpart event.
-	if p.Delayed && p.CancelKey != "" && notifications.IsDelayedCancelled(h.rdb, p.Host, p.CancelKey) {
+	if p.Delayed && p.CancelKey != "" && notifications.IsDelayedCancelled(h.rdb, p.Host, p.CancelKey, p.EmittedAt) {
 		if h.log != nil {
 			h.log.Debug("notification_deliver: cancelled by counterpart event", "event_type", p.EventType, "cancel_key", p.CancelKey)
 		}
 		return nil
 	}
-	d := h.resolveDB(ctx, t.Payload())
+	ctx, d, err := h.resolveDB(ctx, t.Payload())
+	if err != nil {
+		return err
+	}
 	dest, err := d.Queries.GetNotificationDestinationByID(ctx, p.DestinationID)
 	if err != nil || !dest.Enabled {
 		return nil

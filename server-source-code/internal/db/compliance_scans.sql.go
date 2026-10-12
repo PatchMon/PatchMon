@@ -11,6 +11,26 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cancelActiveComplianceScansByHost = `-- name: CancelActiveComplianceScansByHost :execrows
+UPDATE compliance_scans
+SET status = 'cancelled', completed_at = NOW(), error_message = $2, updated_at = NOW()
+WHERE host_id = $1
+  AND (status = 'running' OR (completed_at IS NULL AND status != 'failed'))
+`
+
+type CancelActiveComplianceScansByHostParams struct {
+	HostID       string  `json:"host_id"`
+	ErrorMessage *string `json:"error_message"`
+}
+
+func (q *Queries) CancelActiveComplianceScansByHost(ctx context.Context, arg CancelActiveComplianceScansByHostParams) (int64, error) {
+	result, err := q.db.Exec(ctx, cancelActiveComplianceScansByHost, arg.HostID, arg.ErrorMessage)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countComplianceScansByHost = `-- name: CountComplianceScansByHost :one
 SELECT COUNT(*) FROM compliance_scans WHERE host_id = $1
 `
@@ -316,6 +336,67 @@ func (q *Queries) GetLatestCompletedScans(ctx context.Context) ([]GetLatestCompl
 	return items, nil
 }
 
+const getLatestCompletedScansByHostAllTypes = `-- name: GetLatestCompletedScansByHostAllTypes :many
+SELECT DISTINCT ON (cp.type)
+       cs.id, cs.host_id, cs.profile_id, cs.completed_at, cs.passed, cs.failed,
+       cs.warnings, cs.skipped, cs.not_applicable, cs.score, cs.total_rules,
+       cp.name as profile_name, cp.type as profile_type
+FROM compliance_scans cs
+JOIN compliance_profiles cp ON cp.id = cs.profile_id
+WHERE cs.host_id = $1 AND cs.status = 'completed'
+ORDER BY cp.type, cs.completed_at DESC
+`
+
+type GetLatestCompletedScansByHostAllTypesRow struct {
+	ID            string           `json:"id"`
+	HostID        string           `json:"host_id"`
+	ProfileID     string           `json:"profile_id"`
+	CompletedAt   pgtype.Timestamp `json:"completed_at"`
+	Passed        int32            `json:"passed"`
+	Failed        int32            `json:"failed"`
+	Warnings      int32            `json:"warnings"`
+	Skipped       int32            `json:"skipped"`
+	NotApplicable int32            `json:"not_applicable"`
+	Score         *float64         `json:"score"`
+	TotalRules    int32            `json:"total_rules"`
+	ProfileName   string           `json:"profile_name"`
+	ProfileType   string           `json:"profile_type"`
+}
+
+func (q *Queries) GetLatestCompletedScansByHostAllTypes(ctx context.Context, hostID string) ([]GetLatestCompletedScansByHostAllTypesRow, error) {
+	rows, err := q.db.Query(ctx, getLatestCompletedScansByHostAllTypes, hostID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetLatestCompletedScansByHostAllTypesRow
+	for rows.Next() {
+		var i GetLatestCompletedScansByHostAllTypesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.HostID,
+			&i.ProfileID,
+			&i.CompletedAt,
+			&i.Passed,
+			&i.Failed,
+			&i.Warnings,
+			&i.Skipped,
+			&i.NotApplicable,
+			&i.Score,
+			&i.TotalRules,
+			&i.ProfileName,
+			&i.ProfileType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getLatestCompletedScansByProfile = `-- name: GetLatestCompletedScansByProfile :many
 SELECT cs.id, cs.host_id, cs.profile_id, cs.completed_at, cs.passed, cs.failed,
        cs.warnings, cs.skipped, cs.not_applicable, cs.score, cs.total_rules,
@@ -517,7 +598,7 @@ SELECT cs.id, cs.host_id, cs.profile_id, cs.started_at, cs.completed_at, cs.stat
 FROM compliance_scans cs
 JOIN hosts h ON h.id = cs.host_id
 JOIN compliance_profiles cp ON cp.id = cs.profile_id
-ORDER BY cs.completed_at DESC NULLS LAST
+ORDER BY cs.completed_at DESC NULLS LAST, cs.started_at DESC, cs.id
 LIMIT 10
 `
 
@@ -579,6 +660,31 @@ func (q *Queries) GetRecentComplianceScans(ctx context.Context) ([]GetRecentComp
 		return nil, err
 	}
 	return items, nil
+}
+
+const getRemediationProfileNameByHost = `-- name: GetRemediationProfileNameByHost :one
+SELECT cp.name
+FROM compliance_scans cs
+JOIN compliance_profiles cp ON cp.id = cs.profile_id
+WHERE cs.host_id = $1 AND cs.status = 'completed' AND cp.type = 'openscap'
+ORDER BY EXISTS (
+    SELECT 1 FROM compliance_results cr
+    JOIN compliance_rules ru ON ru.id = cr.rule_id
+    WHERE cr.scan_id = cs.id AND ru.rule_ref = $2::text
+) DESC, cs.completed_at DESC
+LIMIT 1
+`
+
+type GetRemediationProfileNameByHostParams struct {
+	HostID  string `json:"host_id"`
+	RuleRef string `json:"rule_ref"`
+}
+
+func (q *Queries) GetRemediationProfileNameByHost(ctx context.Context, arg GetRemediationProfileNameByHostParams) (string, error) {
+	row := q.db.QueryRow(ctx, getRemediationProfileNameByHost, arg.HostID, arg.RuleRef)
+	var name string
+	err := row.Scan(&name)
+	return name, err
 }
 
 const listActiveComplianceScans = `-- name: ListActiveComplianceScans :many
@@ -644,7 +750,7 @@ SELECT cs.id, cs.host_id, cs.profile_id, cs.started_at, cs.completed_at, cs.stat
 FROM compliance_scans cs
 JOIN compliance_profiles cp ON cp.id = cs.profile_id
 WHERE cs.host_id = $1
-ORDER BY cs.completed_at DESC NULLS LAST
+ORDER BY cs.completed_at DESC NULLS LAST, cs.started_at DESC, cs.id
 LIMIT $2 OFFSET $3
 `
 
@@ -727,7 +833,7 @@ WHERE ($3::text IS NULL OR cs.status = $3)
   AND ($4::text IS NULL OR cs.host_id = $4)
   AND ($5::text IS NULL OR cp.type = $5)
   AND ($6::text IS NULL OR h.friendly_name ILIKE '%' || $6 || '%' OR h.hostname ILIKE '%' || $6 || '%' OR cp.name ILIKE '%' || $6 || '%')
-ORDER BY cs.started_at DESC
+ORDER BY cs.started_at DESC, cs.id
 LIMIT $1 OFFSET $2
 `
 

@@ -11,6 +11,7 @@ import {
 	settingsAPI,
 } from "../utils/api";
 import { invalidateHostScope } from "../utils/queryScopes";
+import ServerUrlCorsWarning from "./ServerUrlCorsWarning";
 import ModalPortal from "./ui/ModalPortal";
 
 const STEPS = [
@@ -110,13 +111,13 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 			: "";
 		if (useCurl) {
 			const curlInsecure = includeSslBypass ? " -k" : "";
-			return `${sslBlock}curl.exe${curlInsecure} -s -H "X-API-ID: ${createdHost?.api_id}" -H "X-API-KEY: ${plaintextApiKey}" -o "$env:TEMP\\patchmon-install.ps1" "${installUrl}"; if ($LASTEXITCODE -eq 0) { & "$env:TEMP\\patchmon-install.ps1" } else { Write-Error "curl failed with exit code $LASTEXITCODE" }`;
+			return `${sslBlock}curl.exe${curlInsecure} -s -H "X-API-ID: ${createdHost?.api_id}" -H "X-API-KEY: ${plaintextApiKey}" -o "$env:TEMP\\patchmon-install.ps1" "${installUrl}"; if ($LASTEXITCODE -eq 0) { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; & "$env:TEMP\\patchmon-install.ps1" } else { Write-Error "curl failed with exit code $LASTEXITCODE" }`;
 		}
 		// -OutFile writes the response bytes straight to disk. Reading
 		// $r.Content instead makes Windows PowerShell 5.1 decode the body
 		// through the Windows ANSI code page, which corrupts every non-ASCII
 		// character in the script.
-		return `${sslBlock}Invoke-WebRequest -Uri "${installUrl}" -Headers @{"X-API-ID"="${createdHost?.api_id}"; "X-API-KEY"="${plaintextApiKey}"} -UseBasicParsing -OutFile "$env:TEMP\\patchmon-install.ps1"; & "$env:TEMP\\patchmon-install.ps1"`;
+		return `${sslBlock}Invoke-WebRequest -Uri "${installUrl}" -Headers @{"X-API-ID"="${createdHost?.api_id}"; "X-API-KEY"="${plaintextApiKey}"} -UseBasicParsing -OutFile "$env:TEMP\\patchmon-install.ps1"; Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; & "$env:TEMP\\patchmon-install.ps1"`;
 	};
 
 	const getShellCommand = (force) => {
@@ -570,6 +571,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 								: ""}
 							. After copying, the wizard will wait for the connection.
 						</p>
+						<ServerUrlCorsWarning enabled={isOpen} />
 						{platform === "windows" && (
 							<div className="flex flex-wrap items-center gap-4">
 								<label className="flex items-center gap-2 cursor-pointer">

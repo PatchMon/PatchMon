@@ -28,6 +28,7 @@ import {
 } from "react";
 
 import { Link, useNavigate, useParams } from "react-router-dom";
+import ModalPortal from "../components/ui/ModalPortal";
 import {
 	formatDateOnly,
 	formatRelativeTime,
@@ -303,78 +304,80 @@ const RepositoryDetail = () => {
 		<div className="space-y-4 sm:space-y-6">
 			{/* Delete Confirmation Modal */}
 			{showDeleteModal && (
-				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-					<button
-						type="button"
-						onClick={cancelDelete}
-						className="fixed inset-0 cursor-default"
-						aria-label="Close modal"
-						disabled={deleteRepositoryMutation.isPending}
-					/>
-					<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 relative z-10">
-						<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
-							<div className="flex items-center justify-between gap-3">
-								<div className="flex items-center gap-3 min-w-0">
-									<div className="w-10 h-10 bg-danger-100 dark:bg-danger-900 rounded-full flex items-center justify-center flex-shrink-0">
-										<AlertTriangle className="h-5 w-5 text-danger-600 dark:text-danger-400" />
+				<ModalPortal>
+					<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120]">
+						<button
+							type="button"
+							onClick={cancelDelete}
+							className="fixed inset-0 cursor-default"
+							aria-label="Close modal"
+							disabled={deleteRepositoryMutation.isPending}
+						/>
+						<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 relative z-10">
+							<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
+								<div className="flex items-center justify-between gap-3">
+									<div className="flex items-center gap-3 min-w-0">
+										<div className="w-10 h-10 bg-danger-100 dark:bg-danger-900 rounded-full flex items-center justify-center flex-shrink-0">
+											<AlertTriangle className="h-5 w-5 text-danger-600 dark:text-danger-400" />
+										</div>
+										<div className="min-w-0">
+											<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+												Delete Repository
+											</h3>
+											<p className="text-sm text-secondary-600 dark:text-white">
+												This action cannot be undone
+											</p>
+										</div>
 									</div>
-									<div className="min-w-0">
-										<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
-											Delete Repository
-										</h3>
-										<p className="text-sm text-secondary-600 dark:text-white">
-											This action cannot be undone
+									<button
+										type="button"
+										onClick={cancelDelete}
+										className="p-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-700 text-secondary-400 hover:text-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
+										aria-label="Close"
+										disabled={deleteRepositoryMutation.isPending}
+									>
+										<X className="h-5 w-5" />
+									</button>
+								</div>
+							</div>
+							<div className="px-6 py-4">
+								<p className="text-secondary-700 dark:text-white">
+									Are you sure you want to delete{" "}
+									<span className="font-semibold">"{repository?.name}"</span>?
+								</p>
+								{repository?.host_repositories?.length > 0 && (
+									<div className="mt-3 p-3 bg-danger-50 dark:bg-danger-900 border border-danger-200 dark:border-danger-700 rounded-md">
+										<p className="text-sm text-danger-800 dark:text-danger-200">
+											<strong>Warning:</strong> This repository is currently
+											assigned to {repository.host_repositories.length} host
+											{repository.host_repositories.length !== 1 ? "s" : ""}.
 										</p>
 									</div>
-								</div>
+								)}
+							</div>
+							<div className="px-6 py-4 border-t border-secondary-200 dark:border-secondary-600 flex justify-end gap-3">
 								<button
 									type="button"
 									onClick={cancelDelete}
-									className="p-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-700 text-secondary-400 hover:text-secondary-600 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
-									aria-label="Close"
+									className="btn-outline"
 									disabled={deleteRepositoryMutation.isPending}
 								>
-									<X className="h-5 w-5" />
+									Cancel
+								</button>
+								<button
+									type="button"
+									onClick={confirmDelete}
+									className="btn-danger disabled:opacity-50 disabled:cursor-not-allowed"
+									disabled={deleteRepositoryMutation.isPending}
+								>
+									{deleteRepositoryMutation.isPending
+										? "Deleting..."
+										: "Delete Repository"}
 								</button>
 							</div>
 						</div>
-						<div className="px-6 py-4">
-							<p className="text-secondary-700 dark:text-white">
-								Are you sure you want to delete{" "}
-								<span className="font-semibold">"{repository?.name}"</span>?
-							</p>
-							{repository?.host_repositories?.length > 0 && (
-								<div className="mt-3 p-3 bg-danger-50 dark:bg-danger-900 border border-danger-200 dark:border-danger-700 rounded-md">
-									<p className="text-sm text-danger-800 dark:text-danger-200">
-										<strong>Warning:</strong> This repository is currently
-										assigned to {repository.host_repositories.length} host
-										{repository.host_repositories.length !== 1 ? "s" : ""}.
-									</p>
-								</div>
-							)}
-						</div>
-						<div className="px-6 py-4 border-t border-secondary-200 dark:border-secondary-600 flex justify-end gap-3">
-							<button
-								type="button"
-								onClick={cancelDelete}
-								className="btn-outline"
-								disabled={deleteRepositoryMutation.isPending}
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-								onClick={confirmDelete}
-								className="btn-danger disabled:opacity-50 disabled:cursor-not-allowed"
-								disabled={deleteRepositoryMutation.isPending}
-							>
-								{deleteRepositoryMutation.isPending
-									? "Deleting..."
-									: "Delete Repository"}
-							</button>
-						</div>
 					</div>
-				</div>
+				</ModalPortal>
 			)}
 
 			{/* Header */}

@@ -108,6 +108,8 @@ CREATE TABLE IF NOT EXISTS settings (
     enable_hsts BOOLEAN,
     json_body_limit TEXT,
     agent_update_body_limit TEXT,
+    compliance_body_limit TEXT,
+    agent_ping_body_limit TEXT,
     db_transaction_long_timeout INTEGER,
     cors_origin TEXT,
     enable_logging BOOLEAN,
@@ -253,6 +255,9 @@ CREATE TABLE IF NOT EXISTS hosts (
     compliance_hash TEXT,
     last_full_report_at TIMESTAMP(3)
 );
+
+CREATE INDEX IF NOT EXISTS idx_hosts_machine_id
+    ON hosts (machine_id);
 
 -- dashboard_preferences
 CREATE TABLE IF NOT EXISTS dashboard_preferences (
@@ -725,6 +730,10 @@ CREATE TABLE IF NOT EXISTS patch_runs (
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP(3) NOT NULL
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS patch_runs_one_active_per_host
+    ON patch_runs (host_id)
+    WHERE status IN ('queued', 'pending_validation', 'running');
 
 -- alert_config
 CREATE TABLE IF NOT EXISTS alert_config (

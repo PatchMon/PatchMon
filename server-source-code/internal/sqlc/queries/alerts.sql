@@ -72,7 +72,7 @@ WHERE type = $1
   AND (NOT $3 OR resolved_at IS NOT NULL);
 
 -- name: ListActiveAlertsByType :many
-SELECT id, type, metadata FROM alerts WHERE type = $1 AND is_active = true;
+SELECT id, type, metadata, created_at FROM alerts WHERE type = $1 AND is_active = true;
 
 -- name: GetAlertsToAutoResolve :many
 SELECT id, type, created_at FROM alerts

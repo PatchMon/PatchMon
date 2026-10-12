@@ -24,6 +24,7 @@ type NotificationDeliverPayload struct {
 	EventFingerprint string                 `json:"event_fingerprint"`
 	Delayed          bool                   `json:"delayed,omitempty"`
 	CancelKey        string                 `json:"cancel_key,omitempty"`
+	EmittedAt        int64                  `json:"emitted_at,omitempty"`
 	Metadata         map[string]interface{} `json:"metadata,omitempty"`
 }
 

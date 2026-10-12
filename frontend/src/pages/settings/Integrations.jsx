@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { Link } from "react-router-dom";
+import ModalPortal from "../../components/ui/ModalPortal";
 import { useConfirm } from "../../contexts/ConfirmContext";
 import { useToast } from "../../contexts/ToastContext";
 import api, { dashboardAPI, formatDate, settingsAPI } from "../../utils/api";
@@ -51,6 +52,7 @@ function build_checkmk_csv(hosts, include_additional_fields) {
 			CHECKMK_HOSTNAME_MAX_LENGTH,
 		);
 		const ip = host.ip || "";
+		const isIPv6 = ip.includes(":");
 		const alias = host.friendly_name || host.hostname || hostname;
 		const agent = "cmk-agent";
 		if (include_additional_fields) {
@@ -59,8 +61,8 @@ function build_checkmk_csv(hosts, include_additional_fields) {
 					escape_csv_field(hostname),
 					escape_csv_field(alias),
 					escape_csv_field(""), // Monitored on site
-					escape_csv_field(ip),
-					escape_csv_field(""), // IPv6 address
+					escape_csv_field(isIPv6 ? "" : ip),
+					escape_csv_field(isIPv6 ? ip : ""),
 					escape_csv_field(""), // SNMP community
 					escape_csv_field(""), // Tag: Criticality (e.g. prod, test)
 					escape_csv_field(""), // Tag: Networking Segment
@@ -1767,87 +1769,836 @@ const Integrations = () => {
 
 			{/* Create Token Modal */}
 			{show_create_modal && (
-				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-					<div className="bg-white dark:bg-secondary-800 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-						<div className="p-4 md:p-6">
-							<div className="flex items-center justify-between mb-4">
-								<h2 className="text-lg md:text-xl font-bold text-secondary-900 dark:text-white">
-									{activeTab === "gethomepage"
-										? "Create GetHomepage API Key"
-										: activeTab === "proxmox"
-											? "Create Proxmox Token"
-											: activeTab === "auto-enrollment-direct"
-												? "Create Direct Enrollment Token"
-												: activeTab === "scoped-credentials"
-													? "Create Scoped Credential"
-													: "Create Token"}
-								</h2>
-								<button
-									type="button"
-									onClick={() => {
-										setShowCreateModal(false);
-										setUsageType("proxmox-lxc");
-										setSelectedScriptType("proxmox-lxc");
-									}}
-									className="text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-200"
-								>
-									<X className="h-5 w-5 md:h-6 md:w-6" />
-								</button>
-							</div>
+				<ModalPortal>
+					<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120] p-4">
+						<div className="bg-white dark:bg-secondary-800 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+							<div className="p-4 md:p-6">
+								<div className="flex items-center justify-between mb-4">
+									<h2 className="text-lg md:text-xl font-bold text-secondary-900 dark:text-white">
+										{activeTab === "gethomepage"
+											? "Create GetHomepage API Key"
+											: activeTab === "proxmox"
+												? "Create Proxmox Token"
+												: activeTab === "auto-enrollment-direct"
+													? "Create Direct Enrollment Token"
+													: activeTab === "scoped-credentials"
+														? "Create Scoped Credential"
+														: "Create Token"}
+									</h2>
+									<button
+										type="button"
+										onClick={() => {
+											setShowCreateModal(false);
+											setUsageType("proxmox-lxc");
+											setSelectedScriptType("proxmox-lxc");
+										}}
+										className="text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-200"
+									>
+										<X className="h-5 w-5 md:h-6 md:w-6" />
+									</button>
+								</div>
 
-							<form onSubmit={create_token} className="space-y-4">
-								<label className="block">
-									<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
-										Token Name *
-									</span>
-									<input
-										type="text"
-										required
-										value={form_data.token_name}
-										onChange={(e) =>
-											setFormData({ ...form_data, token_name: e.target.value })
-										}
-										placeholder={
-											activeTab === "gethomepage"
-												? "e.g., GetHomepage Widget"
-												: activeTab === "proxmox"
-													? "e.g., Proxmox Production"
-													: activeTab === "auto-enrollment-direct"
-														? "e.g., Direct Enrollment Token"
-														: activeTab === "scoped-credentials"
-															? "e.g., Ansible Inventory"
-															: "e.g., Token Name"
-										}
-										className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
-									/>
-								</label>
+								<form onSubmit={create_token} className="space-y-4">
+									<label className="block">
+										<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+											Token Name *
+										</span>
+										<input
+											type="text"
+											required
+											value={form_data.token_name}
+											onChange={(e) =>
+												setFormData({
+													...form_data,
+													token_name: e.target.value,
+												})
+											}
+											placeholder={
+												activeTab === "gethomepage"
+													? "e.g., GetHomepage Widget"
+													: activeTab === "proxmox"
+														? "e.g., Proxmox Production"
+														: activeTab === "auto-enrollment-direct"
+															? "e.g., Direct Enrollment Token"
+															: activeTab === "scoped-credentials"
+																? "e.g., Ansible Inventory"
+																: "e.g., Token Name"
+											}
+											className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+										/>
+									</label>
 
-								{(activeTab === "proxmox" ||
-									activeTab === "auto-enrollment-direct") && (
-									<>
-										<label className="block">
-											<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
-												Max Hosts Per Day
+									{(activeTab === "proxmox" ||
+										activeTab === "auto-enrollment-direct") && (
+										<>
+											<label className="block">
+												<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+													Max Hosts Per Day
+												</span>
+												<input
+													type="number"
+													min="1"
+													max="1000"
+													value={form_data.max_hosts_per_day}
+													onChange={(e) =>
+														setFormData({
+															...form_data,
+															max_hosts_per_day: e.target.value,
+														})
+													}
+													className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+												/>
+												<p className="mt-1 text-xs text-secondary-500 dark:text-white">
+													Maximum number of hosts that can be enrolled per day
+													using this token
+												</p>
+											</label>
+
+											<label className="block">
+												<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+													Default Host Group (Optional)
+												</span>
+												<select
+													value={form_data.default_host_group_id}
+													onChange={(e) =>
+														setFormData({
+															...form_data,
+															default_host_group_id: e.target.value,
+														})
+													}
+													className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+												>
+													<option value="">No default group</option>
+													{host_groups.map((group) => (
+														<option key={group.id} value={group.id}>
+															{group.name}
+														</option>
+													))}
+												</select>
+												<p className="mt-1 text-xs text-secondary-500 dark:text-white">
+													Auto-enrolled hosts will be assigned to this group
+												</p>
+											</label>
+										</>
+									)}
+
+									{activeTab === "scoped-credentials" && (
+										<div className="block">
+											<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
+												Scopes *
 											</span>
-											<input
-												type="number"
-												min="1"
-												max="1000"
-												value={form_data.max_hosts_per_day}
-												onChange={(e) =>
-													setFormData({
-														...form_data,
-														max_hosts_per_day: e.target.value,
-													})
-												}
-												className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
-											/>
+											<div className="border border-secondary-300 dark:border-secondary-600 rounded-md p-4 bg-secondary-50 dark:bg-secondary-900">
+												<div className="mb-3">
+													<p className="text-xs font-semibold text-secondary-700 dark:text-white mb-2">
+														Host Permissions
+													</p>
+													<div className="space-y-2">
+														{["get", "put", "patch", "update", "delete"].map(
+															(action) => (
+																<label
+																	key={action}
+																	className="flex items-center gap-2"
+																>
+																	<input
+																		type="checkbox"
+																		checked={
+																			form_data.scopes?.host?.includes(
+																				action,
+																			) || false
+																		}
+																		onChange={() =>
+																			toggle_scope_action("host", action)
+																		}
+																		className="rounded border-secondary-300 dark:border-secondary-600 text-primary-600 focus:ring-primary-500 dark:focus:ring-primary-400"
+																	/>
+																	<span className="text-sm text-secondary-700 dark:text-white uppercase">
+																		{action}
+																	</span>
+																	<span className="text-xs text-secondary-500 dark:text-white">
+																		{action === "get" && "- Read host data"}
+																		{action === "put" && "- Replace host data"}
+																		{action === "patch" && "- Update host data"}
+																		{action === "update" &&
+																			"- Modify host data"}
+																		{action === "delete" && "- Delete hosts"}
+																	</span>
+																</label>
+															),
+														)}
+													</div>
+												</div>
+											</div>
 											<p className="mt-1 text-xs text-secondary-500 dark:text-white">
-												Maximum number of hosts that can be enrolled per day
-												using this token
+												Select the permissions this API credential should have
 											</p>
-										</label>
+										</div>
+									)}
 
+									<label className="block">
+										<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+											Allowed IP Addresses (Optional)
+										</span>
+										<input
+											type="text"
+											value={form_data.allowed_ip_ranges}
+											onChange={(e) =>
+												setFormData({
+													...form_data,
+													allowed_ip_ranges: e.target.value,
+												})
+											}
+											placeholder="e.g., 192.168.1.100, 10.0.0.50"
+											className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+										/>
+										<p className="mt-1 text-xs text-secondary-500 dark:text-white">
+											Comma-separated list of IP addresses allowed to use this
+											token
+										</p>
+									</label>
+
+									<label className="block">
+										<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+											Expiration Date (Optional)
+										</span>
+										<input
+											type="datetime-local"
+											value={form_data.expires_at}
+											onChange={(e) =>
+												setFormData({
+													...form_data,
+													expires_at: e.target.value,
+												})
+											}
+											className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+										/>
+									</label>
+
+									<div className="flex flex-col sm:flex-row gap-3 pt-4">
+										<button
+											type="submit"
+											className="flex-1 btn-primary py-2 px-4 rounded-md w-full sm:w-auto"
+										>
+											Create Token
+										</button>
+										<button
+											type="button"
+											onClick={() => {
+												setShowCreateModal(false);
+											}}
+											className="flex-1 bg-secondary-100 dark:bg-secondary-700 text-secondary-700 dark:text-white py-2 px-4 rounded-md hover:bg-secondary-200 dark:hover:bg-secondary-600 w-full sm:w-auto"
+										>
+											Cancel
+										</button>
+									</div>
+								</form>
+							</div>
+						</div>
+					</div>
+				</ModalPortal>
+			)}
+
+			{/* New Token Display Modal */}
+			{new_token && (
+				<ModalPortal>
+					<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120] p-4">
+						<div className="bg-white dark:bg-secondary-800 rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+							<div className="p-4 md:p-6">
+								<div className="flex items-center justify-between mb-4 gap-3">
+									<div className="flex items-center gap-2 min-w-0">
+										<CheckCircle className="h-5 w-5 md:h-6 md:w-6 text-green-600 dark:text-green-400 flex-shrink-0" />
+										<h2 className="text-base md:text-lg font-bold text-secondary-900 dark:text-white truncate">
+											{new_token.metadata?.integration_type === "gethomepage" ||
+											activeTab === "gethomepage"
+												? "API Key Created Successfully"
+												: new_token.metadata?.integration_type === "api" ||
+														activeTab === "scoped-credentials"
+													? "API Credential Created Successfully"
+													: new_token.metadata?.integration_type ===
+																"direct-host" ||
+															activeTab === "auto-enrollment-direct"
+														? "Direct Enrollment Token Created Successfully"
+														: "Token Created Successfully"}
+										</h2>
+									</div>
+									<button
+										type="button"
+										onClick={() => {
+											setNewToken(null);
+											setShowSecret(false);
+											setSelectedScriptType("proxmox-lxc");
+										}}
+										className="text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-200 flex-shrink-0"
+									>
+										<X className="h-5 w-5" />
+									</button>
+								</div>
+
+								<div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3 mb-4">
+									<div className="flex items-center gap-2">
+										<AlertCircle className="h-4 w-4 text-yellow-600 dark:text-yellow-400 flex-shrink-0" />
+										<p className="text-xs text-yellow-800 dark:text-yellow-200">
+											<strong>Important:</strong> Save these credentials - the
+											secret won't be shown again.
+										</p>
+									</div>
+								</div>
+
+								<div className="space-y-3">
+									<div>
+										<label
+											htmlFor={token_name_id}
+											className="block text-xs font-medium text-secondary-700 dark:text-white mb-1"
+										>
+											Token Name
+										</label>
+										<input
+											id={token_name_id}
+											type="text"
+											value={new_token.token_name}
+											readOnly
+											className="w-full px-3 py-2 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono"
+										/>
+									</div>
+
+									<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+										<div>
+											<label
+												htmlFor={token_key_id}
+												className="block text-xs font-medium text-secondary-700 dark:text-white mb-1"
+											>
+												Token Key
+											</label>
+											<div className="flex items-center gap-2">
+												<input
+													id={token_key_id}
+													type="text"
+													value={new_token.token_key}
+													readOnly
+													className="flex-1 px-3 py-2 text-xs md:text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono break-all"
+												/>
+												<button
+													type="button"
+													onClick={() =>
+														copy_to_clipboard(new_token.token_key, "new-key")
+													}
+													className="btn-primary p-2 flex-shrink-0"
+													title="Copy Key"
+												>
+													{copy_success["new-key"] ? (
+														<CheckCircle className="h-4 w-4" />
+													) : (
+														<Copy className="h-4 w-4" />
+													)}
+												</button>
+											</div>
+										</div>
+
+										<div>
+											<label
+												htmlFor={token_secret_id}
+												className="block text-xs font-medium text-secondary-700 dark:text-white mb-1"
+											>
+												Token Secret
+											</label>
+											<div className="flex items-center gap-2">
+												<input
+													id={token_secret_id}
+													type={show_secret ? "text" : "password"}
+													value={new_token.token_secret}
+													readOnly
+													className="flex-1 px-3 py-2 text-xs md:text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono break-all"
+												/>
+												<button
+													type="button"
+													onClick={() => setShowSecret(!show_secret)}
+													className="p-2 text-secondary-600 hover:text-secondary-800 dark:text-white flex-shrink-0"
+													title="Toggle visibility"
+												>
+													{show_secret ? (
+														<EyeOff className="h-4 w-4" />
+													) : (
+														<Eye className="h-4 w-4" />
+													)}
+												</button>
+												<button
+													type="button"
+													onClick={() =>
+														copy_to_clipboard(
+															new_token.token_secret,
+															"new-secret",
+														)
+													}
+													className="btn-primary p-2 flex-shrink-0"
+													title="Copy Secret"
+												>
+													{copy_success["new-secret"] ? (
+														<CheckCircle className="h-4 w-4" />
+													) : (
+														<Copy className="h-4 w-4" />
+													)}
+												</button>
+											</div>
+										</div>
+									</div>
+
+									{(new_token.metadata?.integration_type === "api" ||
+										activeTab === "scoped-credentials") &&
+										new_token.scopes && (
+											<div className="mt-4">
+												<div className="block text-xs font-medium text-secondary-700 dark:text-white mb-2">
+													Granted Scopes
+												</div>
+												<div className="bg-secondary-50 dark:bg-secondary-900 border border-secondary-300 dark:border-secondary-600 rounded-md p-3">
+													{Object.entries(new_token.scopes).map(
+														([resource, actions]) => (
+															<div key={resource} className="text-sm">
+																<span className="font-semibold text-secondary-800 dark:text-secondary-200 capitalize">
+																	{resource}:
+																</span>{" "}
+																<span className="text-secondary-600 dark:text-white">
+																	{Array.isArray(actions)
+																		? actions.join(", ").toUpperCase()
+																		: actions}
+																</span>
+															</div>
+														),
+													)}
+												</div>
+											</div>
+										)}
+
+									{(new_token.metadata?.integration_type === "api" ||
+										activeTab === "scoped-credentials") && (
+										<div className="mt-6">
+											<div className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
+												Usage Examples
+											</div>
+											<div className="space-y-3">
+												<div>
+													<p className="text-xs text-secondary-600 dark:text-white mb-2">
+														Basic cURL request:
+													</p>
+													<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+														<input
+															type="text"
+															value={`curl -u "${new_token.token_key}:${new_token.token_secret}" ${server_url}/api/v1/api/hosts`}
+															readOnly
+															className="flex-1 px-3 py-2 text-xs border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono break-all"
+														/>
+														<button
+															type="button"
+															onClick={() =>
+																copy_to_clipboard(
+																	`curl -u "${new_token.token_key}:${new_token.token_secret}" ${server_url}/api/v1/api/hosts`,
+																	"api-curl-basic",
+																)
+															}
+															className="btn-primary p-2 flex-shrink-0"
+															title="Copy cURL command"
+														>
+															{copy_success["api-curl-basic"] ? (
+																<CheckCircle className="h-4 w-4" />
+															) : (
+																<Copy className="h-4 w-4" />
+															)}
+														</button>
+													</div>
+												</div>
+												<div>
+													<p className="text-xs text-secondary-600 dark:text-white mb-2">
+														Filter by host group:
+													</p>
+													<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+														<input
+															type="text"
+															value={`curl -u "${new_token.token_key}:${new_token.token_secret}" "${server_url}/api/v1/api/hosts?hostgroup=Production"`}
+															readOnly
+															className="flex-1 px-3 py-2 text-xs border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono break-all"
+														/>
+														<button
+															type="button"
+															onClick={() =>
+																copy_to_clipboard(
+																	`curl -u "${new_token.token_key}:${new_token.token_secret}" "${server_url}/api/v1/api/hosts?hostgroup=Production"`,
+																	"api-curl-filter",
+																)
+															}
+															className="btn-primary p-2 flex-shrink-0"
+															title="Copy cURL command"
+														>
+															{copy_success["api-curl-filter"] ? (
+																<CheckCircle className="h-4 w-4" />
+															) : (
+																<Copy className="h-4 w-4" />
+															)}
+														</button>
+													</div>
+												</div>
+											</div>
+											<p className="text-xs text-secondary-500 dark:text-white mt-3">
+												💡 Replace "Production" with your host group name or
+												UUID
+											</p>
+										</div>
+									)}
+
+									{(new_token.metadata?.integration_type === "proxmox-lxc" ||
+										activeTab === "proxmox") && (
+										<div className="mt-6">
+											<div className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
+												Proxmox Auto-Enrollment Command
+											</div>
+
+											<p className="text-xs text-secondary-600 dark:text-white mb-2">
+												Run this command on your Proxmox host to automatically
+												discover and enroll all running LXC containers:
+											</p>
+
+											{/* Force Install Toggle */}
+											<div className="mb-3">
+												<label className="flex items-center gap-2 text-sm">
+													<input
+														type="checkbox"
+														checked={force_proxmox_install}
+														onChange={(e) =>
+															setForceProxmoxInstall(e.target.checked)
+														}
+														className="rounded border-secondary-300 dark:border-secondary-600 text-primary-600 focus:ring-primary-500 dark:focus:ring-primary-400 dark:bg-secondary-700"
+													/>
+													<span className="text-secondary-800 dark:text-secondary-200">
+														Force install (bypass broken packages)
+													</span>
+												</label>
+												<p className="text-xs text-secondary-600 dark:text-white mt-1">
+													Enable this if hosts have broken packages (CloudPanel,
+													WHM, etc.) that block apt-get operations
+												</p>
+											</div>
+
+											<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+												<input
+													type="text"
+													value={`curl ${curl_flags} "${getEnrollmentUrl("proxmox-lxc")}" | bash`}
+													readOnly
+													className="flex-1 px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono text-xs break-all"
+												/>
+												<button
+													type="button"
+													onClick={() =>
+														copy_to_clipboard(
+															`curl ${curl_flags} "${getEnrollmentUrl("proxmox-lxc")}" | bash`,
+															"enrollment-command",
+														)
+													}
+													className="btn-primary flex items-center justify-center gap-1 px-3 py-2 whitespace-nowrap"
+												>
+													{copy_success["enrollment-command"] ? (
+														<>
+															<CheckCircle className="h-4 w-4" />
+															Copied
+														</>
+													) : (
+														<>
+															<Copy className="h-4 w-4" />
+															Copy
+														</>
+													)}
+												</button>
+											</div>
+										</div>
+									)}
+
+									{(new_token.metadata?.integration_type === "direct-host" ||
+										activeTab === "auto-enrollment-direct") && (
+										<div className="mt-6">
+											<div className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
+												Direct Host Enrollment Command
+											</div>
+
+											<p className="text-xs text-secondary-600 dark:text-white mb-2">
+												Run this command on individual hosts to enroll them
+												directly:
+											</p>
+
+											{/* Force Install Toggle */}
+											<div className="mb-3">
+												<label className="flex items-center gap-2 text-sm">
+													<input
+														type="checkbox"
+														checked={force_proxmox_install}
+														onChange={(e) =>
+															setForceProxmoxInstall(e.target.checked)
+														}
+														className="rounded border-secondary-300 dark:border-secondary-600 text-primary-600 focus:ring-primary-500 dark:focus:ring-primary-400 dark:bg-secondary-700"
+													/>
+													<span className="text-secondary-800 dark:text-secondary-200">
+														Force install (bypass broken packages)
+													</span>
+												</label>
+												<p className="text-xs text-secondary-600 dark:text-white mt-1">
+													Enable this if hosts have broken packages (CloudPanel,
+													WHM, etc.) that block apt-get operations
+												</p>
+											</div>
+
+											<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+												<input
+													type="text"
+													value={`curl ${curl_flags} "${getEnrollmentUrl("direct-host")}" | sh`}
+													readOnly
+													className="flex-1 px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono text-xs break-all"
+												/>
+												<button
+													type="button"
+													onClick={() =>
+														copy_to_clipboard(
+															`curl ${curl_flags} "${getEnrollmentUrl("direct-host")}" | sh`,
+															"direct-enrollment-command",
+														)
+													}
+													className="btn-primary flex items-center justify-center gap-1 px-3 py-2 whitespace-nowrap"
+												>
+													{copy_success["direct-enrollment-command"] ? (
+														<>
+															<CheckCircle className="h-4 w-4" />
+															Copied
+														</>
+													) : (
+														<>
+															<Copy className="h-4 w-4" />
+															Copy
+														</>
+													)}
+												</button>
+											</div>
+
+											<p className="text-xs text-secondary-500 dark:text-white mt-3 p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
+												💡 <strong>Tip:</strong> Specify a custom name:{" "}
+												<code className="text-xs bg-secondary-200 dark:bg-secondary-700 px-1 py-0.5 rounded">
+													FRIENDLY_NAME="My Server" sh
+												</code>
+											</p>
+										</div>
+									)}
+
+									{(new_token.metadata?.integration_type === "gethomepage" ||
+										activeTab === "gethomepage") && (
+										<div className="mt-3 space-y-3">
+											<div>
+												<label
+													htmlFor={token_base64_id}
+													className="block text-xs font-medium text-secondary-700 dark:text-white mb-1"
+												>
+													Base64 Encoded Credentials
+												</label>
+												<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+													<input
+														id={token_base64_id}
+														type="text"
+														value={btoa(
+															`${new_token.token_key}:${new_token.token_secret}`,
+														)}
+														readOnly
+														className="flex-1 px-3 py-2 text-xs md:text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono break-all"
+													/>
+													<button
+														type="button"
+														onClick={() =>
+															copy_to_clipboard(
+																btoa(
+																	`${new_token.token_key}:${new_token.token_secret}`,
+																),
+																"base64-creds",
+															)
+														}
+														className="btn-primary p-2 flex-shrink-0"
+														title="Copy Base64"
+													>
+														{copy_success["base64-creds"] ? (
+															<CheckCircle className="h-4 w-4" />
+														) : (
+															<Copy className="h-4 w-4" />
+														)}
+													</button>
+												</div>
+											</div>
+
+											<div>
+												<div className="flex items-center justify-between mb-1">
+													<label
+														htmlFor={gethomepage_config_id}
+														className="text-xs font-medium text-secondary-700 dark:text-white"
+													>
+														GetHomepage Configuration
+													</label>
+													<button
+														type="button"
+														onClick={() => {
+															const base64Creds = btoa(
+																`${new_token.token_key}:${new_token.token_secret}`,
+															);
+															const config = `- PatchMon:
+    href: ${server_url}
+    description: PatchMon Statistics
+    icon: ${server_url}/assets/logo_square_default.svg
+    widget:
+      type: customapi
+      url: ${server_url}/api/v1/gethomepage/stats
+      headers:
+        Authorization: Basic ${base64Creds}
+      mappings:
+       - field: total_hosts
+          label: Total Hosts
+       - field: hosts_needing_updates
+          label: Needs Updates
+       - field: security_updates
+          label: Security Updates`;
+															copy_to_clipboard(config, "gethomepage-config");
+														}}
+														className="btn-primary flex items-center gap-1 px-2 py-1 text-xs"
+													>
+														{copy_success["gethomepage-config"] ? (
+															<>
+																<CheckCircle className="h-3 w-3" />
+																Copied
+															</>
+														) : (
+															<>
+																<Copy className="h-3 w-3" />
+																Copy Config
+															</>
+														)}
+													</button>
+												</div>
+												<textarea
+													id={gethomepage_config_id}
+													value={(() => {
+														const base64Creds = btoa(
+															`${new_token.token_key}:${new_token.token_secret}`,
+														);
+														return `- PatchMon:
+    href: ${server_url}
+    description: PatchMon Statistics
+    icon: ${server_url}/assets/logo_square_default.svg
+    widget:
+      type: customapi
+      url: ${server_url}/api/v1/gethomepage/stats
+      headers:
+        Authorization: Basic ${base64Creds}
+      mappings:
+       - field: total_hosts
+          label: Total Hosts
+       - field: hosts_needing_updates
+          label: Needs Updates
+       - field: security_updates
+          label: Security Updates`;
+													})()}
+													readOnly
+													rows={12}
+													className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono text-xs resize-none"
+												/>
+												<p className="text-xs text-secondary-500 dark:text-white mt-1">
+													💡 Paste into your GetHomepage{" "}
+													<code className="bg-secondary-100 dark:bg-secondary-700 px-1 rounded">
+														services.yml
+													</code>
+												</p>
+											</div>
+										</div>
+									)}
+								</div>
+
+								<div className="mt-4 pt-4 border-t border-secondary-200 dark:border-secondary-600">
+									<button
+										type="button"
+										onClick={() => {
+											setNewToken(null);
+											setShowSecret(false);
+											setSelectedScriptType("proxmox-lxc");
+										}}
+										className="w-full btn-primary py-2 px-4 rounded-md text-sm md:text-base"
+									>
+										I've Saved the Credentials
+									</button>
+								</div>
+							</div>
+						</div>
+					</div>
+				</ModalPortal>
+			)}
+
+			{/* Edit Token Modal */}
+			{show_edit_modal && edit_token && (
+				<ModalPortal>
+					<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120] p-4">
+						<div className="bg-white dark:bg-secondary-800 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+							<div className="p-4 md:p-6">
+								<div className="flex items-center justify-between mb-4 md:mb-6 gap-3">
+									<h2 className="text-lg md:text-xl font-bold text-secondary-900 dark:text-white">
+										Edit Token
+									</h2>
+									<button
+										type="button"
+										onClick={() => {
+											setShowEditModal(false);
+											setEditToken(null);
+										}}
+										className="text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-200 flex-shrink-0"
+									>
+										<X className="h-5 w-5 md:h-6 md:w-6" />
+									</button>
+								</div>
+
+								<form onSubmit={update_token} className="space-y-4">
+									<label className="block">
+										<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+											Token Name
+										</span>
+										<input
+											type="text"
+											value={form_data.token_name}
+											onChange={(e) =>
+												setFormData({
+													...form_data,
+													token_name: e.target.value,
+												})
+											}
+											placeholder="e.g., my-pve"
+											className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+											required
+										/>
+										<p className="mt-1 text-xs text-secondary-500 dark:text-white">
+											Update the token name for better organization
+										</p>
+									</label>
+
+									<label className="block">
+										<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+											Max Hosts Per Day
+										</span>
+										<input
+											type="number"
+											min="1"
+											max="1000"
+											value={form_data.max_hosts_per_day}
+											onChange={(e) =>
+												setFormData({
+													...form_data,
+													max_hosts_per_day:
+														parseInt(e.target.value, 10) || 100,
+												})
+											}
+											className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+										/>
+										<p className="mt-1 text-xs text-secondary-500 dark:text-white">
+											Maximum number of hosts that can be enrolled per day with
+											this token
+										</p>
+									</label>
+
+									{(edit_token?.metadata?.integration_type === "proxmox-lxc" ||
+										edit_token?.metadata?.integration_type ===
+											"direct-host") && (
 										<label className="block">
 											<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
 												Default Host Group (Optional)
@@ -1873,846 +2624,122 @@ const Integrations = () => {
 												Auto-enrolled hosts will be assigned to this group
 											</p>
 										</label>
-									</>
-								)}
+									)}
 
-								{activeTab === "scoped-credentials" && (
-									<div className="block">
-										<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
-											Scopes *
-										</span>
-										<div className="border border-secondary-300 dark:border-secondary-600 rounded-md p-4 bg-secondary-50 dark:bg-secondary-900">
-											<div className="mb-3">
-												<p className="text-xs font-semibold text-secondary-700 dark:text-white mb-2">
-													Host Permissions
-												</p>
-												<div className="space-y-2">
-													{["get", "put", "patch", "update", "delete"].map(
-														(action) => (
-															<label
-																key={action}
-																className="flex items-center gap-2"
-															>
-																<input
-																	type="checkbox"
-																	checked={
-																		form_data.scopes?.host?.includes(action) ||
-																		false
-																	}
-																	onChange={() =>
-																		toggle_scope_action("host", action)
-																	}
-																	className="rounded border-secondary-300 dark:border-secondary-600 text-primary-600 focus:ring-primary-500 dark:focus:ring-primary-400"
-																/>
-																<span className="text-sm text-secondary-700 dark:text-white uppercase">
-																	{action}
-																</span>
-																<span className="text-xs text-secondary-500 dark:text-white">
-																	{action === "get" && "- Read host data"}
-																	{action === "put" && "- Replace host data"}
-																	{action === "patch" && "- Update host data"}
-																	{action === "update" && "- Modify host data"}
-																	{action === "delete" && "- Delete hosts"}
-																</span>
-															</label>
-														),
-													)}
+									{edit_token?.metadata?.integration_type === "api" && (
+										<div className="block">
+											<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
+												Scopes
+											</span>
+											<div className="border border-secondary-300 dark:border-secondary-600 rounded-md p-4 bg-secondary-50 dark:bg-secondary-900">
+												<div className="mb-3">
+													<p className="text-xs font-semibold text-secondary-700 dark:text-white mb-2">
+														Host Permissions
+													</p>
+													<div className="space-y-2">
+														{["get", "put", "patch", "update", "delete"].map(
+															(action) => (
+																<label
+																	key={action}
+																	className="flex items-center gap-2"
+																>
+																	<input
+																		type="checkbox"
+																		checked={
+																			form_data.scopes?.host?.includes(
+																				action,
+																			) || false
+																		}
+																		onChange={() =>
+																			toggle_scope_action("host", action)
+																		}
+																		className="rounded border-secondary-300 dark:border-secondary-600 text-primary-600 focus:ring-primary-500 dark:focus:ring-primary-400"
+																	/>
+																	<span className="text-sm text-secondary-700 dark:text-white uppercase">
+																		{action}
+																	</span>
+																	<span className="text-xs text-secondary-500 dark:text-white">
+																		{action === "get" && "- Read host data"}
+																		{action === "put" && "- Replace host data"}
+																		{action === "patch" && "- Update host data"}
+																		{action === "update" &&
+																			"- Modify host data"}
+																		{action === "delete" && "- Delete hosts"}
+																	</span>
+																</label>
+															),
+														)}
+													</div>
 												</div>
 											</div>
-										</div>
-										<p className="mt-1 text-xs text-secondary-500 dark:text-white">
-											Select the permissions this API credential should have
-										</p>
-									</div>
-								)}
-
-								<label className="block">
-									<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
-										Allowed IP Addresses (Optional)
-									</span>
-									<input
-										type="text"
-										value={form_data.allowed_ip_ranges}
-										onChange={(e) =>
-											setFormData({
-												...form_data,
-												allowed_ip_ranges: e.target.value,
-											})
-										}
-										placeholder="e.g., 192.168.1.100, 10.0.0.50"
-										className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
-									/>
-									<p className="mt-1 text-xs text-secondary-500 dark:text-white">
-										Comma-separated list of IP addresses allowed to use this
-										token
-									</p>
-								</label>
-
-								<label className="block">
-									<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
-										Expiration Date (Optional)
-									</span>
-									<input
-										type="datetime-local"
-										value={form_data.expires_at}
-										onChange={(e) =>
-											setFormData({ ...form_data, expires_at: e.target.value })
-										}
-										className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
-									/>
-								</label>
-
-								<div className="flex flex-col sm:flex-row gap-3 pt-4">
-									<button
-										type="submit"
-										className="flex-1 btn-primary py-2 px-4 rounded-md w-full sm:w-auto"
-									>
-										Create Token
-									</button>
-									<button
-										type="button"
-										onClick={() => {
-											setShowCreateModal(false);
-										}}
-										className="flex-1 bg-secondary-100 dark:bg-secondary-700 text-secondary-700 dark:text-white py-2 px-4 rounded-md hover:bg-secondary-200 dark:hover:bg-secondary-600 w-full sm:w-auto"
-									>
-										Cancel
-									</button>
-								</div>
-							</form>
-						</div>
-					</div>
-				</div>
-			)}
-
-			{/* New Token Display Modal */}
-			{new_token && (
-				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-					<div className="bg-white dark:bg-secondary-800 rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-						<div className="p-4 md:p-6">
-							<div className="flex items-center justify-between mb-4 gap-3">
-								<div className="flex items-center gap-2 min-w-0">
-									<CheckCircle className="h-5 w-5 md:h-6 md:w-6 text-green-600 dark:text-green-400 flex-shrink-0" />
-									<h2 className="text-base md:text-lg font-bold text-secondary-900 dark:text-white truncate">
-										{new_token.metadata?.integration_type === "gethomepage" ||
-										activeTab === "gethomepage"
-											? "API Key Created Successfully"
-											: new_token.metadata?.integration_type === "api" ||
-													activeTab === "scoped-credentials"
-												? "API Credential Created Successfully"
-												: new_token.metadata?.integration_type ===
-															"direct-host" ||
-														activeTab === "auto-enrollment-direct"
-													? "Direct Enrollment Token Created Successfully"
-													: "Token Created Successfully"}
-									</h2>
-								</div>
-								<button
-									type="button"
-									onClick={() => {
-										setNewToken(null);
-										setShowSecret(false);
-										setSelectedScriptType("proxmox-lxc");
-									}}
-									className="text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-200 flex-shrink-0"
-								>
-									<X className="h-5 w-5" />
-								</button>
-							</div>
-
-							<div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3 mb-4">
-								<div className="flex items-center gap-2">
-									<AlertCircle className="h-4 w-4 text-yellow-600 dark:text-yellow-400 flex-shrink-0" />
-									<p className="text-xs text-yellow-800 dark:text-yellow-200">
-										<strong>Important:</strong> Save these credentials - the
-										secret won't be shown again.
-									</p>
-								</div>
-							</div>
-
-							<div className="space-y-3">
-								<div>
-									<label
-										htmlFor={token_name_id}
-										className="block text-xs font-medium text-secondary-700 dark:text-white mb-1"
-									>
-										Token Name
-									</label>
-									<input
-										id={token_name_id}
-										type="text"
-										value={new_token.token_name}
-										readOnly
-										className="w-full px-3 py-2 text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono"
-									/>
-								</div>
-
-								<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-									<div>
-										<label
-											htmlFor={token_key_id}
-											className="block text-xs font-medium text-secondary-700 dark:text-white mb-1"
-										>
-											Token Key
-										</label>
-										<div className="flex items-center gap-2">
-											<input
-												id={token_key_id}
-												type="text"
-												value={new_token.token_key}
-												readOnly
-												className="flex-1 px-3 py-2 text-xs md:text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono break-all"
-											/>
-											<button
-												type="button"
-												onClick={() =>
-													copy_to_clipboard(new_token.token_key, "new-key")
-												}
-												className="btn-primary p-2 flex-shrink-0"
-												title="Copy Key"
-											>
-												{copy_success["new-key"] ? (
-													<CheckCircle className="h-4 w-4" />
-												) : (
-													<Copy className="h-4 w-4" />
-												)}
-											</button>
-										</div>
-									</div>
-
-									<div>
-										<label
-											htmlFor={token_secret_id}
-											className="block text-xs font-medium text-secondary-700 dark:text-white mb-1"
-										>
-											Token Secret
-										</label>
-										<div className="flex items-center gap-2">
-											<input
-												id={token_secret_id}
-												type={show_secret ? "text" : "password"}
-												value={new_token.token_secret}
-												readOnly
-												className="flex-1 px-3 py-2 text-xs md:text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono break-all"
-											/>
-											<button
-												type="button"
-												onClick={() => setShowSecret(!show_secret)}
-												className="p-2 text-secondary-600 hover:text-secondary-800 dark:text-white flex-shrink-0"
-												title="Toggle visibility"
-											>
-												{show_secret ? (
-													<EyeOff className="h-4 w-4" />
-												) : (
-													<Eye className="h-4 w-4" />
-												)}
-											</button>
-											<button
-												type="button"
-												onClick={() =>
-													copy_to_clipboard(
-														new_token.token_secret,
-														"new-secret",
-													)
-												}
-												className="btn-primary p-2 flex-shrink-0"
-												title="Copy Secret"
-											>
-												{copy_success["new-secret"] ? (
-													<CheckCircle className="h-4 w-4" />
-												) : (
-													<Copy className="h-4 w-4" />
-												)}
-											</button>
-										</div>
-									</div>
-								</div>
-
-								{(new_token.metadata?.integration_type === "api" ||
-									activeTab === "scoped-credentials") &&
-									new_token.scopes && (
-										<div className="mt-4">
-											<div className="block text-xs font-medium text-secondary-700 dark:text-white mb-2">
-												Granted Scopes
-											</div>
-											<div className="bg-secondary-50 dark:bg-secondary-900 border border-secondary-300 dark:border-secondary-600 rounded-md p-3">
-												{Object.entries(new_token.scopes).map(
-													([resource, actions]) => (
-														<div key={resource} className="text-sm">
-															<span className="font-semibold text-secondary-800 dark:text-secondary-200 capitalize">
-																{resource}:
-															</span>{" "}
-															<span className="text-secondary-600 dark:text-white">
-																{Array.isArray(actions)
-																	? actions.join(", ").toUpperCase()
-																	: actions}
-															</span>
-														</div>
-													),
-												)}
-											</div>
+											<p className="mt-1 text-xs text-secondary-500 dark:text-white">
+												Update the permissions for this API credential
+											</p>
 										</div>
 									)}
 
-								{(new_token.metadata?.integration_type === "api" ||
-									activeTab === "scoped-credentials") && (
-									<div className="mt-6">
-										<div className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
-											Usage Examples
-										</div>
-										<div className="space-y-3">
-											<div>
-												<p className="text-xs text-secondary-600 dark:text-white mb-2">
-													Basic cURL request:
-												</p>
-												<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-													<input
-														type="text"
-														value={`curl -u "${new_token.token_key}:${new_token.token_secret}" ${server_url}/api/v1/api/hosts`}
-														readOnly
-														className="flex-1 px-3 py-2 text-xs border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono break-all"
-													/>
-													<button
-														type="button"
-														onClick={() =>
-															copy_to_clipboard(
-																`curl -u "${new_token.token_key}:${new_token.token_secret}" ${server_url}/api/v1/api/hosts`,
-																"api-curl-basic",
-															)
-														}
-														className="btn-primary p-2 flex-shrink-0"
-														title="Copy cURL command"
-													>
-														{copy_success["api-curl-basic"] ? (
-															<CheckCircle className="h-4 w-4" />
-														) : (
-															<Copy className="h-4 w-4" />
-														)}
-													</button>
-												</div>
-											</div>
-											<div>
-												<p className="text-xs text-secondary-600 dark:text-white mb-2">
-													Filter by host group:
-												</p>
-												<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-													<input
-														type="text"
-														value={`curl -u "${new_token.token_key}:${new_token.token_secret}" "${server_url}/api/v1/api/hosts?hostgroup=Production"`}
-														readOnly
-														className="flex-1 px-3 py-2 text-xs border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono break-all"
-													/>
-													<button
-														type="button"
-														onClick={() =>
-															copy_to_clipboard(
-																`curl -u "${new_token.token_key}:${new_token.token_secret}" "${server_url}/api/v1/api/hosts?hostgroup=Production"`,
-																"api-curl-filter",
-															)
-														}
-														className="btn-primary p-2 flex-shrink-0"
-														title="Copy cURL command"
-													>
-														{copy_success["api-curl-filter"] ? (
-															<CheckCircle className="h-4 w-4" />
-														) : (
-															<Copy className="h-4 w-4" />
-														)}
-													</button>
-												</div>
-											</div>
-										</div>
-										<p className="text-xs text-secondary-500 dark:text-white mt-3">
-											💡 Replace "Production" with your host group name or UUID
-										</p>
-									</div>
-								)}
-
-								{(new_token.metadata?.integration_type === "proxmox-lxc" ||
-									activeTab === "proxmox") && (
-									<div className="mt-6">
-										<div className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
-											Proxmox Auto-Enrollment Command
-										</div>
-
-										<p className="text-xs text-secondary-600 dark:text-white mb-2">
-											Run this command on your Proxmox host to automatically
-											discover and enroll all running LXC containers:
-										</p>
-
-										{/* Force Install Toggle */}
-										<div className="mb-3">
-											<label className="flex items-center gap-2 text-sm">
-												<input
-													type="checkbox"
-													checked={force_proxmox_install}
-													onChange={(e) =>
-														setForceProxmoxInstall(e.target.checked)
-													}
-													className="rounded border-secondary-300 dark:border-secondary-600 text-primary-600 focus:ring-primary-500 dark:focus:ring-primary-400 dark:bg-secondary-700"
-												/>
-												<span className="text-secondary-800 dark:text-secondary-200">
-													Force install (bypass broken packages)
-												</span>
-											</label>
-											<p className="text-xs text-secondary-600 dark:text-white mt-1">
-												Enable this if hosts have broken packages (CloudPanel,
-												WHM, etc.) that block apt-get operations
-											</p>
-										</div>
-
-										<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-											<input
-												type="text"
-												value={`curl ${curl_flags} "${getEnrollmentUrl("proxmox-lxc")}" | bash`}
-												readOnly
-												className="flex-1 px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono text-xs break-all"
-											/>
-											<button
-												type="button"
-												onClick={() =>
-													copy_to_clipboard(
-														`curl ${curl_flags} "${getEnrollmentUrl("proxmox-lxc")}" | bash`,
-														"enrollment-command",
-													)
-												}
-												className="btn-primary flex items-center justify-center gap-1 px-3 py-2 whitespace-nowrap"
-											>
-												{copy_success["enrollment-command"] ? (
-													<>
-														<CheckCircle className="h-4 w-4" />
-														Copied
-													</>
-												) : (
-													<>
-														<Copy className="h-4 w-4" />
-														Copy
-													</>
-												)}
-											</button>
-										</div>
-									</div>
-								)}
-
-								{(new_token.metadata?.integration_type === "direct-host" ||
-									activeTab === "auto-enrollment-direct") && (
-									<div className="mt-6">
-										<div className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
-											Direct Host Enrollment Command
-										</div>
-
-										<p className="text-xs text-secondary-600 dark:text-white mb-2">
-											Run this command on individual hosts to enroll them
-											directly:
-										</p>
-
-										{/* Force Install Toggle */}
-										<div className="mb-3">
-											<label className="flex items-center gap-2 text-sm">
-												<input
-													type="checkbox"
-													checked={force_proxmox_install}
-													onChange={(e) =>
-														setForceProxmoxInstall(e.target.checked)
-													}
-													className="rounded border-secondary-300 dark:border-secondary-600 text-primary-600 focus:ring-primary-500 dark:focus:ring-primary-400 dark:bg-secondary-700"
-												/>
-												<span className="text-secondary-800 dark:text-secondary-200">
-													Force install (bypass broken packages)
-												</span>
-											</label>
-											<p className="text-xs text-secondary-600 dark:text-white mt-1">
-												Enable this if hosts have broken packages (CloudPanel,
-												WHM, etc.) that block apt-get operations
-											</p>
-										</div>
-
-										<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-											<input
-												type="text"
-												value={`curl ${curl_flags} "${getEnrollmentUrl("direct-host")}" | sh`}
-												readOnly
-												className="flex-1 px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono text-xs break-all"
-											/>
-											<button
-												type="button"
-												onClick={() =>
-													copy_to_clipboard(
-														`curl ${curl_flags} "${getEnrollmentUrl("direct-host")}" | sh`,
-														"direct-enrollment-command",
-													)
-												}
-												className="btn-primary flex items-center justify-center gap-1 px-3 py-2 whitespace-nowrap"
-											>
-												{copy_success["direct-enrollment-command"] ? (
-													<>
-														<CheckCircle className="h-4 w-4" />
-														Copied
-													</>
-												) : (
-													<>
-														<Copy className="h-4 w-4" />
-														Copy
-													</>
-												)}
-											</button>
-										</div>
-
-										<p className="text-xs text-secondary-500 dark:text-white mt-3 p-2 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
-											💡 <strong>Tip:</strong> Specify a custom name:{" "}
-											<code className="text-xs bg-secondary-200 dark:bg-secondary-700 px-1 py-0.5 rounded">
-												FRIENDLY_NAME="My Server" sh
-											</code>
-										</p>
-									</div>
-								)}
-
-								{(new_token.metadata?.integration_type === "gethomepage" ||
-									activeTab === "gethomepage") && (
-									<div className="mt-3 space-y-3">
-										<div>
-											<label
-												htmlFor={token_base64_id}
-												className="block text-xs font-medium text-secondary-700 dark:text-white mb-1"
-											>
-												Base64 Encoded Credentials
-											</label>
-											<div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-												<input
-													id={token_base64_id}
-													type="text"
-													value={btoa(
-														`${new_token.token_key}:${new_token.token_secret}`,
-													)}
-													readOnly
-													className="flex-1 px-3 py-2 text-xs md:text-sm border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono break-all"
-												/>
-												<button
-													type="button"
-													onClick={() =>
-														copy_to_clipboard(
-															btoa(
-																`${new_token.token_key}:${new_token.token_secret}`,
-															),
-															"base64-creds",
-														)
-													}
-													className="btn-primary p-2 flex-shrink-0"
-													title="Copy Base64"
-												>
-													{copy_success["base64-creds"] ? (
-														<CheckCircle className="h-4 w-4" />
-													) : (
-														<Copy className="h-4 w-4" />
-													)}
-												</button>
-											</div>
-										</div>
-
-										<div>
-											<div className="flex items-center justify-between mb-1">
-												<label
-													htmlFor={gethomepage_config_id}
-													className="text-xs font-medium text-secondary-700 dark:text-white"
-												>
-													GetHomepage Configuration
-												</label>
-												<button
-													type="button"
-													onClick={() => {
-														const base64Creds = btoa(
-															`${new_token.token_key}:${new_token.token_secret}`,
-														);
-														const config = `- PatchMon:
-    href: ${server_url}
-    description: PatchMon Statistics
-    icon: ${server_url}/assets/logo_square_default.svg
-    widget:
-      type: customapi
-      url: ${server_url}/api/v1/gethomepage/stats
-      headers:
-        Authorization: Basic ${base64Creds}
-      mappings:
-       - field: total_hosts
-          label: Total Hosts
-       - field: hosts_needing_updates
-          label: Needs Updates
-       - field: security_updates
-          label: Security Updates`;
-														copy_to_clipboard(config, "gethomepage-config");
-													}}
-													className="btn-primary flex items-center gap-1 px-2 py-1 text-xs"
-												>
-													{copy_success["gethomepage-config"] ? (
-														<>
-															<CheckCircle className="h-3 w-3" />
-															Copied
-														</>
-													) : (
-														<>
-															<Copy className="h-3 w-3" />
-															Copy Config
-														</>
-													)}
-												</button>
-											</div>
-											<textarea
-												id={gethomepage_config_id}
-												value={(() => {
-													const base64Creds = btoa(
-														`${new_token.token_key}:${new_token.token_secret}`,
-													);
-													return `- PatchMon:
-    href: ${server_url}
-    description: PatchMon Statistics
-    icon: ${server_url}/assets/logo_square_default.svg
-    widget:
-      type: customapi
-      url: ${server_url}/api/v1/gethomepage/stats
-      headers:
-        Authorization: Basic ${base64Creds}
-      mappings:
-       - field: total_hosts
-          label: Total Hosts
-       - field: hosts_needing_updates
-          label: Needs Updates
-       - field: security_updates
-          label: Security Updates`;
-												})()}
-												readOnly
-												rows={12}
-												className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-secondary-50 dark:bg-secondary-900 text-secondary-900 dark:text-white font-mono text-xs resize-none"
-											/>
-											<p className="text-xs text-secondary-500 dark:text-white mt-1">
-												💡 Paste into your GetHomepage{" "}
-												<code className="bg-secondary-100 dark:bg-secondary-700 px-1 rounded">
-													services.yml
-												</code>
-											</p>
-										</div>
-									</div>
-								)}
-							</div>
-
-							<div className="mt-4 pt-4 border-t border-secondary-200 dark:border-secondary-600">
-								<button
-									type="button"
-									onClick={() => {
-										setNewToken(null);
-										setShowSecret(false);
-										setSelectedScriptType("proxmox-lxc");
-									}}
-									className="w-full btn-primary py-2 px-4 rounded-md text-sm md:text-base"
-								>
-									I've Saved the Credentials
-								</button>
-							</div>
-						</div>
-					</div>
-				</div>
-			)}
-
-			{/* Edit Token Modal */}
-			{show_edit_modal && edit_token && (
-				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-					<div className="bg-white dark:bg-secondary-800 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-						<div className="p-4 md:p-6">
-							<div className="flex items-center justify-between mb-4 md:mb-6 gap-3">
-								<h2 className="text-lg md:text-xl font-bold text-secondary-900 dark:text-white">
-									Edit Token
-								</h2>
-								<button
-									type="button"
-									onClick={() => {
-										setShowEditModal(false);
-										setEditToken(null);
-									}}
-									className="text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-200 flex-shrink-0"
-								>
-									<X className="h-5 w-5 md:h-6 md:w-6" />
-								</button>
-							</div>
-
-							<form onSubmit={update_token} className="space-y-4">
-								<label className="block">
-									<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
-										Token Name
-									</span>
-									<input
-										type="text"
-										value={form_data.token_name}
-										onChange={(e) =>
-											setFormData({ ...form_data, token_name: e.target.value })
-										}
-										placeholder="e.g., my-pve"
-										className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
-										required
-									/>
-									<p className="mt-1 text-xs text-secondary-500 dark:text-white">
-										Update the token name for better organization
-									</p>
-								</label>
-
-								<label className="block">
-									<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
-										Max Hosts Per Day
-									</span>
-									<input
-										type="number"
-										min="1"
-										max="1000"
-										value={form_data.max_hosts_per_day}
-										onChange={(e) =>
-											setFormData({
-												...form_data,
-												max_hosts_per_day: parseInt(e.target.value, 10) || 100,
-											})
-										}
-										className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
-									/>
-									<p className="mt-1 text-xs text-secondary-500 dark:text-white">
-										Maximum number of hosts that can be enrolled per day with
-										this token
-									</p>
-								</label>
-
-								{(edit_token?.metadata?.integration_type === "proxmox-lxc" ||
-									edit_token?.metadata?.integration_type === "direct-host") && (
 									<label className="block">
 										<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
-											Default Host Group (Optional)
+											Allowed IP Addresses (Optional)
 										</span>
-										<select
-											value={form_data.default_host_group_id}
+										<input
+											type="text"
+											value={form_data.allowed_ip_ranges}
 											onChange={(e) =>
 												setFormData({
 													...form_data,
-													default_host_group_id: e.target.value,
+													allowed_ip_ranges: e.target.value,
+												})
+											}
+											placeholder="e.g., 192.168.1.100, 10.0.0.50"
+											className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+										/>
+										<p className="mt-1 text-xs text-secondary-500 dark:text-white">
+											Comma-separated list of IP addresses allowed to use this
+											token
+										</p>
+									</label>
+
+									<label className="block">
+										<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
+											Expiration Date (Optional)
+										</span>
+										<input
+											type="datetime-local"
+											value={form_data.expires_at}
+											onChange={(e) =>
+												setFormData({
+													...form_data,
+													expires_at: e.target.value,
 												})
 											}
 											className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
-										>
-											<option value="">No default group</option>
-											{host_groups.map((group) => (
-												<option key={group.id} value={group.id}>
-													{group.name}
-												</option>
-											))}
-										</select>
-										<p className="mt-1 text-xs text-secondary-500 dark:text-white">
-											Auto-enrolled hosts will be assigned to this group
-										</p>
+										/>
 									</label>
-								)}
 
-								{edit_token?.metadata?.integration_type === "api" && (
-									<div className="block">
-										<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
-											Scopes
-										</span>
-										<div className="border border-secondary-300 dark:border-secondary-600 rounded-md p-4 bg-secondary-50 dark:bg-secondary-900">
-											<div className="mb-3">
-												<p className="text-xs font-semibold text-secondary-700 dark:text-white mb-2">
-													Host Permissions
-												</p>
-												<div className="space-y-2">
-													{["get", "put", "patch", "update", "delete"].map(
-														(action) => (
-															<label
-																key={action}
-																className="flex items-center gap-2"
-															>
-																<input
-																	type="checkbox"
-																	checked={
-																		form_data.scopes?.host?.includes(action) ||
-																		false
-																	}
-																	onChange={() =>
-																		toggle_scope_action("host", action)
-																	}
-																	className="rounded border-secondary-300 dark:border-secondary-600 text-primary-600 focus:ring-primary-500 dark:focus:ring-primary-400"
-																/>
-																<span className="text-sm text-secondary-700 dark:text-white uppercase">
-																	{action}
-																</span>
-																<span className="text-xs text-secondary-500 dark:text-white">
-																	{action === "get" && "- Read host data"}
-																	{action === "put" && "- Replace host data"}
-																	{action === "patch" && "- Update host data"}
-																	{action === "update" && "- Modify host data"}
-																	{action === "delete" && "- Delete hosts"}
-																</span>
-															</label>
-														),
-													)}
-												</div>
-											</div>
-										</div>
-										<p className="mt-1 text-xs text-secondary-500 dark:text-white">
-											Update the permissions for this API credential
-										</p>
+									<div className="flex flex-col sm:flex-row gap-3 pt-4">
+										<button
+											type="submit"
+											className="flex-1 btn-primary py-2 px-4 rounded-md w-full sm:w-auto"
+										>
+											Update Credential
+										</button>
+										<button
+											type="button"
+											onClick={() => {
+												setShowEditModal(false);
+												setEditToken(null);
+											}}
+											className="flex-1 bg-secondary-100 dark:bg-secondary-700 text-secondary-700 dark:text-white py-2 px-4 rounded-md hover:bg-secondary-200 dark:hover:bg-secondary-600 w-full sm:w-auto"
+										>
+											Cancel
+										</button>
 									</div>
-								)}
-
-								<label className="block">
-									<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
-										Allowed IP Addresses (Optional)
-									</span>
-									<input
-										type="text"
-										value={form_data.allowed_ip_ranges}
-										onChange={(e) =>
-											setFormData({
-												...form_data,
-												allowed_ip_ranges: e.target.value,
-											})
-										}
-										placeholder="e.g., 192.168.1.100, 10.0.0.50"
-										className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
-									/>
-									<p className="mt-1 text-xs text-secondary-500 dark:text-white">
-										Comma-separated list of IP addresses allowed to use this
-										token
-									</p>
-								</label>
-
-								<label className="block">
-									<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-1">
-										Expiration Date (Optional)
-									</span>
-									<input
-										type="datetime-local"
-										value={form_data.expires_at}
-										onChange={(e) =>
-											setFormData({ ...form_data, expires_at: e.target.value })
-										}
-										className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
-									/>
-								</label>
-
-								<div className="flex flex-col sm:flex-row gap-3 pt-4">
-									<button
-										type="submit"
-										className="flex-1 btn-primary py-2 px-4 rounded-md w-full sm:w-auto"
-									>
-										Update Credential
-									</button>
-									<button
-										type="button"
-										onClick={() => {
-											setShowEditModal(false);
-											setEditToken(null);
-										}}
-										className="flex-1 bg-secondary-100 dark:bg-secondary-700 text-secondary-700 dark:text-white py-2 px-4 rounded-md hover:bg-secondary-200 dark:hover:bg-secondary-600 w-full sm:w-auto"
-									>
-										Cancel
-									</button>
-								</div>
-							</form>
+								</form>
+							</div>
 						</div>
 					</div>
-				</div>
+				</ModalPortal>
 			)}
 		</div>
 	);

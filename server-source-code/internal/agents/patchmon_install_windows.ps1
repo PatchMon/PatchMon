@@ -85,6 +85,13 @@ $InstallPath   = "C:\Program Files\PatchMon"
 $ConfigPath    = "C:\ProgramData\PatchMon"
 $SkipSslVerify = ($env:PATCHMON_IGNORE_SSL -eq "true" -or $env:PATCHMON_IGNORE_SSL -eq "1")
 
+# Check if running as Administrator
+$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Error "This script must be run as Administrator. Right-click PowerShell and select 'Run as Administrator'."
+    exit 1
+}
+
 # Honor server's ignore SSL setting (injected when Settings > Agent Updates > Ignore SSL is enabled)
 if ($SkipSslVerify) {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -106,16 +113,15 @@ if ($BootstrapToken -and $ServerURL) {
         }
         Write-Host "Credentials received successfully." -ForegroundColor Green
     } catch {
+        $serverResponse = $_.ErrorDetails.Message
+        if ($serverResponse -match '"code"\s*:\s*"(cors_mismatch|host_mismatch)"') {
+            Write-Host "Server response: $serverResponse"
+            Write-Error "The PatchMon server rejected the URL this host used ($($Matches[1])). The hostname in Settings > Server URL must be listed in CORS_ORIGIN."
+            exit 1
+        }
         Write-Error "Failed to fetch credentials: $($_.Exception.Message). Bootstrap token may have expired. Please request a new installation script."
         exit 1
     }
-}
-
-# Check if running as Administrator
-$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin) {
-    Write-Error "This script must be run as Administrator. Right-click PowerShell and select 'Run as Administrator'."
-    exit 1
 }
 
 Write-Host "PatchMon Agent Installation for Windows" -ForegroundColor Green

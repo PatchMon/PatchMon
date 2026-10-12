@@ -1,12 +1,16 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -115,6 +119,27 @@ func (rl *scanRateLimiter) allow(key string) bool {
 }
 
 var scanSubmitLimiter = newScanRateLimiter(10, time.Minute)
+
+// A body limit cannot bound this: complianceResultItem is 192 bytes of struct
+// per 3 bytes of "{}," on the wire, so 20 MB decodes to over 1 GB.
+const maxComplianceObjects = 50000
+
+func countJSONObjects(b []byte) int {
+	n, inString, escaped := 0, false, false
+	for _, c := range b {
+		switch {
+		case escaped:
+			escaped = false
+		case inString && c == '\\':
+			escaped = true
+		case c == '"':
+			inString = !inString
+		case !inString && c == '{':
+			n++
+		}
+	}
+	return n
+}
 
 // Agent scan payload (matches agent CompliancePayload / nested scans)
 type complianceScanPayload struct {
@@ -284,8 +309,29 @@ func (h *ComplianceHandler) ReceiveScans(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			slog.Warn("compliance: body exceeded COMPLIANCE_BODY_LIMIT", "host_id", host.ID, "limit_bytes", tooLarge.Limit)
+			JSON(w, http.StatusRequestEntityTooLarge, map[string]string{
+				"error": fmt.Sprintf("Scan results exceed the %s COMPLIANCE_BODY_LIMIT. Raise it in Settings then Environment, and raise the body size limit on any reverse proxy in front of PatchMon.", formatBytesEnv(tooLarge.Limit)),
+			})
+			return
+		}
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Could not read request body"})
+		return
+	}
+
+	if n := countJSONObjects(raw); n > maxComplianceObjects {
+		JSON(w, http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("Scan payload contains %d JSON objects, above the %d limit. A single scan should carry one result per rule.", n, maxComplianceObjects),
+		})
+		return
+	}
+
 	var payload complianceScanPayload
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+	if err := json.Unmarshal(raw, &payload); err != nil {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON body"})
 		return
 	}
@@ -553,7 +599,7 @@ func (h *ComplianceHandler) ListProfiles(w http.ResponseWriter, r *http.Request)
 
 // GetDashboard returns the compliance dashboard.
 func (h *ComplianceHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
-	dash, err := h.complianceStore.GetDashboard(r.Context())
+	dash, err := h.complianceStore.GetDashboard(r.Context(), nil)
 	if err != nil {
 		slog.Error("compliance dashboard failed", "error", err)
 		Error(w, http.StatusInternalServerError, "Failed to fetch dashboard data")
@@ -983,7 +1029,11 @@ func (h *ComplianceHandler) TriggerScan(w http.ResponseWriter, r *http.Request) 
 		Error(w, http.StatusInternalServerError, "Failed to create scan task")
 		return
 	}
-	info, err := h.queueClient.Enqueue(task)
+	info, err := h.enqueueScan(task, hostID)
+	if errors.Is(err, asynq.ErrTaskIDConflict) {
+		Error(w, http.StatusConflict, "A scan is already queued or running on this host")
+		return
+	}
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to enqueue scan")
 		return
@@ -1053,7 +1103,7 @@ func (h *ComplianceHandler) TriggerBulkScan(w http.ResponseWriter, r *http.Reque
 			skipped++
 			continue
 		}
-		if _, err := h.queueClient.Enqueue(task); err != nil {
+		if _, err := h.enqueueScan(task, hostID); err != nil {
 			skipped++
 			continue
 		}
@@ -1086,23 +1136,33 @@ func (h *ComplianceHandler) CancelScan(w http.ResponseWriter, r *http.Request) {
 	}
 	// Remove queued run_scan job so it won't run when agent connects
 	if h.queueInspector != nil {
-		taskID := "compliance-scan-" + hostID
-		_ = h.queueInspector.DeleteTask(queue.QueueCompliance, taskID)
+		_ = h.queueInspector.DeleteTask(queue.QueueCompliance, queue.RunScanTaskID(hostID))
 	}
 	// Set cancel flag so worker won't re-queue if it runs before DeleteTask propagates
 	if h.integrationStatus != nil {
 		_ = h.integrationStatus.SetComplianceScanCancel(r.Context(), hostID)
 	}
+	sendErr := agentregistry.ErrNotConnected
 	if h.registry.IsConnected(host.ApiID) {
-		if err := h.registry.SendJSON(host.ApiID, map[string]interface{}{"type": "compliance_scan_cancel"}); err != nil {
-			Error(w, http.StatusServiceUnavailable, "Failed to send cancel to agent")
-			return
-		}
+		sendErr = h.registry.SendJSON(host.ApiID, map[string]interface{}{"type": "compliance_scan_cancel"})
 	}
-	JSON(w, http.StatusOK, map[string]interface{}{
-		"success": true,
-		"message": "Scan cancel sent",
-	})
+	cancelled, err := h.complianceStore.CancelActiveScans(r.Context(), hostID)
+	if err != nil {
+		slog.Error("compliance cancel: failed to mark scans cancelled", "error", err, "host_id", hostID)
+		Error(w, http.StatusInternalServerError, "Failed to cancel scan")
+		return
+	}
+	resp := map[string]interface{}{
+		"success":        true,
+		"message":        "Scan cancel sent",
+		"scansCancelled": cancelled,
+	}
+	if sendErr != nil {
+		slog.Warn("compliance cancel: failed to notify agent", "error", sendErr, "host_id", hostID)
+		resp["message"] = "Scan cancelled; the agent could not be notified and may still finish it"
+		resp["agentNotified"] = false
+	}
+	JSON(w, http.StatusOK, resp)
 }
 
 // InstallScanner handles POST /compliance/install-scanner/:hostId.
@@ -1119,6 +1179,10 @@ func (h *ComplianceHandler) InstallScanner(w http.ResponseWriter, r *http.Reques
 	host, err := h.hostsStore.GetByID(r.Context(), hostID)
 	if err != nil || host == nil {
 		Error(w, http.StatusNotFound, "Host not found")
+		return
+	}
+	if h.installInProgress(r.Context(), hostID, host.ApiID) {
+		Error(w, http.StatusConflict, "An install is already running on this host. Cancel it first to start another.")
 		return
 	}
 	task, err := queue.NewInstallComplianceToolsTask(hostID, host.ApiID, hostFromRequest(r))
@@ -1171,6 +1235,10 @@ func (h *ComplianceHandler) CancelInstall(w http.ResponseWriter, r *http.Request
 		return
 	}
 	_ = h.integrationStatus.SetComplianceInstallCancel(r.Context(), jobID)
+	_ = h.integrationStatus.ClearComplianceInstallJob(r.Context(), hostID)
+	if h.queueInspector != nil {
+		_ = h.queueInspector.DeleteTask(queue.QueueCompliance, jobID)
+	}
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
 		"message": "Cancel requested",
@@ -1263,6 +1331,8 @@ func (h *ComplianceHandler) GetInstallJobStatus(w http.ResponseWriter, r *http.R
 	resp["jobId"] = jobID
 
 	status := "unknown"
+	var dispatchedAt time.Time
+	awaitingAgent := false
 	if h.queueInspector != nil {
 		info, err := h.queueInspector.GetTaskInfo(queue.QueueCompliance, jobID)
 		if err == nil {
@@ -1274,8 +1344,13 @@ func (h *ComplianceHandler) GetInstallJobStatus(w http.ResponseWriter, r *http.R
 				status = "active"
 			case "completed":
 				status = "completed"
+				awaitingAgent = true
+				dispatchedAt = info.CompletedAt
 			case "retry":
 				status = "active"
+			case "archived":
+				status = "failed"
+				resp["error"] = "The install could not be started on the agent. Check that it is connected, then click Install Scanner to try again."
 			default:
 				status = raw
 			}
@@ -1292,9 +1367,11 @@ func (h *ComplianceHandler) GetInstallJobStatus(w http.ResponseWriter, r *http.R
 				if msg, ok := live["message"].(string); ok && msg != "" {
 					resp["message"] = msg
 				}
-				if evts, ok := live["install_events"].([]interface{}); ok && len(evts) > 0 {
+				eventsJobID, _ := live["install_job_id"].(string)
+				if evts, ok := live["install_events"].([]interface{}); ok && len(evts) > 0 && queue.InstallEventsMatchJob(eventsJobID, jobID) {
 					resp["install_events"] = evts
 					if mapped, reason, ok := installJobStatusFromEvents(evts); ok {
+						awaitingAgent = false
 						resp["status"] = mapped
 						if mapped == "failed" {
 							// live["message"] is the last resort only: the
@@ -1315,8 +1392,74 @@ func (h *ComplianceHandler) GetInstallJobStatus(w http.ResponseWriter, r *http.R
 			}
 		}
 	}
+	if awaitingAgent {
+		st, errMsg := installStatusAwaitingAgent(dispatchedAt, time.Now())
+		resp["status"] = st
+		if errMsg != "" {
+			resp["error"] = errMsg
+		}
+	}
 
 	JSON(w, http.StatusOK, resp)
+}
+
+func (h *ComplianceHandler) installInProgress(ctx context.Context, hostID, apiID string) bool {
+	if h.queueInspector == nil || h.integrationStatus == nil {
+		return false
+	}
+	jobID, _ := h.integrationStatus.GetComplianceInstallJob(ctx, hostID)
+	if jobID == "" {
+		return false
+	}
+	info, err := h.queueInspector.GetTaskInfo(queue.QueueCompliance, jobID)
+	if err != nil {
+		return false
+	}
+	switch info.State.String() {
+	case "pending", "scheduled", "active", "retry":
+		return true
+	case "completed":
+	default:
+		return false
+	}
+	if live, _ := h.integrationStatus.Get(ctx, apiID, "compliance"); live != nil {
+		eventsJobID, _ := live["install_job_id"].(string)
+		if evts, ok := live["install_events"].([]interface{}); ok && queue.InstallEventsMatchJob(eventsJobID, jobID) {
+			if _, _, finished := installJobStatusFromEvents(evts); finished {
+				return false
+			}
+		}
+	}
+	status, _ := installStatusAwaitingAgent(info.CompletedAt, time.Now())
+	return status == "active"
+}
+
+// enqueueScan replaces a dead run_scan task: an archived task keeps its fixed
+// task ID and would otherwise block the host's scans until the archive expires.
+func (h *ComplianceHandler) enqueueScan(task *asynq.Task, hostID string) (*asynq.TaskInfo, error) {
+	info, err := h.queueClient.Enqueue(task)
+	if !errors.Is(err, asynq.ErrTaskIDConflict) || h.queueInspector == nil {
+		return info, err
+	}
+	existing, ierr := h.queueInspector.GetTaskInfo(queue.QueueCompliance, queue.RunScanTaskID(hostID))
+	if ierr != nil || existing.State != asynq.TaskStateArchived {
+		return info, err
+	}
+	if derr := h.queueInspector.DeleteTask(queue.QueueCompliance, existing.ID); derr != nil {
+		return info, err
+	}
+	return h.queueClient.Enqueue(task)
+}
+
+const installAgentReportWindow = 20 * time.Minute
+
+// installStatusAwaitingAgent covers the gap between the queue handing the
+// install to the agent and the agent reporting its final step.
+func installStatusAwaitingAgent(dispatchedAt, now time.Time) (status, errMsg string) {
+	if !dispatchedAt.IsZero() && now.Sub(dispatchedAt) < installAgentReportWindow {
+		return "active", ""
+	}
+	return "failed", "The agent did not report the install finishing. Check the agent log, then click Install Scanner to try again."
 }
 
 // UpgradeSSG handles POST /compliance/upgrade-ssg/:hostId.
@@ -1514,6 +1657,14 @@ func (h *ComplianceHandler) authenticateAgent(w http.ResponseWriter, r *http.Req
 	return true
 }
 
+var agentProfileIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_.\-]{1,256}$`)
+
+// isAgentProfileID mirrors the agent's validateProfileID; the agent drops the
+// whole remediate_rule message when profile_id fails it.
+func isAgentProfileID(s string) bool {
+	return agentProfileIDPattern.MatchString(s)
+}
+
 // RemediateRule handles POST /compliance/remediate/:hostId.
 func (h *ComplianceHandler) RemediateRule(w http.ResponseWriter, r *http.Request) {
 	hostID := chi.URLParam(r, "hostId")
@@ -1537,7 +1688,15 @@ func (h *ComplianceHandler) RemediateRule(w http.ResponseWriter, r *http.Request
 		Error(w, http.StatusServiceUnavailable, "Agent is not connected")
 		return
 	}
-	if err := h.registry.SendJSON(host.ApiID, map[string]interface{}{"type": "remediate_rule", "rule_id": req.RuleID}); err != nil {
+	msg := map[string]interface{}{"type": "remediate_rule", "rule_id": req.RuleID}
+	profileName, err := h.complianceStore.GetRemediationProfileName(r.Context(), hostID, req.RuleID)
+	if err != nil {
+		slog.Warn("compliance remediate: profile lookup failed", "error", err, "host_id", hostID)
+	}
+	if isAgentProfileID(profileName) {
+		msg["profile_id"] = profileName
+	}
+	if err := h.registry.SendJSON(host.ApiID, msg); err != nil {
 		Error(w, http.StatusServiceUnavailable, "Failed to send remediate command")
 		return
 	}

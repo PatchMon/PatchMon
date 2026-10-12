@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"slices"
 	"strings"
 	"time"
@@ -17,8 +18,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// ExtractIPFromInterface extracts the first inet (IPv4) address from the named interface in networkInterfaces JSON.
-// Returns empty string if not found or on parse error.
+// ExtractIPFromInterface returns the first global IPv4 address on the named interface in
+// networkInterfaces JSON, falling back to the first global IPv6. Empty if none or on parse error.
 func ExtractIPFromInterface(networkInterfaces []byte, interfaceName string) string {
 	if len(networkInterfaces) == 0 || interfaceName == "" {
 		return ""
@@ -36,21 +37,28 @@ func ExtractIPFromInterface(networkInterfaces []byte, interfaceName string) stri
 		if !ok {
 			return ""
 		}
+		var ipv6Fallback string
 		for _, a := range addrs {
 			addrMap, ok := a.(map[string]interface{})
 			if !ok {
 				continue
 			}
 			family, _ := addrMap["family"].(string)
-			if family != "inet" {
+			addr, _ := addrMap["address"].(string)
+			ip := net.ParseIP(addr)
+			if ip == nil || !ip.IsGlobalUnicast() {
 				continue
 			}
-			addr, _ := addrMap["address"].(string)
-			if addr != "" {
+			switch family {
+			case "inet":
 				return addr
+			case "inet6":
+				if ipv6Fallback == "" {
+					ipv6Fallback = addr
+				}
 			}
 		}
-		return ""
+		return ipv6Fallback
 	}
 	return ""
 }

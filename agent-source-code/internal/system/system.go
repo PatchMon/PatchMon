@@ -161,6 +161,17 @@ func (d *Detector) getFreeBSDInfo() (osType, osVersion string, err error) {
 	return osType, osVersion, nil
 }
 
+// gopsutil returns DisplayVersion as PlatformVersion, and it is absent before
+// Server 2022, so 2016 and 2019 LTSC need the ReleaseId fallback.
+func resolveWindowsOSVersion(platformVersion, releaseID, kernelVersion string) string {
+	for _, v := range []string{platformVersion, releaseID, kernelVersion} {
+		if v != "" {
+			return v
+		}
+	}
+	return "Unknown"
+}
+
 // DetectOS detects the operating system and version using /etc/os-release
 func (d *Detector) DetectOS() (osType, osVersion string, err error) {
 	// Check for Windows first (uses gopsutil)
@@ -171,11 +182,7 @@ func (d *Detector) DetectOS() (osType, osVersion string, err error) {
 		if infoErr != nil {
 			return "Windows", "Unknown", nil
 		}
-		osVer := info.PlatformVersion
-		if osVer == "" {
-			osVer = "Unknown"
-		}
-		return "Windows", osVer, nil
+		return "Windows", resolveWindowsOSVersion(info.PlatformVersion, windowsReleaseID(), info.KernelVersion), nil
 	}
 	// Check for FreeBSD first (doesn't have /etc/os-release)
 	if d.isFreeBSD() {
@@ -287,6 +294,22 @@ func (d *Detector) GetHostname() (string, error) {
 	return info.Hostname, nil
 }
 
+func selectPrimaryIPAddress(ips []net.IP) string {
+	var ipv6Fallback string
+	for _, ip := range ips {
+		if !ip.IsGlobalUnicast() {
+			continue
+		}
+		if ip.To4() != nil {
+			return ip.String()
+		}
+		if ipv6Fallback == "" {
+			ipv6Fallback = ip.String()
+		}
+	}
+	return ipv6Fallback
+}
+
 // GetIPAddress gets the primary IP address using network interfaces
 func (d *Detector) GetIPAddress() string {
 	interfaces, err := net.Interfaces()
@@ -294,6 +317,8 @@ func (d *Detector) GetIPAddress() string {
 		d.logger.WithError(err).Warn("Failed to get network interfaces")
 		return ""
 	}
+
+	var ips []net.IP
 
 	for _, iface := range interfaces {
 		// Skip loopback and down interfaces
@@ -308,14 +333,12 @@ func (d *Detector) GetIPAddress() string {
 
 		for _, addr := range addrs {
 			if ipnet, ok := addr.(*net.IPNet); ok {
-				if ipnet.IP.To4() != nil && !ipnet.IP.IsLoopback() {
-					return ipnet.IP.String()
-				}
+				ips = append(ips, ipnet.IP)
 			}
 		}
 	}
 
-	return ""
+	return selectPrimaryIPAddress(ips)
 }
 
 // GetKernelVersion gets the kernel version

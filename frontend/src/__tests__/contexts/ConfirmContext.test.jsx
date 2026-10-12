@@ -10,6 +10,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
+import ModalPortal from "../../components/ui/ModalPortal";
 import { ConfirmProvider, useConfirm } from "../../contexts/ConfirmContext";
 
 const Trigger = ({ onResult, options, label = "Delete thing" }) => {
@@ -148,6 +149,29 @@ describe("ConfirmContext", () => {
 		await waitFor(() =>
 			expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus(),
 		);
+	});
+
+	it("stacks above a portalled modal it is opened from", async () => {
+		const user = userEvent.setup();
+		renderWithProvider(
+			<ModalPortal>
+				<div data-testid="modal" className="fixed inset-0 z-[120]">
+					<Trigger onResult={vi.fn()} options={{}} />
+				</div>
+			</ModalPortal>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "Delete thing" }));
+
+		const modal = screen.getByTestId("modal");
+		const dialog = screen
+			.getByRole("button", { name: "Cancel" })
+			.closest(".fixed.inset-0");
+		expect(dialog.parentElement).toBe(document.body);
+		expect(dialog).toHaveClass("z-[125]");
+		expect(
+			modal.compareDocumentPosition(dialog) & Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
 	});
 
 	it("throws when used outside a provider", () => {

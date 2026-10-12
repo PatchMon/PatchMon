@@ -11,6 +11,7 @@ import (
 )
 
 type Querier interface {
+	ActivateScheduledPatchRun(ctx context.Context, id string) (int64, error)
 	// Bulk insert N host_packages rows in a single statement. Replaces the legacy
 	// InsertHostPackage and InsertHostPackageWithWUA per-row inserts — one path
 	// now covers Linux/FreeBSD (all wua_* columns NULL) and Windows (wua_* set).
@@ -100,6 +101,7 @@ type Querier interface {
 	// Re-parsing the JSON here is cheap (kilobytes, in-memory) and avoids a
 	// per-row round-trip — the alternative was a SELECT loop in Go.
 	BulkUpsertPackages(ctx context.Context, payload []byte) ([]BulkUpsertPackagesRow, error)
+	CancelActiveComplianceScansByHost(ctx context.Context, arg CancelActiveComplianceScansByHostParams) (int64, error)
 	ClearHostComplianceHashOnEnable(ctx context.Context, arg ClearHostComplianceHashOnEnableParams) error
 	// Force a fresh docker payload on next check-in by NULLing the hash whenever
 	// the operator re-enables docker. If the agent was already streaming docker
@@ -141,13 +143,13 @@ type Querier interface {
 	CountNetworks(ctx context.Context, arg CountNetworksParams) (int32, error)
 	CountNetworksByHostID(ctx context.Context, hostID string) (int32, error)
 	CountPatchRuns(ctx context.Context, arg CountPatchRunsParams) (int64, error)
-	CountPatchRunsTotal(ctx context.Context) (int64, error)
+	CountPatchRunsTotal(ctx context.Context, hostIds []string) (int64, error)
 	CountRepositories(ctx context.Context) (int32, error)
 	CountRepositoriesForList(ctx context.Context, arg CountRepositoriesForListParams) (int32, error)
 	CountSecureRepositories(ctx context.Context) (int32, error)
 	CountSuperadmins(ctx context.Context) (int64, error)
 	CountTfaRememberSessionsByUser(ctx context.Context, userID string) (int64, error)
-	CountUnscannedHosts(ctx context.Context) (int64, error)
+	CountUnscannedHosts(ctx context.Context, hostIds []string) (int64, error)
 	CountUpdateHistory(ctx context.Context, hostID string) (int32, error)
 	CountUsers(ctx context.Context) (int64, error)
 	CountUsersByRole(ctx context.Context, role string) (int64, error)
@@ -298,6 +300,7 @@ type Querier interface {
 	GetHomepageStats(ctx context.Context, since pgtype.Timestamp) (GetHomepageStatsRow, error)
 	GetHostByApiID(ctx context.Context, apiID string) (Host, error)
 	GetHostByID(ctx context.Context, id string) (Host, error)
+	GetHostByMachineIDAndName(ctx context.Context, arg GetHostByMachineIDAndNameParams) (Host, error)
 	// Single-row read used on the per-ping hot path. Returns the host's identity
 	// and the six per-section hashes the server compares against incoming agent
 	// hashes.
@@ -367,6 +370,7 @@ type Querier interface {
 	GetImagesByIDs(ctx context.Context, dollar_1 []string) ([]DockerImage, error)
 	GetImagesBySource(ctx context.Context) ([]GetImagesBySourceRow, error)
 	GetLatestCompletedScans(ctx context.Context) ([]GetLatestCompletedScansRow, error)
+	GetLatestCompletedScansByHostAllTypes(ctx context.Context, hostID string) ([]GetLatestCompletedScansByHostAllTypesRow, error)
 	GetLatestCompletedScansByProfile(ctx context.Context, profileID string) ([]GetLatestCompletedScansByProfileRow, error)
 	GetLatestComplianceScanByHost(ctx context.Context, hostID string) (GetLatestComplianceScanByHostRow, error)
 	GetLatestComplianceScanByHostAndType(ctx context.Context, arg GetLatestComplianceScanByHostAndTypeParams) (GetLatestComplianceScanByHostAndTypeRow, error)
@@ -405,6 +409,7 @@ type Querier interface {
 	GetRecentComplianceScans(ctx context.Context) ([]GetRecentComplianceScansRow, error)
 	GetRecentHosts(ctx context.Context, limit int32) ([]GetRecentHostsRow, error)
 	GetRecentUsers(ctx context.Context, limit int32) ([]GetRecentUsersRow, error)
+	GetRemediationProfileNameByHost(ctx context.Context, arg GetRemediationProfileNameByHostParams) (string, error)
 	GetRepoCountsForRepos(ctx context.Context, dollar_1 []string) ([]GetRepoCountsForReposRow, error)
 	GetRepositoryByID(ctx context.Context, id string) (Repository, error)
 	// Lock-free read on the (url, distribution, components) unique key. Serves
@@ -516,11 +521,10 @@ type Querier interface {
 	// patch_policy_exclusions
 	ListPatchPolicyExclusions(ctx context.Context, patchPolicyID string) ([]ListPatchPolicyExclusionsRow, error)
 	// The 'status' filter accepts an exact status value. The pseudo-value
-	// 'active' matches any in-flight run (queued or running) so UI widgets
-	// that aggregate those two states can link to a single filter.
+	// 'active' matches the in-flight runs that block a host: queued, pending_validation, running.
 	ListPatchRuns(ctx context.Context, arg ListPatchRunsParams) ([]ListPatchRunsRow, error)
 	ListPatchRunsByPackage(ctx context.Context, arg ListPatchRunsByPackageParams) ([]ListPatchRunsByPackageRow, error)
-	ListPatchRunsByStatus(ctx context.Context) ([]ListPatchRunsByStatusRow, error)
+	ListPatchRunsByStatus(ctx context.Context, hostIds []string) ([]ListPatchRunsByStatusRow, error)
 	ListPatchRunsOrderByCompletedAt(ctx context.Context, arg ListPatchRunsOrderByCompletedAtParams) ([]ListPatchRunsOrderByCompletedAtRow, error)
 	ListPatchRunsOrderByCompletedAtAsc(ctx context.Context, arg ListPatchRunsOrderByCompletedAtAscParams) ([]ListPatchRunsOrderByCompletedAtAscRow, error)
 	ListPatchRunsOrderByCreatedAtAsc(ctx context.Context, arg ListPatchRunsOrderByCreatedAtAscParams) ([]ListPatchRunsOrderByCreatedAtAscRow, error)
@@ -528,7 +532,7 @@ type Querier interface {
 	ListPatchRunsOrderByStartedAtAsc(ctx context.Context, arg ListPatchRunsOrderByStartedAtAscParams) ([]ListPatchRunsOrderByStartedAtAscRow, error)
 	ListPatchRunsOrderByStatus(ctx context.Context, arg ListPatchRunsOrderByStatusParams) ([]ListPatchRunsOrderByStatusRow, error)
 	ListPatchRunsOrderByStatusDesc(ctx context.Context, arg ListPatchRunsOrderByStatusDescParams) ([]ListPatchRunsOrderByStatusDescRow, error)
-	ListRecentPatchRuns(ctx context.Context, limit int32) ([]ListRecentPatchRunsRow, error)
+	ListRecentPatchRuns(ctx context.Context, arg ListRecentPatchRunsParams) ([]ListRecentPatchRunsRow, error)
 	ListRepositories(ctx context.Context, arg ListRepositoriesParams) ([]ListRepositoriesRow, error)
 	ListRoles(ctx context.Context) ([]RolePermission, error)
 	ListScheduledReports(ctx context.Context) ([]ScheduledReport, error)
@@ -545,6 +549,7 @@ type Querier interface {
 	// so progress chunks the agent appended between our read and write are preserved.
 	// Same status guard as UpdatePatchRunCancelled.
 	MarkPatchRunCancelledByUser(ctx context.Context, arg MarkPatchRunCancelledByUserParams) (int64, error)
+	MarkPatchRunDispatched(ctx context.Context, id string) (int64, error)
 	MarkPatchRunsAgentDisconnected(ctx context.Context, arg MarkPatchRunsAgentDisconnectedParams) (int64, error)
 	// Stall sweep. The predicate is deliberately "no activity since", NOT "started
 	// before": every progress chunk the agent streams bumps updated_at (see
@@ -554,11 +559,14 @@ type Querier interface {
 	// every long run timed_out while it was still working and discard the real
 	// outcome the agent later reports.
 	MarkPatchRunsTimedOut(ctx context.Context, arg MarkPatchRunsTimedOutParams) (int64, error)
+	// Keyed on when the run became due, not updated_at: the offline-agent retry bumps updated_at every 5 minutes.
+	MarkUndispatchedPatchRunsTimedOut(ctx context.Context, arg MarkUndispatchedPatchRunsTimedOutParams) (int64, error)
 	// Declared :execrows, not :exec, because the status guard IS the concurrency
 	// control. Two approvals racing both pass the handler's Go-side status check;
 	// only one of them updates a row here, and the loser must be told so rather
 	// than going on to create a second patch run and enqueue a second task.
 	MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) (int64, error)
+	RequeuePatchRun(ctx context.Context, arg RequeuePatchRunParams) (int64, error)
 	RevokeAllSessionsForUser(ctx context.Context, userID string) error
 	RevokeAllSessionsForUserExcept(ctx context.Context, arg RevokeAllSessionsForUserExceptParams) error
 	RevokeAllTrustedDevicesForUser(ctx context.Context, userID string) error
@@ -567,6 +575,7 @@ type Querier interface {
 	SetHostAwaitingPostPatchReport(ctx context.Context, arg SetHostAwaitingPostPatchReportParams) error
 	SetNewsletterSubscribed(ctx context.Context, id string) error
 	SetPatchRunPolicySnapshot(ctx context.Context, arg SetPatchRunPolicySnapshotParams) error
+	SkipScheduledPatchRun(ctx context.Context, arg SkipScheduledPatchRunParams) (int64, error)
 	ToggleHostRepository(ctx context.Context, arg ToggleHostRepositoryParams) error
 	TouchTrustedDeviceLastUsed(ctx context.Context, arg TouchTrustedDeviceLastUsedParams) error
 	UpdateAlert(ctx context.Context, id string) error
@@ -641,11 +650,9 @@ type Querier interface {
 	UpdatePatchRunProgress(ctx context.Context, arg UpdatePatchRunProgressParams) error
 	UpdatePatchRunScheduledAt(ctx context.Context, arg UpdatePatchRunScheduledAtParams) error
 	// Clear dry-run output fields so real-run output starts fresh.
-	// Status guard prevents an in-flight agent message from clobbering an
-	// already-terminated run (cancelled/timed_out/etc.). agent_disconnected is
-	// intentionally NOT in the guard so a recovering agent can unwedge the row.
+	// Allow-list, not deny-list: agent credentials must not be able to start a
+	// scheduled, pending_approval or approved run. agent_disconnected lets a recovering agent unwedge the row.
 	UpdatePatchRunStarted(ctx context.Context, id string) error
-	UpdatePatchRunStatus(ctx context.Context, arg UpdatePatchRunStatusParams) error
 	// Agent streams progress chunks during the run, then sends the final authoritative
 	// output on the terminal stage; REPLACE (not append) so the final record is never
 	// a duplicate of the streamed progress.

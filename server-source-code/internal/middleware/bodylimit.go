@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"io"
 	"net/http"
 
@@ -22,7 +23,11 @@ func BodyLimit(limit int64) func(http.Handler) http.Handler {
 	}
 }
 
+type unlimitedBodyKey struct{}
+
 // BodyLimitFor limits the request body using the calling context's setting.
+// MaxBytesReader composes rather than replaces, so rewrapping the stashed
+// original is what lets a route limit raise, not just tighten, a group limit.
 func BodyLimitFor(cfgResolver *hostctx.ConfigResolver, pick func(*config.ResolvedConfig) int64) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -36,7 +41,13 @@ func BodyLimitFor(cfgResolver *hostctx.ConfigResolver, pick func(*config.Resolve
 				next.ServeHTTP(w, r)
 				return
 			}
-			r.Body = http.MaxBytesReader(w, r.Body, limit)
+			body := r.Body
+			if orig, ok := r.Context().Value(unlimitedBodyKey{}).(io.ReadCloser); ok {
+				body = orig
+			} else {
+				r = r.WithContext(context.WithValue(r.Context(), unlimitedBodyKey{}, body))
+			}
+			r.Body = http.MaxBytesReader(w, body, limit)
 			next.ServeHTTP(w, r)
 		})
 	}

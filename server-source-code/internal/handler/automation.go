@@ -160,7 +160,7 @@ func (h *AutomationHandler) getQueueLastRunInfo(queueName string) (lastRun strin
 	if t := h.latestCompletedTask(queueName); t != nil {
 		lastRunTs = t.CompletedAt.UnixMilli()
 		lastRun = t.CompletedAt.Format("1/2/2006, 3:04:05 PM")
-		if t.LastErr != "" {
+		if t.LastErr != "" && !queue.IsRetryLaterError(t.LastErr) {
 			status = "Failed"
 		} else {
 			status = "Success"
@@ -261,7 +261,7 @@ func (h *AutomationHandler) Overview(w http.ResponseWriter, r *http.Request) {
 		{"Alert Cleanup", queue.QueueAlertCleanup, "Cleans up old alerts based on retention policies and auto-resolves expired alerts", "Daily at 3 AM"},
 		{"Host Status Monitor", queue.QueueHostStatus, "Monitors host status and creates alerts when hosts go offline", "Every 5 minutes"},
 		{"Compliance Scan Cleanup", queue.QueueComplianceScanCleanup, "Automatically terminates compliance scans running over 3 hours", "Daily at 1 AM"},
-		{"Patch Run Cleanup", queue.QueuePatchRunCleanup, "Marks patch runs stuck in running state for over PATCH_RUN_STALL_TIMEOUT_MIN minutes as timed_out", "Every 10 minutes"},
+		{"Patch Run Cleanup", queue.QueuePatchRunCleanup, "Marks patch runs stuck in running state for over PATCH_RUN_STALL_TIMEOUT_MIN minutes, or not dispatched within 24 hours of becoming due, as timed_out", "Every 10 minutes"},
 		{"Agent Reports Cleanup", queue.QueueAgentReportsCleanup, "Deletes Agent Activity rows older than AGENT_REPORTS_RETENTION_DAYS", "Daily at 2 AM"},
 		{"SSG Content Update Check", queue.QueueSSGUpdateCheck, "Checks for outdated SSG compliance content on hosts and queues upgrades", "Daily at 5 AM"},
 	}
@@ -380,7 +380,7 @@ func (h *AutomationHandler) Jobs(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		status := "completed"
-		if t.LastErr != "" {
+		if t.LastErr != "" && !queue.IsRetryLaterError(t.LastErr) {
 			status = "failed"
 		}
 		formatted = append(formatted, map[string]interface{}{
@@ -388,7 +388,7 @@ func (h *AutomationHandler) Jobs(w http.ResponseWriter, r *http.Request) {
 			"name":         t.Type,
 			"status":       status,
 			"data":         nil,
-			"failedReason": t.LastErr,
+			"failedReason": queue.DisplayTaskError(t.LastErr),
 			"finishedOn":   t.CompletedAt.UnixMilli(),
 			"createdAt":    t.CompletedAt.UnixMilli(),
 			"attemptsMade": t.Retried,

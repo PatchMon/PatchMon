@@ -274,6 +274,7 @@ export const settingsAPI = {
 	getPublic: () => api.get("/settings/public"), // Public endpoint for read-only settings (auto_update, etc.)
 	update: (settings) => api.put("/settings", settings),
 	getServerUrl: () => api.get("/settings/server-url"),
+	checkServerUrlCors: () => api.get("/settings/server-url/cors-check"),
 	getCurrentUrl: () => api.get("/settings/current-url"),
 	getEnvConfig: () => api.get("/settings/env-config"),
 	getEnvironmentConfig: () => api.get("/settings/environment"),

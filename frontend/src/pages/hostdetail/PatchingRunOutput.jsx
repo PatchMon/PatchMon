@@ -14,6 +14,7 @@ const PatchingRunOutput = ({ runId }) => {
 		refetchInterval: (query) => {
 			const status = query.state.data?.status;
 			if (status === "queued" || status === "running") return 3000;
+			if (status === "scheduled") return 30000;
 			return false;
 		},
 	});

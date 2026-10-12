@@ -38,18 +38,8 @@ func NewScheduledReportsDispatchHandler(defaultDB *database.DB, poolCache *hostc
 	return &ScheduledReportsDispatchHandler{defaultDB: defaultDB, poolCache: poolCache, qc: qc, log: log}
 }
 
-func (h *ScheduledReportsDispatchHandler) resolveDB(ctx context.Context, payload []byte) *database.DB {
-	db := h.defaultDB
-	if len(payload) == 0 || h.poolCache == nil {
-		return db
-	}
-	var p AutomationPayload
-	if err := json.Unmarshal(payload, &p); err == nil && strings.TrimSpace(p.Host) != "" {
-		if resolved, err := h.poolCache.GetOrCreate(ctx, p.Host); err == nil && resolved != nil {
-			db = resolved
-		}
-	}
-	return db
+func (h *ScheduledReportsDispatchHandler) resolveDB(ctx context.Context, payload []byte) (context.Context, *database.DB, error) {
+	return resolveDBFromPayload(ctx, payload, h.defaultDB, h.poolCache)
 }
 
 func (h *ScheduledReportsDispatchHandler) processDB(ctx context.Context, d *database.DB, tenantHost string) {
@@ -76,7 +66,10 @@ func (h *ScheduledReportsDispatchHandler) processDB(ctx context.Context, d *data
 func (h *ScheduledReportsDispatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	payload := t.Payload()
 	if len(payload) > 0 {
-		d := h.resolveDB(ctx, payload)
+		ctx, d, err := h.resolveDB(ctx, payload)
+		if err != nil {
+			return err
+		}
 		h.processDB(ctx, d, tenantHostFromPayload(payload))
 		return nil
 	}
@@ -87,11 +80,11 @@ func (h *ScheduledReportsDispatchHandler) ProcessTask(ctx context.Context, t *as
 	h.processDB(ctx, h.defaultDB, "")
 	hosts := h.poolCache.ListHosts()
 	for _, host := range hosts {
-		d, err := h.poolCache.GetOrCreate(ctx, host)
-		if err != nil || d == nil {
+		hctx, d, _ := resolveDBForHost(ctx, host, nil, h.poolCache)
+		if d == nil {
 			continue
 		}
-		h.processDB(ctx, d, host)
+		h.processDB(hctx, d, host)
 	}
 	return nil
 }
@@ -150,18 +143,12 @@ func NewScheduledReportRunHandler(defaultDB *database.DB, poolCache *hostctx.Poo
 	return &ScheduledReportRunHandler{defaultDB: defaultDB, poolCache: poolCache, qc: qc, enc: enc, log: log}
 }
 
-func (h *ScheduledReportRunHandler) resolveDB(ctx context.Context, payload []byte) *database.DB {
-	db := h.defaultDB
-	if len(payload) == 0 || h.poolCache == nil {
-		return db
-	}
+func (h *ScheduledReportRunHandler) resolveDB(ctx context.Context, payload []byte) (context.Context, *database.DB, error) {
 	var p ScheduledReportRunPayload
-	if err := json.Unmarshal(payload, &p); err == nil && strings.TrimSpace(p.Host) != "" {
-		if resolved, err := h.poolCache.GetOrCreate(ctx, p.Host); err == nil && resolved != nil {
-			db = resolved
-		}
+	if len(payload) == 0 || json.Unmarshal(payload, &p) != nil {
+		return ctx, h.defaultDB, nil
 	}
-	return db
+	return resolveDBForHost(ctx, p.Host, h.defaultDB, h.poolCache)
 }
 
 // ProcessTask implements asynq.Handler.
@@ -170,7 +157,10 @@ func (h *ScheduledReportRunHandler) ProcessTask(ctx context.Context, t *asynq.Ta
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return err
 	}
-	d := h.resolveDB(ctx, t.Payload())
+	ctx, d, err := h.resolveDB(ctx, t.Payload())
+	if err != nil {
+		return err
+	}
 	rep, err := d.Queries.GetScheduledReportByID(ctx, p.ReportID)
 	if err != nil {
 		return nil

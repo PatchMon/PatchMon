@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -380,6 +381,10 @@ func (h *HostsHandler) UpdateConnection(w http.ResponseWriter, r *http.Request) 
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		Error(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if req.IP != nil && *req.IP != "" && net.ParseIP(*req.IP) == nil {
+		Error(w, http.StatusBadRequest, "Invalid IP address")
 		return
 	}
 
@@ -1289,10 +1294,61 @@ func (h *HostsHandler) ApplyPendingConfig(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	installQueued := false
+	if openscapNewlyEnabled(host, complianceEnabled, openscapEnabled) && openscapInstallSupported(host) {
+		installQueued = h.queueScannerInstall(r, host)
+	}
+
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"success": true,
-		"message": "Configuration applied successfully",
+		"success":              true,
+		"message":              "Configuration applied successfully",
+		"scannerInstallQueued": installQueued,
 	})
+}
+
+// The agent restarts after apply_config; the install command must reach it once it has reconnected.
+const scannerInstallDelay = 30 * time.Second
+
+func openscapNewlyEnabled(before *models.Host, complianceEnabled, openscapEnabled bool) bool {
+	return complianceEnabled && openscapEnabled &&
+		(!before.ComplianceEnabled || !before.ComplianceOpenscapEnabled)
+}
+
+// openscapInstallSupported skips platforms the agent cannot install OpenSCAP on.
+// SUSE reports "unknown", so this must stay a deny-list.
+func openscapInstallSupported(host *models.Host) bool {
+	if host.PackageManager == nil {
+		return true
+	}
+	switch *host.PackageManager {
+	case "windows", "pkg", "apk", "pacman":
+		return false
+	}
+	return true
+}
+
+func (h *HostsHandler) queueScannerInstall(r *http.Request, host *models.Host) bool {
+	if h.queueClient == nil {
+		return false
+	}
+	task, err := queue.NewInstallComplianceToolsTask(host.ID, host.ApiID, hostFromRequest(r))
+	if err != nil {
+		slog.Error("apply-pending-config: failed to build scanner install task", "host_id", host.ID, "error", err)
+		return false
+	}
+	if h.integrationStatus != nil {
+		_ = h.integrationStatus.ClearInstallEvents(r.Context(), host.ApiID, "compliance")
+	}
+	info, err := h.queueClient.Enqueue(task, asynq.ProcessIn(scannerInstallDelay))
+	if err != nil {
+		slog.Error("apply-pending-config: failed to queue scanner install", "host_id", host.ID, "error", err)
+		return false
+	}
+	if h.integrationStatus != nil {
+		_ = h.integrationStatus.SetComplianceInstallJob(r.Context(), host.ID, info.ID)
+	}
+	slog.Info("apply-pending-config: queued scanner install", "host_id", host.ID, "job_id", info.ID)
+	return true
 }
 
 func hostToResponse(h *models.Host, groups []models.HostGroup, staleCutoff time.Time) map[string]interface{} {

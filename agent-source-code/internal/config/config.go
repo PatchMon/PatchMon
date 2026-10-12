@@ -683,6 +683,21 @@ const (
 	ComplianceEnabled ComplianceMode = "enabled" // true - enabled with automatic scheduled scans
 )
 
+// ParseComplianceMode maps a mode string to a ComplianceMode. The second
+// return value is false for anything unrecognised, so callers decide whether
+// to fall back or to keep the local configuration.
+func ParseComplianceMode(s string) (ComplianceMode, bool) {
+	switch s {
+	case "on-demand", "on_demand":
+		return ComplianceOnDemand, true
+	case "enabled", "true":
+		return ComplianceEnabled, true
+	case "disabled", "false":
+		return ComplianceDisabled, true
+	}
+	return "", false
+}
+
 // GetComplianceMode returns the current compliance mode
 // Returns: "disabled" (false), "on-demand" ("on-demand"), or "enabled" (true)
 func (m *Manager) GetComplianceMode() ComplianceMode {

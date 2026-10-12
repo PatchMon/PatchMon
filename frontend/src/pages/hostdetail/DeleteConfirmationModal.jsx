@@ -1,4 +1,5 @@
 import { AlertTriangle } from "lucide-react";
+import ModalPortal from "../../components/ui/ModalPortal";
 
 const DeleteConfirmationModal = ({
 	host,
@@ -9,8 +10,8 @@ const DeleteConfirmationModal = ({
 }) => {
 	if (!isOpen || !host) return null;
 
-	return (
-		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+	const modal = (
+		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120]">
 			<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 w-full max-w-md">
 				<div className="flex items-center gap-3 mb-4">
 					<div className="w-10 h-10 bg-danger-100 dark:bg-danger-900 rounded-full flex items-center justify-center">
@@ -61,6 +62,8 @@ const DeleteConfirmationModal = ({
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 };
 
 export default DeleteConfirmationModal;
