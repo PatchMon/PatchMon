@@ -69,7 +69,7 @@ func SubscribeToList(ctx context.Context, name, email string) error {
 // logged at warn-level only.
 //
 // Call after a successful user insert with a populated u.ID and u.Email.
-func AutoSubscribeIfHosted(adminMode bool, users *store.UsersStore, log *slog.Logger, u *models.User) {
+func AutoSubscribeIfHosted(reqCtx context.Context, adminMode bool, users *store.UsersStore, log *slog.Logger, u *models.User) {
 	if !adminMode || users == nil || u == nil || u.Email == "" {
 		return
 	}
@@ -86,10 +86,7 @@ func AutoSubscribeIfHosted(adminMode bool, users *store.UsersStore, log *slog.Lo
 	name := newsletterDisplayName(u)
 
 	go func() {
-		// Detach from the request context (which dies when the handler
-		// returns) but keep a hard ceiling so a slow Listmonk can't pin a
-		// goroutine forever.
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(reqCtx), 15*time.Second)
 		defer cancel()
 
 		if err := SubscribeToList(ctx, name, email); err != nil {

@@ -334,7 +334,7 @@ func (h *DiscordHandler) Callback(w http.ResponseWriter, r *http.Request) {
 			DiscordUsername: &discordUser.Username,
 			DiscordAvatar:   avatarPtr,
 		}
-		AutoSubscribeIfHosted(h.cfg != nil && h.cfg.AdminMode, h.users, h.log, user)
+		AutoSubscribeIfHosted(r.Context(), h.cfg != nil && h.cfg.AdminMode, h.users, h.log, user)
 	}
 
 	// Never adopt an account that already holds a credential: mailbox control
