@@ -412,7 +412,10 @@ func (h *ReportNowHandler) ProcessTask(ctx context.Context, t *asynq.Task) error
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return err
 	}
-	ctx, d := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
+	ctx, d, err := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
+	if err != nil {
+		return err
+	}
 
 	// The host may have reported during the catch-up's jitter delay.
 	knownHostID := ""
@@ -478,7 +481,10 @@ func sendAgentCommand(ctx context.Context, h *ReportNowHandler, p ReportNowPaylo
 		taskID = taskIDVal
 	}
 	attempt := int32(retryCount + 1)
-	ctx, d := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
+	ctx, d, err := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
+	if err != nil {
+		return err
+	}
 
 	if d != nil && taskID != "" && retryCount == 0 {
 		host, err := d.Queries.GetHostByApiID(ctx, p.ApiID)
@@ -579,7 +585,10 @@ func (h *UpdateAgentHandler) ProcessTask(ctx context.Context, t *asynq.Task) err
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return err
 	}
-	ctx, d := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
+	ctx, d, err := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
+	if err != nil {
+		return err
+	}
 
 	taskID, _ := asynq.GetTaskID(ctx)
 	retryCount, _ := asynq.GetRetryCount(ctx)
@@ -674,7 +683,11 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 		return err
 	}
 
-	if hctx, rd := resolveDBForHost(ctx, p.Host, nil, h.poolCache); rd != nil {
+	hctx, rd, err := resolveDBForHost(ctx, p.Host, nil, h.poolCache)
+	if err != nil {
+		return err
+	}
+	if rd != nil {
 		ctx = hostctx.WithDB(hctx, rd)
 	}
 

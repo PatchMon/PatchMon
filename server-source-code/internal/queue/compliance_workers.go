@@ -175,9 +175,9 @@ func (h *RunScanHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 
 	// Resolve per-context DB and put it on ctx so DBProvider-backed stores
 	// (h.compliance) resolve to the same database.
-	ctx, d := resolveDBFromPayload(ctx, t.Payload(), h.db, h.poolCache)
-	if h.poolCache != nil && strings.TrimSpace(p.Host) != "" && hostctx.TenantHostKey(ctx) == "" {
-		return fmt.Errorf("run_scan: database for %q not available", p.Host)
+	ctx, d, err := resolveDBFromPayload(ctx, t.Payload(), h.db, h.poolCache)
+	if err != nil {
+		return err
 	}
 	if d != nil {
 		ctx = hostctx.WithDB(ctx, d)
@@ -383,7 +383,10 @@ func (h *InstallComplianceToolsHandler) ProcessTask(ctx context.Context, t *asyn
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return err
 	}
-	ctx, d := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
+	ctx, d, err := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
+	if err != nil {
+		return err
+	}
 
 	// Resolve Redis from payload.Host when set; fall back to system rdb.
 	rdb := h.rdb
