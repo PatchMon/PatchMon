@@ -15,9 +15,11 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// Vendor advisory identifiers all share the shape PREFIX-YEAR:SEQUENCE, for
-// example RHSA-2025:1234, ALSA-2025:11140, RLSA-2025:5678, ELSA-2025-1234.
-var advisoryIDRe = regexp.MustCompile(`^[A-Z]{2,10}-\d{4}[:-]\d+`)
+// Matches RHSA-2025:1234, FEDORA-2026-044e56d9ff, FEDORA-EPEL-2024-0d2c3ad7a1,
+// ALAS2-2023-1957 and ALAS2KERNEL-5.10-2024-055.
+var advisoryIDRe = regexp.MustCompile(`^[A-Z][A-Z0-9]+(?:-[A-Z0-9][A-Z0-9.]*)*-\d{4}[:-][0-9a-fA-F]+`)
+
+var updateinfoPackageRe = regexp.MustCompile(`^\S+-(\d+:)?[^-\s]+-[^-\s]+\.[A-Za-z0-9_]+$`)
 
 // DNFManager handles dnf/yum package information collection
 type DNFManager struct {
@@ -262,18 +264,20 @@ func (m *DNFManager) getSecurityPackages(packageManager string) map[string]bool 
 
 	// Scoped so each variant releases its own context: a function-level defer
 	// would bind to the first cancel func only.
-	runUpdateInfo := func(subcommand string) ([]byte, error) {
-		cmd, cancel := boundedCommand(networkCollectorTimeout, packageManager, "updateinfo", "list", subcommand)
+	runUpdateInfo := func(filter string) ([]byte, error) {
+		cmd, cancel := boundedCommand(networkCollectorTimeout, packageManager, "updateinfo", "list", filter)
 		defer cancel()
 		cmd.Env = messagesCEnv(os.Environ())
 		return cmd.Output()
 	}
 
-	// Try dnf updateinfo list security (works for dnf)
-	updateInfoOutput, err := runUpdateInfo("security")
-	if err != nil {
-		// Fall back to "sec" if "security" doesn't work
-		updateInfoOutput, err = runUpdateInfo("sec")
+	// dnf5 reads a positional "security" as an advisory name and exits 0 with nothing.
+	var updateInfoOutput []byte
+	var err error
+	for _, filter := range []string{"--security", "security", "sec"} {
+		if updateInfoOutput, err = runUpdateInfo(filter); err == nil {
+			break
+		}
 	}
 
 	if err != nil {
@@ -298,8 +302,6 @@ func (m *DNFManager) parseSecurityPackages(updateInfoOutput []byte) map[string]b
 			continue
 		}
 
-		// Format: ALSA-2025:11140 Moderate/Sec.  glib2-2.68.4-16.el9_6.2.x86_64
-		// We need to extract the package name (3rd field) and get the base name
 		fields := slices.Collect(strings.FieldsSeq(line))
 		if len(fields) < 3 {
 			continue
@@ -313,10 +315,12 @@ func (m *DNFManager) parseSecurityPackages(updateInfoOutput []byte) map[string]b
 			continue
 		}
 
-		// The package name is in the format: package-name-version-release.arch
-		// We need to extract just the base package name
-		packageNameWithVersion := fields[2]
-		basePackageName := m.extractBasePackageName(packageNameWithVersion)
+		// dnf4/yum: ID Severity/Sec. NEVRA. dnf5: ID Type Severity NEVRA Issued.
+		i := slices.IndexFunc(fields[1:], updateinfoPackageRe.MatchString)
+		if i < 0 {
+			continue
+		}
+		basePackageName := m.extractBasePackageName(fields[i+1])
 
 		if basePackageName != "" {
 			securityPackages[basePackageName] = true
