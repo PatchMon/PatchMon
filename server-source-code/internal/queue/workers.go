@@ -33,7 +33,7 @@ const (
 	hostStatusMonitorConcurrency = 20
 )
 
-// resolveDBFromPayload returns the DB to use: from poolCache when host is in payload, else defaultDB.
+// resolveDBFromPayload resolves the DB for the host named in an AutomationPayload.
 func resolveDBFromPayload(ctx context.Context, payload []byte, defaultDB *database.DB, poolCache *hostctx.PoolCache) (context.Context, *database.DB, error) {
 	if len(payload) == 0 || poolCache == nil {
 		return ctx, defaultDB, nil
