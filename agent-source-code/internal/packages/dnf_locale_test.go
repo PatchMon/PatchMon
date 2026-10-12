@@ -57,9 +57,10 @@ FEDORA-2026-8efcd7a2a1 security curl-libs-8.18.0-12.fc44.aarch64 2026-10-08 01:1
 			output: `Loaded plugins: ovl, priorities
 ALAS2-2023-1957 important/Sec. ca-certificates-2021.2.50-72.amzn2.0.5.noarch
 ALAS2-2023-1972 medium/Sec.    cpio-2.12-11.amzn2.aarch64
+ALAS2KERNEL-5.10-2024-055 medium/Sec.    kernel-5.10.29-27.128.amzn2.aarch64
 updateinfo list done
 `,
-			want: []string{"ca-certificates", "cpio"},
+			want: []string{"ca-certificates", "cpio", "kernel"},
 		},
 	}
 	m := newSilentManager()

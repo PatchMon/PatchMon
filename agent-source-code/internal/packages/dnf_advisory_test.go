@@ -22,6 +22,13 @@ func TestAdvisoryIDRe(t *testing.T) {
 		{"fedora hex leading letter", "FEDORA-2026-abc1234567", true},
 		{"amazon linux 2", "ALAS2-2023-1957", true},
 		{"amazon linux 2023", "ALAS2023-2024-512", true},
+		{"amazon linux 2 kernel extras", "ALAS2KERNEL-5.10-2024-055", true},
+		{"amazon linux 2 livepatch", "ALAS2LIVEPATCH-2023-123", true},
+		{"fedora epel", "FEDORA-EPEL-2024-0d2c3ad7a1", true},
+		{"fedora epel next", "FEDORA-EPEL-NEXT-2024-0d2c3ad7a1", true},
+		{"loaded plugins line", "Loaded", false},
+		{"date field", "2026-09-09", false},
+		{"mixed-case package", "NetworkManager-1:1.42.2-1.el9.x86_64", false},
 		{"dnf5 header", "Name", false},
 
 		{"summary header", "Updates", false},

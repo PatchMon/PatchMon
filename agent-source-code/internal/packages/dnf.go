@@ -15,9 +15,9 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// Vendor advisory identifiers all share the shape PREFIX-YEAR:SEQUENCE, for
-// example RHSA-2025:1234, ALSA-2025:11140, RLSA-2025:5678, ELSA-2025-1234.
-var advisoryIDRe = regexp.MustCompile(`^[A-Z][A-Z0-9]{1,11}-\d{4}[:-][0-9a-fA-F]+`)
+// Matches RHSA-2025:1234, FEDORA-2026-044e56d9ff, FEDORA-EPEL-2024-0d2c3ad7a1,
+// ALAS2-2023-1957 and ALAS2KERNEL-5.10-2024-055.
+var advisoryIDRe = regexp.MustCompile(`^[A-Z][A-Z0-9]+(?:-[A-Z0-9][A-Z0-9.]*)*-\d{4}[:-][0-9a-fA-F]+`)
 
 var updateinfoPackageRe = regexp.MustCompile(`^\S+-(\d+:)?[^-\s]+-[^-\s]+\.[A-Za-z0-9_]+$`)
 
