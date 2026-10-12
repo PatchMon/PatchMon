@@ -97,7 +97,7 @@ func TestReceiveDockerDataPruneDecision(t *testing.T) {
 			}
 			for i, w := range tc.want {
 				g := rec.calls[i]
-				if g.table != w.table || g.hostID != w.hostID || !slices.Equal(g.ids, w.ids) {
+				if g.table != w.table || g.hostID != w.hostID || !slices.Equal(g.ids, w.ids) || g.ids == nil {
 					t.Errorf("call %d: got %+v, want %+v", i, g, w)
 				}
 			}

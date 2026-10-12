@@ -306,7 +306,7 @@ func (h *IntegrationsHandler) ReceiveDockerData(w http.ResponseWriter, r *http.R
 
 	slog.Info("received docker data from agent", "host", host.FriendlyName, "host_id", host.ID,
 		"containers", len(payload.Containers), "images", len(payload.Images),
-		"volumes", len(payload.Volumes), "networks", len(payload.Networks), "updates", len(payload.Updates))
+		"volumes", len(payload.Volumes), "networks", len(payload.Networks), "updates", len(payload.Updates), "collected", payload.Collected)
 
 	// Verify the agent's canonical docker hash if present. Mismatch means
 	// the agent's canonicalisation diverged from ours — surface immediately
