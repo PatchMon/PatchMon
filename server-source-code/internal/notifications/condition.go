@@ -90,16 +90,13 @@ if #ARGV > 3 then redis.call('PEXPIRE', KEYS[1], ARGV[2]) end
 return {added, cleared, reminded}
 `)
 
-// ConditionSync is the result of SyncConditions.
 type ConditionSync struct {
 	Entered  []string
 	Left     []string
 	Reminded []string
 }
 
-// SyncConditions records the references currently in the condition for eventType, with the time each was last notified.
-// It reports those that newly entered it, those that left it, and, when remindEvery is positive,
-// those still in it whose last notification is at least remindEvery old (their time is reset to now).
+// SyncConditions records who is in the condition and reports entries, exits, and reminders due after remindEvery.
 func (e *Emitter) SyncConditions(ctx context.Context, tenantHost, eventType string, active []string, remindEvery time.Duration, now time.Time) (ConditionSync, error) {
 	if e == nil || e.rdb == nil {
 		return ConditionSync{Entered: active}, nil
@@ -127,6 +124,19 @@ func (e *Emitter) ForgetConditions(ctx context.Context, tenantHost, eventType st
 		return
 	}
 	_ = e.rdb.HDel(ctx, tenantRedisKey(tenantHost, conditionKey(eventType)), refIDs...).Err()
+}
+
+// RewindConditions marks refs as never notified, so they are reported as reminders due on the next sync.
+func (e *Emitter) RewindConditions(ctx context.Context, tenantHost, eventType string, refIDs []string) {
+	if e == nil || e.rdb == nil || len(refIDs) == 0 {
+		return
+	}
+	key := tenantRedisKey(tenantHost, conditionKey(eventType))
+	pipe := e.rdb.Pipeline()
+	for _, id := range refIDs {
+		pipe.HSet(ctx, key, id, "0")
+	}
+	_, _ = pipe.Exec(ctx)
 }
 
 // ClearConditions forgets every reference recorded for eventType, so the next occurrence notifies again.

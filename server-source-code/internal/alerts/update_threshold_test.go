@@ -78,6 +78,7 @@ func TestReminderInterval(t *testing.T) {
 		{"zero means no reminders", h(0), 0},
 		{"negative treated as none", h(-3), 0},
 		{"daily", h(24), 24 * time.Hour},
+		{"huge values clamped to a year", h(1 << 30), 24 * 365 * time.Hour},
 	}
 	for _, tc := range cases {
 		if got := reminderInterval(tc.cfg); got != tc.want {

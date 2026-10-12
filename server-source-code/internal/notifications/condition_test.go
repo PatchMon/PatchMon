@@ -176,6 +176,7 @@ func TestConditionHelpers_NoRedis(t *testing.T) {
 	e.ReleaseCheck(ctx, "", "x")
 	e.ClearConditions(ctx, "", "x")
 	e.ForgetConditions(ctx, "", "x", []string{"h1"})
+	e.RewindConditions(ctx, "", "x", []string{"h1"})
 }
 
 func TestReleaseDedup_DroppedDeliveryCanBeRetried(t *testing.T) {
@@ -235,5 +236,23 @@ func TestSyncConditions_Reminders(t *testing.T) {
 	}
 	if r, _ := e.SyncConditions(ctx, "", typ, []string{"h1", "h2"}, 0, base.Add(48*time.Hour)); len(r.Reminded) != 0 {
 		t.Fatalf("reminders sent after being switched off: %+v", r)
+	}
+}
+
+func TestRewindConditions_UndeliveredReminderRetriedAsReminder(t *testing.T) {
+	t.Parallel()
+	e, _ := newTestEmitter(t)
+	ctx := context.Background()
+	base := time.Now()
+	typ := "host_security_updates_exceeded"
+
+	_, _ = e.SyncConditions(ctx, "", typ, []string{"h1"}, time.Hour, base)
+	e.RewindConditions(ctx, "", typ, []string{"h1"})
+	r, _ := e.SyncConditions(ctx, "", typ, []string{"h1"}, time.Hour, base.Add(time.Minute))
+	if len(r.Entered) != 0 || !slices.Equal(r.Reminded, []string{"h1"}) {
+		t.Fatalf("rewound reminder: %+v", r)
+	}
+	if r, _ := e.SyncConditions(ctx, "", typ, []string{"h1"}, time.Hour, base.Add(2*time.Minute)); len(r.Reminded) != 0 {
+		t.Fatalf("delivered retry did not reset the reminder clock: %+v", r)
 	}
 }

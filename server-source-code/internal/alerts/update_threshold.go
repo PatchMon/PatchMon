@@ -15,7 +15,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const defaultThresholdIntervalMinutes = 30
+const (
+	defaultThresholdIntervalMinutes = 30
+	maxReminderIntervalHours        = 24 * 365
+)
 
 type thresholdCheck struct {
 	alertType        string
@@ -191,7 +194,7 @@ func evaluateThreshold(ctx context.Context, d *database.DB, tenantHost string, e
 
 	alertsStore := store.NewAlertsStore(d)
 	alertsCreated := 0
-	var undelivered []string
+	var undelivered, undeliveredReminders []string
 	for _, host := range hostRows {
 		if host.Status != "active" {
 			continue
@@ -226,7 +229,11 @@ func evaluateThreshold(ctx context.Context, d *database.DB, tenantHost string, e
 				Metadata:      meta,
 			})
 			if !ok {
-				undelivered = append(undelivered, host.ID)
+				if decision.reminder {
+					undeliveredReminders = append(undeliveredReminders, host.ID)
+				} else {
+					undelivered = append(undelivered, host.ID)
+				}
 				continue
 			}
 			alertsCreated++
@@ -251,14 +258,15 @@ func evaluateThreshold(ctx context.Context, d *database.DB, tenantHost string, e
 		}
 	}
 	emit.ForgetConditions(ctx, tenantHost, chk.alertType, undelivered)
-	return alertsCreated, len(undelivered) > 0, nil
+	emit.RewindConditions(ctx, tenantHost, chk.alertType, undeliveredReminders)
+	return alertsCreated, len(undelivered)+len(undeliveredReminders) > 0, nil
 }
 
 func reminderInterval(cfg *store.AlertConfigWithUser) time.Duration {
 	if cfg == nil || cfg.ReminderIntervalHours == nil || *cfg.ReminderIntervalHours <= 0 {
 		return 0
 	}
-	return time.Duration(*cfg.ReminderIntervalHours) * time.Hour
+	return time.Duration(min(*cfg.ReminderIntervalHours, maxReminderIntervalHours)) * time.Hour
 }
 
 func toSet(ids []string) map[string]bool {
