@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -294,7 +295,7 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 			}
 
 			// Direct mode
-			sshAddr := hostIPOrHostname(host) + ":" + strconv.Itoa(orInt(msg.Port, 22))
+			sshAddr := net.JoinHostPort(hostIPOrHostname(host), strconv.Itoa(orInt(msg.Port, 22)))
 			hostKeyCB := hostKeyCallback(h.log)
 			config := &ssh.ClientConfig{
 				User:            orDefault(msg.Username, "root"),

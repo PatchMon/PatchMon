@@ -326,8 +326,6 @@ func TestBuildPackageUpsertPayload_PreservesOrder(t *testing.T) {
 	}
 }
 
-// TestExtractIPFromInterface verifies that IP addresses are correctly extracted
-// from the selected interface, preferring IPv4 and falling back to IPv6.
 func TestExtractIPFromInterface(t *testing.T) {
 	tests := []struct {
 		name              string

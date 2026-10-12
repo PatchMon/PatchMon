@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// TestSelectPrimaryIPAddress verifies that IPv4 is preferred when available
-// and that a global IPv6 address is used as a fallback on IPv6-only systems.
 func TestSelectPrimaryIPAddress(t *testing.T) {
 	tests := []struct {
 		name string
@@ -35,6 +33,22 @@ func TestSelectPrimaryIPAddress(t *testing.T) {
 				net.ParseIP("192.0.2.10"),
 			},
 			want: "192.0.2.10",
+		},
+		{
+			name: "private IPv4 still preferred over IPv6",
+			ips: []net.IP{
+				net.ParseIP("2001:db8::10"),
+				net.ParseIP("10.0.0.5"),
+			},
+			want: "10.0.0.5",
+		},
+		{
+			name: "IPv4 link-local only returns empty",
+			ips: []net.IP{
+				net.ParseIP("169.254.10.20"),
+				net.ParseIP("fe80::10"),
+			},
+			want: "",
 		},
 		{
 			name: "IPv4 link-local falls back to IPv6",

@@ -18,64 +18,48 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// ExtractIPFromInterface extracts a preferred IP address from the named
-// interface in networkInterfaces JSON. IPv4 is preferred for backwards
-// compatibility, with IPv6 used as a fallback.
-// Returns empty string if no suitable address is found or on parse error.
+// ExtractIPFromInterface returns the first global IPv4 address on the named interface in
+// networkInterfaces JSON, falling back to the first global IPv6. Empty if none or on parse error.
 func ExtractIPFromInterface(networkInterfaces []byte, interfaceName string) string {
 	if len(networkInterfaces) == 0 || interfaceName == "" {
 		return ""
 	}
-
 	var ifaces []map[string]interface{}
 	if err := json.Unmarshal(networkInterfaces, &ifaces); err != nil {
 		return ""
 	}
-
 	for _, iface := range ifaces {
 		name, _ := iface["name"].(string)
 		if name != interfaceName {
 			continue
 		}
-
 		addrs, ok := iface["addresses"].([]interface{})
 		if !ok {
 			return ""
 		}
-
 		var ipv6Fallback string
-
 		for _, a := range addrs {
 			addrMap, ok := a.(map[string]interface{})
 			if !ok {
 				continue
 			}
-
 			family, _ := addrMap["family"].(string)
 			addr, _ := addrMap["address"].(string)
-			if addr == "" {
+			ip := net.ParseIP(addr)
+			if ip == nil || !ip.IsGlobalUnicast() {
 				continue
 			}
-
 			switch family {
 			case "inet":
-				ip := net.ParseIP(addr)
-				if ip != nil && ip.IsGlobalUnicast() {
-					// Preserve existing behaviour: prefer usable IPv4.
-					return addr
-				}
-
+				return addr
 			case "inet6":
-				ip := net.ParseIP(addr)
-				if ip != nil && ip.IsGlobalUnicast() && ipv6Fallback == "" {
+				if ipv6Fallback == "" {
 					ipv6Fallback = addr
 				}
 			}
 		}
-
 		return ipv6Fallback
 	}
-
 	return ""
 }
 
