@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -55,20 +56,18 @@ func CORS(origin string, dynamicResolver OriginResolver) func(http.Handler) http
 				}
 			}
 
-			if !set.wildcard {
-				if fwd := forwardedHost(r); fwd != "" {
-					if !hostAllowed(set.hosts, fwd) {
-						reflectOrigin := reqOrigin
-						if reflectOrigin == "" {
-							reflectOrigin = EffectiveOrigin(r, fwd)
-						}
-						rejectHost(w, reflectOrigin, "CORS_ORIGIN mismatch. Access this app via the URL configured in CORS_ORIGIN (.env or Database settings).", "cors_mismatch")
-						return
+			if fwd := forwardedHost(r); fwd != "" {
+				if !set.allowsForwarded(fwd) {
+					reflectOrigin := reqOrigin
+					if reflectOrigin == "" {
+						reflectOrigin = EffectiveOrigin(r, fwd)
 					}
-				} else if host := r.Host; host != "" && !isLoopback(host) && !hostAllowed(set.hosts, host) && !set.hosts[hostnameOf(strings.ToLower(host))] {
-					rejectHost(w, "", "Host not allowed. Access this app via the URL configured in CORS_ORIGIN (.env or Database settings).", "host_mismatch")
+					rejectHost(w, reflectOrigin, "CORS_ORIGIN mismatch. Access this app via the URL configured in CORS_ORIGIN (.env or Database settings).", "cors_mismatch")
 					return
 				}
+			} else if !set.allowsDirect(r.Host) {
+				rejectHost(w, "", "Host not allowed. Access this app via the URL configured in CORS_ORIGIN (.env or Database settings).", "host_mismatch")
+				return
 			}
 
 			if allowOrigin != "" {
@@ -87,9 +86,33 @@ func CORS(origin string, dynamicResolver OriginResolver) func(http.Handler) http
 				return
 			}
 
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), corsOriginSetKey{}, set)))
 		})
 	}
+}
+
+type corsOriginSetKey struct{}
+
+func (s originSet) allowsForwarded(hostPort string) bool {
+	return s.wildcard || hostAllowed(s.hosts, hostPort)
+}
+
+func (s originSet) allowsDirect(hostPort string) bool {
+	return s.wildcard || hostPort == "" || isLoopback(hostPort) || hostAllowed(s.hosts, hostPort) || s.hosts[hostnameOf(strings.ToLower(hostPort))]
+}
+
+// CORSAllowsHost reports whether the CORS middleware would accept a request for
+// hostPort arriving the same way as r (proxied or direct), using the origin set
+// it applied to r. It returns true when the middleware did not run.
+func CORSAllowsHost(r *http.Request, hostPort string) bool {
+	set, ok := r.Context().Value(corsOriginSetKey{}).(originSet)
+	if !ok {
+		return true
+	}
+	if forwardedHost(r) != "" {
+		return set.allowsForwarded(hostPort)
+	}
+	return set.allowsDirect(hostPort)
 }
 
 func rejectHost(w http.ResponseWriter, reflectOrigin, msg, code string) {

@@ -88,6 +88,41 @@ func (h *SettingsHandler) GetServerURL(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]string{"server_url": url})
 }
 
+type serverURLCORSCheckResponse struct {
+	ServerURL string `json:"server_url"`
+	Allowed   bool   `json:"allowed"`
+	Reason    string `json:"reason"`
+}
+
+// ServerURLCORSCheck handles GET /settings/server-url/cors-check.
+func (h *SettingsHandler) ServerURLCORSCheck(w http.ResponseWriter, r *http.Request) {
+	s, err := h.settings.GetFirst(r.Context())
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to load settings")
+		return
+	}
+	serverURL := s.ServerURL
+	if serverURL == "" {
+		serverURL = "http://localhost:3001"
+	}
+	JSON(w, http.StatusOK, checkServerURLCORS(r, serverURL))
+}
+
+func checkServerURLCORS(r *http.Request, serverURL string) serverURLCORSCheckResponse {
+	resp := serverURLCORSCheckResponse{ServerURL: serverURL}
+	if validateServerURL(serverURL) != nil {
+		resp.Reason = "server_url_invalid"
+		return resp
+	}
+	u, _ := url.Parse(serverURL)
+	if !middleware.CORSAllowsHost(r, u.Host) {
+		resp.Reason = "host_not_in_cors_origin"
+		return resp
+	}
+	resp.Allowed = true
+	return resp
+}
+
 // GetCurrentURL handles GET /settings/current-url (public). Returns the effective URL from X-Forwarded-* or Host.
 func (h *SettingsHandler) GetCurrentURL(w http.ResponseWriter, r *http.Request) {
 	scheme := "https"

@@ -3682,9 +3682,18 @@ Symptoms: `curl: (60) SSL certificate problem` on Linux, or `Could not establish
 
 > Do not use `skip_ssl_verify` in production. It disables TLS verification entirely and exposes the agent to man-in-the-middle attacks. See the [Agent Configuration Reference](#agent-config-yml-reference) for more on `skip_ssl_verify`.
 
-#### 3. "CORS error" in the browser (wizard-side only)
+#### 3. "CORS error" in the browser, or the install script reports a rejected URL
 
-The wizard itself calls `/api/v1/hosts/install` and `/api/v1/ws/status/{apiId}` from your browser. If either fails with a CORS error, your server's `CORS_ORIGIN` env var does not match the URL you are accessing PatchMon with. The install script and agent are checked the same way, so a Server URL whose hostname is not in `CORS_ORIGIN` is rejected with a `host_mismatch` or `cors_mismatch` error.
+The wizard itself calls `/api/v1/hosts/install` and `/api/v1/ws/status/{apiId}` from your browser. If either fails with a CORS error, your server's `CORS_ORIGIN` env var does not match the URL you are accessing PatchMon with.
+
+The install script and agent are checked the same way, so a Server URL whose hostname is not in `CORS_ORIGIN` is rejected. The install script then stops with:
+
+```
+ERROR: The PatchMon server rejected the URL this host used (host_mismatch). The hostname in Settings > Server URL must be listed in CORS_ORIGIN.
+Server response: {"code":"host_mismatch","error":"Host not allowed. ..."}
+```
+
+The code is `cors_mismatch` instead when PatchMon sits behind a reverse proxy. On Windows the same message is shown by the PowerShell installer. Either change **Settings → Server URL** to a URL whose hostname is already in `CORS_ORIGIN`, or add that URL to `CORS_ORIGIN`. The web UI warns you when the two do not match.
 
 Fix: set `CORS_ORIGIN` in the server `.env` to the **exact origin** (protocol + host + port) the browser uses. For example:
 
@@ -3692,7 +3701,7 @@ Fix: set `CORS_ORIGIN` in the server `.env` to the **exact origin** (protocol + 
 CORS_ORIGIN=https://patchmon.example.com
 ```
 
-If users reach PatchMon from more than one URL (e.g. an external domain and an internal LAN address), comma-separate the values with no spaces:
+If users reach PatchMon from more than one URL (e.g. an external domain and an internal LAN address), comma-separate the values:
 
 ```
 CORS_ORIGIN=https://patchmon.example.com,https://patchmon.internal.lan
@@ -3722,7 +3731,7 @@ ERROR: Failed to fetch credentials. Bootstrap token may have expired.
 Please request a new installation script.
 ```
 
-The script prints the server's response between those two lines, which tells an expired token apart from any other rejection. Go back to **Step 4** of the wizard and click **Copy command** again. This reuses the same host record but mints a fresh token.
+The script prints the server's response between those two lines, which tells an expired token apart from any other rejection. If the script instead says the server rejected the URL this host used, the token is fine: see section 3 above. Go back to **Step 4** of the wizard and click **Copy command** again. This reuses the same host record but mints a fresh token.
 
 #### 6. Installer aborts on clock skew
 

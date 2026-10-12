@@ -113,6 +113,12 @@ if ($BootstrapToken -and $ServerURL) {
         }
         Write-Host "Credentials received successfully." -ForegroundColor Green
     } catch {
+        $serverResponse = $_.ErrorDetails.Message
+        if ($serverResponse -match '"code"\s*:\s*"(cors_mismatch|host_mismatch)"') {
+            Write-Host "Server response: $serverResponse"
+            Write-Error "The PatchMon server rejected the URL this host used ($($Matches[1])). The hostname in Settings > Server URL must be listed in CORS_ORIGIN."
+            exit 1
+        }
         Write-Error "Failed to fetch credentials: $($_.Exception.Message). Bootstrap token may have expired. Please request a new installation script."
         exit 1
     }

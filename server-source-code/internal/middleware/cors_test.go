@@ -372,3 +372,92 @@ func TestValidateOrigins(t *testing.T) {
 		})
 	}
 }
+
+func TestCORSAllowsHost_MatchesMiddleware(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		configured string
+		viaProxy   bool
+		host       string
+		want       bool
+	}{
+		{"listed host via proxy", "https://pm.example.com", true, "pm.example.com", true},
+		{"unlisted host via proxy", "https://pm.example.com", true, "other.example.com", false},
+		{"default port equivalence via proxy", "https://pm.example.com", true, "pm.example.com:443", true},
+		{"non-default port must match via proxy", "https://pm.example.com", true, "pm.example.com:8443", false},
+		{"wildcard via proxy", "*", true, "anything.example", true},
+		{"list with spaces and slash via proxy", " https://a.example/ , https://PM.example.com/ ", true, "pm.example.com", true},
+		{"ip with port via proxy", "http://192.168.1.10:3000", true, "192.168.1.10:3000", true},
+		{"ip on other port via proxy", "http://192.168.1.10:3000", true, "192.168.1.10:3001", false},
+		{"listed host direct", "http://192.168.1.10:3000", false, "192.168.1.10:3000", true},
+		{"default-port origin hostname on any port direct", "https://pm.example.com", false, "pm.example.com:3000", true},
+		{"non-default port origin direct", "http://192.168.1.10:3000", false, "192.168.1.10:3001", false},
+		{"unlisted host direct", "https://pm.example.com", false, "10.0.0.5:3000", false},
+		{"loopback direct", "https://pm.example.com", false, "localhost:3001", true},
+		{"loopback via proxy", "https://pm.example.com", true, "localhost:3001", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var agentHeaders map[string]string
+			agentHost := tc.host
+			if tc.viaProxy {
+				agentHeaders = map[string]string{"X-Forwarded-Host": tc.host}
+				agentHost = "127.0.0.1:3001"
+			}
+			middlewareAllowed := serveCORS(t, tc.configured, nil, http.MethodGet, agentHost, agentHeaders).Code == http.StatusOK
+
+			var got bool
+			check := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = CORSAllowsHost(r, tc.host)
+				w.WriteHeader(http.StatusOK)
+			})
+			adminHost := "127.0.0.1:3001"
+			req := httptest.NewRequest(http.MethodGet, "http://"+adminHost+"/api/v1/settings/server-url/cors-check", nil)
+			req.Host = adminHost
+			if tc.viaProxy {
+				req.Header.Set("X-Forwarded-Host", "admin.invalid")
+				CORS(tc.configured+",https://admin.invalid", nil)(check).ServeHTTP(httptest.NewRecorder(), req)
+			} else {
+				CORS(tc.configured, nil)(check).ServeHTTP(httptest.NewRecorder(), req)
+			}
+
+			if middlewareAllowed != tc.want {
+				t.Fatalf("middleware allowed %q = %v, want %v", tc.host, middlewareAllowed, tc.want)
+			}
+			if got != tc.want {
+				t.Fatalf("CORSAllowsHost(%q) = %v, want %v", tc.host, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCORSAllowsHost_UsesResolvedContextOrigin(t *testing.T) {
+	t.Parallel()
+
+	resolver := func(r *http.Request) (string, bool) {
+		if r.Header.Get("X-Forwarded-Host") == "ctx-a.example" {
+			return "https://ctx-a.example", true
+		}
+		return "", false
+	}
+	got := map[string]bool{}
+	check := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		for _, h := range []string{"ctx-a.example", "static.example", "ctx-b.example"} {
+			got[h] = CORSAllowsHost(r, h)
+		}
+	})
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:3001/", nil)
+	req.Header.Set("X-Forwarded-Host", "ctx-a.example")
+	CORS("https://static.example", resolver)(check).ServeHTTP(httptest.NewRecorder(), req)
+
+	want := map[string]bool{"ctx-a.example": true, "static.example": false, "ctx-b.example": false}
+	for h, w := range want {
+		if got[h] != w {
+			t.Errorf("CORSAllowsHost(%q) = %v, want %v", h, got[h], w)
+		}
+	}
+}
