@@ -12,22 +12,23 @@ func intPtr(n int) *int { return &n }
 func storedAlertConfig() *models.AlertConfig {
 	user, rule := "u1", "round_robin"
 	return &models.AlertConfig{
-		AlertType:            "host_down",
-		IsEnabled:            true,
-		DefaultSeverity:      "warning",
-		AutoAssignEnabled:    true,
-		AutoAssignUserID:     &user,
-		AutoAssignRule:       &rule,
-		RetentionDays:        intPtr(30),
-		AutoResolveAfterDays: intPtr(7),
-		CleanupResolvedOnly:  true,
-		NotificationEnabled:  true,
-		EscalationEnabled:    true,
-		EscalationAfterHours: intPtr(4),
-		AlertDelaySeconds:    intPtr(300),
-		CheckIntervalMinutes: intPtr(5),
-		Metadata:             models.JSON(`{"threshold":30}`),
-		Category:             "host",
+		AlertType:             "host_down",
+		IsEnabled:             true,
+		DefaultSeverity:       "warning",
+		AutoAssignEnabled:     true,
+		AutoAssignUserID:      &user,
+		AutoAssignRule:        &rule,
+		RetentionDays:         intPtr(30),
+		AutoResolveAfterDays:  intPtr(7),
+		CleanupResolvedOnly:   true,
+		NotificationEnabled:   true,
+		EscalationEnabled:     true,
+		EscalationAfterHours:  intPtr(4),
+		AlertDelaySeconds:     intPtr(300),
+		CheckIntervalMinutes:  intPtr(5),
+		ReminderIntervalHours: intPtr(24),
+		Metadata:              models.JSON(`{"threshold":30}`),
+		Category:              "host",
 	}
 }
 
@@ -54,6 +55,7 @@ func TestApplyAlertConfigUpdate_OmittedFieldsKeepStoredValues(t *testing.T) {
 		"escalation_after_hours":  cfg.EscalationAfterHours,
 		"alert_delay_seconds":     cfg.AlertDelaySeconds,
 		"check_interval_minutes":  cfg.CheckIntervalMinutes,
+		"reminder_interval_hours": cfg.ReminderIntervalHours,
 	}
 	for name, v := range checks {
 		if v == nil {
@@ -77,6 +79,7 @@ func TestApplyAlertConfigUpdate_ExplicitValuesApplied(t *testing.T) {
 		"retention_days": 90,
 		"auto_resolve_after_days": null,
 		"check_interval_minutes": null,
+		"reminder_interval_hours": 6,
 		"cleanup_resolved_only": false,
 		"auto_assign_user_id": null,
 		"auto_assign_rule": ""
@@ -87,6 +90,9 @@ func TestApplyAlertConfigUpdate_ExplicitValuesApplied(t *testing.T) {
 	}
 	if cfg.EscalationAfterHours != nil || cfg.AutoResolveAfterDays != nil || cfg.CheckIntervalMinutes != nil {
 		t.Error("explicit null did not clear the field")
+	}
+	if cfg.ReminderIntervalHours == nil || *cfg.ReminderIntervalHours != 6 {
+		t.Errorf("reminder_interval_hours not applied: %v", cfg.ReminderIntervalHours)
 	}
 	if cfg.RetentionDays == nil || *cfg.RetentionDays != 90 {
 		t.Errorf("retention_days not applied: %v", cfg.RetentionDays)

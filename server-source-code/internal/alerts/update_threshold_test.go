@@ -41,18 +41,47 @@ func TestDecideThreshold(t *testing.T) {
 		count    int
 		hasAlert bool
 		entered  bool
-		want     thresholdAction
+		remind   bool
+		want     thresholdDecision
 	}{
-		{"newly exceeded, no alert row", 5, false, true, thresholdNotify},
-		{"still exceeded, already notified", 5, false, false, thresholdNone},
-		{"newly exceeded with an active alert row", 5, true, true, thresholdTouch},
-		{"still exceeded with an active alert row", 5, true, false, thresholdTouch},
-		{"at threshold with an active alert row", 2, true, false, thresholdResolve},
-		{"below threshold, nothing to resolve", 1, false, false, thresholdNone},
+		{"newly exceeded, no alert row", 5, false, true, false, thresholdDecision{notify: true}},
+		{"still exceeded, already notified", 5, false, false, false, thresholdDecision{}},
+		{"still exceeded, reminder due", 5, false, false, true, thresholdDecision{notify: true, reminder: true}},
+		{"newly exceeded with an active alert row", 5, true, true, false, thresholdDecision{touch: true}},
+		{"still exceeded with an active alert row", 5, true, false, false, thresholdDecision{touch: true}},
+		{"reminder due with an active alert row", 5, true, false, true, thresholdDecision{touch: true, notify: true, reminder: true}},
+		{"at threshold with an active alert row", 2, true, false, false, thresholdDecision{resolve: true}},
+		{"below threshold, nothing to resolve", 1, false, false, false, thresholdDecision{}},
+		{"reminder flag ignored once cleared", 1, false, false, true, thresholdDecision{}},
 	}
 	for _, tc := range cases {
-		if got := decideThreshold(tc.count, 2, tc.hasAlert, tc.entered); got != tc.want {
-			t.Errorf("%s: got %d, want %d", tc.name, got, tc.want)
+		if got := decideThreshold(tc.count, 2, tc.hasAlert, tc.entered, tc.remind); got != tc.want {
+			t.Errorf("%s: got %+v, want %+v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestReminderInterval(t *testing.T) {
+	t.Parallel()
+	h := func(v int) *store.AlertConfigWithUser {
+		cfg := &store.AlertConfigWithUser{}
+		cfg.ReminderIntervalHours = &v
+		return cfg
+	}
+	cases := []struct {
+		name string
+		cfg  *store.AlertConfigWithUser
+		want time.Duration
+	}{
+		{"nil config", nil, 0},
+		{"unset means no reminders", &store.AlertConfigWithUser{}, 0},
+		{"zero means no reminders", h(0), 0},
+		{"negative treated as none", h(-3), 0},
+		{"daily", h(24), 24 * time.Hour},
+	}
+	for _, tc := range cases {
+		if got := reminderInterval(tc.cfg); got != tc.want {
+			t.Errorf("%s: got %s, want %s", tc.name, got, tc.want)
 		}
 	}
 }

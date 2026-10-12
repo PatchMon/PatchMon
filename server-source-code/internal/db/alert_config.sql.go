@@ -13,7 +13,7 @@ import (
 
 const getAlertConfigByType = `-- name: GetAlertConfigByType :one
 SELECT
-    ac.id, ac.alert_type, ac.is_enabled, ac.default_severity, ac.auto_assign_enabled, ac.auto_assign_user_id, ac.auto_assign_rule, ac.auto_assign_conditions, ac.retention_days, ac.auto_resolve_after_days, ac.cleanup_resolved_only, ac.notification_enabled, ac.escalation_enabled, ac.escalation_after_hours, ac.alert_delay_seconds, ac.metadata, ac.category, ac.check_interval_minutes, ac.created_at, ac.updated_at,
+    ac.id, ac.alert_type, ac.is_enabled, ac.default_severity, ac.auto_assign_enabled, ac.auto_assign_user_id, ac.auto_assign_rule, ac.auto_assign_conditions, ac.retention_days, ac.auto_resolve_after_days, ac.cleanup_resolved_only, ac.notification_enabled, ac.escalation_enabled, ac.escalation_after_hours, ac.alert_delay_seconds, ac.metadata, ac.category, ac.check_interval_minutes, ac.reminder_interval_hours, ac.created_at, ac.updated_at,
     u.id AS auto_assign_user_id_val,
     u.username AS auto_assign_username,
     u.email AS auto_assign_email,
@@ -25,31 +25,32 @@ WHERE ac.alert_type = $1
 `
 
 type GetAlertConfigByTypeRow struct {
-	ID                   string           `json:"id"`
-	AlertType            string           `json:"alert_type"`
-	IsEnabled            bool             `json:"is_enabled"`
-	DefaultSeverity      string           `json:"default_severity"`
-	AutoAssignEnabled    bool             `json:"auto_assign_enabled"`
-	AutoAssignUserID     *string          `json:"auto_assign_user_id"`
-	AutoAssignRule       *string          `json:"auto_assign_rule"`
-	AutoAssignConditions []byte           `json:"auto_assign_conditions"`
-	RetentionDays        *int32           `json:"retention_days"`
-	AutoResolveAfterDays *int32           `json:"auto_resolve_after_days"`
-	CleanupResolvedOnly  bool             `json:"cleanup_resolved_only"`
-	NotificationEnabled  bool             `json:"notification_enabled"`
-	EscalationEnabled    bool             `json:"escalation_enabled"`
-	EscalationAfterHours *int32           `json:"escalation_after_hours"`
-	AlertDelaySeconds    *int32           `json:"alert_delay_seconds"`
-	Metadata             []byte           `json:"metadata"`
-	Category             string           `json:"category"`
-	CheckIntervalMinutes *int32           `json:"check_interval_minutes"`
-	CreatedAt            pgtype.Timestamp `json:"created_at"`
-	UpdatedAt            pgtype.Timestamp `json:"updated_at"`
-	AutoAssignUserIDVal  *string          `json:"auto_assign_user_id_val"`
-	AutoAssignUsername   *string          `json:"auto_assign_username"`
-	AutoAssignEmail      *string          `json:"auto_assign_email"`
-	AutoAssignFirstName  *string          `json:"auto_assign_first_name"`
-	AutoAssignLastName   *string          `json:"auto_assign_last_name"`
+	ID                    string           `json:"id"`
+	AlertType             string           `json:"alert_type"`
+	IsEnabled             bool             `json:"is_enabled"`
+	DefaultSeverity       string           `json:"default_severity"`
+	AutoAssignEnabled     bool             `json:"auto_assign_enabled"`
+	AutoAssignUserID      *string          `json:"auto_assign_user_id"`
+	AutoAssignRule        *string          `json:"auto_assign_rule"`
+	AutoAssignConditions  []byte           `json:"auto_assign_conditions"`
+	RetentionDays         *int32           `json:"retention_days"`
+	AutoResolveAfterDays  *int32           `json:"auto_resolve_after_days"`
+	CleanupResolvedOnly   bool             `json:"cleanup_resolved_only"`
+	NotificationEnabled   bool             `json:"notification_enabled"`
+	EscalationEnabled     bool             `json:"escalation_enabled"`
+	EscalationAfterHours  *int32           `json:"escalation_after_hours"`
+	AlertDelaySeconds     *int32           `json:"alert_delay_seconds"`
+	Metadata              []byte           `json:"metadata"`
+	Category              string           `json:"category"`
+	CheckIntervalMinutes  *int32           `json:"check_interval_minutes"`
+	ReminderIntervalHours *int32           `json:"reminder_interval_hours"`
+	CreatedAt             pgtype.Timestamp `json:"created_at"`
+	UpdatedAt             pgtype.Timestamp `json:"updated_at"`
+	AutoAssignUserIDVal   *string          `json:"auto_assign_user_id_val"`
+	AutoAssignUsername    *string          `json:"auto_assign_username"`
+	AutoAssignEmail       *string          `json:"auto_assign_email"`
+	AutoAssignFirstName   *string          `json:"auto_assign_first_name"`
+	AutoAssignLastName    *string          `json:"auto_assign_last_name"`
 }
 
 func (q *Queries) GetAlertConfigByType(ctx context.Context, alertType string) (GetAlertConfigByTypeRow, error) {
@@ -74,6 +75,7 @@ func (q *Queries) GetAlertConfigByType(ctx context.Context, alertType string) (G
 		&i.Metadata,
 		&i.Category,
 		&i.CheckIntervalMinutes,
+		&i.ReminderIntervalHours,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AutoAssignUserIDVal,
@@ -87,7 +89,7 @@ func (q *Queries) GetAlertConfigByType(ctx context.Context, alertType string) (G
 
 const listAlertConfig = `-- name: ListAlertConfig :many
 SELECT
-    ac.id, ac.alert_type, ac.is_enabled, ac.default_severity, ac.auto_assign_enabled, ac.auto_assign_user_id, ac.auto_assign_rule, ac.auto_assign_conditions, ac.retention_days, ac.auto_resolve_after_days, ac.cleanup_resolved_only, ac.notification_enabled, ac.escalation_enabled, ac.escalation_after_hours, ac.alert_delay_seconds, ac.metadata, ac.category, ac.check_interval_minutes, ac.created_at, ac.updated_at,
+    ac.id, ac.alert_type, ac.is_enabled, ac.default_severity, ac.auto_assign_enabled, ac.auto_assign_user_id, ac.auto_assign_rule, ac.auto_assign_conditions, ac.retention_days, ac.auto_resolve_after_days, ac.cleanup_resolved_only, ac.notification_enabled, ac.escalation_enabled, ac.escalation_after_hours, ac.alert_delay_seconds, ac.metadata, ac.category, ac.check_interval_minutes, ac.reminder_interval_hours, ac.created_at, ac.updated_at,
     u.id AS auto_assign_user_id_val,
     u.username AS auto_assign_username,
     u.email AS auto_assign_email,
@@ -99,31 +101,32 @@ ORDER BY ac.alert_type ASC
 `
 
 type ListAlertConfigRow struct {
-	ID                   string           `json:"id"`
-	AlertType            string           `json:"alert_type"`
-	IsEnabled            bool             `json:"is_enabled"`
-	DefaultSeverity      string           `json:"default_severity"`
-	AutoAssignEnabled    bool             `json:"auto_assign_enabled"`
-	AutoAssignUserID     *string          `json:"auto_assign_user_id"`
-	AutoAssignRule       *string          `json:"auto_assign_rule"`
-	AutoAssignConditions []byte           `json:"auto_assign_conditions"`
-	RetentionDays        *int32           `json:"retention_days"`
-	AutoResolveAfterDays *int32           `json:"auto_resolve_after_days"`
-	CleanupResolvedOnly  bool             `json:"cleanup_resolved_only"`
-	NotificationEnabled  bool             `json:"notification_enabled"`
-	EscalationEnabled    bool             `json:"escalation_enabled"`
-	EscalationAfterHours *int32           `json:"escalation_after_hours"`
-	AlertDelaySeconds    *int32           `json:"alert_delay_seconds"`
-	Metadata             []byte           `json:"metadata"`
-	Category             string           `json:"category"`
-	CheckIntervalMinutes *int32           `json:"check_interval_minutes"`
-	CreatedAt            pgtype.Timestamp `json:"created_at"`
-	UpdatedAt            pgtype.Timestamp `json:"updated_at"`
-	AutoAssignUserIDVal  *string          `json:"auto_assign_user_id_val"`
-	AutoAssignUsername   *string          `json:"auto_assign_username"`
-	AutoAssignEmail      *string          `json:"auto_assign_email"`
-	AutoAssignFirstName  *string          `json:"auto_assign_first_name"`
-	AutoAssignLastName   *string          `json:"auto_assign_last_name"`
+	ID                    string           `json:"id"`
+	AlertType             string           `json:"alert_type"`
+	IsEnabled             bool             `json:"is_enabled"`
+	DefaultSeverity       string           `json:"default_severity"`
+	AutoAssignEnabled     bool             `json:"auto_assign_enabled"`
+	AutoAssignUserID      *string          `json:"auto_assign_user_id"`
+	AutoAssignRule        *string          `json:"auto_assign_rule"`
+	AutoAssignConditions  []byte           `json:"auto_assign_conditions"`
+	RetentionDays         *int32           `json:"retention_days"`
+	AutoResolveAfterDays  *int32           `json:"auto_resolve_after_days"`
+	CleanupResolvedOnly   bool             `json:"cleanup_resolved_only"`
+	NotificationEnabled   bool             `json:"notification_enabled"`
+	EscalationEnabled     bool             `json:"escalation_enabled"`
+	EscalationAfterHours  *int32           `json:"escalation_after_hours"`
+	AlertDelaySeconds     *int32           `json:"alert_delay_seconds"`
+	Metadata              []byte           `json:"metadata"`
+	Category              string           `json:"category"`
+	CheckIntervalMinutes  *int32           `json:"check_interval_minutes"`
+	ReminderIntervalHours *int32           `json:"reminder_interval_hours"`
+	CreatedAt             pgtype.Timestamp `json:"created_at"`
+	UpdatedAt             pgtype.Timestamp `json:"updated_at"`
+	AutoAssignUserIDVal   *string          `json:"auto_assign_user_id_val"`
+	AutoAssignUsername    *string          `json:"auto_assign_username"`
+	AutoAssignEmail       *string          `json:"auto_assign_email"`
+	AutoAssignFirstName   *string          `json:"auto_assign_first_name"`
+	AutoAssignLastName    *string          `json:"auto_assign_last_name"`
 }
 
 func (q *Queries) ListAlertConfig(ctx context.Context) ([]ListAlertConfigRow, error) {
@@ -154,6 +157,7 @@ func (q *Queries) ListAlertConfig(ctx context.Context) ([]ListAlertConfigRow, er
 			&i.Metadata,
 			&i.Category,
 			&i.CheckIntervalMinutes,
+			&i.ReminderIntervalHours,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.AutoAssignUserIDVal,
@@ -178,10 +182,10 @@ INSERT INTO alert_config (
     auto_assign_enabled, auto_assign_user_id, auto_assign_rule, auto_assign_conditions,
     retention_days, auto_resolve_after_days, cleanup_resolved_only,
     notification_enabled, escalation_enabled, escalation_after_hours, alert_delay_seconds, metadata,
-    category, check_interval_minutes, created_at, updated_at
+    category, check_interval_minutes, reminder_interval_hours, created_at, updated_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, COALESCE($16, '{}'::jsonb),
-    $17, $18, NOW(), NOW()
+    $17, $18, $19, NOW(), NOW()
 )
 ON CONFLICT (alert_type) DO UPDATE SET
     is_enabled = EXCLUDED.is_enabled,
@@ -200,29 +204,31 @@ ON CONFLICT (alert_type) DO UPDATE SET
     metadata = EXCLUDED.metadata,
     category = EXCLUDED.category,
     check_interval_minutes = EXCLUDED.check_interval_minutes,
+    reminder_interval_hours = EXCLUDED.reminder_interval_hours,
     updated_at = NOW()
-RETURNING id, alert_type, is_enabled, default_severity, auto_assign_enabled, auto_assign_user_id, auto_assign_rule, auto_assign_conditions, retention_days, auto_resolve_after_days, cleanup_resolved_only, notification_enabled, escalation_enabled, escalation_after_hours, alert_delay_seconds, metadata, category, check_interval_minutes, created_at, updated_at
+RETURNING id, alert_type, is_enabled, default_severity, auto_assign_enabled, auto_assign_user_id, auto_assign_rule, auto_assign_conditions, retention_days, auto_resolve_after_days, cleanup_resolved_only, notification_enabled, escalation_enabled, escalation_after_hours, alert_delay_seconds, metadata, category, check_interval_minutes, reminder_interval_hours, created_at, updated_at
 `
 
 type UpsertAlertConfigParams struct {
-	ID                   string      `json:"id"`
-	AlertType            string      `json:"alert_type"`
-	IsEnabled            bool        `json:"is_enabled"`
-	DefaultSeverity      string      `json:"default_severity"`
-	AutoAssignEnabled    bool        `json:"auto_assign_enabled"`
-	AutoAssignUserID     *string     `json:"auto_assign_user_id"`
-	AutoAssignRule       *string     `json:"auto_assign_rule"`
-	AutoAssignConditions []byte      `json:"auto_assign_conditions"`
-	RetentionDays        *int32      `json:"retention_days"`
-	AutoResolveAfterDays *int32      `json:"auto_resolve_after_days"`
-	CleanupResolvedOnly  bool        `json:"cleanup_resolved_only"`
-	NotificationEnabled  bool        `json:"notification_enabled"`
-	EscalationEnabled    bool        `json:"escalation_enabled"`
-	EscalationAfterHours *int32      `json:"escalation_after_hours"`
-	AlertDelaySeconds    *int32      `json:"alert_delay_seconds"`
-	Column16             interface{} `json:"column_16"`
-	Category             string      `json:"category"`
-	CheckIntervalMinutes *int32      `json:"check_interval_minutes"`
+	ID                    string      `json:"id"`
+	AlertType             string      `json:"alert_type"`
+	IsEnabled             bool        `json:"is_enabled"`
+	DefaultSeverity       string      `json:"default_severity"`
+	AutoAssignEnabled     bool        `json:"auto_assign_enabled"`
+	AutoAssignUserID      *string     `json:"auto_assign_user_id"`
+	AutoAssignRule        *string     `json:"auto_assign_rule"`
+	AutoAssignConditions  []byte      `json:"auto_assign_conditions"`
+	RetentionDays         *int32      `json:"retention_days"`
+	AutoResolveAfterDays  *int32      `json:"auto_resolve_after_days"`
+	CleanupResolvedOnly   bool        `json:"cleanup_resolved_only"`
+	NotificationEnabled   bool        `json:"notification_enabled"`
+	EscalationEnabled     bool        `json:"escalation_enabled"`
+	EscalationAfterHours  *int32      `json:"escalation_after_hours"`
+	AlertDelaySeconds     *int32      `json:"alert_delay_seconds"`
+	Column16              interface{} `json:"column_16"`
+	Category              string      `json:"category"`
+	CheckIntervalMinutes  *int32      `json:"check_interval_minutes"`
+	ReminderIntervalHours *int32      `json:"reminder_interval_hours"`
 }
 
 func (q *Queries) UpsertAlertConfig(ctx context.Context, arg UpsertAlertConfigParams) (AlertConfig, error) {
@@ -245,6 +251,7 @@ func (q *Queries) UpsertAlertConfig(ctx context.Context, arg UpsertAlertConfigPa
 		arg.Column16,
 		arg.Category,
 		arg.CheckIntervalMinutes,
+		arg.ReminderIntervalHours,
 	)
 	var i AlertConfig
 	err := row.Scan(
@@ -266,6 +273,7 @@ func (q *Queries) UpsertAlertConfig(ctx context.Context, arg UpsertAlertConfigPa
 		&i.Metadata,
 		&i.Category,
 		&i.CheckIntervalMinutes,
+		&i.ReminderIntervalHours,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

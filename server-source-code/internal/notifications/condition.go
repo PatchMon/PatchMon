@@ -61,8 +61,10 @@ func (e *Emitter) ReleaseCheck(ctx context.Context, tenantHost, name string) {
 }
 
 var syncConditionScript = redis.NewScript(`
+local now = tonumber(ARGV[1])
+local remind = tonumber(ARGV[3])
 local current = {}
-for i = 3, #ARGV do current[ARGV[i]] = true end
+for i = 4, #ARGV do current[ARGV[i]] = true end
 local cleared = {}
 for _, id in ipairs(redis.call('HKEYS', KEYS[1])) do
 	if not current[id] then
@@ -71,30 +73,52 @@ for _, id in ipairs(redis.call('HKEYS', KEYS[1])) do
 	end
 end
 local added = {}
-for i = 3, #ARGV do
-	if redis.call('HSETNX', KEYS[1], ARGV[i], ARGV[1]) == 1 then table.insert(added, ARGV[i]) end
+local reminded = {}
+for i = 4, #ARGV do
+	local id = ARGV[i]
+	if redis.call('HSETNX', KEYS[1], id, ARGV[1]) == 1 then
+		table.insert(added, id)
+	elseif remind > 0 then
+		local last = tonumber(redis.call('HGET', KEYS[1], id))
+		if last and now - last >= remind then
+			redis.call('HSET', KEYS[1], id, ARGV[1])
+			table.insert(reminded, id)
+		end
+	end
 end
-if #ARGV > 2 then redis.call('PEXPIRE', KEYS[1], ARGV[2]) end
-return {added, cleared}
+if #ARGV > 3 then redis.call('PEXPIRE', KEYS[1], ARGV[2]) end
+return {added, cleared, reminded}
 `)
 
-// SyncConditions records the references currently in the condition for eventType.
-// It returns the references that newly entered it and those that left it since the last sync.
-func (e *Emitter) SyncConditions(ctx context.Context, tenantHost, eventType string, active []string, now time.Time) (entered, left []string, err error) {
+// ConditionSync is the result of SyncConditions.
+type ConditionSync struct {
+	Entered  []string
+	Left     []string
+	Reminded []string
+}
+
+// SyncConditions records the references currently in the condition for eventType, with the time each was last notified.
+// It reports those that newly entered it, those that left it, and, when remindEvery is positive,
+// those still in it whose last notification is at least remindEvery old (their time is reset to now).
+func (e *Emitter) SyncConditions(ctx context.Context, tenantHost, eventType string, active []string, remindEvery time.Duration, now time.Time) (ConditionSync, error) {
 	if e == nil || e.rdb == nil {
-		return active, nil, nil
+		return ConditionSync{Entered: active}, nil
+	}
+	remindMs := int64(0)
+	if remindEvery > 0 {
+		remindMs = max((remindEvery - checkDueSlack).Milliseconds(), 1)
 	}
 	key := tenantRedisKey(tenantHost, conditionKey(eventType))
-	args := make([]interface{}, 0, len(active)+2)
-	args = append(args, strconv.FormatInt(now.UnixMilli(), 10), conditionStoreTTL.Milliseconds())
+	args := make([]interface{}, 0, len(active)+3)
+	args = append(args, strconv.FormatInt(now.UnixMilli(), 10), conditionStoreTTL.Milliseconds(), remindMs)
 	for _, id := range active {
 		args = append(args, id)
 	}
 	res, err := syncConditionScript.Run(ctx, e.rdb, []string{key}, args...).Slice()
 	if err != nil {
-		return nil, nil, err
+		return ConditionSync{}, err
 	}
-	return toStrings(res, 0), toStrings(res, 1), nil
+	return ConditionSync{Entered: toStrings(res, 0), Left: toStrings(res, 1), Reminded: toStrings(res, 2)}, nil
 }
 
 // ForgetConditions removes refs from the condition for eventType, so they count as newly entered next time.

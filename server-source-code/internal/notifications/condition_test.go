@@ -70,13 +70,16 @@ func TestSyncConditions_OncePerOccurrence(t *testing.T) {
 
 	sync := func(active ...string) ([]string, []string) {
 		t.Helper()
-		entered, left, err := e.SyncConditions(ctx, "", typ, active, now)
+		r, err := e.SyncConditions(ctx, "", typ, active, 0, now)
 		if err != nil {
 			t.Fatal(err)
 		}
-		slices.Sort(entered)
-		slices.Sort(left)
-		return entered, left
+		slices.Sort(r.Entered)
+		slices.Sort(r.Left)
+		if len(r.Reminded) != 0 {
+			t.Fatalf("reminders sent with reminders off: %v", r.Reminded)
+		}
+		return r.Entered, r.Left
 	}
 
 	if entered, _ := sync("h1", "h2"); !slices.Equal(entered, []string{"h1", "h2"}) {
@@ -104,16 +107,16 @@ func TestSyncConditions_ScopedPerContextAndType(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 
-	if _, _, err := e.SyncConditions(ctx, "a.example.com", "host_security_updates_exceeded", []string{"h1"}, now); err != nil {
+	if _, err := e.SyncConditions(ctx, "a.example.com", "host_security_updates_exceeded", []string{"h1"}, 0, now); err != nil {
 		t.Fatal(err)
 	}
-	entered, _, _ := e.SyncConditions(ctx, "b.example.com", "host_security_updates_exceeded", []string{"h1"}, now)
-	if !slices.Equal(entered, []string{"h1"}) {
-		t.Fatalf("context b suppressed by context a: %v", entered)
+	r, _ := e.SyncConditions(ctx, "b.example.com", "host_security_updates_exceeded", []string{"h1"}, 0, now)
+	if !slices.Equal(r.Entered, []string{"h1"}) {
+		t.Fatalf("context b suppressed by context a: %v", r.Entered)
 	}
-	entered, _, _ = e.SyncConditions(ctx, "a.example.com", "host_pending_updates_exceeded", []string{"h1"}, now)
-	if !slices.Equal(entered, []string{"h1"}) {
-		t.Fatalf("pending updates suppressed by security updates: %v", entered)
+	r, _ = e.SyncConditions(ctx, "a.example.com", "host_pending_updates_exceeded", []string{"h1"}, 0, now)
+	if !slices.Equal(r.Entered, []string{"h1"}) {
+		t.Fatalf("pending updates suppressed by security updates: %v", r.Entered)
 	}
 	key := tenantRedisKey("a.example.com", conditionKey("host_security_updates_exceeded"))
 	if ttl := rdb.TTL(ctx, key).Val(); ttl <= 0 {
@@ -128,11 +131,11 @@ func TestClearConditions_NextOccurrenceNotifies(t *testing.T) {
 	now := time.Now()
 	typ := "host_pending_updates_exceeded"
 
-	_, _, _ = e.SyncConditions(ctx, "", typ, []string{"h1"}, now)
+	_, _ = e.SyncConditions(ctx, "", typ, []string{"h1"}, 0, now)
 	e.ClearConditions(ctx, "", typ)
-	entered, _, _ := e.SyncConditions(ctx, "", typ, []string{"h1"}, now)
-	if !slices.Equal(entered, []string{"h1"}) {
-		t.Fatalf("after clearing, entered = %v", entered)
+	r, _ := e.SyncConditions(ctx, "", typ, []string{"h1"}, 0, now)
+	if !slices.Equal(r.Entered, []string{"h1"}) {
+		t.Fatalf("after clearing, entered = %v", r.Entered)
 	}
 }
 
@@ -143,11 +146,11 @@ func TestForgetConditions_RefEntersAgain(t *testing.T) {
 	now := time.Now()
 	typ := "host_security_updates_exceeded"
 
-	_, _, _ = e.SyncConditions(ctx, "", typ, []string{"h1", "h2"}, now)
+	_, _ = e.SyncConditions(ctx, "", typ, []string{"h1", "h2"}, 0, now)
 	e.ForgetConditions(ctx, "", typ, []string{"h2"})
-	entered, left, _ := e.SyncConditions(ctx, "", typ, []string{"h1", "h2"}, now)
-	if !slices.Equal(entered, []string{"h2"}) || len(left) != 0 {
-		t.Fatalf("after forgetting h2: entered %v, left %v", entered, left)
+	r, _ := e.SyncConditions(ctx, "", typ, []string{"h1", "h2"}, 0, now)
+	if !slices.Equal(r.Entered, []string{"h2"}) || len(r.Left) != 0 {
+		t.Fatalf("after forgetting h2: entered %v, left %v", r.Entered, r.Left)
 	}
 }
 
@@ -166,9 +169,9 @@ func TestConditionHelpers_NoRedis(t *testing.T) {
 	if !e.ClaimCheckDue(ctx, "", "x", time.Hour, time.Now()) {
 		t.Fatal("nil emitter must not block the check")
 	}
-	entered, left, err := e.SyncConditions(ctx, "", "x", []string{"h1"}, time.Now())
-	if err != nil || !slices.Equal(entered, []string{"h1"}) || left != nil {
-		t.Fatalf("nil emitter sync = %v %v %v", entered, left, err)
+	r, err := e.SyncConditions(ctx, "", "x", []string{"h1"}, time.Hour, time.Now())
+	if err != nil || !slices.Equal(r.Entered, []string{"h1"}) || r.Left != nil || r.Reminded != nil {
+		t.Fatalf("nil emitter sync = %+v %v", r, err)
 	}
 	e.ReleaseCheck(ctx, "", "x")
 	e.ClearConditions(ctx, "", "x")
@@ -187,5 +190,50 @@ func TestReleaseDedup_DroppedDeliveryCanBeRetried(t *testing.T) {
 	}
 	if e.tryDedup("a.example.com", "fp") {
 		t.Fatal("dedup no longer applies after a successful attempt")
+	}
+}
+
+func TestSyncConditions_Reminders(t *testing.T) {
+	t.Parallel()
+	e, _ := newTestEmitter(t)
+	ctx := context.Background()
+	base := time.Date(2026, 10, 12, 10, 0, 0, 0, time.UTC)
+	typ := "host_security_updates_exceeded"
+	every := 4 * time.Hour
+
+	sync := func(at time.Duration, active ...string) ConditionSync {
+		t.Helper()
+		r, err := e.SyncConditions(ctx, "", typ, active, every, base.Add(at))
+		if err != nil {
+			t.Fatal(err)
+		}
+		slices.Sort(r.Entered)
+		slices.Sort(r.Reminded)
+		return r
+	}
+
+	if r := sync(0, "h1"); !slices.Equal(r.Entered, []string{"h1"}) || len(r.Reminded) != 0 {
+		t.Fatalf("first occurrence: %+v", r)
+	}
+	if r := sync(time.Hour, "h1", "h2"); !slices.Equal(r.Entered, []string{"h2"}) || len(r.Reminded) != 0 {
+		t.Fatalf("one hour in: %+v", r)
+	}
+	if r := sync(4*time.Hour-10*time.Second, "h1", "h2"); !slices.Equal(r.Reminded, []string{"h1"}) {
+		t.Fatalf("h1 reminder not due at four hours (with tick jitter): %+v", r)
+	}
+	if r := sync(5*time.Hour, "h1", "h2"); !slices.Equal(r.Reminded, []string{"h2"}) {
+		t.Fatalf("five hours in, expected only h2's reminder: %+v", r)
+	}
+	if r := sync(6*time.Hour, "h1", "h2"); len(r.Reminded) != 0 {
+		t.Fatalf("reminder repeated before the interval: %+v", r)
+	}
+	if r := sync(8*time.Hour, "h2"); len(r.Reminded) != 0 || !slices.Equal(r.Left, []string{"h1"}) {
+		t.Fatalf("cleared host still reminded: %+v", r)
+	}
+	if r := sync(8*time.Hour+time.Minute, "h1", "h2"); !slices.Equal(r.Entered, []string{"h1"}) || len(r.Reminded) != 0 {
+		t.Fatalf("re-occurrence must notify immediately, not as a reminder: %+v", r)
+	}
+	if r, _ := e.SyncConditions(ctx, "", typ, []string{"h1", "h2"}, 0, base.Add(48*time.Hour)); len(r.Reminded) != 0 {
+		t.Fatalf("reminders sent after being switched off: %+v", r)
 	}
 }

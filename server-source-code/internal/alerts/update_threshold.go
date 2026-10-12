@@ -142,25 +142,21 @@ func ProcessUpdateThresholdMonitor(ctx context.Context, d *database.DB, tenantHo
 	return alertsCreated, nil
 }
 
-type thresholdAction int
+type thresholdDecision struct {
+	touch    bool
+	notify   bool
+	reminder bool
+	resolve  bool
+}
 
-const (
-	thresholdNone thresholdAction = iota
-	thresholdTouch
-	thresholdNotify
-	thresholdResolve
-)
-
-func decideThreshold(count, threshold int, hasAlert, entered bool) thresholdAction {
-	switch {
-	case count > threshold && hasAlert:
-		return thresholdTouch
-	case count > threshold && entered:
-		return thresholdNotify
-	case count <= threshold && hasAlert:
-		return thresholdResolve
-	default:
-		return thresholdNone
+func decideThreshold(count, threshold int, hasAlert, entered, reminderDue bool) thresholdDecision {
+	if count <= threshold {
+		return thresholdDecision{resolve: hasAlert}
+	}
+	return thresholdDecision{
+		touch:    hasAlert,
+		notify:   (entered && !hasAlert) || reminderDue,
+		reminder: reminderDue && !entered,
 	}
 }
 
@@ -179,17 +175,15 @@ func evaluateThreshold(ctx context.Context, d *database.DB, tenantHost string, e
 	alertsByHostID := buildAlertsByHostID(ctx, d, chk.alertType)
 
 	exceeded := exceededHostIDs(hostRows, countByHost, chk.count, threshold)
-	entered, left, err := emit.SyncConditions(ctx, tenantHost, chk.alertType, exceeded, now)
+	synced, err := emit.SyncConditions(ctx, tenantHost, chk.alertType, exceeded, reminderInterval(chk.cfg), now)
 	if err != nil {
 		return 0, false, err
 	}
-	isNew := make(map[string]bool, len(entered))
-	for _, id := range entered {
-		isNew[id] = true
-	}
-	if len(left) > 0 {
-		recovered := make(map[string]time.Time, len(left))
-		for _, id := range left {
+	isNew := toSet(synced.Entered)
+	remind := toSet(synced.Reminded)
+	if len(synced.Left) > 0 {
+		recovered := make(map[string]time.Time, len(synced.Left))
+		for _, id := range synced.Left {
 			recovered[id] = now
 		}
 		emit.CancelPending(ctx, tenantHost, chk.alertType, recovered)
@@ -206,33 +200,38 @@ func evaluateThreshold(ctx context.Context, d *database.DB, tenantHost string, e
 		hostName := hostDisplayName(host)
 		alertID, hasAlert := alertsByHostID[host.ID]
 
-		switch decideThreshold(n, threshold, hasAlert, isNew[host.ID]) {
-		case thresholdTouch:
+		decision := decideThreshold(n, threshold, hasAlert, isNew[host.ID], remind[host.ID])
+		if decision.touch {
 			_ = d.Queries.UpdateAlert(ctx, alertID)
-		case thresholdNotify:
-			if emit == nil {
-				continue
+		}
+		if decision.notify && emit != nil {
+			title := chk.title(hostName, n)
+			meta := map[string]interface{}{
+				"host_id":   host.ID,
+				"host_name": hostName,
+				"count":     n,
+				"threshold": threshold,
+			}
+			if decision.reminder {
+				title = "Reminder: " + title
+				meta["reminder"] = true
 			}
 			ok := emit.EmitEventChecked(ctx, d, tenantHost, notifications.Event{
 				Type:          chk.alertType,
 				Severity:      DefaultSeverity(chk.cfg.DefaultSeverity, "warning"),
-				Title:         chk.title(hostName, n),
+				Title:         title,
 				Message:       chk.message(hostName, n, threshold),
 				ReferenceType: "host",
 				ReferenceID:   host.ID,
-				Metadata: map[string]interface{}{
-					"host_id":   host.ID,
-					"host_name": hostName,
-					"count":     n,
-					"threshold": threshold,
-				},
+				Metadata:      meta,
 			})
 			if !ok {
 				undelivered = append(undelivered, host.ID)
 				continue
 			}
 			alertsCreated++
-		case thresholdResolve:
+		}
+		if decision.resolve {
 			_ = alertsStore.UpdateResolved(ctx, alertID, nil)
 			_ = alertsStore.RecordHistory(ctx, alertID, nil, "resolved", map[string]interface{}{
 				"resolved_reason": chk.resolvedReason,
@@ -253,6 +252,21 @@ func evaluateThreshold(ctx context.Context, d *database.DB, tenantHost string, e
 	}
 	emit.ForgetConditions(ctx, tenantHost, chk.alertType, undelivered)
 	return alertsCreated, len(undelivered) > 0, nil
+}
+
+func reminderInterval(cfg *store.AlertConfigWithUser) time.Duration {
+	if cfg == nil || cfg.ReminderIntervalHours == nil || *cfg.ReminderIntervalHours <= 0 {
+		return 0
+	}
+	return time.Duration(*cfg.ReminderIntervalHours) * time.Hour
+}
+
+func toSet(ids []string) map[string]bool {
+	m := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		m[id] = true
+	}
+	return m
 }
 
 func thresholdInterval(cfg *store.AlertConfigWithUser) time.Duration {

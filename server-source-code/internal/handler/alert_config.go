@@ -179,6 +179,7 @@ func alertConfigToMap(c *models.AlertConfig, autoAssignUser *store.UserRef) map[
 		"alert_delay_seconds":     c.AlertDelaySeconds,
 		"category":                c.Category,
 		"check_interval_minutes":  c.CheckIntervalMinutes,
+		"reminder_interval_hours": c.ReminderIntervalHours,
 		"created_at":              c.CreatedAt,
 		"updated_at":              c.UpdatedAt,
 	}
@@ -263,6 +264,7 @@ func applyAlertConfigUpdate(cfg *models.AlertConfig, req map[string]interface{})
 	applyNullableInt(&cfg.EscalationAfterHours, req, "escalation_after_hours")
 	applyNullableInt(&cfg.AlertDelaySeconds, req, "alert_delay_seconds")
 	applyNullableInt(&cfg.CheckIntervalMinutes, req, "check_interval_minutes")
+	applyNullableInt(&cfg.ReminderIntervalHours, req, "reminder_interval_hours")
 	if v, ok := req["auto_assign_conditions"].(map[string]interface{}); ok {
 		b, _ := json.Marshal(v)
 		cfg.AutoAssignConditions = b
