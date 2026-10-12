@@ -49,6 +49,14 @@ UPDATE patch_runs SET status = 'running', started_at = NOW(), completed_at = NUL
 WHERE id = $1
   AND status NOT IN ('cancelled','timed_out','completed','failed','validated','dry_run_completed');
 
+-- name: ActivateScheduledPatchRun :execrows
+UPDATE patch_runs SET status = 'queued', updated_at = NOW()
+WHERE id = $1 AND status = 'scheduled';
+
+-- name: SkipScheduledPatchRun :execrows
+UPDATE patch_runs SET status = 'cancelled', error_message = $2, completed_at = NOW(), updated_at = NOW()
+WHERE id = $1 AND status = 'scheduled';
+
 -- name: MarkPatchRunDispatched :execrows
 UPDATE patch_runs SET status = 'running', updated_at = NOW()
 WHERE id = $1 AND status IN ('queued', 'pending_validation');
@@ -254,7 +262,7 @@ SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname,
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
-WHERE pr.status IN ('queued', 'running', 'pending_validation', 'pending_approval', 'validated') AND (pr.dry_run = false OR pr.dry_run IS NULL OR pr.status IN ('pending_validation', 'pending_approval', 'validated'))
+WHERE pr.status IN ('scheduled', 'queued', 'running', 'pending_validation', 'pending_approval', 'validated') AND (pr.dry_run = false OR pr.dry_run IS NULL OR pr.status IN ('pending_validation', 'pending_approval', 'validated'))
 ORDER BY pr.created_at ASC;
 
 -- name: CountPatchRunsTotal :one
@@ -364,6 +372,13 @@ VALUES ($1, $2, $3, NOW(), NOW());
 
 -- name: DeletePatchPolicyExclusion :exec
 DELETE FROM patch_policy_exclusions WHERE patch_policy_id = $1 AND host_id = $2;
+
+-- name: MarkUndispatchedPatchRunsTimedOut :execrows
+-- Keyed on when the run became due, not updated_at: the offline-agent retry bumps updated_at every 5 minutes.
+UPDATE patch_runs
+SET status = 'timed_out', error_message = sqlc.narg('error_message'), completed_at = NOW(), updated_at = NOW()
+WHERE status IN ('scheduled', 'queued', 'pending_validation')
+  AND COALESCE(scheduled_at, created_at) < sqlc.arg('due_before');
 
 -- name: MarkPatchRunsTimedOut :execrows
 -- Stall sweep. The predicate is deliberately "no activity since", NOT "started

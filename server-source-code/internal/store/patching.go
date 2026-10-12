@@ -235,9 +235,10 @@ type CreateRunOpts struct {
 	ValidationRunID  *string
 	ApprovedByUserID *string
 	// InitialStatus overrides the default status derivation. When empty the
-	// status is "pending_validation" for dry runs, "queued" otherwise. Set to
-	// "pending_approval" with dryRun=false to represent a "submit for
-	// approval" run that hasn't been executed and isn't a dry-run either.
+	// status is "pending_validation" for dry runs, "scheduled" when scheduledAt
+	// is set, "queued" otherwise. Set to "pending_approval" with dryRun=false
+	// to represent a "submit for approval" run that hasn't been executed and
+	// isn't a dry-run either.
 	InitialStatus string
 }
 
@@ -329,6 +330,8 @@ func newCreatePatchRunParams(id, hostID, jobID, patchType string, packageName *s
 	status := "queued"
 	if dryRun {
 		status = "pending_validation"
+	} else if scheduledAt != nil {
+		status = "scheduled"
 	}
 	if opts != nil && opts.InitialStatus != "" {
 		status = opts.InitialStatus
@@ -473,6 +476,24 @@ func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, osType, stage, ou
 	default:
 		return nil
 	}
+}
+
+// ActivateScheduledRun moves a scheduled run to queued when its window arrives;
+// false means no longer scheduled, ErrHostHasActivePatchRun means the host is busy.
+func (s *PatchRunsStore) ActivateScheduledRun(ctx context.Context, id string) (bool, error) {
+	d := s.db.DB(ctx)
+	n, err := d.Queries.ActivateScheduledPatchRun(ctx, id)
+	if err != nil {
+		return false, mapActiveRunConflict(err)
+	}
+	return n > 0, nil
+}
+
+// SkipScheduledRun terminates a scheduled run without dispatching it.
+func (s *PatchRunsStore) SkipScheduledRun(ctx context.Context, id, reason string) error {
+	d := s.db.DB(ctx)
+	_, err := d.Queries.SkipScheduledPatchRun(ctx, db.SkipScheduledPatchRunParams{ID: id, ErrorMessage: &reason})
+	return err
 }
 
 // MarkDispatched moves a run to running only if it is still awaiting dispatch.

@@ -11,6 +11,19 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const activateScheduledPatchRun = `-- name: ActivateScheduledPatchRun :execrows
+UPDATE patch_runs SET status = 'queued', updated_at = NOW()
+WHERE id = $1 AND status = 'scheduled'
+`
+
+func (q *Queries) ActivateScheduledPatchRun(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, activateScheduledPatchRun, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const clearScheduledAt = `-- name: ClearScheduledAt :exec
 UPDATE patch_runs SET scheduled_at = NULL, updated_at = NOW() WHERE id = $1
 `
@@ -452,7 +465,7 @@ SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
-WHERE pr.status IN ('queued', 'running', 'pending_validation', 'pending_approval', 'validated') AND (pr.dry_run = false OR pr.dry_run IS NULL OR pr.status IN ('pending_validation', 'pending_approval', 'validated'))
+WHERE pr.status IN ('scheduled', 'queued', 'running', 'pending_validation', 'pending_approval', 'validated') AND (pr.dry_run = false OR pr.dry_run IS NULL OR pr.status IN ('pending_validation', 'pending_approval', 'validated'))
 ORDER BY pr.created_at ASC
 `
 
@@ -1775,6 +1788,27 @@ func (q *Queries) MarkPatchRunsTimedOut(ctx context.Context, arg MarkPatchRunsTi
 	return result.RowsAffected(), nil
 }
 
+const markUndispatchedPatchRunsTimedOut = `-- name: MarkUndispatchedPatchRunsTimedOut :execrows
+UPDATE patch_runs
+SET status = 'timed_out', error_message = $1, completed_at = NOW(), updated_at = NOW()
+WHERE status IN ('scheduled', 'queued', 'pending_validation')
+  AND COALESCE(scheduled_at, created_at) < $2
+`
+
+type MarkUndispatchedPatchRunsTimedOutParams struct {
+	ErrorMessage *string          `json:"error_message"`
+	DueBefore    pgtype.Timestamp `json:"due_before"`
+}
+
+// Keyed on when the run became due, not updated_at: the offline-agent retry bumps updated_at every 5 minutes.
+func (q *Queries) MarkUndispatchedPatchRunsTimedOut(ctx context.Context, arg MarkUndispatchedPatchRunsTimedOutParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markUndispatchedPatchRunsTimedOut, arg.ErrorMessage, arg.DueBefore)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const markValidationApproved = `-- name: MarkValidationApproved :execrows
 UPDATE patch_runs SET status = 'approved', approved_by_user_id = $2, updated_at = NOW() WHERE id = $1 AND status IN ('validated', 'pending_validation', 'pending_approval')
 `
@@ -1815,6 +1849,24 @@ func (q *Queries) SetPatchRunPolicySnapshot(ctx context.Context, arg SetPatchRun
 		arg.PolicySnapshot,
 	)
 	return err
+}
+
+const skipScheduledPatchRun = `-- name: SkipScheduledPatchRun :execrows
+UPDATE patch_runs SET status = 'cancelled', error_message = $2, completed_at = NOW(), updated_at = NOW()
+WHERE id = $1 AND status = 'scheduled'
+`
+
+type SkipScheduledPatchRunParams struct {
+	ID           string  `json:"id"`
+	ErrorMessage *string `json:"error_message"`
+}
+
+func (q *Queries) SkipScheduledPatchRun(ctx context.Context, arg SkipScheduledPatchRunParams) (int64, error) {
+	result, err := q.db.Exec(ctx, skipScheduledPatchRun, arg.ID, arg.ErrorMessage)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updatePatchPolicy = `-- name: UpdatePatchPolicy :exec

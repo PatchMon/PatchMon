@@ -1,3 +1,16 @@
+UPDATE patch_runs
+SET status = 'scheduled', updated_at = (NOW() AT TIME ZONE 'UTC')
+WHERE status = 'queued'
+  AND scheduled_at > (NOW() AT TIME ZONE 'UTC');
+
+UPDATE patch_runs
+SET status = 'timed_out',
+    error_message = 'Marked as timed_out: the run was not dispatched to the agent within 24 hours of becoming due',
+    completed_at = (NOW() AT TIME ZONE 'UTC'),
+    updated_at = (NOW() AT TIME ZONE 'UTC')
+WHERE status IN ('scheduled', 'queued', 'pending_validation')
+  AND COALESCE(scheduled_at, created_at) < (NOW() AT TIME ZONE 'UTC') - INTERVAL '24 hours';
+
 WITH ranked AS (
     SELECT id,
            ROW_NUMBER() OVER (
@@ -10,8 +23,8 @@ WITH ranked AS (
 UPDATE patch_runs pr
 SET status = 'timed_out',
     error_message = 'Stopped tracking on upgrade: another patch run was already active on this host',
-    completed_at = NOW(),
-    updated_at = NOW()
+    completed_at = (NOW() AT TIME ZONE 'UTC'),
+    updated_at = (NOW() AT TIME ZONE 'UTC')
 FROM ranked
 WHERE pr.id = ranked.id
   AND ranked.rn > 1;

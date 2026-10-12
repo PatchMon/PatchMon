@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -8,7 +9,11 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -67,6 +72,122 @@ func TestActivePatchRunIndexCoversEveryDispatchableStatus(t *testing.T) {
 		got := activeIndexStatuses(t, p)
 		if strings.Join(got, ",") != strings.Join(want, ",") {
 			t.Errorf("%s: index statuses = %v, want %v", p, got, want)
+		}
+	}
+}
+
+type execOnlyDBTX struct {
+	execTag pgconn.CommandTag
+	execErr error
+}
+
+func (f execOnlyDBTX) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+	return f.execTag, f.execErr
+}
+
+func (f execOnlyDBTX) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (f execOnlyDBTX) QueryRow(context.Context, string, ...interface{}) pgx.Row {
+	return nil
+}
+
+type staticDBProvider struct{ d *database.DB }
+
+func (p staticDBProvider) DB(context.Context) *database.DB { return p.d }
+
+func runsStoreWith(f execOnlyDBTX) *PatchRunsStore {
+	return NewPatchRunsStore(staticDBProvider{d: &database.DB{Queries: db.New(f)}})
+}
+
+func TestActivateScheduledRun(t *testing.T) {
+	ctx := context.Background()
+	conflict := &pgconn.PgError{Code: "23505", ConstraintName: activePatchRunIndex}
+
+	ok, err := runsStoreWith(execOnlyDBTX{execTag: pgconn.NewCommandTag("UPDATE 1")}).ActivateScheduledRun(ctx, "r")
+	if err != nil || !ok {
+		t.Fatalf("idle host: got ok=%v err=%v", ok, err)
+	}
+	ok, err = runsStoreWith(execOnlyDBTX{execTag: pgconn.NewCommandTag("UPDATE 0")}).ActivateScheduledRun(ctx, "r")
+	if err != nil || ok {
+		t.Fatalf("no longer scheduled: got ok=%v err=%v", ok, err)
+	}
+	_, err = runsStoreWith(execOnlyDBTX{execErr: conflict}).ActivateScheduledRun(ctx, "r")
+	if !errors.Is(err, ErrHostHasActivePatchRun) {
+		t.Fatalf("busy host: got %v, want ErrHostHasActivePatchRun", err)
+	}
+}
+
+func TestCreateRunMapsActiveRunConflict(t *testing.T) {
+	s := runsStoreWith(execOnlyDBTX{execErr: &pgconn.PgError{Code: "23505", ConstraintName: activePatchRunIndex}})
+	_, err := s.CreateRun(context.Background(), "", "h", "j", "patch_all", nil, nil, nil, false, nil, nil, nil, nil, nil)
+	if !errors.Is(err, ErrHostHasActivePatchRun) {
+		t.Fatalf("got %v, want ErrHostHasActivePatchRun", err)
+	}
+}
+
+func TestCreateRunStatusDerivation(t *testing.T) {
+	future := time.Now().Add(time.Hour)
+	cases := []struct {
+		name      string
+		dryRun    bool
+		scheduled *time.Time
+		opts      *CreateRunOpts
+		want      string
+	}{
+		{"immediate", false, nil, nil, "queued"},
+		{"policy delayed", false, &future, nil, "scheduled"},
+		{"dry run", true, nil, nil, "pending_validation"},
+		{"submit for approval", false, nil, &CreateRunOpts{InitialStatus: "pending_approval"}, "pending_approval"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := newCreatePatchRunParams("", "h", "j", "patch_all", nil, nil, nil, tc.dryRun, tc.scheduled, nil, nil, nil, tc.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.Status != tc.want {
+				t.Errorf("status = %q, want %q", p.Status, tc.want)
+			}
+		})
+	}
+}
+
+func TestScheduledRunQueriesAreGuarded(t *testing.T) {
+	src := loadPatchingQueries(t)
+	activate := namedQuery(t, src, "ActivateScheduledPatchRun")
+	if !strings.Contains(activate, "status = 'queued'") || !strings.Contains(activate, "AND status = 'scheduled'") {
+		t.Errorf("ActivateScheduledPatchRun must move only scheduled rows into queued, got:\n%s", activate)
+	}
+	skip := namedQuery(t, src, "SkipScheduledPatchRun")
+	if !strings.Contains(skip, "AND status = 'scheduled'") {
+		t.Errorf("SkipScheduledPatchRun must only touch scheduled rows, got:\n%s", skip)
+	}
+	expire := namedQuery(t, src, "MarkUndispatchedPatchRunsTimedOut")
+	if !strings.Contains(expire, "COALESCE(scheduled_at, created_at) <") || strings.Contains(expire, "updated_at <") {
+		t.Errorf("MarkUndispatchedPatchRunsTimedOut must key on when the run became due, got:\n%s", expire)
+	}
+	if strings.Contains(expire, "'running'") {
+		t.Errorf("MarkUndispatchedPatchRunsTimedOut must not touch running rows, got:\n%s", expire)
+	}
+}
+
+func TestActiveRunMigrationPreparesDataBeforeIndex(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "migrate", "migrations", "000050_v2-1-4_patch_runs_one_active_per_host.up.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	up := string(b)
+	idx := strings.Index(up, "CREATE UNIQUE INDEX")
+	for _, step := range []string{
+		"SET status = 'scheduled'",
+		"COALESCE(scheduled_at, created_at) < (NOW() AT TIME ZONE 'UTC') - INTERVAL '24 hours'",
+		"ranked.rn > 1",
+	} {
+		at := strings.Index(up, step)
+		if at < 0 || at > idx {
+			t.Errorf("up migration must run %q before creating the index", step)
 		}
 	}
 }

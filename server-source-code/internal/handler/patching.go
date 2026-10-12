@@ -375,7 +375,7 @@ func (h *PatchingHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	statusCounts := map[string]int{
-		"queued": 0, "running": 0, "completed": 0, "failed": 0, "cancelled": 0,
+		"scheduled": 0, "queued": 0, "running": 0, "completed": 0, "failed": 0, "cancelled": 0,
 		"timed_out": 0, "agent_disconnected": 0,
 		"pending_validation": 0, "pending_approval": 0, "validated": 0,
 	}
@@ -384,6 +384,7 @@ func (h *PatchingHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	summary := map[string]interface{}{
 		"total_runs":         total,
+		"scheduled":          statusCounts["scheduled"],
 		"queued":             statusCounts["queued"],
 		"running":            statusCounts["running"],
 		"completed":          statusCounts["completed"],

@@ -1447,13 +1447,13 @@ The server moves a run through these statuses, visible as badges in the Runs & H
 | `validated` | The dry-run finished successfully; the run is waiting for an operator to approve it. |
 | `pending_approval` | A patch run was submitted for approval without a dry-run (e.g. a `patch_all` that cannot be dry-run). An approver needs to sign off before the run is queued. |
 | `approved` | The original validation run after someone approved it. A new execution run (linked by `validation_run_id`) is created alongside this row and queued. |
-| `scheduled` | The run has been accepted but is waiting for its `run_at` timestamp (delayed or fixed-time policy). |
+| `scheduled` | The run has been accepted but is waiting for its `run_at` timestamp (delayed or fixed-time policy). Scheduled runs do not block other runs on the host; when the window arrives the run moves to `queued`, or is cancelled if another run is still active on the host. |
 | `running` | The agent is currently executing the package manager command on the host. This is the status that opens the live WebSocket stream. |
 | `completed` | The run finished successfully. The persisted `shell_output` is now authoritative. |
 | `dry_run_completed` | A dry-run finished successfully (terminal state for dry-runs that aren't turned into a real run). |
 | `failed` | The run finished with a non-zero exit status or the host reported an error. |
-| `cancelled` | The run was stopped by an operator clicking **Stop Run** (or deleted before execution). The cancel is applied authoritatively in the database first; if the agent is connected the server also sends a courtesy `patch_run_stop` so the running subprocess is interrupted. With this ordering, an offline or unresponsive agent can't leave the row stuck in `running`. |
-| `timed_out` | The periodic patch-run cleanup found this run still in `running` state past the configured stall timeout (`PATCH_RUN_STALL_TIMEOUT_MIN`, default 30 minutes) and marked it as timed out. The cleanup sweep runs every 10 minutes. |
+| `cancelled` | The run was stopped by an operator clicking **Stop Run** (or deleted before execution), or a scheduled run was skipped because another run was active on the host when its window arrived. The cancel is applied authoritatively in the database first; if the agent is connected the server also sends a courtesy `patch_run_stop` so the running subprocess is interrupted. With this ordering, an offline or unresponsive agent can't leave the row stuck in `running`. |
+| `timed_out` | The periodic patch-run cleanup found this run still in `running` state past the configured stall timeout (`PATCH_RUN_STALL_TIMEOUT_MIN`, default 30 minutes) and marked it as timed out, or found a `scheduled`, `queued` or `pending_validation` run that was not dispatched within 24 hours of becoming due. The cleanup sweep runs every 10 minutes. |
 | `agent_disconnected` | The agent's WebSocket dropped while this run was `running`. The server marks every in-flight run for that host as `agent_disconnected` so the row doesn't sit at `running` indefinitely. If the agent reconnects and posts a late `completed` / `failed` / `cancelled` for the same run, the server will update the row to that final state. |
 
 #### 2. Patch Policy
@@ -1757,7 +1757,7 @@ Another operator already approved or deleted the run while you were looking at i
 
 #### "A patch run is already queued or in progress on this host"
 
-PatchMon allows one queued (including runs waiting on a policy schedule), validating or running patch run per host at a time, because package managers lock while they work and a second run would fail on the lock. Wait for the current run to finish, or stop or delete it, then start the new one; in a multi-host wizard, busy hosts are reported as failed and the other hosts go ahead.
+PatchMon allows one queued, validating or running patch run per host at a time, because package managers lock while they work and a second run would fail on the lock. Wait for the current run to finish, or stop or delete it, then start the new one; in a multi-host wizard, busy hosts are reported as failed and the other hosts go ahead. Runs waiting for a policy window show as **Scheduled** and do not block the host. If the host is still busy when the window arrives, the scheduled run is cancelled with the reason "Skipped: another patch run was in progress on this host when the scheduled window arrived". Runs that are not dispatched to the agent within 24 hours of becoming due (for example because the host stayed offline) are marked **Timed out** by the cleanup sweep, so they never block a host indefinitely.
 
 ---
 

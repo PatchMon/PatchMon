@@ -11,6 +11,7 @@ import (
 )
 
 type Querier interface {
+	ActivateScheduledPatchRun(ctx context.Context, id string) (int64, error)
 	// Bulk insert N host_packages rows in a single statement. Replaces the legacy
 	// InsertHostPackage and InsertHostPackageWithWUA per-row inserts — one path
 	// now covers Linux/FreeBSD (all wua_* columns NULL) and Windows (wua_* set).
@@ -553,6 +554,8 @@ type Querier interface {
 	// every long run timed_out while it was still working and discard the real
 	// outcome the agent later reports.
 	MarkPatchRunsTimedOut(ctx context.Context, arg MarkPatchRunsTimedOutParams) (int64, error)
+	// Keyed on when the run became due, not updated_at: the offline-agent retry bumps updated_at every 5 minutes.
+	MarkUndispatchedPatchRunsTimedOut(ctx context.Context, arg MarkUndispatchedPatchRunsTimedOutParams) (int64, error)
 	// Declared :execrows, not :exec, because the status guard IS the concurrency
 	// control. Two approvals racing both pass the handler's Go-side status check;
 	// only one of them updates a row here, and the loser must be told so rather
@@ -566,6 +569,7 @@ type Querier interface {
 	SetHostAwaitingPostPatchReport(ctx context.Context, arg SetHostAwaitingPostPatchReportParams) error
 	SetNewsletterSubscribed(ctx context.Context, id string) error
 	SetPatchRunPolicySnapshot(ctx context.Context, arg SetPatchRunPolicySnapshotParams) error
+	SkipScheduledPatchRun(ctx context.Context, arg SkipScheduledPatchRunParams) (int64, error)
 	ToggleHostRepository(ctx context.Context, arg ToggleHostRepositoryParams) error
 	TouchTrustedDeviceLastUsed(ctx context.Context, arg TouchTrustedDeviceLastUsedParams) error
 	UpdateAlert(ctx context.Context, id string) error

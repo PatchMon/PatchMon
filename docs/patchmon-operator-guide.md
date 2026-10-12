@@ -2429,7 +2429,7 @@ Configuration for the Guacamole daemon (`guacd`) that powers in-browser RDP sess
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `PATCH_RUN_STALL_TIMEOUT_MIN` | `30` | No | Minutes a patch run can stay in `running` state before the periodic cleanup (every 10 minutes) marks it as `timed_out`. Minimum `5`; values below 5 are clamped at startup with a warning. Also editable via Settings → Environment in the web UI; the env var still wins if set. Changes made in the UI take effect on the next cleanup sweep without a restart. |
+| `PATCH_RUN_STALL_TIMEOUT_MIN` | `30` | No | Minutes a patch run can stay in `running` state before the periodic cleanup (every 10 minutes) marks it as `timed_out`. Minimum `5`; values below 5 are clamped at startup with a warning. Also editable via Settings → Environment in the web UI; the env var still wins if set. Changes made in the UI take effect on the next cleanup sweep without a restart. The same sweep also times out runs that were never dispatched within 24 hours of becoming due; that window is fixed. |
 
 ### Reporting
 

@@ -562,6 +562,10 @@ func (h *ComplianceScanCleanupHandler) cleanupDB(ctx context.Context, d *databas
 	})
 }
 
+const undispatchedPatchRunExpiry = 24 * time.Hour
+
+var undispatchedPatchRunExpiredMsg = "Marked as timed_out: the run was not dispatched to the agent within 24 hours of becoming due"
+
 // PatchRunCleanupHandler handles patch-run-cleanup jobs.
 type PatchRunCleanupHandler struct {
 	defaultDB *database.DB
@@ -633,10 +637,18 @@ func (h *PatchRunCleanupHandler) cleanupDB(ctx context.Context, d *database.DB, 
 	// output is never swept, however long it takes.
 	pgThreshold := pgtime.From(time.Now().Add(-time.Duration(stallMin) * time.Minute))
 	msg := fmt.Sprintf("Marked as timed_out after %d minutes with no progress from the agent", stallMin)
-	return d.Queries.MarkPatchRunsTimedOut(ctx, db.MarkPatchRunsTimedOutParams{
+	stalled, err := d.Queries.MarkPatchRunsTimedOut(ctx, db.MarkPatchRunsTimedOutParams{
 		StaleBefore:  pgThreshold,
 		ErrorMessage: &msg,
 	})
+	if err != nil {
+		return 0, err
+	}
+	undispatched, err := d.Queries.MarkUndispatchedPatchRunsTimedOut(ctx, db.MarkUndispatchedPatchRunsTimedOutParams{
+		DueBefore:    pgtime.From(time.Now().Add(-undispatchedPatchRunExpiry)),
+		ErrorMessage: &undispatchedPatchRunExpiredMsg,
+	})
+	return stalled + undispatched, err
 }
 
 // AgentReportsCleanupHandler sweeps update_history (the Agent Activity feed
