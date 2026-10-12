@@ -5072,13 +5072,13 @@ The installer detects the OS architecture via `PROCESSOR_ARCHITECTURE` / `PROCES
 
 | Version | Service Manager | Package Manager | Notes |
 |---|---|---|---|
-| Windows 10 (64-bit) | Service Control Manager (SCM) | winget / chocolatey (reporting only) | amd64. Windows 10 32-bit reached EOL on 14 October 2025 and is not supported. |
-| Windows 11 | SCM | winget / chocolatey (reporting only) | amd64 and native ARM64 on Copilot+ PCs |
-| Windows Server 2019 | SCM | winget / chocolatey (reporting only) | amd64 |
-| Windows Server 2022 | SCM | winget / chocolatey (reporting only) | amd64 |
-| Windows Server 2025 | SCM | winget / chocolatey (reporting only) | amd64 and ARM64 |
+| Windows 10 (64-bit) | Service Control Manager (SCM) | WinGet / Windows Update (reporting only) | amd64. Windows 10 32-bit reached EOL on 14 October 2025 and is not supported. |
+| Windows 11 | SCM | WinGet / Windows Update (reporting only) | amd64 and native ARM64 on Copilot+ PCs |
+| Windows Server 2019 | SCM | WinGet / Windows Update (reporting only) | amd64 |
+| Windows Server 2022 | SCM | WinGet / Windows Update (reporting only) | amd64 |
+| Windows Server 2025 | SCM | WinGet / Windows Update (reporting only) | amd64 and ARM64 |
 
-The Windows agent reports installed packages (via `winget`, `chocolatey`, and MSI inventory) but does not execute patch deployments. PatchMon integrates with third-party patching vendors for Windows rollout.
+The Windows agent reports installed applications (read from the Windows registry and enriched with update availability from WinGet) and Windows Updates (via the Windows Update Agent), but does not execute patch deployments. Chocolatey packages are not collected. PatchMon integrates with third-party patching vendors for Windows rollout.
 
 #### Supported Operating Systems: FreeBSD
 
