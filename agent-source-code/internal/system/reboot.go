@@ -193,6 +193,8 @@ func (d *Detector) latestInstalledKernel(runningKernel string) string {
 // neither is an upgrade of the other, so a 2712 host must only ever be compared
 // against 2712 kernels. If nothing matches the running flavour the whole set is
 // considered, which keeps behaviour sane when the running kernel is unknown.
+// An unlabelled running kernel, such as the Pi Zero's 6.1.21+, matches only
+// unlabelled candidates while any exist.
 func (d *Detector) selectLatestKernel(candidates []string, flavour string) string {
 	usable := make([]string, 0, len(candidates))
 	for _, candidate := range candidates {
@@ -205,21 +207,18 @@ func (d *Detector) selectLatestKernel(candidates []string, flavour string) strin
 		return ""
 	}
 
-	matching := usable
-	if flavour != "" {
-		matching = make([]string, 0, len(usable))
-		for _, candidate := range usable {
-			if kernelFlavour(candidate) == flavour {
-				matching = append(matching, candidate)
-			}
+	matching := make([]string, 0, len(usable))
+	for _, candidate := range usable {
+		if kernelFlavour(candidate) == flavour {
+			matching = append(matching, candidate)
 		}
-		if len(matching) == 0 {
-			d.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
-				"flavour":    flavour,
-				"candidates": usable,
-			})).Debug("No installed kernel matches the running line, comparing against all")
-			matching = usable
-		}
+	}
+	if len(matching) == 0 {
+		d.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
+			"flavour":    flavour,
+			"candidates": usable,
+		})).Debug("No installed kernel matches the running line, comparing against all")
+		matching = usable
 	}
 
 	sort.Slice(matching, func(i, j int) bool {
@@ -275,6 +274,8 @@ func (d *Detector) collectKernelsFromModules() []string {
 	return kernels
 }
 
+var piVariantRe = regexp.MustCompile(`^v\d+l?$`)
+
 // kernelCoreRe matches a leading numeric MAJOR.MINOR version.
 var kernelCoreRe = regexp.MustCompile(`^\d+\.\d+`)
 
@@ -286,18 +287,23 @@ func hasVersionCore(release string) bool {
 }
 
 // kernelFlavour returns a key identifying which kernel line a release belongs
-// to: amd64, pve, generic, rpt-rpi for the Pi 5 build, arch or zen.
+// to: amd64, pve, generic, rpt-rpi for the Pi 5 build, rpt-rpi-v8, arch or zen.
 //
 // It keeps the components that name the line and discards those that only carry
 // a revision, so that releases from one line always agree. Purely numeric
 // components are revisions (the 1 in deb13.1, the pkgrel in arch1-1), and a
 // trailing number on a label marks a point release (el9_4 and el9_5 are both
-// el), so both are dropped. A release with no labels at all yields an empty
-// flavour, which means the running line is unknown and every candidate counts.
+// el), so both are dropped. Raspberry Pi variant labels (v6, v7, v7l, v8) are
+// kept whole, because those builds are installed side by side and none is an
+// upgrade of another. A release with no labels at all yields an empty flavour.
 func kernelFlavour(release string) string {
 	var labels []string
 	for _, part := range parseKernelVersion(release) {
 		if _, err := strconv.Atoi(part); err == nil {
+			continue
+		}
+		if piVariantRe.MatchString(part) {
+			labels = append(labels, part)
 			continue
 		}
 		labels = append(labels, strings.TrimRight(part, "0123456789_"))
