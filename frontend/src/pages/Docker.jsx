@@ -18,10 +18,11 @@ import {
 	X,
 } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Link, useLocation, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import ModalPortal from "../components/ui/ModalPortal";
 import { useToast } from "../contexts/ToastContext";
 import { usePageRefresh } from "../hooks/usePageRefresh";
+import { useTabParam } from "../hooks/useTabParam";
 import api, { formatError } from "../utils/api";
 import { generateRegistryLink, getSourceDisplayName } from "../utils/docker";
 
@@ -42,7 +43,6 @@ const Docker = () => {
 	const queryClient = useQueryClient();
 	const toast = useToast();
 	const [searchParams] = useSearchParams();
-	const location = useLocation();
 	const [searchTerm, setSearchTerm] = useState("");
 	const urlTab = searchParams.get("tab");
 	const [activeTab, setActiveTab] = useState(
@@ -51,14 +51,13 @@ const Docker = () => {
 	const { refresh: refreshDocker, isRefreshing } =
 		usePageRefresh(DOCKER_REFRESH_KEYS);
 
-	// Sync tab only on actual URL navigation (not in-page tab clicks)
+	useTabParam(activeTab);
+
 	useEffect(() => {
-		const params = new URLSearchParams(location.search);
-		const tab = params.get("tab");
-		if (tab && VALID_DOCKER_TABS.includes(tab)) {
-			setActiveTab(tab);
+		if (urlTab && VALID_DOCKER_TABS.includes(urlTab)) {
+			setActiveTab(urlTab);
 		}
-	}, [location.search]);
+	}, [urlTab]);
 	const [sortField, setSortField] = useState("status");
 	const [sortDirection, setSortDirection] = useState("asc");
 	const [statusFilter, setStatusFilter] = useState("all");

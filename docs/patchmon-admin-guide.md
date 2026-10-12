@@ -710,7 +710,7 @@ Quick reference panel for the host's identity and agent settings. Fields include
 - **Host Groups**: coloured multi-select chips. Add or remove groups; changes save on blur.
 - **Operating System**: icon plus OS type and version (detected by the agent).
 - **Agent Version**: version of `patchmon-agent` currently reporting.
-- **Agent Auto-update**: per-host toggle. If global auto-update is disabled, a yellow warning badge is shown with a tooltip pointing to **Settings → Agent Updates**.
+- **Agent Auto-update**: per-host toggle, on by default for new hosts so the global setting alone decides whether agents update. Turn it off to keep a single host on its current agent version. If global auto-update is disabled, a yellow warning badge is shown with a tooltip pointing to **Settings → Agent Updates**.
 - **Force Agent Version Upgrade**: the **Update Now** button sends an immediate upgrade command via WebSocket. Disabled when the agent is offline.
 
 See Managing the PatchMon Agent for what the agent does when it receives an upgrade command.
@@ -1024,7 +1024,7 @@ Groups are a **selector** across the product. Wherever a workflow asks "which ho
 
 - When you build a patch run, the target picker offers **Host** or **Host group** as the target type.
 - Choosing a host group expands the target to every current member at the time the run is queued.
-- Patch policies (recurring runs) can use a host group as the primary selector, so adding a new host to the group automatically includes it in the next scheduled run.
+- Patch policies can be assigned to a host group, so a host added to the group automatically picks up that policy. The policy decides when a run someone triggers on that host actually executes; it does not start runs on its own.
 
 For the full patching flow, see the Patching chapter.
 
@@ -1214,7 +1214,7 @@ From there, you can drill into individual packages, set up a patch run, or narro
 
 - **Live list, periodic backing data.** Rows are fetched from the PatchMon server and reflect the most recent reports submitted by each host. To refresh a host's data immediately, open the host's detail page and click **Fetch Report**. The Packages list picks up the new state on its next refetch (or click **Refresh** on the Packages page).
 - **Drilling down into patch state.** The **Hosts** page is the better starting point when you care about which *hosts* are behind on updates. Use the Packages page when you care about which *packages* expose the fleet.
-- **Windows hosts.** Package reporting works for Windows (via `winget`, `chocolatey`, and MSI inventory), but the **Patch all** / **Patch selected** actions do not target Windows. Patching on Windows is managed via Windows Update or WinGet directly on the host.
+- **Windows hosts.** Package reporting works for Windows (installed applications enriched with WinGet update data, plus Windows Updates; Chocolatey is not used), but the **Patch all** / **Patch selected** actions do not target Windows. Patching on Windows is managed via Windows Update or WinGet directly on the host.
 
 ### Related Pages
 
@@ -1773,6 +1773,8 @@ PatchMon allows one queued, validating or running patch run per host at a time, 
 ## Chapter 10: Patch Policies and Scheduling {#patch-policies-and-scheduling}
 
 A **patch policy** controls *when* an approved patch run actually fires on a host. Policies let you carve out maintenance windows, build in a delay for "I might change my mind" runs, or force an immediate execution on anything that matters. Assignments and exclusions let you apply a policy broadly (to a host group) while still carving specific hosts out of it.
+
+A policy never starts a run by itself, and PatchMon has no recurring patch schedule. A policy only affects runs that a user triggers (from the Patching wizard, **Patch all** on a host, or the Packages page): it decides whether each run executes immediately, after a delay, or at the next fixed time. Assigning a policy with a fixed time of 01:00 to a host therefore does nothing until someone queues a run for that host.
 
 This page walks through the policy model, how effective policies are resolved, the Settings UI, and how policies interact with run triggers.
 
@@ -4371,10 +4373,12 @@ Four providers are supported in 2.0, each with a curated list of models:
 
 | Provider | Default model | Additional models |
 |----------|---------------|-------------------|
-| **OpenRouter** | `anthropic/claude-3.5-sonnet` | Claude 3 Haiku, GPT-4o, GPT-4o Mini, Gemini Pro 1.5, Llama 3.1 70B |
-| **Anthropic** | `claude-sonnet-4-20250514` | Claude 3.5 Sonnet, Claude 3.5 Haiku |
+| **OpenRouter** | `anthropic/claude-sonnet-5.5` | Claude Haiku 5.5, GPT-4o, GPT-4o Mini, Gemini 2.5 Flash, Llama 3.1 70B |
+| **Anthropic** | `claude-sonnet-5-5` | Claude Opus 5.5, Claude Haiku 5.5 |
 | **OpenAI** | `gpt-4o-mini` | GPT-4o, GPT-4 Turbo |
-| **Google Gemini** | `gemini-1.5-flash` | Gemini 1.5 Pro, Gemini 2.0 Flash (experimental) |
+| **Google Gemini** | `gemini-2.5-flash-lite` | Gemini 2.5 Flash, Gemini 2.5 Pro |
+
+If a saved model has since been retired by its provider, PatchMon uses that provider's default model instead, so the assistant keeps working without you re-saving the settings.
 
 Pick one provider per PatchMon deployment. To change providers, edit the AI settings. The API key is cleared automatically when you switch, and you'll be asked to enter a new one for the new provider.
 

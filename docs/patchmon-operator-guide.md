@@ -283,6 +283,78 @@ docker compose up -d
 
 Check the [GitHub releases page](https://github.com/PatchMon/PatchMon/releases) for version-specific changes and migration notes before upgrading.
 
+#### Migrating from 1.4.2 to 2.0.0 {#migrating-from-1-4-2-to-2-0-0}
+
+PatchMon 2.0.0 replaced the separate `backend` and `frontend` containers with a single `server` container, so a 1.4.2 stack cannot be upgraded with `docker compose pull` alone. The migration script `tools/migrate1-4-2_to_2-0-0.sh` in the PatchMon repository converts your compose directory to the new layout.
+
+**What the script does**
+
+1. Checks that `docker-compose.yml` exists, that Docker and the Compose plugin are installed, and that the compose file still uses the 1.4.2 layout. It stops without changing anything if the stack is already migrated.
+2. Downloads the current `docker/docker-compose.yml` and `docker/env.example` from the `main` branch and checks that they look valid. Because these use the `latest` image tag, you end up on the newest 2.x release rather than exactly 2.0.0. Set `UPSTREAM` to a different raw base URL if you need to pull them from somewhere else.
+3. Copies your `docker-compose.yml` and `.env` (if you have one) into a `backup-1-4-2-<timestamp>/` folder next to them.
+4. Runs `docker compose down`, then installs the new compose file and `.env` template.
+5. Fills in each variable the new template contains with its value from your old `.env`, falls back to values written directly in the old compose file where `.env` had none (for example `JWT_SECRET`, `CORS_ORIGIN`, the Postgres settings, and the Redis password from either the backend environment or `--requirepass`), and merges `CORS_ORIGIN` and `CORS_ORIGINS` into a single `CORS_ORIGIN`. Variables the 2.x template no longer has are dropped; they remain in the backup folder.
+6. Writes `COMPOSE_PROJECT_NAME` if your project was not called `patchmon`, so the existing data volumes are reused.
+7. If the old `frontend` service was published on a port other than 3000, sets `PORT` to that port.
+
+The script does **not** start the new stack, and it does **not** back up your database.
+
+**Before you start**
+
+- Bash, `curl`, Docker and the Docker Compose plugin on the host.
+- Back up the database while the 1.4.2 stack is still running. The 2.0.0 server migrates the schema on first start, so restoring the old compose files alone is not enough to go back:
+
+  ```bash
+  docker compose exec -T database pg_dump -U patchmon_user -d patchmon_db > patchmon-1.4.2.sql
+  ```
+
+  Check that the file is not empty before you continue.
+
+**Run the migration**
+
+From your PatchMon compose directory (the one containing `docker-compose.yml` and `.env`):
+
+```bash
+curl -fsSL -o migrate1-4-2_to_2-0-0.sh https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/tools/migrate1-4-2_to_2-0-0.sh
+less migrate1-4-2_to_2-0-0.sh
+bash migrate1-4-2_to_2-0-0.sh
+```
+
+You can also pass the compose directory as the first argument instead of running it from there. Review the new `.env` and `docker-compose.yml`, then start the stack:
+
+```bash
+docker compose up -d
+```
+
+**Verify**
+
+- `docker compose ps` shows `server`, `database`, `redis` and `guacd` running, and `server` becomes healthy.
+- `docker compose logs server` contains `[migrate] applied successfully` and no errors after it.
+- You can log in with your existing account, and your hosts, packages and history are present.
+- Agents reconnect and their last check-in time updates.
+
+If the server exits straight after `[migrate] applied successfully`, check the server logs (see **Troubleshooting** below) and that `REDIS_PASSWORD` and the database settings in `.env` are set.
+
+**Roll back**
+
+If the script fails part-way, it prints the commands to restore your original files from the backup folder. If 2.0.0 has already started against your database, restore the database as well:
+
+```bash
+docker compose down
+cp backup-1-4-2-<timestamp>/docker-compose.yml docker-compose.yml
+cp backup-1-4-2-<timestamp>/.env .env
+docker volume rm <project>_postgres_data
+docker compose up -d --wait database
+docker compose exec -T database psql -U patchmon_user -d patchmon_db < patchmon-1.4.2.sql
+docker compose up -d
+```
+
+Replace `<project>` with your Compose project name (`patchmon` unless you changed it; `docker volume ls` shows it). If you had no `.env` before migrating, delete the new one instead of copying it back.
+
+**Clean up**
+
+The `agent_files` and `branding_assets` volumes from 1.4.2 are no longer used. Once you are sure 2.0.0 is working, remove them with `docker volume rm <project>_agent_files <project>_branding_assets`. Keep `patchmon-1.4.2.sql` until then as well.
+
 #### Why the newest version can take a day to appear
 
 Publishing a release and announcing it to running instances are two separate steps.
@@ -331,6 +403,12 @@ docker compose logs redis
 ```
 
 Verify that `REDIS_PASSWORD` in your `.env` is set. The Redis container uses this value in its startup command (`--requirepass`).
+
+At startup the server logs a `connecting to redis` line whose `addr` field shows the Redis address it resolved (for example `redis:6379`), and the same address appears in the `[fatal] redis` line if the connection fails. If it shows `localhost:6379`, `REDIS_HOST` is not reaching the `server` container: check the variable is set in `.env` (or the service's `environment:` block) and recreate the container.
+
+#### Server exits straight after "[migrate] applied successfully"
+
+The server stopped on a fatal startup error, most often Redis being unreachable or rejecting `REDIS_PASSWORD`. Fatal startup errors are always printed to the container output as a line starting `[fatal]`, even when `ENABLE_LOGGING=false`, so check `docker compose logs server` for it.
 
 #### Checking server logs
 
@@ -2687,7 +2765,7 @@ OIDC_REDIRECT_URI=https://patchmon.example.com/api/v1/auth/oidc/callback
 | Variable | Description |
 |----------|-------------|
 | `OIDC_ENABLED` | Set to `true` to enable OIDC |
-| `OIDC_ISSUER_URL` | Your IdP's issuer / discovery URL |
+| `OIDC_ISSUER_URL` | Your IdP's issuer URL (a trailing `/.well-known/openid-configuration` is removed automatically) |
 | `OIDC_CLIENT_ID` | Client ID from your IdP application |
 | `OIDC_CLIENT_SECRET` | Client secret from your IdP application |
 | `OIDC_REDIRECT_URI` | Must match exactly what you configured in your IdP |
@@ -3074,9 +3152,36 @@ You get this immediately on clicking the SSO button, before your IdP's login pag
 PatchMon fetches your IdP's discovery document (`.well-known/openid-configuration`) on the first login attempt rather than at startup, so problems reaching or validating that document surface at this point:
 
 - PatchMon cannot reach the IdP from inside the container (DNS, firewall, or network policy)
-- `OIDC_ISSUER_URL` is wrong. It must not include `.well-known/openid-configuration`, which PatchMon appends itself
+- `OIDC_ISSUER_URL` is wrong. Use the issuer URL, not the discovery document URL. If you do paste the full URL ending in `/.well-known/openid-configuration`, PatchMon removes that suffix before discovery
 - The issuer URL in the discovery document does not match `OIDC_ISSUER_URL`. For Authentik, the trailing slash matters
-- The IdP's TLS certificate is not trusted by the PatchMon container
+- The IdP's TLS certificate is not trusted by the PatchMon container. The log ends in `x509: certificate signed by unknown authority`. See the next section
+
+#### IdP Certificate Signed by an Internal CA
+
+If your identity provider's certificate is issued by a private or internal certificate authority, the PatchMon server does not trust it, and the first login attempt fails with `Failed to reach the OIDC provider`. The log line reads:
+
+```text
+oidc auth url failed ... tls: failed to verify certificate: x509: certificate signed by unknown authority
+```
+
+PatchMon has no option to skip certificate verification for OIDC. Make the server trust your CA instead.
+
+**Docker.** Mount your CA certificate (PEM format) into the `server` container and point `SSL_CERT_FILE` at it:
+
+```yaml
+services:
+  server:
+    environment:
+      SSL_CERT_FILE: /etc/patchmon/internal-ca.pem
+    volumes:
+      - ./internal-ca.pem:/etc/patchmon/internal-ca.pem:ro
+```
+
+Then recreate the container with `docker compose up -d`. The server reads the file the first time it opens a TLS connection, so a restart is needed whenever you change it. If you have several CA certificates, either concatenate them into one PEM file or mount them into a directory and set `SSL_CERT_DIR` to that directory instead.
+
+On the stock PatchMon image the system CA bundle in `/etc/ssl/certs` is still loaded alongside your file, so public certificates (for example your notification destinations) keep working. Do **not** mount your CA over `/etc/ssl/certs/ca-certificates.crt`: that replaces the public bundle, and every outbound connection to a publicly signed service will then fail with the same `unknown authority` error.
+
+**Native or LXC installs.** Add the CA to the operating system's trust store (on Debian and Ubuntu, copy it to `/usr/local/share/ca-certificates/` with a `.crt` extension and run `update-ca-certificates`), then restart the PatchMon service.
 
 #### "Session Expired" Error
 
@@ -5072,13 +5177,13 @@ The installer detects the OS architecture via `PROCESSOR_ARCHITECTURE` / `PROCES
 
 | Version | Service Manager | Package Manager | Notes |
 |---|---|---|---|
-| Windows 10 (64-bit) | Service Control Manager (SCM) | winget / chocolatey (reporting only) | amd64. Windows 10 32-bit reached EOL on 14 October 2025 and is not supported. |
-| Windows 11 | SCM | winget / chocolatey (reporting only) | amd64 and native ARM64 on Copilot+ PCs |
-| Windows Server 2019 | SCM | winget / chocolatey (reporting only) | amd64 |
-| Windows Server 2022 | SCM | winget / chocolatey (reporting only) | amd64 |
-| Windows Server 2025 | SCM | winget / chocolatey (reporting only) | amd64 and ARM64 |
+| Windows 10 (64-bit) | Service Control Manager (SCM) | WinGet / Windows Update (reporting only) | amd64. Windows 10 32-bit reached EOL on 14 October 2025 and is not supported. |
+| Windows 11 | SCM | WinGet / Windows Update (reporting only) | amd64 and native ARM64 on Copilot+ PCs |
+| Windows Server 2019 | SCM | WinGet / Windows Update (reporting only) | amd64 |
+| Windows Server 2022 | SCM | WinGet / Windows Update (reporting only) | amd64 |
+| Windows Server 2025 | SCM | WinGet / Windows Update (reporting only) | amd64 and ARM64 |
 
-The Windows agent reports installed packages (via `winget`, `chocolatey`, and MSI inventory) but does not execute patch deployments. PatchMon integrates with third-party patching vendors for Windows rollout.
+The Windows agent reports installed applications (read from the Windows registry and enriched with update availability from WinGet) and Windows Updates (via the Windows Update Agent), but does not execute patch deployments. Chocolatey packages are not collected. PatchMon integrates with third-party patching vendors for Windows rollout.
 
 #### Supported Operating Systems: FreeBSD
 

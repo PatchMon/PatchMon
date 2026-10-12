@@ -149,6 +149,19 @@ func (h *HostsHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, hostToResponse(host, groups, h.hosts.StaleCutoff(r.Context())))
 }
 
+func newPendingHost(friendlyName, machineID, apiID, apiKeyHash string) *models.Host {
+	return &models.Host{
+		MachineID:    &machineID,
+		FriendlyName: friendlyName,
+		OSType:       "unknown",
+		OSVersion:    "unknown",
+		Status:       "pending",
+		ApiID:        apiID,
+		ApiKey:       apiKeyHash,
+		AutoUpdate:   true,
+	}
+}
+
 // Create handles POST /hosts/create.
 func (h *HostsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -194,19 +207,11 @@ func (h *HostsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	machineID := "pending-" + uuid.New().String()
-	host := &models.Host{
-		MachineID:              &machineID,
-		FriendlyName:           req.FriendlyName,
-		OSType:                 "unknown",
-		OSVersion:              "unknown",
-		Status:                 "pending",
-		ApiID:                  apiID,
-		ApiKey:                 apiKeyHash,
-		DockerEnabled:          req.DockerEnabled != nil && *req.DockerEnabled,
-		ComplianceEnabled:      complianceEnabled,
-		ComplianceOnDemandOnly: complianceOnDemandOnly,
-		ExpectedPlatform:       req.ExpectedPlatform,
-	}
+	host := newPendingHost(req.FriendlyName, machineID, apiID, apiKeyHash)
+	host.DockerEnabled = req.DockerEnabled != nil && *req.DockerEnabled
+	host.ComplianceEnabled = complianceEnabled
+	host.ComplianceOnDemandOnly = complianceOnDemandOnly
+	host.ExpectedPlatform = req.ExpectedPlatform
 	if err := h.hosts.Create(r.Context(), host); err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to create host")
 		return

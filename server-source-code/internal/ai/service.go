@@ -38,24 +38,24 @@ var providers = map[string]struct {
 		name:    "OpenRouter",
 		baseURL: "https://openrouter.ai/api/v1",
 		models: []Model{
-			{ID: "anthropic/claude-3.5-sonnet", Name: "Claude 3.5 Sonnet"},
-			{ID: "anthropic/claude-3-haiku", Name: "Claude 3 Haiku"},
+			{ID: "anthropic/claude-sonnet-5.5", Name: "Claude Sonnet 5.5"},
+			{ID: "anthropic/claude-haiku-5.5", Name: "Claude Haiku 5.5"},
 			{ID: "openai/gpt-4o", Name: "GPT-4o"},
 			{ID: "openai/gpt-4o-mini", Name: "GPT-4o Mini"},
-			{ID: "google/gemini-pro-1.5", Name: "Gemini Pro 1.5"},
+			{ID: "google/gemini-2.5-flash", Name: "Gemini 2.5 Flash"},
 			{ID: "meta-llama/llama-3.1-70b-instruct", Name: "Llama 3.1 70B"},
 		},
-		defaultModel: "anthropic/claude-3.5-sonnet",
+		defaultModel: "anthropic/claude-sonnet-5.5",
 	},
 	"anthropic": {
 		name:    "Anthropic Claude",
 		baseURL: "https://api.anthropic.com/v1",
 		models: []Model{
-			{ID: "claude-sonnet-4-20250514", Name: "Claude Sonnet 4"},
-			{ID: "claude-3-5-sonnet-20241022", Name: "Claude 3.5 Sonnet"},
-			{ID: "claude-3-5-haiku-20241022", Name: "Claude 3.5 Haiku"},
+			{ID: "claude-sonnet-5-5", Name: "Claude Sonnet 5.5"},
+			{ID: "claude-opus-5-5", Name: "Claude Opus 5.5"},
+			{ID: "claude-haiku-5-5", Name: "Claude Haiku 5.5"},
 		},
-		defaultModel: "claude-sonnet-4-20250514",
+		defaultModel: "claude-sonnet-5-5",
 	},
 	"openai": {
 		name:    "OpenAI",
@@ -71,12 +71,52 @@ var providers = map[string]struct {
 		name:    "Google Gemini",
 		baseURL: "https://generativelanguage.googleapis.com/v1beta",
 		models: []Model{
-			{ID: "gemini-1.5-pro", Name: "Gemini 1.5 Pro"},
-			{ID: "gemini-1.5-flash", Name: "Gemini 1.5 Flash"},
-			{ID: "gemini-2.0-flash-exp", Name: "Gemini 2.0 Flash"},
+			{ID: "gemini-2.5-flash-lite", Name: "Gemini 2.5 Flash-Lite"},
+			{ID: "gemini-2.5-flash", Name: "Gemini 2.5 Flash"},
+			{ID: "gemini-2.5-pro", Name: "Gemini 2.5 Pro"},
 		},
-		defaultModel: "gemini-1.5-flash",
+		defaultModel: "gemini-2.5-flash-lite",
 	},
+}
+
+var retiredModels = map[string]map[string]bool{
+	"openrouter": {
+		"anthropic/claude-3.5-sonnet": true,
+		"anthropic/claude-3-haiku":    true,
+		"google/gemini-pro-1.5":       true,
+	},
+	"anthropic": {
+		"claude-sonnet-4-20250514":   true,
+		"claude-3-5-sonnet-20241022": true,
+		"claude-3-5-haiku-20241022":  true,
+	},
+	"gemini": {
+		"gemini-1.5-pro":       true,
+		"gemini-1.5-flash":     true,
+		"gemini-2.0-flash-exp": true,
+	},
+}
+
+var anthropicThinking = map[string]map[string]string{
+	"claude-sonnet-5-5": {"type": "between_tools"},
+	"claude-haiku-5-5":  {"type": "disabled"},
+}
+
+var anthropicMinMaxTokens = map[string]int{
+	"claude-opus-5-5": 16000,
+}
+
+// ResolveModel returns the saved model, or the provider default when the saved
+// model is unset or has been retired by the provider.
+func ResolveModel(provider, model string) string {
+	cfg, ok := providers[provider]
+	if !ok {
+		return model
+	}
+	if model == "" || retiredModels[provider][model] {
+		return cfg.defaultModel
+	}
+	return model
 }
 
 const (
@@ -197,6 +237,7 @@ func (s *Service) callAI(settings *models.Settings, prompt string, opts *callOpt
 	if settings.AiModel != nil {
 		model = *settings.AiModel
 	}
+	model = ResolveModel(provider, model)
 
 	switch provider {
 	case "openrouter":
@@ -219,11 +260,13 @@ func callOpenRouter(apiKey, model string, messages []Message, opts *callOptions)
 		model = cfg.defaultModel
 	}
 	body := map[string]interface{}{
-		"model":       model,
-		"messages":    messages,
-		"max_tokens":  opts.maxTokens,
-		"temperature": opts.temperature,
-		"stream":      false,
+		"model":      model,
+		"messages":   messages,
+		"max_tokens": opts.maxTokens,
+		"stream":     false,
+	}
+	if !strings.HasPrefix(model, "anthropic/") {
+		body["temperature"] = opts.temperature
 	}
 	reqBody, _ := json.Marshal(body)
 	req, err := http.NewRequest("POST", cfg.baseURL+"/chat/completions", bytes.NewReader(reqBody))
@@ -275,11 +318,15 @@ func callAnthropic(apiKey, model string, messages []Message, opts *callOptions) 
 			conv = append(conv, m)
 		}
 	}
+	maxTokens := max(opts.maxTokens, anthropicMinMaxTokens[model])
 	body := map[string]interface{}{
 		"model":      model,
-		"max_tokens": opts.maxTokens,
+		"max_tokens": maxTokens,
 		"system":     systemMsg,
 		"messages":   conv,
+	}
+	if thinking, ok := anthropicThinking[model]; ok {
+		body["thinking"] = thinking
 	}
 	reqBody, _ := json.Marshal(body)
 	req, err := http.NewRequest("POST", cfg.baseURL+"/messages", bytes.NewReader(reqBody))
@@ -301,16 +348,29 @@ func callAnthropic(apiKey, model string, messages []Message, opts *callOptions) 
 	}
 	var out struct {
 		Content []struct {
+			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
+		StopReason string `json:"stop_reason"`
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
 		return "", err
 	}
-	if len(out.Content) > 0 {
-		return out.Content[0].Text, nil
+	var text strings.Builder
+	for _, c := range out.Content {
+		if c.Type == "text" {
+			text.WriteString(c.Text)
+		}
 	}
-	return "", nil
+	if text.Len() == 0 {
+		switch out.StopReason {
+		case "max_tokens":
+			return "", fmt.Errorf("anthropic API returned no text before reaching max_tokens")
+		case "refusal":
+			return "", fmt.Errorf("anthropic API declined to answer this request")
+		}
+	}
+	return text.String(), nil
 }
 
 // OpenAI

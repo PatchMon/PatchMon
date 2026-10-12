@@ -554,18 +554,9 @@ func (h *AutoEnrollmentHandler) createEnrolledHost(ctx context.Context, w http.R
 		}
 	}
 
-	host := &models.Host{
-		MachineID:              &machineID,
-		FriendlyName:           friendlyName,
-		OSType:                 "unknown",
-		OSVersion:              "unknown",
-		Status:                 "pending",
-		ApiID:                  apiID,
-		ApiKey:                 string(apiKeyHash),
-		DockerEnabled:          false,
-		ComplianceEnabled:      complianceEnabled,
-		ComplianceOnDemandOnly: complianceOnDemandOnly,
-	}
+	host := newPendingHost(friendlyName, machineID, apiID, string(apiKeyHash))
+	host.ComplianceEnabled = complianceEnabled
+	host.ComplianceOnDemandOnly = complianceOnDemandOnly
 	if err := h.hosts.Create(ctx, host); err != nil {
 		if h.log != nil {
 			h.log.Error("auto-enrollment create host failed", "error", err)

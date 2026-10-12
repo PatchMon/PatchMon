@@ -50,6 +50,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { useConfirm } from "../contexts/ConfirmContext";
 import { useSettings } from "../contexts/SettingsContext";
 import { useToast } from "../contexts/ToastContext";
+import { searchWithoutTab, useTabParam } from "../hooks/useTabParam";
 import { adminHostsAPI, formatDate, hostGroupsAPI } from "../utils/api";
 import { patchingAPI } from "../utils/patchingApi";
 import { hasExtraDependencies } from "../utils/patchRun";
@@ -81,19 +82,21 @@ const Patching = () => {
 	const initialType = searchParams.get("type") || "";
 	const [activeTab, setActiveTab] = useState(initialTab);
 
-	// Sync tab and filter state on actual URL navigation (not in-page tab clicks)
+	useTabParam(activeTab);
+
 	useEffect(() => {
-		const params = new URLSearchParams(location.search);
-		const tab = params.get("tab");
-		if (tab && ["overview", "runs", "policies"].includes(tab)) {
-			setActiveTab(tab);
+		if (urlTab && ["overview", "runs", "policies"].includes(urlTab)) {
+			setActiveTab(urlTab);
 		}
-		const status = params.get("status") || "";
-		setRunsFilterStatus(status);
-		const type = params.get("type") || "";
-		setRunsFilterType(type);
+	}, [urlTab]);
+
+	const filterSearch = searchWithoutTab(location.search);
+	useEffect(() => {
+		const params = new URLSearchParams(filterSearch);
+		setRunsFilterStatus(params.get("status") || "");
+		setRunsFilterType(params.get("type") || "");
 		setRunsPage(1);
-	}, [location.search]);
+	}, [filterSearch]);
 
 	const [runsFilterStatus, setRunsFilterStatus] = useState(initialStatus);
 	const [runsFilterType, setRunsFilterType] = useState(initialType);
