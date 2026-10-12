@@ -328,8 +328,9 @@ func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Reques
 			"show_newsletter":              showNewsletter,
 			"admin_mode":                   adminMode,
 			"discord": map[string]interface{}{
-				"enabled":    false,
-				"buttonText": "Login with Discord",
+				"enabled":           false,
+				"buttonText":        "Login with Discord",
+				"allowRegistration": false,
 			},
 			"hasAdminUsers": hasAdminUsers,
 			"oidc": map[string]interface{}{
@@ -381,8 +382,9 @@ func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Reques
 		"show_newsletter":              showNewsletter,
 		"admin_mode":                   adminMode,
 		"discord": map[string]interface{}{
-			"enabled":    h.isDiscordProperlyConfigured(s),
-			"buttonText": discordButtonText,
+			"enabled":           h.isDiscordProperlyConfigured(s),
+			"buttonText":        discordButtonText,
+			"allowRegistration": s.DiscordAllowRegistration,
 		},
 		"logo_dark":     s.LogoDark,
 		"logo_light":    s.LogoLight,

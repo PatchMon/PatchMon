@@ -63,8 +63,10 @@ UPDATE settings SET
     compliance_scan_interval = $57,
     package_cache_refresh_mode = $58,
     package_cache_refresh_max_age = $59,
-    oidc_trust_unverified_email = $60
-WHERE id = $61;
+    oidc_trust_unverified_email = $60,
+    discord_allow_registration = $61,
+    discord_required_guild_id = $62
+WHERE id = $63;
 
 -- name: UpdateSettingsConfig :exec
 UPDATE settings SET

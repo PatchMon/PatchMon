@@ -78,10 +78,18 @@ func (h *DiscordHandler) loadDiscordConfig(ctx context.Context) (*discord.Config
 	} else {
 		redirectURI = strings.TrimSuffix(h.resolved.CORSOrigin, "/") + "/api/v1/auth/discord/callback"
 	}
+	// Carry the required guild ID into the OAuth config so the authorization
+	// URL requests the guilds scope and the callback can enforce membership.
+	// It is never returned to the client.
+	requiredGuildID := ""
+	if s.DiscordRequiredGuildID != nil {
+		requiredGuildID = *s.DiscordRequiredGuildID
+	}
 	return &discord.Config{
-		ClientID:     *s.DiscordClientID,
-		ClientSecret: secret,
-		RedirectURI:  redirectURI,
+		ClientID:        *s.DiscordClientID,
+		ClientSecret:    secret,
+		RedirectURI:     redirectURI,
+		RequiredGuildID: requiredGuildID,
 	}, nil
 }
 
@@ -231,6 +239,28 @@ func (h *DiscordHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		avatarPtr = &avatarURL
 	}
 
+	// Guild restriction: when a required guild is configured, the user must be
+	// a member before either linking or logging in. Fail closed on any fetch or
+	// decode error so a Discord outage or malformed response cannot bypass the
+	// restriction.
+	if cfg.RequiredGuildID != "" {
+		guilds, gErr := discord.GetUserGuilds(r.Context(), accessToken)
+		if !guildRequirementSatisfied(cfg.RequiredGuildID, guilds, gErr) {
+			if h.log != nil {
+				h.log.Warn("discord guild requirement not met",
+					"discord_id", discordUser.ID,
+					"required_guild_id", cfg.RequiredGuildID,
+					"error", gErr)
+			}
+			if sessionData.Mode == "link" {
+				redirectTo("/settings/profile?discord_linked=false")
+			} else {
+				redirectTo("/login?error=You+must+be+a+member+of+the+required+Discord+server")
+			}
+			return
+		}
+	}
+
 	// Mode: Link
 	if sessionData.Mode == "link" {
 		userID := sessionData.UserID
@@ -281,8 +311,10 @@ func (h *DiscordHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Auto-create user if signup enabled
-	if user == nil && s != nil && s.SignupEnabled {
+	// Auto-create user only when global signup is enabled and Discord
+	// registration is opted in. Existing users always log in regardless of the
+	// opt-in.
+	if shouldAutoCreateDiscordUser(user, s) {
 		baseUsername := usernameSanitize.ReplaceAllString(discordUser.Username, "")
 		if len(baseUsername) > 32 {
 			baseUsername = baseUsername[:32]
@@ -454,11 +486,13 @@ func (h *DiscordHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	s, err := h.settings.GetFirst(r.Context())
 	if err != nil {
 		JSON(w, http.StatusOK, map[string]interface{}{
-			"discord_oauth_enabled":     false,
-			"discord_client_id":         nil,
-			"discord_client_secret_set": false,
-			"discord_redirect_uri":      nil,
-			"discord_button_text":       "Login with Discord",
+			"discord_oauth_enabled":      false,
+			"discord_client_id":          nil,
+			"discord_client_secret_set":  false,
+			"discord_redirect_uri":       nil,
+			"discord_button_text":        "Login with Discord",
+			"discord_allow_registration": false,
+			"discord_required_guild_id":  nil,
 		})
 		return
 	}
@@ -468,11 +502,13 @@ func (h *DiscordHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 		secretSet = err == nil
 	}
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"discord_oauth_enabled":     s.DiscordOAuthEnabled,
-		"discord_client_id":         s.DiscordClientID,
-		"discord_client_secret_set": secretSet,
-		"discord_redirect_uri":      s.DiscordRedirectURI,
-		"discord_button_text":       ptrOrDefault(s.DiscordButtonText, "Login with Discord"),
+		"discord_oauth_enabled":      s.DiscordOAuthEnabled,
+		"discord_client_id":          s.DiscordClientID,
+		"discord_client_secret_set":  secretSet,
+		"discord_redirect_uri":       s.DiscordRedirectURI,
+		"discord_button_text":        ptrOrDefault(s.DiscordButtonText, "Login with Discord"),
+		"discord_allow_registration": s.DiscordAllowRegistration,
+		"discord_required_guild_id":  s.DiscordRequiredGuildID,
 	})
 }
 
@@ -499,12 +535,14 @@ func (h *DiscordHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) 
 		secretSet = err == nil
 	}
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"message":                   "Discord settings updated successfully",
-		"discord_oauth_enabled":     s.DiscordOAuthEnabled,
-		"discord_client_id":         s.DiscordClientID,
-		"discord_client_secret_set": secretSet,
-		"discord_redirect_uri":      s.DiscordRedirectURI,
-		"discord_button_text":       ptrOrDefault(s.DiscordButtonText, "Login with Discord"),
+		"message":                    "Discord settings updated successfully",
+		"discord_oauth_enabled":      s.DiscordOAuthEnabled,
+		"discord_client_id":          s.DiscordClientID,
+		"discord_client_secret_set":  secretSet,
+		"discord_redirect_uri":       s.DiscordRedirectURI,
+		"discord_button_text":        ptrOrDefault(s.DiscordButtonText, "Login with Discord"),
+		"discord_allow_registration": s.DiscordAllowRegistration,
+		"discord_required_guild_id":  s.DiscordRequiredGuildID,
 	})
 }
 
@@ -552,4 +590,40 @@ func applyDiscordSettingsUpdate(s *models.Settings, req map[string]interface{}, 
 		}
 		s.DiscordButtonText = &t
 	}
+	if v, ok := req["discord_allow_registration"].(bool); ok {
+		s.DiscordAllowRegistration = v
+	}
+	// An empty string clears the restriction; an absent or null field keeps it.
+	if v, ok := req["discord_required_guild_id"].(string); ok {
+		if v == "" {
+			s.DiscordRequiredGuildID = nil
+		} else {
+			s.DiscordRequiredGuildID = &v
+		}
+	}
+}
+
+// guildRequirementSatisfied enforces the configured required guild. It fails
+// closed: when a guild fetch/decode error occurred (err != nil) or no guilds
+// were returned, the user is treated as a non-member so a Discord outage or a
+// malformed response can never bypass the restriction.
+func guildRequirementSatisfied(requiredGuildID string, guilds []discord.Guild, err error) bool {
+	if requiredGuildID == "" {
+		return true
+	}
+	if err != nil {
+		return false
+	}
+	return discord.IsGuildMember(guilds, requiredGuildID)
+}
+
+// shouldAutoCreateDiscordUser reports whether a new local user should be
+// auto-created from a Discord login. Creation requires the user to be absent
+// and BOTH global signup and Discord registration opt-in to be enabled.
+// Existing users always log in regardless of the opt-in.
+func shouldAutoCreateDiscordUser(user *models.User, s *models.Settings) bool {
+	if user != nil || s == nil || !s.SignupEnabled {
+		return false
+	}
+	return s.DiscordAllowRegistration
 }

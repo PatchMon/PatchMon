@@ -143,6 +143,8 @@ type Settings struct {
 	DiscordClientSecret             *string    `db:"discord_client_secret"`
 	DiscordRedirectURI              *string    `db:"discord_redirect_uri"`
 	DiscordButtonText               *string    `db:"discord_button_text"`
+	DiscordAllowRegistration        bool       `db:"discord_allow_registration"`
+	DiscordRequiredGuildID          *string    `db:"discord_required_guild_id"`
 	OidcEnabled                     bool       `db:"oidc_enabled"`
 	OidcIssuerURL                   *string    `db:"oidc_issuer_url"`
 	OidcClientID                    *string    `db:"oidc_client_id"`

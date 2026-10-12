@@ -76,6 +76,8 @@ CREATE TABLE IF NOT EXISTS settings (
     discord_client_secret TEXT,
     discord_redirect_uri TEXT,
     discord_button_text TEXT DEFAULT 'Login with Discord',
+    discord_allow_registration BOOLEAN NOT NULL DEFAULT false,
+    discord_required_guild_id TEXT,
     oidc_enabled BOOLEAN NOT NULL DEFAULT false,
     oidc_issuer_url TEXT,
     oidc_client_id TEXT,
