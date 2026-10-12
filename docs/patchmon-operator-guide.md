@@ -283,6 +283,78 @@ docker compose up -d
 
 Check the [GitHub releases page](https://github.com/PatchMon/PatchMon/releases) for version-specific changes and migration notes before upgrading.
 
+#### Migrating from 1.4.2 to 2.0.0 {#migrating-from-1-4-2-to-2-0-0}
+
+PatchMon 2.0.0 replaced the separate `backend` and `frontend` containers with a single `server` container, so a 1.4.2 stack cannot be upgraded with `docker compose pull` alone. The migration script `tools/migrate1-4-2_to_2-0-0.sh` in the PatchMon repository converts your compose directory to the new layout.
+
+**What the script does**
+
+1. Checks that `docker-compose.yml` and `.env` exist, that Docker and the Compose plugin are installed, and that the compose file still uses the 1.4.2 layout. It stops without changing anything if the stack is already migrated.
+2. Downloads the current `docker/docker-compose.yml` and `docker/env.example` from the `main` branch and checks that they look valid. Because these use the `latest` image tag, you end up on the newest 2.x release rather than exactly 2.0.0. Set `UPSTREAM` to a different raw base URL if you need to pull them from somewhere else.
+3. Copies your `docker-compose.yml` and `.env` into a `backup-1-4-2-<timestamp>/` folder next to them.
+4. Runs `docker compose down`, then installs the new compose file and `.env` template.
+5. Fills in each variable the new template contains with its value from your old `.env`, falls back to values hard-coded in the old compose file (Redis and Postgres settings) where `.env` had none, and merges `CORS_ORIGIN` and `CORS_ORIGINS` into a single `CORS_ORIGIN`. Variables the 2.x template no longer has are dropped; they remain in the backup folder.
+6. Writes `COMPOSE_PROJECT_NAME` if your project was not called `patchmon`, so the existing data volumes are reused.
+7. If the old `frontend` service was published on a port other than 3000, sets `PORT` to that port.
+
+The script does **not** start the new stack, and it does **not** back up your database.
+
+**Before you start**
+
+- Bash, `curl`, Docker and the Docker Compose plugin on the host.
+- Back up the database while the 1.4.2 stack is still running. The 2.0.0 server migrates the schema on first start, so restoring the old compose files alone is not enough to go back:
+
+  ```bash
+  docker compose exec -T database pg_dump -U patchmon_user -d patchmon_db > patchmon-1.4.2.sql
+  ```
+
+  Check that the file is not empty before you continue.
+
+**Run the migration**
+
+From your PatchMon compose directory (the one containing `docker-compose.yml` and `.env`):
+
+```bash
+curl -fsSL -o migrate1-4-2_to_2-0-0.sh https://raw.githubusercontent.com/PatchMon/PatchMon/refs/heads/main/tools/migrate1-4-2_to_2-0-0.sh
+less migrate1-4-2_to_2-0-0.sh
+bash migrate1-4-2_to_2-0-0.sh
+```
+
+You can also pass the compose directory as the first argument instead of running it from there. Review the new `.env` and `docker-compose.yml`, then start the stack:
+
+```bash
+docker compose up -d
+```
+
+**Verify**
+
+- `docker compose ps` shows `server`, `database`, `redis` and `guacd` running, and `server` becomes healthy.
+- `docker compose logs server` contains `[migrate] applied successfully` and no errors after it.
+- You can log in with your existing account, and your hosts, packages and history are present.
+- Agents reconnect and their last check-in time updates.
+
+If the server exits straight after `[migrate] applied successfully`, check the server logs (see **Troubleshooting** below) and that `REDIS_PASSWORD` and the database settings in `.env` are set.
+
+**Roll back**
+
+If the script fails part-way, it prints the commands to restore your original files from the backup folder. If 2.0.0 has already started against your database, restore the database as well:
+
+```bash
+docker compose down
+cp backup-1-4-2-<timestamp>/docker-compose.yml docker-compose.yml
+cp backup-1-4-2-<timestamp>/.env .env
+docker volume rm <project>_postgres_data
+docker compose up -d --wait database
+docker compose exec -T database psql -U patchmon_user -d patchmon_db < patchmon-1.4.2.sql
+docker compose up -d
+```
+
+Replace `<project>` with your Compose project name (`patchmon` unless you changed it; `docker volume ls` shows it).
+
+**Clean up**
+
+The `agent_files` and `branding_assets` volumes from 1.4.2 are no longer used. Once you are sure 2.0.0 is working, remove them with `docker volume rm <project>_agent_files <project>_branding_assets`. Keep `patchmon-1.4.2.sql` until then as well.
+
 #### Why the newest version can take a day to appear
 
 Publishing a release and announcing it to running instances are two separate steps.
