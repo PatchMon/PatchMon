@@ -109,10 +109,26 @@ func TestCORS_HostEnforcement(t *testing.T) {
 			wantACAO:   "http://patchmon.example.com:8443",
 		},
 		{
-			name:       "chained proxies appending to the forwarded host still match",
+			name:       "appending proxy chain is judged on the entry the last proxy added",
 			configured: "http://patchmon,http://patchmon.local",
 			host:       "127.0.0.1:3001",
 			headers:    browser(map[string]string{"X-Forwarded-Host": "(null), patchmon"}),
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "client-supplied entry before the proxy's own is ignored",
+			configured: "http://patchmon",
+			host:       "127.0.0.1:3001",
+			headers:    browser(map[string]string{"X-Forwarded-Host": "patchmon, evil.example"}),
+			wantStatus: http.StatusForbidden,
+			wantCode:   "cors_mismatch",
+			wantACAO:   "http://evil.example",
+		},
+		{
+			name:       "entry the proxy appended is the one trusted",
+			configured: "http://patchmon",
+			host:       "127.0.0.1:3001",
+			headers:    browser(map[string]string{"X-Forwarded-Host": "evil.example, patchmon"}),
 			wantStatus: http.StatusOK,
 		},
 		{
@@ -283,7 +299,7 @@ func TestCORS_HostEnforcement(t *testing.T) {
 					t.Errorf("code = %q, want %q", body.Code, tc.wantCode)
 				}
 			}
-			if rec.Code != http.StatusForbidden && rec.Header().Get("Vary") != "Origin" {
+			if (rec.Code != http.StatusForbidden || tc.wantCode == "cors_mismatch") && rec.Header().Get("Vary") != "Origin" {
 				t.Errorf("Vary = %q, want Origin", rec.Header().Get("Vary"))
 			}
 		})

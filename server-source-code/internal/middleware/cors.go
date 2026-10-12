@@ -56,11 +56,11 @@ func CORS(origin string, dynamicResolver OriginResolver) func(http.Handler) http
 			}
 
 			if !set.wildcard && isBrowserRequest(r) {
-				if fwd := forwardedHosts(r); len(fwd) > 0 {
-					if !slices.ContainsFunc(fwd, func(h string) bool { return hostAllowed(set.hosts, h) }) {
+				if fwd := forwardedHost(r); fwd != "" {
+					if !hostAllowed(set.hosts, fwd) {
 						reflectOrigin := reqOrigin
 						if reflectOrigin == "" {
-							reflectOrigin = EffectiveOrigin(r, fwd[0])
+							reflectOrigin = EffectiveOrigin(r, fwd)
 						}
 						rejectHost(w, reflectOrigin, "CORS_ORIGIN mismatch. Access this app via the URL configured in CORS_ORIGIN (.env or Database settings).", "cors_mismatch")
 						return
@@ -98,6 +98,7 @@ func rejectHost(w http.ResponseWriter, reflectOrigin, msg, code string) {
 		w.Header().Set("Access-Control-Allow-Methods", corsAllowMethods)
 		w.Header().Set("Access-Control-Allow-Headers", corsAllowHeaders)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Vary", "Origin")
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
@@ -112,19 +113,16 @@ func isBrowserRequest(r *http.Request) bool {
 		strings.Contains(h.Get("Accept"), "text/html")
 }
 
-func forwardedHosts(r *http.Request) []string {
-	raw := r.Header.Get("X-Forwarded-Host")
-	if raw == "" {
-		return nil
-	}
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
+// Rightmost entry: an appending proxy puts its own value after whatever the
+// client sent, as with X-Forwarded-For, so anything further left is untrusted.
+func forwardedHost(r *http.Request) string {
+	parts := strings.Split(r.Header.Get("X-Forwarded-Host"), ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		if p := strings.TrimSpace(parts[i]); p != "" {
+			return p
 		}
 	}
-	return out
+	return ""
 }
 
 func hostAllowed(hosts map[string]bool, hostPort string) bool {
