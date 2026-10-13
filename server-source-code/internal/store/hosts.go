@@ -9,8 +9,8 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
-	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
