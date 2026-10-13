@@ -1866,16 +1866,23 @@ func (q *Queries) MarkPatchRunsAgentDisconnected(ctx context.Context, arg MarkPa
 	return result.RowsAffected(), nil
 }
 
-const markPatchRunsTimedOut = `-- name: MarkPatchRunsTimedOut :execrows
+const markPatchRunsTimedOut = `-- name: MarkPatchRunsTimedOut :many
 UPDATE patch_runs
 SET status = 'timed_out', error_message = $1, completed_at = NOW(), updated_at = NOW()
-WHERE status = 'running'
-  AND updated_at < $2
+WHERE patch_runs.status = 'running'
+  AND patch_runs.updated_at < $2
+RETURNING id, host_id, (SELECT COALESCE(NULLIF(h.friendly_name, ''), h.hostname, '') FROM hosts h WHERE h.id = patch_runs.host_id)::text AS host_name
 `
 
 type MarkPatchRunsTimedOutParams struct {
 	ErrorMessage *string          `json:"error_message"`
 	StaleBefore  pgtype.Timestamp `json:"stale_before"`
+}
+
+type MarkPatchRunsTimedOutRow struct {
+	ID       string `json:"id"`
+	HostID   string `json:"host_id"`
+	HostName string `json:"host_name"`
 }
 
 // Stall sweep. The predicate is deliberately "no activity since", NOT "started
@@ -1885,19 +1892,32 @@ type MarkPatchRunsTimedOutParams struct {
 // genuinely wedged run does not. Using elapsed-since-start here would mark
 // every long run timed_out while it was still working and discard the real
 // outcome the agent later reports.
-func (q *Queries) MarkPatchRunsTimedOut(ctx context.Context, arg MarkPatchRunsTimedOutParams) (int64, error) {
-	result, err := q.db.Exec(ctx, markPatchRunsTimedOut, arg.ErrorMessage, arg.StaleBefore)
+func (q *Queries) MarkPatchRunsTimedOut(ctx context.Context, arg MarkPatchRunsTimedOutParams) ([]MarkPatchRunsTimedOutRow, error) {
+	rows, err := q.db.Query(ctx, markPatchRunsTimedOut, arg.ErrorMessage, arg.StaleBefore)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected(), nil
+	defer rows.Close()
+	var items []MarkPatchRunsTimedOutRow
+	for rows.Next() {
+		var i MarkPatchRunsTimedOutRow
+		if err := rows.Scan(&i.ID, &i.HostID, &i.HostName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
-const markUndispatchedPatchRunsTimedOut = `-- name: MarkUndispatchedPatchRunsTimedOut :execrows
+const markUndispatchedPatchRunsTimedOut = `-- name: MarkUndispatchedPatchRunsTimedOut :many
 UPDATE patch_runs
 SET status = 'timed_out', error_message = $1, completed_at = NOW(), updated_at = NOW()
 WHERE status IN ('scheduled', 'queued', 'pending_validation')
   AND COALESCE(scheduled_at, created_at) < $2
+RETURNING id, host_id, (SELECT COALESCE(NULLIF(h.friendly_name, ''), h.hostname, '') FROM hosts h WHERE h.id = patch_runs.host_id)::text AS host_name
 `
 
 type MarkUndispatchedPatchRunsTimedOutParams struct {
@@ -1905,13 +1925,31 @@ type MarkUndispatchedPatchRunsTimedOutParams struct {
 	DueBefore    pgtype.Timestamp `json:"due_before"`
 }
 
+type MarkUndispatchedPatchRunsTimedOutRow struct {
+	ID       string `json:"id"`
+	HostID   string `json:"host_id"`
+	HostName string `json:"host_name"`
+}
+
 // Keyed on when the run became due, not updated_at: the offline-agent retry bumps updated_at every 5 minutes.
-func (q *Queries) MarkUndispatchedPatchRunsTimedOut(ctx context.Context, arg MarkUndispatchedPatchRunsTimedOutParams) (int64, error) {
-	result, err := q.db.Exec(ctx, markUndispatchedPatchRunsTimedOut, arg.ErrorMessage, arg.DueBefore)
+func (q *Queries) MarkUndispatchedPatchRunsTimedOut(ctx context.Context, arg MarkUndispatchedPatchRunsTimedOutParams) ([]MarkUndispatchedPatchRunsTimedOutRow, error) {
+	rows, err := q.db.Query(ctx, markUndispatchedPatchRunsTimedOut, arg.ErrorMessage, arg.DueBefore)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected(), nil
+	defer rows.Close()
+	var items []MarkUndispatchedPatchRunsTimedOutRow
+	for rows.Next() {
+		var i MarkUndispatchedPatchRunsTimedOutRow
+		if err := rows.Scan(&i.ID, &i.HostID, &i.HostName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const markValidationApproved = `-- name: MarkValidationApproved :execrows

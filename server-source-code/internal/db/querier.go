@@ -566,9 +566,9 @@ type Querier interface {
 	// genuinely wedged run does not. Using elapsed-since-start here would mark
 	// every long run timed_out while it was still working and discard the real
 	// outcome the agent later reports.
-	MarkPatchRunsTimedOut(ctx context.Context, arg MarkPatchRunsTimedOutParams) (int64, error)
+	MarkPatchRunsTimedOut(ctx context.Context, arg MarkPatchRunsTimedOutParams) ([]MarkPatchRunsTimedOutRow, error)
 	// Keyed on when the run became due, not updated_at: the offline-agent retry bumps updated_at every 5 minutes.
-	MarkUndispatchedPatchRunsTimedOut(ctx context.Context, arg MarkUndispatchedPatchRunsTimedOutParams) (int64, error)
+	MarkUndispatchedPatchRunsTimedOut(ctx context.Context, arg MarkUndispatchedPatchRunsTimedOutParams) ([]MarkUndispatchedPatchRunsTimedOutRow, error)
 	// Declared :execrows, not :exec, because the status guard IS the concurrency
 	// control. Two approvals racing both pass the handler's Go-side status check;
 	// only one of them updates a row here, and the loser must be told so rather

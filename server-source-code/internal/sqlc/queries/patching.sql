@@ -378,14 +378,15 @@ VALUES ($1, $2, $3, NOW(), NOW());
 -- name: DeletePatchPolicyExclusion :exec
 DELETE FROM patch_policy_exclusions WHERE patch_policy_id = $1 AND host_id = $2;
 
--- name: MarkUndispatchedPatchRunsTimedOut :execrows
+-- name: MarkUndispatchedPatchRunsTimedOut :many
 -- Keyed on when the run became due, not updated_at: the offline-agent retry bumps updated_at every 5 minutes.
 UPDATE patch_runs
 SET status = 'timed_out', error_message = sqlc.narg('error_message'), completed_at = NOW(), updated_at = NOW()
 WHERE status IN ('scheduled', 'queued', 'pending_validation')
-  AND COALESCE(scheduled_at, created_at) < sqlc.arg('due_before');
+  AND COALESCE(scheduled_at, created_at) < sqlc.arg('due_before')
+RETURNING id, host_id, (SELECT COALESCE(NULLIF(h.friendly_name, ''), h.hostname, '') FROM hosts h WHERE h.id = patch_runs.host_id)::text AS host_name;
 
--- name: MarkPatchRunsTimedOut :execrows
+-- name: MarkPatchRunsTimedOut :many
 -- Stall sweep. The predicate is deliberately "no activity since", NOT "started
 -- before": every progress chunk the agent streams bumps updated_at (see
 -- UpdatePatchRunProgress), so a long-but-healthy run (dist-upgrade on slow
@@ -395,8 +396,9 @@ WHERE status IN ('scheduled', 'queued', 'pending_validation')
 -- outcome the agent later reports.
 UPDATE patch_runs
 SET status = 'timed_out', error_message = sqlc.narg('error_message'), completed_at = NOW(), updated_at = NOW()
-WHERE status = 'running'
-  AND updated_at < sqlc.arg('stale_before');
+WHERE patch_runs.status = 'running'
+  AND patch_runs.updated_at < sqlc.arg('stale_before')
+RETURNING id, host_id, (SELECT COALESCE(NULLIF(h.friendly_name, ''), h.hostname, '') FROM hosts h WHERE h.id = patch_runs.host_id)::text AS host_name;
 
 -- name: MarkPatchRunsAgentDisconnected :execrows
 UPDATE patch_runs
