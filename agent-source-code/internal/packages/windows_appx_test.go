@@ -340,10 +340,41 @@ func TestApplyAppxInstallState(t *testing.T) {
 			wantVer: "120.0.1.0",
 		},
 		{
-			name:    "non-numeric winget version is kept even when staged-only",
-			pkg:     models.Package{Name: "Microsoft.WindowsAppRuntime.1.8", CurrentVersion: "> 1.8.10"},
+			name:     "non-numeric winget version with an exact staged-only match is dropped",
+			pkg:      models.Package{Name: "Microsoft.WindowsAppRuntime.1.8", CurrentVersion: "> 1.8.10"},
+			appx:     []appxPackage{{"Microsoft.WindowsAppRuntime.1.8", "8000.616.304.0", "Staged"}},
+			wantDrop: true,
+		},
+		{
+			name:     "non-numeric winget version with an exact family Id staged-only match is dropped",
+			pkg:      models.Package{Name: "Windows App Runtime 1.8", CurrentVersion: "> 1.8.10"},
+			origin:   appOrigin{wingetID: "Microsoft.WindowsAppRuntime.1.8_8wekyb3d8bbwe"},
+			appx:     []appxPackage{{"Microsoft.WindowsAppRuntime.1.8", "8000.616.304.0", "Staged"}},
+			wantDrop: true,
+		},
+		{
+			name:    "non-numeric winget version with only a prefix staged-only match is kept",
+			pkg:     models.Package{Name: "Microsoft.WindowsAppRuntime.1", CurrentVersion: "> 1.8.10"},
 			appx:    []appxPackage{{"Microsoft.WindowsAppRuntime.1.8", "8000.616.304.0", "Staged"}},
 			wantVer: "> 1.8.10",
+		},
+		{
+			name:    "non-numeric winget version on a registry row with an exact staged-only match is kept",
+			pkg:     models.Package{Name: "Microsoft.WindowsAppRuntime.1.8", CurrentVersion: "> 1.8.10"},
+			origin:  appOrigin{registry: true},
+			appx:    []appxPackage{{"Microsoft.WindowsAppRuntime.1.8", "8000.616.304.0", "Staged"}},
+			wantVer: "> 1.8.10",
+		},
+		{
+			name: "non-numeric winget version with an installed copy is untouched",
+			pkg:  models.Package{Name: "Microsoft.WindowsAppRuntime.1.8", CurrentVersion: "> 1.8.10", AvailableVersion: "1.8.11", NeedsUpdate: true},
+			appx: []appxPackage{
+				{"Microsoft.WindowsAppRuntime.1.8", "8000.616.304.0", "Staged"},
+				{"Microsoft.WindowsAppRuntime.1.8", "8000.731.1532.0", "Installed"},
+			},
+			wantVer:   "> 1.8.10",
+			wantAvail: "1.8.11",
+			wantNeeds: true,
 		},
 		{
 			name:      "no Appx data leaves the row untouched",

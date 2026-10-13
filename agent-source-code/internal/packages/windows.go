@@ -516,20 +516,21 @@ func applyAppxInstallState(pkgs []models.Package, origins []appOrigin, appx []ap
 		if i < len(origins) {
 			o = origins[i]
 		}
-		if !isDottedNumeric(p.CurrentVersion) {
-			kept = append(kept, p)
-			continue
-		}
+		numeric := isDottedNumeric(p.CurrentVersion)
 		v, exact := appxVersionsForRow(byName, p, o)
 		if v == nil || len(v.staged) == 0 {
 			kept = append(kept, p)
 			continue
 		}
 		if !v.present {
-			if !o.registry && (exact || v.hasStaged(p.CurrentVersion)) {
+			if !o.registry && (exact || (numeric && v.hasStaged(p.CurrentVersion))) {
 				dropped = append(dropped, p.Name)
 				continue
 			}
+			kept = append(kept, p)
+			continue
+		}
+		if !numeric {
 			kept = append(kept, p)
 			continue
 		}
