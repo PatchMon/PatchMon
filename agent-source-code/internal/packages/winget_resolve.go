@@ -17,6 +17,7 @@ var (
 const (
 	wingetPackagePrefix = "Microsoft.DesktopAppInstaller_"
 	vclibsPackagePrefix = "Microsoft.VCLibs.140.00.UWPDesktop_"
+	vclibsAppPrefix     = "Microsoft.VCLibs.140.00_"
 	microsoftPublisher  = "8wekyb3d8bbwe"
 )
 
@@ -92,7 +93,14 @@ func chooseVCLibsDir(dirs []string, arch string) (appxDir, bool) {
 	return newestAppxDir(dirs, vclibsPackagePrefix, arch)
 }
 
-func wingetChildEnv(environ []string, vclibsDir string) []string {
+func wingetChildEnv(environ []string, libDirs ...string) []string {
+	var dirs []string
+	for _, d := range libDirs {
+		if d != "" {
+			dirs = append(dirs, d)
+		}
+	}
+	vclibsDir := strings.Join(dirs, ";")
 	out := make([]string, 0, len(environ)+1)
 	pathSet := false
 	for _, kv := range environ {
@@ -148,12 +156,14 @@ func resolveWinget() (string, []string, error) {
 	if libArch == "neutral" {
 		libArch = arch
 	}
-	libs, _ := filepath.Glob(filepath.Join(root, vclibsPackagePrefix+"*__"+microsoftPublisher))
-	vclibs := ""
-	if v, ok := chooseVCLibsDir(libs, libArch); ok {
-		vclibs = v.path
+	var libDirs []string
+	for _, prefix := range []string{vclibsPackagePrefix, vclibsAppPrefix} {
+		libs, _ := filepath.Glob(filepath.Join(root, prefix+"*__"+microsoftPublisher))
+		if v, ok := newestAppxDir(libs, prefix, libArch); ok {
+			libDirs = append(libDirs, v.path)
+		}
 	}
-	return exe, wingetChildEnv(os.Environ(), vclibs), nil
+	return exe, wingetChildEnv(os.Environ(), libDirs...), nil
 }
 
 func verifyWingetSignature(exe string) error {
