@@ -79,7 +79,6 @@ function Invoke-Download($session, $ids) {
         Emit @{ type = 'result'; op = 'download'; result_code = 2; hresult = '' }
         return
     }
-    Emit @{ type = 'log'; message = "Downloading $($coll.Count) update(s)" }
     $dl = $session.CreateUpdateDownloader()
     $dl.Updates = $coll
     $r = $dl.Download()
