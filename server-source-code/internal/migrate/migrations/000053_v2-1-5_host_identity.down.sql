@@ -1,5 +1,8 @@
+DROP INDEX IF EXISTS idx_hosts_machine_id_norm;
+DROP INDEX IF EXISTS idx_hosts_enrolment_machine_id_norm;
 DROP INDEX IF EXISTS idx_hosts_enrolment_token_id;
 
+ALTER TABLE hosts DROP COLUMN IF EXISTS enrolment_machine_id;
 ALTER TABLE hosts DROP COLUMN IF EXISTS identity_conflict_at;
 ALTER TABLE hosts DROP COLUMN IF EXISTS identity_fingerprint_changed_at;
 ALTER TABLE hosts DROP COLUMN IF EXISTS identity_prev_fingerprint;

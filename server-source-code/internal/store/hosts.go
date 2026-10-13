@@ -9,6 +9,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -172,10 +173,16 @@ func (s *HostsStore) GetByApiID(ctx context.Context, apiID string) (*models.Host
 	return dbHostToModel(h), nil
 }
 
-// GetByMachineIDAndName returns the oldest host matching machine_id and a case-insensitive friendly_name, or nil when none exists.
+// GetByMachineIDAndName returns the oldest host whose enrolment or reported
+// machine ID matches machineID after normalisation, with a case-insensitive
+// friendly_name, or nil when none exists or machineID is not a usable ID.
 func (s *HostsStore) GetByMachineIDAndName(ctx context.Context, machineID, friendlyName string) (*models.Host, error) {
+	norm := util.NormaliseMachineID(machineID)
+	if norm == "" {
+		return nil, nil
+	}
 	d := s.db.DB(ctx)
-	h, err := d.Queries.GetHostByMachineIDAndName(ctx, db.GetHostByMachineIDAndNameParams{MachineID: &machineID, FriendlyName: friendlyName})
+	h, err := d.Queries.GetHostByMachineIDAndName(ctx, db.GetHostByMachineIDAndNameParams{NormalisedMachineID: norm, FriendlyName: friendlyName})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -234,6 +241,7 @@ func (s *HostsStore) Create(ctx context.Context, h *models.Host) error {
 		ComplianceOnDemandOnly: h.ComplianceOnDemandOnly,
 		ExpectedPlatform:       h.ExpectedPlatform,
 		EnrolmentTokenID:       h.EnrolmentTokenID,
+		EnrolmentMachineID:     h.EnrolmentMachineID,
 	})
 }
 

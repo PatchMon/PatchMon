@@ -65,6 +65,7 @@ type Host struct {
 	IdentityPrevFingerprint      *string    `db:"identity_prev_fingerprint"`
 	IdentityFingerprintChangedAt *time.Time `db:"identity_fingerprint_changed_at"`
 	IdentityConflictAt           *time.Time `db:"identity_conflict_at"`
+	EnrolmentMachineID           *string    `db:"enrolment_machine_id"`
 }
 
 // HostIDMismatch reports whether the agent last claimed a host_id other than

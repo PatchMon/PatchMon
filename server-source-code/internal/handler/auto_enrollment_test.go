@@ -104,6 +104,16 @@ func TestCreateEnrolledHost_DuplicateGuard(t *testing.T) {
 			wantCreated: 1,
 		},
 		{
+			name:        "uninitialized machine id skips the lookup and gets a placeholder",
+			machineID:   "uninitialized",
+			wantCreated: 1,
+		},
+		{
+			name:        "vendor default SMBIOS UUID skips the lookup and gets a placeholder",
+			machineID:   "03000200-0400-0500-0006-000700080009",
+			wantCreated: 1,
+		},
+		{
 			name:        "lookup error gives 500 and creates nothing",
 			machineID:   "lxc-102-ghi",
 			lookupErr:   errors.New("db down"),
@@ -156,6 +166,13 @@ func TestCreateEnrolledHost_DuplicateGuard(t *testing.T) {
 			}
 			if tt.wantMachineID == "" && !strings.HasPrefix(*host.MachineID, "pending-") {
 				t.Fatalf("machine_id = %q, want a pending- placeholder", *host.MachineID)
+			}
+			if strings.HasPrefix(*host.MachineID, "pending-") {
+				if host.EnrolmentMachineID != nil {
+					t.Fatalf("enrolment_machine_id = %q, want NULL for a placeholder", *host.EnrolmentMachineID)
+				}
+			} else if host.EnrolmentMachineID == nil || *host.EnrolmentMachineID != *host.MachineID {
+				t.Fatalf("enrolment_machine_id = %v, want %q", host.EnrolmentMachineID, *host.MachineID)
 			}
 			if host.ApiKey == apiKey {
 				t.Fatal("stored api_key must be the hash, not the plain key")

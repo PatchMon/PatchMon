@@ -287,3 +287,53 @@ func TestServeInstall_InjectsHostID(t *testing.T) {
 		})
 	}
 }
+
+func TestEnroll_MachineIDGuardSurvivesReportOverwrite(t *testing.T) {
+	f := newEnrolFixture(t)
+	ctx := context.Background()
+	_, key, secret := f.token(100, 0)
+	name := "rebuilt-" + uuid.New().String()[:8]
+	raw := strings.ReplaceAll(uuid.New().String(), "-", "")
+
+	code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": name, "machine_id": raw})
+	if code != http.StatusCreated {
+		t.Fatalf("first enrol: %d %v", code, out)
+	}
+	hostID := hostField(out, "id")
+	dashed := strings.ToUpper(raw[0:8] + "-" + raw[8:12] + "-" + raw[12:16] + "-" + raw[16:20] + "-" + raw[20:])
+	if _, err := f.d.Exec(ctx, `UPDATE hosts SET machine_id = $2, status = 'active', agent_version = '2.1.5' WHERE id = $1`, hostID, dashed); err != nil {
+		t.Fatal(err)
+	}
+	row, _ := f.hosts.GetByID(ctx, hostID)
+	if row.EnrolmentMachineID == nil || *row.EnrolmentMachineID != raw {
+		t.Fatalf("enrolment_machine_id = %v, want the enrolment value %q", row.EnrolmentMachineID, raw)
+	}
+
+	for _, sent := range []string{raw, dashed, strings.ToLower(dashed)} {
+		code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": strings.ToUpper(name), "machine_id": sent})
+		if code != http.StatusConflict || out["code"] != "machine_id_match" {
+			t.Fatalf("rerun with %q: %d %v, want 409 machine_id_match", sent, code, out)
+		}
+	}
+
+	agentOnly := "AB" + strings.Repeat("c", 30)
+	if _, err := f.d.Exec(ctx, `UPDATE hosts SET machine_id = $2 WHERE id = $1`, hostID, agentOnly); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": name, "machine_id": strings.ToLower(agentOnly)}); code != http.StatusConflict {
+		t.Fatalf("match on the agent-reported value: %d %v, want 409", code, out)
+	}
+}
+
+func TestEnroll_JunkMachineIDsNeverMatch(t *testing.T) {
+	f := newEnrolFixture(t)
+	_, key, secret := f.token(100, 0)
+	for _, junk := range []string{"uninitialized", "00000000-0000-0000-0000-000000000000", "03000200-0400-0500-0006-000700080009"} {
+		name := "junk-" + uuid.New().String()[:8]
+		for i := 0; i < 2; i++ {
+			if code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": name, "machine_id": junk}); code != http.StatusCreated {
+				t.Fatalf("%s enrol %d: %d %v, want 201 (junk is not an identity)", junk, i, code, out)
+			}
+		}
+	}
+}

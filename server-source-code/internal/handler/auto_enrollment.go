@@ -563,7 +563,7 @@ func decideReenrol(existing *models.Host, tokenID, machineID string, agentSeen b
 		return reenrolHostReporting
 	case existing.EnrolmentTokenID == nil || *existing.EnrolmentTokenID != tokenID:
 		return reenrolNotReenrollable
-	case !sameEnrolMachine(existing.MachineID, machineID):
+	case !sameEnrolMachine(existing.EnrolmentMachineID, machineID):
 		return reenrolNotReenrollable
 	case existing.CredentialsReissuedAt != nil && now.Sub(*existing.CredentialsReissuedAt) < reenrolCooldownPeriod:
 		return reenrolCooldown
@@ -573,14 +573,16 @@ func decideReenrol(existing *models.Host, tokenID, machineID string, agentSeen b
 
 // A host_id alone is not secret, so re-issue is also bound to the machine_id
 // the row was enrolled with.
-func sameEnrolMachine(stored *string, machineID string) bool {
-	if stored == nil {
-		return false
+func sameEnrolMachine(enrolled *string, machineID string) bool {
+	stored := ""
+	if enrolled != nil {
+		stored = util.NormaliseMachineID(*enrolled)
 	}
-	if machineID == "" {
-		return strings.HasPrefix(*stored, "pending-")
-	}
-	return *stored == machineID
+	return stored == util.NormaliseMachineID(machineID)
+}
+
+func usableMachineID(machineID string) bool {
+	return !strings.HasPrefix(machineID, "pending-") && util.NormaliseMachineID(machineID) != ""
 }
 
 func (h *AutoEnrollmentHandler) agentSeen(apiID string) bool {
@@ -654,7 +656,8 @@ func (h *AutoEnrollmentHandler) reenrolExistingHost(ctx context.Context, w http.
 }
 
 func (h *AutoEnrollmentHandler) createEnrolledHost(ctx context.Context, w http.ResponseWriter, friendlyName, machineID string, defaultGroupID *string, tokenID string) (*models.Host, string, bool) {
-	if machineID != "" && !strings.HasPrefix(machineID, "pending-") {
+	usable := usableMachineID(machineID)
+	if usable {
 		existing, err := h.hosts.GetByMachineIDAndName(ctx, machineID, friendlyName)
 		if err != nil {
 			if h.log != nil {
@@ -702,7 +705,7 @@ func (h *AutoEnrollmentHandler) createEnrolledHost(ctx context.Context, w http.R
 		}
 	}
 
-	if machineID == "" {
+	if !usable && !strings.HasPrefix(machineID, "pending-") {
 		machineID = "pending-" + uuid.New().String()
 	}
 
@@ -719,6 +722,9 @@ func (h *AutoEnrollmentHandler) createEnrolledHost(ctx context.Context, w http.R
 	host.ComplianceOnDemandOnly = complianceOnDemandOnly
 	if tokenID != "" {
 		host.EnrolmentTokenID = &tokenID
+	}
+	if usable {
+		host.EnrolmentMachineID = &machineID
 	}
 	if err := h.hosts.Create(ctx, host); err != nil {
 		if h.log != nil {

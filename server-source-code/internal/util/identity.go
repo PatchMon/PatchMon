@@ -1,6 +1,9 @@
 package util
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 var (
 	versionPrefixRe = regexp.MustCompile(`^\d+\.\d+\.\d+`)
@@ -24,4 +27,20 @@ func ValidConfigVersion(v string) bool {
 // claim: 1 to 64 letters, digits or hyphens.
 func ValidHostID(id string) bool {
 	return hostIDRe.MatchString(id)
+}
+
+var junkMachineIDs = map[string]bool{
+	"uninitialized":                    true,
+	"03000200040005000006000700080009": true,
+}
+
+// NormaliseMachineID lowercases id and drops dashes and surrounding space. It
+// returns "" for values that do not identify a machine: empty, "uninitialized",
+// all zeros or all Fs, and vendor default SMBIOS UUIDs shared by many machines.
+func NormaliseMachineID(id string) string {
+	n := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(id), "-", ""))
+	if n == "" || junkMachineIDs[n] || strings.Trim(n, "0") == "" || strings.Trim(n, "f") == "" {
+		return ""
+	}
+	return n
 }

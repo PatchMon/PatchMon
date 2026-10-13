@@ -32,7 +32,8 @@ SELECT * FROM hosts WHERE api_id = $1;
 
 -- name: GetHostByMachineIDAndName :one
 SELECT * FROM hosts
-WHERE machine_id = sqlc.arg('machine_id')
+WHERE (lower(replace(enrolment_machine_id, '-', '')) = sqlc.arg('normalised_machine_id')::text
+       OR lower(replace(machine_id, '-', '')) = sqlc.arg('normalised_machine_id')::text)
   AND lower(friendly_name) = lower(sqlc.arg('friendly_name'))
 ORDER BY created_at ASC
 LIMIT 1;
@@ -45,12 +46,12 @@ INSERT INTO hosts (
     id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status,
     api_id, api_key, agent_version, auto_update, created_at, updated_at,
     docker_enabled, compliance_enabled, compliance_on_demand_only, expected_platform,
-    enrolment_token_id
+    enrolment_token_id, enrolment_machine_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9,
     $10, $11, $12, $13, $14, $15,
     $16, $17, $18, $19,
-    $20
+    $20, $21
 );
 
 -- name: UpdateHostFriendlyName :exec

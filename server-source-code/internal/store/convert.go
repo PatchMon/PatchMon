@@ -514,6 +514,7 @@ func dbHostToModel(h db.Host) *models.Host {
 		IdentityPrevFingerprint:      h.IdentityPrevFingerprint,
 		IdentityFingerprintChangedAt: pgTimePtr(h.IdentityFingerprintChangedAt),
 		IdentityConflictAt:           pgTimePtr(h.IdentityConflictAt),
+		EnrolmentMachineID:           h.EnrolmentMachineID,
 	}
 }
 

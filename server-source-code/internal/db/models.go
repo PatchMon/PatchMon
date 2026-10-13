@@ -317,6 +317,7 @@ type Host struct {
 	IdentityPrevFingerprint      *string            `json:"identity_prev_fingerprint"`
 	IdentityFingerprintChangedAt pgtype.Timestamp   `json:"identity_fingerprint_changed_at"`
 	IdentityConflictAt           pgtype.Timestamp   `json:"identity_conflict_at"`
+	EnrolmentMachineID           *string            `json:"enrolment_machine_id"`
 }
 
 type HostGroup struct {

@@ -2587,7 +2587,7 @@ curl "https://patchmon.example.com/api/v1/auto-enrollment/script?type=proxmox-lx
 
 | `code` | Cause |
 |--------|-------|
-| `machine_id_match` | No `host_id` was sent, and a host with the same `machine_id` and the same name is already enrolled (the name comparison ignores case). Requests that omit `machine_id` are never deduplicated |
+| `machine_id_match` | No `host_id` was sent, and a host with the same `machine_id` and the same name is already enrolled. Names are compared ignoring case; machine IDs ignoring case and dashes, against both the ID sent at enrolment and the one the agent later reports. Requests that omit `machine_id`, or send one that does not identify a machine (`uninitialized`, all zeros, or a vendor default such as `03000200-0400-0500-0006-000700080009`), are never deduplicated |
 | `host_reporting` | The host named by `host_id` has already reported |
 | `host_not_reenrollable` | The host named by `host_id` was not created by this token |
 
