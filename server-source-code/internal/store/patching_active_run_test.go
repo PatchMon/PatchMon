@@ -206,3 +206,22 @@ func TestAgentAndRequeueTransitionsAreAllowListed(t *testing.T) {
 		t.Errorf("RequeuePatchRun must only touch runs still awaiting dispatch, got:\n%s", requeue)
 	}
 }
+
+func TestUpdateOutputReportsWhetherItEndedTheRun(t *testing.T) {
+	ctx := context.Background()
+	for _, osType := range []string{"ubuntu", "Windows"} {
+		for _, stage := range []string{"completed", "failed"} {
+			ended, err := runsStoreWith(execOnlyDBTX{execTag: pgconn.NewCommandTag("UPDATE 0")}).UpdateOutput(ctx, "r", osType, stage, "out", "")
+			if err != nil || ended {
+				t.Errorf("%s %s replay on a finished run: ended=%v err=%v", osType, stage, ended, err)
+			}
+		}
+	}
+	if ended, err := runsStoreWith(execOnlyDBTX{execTag: pgconn.NewCommandTag("UPDATE 1")}).UpdateOutput(ctx, "r", "ubuntu", "dry_run_completed", "out", ""); err != nil || ended {
+		t.Errorf("dry_run_completed: ended=%v err=%v", ended, err)
+	}
+	ended, err := runsStoreWith(execOnlyDBTX{execTag: pgconn.NewCommandTag("UPDATE 1")}).UpdateOutput(ctx, "r", "ubuntu", "completed", "", "")
+	if err != nil || !ended {
+		t.Errorf("first completed report: ended=%v err=%v", ended, err)
+	}
+}

@@ -80,7 +80,8 @@ func (s *PatchRunsStore) ReplaceItems(ctx context.Context, runID, hostID string,
 // FailRun marks a run that never reached the agent as failed.
 func (s *PatchRunsStore) FailRun(ctx context.Context, id, errorMessage string) error {
 	d := s.db.DB(ctx)
-	return d.Queries.UpdatePatchRunFailed(ctx, db.UpdatePatchRunFailedParams{ID: id, ShellOutput: "", ErrorMessage: &errorMessage})
+	_, err := d.Queries.UpdatePatchRunFailed(ctx, db.UpdatePatchRunFailedParams{ID: id, ShellOutput: "", ErrorMessage: &errorMessage})
+	return err
 }
 
 // Limits on agent item reports.

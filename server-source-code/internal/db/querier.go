@@ -638,11 +638,11 @@ type Querier interface {
 	// agent_disconnected and timed_out are intentionally NOT in the guard: both are
 	// server-side "we gave up waiting" markers, so a recovering agent posting a late
 	// genuine "completed" must be able to unwedge the row and deliver the real output.
-	UpdatePatchRunCompleted(ctx context.Context, arg UpdatePatchRunCompletedParams) error
+	UpdatePatchRunCompleted(ctx context.Context, arg UpdatePatchRunCompletedParams) (int64, error)
 	// REPLACE (not append) - agent streams progress chunks then sends final full output.
 	// agent_disconnected and timed_out are intentionally NOT in the guard so a
 	// recovering agent that posts a late "failed" can still unwedge the row.
-	UpdatePatchRunFailed(ctx context.Context, arg UpdatePatchRunFailedParams) error
+	UpdatePatchRunFailed(ctx context.Context, arg UpdatePatchRunFailedParams) (int64, error)
 	UpdatePatchRunItemsFromAgent(ctx context.Context, arg UpdatePatchRunItemsFromAgentParams) (int64, error)
 	UpdatePatchRunPackagesAffected(ctx context.Context, arg UpdatePatchRunPackagesAffectedParams) error
 	UpdatePatchRunProgress(ctx context.Context, arg UpdatePatchRunProgressParams) error

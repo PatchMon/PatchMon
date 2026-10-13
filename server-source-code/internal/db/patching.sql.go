@@ -2074,7 +2074,7 @@ func (q *Queries) UpdatePatchRunCancelledOutput(ctx context.Context, arg UpdateP
 	return result.RowsAffected(), nil
 }
 
-const updatePatchRunCompleted = `-- name: UpdatePatchRunCompleted :exec
+const updatePatchRunCompleted = `-- name: UpdatePatchRunCompleted :execrows
 UPDATE patch_runs SET status = 'completed', shell_output = $2, completed_at = NOW(), updated_at = NOW()
 WHERE id = $1
   AND status NOT IN ('cancelled','completed','failed','validated','dry_run_completed')
@@ -2089,12 +2089,15 @@ type UpdatePatchRunCompletedParams struct {
 // agent_disconnected and timed_out are intentionally NOT in the guard: both are
 // server-side "we gave up waiting" markers, so a recovering agent posting a late
 // genuine "completed" must be able to unwedge the row and deliver the real output.
-func (q *Queries) UpdatePatchRunCompleted(ctx context.Context, arg UpdatePatchRunCompletedParams) error {
-	_, err := q.db.Exec(ctx, updatePatchRunCompleted, arg.ID, arg.ShellOutput)
-	return err
+func (q *Queries) UpdatePatchRunCompleted(ctx context.Context, arg UpdatePatchRunCompletedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updatePatchRunCompleted, arg.ID, arg.ShellOutput)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
-const updatePatchRunFailed = `-- name: UpdatePatchRunFailed :exec
+const updatePatchRunFailed = `-- name: UpdatePatchRunFailed :execrows
 UPDATE patch_runs SET status = 'failed', shell_output = $2, error_message = $3, completed_at = NOW(), updated_at = NOW()
 WHERE id = $1
   AND status NOT IN ('cancelled','completed','failed','validated','dry_run_completed')
@@ -2109,9 +2112,12 @@ type UpdatePatchRunFailedParams struct {
 // REPLACE (not append) - agent streams progress chunks then sends final full output.
 // agent_disconnected and timed_out are intentionally NOT in the guard so a
 // recovering agent that posts a late "failed" can still unwedge the row.
-func (q *Queries) UpdatePatchRunFailed(ctx context.Context, arg UpdatePatchRunFailedParams) error {
-	_, err := q.db.Exec(ctx, updatePatchRunFailed, arg.ID, arg.ShellOutput, arg.ErrorMessage)
-	return err
+func (q *Queries) UpdatePatchRunFailed(ctx context.Context, arg UpdatePatchRunFailedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updatePatchRunFailed, arg.ID, arg.ShellOutput, arg.ErrorMessage)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updatePatchRunPackagesAffected = `-- name: UpdatePatchRunPackagesAffected :exec

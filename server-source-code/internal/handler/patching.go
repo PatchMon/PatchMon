@@ -187,8 +187,6 @@ func (h *PatchingHandler) agentRunFromRequest(w http.ResponseWriter, r *http.Req
 	return run, true
 }
 
-var terminalPatchStages = map[string]bool{"completed": true, "failed": true, "cancelled": true, "dry_run_completed": true}
-
 // ServePatchOutput handles POST /patching/runs/:id/output (agent-facing, API key auth).
 func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Request) {
 	host, ok := h.authenticateAgent(w, r)
@@ -202,10 +200,6 @@ func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Reques
 		ErrorMessage   string `json:"error_message"`
 		RebootRequired *bool  `json:"reboot_required"`
 	}
-	if !isValidPatchUUID(chi.URLParam(r, "id")) {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid patch run ID"})
-		return
-	}
 	if err := decodeJSON(r, &body); err != nil {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
 		return
@@ -217,7 +211,7 @@ func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Reques
 	}
 	patchRunID := run.ID
 
-	err := h.patchRuns.UpdateOutput(r.Context(), patchRunID, host.OSType, body.Stage, body.Output, body.ErrorMessage)
+	ended, err := h.patchRuns.UpdateOutput(r.Context(), patchRunID, host.OSType, body.Stage, body.Output, body.ErrorMessage)
 	if errors.Is(err, store.ErrHostHasActivePatchRun) {
 		h.log.Warn("patching: started report ignored, another patch run is active on this host", "patch_run_id", patchRunID)
 		err = nil
@@ -266,7 +260,7 @@ func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Reques
 			})
 		}
 	}
-	if terminalPatchStages[body.Stage] {
+	if ended && !run.DryRun && run.RebootRequired == nil {
 		required := body.RebootRequired
 		if store.IsWindowsOSType(host.OSType) && (required == nil || !*required) {
 			need, err := h.patchRuns.ItemsNeedReboot(r.Context(), run.ID)
@@ -414,13 +408,10 @@ func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Reques
 const windowsRestartReason = "Windows Update installation requires a restart"
 
 func (h *PatchingHandler) recordRunRebootRequired(ctx context.Context, host *models.Host, run *db.GetPatchRunByIDRow, required bool) {
-	if run.RebootRequired != nil && *run.RebootRequired == required {
-		return
-	}
 	if err := h.patchRuns.SetRebootRequired(ctx, run.ID, required); err != nil {
 		h.log.Error("patching: failed to record reboot_required", "patch_run_id", run.ID, "error", err)
 	}
-	if !required || run.DryRun {
+	if !required {
 		return
 	}
 	reason := windowsRestartReason
@@ -457,10 +448,6 @@ func (h *PatchingHandler) recordRunRebootRequired(ctx context.Context, host *mod
 func (h *PatchingHandler) ServePatchItems(w http.ResponseWriter, r *http.Request) {
 	host, ok := h.authenticateAgent(w, r)
 	if !ok {
-		return
-	}
-	if !isValidPatchUUID(chi.URLParam(r, "id")) {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid patch run ID"})
 		return
 	}
 	var body struct {

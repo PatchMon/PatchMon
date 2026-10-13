@@ -73,7 +73,7 @@ UPDATE patch_runs SET scheduled_at = NULL, updated_at = NOW() WHERE id = $1;
 -- name: UpdatePatchRunProgress :exec
 UPDATE patch_runs SET shell_output = shell_output || $2, updated_at = NOW() WHERE id = $1;
 
--- name: UpdatePatchRunCompleted :exec
+-- name: UpdatePatchRunCompleted :execrows
 -- REPLACE (not append) - agent streams progress chunks then sends final full output.
 -- agent_disconnected and timed_out are intentionally NOT in the guard: both are
 -- server-side "we gave up waiting" markers, so a recovering agent posting a late
@@ -82,7 +82,7 @@ UPDATE patch_runs SET status = 'completed', shell_output = $2, completed_at = NO
 WHERE id = $1
   AND status NOT IN ('cancelled','completed','failed','validated','dry_run_completed');
 
--- name: UpdatePatchRunFailed :exec
+-- name: UpdatePatchRunFailed :execrows
 -- REPLACE (not append) - agent streams progress chunks then sends final full output.
 -- agent_disconnected and timed_out are intentionally NOT in the guard so a
 -- recovering agent that posts a late "failed" can still unwedge the row.

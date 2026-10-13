@@ -421,22 +421,25 @@ func (s *PatchRunsStore) GetByID(ctx context.Context, id string) (*db.GetPatchRu
 //   - Terminal stages (completed, failed, cancelled, dry_run_completed) REPLACE
 //     shell_output with the authoritative full output from the agent. This
 //     avoids duplication of progress chunks already appended during the run.
-func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, osType, stage, output, errorMessage string) error {
+//
+// The bool is true when this report moved a real run into completed, failed or cancelled.
+func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, osType, stage, output, errorMessage string) (bool, error) {
 	if IsWindowsOSType(osType) {
 		return s.updateWindowsOutput(ctx, id, stage, output, errorMessage)
 	}
 	d := s.db.DB(ctx)
 	switch stage {
 	case "started":
-		return mapActiveRunConflict(d.Queries.UpdatePatchRunStarted(ctx, id))
+		return false, mapActiveRunConflict(d.Queries.UpdatePatchRunStarted(ctx, id))
 	case "progress":
 		if output == "" {
-			return nil
+			return false, nil
 		}
-		return d.Queries.UpdatePatchRunProgress(ctx, db.UpdatePatchRunProgressParams{ID: id, ShellOutput: output})
+		return false, d.Queries.UpdatePatchRunProgress(ctx, db.UpdatePatchRunProgressParams{ID: id, ShellOutput: output})
 	case "completed":
-		if err := d.Queries.UpdatePatchRunCompleted(ctx, db.UpdatePatchRunCompletedParams{ID: id, ShellOutput: output}); err != nil {
-			return err
+		rows, err := d.Queries.UpdatePatchRunCompleted(ctx, db.UpdatePatchRunCompletedParams{ID: id, ShellOutput: output})
+		if err != nil {
+			return false, err
 		}
 		// Parse packages_affected from real run output for visibility.
 		// Uses a multi-format parser covering apt "Unpacking"/"Setting up" lines
@@ -445,20 +448,21 @@ func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, osType, stage, ou
 			b, _ := json.Marshal(pkgs)
 			_ = d.Queries.UpdatePatchRunPackagesAffected(ctx, db.UpdatePatchRunPackagesAffectedParams{ID: id, PackagesAffected: b})
 		}
-		return nil
+		return rows > 0, nil
 	case "dry_run_completed":
 		pkgs := parsePackagesAffectedFromDryRunOutput(osType, output)
 		var b []byte
 		if len(pkgs) > 0 {
 			b, _ = json.Marshal(pkgs)
 		}
-		return d.Queries.UpdatePatchRunValidated(ctx, db.UpdatePatchRunValidatedParams{ID: id, ShellOutput: output, PackagesAffected: b})
+		return false, d.Queries.UpdatePatchRunValidated(ctx, db.UpdatePatchRunValidatedParams{ID: id, ShellOutput: output, PackagesAffected: b})
 	case "failed":
-		return d.Queries.UpdatePatchRunFailed(ctx, db.UpdatePatchRunFailedParams{
+		rows, err := d.Queries.UpdatePatchRunFailed(ctx, db.UpdatePatchRunFailedParams{
 			ID:           id,
 			ShellOutput:  output,
 			ErrorMessage: &errorMessage,
 		})
+		return rows > 0, err
 	case "cancelled":
 		errPtr := &errorMessage
 		if errorMessage == "" {
@@ -470,7 +474,7 @@ func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, osType, stage, ou
 			ErrorMessage: errPtr,
 		})
 		if err != nil {
-			return err
+			return false, err
 		}
 		if rows == 0 {
 			// The status guard blocked the transition. On the COMMON path this
@@ -491,12 +495,12 @@ func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, osType, stage, ou
 				ErrorMessage: errPtr,
 			})
 			if outErr != nil {
-				return outErr
+				return false, outErr
 			}
 			if outRows == 0 {
 				// Genuinely a different terminal state (completed / failed /
 				// timed_out). Leave it alone.
-				return nil
+				return false, nil
 			}
 		}
 		// Record packages that were actually applied before the stop so the
@@ -505,15 +509,15 @@ func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, osType, stage, ou
 			b, _ := json.Marshal(pkgs)
 			_ = d.Queries.UpdatePatchRunPackagesAffected(ctx, db.UpdatePatchRunPackagesAffectedParams{ID: id, PackagesAffected: b})
 		}
-		return nil
+		return true, nil
 	default:
-		return nil
+		return false, nil
 	}
 }
 
 // updateWindowsOutput applies the same stage transitions as UpdateOutput, but takes
 // packages_affected from the run's items instead of parsing package manager output.
-func (s *PatchRunsStore) updateWindowsOutput(ctx context.Context, id, stage, output, errorMessage string) error {
+func (s *PatchRunsStore) updateWindowsOutput(ctx context.Context, id, stage, output, errorMessage string) (bool, error) {
 	d := s.db.DB(ctx)
 	affected := func() ([]byte, error) {
 		items, err := d.Queries.ListPatchRunItems(ctx, id)
@@ -526,51 +530,51 @@ func (s *PatchRunsStore) updateWindowsOutput(ctx context.Context, id, stage, out
 		}
 		return json.Marshal(pkgs)
 	}
+	var rows int64
+	var err error
 	switch stage {
 	case "started":
-		return mapActiveRunConflict(d.Queries.UpdatePatchRunStarted(ctx, id))
+		return false, mapActiveRunConflict(d.Queries.UpdatePatchRunStarted(ctx, id))
 	case "progress":
 		if output == "" {
-			return nil
+			return false, nil
 		}
-		return d.Queries.UpdatePatchRunProgress(ctx, db.UpdatePatchRunProgressParams{ID: id, ShellOutput: output})
+		return false, d.Queries.UpdatePatchRunProgress(ctx, db.UpdatePatchRunProgressParams{ID: id, ShellOutput: output})
 	case "dry_run_completed":
 		b, err := affected()
 		if err != nil {
-			return err
+			return false, err
 		}
-		return d.Queries.UpdatePatchRunValidated(ctx, db.UpdatePatchRunValidatedParams{ID: id, ShellOutput: output, PackagesAffected: b})
+		return false, d.Queries.UpdatePatchRunValidated(ctx, db.UpdatePatchRunValidatedParams{ID: id, ShellOutput: output, PackagesAffected: b})
 	case "completed":
-		if err := d.Queries.UpdatePatchRunCompleted(ctx, db.UpdatePatchRunCompletedParams{ID: id, ShellOutput: output}); err != nil {
-			return err
-		}
+		rows, err = d.Queries.UpdatePatchRunCompleted(ctx, db.UpdatePatchRunCompletedParams{ID: id, ShellOutput: output})
 	case "failed":
-		if err := d.Queries.UpdatePatchRunFailed(ctx, db.UpdatePatchRunFailedParams{ID: id, ShellOutput: output, ErrorMessage: &errorMessage}); err != nil {
-			return err
-		}
+		rows, err = d.Queries.UpdatePatchRunFailed(ctx, db.UpdatePatchRunFailedParams{ID: id, ShellOutput: output, ErrorMessage: &errorMessage})
 	case "cancelled":
 		errPtr := &errorMessage
 		if errorMessage == "" {
 			errPtr = nil
 		}
-		rows, err := d.Queries.UpdatePatchRunCancelled(ctx, db.UpdatePatchRunCancelledParams{ID: id, ShellOutput: output, ErrorMessage: errPtr})
-		if err != nil {
-			return err
-		}
-		if rows == 0 {
-			outRows, err := d.Queries.UpdatePatchRunCancelledOutput(ctx, db.UpdatePatchRunCancelledOutputParams{ID: id, ShellOutput: output, ErrorMessage: errPtr})
-			if err != nil || outRows == 0 {
-				return err
-			}
+		rows, err = d.Queries.UpdatePatchRunCancelled(ctx, db.UpdatePatchRunCancelledParams{ID: id, ShellOutput: output, ErrorMessage: errPtr})
+		if err == nil && rows == 0 {
+			rows, err = d.Queries.UpdatePatchRunCancelledOutput(ctx, db.UpdatePatchRunCancelledOutputParams{ID: id, ShellOutput: output, ErrorMessage: errPtr})
 		}
 	default:
-		return nil
+		return false, nil
+	}
+	if err != nil || rows == 0 {
+		return false, err
 	}
 	b, err := affected()
-	if err != nil || b == nil {
-		return err
+	if err != nil {
+		return true, err
 	}
-	return d.Queries.UpdatePatchRunPackagesAffected(ctx, db.UpdatePatchRunPackagesAffectedParams{ID: id, PackagesAffected: b})
+	if b != nil {
+		if err := d.Queries.UpdatePatchRunPackagesAffected(ctx, db.UpdatePatchRunPackagesAffectedParams{ID: id, PackagesAffected: b}); err != nil {
+			return true, err
+		}
+	}
+	return true, nil
 }
 
 // ActivateScheduledRun moves a scheduled run to queued when its window arrives;
