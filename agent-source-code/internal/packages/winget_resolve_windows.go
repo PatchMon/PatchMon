@@ -29,7 +29,10 @@ func powershellPath() (string, error) {
 }
 
 func hideWindow(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.HideWindow = true
 }
 
 const wingetTrustScript = `$p = [Console]::In.ReadToEnd().Trim()

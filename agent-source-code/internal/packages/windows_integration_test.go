@@ -127,7 +127,12 @@ func TestResolveWingetLive(t *testing.T) {
 func TestWingetUpgradeMapLive(t *testing.T) {
 	requireWindowsIntegration(t)
 
-	upgrades := newTestWindowsManager().getWingetUpgradeAvailable()
+	m := newTestWindowsManager()
+	w, ok := m.resolveWingetCommand()
+	if !ok {
+		t.Skip("winget not resolvable on this host")
+	}
+	upgrades := m.getWingetUpgradeAvailable(w)
 	for name, version := range upgrades {
 		if name == "" {
 			t.Error("upgrade map contains an empty package name")
