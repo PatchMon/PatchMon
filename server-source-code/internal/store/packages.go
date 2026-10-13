@@ -226,9 +226,6 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 
 	out := make([]PackageWithStats, len(pkgs))
 	for i, p := range pkgs {
-		// Counters are global per-package as documented above (host filter
-		// in the table doesn't change the per-row footprint badge), and
-		// come straight from mv_package_stats via ListPackages.
 		totalInstalls := int(p.TotalInstalls)
 		updatesNeeded := int(p.UpdatesNeeded)
 		securityUpdates := int(p.SecurityUpdates)

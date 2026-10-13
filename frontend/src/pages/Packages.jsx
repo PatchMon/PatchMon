@@ -190,6 +190,13 @@ const Packages = () => {
 
 	// Handle hosts click (view hosts where package is installed)
 	const handlePackageHostsClick = async (pkg) => {
+		if (hostFilter && hostFilter !== "all") {
+			const params = new URLSearchParams();
+			params.set("selected", hostFilter);
+			params.set("filter", "selected");
+			navigate(`/hosts?${params.toString()}`);
+			return;
+		}
 		try {
 			const totalHosts = pkg.packageHostsCount || pkg.stats?.totalInstalls || 0;
 			// If many hosts: package detail has paginated list. URL length limits ~2k chars.
