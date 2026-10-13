@@ -7320,7 +7320,7 @@ You need both to see the whole picture, because neither one is complete on its o
 
 The npm tree does not appear in the image scan. The web interface is bundled by Vite and then compiled directly into the Go binary, so by the time it reaches the image there is no npm metadata left for a scanner to find. Scanning the source tree is the only way to enumerate those dependencies.
 
-One component is in neither file: the SCAP security policy content used for compliance scanning is downloaded from the ComplianceAsCode project during the image build. It is data rather than a package, so it carries no metadata for a scanner to catalogue. The version is fixed per release by the `SSG_VERSION` build argument.
+One component is in neither file: the SCAP security policy content used for compliance scanning is downloaded from the ComplianceAsCode project during the image build. It is data rather than a package, so it carries no metadata for a scanner to catalogue. Each image build fetches whichever ComplianceAsCode release is the latest at build time, so two builds of the same PatchMon version can carry different content. To see the version a running image has, open **Security Compliance → Settings → OpenSCAP Content**, which shows it as **SSG *x.y.z***.
 
 ### Verifying an image you have already pulled
 
