@@ -975,11 +975,19 @@ func mapGroupsToRoleFromConfig(groups []string, cfg *config.Config) string {
 
 var usernameSanitize = regexp.MustCompile(`[^a-zA-Z0-9._-]`)
 
-func (h *OidcHandler) createOidcUser(ctx context.Context, info *oidc.UserInfo) *models.User {
-	baseUsername := usernameSanitize.ReplaceAllString(strings.Split(info.Email, "@")[0], "")
-	if len(baseUsername) > 32 {
-		baseUsername = baseUsername[:32]
+func oidcBaseUsername(info *oidc.UserInfo) string {
+	base := usernameSanitize.ReplaceAllString(strings.Split(info.PreferredUsername, "@")[0], "")
+	if len(base) < 3 {
+		base = usernameSanitize.ReplaceAllString(strings.Split(info.Email, "@")[0], "")
 	}
+	if len(base) > 32 {
+		base = base[:32]
+	}
+	return base
+}
+
+func (h *OidcHandler) createOidcUser(ctx context.Context, info *oidc.UserInfo) *models.User {
+	baseUsername := oidcBaseUsername(info)
 	username := baseUsername
 	counter := 1
 	for {
