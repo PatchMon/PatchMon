@@ -68,6 +68,13 @@ function formatRepoName(name) {
 	return name;
 }
 
+const PACKAGE_COLUMN_WIDTH = {
+	packageHosts: "w-28",
+	status: "w-56",
+	latestVersion: "w-40",
+	sourceRepos: "w-48",
+};
+
 const WindowsPackageTags = ({ info }) => {
 	const source = windowsSourceLabel(info);
 	const badges = windowsBadges(info).filter((b) => b.key !== "not-patchable");
@@ -551,11 +558,14 @@ const Packages = () => {
 						<button
 							type="button"
 							onClick={() => navigate(`/packages/${pkg.id}`)}
-							className="flex items-center text-left hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded p-2 -m-2 transition-colors group flex-1"
+							className="flex items-center text-left hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded p-2 -m-2 transition-colors group flex-1 min-w-0"
 						>
 							<Package className="h-5 w-5 text-secondary-400 mr-3 flex-shrink-0" />
-							<div className="flex-1">
-								<div className="text-sm font-medium text-secondary-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400">
+							<div className="flex-1 min-w-0">
+								<div
+									className="text-sm font-medium text-secondary-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400 line-clamp-2 [overflow-wrap:anywhere]"
+									title={pkg.name}
+								>
 									{pkg.name}
 								</div>
 								{pkg.category && (
@@ -648,7 +658,7 @@ const Packages = () => {
 			case "latestVersion":
 				return (
 					<div
-						className="text-sm text-secondary-900 dark:text-white max-w-xs truncate"
+						className="text-sm text-secondary-900 dark:text-white max-w-[10rem] mx-auto truncate"
 						title={pkg.latestVersion || "N/A"}
 					>
 						{pkg.latestVersion || "N/A"}
@@ -1109,12 +1119,17 @@ const Packages = () => {
 													<button
 														type="button"
 														onClick={() => navigate(`/packages/${pkg.id}`)}
-														className="text-left flex-1"
+														className="text-left flex-1 min-w-0"
 													>
 														<div className="flex items-center gap-3">
 															<Package className="h-5 w-5 text-secondary-400 flex-shrink-0" />
-															<div className="text-base font-semibold text-secondary-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400">
-																{pkg.name}
+															<div className="text-base font-semibold text-secondary-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 min-w-0">
+																<span
+																	className="line-clamp-2 [overflow-wrap:anywhere]"
+																	title={pkg.name}
+																>
+																	{pkg.name}
+																</span>
 																{isWindowsHostFilter && (
 																	<WindowsPackageTags
 																		info={windowsInfoFor(pkg)}
@@ -1277,7 +1292,9 @@ const Packages = () => {
 												{visibleColumns.map((column) => (
 													<th
 														key={column.id}
-														className="px-4 py-2 text-center text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+														className={`px-4 py-2 text-center text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap ${
+															PACKAGE_COLUMN_WIDTH[column.id] || ""
+														}`}
 													>
 														{PACKAGES_SORTABLE_COLUMNS.has(column.id) ? (
 															<button
@@ -1332,7 +1349,11 @@ const Packages = () => {
 														{visibleColumns.map((column) => (
 															<td
 																key={column.id}
-																className="px-4 py-2 whitespace-nowrap text-center"
+																className={`px-4 py-2 text-center ${
+																	column.id === "name"
+																		? "min-w-[16rem]"
+																		: `whitespace-nowrap ${PACKAGE_COLUMN_WIDTH[column.id] || ""}`
+																}`}
 															>
 																{renderCellContent(column, pkg)}
 															</td>
