@@ -5177,13 +5177,18 @@ The installer detects the OS architecture via `PROCESSOR_ARCHITECTURE` / `PROCES
 
 | Version | Service Manager | Package Manager | Notes |
 |---|---|---|---|
-| Windows 10 (64-bit) | Service Control Manager (SCM) | WinGet / Windows Update (reporting only) | amd64. Windows 10 32-bit reached EOL on 14 October 2025 and is not supported. |
-| Windows 11 | SCM | WinGet / Windows Update (reporting only) | amd64 and native ARM64 on Copilot+ PCs |
-| Windows Server 2019 | SCM | WinGet / Windows Update (reporting only) | amd64 |
-| Windows Server 2022 | SCM | WinGet / Windows Update (reporting only) | amd64 |
-| Windows Server 2025 | SCM | WinGet / Windows Update (reporting only) | amd64 and ARM64 |
+| Windows 10 (64-bit) | Service Control Manager (SCM) | Windows Update / winget | amd64. Windows 10 32-bit reached EOL on 14 October 2025 and is not supported. |
+| Windows 11 | SCM | Windows Update / winget | amd64 and native ARM64 on Copilot+ PCs |
+| Windows Server 2019 | SCM | Windows Update / winget | amd64 |
+| Windows Server 2022 | SCM | Windows Update / winget | amd64 |
+| Windows Server 2025 | SCM | Windows Update / winget | amd64 and ARM64 |
 
-The Windows agent reports installed applications (read from the Windows registry and enriched with update availability from WinGet) and Windows Updates (via the Windows Update Agent), but does not execute patch deployments. Chocolatey packages are not collected. PatchMon integrates with third-party patching vendors for Windows rollout.
+The Windows agent reports installed applications (read from the Windows registry and enriched with update availability from winget) and Windows Updates (via the Windows Update Agent). From agent 2.1.5 it also installs them: Windows Updates through the Windows Update Agent, and applications through winget by their exact winget Id. Applications that winget does not recognise are reported but shown as not patchable. Chocolatey packages are not collected. Day-to-day use, including what Patch all includes and how restarts are handled, is covered under *Windows patching* in the Patching Overview chapter of the Admin Guide.
+
+- **Agent version.** The server refuses Windows patch runs for hosts on an agent older than 2.1.5. Upgrade the agent before patching Windows hosts.
+- **WSUS.** A host configured for WSUS needs no extra configuration. Windows Update only offers WSUS-approved updates, so PatchMon installs only those, and the host must be able to reach its WSUS server.
+- **winget and the Visual C++ runtime.** winget is part of Microsoft's App Installer package; hosts without it (often Windows Server 2019 and 2022, Server Core and LTSC) can patch Windows Updates but not applications. `winget.exe` needs the Visual C++ runtime, which Windows does not supply to it when it runs as Local System. The agent points winget at the Microsoft VCLibs framework package that App Installer already installs, so you do not need to install the Visual C++ Redistributable for patching to work.
+- **Restarts.** PatchMon never restarts a Windows host. Runs that need a restart flag the host as needing a reboot.
 
 #### Supported Operating Systems: FreeBSD
 
