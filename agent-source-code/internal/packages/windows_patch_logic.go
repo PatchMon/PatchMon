@@ -647,6 +647,33 @@ const msgStoreApp = "Microsoft Store app: it updates through the Store for each 
 
 const msgDeferredReplace = "Installed; some files will be replaced at the next restart."
 
+// significantRenames returns the source and destination of each pending boot-time rename
+// whose destination is outside a temp directory. PendingFileRenameOperations holds
+// source/destination pairs; an empty destination is a delete, such as an NSIS installer
+// cleaning up its own plugin folder, and never means an app file is waiting to be replaced.
+func significantRenames(values [][]string, tempDirs []string) []string {
+	var out []string
+	for _, v := range values {
+		for i := 0; i+1 < len(v); i += 2 {
+			dst := strings.TrimPrefix(strings.TrimPrefix(v[i+1], "!"), `\??\`)
+			if dst == "" || underAnyDir(dst, tempDirs) {
+				continue
+			}
+			out = append(out, v[i]+"\x00"+v[i+1])
+		}
+	}
+	return out
+}
+
+func underAnyDir(path string, dirs []string) bool {
+	for _, d := range dirs {
+		if d != "" && pathInside(path, d) {
+			return true
+		}
+	}
+	return false
+}
+
 // newPendingRenames reports whether after holds entries that before did not, counting
 // duplicates, so an installer queueing files for replacement at boot is caught.
 func newPendingRenames(before, after []string) bool {

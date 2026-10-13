@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -147,7 +149,21 @@ func (b *wingetExecBackend) UpdatableApps() []models.Package {
 }
 
 func (b *wingetExecBackend) PendingFileRenames() []string {
-	return pendingFileRenames()
+	return significantRenames(pendingFileRenameValues(), renameTempDirs(b.env))
+}
+
+func renameTempDirs(childEnv []string) []string {
+	var dirs []string
+	if root := os.Getenv("SystemRoot"); root != "" {
+		dirs = append(dirs, filepath.Join(root, "Temp"), filepath.Join(root, "SystemTemp"))
+	}
+	for _, kv := range append(os.Environ(), childEnv...) {
+		k, v, _ := strings.Cut(kv, "=")
+		if (strings.EqualFold(k, "TEMP") || strings.EqualFold(k, "TMP")) && v != "" {
+			dirs = append(dirs, v)
+		}
+	}
+	return dirs
 }
 
 func (b *wingetExecBackend) UpgradeState(ctx context.Context, id string, log func(string)) (wingetUpgradeState, error) {

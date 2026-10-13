@@ -1007,3 +1007,37 @@ func TestRunSkipsStoreAppsWithoutRunningWinget(t *testing.T) {
 		t.Errorf("stage %q summary %q", res.Stage, res.ErrorMessage)
 	}
 }
+
+func TestSignificantRenames(t *testing.T) {
+	temps := []string{`C:\Windows\Temp`, `C:\Windows\SystemTemp`, `C:\ProgramData\PatchMon\winget-tmp`}
+	nsis := []string{
+		`\??\C:\Windows\SystemTemp\nsr6A69.tmp\System.dll`, "",
+		`\??\C:\Windows\SystemTemp\nsr6A69.tmp\`, "",
+	}
+	sevenZip := []string{`\??\C:\Program Files\7-Zip\7zFM.exe.tmp`, `!\??\C:\Program Files\7-Zip\7zFM.exe`}
+	intoTemp := []string{`\??\C:\x.dll`, `!\??\C:\Windows\Temp\y.dll`, `\??\C:\a`, `\??\C:\ProgramData\PatchMon\winget-tmp\b`}
+	cases := []struct {
+		name   string
+		values [][]string
+		want   int
+	}{
+		{"NSIS deletes its temp plugin dir", [][]string{nsis}, 0},
+		{"7-Zip replaces an in-use file", [][]string{sevenZip}, 1},
+		{"rename into a temp dir", [][]string{intoTemp}, 0},
+		{"both values, mixed", [][]string{nsis, sevenZip}, 1},
+		{"odd trailing entry is ignored", [][]string{{`\??\C:\lonely`}}, 0},
+	}
+	for _, c := range cases {
+		if got := significantRenames(c.values, temps); len(got) != c.want {
+			t.Errorf("%s: got %q, want %d", c.name, got, c.want)
+		}
+	}
+	before := significantRenames([][]string{nsis}, temps)
+	after := significantRenames([][]string{nsis, nsis, sevenZip}, temps)
+	if !newPendingRenames(before, after) {
+		t.Error("a new app-file replacement must be noticed")
+	}
+	if newPendingRenames(before, significantRenames([][]string{nsis, nsis}, temps)) {
+		t.Error("new NSIS temp deletes must not be noticed")
+	}
+}
