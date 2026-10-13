@@ -274,7 +274,7 @@ func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Reques
 			h.recordRunRebootRequired(r.Context(), host, run, *required)
 		}
 	}
-	if body.Stage == "completed" && !run.DryRun {
+	if ended && body.Stage == "completed" && !run.DryRun {
 		if err := h.hosts.SetAwaitingPostPatchReport(r.Context(), run.HostID, &patchRunID); err != nil {
 			h.log.Error("patching: failed to set awaiting post-patch report", "host_id", run.HostID, "patch_run_id", patchRunID, "error", err)
 		}
@@ -308,7 +308,7 @@ func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Reques
 			})
 		}
 	}
-	if h.notify != nil && (body.Stage == "completed" || body.Stage == "failed") {
+	if h.notify != nil && notifiesRunEnd(body.Stage, ended) {
 		if d := hostctx.DBFromContext(r.Context()); d != nil {
 			// Resolve host display name
 			hostName := ""
@@ -403,6 +403,11 @@ func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	JSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// notifiesRunEnd reports whether a terminal report should notify; a replay against a finished run must not.
+func notifiesRunEnd(stage string, ended bool) bool {
+	return ended && (stage == "completed" || stage == "failed")
 }
 
 const windowsRestartReason = "Windows Update installation requires a restart"

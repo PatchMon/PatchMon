@@ -255,3 +255,23 @@ func TestPatchRunListRowsCarryHostOSType(t *testing.T) {
 		t.Fatalf("hosts.os_type = %v", hosts["os_type"])
 	}
 }
+
+func TestNotifiesRunEnd(t *testing.T) {
+	cases := []struct {
+		stage string
+		ended bool
+		want  bool
+	}{
+		{"completed", true, true},
+		{"failed", true, true},
+		{"completed", false, false},
+		{"failed", false, false},
+		{"cancelled", true, false},
+		{"progress", true, false},
+	}
+	for _, tc := range cases {
+		if got := notifiesRunEnd(tc.stage, tc.ended); got != tc.want {
+			t.Errorf("notifiesRunEnd(%q, %v) = %v, want %v", tc.stage, tc.ended, got, tc.want)
+		}
+	}
+}
