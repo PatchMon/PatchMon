@@ -30,7 +30,7 @@ import (
 
 const patchRunJobIDPrefix = "patch-run-"
 
-var packageNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+-_]*$`)
+var packageNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._+\-]*$`)
 
 // deletablePatchRunStatuses are statuses where the run can be deleted (not yet executed or cancelled).
 var deletablePatchRunStatuses = map[string]bool{
@@ -595,6 +595,35 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var approveOpts *store.CreateRunOpts
+	if store.IsWindowsOSType(host.OSType) {
+		if verr := windowsAgentVersionError(host.AgentVersion); verr != nil {
+			writeRunRequestError(w, verr)
+			return
+		}
+		if valRun.PatchType == "patch_package" {
+			valItems, err := h.patchRuns.ListItems(r.Context(), validationID)
+			if err != nil {
+				h.log.Error("patching: list validation items error", "validation_run_id", validationID, "error", err)
+				JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to read package list for run"})
+				return
+			}
+			items := itemsForApproval(valRun.Status, valItems)
+			if len(items) == 0 {
+				JSON(w, http.StatusBadRequest, map[string]string{"error": "Nothing to install: the validation found no applicable updates on this host"})
+				return
+			}
+			pkgName = nil
+			pkgNames = itemTitles(items)
+			approveOpts = &store.CreateRunOpts{Items: items}
+		} else {
+			approveOpts = &store.CreateRunOpts{
+				WindowsIncludeUpdates: valRun.WindowsIncludeUpdates,
+				WindowsIncludeApps:    valRun.WindowsIncludeApps,
+			}
+		}
+	}
+
 	// Compute policy and delay.
 	orgTZ := h.resolveOrgTimezone(r.Context())
 	policy, _ := h.patchPolicies.ResolveEffectivePolicy(r.Context(), valRun.HostID)
@@ -674,7 +703,7 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 	if delayMs > 0 {
 		schedAt = &runAt
 	}
-	if err := h.patchRuns.ApproveAndCreateRun(r.Context(), validationID, approvedBy, newRunID, valRun.HostID, jobID, valRun.PatchType, pkgName, pkgNames, valRun.TriggeredByUserID, schedAt, policyID, policyNamePtr, policySnap); err != nil {
+	if err := h.patchRuns.ApproveAndCreateRun(r.Context(), validationID, approvedBy, newRunID, valRun.HostID, jobID, valRun.PatchType, pkgName, pkgNames, valRun.TriggeredByUserID, schedAt, policyID, policyNamePtr, policySnap, approveOpts); err != nil {
 		switch {
 		case errors.Is(err, store.ErrValidationNotApprovable):
 			JSON(w, http.StatusConflict, map[string]string{"error": "This run has already been approved or is no longer awaiting approval"})
@@ -760,18 +789,18 @@ func (h *PatchingHandler) RetryValidation(w http.ResponseWriter, r *http.Request
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Only pending-validation runs can be retried"})
 		return
 	}
-	// patch_all runs cannot be dry-run on the agent (no --dry-run support for
-	// the bulk upgrade path). Re-validation only makes sense for patch_package
-	// pending runs that stalled mid dry-run (e.g. host was offline). Pending
-	// approval patch_all runs are just waiting for approval, not validation.
-	if run.PatchType != "patch_package" {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "Validation retry is only supported for patch_package runs"})
-		return
-	}
-
 	host, err := h.hosts.GetByID(r.Context(), run.HostID)
 	if err != nil || host == nil {
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Host not found for run"})
+		return
+	}
+	windows := store.IsWindowsOSType(host.OSType)
+	// patch_all runs cannot be dry-run on Linux/FreeBSD agents (no --dry-run support for
+	// the bulk upgrade path). Re-validation only makes sense for patch_package
+	// pending runs that stalled mid dry-run (e.g. host was offline). Pending
+	// approval patch_all runs are just waiting for approval, not validation.
+	if run.PatchType != "patch_package" && !windows {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Validation retry is only supported for patch_package runs"})
 		return
 	}
 
@@ -784,6 +813,31 @@ func (h *PatchingHandler) RetryValidation(w http.ResponseWriter, r *http.Request
 		if err := json.Unmarshal(run.PackageNames, &pkgNames); err != nil {
 			JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to read package list for run"})
 			return
+		}
+	}
+
+	if windows {
+		names := pkgNames
+		if len(names) == 0 && pkgName != nil {
+			names = []string{*pkgName}
+		}
+		scope := &windowsScope{Updates: run.WindowsIncludeUpdates, Apps: run.WindowsIncludeApps}
+		plan, reqErr, err := h.validateWindowsRun(r.Context(), host.ID, host.AgentVersion, run.PatchType, names, scope)
+		if err != nil {
+			h.log.Error("patching: resolve windows targets error", "host_id", host.ID, "error", err)
+			JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to resolve patch targets"})
+			return
+		}
+		if reqErr != nil {
+			writeRunRequestError(w, reqErr)
+			return
+		}
+		if run.PatchType == "patch_package" {
+			if err := h.patchRuns.ReplaceItems(r.Context(), id, run.HostID, plan.Items); err != nil {
+				h.log.Error("patching: reset validation items error", "patch_run_id", id, "error", err)
+				JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to reset patch targets"})
+				return
+			}
 		}
 	}
 
@@ -888,8 +942,9 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		// enqueuing any work to the host. It's the "submit for approval" path:
 		// a second approver later calls ApproveRun to actually execute. Works
 		// for any patch_type (including patch_all, which cannot dry-run).
-		PendingApproval  bool   `json:"pending_approval"`
-		ScheduleOverride string `json:"schedule_override"` // "immediate" to bypass policy delay
+		PendingApproval  bool          `json:"pending_approval"`
+		ScheduleOverride string        `json:"schedule_override"` // "immediate" to bypass policy delay
+		WindowsScope     *windowsScope `json:"windows_scope"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
@@ -903,18 +958,50 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "patch_type must be patch_all or patch_package"})
 		return
 	}
-	if body.DryRun && body.PatchType != "patch_package" {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "dry_run is only supported for patch_package"})
-		return
-	}
 	if body.DryRun && body.PendingApproval {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "dry_run and pending_approval are mutually exclusive"})
 		return
 	}
 
+	host, err := h.hosts.GetByID(r.Context(), body.HostID)
+	if err != nil || host == nil {
+		JSON(w, http.StatusNotFound, map[string]string{"error": "Host not found"})
+		return
+	}
+	windows := store.IsWindowsOSType(host.OSType)
+
+	if body.DryRun && body.PatchType != "patch_package" && !windows {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "dry_run is only supported for patch_package"})
+		return
+	}
+
 	var pkgName *string
 	var pkgNames []string
-	if body.PatchType == "patch_package" {
+	var createOpts *store.CreateRunOpts
+	if windows {
+		names := body.PackageNames
+		if len(names) == 0 && body.PackageName != "" {
+			names = []string{body.PackageName}
+		}
+		plan, reqErr, err := h.validateWindowsRun(r.Context(), host.ID, host.AgentVersion, body.PatchType, names, body.WindowsScope)
+		if err != nil {
+			h.log.Error("patching: resolve windows targets error", "host_id", host.ID, "error", err)
+			JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to resolve patch targets"})
+			return
+		}
+		if reqErr != nil {
+			writeRunRequestError(w, reqErr)
+			return
+		}
+		if body.PatchType == "patch_package" {
+			pkgNames = itemTitles(plan.Items)
+		}
+		createOpts = &store.CreateRunOpts{
+			Items:                 plan.Items,
+			WindowsIncludeUpdates: plan.IncludeUpdates,
+			WindowsIncludeApps:    plan.IncludeApps,
+		}
+	} else if body.PatchType == "patch_package" {
 		if len(body.PackageNames) > 0 {
 			for _, n := range body.PackageNames {
 				if !isValidPackageName(n) {
@@ -922,7 +1009,7 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
-			if len(body.PackageNames) > 100 {
+			if len(body.PackageNames) > maxPatchTargets {
 				JSON(w, http.StatusBadRequest, map[string]string{"error": "package_names limited to 100 packages per run"})
 				return
 			}
@@ -933,12 +1020,6 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 			JSON(w, http.StatusBadRequest, map[string]string{"error": "Valid package_name or non-empty package_names is required for patch_package"})
 			return
 		}
-	}
-
-	host, err := h.hosts.GetByID(r.Context(), body.HostID)
-	if err != nil || host == nil {
-		JSON(w, http.StatusNotFound, map[string]string{"error": "Host not found"})
-		return
 	}
 
 	orgTZ := h.resolveOrgTimezone(r.Context())
@@ -1011,9 +1092,11 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	// which implies an in-flight dry-run), they're just waiting for an
 	// approver to call ApproveRun, which builds the real execution run
 	// (same code path the approve wizard already uses).
-	var createOpts *store.CreateRunOpts
 	if body.PendingApproval {
-		createOpts = &store.CreateRunOpts{InitialStatus: "pending_approval"}
+		if createOpts == nil {
+			createOpts = &store.CreateRunOpts{}
+		}
+		createOpts.InitialStatus = "pending_approval"
 	}
 	_, err = h.patchRuns.CreateRun(r.Context(), patchRunID, body.HostID, jobID, body.PatchType, pkgName, pkgNames, triggeredBy, body.DryRun, scheduledAt, policyID, policyNamePtr, policySnapshot, createOpts)
 	if errors.Is(err, store.ErrHostHasActivePatchRun) {

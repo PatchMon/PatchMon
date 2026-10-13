@@ -1,6 +1,9 @@
 package store
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 // WUA update types the agent reports in wuaType.
 const (
@@ -21,4 +24,9 @@ func IsValidWingetID(id string) bool {
 // IsValidWUAGuid reports whether id is a Windows Update UpdateID.
 func IsValidWUAGuid(id string) bool {
 	return wuaGUIDPattern.MatchString(id)
+}
+
+// IsWindowsOSType applies the same Windows host test as the frontend.
+func IsWindowsOSType(osType string) bool {
+	return strings.Contains(strings.ToLower(osType), "windows")
 }

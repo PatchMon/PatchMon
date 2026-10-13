@@ -90,3 +90,6 @@ FROM host_packages hp
 JOIN packages p ON p.id = hp.package_id
 WHERE hp.host_id = sqlc.arg('host_id')
   AND p.name = ANY(sqlc.arg('names')::text[]);
+
+-- name: DeletePatchRunItems :exec
+DELETE FROM patch_run_items WHERE patch_run_id = $1;

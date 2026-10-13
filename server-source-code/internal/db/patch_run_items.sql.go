@@ -9,6 +9,15 @@ import (
 	"context"
 )
 
+const deletePatchRunItems = `-- name: DeletePatchRunItems :exec
+DELETE FROM patch_run_items WHERE patch_run_id = $1
+`
+
+func (q *Queries) DeletePatchRunItems(ctx context.Context, patchRunID string) error {
+	_, err := q.db.Exec(ctx, deletePatchRunItems, patchRunID)
+	return err
+}
+
 const insertPatchRunItems = `-- name: InsertPatchRunItems :exec
 INSERT INTO patch_run_items (
     id, patch_run_id, host_id, kind, identifier, revision_number, title, kb, status,

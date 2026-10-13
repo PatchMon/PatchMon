@@ -216,6 +216,7 @@ type Querier interface {
 	DeletePatchPolicyAssignment(ctx context.Context, id string) error
 	DeletePatchPolicyExclusion(ctx context.Context, arg DeletePatchPolicyExclusionParams) error
 	DeletePatchRun(ctx context.Context, id string) error
+	DeletePatchRunItems(ctx context.Context, patchRunID string) error
 	DeletePendingConfig(ctx context.Context, hostID string) error
 	DeletePreviousCompletedScansByHostAndProfile(ctx context.Context, arg DeletePreviousCompletedScansByHostAndProfileParams) error
 	DeleteRepositoriesByIDs(ctx context.Context, dollar_1 []string) error

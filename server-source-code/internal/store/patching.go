@@ -239,7 +239,10 @@ type CreateRunOpts struct {
 	// is set, "queued" otherwise. Set to "pending_approval" with dryRun=false
 	// to represent a "submit for approval" run that hasn't been executed and
 	// isn't a dry-run either.
-	InitialStatus string
+	InitialStatus         string
+	Items                 []NewPatchRunItem
+	WindowsIncludeUpdates *bool
+	WindowsIncludeApps    *bool
 }
 
 // ErrHostHasActivePatchRun is returned when a host already has a queued,
@@ -273,20 +276,42 @@ func (s *PatchRunsStore) CreateRun(ctx context.Context, id, hostID, jobID, patch
 		return "", err
 	}
 	d := s.db.DB(ctx)
-	if err := d.Queries.CreatePatchRun(ctx, params); err != nil {
+	if opts == nil || len(opts.Items) == 0 {
+		if err := d.Queries.CreatePatchRun(ctx, params); err != nil {
+			return params.ID, mapActiveRunConflict(err)
+		}
+		return params.ID, nil
+	}
+	tx, err := d.Begin(ctx)
+	if err != nil {
+		return params.ID, err
+	}
+	defer func() {
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+	}()
+	q := d.Queries.WithTx(tx)
+	if err := q.CreatePatchRun(ctx, params); err != nil {
 		return params.ID, mapActiveRunConflict(err)
 	}
-	return params.ID, nil
+	if err := insertPatchRunItems(ctx, q, params.ID, hostID, opts.Items); err != nil {
+		return params.ID, err
+	}
+	return params.ID, tx.Commit(ctx)
 }
 
 // ApproveAndCreateRun marks the validation run approved and creates the linked
 // execution run in one transaction, so a refused run never consumes the approval.
 // Returns ErrValidationNotApprovable or ErrHostHasActivePatchRun on conflict.
-func (s *PatchRunsStore) ApproveAndCreateRun(ctx context.Context, validationRunID string, approvedByUserID *string, id, hostID, jobID, patchType string, packageName *string, packageNames []string, triggeredByUserID *string, scheduledAt *time.Time, policyID, policyName *string, policySnapshot []byte) error {
-	params, err := newCreatePatchRunParams(id, hostID, jobID, patchType, packageName, packageNames, triggeredByUserID, false, scheduledAt, policyID, policyName, policySnapshot, &CreateRunOpts{
-		ValidationRunID:  &validationRunID,
-		ApprovedByUserID: approvedByUserID,
-	})
+// opts may carry Items and the Windows scope flags; its ValidationRunID and ApprovedByUserID are ignored.
+func (s *PatchRunsStore) ApproveAndCreateRun(ctx context.Context, validationRunID string, approvedByUserID *string, id, hostID, jobID, patchType string, packageName *string, packageNames []string, triggeredByUserID *string, scheduledAt *time.Time, policyID, policyName *string, policySnapshot []byte, opts *CreateRunOpts) error {
+	runOpts := CreateRunOpts{}
+	if opts != nil {
+		runOpts = *opts
+	}
+	runOpts.ValidationRunID = &validationRunID
+	runOpts.ApprovedByUserID = approvedByUserID
+	runOpts.InitialStatus = ""
+	params, err := newCreatePatchRunParams(id, hostID, jobID, patchType, packageName, packageNames, triggeredByUserID, false, scheduledAt, policyID, policyName, policySnapshot, &runOpts)
 	if err != nil {
 		return err
 	}
@@ -311,6 +336,9 @@ func (s *PatchRunsStore) ApproveAndCreateRun(ctx context.Context, validationRunI
 	}
 	if err := q.CreatePatchRun(ctx, params); err != nil {
 		return mapActiveRunConflict(err)
+	}
+	if err := insertPatchRunItems(ctx, q, params.ID, hostID, runOpts.Items); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
 }
@@ -338,27 +366,32 @@ func newCreatePatchRunParams(id, hostID, jobID, patchType string, packageName *s
 	}
 	var validationRunID *string
 	var approvedByUserID *string
+	var includeUpdates, includeApps *bool
 	if opts != nil {
 		validationRunID = opts.ValidationRunID
 		approvedByUserID = opts.ApprovedByUserID
+		includeUpdates = opts.WindowsIncludeUpdates
+		includeApps = opts.WindowsIncludeApps
 	}
 	return db.CreatePatchRunParams{
-		ID:                id,
-		HostID:            hostID,
-		JobID:             jobID,
-		PatchType:         patchType,
-		PackageName:       packageName,
-		PackageNames:      pkgNames,
-		Status:            status,
-		ShellOutput:       "",
-		TriggeredByUserID: triggeredByUserID,
-		DryRun:            dryRun,
-		ScheduledAt:       pgtime.FromPtr(scheduledAt),
-		PolicyID:          policyID,
-		PolicyName:        policyName,
-		PolicySnapshot:    policySnapshot,
-		ValidationRunID:   validationRunID,
-		ApprovedByUserID:  approvedByUserID,
+		ID:                    id,
+		HostID:                hostID,
+		JobID:                 jobID,
+		PatchType:             patchType,
+		PackageName:           packageName,
+		PackageNames:          pkgNames,
+		Status:                status,
+		ShellOutput:           "",
+		TriggeredByUserID:     triggeredByUserID,
+		DryRun:                dryRun,
+		ScheduledAt:           pgtime.FromPtr(scheduledAt),
+		PolicyID:              policyID,
+		PolicyName:            policyName,
+		PolicySnapshot:        policySnapshot,
+		ValidationRunID:       validationRunID,
+		ApprovedByUserID:      approvedByUserID,
+		WindowsIncludeUpdates: includeUpdates,
+		WindowsIncludeApps:    includeApps,
 	}, nil
 }
 

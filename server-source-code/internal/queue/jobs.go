@@ -791,20 +791,22 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 		return nil
 	}
 
-	// Build run_patch payload
-	payload := map[string]interface{}{
-		"type":         "run_patch",
-		"patch_run_id": p.PatchRunID,
-		"patch_type":   p.PatchType,
-		"dry_run":      p.DryRun,
+	var pending []db.PatchRunItem
+	windows := run.HostOsType != nil && store.IsWindowsOSType(*run.HostOsType)
+	if windows && p.PatchType == "patch_package" {
+		pending, err = h.patchRuns.ListPendingItems(ctx, p.PatchRunID)
+		if err != nil {
+			return err
+		}
+		if len(pending) == 0 {
+			if err := h.patchRuns.FailRun(ctx, p.PatchRunID, noPatchTargetsMessage); err != nil {
+				return err
+			}
+			h.log.Warn("run_patch: windows run has no patch targets, marked failed", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
+			return nil
+		}
 	}
-	if p.PackageName != nil {
-		payload["package_name"] = *p.PackageName
-	}
-	if len(p.PackageNames) > 0 {
-		payload["package_names"] = p.PackageNames
-	}
-	msg, err := json.Marshal(payload)
+	msg, err := json.Marshal(buildRunPatchMessage(p, run, windows, pending))
 	if err != nil {
 		return err
 	}
@@ -818,4 +820,41 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 	}
 	h.log.Info("run_patch sent", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
 	return nil
+}
+
+const noPatchTargetsMessage = "No patch targets: none of the selected updates or apps are pending on this host"
+
+type runPatchTarget struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
+}
+
+func buildRunPatchMessage(p RunPatchPayload, run *db.GetPatchRunByIDRow, windows bool, pending []db.PatchRunItem) map[string]interface{} {
+	payload := map[string]interface{}{
+		"type":         "run_patch",
+		"patch_run_id": p.PatchRunID,
+		"patch_type":   p.PatchType,
+		"dry_run":      p.DryRun,
+	}
+	if p.PackageName != nil {
+		payload["package_name"] = *p.PackageName
+	}
+	if len(p.PackageNames) > 0 {
+		payload["package_names"] = p.PackageNames
+	}
+	if !windows {
+		return payload
+	}
+	switch p.PatchType {
+	case "patch_package":
+		targets := make([]runPatchTarget, len(pending))
+		for i, it := range pending {
+			targets[i] = runPatchTarget{Kind: it.Kind, ID: it.Identifier}
+		}
+		payload["targets"] = targets
+	case "patch_all":
+		payload["include_updates"] = run.WindowsIncludeUpdates == nil || *run.WindowsIncludeUpdates
+		payload["include_apps"] = run.WindowsIncludeApps == nil || *run.WindowsIncludeApps
+	}
+	return payload
 }
