@@ -178,6 +178,8 @@ export const adminHostsAPI = {
 	deleteBulk: (hostIds) => api.delete("/hosts/bulk", { data: { hostIds } }),
 	regenerateCredentials: (hostId) =>
 		api.post(`/hosts/${hostId}/regenerate-credentials`),
+	dismissIdentityConflict: (hostId) =>
+		api.post(`/hosts/${hostId}/identity-conflict/dismiss`),
 	updateGroup: (hostId, hostGroupId) =>
 		api.put(`/hosts/${hostId}/group`, { hostGroupId }),
 	updateGroups: (hostId, groupIds) =>
