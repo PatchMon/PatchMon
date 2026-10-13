@@ -472,6 +472,7 @@ while read -r vmid status; do
                 timeout 10 pct exec "$vmid" -- sh -c "$(declare -f write_stub_config); write_stub_config \"\$@\"" _ /etc/patchmon "$PATCHMON_URL" "$new_host_id" </dev/null >/dev/null 2>&1 || true
                 ;;
             host_reporting)
+                put_back_identity
                 warn "  ⊘ $friendly_name is already reporting to PatchMon${existing_name:+ as $existing_name}; skipping"
                 warn "    Usually a cloned container, or credentials regenerated in PatchMon but not applied. Reinstall with the host's install command, or set FORCE_NEW_HOST=true to enrol it as a separate host."
                 ((skipped_count++)) || true
@@ -480,6 +481,7 @@ while read -r vmid status; do
                 continue
                 ;;
             host_not_reenrollable)
+                put_back_identity
                 warn "  ⊘ $friendly_name was added to PatchMon another way${existing_name:+ as $existing_name}; skipping"
                 warn "    Use the install command on the host's page in PatchMon."
                 ((skipped_count++)) || true
@@ -490,7 +492,7 @@ while read -r vmid status; do
             already_enrolled)
                 put_back_identity
                 if [[ "$force_new" == "true" ]]; then
-                    warn "  ⊘ FORCE_NEW_HOST: PatchMon already has a host with this container's machine ID and name${existing_name:+ ($existing_name)}, usually the one it was cloned from. Do not remove that host; give this container its own /etc/machine-id or a HOST_PREFIX, then rerun"
+                    warn "  ⊘ FORCE_NEW_HOST: PatchMon already has a host with this container's machine ID and name${existing_name:+ ($existing_name)}: the container it was cloned from, or a host an earlier FORCE_NEW_HOST run already created for it. Do not remove it. If it is the original, give this container its own /etc/machine-id or a HOST_PREFIX; if it is this container's new host, rerun without FORCE_NEW_HOST"
                 else
                     warn "  ⊘ $friendly_name is already enrolled in PatchMon${existing_name:+ as $existing_name}; skipping"
                     warn "    Remove the host in PatchMon before it can be enrolled again"

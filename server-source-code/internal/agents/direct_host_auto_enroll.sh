@@ -327,6 +327,7 @@ if [ "$FORCE_NEW_HOST" = "true" ]; then
         info "Previous configuration moved to $set_aside_dir"
         force_enrolled=false
         trap 'if [ "$force_enrolled" != "true" ]; then restore_identity /etc/patchmon "$set_aside_dir"; warn "No new host was created, so the previous configuration was put back"; fi' EXIT
+        trap 'exit 130' INT TERM HUP
     fi
 fi
 
@@ -490,7 +491,9 @@ case "$(enrol_outcome "$http_code" "$body")" in
         fetch_install_script "$api_id" "$api_key"
         if [ "$fetch_code" != "200" ]; then
             rm -f "$install_script"
-            error "Failed to download the install script (HTTP $fetch_code). Rerun this script to retry; the host will not be enrolled twice."
+            rerun_hint="Rerun this script to retry"
+            [ "$FORCE_NEW_HOST" = "true" ] && rerun_hint="Rerun this script without FORCE_NEW_HOST to retry"
+            error "Failed to download the install script (HTTP $fetch_code). $rerun_hint; the host will not be enrolled twice."
         fi
         run_install "$install_script"
         ;;
@@ -507,7 +510,7 @@ case "$(enrol_outcome "$http_code" "$body")" in
         ;;
     already_enrolled)
         if [ "$FORCE_NEW_HOST" = "true" ]; then
-            printf "%b\n" "${RED}[ERROR]${NC} FORCE_NEW_HOST: PatchMon already has a host with this machine ID and name${existing_name:+ ($existing_name)}, usually the machine this one was cloned from. Do not remove that host. Rerun with a different FRIENDLY_NAME, or give this machine its own /etc/machine-id first." >&2
+            printf "%b\n" "${RED}[ERROR]${NC} FORCE_NEW_HOST: PatchMon already has a host with this machine ID and name${existing_name:+ ($existing_name)}: the machine this one was cloned from, or a host an earlier FORCE_NEW_HOST run already created for it. Do not remove it. If it is the original, rerun with a different FRIENDLY_NAME or give this machine its own /etc/machine-id; if it is this machine's new host, rerun without FORCE_NEW_HOST." >&2
             exit 1
         fi
         if [ -n "$existing_name" ]; then
