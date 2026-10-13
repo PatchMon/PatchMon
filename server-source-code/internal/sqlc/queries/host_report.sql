@@ -26,7 +26,9 @@ UPDATE hosts SET
     system_uptime = COALESCE(sqlc.narg('system_uptime')::text, system_uptime),
     boot_time = COALESCE(sqlc.narg('boot_time')::timestamptz, boot_time),
     load_average = COALESCE(sqlc.narg('load_average')::jsonb, load_average),
-    needs_reboot = COALESCE(sqlc.narg('needs_reboot')::boolean, needs_reboot),
+    -- A run that needed a restart pins needs_reboot until boot_time moves; 60s absorbs uptime jitter.
+    needs_reboot = COALESCE(sqlc.narg('needs_reboot')::boolean, needs_reboot) OR (patch_reboot_pending_boot_time IS NOT NULL
+            AND ABS(EXTRACT(EPOCH FROM (COALESCE(sqlc.narg('boot_time')::timestamptz, boot_time) - patch_reboot_pending_boot_time))) < 60),
     -- reboot_reason is only rewritten when this report also carries
     -- needs_reboot. A hash-gated partial report never carries either (the ping
     -- metrics path owns both fields), and reboot_reason has no COALESCE guard
@@ -35,6 +37,9 @@ UPDATE hosts SET
     -- Second arm: a report asserting needs_reboot without a reason must not
     -- blank a stored one; clearing the flag still clears both.
     reboot_reason = CASE
+        WHEN (patch_reboot_pending_boot_time IS NOT NULL
+                AND ABS(EXTRACT(EPOCH FROM (COALESCE(sqlc.narg('boot_time')::timestamptz, boot_time) - patch_reboot_pending_boot_time))) < 60)
+             AND NOT COALESCE(sqlc.narg('needs_reboot')::boolean, false) THEN 'Restart required to finish a patch run'
         WHEN sqlc.narg('needs_reboot')::boolean IS NULL THEN reboot_reason
         WHEN sqlc.narg('needs_reboot')::boolean IS TRUE
              AND sqlc.narg('reboot_reason')::text IS NULL THEN reboot_reason
@@ -46,7 +51,9 @@ UPDATE hosts SET
     interfaces_hash = COALESCE(sqlc.narg('interfaces_hash')::text, interfaces_hash),
     hostname_hash = COALESCE(sqlc.narg('hostname_hash')::text, hostname_hash),
     last_full_report_at = COALESCE(sqlc.narg('last_full_report_at')::timestamp, last_full_report_at),
-    awaiting_post_patch_report_run_id = NULL
+    awaiting_post_patch_report_run_id = NULL,
+    patch_reboot_pending_boot_time = CASE WHEN (patch_reboot_pending_boot_time IS NOT NULL
+            AND ABS(EXTRACT(EPOCH FROM (COALESCE(sqlc.narg('boot_time')::timestamptz, boot_time) - patch_reboot_pending_boot_time))) < 60) THEN patch_reboot_pending_boot_time END
 WHERE id = sqlc.arg('id');
 
 -- name: DeleteHostPackagesByHostID :exec

@@ -583,6 +583,7 @@ type Querier interface {
 	RevokeSessionByID(ctx context.Context, arg RevokeSessionByIDParams) error
 	RevokeTrustedDeviceByID(ctx context.Context, arg RevokeTrustedDeviceByIDParams) error
 	SetHostAwaitingPostPatchReport(ctx context.Context, arg SetHostAwaitingPostPatchReportParams) error
+	SetHostPatchRebootPending(ctx context.Context, arg SetHostPatchRebootPendingParams) error
 	SetNewsletterSubscribed(ctx context.Context, id string) error
 	SetPatchRunPolicySnapshot(ctx context.Context, arg SetPatchRunPolicySnapshotParams) error
 	SetPatchRunRebootRequired(ctx context.Context, arg SetPatchRunRebootRequiredParams) error

@@ -1,3 +1,4 @@
+ALTER TABLE hosts DROP COLUMN IF EXISTS patch_reboot_pending_boot_time;
 ALTER TABLE host_packages ADD COLUMN IF NOT EXISTS wua_install_result TEXT;
 ALTER TABLE host_packages DROP COLUMN IF EXISTS wua_update_type;
 ALTER TABLE host_packages DROP COLUMN IF EXISTS wua_browse_only;

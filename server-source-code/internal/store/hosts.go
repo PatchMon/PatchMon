@@ -364,10 +364,10 @@ func (s *HostsStore) HasActivePatchRun(ctx context.Context, hostID string) (bool
 	return d.Queries.HostHasActivePatchRun(ctx, hostID)
 }
 
-// SetRebootStatus records whether the host needs a restart and why.
-func (s *HostsStore) SetRebootStatus(ctx context.Context, hostID string, needsReboot bool, reason *string) error {
+// SetPatchRebootPending flags the host as needing a restart until its boot time changes.
+func (s *HostsStore) SetPatchRebootPending(ctx context.Context, hostID, reason string) error {
 	d := s.db.DB(ctx)
-	return d.Queries.UpdateHostRebootStatus(ctx, db.UpdateHostRebootStatusParams{ID: hostID, NeedsReboot: &needsReboot, RebootReason: reason})
+	return d.Queries.SetHostPatchRebootPending(ctx, db.SetHostPatchRebootPendingParams{ID: hostID, RebootReason: &reason})
 }
 
 // SetAwaitingPostPatchReport marks a host as awaiting a fresh inventory report after a real patch run completed.

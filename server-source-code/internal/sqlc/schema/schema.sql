@@ -234,6 +234,7 @@ CREATE TABLE IF NOT EXISTS hosts (
     notes TEXT,
     needs_reboot BOOLEAN DEFAULT false,
     reboot_reason TEXT,
+    patch_reboot_pending_boot_time TIMESTAMPTZ,
     docker_enabled BOOLEAN NOT NULL DEFAULT false,
     compliance_enabled BOOLEAN NOT NULL DEFAULT false,
     compliance_on_demand_only BOOLEAN NOT NULL DEFAULT true,

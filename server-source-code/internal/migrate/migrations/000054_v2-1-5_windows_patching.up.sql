@@ -31,3 +31,4 @@ ALTER TABLE host_packages ADD COLUMN IF NOT EXISTS winget_pinned BOOLEAN;
 ALTER TABLE host_packages ADD COLUMN IF NOT EXISTS wua_browse_only BOOLEAN;
 ALTER TABLE host_packages ADD COLUMN IF NOT EXISTS wua_update_type TEXT;
 ALTER TABLE host_packages DROP COLUMN IF EXISTS wua_install_result;
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS patch_reboot_pending_boot_time TIMESTAMPTZ;

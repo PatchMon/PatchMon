@@ -410,7 +410,7 @@ func notifiesRunEnd(stage string, ended bool) bool {
 	return ended && (stage == "completed" || stage == "failed")
 }
 
-const windowsRestartReason = "Windows Update installation requires a restart"
+const patchRestartReason = "Restart required to finish a patch run"
 
 func (h *PatchingHandler) recordRunRebootRequired(ctx context.Context, host *models.Host, run *db.GetPatchRunByIDRow, required bool) {
 	if err := h.patchRuns.SetRebootRequired(ctx, run.ID, required); err != nil {
@@ -419,8 +419,7 @@ func (h *PatchingHandler) recordRunRebootRequired(ctx context.Context, host *mod
 	if !required {
 		return
 	}
-	reason := windowsRestartReason
-	if err := h.hosts.SetRebootStatus(ctx, host.ID, true, &reason); err != nil {
+	if err := h.hosts.SetPatchRebootPending(ctx, host.ID, patchRestartReason); err != nil {
 		h.log.Error("patching: failed to set host reboot status", "host_id", host.ID, "error", err)
 	}
 	if h.notify == nil {
@@ -438,7 +437,7 @@ func (h *PatchingHandler) recordRunRebootRequired(ctx context.Context, host *mod
 		Type:          "patch_reboot_required",
 		Severity:      "warning",
 		Title:         "Reboot Required - " + hostName,
-		Message:       "Host \"" + hostName + "\" requires a reboot after Windows Update installation.",
+		Message:       "Host \"" + hostName + "\" needs a restart to finish a patch run.",
 		ReferenceType: "host",
 		ReferenceID:   host.ID,
 		Metadata: map[string]interface{}{

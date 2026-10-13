@@ -358,7 +358,9 @@ UPDATE hosts SET
     system_uptime = COALESCE($19::text, system_uptime),
     boot_time = COALESCE($20::timestamptz, boot_time),
     load_average = COALESCE($21::jsonb, load_average),
-    needs_reboot = COALESCE($22::boolean, needs_reboot),
+    -- A run that needed a restart pins needs_reboot until boot_time moves; 60s absorbs uptime jitter.
+    needs_reboot = COALESCE($22::boolean, needs_reboot) OR (patch_reboot_pending_boot_time IS NOT NULL
+            AND ABS(EXTRACT(EPOCH FROM (COALESCE($20::timestamptz, boot_time) - patch_reboot_pending_boot_time))) < 60),
     -- reboot_reason is only rewritten when this report also carries
     -- needs_reboot. A hash-gated partial report never carries either (the ping
     -- metrics path owns both fields), and reboot_reason has no COALESCE guard
@@ -367,6 +369,9 @@ UPDATE hosts SET
     -- Second arm: a report asserting needs_reboot without a reason must not
     -- blank a stored one; clearing the flag still clears both.
     reboot_reason = CASE
+        WHEN (patch_reboot_pending_boot_time IS NOT NULL
+                AND ABS(EXTRACT(EPOCH FROM (COALESCE($20::timestamptz, boot_time) - patch_reboot_pending_boot_time))) < 60)
+             AND NOT COALESCE($22::boolean, false) THEN 'Restart required to finish a patch run'
         WHEN $22::boolean IS NULL THEN reboot_reason
         WHEN $22::boolean IS TRUE
              AND $23::text IS NULL THEN reboot_reason
@@ -378,7 +383,9 @@ UPDATE hosts SET
     interfaces_hash = COALESCE($27::text, interfaces_hash),
     hostname_hash = COALESCE($28::text, hostname_hash),
     last_full_report_at = COALESCE($29::timestamp, last_full_report_at),
-    awaiting_post_patch_report_run_id = NULL
+    awaiting_post_patch_report_run_id = NULL,
+    patch_reboot_pending_boot_time = CASE WHEN (patch_reboot_pending_boot_time IS NOT NULL
+            AND ABS(EXTRACT(EPOCH FROM (COALESCE($20::timestamptz, boot_time) - patch_reboot_pending_boot_time))) < 60) THEN patch_reboot_pending_boot_time END
 WHERE id = $30
 `
 

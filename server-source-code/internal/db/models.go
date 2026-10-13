@@ -312,6 +312,7 @@ type Host struct {
 	Notes                        *string            `json:"notes"`
 	NeedsReboot                  *bool              `json:"needs_reboot"`
 	RebootReason                 *string            `json:"reboot_reason"`
+	PatchRebootPendingBootTime   pgtype.Timestamptz `json:"patch_reboot_pending_boot_time"`
 	DockerEnabled                bool               `json:"docker_enabled"`
 	ComplianceEnabled            bool               `json:"compliance_enabled"`
 	ComplianceOnDemandOnly       bool               `json:"compliance_on_demand_only"`
