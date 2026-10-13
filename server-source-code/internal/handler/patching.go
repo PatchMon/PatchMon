@@ -266,8 +266,19 @@ func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Reques
 			})
 		}
 	}
-	if terminalPatchStages[body.Stage] && body.RebootRequired != nil {
-		h.recordRunRebootRequired(r.Context(), host, run, *body.RebootRequired)
+	if terminalPatchStages[body.Stage] {
+		required := body.RebootRequired
+		if store.IsWindowsOSType(host.OSType) && (required == nil || !*required) {
+			need, err := h.patchRuns.ItemsNeedReboot(r.Context(), run.ID)
+			if err != nil {
+				h.log.Error("patching: failed to read run items for reboot state", "patch_run_id", run.ID, "error", err)
+			} else if need {
+				required = &need
+			}
+		}
+		if required != nil {
+			h.recordRunRebootRequired(r.Context(), host, run, *required)
+		}
 	}
 	if body.Stage == "completed" && !run.DryRun {
 		if err := h.hosts.SetAwaitingPostPatchReport(r.Context(), run.HostID, &patchRunID); err != nil {

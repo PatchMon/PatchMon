@@ -751,7 +751,7 @@ CREATE TABLE IF NOT EXISTS patch_run_items (
     title TEXT NOT NULL,
     kb TEXT,
     status TEXT NOT NULL CHECK (status IN ('pending', 'would_install', 'not_applicable', 'installed',
-        'installed_with_errors', 'failed', 'aborted', 'skipped')),
+        'installed_with_errors', 'installed_pending_reboot', 'already_installed', 'failed', 'aborted', 'skipped')),
     result_code INTEGER,
     hresult TEXT,
     exit_code BIGINT,

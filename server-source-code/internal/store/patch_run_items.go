@@ -93,7 +93,8 @@ const (
 
 var patchItemStatuses = map[string]bool{
 	"pending": true, "would_install": true, "not_applicable": true, "installed": true,
-	"installed_with_errors": true, "failed": true, "aborted": true, "skipped": true,
+	"installed_with_errors": true, "installed_pending_reboot": true, "already_installed": true,
+	"failed": true, "aborted": true, "skipped": true,
 }
 
 var hresultPattern = regexp.MustCompile(`^0x[0-9A-Fa-f]{1,8}$`)
@@ -330,10 +331,28 @@ func windowsPackagesAffected(stage string, items []db.PatchRunItem) []string {
 				out = append(out, it.Title)
 			}
 		case "completed", "failed", "cancelled":
-			if it.Status == "installed" || it.Status == "installed_with_errors" {
+			if it.Status == "installed" || it.Status == "installed_with_errors" || it.Status == "installed_pending_reboot" {
 				out = append(out, it.Title)
 			}
 		}
 	}
 	return out
+}
+
+func itemsNeedReboot(items []db.PatchRunItem) bool {
+	for _, it := range items {
+		if it.RebootRequired || it.Status == "installed_pending_reboot" {
+			return true
+		}
+	}
+	return false
+}
+
+// ItemsNeedReboot reports whether any of the run's items left the host needing a restart.
+func (s *PatchRunsStore) ItemsNeedReboot(ctx context.Context, runID string) (bool, error) {
+	items, err := s.ListItems(ctx, runID)
+	if err != nil {
+		return false, err
+	}
+	return itemsNeedReboot(items), nil
 }

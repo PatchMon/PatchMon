@@ -110,11 +110,13 @@ func TestWindowsPackagesAffected(t *testing.T) {
 		{Title: "C", Status: "failed"},
 		{Title: "D", Status: "would_install"},
 		{Title: "E", Status: "not_applicable"},
+		{Title: "F", Status: "installed_pending_reboot"},
+		{Title: "G", Status: "already_installed"},
 	}
 	for stage, want := range map[string][]string{
-		"completed":         {"A", "B"},
-		"failed":            {"A", "B"},
-		"cancelled":         {"A", "B"},
+		"completed":         {"A", "B", "F"},
+		"failed":            {"A", "B", "F"},
+		"cancelled":         {"A", "B", "F"},
 		"dry_run_completed": {"D"},
 		"progress":          nil,
 	} {
@@ -132,6 +134,26 @@ func TestRunAcceptsItemReports(t *testing.T) {
 	} {
 		if got := RunAcceptsItemReports(status); got != want {
 			t.Errorf("%s: got %v, want %v", status, got, want)
+		}
+	}
+}
+
+func TestItemsNeedReboot(t *testing.T) {
+	if itemsNeedReboot([]db.PatchRunItem{{Status: "installed"}, {Status: "already_installed"}}) {
+		t.Error("no restart signal, but reported as needing one")
+	}
+	if !itemsNeedReboot([]db.PatchRunItem{{Status: "installed"}, {Status: "installed_pending_reboot"}}) {
+		t.Error("installed_pending_reboot not treated as needing a restart")
+	}
+	if !itemsNeedReboot([]db.PatchRunItem{{Status: "installed", RebootRequired: true}}) {
+		t.Error("item reboot_required ignored")
+	}
+}
+
+func TestNormaliseAgentItemsAcceptsRestartStatuses(t *testing.T) {
+	for _, st := range []string{"installed_pending_reboot", "already_installed"} {
+		if _, err := normaliseAgentItems([]AgentItemReport{{Kind: "wua", ID: itemGUID, Status: st}}); err != nil {
+			t.Errorf("%s rejected: %v", st, err)
 		}
 	}
 }
