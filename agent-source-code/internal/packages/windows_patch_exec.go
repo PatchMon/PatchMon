@@ -118,8 +118,21 @@ func (b *wingetExecBackend) Resolve() error {
 }
 
 func (b *wingetExecBackend) Run(ctx context.Context, args []string, log func(string)) (uint32, string, error) {
+	env := b.env
+	if len(args) > 0 && args[0] == "upgrade" {
+		dir, err := newRunTempDir(envValue(b.env, "TEMP"))
+		if err != nil {
+			return 0, "", fmt.Errorf("prepare a private temp directory for winget: %w", err)
+		}
+		defer func() {
+			if err := os.RemoveAll(dir); err != nil && log != nil {
+				log("[winget] could not remove its temp directory " + dir + ": " + err.Error() + "\n")
+			}
+		}()
+		env = withTempDir(b.env, dir)
+	}
 	cmd := exec.CommandContext(ctx, b.path, args...)
-	cmd.Env = b.env
+	cmd.Env = env
 	hideWindow(cmd)
 	cmd.WaitDelay = childWaitDelay
 	lines := newLineLogger(log, 1<<20)

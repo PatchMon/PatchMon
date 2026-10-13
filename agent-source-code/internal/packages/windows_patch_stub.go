@@ -8,4 +8,6 @@ var errNotWindows = errors.New("windows patching is not supported on this platfo
 
 func wingetTempDir() (string, error) { return "", errNotWindows }
 
+func newRunTempDir(string) (string, error) { return "", errNotWindows }
+
 func pendingFileRenameValues() [][]string { return nil }

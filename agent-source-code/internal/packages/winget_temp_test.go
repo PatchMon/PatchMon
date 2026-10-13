@@ -12,3 +12,13 @@ func TestWithTempDirReplacesTempAndTmp(t *testing.T) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 }
+
+func TestEnvValue(t *testing.T) {
+	env := withTempDir([]string{"A=1", `temp=C:\old`}, `C:\Windows\SystemTemp`)
+	if got := envValue(env, "TEMP"); got != `C:\Windows\SystemTemp` {
+		t.Errorf("TEMP = %q", got)
+	}
+	if got := envValue(env, "MISSING"); got != "" {
+		t.Errorf("missing = %q", got)
+	}
+}

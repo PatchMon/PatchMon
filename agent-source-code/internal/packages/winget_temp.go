@@ -15,3 +15,12 @@ func withTempDir(environ []string, dir string) []string {
 	}
 	return append(out, "TEMP="+dir, "TMP="+dir)
 }
+
+func envValue(environ []string, key string) string {
+	for _, kv := range environ {
+		if k, v, ok := strings.Cut(kv, "="); ok && strings.EqualFold(k, key) {
+			return v
+		}
+	}
+	return ""
+}
