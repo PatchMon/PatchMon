@@ -1108,17 +1108,22 @@ func (r *windowsPatchRun) runWUAPhase(runCtx, stopCtx context.Context, wuaIDs []
 	r.out("[Windows Update] Searching for updates...\n")
 	var scan wuaScan
 	var err error
+	var scanTimedOut bool
 	r.withHeartbeat("[Windows Update] Searching for updates", func() {
 		ctx, cancel := context.WithTimeout(stopCtx, r.timeouts.scan)
 		defer cancel()
 		scan, err = r.wua.Scan(ctx, r.log)
+		scanTimedOut = errors.Is(ctx.Err(), context.DeadlineExceeded)
 	})
 	if err != nil {
 		if reason := r.interruptReason(runCtx); reason != "" {
 			r.failWUATargets(wuaIDs, itemSkipped, reason)
 			return
 		}
-		msg := "Windows Update search failed: " + err.Error()
+		msg := "Windows Update search failed: " + r.errorItemMessage(err)
+		if scanTimedOut {
+			msg = fmt.Sprintf("Windows Update search did not finish within %d minutes", minutes(r.timeouts.scan))
+		}
 		r.out("[Windows Update] %s\n", msg)
 		if r.req.PatchAll {
 			r.runErrors = append(r.runErrors, msg)
@@ -1176,18 +1181,25 @@ func (r *windowsPatchRun) runWUAPhase(runCtx, stopCtx context.Context, wuaIDs []
 	}
 	r.out("[Windows Update] Downloading %d update(s)...\n", len(ids))
 	var dl map[string]wuaOpResult
+	var dlTimedOut bool
 	r.withHeartbeat("[Windows Update] Downloading", func() {
 		ctx, cancel := context.WithTimeout(stopCtx, dlTimeout)
 		defer cancel()
 		dl, err = r.wua.Download(ctx, ids, r.log)
+		dlTimedOut = errors.Is(ctx.Err(), context.DeadlineExceeded)
 	})
 	if err != nil {
 		reason := r.interruptReason(runCtx)
 		status := itemSkipped
 		msg := reason
-		if reason == "" {
+		switch {
+		case reason != "":
+		case dlTimedOut:
 			status = itemFailed
-			msg = "Download failed: " + errorItemMessage(err)
+			msg = fmt.Sprintf("Download did not finish within %d minutes", minutes(dlTimeout))
+		default:
+			status = itemFailed
+			msg = "Download failed: " + r.errorItemMessage(err)
 		}
 		for _, it := range queued {
 			r.finish(it, status, msg)
@@ -1230,12 +1242,18 @@ func (r *windowsPatchRun) runWUAPhase(runCtx, stopCtx context.Context, wuaIDs []
 		r.out("%s...\n", label)
 		var res wuaOpResult
 		var ierr error
+		var timedOut bool
 		r.withHeartbeat(label, func() {
 			ctx, cancel := context.WithTimeout(runCtx, timeout)
 			defer cancel()
 			res, ierr = r.wua.Install(ctx, u.ID, r.log)
+			timedOut = ierr != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) && runCtx.Err() == nil
 		})
-		r.applyInstallResult(it, res, ierr)
+		if timedOut {
+			r.finish(it, itemFailed, fmt.Sprintf("Install did not finish within %d minutes. Windows may still be completing it; check after a restart.", minutes(timeout)))
+		} else {
+			r.applyInstallResult(it, res, ierr)
+		}
 		r.out("  %s: %s\n", displayName(*it), it.Message)
 		if it.Status == itemFailed && isInstallBlockedHResult(it.HResult) {
 			blocked = msgRestartFirst
@@ -1273,7 +1291,7 @@ func (r *windowsPatchRun) applyInstallResult(it *models.PatchRunItem, res wuaOpR
 		if errors.As(err, &se) {
 			it.HResult = normaliseHResult(se.HResult)
 		}
-		r.finish(it, itemFailed, "Install failed: "+errorItemMessage(err))
+		r.finish(it, itemFailed, "Install failed: "+r.errorItemMessage(err))
 		return
 	}
 	switch {
@@ -1299,12 +1317,26 @@ func (r *windowsPatchRun) applyInstallResult(it *models.PatchRunItem, res wuaOpR
 	r.finish(it, wuaResultStatus(res.ResultCode), msg)
 }
 
-func errorItemMessage(err error) string {
+// errorItemMessage turns an error into item text. Only the script's own messages are shown;
+// anything else goes to the run output and the item gets a plain description.
+func (r *windowsPatchRun) errorItemMessage(err error) string {
 	var se *wuaScriptError
-	if errors.As(err, &se) {
+	switch {
+	case errors.As(err, &se):
 		return se.itemMessage()
+	case errors.Is(err, errWUANoResult):
+		return "the Windows Update script ended without a result"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "it did not finish in time"
+	case errors.Is(err, context.Canceled):
+		return "it was cancelled"
 	}
-	return err.Error()
+	r.out("[Windows Update] %s\n", stripTerminalControls(err.Error()))
+	return "Windows Update could not be run; see the run output"
+}
+
+func minutes(d time.Duration) int {
+	return int(d / time.Minute)
 }
 
 func displayName(it models.PatchRunItem) string {

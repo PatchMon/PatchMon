@@ -417,6 +417,7 @@ func TestGuardedWindowsUpdatesWithoutCacheIsOmitted(t *testing.T) {
 }
 
 type fakeWUA struct {
+	hang         map[string]bool
 	mu           sync.Mutex
 	scan         wuaScan
 	scanErr      error
@@ -430,15 +431,23 @@ type fakeWUA struct {
 	installDelay time.Duration
 }
 
-func (f *fakeWUA) Scan(_ context.Context, log func(string)) (wuaScan, error) {
+func (f *fakeWUA) Scan(ctx context.Context, log func(string)) (wuaScan, error) {
 	log("scanning\n")
+	if f.hang["scan"] {
+		<-ctx.Done()
+		return wuaScan{}, ctx.Err()
+	}
 	return f.scan, f.scanErr
 }
 
-func (f *fakeWUA) Download(_ context.Context, ids []string, _ func(string)) (map[string]wuaOpResult, error) {
+func (f *fakeWUA) Download(ctx context.Context, ids []string, _ func(string)) (map[string]wuaOpResult, error) {
 	f.mu.Lock()
 	f.downloads = append(f.downloads, ids)
 	f.mu.Unlock()
+	if f.hang["download"] {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	return f.downloadRes, f.downloadErr
 }
 
@@ -448,6 +457,10 @@ func (f *fakeWUA) Install(ctx context.Context, id string, _ func(string)) (wuaOp
 	f.mu.Unlock()
 	if f.onInstall != nil {
 		f.onInstall(ctx, id)
+	}
+	if f.hang["install:"+id] {
+		<-ctx.Done()
+		return wuaOpResult{}, ctx.Err()
 	}
 	if f.installDelay > 0 {
 		time.Sleep(f.installDelay)
@@ -1114,5 +1127,42 @@ func TestRunInvalidatesTheUpdateCacheAfterInstalling(t *testing.T) {
 	restartPendingMu.Unlock()
 	if n != 0 {
 		t.Error("a failed install must not be recorded as waiting for a restart")
+	}
+}
+
+func runWithTimeouts(req WindowsPatchRequest, w *fakeWUA, set func(*windowsPatchTimeouts)) (WindowsPatchResult, *recorder) {
+	rec := &recorder{}
+	r := newWindowsPatchRun(req, rec.hooks(), w, &fakeWinget{})
+	set(&r.timeouts)
+	return r.run(context.Background(), context.Background()), rec
+}
+
+func TestWUATimeoutsHaveReadableMessages(t *testing.T) {
+	two := wuaScan{Updates: []wuaUpdate{{ID: guidA, Title: "A", Type: 1}, {ID: guidB, Title: "B", Type: 1}}}
+	short := 20 * time.Millisecond
+
+	res, _ := runWithTimeouts(WindowsPatchRequest{Targets: []WindowsPatchTarget{{Kind: WindowsTargetWUA, ID: guidA}}}, &fakeWUA{hang: map[string]bool{"scan": true}}, func(to *windowsPatchTimeouts) { to.scan = short })
+	if it := itemByID(res, guidA); it.Status != itemFailed || it.Message != "Windows Update search did not finish within 0 minutes" {
+		t.Errorf("scan timeout = %+v", it)
+	}
+
+	res, _ = runWithTimeouts(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, &fakeWUA{scan: two, hang: map[string]bool{"download": true}}, func(to *windowsPatchTimeouts) { to.download = short })
+	if it := itemByID(res, guidA); it.Status != itemFailed || !strings.HasPrefix(it.Message, "Download did not finish within") {
+		t.Errorf("download timeout = %+v", it)
+	}
+
+	res, _ = runWithTimeouts(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, &fakeWUA{scan: two, hang: map[string]bool{"install:" + guidA: true}}, func(to *windowsPatchTimeouts) { to.install = short })
+	if it := itemByID(res, guidA); it.Status != itemFailed || it.RebootRequired || !strings.HasPrefix(it.Message, "Install did not finish within") || !strings.Contains(it.Message, "check after a restart") {
+		t.Errorf("install timeout = %+v", it)
+	}
+
+	w := &fakeWUA{scan: two, installErr: map[string]error{guidA: errors.New("exec: \"powershell.exe\": file does not exist")}}
+	res, rec := runWithTimeouts(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, w, func(*windowsPatchTimeouts) {})
+	it := itemByID(res, guidA)
+	if strings.Contains(it.Message, "exec:") || it.Message != "Install failed: Windows Update could not be run; see the run output" {
+		t.Errorf("raw error reached the item: %+v", it)
+	}
+	if !strings.Contains(rec.output(), "file does not exist") {
+		t.Error("the raw error must still reach the run output")
 	}
 }
