@@ -717,7 +717,7 @@ func guardedWindowsUpdates(collect func() []models.Package) ([]models.Package, b
 func (m *WindowsManager) UpdatableWingetApps() []models.Package {
 	var out []models.Package
 	for _, p := range m.appPackages() {
-		if p.NeedsUpdate && p.WingetID != "" && !p.WingetPinned {
+		if p.NeedsUpdate && p.WingetID != "" && !p.WingetPinned && !p.WingetStoreApp {
 			out = append(out, p)
 		}
 	}

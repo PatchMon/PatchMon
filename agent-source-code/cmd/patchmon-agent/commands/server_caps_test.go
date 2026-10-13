@@ -14,7 +14,7 @@ func pinnedPackages() []models.Package {
 }
 
 func TestWingetPinnedOnlyReachesServersThatAcceptIt(t *testing.T) {
-	t.Cleanup(func() { serverAcceptsWingetPinned.Store(false) })
+	t.Cleanup(func() { serverAcceptsWingetPinned.Store(false); serverAcceptsWingetStoreApp.Store(false) })
 
 	legacy := pinnedPackages()
 	legacy[0].WingetPinned = false
@@ -59,5 +59,27 @@ func TestWingetPinnedOnlyReachesServersThatAcceptIt(t *testing.T) {
 	recordServerCapabilities(nil)
 	if !serverAcceptsWingetPinned.Load() {
 		t.Error("a failed ping must not change what the server is known to accept")
+	}
+}
+
+func TestWingetStoreAppGatedOnItsOwnCapability(t *testing.T) {
+	t.Cleanup(func() { serverAcceptsWingetPinned.Store(false); serverAcceptsWingetStoreApp.Store(false) })
+	pkgs := func() []models.Package {
+		return []models.Package{{Name: "Windows Terminal", WingetID: "Microsoft.WindowsTerminal", NeedsUpdate: true, WingetPinned: true, WingetStoreApp: true}}
+	}
+	for _, tc := range []struct {
+		caps          []string
+		pinned, store bool
+	}{
+		{nil, false, false},
+		{[]string{"wingetPinned"}, true, false},
+		{[]string{"wingetStoreApp"}, false, true},
+		{[]string{"wingetPinned", "wingetStoreApp"}, true, true},
+	} {
+		recordServerCapabilities(&models.PingResponse{Capabilities: tc.caps})
+		got := withServerSupportedFields(pkgs())[0]
+		if got.WingetPinned != tc.pinned || got.WingetStoreApp != tc.store {
+			t.Errorf("caps %v: pinned %v store %v", tc.caps, got.WingetPinned, got.WingetStoreApp)
+		}
 	}
 }

@@ -23,6 +23,7 @@ type Package struct {
 	WUAType           string   `json:"wuaType,omitempty"`
 	WingetID          string   `json:"wingetId,omitempty"`
 	WingetPinned      bool     `json:"wingetPinned,omitempty"`
+	WingetStoreApp    bool     `json:"wingetStoreApp,omitempty"`
 }
 
 // Repository represents a software repository

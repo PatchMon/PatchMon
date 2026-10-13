@@ -105,6 +105,9 @@ func (m *WindowsManager) appPackages() []models.Package {
 			m.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{"packages": suppressed})).Debug("Update flag cleared: a newer Appx copy is installed than winget reports")
 		}
 	}
+	if hasWingetUpdate(appPackages) {
+		markStoreApps(appPackages, m.getStoreAppx(), windowsAppsDir())
+	}
 	m.logger.WithField("count", len(appPackages)).Info("Application packages after merge")
 	return appPackages
 }
