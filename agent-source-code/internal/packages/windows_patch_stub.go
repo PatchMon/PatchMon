@@ -11,4 +11,4 @@ var errNotWindows = errors.New("windows patching is not supported on this platfo
 
 func hideWindow(*exec.Cmd) {}
 
-func checkAuthenticode(string) error { return errNotWindows }
+func checkWingetTrust(string) error { return errNotWindows }
