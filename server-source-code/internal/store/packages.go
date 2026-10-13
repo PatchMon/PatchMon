@@ -86,6 +86,7 @@ type Patchability struct {
 	WUABrowseOnly      bool   `json:"wuaBrowseOnly,omitempty"`
 	WUAUpdateType      string `json:"wuaUpdateType,omitempty"`
 	IsFeatureUpgrade   bool   `json:"isFeatureUpgrade,omitempty"`
+	PendingRestart     bool   `json:"pendingRestart,omitempty"`
 }
 
 // PackageStats holds package statistics.
@@ -217,6 +218,7 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 				WUABrowseOnly:      r.WuaBrowseOnly,
 				WUAUpdateType:      r.WuaUpdateType,
 				IsFeatureUpgrade:   r.IsFeatureUpgrade,
+				PendingRestart:     r.PendingRestart,
 			},
 		}
 		hostsByPkg[r.PackageID] = append(hostsByPkg[r.PackageID], ref)
@@ -306,6 +308,7 @@ func (s *PackagesStore) GetByID(ctx context.Context, id string) (*PackageDetail,
 			WUABrowseOnly:      r.WuaBrowseOnly,
 			WUAUpdateType:      r.WuaUpdateType,
 			IsFeatureUpgrade:   r.IsFeatureUpgrade,
+			PendingRestart:     r.PendingRestart,
 			Hosts: HostPackageHostRef{
 				ID:           r.HostID,
 				FriendlyName: r.HostFriendlyName,
@@ -409,6 +412,7 @@ type HostPackageWithHost struct {
 	WUABrowseOnly      bool               `json:"wua_browse_only,omitempty"`
 	WUAUpdateType      string             `json:"wua_update_type,omitempty"`
 	IsFeatureUpgrade   bool               `json:"is_feature_upgrade,omitempty"`
+	PendingRestart     bool               `json:"pending_restart,omitempty"`
 }
 
 // HostPackageHostRef has host fields for package detail.
@@ -549,6 +553,7 @@ func (s *PackagesStore) GetHosts(ctx context.Context, packageIDOrName string, p 
 				WUABrowseOnly:      r.WuaBrowseOnly,
 				WUAUpdateType:      r.WuaUpdateType,
 				IsFeatureUpgrade:   r.IsFeatureUpgrade,
+				PendingRestart:     r.PendingRestart,
 			},
 		}
 	}

@@ -152,3 +152,16 @@ func TestDeleteExceptWindowsUpdatesKeepsOnlyThatCategory(t *testing.T) {
 		t.Fatalf("query does not scope to the host and the Windows Update category:\n%s", q)
 	}
 }
+
+func TestPendingRestartPredicateInHostListings(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "sqlc", "queries", "packages.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{"GetHostPackagesWithHostsByPackageID", "GetHostRefsForPackageIDs", "ListHostsForPackage"} {
+		body := namedQueryIn(t, string(b), q)
+		if !strings.Contains(body, "hp.current_version = 'pending restart'") || !strings.Contains(body, "wp.category = 'Windows Update'") || !strings.Contains(body, "pending_restart") {
+			t.Errorf("%s does not return pending_restart for restart-pending Windows Updates", q)
+		}
+	}
+}

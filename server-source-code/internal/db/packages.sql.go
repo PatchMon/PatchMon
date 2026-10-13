@@ -128,7 +128,9 @@ SELECT hp.id, hp.host_id, hp.package_id, hp.current_version, hp.available_versio
     (CASE WHEN hp.wua_guid IS NOT NULL THEN 'wua' WHEN hp.winget_id IS NOT NULL THEN 'winget' ELSE '' END)::text AS patch_source,
     COALESCE(hp.wua_browse_only, false)::boolean AS wua_browse_only,
     COALESCE(hp.wua_update_type, '')::text AS wua_update_type,
-    (hp.wua_update_type IS NOT DISTINCT FROM 'FeatureUpgrade' OR COALESCE(hp.wua_categories @> '["Upgrades"]'::jsonb, false))::boolean AS is_feature_upgrade
+    (hp.wua_update_type IS NOT DISTINCT FROM 'FeatureUpgrade' OR COALESCE(hp.wua_categories @> '["Upgrades"]'::jsonb, false))::boolean AS is_feature_upgrade,
+    (hp.current_version = 'pending restart'
+        AND EXISTS (SELECT 1 FROM packages wp WHERE wp.id = hp.package_id AND wp.category = 'Windows Update'))::boolean AS pending_restart
 FROM host_packages hp
 JOIN hosts h ON h.id = hp.host_id
 LEFT JOIN repositories r ON r.id = hp.source_repository_id
@@ -161,6 +163,7 @@ type GetHostPackagesWithHostsByPackageIDRow struct {
 	WuaBrowseOnly      bool             `json:"wua_browse_only"`
 	WuaUpdateType      string           `json:"wua_update_type"`
 	IsFeatureUpgrade   bool             `json:"is_feature_upgrade"`
+	PendingRestart     bool             `json:"pending_restart"`
 }
 
 // ListPackages and CountPackages are intentionally NOT defined here.
@@ -221,6 +224,7 @@ func (q *Queries) GetHostPackagesWithHostsByPackageID(ctx context.Context, packa
 			&i.WuaBrowseOnly,
 			&i.WuaUpdateType,
 			&i.IsFeatureUpgrade,
+			&i.PendingRestart,
 		); err != nil {
 			return nil, err
 		}
@@ -248,6 +252,8 @@ WITH ranked_refs AS (
         COALESCE(hp.wua_browse_only, false)::boolean AS wua_browse_only,
         COALESCE(hp.wua_update_type, '')::text AS wua_update_type,
         (hp.wua_update_type IS NOT DISTINCT FROM 'FeatureUpgrade' OR COALESCE(hp.wua_categories @> '["Upgrades"]'::jsonb, false))::boolean AS is_feature_upgrade,
+    (hp.current_version = 'pending restart'
+        AND EXISTS (SELECT 1 FROM packages wp WHERE wp.id = hp.package_id AND wp.category = 'Windows Update'))::boolean AS pending_restart,
         row_number() OVER (
             PARTITION BY hp.package_id
             ORDER BY hp.needs_update DESC, h.friendly_name ASC, h.id ASC
@@ -258,7 +264,7 @@ WITH ranked_refs AS (
     AND ($2::text IS NULL OR hp.host_id = $2)
 )
 SELECT package_id, host_id, friendly_name, os_type, current_version, available_version, needs_update, is_security_update,
-    patchable, not_patchable_reason, patch_source, wua_browse_only, wua_update_type, is_feature_upgrade
+    patchable, not_patchable_reason, patch_source, wua_browse_only, wua_update_type, is_feature_upgrade, pending_restart
 FROM ranked_refs
 WHERE rn <= 10
 ORDER BY package_id, needs_update DESC, friendly_name ASC
@@ -284,6 +290,7 @@ type GetHostRefsForPackageIDsRow struct {
 	WuaBrowseOnly      bool    `json:"wua_browse_only"`
 	WuaUpdateType      string  `json:"wua_update_type"`
 	IsFeatureUpgrade   bool    `json:"is_feature_upgrade"`
+	PendingRestart     bool    `json:"pending_restart"`
 }
 
 func (q *Queries) GetHostRefsForPackageIDs(ctx context.Context, arg GetHostRefsForPackageIDsParams) ([]GetHostRefsForPackageIDsRow, error) {
@@ -310,6 +317,7 @@ func (q *Queries) GetHostRefsForPackageIDs(ctx context.Context, arg GetHostRefsF
 			&i.WuaBrowseOnly,
 			&i.WuaUpdateType,
 			&i.IsFeatureUpgrade,
+			&i.PendingRestart,
 		); err != nil {
 			return nil, err
 		}
@@ -439,7 +447,9 @@ SELECT h.id, h.friendly_name, h.hostname, h.os_type, h.os_version, h.last_update
     (CASE WHEN hp.wua_guid IS NOT NULL THEN 'wua' WHEN hp.winget_id IS NOT NULL THEN 'winget' ELSE '' END)::text AS patch_source,
     COALESCE(hp.wua_browse_only, false)::boolean AS wua_browse_only,
     COALESCE(hp.wua_update_type, '')::text AS wua_update_type,
-    (hp.wua_update_type IS NOT DISTINCT FROM 'FeatureUpgrade' OR COALESCE(hp.wua_categories @> '["Upgrades"]'::jsonb, false))::boolean AS is_feature_upgrade
+    (hp.wua_update_type IS NOT DISTINCT FROM 'FeatureUpgrade' OR COALESCE(hp.wua_categories @> '["Upgrades"]'::jsonb, false))::boolean AS is_feature_upgrade,
+    (hp.current_version = 'pending restart'
+        AND EXISTS (SELECT 1 FROM packages wp WHERE wp.id = hp.package_id AND wp.category = 'Windows Update'))::boolean AS pending_restart
 FROM host_packages hp
 JOIN hosts h ON h.id = hp.host_id
 LEFT JOIN repositories r ON r.id = hp.source_repository_id
@@ -480,6 +490,7 @@ type ListHostsForPackageRow struct {
 	WuaBrowseOnly      bool             `json:"wua_browse_only"`
 	WuaUpdateType      string           `json:"wua_update_type"`
 	IsFeatureUpgrade   bool             `json:"is_feature_upgrade"`
+	PendingRestart     bool             `json:"pending_restart"`
 }
 
 func (q *Queries) ListHostsForPackage(ctx context.Context, arg ListHostsForPackageParams) ([]ListHostsForPackageRow, error) {
@@ -519,6 +530,7 @@ func (q *Queries) ListHostsForPackage(ctx context.Context, arg ListHostsForPacka
 			&i.WuaBrowseOnly,
 			&i.WuaUpdateType,
 			&i.IsFeatureUpgrade,
+			&i.PendingRestart,
 		); err != nil {
 			return nil, err
 		}
