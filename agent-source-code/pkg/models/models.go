@@ -217,6 +217,8 @@ type PingResponse struct {
 	// "nothing changed" — see serverSupportsHashGate. The exact "hashGate"
 	// JSON key is a client/server contract; do not rename it.
 	HashGate bool `json:"hashGate,omitempty"`
+	// Capabilities lists optional report fields the server accepts, such as "wingetPinned".
+	Capabilities []string `json:"capabilities,omitempty"`
 	// RequestFull lists the section identifiers (subset of the closed
 	// SectionXxx constants) whose stored server-side hash differs from
 	// what the agent shipped. Empty array == nothing changed, agent stays

@@ -164,6 +164,7 @@ func collectReportData() (*collectedReport, error) {
 	if packageList == nil {
 		packageList = []models.Package{}
 	}
+	packageList = withServerSupportedFields(packageList)
 	if repoList == nil {
 		repoList = []models.Repository{}
 	}
@@ -657,6 +658,7 @@ func runCheckIn(ctx context.Context, forceFull bool) error {
 		// Server unreachable / wrong creds — caller logs and retries.
 		return fmt.Errorf("check-in ping failed: %w", err)
 	}
+	recordServerCapabilities(resp)
 
 	if !serverSupportsHashGate(resp) {
 		// Pre-2.0.3 server. An empty requestFull from it means "unknown",
