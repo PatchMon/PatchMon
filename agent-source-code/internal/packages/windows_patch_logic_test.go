@@ -417,6 +417,8 @@ func TestGuardedWindowsUpdatesWithoutCacheIsOmitted(t *testing.T) {
 }
 
 type fakeWUA struct {
+	statuses     map[string][]wuaOpResult
+	statusCalls  int
 	hang         map[string]bool
 	mu           sync.Mutex
 	scan         wuaScan
@@ -449,6 +451,21 @@ func (f *fakeWUA) Download(ctx context.Context, ids []string, _ func(string)) (m
 		return nil, ctx.Err()
 	}
 	return f.downloadRes, f.downloadErr
+}
+
+func (f *fakeWUA) Status(_ context.Context, id string, _ func(string)) (wuaOpResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.statusCalls++
+	seq := f.statuses[id]
+	if len(seq) == 0 {
+		return wuaOpResult{ID: id, Found: true}, nil
+	}
+	res := seq[0]
+	if len(seq) > 1 {
+		f.statuses[id] = seq[1:]
+	}
+	return res, nil
 }
 
 func (f *fakeWUA) Install(ctx context.Context, id string, _ func(string)) (wuaOpResult, error) {
@@ -1164,7 +1181,9 @@ func TestWUATimeoutsHaveReadableMessages(t *testing.T) {
 		t.Errorf("download timeout = %+v", it)
 	}
 
-	res, _ = runWithTimeouts(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, &fakeWUA{scan: two, hang: map[string]bool{"install:" + guidA: true}}, func(to *windowsPatchTimeouts) { to.install = short })
+	res, _ = runWithTimeouts(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, &fakeWUA{scan: two, hang: map[string]bool{"install:" + guidA: true}}, func(to *windowsPatchTimeouts) {
+		to.install, to.recheck, to.recheckEvery = short, short, time.Millisecond
+	})
 	if it := itemByID(res, guidA); it.Status != itemFailed || it.RebootRequired || !strings.HasPrefix(it.Message, "Install did not finish within") || !strings.Contains(it.Message, "check after a restart") {
 		t.Errorf("install timeout = %+v", it)
 	}
@@ -1186,7 +1205,7 @@ func TestInstallTimeoutStopsTheRestOfWindowsUpdate(t *testing.T) {
 	rec := &recorder{}
 	g := &fakeWinget{apps: []models.Package{{Name: "7-Zip", WingetID: "7zip.7zip", NeedsUpdate: true}}}
 	r := newWindowsPatchRun(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true, IncludeApps: true}, rec.hooks(), w, g)
-	r.timeouts.install = 20 * time.Millisecond
+	r.timeouts.install, r.timeouts.recheck, r.timeouts.recheckEvery = 20*time.Millisecond, 20*time.Millisecond, time.Millisecond
 	res := r.run(context.Background(), context.Background())
 	if !reflect.DeepEqual(w.installs, []string{guidA}) {
 		t.Fatalf("installs = %v; nothing may start while Windows is still servicing", w.installs)
@@ -1205,5 +1224,44 @@ func TestInstallTimeoutStopsTheRestOfWindowsUpdate(t *testing.T) {
 	runFake(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, &recorder{}, w, &fakeWinget{})
 	if len(w.installs) != 2 {
 		t.Errorf("an ordinary failure must not stop the next update: %v", w.installs)
+	}
+}
+
+func TestInstallTimeoutRechecksWindows(t *testing.T) {
+	scan := wuaScan{Updates: []wuaUpdate{{ID: guidA, Title: "A cumulative update", KBs: jsonStrings{"KB5122871"}, Type: 1}, {ID: guidB, Title: "B .NET", KBs: jsonStrings{"KB5127690"}, Type: 1}}}
+	set := func(to *windowsPatchTimeouts) {
+		to.install, to.recheck, to.recheckEvery = 20*time.Millisecond, time.Second, 5*time.Millisecond
+	}
+	cases := []struct {
+		name      string
+		statuses  []wuaOpResult
+		status    string
+		reboot    bool
+		nextRan   bool
+		msgPrefix string
+	}{
+		{"finished after the limit", []wuaOpResult{{Found: true}, {Found: true, AlreadyInstalled: true}}, itemInstalled, false, true, "Installed; Windows finished after"},
+		{"installed, restart pending", []wuaOpResult{{Found: true, PendingReboot: true}}, itemPendingReboot, true, true, "Installed; Windows finished after"},
+		{"still servicing", nil, itemFailed, false, false, "Install did not finish within"},
+	}
+	for _, c := range cases {
+		w := &fakeWUA{scan: scan, hang: map[string]bool{"install:" + guidA: true}, statuses: map[string][]wuaOpResult{guidA: c.statuses}}
+		res, _ := runWithTimeouts(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, w, set)
+		it := itemByID(res, guidA)
+		if it.Status != c.status || it.RebootRequired != c.reboot || !strings.HasPrefix(it.Message, c.msgPrefix) {
+			t.Errorf("%s: item = %+v", c.name, it)
+		}
+		ranNext := len(w.installs) == 2
+		if ranNext != c.nextRan {
+			t.Errorf("%s: installs = %v", c.name, w.installs)
+		}
+		if !c.nextRan {
+			if next := itemByID(res, guidB); next.Status != itemSkipped || next.Message != msgStillInstalling {
+				t.Errorf("%s: next = %+v", c.name, next)
+			}
+			if w.statusCalls < 2 {
+				t.Errorf("%s: polled %d times", c.name, w.statusCalls)
+			}
+		}
 	}
 }

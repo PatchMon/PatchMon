@@ -89,6 +89,19 @@ function Invoke-Download($session, $ids) {
     Emit @{ type = 'result'; op = 'download'; result_code = [int]$r.ResultCode; hresult = (Hex $r.HResult) }
 }
 
+function Invoke-Status($session, $id) {
+    $id = $id.ToLower()
+    $map = Find-ById $session @($id)
+    $u = $map[$id]
+    if ($null -eq $u) {
+        Emit @{ type = 'result'; op = 'status'; id = $id; found = $false }
+        return
+    }
+    $pending = $false
+    if (-not $u.IsInstalled -and (Get-SystemRebootRequired)) { $pending = (Get-InProgressIds $session).ContainsKey($id) }
+    Emit @{ type = 'result'; op = 'status'; id = $id; found = $true; already_installed = [bool]$u.IsInstalled; pending_reboot = $pending }
+}
+
 function Invoke-Install($session, $id) {
     $id = $id.ToLower()
     $map = Find-ById $session @($id)
@@ -151,6 +164,10 @@ try {
         'install' {
             if (([string]$req.id) -notmatch $guidPattern) { throw 'invalid update id' }
             Invoke-Install $session ([string]$req.id)
+        }
+        'status' {
+            if (([string]$req.id) -notmatch $guidPattern) { throw 'invalid update id' }
+            Invoke-Status $session ([string]$req.id)
         }
         default { throw 'unknown op' }
     }

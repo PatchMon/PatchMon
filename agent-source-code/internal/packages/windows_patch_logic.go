@@ -636,6 +636,7 @@ type wuaBackend interface {
 	Scan(ctx context.Context, log func(string)) (wuaScan, error)
 	Download(ctx context.Context, ids []string, log func(string)) (map[string]wuaOpResult, error)
 	Install(ctx context.Context, id string, log func(string)) (wuaOpResult, error)
+	Status(ctx context.Context, id string, log func(string)) (wuaOpResult, error)
 }
 
 type wingetBackend interface {
@@ -702,6 +703,7 @@ func newPendingRenames(before, after []string) bool {
 
 type windowsPatchTimeouts struct {
 	scan, download, downloadFeature, install, installFeature, wingetUpgrade, wingetList, heartbeat time.Duration
+	recheck, recheckEvery, recheckCall                                                             time.Duration
 }
 
 var defaultWindowsPatchTimeouts = windowsPatchTimeouts{
@@ -713,6 +715,9 @@ var defaultWindowsPatchTimeouts = windowsPatchTimeouts{
 	wingetUpgrade:   30 * time.Minute,
 	wingetList:      5 * time.Minute,
 	heartbeat:       60 * time.Second,
+	recheck:         10 * time.Minute,
+	recheckEvery:    60 * time.Second,
+	recheckCall:     2 * time.Minute,
 }
 
 var wuaMu sync.Mutex
@@ -1254,8 +1259,9 @@ func (r *windowsPatchRun) runWUAPhase(runCtx, stopCtx context.Context, wuaIDs []
 			timedOut = ierr != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) && runCtx.Err() == nil
 		})
 		if timedOut {
-			r.finish(it, itemFailed, fmt.Sprintf("Install did not finish within %d minutes. Windows may still be completing it; check after a restart.", minutes(timeout)))
-			blocked = msgStillInstalling
+			if !r.recheckAfterTimeout(stopCtx, it, u.ID, timeout) {
+				blocked = msgStillInstalling
+			}
 		} else {
 			r.applyInstallResult(it, res, ierr)
 		}
@@ -1264,6 +1270,46 @@ func (r *windowsPatchRun) runWUAPhase(runCtx, stopCtx context.Context, wuaIDs []
 			blocked = msgRestartFirst
 		}
 	}
+}
+
+// recheckAfterTimeout asks Windows whether an update whose install step timed out was
+// installed anyway: servicing carries on after the script is killed. It reports whether a
+// result was found; if not, the item stays failed and the remaining updates must wait.
+func (r *windowsPatchRun) recheckAfterTimeout(stopCtx context.Context, it *models.PatchRunItem, id string, timeout time.Duration) bool {
+	label := "[Windows Update] Checking whether Windows finished installing " + displayName(*it)
+	r.out("%s...\n", label)
+	var res wuaOpResult
+	found := false
+	r.withHeartbeat(label, func() {
+		deadline := r.now().Add(r.timeouts.recheck)
+		for {
+			ctx, cancel := context.WithTimeout(stopCtx, r.timeouts.recheckCall)
+			st, err := r.wua.Status(ctx, id, r.log)
+			cancel()
+			if err == nil && st.Found && (st.AlreadyInstalled || st.PendingReboot) {
+				res, found = st, true
+				return
+			}
+			if !r.now().Add(r.timeouts.recheckEvery).Before(deadline) {
+				return
+			}
+			select {
+			case <-stopCtx.Done():
+				return
+			case <-time.After(r.timeouts.recheckEvery):
+			}
+		}
+	})
+	switch {
+	case found && res.AlreadyInstalled:
+		r.finish(it, itemInstalled, fmt.Sprintf("Installed; Windows finished after the %d-minute limit", minutes(timeout)))
+	case found:
+		it.RebootRequired = true
+		r.finish(it, itemPendingReboot, fmt.Sprintf("Installed; Windows finished after the %d-minute limit; restart the host to complete it", minutes(timeout)))
+	default:
+		r.finish(it, itemFailed, fmt.Sprintf("Install did not finish within %d minutes. Windows may still be completing it; check after a restart.", minutes(timeout)))
+	}
+	return found
 }
 
 // recordWUAOutcome runs while the run still holds wuaMu, so the next report searches afresh

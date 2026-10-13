@@ -90,6 +90,14 @@ func (b wuaScriptBackend) Download(ctx context.Context, ids []string, log func(s
 	return res, nil
 }
 
+func (b wuaScriptBackend) Status(ctx context.Context, id string, log func(string)) (wuaOpResult, error) {
+	out, err := b.exec(ctx, wuaRequest{Op: "status", ID: id}, log)
+	if err != nil {
+		return wuaOpResult{}, err
+	}
+	return out.Final.wuaOpResult, nil
+}
+
 func (b wuaScriptBackend) Install(ctx context.Context, id string, log func(string)) (wuaOpResult, error) {
 	out, err := b.exec(ctx, wuaRequest{Op: "install", ID: id}, log)
 	if err != nil {
