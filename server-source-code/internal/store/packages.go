@@ -75,6 +75,17 @@ type PackageHostRef struct {
 	AvailableVersion *string `json:"availableVersion"`
 	NeedsUpdate      bool    `json:"needsUpdate"`
 	IsSecurityUpdate bool    `json:"isSecurityUpdate"`
+	Patchability
+}
+
+// Patchability says whether a host-package pair can be patched and, on Windows, by which channel.
+type Patchability struct {
+	Patchable          bool   `json:"patchable"`
+	NotPatchableReason string `json:"notPatchableReason,omitempty"`
+	PatchSource        string `json:"patchSource,omitempty"`
+	WUABrowseOnly      bool   `json:"wuaBrowseOnly,omitempty"`
+	WUAUpdateType      string `json:"wuaUpdateType,omitempty"`
+	IsFeatureUpgrade   bool   `json:"isFeatureUpgrade,omitempty"`
 }
 
 // PackageStats holds package statistics.
@@ -199,6 +210,14 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 			AvailableVersion: r.AvailableVersion,
 			NeedsUpdate:      r.NeedsUpdate,
 			IsSecurityUpdate: r.IsSecurityUpdate,
+			Patchability: Patchability{
+				Patchable:          r.Patchable,
+				NotPatchableReason: r.NotPatchableReason,
+				PatchSource:        r.PatchSource,
+				WUABrowseOnly:      r.WuaBrowseOnly,
+				WUAUpdateType:      r.WuaUpdateType,
+				IsFeatureUpgrade:   r.IsFeatureUpgrade,
+			},
 		}
 		hostsByPkg[r.PackageID] = append(hostsByPkg[r.PackageID], ref)
 	}
@@ -271,16 +290,22 @@ func (s *PackagesStore) GetByID(ctx context.Context, id string) (*PackageDetail,
 	var sourceRepos []PackageRepoRef
 	for i, r := range rows {
 		hostPackages[i] = HostPackageWithHost{
-			ID:               r.ID,
-			HostID:           r.HostID,
-			PackageID:        id,
-			CurrentVersion:   r.CurrentVersion,
-			AvailableVersion: r.AvailableVersion,
-			NeedsUpdate:      r.NeedsUpdate,
-			IsSecurityUpdate: r.IsSecurityUpdate,
-			LastChecked:      pgTime(r.LastChecked),
-			SourceRepoID:     r.SourceRepositoryID,
-			SourceRepoName:   r.SourceRepoName,
+			ID:                 r.ID,
+			HostID:             r.HostID,
+			PackageID:          id,
+			CurrentVersion:     r.CurrentVersion,
+			AvailableVersion:   r.AvailableVersion,
+			NeedsUpdate:        r.NeedsUpdate,
+			IsSecurityUpdate:   r.IsSecurityUpdate,
+			LastChecked:        pgTime(r.LastChecked),
+			SourceRepoID:       r.SourceRepositoryID,
+			SourceRepoName:     r.SourceRepoName,
+			Patchable:          r.Patchable,
+			NotPatchableReason: r.NotPatchableReason,
+			PatchSource:        r.PatchSource,
+			WUABrowseOnly:      r.WuaBrowseOnly,
+			WUAUpdateType:      r.WuaUpdateType,
+			IsFeatureUpgrade:   r.IsFeatureUpgrade,
 			Hosts: HostPackageHostRef{
 				ID:           r.HostID,
 				FriendlyName: r.HostFriendlyName,
@@ -367,17 +392,23 @@ type PackageDetail struct {
 
 // HostPackageWithHost is host_package with nested host.
 type HostPackageWithHost struct {
-	ID               string             `json:"id"`
-	HostID           string             `json:"host_id"`
-	PackageID        string             `json:"package_id"`
-	CurrentVersion   string             `json:"current_version"`
-	AvailableVersion *string            `json:"available_version"`
-	NeedsUpdate      bool               `json:"needs_update"`
-	IsSecurityUpdate bool               `json:"is_security_update"`
-	LastChecked      time.Time          `json:"last_checked"`
-	SourceRepoID     *string            `json:"source_repo_id"`
-	SourceRepoName   *string            `json:"source_repo_name"`
-	Hosts            HostPackageHostRef `json:"hosts"`
+	ID                 string             `json:"id"`
+	HostID             string             `json:"host_id"`
+	PackageID          string             `json:"package_id"`
+	CurrentVersion     string             `json:"current_version"`
+	AvailableVersion   *string            `json:"available_version"`
+	NeedsUpdate        bool               `json:"needs_update"`
+	IsSecurityUpdate   bool               `json:"is_security_update"`
+	LastChecked        time.Time          `json:"last_checked"`
+	SourceRepoID       *string            `json:"source_repo_id"`
+	SourceRepoName     *string            `json:"source_repo_name"`
+	Hosts              HostPackageHostRef `json:"hosts"`
+	Patchable          bool               `json:"patchable"`
+	NotPatchableReason string             `json:"not_patchable_reason,omitempty"`
+	PatchSource        string             `json:"patch_source,omitempty"`
+	WUABrowseOnly      bool               `json:"wua_browse_only,omitempty"`
+	WUAUpdateType      string             `json:"wua_update_type,omitempty"`
+	IsFeatureUpgrade   bool               `json:"is_feature_upgrade,omitempty"`
 }
 
 // HostPackageHostRef has host fields for package detail.
@@ -442,6 +473,7 @@ type PackageHostEntry struct {
 	NeedsReboot      *bool     `json:"needsReboot"`
 	RebootReason     *string   `json:"rebootReason"`
 	SourceRepoName   *string   `json:"sourceRepoName"`
+	Patchability
 }
 
 // GetHosts returns hosts where a package is installed.
@@ -510,6 +542,14 @@ func (s *PackagesStore) GetHosts(ctx context.Context, packageIDOrName string, p 
 			NeedsReboot:      r.NeedsReboot,
 			RebootReason:     r.RebootReason,
 			SourceRepoName:   r.SourceRepoName,
+			Patchability: Patchability{
+				Patchable:          r.Patchable,
+				NotPatchableReason: r.NotPatchableReason,
+				PatchSource:        r.PatchSource,
+				WUABrowseOnly:      r.WuaBrowseOnly,
+				WUAUpdateType:      r.WuaUpdateType,
+				IsFeatureUpgrade:   r.IsFeatureUpgrade,
+			},
 		}
 	}
 	return out, int(total), nil

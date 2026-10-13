@@ -19,6 +19,9 @@ type Package struct {
 	WUACategories     []string `json:"wuaCategories,omitempty"`
 	WUASupportURL     string   `json:"wuaSupportUrl,omitempty"`
 	WUARevisionNumber int32    `json:"wuaRevisionNumber,omitempty"`
+	WUABrowseOnly     bool     `json:"wuaBrowseOnly,omitempty"`
+	WUAType           string   `json:"wuaType,omitempty"`
+	WingetID          string   `json:"wingetId,omitempty"`
 }
 
 // Repository represents a software repository

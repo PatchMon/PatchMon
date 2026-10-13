@@ -27,6 +27,8 @@ func NewWindowsManager(logger *logrus.Logger) *WindowsManager {
 	}
 }
 
+var wingetIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+\-]{0,127}$`)
+
 // wingetEntry holds parsed fields from winget list table output
 type wingetEntry struct {
 	Name      string
@@ -137,6 +139,7 @@ func (m *WindowsManager) mergeRegistryAndWinget(regPkgs []models.Package, rows [
 		row := rows[j].pkg
 		matchedNames[normalizePackageName(row.Name)] = true
 		regPkgs[i].SourceRepository = row.SourceRepository
+		regPkgs[i].WingetID = row.WingetID
 		if row.NeedsUpdate && installedIsOlder(regPkgs[i].CurrentVersion, row.AvailableVersion) {
 			regPkgs[i].NeedsUpdate = true
 			if regPkgs[i].AvailableVersion == "" {
@@ -742,7 +745,12 @@ func wingetEntriesToRows(entries []wingetEntry, upgradeMap map[string]string) []
 			version = "unknown"
 		}
 		avail := strings.TrimSpace(stripEllipsis(e.Available))
-		id := strings.TrimSpace(stripEllipsis(e.ID))
+		rawID := strings.TrimSpace(e.ID)
+		id := strings.TrimSpace(stripEllipsis(rawID))
+		wingetID := ""
+		if id == rawID && wingetIDPattern.MatchString(id) {
+			wingetID = id
+		}
 		var needsUpdate bool
 		if up, listed := upgradeMap[id]; listed {
 			if avail == "" {
@@ -768,6 +776,7 @@ func wingetEntriesToRows(entries []wingetEntry, upgradeMap map[string]string) []
 				AvailableVersion: avail,
 				NeedsUpdate:      needsUpdate,
 				SourceRepository: source,
+				WingetID:         wingetID,
 			},
 			truncated: truncated,
 		})
@@ -1104,6 +1113,8 @@ try {
       WUACategories    = $cats
       WUASupportURL    = $supportUrl
       WUARevisionNumber = $revNum
+      WUABrowseOnly    = [bool]$u.BrowseOnly
+      WUAType          = if ($u.Type -eq 2) { "Driver" } else { "Software" }
     }
   }
 } catch {
@@ -1191,6 +1202,8 @@ $result | ConvertTo-Json -Compress -Depth 4
 		WUACategories     []string `json:"WUACategories"`
 		WUASupportURL     string   `json:"WUASupportURL"`
 		WUARevisionNumber int32    `json:"WUARevisionNumber"`
+		WUABrowseOnly     bool     `json:"WUABrowseOnly"`
+		WUAType           string   `json:"WUAType"`
 	}
 	if err := json.Unmarshal([]byte(outputStr), &raw); err != nil {
 		m.logger.WithError(err).Warn("Failed to parse Windows updates JSON")
@@ -1219,6 +1232,8 @@ $result | ConvertTo-Json -Compress -Depth 4
 			WUACategories:     u.WUACategories,
 			WUASupportURL:     u.WUASupportURL,
 			WUARevisionNumber: u.WUARevisionNumber,
+			WUABrowseOnly:     u.WUABrowseOnly,
+			WUAType:           u.WUAType,
 		})
 	}
 	return packages

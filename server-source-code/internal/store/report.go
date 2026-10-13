@@ -90,6 +90,9 @@ type ReportPackage struct {
 	WUACategories     []string `json:"wuaCategories,omitempty"`
 	WUASupportURL     string   `json:"wuaSupportUrl,omitempty"`
 	WUARevisionNumber int32    `json:"wuaRevisionNumber,omitempty"`
+	WUABrowseOnly     bool     `json:"wuaBrowseOnly,omitempty"`
+	WUAType           string   `json:"wuaType,omitempty"`
+	WingetID          string   `json:"wingetId,omitempty"`
 }
 
 // ReportRepository is a single repository from the agent report.
@@ -985,6 +988,9 @@ type hostPackageRow struct {
 	WUADescription     string   `json:"wua_description"`
 	WUASupportURL      string   `json:"wua_support_url"`
 	WUARevisionNumber  int32    `json:"wua_revision_number"`
+	WingetID           string   `json:"winget_id"`
+	WUABrowseOnly      *bool    `json:"wua_browse_only"`
+	WUAUpdateType      string   `json:"wua_update_type"`
 }
 
 // buildHostPackagesPayload encodes host_packages rows as a jsonb array suitable
@@ -1032,6 +1038,9 @@ func buildHostPackagesPayload(
 			IsSecurityUpdate:   p.IsSecurityUpdate,
 			SourceRepositoryID: sourceRepoID,
 		}
+		if IsValidWingetID(p.WingetID) {
+			row.WingetID = p.WingetID
+		}
 
 		// Windows Update entries carry WUA metadata. The agent flags them by
 		// setting WUAGuid; we keep the same Go-side detection rule the
@@ -1045,6 +1054,11 @@ func buildHostPackagesPayload(
 			row.WUARevisionNumber = p.WUARevisionNumber
 			if len(p.WUACategories) > 0 {
 				row.WUACategories = p.WUACategories
+			}
+			browseOnly := p.WUABrowseOnly
+			row.WUABrowseOnly = &browseOnly
+			if p.WUAType == WUAUpdateTypeSoftware || p.WUAType == WUAUpdateTypeDriver {
+				row.WUAUpdateType = p.WUAType
 			}
 		}
 		rows = append(rows, row)
