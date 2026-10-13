@@ -1,8 +1,11 @@
 package packages
 
 import (
+	"io"
 	"reflect"
 	"testing"
+
+	"github.com/sirupsen/logrus"
 )
 
 func TestWingetChildEnvPrependsEveryVCLibsDir(t *testing.T) {
@@ -26,5 +29,19 @@ func TestNewestAppxDirKeepsVCLibsFlavoursApart(t *testing.T) {
 	d, ok = newestAppxDir(dirs, vclibsPackagePrefix, "arm64")
 	if !ok || d.path != dirs[0] {
 		t.Fatalf("UWPDesktop VCLibs = %+v, %v", d, ok)
+	}
+}
+
+func TestWingetListOutputParsesAfterProgressAndSpinner(t *testing.T) {
+	m := &WindowsManager{logger: logrus.New()}
+	m.logger.SetOutput(io.Discard)
+	raw := "   - \r   \\ \r\x1b[2K  ███▒▒  1024 KB / 8.30 MB\r\n" +
+		"Name               Id                  Version  Available Source\r\n" +
+		"-----------------------------------------------------------------\r\n" +
+		"7-Zip 24.08 (x64)  7zip.7zip           24.08    24.09     winget\r\n" +
+		"Notepad++          Notepad++.Notepad++ 8.6      8.7       winget\r\n"
+	entries := m.parseWingetTable(stripTerminalControls(raw))
+	if len(entries) != 2 || entries[0].ID != "7zip.7zip" || entries[1].ID != "Notepad++.Notepad++" || entries[1].Available != "8.7" {
+		t.Fatalf("entries = %+v", entries)
 	}
 }
