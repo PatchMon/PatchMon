@@ -44,7 +44,7 @@ func collectWindowsApps(t *testing.T, reg []models.Package, table string, upgrad
 	if len(entries) == 0 {
 		t.Fatal("fixture produced no winget entries")
 	}
-	return m.mergeRegistryAndWinget(reg, wingetEntriesToPackages(entries, upgradeMap))
+	return m.mergeRegistryAndWinget(reg, wingetEntriesToRows(entries, upgradeMap))
 }
 
 func findPackage(t *testing.T, pkgs []models.Package, name string) models.Package {
