@@ -338,7 +338,7 @@ func windowsPackagesAffected(stage string, items []db.PatchRunItem) []string {
 				out = append(out, it.Title)
 			}
 		case "completed", "failed", "cancelled":
-			if it.Status == "installed" || it.Status == "installed_with_errors" || it.Status == "installed_pending_reboot" {
+			if it.Status == "installed" || it.Status == "installed_with_errors" {
 				out = append(out, it.Title)
 			}
 		}

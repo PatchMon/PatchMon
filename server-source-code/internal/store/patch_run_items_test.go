@@ -117,9 +117,9 @@ func TestWindowsPackagesAffected(t *testing.T) {
 		{Title: "G", Status: "already_installed"},
 	}
 	for stage, want := range map[string][]string{
-		"completed":         {"A", "B", "F"},
-		"failed":            {"A", "B", "F"},
-		"cancelled":         {"A", "B", "F"},
+		"completed":         {"A", "B"},
+		"failed":            {"A", "B"},
+		"cancelled":         {"A", "B"},
 		"dry_run_completed": {"D"},
 		"progress":          nil,
 	} {
