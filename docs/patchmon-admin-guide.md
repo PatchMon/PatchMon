@@ -148,7 +148,7 @@ PatchMon is licensed under [AGPLv3](https://github.com/PatchMon/PatchMon/blob/ma
 
 PatchMon 2.0 moves most day-to-day tuning out of the container's `.env` and into the **Settings** area of the web UI. From here you manage users and roles, host groups, agent update cadence, server-level toggles, branding, integrations, and authentication providers. Settings are stored in the database and the server re-reads them on every request (with a brief in-memory cache for hot paths), so most changes take effect without restarting the container.
 
-> **Env vars beat DB values.** When the same setting is present both as an environment variable and as a Settings UI value, the environment variable wins. The UI shows a small yellow "env" badge on values that are being overridden by `.env`, so you can tell at a glance why your change "didn't save". See PatchMon Environment Variables Reference for the full priority model.
+> **Env vars beat DB values.** When the same setting is present both as an environment variable and as a Settings UI value, the environment variable wins. The Environment page shows a yellow ".env" source badge on those variables, marks them **Set in .env**, and does not let you edit them there, because a database value would be ignored. See PatchMon Environment Variables Reference for the full priority model.
 
 This page is the map of the Settings area: what each page does, which permission unlocks it, and which deeper chapter to read if you need more detail.
 
@@ -318,11 +318,13 @@ If you change the URL later, existing agents keep using whatever URL they were i
 **Path:** `/settings/environment`
 **Requires:** `can_manage_settings`
 
-New in 2.0: every tunable environment variable that can be safely changed at runtime is listed here with its **effective value**, **source** (env / database / default), **default**, and a one-line description. Editable variables have an edit button; sensitive or bootstrap-only variables (like `DATABASE_URL`, `JWT_SECRET`, `REDIS_PASSWORD`, `AI_ENCRYPTION_KEY`, `SESSION_SECRET`) show as read-only and must still be changed in `.env`.
+New in 2.0: every tunable environment variable that can be safely changed at runtime is listed here with its **effective value**, **source** (env / database / default), **default**, and a one-line description. Editable variables have an **Edit** button; sensitive or bootstrap-only variables (like `DATABASE_URL`, `JWT_SECRET`, `REDIS_PASSWORD`, `AI_ENCRYPTION_KEY`, `SESSION_SECRET`) show **Configure via .env** and must still be changed in `.env`.
+
+A variable that would normally be editable but already has a value in `.env` (or the container environment) shows **Set in .env** instead of an Edit button. The `.env` value takes priority, so anything saved here would be ignored. To change it, edit or remove it in `.env` and restart the server. If the database also holds a value for it, the row says the database value is ignored and a **Misconfiguration detected** banner appears at the top of the page. The stock Docker `env.example` sets `CORS_ORIGIN`, so on a default Docker install that variable is managed in `.env`.
 
 Variables are grouped by category: Database, Server, Logging, Authentication, Password policy, Server performance, Rate limits, Redis, Encryption, Deployment.
 
-When you edit a value, the UI writes it to the database and immediately flashes a "Restart the application for changes to take effect" toast. Some settings take effect on the next request (CORS origin, log level, rate limits); others need a restart. The UI doesn't always know which is which, so the safe rule is: change, then `docker compose restart server`.
+When you save a value, the UI writes it to the database, reloads the table so it shows the value the server resolved, and shows the server's confirmation. Most settings take effect straight away and the confirmation says "Saved. The new value is in effect." Settings that are wired in at startup (`CORS_ORIGIN`, `ENABLE_LOGGING`, `LOG_LEVEL`, `ENABLE_HSTS`, `DB_TRANSACTION_LONG_TIMEOUT`) say "Saved. Restart the application for this change to take effect." instead; for those, run `docker compose restart server`.
 
 > **Tip:** If you've been managing PatchMon from `.env` files for a long time and want to move configuration into the database, clear a variable from `.env` first, then change it here. Otherwise the env value keeps winning.
 
@@ -371,7 +373,7 @@ The Settings sidebar doesn't list them because the pages where you actually use 
 
 #### "I changed a setting but nothing happened"
 
-Check the Environment page for the variable you changed. If the "Source" column says `env`, your change to the database value is being overridden by an environment variable set in `.env` or the container spec. Clear the env value and the DB value will take over.
+Check the Environment page for the variable you changed. If its row says **Set in .env**, the value comes from `.env` or the container spec and overrides the database, which is why the page does not let you edit it. Change it in `.env`, or remove it from `.env` and restart the server so the database value takes over.
 
 #### "I saved a setting and the UI says 'Restart to take effect'"
 
@@ -381,7 +383,7 @@ Some settings (startup-only values like `PORT`, `DATABASE_URL`, pool sizes) are 
 docker compose restart server
 ```
 
-A small number of settings (CORS origin, log level, rate-limit windows) are re-resolved on every request and don't require a restart. The UI doesn't always distinguish between them; when in doubt, restart.
+Most Environment page settings (rate limits, password policy, lockout and session timeouts, body limits) are re-resolved on every request and don't require a restart. The confirmation shown after saving tells you which case you are in.
 
 #### "Branding / AI Terminal / Roles is greyed out"
 
@@ -1007,6 +1009,8 @@ Once the group is empty, return to **Settings → Host Groups** and delete it.
 4. Use **Clear Filters** to reset.
 
 You can also deep-link by visiting `/hosts?group=<groupId>`; group-clicks from other parts of the UI (for example the Host Groups page's host count badge) do exactly this.
+
+Every filter on the Hosts page is kept in the address bar: the search box, Host Group, Reporting, Connection, Operating System and OS Version, the grouping, **Hide Stale**, and the column sort. Reloading the page, using the browser's back and forward buttons, or sharing or bookmarking the link brings back the same view. Filters left at their default are not added to the address.
 
 #### Grouping the table
 
