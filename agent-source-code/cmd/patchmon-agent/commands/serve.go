@@ -453,9 +453,12 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					} else {
 						err = runPatch(msg.patchRunID, msg.patchType, msg.packageNames, msg.dryRun)
 					}
-					if err != nil {
+					switch {
+					case errors.Is(err, errPatchRunStopped):
+						logger.Info("Patch run stopped by user")
+					case err != nil:
 						logger.WithField("error", logutil.Sanitize(err.Error())).Warn("run_patch failed")
-					} else {
+					default:
 						logger.Info("run_patch completed successfully")
 					}
 				}(m)
@@ -1479,6 +1482,8 @@ var patchRunCancels sync.Map
 // patchRunStopped records patchRunIDs that were explicitly stopped by the server so
 // the runner can report stage="cancelled" instead of "failed" after the process exits.
 var patchRunStopped sync.Map
+
+var errPatchRunStopped = errors.New("patch run stopped by user")
 
 type complianceScheduler struct {
 	interval time.Duration
@@ -2857,7 +2862,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 	}
 
 	if wasStopped {
-		return fmt.Errorf("patch run stopped by user")
+		return errPatchRunStopped
 	}
 	return nil
 }
@@ -2948,7 +2953,7 @@ func runPatchWindows(patchRunID string, req packages.WindowsPatchRequest, parseE
 
 	switch {
 	case wasStopped:
-		return fmt.Errorf("patch run stopped by user")
+		return errPatchRunStopped
 	case stageErr != nil:
 		return stageErr
 	}
