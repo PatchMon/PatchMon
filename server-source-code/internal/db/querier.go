@@ -541,7 +541,7 @@ type Querier interface {
 	ListUpdateHistoryByDateRange(ctx context.Context, arg ListUpdateHistoryByDateRangeParams) ([]ListUpdateHistoryByDateRangeRow, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]User, error)
 	ListVolumes(ctx context.Context, arg ListVolumesParams) ([]DockerVolume, error)
-	LockPatchRunStatus(ctx context.Context, id string) (string, error)
+	LockPatchRunStatus(ctx context.Context, arg LockPatchRunStatusParams) (LockPatchRunStatusRow, error)
 	// User-initiated cancel from StopRun. Deliberately does NOT touch shell_output
 	// so progress chunks the agent appended between our read and write are preserved.
 	// Same status guard as UpdatePatchRunCancelled.

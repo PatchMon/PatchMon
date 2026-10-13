@@ -131,12 +131,19 @@ func TestWindowsPackagesAffected(t *testing.T) {
 
 func TestRunAcceptsItemReports(t *testing.T) {
 	for status, want := range map[string]bool{
-		"running": true, "pending_validation": true, "cancelled": true, "agent_disconnected": true, "timed_out": true,
-		"queued": false, "scheduled": false, "pending_approval": false, "approved": false,
+		"queued": true, "running": true, "pending_validation": true,
+		"scheduled": false, "pending_approval": false, "approved": false,
 		"completed": false, "failed": false, "validated": false, "dry_run_completed": false,
 	} {
-		if got := RunAcceptsItemReports(status); got != want {
-			t.Errorf("%s: got %v, want %v", status, got, want)
+		for _, grace := range []bool{true, false} {
+			if got := RunAcceptsItemReports(status, grace); got != want {
+				t.Errorf("%s (grace %v): got %v, want %v", status, grace, got, want)
+			}
+		}
+	}
+	for _, status := range []string{"cancelled", "timed_out", "agent_disconnected"} {
+		if !RunAcceptsItemReports(status, true) || RunAcceptsItemReports(status, false) {
+			t.Errorf("%s must accept items only within the grace window", status)
 		}
 	}
 }

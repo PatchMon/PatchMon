@@ -224,11 +224,17 @@ func normaliseItemTime(s *string) *string {
 // ErrRunNotAcceptingItems is returned when a run's status no longer takes agent item reports.
 var ErrRunNotAcceptingItems = errors.New("patch run is not accepting item reports")
 
+// ItemReportGrace is how long after a run stops that a late agent may still post its items.
+const ItemReportGrace = 15 * time.Minute
+
 // RunAcceptsItemReports reports whether an agent may still post items for a run in this status.
-func RunAcceptsItemReports(status string) bool {
+// Stopped runs accept them only within ItemReportGrace of their last change.
+func RunAcceptsItemReports(status string, withinGrace bool) bool {
 	switch status {
-	case "running", "pending_validation", "cancelled", "timed_out", "agent_disconnected":
+	case "queued", "running", "pending_validation":
 		return true
+	case "cancelled", "timed_out", "agent_disconnected":
+		return withinGrace
 	}
 	return false
 }
@@ -261,11 +267,11 @@ func (s *PatchRunsStore) RecordAgentItems(ctx context.Context, runID, hostID str
 	}()
 	q := d.Queries.WithTx(tx)
 
-	status, err := q.LockPatchRunStatus(ctx, runID)
+	lock, err := q.LockPatchRunStatus(ctx, db.LockPatchRunStatusParams{ID: runID, GraceSeconds: int32(ItemReportGrace / time.Second)})
 	if err != nil {
 		return res, err
 	}
-	if !RunAcceptsItemReports(status) {
+	if !RunAcceptsItemReports(lock.Status, lock.WithinGrace) {
 		return res, ErrRunNotAcceptingItems
 	}
 	keys, err := q.ListPatchRunItemKeys(ctx, runID)

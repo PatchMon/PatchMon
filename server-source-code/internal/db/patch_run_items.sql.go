@@ -164,14 +164,26 @@ func (q *Queries) ListPendingPatchRunItems(ctx context.Context, patchRunID strin
 }
 
 const lockPatchRunStatus = `-- name: LockPatchRunStatus :one
-SELECT status FROM patch_runs WHERE id = $1 FOR UPDATE
+SELECT status,
+    (COALESCE(completed_at, updated_at) > NOW() - make_interval(secs => $1::int))::boolean AS within_grace
+FROM patch_runs WHERE id = $2 FOR UPDATE
 `
 
-func (q *Queries) LockPatchRunStatus(ctx context.Context, id string) (string, error) {
-	row := q.db.QueryRow(ctx, lockPatchRunStatus, id)
-	var status string
-	err := row.Scan(&status)
-	return status, err
+type LockPatchRunStatusParams struct {
+	GraceSeconds int32  `json:"grace_seconds"`
+	ID           string `json:"id"`
+}
+
+type LockPatchRunStatusRow struct {
+	Status      string `json:"status"`
+	WithinGrace bool   `json:"within_grace"`
+}
+
+func (q *Queries) LockPatchRunStatus(ctx context.Context, arg LockPatchRunStatusParams) (LockPatchRunStatusRow, error) {
+	row := q.db.QueryRow(ctx, lockPatchRunStatus, arg.GraceSeconds, arg.ID)
+	var i LockPatchRunStatusRow
+	err := row.Scan(&i.Status, &i.WithinGrace)
+	return i, err
 }
 
 const resolveWindowsPatchTargets = `-- name: ResolveWindowsPatchTargets :many
