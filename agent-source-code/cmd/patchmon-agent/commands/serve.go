@@ -287,6 +287,7 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 	} else {
 		recordServerCapabilities(resp)
 		logger.Info("Startup notification sent to server")
+		reconcileHostID(resp.HostID)
 	}
 
 	// Start websocket loop FIRST so agent appears online immediately

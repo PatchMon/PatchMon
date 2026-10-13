@@ -278,6 +278,8 @@ Controls how and when PatchMon agents talk to the server and update themselves:
 
 Inspect the bundled agent binary versions (one per OS/architecture), check for newer releases upstream, and force a fresh download of the bundled binaries. Useful after you upgrade the server. Agents pick up the new binaries via the auto-update flow. No manual distribution required.
 
+From agent 2.1.5, each host's page also shows a **Config Version** next to the agent version. An upgraded agent updates its `config.yml` to the new release when it restarts, so the two match once the host has reported after the upgrade. See [Host Info](#host-info).
+
 See Managing the PatchMon Agent for how agents consume this information.
 
 ---
@@ -712,10 +714,24 @@ Quick reference panel for the host's identity and agent settings. Fields include
 - **Host Groups**: coloured multi-select chips. Add or remove groups; changes save on blur.
 - **Operating System**: icon plus OS type and version (detected by the agent).
 - **Agent Version**: version of `patchmon-agent` currently reporting.
+- **Config Version**: the version of the agent's `config.yml` layout, as last reported (agent 2.1.5 and later). The agent sets it to its own version whenever it loads its configuration, so it normally matches **Agent Version**. The field shows:
+  - the version alone when the two match;
+  - an **out of date** warning when they differ, usually because the agent could not save its `config.yml` after an upgrade;
+  - a **not reported** warning when the agent is 2.1.5 or later but no config version has been recorded;
+  - a note that agent 2.1.5 is required when the agent is older.
 - **Agent Auto-update**: per-host toggle, on by default for new hosts so the global setting alone decides whether agents update. Turn it off to keep a single host on its current agent version. If global auto-update is disabled, a yellow warning badge is shown with a tooltip pointing to **Settings → Agent Updates**.
 - **Force Agent Version Upgrade**: the **Update Now** button sends an immediate upgrade command via WebSocket. Disabled when the agent is offline. While a patch run is queued, validating or running on the host, it is refused with "A patch run is in progress on this host. Try again when it finishes.", and automatic agent updates wait until the run is over, so an agent restart never cuts a patch run short.
 
 See Managing the PatchMon Agent for what the agent does when it receives an upgrade command.
+
+#### Host identity warnings
+
+From PatchMon 2.1.5 every agent knows the ID of its host record (`host_id` in its `config.yml`) and reports it. The host page uses this to warn about agents that are not what they seem. Neither warning blocks the agent: reports keep arriving and are filed under the host the agent's credentials belong to.
+
+- **Host ID mismatch**: the agent's `config.yml` names a different host than its credentials belong to. Usually the file was copied from another machine or edited by hand. Fix it on the machine with `sudo patchmon-agent config sync-host-id` (which adopts this host's ID), or reinstall the agent with the install command from this host's page. The warning clears on the agent's next check-in. See the operator guide's Agent Troubleshooting chapter for details.
+- **Possible clone**: two different machines appear to be reporting with this host's credentials, typically because a VM or container was cloned after the agent was installed. Their data alternates on this one host. Give each clone its own host (the operator guide's Agent Troubleshooting chapter has the steps), then either:
+  - **Dismiss** the warning (requires `can_manage_hosts`). It comes back if the machines keep alternating.
+  - **Regenerate credentials** (see [API Credentials](#api-credentials)) and apply them to the original machine. Any copy still using the old credentials is locked out, and the warning is cleared.
 
 ### Network
 
@@ -871,7 +887,8 @@ Click **Copy**. You're automatically moved to the **Waiting for Connection** scr
 
 - **API ID**: copyable.
 - **API Key**: obscured by default. The plaintext key is **only** available if it was just created or regenerated; otherwise the field shows *hashed – not usable*.
-- **Regenerate**: creates a new API ID and key and invalidates the old ones. Use this if credentials have been lost or compromised. The agent on the host will need to be reconfigured or the install command re-run.
+- **Regenerate**: creates a new API ID and key and invalidates the old ones. Use this if credentials have been lost or compromised. The agent on the host will need to be reconfigured or the install command re-run. Regenerating also clears the host's **Host ID mismatch** and **possible clone** warnings.
+- **Re-issued by auto-enrolment**: shown when an auto-enrolment script issued a new API key for this host, with the date. This happens only for a host that the same enrolment token created and that has never reported, typically when a script is rerun after an install failed part-way.
 
 ### Common Actions: Where to Click
 

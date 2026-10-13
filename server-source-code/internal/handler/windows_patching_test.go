@@ -10,9 +10,8 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 )
 
-func strp(s string) *string { return &s }
-func boolp(b bool) *bool    { return &b }
-func i32p(i int32) *int32   { return &i }
+func boolp(b bool) *bool  { return &b }
+func i32p(i int32) *int32 { return &i }
 
 const testGUID = "7F1B0C5E-1111-2222-3333-444455556666"
 

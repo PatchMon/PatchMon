@@ -333,6 +333,15 @@ type Host struct {
 	DockerHash                   *string            `json:"docker_hash"`
 	ComplianceHash               *string            `json:"compliance_hash"`
 	LastFullReportAt             pgtype.Timestamp   `json:"last_full_report_at"`
+	ConfigVersion                *string            `json:"config_version"`
+	ReportedHostID               *string            `json:"reported_host_id"`
+	EnrolmentTokenID             *string            `json:"enrolment_token_id"`
+	CredentialsReissuedAt        pgtype.Timestamp   `json:"credentials_reissued_at"`
+	IdentityFingerprint          *string            `json:"identity_fingerprint"`
+	IdentityPrevFingerprint      *string            `json:"identity_prev_fingerprint"`
+	IdentityFingerprintChangedAt pgtype.Timestamp   `json:"identity_fingerprint_changed_at"`
+	IdentityConflictAt           pgtype.Timestamp   `json:"identity_conflict_at"`
+	EnrolmentMachineID           *string            `json:"enrolment_machine_id"`
 }
 
 type HostGroup struct {

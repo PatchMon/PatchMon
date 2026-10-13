@@ -40,6 +40,10 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import AddHostWizard from "../components/AddHostWizard";
 import HostStatusPills from "../components/HostStatusPills";
+import {
+	AgentVersionIndicators,
+	ConfigVersionValue,
+} from "../components/host/HostIdentity";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import InlineToggle from "../components/InlineToggle";
@@ -61,6 +65,11 @@ import {
 	settingsAPI,
 	userPreferencesAPI,
 } from "../utils/api";
+import {
+	hasConfigVersionMismatch,
+	hasHostIdMismatch,
+	hasIdentityConflict,
+} from "../utils/hostIdentity";
 import { deriveReportingState } from "../utils/hostStatus";
 import { getOSDisplayName, OSIcon } from "../utils/osIcons.jsx";
 import { invalidateHostScope } from "../utils/queryScopes";
@@ -249,27 +258,33 @@ const Hosts = () => {
 			{ id: "os_version", label: "OS Version", visible: false, order: 6 },
 			{ id: "agent_version", label: "Agent Version", visible: true, order: 7 },
 			{
+				id: "config_version",
+				label: "Config Version",
+				visible: false,
+				order: 8,
+			},
+			{
 				id: "auto_update",
 				label: "Agent Auto-Update",
 				visible: true,
-				order: 8,
+				order: 9,
 			},
-			{ id: "ws_status", label: "Connection", visible: true, order: 9 },
-			{ id: "integrations", label: "Integrations", visible: true, order: 10 },
-			{ id: "status", label: "Reporting", visible: true, order: 11 },
-			{ id: "needs_reboot", label: "Reboot", visible: true, order: 12 },
-			{ id: "uptime", label: "Uptime", visible: true, order: 13 },
-			{ id: "updates", label: "Updates", visible: true, order: 14 },
+			{ id: "ws_status", label: "Connection", visible: true, order: 10 },
+			{ id: "integrations", label: "Integrations", visible: true, order: 11 },
+			{ id: "status", label: "Reporting", visible: true, order: 12 },
+			{ id: "needs_reboot", label: "Reboot", visible: true, order: 13 },
+			{ id: "uptime", label: "Uptime", visible: true, order: 14 },
+			{ id: "updates", label: "Updates", visible: true, order: 15 },
 			{
 				id: "security_updates",
 				label: "Security Updates",
 				visible: true,
-				order: 15,
+				order: 16,
 			},
-			{ id: "ssg_version", label: "SSG Version", visible: false, order: 16 },
-			{ id: "notes", label: "Notes", visible: false, order: 17 },
-			{ id: "last_update", label: "Last Update", visible: true, order: 18 },
-			{ id: "actions", label: "Actions", visible: true, order: 19 },
+			{ id: "ssg_version", label: "SSG Version", visible: false, order: 17 },
+			{ id: "notes", label: "Notes", visible: false, order: 18 },
+			{ id: "last_update", label: "Last Update", visible: true, order: 19 },
+			{ id: "actions", label: "Actions", visible: true, order: 20 },
 		],
 		[],
 	);
@@ -935,6 +950,10 @@ const Hosts = () => {
 					aValue = a.agent_version?.toLowerCase() || "zzz_no_version";
 					bValue = b.agent_version?.toLowerCase() || "zzz_no_version";
 					break;
+				case "config_version":
+					aValue = a.config_version?.toLowerCase() || "zzz_no_version";
+					bValue = b.config_version?.toLowerCase() || "zzz_no_version";
+					break;
 				case "status":
 					aValue = a.effectiveStatus || a.status;
 					bValue = b.effectiveStatus || b.status;
@@ -1391,8 +1410,15 @@ const Hosts = () => {
 				);
 			case "agent_version":
 				return (
+					<div className="flex items-center gap-1.5 text-sm text-secondary-900 dark:text-white">
+						<span>{host.agent_version || "N/A"}</span>
+						<AgentVersionIndicators host={host} />
+					</div>
+				);
+			case "config_version":
+				return (
 					<div className="text-sm text-secondary-900 dark:text-white">
-						{host.agent_version || "N/A"}
+						<ConfigVersionValue host={host} emptyLabel="N/A" />
 					</div>
 				);
 			case "auto_update":
@@ -2278,6 +2304,40 @@ const Hosts = () => {
 																	/>
 																</div>
 
+																{(visibleColumns.some(
+																	(col) => col.id === "config_version",
+																) ||
+																	hasConfigVersionMismatch(host) ||
+																	hasHostIdMismatch(host) ||
+																	hasIdentityConflict(host)) && (
+																	<div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+																		<div className="flex items-center gap-1.5">
+																			<span className="text-secondary-500 dark:text-white">
+																				Agent:
+																			</span>
+																			<span className="text-secondary-700 dark:text-white">
+																				{host.agent_version || "N/A"}
+																			</span>
+																			<AgentVersionIndicators host={host} />
+																		</div>
+																		{visibleColumns.some(
+																			(col) => col.id === "config_version",
+																		) && (
+																			<div className="flex items-center gap-1.5">
+																				<span className="text-secondary-500 dark:text-white">
+																					Config:
+																				</span>
+																				<span className="text-secondary-700 dark:text-white">
+																					<ConfigVersionValue
+																						host={host}
+																						emptyLabel="N/A"
+																					/>
+																				</span>
+																			</div>
+																		)}
+																	</div>
+																)}
+
 																{/* Group info */}
 																<div className="flex flex-wrap items-center gap-3 text-sm">
 																	{visibleColumns.some(
@@ -2439,6 +2499,17 @@ const Hosts = () => {
 																			>
 																				{column.label}
 																				{getSortIcon("agent_version")}
+																			</button>
+																		) : column.id === "config_version" ? (
+																			<button
+																				type="button"
+																				onClick={() =>
+																					handleSort("config_version")
+																				}
+																				className="flex items-center gap-2 hover:text-secondary-700"
+																			>
+																				{column.label}
+																				{getSortIcon("config_version")}
 																			</button>
 																		) : column.id === "auto_update" ? (
 																			<div className="flex items-center gap-2 font-normal text-xs text-secondary-500 dark:text-white normal-case tracking-wider">

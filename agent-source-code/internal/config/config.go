@@ -8,9 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
+	"patchmon-agent/internal/pkgversion"
 	"patchmon-agent/pkg/models"
 
 	"github.com/spf13/viper"
@@ -186,6 +188,8 @@ func (m *Manager) LoadConfig() error {
 	// keep a stable snapshot. Integrations cleared so the file is authoritative.
 	loaded := *m.config
 	loaded.Integrations = nil
+	loaded.HostID = ""
+	loaded.ConfigVersion = ""
 	if err := v.Unmarshal(&loaded); err != nil {
 		m.loadErr = err
 		return fmt.Errorf("error unmarshaling config: %w", err)
@@ -241,10 +245,15 @@ func (m *Manager) LoadConfig() error {
 	// Ensure compliance is a nested object for YAML output
 	m.ensureComplianceNestedLocked()
 
+	m.config.HostID = strings.TrimSpace(m.config.HostID)
+	m.config.ConfigVersion = strings.TrimSpace(m.config.ConfigVersion)
+	onDiskVersion := m.config.ConfigVersion
+	migrateConfig(m.config, pkgversion.Version, configMigrations)
+
 	// Persist normalized config so new defaults (e.g. scan_interval) appear on disk
 	if err := m.saveConfigLocked(); err != nil {
-		// Non-fatal: config is correct in memory even if save fails
-		_ = err
+		// Keep reporting the file's version, so an unsaved stamp shows as a mismatch.
+		m.config.ConfigVersion = onDiskVersion
 	}
 
 	// ReportOffset can be 0 - it will be recalculated if missing
@@ -450,6 +459,14 @@ func (m *Manager) saveConfigLocked() error {
 	configViper.Set("report_offset", m.config.ReportOffset)
 	configViper.Set("package_cache_refresh_mode", m.config.PackageCacheRefreshMode)
 	configViper.Set("package_cache_refresh_max_age", m.config.PackageCacheRefreshMaxAge)
+	configVersion := m.config.ConfigVersion
+	if configVersion == "" {
+		configVersion = pkgversion.Version
+	}
+	configViper.Set("config_version", configVersion)
+	if m.config.HostID != "" {
+		configViper.Set("host_id", m.config.HostID)
+	}
 
 	// Always save integrations map with all available integrations
 	if m.config.Integrations == nil {
@@ -546,6 +563,78 @@ func writeConfigAtomically(v *viper.Viper, path string) error {
 		return fmt.Errorf("error replacing config file: %w", err)
 	}
 
+	return nil
+}
+
+// HostIDResult is the outcome of AdoptHostID.
+type HostIDResult int
+
+const (
+	// HostIDIgnored means the server sent no usable host ID.
+	HostIDIgnored HostIDResult = iota
+	// HostIDAdopted means the config had no host ID and now holds the server's.
+	HostIDAdopted
+	// HostIDMatch means the config already holds the server's host ID.
+	HostIDMatch
+	// HostIDConflict means the config holds a different host ID, which is kept.
+	HostIDConflict
+)
+
+// GetHostID returns the host ID from config.yml, or "" when it has none.
+func (m *Manager) GetHostID() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.config.HostID
+}
+
+// AdoptHostID records serverID when the config has no host ID. A different,
+// non-empty host ID is never replaced here; that takes SetHostID.
+func (m *Manager) AdoptHostID(serverID string) (HostIDResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !ValidHostID(serverID) {
+		return HostIDIgnored, nil
+	}
+	switch m.config.HostID {
+	case serverID:
+		return HostIDMatch, nil
+	case "":
+		if err := m.setHostIDLocked(serverID); err != nil {
+			return HostIDIgnored, err
+		}
+		return HostIDAdopted, nil
+	}
+	return HostIDConflict, nil
+}
+
+// SetHostID replaces the host ID. Only explicit operator commands call it.
+func (m *Manager) SetHostID(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !ValidHostID(id) {
+		return fmt.Errorf("invalid host ID %q", id)
+	}
+	return m.setHostIDLocked(id)
+}
+
+// ClearHostID removes the host ID so the next ping learns it again.
+func (m *Manager) ClearHostID() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.setHostIDLocked("")
+}
+
+// Caller must hold the write lock. Copies the config so GetConfig snapshots
+// held by other goroutines are not mutated.
+func (m *Manager) setHostIDLocked(id string) error {
+	prev := m.config
+	next := *prev
+	next.HostID = id
+	m.config = &next
+	if err := m.saveConfigLocked(); err != nil {
+		m.config = prev
+		return err
+	}
 	return nil
 }
 

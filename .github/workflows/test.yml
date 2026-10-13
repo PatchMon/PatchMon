@@ -18,6 +18,21 @@ jobs:
     name: Test (server)
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: patchmon_test
+          POSTGRES_PASSWORD: patchmon_test
+          POSTGRES_DB: patchmon_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U patchmon_test -d patchmon_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - name: Checkout code
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -47,7 +62,9 @@ jobs:
 
       - name: Run tests
         working-directory: server-source-code
-        run: go test -v -race -coverprofile=coverage.out ./...
+        env:
+          PATCHMON_TEST_DATABASE_URL: postgresql://patchmon_test:patchmon_test@localhost:5432/patchmon_test?sslmode=disable
+        run: go test -v -race -count=1 -coverprofile=coverage.out ./...
 
       - name: Generate coverage report
         working-directory: server-source-code

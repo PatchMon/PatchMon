@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"patchmon-agent/internal/config"
 	"patchmon-agent/internal/pkgversion"
 
 	"github.com/spf13/cobra"
@@ -36,7 +37,11 @@ var configSetAPICmd = &cobra.Command{
 	Long: `Configure API credentials for the PatchMon server.
 
 Example:
-  patchmon-agent config set-api patchmon_1a2b3c4d abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890 http://patchmon.example.com`,
+  patchmon-agent config set-api patchmon_1a2b3c4d abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890 http://patchmon.example.com
+
+With --host-id, config.yml is given that host ID. Without it, a host ID is
+kept when the API ID is unchanged and cleared otherwise, then learned again
+from the server.`,
 	Args: cobra.ExactArgs(3),
 	RunE: func(_ *cobra.Command, args []string) error {
 		if err := checkRoot(); err != nil {
@@ -47,7 +52,23 @@ Example:
 		apiKey := args[1]
 		serverURL := args[2]
 
-		return configureCreds(apiID, apiKey, serverURL)
+		return configureCreds(apiID, apiKey, serverURL, setAPIHostID)
+	},
+}
+
+var setAPIHostID string
+
+var configSyncHostIDCmd = &cobra.Command{
+	Use:   "sync-host-id",
+	Short: "Replace the host ID in config.yml with the server's",
+	Long: `Ask the PatchMon server which host these credentials belong to and write
+that host ID to config.yml, replacing any different value already there.`,
+	Args: cobra.NoArgs,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		if err := checkRoot(); err != nil {
+			return err
+		}
+		return syncHostID()
 	},
 }
 
@@ -55,6 +76,32 @@ func init() {
 	// Add subcommands to config
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configSetAPICmd)
+	configCmd.AddCommand(configSyncHostIDCmd)
+	configSetAPICmd.Flags().StringVar(&setAPIHostID, "host-id", "", "host ID to write to config.yml")
+}
+
+func syncHostID() error {
+	resp, err := pingServer()
+	if err != nil {
+		return err
+	}
+	if !config.ValidHostID(resp.HostID) {
+		return fmt.Errorf("the server did not return a host ID; it needs PatchMon 2.1.5 or later")
+	}
+	old := cfgManager.GetHostID()
+	if old == resp.HostID {
+		fmt.Printf("host_id is already %s\n", old)
+		return nil
+	}
+	if err := cfgManager.SetHostID(resp.HostID); err != nil {
+		return fmt.Errorf("failed to save host_id: %w", err)
+	}
+	if old == "" {
+		old = "(none)"
+	}
+	fmt.Printf("host_id changed from %s to %s\n", old, resp.HostID)
+	logger.WithField("old_host_id", old).WithField("host_id", resp.HostID).Info("host_id synchronised with the server")
+	return nil
 }
 
 func showConfig() error {
@@ -72,6 +119,8 @@ func showConfig() error {
 		fmt.Printf("  Server: Not configured\n")
 	}
 	fmt.Printf("  Agent Version: %s\n", pkgversion.Version)
+	fmt.Printf("  Config Version: %s\n", valueOrNone(cfg.ConfigVersion))
+	fmt.Printf("  Host ID: %s\n", valueOrNone(cfg.HostID))
 	fmt.Printf("  Config File: %s\n", cfgManager.GetConfigFile())
 	fmt.Printf("  Credentials File: %s\n", cfg.CredentialsFile)
 	fmt.Printf("  Log File: %s\n", cfg.LogFile)
@@ -98,7 +147,14 @@ func showConfig() error {
 	return nil
 }
 
-func configureCreds(apiID, apiKey, serverURL string) error {
+func valueOrNone(v string) string {
+	if v == "" {
+		return "(none)"
+	}
+	return v
+}
+
+func configureCreds(apiID, apiKey, serverURL, hostID string) error {
 	logger.Info("Setting up credentials...")
 
 	// Validate credentials not empty
@@ -107,6 +163,10 @@ func configureCreds(apiID, apiKey, serverURL string) error {
 	}
 
 	// Validate server URL format
+	if hostID != "" && !config.ValidHostID(hostID) {
+		return fmt.Errorf("invalid host ID %q", hostID)
+	}
+
 	if _, err := url.Parse(serverURL); err != nil {
 		return fmt.Errorf("invalid server URL format: %w", err)
 	}
@@ -124,8 +184,27 @@ func configureCreds(apiID, apiKey, serverURL string) error {
 			Warn("Existing config could not be parsed and is being replaced with defaults, any settings it held are lost")
 	}
 
+	previousAPIID := ""
+	if cfgManager.LoadCredentials() == nil {
+		if creds := cfgManager.GetCredentials(); creds != nil {
+			previousAPIID = creds.APIID
+		}
+	}
+
 	if err := cfgManager.SetPatchmonServer(serverURL); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
+	}
+
+	switch {
+	case hostID != "":
+		if err := cfgManager.SetHostID(hostID); err != nil {
+			return fmt.Errorf("failed to save host_id: %w", err)
+		}
+	case previousAPIID != apiID && cfgManager.GetHostID() != "":
+		logger.Info("API ID changed, clearing host_id so it is learned again from the server")
+		if err := cfgManager.ClearHostID(); err != nil {
+			return fmt.Errorf("failed to clear host_id: %w", err)
+		}
 	}
 
 	// Save credentials
@@ -139,11 +218,12 @@ func configureCreds(apiID, apiKey, serverURL string) error {
 
 	// Test credentials
 	logger.Info("Testing connection...")
-	_, err := pingServer()
+	resp, err := pingServer()
 	if err != nil {
 		logger.WithError(err).Error("Connection test failed")
 		return err
 	}
+	reconcileHostID(resp.HostID)
 
 	logger.Info("Connectivity test successful")
 	logger.Info("API credentials are valid")

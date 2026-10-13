@@ -27,7 +27,7 @@ func TestServePing_OversizedBodyRecordsActivityRow(t *testing.T) {
 	if err := hosts.Create(ctx, host); err != nil {
 		t.Fatal(err)
 	}
-	h := NewInstallHandler(hosts, store.NewSettingsStore(d), nil, store.NewReportStore(d))
+	h := NewInstallHandler(hosts, store.NewSettingsStore(d), nil, store.NewReportStore(d), nil)
 
 	body := `{"metrics":{"diskDetails":[{"mount":"` + strings.Repeat("x", 512) + `"}]}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/hosts/ping", strings.NewReader(body))

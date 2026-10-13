@@ -19,10 +19,11 @@ var pingCmd = &cobra.Command{
 			return err
 		}
 
-		_, err := pingServer()
+		resp, err := pingServer()
 		if err != nil {
 			return err
 		}
+		reconcileHostID(resp.HostID)
 
 		fmt.Println("✅ API credentials are valid")
 		fmt.Println("✅ Connectivity test successful")

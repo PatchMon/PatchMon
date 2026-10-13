@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 
 export const HOSTS_SORT_FIELDS = {
 	agent_version: "agent_version",
+	config_version: "config_version",
 	friendlyName: "friendly_name",
 	group: "group",
 	hostname: "hostname",
