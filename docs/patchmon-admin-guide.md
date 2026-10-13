@@ -1008,6 +1008,8 @@ Once the group is empty, return to **Settings → Host Groups** and delete it.
 
 You can also deep-link by visiting `/hosts?group=<groupId>`; group-clicks from other parts of the UI (for example the Host Groups page's host count badge) do exactly this.
 
+Every filter on the Hosts page is kept in the address bar: the search box, Host Group, Reporting, Connection, Operating System and OS Version, the grouping, **Hide Stale**, and the column sort. Reloading the page, using the browser's back and forward buttons, or sharing or bookmarking the link brings back the same view. Filters left at their default are not added to the address.
+
 #### Grouping the table
 
 Above the filter panel, the **No Grouping** dropdown lets you group rows by **Group**, **Status**, or **OS**. Picking **By Group** splits the Hosts table into sections, one per group, each with a count header. Hosts in multiple groups appear under each of their groups. This is a visual grouping, not a filter.
