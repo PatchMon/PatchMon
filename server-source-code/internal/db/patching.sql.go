@@ -487,7 +487,7 @@ func (q *Queries) HostHasActivePatchRun(ctx context.Context, hostID string) (boo
 }
 
 const listActivePatchRuns = `-- name: ListActivePatchRuns :many
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -523,6 +523,7 @@ type ListActivePatchRunsRow struct {
 	WindowsIncludeApps    *bool            `json:"windows_include_apps"`
 	HostFriendlyName      *string          `json:"host_friendly_name"`
 	HostHostname          *string          `json:"host_hostname"`
+	HostOsType            *string          `json:"host_os_type"`
 	TriggeredByUsername   *string          `json:"triggered_by_username"`
 }
 
@@ -563,6 +564,7 @@ func (q *Queries) ListActivePatchRuns(ctx context.Context) ([]ListActivePatchRun
 			&i.WindowsIncludeApps,
 			&i.HostFriendlyName,
 			&i.HostHostname,
+			&i.HostOsType,
 			&i.TriggeredByUsername,
 		); err != nil {
 			return nil, err
@@ -725,7 +727,7 @@ func (q *Queries) ListPatchPolicyExclusions(ctx context.Context, patchPolicyID s
 }
 
 const listPatchRuns = `-- name: ListPatchRuns :many
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -776,6 +778,7 @@ type ListPatchRunsRow struct {
 	WindowsIncludeApps    *bool            `json:"windows_include_apps"`
 	HostFriendlyName      *string          `json:"host_friendly_name"`
 	HostHostname          *string          `json:"host_hostname"`
+	HostOsType            *string          `json:"host_os_type"`
 	TriggeredByUsername   *string          `json:"triggered_by_username"`
 }
 
@@ -824,6 +827,7 @@ func (q *Queries) ListPatchRuns(ctx context.Context, arg ListPatchRunsParams) ([
 			&i.WindowsIncludeApps,
 			&i.HostFriendlyName,
 			&i.HostHostname,
+			&i.HostOsType,
 			&i.TriggeredByUsername,
 		); err != nil {
 			return nil, err
@@ -924,7 +928,7 @@ func (q *Queries) ListPatchRunsByStatus(ctx context.Context, hostIds []string) (
 }
 
 const listPatchRunsOrderByCompletedAt = `-- name: ListPatchRunsOrderByCompletedAt :many
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -975,6 +979,7 @@ type ListPatchRunsOrderByCompletedAtRow struct {
 	WindowsIncludeApps    *bool            `json:"windows_include_apps"`
 	HostFriendlyName      *string          `json:"host_friendly_name"`
 	HostHostname          *string          `json:"host_hostname"`
+	HostOsType            *string          `json:"host_os_type"`
 	TriggeredByUsername   *string          `json:"triggered_by_username"`
 }
 
@@ -1021,6 +1026,7 @@ func (q *Queries) ListPatchRunsOrderByCompletedAt(ctx context.Context, arg ListP
 			&i.WindowsIncludeApps,
 			&i.HostFriendlyName,
 			&i.HostHostname,
+			&i.HostOsType,
 			&i.TriggeredByUsername,
 		); err != nil {
 			return nil, err
@@ -1034,7 +1040,7 @@ func (q *Queries) ListPatchRunsOrderByCompletedAt(ctx context.Context, arg ListP
 }
 
 const listPatchRunsOrderByCompletedAtAsc = `-- name: ListPatchRunsOrderByCompletedAtAsc :many
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -1085,6 +1091,7 @@ type ListPatchRunsOrderByCompletedAtAscRow struct {
 	WindowsIncludeApps    *bool            `json:"windows_include_apps"`
 	HostFriendlyName      *string          `json:"host_friendly_name"`
 	HostHostname          *string          `json:"host_hostname"`
+	HostOsType            *string          `json:"host_os_type"`
 	TriggeredByUsername   *string          `json:"triggered_by_username"`
 }
 
@@ -1131,6 +1138,7 @@ func (q *Queries) ListPatchRunsOrderByCompletedAtAsc(ctx context.Context, arg Li
 			&i.WindowsIncludeApps,
 			&i.HostFriendlyName,
 			&i.HostHostname,
+			&i.HostOsType,
 			&i.TriggeredByUsername,
 		); err != nil {
 			return nil, err
@@ -1144,7 +1152,7 @@ func (q *Queries) ListPatchRunsOrderByCompletedAtAsc(ctx context.Context, arg Li
 }
 
 const listPatchRunsOrderByCreatedAtAsc = `-- name: ListPatchRunsOrderByCreatedAtAsc :many
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -1195,6 +1203,7 @@ type ListPatchRunsOrderByCreatedAtAscRow struct {
 	WindowsIncludeApps    *bool            `json:"windows_include_apps"`
 	HostFriendlyName      *string          `json:"host_friendly_name"`
 	HostHostname          *string          `json:"host_hostname"`
+	HostOsType            *string          `json:"host_os_type"`
 	TriggeredByUsername   *string          `json:"triggered_by_username"`
 }
 
@@ -1241,6 +1250,7 @@ func (q *Queries) ListPatchRunsOrderByCreatedAtAsc(ctx context.Context, arg List
 			&i.WindowsIncludeApps,
 			&i.HostFriendlyName,
 			&i.HostHostname,
+			&i.HostOsType,
 			&i.TriggeredByUsername,
 		); err != nil {
 			return nil, err
@@ -1254,7 +1264,7 @@ func (q *Queries) ListPatchRunsOrderByCreatedAtAsc(ctx context.Context, arg List
 }
 
 const listPatchRunsOrderByStartedAt = `-- name: ListPatchRunsOrderByStartedAt :many
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -1305,6 +1315,7 @@ type ListPatchRunsOrderByStartedAtRow struct {
 	WindowsIncludeApps    *bool            `json:"windows_include_apps"`
 	HostFriendlyName      *string          `json:"host_friendly_name"`
 	HostHostname          *string          `json:"host_hostname"`
+	HostOsType            *string          `json:"host_os_type"`
 	TriggeredByUsername   *string          `json:"triggered_by_username"`
 }
 
@@ -1351,6 +1362,7 @@ func (q *Queries) ListPatchRunsOrderByStartedAt(ctx context.Context, arg ListPat
 			&i.WindowsIncludeApps,
 			&i.HostFriendlyName,
 			&i.HostHostname,
+			&i.HostOsType,
 			&i.TriggeredByUsername,
 		); err != nil {
 			return nil, err
@@ -1364,7 +1376,7 @@ func (q *Queries) ListPatchRunsOrderByStartedAt(ctx context.Context, arg ListPat
 }
 
 const listPatchRunsOrderByStartedAtAsc = `-- name: ListPatchRunsOrderByStartedAtAsc :many
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -1415,6 +1427,7 @@ type ListPatchRunsOrderByStartedAtAscRow struct {
 	WindowsIncludeApps    *bool            `json:"windows_include_apps"`
 	HostFriendlyName      *string          `json:"host_friendly_name"`
 	HostHostname          *string          `json:"host_hostname"`
+	HostOsType            *string          `json:"host_os_type"`
 	TriggeredByUsername   *string          `json:"triggered_by_username"`
 }
 
@@ -1461,6 +1474,7 @@ func (q *Queries) ListPatchRunsOrderByStartedAtAsc(ctx context.Context, arg List
 			&i.WindowsIncludeApps,
 			&i.HostFriendlyName,
 			&i.HostHostname,
+			&i.HostOsType,
 			&i.TriggeredByUsername,
 		); err != nil {
 			return nil, err
@@ -1474,7 +1488,7 @@ func (q *Queries) ListPatchRunsOrderByStartedAtAsc(ctx context.Context, arg List
 }
 
 const listPatchRunsOrderByStatus = `-- name: ListPatchRunsOrderByStatus :many
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -1525,6 +1539,7 @@ type ListPatchRunsOrderByStatusRow struct {
 	WindowsIncludeApps    *bool            `json:"windows_include_apps"`
 	HostFriendlyName      *string          `json:"host_friendly_name"`
 	HostHostname          *string          `json:"host_hostname"`
+	HostOsType            *string          `json:"host_os_type"`
 	TriggeredByUsername   *string          `json:"triggered_by_username"`
 }
 
@@ -1571,6 +1586,7 @@ func (q *Queries) ListPatchRunsOrderByStatus(ctx context.Context, arg ListPatchR
 			&i.WindowsIncludeApps,
 			&i.HostFriendlyName,
 			&i.HostHostname,
+			&i.HostOsType,
 			&i.TriggeredByUsername,
 		); err != nil {
 			return nil, err
@@ -1584,7 +1600,7 @@ func (q *Queries) ListPatchRunsOrderByStatus(ctx context.Context, arg ListPatchR
 }
 
 const listPatchRunsOrderByStatusDesc = `-- name: ListPatchRunsOrderByStatusDesc :many
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -1635,6 +1651,7 @@ type ListPatchRunsOrderByStatusDescRow struct {
 	WindowsIncludeApps    *bool            `json:"windows_include_apps"`
 	HostFriendlyName      *string          `json:"host_friendly_name"`
 	HostHostname          *string          `json:"host_hostname"`
+	HostOsType            *string          `json:"host_os_type"`
 	TriggeredByUsername   *string          `json:"triggered_by_username"`
 }
 
@@ -1681,6 +1698,7 @@ func (q *Queries) ListPatchRunsOrderByStatusDesc(ctx context.Context, arg ListPa
 			&i.WindowsIncludeApps,
 			&i.HostFriendlyName,
 			&i.HostHostname,
+			&i.HostOsType,
 			&i.TriggeredByUsername,
 		); err != nil {
 			return nil, err
@@ -1694,7 +1712,7 @@ func (q *Queries) ListPatchRunsOrderByStatusDesc(ctx context.Context, arg ListPa
 }
 
 const listRecentPatchRuns = `-- name: ListRecentPatchRuns :many
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -1740,6 +1758,7 @@ type ListRecentPatchRunsRow struct {
 	WindowsIncludeApps    *bool            `json:"windows_include_apps"`
 	HostFriendlyName      *string          `json:"host_friendly_name"`
 	HostHostname          *string          `json:"host_hostname"`
+	HostOsType            *string          `json:"host_os_type"`
 	TriggeredByUsername   *string          `json:"triggered_by_username"`
 }
 
@@ -1780,6 +1799,7 @@ func (q *Queries) ListRecentPatchRuns(ctx context.Context, arg ListRecentPatchRu
 			&i.WindowsIncludeApps,
 			&i.HostFriendlyName,
 			&i.HostHostname,
+			&i.HostOsType,
 			&i.TriggeredByUsername,
 		); err != nil {
 			return nil, err

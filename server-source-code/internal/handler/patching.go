@@ -1749,7 +1749,7 @@ func patchRunItemsToResponse(items []db.PatchRunItem) []map[string]interface{} {
 func patchRunsToResponse(rows []db.ListRecentPatchRunsRow) []map[string]interface{} {
 	out := make([]map[string]interface{}, len(rows))
 	for i, r := range rows {
-		m := patchRunRowToMap(r.ID, r.HostID, r.JobID, r.PatchType, r.PackageName, r.PackageNames, r.Status, r.ShellOutput, r.ErrorMessage, r.StartedAt, r.CompletedAt, r.ScheduledAt, r.CreatedAt, r.UpdatedAt, r.HostFriendlyName, r.HostHostname, r.TriggeredByUsername)
+		m := patchRunRowToMap(r.ID, r.HostID, r.JobID, r.PatchType, r.PackageName, r.PackageNames, r.Status, r.ShellOutput, r.ErrorMessage, r.StartedAt, r.CompletedAt, r.ScheduledAt, r.CreatedAt, r.UpdatedAt, r.HostFriendlyName, r.HostHostname, r.HostOsType, r.TriggeredByUsername)
 		m["dry_run"] = r.DryRun
 		if len(r.PackagesAffected) > 0 {
 			var pkgs []string
@@ -1764,7 +1764,7 @@ func patchRunsToResponse(rows []db.ListRecentPatchRunsRow) []map[string]interfac
 func patchRunsActiveToResponse(rows []db.ListActivePatchRunsRow) []map[string]interface{} {
 	out := make([]map[string]interface{}, len(rows))
 	for i, r := range rows {
-		m := patchRunRowToMap(r.ID, r.HostID, r.JobID, r.PatchType, r.PackageName, r.PackageNames, r.Status, r.ShellOutput, r.ErrorMessage, r.StartedAt, r.CompletedAt, r.ScheduledAt, r.CreatedAt, r.UpdatedAt, r.HostFriendlyName, r.HostHostname, r.TriggeredByUsername)
+		m := patchRunRowToMap(r.ID, r.HostID, r.JobID, r.PatchType, r.PackageName, r.PackageNames, r.Status, r.ShellOutput, r.ErrorMessage, r.StartedAt, r.CompletedAt, r.ScheduledAt, r.CreatedAt, r.UpdatedAt, r.HostFriendlyName, r.HostHostname, r.HostOsType, r.TriggeredByUsername)
 		m["dry_run"] = r.DryRun
 		if len(r.PackagesAffected) > 0 {
 			var pkgs []string
@@ -1779,7 +1779,7 @@ func patchRunsActiveToResponse(rows []db.ListActivePatchRunsRow) []map[string]in
 func patchRunsListToResponse(rows []db.ListPatchRunsRow) []map[string]interface{} {
 	out := make([]map[string]interface{}, len(rows))
 	for i, r := range rows {
-		m := patchRunRowToMap(r.ID, r.HostID, r.JobID, r.PatchType, r.PackageName, r.PackageNames, r.Status, r.ShellOutput, r.ErrorMessage, r.StartedAt, r.CompletedAt, r.ScheduledAt, r.CreatedAt, r.UpdatedAt, r.HostFriendlyName, r.HostHostname, r.TriggeredByUsername)
+		m := patchRunRowToMap(r.ID, r.HostID, r.JobID, r.PatchType, r.PackageName, r.PackageNames, r.Status, r.ShellOutput, r.ErrorMessage, r.StartedAt, r.CompletedAt, r.ScheduledAt, r.CreatedAt, r.UpdatedAt, r.HostFriendlyName, r.HostHostname, r.HostOsType, r.TriggeredByUsername)
 		m["dry_run"] = r.DryRun
 		m["validation_run_id"] = r.ValidationRunID
 		m["windows_scope"] = windowsScopeResponse(r.WindowsIncludeUpdates, r.WindowsIncludeApps)
@@ -1793,7 +1793,7 @@ func patchRunsListToResponse(rows []db.ListPatchRunsRow) []map[string]interface{
 	return out
 }
 
-func patchRunRowToMap(id, hostID, jobID, patchType string, pkgName *string, pkgNames []byte, status, shellOutput string, errMsg *string, startedAt, completedAt, scheduledAt pgtype.Timestamp, createdAt, updatedAt pgtype.Timestamp, hostFriendly, hostHostname, triggeredByUsername *string) map[string]interface{} {
+func patchRunRowToMap(id, hostID, jobID, patchType string, pkgName *string, pkgNames []byte, status, shellOutput string, errMsg *string, startedAt, completedAt, scheduledAt pgtype.Timestamp, createdAt, updatedAt pgtype.Timestamp, hostFriendly, hostHostname, hostOSType, triggeredByUsername *string) map[string]interface{} {
 	m := map[string]interface{}{
 		"id":                    id,
 		"host_id":               hostID,
@@ -1813,6 +1813,7 @@ func patchRunRowToMap(id, hostID, jobID, patchType string, pkgName *string, pkgN
 			"id":            hostID,
 			"friendly_name": hostFriendly,
 			"hostname":      hostHostname,
+			"os_type":       hostOSType,
 		},
 	}
 	if len(pkgNames) > 0 {

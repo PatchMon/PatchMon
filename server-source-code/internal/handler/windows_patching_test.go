@@ -247,3 +247,11 @@ func TestWindowsScopeResponse(t *testing.T) {
 		t.Errorf("got %v", got)
 	}
 }
+
+func TestPatchRunListRowsCarryHostOSType(t *testing.T) {
+	rows := patchRunsListToResponse([]db.ListPatchRunsRow{{ID: "r", HostOsType: strp("Windows")}})
+	hosts := rows[0]["hosts"].(map[string]interface{})
+	if got := hosts["os_type"].(*string); got == nil || *got != "Windows" {
+		t.Fatalf("hosts.os_type = %v", hosts["os_type"])
+	}
+}

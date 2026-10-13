@@ -130,7 +130,7 @@ WHERE id = $1
 -- name: ListPatchRuns :many
 -- The 'status' filter accepts an exact status value. The pseudo-value
 -- 'active' matches the in-flight runs that block a host: queued, pending_validation, running.
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -145,7 +145,7 @@ ORDER BY pr.created_at DESC
 LIMIT sqlc.arg('limit_arg') OFFSET sqlc.arg('offset_arg');
 
 -- name: ListPatchRunsOrderByCreatedAtAsc :many
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -160,7 +160,7 @@ ORDER BY pr.created_at ASC
 LIMIT sqlc.arg('limit_arg') OFFSET sqlc.arg('offset_arg');
 
 -- name: ListPatchRunsOrderByStartedAt :many
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -175,7 +175,7 @@ ORDER BY COALESCE(pr.started_at, pr.created_at) DESC NULLS LAST, pr.created_at D
 LIMIT sqlc.arg('limit_arg') OFFSET sqlc.arg('offset_arg');
 
 -- name: ListPatchRunsOrderByStartedAtAsc :many
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -190,7 +190,7 @@ ORDER BY COALESCE(pr.started_at, pr.created_at) ASC NULLS LAST, pr.created_at DE
 LIMIT sqlc.arg('limit_arg') OFFSET sqlc.arg('offset_arg');
 
 -- name: ListPatchRunsOrderByCompletedAt :many
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -205,7 +205,7 @@ ORDER BY COALESCE(pr.completed_at, pr.created_at) DESC NULLS LAST, pr.created_at
 LIMIT sqlc.arg('limit_arg') OFFSET sqlc.arg('offset_arg');
 
 -- name: ListPatchRunsOrderByCompletedAtAsc :many
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -220,7 +220,7 @@ ORDER BY COALESCE(pr.completed_at, pr.created_at) ASC NULLS LAST, pr.created_at 
 LIMIT sqlc.arg('limit_arg') OFFSET sqlc.arg('offset_arg');
 
 -- name: ListPatchRunsOrderByStatus :many
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -235,7 +235,7 @@ ORDER BY pr.status ASC, pr.created_at DESC
 LIMIT sqlc.arg('limit_arg') OFFSET sqlc.arg('offset_arg');
 
 -- name: ListPatchRunsOrderByStatusDesc :many
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -263,7 +263,7 @@ WHERE (sqlc.arg('host_id')::text = '' OR host_id = sqlc.arg('host_id'))
 SELECT EXISTS(SELECT 1 FROM patch_runs WHERE host_id = $1 AND status IN ('queued', 'pending_validation', 'running'));
 
 -- name: ListActivePatchRuns :many
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -282,7 +282,7 @@ WHERE ((dry_run = false OR dry_run IS NULL) OR status IN ('pending_validation', 
 GROUP BY status;
 
 -- name: ListRecentPatchRuns :many
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
