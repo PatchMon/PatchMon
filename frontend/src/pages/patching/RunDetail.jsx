@@ -6,6 +6,7 @@ import {
 	Copy,
 	PlayCircle,
 	RefreshCw,
+	RotateCcw,
 	Server,
 	Shield,
 	Square,
@@ -20,11 +21,13 @@ import {
 	PackageNameList,
 } from "../../components/PackageListDisplay";
 import { PatchRunStatusBadge } from "../../components/PatchRunStatusBadge";
+import RunItemsCard from "../../components/patching/RunItemsCard";
 import ModalPortal from "../../components/ui/ModalPortal";
 import { useToast } from "../../contexts/ToastContext";
 import { formatDate } from "../../utils/api";
 import { buildRunStreamURL, patchingAPI } from "../../utils/patchingApi";
 import { hasExtraDependencies } from "../../utils/patchRun";
+import { RESTART_REQUIRED_BANNER } from "../../utils/windowsPatching";
 
 // Statuses where we should open the live WebSocket stream and show the Stop
 // Run affordance. Everything else is already terminal or still scheduled.
@@ -746,6 +749,17 @@ const RunDetail = () => {
 							</div>
 						</div>
 					)}
+
+					{run.reboot_required === true && (
+						<div className="rounded-lg bg-warning-50 dark:bg-warning-900/30 border border-warning-200 dark:border-warning-600 p-4 flex items-start gap-3">
+							<RotateCcw className="h-5 w-5 text-warning-600 dark:text-warning-400 mt-0.5 flex-shrink-0" />
+							<p className="text-sm font-medium text-warning-800 dark:text-warning-200">
+								{RESTART_REQUIRED_BANNER}
+							</p>
+						</div>
+					)}
+
+					<RunItemsCard items={run.items} />
 
 					{/* Shell output (§3.4 content card + terminal chrome) */}
 					<div className="card p-4 sm:p-6 flex flex-col">

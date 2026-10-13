@@ -77,6 +77,14 @@ export const patchingAPI = {
 				...(opts.schedule_override
 					? { schedule_override: opts.schedule_override }
 					: {}),
+				...(opts.windows_scope
+					? {
+							windows_scope: {
+								updates: !!opts.windows_scope.updates,
+								apps: !!opts.windows_scope.apps,
+							},
+						}
+					: {}),
 			})
 			.then((res) => res.data),
 	approveRun: (id, opts = {}) =>

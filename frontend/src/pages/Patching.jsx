@@ -263,6 +263,13 @@ const Patching = () => {
 			hostname: run.hosts?.hostname,
 		},
 		patchType: run.patch_type,
+		windowsScope:
+			run.windows_include_updates != null || run.windows_include_apps != null
+				? {
+						updates: run.windows_include_updates !== false,
+						apps: run.windows_include_apps !== false,
+					}
+				: null,
 		packageNames:
 			Array.isArray(run.package_names) && run.package_names.length > 0
 				? run.package_names
@@ -557,6 +564,11 @@ const Patching = () => {
 					)}
 					patchTypeByRun={Object.fromEntries(
 						approveWizardRuns.map((r) => [r.runId, r.patchType]),
+					)}
+					windowsScopeByRun={Object.fromEntries(
+						approveWizardRuns
+							.filter((r) => r.windowsScope)
+							.map((r) => [r.runId, r.windowsScope]),
 					)}
 					onSuccess={handleApproveWizardSuccess}
 				/>
