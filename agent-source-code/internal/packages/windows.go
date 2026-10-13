@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -50,6 +51,9 @@ func (m *WindowsManager) GetPackages() []models.Package {
 	// 1. Registry is the primary source — works reliably as SYSTEM in Session 0
 	//    (same approach as rmmagent's go-win64api which reads Uninstall registry keys)
 	regPackages := m.getPackagesFromRegistry()
+	if hasUnversionedSQLServer(regPackages) {
+		applySQLServerPatchLevels(regPackages, m.getSQLServerSetups())
+	}
 	m.logger.WithField("count", len(regPackages)).Info("Collected packages via registry")
 
 	// 2. Try WinGet for update availability enrichment
@@ -126,7 +130,7 @@ func (m *WindowsManager) mergeRegistryAndWinget(regPkgs, wingetPkgs []models.Pac
 	for i := range regPkgs {
 		key := normalizePackageName(regPkgs[i].Name)
 		if winfo, ok := wingetByName[key]; ok {
-			if winfo.NeedsUpdate {
+			if winfo.NeedsUpdate && !isUnknownVersion(regPkgs[i].CurrentVersion) {
 				regPkgs[i].NeedsUpdate = true
 				if regPkgs[i].AvailableVersion == "" {
 					regPkgs[i].AvailableVersion = winfo.AvailableVersion
@@ -156,6 +160,153 @@ func (m *WindowsManager) mergeRegistryAndWinget(regPkgs, wingetPkgs []models.Pac
 	}
 
 	return regPkgs
+}
+
+func isUnknownVersion(v string) bool {
+	v = strings.TrimSpace(v)
+	return v == "" || strings.EqualFold(v, "unknown")
+}
+
+// compareDottedVersions compares purely numeric dotted versions, treating
+// missing components as zero. ok is false when either side is not numeric.
+func compareDottedVersions(a, b string) (cmp int, ok bool) {
+	pa, okA := parseDottedVersion(a)
+	pb, okB := parseDottedVersion(b)
+	if !okA || !okB {
+		return 0, false
+	}
+	for i := 0; i < len(pa) || i < len(pb); i++ {
+		var x, y uint64
+		if i < len(pa) {
+			x = pa[i]
+		}
+		if i < len(pb) {
+			y = pb[i]
+		}
+		if x != y {
+			if x < y {
+				return -1, true
+			}
+			return 1, true
+		}
+	}
+	return 0, true
+}
+
+func parseDottedVersion(v string) ([]uint64, bool) {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if v == "" {
+		return nil, false
+	}
+	fields := strings.Split(v, ".")
+	out := make([]uint64, 0, len(fields))
+	for _, f := range fields {
+		n, err := strconv.ParseUint(f, 10, 64)
+		if err != nil {
+			return nil, false
+		}
+		out = append(out, n)
+	}
+	return out, true
+}
+
+type sqlServerSetup struct {
+	Instance   string `json:"Instance"`
+	Version    string `json:"Version"`
+	PatchLevel string `json:"PatchLevel"`
+}
+
+var (
+	sqlServerProductRe   = regexp.MustCompile(`^Microsoft SQL Server (\d{4}) \((?:64|32)-bit\)$`)
+	sqlServerInstanceRe  = regexp.MustCompile(`^MSSQL(\d+)\.`)
+	sqlServerMajorByYear = map[string]string{
+		"2012": "11", "2014": "12", "2016": "13", "2017": "14", "2019": "15", "2022": "16", "2025": "17",
+	}
+)
+
+func hasUnversionedSQLServer(pkgs []models.Package) bool {
+	for _, p := range pkgs {
+		if isUnknownVersion(p.CurrentVersion) && sqlServerProductRe.MatchString(p.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+// With several instances of one major version the lowest PatchLevel wins.
+func applySQLServerPatchLevels(pkgs []models.Package, setups []sqlServerSetup) {
+	lowest := map[string]string{}
+	for _, s := range setups {
+		m := sqlServerInstanceRe.FindStringSubmatch(s.Instance)
+		if m == nil {
+			continue
+		}
+		level := strings.TrimSpace(s.PatchLevel)
+		if _, ok := parseDottedVersion(level); !ok {
+			level = strings.TrimSpace(s.Version)
+		}
+		if _, ok := parseDottedVersion(level); !ok {
+			continue
+		}
+		if cur, seen := lowest[m[1]]; !seen {
+			lowest[m[1]] = level
+		} else if c, _ := compareDottedVersions(level, cur); c < 0 {
+			lowest[m[1]] = level
+		}
+	}
+	for i := range pkgs {
+		if !isUnknownVersion(pkgs[i].CurrentVersion) {
+			continue
+		}
+		m := sqlServerProductRe.FindStringSubmatch(pkgs[i].Name)
+		if m == nil {
+			continue
+		}
+		if level, ok := lowest[sqlServerMajorByYear[m[1]]]; ok {
+			pkgs[i].CurrentVersion = level
+		}
+	}
+}
+
+func (m *WindowsManager) getSQLServerSetups() []sqlServerSetup {
+	psScript := `
+$ErrorActionPreference = "SilentlyContinue"
+$result = @()
+Get-ChildItem -LiteralPath "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server" | Where-Object { $_.PSChildName -match '^MSSQL\d+\.' } | ForEach-Object {
+  $setup = Get-ItemProperty -LiteralPath (Join-Path $_.PSPath "Setup")
+  if ($setup) {
+    $result += @{
+      Instance   = [string]$_.PSChildName
+      Version    = [string]$setup.Version
+      PatchLevel = [string]$setup.PatchLevel
+    }
+  }
+}
+$result | ConvertTo-Json -Compress -Depth 2
+`
+	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
+	defer cancel()
+	output, err := cmd.Output()
+	if err != nil {
+		m.logger.WithError(err).Debug("SQL Server setup registry query failed")
+		return nil
+	}
+	return parseSQLServerSetups(output)
+}
+
+func parseSQLServerSetups(output []byte) []sqlServerSetup {
+	s := strings.TrimSpace(string(winexec.TrimBOM(output)))
+	if s == "" || s == "null" {
+		return nil
+	}
+	if !strings.HasPrefix(s, "[") {
+		s = "[" + s + "]"
+	}
+	var setups []sqlServerSetup
+	if err := json.Unmarshal([]byte(s), &setups); err != nil {
+		return nil
+	}
+	return setups
 }
 
 // normalizePackageName lowercases and trims for fuzzy matching between registry and WinGet names
@@ -356,8 +507,10 @@ if ($out) { $out | Out-String }
 	}
 
 	// Second pass: winget list --upgrade-available for accurate NeedsUpdate/AvailableVersion
-	upgradeMap := m.getWingetUpgradeAvailable()
+	return wingetEntriesToPackages(entries, m.getWingetUpgradeAvailable())
+}
 
+func wingetEntriesToPackages(entries []wingetEntry, upgradeMap map[string]string) []models.Package {
 	var packages []models.Package
 	for _, e := range entries {
 		name := strings.TrimSpace(stripEllipsis(e.Name))
@@ -381,6 +534,10 @@ if ($out) { $out | Out-String }
 			}
 		} else if avail != "" && avail != version {
 			needsUpdate = true
+		}
+		if isUnknownVersion(version) {
+			needsUpdate = false
+			avail = ""
 		}
 		// Forward WinGet source as SourceRepository
 		source := strings.TrimSpace(e.Source)
