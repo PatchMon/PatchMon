@@ -241,11 +241,14 @@ func TestClassifyWingetUpgradeExit(t *testing.T) {
 }
 
 func TestWingetArgs(t *testing.T) {
-	if got, want := wingetUpgradeArgs("Notepad++.Notepad++"), []string{"upgrade", "--id", "Notepad++.Notepad++", "--exact", "--silent", "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity"}; !reflect.DeepEqual(got, want) {
+	if got, want := wingetUpgradeArgs("Notepad++.Notepad++"), []string{"upgrade", "--id", "Notepad++.Notepad++", "--exact", "--source", "winget", "--silent", "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("upgrade args = %q", got)
 	}
-	if got, want := wingetListArgs("7zip.7zip"), []string{"list", "--id", "7zip.7zip", "--exact", "--upgrade-available", "--accept-source-agreements", "--disable-interactivity"}; !reflect.DeepEqual(got, want) {
+	if got, want := wingetListArgs("7zip.7zip"), []string{"list", "--id", "7zip.7zip", "--exact", "--source", "winget", "--upgrade-available", "--accept-source-agreements", "--disable-interactivity"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("list args = %q", got)
+	}
+	if got, want := wingetInstalledArgs("7zip.7zip"), []string{"list", "--id", "7zip.7zip", "--exact", "--source", "winget", "--accept-source-agreements", "--disable-interactivity"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("installed args = %q", got)
 	}
 	for _, a := range wingetListArgs("x") {
 		if a == "upgrade" {
@@ -459,6 +462,7 @@ func (f *fakeWUA) Install(ctx context.Context, id string, _ func(string)) (wuaOp
 }
 
 type fakeWinget struct {
+	checkErr   error
 	states     map[string]wingetUpgradeState
 	checked    []string
 	renames    [][]string
@@ -481,6 +485,9 @@ func (f *fakeWinget) UpdatableApps() []models.Package { return f.apps }
 
 func (f *fakeWinget) UpgradeState(_ context.Context, id string, _ func(string)) (wingetUpgradeState, error) {
 	f.checked = append(f.checked, id)
+	if f.checkErr != nil {
+		return wingetStateNone, f.checkErr
+	}
 	return f.states[id], nil
 }
 
@@ -947,5 +954,28 @@ func TestInventoryFlagsPinnedApps(t *testing.T) {
 		if r.pkg.WingetPinned {
 			t.Errorf("without --upgrade-available output nothing can be called pinned: %+v", r.pkg)
 		}
+	}
+}
+
+func TestWingetListCheckFailed(t *testing.T) {
+	for code, want := range map[uint32]bool{0: false, wingetNoPackageFound: false, wingetUpdateNotApplicable: false, wingetVersionNotNewer: false, 0x8A15005E: true, 0x80072EE7: true} {
+		if got := wingetListCheckFailed(code); got != want {
+			t.Errorf("%s = %v, want %v", hexCode(code), got, want)
+		}
+	}
+	if msg := (&wingetCheckError{code: 0x8A15005E}).Error(); !strings.Contains(msg, "certificate") {
+		t.Errorf("0x8A15005E message = %q", msg)
+	}
+}
+
+func TestRunCheckErrorFailsItemWithCode(t *testing.T) {
+	g := &fakeWinget{checkErr: &wingetCheckError{code: 0x8A15005E}}
+	res := runFake(WindowsPatchRequest{Targets: []WindowsPatchTarget{{Kind: WindowsTargetWinget, ID: "7zip.7zip"}}}, &recorder{}, &fakeWUA{}, g)
+	it := itemByID(res, "7zip.7zip")
+	if it.Status != itemFailed || it.ExitCode == nil || uint32(*it.ExitCode) != 0x8A15005E || strings.Contains(it.Message, "0x") {
+		t.Errorf("item = %+v", it)
+	}
+	if len(g.calls) != 0 {
+		t.Errorf("upgrade ran after a failed check: %q", g.calls)
 	}
 }

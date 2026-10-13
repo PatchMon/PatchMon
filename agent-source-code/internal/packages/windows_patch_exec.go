@@ -155,12 +155,18 @@ func (b *wingetExecBackend) UpgradeState(ctx context.Context, id string, log fun
 	if err != nil {
 		return wingetStateNone, err
 	}
+	if wingetListCheckFailed(code) {
+		return wingetStateNone, &wingetCheckError{code: code}
+	}
 	if code == 0 && wingetOutputListsID(out, id) {
 		return wingetStateAvailable, nil
 	}
-	_, out, err = b.Run(ctx, wingetInstalledArgs(id), nil)
+	code, out, err = b.Run(ctx, wingetInstalledArgs(id), nil)
 	if err != nil {
 		return wingetStateNone, err
+	}
+	if wingetListCheckFailed(code) {
+		return wingetStateNone, &wingetCheckError{code: code}
 	}
 	quiet := logrus.New()
 	quiet.SetOutput(io.Discard)

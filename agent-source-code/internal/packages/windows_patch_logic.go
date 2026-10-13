@@ -510,6 +510,7 @@ var wingetCodeMessages = map[uint32]string{
 	wingetSourceAgreementsNeed: "winget source agreements were not accepted",
 	0x8A150008:                 "Downloading the installer failed",
 	0x8A150011:                 "The installer's hash does not match its manifest",
+	0x8A15005E:                 "A winget source's server certificate was rejected: check TLS inspection or proxy settings",
 	0x8A150105:                 "Not enough disk space",
 	0x8A150107:                 "The installer needs internet access",
 	0x8A15010F:                 "Blocked by organisation policy",
@@ -537,12 +538,14 @@ func wingetOutputListsID(output, id string) bool {
 	return false
 }
 
+// The inventory's winget Ids come from the winget source. Naming it keeps an msstore failure,
+// which upgrade treats as fatal, from failing every app.
 func wingetUpgradeArgs(id string) []string {
-	return []string{"upgrade", "--id", id, "--exact", "--silent", "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity"}
+	return []string{"upgrade", "--id", id, "--exact", "--source", "winget", "--silent", "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity"}
 }
 
 func wingetListArgs(id string) []string {
-	return []string{"list", "--id", id, "--exact", "--upgrade-available", "--accept-source-agreements", "--disable-interactivity"}
+	return []string{"list", "--id", id, "--exact", "--source", "winget", "--upgrade-available", "--accept-source-agreements", "--disable-interactivity"}
 }
 
 func finalWindowsStage(items []models.PatchRunItem, runErrors []string, stopped, dryRun, _ bool) (stage, errMsg string) {
@@ -757,7 +760,20 @@ func installedUpgradeState(entries []wingetEntry, id string) wingetUpgradeState 
 }
 
 func wingetInstalledArgs(id string) []string {
-	return []string{"list", "--id", id, "--exact", "--accept-source-agreements", "--disable-interactivity"}
+	return []string{"list", "--id", id, "--exact", "--source", "winget", "--accept-source-agreements", "--disable-interactivity"}
+}
+
+// wingetCheckError is a winget list exit that means the check itself failed, not "no upgrade".
+type wingetCheckError struct{ code uint32 }
+
+func (e *wingetCheckError) Error() string { return wingetCodeMessage(e.code) }
+
+func wingetListCheckFailed(code uint32) bool {
+	switch code {
+	case 0, wingetNoPackageFound, wingetUpdateNotApplicable, wingetVersionNotNewer:
+		return false
+	}
+	return true
 }
 
 const msgPinned = "Pinned in winget: remove the pin to update it"
@@ -1251,7 +1267,14 @@ func (r *windowsPatchRun) runWingetPhase(runCtx, stopCtx context.Context, winget
 				r.finish(it, itemSkipped, reason)
 				continue
 			}
-			r.finish(it, itemFailed, "winget did not complete: "+err.Error())
+			var ce *wingetCheckError
+			if errors.As(err, &ce) {
+				ec := int64(ce.code)
+				it.ExitCode = &ec
+				r.finish(it, itemFailed, ce.Error())
+			} else {
+				r.finish(it, itemFailed, "winget did not complete: "+err.Error())
+			}
 			r.out("  %s: %s\n", it.ID, it.Message)
 			continue
 		}
