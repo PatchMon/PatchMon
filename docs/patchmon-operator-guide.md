@@ -5187,7 +5187,7 @@ The Windows agent reports installed applications (read from the Windows registry
 
 - **Agent version.** The server refuses Windows patch runs for hosts on an agent older than 2.1.5. Upgrade the agent before patching Windows hosts.
 - **WSUS.** A host configured for WSUS needs no extra configuration. Windows Update only offers WSUS-approved updates, so PatchMon installs only those, and the host must be able to reach its WSUS server.
-- **winget and the Visual C++ runtime.** winget is part of Microsoft's App Installer package; hosts without it (often Windows Server 2019 and 2022, Server Core and LTSC) can patch Windows Updates but not applications. `winget.exe` needs the Visual C++ runtime, which Windows does not supply to it when it runs as Local System. The agent points winget at the Microsoft VCLibs framework package that App Installer already installs, so you do not need to install the Visual C++ Redistributable for patching to work.
+- **winget and the Visual C++ runtime.** winget is part of Microsoft's App Installer package, which Windows Server 2025 includes as standard. Hosts without it (often Windows Server 2019 and 2022, Server Core and LTSC) can patch Windows Updates but not applications. `winget.exe` needs the Visual C++ runtime, which Windows does not supply to it when it runs as Local System. The agent points winget at the Microsoft VCLibs framework package that App Installer already installs, so you do not need to install the Visual C++ Redistributable for patching to work.
 - **Restarts.** PatchMon never restarts a Windows host. Runs that need a restart flag the host as needing a reboot.
 
 #### Supported Operating Systems: FreeBSD

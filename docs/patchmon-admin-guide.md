@@ -1523,7 +1523,7 @@ Windows hosts are patched from the same places as Linux hosts: Host Detail, the 
 
 The agent reads installed applications from the Windows registry and matches them against winget. PatchMon only ever asks winget to upgrade a package by its exact winget Id. An app that winget has no match for has no Id, so there is no safe way to tell winget which package to upgrade. These apps still report their available version, but they cannot be selected; the tooltip reads "Not patchable: this app was not found in winget. Update it with its own updater." Use the vendor's updater or your software deployment tool for them.
 
-Hosts without winget (it ships with the App Installer package, which Windows Server 2019 and 2022, Server Core and LTSC editions often do not have) list every app as Not patchable. Windows Updates still patch.
+Hosts without winget (it ships with the App Installer package, which Windows Server 2019 and 2022, Server Core and LTSC editions often do not have) list every app as Not patchable. Windows Updates still patch. Windows Server 2025 includes winget as standard.
 
 Windows Update rows also carry badges: **Security**, **Optional**, **Driver** and **Feature upgrade**.
 
