@@ -39,6 +39,7 @@ func TestIsStoreApp(t *testing.T) {
 		{"prefix of a Store app is not a match", models.Package{Name: "Terminal Preview", WingetID: "Microsoft.WindowsTerminal.Preview"}, false},
 		{"desktop app", models.Package{Name: "7-Zip", WingetID: "7zip.7zip", SourceRepository: "winget"}, false},
 		{"no winget id", models.Package{Name: "Windows Terminal"}, false},
+		{"display name alone never matches", models.Package{Name: "Microsoft.WindowsCalculator", WingetID: "Vendor.DesktopCalc"}, false},
 	}
 	for _, c := range cases {
 		if got := isStoreApp(c.pkg, appx, testWindowsApps); got != c.want {

@@ -50,13 +50,12 @@ func isStoreApp(p models.Package, appx []storeAppx, windowsApps string) bool {
 	if strings.EqualFold(p.SourceRepository, "msstore") || storeProductIDPattern.MatchString(id) || packageFamilyPattern.MatchString(id) {
 		return true
 	}
-	name := normalizePackageName(p.Name)
 	for _, a := range appx {
 		if !isStoreInstall(a, windowsApps) {
 			continue
 		}
 		family, _, _ := strings.Cut(a.PackageFamilyName, "_")
-		if strings.EqualFold(a.Name, id) || strings.EqualFold(family, id) || (name != "" && normalizePackageName(a.Name) == name) {
+		if strings.EqualFold(a.Name, id) || strings.EqualFold(family, id) {
 			return true
 		}
 	}
