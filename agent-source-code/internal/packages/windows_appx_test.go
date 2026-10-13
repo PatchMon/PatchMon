@@ -195,9 +195,11 @@ func TestApplyAppxInstallStateReportsSuppressed(t *testing.T) {
 		{Name: "Microsoft.WindowsAppRuntime.1.7", CurrentVersion: "1.7.8", AvailableVersion: "1.7.9", NeedsUpdate: true},
 		{Name: "Microsoft.VCLibs.140.00", CurrentVersion: "14.0.30704.0", AvailableVersion: "14.0.33519.0", NeedsUpdate: true},
 	}
+	pkgs = append(pkgs, models.Package{Name: "Microsoft.VCLibs.140.00.UWPDesktop", CurrentVersion: "14.0.30704.0", AvailableVersion: "14.0.40000.0", NeedsUpdate: true})
 	got := applyAppxInstallState(pkgs, issue1149Appx())
-	if len(got) != 1 || got[0] != "Microsoft.WindowsAppRuntime.1.7" {
-		t.Errorf("suppressed = %v, want only the WindowsAppRuntime row", got)
+	want := []string{"Microsoft.WindowsAppRuntime.1.7", "Microsoft.VCLibs.140.00"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("suppressed = %v, want %v", got, want)
 	}
 }
 

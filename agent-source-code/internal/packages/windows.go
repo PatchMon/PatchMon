@@ -443,6 +443,9 @@ func applyAppxInstallState(pkgs []models.Package, appx []appxPackage) (suppresse
 			}
 			pkgs[i].CurrentVersion = v.installed
 			pkgs[i].NeedsUpdate = installedIsOlder(v.installed, pkgs[i].AvailableVersion)
+			if !pkgs[i].NeedsUpdate {
+				suppressed = append(suppressed, pkgs[i].Name)
+			}
 		case exact && isDottedNumeric(current) && !sameVersionScheme(current, v.installed) && v.newerThanAllStaged():
 			pkgs[i].CurrentVersion = v.installed
 			pkgs[i].NeedsUpdate = false
