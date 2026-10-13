@@ -93,9 +93,6 @@ UPDATE hosts SET api_id = $1, api_key = $2, updated_at = NOW() WHERE id = $3;
 -- name: SetHostPatchRebootPending :exec
 UPDATE hosts SET needs_reboot = true, reboot_reason = $2, patch_reboot_pending_boot_time = boot_time, updated_at = NOW() WHERE id = $1;
 
--- name: UpdateHostRebootStatus :exec
-UPDATE hosts SET needs_reboot = $2, reboot_reason = $3, updated_at = NOW() WHERE id = $1;
-
 -- name: UpdateHostPing :exec
 UPDATE hosts SET last_update = NOW(), updated_at = NOW(), status = 'active' WHERE id = $1;
 

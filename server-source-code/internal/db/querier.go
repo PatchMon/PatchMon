@@ -621,7 +621,6 @@ type Querier interface {
 	UpdateHostNotes(ctx context.Context, arg UpdateHostNotesParams) error
 	UpdateHostPing(ctx context.Context, id string) error
 	UpdateHostPrimaryInterface(ctx context.Context, arg UpdateHostPrimaryInterfaceParams) error
-	UpdateHostRebootStatus(ctx context.Context, arg UpdateHostRebootStatusParams) error
 	UpdateJobHistoryCompleted(ctx context.Context, jobID string) error
 	UpdateJobHistoryDelayed(ctx context.Context, jobID string) error
 	UpdateJobHistoryFailed(ctx context.Context, arg UpdateJobHistoryFailedParams) error
