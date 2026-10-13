@@ -1,0 +1,788 @@
+package packages
+
+import (
+	"context"
+	"errors"
+	"reflect"
+	"regexp"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"patchmon-agent/internal/winexec"
+	"patchmon-agent/pkg/models"
+)
+
+func TestValidWindowsPatchTarget(t *testing.T) {
+	cases := []struct {
+		kind, id string
+		want     bool
+	}{
+		{WindowsTargetWUA, "7f1b0c5e-1234-4abc-9def-0123456789ab", true},
+		{WindowsTargetWUA, "7F1B0C5E-1234-4ABC-9DEF-0123456789AB", true},
+		{WindowsTargetWUA, "KB5044284", false},
+		{WindowsTargetWUA, "7f1b0c5e-1234-4abc-9def-0123456789ab' OR 1=1", false},
+		{WindowsTargetWinget, "Notepad++.Notepad++", true},
+		{WindowsTargetWinget, "Microsoft.VCRedist.2015+.x64", true},
+		{WindowsTargetWinget, "9NBLGGH4NNS1", true},
+		{WindowsTargetWinget, "7zip.7zip", true},
+		{WindowsTargetWinget, "x';calc;'", false},
+		{WindowsTargetWinget, `a"b`, false},
+		{WindowsTargetWinget, "a b", false},
+		{WindowsTargetWinget, "a;b", false},
+		{WindowsTargetWinget, "$(calc)", false},
+		{WindowsTargetWinget, "a`b", false},
+		{WindowsTargetWinget, "--force", false},
+		{WindowsTargetWinget, "-h", false},
+		{WindowsTargetWinget, `..\evil`, false},
+		{WindowsTargetWinget, "a" + strings.Repeat("b", 128), false},
+		{WindowsTargetWinget, "a" + strings.Repeat("b", 127), true},
+		{"apt", "vim", false},
+		{"", "", false},
+	}
+	for _, c := range cases {
+		if got := ValidWindowsPatchTarget(WindowsPatchTarget{Kind: c.kind, ID: c.id}); got != c.want {
+			t.Errorf("ValidWindowsPatchTarget(%q, %q) = %v, want %v", c.kind, c.id, got, c.want)
+		}
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+func TestNewWindowsPatchRequest(t *testing.T) {
+	req, _, err := NewWindowsPatchRequest("patch_all", false, nil, nil, nil)
+	if err != nil || !req.PatchAll || !req.IncludeUpdates || !req.IncludeApps {
+		t.Fatalf("missing scope flags must default on: %+v %v", req, err)
+	}
+	req, _, err = NewWindowsPatchRequest("patch_all", true, nil, boolPtr(false), nil)
+	if err != nil || req.IncludeUpdates || !req.IncludeApps || !req.DryRun {
+		t.Fatalf("include_updates=false not honoured: %+v %v", req, err)
+	}
+	if _, _, err = NewWindowsPatchRequest("patch_all", false, nil, boolPtr(false), boolPtr(false)); err == nil {
+		t.Fatal("patch_all with both scopes off must be rejected")
+	}
+
+	targets := []WindowsPatchTarget{
+		{Kind: WindowsTargetWUA, ID: "7F1B0C5E-1234-4ABC-9DEF-0123456789AB"},
+		{Kind: WindowsTargetWUA, ID: "7f1b0c5e-1234-4abc-9def-0123456789ab"},
+		{Kind: WindowsTargetWinget, ID: "x';calc;'"},
+		{Kind: WindowsTargetWinget, ID: "7zip.7zip"},
+	}
+	req, rejected, err := NewWindowsPatchRequest("patch_package", false, targets, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []WindowsPatchTarget{
+		{Kind: WindowsTargetWUA, ID: "7f1b0c5e-1234-4abc-9def-0123456789ab"},
+		{Kind: WindowsTargetWinget, ID: "7zip.7zip"},
+	}
+	if !reflect.DeepEqual(req.Targets, want) {
+		t.Errorf("targets = %+v, want %+v", req.Targets, want)
+	}
+	if len(rejected) != 1 || rejected[0].ID != "x';calc;'" {
+		t.Errorf("rejected = %+v", rejected)
+	}
+	if _, _, err = NewWindowsPatchRequest("patch_package", false, []WindowsPatchTarget{{Kind: "winget", ID: "-x"}}, nil, nil); err == nil {
+		t.Fatal("patch_package with no valid targets must be rejected")
+	}
+}
+
+const (
+	guidA = "aaaaaaaa-0000-0000-0000-000000000001"
+	guidB = "bbbbbbbb-0000-0000-0000-000000000002"
+	guidC = "cccccccc-0000-0000-0000-000000000003"
+	guidD = "dddddddd-0000-0000-0000-000000000004"
+	guidE = "eeeeeeee-0000-0000-0000-000000000005"
+	guidF = "ffffffff-0000-0000-0000-000000000006"
+)
+
+func sampleScan() wuaScan {
+	return wuaScan{Updates: []wuaUpdate{
+		{ID: guidA, Title: "Zeta app update", KBs: jsonStrings{"KB1"}, Type: 1},
+		{ID: guidB, Title: "Cumulative Update", KBs: jsonStrings{"KB2"}, Type: 1, CategoryIDs: jsonStrings{wuaCategorySecurity}},
+		{ID: guidC, Title: "Driver", Type: 2},
+		{ID: guidD, Title: "Optional preview", Type: 1, BrowseOnly: true},
+		{ID: guidE, Title: "Windows 11, version 24H2", Type: 1, CategoryIDs: jsonStrings{wuaCategoryUpgrades}},
+		{ID: guidF, Title: "Feature by name", Type: 1, Categories: jsonStrings{"Upgrades"}},
+	}}
+}
+
+func ids(us []wuaUpdate) []string {
+	var out []string
+	for _, u := range us {
+		out = append(out, u.ID)
+	}
+	return out
+}
+
+func TestSelectWUAUpdatesPatchAll(t *testing.T) {
+	install, decided := selectWUAUpdates(sampleScan(), true, nil)
+	if got, want := ids(install), []string{guidB, guidA}; !reflect.DeepEqual(got, want) {
+		t.Errorf("patch_all install = %v, want %v (security first, then title; no driver, optional or feature)", got, want)
+	}
+	if len(decided) != 0 {
+		t.Errorf("patch_all must not report items for excluded classes: %+v", decided)
+	}
+}
+
+func TestSelectWUAUpdatesPatchPackage(t *testing.T) {
+	missing := "12345678-0000-0000-0000-000000000000"
+	install, decided := selectWUAUpdates(sampleScan(), false, []string{guidE, guidC, strings.ToUpper(missing)})
+	if got, want := ids(install), []string{guidC, guidE}; !reflect.DeepEqual(got, want) {
+		t.Errorf("explicit targets = %v, want %v (driver and feature upgrade allowed when named)", got, want)
+	}
+	if len(decided) != 1 || decided[0].ID != missing || decided[0].Status != itemNotApplicable {
+		t.Errorf("missing target must be not_applicable: %+v", decided)
+	}
+}
+
+func TestSelectWUAUpdatesBlockers(t *testing.T) {
+	scan := wuaScan{Updates: []wuaUpdate{
+		{ID: guidA, Title: "Pending restart", Type: 1, PendingReboot: true},
+		{ID: guidB, Title: "Interactive", Type: 1, CanRequestUserInput: true},
+		{ID: guidC, Title: "Normal", Type: 1},
+	}}
+	install, decided := selectWUAUpdates(scan, true, nil)
+	if len(install) != 1 || install[0].ID != guidC {
+		t.Fatalf("install = %v", ids(install))
+	}
+	byID := map[string]models.PatchRunItem{}
+	for _, it := range decided {
+		byID[it.ID] = it
+	}
+	if it := byID[guidA]; it.Status != itemNotApplicable || !it.RebootRequired {
+		t.Errorf("installed-pending-reboot must never reinstall: %+v", it)
+	}
+	if it := byID[guidB]; it.Status != itemSkipped {
+		t.Errorf("interactive update must be skipped: %+v", it)
+	}
+
+	scan.RebootRequiredBeforeInstall = true
+	install, decided = selectWUAUpdates(scan, true, nil)
+	if len(install) != 0 {
+		t.Fatalf("restart required before install must block every update: %v", ids(install))
+	}
+	for _, it := range decided {
+		if it.ID == guidC && (it.Status != itemSkipped || it.Message != msgRestartFirst) {
+			t.Errorf("blocked update = %+v", it)
+		}
+	}
+}
+
+func TestWUAResultMapping(t *testing.T) {
+	cases := map[int]string{2: itemInstalled, 3: itemInstalledWithErrors, 4: itemFailed, 5: itemAborted, 0: itemFailed, 1: itemFailed}
+	for rc, want := range cases {
+		if got := wuaResultStatus(rc); got != want {
+			t.Errorf("rc %d = %q, want %q", rc, got, want)
+		}
+	}
+	if msg := wuaResultMessage(0, ""); msg != "Did not run" {
+		t.Errorf("rc 0 message = %q", msg)
+	}
+	if msg := wuaResultMessage(4, "0x800F0922"); !strings.Contains(msg, "0x800F0922") || !strings.Contains(msg, "CBS.log") {
+		t.Errorf("failure message lacks code or hint: %q", msg)
+	}
+	if msg := wuaResultMessage(2, "0x00000000"); msg != "Installed" {
+		t.Errorf("zero HRESULT must not be shown: %q", msg)
+	}
+	if wuaHResultHint("80240016") == "" || wuaHResultHint("0X8024402F") == "" {
+		t.Error("HRESULT hints must match regardless of case or prefix")
+	}
+	if !isInstallBlockedHResult("0x80240016") || isInstallBlockedHResult("0x80240017") {
+		t.Error("install-blocked detection is wrong")
+	}
+}
+
+func TestClassifyWingetExit(t *testing.T) {
+	negative := int32(-1978335189)
+	cases := []struct {
+		code   uint32
+		dry    bool
+		output string
+		status string
+		reboot bool
+	}{
+		{0, false, "", itemInstalled, false},
+		{uint32(negative), false, "", itemNotApplicable, false},
+		{wingetNoPackageFound, false, "", itemNotApplicable, false},
+		{wingetUserScopeFromAdmin, false, "", itemNotApplicable, false},
+		{wingetRebootToFinish, false, "", itemInstalled, true},
+		{wingetPackageInUse, false, "", itemFailed, false},
+		{wingetInstallInProgress, false, "", itemFailed, false},
+		{wingetPinned, false, "", itemSkipped, false},
+		{0x8A150008, false, "", itemFailed, false},
+		{1, false, "", itemFailed, false},
+		{0, true, "Name   Id         Version Available\n7-Zip  7zip.7zip  23.01   24.08\n", itemWouldInstall, false},
+		{0, true, "No installed package found matching input criteria.\n", itemNotApplicable, false},
+		{wingetUpdateNotApplicable, true, "", itemNotApplicable, false},
+		{wingetPinned, true, "", itemSkipped, false},
+		{0x8A150008, true, "", itemFailed, false},
+	}
+	for _, c := range cases {
+		got := classifyWingetExit(c.code, c.dry, c.output, "7zip.7zip")
+		if got.Status != c.status || got.RebootRequired != c.reboot {
+			t.Errorf("code %s dry=%v = %+v, want %s reboot=%v", hexCode(c.code), c.dry, got, c.status, c.reboot)
+		}
+	}
+	if !strings.Contains(classifyWingetExit(wingetNoPackageFound, false, "", "x").Message, "single user") {
+		t.Error("user-scope message missing")
+	}
+	if !strings.Contains(classifyWingetExit(0x8A150008, false, "", "x").Message, "0x8A150008") {
+		t.Error("unknown codes must carry the hex code")
+	}
+}
+
+func TestWingetArgs(t *testing.T) {
+	if got, want := wingetUpgradeArgs("Notepad++.Notepad++"), []string{"upgrade", "--id", "Notepad++.Notepad++", "--exact", "--silent", "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("upgrade args = %q", got)
+	}
+	if got, want := wingetListArgs("7zip.7zip"), []string{"list", "--id", "7zip.7zip", "--exact", "--upgrade-available", "--accept-source-agreements", "--disable-interactivity"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("list args = %q", got)
+	}
+	for _, a := range wingetListArgs("x") {
+		if a == "upgrade" {
+			t.Fatal("dry run must never call winget upgrade")
+		}
+	}
+}
+
+func TestStripTerminalControls(t *testing.T) {
+	cases := map[string]string{
+		"\x1b[31mred\x1b[0m":                "red",
+		"   - \r   \\ \r   | \rFound 7-Zip": "Found 7-Zip",
+		"\x1b]0;title\x07after":             "after",
+		"tab\tkept":                         "tab\tkept",
+		"bell\x07gone\x00":                  "bellgone",
+		"line1\nline2":                      "line1\nline2",
+		"  ██████████████  1.00 MB / 2.00 MB": "",
+		"-\n\\\n|\n/": "",
+		"crlf\r\n":    "crlf\n",
+	}
+	for in, want := range cases {
+		if got := stripTerminalControls(in); got != want {
+			t.Errorf("stripTerminalControls(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestLineLogger(t *testing.T) {
+	var got []string
+	l := newLineLogger(func(s string) { got = append(got, s) }, 1<<20)
+	_, _ = l.Write([]byte("  -\r  \\\r"))
+	_, _ = l.Write([]byte("Successfully \x1b[1minstalled\x1b[0m\r\nNo trailing"))
+	l.Flush()
+	if want := []string{"Successfully installed\n", "No trailing\n"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("lines = %q, want %q", got, want)
+	}
+	if l.Output() != "Successfully installed\nNo trailing\n" {
+		t.Errorf("captured = %q", l.Output())
+	}
+}
+
+func TestParseWUAOutput(t *testing.T) {
+	in := "\xEF\xBB\xBF" + `{"type":"log","message":"hello"}` + "\n" +
+		"WARNING: not json\r\n" +
+		`{"type":"update","id":"` + guidA + `","title":"T","kbs":"KB1","categories":["Security Updates"],"category_ids":["` + wuaCategorySecurity + `"],"type_code":2,"browse_only":true,"pending_reboot":true}` + "\n" +
+		`{"type":"update_result","id":"` + guidB + `","result_code":4,"hresult":"0x80246007"}` + "\n" +
+		`{"type":"result","op":"scan","count":1,"reboot_required_before_install":true}`
+	var logs []string
+	out, err := parseWUAOutput(strings.NewReader(in), func(s string) { logs = append(logs, s) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Updates) != 1 {
+		t.Fatalf("updates = %+v", out.Updates)
+	}
+	u := out.Updates[0]
+	if u.ID != guidA || !reflect.DeepEqual([]string(u.KBs), []string{"KB1"}) || u.Type != 2 || !u.BrowseOnly || !u.PendingReboot || !isSecurityOrCritical(u) {
+		t.Errorf("update = %+v", u)
+	}
+	if len(out.Results) != 1 || out.Results[0].ResultCode != 4 {
+		t.Errorf("results = %+v", out.Results)
+	}
+	if out.Final == nil || !out.Final.RebootRequiredBeforeInstall {
+		t.Errorf("final = %+v", out.Final)
+	}
+	if !reflect.DeepEqual(logs, []string{"hello\n", "WARNING: not json\n"}) {
+		t.Errorf("logs = %q", logs)
+	}
+
+	if _, err := parseWUAOutput(strings.NewReader(`{"type":"log","message":"x"}`), func(string) {}); !errors.Is(err, errWUANoResult) {
+		t.Errorf("missing terminal line must fail, got %v", err)
+	}
+	if _, err := parseWUAOutput(strings.NewReader(""), func(string) {}); !errors.Is(err, errWUANoResult) {
+		t.Errorf("empty output must fail, got %v", err)
+	}
+	_, err = parseWUAOutput(strings.NewReader(`{"type":"error","message":"boom","hresult":"0x80070422"}`), func(string) {})
+	var se *wuaScriptError
+	if !errors.As(err, &se) || !strings.Contains(err.Error(), "disabled") {
+		t.Errorf("error line = %v", err)
+	}
+	install := `{"type":"result","op":"install","id":"` + guidA + `","found":true,"result_code":3,"hresult":"0x00000000","reboot_required":true}`
+	out, err = parseWUAOutput(strings.NewReader(install), func(string) {})
+	if err != nil || out.Final.ResultCode != 3 || !out.Final.RebootRequired || !out.Final.Found {
+		t.Errorf("install result = %+v %v", out.Final, err)
+	}
+}
+
+func TestWUAScriptIsStatic(t *testing.T) {
+	if wuaScript == "" {
+		t.Fatal("wua.ps1 is not embedded")
+	}
+	if regexp.MustCompile(`%[-+# 0-9.]*[sdvqxXtTwf]`).MatchString(wuaScript) {
+		t.Error("wua.ps1 contains a Go format verb; it must never be built with fmt")
+	}
+	args := wuaPowerShellArgs()
+	if args[len(args)-2] != "-Command" || args[len(args)-1] != winexec.Script(wuaScript) {
+		t.Error("the executed script must be exactly the embedded file behind the UTF-8 preamble")
+	}
+	for _, want := range []string{"[Console]::In.ReadToEnd()", "IsInstalled=0 AND IsHidden=0", "$guidPattern", "-notmatch $guidPattern"} {
+		if !strings.Contains(wuaScript, want) {
+			t.Errorf("wua.ps1 lacks %q", want)
+		}
+	}
+}
+
+func TestFinalWindowsStage(t *testing.T) {
+	ok := models.PatchRunItem{ID: "a", Status: itemInstalled}
+	failed := models.PatchRunItem{ID: "b", KB: "KB5044284", Status: itemFailed, HResult: "0x800f0922"}
+	skipped := models.PatchRunItem{ID: "c", Title: "7-Zip", Status: itemSkipped, Message: "Pinned with winget pin"}
+	code := int64(wingetPackageInUse)
+	inUse := models.PatchRunItem{ID: "d", Title: "Notepad++", Status: itemFailed, ExitCode: &code}
+	cases := []struct {
+		name     string
+		items    []models.PatchRunItem
+		errs     []string
+		stopped  bool
+		dry, pkg bool
+		stage    string
+		msg      string
+	}{
+		{"stop wins", []models.PatchRunItem{failed}, nil, true, false, false, "cancelled", "stopped by user"},
+		{"failure", []models.PatchRunItem{ok, failed, inUse}, nil, false, false, false, "failed", "2 of 3 failed: KB5044284 (0x800f0922), Notepad++ (0x8A150101)"},
+		{"skip benign in patch_all", []models.PatchRunItem{ok, skipped}, nil, false, false, false, "completed", ""},
+		{"skip fails patch_package", []models.PatchRunItem{ok, skipped}, nil, false, false, true, "failed", "1 of 2 failed: 7-Zip (Pinned with winget pin)"},
+		{"dry run", []models.PatchRunItem{{Status: itemWouldInstall}}, nil, false, true, false, "dry_run_completed", ""},
+		{"empty", nil, nil, false, false, false, "completed", ""},
+		{"run error", nil, []string{"Windows Update search failed: x"}, false, false, false, "failed", "Windows Update search failed: x"},
+	}
+	for _, c := range cases {
+		stage, msg := finalWindowsStage(c.items, c.errs, c.stopped, c.dry, c.pkg)
+		if stage != c.stage || msg != c.msg {
+			t.Errorf("%s: got (%q, %q), want (%q, %q)", c.name, stage, msg, c.stage, c.msg)
+		}
+	}
+}
+
+func TestChooseWingetDir(t *testing.T) {
+	root := "C:/Program Files/WindowsApps/"
+	dirs := []string{
+		root + "Microsoft.DesktopAppInstaller_1.9.25200.0_x64__8wekyb3d8bbwe",
+		root + "Microsoft.DesktopAppInstaller_1.10.3.0_x64__8wekyb3d8bbwe",
+		root + "Microsoft.DesktopAppInstaller_1.24.25199.0_arm64__8wekyb3d8bbwe",
+		root + "Microsoft.DesktopAppInstaller_9.0.0.0_x64__notmicrosoft",
+		root + "Microsoft.DesktopAppInstaller_2.0.0.0_neutral_~_8wekyb3d8bbwe",
+	}
+	if d, ok := chooseWingetDir(dirs, "x64"); !ok || d.version != "1.10.3.0" {
+		t.Errorf("x64 = %+v", d)
+	}
+	if d, ok := chooseWingetDir(dirs, "arm64"); !ok || d.arch != "arm64" {
+		t.Errorf("arm64 = %+v", d)
+	}
+	if d, ok := chooseWingetDir(dirs[2:3], "x64"); !ok || d.arch != "arm64" {
+		t.Errorf("fallback to another arch = %+v", d)
+	}
+	if _, ok := chooseWingetDir(nil, "x64"); ok {
+		t.Error("empty must not resolve")
+	}
+	libs := []string{
+		root + "Microsoft.VCLibs.140.00.UWPDesktop_14.0.33519.0_arm64__8wekyb3d8bbwe",
+		root + "Microsoft.VCLibs.140.00.UWPDesktop_14.0.33728.0_arm64__8wekyb3d8bbwe",
+		root + "Microsoft.VCLibs.140.00.UWPDesktop_14.0.40000.0_x64__8wekyb3d8bbwe",
+		root + "Microsoft.VCLibs.140.00_14.0.50000.0_arm64__8wekyb3d8bbwe",
+	}
+	if d, ok := chooseVCLibsDir(libs, "arm64"); !ok || d.version != "14.0.33728.0" {
+		t.Errorf("vclibs arm64 = %+v", d)
+	}
+}
+
+func TestWingetChildEnv(t *testing.T) {
+	env := wingetChildEnv([]string{"Path=C:\\Windows", "TERM=xterm", "A=1"}, `C:\VCLibs`)
+	want := []string{`Path=C:\VCLibs;C:\Windows`, "A=1", "TERM=dumb"}
+	if !reflect.DeepEqual(env, want) {
+		t.Errorf("env = %q, want %q", env, want)
+	}
+	if env := wingetChildEnv([]string{"A=1"}, ""); !reflect.DeepEqual(env, []string{"A=1", "TERM=dumb"}) {
+		t.Errorf("env without vclibs = %q", env)
+	}
+}
+
+func TestGuardedWindowsUpdatesUsesCacheWhileLocked(t *testing.T) {
+	first := []models.Package{{Name: "KB1", NeedsUpdate: true}}
+	if got := guardedWindowsUpdates(func() []models.Package { return first }); len(got) != 1 {
+		t.Fatalf("got %+v", got)
+	}
+	wuaMu.Lock()
+	called := false
+	got := guardedWindowsUpdates(func() []models.Package { called = true; return nil })
+	wuaMu.Unlock()
+	if called {
+		t.Error("collector must not search while a patch run holds wuaMu")
+	}
+	if len(got) != 1 || got[0].Name != "KB1" {
+		t.Errorf("locked result = %+v, want the cached list", got)
+	}
+}
+
+type fakeWUA struct {
+	mu           sync.Mutex
+	scan         wuaScan
+	scanErr      error
+	downloads    [][]string
+	downloadRes  map[string]wuaOpResult
+	downloadErr  error
+	installs     []string
+	installRes   map[string]wuaOpResult
+	installErr   map[string]error
+	onInstall    func(ctx context.Context, id string)
+	installDelay time.Duration
+}
+
+func (f *fakeWUA) Scan(_ context.Context, log func(string)) (wuaScan, error) {
+	log("scanning\n")
+	return f.scan, f.scanErr
+}
+
+func (f *fakeWUA) Download(_ context.Context, ids []string, _ func(string)) (map[string]wuaOpResult, error) {
+	f.mu.Lock()
+	f.downloads = append(f.downloads, ids)
+	f.mu.Unlock()
+	return f.downloadRes, f.downloadErr
+}
+
+func (f *fakeWUA) Install(ctx context.Context, id string, _ func(string)) (wuaOpResult, error) {
+	f.mu.Lock()
+	f.installs = append(f.installs, id)
+	f.mu.Unlock()
+	if f.onInstall != nil {
+		f.onInstall(ctx, id)
+	}
+	if f.installDelay > 0 {
+		time.Sleep(f.installDelay)
+	}
+	if err := f.installErr[id]; err != nil {
+		return wuaOpResult{}, err
+	}
+	if res, ok := f.installRes[id]; ok {
+		return res, nil
+	}
+	return wuaOpResult{ID: id, Found: true, ResultCode: 2}, nil
+}
+
+type fakeWinget struct {
+	resolveErr error
+	apps       []models.Package
+	calls      [][]string
+	codes      map[string]uint32
+	output     string
+}
+
+func (f *fakeWinget) Resolve() error { return f.resolveErr }
+
+func (f *fakeWinget) Run(_ context.Context, args []string, log func(string)) (uint32, string, error) {
+	f.calls = append(f.calls, args)
+	log("winget output\n")
+	return f.codes[args[2]], f.output, nil
+}
+
+func (f *fakeWinget) UpdatableApps() []models.Package { return f.apps }
+
+type recorder struct {
+	mu      sync.Mutex
+	out     strings.Builder
+	posts   [][]models.PatchRunItem
+	stopped bool
+	reboot  bool
+}
+
+func (r *recorder) hooks() WindowsPatchHooks {
+	return WindowsPatchHooks{
+		Output: func(s string) { r.mu.Lock(); r.out.WriteString(s); r.mu.Unlock() },
+		PostItems: func(items []models.PatchRunItem) {
+			r.mu.Lock()
+			r.posts = append(r.posts, items)
+			r.mu.Unlock()
+		},
+		Stopped:        func() bool { r.mu.Lock(); defer r.mu.Unlock(); return r.stopped },
+		RebootRequired: func() bool { return r.reboot },
+	}
+}
+
+func (r *recorder) output() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.out.String()
+}
+
+func itemByID(res WindowsPatchResult, id string) models.PatchRunItem {
+	for _, it := range res.Items {
+		if it.ID == id {
+			return it
+		}
+	}
+	return models.PatchRunItem{}
+}
+
+func runFake(req WindowsPatchRequest, rec *recorder, w *fakeWUA, g *fakeWinget) WindowsPatchResult {
+	return newWindowsPatchRun(req, rec.hooks(), w, g).run(context.Background(), context.Background())
+}
+
+func TestRunPatchAllDryRunInstallsNothing(t *testing.T) {
+	w := &fakeWUA{scan: sampleScan()}
+	g := &fakeWinget{
+		apps: []models.Package{
+			{Name: "7-Zip", WingetID: "7zip.7zip", NeedsUpdate: true},
+			{Name: "Up to date", WingetID: "Foo.Bar", NeedsUpdate: false},
+			{Name: "Registry only", NeedsUpdate: true},
+		},
+		output: "7-Zip 7zip.7zip 23.01 24.08\n",
+	}
+	rec := &recorder{}
+	res := runFake(WindowsPatchRequest{PatchAll: true, DryRun: true, IncludeUpdates: true, IncludeApps: true}, rec, w, g)
+	if len(w.downloads) != 0 || len(w.installs) != 0 {
+		t.Fatalf("dry run downloaded %v or installed %v", w.downloads, w.installs)
+	}
+	if len(g.calls) != 1 || !reflect.DeepEqual(g.calls[0], wingetListArgs("7zip.7zip")) {
+		t.Fatalf("winget calls = %q", g.calls)
+	}
+	if res.Stage != "dry_run_completed" {
+		t.Errorf("stage = %q (%s)", res.Stage, res.ErrorMessage)
+	}
+	for _, id := range []string{guidA, guidB, "7zip.7zip"} {
+		if it := itemByID(res, id); it.Status != itemWouldInstall {
+			t.Errorf("%s = %+v", id, it)
+		}
+	}
+	if len(res.Items) != 3 {
+		t.Errorf("items = %+v", res.Items)
+	}
+}
+
+func TestRunPatchAllScopes(t *testing.T) {
+	w := &fakeWUA{scan: sampleScan()}
+	g := &fakeWinget{apps: []models.Package{{Name: "7-Zip", WingetID: "7zip.7zip", NeedsUpdate: true}}}
+	runFake(WindowsPatchRequest{PatchAll: true, IncludeUpdates: false, IncludeApps: true}, &recorder{}, w, g)
+	if len(w.installs) != 0 || len(g.calls) != 1 {
+		t.Errorf("updates off: wua installs %v, winget calls %v", w.installs, g.calls)
+	}
+	w = &fakeWUA{scan: sampleScan()}
+	g = &fakeWinget{apps: []models.Package{{Name: "7-Zip", WingetID: "7zip.7zip", NeedsUpdate: true}}}
+	res := runFake(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true, IncludeApps: false}, &recorder{}, w, g)
+	if len(g.calls) != 0 || !reflect.DeepEqual(w.installs, []string{guidB, guidA}) {
+		t.Errorf("apps off: wua installs %v, winget calls %v", w.installs, g.calls)
+	}
+	if res.Stage != "completed" {
+		t.Errorf("stage = %q %q", res.Stage, res.ErrorMessage)
+	}
+	res = runFake(WindowsPatchRequest{PatchAll: true}, &recorder{}, &fakeWUA{}, &fakeWinget{})
+	if res.Stage != "failed" {
+		t.Errorf("both scopes off = %q", res.Stage)
+	}
+}
+
+func TestRunPatchPackageResults(t *testing.T) {
+	missing := "12345678-0000-0000-0000-000000000000"
+	w := &fakeWUA{
+		scan: sampleScan(),
+		installRes: map[string]wuaOpResult{
+			guidA: {Found: true, ResultCode: 3, HResult: "0x00000000", RebootRequired: true},
+			guidB: {Found: true, ResultCode: 4, HResult: "0x800F0922"},
+		},
+	}
+	g := &fakeWinget{codes: map[string]uint32{"7zip.7zip": 0, "Notepad++.Notepad++": wingetPackageInUse}}
+	rec := &recorder{}
+	res := runFake(WindowsPatchRequest{Targets: []WindowsPatchTarget{
+		{Kind: WindowsTargetWUA, ID: guidA},
+		{Kind: WindowsTargetWUA, ID: guidB},
+		{Kind: WindowsTargetWUA, ID: missing},
+		{Kind: WindowsTargetWinget, ID: "7zip.7zip"},
+		{Kind: WindowsTargetWinget, ID: "Notepad++.Notepad++"},
+	}}, rec, w, g)
+
+	if res.Stage != "failed" || !strings.HasPrefix(res.ErrorMessage, "2 of 5 failed: KB2 (0x800f0922)") {
+		t.Errorf("stage = %q, message = %q", res.Stage, res.ErrorMessage)
+	}
+	if it := itemByID(res, guidA); it.Status != itemInstalledWithErrors || !it.RebootRequired || it.ResultCode == nil || *it.ResultCode != 3 {
+		t.Errorf("rc 3 item = %+v", it)
+	}
+	if it := itemByID(res, missing); it.Status != itemNotApplicable {
+		t.Errorf("missing item = %+v", it)
+	}
+	if it := itemByID(res, "Notepad++.Notepad++"); it.Status != itemFailed || it.ExitCode == nil || uint32(*it.ExitCode) != wingetPackageInUse {
+		t.Errorf("in-use item = %+v", it)
+	}
+	if !res.RebootRequired {
+		t.Error("per-update restart flag must reach the run")
+	}
+	if !reflect.DeepEqual(g.calls[0], wingetUpgradeArgs("7zip.7zip")) {
+		t.Errorf("winget args = %q", g.calls[0])
+	}
+	for _, batch := range rec.posts {
+		if len(batch) > maxItemsPerPost {
+			t.Errorf("posted %d items in one call", len(batch))
+		}
+	}
+	if n := strings.Count(rec.output(), "scanning"); n != 1 {
+		t.Errorf("output must be sent as deltas; scan log appeared %d times", n)
+	}
+}
+
+func TestRunStopBetweenItemsNeverInterruptsInstall(t *testing.T) {
+	rec := &recorder{}
+	runCtx := context.Background()
+	stopCtx, stop := context.WithCancel(runCtx)
+	var installCtxErr error
+	w := &fakeWUA{scan: wuaScan{Updates: []wuaUpdate{
+		{ID: guidA, Title: "A", Type: 1},
+		{ID: guidB, Title: "B", Type: 1},
+	}}}
+	w.onInstall = func(ctx context.Context, _ string) {
+		rec.mu.Lock()
+		rec.stopped = true
+		rec.mu.Unlock()
+		stop()
+		installCtxErr = ctx.Err()
+	}
+	res := newWindowsPatchRun(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true, IncludeApps: true}, rec.hooks(), w, &fakeWinget{apps: []models.Package{{Name: "7-Zip", WingetID: "7zip.7zip", NeedsUpdate: true}}}).run(runCtx, stopCtx)
+	if installCtxErr != nil {
+		t.Fatalf("a stop cancelled the install in progress: %v", installCtxErr)
+	}
+	if len(w.installs) != 1 {
+		t.Fatalf("installs after stop = %v", w.installs)
+	}
+	if res.Stage != "cancelled" {
+		t.Errorf("stage = %q", res.Stage)
+	}
+	if it := itemByID(res, guidA); it.Status != itemInstalled {
+		t.Errorf("current item must finish: %+v", it)
+	}
+	if it := itemByID(res, guidB); it.Status != itemSkipped || it.Message != msgStopped {
+		t.Errorf("remaining item = %+v", it)
+	}
+	if it := itemByID(res, "7zip.7zip"); it.Status != itemSkipped {
+		t.Errorf("remaining app = %+v", it)
+	}
+}
+
+func TestRunInstallBlockedSkipsRest(t *testing.T) {
+	w := &fakeWUA{
+		scan:       wuaScan{Updates: []wuaUpdate{{ID: guidA, Title: "A", Type: 1}, {ID: guidB, Title: "B", Type: 1}}},
+		installErr: map[string]error{guidA: &wuaScriptError{Message: "install not allowed", HResult: "0x80240016"}},
+	}
+	res := runFake(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, &recorder{}, w, &fakeWinget{})
+	if len(w.installs) != 1 {
+		t.Errorf("installs = %v", w.installs)
+	}
+	if it := itemByID(res, guidA); it.Status != itemFailed || it.HResult != "0x80240016" {
+		t.Errorf("blocked item = %+v", it)
+	}
+	if it := itemByID(res, guidB); it.Status != itemSkipped || it.Message != msgRestartFirst {
+		t.Errorf("next item = %+v", it)
+	}
+	if res.Stage != "failed" {
+		t.Errorf("stage = %q", res.Stage)
+	}
+}
+
+func TestRunAlreadyInstalledIsNotReinstalled(t *testing.T) {
+	w := &fakeWUA{
+		scan: wuaScan{Updates: []wuaUpdate{{ID: guidA, Title: "A", Type: 1}, {ID: guidB, Title: "B", Type: 1}, {ID: guidC, Title: "C", Type: 1}}},
+		installRes: map[string]wuaOpResult{
+			guidA: {Found: true, AlreadyInstalled: true},
+			guidB: {Found: true, PendingReboot: true},
+			guidC: {Found: false},
+		},
+	}
+	res := runFake(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, &recorder{}, w, &fakeWinget{})
+	for _, id := range []string{guidA, guidB, guidC} {
+		if it := itemByID(res, id); it.Status != itemNotApplicable {
+			t.Errorf("%s = %+v", id, it)
+		}
+	}
+	if !itemByID(res, guidB).RebootRequired || !res.RebootRequired {
+		t.Error("an install pending a restart must report the restart")
+	}
+	if res.Stage != "completed" {
+		t.Errorf("stage = %q %q", res.Stage, res.ErrorMessage)
+	}
+}
+
+func TestRunDownloadFailure(t *testing.T) {
+	w := &fakeWUA{
+		scan:        wuaScan{Updates: []wuaUpdate{{ID: guidA, Title: "A", Type: 1}, {ID: guidB, Title: "B", Type: 1}}},
+		downloadRes: map[string]wuaOpResult{guidA: {ID: guidA, ResultCode: 4, HResult: "0x8024402F"}},
+	}
+	res := runFake(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, &recorder{}, w, &fakeWinget{})
+	if !reflect.DeepEqual(w.installs, []string{guidB}) {
+		t.Errorf("installs = %v", w.installs)
+	}
+	if it := itemByID(res, guidA); it.Status != itemFailed || !strings.Contains(it.Message, "proxy") {
+		t.Errorf("download-failed item = %+v", it)
+	}
+
+	w = &fakeWUA{scan: wuaScan{Updates: []wuaUpdate{{ID: guidA, Title: "A", Type: 1}}}, downloadErr: errors.New("boom")}
+	res = runFake(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, &recorder{}, w, &fakeWinget{})
+	if len(w.installs) != 0 || itemByID(res, guidA).Status != itemFailed || res.Stage != "failed" {
+		t.Errorf("download error: installs %v, result %+v", w.installs, res)
+	}
+}
+
+func TestRunScanFailure(t *testing.T) {
+	w := &fakeWUA{scanErr: &wuaScriptError{Message: "x", HResult: "0x80070422"}}
+	res := runFake(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, &recorder{}, w, &fakeWinget{})
+	if res.Stage != "failed" || !strings.Contains(res.ErrorMessage, "disabled") {
+		t.Errorf("patch_all scan failure = %+v", res)
+	}
+	res = runFake(WindowsPatchRequest{Targets: []WindowsPatchTarget{{Kind: WindowsTargetWUA, ID: guidA}}}, &recorder{}, w, &fakeWinget{})
+	if it := itemByID(res, guidA); it.Status != itemFailed || res.Stage != "failed" {
+		t.Errorf("patch_package scan failure = %+v", res)
+	}
+}
+
+func TestRunWingetMissing(t *testing.T) {
+	g := &fakeWinget{resolveErr: errors.New("not found")}
+	res := runFake(WindowsPatchRequest{Targets: []WindowsPatchTarget{{Kind: WindowsTargetWinget, ID: "7zip.7zip"}}}, &recorder{}, &fakeWUA{}, g)
+	if it := itemByID(res, "7zip.7zip"); it.Status != itemFailed || it.Message != "winget is not installed on this host" || res.Stage != "failed" {
+		t.Errorf("patch_package without winget = %+v", res)
+	}
+	rec := &recorder{}
+	res = runFake(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true, IncludeApps: true}, rec, &fakeWUA{}, g)
+	if res.Stage != "completed" || !strings.Contains(rec.output(), "winget is not installed") {
+		t.Errorf("patch_all without winget = %+v", res)
+	}
+}
+
+func TestRunHeartbeatAndRebootHook(t *testing.T) {
+	w := &fakeWUA{scan: wuaScan{Updates: []wuaUpdate{{ID: guidA, Title: "A", KBs: jsonStrings{"KB9"}, Type: 1}}}, installDelay: 60 * time.Millisecond}
+	rec := &recorder{reboot: true}
+	r := newWindowsPatchRun(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, rec.hooks(), w, &fakeWinget{})
+	r.timeouts.heartbeat = 10 * time.Millisecond
+	res := r.run(context.Background(), context.Background())
+	if !strings.Contains(rec.output(), "[Windows Update] Installing A (KB9): 0m elapsed") {
+		t.Errorf("no heartbeat in output:\n%s", rec.output())
+	}
+	if !res.RebootRequired {
+		t.Error("the system restart check must be consulted")
+	}
+}
+
+func TestRunTimeLimitFailsRun(t *testing.T) {
+	runCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w := &fakeWUA{scan: wuaScan{Updates: []wuaUpdate{{ID: guidA, Title: "A", Type: 1}}}}
+	res := newWindowsPatchRun(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, (&recorder{}).hooks(), w, &fakeWinget{}).run(runCtx, context.Background())
+	if len(w.installs) != 0 || res.Stage != "failed" || !strings.Contains(res.ErrorMessage, msgTimeLimit) {
+		t.Errorf("time limit = %+v, installs %v", res, w.installs)
+	}
+}
