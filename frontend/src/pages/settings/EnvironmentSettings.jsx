@@ -72,7 +72,7 @@ const SourceBadge = ({ source }) => {
 };
 
 const VariableKey = ({ name }) => (
-	<span className="text-sm font-mono font-medium text-secondary-900 dark:text-white [overflow-wrap:anywhere]">
+	<span className="text-sm font-mono font-medium text-secondary-900 dark:text-white break-words">
 		{name.split("_").map((part, i, parts) => (
 			<Fragment key={parts.slice(0, i + 1).join("_")}>
 				{part}
@@ -202,7 +202,7 @@ const EnvironmentSettings = () => {
 				<TimezoneSelect
 					value={editValue}
 					onChange={(e) => setEditValue(e.target.value)}
-					className="block w-48 rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-800 px-2 py-1 text-sm"
+					className="block w-full max-w-[12rem] rounded border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-800 px-2 py-1 text-sm"
 				/>
 			) : isBooleanVar(v) ? (
 				<select
@@ -246,9 +246,20 @@ const EnvironmentSettings = () => {
 	);
 
 	const renderValue = (v) => {
-		if (editingKey === v.key) return renderEditor(v);
 		const showDefault =
 			(v.defaultValue || "") !== (v.effectiveValue || "") && v.defaultValue;
+		if (editingKey === v.key) {
+			return (
+				<div className="min-w-0">
+					{renderEditor(v)}
+					{v.defaultValue && (
+						<div className="mt-0.5 text-xs text-secondary-500 dark:text-secondary-400 [overflow-wrap:anywhere]">
+							Default: {v.defaultValue}
+						</div>
+					)}
+				</div>
+			);
+		}
 		return (
 			<div className="min-w-0">
 				{v.effectiveValue?.includes(",") ? (
@@ -272,12 +283,10 @@ const EnvironmentSettings = () => {
 		);
 	};
 
-	const renderAction = (v, align = "end") => {
+	const renderAction = (v) => {
 		if (v.editable && v.effectiveSource === "env") {
 			return (
-				<div
-					className={`flex flex-col gap-0.5 ${align === "end" ? "items-end text-right" : "items-start"}`}
-				>
+				<div className="flex flex-col items-start gap-0.5">
 					<span
 						className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300 whitespace-nowrap"
 						title={`${v.key} is set in .env, which takes priority over the database. Change it in .env and restart PatchMon.`}
@@ -393,7 +402,6 @@ const EnvironmentSettings = () => {
 				</div>
 			)}
 
-			{/* Mobile Card Layout */}
 			<div className="md:hidden space-y-4">
 				{orderedCategories.map((category) => (
 					<section key={category} className="space-y-2">
@@ -420,7 +428,7 @@ const EnvironmentSettings = () => {
 								</div>
 								{renderValue(v)}
 								<div className="pt-2 border-t border-secondary-200 dark:border-secondary-600">
-									{renderAction(v, "start")}
+									{renderAction(v)}
 								</div>
 							</div>
 						))}
@@ -428,8 +436,7 @@ const EnvironmentSettings = () => {
 				))}
 			</div>
 
-			{/* Desktop Table Layout */}
-			<div className="hidden md:block card overflow-hidden">
+			<div className="hidden md:block card overflow-x-auto">
 				<table className="w-full divide-y divide-secondary-200 dark:divide-secondary-600">
 					<thead className="bg-secondary-50 dark:bg-secondary-700">
 						<tr>

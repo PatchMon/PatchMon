@@ -324,4 +324,23 @@ describe("Environment settings layout", () => {
 		fireEvent.click(within(card).getByRole("button", { name: /edit/i }));
 		expect(within(card).getByRole("textbox")).toHaveValue("3001");
 	});
+
+	it("keeps the default visible while a value is being edited", async () => {
+		settingsAPI.getEnvironmentConfig.mockResolvedValue({
+			data: {
+				variables: [
+					variable("JSON_BODY_LIMIT", {
+						effectiveValue: "5mb",
+						defaultValue: "5mb",
+						effectiveSource: "db",
+					}),
+				],
+			},
+		});
+		renderPage();
+		const row = await rowFor("JSON_BODY_LIMIT");
+		expect(within(row).queryByText("Default: 5mb")).toBeNull();
+		fireEvent.click(within(row).getByRole("button", { name: /edit/i }));
+		expect(within(row).getByText("Default: 5mb")).toBeInTheDocument();
+	});
 });

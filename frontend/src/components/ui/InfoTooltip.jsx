@@ -13,7 +13,7 @@ const InfoTooltip = ({
 			<button
 				type="button"
 				aria-label={label}
-				className={`relative inline-flex flex-shrink-0 items-center justify-center rounded p-0.5 align-middle text-secondary-400 hover:text-secondary-600 dark:text-secondary-400 dark:hover:text-secondary-200 cursor-help focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 before:absolute before:-inset-3 md:before:-inset-1 ${className}`}
+				className={`relative inline-flex flex-shrink-0 items-center justify-center rounded p-0.5 align-middle text-secondary-400 hover:text-secondary-600 dark:hover:text-secondary-200 cursor-help focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 before:absolute before:-inset-3 md:before:-inset-1 ${className}`}
 			>
 				<Info className="h-4 w-4" aria-hidden="true" />
 			</button>
