@@ -261,7 +261,8 @@ jobs:
   # Everything above runs with the default GOOS, so nothing behind
   # //go:build windows is ever compiled: service_windows.go,
   # updatedir_windows.go, sysproc_windows.go and windows_patch.go used to reach
-  # their first compile in agent-release.yml, i.e. after a tag already existed.
+  # their first compile in docker.yml's build-agents job, which a fork PR only
+  # reaches once a maintainer labels it for a build.
   # This job is the cheap gate that closes that hole on every PR.
   agent-windows-crosscompile:
     name: Agent Cross-Compile (windows)
