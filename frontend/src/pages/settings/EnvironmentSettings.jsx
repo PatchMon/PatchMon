@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Edit2, HelpCircle, Variable } from "lucide-react";
+import { AlertTriangle, Edit2, HelpCircle, Lock, Variable } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { TimezoneSelect } from "../../components/TimezoneSelect";
 import { useToast } from "../../contexts/ToastContext";
@@ -100,29 +100,11 @@ const EnvironmentSettings = () => {
 	const updateMutation = useMutation({
 		mutationFn: ({ key, value }) =>
 			settingsAPI.updateEnvironmentConfig(key, value),
-		onSuccess: async (_, { key, value }) => {
-			// Optimistically update cache so the UI shows the new value immediately
-			queryClient.setQueryData(["environment-config"], (old) => {
-				if (!old?.variables) return old;
-				return {
-					...old,
-					variables: old.variables.map((v) =>
-						v.key === key
-							? {
-									...v,
-									effectiveValue: value,
-									effectiveSource: v.effectiveSource === "env" ? "env" : "db",
-								}
-							: v,
-					),
-				};
-			});
+		onSuccess: async (response) => {
 			await queryClient.invalidateQueries({ queryKey: ["environment-config"] });
 			setEditingKey(null);
 			setEditValue("");
-			toast.success(
-				"Saved. Restart the application for changes to take effect.",
-			);
+			toast.success(response?.data?.message || "Saved.");
 		},
 		onError: (err) => {
 			toast.error(err.response?.data?.error || "Failed to update");
@@ -216,7 +198,13 @@ const EnvironmentSettings = () => {
 						(not in the database).
 					</p>
 					<p className="text-sm text-secondary-500 dark:text-secondary-400 mt-1">
-						If any changes are made then please restart the PatchMon server.
+						Variables marked &quot;Set in .env&quot; already have a value in the
+						.env file, which takes priority, so they cannot be changed here.
+						Edit or remove them in .env and restart the PatchMon server.
+					</p>
+					<p className="text-sm text-secondary-500 dark:text-secondary-400 mt-1">
+						Most changes apply straight away. After saving you will be told if a
+						restart is needed.
 					</p>
 				</div>
 			</div>
@@ -230,9 +218,10 @@ const EnvironmentSettings = () => {
 								Misconfiguration detected
 							</h3>
 							<p className="mt-1 text-sm text-amber-700 dark:text-amber-300">
-								Some variables have both env and database values. Env takes
-								precedence. Remove from .env for the database value to take
-								effect.
+								Some variables have both .env and database values. The .env
+								value takes precedence and the database value is ignored. Remove
+								the variable from .env and restart for the database value to
+								take effect.
 							</p>
 						</div>
 					</div>
@@ -427,35 +416,35 @@ const EnvironmentSettings = () => {
 												<SourceBadge source={v.effectiveSource} />
 											</td>
 											<td className="px-3 py-2 whitespace-nowrap text-right">
-												{v.editable ? (
-													<div className="flex items-center justify-end gap-2">
+												{v.editable && v.effectiveSource === "env" ? (
+													<div className="flex flex-col items-end gap-0.5">
+														<span
+															className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300"
+															title={`${v.key} is set in .env, which takes priority over the database. Change it in .env and restart PatchMon.`}
+														>
+															<Lock className="h-3.5 w-3.5" />
+															Set in .env
+														</span>
 														{v.conflict && (
-															<span
-																className="text-xs text-amber-600 dark:text-amber-400"
-																title="Remove from .env for the database value to take effect"
-															>
-																Remove from .env
+															<span className="text-xs text-secondary-500 dark:text-secondary-400">
+																{v.dbValue
+																	? `Database value "${v.dbValue}" is ignored`
+																	: "Database value is ignored"}
 															</span>
 														)}
-														<button
-															type="button"
-															onClick={() => handleEdit(v)}
-															disabled={
-																editingKey !== null && editingKey !== v.key
-															}
-															className="inline-flex items-center gap-1 text-xs text-primary-600 hover:text-primary-700 dark:text-primary-400 disabled:opacity-50"
-															title={
-																v.conflict
-																	? "Remove from .env for the database value to take effect"
-																	: undefined
-															}
-														>
-															<Edit2 className="h-4 w-4" />
-															{v.effectiveSource === "env"
-																? "Override"
-																: "Edit"}
-														</button>
 													</div>
+												) : v.editable ? (
+													<button
+														type="button"
+														onClick={() => handleEdit(v)}
+														disabled={
+															editingKey !== null && editingKey !== v.key
+														}
+														className="inline-flex items-center gap-1 text-xs text-primary-600 hover:text-primary-700 dark:text-primary-400 disabled:opacity-50"
+													>
+														<Edit2 className="h-4 w-4" />
+														Edit
+													</button>
 												) : (
 													<span
 														className="text-xs text-secondary-400"
