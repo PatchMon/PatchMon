@@ -47,7 +47,7 @@ func runShell(t *testing.T, sh, src string, args ...string) string {
 }
 
 func TestEnrolHelpersMatchBetweenScripts(t *testing.T) {
-	for _, name := range []string{"patchmon_identity", "identity_value", "same_server", "enrol_outcome", "write_stub_config"} {
+	for _, name := range []string{"patchmon_identity", "identity_value", "same_server", "enrol_outcome", "set_aside_identity", "write_stub_config"} {
 		direct := extractShellFunc(t, DirectHostAutoEnrollScript, name)
 		proxmox := extractShellFunc(t, ProxmoxAutoEnrollScript, name)
 		if direct != proxmox {
@@ -224,6 +224,73 @@ func TestIdentityValueAndSameServer(t *testing.T) {
 			if got != c.want {
 				t.Errorf("%s: same_server(%q, %q) = %v, want %v", sh, c.a, c.b, got, c.want)
 			}
+		}
+	}
+}
+
+func TestSetAsideIdentity(t *testing.T) {
+	fns := extractShellFunc(t, DirectHostAutoEnrollScript, "set_aside_identity") + extractShellFunc(t, DirectHostAutoEnrollScript, "patchmon_identity")
+	for _, sh := range shells(t) {
+		t.Run(filepath.Base(sh), func(t *testing.T) {
+			dir := t.TempDir()
+			for name, body := range map[string]string{
+				"config.yml":                         "patchmon_server: https://pm\nhost_id: old\n",
+				"credentials.yml":                    "api_id: patchmon_old\napi_key: aaaa\n",
+				"config.yml.backup.20260101_000000":  "patchmon_server: https://pm\nhost_id: older\n",
+				"credentials.yml.backup.20260101_00": "api_id: patchmon_older\napi_key: bbbb\n",
+				"logs.txt":                           "keep",
+			} {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			moved := strings.TrimSpace(runShell(t, sh, fns+`set_aside_identity "$1"`, dir))
+			if !strings.HasPrefix(moved, filepath.Join(dir, "pre-force-new-")) {
+				t.Fatalf("set-aside dir = %q", moved)
+			}
+			entries, _ := os.ReadDir(moved)
+			if len(entries) != 4 {
+				t.Fatalf("moved %d files, want 4", len(entries))
+			}
+			if fi, _ := os.Stat(moved); fi.Mode().Perm() != 0o700 {
+				t.Errorf("set-aside dir mode = %v, want 0700", fi.Mode().Perm())
+			}
+			if _, err := os.Stat(filepath.Join(dir, "logs.txt")); err != nil {
+				t.Error("an unrelated file was moved")
+			}
+			if got := runShell(t, sh, fns+`patchmon_identity "$1"`, dir); got != "api_id=\napi_key=\nhost_id=\nserver=\n" {
+				t.Errorf("a later rerun would still find the old identity: %q", got)
+			}
+			if got := strings.TrimSpace(runShell(t, sh, fns+`set_aside_identity "$1"`, t.TempDir())); got != "" {
+				t.Errorf("nothing to move should print nothing, got %q", got)
+			}
+		})
+	}
+}
+
+func TestProxmoxForceNewHostFor(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	fn := extractShellFunc(t, ProxmoxAutoEnrollScript, "force_new_host_for")
+	for _, c := range []struct {
+		value, vmid string
+		want        bool
+	}{
+		{"true", "101", true},
+		{"false", "101", false},
+		{"", "101", false},
+		{"101", "101", true},
+		{"101,102", "102", true},
+		{"101 102", "102", true},
+		{"1011", "101", false},
+		{"101", "1011", false},
+	} {
+		cmd := exec.Command(bash, "-c", fn+`force_new_host_for "$1"`, "_", c.vmid)
+		cmd.Env = append(os.Environ(), "FORCE_NEW_HOST="+c.value)
+		if got := cmd.Run() == nil; got != c.want {
+			t.Errorf("FORCE_NEW_HOST=%q vmid %s: %v, want %v", c.value, c.vmid, got, c.want)
 		}
 	}
 }

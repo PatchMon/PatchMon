@@ -117,6 +117,19 @@ enrolled_host_id() {
     printf '%s' "$1" | grep -o '"id":"[^"]*"' | tail -n 1 | cut -d'"' -f4 || true
 }
 
+set_aside_identity() {
+    _sa_dir="${1:-/etc/patchmon}"
+    _sa_to="$_sa_dir/pre-force-new-$(date +%Y%m%d_%H%M%S)"
+    for _sa_f in "$_sa_dir"/config.yml "$_sa_dir"/config.yml.backup.* "$_sa_dir"/credentials.yml "$_sa_dir"/credentials.yml.backup.*; do
+        [ -f "$_sa_f" ] || continue
+        mkdir -p "$_sa_to" && chmod 700 "$_sa_to" && mv "$_sa_f" "$_sa_to/" || return 1
+    done
+    if [ -d "$_sa_to" ]; then
+        printf '%s\n' "$_sa_to"
+    fi
+    return 0
+}
+
 write_stub_config() {
     [ -f "$1/config.yml" ] && return 0
     case "$3" in ""|*[!A-Za-z0-9-]*) return 0 ;; esac
@@ -294,6 +307,14 @@ else
 fi
 echo ""
 
+if [ "$FORCE_NEW_HOST" = "true" ]; then
+    warn "FORCE_NEW_HOST=true: setting aside this machine's PatchMon credentials and host_id, a new host will be created"
+    if ! set_aside_dir=$(set_aside_identity /etc/patchmon); then
+        error "Could not move the existing configuration out of /etc/patchmon"
+    fi
+    [ -n "$set_aside_dir" ] && info "Previous configuration moved to $set_aside_dir"
+fi
+
 # ===== CHECK IF AGENT ALREADY INSTALLED =====
 info "Checking if agent is already configured..."
 
@@ -362,9 +383,7 @@ fetch_install_script() {
 existing_api_id=""
 existing_api_key=""
 existing_host_id=""
-if [ "$FORCE_NEW_HOST" = "true" ]; then
-    warn "FORCE_NEW_HOST=true: ignoring any existing credentials and host_id, a new host will be created"
-else
+if [ "$FORCE_NEW_HOST" != "true" ]; then
     identity=$(patchmon_identity /etc/patchmon)
     if same_server "$(identity_value "$identity" server)" "$PATCHMON_URL"; then
         existing_api_id=$(identity_value "$identity" api_id)

@@ -205,11 +205,29 @@ enrol_outcome() {
     esac
 }
 
+set_aside_identity() {
+    _sa_dir="${1:-/etc/patchmon}"
+    _sa_to="$_sa_dir/pre-force-new-$(date +%Y%m%d_%H%M%S)"
+    for _sa_f in "$_sa_dir"/config.yml "$_sa_dir"/config.yml.backup.* "$_sa_dir"/credentials.yml "$_sa_dir"/credentials.yml.backup.*; do
+        [ -f "$_sa_f" ] || continue
+        mkdir -p "$_sa_to" && chmod 700 "$_sa_to" && mv "$_sa_f" "$_sa_to/" || return 1
+    done
+    if [ -d "$_sa_to" ]; then
+        printf '%s\n' "$_sa_to"
+    fi
+    return 0
+}
+
 write_stub_config() {
     [ -f "$1/config.yml" ] && return 0
     case "$3" in ""|*[!A-Za-z0-9-]*) return 0 ;; esac
     mkdir -p "$1" || return 0
     (umask 077 && printf 'patchmon_server: "%s"\nhost_id: "%s"\n' "$2" "$3" > "$1/config.yml") || true
+}
+
+force_new_host_for() {
+    [[ "$FORCE_NEW_HOST" == "true" ]] && return 0
+    [[ ",${FORCE_NEW_HOST//[[:space:]]/,}," == *",$1,"* ]]
 }
 
 node_id=$( (tr -d '[:space:]' < /etc/machine-id) 2>/dev/null || true)
@@ -286,6 +304,22 @@ while read -r vmid status; do
         continue
     fi
 
+    force_new=false
+    if force_new_host_for "$vmid"; then
+        force_new=true
+        warn "  FORCE_NEW_HOST: setting aside this container's PatchMon credentials and host_id, a new host will be created"
+        if ! set_aside_dir=$(timeout 10 pct exec "$vmid" -- sh -c "$(declare -f set_aside_identity); set_aside_identity /etc/patchmon" </dev/null 2>/dev/null); then
+            error "  ✗ Could not move the existing configuration out of /etc/patchmon in $friendly_name"
+            failed_containers["$vmid"]="$friendly_name|FORCE_NEW_HOST could not set aside the old configuration|"
+            ((failed_count++)) || true
+            echo ""
+            sleep 1
+            continue
+        fi
+        set_aside_dir=$(identity_value "dir=$set_aside_dir" dir)
+        [[ -n "$set_aside_dir" ]] && info "  Previous configuration moved to $set_aside_dir"
+    fi
+
     # Check if agent is already installed and working BEFORE enrollment
     info "  Checking if agent is already configured..."
     config_check=$(timeout 10 pct exec "$vmid" -- sh -c "
@@ -328,9 +362,7 @@ while read -r vmid status; do
     existing_api_id=""
     existing_api_key=""
     existing_host_id=""
-    if [[ "$FORCE_NEW_HOST" == "true" ]]; then
-        warn "  FORCE_NEW_HOST=true: ignoring existing credentials and host_id, a new host will be created"
-    else
+    if [[ "$force_new" != "true" ]]; then
         identity=$(timeout 10 pct exec "$vmid" -- sh -c "$(declare -f patchmon_identity); patchmon_identity /etc/patchmon" 2>/dev/null </dev/null || true)
         if same_server "$(identity_value "$identity" server)" "$PATCHMON_URL"; then
             existing_api_id=$(identity_value "$identity" api_id)

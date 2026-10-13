@@ -1356,13 +1356,13 @@ The token's daily host limit applies only when a host is created. Repairs and re
 
 **Saved copies of the script.** Containers enrolled by an older copy of the script, and copies saved to disk for cron, keep the old behaviour until you download the script again. Re-download any saved copy (see [Scheduled Enrollment (Cron)](#scheduled-enrollment-cron)) to get this behaviour. An updated script still works against an older PatchMon server: credential reuse works, and the server ignores `host_id`.
 
-**Splitting a cloned container.** If a container was cloned from one that already had the agent, both carry the same credentials and report as one host. Set `FORCE_NEW_HOST=true` for a run to ignore the existing credentials and `host_id` and enrol the container as a new host:
+**Splitting a cloned container.** If a container was cloned from one that already had the agent, both carry the same credentials and report as one host. Set `FORCE_NEW_HOST` to the clone's VMID (or a comma-separated list of VMIDs) to enrol it as a new host, even though its agent still works:
 
 ```bash
-FORCE_NEW_HOST=true ./proxmox_auto_enroll.sh
+FORCE_NEW_HOST=105 ./proxmox_auto_enroll.sh
 ```
 
-`FORCE_NEW_HOST` applies to every container the run reaches, so use it only on a run limited to the clones you want to split, or temporarily stop the others.
+For each listed container the script first moves the container's `config.yml`, `credentials.yml` and their backups into `/etc/patchmon/pre-force-new-<timestamp>/`, so neither this run nor a later one reuses them, then enrols and installs as for a new container. `FORCE_NEW_HOST=true` does this for every running container the run reaches, so only use it when every container should become a new host.
 
 #### Two-Tier Security Model
 
@@ -1774,7 +1774,7 @@ All configuration can be set via environment variables:
 | `DRY_RUN` | `false` | Preview mode (no changes) | `true`/`false` |
 | `HOST_PREFIX` | `""` | Prefix for host names | `proxmox-`, `prod-`, etc. |
 | `FORCE_INSTALL` | `false` | Bypass broken packages | `true`/`false` |
-| `FORCE_NEW_HOST` | `false` | Ignore existing credentials and `host_id` in containers and enrol each as a new host (for splitting clones) | `true`/`false` |
+| `FORCE_NEW_HOST` | `false` | Enrol containers as new hosts even if their agent works, after moving their old configuration and credentials into `/etc/patchmon/pre-force-new-<timestamp>/` (for splitting clones) | `true` (every container), or VMIDs such as `105` or `105,106` |
 | `DEBUG` | `false` | Enable debug logging | `true`/`false` |
 
 #### Script Configuration Section
@@ -2123,7 +2123,7 @@ If you need to re-enroll:
 **Cause:** The container's agent cannot reach PatchMon with its credentials, but the host its `host_id` names has already reported (enrolment returned `409` with code `host_reporting`). PatchMon never issues new credentials for a host that has reported. This is usually a cloned container, or credentials regenerated in PatchMon but not applied to the container.
 
 **Solution:**
-- If the container is a clone of another enrolled container, rerun with `FORCE_NEW_HOST=true` to enrol it as its own host (see [Running the Script Again](#running-the-script-again)).
+- If the container is a clone of another enrolled container, rerun with `FORCE_NEW_HOST=<its VMID>` to enrol it as its own host (see [Running the Script Again](#running-the-script-again)).
 - If credentials were regenerated in PatchMon, reinstall the agent in the container with the install command on the host's page.
 
 ##### Warning: Container Added Another Way
@@ -3023,7 +3023,7 @@ curl "https://patchmon.example.com/api/v1/auto-enrollment/script?type=proxmox-lx
 
 **Response:** `200 OK`. Plain text bash script with credentials injected.
 
-Both scripts can be run again on a host that is already enrolled. They skip a host whose agent works, reuse its credentials if PatchMon still accepts them, and otherwise enrol with the host's `host_id` so that a host which never reported gets new credentials rather than a duplicate record. See [Running the Script Again](#running-the-script-again) in the Proxmox chapter; the `direct-host` script behaves the same way for the machine it runs on. Existing credentials and `host_id` are only used when the agent's `config.yml` points at the same PatchMon URL the script was downloaded from, so after a change of server URL repair the host with the install command from its host page. To ignore existing credentials and `host_id` and create a new host (for example on a cloned machine), set `FORCE_NEW_HOST=true`:
+Both scripts can be run again on a host that is already enrolled. They skip a host whose agent works, reuse its credentials if PatchMon still accepts them, and otherwise enrol with the host's `host_id` so that a host which never reported gets new credentials rather than a duplicate record. See [Running the Script Again](#running-the-script-again) in the Proxmox chapter; the `direct-host` script behaves the same way for the machine it runs on. Existing credentials and `host_id` are only used when the agent's `config.yml` points at the same PatchMon URL the script was downloaded from, so after a change of server URL repair the host with the install command from its host page. To create a new host for this machine even when its agent works (for example on a cloned machine), set `FORCE_NEW_HOST=true`. The script moves `/etc/patchmon/config.yml`, `credentials.yml` and their backups into `/etc/patchmon/pre-force-new-<timestamp>/` first, so they are never reused:
 
 ```bash
 curl -s "https://patchmon.example.com/api/v1/auto-enrollment/script?type=direct-host&token_key=KEY&token_secret=SECRET" | FORCE_NEW_HOST=true sh

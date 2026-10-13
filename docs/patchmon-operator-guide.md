@@ -7285,7 +7285,7 @@ This happens when a VM or container that already had the agent installed is clon
 **Fix:** give each copy its own host record.
 
 1. On each clone (not the original), remove the copied agent identity and enrol it as a new host:
-   - With an auto-enrolment script, rerun it with `FORCE_NEW_HOST=true`. The script ignores the existing credentials and `host_id` and creates a new host. See the Auto-Enrollment chapter of the API and integrations guide.
+   - With an auto-enrolment script, rerun it with `FORCE_NEW_HOST=true` on the clone (for the Proxmox script, `FORCE_NEW_HOST=<vmid>`). This works even while the clone's agent is running: the script moves the copied `config.yml`, `credentials.yml` and their backups into `/etc/patchmon/pre-force-new-<timestamp>/`, then enrols and installs a new host. See the Auto-Enrollment chapter of the API and integrations guide.
    - Otherwise, add a new host in PatchMon, remove `/etc/patchmon/config.yml` and `/etc/patchmon/credentials.yml` on the clone, and run the new host's install command.
 2. On the original host's page, dismiss the warning (needs `can_manage_hosts`). Alternatively, regenerate the original host's credentials and apply them to the original machine; that also clears the warning and locks out any copy you missed.
 
