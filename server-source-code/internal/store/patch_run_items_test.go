@@ -2,7 +2,10 @@ package store
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -154,6 +157,20 @@ func TestNormaliseAgentItemsAcceptsRestartStatuses(t *testing.T) {
 	for _, st := range []string{"installed_pending_reboot", "already_installed"} {
 		if _, err := normaliseAgentItems([]AgentItemReport{{Kind: "wua", ID: itemGUID, Status: st}}); err != nil {
 			t.Errorf("%s rejected: %v", st, err)
+		}
+	}
+}
+
+func TestAgentItemReportsNeverRewriteTitles(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "sqlc", "queries", "patch_run_items.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	for _, q := range []string{"UpdatePatchRunItemsFromAgent", "UpsertPatchRunItemsFromAgent"} {
+		body := namedQueryIn(t, src, q)
+		if regexp.MustCompile(`(?m)^\s*title\s*=`).MatchString(body) {
+			t.Errorf("%s rewrites title on an existing item; approval copies titles into package_names", q)
 		}
 	}
 }

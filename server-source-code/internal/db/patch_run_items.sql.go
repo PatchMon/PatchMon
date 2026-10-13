@@ -239,7 +239,6 @@ func (q *Queries) ResolveWindowsPatchTargets(ctx context.Context, arg ResolveWin
 const updatePatchRunItemsFromAgent = `-- name: UpdatePatchRunItemsFromAgent :execrows
 UPDATE patch_run_items i SET
     revision_number = COALESCE(NULLIF(t.revision_number, 0), i.revision_number),
-    title           = COALESCE(NULLIF(t.title, ''), i.title),
     kb              = COALESCE(NULLIF(t.kb, ''), i.kb),
     status          = t.status,
     result_code     = t.result_code,
@@ -291,7 +290,6 @@ FROM jsonb_to_recordset($3::jsonb)
          download_bytes bigint, message text, started_at timestamptz, completed_at timestamptz)
 ON CONFLICT (patch_run_id, kind, identifier) DO UPDATE SET
     revision_number = COALESCE(EXCLUDED.revision_number, patch_run_items.revision_number),
-    title           = CASE WHEN EXCLUDED.title = EXCLUDED.identifier THEN patch_run_items.title ELSE EXCLUDED.title END,
     kb              = COALESCE(EXCLUDED.kb, patch_run_items.kb),
     status          = EXCLUDED.status,
     result_code     = EXCLUDED.result_code,
