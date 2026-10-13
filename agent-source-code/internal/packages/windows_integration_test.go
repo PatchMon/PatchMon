@@ -150,7 +150,13 @@ func TestWindowsUpdatesCollectorLive(t *testing.T) {
 	requireWindowsIntegration(t)
 
 	done := make(chan []models.Package, 1)
-	go func() { done <- newTestWindowsManager().getWindowsUpdates() }()
+	go func() {
+		pkgs, ok := newTestWindowsManager().getWindowsUpdates()
+		if !ok {
+			t.Error("the Windows Update search failed")
+		}
+		done <- pkgs
+	}()
 
 	select {
 	case pkgs := <-done:
