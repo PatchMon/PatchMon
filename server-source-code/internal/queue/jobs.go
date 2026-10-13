@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/hibiken/asynq"
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -644,19 +645,17 @@ func (h *UpdateAgentHandler) ProcessTask(ctx context.Context, t *asynq.Task) err
 	}
 
 	if d != nil {
-		if host, err := d.Queries.GetHostByApiID(ctx, p.ApiID); err == nil {
-			active, err := d.Queries.HostHasActivePatchRun(ctx, host.ID)
-			if err != nil {
-				return err
+		patching, err := hostIsPatching(ctx, d.Queries, p.ApiID)
+		if err != nil {
+			return err
+		}
+		if patching {
+			msg := store.PatchRunInProgressMessage
+			if taskID != "" {
+				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
 			}
-			if active {
-				msg := store.PatchRunInProgressMessage
-				if taskID != "" {
-					_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
-				}
-				h.log.Info("update_agent: skipped, patch run in progress", "api_id", p.ApiID)
-				return nil
-			}
+			h.log.Info("update_agent: skipped, patch run in progress", "api_id", p.ApiID)
+			return nil
 		}
 	}
 
@@ -909,4 +908,21 @@ func buildRunPatchMessage(p RunPatchPayload, run *db.GetPatchRunByIDRow, windows
 		payload["include_apps"] = run.WindowsIncludeApps == nil || *run.WindowsIncludeApps
 	}
 	return payload
+}
+
+type activeRunChecker interface {
+	GetHostByApiID(ctx context.Context, apiID string) (db.Host, error)
+	HostHasActivePatchRun(ctx context.Context, hostID string) (bool, error)
+}
+
+// hostIsPatching fails closed: any lookup error other than an unknown host is returned so the update retries.
+func hostIsPatching(ctx context.Context, q activeRunChecker, apiID string) (bool, error) {
+	host, err := q.GetHostByApiID(ctx, apiID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return q.HostHasActivePatchRun(ctx, host.ID)
 }
