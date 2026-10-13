@@ -154,6 +154,8 @@ func (m *WindowsManager) mergeRegistryAndWinget(regPkgs []models.Package, rows [
 		matchedNames[normalizePackageName(row.Name)] = true
 		regPkgs[i].SourceRepository = row.SourceRepository
 		regPkgs[i].WingetID = row.WingetID
+		regPkgs[i].WingetPinned = row.WingetPinned
+		regPkgs[i].WingetStoreApp = row.WingetStoreApp
 		if row.NeedsUpdate && installedIsOlder(regPkgs[i].CurrentVersion, row.AvailableVersion) {
 			regPkgs[i].NeedsUpdate = true
 			if regPkgs[i].AvailableVersion == "" {
