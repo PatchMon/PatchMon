@@ -610,6 +610,31 @@ type wingetBackend interface {
 	Resolve() error
 	Run(ctx context.Context, args []string, log func(string)) (code uint32, output string, err error)
 	UpdatableApps() []models.Package
+	PendingFileRenames() []string
+}
+
+const msgDeferredReplace = "Installed; some files will be replaced at the next restart."
+
+// newPendingRenames reports whether after holds entries that before did not, counting
+// duplicates, so an installer queueing files for replacement at boot is caught.
+func newPendingRenames(before, after []string) bool {
+	seen := make(map[string]int, len(before))
+	for _, e := range before {
+		if e != "" {
+			seen[strings.ToLower(e)]++
+		}
+	}
+	for _, e := range after {
+		if e == "" {
+			continue
+		}
+		k := strings.ToLower(e)
+		if seen[k] == 0 {
+			return true
+		}
+		seen[k]--
+	}
+	return false
 }
 
 type windowsPatchTimeouts struct {
@@ -1167,6 +1192,10 @@ func (r *windowsPatchRun) runWingetPhase(runCtx, stopCtx context.Context, winget
 		var code uint32
 		var output string
 		var err error
+		var renamesBefore []string
+		if !r.req.DryRun {
+			renamesBefore = r.winget.PendingFileRenames()
+		}
 		r.withHeartbeat(label, func() {
 			code, output, err = r.winget.Run(ctx, args, r.log)
 		})
@@ -1181,6 +1210,10 @@ func (r *windowsPatchRun) runWingetPhase(runCtx, stopCtx context.Context, winget
 			continue
 		}
 		oc := classifyWingetUpgradeExit(code, r.req.DryRun, output, it.ID)
+		if !r.req.DryRun && oc.Status == itemInstalled && newPendingRenames(renamesBefore, r.winget.PendingFileRenames()) {
+			oc.RebootRequired = true
+			oc.Message = msgDeferredReplace
+		}
 		ec := int64(code)
 		it.ExitCode = &ec
 		it.RebootRequired = oc.RebootRequired

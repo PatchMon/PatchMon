@@ -143,3 +143,7 @@ func (b *wingetExecBackend) UpdatableApps() []models.Package {
 	}
 	return b.apps()
 }
+
+func (b *wingetExecBackend) PendingFileRenames() []string {
+	return pendingFileRenames()
+}

@@ -458,6 +458,7 @@ func (f *fakeWUA) Install(ctx context.Context, id string, _ func(string)) (wuaOp
 }
 
 type fakeWinget struct {
+	renames    [][]string
 	resolveErr error
 	apps       []models.Package
 	calls      [][]string
@@ -474,6 +475,15 @@ func (f *fakeWinget) Run(_ context.Context, args []string, log func(string)) (ui
 }
 
 func (f *fakeWinget) UpdatableApps() []models.Package { return f.apps }
+
+func (f *fakeWinget) PendingFileRenames() []string {
+	if len(f.renames) == 0 {
+		return nil
+	}
+	r := f.renames[0]
+	f.renames = f.renames[1:]
+	return r
+}
 
 type recorder struct {
 	mu      sync.Mutex
@@ -822,5 +832,44 @@ func TestRunRestartReflectsThisRunOnly(t *testing.T) {
 	w = &fakeWUA{scan: wuaScan{Updates: []wuaUpdate{{ID: guidA, Title: "A", Type: 1}}}}
 	if res := runFake(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, &recorder{reboot: true}, w, &fakeWinget{}); !res.RebootRequired {
 		t.Error("an installed update followed by a pending restart must report it")
+	}
+}
+
+func TestNewPendingRenames(t *testing.T) {
+	before := []string{`\??\C:\a.tmp`, "", `\??\C:\b.tmp`, ""}
+	cases := []struct {
+		after []string
+		want  bool
+	}{
+		{before, false},
+		{nil, false},
+		{[]string{`\??\C:\A.TMP`, ""}, false},
+		{append(append([]string{}, before...), `\??\C:\Program Files\7-Zip\7-zip.dll`, `\??\C:\Program Files\7-Zip\7-zip.dll.new`), true},
+		{append(append([]string{}, before...), `\??\C:\a.tmp`), true},
+	}
+	for i, c := range cases {
+		if got := newPendingRenames(before, c.after); got != c.want {
+			t.Errorf("case %d: got %v, want %v", i, got, c.want)
+		}
+	}
+}
+
+func TestRunFlagsAppUpgradeThatDefersFileReplacement(t *testing.T) {
+	g := &fakeWinget{
+		codes:   map[string]uint32{"7zip.7zip": 0, "Notepad++.Notepad++": 0},
+		renames: [][]string{{"old"}, {"old", `\??\C:\Program Files\7-Zip\7-zip.dll`}, {"old"}, {"old"}},
+	}
+	res := runFake(WindowsPatchRequest{Targets: []WindowsPatchTarget{
+		{Kind: WindowsTargetWinget, ID: "7zip.7zip"},
+		{Kind: WindowsTargetWinget, ID: "Notepad++.Notepad++"},
+	}}, &recorder{}, &fakeWUA{}, g)
+	if it := itemByID(res, "7zip.7zip"); it.Status != itemInstalled || !it.RebootRequired || it.Message != msgDeferredReplace {
+		t.Errorf("deferred upgrade = %+v", it)
+	}
+	if it := itemByID(res, "Notepad++.Notepad++"); it.RebootRequired {
+		t.Errorf("clean upgrade = %+v", it)
+	}
+	if !res.RebootRequired {
+		t.Error("the deferred replacement must reach the run")
 	}
 }
