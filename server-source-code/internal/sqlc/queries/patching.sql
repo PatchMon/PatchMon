@@ -1,7 +1,7 @@
 -- patch_runs
 -- name: CreatePatchRun :exec
-INSERT INTO patch_runs (id, host_id, job_id, patch_type, package_name, package_names, status, shell_output, triggered_by_user_id, dry_run, scheduled_at, policy_id, policy_name, policy_snapshot, validation_run_id, approved_by_user_id, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW());
+INSERT INTO patch_runs (id, host_id, job_id, patch_type, package_name, package_names, status, shell_output, triggered_by_user_id, dry_run, scheduled_at, policy_id, policy_name, policy_snapshot, validation_run_id, approved_by_user_id, windows_include_updates, windows_include_apps, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW());
 
 -- name: UpdatePatchRunValidated :exec
 -- Agent streams progress chunks during the run, then sends the final authoritative
@@ -22,6 +22,9 @@ UPDATE patch_runs SET policy_id = $2, policy_name = $3, policy_snapshot = $4, up
 -- name: UpdatePatchRunScheduledAt :exec
 UPDATE patch_runs SET scheduled_at = $2, updated_at = NOW() WHERE id = $1;
 
+-- name: SetPatchRunRebootRequired :exec
+UPDATE patch_runs SET reboot_required = $2, updated_at = NOW() WHERE id = $1;
+
 -- name: UpdatePatchRunPackagesAffected :exec
 UPDATE patch_runs SET packages_affected = $2, updated_at = NOW() WHERE id = $1;
 
@@ -29,7 +32,7 @@ UPDATE patch_runs SET packages_affected = $2, updated_at = NOW() WHERE id = $1;
 DELETE FROM patch_runs WHERE id = $1;
 
 -- name: GetPatchRunByID :one
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username, au.username AS approved_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username, au.username AS approved_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
