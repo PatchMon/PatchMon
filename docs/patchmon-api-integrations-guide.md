@@ -1318,14 +1318,50 @@ PatchMon's Proxmox Auto-Enrollment feature enables you to automatically discover
 
 3. **For each container**, the script:
    - Gathers hostname, IP address, OS information, machine ID
-   - Calls PatchMon API to create host entry. If the machine ID is already enrolled, the container is skipped and must be removed in PatchMon before it can be enrolled again
-   - Receives unique `api_id` and `api_key` for that container
+   - Skips the container if its agent is already installed and can reach PatchMon
+   - Reuses the container's existing credentials if they still work (see [Running the Script Again](#running-the-script-again))
+   - Otherwise calls PatchMon API to create host entry, sending the container's `host_id` if it has one. If the machine ID and name are already enrolled, the container is skipped and must be removed in PatchMon before it can be enrolled again
+   - Receives unique `api_id` and `api_key` for that container, and writes a minimal `/etc/patchmon/config.yml` holding the new host's `host_id` if the container has none yet
    - Uses `pct exec` to enter the container
    - Installs curl if missing
    - Downloads and runs PatchMon agent installer
    - Agent authenticates with container-specific credentials
 
 4. **Containers appear in PatchMon** with full patch tracking enabled
+
+#### Running the Script Again
+
+The script is safe to rerun, by hand or from cron. From PatchMon 2.1.5 (script version 2.2.0), a rerun repairs a broken agent on the host it already has, instead of creating a second host. For each container:
+
+| Container state | What the script does |
+|-----------------|----------------------|
+| Agent installed and `patchmon-agent ping` succeeds | Skips it |
+| Credentials present in `/etc/patchmon/credentials.yml` (or its newest backup) and PatchMon still accepts them | Reinstalls the agent with those credentials. No enrolment call is made and no host is created |
+| Credentials rejected by PatchMon (HTTP 401) | Enrols, sending the `host_id` from `/etc/patchmon/config.yml` (or its newest backup) if there is one |
+| Credentials could not be checked (network error, server error) | Fails the container for this run and does **not** enrol, so a temporary fault cannot create a duplicate. The next run retries |
+| No credentials | Enrols, sending `host_id` if there is one |
+
+When the script enrols with a `host_id`, PatchMon answers in one of these ways:
+
+| Response | Meaning | Script outcome |
+|----------|---------|----------------|
+| `200`, `reenrolled: true` | The host exists, has never reported, and was created by this same token (typically an earlier run whose install failed part-way). PatchMon issues a new API key for it | Installs the agent with the new credentials; same host record |
+| `201` | No host with that ID exists; a new host is created | Installs as for any new host |
+| `409`, code `host_reporting` | The host has already reported. PatchMon never re-keys such a host from enrolment. Usually a cloned container, or credentials regenerated in PatchMon but not applied | Skipped with a warning |
+| `409`, code `host_not_reenrollable` | The host was added another way (for example in the UI), by a different token, or before PatchMon 2.1.5 | Skipped with a warning; use the install command on the host's page |
+| `429`, code `reenrol_cooldown` | Credentials for this host were re-issued less than 60 seconds ago | Fails the container for this run; the next run retries |
+
+The token's daily host limit applies only when a host is created. Repairs and re-issues do not count towards it.
+
+**Saved copies of the script.** Containers enrolled by an older copy of the script, and copies saved to disk for cron, keep the old behaviour until you download the script again. Re-download any saved copy (see [Scheduled Enrollment (Cron)](#scheduled-enrollment-cron)) to get this behaviour. An updated script still works against an older PatchMon server: credential reuse works, and the server ignores `host_id`.
+
+**Splitting a cloned container.** If a container was cloned from one that already had the agent, both carry the same credentials and report as one host. Set `FORCE_NEW_HOST=true` for a run to ignore the existing credentials and `host_id` and enrol the container as a new host:
+
+```bash
+FORCE_NEW_HOST=true ./proxmox_auto_enroll.sh
+```
+
+`FORCE_NEW_HOST` applies to every container the run reaches, so use it only on a run limited to the clones you want to split, or temporarily stop the others.
 
 #### Two-Tier Security Model
 
@@ -1623,6 +1659,9 @@ AUTO_ENROLLMENT_SECRET=your_secret_here
 # FORCE_INSTALL=false
 # CURL_FLAGS=-sk
 
+# Save the script to disk again after upgrading PatchMon, so this copy
+# gets the newer rerun behaviour.
+
 # === Schedule ===
 # Run daily at 2 AM
 0 2 * * * /root/proxmox_auto_enroll.sh >> /var/log/patchmon-enroll.log 2>&1
@@ -1700,7 +1739,7 @@ grep patchmon /var/log/syslog | tail -n 20
 tail -f /var/log/patchmon-enroll.log
 ```
 
-Already-enrolled containers are automatically skipped on each run, so there is no risk of duplicates or errors from repeated execution.
+Already-enrolled containers are automatically skipped on each run. Containers whose agent is broken are repaired on the host they already have (see [Running the Script Again](#running-the-script-again)), so repeated runs do not create duplicates. Download the script again after upgrading PatchMon so the saved copy picks up changes to this behaviour.
 
 #### Multi-Environment Setup
 
@@ -1734,6 +1773,7 @@ All configuration can be set via environment variables:
 | `DRY_RUN` | `false` | Preview mode (no changes) | `true`/`false` |
 | `HOST_PREFIX` | `""` | Prefix for host names | `proxmox-`, `prod-`, etc. |
 | `FORCE_INSTALL` | `false` | Bypass broken packages | `true`/`false` |
+| `FORCE_NEW_HOST` | `false` | Ignore existing credentials and `host_id` in containers and enrol each as a new host (for splitting clones) | `true`/`false` |
 | `DEBUG` | `false` | Enable debug logging | `true`/`false` |
 
 #### Script Configuration Section
@@ -1749,6 +1789,7 @@ CURL_FLAGS="${CURL_FLAGS:--s}"
 DRY_RUN="${DRY_RUN:-false}"
 HOST_PREFIX="${HOST_PREFIX:-}"
 FORCE_INSTALL="${FORCE_INSTALL:-false}"
+FORCE_NEW_HOST="${FORCE_NEW_HOST:-false}"
 ```
 
 #### Token Configuration (PatchMon UI)
@@ -1928,12 +1969,12 @@ Response: {"error":"Invalid token secret"}
 
 **Symptom:**
 ```
-[ERROR] Rate limit exceeded - maximum hosts per day reached
+[ERROR]   ✗ PatchMon asked to retry later (HTTP 429) for container-name
 ```
 
-**Cause:** Token's `max_hosts_per_day` limit reached
+**Cause:** Token's `max_hosts_per_day` limit reached, or (code `reenrol_cooldown` in the response) credentials for that container's host were re-issued less than 60 seconds ago. The cooldown clears on its own; the next run retries.
 
-**Solution:**
+**Solution for the daily limit:**
 ```bash
 # Option 1: Wait until tomorrow (limit resets at midnight)
 date
@@ -2070,6 +2111,30 @@ If you need to re-enroll:
 1. Delete host from PatchMon UI (Hosts page)
 2. Remove agent config inside the container: `pct exec <vmid> -- rm -rf /etc/patchmon/`
 3. Rerun enrollment script
+
+##### Warning: Container Already Reporting
+
+**Symptom:**
+```
+[WARN]   ⊘ container-name is already reporting to PatchMon as container-name; skipping
+```
+
+**Cause:** The container's agent cannot reach PatchMon with its credentials, but the host its `host_id` names has already reported (enrolment returned `409` with code `host_reporting`). PatchMon never issues new credentials for a host that has reported. This is usually a cloned container, or credentials regenerated in PatchMon but not applied to the container.
+
+**Solution:**
+- If the container is a clone of another enrolled container, rerun with `FORCE_NEW_HOST=true` to enrol it as its own host (see [Running the Script Again](#running-the-script-again)).
+- If credentials were regenerated in PatchMon, reinstall the agent in the container with the install command on the host's page.
+
+##### Warning: Container Added Another Way
+
+**Symptom:**
+```
+[WARN]   ⊘ container-name was added to PatchMon another way as container-name; skipping
+```
+
+**Cause:** The container's `host_id` names a host that has never reported but was not created by this token, for example one added in the UI or enrolled before PatchMon 2.1.5 (code `host_not_reenrollable`).
+
+**Solution:** Use the install command on that host's page in PatchMon, or delete that host and rerun the script.
 
 #### Agent Not Reporting
 
@@ -2479,11 +2544,12 @@ curl "https://patchmon.example.com/api/v1/auto-enrollment/script?type=proxmox-lx
 
 **Endpoint:** `POST /api/v1/auto-enrollment/enroll`
 
-**Request:**
+**Request** (`host_id` is optional; the scripts send it when the container already has one):
 ```json
 {
   "friendly_name": "webserver",
   "machine_id": "proxmox-lxc-100-abc123",
+  "host_id": "550e8400-e29b-41d4-a716-446655440000",
   "metadata": {
     "vmid": "100",
     "proxmox_node": "proxmox01",
@@ -2512,23 +2578,37 @@ curl "https://patchmon.example.com/api/v1/auto-enrollment/script?type=proxmox-lx
 }
 ```
 
+**Response:** `200 OK` when `host_id` names a host this token created that has never reported. Same body as `201`, with `"message": "Host credentials re-issued"` and `"reenrolled": true`. The host keeps its ID and API ID; only the API key is new.
+
 **Error Responses:**
 
-`409 Conflict` - A host with the same `machine_id` and the same name is already enrolled (the name comparison ignores case). Nothing is created and no credentials are issued. The enrolment scripts treat this as "already enrolled" and skip the host. Requests that omit `machine_id` are never deduplicated:
+`409 Conflict` - Nothing is created and no credentials are issued. The `code` field says why:
+
+| `code` | Cause |
+|--------|-------|
+| `machine_id_match` | No `host_id` was sent, and a host with the same `machine_id` and the same name is already enrolled (the name comparison ignores case). Requests that omit `machine_id` are never deduplicated |
+| `host_reporting` | The host named by `host_id` has already reported |
+| `host_not_reenrollable` | The host named by `host_id` was not created by this token |
+
 ```json
 {
   "error": "Host already enrolled",
+  "code": "machine_id_match",
   "friendly_name": "webserver"
 }
 ```
 
-`429 Too Many Requests` - Rate limit exceeded:
+`429 Too Many Requests` - Either the token's daily host limit was reached on a request that would create a host:
 ```json
 {
   "error": "Rate limit exceeded",
-  "message": "Maximum 100 hosts per day allowed for this token"
+  "message": "Maximum hosts per day allowed for this token"
 }
 ```
+
+or credentials for the host named by `host_id` were re-issued less than 60 seconds ago (`"code": "reenrol_cooldown"`).
+
+See [Running the Script Again](#running-the-script-again) for how the script handles each response.
 
 ### FAQ
 
@@ -2538,7 +2618,7 @@ curl "https://patchmon.example.com/api/v1/auto-enrollment/script?type=proxmox-lx
 A: Yes, as long as the combined enrollment count stays within `max_hosts_per_day` limit. Rate limits are per-token, not per-host.
 
 **Q: What happens if I run the script multiple times?**  
-A: Already-enrolled containers are automatically skipped. The script checks for existing agent configuration inside each container and skips those where the agent is already installed and responsive. Safe to rerun!
+A: Already-enrolled containers are automatically skipped. The script checks for existing agent configuration inside each container and skips those where the agent is already installed and responsive. Containers with a broken agent are repaired with their existing credentials, or given new credentials for the same host if it never reported. See [Running the Script Again](#running-the-script-again). Safe to rerun!
 
 **Q: Can I enroll stopped LXC containers?**  
 A: No, containers must be running. The script needs to execute commands inside the container to install the agent. Start containers before enrolling.
@@ -2570,7 +2650,7 @@ A: Not currently (would require inbound network access). The script must run on 
 A: Yes, token secrets are hashed using bcrypt before storage. Only the hash is stored in the database, never the plain text.
 
 **Q: What happens if someone steals my auto-enrollment token?**  
-A: They can create new hosts up to the rate limit, but cannot control existing hosts or access host data. Immediately disable the token in PatchMon UI if compromised.
+A: They can create new hosts up to the rate limit, and issue new credentials for hosts created by that same token that have never reported. They cannot take over a host that has reported, control existing hosts, or access host data. Immediately disable the token in PatchMon UI if compromised.
 
 **Q: Can I audit who created which tokens?**  
 A: Yes, each token stores the `created_by_user_id`. View in PatchMon UI or query the database.
@@ -2942,6 +3022,12 @@ curl "https://patchmon.example.com/api/v1/auto-enrollment/script?type=proxmox-lx
 
 **Response:** `200 OK`. Plain text bash script with credentials injected.
 
+Both scripts can be run again on a host that is already enrolled. They skip a host whose agent works, reuse its credentials if PatchMon still accepts them, and otherwise enrol with the host's `host_id` so that a host which never reported gets new credentials rather than a duplicate record. See [Running the Script Again](#running-the-script-again) in the Proxmox chapter; the `direct-host` script behaves the same way for the machine it runs on. To ignore existing credentials and `host_id` and create a new host (for example on a cloned machine), set `FORCE_NEW_HOST=true`:
+
+```bash
+curl -s "https://patchmon.example.com/api/v1/auto-enrollment/script?type=direct-host&token_key=KEY&token_secret=SECRET" | FORCE_NEW_HOST=true sh
+```
+
 **Errors:**
 - `400 Bad Request`: Missing or invalid `type` parameter
 - `401 Unauthorized`: Missing credentials, invalid/inactive token, invalid secret, or expired token
@@ -2964,6 +3050,7 @@ Content-Type: application/json
 |-------|------|----------|-------------|
 | `friendly_name` | string | Yes | Display name for the host (max 255 chars) |
 | `machine_id` | string | No | Unique machine identifier (max 255 chars) |
+| `host_id` | string | No | The `host_id` from the machine's existing `config.yml`, if it has one (1 to 64 letters, digits or hyphens). Lets PatchMon recognise a machine it has already enrolled. Never used as the ID of a new host. Added in 2.1.5 |
 | `metadata` | object | No | Additional metadata (vmid, proxmox_node, ip_address, os_info, etc.) |
 
 **Example Request:**
@@ -3001,21 +3088,64 @@ Content-Type: application/json
 
 > **Note:** The `api_key` is only returned in this response (plain text). It is hashed before storage. The `host_group` is `null` if no default host group is configured on the token.
 
+**Response:** `200 OK` (credentials re-issued)
+
+Returned when `host_id` names a host that exists, has never reported, and was created by this same token. PatchMon issues a new API key for that host and returns the same body as `201`, with `"message": "Host credentials re-issued"` and `"reenrolled": true`. The host keeps its ID and its API ID; the old key stops working. Nothing new is created, so the token's daily host limit is neither checked nor consumed.
+
+```json
+{
+  "message": "Host credentials re-issued",
+  "host": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "friendly_name": "webserver",
+    "api_id": "patchmon_abc123def456",
+    "api_key": "new-raw-api-key-value",
+    "host_group": null,
+    "status": "pending"
+  },
+  "reenrolled": true
+}
+```
+
+**How `host_id` is resolved:**
+
+| Host named by `host_id` | Result |
+|-------------------------|--------|
+| Not found | Enrolled as a new host (`201`), exactly as if `host_id` were not sent |
+| Has reported | `409`, code `host_reporting`. A host that has reported is never re-keyed by enrolment |
+| Never reported, created by a different token, in the UI, or before 2.1.5 | `409`, code `host_not_reenrollable` |
+| Never reported, created by this token, credentials re-issued less than 60 seconds ago | `429`, code `reenrol_cooldown` |
+| Never reported, created by this token | `200`, credentials re-issued |
+
+Responses from this path carry `code`, `friendly_name` and `host_id` alongside `error`:
+
+```json
+{
+  "error": "This host is already reporting to PatchMon. If its agent is broken, reinstall it with the install command on the host's page, or regenerate its credentials.",
+  "code": "host_reporting",
+  "friendly_name": "webserver",
+  "host_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
 **Error Responses:**
 
 | Status | Error | Cause |
 |--------|-------|-------|
 | `400` | Validation errors | Missing or invalid `friendly_name` |
+| `400` | `Invalid host_id` | `host_id` is not 1 to 64 letters, digits or hyphens |
 | `401` | `Auto-enrollment credentials required` | Missing `X-Auto-Enrollment-Key` or `X-Auto-Enrollment-Secret` headers |
 | `401` | `Invalid or inactive token` | Token key not found or token is disabled |
 | `401` | `Invalid token secret` | Secret does not match |
 | `401` | `Token expired` | Token has passed its expiration date |
 | `403` | `IP address not authorized for this token` | Client IP not in `allowed_ip_ranges` |
-| `409` | `Host already enrolled` | A host with the same `machine_id` and name already exists; the body also carries that host's `friendly_name` |
-| `429` | `Rate limit exceeded` | Token's `max_hosts_per_day` limit reached |
+| `409` | `Host already enrolled` | Code `machine_id_match`. No `host_id` was sent and a host with the same `machine_id` and name already exists; the body also carries that host's `friendly_name` |
+| `409` | (message) | Code `host_reporting` or `host_not_reenrollable`; see the table above |
+| `429` | `Rate limit exceeded` | Token's `max_hosts_per_day` limit reached on a request that would create a host |
+| `429` | (message) | Code `reenrol_cooldown`. Credentials for the host named by `host_id` were re-issued less than 60 seconds ago |
 | `429` | `Too many requests. Try again later.` | Per-IP agent rate limit hit (`AGENT_RATE_LIMIT_MAX` per `AGENT_RATE_LIMIT_WINDOW_MS`, 1000 per minute by default); the body uses a `message` key and a `Retry-After` header is set |
 
-> **Duplicate handling:** When `machine_id` is supplied, the server looks for an existing host with the same machine ID and the same name (compared case-insensitively) and returns `409 Conflict` instead of creating a second record. Matching on both means cloned containers that share one `/etc/machine-id` but carry different names still enrol as separate hosts. No credentials are generated for a rejected request. Requests without a `machine_id` are never deduplicated. The enrolment scripts treat a `409` as an already enrolled host and move on.
+> **Duplicate handling:** When `machine_id` is supplied, the server looks for an existing host with the same machine ID and the same name (compared case-insensitively) and returns `409 Conflict` instead of creating a second record. Matching on both means cloned containers that share one `/etc/machine-id` but carry different names still enrol as separate hosts. No credentials are generated for a rejected request. Requests without a `machine_id` are never deduplicated. The enrolment scripts treat a `409` as an already enrolled host and move on. This check applies only when no `host_id` is sent, or when the `host_id` is not found.
 
 ### Host Management Endpoints
 
@@ -3107,6 +3237,8 @@ Content-Type: application/json
 | `bootTime` | string | No | Boot instant as a UTC ISO 8601 timestamp. Lets the UI tick uptime live between reports |
 | `loadAverage` | array | No | Load average values |
 | `machineId` | string | No | Machine ID |
+| `hostId` | string | No | `host_id` from the agent's `config.yml` (agent 2.1.5+). A value that differs from the authenticated host's ID does not reject the report; the host is flagged with a host ID mismatch |
+| `configVersion` | string | No | `config_version` from the agent's `config.yml` (agent 2.1.5+). Recorded only when it starts with `N.N.N` (optionally followed by a pre-release or build suffix) and is at most 64 bytes |
 | `needsReboot` | boolean | No | Whether a reboot is required |
 | `rebootReason` | string | No | Reason a reboot is required |
 | `repositories` | array | No | Configured package repositories |
@@ -3158,9 +3290,12 @@ Content-Type: application/json
   "message": "Host updated successfully",
   "packagesProcessed": 1,
   "updatesAvailable": 1,
-  "securityUpdates": 0
+  "securityUpdates": 0,
+  "hostId": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
+
+`hostId` (2.1.5+) is the ID of the host the credentials belong to. Agents record it in `config.yml` as `host_id` when they have none.
 
 ### Ansible Integration Examples
 
@@ -3376,13 +3511,14 @@ vault_patchmon_token_secret: "def456ghi789..."
 
 | Code | Meaning | When It Occurs |
 |------|---------|----------------|
-| `200` | OK | Successful read/update operations |
+| `200` | OK | Successful read/update operations, and credentials re-issued by enrolment (`reenrolled: true`) |
 | `201` | Created | Token or host created successfully |
 | `400` | Bad Request | Validation errors, invalid host group, invalid script type |
 | `401` | Unauthorized | Missing, invalid, or expired credentials |
 | `403` | Forbidden | IP address not in token's whitelist |
 | `404` | Not Found | Token or resource not found |
-| `429` | Too Many Requests | Token's daily host creation limit exceeded |
+| `409` | Conflict | Enrolment refused; see the `code` field |
+| `429` | Too Many Requests | Token's daily host creation limit exceeded, or enrolment re-issue cooldown (`reenrol_cooldown`) |
 | `500` | Internal Server Error | Unexpected server error |
 
 #### Error Response Formats
@@ -3398,7 +3534,17 @@ vault_patchmon_token_secret: "def456ghi789..."
 ```json
 {
   "error": "Rate limit exceeded",
-  "message": "Maximum 100 hosts per day allowed for this token"
+  "message": "Maximum hosts per day allowed for this token"
+}
+```
+
+**Error with code** (enrolment `409` and `429` responses):
+```json
+{
+  "error": "Credentials for this host were re-issued less than a minute ago. Try again shortly.",
+  "code": "reenrol_cooldown",
+  "friendly_name": "webserver",
+  "host_id": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
@@ -3426,14 +3572,20 @@ Each auto-enrollment token has a configurable `max_hosts_per_day` limit:
 - **Reset**: Daily (when the first request of a new day is received)
 - **Scope**: Per-token, not per-IP
 
+The limit counts hosts created. Re-issuing credentials for an existing host (`200`, `reenrolled: true`) is not counted and is not blocked by the limit.
+
 When the limit is exceeded, the API returns `429 Too Many Requests`:
 
 ```json
 {
   "error": "Rate limit exceeded",
-  "message": "Maximum 100 hosts per day allowed for this token"
+  "message": "Maximum hosts per day allowed for this token"
 }
 ```
+
+#### Re-issue Cooldown
+
+PatchMon re-issues credentials for a given host at most once every 60 seconds. A second request within that window gets `429 Too Many Requests` with `"code": "reenrol_cooldown"`. This stops two copies of a cloned machine from repeatedly taking a pending host's credentials from each other.
 
 #### Global Rate Limiting
 
@@ -3446,7 +3598,7 @@ The auto-enrollment endpoints are also subject to the server's global authentica
 - **Secret hashing**: Token secrets are hashed with bcrypt (cost factor 10) before storage
 - **One-time display**: Secrets are only returned during token creation
 - **Rotation**: Recommended every 90 days
-- **Scope limitation**: Tokens can only create hosts. They cannot read, modify, or delete existing host data.
+- **Scope limitation**: Tokens can create hosts, and issue a new API key for a host created by the same token that has never reported. They cannot re-key a host that has reported, and cannot read, modify, or delete existing host data.
 
 #### IP Restrictions
 
@@ -3478,6 +3630,7 @@ All enrollment activity is logged:
 - Token name included in host notes (e.g. "Auto-enrolled via Production Proxmox on 2025-10-11T14:30:00Z")
 - Token creation tracks `created_by_user_id`
 - `last_used_at` timestamp updated on each enrollment
+- Credential re-issues and refused re-enrolments are written to the server log with the host ID, token name and client IP, and the time of the latest re-issue is shown on the host's page
 
 ### Complete Endpoint Summary
 
@@ -4051,7 +4204,8 @@ GET /api/v1/api/hosts/:id/info
   "ip": "192.168.1.100",
   "os_type": "Ubuntu",
   "os_version": "24.04 LTS",
-  "agent_version": "1.5.0",
+  "agent_version": "2.1.5",
+  "config_version": "2.1.5",
   "host_groups": [
     {
       "id": "660e8400-e29b-41d4-a716-446655440001",
@@ -4060,6 +4214,8 @@ GET /api/v1/api/hosts/:id/info
   ]
 }
 ```
+
+`config_version` (added in 2.1.5) is the `config.yml` layout version the agent last reported. It normally equals `agent_version`; it is an empty string when the agent is older than 2.1.5 or has not reported one.
 
 ---
 

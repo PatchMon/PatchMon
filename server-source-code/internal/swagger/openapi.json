@@ -41,6 +41,12 @@
 				"in": "header",
 				"name": "X-Auto-Enrollment-Secret",
 				"description": "Auto-enrollment token secret."
+			},
+			"bearerAuth": {
+				"type": "http",
+				"scheme": "bearer",
+				"bearerFormat": "JWT",
+				"description": "PatchMon user session token, sent as a Bearer token or in the token cookie set at login. Used by web UI endpoints."
 			}
 		}
 	},
@@ -64,6 +70,10 @@
 		{
 			"name": "Auto-enrollment",
 			"description": "Host enrollment and script (token in headers or query)"
+		},
+		{
+			"name": "Hosts (web UI)",
+			"description": "Host actions used by the PatchMon web UI (signed-in user session)"
 		}
 	],
 	"paths": {
@@ -205,7 +215,7 @@
 			"get": {
 				"tags": ["Scoped API - Hosts"],
 				"summary": "Get detailed host information",
-				"description": "Retrieve detailed information about a specific host including OS details, hostname, IP, and host groups. Requires Basic Auth (host:get).",
+				"description": "Retrieve detailed information about a specific host including OS details, hostname, IP, and host groups. config_version is the config.yml schema version the agent last reported (agent 2.1.5 or later); it is an empty string when unknown. Requires Basic Auth (host:get).",
 				"security": [{ "basicAuth": [] }],
 				"parameters": [
 					{
@@ -229,7 +239,8 @@
 									"ip": "192.168.1.10",
 									"os_type": "Ubuntu",
 									"os_version": "22.04",
-									"agent_version": "1.4.5",
+									"agent_version": "2.1.5",
+									"config_version": "2.1.5",
 									"host_groups": [{ "id": "g1", "name": "Production" }]
 								}
 							}
@@ -1092,7 +1103,7 @@
 			"post": {
 				"tags": ["Agent / Install"],
 				"summary": "Agent ping",
-				"description": "Agent heartbeat / ping. Requires X-API-ID and X-API-KEY.",
+				"description": "Agent heartbeat / ping. Requires X-API-ID and X-API-KEY. The body is optional; an empty body is accepted as a plain heartbeat. Every successful response carries hostId, the ID of the host these credentials belong to, so the agent can record it in config.yml as host_id.",
 				"parameters": [
 					{
 						"name": "X-API-ID",
@@ -1114,7 +1125,19 @@
 								"type": "object",
 								"properties": {
 									"triggerCrontabUpdate": { "type": "boolean" },
-									"req": { "type": "object" }
+									"req": { "type": "object" },
+									"hostId": {
+										"type": "string",
+										"description": "host_id from the agent's config.yml (agent 2.1.5 or later). Ignored unless it is 1 to 64 letters, digits or hyphens. When it differs from the authenticated host's ID the ping still succeeds, the response sets hostIdMismatch, and the host is flagged with a host ID mismatch."
+									},
+									"configVersion": {
+										"type": "string",
+										"description": "config_version from the agent's config.yml (agent 2.1.5 or later). Stored only when it starts with N.N.N, optionally followed by a pre-release or build suffix, and is at most 64 bytes; anything else is ignored."
+									},
+									"machineId": {
+										"type": "string",
+										"description": "Machine ID of the host (agent 2.1.5 or later). Used with the hostname hash to detect two machines reporting with the same credentials (a possible clone)."
+									}
 								}
 							}
 						}
@@ -1125,13 +1148,26 @@
 						"description": "OK",
 						"content": {
 							"application/json": {
-								"schema": { "type": "object" },
+								"schema": {
+									"type": "object",
+									"properties": {
+										"hostId": {
+											"type": "string",
+											"description": "ID of the host the credentials belong to. Returned on every successful ping, including an empty-body heartbeat."
+										},
+										"hostIdMismatch": {
+											"type": "boolean",
+											"description": "Present and true only when the request carried a hostId that differs from hostId."
+										}
+									}
+								},
 								"example": {
 									"message": "Ping successful",
 									"timestamp": "2025-03-01T12:00:00Z",
 									"friendlyName": "web-server-1",
 									"agentStartup": true,
-									"integrations": { "docker": true, "compliance": false }
+									"integrations": { "docker": true, "compliance": false },
+									"hostId": "550e8400-e29b-41d4-a716-446655440000"
 								}
 							}
 						}
@@ -1159,7 +1195,7 @@
 			"post": {
 				"tags": ["Agent / Install"],
 				"summary": "Agent update",
-				"description": "Trigger or report agent update. Requires X-API-ID and X-API-KEY.",
+				"description": "Trigger or report agent update. Requires X-API-ID and X-API-KEY. The response carries hostId, the ID of the host these credentials belong to.",
 				"parameters": [
 					{
 						"name": "X-API-ID",
@@ -1174,17 +1210,47 @@
 						"schema": { "type": "string" }
 					}
 				],
+				"requestBody": {
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"description": "Full or partial agent report. Only the identity fields added in 2.1.5 are listed here; see the API and integrations guide for the full report body.",
+								"properties": {
+									"hostId": {
+										"type": "string",
+										"description": "host_id from the agent's config.yml (agent 2.1.5 or later). Ignored unless it is 1 to 64 letters, digits or hyphens. A value that differs from the authenticated host's ID does not reject the report; the host is flagged with a host ID mismatch."
+									},
+									"configVersion": {
+										"type": "string",
+										"description": "config_version from the agent's config.yml (agent 2.1.5 or later). Stored only when it starts with N.N.N, optionally followed by a pre-release or build suffix, and is at most 64 bytes."
+									}
+								},
+								"additionalProperties": true
+							}
+						}
+					}
+				},
 				"responses": {
 					"200": {
 						"description": "OK",
 						"content": {
 							"application/json": {
-								"schema": { "type": "object" },
+								"schema": {
+									"type": "object",
+									"properties": {
+										"hostId": {
+											"type": "string",
+											"description": "ID of the host the credentials belong to."
+										}
+									}
+								},
 								"example": {
 									"message": "Host updated successfully",
 									"packagesProcessed": 342,
 									"updatesAvailable": 5,
-									"securityUpdates": 2
+									"securityUpdates": 2,
+									"hostId": "550e8400-e29b-41d4-a716-446655440000"
 								}
 							}
 						}
@@ -1516,7 +1582,7 @@
 			"post": {
 				"tags": ["Auto-enrollment"],
 				"summary": "Enroll a host",
-				"description": "Enroll a new host. Requires X-Auto-Enrollment-Key and X-Auto-Enrollment-Secret headers.",
+				"description": "Enroll a new host, or re-issue credentials for a host this token created that has never reported. Requires X-Auto-Enrollment-Key and X-Auto-Enrollment-Secret headers.\n\nWithout host_id, a new host is created (201), unless a host with the same machine_id and name exists (409, code machine_id_match). With host_id, the server looks the host up: if it is not found, a new host is created as usual; if it exists, has never reported and was created by this same token, a new API key is issued for it (200, reenrolled true; the API ID is kept). Otherwise the request is refused with a coded 409 or 429 and nothing is created. The token's max_hosts_per_day limit applies only when a host is created; a re-issue neither counts towards it nor is blocked by it. Every error response from the host_id path carries a machine-readable code.",
 				"parameters": [
 					{
 						"name": "X-Auto-Enrollment-Key",
@@ -1536,15 +1602,51 @@
 						"application/json": {
 							"schema": {
 								"type": "object",
+								"required": ["friendly_name"],
 								"properties": {
 									"friendly_name": { "type": "string" },
-									"machine_id": { "type": "string" }
+									"machine_id": { "type": "string" },
+									"host_id": {
+										"type": "string",
+										"description": "Optional. The host_id from the machine's existing config.yml, if it has one. Must be 1 to 64 letters, digits or hyphens. It is never used as the ID of a new host."
+									},
+									"metadata": { "type": "object" }
 								}
+							},
+							"example": {
+								"friendly_name": "webserver",
+								"machine_id": "proxmox-lxc-100-abc123",
+								"host_id": "550e8400-e29b-41d4-a716-446655440000",
+								"metadata": { "vmid": "100", "proxmox_node": "proxmox01" }
 							}
 						}
 					}
 				},
 				"responses": {
+					"200": {
+						"description": "Credentials re-issued for the existing host named by host_id. Same shape as 201 plus reenrolled: true. The host keeps its ID and API ID; only the API key is new.",
+						"content": {
+							"application/json": {
+								"schema": { "type": "object" },
+								"example": {
+									"message": "Host credentials re-issued",
+									"host": {
+										"id": "550e8400-e29b-41d4-a716-446655440000",
+										"friendly_name": "webserver",
+										"api_id": "existing-api-id",
+										"api_key": "new-api-key",
+										"host_group": {
+											"id": "g1",
+											"name": "Production",
+											"color": "#3b82f6"
+										},
+										"status": "pending"
+									},
+									"reenrolled": true
+								}
+							}
+						}
+					},
 					"201": {
 						"description": "Created",
 						"content": {
@@ -1562,16 +1664,16 @@
 											"name": "Production",
 											"color": "#3b82f6"
 										},
-										"status": "active"
+										"status": "pending"
 									}
 								}
 							}
 						}
 					},
 					"400": {
-						"description": "Bad Request",
+						"description": "Bad Request, for example a missing friendly_name or a host_id that is not 1 to 64 letters, digits or hyphens",
 						"content": {
-							"application/json": { "example": { "error": "Invalid request" } }
+							"application/json": { "example": { "error": "Invalid host_id" } }
 						}
 					},
 					"401": {
@@ -1592,13 +1694,57 @@
 							}
 						}
 					},
-					"429": {
-						"description": "Too Many Requests",
+					"409": {
+						"description": "Conflict. Nothing is created and no credentials are issued. code is one of: host_reporting (the host named by host_id has already reported, so it is never re-keyed by enrolment; usually a cloned machine, or credentials regenerated in the UI but not applied), host_not_reenrollable (the host was not created by this token, for example it was added in the UI), machine_id_match (no host_id was sent and a host with the same machine_id and name already exists). The host_id path also returns host_id.",
 						"content": {
 							"application/json": {
-								"example": {
-									"error": "Rate limit exceeded",
-									"message": "Maximum hosts per day allowed for this token"
+								"examples": {
+									"host_reporting": {
+										"value": {
+											"error": "This host is already reporting to PatchMon. If its agent is broken, reinstall it with the install command on the host's page, or regenerate its credentials.",
+											"code": "host_reporting",
+											"friendly_name": "webserver",
+											"host_id": "550e8400-e29b-41d4-a716-446655440000"
+										}
+									},
+									"host_not_reenrollable": {
+										"value": {
+											"error": "This host was added to PatchMon another way and cannot be re-enrolled with this token. Use the install command on the host's page.",
+											"code": "host_not_reenrollable",
+											"friendly_name": "webserver",
+											"host_id": "550e8400-e29b-41d4-a716-446655440000"
+										}
+									},
+									"machine_id_match": {
+										"value": {
+											"error": "Host already enrolled",
+											"code": "machine_id_match",
+											"friendly_name": "webserver"
+										}
+									}
+								}
+							}
+						}
+					},
+					"429": {
+						"description": "Too Many Requests. Either credentials for the host named by host_id were re-issued less than 60 seconds ago (code reenrol_cooldown), or the token's max_hosts_per_day limit has been reached for a request that would create a host.",
+						"content": {
+							"application/json": {
+								"examples": {
+									"reenrol_cooldown": {
+										"value": {
+											"error": "Credentials for this host were re-issued less than a minute ago. Try again shortly.",
+											"code": "reenrol_cooldown",
+											"friendly_name": "webserver",
+											"host_id": "550e8400-e29b-41d4-a716-446655440000"
+										}
+									},
+									"daily_limit": {
+										"value": {
+											"error": "Rate limit exceeded",
+											"message": "Maximum hosts per day allowed for this token"
+										}
+									}
 								}
 							}
 						}
@@ -1608,6 +1754,61 @@
 						"content": {
 							"application/json": {
 								"example": { "error": "Internal Server Error" }
+							}
+						}
+					}
+				}
+			}
+		},
+		"/hosts/{hostId}/identity-conflict/dismiss": {
+			"post": {
+				"tags": ["Hosts (web UI)"],
+				"summary": "Dismiss a possible-clone warning",
+				"description": "Clears the possible-clone flag on a host. The flag is set when two different machines appear to report with the same host credentials. Dismissing it does not change the credentials; if the machines keep alternating, the flag is set again. Regenerating the host's credentials also clears it. Requires a signed-in user with the can_manage_hosts permission.",
+				"security": [{ "bearerAuth": [] }],
+				"parameters": [
+					{
+						"name": "hostId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "format": "uuid" }
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "OK",
+						"content": {
+							"application/json": {
+								"example": {
+									"message": "Identity conflict dismissed",
+									"host_id": "550e8400-e29b-41d4-a716-446655440000"
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Unauthorized",
+						"content": {
+							"application/json": { "example": { "error": "Unauthorized" } }
+						}
+					},
+					"403": {
+						"description": "Forbidden",
+						"content": {
+							"application/json": { "example": { "error": "Insufficient permissions" } }
+						}
+					},
+					"404": {
+						"description": "Not Found",
+						"content": {
+							"application/json": { "example": { "error": "Host not found" } }
+						}
+					},
+					"500": {
+						"description": "Internal Server Error",
+						"content": {
+							"application/json": {
+								"example": { "error": "Failed to dismiss identity conflict" }
 							}
 						}
 					}
