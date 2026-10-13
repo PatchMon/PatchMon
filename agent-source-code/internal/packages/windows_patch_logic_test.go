@@ -1334,3 +1334,34 @@ func TestPersistentCOMFailureReportsInstalledUpdates(t *testing.T) {
 		t.Error("an exit or parse failure is always omitted")
 	}
 }
+
+func TestStopDuringRecheckSkipsTheRestAsStopped(t *testing.T) {
+	scan := wuaScan{Updates: []wuaUpdate{{ID: guidA, Title: "A", Type: 1}, {ID: guidB, Title: "B", Type: 1}}}
+	rec := &recorder{}
+	stopCtx, stop := context.WithCancel(context.Background())
+	w := &fakeWUA{scan: scan, hang: map[string]bool{"install:" + guidA: true}}
+	r := newWindowsPatchRun(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, rec.hooks(), w, &fakeWinget{})
+	r.timeouts.install, r.timeouts.recheck, r.timeouts.recheckEvery = 20*time.Millisecond, time.Minute, 10*time.Millisecond
+	go func() {
+		for {
+			w.mu.Lock()
+			n := w.statusCalls
+			w.mu.Unlock()
+			if n > 0 {
+				rec.mu.Lock()
+				rec.stopped = true
+				rec.mu.Unlock()
+				stop()
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	res := r.run(context.Background(), stopCtx)
+	if it := itemByID(res, guidB); it.Status != itemSkipped || it.Message != msgStopped {
+		t.Errorf("remaining update = %+v, want Stopped", it)
+	}
+	if res.Stage != "cancelled" {
+		t.Errorf("stage = %q", res.Stage)
+	}
+}

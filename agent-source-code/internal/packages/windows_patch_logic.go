@@ -1278,12 +1278,12 @@ func (r *windowsPatchRun) runWUAPhase(runCtx, stopCtx context.Context, wuaIDs []
 		if it == nil {
 			continue
 		}
-		if blocked != "" {
-			r.finish(it, itemSkipped, blocked)
-			continue
-		}
 		if reason := r.interruptReason(runCtx); reason != "" {
 			r.finish(it, itemSkipped, reason)
+			continue
+		}
+		if blocked != "" {
+			r.finish(it, itemSkipped, blocked)
 			continue
 		}
 		timeout := r.timeouts.install
