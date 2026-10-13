@@ -169,6 +169,13 @@ type wuaScriptError struct {
 	HResult string
 }
 
+func (e *wuaScriptError) itemMessage() string {
+	if hint := wuaHResultHint(e.HResult); hint != "" {
+		return e.Message + ": " + hint
+	}
+	return e.Message
+}
+
 func (e *wuaScriptError) Error() string {
 	msg := e.Message
 	if e.HResult != "" {
@@ -386,11 +393,8 @@ func wuaResultMessage(rc int, hresult string) string {
 	default:
 		msg = "Did not run"
 	}
-	if hresult != "" && !isZeroHResult(hresult) {
-		msg += " (" + hresult + ")"
-		if hint := wuaHResultHint(hresult); hint != "" {
-			msg += ": " + hint
-		}
+	if hint := wuaHResultHint(hresult); hint != "" {
+		msg += ": " + hint
 	}
 	return msg
 }
@@ -489,11 +493,11 @@ func classifyWingetUpgradeExit(code uint32, dryRun bool, output, id string) wing
 	case wingetPinned:
 		return wingetOutcome{Status: itemSkipped, Message: "Pinned with winget pin"}
 	case wingetPackageInUse, wingetFileInUse, wingetInUseByOtherApp:
-		return wingetOutcome{Status: itemFailed, Message: "Application is in use: close the app and retry (" + hexCode(code) + ")"}
+		return wingetOutcome{Status: itemFailed, Message: "Application is in use: close the app and retry"}
 	case wingetInstallInProgress:
-		return wingetOutcome{Status: itemFailed, Message: "Another installation is in progress (" + hexCode(code) + ")"}
+		return wingetOutcome{Status: itemFailed, Message: "Another installation is in progress"}
 	case wingetRebootForInstall:
-		return wingetOutcome{Status: itemFailed, RebootRequired: true, Message: "Restart the host, then try again (" + hexCode(code) + ")"}
+		return wingetOutcome{Status: itemFailed, Message: "Restart the host, then try again"}
 	}
 	return wingetOutcome{Status: itemFailed, Message: wingetCodeMessage(code)}
 }
@@ -502,11 +506,24 @@ func hexCode(code uint32) string {
 	return fmt.Sprintf("0x%08X", code)
 }
 
+var wingetCodeMessages = map[uint32]string{
+	wingetSourceAgreementsNeed: "winget source agreements were not accepted",
+	0x8A150008:                 "Downloading the installer failed",
+	0x8A150011:                 "The installer's hash does not match its manifest",
+	0x8A150105:                 "Not enough disk space",
+	0x8A150107:                 "The installer needs internet access",
+	0x8A15010F:                 "Blocked by organisation policy",
+	0x80072EE2:                 "The download timed out",
+	0x80072EE7:                 "Could not resolve the download server's name: check DNS and proxy settings",
+	0x80072EFD:                 "Could not connect to the download server",
+	0x80072F8F:                 "Could not make a secure connection: check the system clock and any TLS inspection",
+}
+
 func wingetCodeMessage(code uint32) string {
-	if code == wingetSourceAgreementsNeed {
-		return "winget source agreements were not accepted (" + hexCode(code) + ")"
+	if msg, ok := wingetCodeMessages[code]; ok {
+		return msg
 	}
-	return "winget exited with " + hexCode(code)
+	return "winget exited with an error"
 }
 
 func wingetOutputListsID(output, id string) bool {
@@ -985,7 +1002,7 @@ func (r *windowsPatchRun) runWUAPhase(runCtx, stopCtx context.Context, wuaIDs []
 		msg := reason
 		if reason == "" {
 			status = itemFailed
-			msg = "Download failed: " + err.Error()
+			msg = "Download failed: " + errorItemMessage(err)
 		}
 		for _, it := range queued {
 			r.finish(it, status, msg)
@@ -1047,7 +1064,7 @@ func (r *windowsPatchRun) applyInstallResult(it *models.PatchRunItem, res wuaOpR
 		if errors.As(err, &se) {
 			it.HResult = normaliseHResult(se.HResult)
 		}
-		r.finish(it, itemFailed, "Install failed: "+err.Error())
+		r.finish(it, itemFailed, "Install failed: "+errorItemMessage(err))
 		return
 	}
 	switch {
@@ -1071,6 +1088,14 @@ func (r *windowsPatchRun) applyInstallResult(it *models.PatchRunItem, res wuaOpR
 		msg += "; restart required"
 	}
 	r.finish(it, wuaResultStatus(res.ResultCode), msg)
+}
+
+func errorItemMessage(err error) string {
+	var se *wuaScriptError
+	if errors.As(err, &se) {
+		return se.itemMessage()
+	}
+	return err.Error()
 }
 
 func displayName(it models.PatchRunItem) string {

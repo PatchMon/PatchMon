@@ -180,8 +180,8 @@ func TestWUAResultMapping(t *testing.T) {
 	if msg := wuaResultMessage(0, ""); msg != "Did not run" {
 		t.Errorf("rc 0 message = %q", msg)
 	}
-	if msg := wuaResultMessage(4, "0x800F0922"); !strings.Contains(msg, "0x800F0922") || !strings.Contains(msg, "CBS.log") {
-		t.Errorf("failure message lacks code or hint: %q", msg)
+	if msg := wuaResultMessage(4, "0x800F0922"); strings.Contains(msg, "0x") || !strings.Contains(msg, "CBS.log") {
+		t.Errorf("failure message must carry the hint and leave the code to hresult: %q", msg)
 	}
 	if msg := wuaResultMessage(2, "0x00000000"); msg != "Installed" {
 		t.Errorf("zero HRESULT must not be shown: %q", msg)
@@ -228,8 +228,15 @@ func TestClassifyWingetUpgradeExit(t *testing.T) {
 	if !strings.Contains(classifyWingetUpgradeExit(wingetNoPackageFound, false, "", "x").Message, "single user") {
 		t.Error("user-scope message missing")
 	}
-	if !strings.Contains(classifyWingetUpgradeExit(0x8A150008, false, "", "x").Message, "0x8A150008") {
-		t.Error("unknown codes must carry the hex code")
+	for _, code := range []uint32{0x8A150008, 0x80072EE7, 0x12345678, wingetPackageInUse, wingetInstallInProgress, wingetRebootForInstall} {
+		for _, dry := range []bool{false, true} {
+			if msg := classifyWingetUpgradeExit(code, dry, "", "x").Message; strings.Contains(msg, "0x") || msg == "" {
+				t.Errorf("code %s: message %q must be plain text; the code is in exit_code", hexCode(code), msg)
+			}
+		}
+	}
+	if msg := classifyWingetUpgradeExit(0x80072EE7, false, "", "x").Message; !strings.Contains(msg, "DNS") {
+		t.Errorf("0x80072EE7 message = %q", msg)
 	}
 }
 
