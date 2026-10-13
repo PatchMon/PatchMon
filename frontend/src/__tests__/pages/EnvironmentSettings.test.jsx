@@ -85,7 +85,13 @@ const renderPage = () => {
 	);
 };
 
-const rowFor = async (key) => (await screen.findByText(key)).closest("tr");
+const rowFor = async (key) =>
+	(await screen.findAllByText(key)).map((el) => el.closest("tr")).find(Boolean);
+
+const cardFor = async (key) =>
+	(await screen.findAllByText(key))
+		.map((el) => el.closest("[data-env-key]"))
+		.find(Boolean);
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -252,5 +258,89 @@ describe("Environment settings for a value held in the database", () => {
 		fireEvent.click(within(row).getByRole("button", { name: "Save" }));
 		await screen.findByText('invalid origin "nope"');
 		expect(within(row).getByRole("textbox")).toHaveValue("nope");
+	});
+});
+
+describe("Environment settings layout", () => {
+	it("moves the description into an info tooltip next to the variable", async () => {
+		settingsAPI.getEnvironmentConfig.mockResolvedValue({
+			data: {
+				variables: [
+					variable("CORS_ORIGIN", {
+						effectiveValue: "https://a.example.com",
+						defaultValue: "http://localhost:3000",
+						description: "Allowed browser origins",
+					}),
+				],
+			},
+		});
+		renderPage();
+		const row = await rowFor("CORS_ORIGIN");
+		expect(within(row).queryByText("Allowed browser origins")).toBeNull();
+		const info = within(row).getByRole("button", {
+			name: "About CORS_ORIGIN",
+		});
+		fireEvent.mouseEnter(info);
+		expect(screen.getByRole("tooltip")).toHaveTextContent(
+			"Allowed browser origins",
+		);
+		expect(
+			within(row).getByText("Default: http://localhost:3000"),
+		).toBeInTheDocument();
+	});
+
+	it("does not repeat the default when it matches the value", async () => {
+		settingsAPI.getEnvironmentConfig.mockResolvedValue({
+			data: {
+				variables: [
+					variable("LOG_LEVEL", {
+						effectiveValue: "info",
+						defaultValue: "info",
+					}),
+				],
+			},
+		});
+		renderPage();
+		const row = await rowFor("LOG_LEVEL");
+		expect(within(row).queryByText(/^Default:/)).toBeNull();
+	});
+
+	it("renders a mobile card with the same value, source and edit action", async () => {
+		settingsAPI.getEnvironmentConfig.mockResolvedValue({
+			data: {
+				variables: [
+					variable("PORT", {
+						effectiveValue: "3001",
+						defaultValue: "3001",
+						effectiveSource: "db",
+					}),
+				],
+			},
+		});
+		renderPage();
+		const card = await cardFor("PORT");
+		expect(within(card).getByText("3001")).toBeInTheDocument();
+		expect(within(card).getByText("Database")).toBeInTheDocument();
+		fireEvent.click(within(card).getByRole("button", { name: /edit/i }));
+		expect(within(card).getByRole("textbox")).toHaveValue("3001");
+	});
+
+	it("keeps the default visible while a value is being edited", async () => {
+		settingsAPI.getEnvironmentConfig.mockResolvedValue({
+			data: {
+				variables: [
+					variable("JSON_BODY_LIMIT", {
+						effectiveValue: "5mb",
+						defaultValue: "5mb",
+						effectiveSource: "db",
+					}),
+				],
+			},
+		});
+		renderPage();
+		const row = await rowFor("JSON_BODY_LIMIT");
+		expect(within(row).queryByText("Default: 5mb")).toBeNull();
+		fireEvent.click(within(row).getByRole("button", { name: /edit/i }));
+		expect(within(row).getByText("Default: 5mb")).toBeInTheDocument();
 	});
 });

@@ -31,7 +31,26 @@ const Tooltip = ({ content, side = "top", className = "", children }) => {
 	const [resolvedSide, setResolvedSide] = useState(side);
 	const [coords, setCoords] = useState(null);
 	const triggerRef = useRef(null);
+	const openRef = useRef(false);
+	const openedAtRef = useRef(0);
 	const id = useId();
+
+	useEffect(() => {
+		openRef.current = open;
+	}, [open]);
+
+	const show = () => {
+		if (!openRef.current) {
+			openRef.current = true;
+			openedAtRef.current = Date.now();
+		}
+		setOpen(true);
+	};
+
+	const hide = () => {
+		openRef.current = false;
+		setOpen(false);
+	};
 
 	const computePosition = useCallback(() => {
 		if (!triggerRef.current) return;
@@ -106,24 +125,26 @@ const Tooltip = ({ content, side = "top", className = "", children }) => {
 		},
 		"aria-describedby": open ? id : children.props["aria-describedby"],
 		onMouseEnter: (e) => {
-			setOpen(true);
+			show();
 			children.props.onMouseEnter?.(e);
 		},
 		onMouseLeave: (e) => {
-			setOpen(false);
+			hide();
 			children.props.onMouseLeave?.(e);
 		},
 		onFocus: (e) => {
-			setOpen(true);
+			show();
 			children.props.onFocus?.(e);
 		},
 		onBlur: (e) => {
-			setOpen(false);
+			hide();
 			children.props.onBlur?.(e);
 		},
 		onClick: (e) => {
-			// Touch / tap support: toggle on click. Mouse users get hover already.
-			setOpen((prev) => !prev);
+			// A tap fires mouseenter and focus just before click; without this
+			// grace window the click toggles the freshly opened tooltip shut.
+			if (openRef.current && Date.now() - openedAtRef.current > 400) hide();
+			else show();
 			children.props.onClick?.(e);
 		},
 	});
