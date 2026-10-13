@@ -71,3 +71,22 @@ func TestClassifyWingetExit(t *testing.T) {
 		}
 	}
 }
+
+func TestWingetListOutputKeepsNonASCIINames(t *testing.T) {
+	m := &WindowsManager{logger: logrus.New()}
+	m.logger.SetOutput(io.Discard)
+	raw := "Name           Id       Version Available Source\r\n" +
+		"-------------------------------------------------\r\n" +
+		"Café Ünïcode…  Some.Id  1.0     1.1       winget\r\n"
+	entries := m.parseWingetTable(stripTerminalControls(raw))
+	if len(entries) != 1 {
+		t.Fatalf("entries = %+v", entries)
+	}
+	e := entries[0]
+	if e.Name != "Café Ünïcode…" || e.ID != "Some.Id" || e.Version != "1.0" || e.Available != "1.1" {
+		t.Errorf("row = %+v", e)
+	}
+	if stripEllipsis(e.Name) != "Café Ünïcode" {
+		t.Errorf("stripEllipsis = %q", stripEllipsis(e.Name))
+	}
+}
