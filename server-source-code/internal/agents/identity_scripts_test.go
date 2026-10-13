@@ -47,7 +47,7 @@ func runShell(t *testing.T, sh, src string, args ...string) string {
 }
 
 func TestEnrolHelpersMatchBetweenScripts(t *testing.T) {
-	for _, name := range []string{"patchmon_identity", "identity_value", "same_server", "enrol_outcome", "set_aside_identity", "write_stub_config"} {
+	for _, name := range []string{"patchmon_identity", "identity_value", "same_server", "enrol_outcome", "set_aside_identity", "restore_identity", "write_stub_config"} {
 		direct := extractShellFunc(t, DirectHostAutoEnrollScript, name)
 		proxmox := extractShellFunc(t, ProxmoxAutoEnrollScript, name)
 		if direct != proxmox {
@@ -292,5 +292,53 @@ func TestProxmoxForceNewHostFor(t *testing.T) {
 		if got := cmd.Run() == nil; got != c.want {
 			t.Errorf("FORCE_NEW_HOST=%q vmid %s: %v, want %v", c.value, c.vmid, got, c.want)
 		}
+	}
+}
+
+func TestRestoreIdentityUndoesSetAside(t *testing.T) {
+	fns := extractShellFunc(t, DirectHostAutoEnrollScript, "set_aside_identity") + extractShellFunc(t, DirectHostAutoEnrollScript, "restore_identity")
+	for _, sh := range shells(t) {
+		t.Run(filepath.Base(sh), func(t *testing.T) {
+			dir := t.TempDir()
+			files := map[string]string{
+				"config.yml":                        "patchmon_server: https://pm\nhost_id: old\n",
+				"credentials.yml":                   "api_id: patchmon_old\napi_key: aaaa\n",
+				"config.yml.backup.20260101_000000": "host_id: older\n",
+			}
+			for name, body := range files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			moved := strings.TrimSpace(runShell(t, sh, fns+`set_aside_identity "$1"`, dir))
+			if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte("stub"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			runShell(t, sh, fns+`restore_identity "$1" "$2"`, dir, moved)
+			for name, body := range files {
+				got, err := os.ReadFile(filepath.Join(dir, name))
+				if err != nil {
+					t.Fatalf("%s not restored: %v", name, err)
+				}
+				if name == "config.yml" {
+					if string(got) != "stub" {
+						t.Errorf("restore overwrote a newer config.yml")
+					}
+					continue
+				}
+				if string(got) != body {
+					t.Errorf("%s = %q, want %q", name, got, body)
+				}
+			}
+
+			outside := t.TempDir()
+			if err := os.WriteFile(filepath.Join(outside, "x"), []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			runShell(t, sh, fns+`restore_identity "$1" "$2"`, dir, outside)
+			if _, err := os.Stat(filepath.Join(dir, "x")); err == nil {
+				t.Error("restore_identity moved files from a directory it did not create")
+			}
+		})
 	}
 }

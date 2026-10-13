@@ -218,6 +218,17 @@ set_aside_identity() {
     return 0
 }
 
+restore_identity() {
+    case "$2" in "$1"/pre-force-new-*) ;; *) return 0 ;; esac
+    [ -d "$2" ] || return 0
+    for _ri_f in "$2"/*; do
+        [ -e "$_ri_f" ] || continue
+        [ -e "$1/${_ri_f##*/}" ] || mv "$_ri_f" "$1/"
+    done
+    rmdir "$2" 2>/dev/null || true
+    return 0
+}
+
 write_stub_config() {
     [ -f "$1/config.yml" ] && return 0
     case "$3" in ""|*[!A-Za-z0-9-]*) return 0 ;; esac
@@ -319,6 +330,11 @@ while read -r vmid status; do
         set_aside_dir=$(identity_value "dir=$set_aside_dir" dir)
         [[ -n "$set_aside_dir" ]] && info "  Previous configuration moved to $set_aside_dir"
     fi
+    put_back_identity() {
+        [[ "$force_new" == "true" && -n "$set_aside_dir" ]] || return 0
+        timeout 10 pct exec "$vmid" -- sh -c "$(declare -f restore_identity); restore_identity /etc/patchmon \"\$1\"" _ "$set_aside_dir" </dev/null >/dev/null 2>&1 || true
+        warn "    No new host was created, so the container's previous configuration was put back"
+    }
 
     # Check if agent is already installed and working BEFORE enrollment
     info "  Checking if agent is already configured..."
@@ -439,6 +455,7 @@ while read -r vmid status; do
                 new_host_id=$(echo "$body" | jq -r '.host.id // empty' 2>/dev/null || echo "")
 
                 if [[ -z "$api_id" ]] || [[ -z "$api_key" ]]; then
+                    put_back_identity
                     error "  ✗ Failed to parse API credentials from the enrolment response for $friendly_name"
                     failed_containers["$vmid"]="$friendly_name|Could not parse API credentials|$body"
                     ((failed_count++)) || true
@@ -471,14 +488,20 @@ while read -r vmid status; do
                 continue
                 ;;
             already_enrolled)
-                warn "  ⊘ $friendly_name is already enrolled in PatchMon${existing_name:+ as $existing_name}; skipping"
-                warn "    Remove the host in PatchMon before it can be enrolled again"
+                put_back_identity
+                if [[ "$force_new" == "true" ]]; then
+                    warn "  ⊘ FORCE_NEW_HOST: PatchMon already has a host with this container's machine ID and name${existing_name:+ ($existing_name)}, usually the one it was cloned from. Do not remove that host; give this container its own /etc/machine-id or a HOST_PREFIX, then rerun"
+                else
+                    warn "  ⊘ $friendly_name is already enrolled in PatchMon${existing_name:+ as $existing_name}; skipping"
+                    warn "    Remove the host in PatchMon before it can be enrolled again"
+                fi
                 ((skipped_count++)) || true
                 echo ""
                 sleep 1
                 continue
                 ;;
             retry_later)
+                put_back_identity
                 error "  ✗ PatchMon asked to retry later (HTTP 429) for $friendly_name"
                 failed_containers["$vmid"]="$friendly_name|HTTP 429, retry on the next run|$body"
                 ((failed_count++)) || true
@@ -487,6 +510,7 @@ while read -r vmid status; do
                 continue
                 ;;
             *)
+                put_back_identity
                 error "  ✗ Failed to enroll $friendly_name - HTTP $http_code"
                 debug "  Response: $body"
                 failed_containers["$vmid"]="$friendly_name|HTTP $http_code enrollment failed|$body"

@@ -130,6 +130,17 @@ set_aside_identity() {
     return 0
 }
 
+restore_identity() {
+    case "$2" in "$1"/pre-force-new-*) ;; *) return 0 ;; esac
+    [ -d "$2" ] || return 0
+    for _ri_f in "$2"/*; do
+        [ -e "$_ri_f" ] || continue
+        [ -e "$1/${_ri_f##*/}" ] || mv "$_ri_f" "$1/"
+    done
+    rmdir "$2" 2>/dev/null || true
+    return 0
+}
+
 write_stub_config() {
     [ -f "$1/config.yml" ] && return 0
     case "$3" in ""|*[!A-Za-z0-9-]*) return 0 ;; esac
@@ -312,7 +323,11 @@ if [ "$FORCE_NEW_HOST" = "true" ]; then
     if ! set_aside_dir=$(set_aside_identity /etc/patchmon); then
         error "Could not move the existing configuration out of /etc/patchmon"
     fi
-    [ -n "$set_aside_dir" ] && info "Previous configuration moved to $set_aside_dir"
+    if [ -n "$set_aside_dir" ]; then
+        info "Previous configuration moved to $set_aside_dir"
+        force_enrolled=false
+        trap 'if [ "$force_enrolled" != "true" ]; then restore_identity /etc/patchmon "$set_aside_dir"; warn "No new host was created, so the previous configuration was put back"; fi' EXIT
+    fi
 fi
 
 # ===== CHECK IF AGENT ALREADY INSTALLED =====
@@ -468,6 +483,7 @@ case "$(enrol_outcome "$http_code" "$body")" in
         else
             success "Host enrolled successfully: $api_id"
         fi
+        force_enrolled=true
         write_stub_config /etc/patchmon "$PATCHMON_URL" "$new_host_id"
         echo ""
 
@@ -490,6 +506,10 @@ case "$(enrol_outcome "$http_code" "$body")" in
         exit 0
         ;;
     already_enrolled)
+        if [ "$FORCE_NEW_HOST" = "true" ]; then
+            printf "%b\n" "${RED}[ERROR]${NC} FORCE_NEW_HOST: PatchMon already has a host with this machine ID and name${existing_name:+ ($existing_name)}, usually the machine this one was cloned from. Do not remove that host. Rerun with a different FRIENDLY_NAME, or give this machine its own /etc/machine-id first." >&2
+            exit 1
+        fi
         if [ -n "$existing_name" ]; then
             warn "This host is already enrolled in PatchMon as '$existing_name'; skipping"
         else
