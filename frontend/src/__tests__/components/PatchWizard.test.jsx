@@ -471,6 +471,39 @@ describe("hasExtraDependencies", () => {
 		expect(hasExtraDependencies(run)).toBe(false);
 	});
 
+	it("is false for patch_all and Windows runs, which have no dependency resolution", () => {
+		const validated = {
+			status: "validated",
+			package_names: [],
+			packages_affected: ["2026-10 Cumulative Update (KB5044284)"],
+		};
+		expect(
+			hasExtraDependencies({ ...validated, patch_type: "patch_all" }),
+		).toBe(false);
+		expect(
+			hasExtraDependencies({
+				...validated,
+				windows_scope: { updates: true, apps: true },
+			}),
+		).toBe(false);
+		expect(
+			hasExtraDependencies({
+				...validated,
+				patch_type: "patch_package",
+				package_names: ["7-Zip 24.08 (x64)"],
+				hosts: { os_type: "Windows 11 Pro" },
+			}),
+		).toBe(false);
+		expect(
+			hasExtraDependencies({
+				...run,
+				status: "validated",
+				patch_type: "patch_package",
+				hosts: { os_type: "Ubuntu" },
+			}),
+		).toBe(true);
+	});
+
 	it("is false for a validated run with no extras", () => {
 		expect(
 			hasExtraDependencies({

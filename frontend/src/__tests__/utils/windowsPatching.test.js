@@ -70,7 +70,7 @@ describe("windowsPatchInfo", () => {
 			"not_pending",
 			"winget",
 		],
-	])("falls back to the design 3.3 predicate for %j", (row, patchable, reason, source) => {
+	])("falls back to the server's patchable predicate for %j", (row, patchable, reason, source) => {
 		const info = windowsPatchInfo(row);
 		expect(info.patchable).toBe(patchable);
 		expect(info.reason).toBe(reason);
@@ -223,7 +223,7 @@ describe("partitionPatchableHosts", () => {
 });
 
 describe("run item results", () => {
-	it("maps every design 7.2 status to a badge", () => {
+	it("maps every run item status to a badge", () => {
 		for (const s of [
 			"pending",
 			"would_install",

@@ -68,7 +68,7 @@ export const isFeatureUpgradeRow = (row) => {
 	return list.some((c) => String(c).trim().toLowerCase() === "upgrades");
 };
 
-// Mirrors the server predicate (design 3.3). The server's `patchable` wins
+// Mirrors the server's patchable predicate. The server's `patchable` wins
 // when present so the UI and trigger validation cannot disagree.
 export const windowsPatchInfo = (row) => {
 	const needsUpdate = !!pick(row, "needsUpdate", "needs_update");

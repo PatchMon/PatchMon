@@ -45,7 +45,6 @@ function formatRepoName(name) {
 
 const isWindowsHost = (host) => isWindowsOs(hostOsType(host));
 
-// Windows hosts defer to the server's patchable flag (design 3.3).
 const isHostPatchable = (host) =>
 	isWindowsHost(host) ? windowsPatchInfo(host).patchable : !!host.needsUpdate;
 

@@ -27,4 +27,10 @@ export const extraDependencies = (run) => {
 // prediction. On completed runs it records what was applied, so a badge would
 // be both retrospective and near-universal.
 export const hasExtraDependencies = (run) =>
-	run?.status === "validated" && extraDependencies(run).length > 0;
+	run?.status === "validated" &&
+	run.patch_type !== "patch_all" &&
+	!run.windows_scope &&
+	!String(run.hosts?.os_type || "")
+		.toLowerCase()
+		.includes("windows") &&
+	extraDependencies(run).length > 0;
