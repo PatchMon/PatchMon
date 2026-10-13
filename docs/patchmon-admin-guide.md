@@ -1569,7 +1569,7 @@ To keep something out of Patch all on one host, hide the update in Windows (hidd
 
 ##### Validate first
 
-Windows supports a dry run for both **Patch selected** and **Patch all**, so the wizard offers the **Validate** step for both. A dry run searches Windows Update and asks winget whether an upgrade is available. Nothing is downloaded or installed. Each item ends **Would install**, with its expected restart behaviour, or **Not applicable**. You can validate up to 100 packages per Windows host in one run.
+Windows supports a dry run for both **Patch selected** and **Patch all**, so the wizard offers the **Validate** step for both. A dry run searches Windows Update and asks winget whether an upgrade is available. Nothing is downloaded or installed. Each item ends **Would install**, with its expected restart behaviour, **Not applicable**, or **Skipped** when it could not be installed as things stand: a Microsoft Store app, an app pinned in winget, an update that needs user input, or an update that cannot install until the host has restarted. You can validate up to 100 packages per Windows host in one run.
 
 Approve the result as you would on Linux. When you approve a validated **Patch selected** run, only the items that would install are carried into the real run.
 
@@ -1620,7 +1620,7 @@ Installing an item accepts its licence terms on your behalf: the Windows Update 
 
 ##### Agent updates during a patch run
 
-Agent updates are held while a patch run is queued, validating or running on the host, on every operating system. **Update Now** is refused with "A patch run is in progress on this host. Try again when it finishes.", automatic updates wait, and an agent that is told to update mid-run applies the update after the run and its post-patch report have finished.
+Agent updates are held while a patch run is queued, validating or running on the host, on every operating system. **Update Now** is refused with "A patch run is in progress on this host. Try again when it finishes.", automatic updates wait, and an agent that is told to update mid-run applies the update after the run and its post-patch report have finished. The reverse also holds: a patch run that reaches the agent while it is downloading or installing its own update fails straight away with "Agent update in progress, retry shortly". Run it again once the agent is back.
 
 The terminal pane on Run Detail shows Windows Update and winget progress instead of `apt-get` output.
 
