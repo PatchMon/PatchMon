@@ -41,6 +41,8 @@ func TestEvaluateWingetTrust(t *testing.T) {
 		{"empty install location", exe, with(func(p *wingetAppxPackage) { p.InstallLocation = "" }), false},
 		{"no package, file signed by Microsoft", exe, wingetTrustReport{Authenticode: "Valid", Signer: "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"}, true},
 		{"no package, file signed by someone else", exe, wingetTrustReport{Authenticode: "Valid", Signer: "CN=Evil, O=Evil"}, false},
+		{"no package, signer only contains the Microsoft O=", exe, wingetTrustReport{Authenticode: "Valid", Signer: "CN=Evil, O=Microsoft Corporation, C=XX"}, false},
+		{"no package, Microsoft signer but NotSigned", exe, wingetTrustReport{Authenticode: "NotSigned", Signer: microsoftPublisherName}, false},
 		{"no package, NotSigned", exe, wingetTrustReport{Authenticode: "NotSigned"}, false},
 	}
 	for _, c := range cases {

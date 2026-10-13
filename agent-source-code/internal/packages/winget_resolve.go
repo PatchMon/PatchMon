@@ -212,7 +212,7 @@ func evaluateWingetTrust(exe string, r wingetTrustReport) error {
 			return nil
 		}
 	}
-	if r.Authenticode == "Valid" && strings.Contains(r.Signer, "O=Microsoft Corporation") {
+	if r.Authenticode == "Valid" && strings.TrimSpace(r.Signer) == microsoftPublisherName {
 		return nil
 	}
 	return fmt.Errorf("winget.exe is not inside a trusted Microsoft App Installer package (%d package(s) checked, Authenticode %s)", len(r.Packages), r.Authenticode)
