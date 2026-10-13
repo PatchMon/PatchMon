@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"patchmon-agent/internal/logutil"
@@ -496,12 +497,15 @@ $ErrorActionPreference = "SilentlyContinue"
 `
 	cmd, cancel := boundedCommand(collectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
+	start := time.Now()
 	output, err := cmd.Output()
 	if err != nil {
 		m.logger.WithError(err).Debug("Get-AppxPackage query failed")
 		return nil
 	}
-	return parseAppxPackages(output)
+	pkgs := parseAppxPackages(output)
+	m.logger.WithFields(logrus.Fields{"count": len(pkgs), "elapsed_ms": time.Since(start).Milliseconds()}).Debug("Collected Appx install state")
+	return pkgs
 }
 
 func parseAppxPackages(output []byte) []appxPackage {
