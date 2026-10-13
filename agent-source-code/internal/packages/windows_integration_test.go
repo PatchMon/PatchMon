@@ -6,6 +6,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -101,6 +102,26 @@ func TestWingetCollectorLive(t *testing.T) {
 	case <-time.After(4 * time.Minute):
 		t.Fatal("winget collector did not return; the bounded command timeout is not being applied")
 	}
+}
+
+func TestResolveWingetLive(t *testing.T) {
+	requireWindowsIntegration(t)
+
+	exe, env, err := resolveWinget()
+	if err != nil {
+		t.Skipf("winget not resolvable on this host: %v", err)
+	}
+	if !strings.EqualFold(filepath.Dir(filepath.Dir(exe)), windowsAppsDir()) {
+		t.Errorf("winget resolved outside WindowsApps: %s", exe)
+	}
+	cmd, cancel := boundedCommand(collectorTimeout, exe, "--version")
+	defer cancel()
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("winget --version failed (0xC0000135 means VCLibs is not on PATH): %v\n%s", err, out)
+	}
+	t.Logf("winget %s at %s", strings.TrimSpace(string(out)), exe)
 }
 
 func TestWingetUpgradeMapLive(t *testing.T) {
