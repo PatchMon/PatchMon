@@ -71,8 +71,13 @@ func (m *WindowsManager) GetPackages() []models.Package {
 	// 3. Merge: start with registry baseline, enrich with WinGet update info
 	appPackages := m.mergeRegistryAndWinget(regPackages, wingetPackages)
 	if hasAppxStyleName(appPackages) {
-		if suppressed := applyAppxInstallState(appPackages, m.getAppxPackages()); len(suppressed) > 0 {
+		var suppressed, dropped []string
+		appPackages, suppressed, dropped = applyAppxInstallState(appPackages, m.getAppxPackages())
+		if len(suppressed) > 0 {
 			m.logger.WithField("packages", suppressed).Debug("Update flag cleared: a newer Appx copy is installed than winget reports")
+		}
+		for _, name := range dropped {
+			m.logger.WithField("package", logutil.Sanitize(name)).Debug("Dropped Appx package that is staged but not installed for any user")
 		}
 	}
 	m.logger.WithField("count", len(appPackages)).Info("Application packages after merge")
@@ -410,7 +415,7 @@ func sameVersionScheme(a, b string) bool {
 }
 
 // winget as SYSTEM reports machine-staged MSIX copies, not the per-user installs.
-func applyAppxInstallState(pkgs []models.Package, appx []appxPackage) (suppressed []string) {
+func applyAppxInstallState(pkgs []models.Package, appx []appxPackage) (kept []models.Package, suppressed, dropped []string) {
 	byName := map[string]*appxVersions{}
 	for _, a := range appx {
 		if _, ok := parseDottedVersion(a.Version); !ok {
@@ -432,35 +437,44 @@ func applyAppxInstallState(pkgs []models.Package, appx []appxPackage) (suppresse
 			v.staged = append(v.staged, a.Version)
 		}
 	}
+	kept = pkgs[:0]
 	for i := range pkgs {
-		if !looksLikeAppxName(pkgs[i].Name) {
+		p := pkgs[i]
+		if !looksLikeAppxName(p.Name) || !isDottedNumeric(p.CurrentVersion) {
+			kept = append(kept, p)
 			continue
 		}
-		v, exact := appxVersionsFor(byName, normalizePackageName(pkgs[i].Name))
-		if v == nil || v.installed == "" || len(v.staged) == 0 {
+		v, exact := appxVersionsFor(byName, normalizePackageName(p.Name))
+		if v == nil || len(v.staged) == 0 {
+			kept = append(kept, p)
 			continue
 		}
-		current := pkgs[i].CurrentVersion
-		if v.hasStaged(current) {
-			if c, _ := compareDottedVersions(v.installed, current); c <= 0 {
+		if v.installed == "" {
+			if exact || v.hasStaged(p.CurrentVersion) {
+				dropped = append(dropped, p.Name)
 				continue
 			}
-			pkgs[i].CurrentVersion = v.installed
-			if pkgs[i].NeedsUpdate && !installedIsOlder(v.installed, pkgs[i].AvailableVersion) {
-				pkgs[i].NeedsUpdate = false
-				pkgs[i].AvailableVersion = ""
-				suppressed = append(suppressed, pkgs[i].Name)
-			}
+			kept = append(kept, p)
 			continue
 		}
-		if pkgs[i].NeedsUpdate && exact && isDottedNumeric(current) && !sameVersionScheme(current, v.installed) && v.newerThanAllStaged() {
-			pkgs[i].CurrentVersion = v.installed
-			pkgs[i].NeedsUpdate = false
-			pkgs[i].AvailableVersion = ""
-			suppressed = append(suppressed, pkgs[i].Name)
+		if v.hasStaged(p.CurrentVersion) {
+			if !versionsEqual(v.installed, p.CurrentVersion) {
+				p.CurrentVersion = v.installed
+				if p.NeedsUpdate && p.AvailableVersion != "" && !installedIsOlder(v.installed, p.AvailableVersion) {
+					p.NeedsUpdate = false
+					p.AvailableVersion = ""
+					suppressed = append(suppressed, p.Name)
+				}
+			}
+		} else if p.NeedsUpdate && exact && !sameVersionScheme(p.CurrentVersion, v.installed) && v.newerThanAllStaged() {
+			p.CurrentVersion = v.installed
+			p.NeedsUpdate = false
+			p.AvailableVersion = ""
+			suppressed = append(suppressed, p.Name)
 		}
+		kept = append(kept, p)
 	}
-	return suppressed
+	return kept, suppressed, dropped
 }
 
 func appxVersionsFor(byName map[string]*appxVersions, name string) (*appxVersions, bool) {
