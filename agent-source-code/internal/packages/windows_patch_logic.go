@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"patchmon-agent/internal/logutil"
 	"patchmon-agent/internal/winexec"
 	"patchmon-agent/pkg/models"
 )
@@ -728,14 +729,38 @@ var (
 	lastWindowsUpdatesSet bool
 )
 
+type wuSearchStatus int
+
+const (
+	wuSearchOK wuSearchStatus = iota
+	wuSearchFailed
+	wuSearchCOMFailed
+)
+
+// wuSearch is how a Windows Update collection went. On a COM failure the packages are the
+// installed updates the script could still list.
+type wuSearch struct {
+	status wuSearchStatus
+	detail string
+}
+
+// persistentCOMFailures is how many COM failures in a row mean the search is blocked, not
+// busy, so installed updates are reported rather than keeping the server's rows forever.
+const persistentCOMFailures = 3
+
+var (
+	comFailureMu     sync.Mutex
+	comFailureStreak int
+)
+
 // While a patch run holds wuaMu, a report gets the last pending list instead of searching.
 // With no list cached yet, or when the search fails, the updates are reported as omitted so
 // the server keeps its rows instead of having them all removed.
 func (m *WindowsManager) windowsUpdatesGuarded() (pkgs []models.Package, omitted bool) {
-	return guardedWindowsUpdates(m.getWindowsUpdates)
+	return guardedWindowsUpdates(m.getWindowsUpdates, func(msg string) { m.logger.Warn(logutil.Sanitize(msg)) })
 }
 
-func guardedWindowsUpdates(collect func() ([]models.Package, bool)) ([]models.Package, bool) {
+func guardedWindowsUpdates(collect func() ([]models.Package, wuSearch), warn func(string)) ([]models.Package, bool) {
 	if !wuaMu.TryLock() {
 		lastWindowsUpdatesMu.Lock()
 		defer lastWindowsUpdatesMu.Unlock()
@@ -748,10 +773,28 @@ func guardedWindowsUpdates(collect func() ([]models.Package, bool)) ([]models.Pa
 		return out, false
 	}
 	defer wuaMu.Unlock()
-	pkgs, ok := collect()
-	if !ok {
+	pkgs, search := collect()
+	comFailureMu.Lock()
+	defer comFailureMu.Unlock()
+	switch search.status {
+	case wuSearchFailed:
+		warn("Windows Update search failed (" + search.detail + "); this report keeps the server's Windows Update rows")
 		return nil, true
+	case wuSearchCOMFailed:
+		comFailureStreak++
+		switch {
+		case comFailureStreak < persistentCOMFailures:
+			warn("Windows Update search failed (" + search.detail + "); this report keeps the server's Windows Update rows")
+			return nil, true
+		case comFailureStreak == persistentCOMFailures:
+			warn("Windows Update search keeps failing (" + search.detail + "); reporting installed updates only")
+		}
+		if pkgs == nil {
+			pkgs = []models.Package{}
+		}
+		return pkgs, false
 	}
+	comFailureStreak = 0
 	applyRestartPending(pkgs)
 	lastWindowsUpdatesMu.Lock()
 	lastWindowsUpdates = append([]models.Package(nil), pkgs...)

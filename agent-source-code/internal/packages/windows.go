@@ -1047,7 +1047,7 @@ func wuaErrorHint(msg string) string {
 
 // getWindowsUpdates queries installed KB patches and pending Windows updates.
 // Uses Get-HotFix for installed; Microsoft.Update.Session for pending (may fail in Session 0).
-func (m *WindowsManager) getWindowsUpdates() ([]models.Package, bool) {
+func (m *WindowsManager) getWindowsUpdates() ([]models.Package, wuSearch) {
 	psScript := `
 $ErrorActionPreference = "SilentlyContinue"
 $result = @()
@@ -1159,12 +1159,12 @@ $result | ConvertTo-Json -Compress -Depth 4
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
-		m.logger.WithError(err).Warn("Failed to query Windows updates; this report keeps the server's Windows Update rows")
-		return nil, false
+		return nil, wuSearch{status: wuSearchFailed, detail: err.Error()}
 	}
 
 	outputStr := strings.TrimSpace(string(winexec.TrimBOM(output)))
 	// Check for COM error message (e.g. E_ACCESSDENIED in Session 0)
+	result := wuSearch{status: wuSearchOK}
 	if strings.Contains(outputStr, "WUA_COM_ERROR:") {
 		idx := strings.Index(outputStr, "WUA_COM_ERROR:")
 		end := idx + 120
@@ -1172,16 +1172,19 @@ $result | ConvertTo-Json -Compress -Depth 4
 			end = len(outputStr)
 		}
 		msg := outputStr[idx:end]
-		hint := wuaErrorHint(msg)
-		m.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
-			"detail": msg,
-			"hint":   hint,
-		})).Warn("Windows Update COM API failed; this report keeps the server's Windows Update rows")
-		return nil, false
+		if hint := wuaErrorHint(msg); hint != "" {
+			msg += " (" + hint + ")"
+		}
+		result = wuSearch{status: wuSearchCOMFailed, detail: msg}
+		if jsonStart := strings.Index(outputStr, "["); jsonStart >= 0 {
+			outputStr = outputStr[jsonStart:]
+		} else {
+			outputStr = ""
+		}
 	}
 
 	if outputStr == "" || outputStr == "null" || outputStr == "[]" {
-		return []models.Package{}, true
+		return []models.Package{}, result
 	}
 
 	// PowerShell may output a single object (not array) when there is exactly one result
@@ -1191,8 +1194,7 @@ $result | ConvertTo-Json -Compress -Depth 4
 
 	var raw []wuaRawUpdate
 	if err := json.Unmarshal([]byte(outputStr), &raw); err != nil {
-		m.logger.WithError(err).Warn("Failed to parse Windows updates JSON; this report keeps the server's Windows Update rows")
-		return nil, false
+		return nil, wuSearch{status: wuSearchFailed, detail: "unreadable output: " + err.Error()}
 	}
 
 	var packages []models.Package
@@ -1204,5 +1206,5 @@ $result | ConvertTo-Json -Compress -Depth 4
 	if packages == nil {
 		packages = []models.Package{}
 	}
-	return packages, true
+	return packages, result
 }

@@ -151,9 +151,9 @@ func TestWindowsUpdatesCollectorLive(t *testing.T) {
 
 	done := make(chan []models.Package, 1)
 	go func() {
-		pkgs, ok := newTestWindowsManager().getWindowsUpdates()
-		if !ok {
-			t.Error("the Windows Update search failed")
+		pkgs, search := newTestWindowsManager().getWindowsUpdates()
+		if search.status != wuSearchOK {
+			t.Errorf("the Windows Update search failed: %s", search.detail)
 		}
 		done <- pkgs
 	}()
