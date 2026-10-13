@@ -3,16 +3,13 @@ package store
 import (
 	"context"
 	"fmt"
-	"log/slog"
-	"os"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
-	"github.com/PatchMon/PatchMon/server-source-code/internal/migrate"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtest"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -72,19 +69,8 @@ type dockerPG struct {
 
 func newDockerPG(t *testing.T) *dockerPG {
 	t.Helper()
-	url := os.Getenv("PATCHMON_TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("PATCHMON_TEST_DATABASE_URL not set")
-	}
 	ctx := context.Background()
-	if err := migrate.Run(url, slog.Default()); err != nil {
-		t.Fatal(err)
-	}
-	d, err := database.NewFromURL(ctx, url, 2, 1, &config.Config{DBConnectTimeout: 5})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(d.Close)
+	d := pgtest.Open(t)
 	return &dockerPG{t: t, ctx: ctx, d: d, s: NewDockerStore(d)}
 }
 
