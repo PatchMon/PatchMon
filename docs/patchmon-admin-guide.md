@@ -1617,7 +1617,12 @@ Restart the host when it suits you. If a restart is still pending from an earlie
 | Installing one Windows Update | 180 minutes, or 240 minutes for a feature upgrade |
 | Upgrading one app with winget | 30 minutes |
 
-A step that runs out of time says so, for example "Install did not finish within 180 minutes. Windows may still be completing it; check after a restart." After an install times out, Windows usually carries on servicing in the background, so PatchMon does not start any more Windows Updates in that run: they end **Skipped** with "Not started: Windows Update was still installing a previous update". App upgrades still run, and the run ends **Failed**. Check the host after a restart and run the remaining updates again.
+A step that runs out of time says so. Windows usually carries on installing an update in the background after its install step times out, so the agent then asks Windows about that update once a minute for up to 10 minutes:
+
+- If Windows finishes it in that time, the item shows **Installed** with "Installed; Windows finished after the 180-minute limit", or **Installed, restart required** with "Installed; Windows finished after the 180-minute limit; restart the host to complete it". The run carries on with the next update.
+- If Windows still has not finished, the item ends **Failed** with "Install did not finish within 180 minutes. Windows may still be completing it; check after a restart." PatchMon does not start any more Windows Updates in that run: they end **Skipped** with "Not started: Windows Update was still installing a previous update". App upgrades still run, and the run ends **Failed**. Check the host after a restart and run the remaining updates again.
+
+Stopping the run during those 10 minutes ends the check straight away. The limits quoted above are for an ordinary update; for a feature upgrade the install limit is 240 minutes.
 
 ##### Apps installed for a single user
 
