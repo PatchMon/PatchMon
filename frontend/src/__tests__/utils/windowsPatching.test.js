@@ -5,6 +5,7 @@ import {
 	isFeatureUpgradeRow,
 	isWindowsScopeValid,
 	partitionPatchableHosts,
+	patchErrorMessage,
 	runItemResultCode,
 	runItemStatus,
 	windowsBadges,
@@ -260,5 +261,34 @@ describe("run item results", () => {
 		).toBeNull();
 		expect(runItemResultCode({ exit_code: -1978335189 })).toBe("0x8A15002B");
 		expect(runItemResultCode({ exit_code: 0 })).toBeNull();
+	});
+});
+
+describe("patchErrorMessage", () => {
+	it("lists each rejected package with its reason", () => {
+		const msg = patchErrorMessage({
+			response: {
+				data: {
+					error: "Some packages cannot be patched",
+					rejected: [
+						{ name: "Legacy App", reason: "no_winget_id" },
+						{ name: "Gone", reason: "not_found" },
+					],
+				},
+			},
+		});
+		expect(msg).toMatch(/^Some packages cannot be patched \(/);
+		expect(msg).toMatch(/Legacy App: Not patchable/);
+		expect(msg).toMatch(/Gone: No longer in this host's inventory/);
+	});
+
+	it("falls back to the plain error or message", () => {
+		expect(
+			patchErrorMessage({ response: { data: { error: "Update the agent" } } }),
+		).toBe("Update the agent");
+		expect(patchErrorMessage({ message: "Network Error" })).toBe(
+			"Network Error",
+		);
+		expect(patchErrorMessage({})).toBe("Request failed");
 	});
 });

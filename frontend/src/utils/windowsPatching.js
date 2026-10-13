@@ -7,6 +7,25 @@ export const UNPATCHABLE_REASON_TEXT = {
 	not_pending: "Up to date",
 };
 
+const REJECT_REASON_TEXT = {
+	...UNPATCHABLE_REASON_TEXT,
+	not_found: "No longer in this host's inventory",
+	invalid_identifier: "The update identifier is not valid",
+};
+
+// Builds a readable message from a trigger error, listing each rejected
+// package with its reason when the server returns them.
+export const patchErrorMessage = (err, fallback = "Request failed") => {
+	const data = err?.response?.data;
+	const base = data?.error || err?.message || fallback;
+	const rejected = Array.isArray(data?.rejected) ? data.rejected : [];
+	if (rejected.length === 0) return base;
+	const list = rejected
+		.map((r) => `${r.name}: ${REJECT_REASON_TEXT[r.reason] || r.reason}`)
+		.join("; ");
+	return `${base} (${list})`;
+};
+
 export const FEATURE_UPGRADE_WARNING =
 	"Feature upgrades download several GB, can take over an hour and need one or more restarts to finish.";
 

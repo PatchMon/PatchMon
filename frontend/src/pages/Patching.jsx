@@ -263,13 +263,7 @@ const Patching = () => {
 			hostname: run.hosts?.hostname,
 		},
 		patchType: run.patch_type,
-		windowsScope:
-			run.windows_include_updates != null || run.windows_include_apps != null
-				? {
-						updates: run.windows_include_updates !== false,
-						apps: run.windows_include_apps !== false,
-					}
-				: null,
+		windowsScope: run.windows_scope || null,
 		packageNames:
 			Array.isArray(run.package_names) && run.package_names.length > 0
 				? run.package_names

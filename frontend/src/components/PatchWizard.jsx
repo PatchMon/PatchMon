@@ -41,6 +41,7 @@ import {
 	isWindowsOs,
 	isWindowsScopeValid,
 	partitionPatchableHosts,
+	patchErrorMessage,
 	RESTART_NOT_AUTOMATIC,
 	UNPATCHABLE_REASON_TEXT,
 	windowsPatchAllSummary,
@@ -832,7 +833,7 @@ export default function PatchWizard({
 							status: "failed",
 							packages_affected: [],
 							shell_output: "",
-							error: err.response?.data?.error || err.message,
+							error: patchErrorMessage(err),
 						},
 					}));
 				}
@@ -991,7 +992,7 @@ export default function PatchWizard({
 				attempt[target.id] = {
 					status: "failed",
 					hostId: target.hostId,
-					error: err?.response?.data?.error || err?.message || "Request failed",
+					error: patchErrorMessage(err),
 				};
 			}
 		}
