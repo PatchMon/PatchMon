@@ -355,3 +355,48 @@ func TestEnroll_StoresTrimmedEnrolmentMachineID(t *testing.T) {
 		t.Fatalf("rerun with the clean ID: %d, want 409", code)
 	}
 }
+
+func TestEnroll_ReissueKeepsHostGroups(t *testing.T) {
+	f := newEnrolFixture(t)
+	ctx := context.Background()
+	tokID, key, secret := f.token(100, 0)
+	groupA, groupB := uuid.New().String(), uuid.New().String()
+	for _, g := range []string{groupA, groupB} {
+		if _, err := f.d.Exec(ctx, `INSERT INTO host_groups (id, name, updated_at) VALUES ($1, $2, NOW())`, g, "g-"+g[:8]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.d.Exec(ctx, `UPDATE auto_enrollment_tokens SET default_host_group_id = $1 WHERE id = $2`, groupA, tokID); err != nil {
+		t.Fatal(err)
+	}
+	name := "groups-" + uuid.New().String()[:8]
+	code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": name, "machine_id": "m-" + name})
+	if code != http.StatusCreated {
+		t.Fatalf("first enrol: %d %v", code, out)
+	}
+	hostID := hostField(out, "id")
+	if err := f.hosts.SetHostGroups(ctx, hostID, []string{groupB}); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out = f.enrol(key, secret, map[string]interface{}{"friendly_name": name, "machine_id": "m-" + name, "host_id": hostID})
+	if code != http.StatusOK || out["reenrolled"] != true {
+		t.Fatalf("re-issue: %d %v", code, out)
+	}
+	var groups []string
+	rows, err := f.d.Raw(ctx, `SELECT host_group_id FROM host_group_memberships WHERE host_id = $1 ORDER BY host_group_id`, hostID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var g string
+		if err := rows.Scan(&g); err != nil {
+			t.Fatal(err)
+		}
+		groups = append(groups, g)
+	}
+	rows.Close()
+	if len(groups) != 1 || groups[0] != groupB {
+		t.Fatalf("groups after re-issue = %v, want the admin's choice [%s]", groups, groupB)
+	}
+}

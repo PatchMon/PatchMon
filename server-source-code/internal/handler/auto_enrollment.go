@@ -646,13 +646,10 @@ func (h *AutoEnrollmentHandler) reenrolExistingHost(ctx context.Context, w http.
 		return
 	}
 
-	if token.DefaultHostGroupID != nil && *token.DefaultHostGroupID != "" {
-		_ = h.hosts.SetHostGroups(ctx, existing.ID, []string{*token.DefaultHostGroupID})
-	}
 	if h.log != nil {
 		h.log.Info("Auto-enrolment re-issued credentials", "host_id", existing.ID, "token", token.TokenName, "ip", clientIPFromRequest(r))
 	}
-	JSON(w, http.StatusOK, enrolResponse("Host credentials re-issued", existing, apiKey, h.hostGroupBrief(ctx, token.DefaultHostGroupID), true))
+	JSON(w, http.StatusOK, enrolResponse("Host credentials re-issued", existing, apiKey, nil, true))
 }
 
 func (h *AutoEnrollmentHandler) createEnrolledHost(ctx context.Context, w http.ResponseWriter, friendlyName, machineID string, defaultGroupID *string, tokenID string) (*models.Host, string, bool) {

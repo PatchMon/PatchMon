@@ -2579,7 +2579,7 @@ curl "https://patchmon.example.com/api/v1/auto-enrollment/script?type=proxmox-lx
 }
 ```
 
-**Response:** `200 OK` when `host_id` names a host this token created that has never reported. Same body as `201`, with `"message": "Host credentials re-issued"` and `"reenrolled": true`. The host keeps its ID and API ID; only the API key is new.
+**Response:** `200 OK` when `host_id` names a host this token created that has never reported. Same body as `201`, with `"message": "Host credentials re-issued"`, `"reenrolled": true` and `host.host_group` set to `null`. The host keeps its ID, API ID and host groups; only the API key is new.
 
 **Error Responses:**
 
