@@ -13,6 +13,8 @@ import (
 
 	"patchmon-agent/internal/winexec"
 	"patchmon-agent/pkg/models"
+
+	"github.com/sirupsen/logrus"
 )
 
 const childWaitDelay = 10 * time.Second
@@ -146,4 +148,21 @@ func (b *wingetExecBackend) UpdatableApps() []models.Package {
 
 func (b *wingetExecBackend) PendingFileRenames() []string {
 	return pendingFileRenames()
+}
+
+func (b *wingetExecBackend) UpgradeState(ctx context.Context, id string, log func(string)) (wingetUpgradeState, error) {
+	code, out, err := b.Run(ctx, wingetListArgs(id), log)
+	if err != nil {
+		return wingetStateNone, err
+	}
+	if code == 0 && wingetOutputListsID(out, id) {
+		return wingetStateAvailable, nil
+	}
+	_, out, err = b.Run(ctx, wingetInstalledArgs(id), nil)
+	if err != nil {
+		return wingetStateNone, err
+	}
+	quiet := logrus.New()
+	quiet.SetOutput(io.Discard)
+	return installedUpgradeState(NewWindowsManager(quiet).parseWingetTable(out), id), nil
 }

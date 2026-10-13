@@ -477,7 +477,7 @@ func classifyWingetUpgradeExit(code uint32, dryRun bool, output, id string) wing
 		case wingetNoPackageFound:
 			return wingetOutcome{Status: itemNotApplicable, Message: msgUserScope}
 		case wingetPinned:
-			return wingetOutcome{Status: itemSkipped, Message: "Pinned with winget pin"}
+			return wingetOutcome{Status: itemSkipped, Message: msgPinned}
 		}
 		return wingetOutcome{Status: itemFailed, Message: wingetCodeMessage(code)}
 	}
@@ -491,7 +491,7 @@ func classifyWingetUpgradeExit(code uint32, dryRun bool, output, id string) wing
 	case wingetNoPackageFound, wingetUserScopeFromAdmin:
 		return wingetOutcome{Status: itemNotApplicable, Message: msgUserScope}
 	case wingetPinned:
-		return wingetOutcome{Status: itemSkipped, Message: "Pinned with winget pin"}
+		return wingetOutcome{Status: itemSkipped, Message: msgPinned}
 	case wingetPackageInUse, wingetFileInUse, wingetInUseByOtherApp:
 		return wingetOutcome{Status: itemFailed, Message: "Application is in use: close the app and retry"}
 	case wingetInstallInProgress:
@@ -545,57 +545,77 @@ func wingetListArgs(id string) []string {
 	return []string{"list", "--id", id, "--exact", "--upgrade-available", "--accept-source-agreements", "--disable-interactivity"}
 }
 
-func finalWindowsStage(items []models.PatchRunItem, runErrors []string, stopped, dryRun, patchPackage bool) (stage, errMsg string) {
+func finalWindowsStage(items []models.PatchRunItem, runErrors []string, stopped, dryRun, _ bool) (stage, errMsg string) {
 	if stopped {
 		return "cancelled", "stopped by user"
 	}
-	var bad []models.PatchRunItem
+	var bad, skipped []models.PatchRunItem
 	for _, it := range items {
 		switch it.Status {
 		case itemFailed, itemAborted:
 			bad = append(bad, it)
 		case itemSkipped:
-			if patchPackage {
-				bad = append(bad, it)
-			}
+			skipped = append(skipped, it)
 		}
 	}
-	if len(bad) > 0 || len(runErrors) > 0 {
-		var parts []string
-		if len(bad) > 0 {
-			var names []string
-			for i, it := range bad {
-				if i == 3 {
-					break
-				}
-				names = append(names, itemLabel(it))
-			}
-			parts = append(parts, fmt.Sprintf("%d of %d failed: %s", len(bad), len(items), strings.Join(names, ", ")))
+	var parts []string
+	if len(bad) > 0 {
+		parts = append(parts, fmt.Sprintf("%d of %d failed: %s", len(bad), len(items), itemLabels(bad, itemLabel)))
+	}
+	if len(skipped) > 0 {
+		parts = append(parts, fmt.Sprintf("%d skipped: %s", len(skipped), itemLabels(skipped, skippedLabel)))
+	}
+	parts = append(parts, runErrors...)
+	summary := strings.Join(parts, "; ")
+	switch {
+	case len(bad) > 0 || len(runErrors) > 0:
+		return "failed", summary
+	case dryRun:
+		return "dry_run_completed", summary
+	}
+	return "completed", summary
+}
+
+func itemLabels(items []models.PatchRunItem, label func(models.PatchRunItem) string) string {
+	var names []string
+	for i, it := range items {
+		if i == 3 {
+			names = append(names, "...")
+			break
 		}
-		parts = append(parts, runErrors...)
-		return "failed", strings.Join(parts, "; ")
+		names = append(names, label(it))
 	}
-	if dryRun {
-		return "dry_run_completed", ""
+	return strings.Join(names, ", ")
+}
+
+func itemName(it models.PatchRunItem) string {
+	switch {
+	case it.KB != "":
+		return it.KB
+	case it.Title != "":
+		return it.Title
 	}
-	return "completed", ""
+	return it.ID
+}
+
+func skippedLabel(it models.PatchRunItem) string {
+	reason := it.Message
+	if r, _, ok := strings.Cut(reason, ":"); ok {
+		reason = r
+	}
+	if reason == "" {
+		return itemName(it)
+	}
+	return itemName(it) + " (" + strings.ToLower(reason[:1]) + reason[1:] + ")"
 }
 
 func itemLabel(it models.PatchRunItem) string {
-	name := it.KB
-	if name == "" {
-		name = it.Title
-	}
-	if name == "" {
-		name = it.ID
-	}
+	name := itemName(it)
 	switch {
 	case it.HResult != "" && !isZeroHResult(it.HResult):
 		name += " (" + it.HResult + ")"
 	case it.ExitCode != nil && *it.ExitCode != 0:
 		name += " (" + hexCode(uint32(*it.ExitCode)) + ")"
-	case it.Status == itemSkipped && it.Message != "":
-		name += " (" + it.Message + ")"
 	}
 	return name
 }
@@ -611,6 +631,7 @@ type wingetBackend interface {
 	Run(ctx context.Context, args []string, log func(string)) (code uint32, output string, err error)
 	UpdatableApps() []models.Package
 	PendingFileRenames() []string
+	UpgradeState(ctx context.Context, id string, log func(string)) (wingetUpgradeState, error)
 }
 
 const msgDeferredReplace = "Installed; some files will be replaced at the next restart."
@@ -688,10 +709,58 @@ func guardedWindowsUpdates(collect func() []models.Package) ([]models.Package, b
 	return pkgs, false
 }
 
-// UpdatableWingetApps returns installed applications without querying Windows Update.
+// UpdatableWingetApps returns the apps winget would upgrade unattended: flagged for update,
+// with a winget Id, and listed by winget list --upgrade-available.
 func (m *WindowsManager) UpdatableWingetApps() []models.Package {
-	return m.appPackages()
+	var out []models.Package
+	for _, p := range m.appPackages() {
+		if p.NeedsUpdate && p.WingetID != "" && !p.WingetPinned {
+			out = append(out, p)
+		}
+	}
+	return out
 }
+
+// listedUnderTruncatedID reports whether winget list --upgrade-available printed id cut short
+// to its column width, so a missing exact match is not mistaken for a pin.
+func listedUnderTruncatedID(upgradeMap map[string]string, id string) bool {
+	for k := range upgradeMap {
+		if len(k) < len(id) && strings.HasPrefix(strings.ToLower(id), strings.ToLower(k)) {
+			return true
+		}
+	}
+	return false
+}
+
+type wingetUpgradeState int
+
+const (
+	wingetStateAvailable wingetUpgradeState = iota
+	wingetStateNone
+	wingetStatePinned
+	wingetStateNotInstalled
+)
+
+// installedUpgradeState reads winget list --id X --exact after --upgrade-available did not
+// list X: a newer Available version then means a pin or an explicit-upgrade package.
+func installedUpgradeState(entries []wingetEntry, id string) wingetUpgradeState {
+	for _, e := range entries {
+		if !strings.EqualFold(strings.TrimSpace(stripEllipsis(e.ID)), id) {
+			continue
+		}
+		if availableIsNewer(strings.TrimSpace(stripEllipsis(e.Available)), strings.TrimSpace(stripEllipsis(e.Version))) {
+			return wingetStatePinned
+		}
+		return wingetStateNone
+	}
+	return wingetStateNotInstalled
+}
+
+func wingetInstalledArgs(id string) []string {
+	return []string{"list", "--id", id, "--exact", "--accept-source-agreements", "--disable-interactivity"}
+}
+
+const msgPinned = "Pinned in winget: remove the pin to update it"
 
 type lineLogger struct {
 	log      func(string)
@@ -1174,34 +1243,11 @@ func (r *windowsPatchRun) runWingetPhase(runCtx, stopCtx context.Context, winget
 			continue
 		}
 		it.StartedAt = r.ts()
-		var args []string
-		var ctx context.Context
-		var cancel context.CancelFunc
-		label := "[winget] "
-		if r.req.DryRun {
-			args = wingetListArgs(it.ID)
-			ctx, cancel = context.WithTimeout(stopCtx, r.timeouts.wingetList)
-			label += "Checking " + it.ID
-		} else {
-			args = wingetUpgradeArgs(it.ID)
-			ctx, cancel = context.WithTimeout(runCtx, r.timeouts.wingetUpgrade)
-			label += "Upgrading " + it.ID
-			r.post(it)
-		}
-		r.out("%s...\n", label)
-		var code uint32
-		var output string
-		var err error
-		var renamesBefore []string
-		if !r.req.DryRun {
-			renamesBefore = r.winget.PendingFileRenames()
-		}
-		r.withHeartbeat(label, func() {
-			code, output, err = r.winget.Run(ctx, args, r.log)
-		})
-		cancel()
+		checkCtx, cancelCheck := context.WithTimeout(stopCtx, r.timeouts.wingetList)
+		state, err := r.winget.UpgradeState(checkCtx, it.ID, r.log)
+		cancelCheck()
 		if err != nil {
-			if reason := r.interruptReason(runCtx); reason != "" && r.req.DryRun {
+			if reason := r.interruptReason(runCtx); reason != "" {
 				r.finish(it, itemSkipped, reason)
 				continue
 			}
@@ -1209,17 +1255,53 @@ func (r *windowsPatchRun) runWingetPhase(runCtx, stopCtx context.Context, winget
 			r.out("  %s: %s\n", it.ID, it.Message)
 			continue
 		}
-		oc := classifyWingetUpgradeExit(code, r.req.DryRun, output, it.ID)
-		if !r.req.DryRun && oc.Status == itemInstalled && newPendingRenames(renamesBefore, r.winget.PendingFileRenames()) {
-			oc.RebootRequired = true
-			oc.Message = msgDeferredReplace
+		switch state {
+		case wingetStatePinned:
+			r.finish(it, itemSkipped, msgPinned)
+		case wingetStateNone:
+			r.finish(it, itemNotApplicable, "No upgrade available")
+		case wingetStateNotInstalled:
+			r.finish(it, itemNotApplicable, msgUserScope)
+		default:
+			if r.req.DryRun {
+				r.finish(it, itemWouldInstall, "Upgrade available")
+			} else {
+				r.upgradeApp(runCtx, it)
+				continue
+			}
 		}
-		ec := int64(code)
-		it.ExitCode = &ec
-		it.RebootRequired = oc.RebootRequired
-		r.finish(it, oc.Status, oc.Message)
 		r.out("  %s: %s\n", it.ID, it.Message)
 	}
+}
+
+func (r *windowsPatchRun) upgradeApp(runCtx context.Context, it *models.PatchRunItem) {
+	label := "[winget] Upgrading " + it.ID
+	r.post(it)
+	r.out("%s...\n", label)
+	ctx, cancel := context.WithTimeout(runCtx, r.timeouts.wingetUpgrade)
+	defer cancel()
+	renamesBefore := r.winget.PendingFileRenames()
+	var code uint32
+	var output string
+	var err error
+	r.withHeartbeat(label, func() {
+		code, output, err = r.winget.Run(ctx, wingetUpgradeArgs(it.ID), r.log)
+	})
+	if err != nil {
+		r.finish(it, itemFailed, "winget did not complete: "+err.Error())
+		r.out("  %s: %s\n", it.ID, it.Message)
+		return
+	}
+	oc := classifyWingetUpgradeExit(code, false, output, it.ID)
+	if oc.Status == itemInstalled && newPendingRenames(renamesBefore, r.winget.PendingFileRenames()) {
+		oc.RebootRequired = true
+		oc.Message = msgDeferredReplace
+	}
+	ec := int64(code)
+	it.ExitCode = &ec
+	it.RebootRequired = oc.RebootRequired
+	r.finish(it, oc.Status, oc.Message)
+	r.out("  %s: %s\n", it.ID, it.Message)
 }
 
 // WindowsRunLimit is the overall time cap for a run. Named targets may include a feature

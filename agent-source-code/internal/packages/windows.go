@@ -770,7 +770,7 @@ func wingetEntriesToRows(entries []wingetEntry, upgradeMap map[string]string) []
 		if id == rawID && wingetIDPattern.MatchString(id) {
 			wingetID = id
 		}
-		var needsUpdate bool
+		var needsUpdate, pinned bool
 		if up, listed := upgradeMap[id]; listed {
 			if avail == "" {
 				avail = up
@@ -778,6 +778,7 @@ func wingetEntriesToRows(entries []wingetEntry, upgradeMap map[string]string) []
 			needsUpdate = installedIsOlder(version, avail)
 		} else {
 			needsUpdate = availableIsNewer(avail, version)
+			pinned = needsUpdate && wingetID != "" && upgradeMap != nil && !listedUnderTruncatedID(upgradeMap, id)
 		}
 		if !needsUpdate {
 			avail = ""
@@ -796,6 +797,7 @@ func wingetEntriesToRows(entries []wingetEntry, upgradeMap map[string]string) []
 				NeedsUpdate:      needsUpdate,
 				SourceRepository: source,
 				WingetID:         wingetID,
+				WingetPinned:     pinned,
 			},
 			truncated: truncated,
 		})

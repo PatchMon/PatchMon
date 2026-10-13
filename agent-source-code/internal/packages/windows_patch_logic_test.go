@@ -335,7 +335,7 @@ func TestWUAScriptIsStatic(t *testing.T) {
 func TestFinalWindowsStage(t *testing.T) {
 	ok := models.PatchRunItem{ID: "a", Status: itemInstalled}
 	failed := models.PatchRunItem{ID: "b", KB: "KB5044284", Status: itemFailed, HResult: "0x800f0922"}
-	skipped := models.PatchRunItem{ID: "c", Title: "7-Zip", Status: itemSkipped, Message: "Pinned with winget pin"}
+	skipped := models.PatchRunItem{ID: "7zip.7zip", Status: itemSkipped, Message: msgPinned}
 	code := int64(wingetPackageInUse)
 	inUse := models.PatchRunItem{ID: "d", Title: "Notepad++", Status: itemFailed, ExitCode: &code}
 	cases := []struct {
@@ -349,8 +349,9 @@ func TestFinalWindowsStage(t *testing.T) {
 	}{
 		{"stop wins", []models.PatchRunItem{failed}, nil, true, false, false, "cancelled", "stopped by user"},
 		{"failure", []models.PatchRunItem{ok, failed, inUse}, nil, false, false, false, "failed", "2 of 3 failed: KB5044284 (0x800f0922), Notepad++ (0x8A150101)"},
-		{"skip benign in patch_all", []models.PatchRunItem{ok, skipped}, nil, false, false, false, "completed", ""},
-		{"skip fails patch_package", []models.PatchRunItem{ok, skipped}, nil, false, false, true, "failed", "1 of 2 failed: 7-Zip (Pinned with winget pin)"},
+		{"skip is not a failure in patch_all", []models.PatchRunItem{ok, skipped}, nil, false, false, false, "completed", "1 skipped: 7zip.7zip (pinned in winget)"},
+		{"skip is not a failure in patch_package", []models.PatchRunItem{skipped}, nil, false, false, true, "completed", "1 skipped: 7zip.7zip (pinned in winget)"},
+		{"failure and skip", []models.PatchRunItem{failed, skipped}, nil, false, false, true, "failed", "1 of 2 failed: KB5044284 (0x800f0922); 1 skipped: 7zip.7zip (pinned in winget)"},
 		{"dry run", []models.PatchRunItem{{Status: itemWouldInstall}}, nil, false, true, false, "dry_run_completed", ""},
 		{"already done is success", []models.PatchRunItem{{Status: itemAlreadyInstalled}, {Status: itemPendingReboot}}, nil, false, false, true, "completed", ""},
 		{"empty", nil, nil, false, false, false, "completed", ""},
@@ -458,6 +459,8 @@ func (f *fakeWUA) Install(ctx context.Context, id string, _ func(string)) (wuaOp
 }
 
 type fakeWinget struct {
+	states     map[string]wingetUpgradeState
+	checked    []string
 	renames    [][]string
 	resolveErr error
 	apps       []models.Package
@@ -475,6 +478,11 @@ func (f *fakeWinget) Run(_ context.Context, args []string, log func(string)) (ui
 }
 
 func (f *fakeWinget) UpdatableApps() []models.Package { return f.apps }
+
+func (f *fakeWinget) UpgradeState(_ context.Context, id string, _ func(string)) (wingetUpgradeState, error) {
+	f.checked = append(f.checked, id)
+	return f.states[id], nil
+}
 
 func (f *fakeWinget) PendingFileRenames() []string {
 	if len(f.renames) == 0 {
@@ -540,8 +548,8 @@ func TestRunPatchAllDryRunInstallsNothing(t *testing.T) {
 	if len(w.downloads) != 0 || len(w.installs) != 0 {
 		t.Fatalf("dry run downloaded %v or installed %v", w.downloads, w.installs)
 	}
-	if len(g.calls) != 1 || !reflect.DeepEqual(g.calls[0], wingetListArgs("7zip.7zip")) {
-		t.Fatalf("winget calls = %q", g.calls)
+	if len(g.calls) != 0 || !reflect.DeepEqual(g.checked, []string{"7zip.7zip"}) {
+		t.Fatalf("dry run must only check apps: calls %q, checked %q", g.calls, g.checked)
 	}
 	if res.Stage != "dry_run_completed" {
 		t.Errorf("stage = %q (%s)", res.Stage, res.ErrorMessage)
@@ -871,5 +879,73 @@ func TestRunFlagsAppUpgradeThatDefersFileReplacement(t *testing.T) {
 	}
 	if !res.RebootRequired {
 		t.Error("the deferred replacement must reach the run")
+	}
+}
+
+func TestRunNeverUpgradesPinnedApp(t *testing.T) {
+	g := &fakeWinget{
+		states: map[string]wingetUpgradeState{"7zip.7zip": wingetStatePinned, "Gone.App": wingetStateNotInstalled, "Same.App": wingetStateNone},
+		codes:  map[string]uint32{},
+	}
+	res := runFake(WindowsPatchRequest{Targets: []WindowsPatchTarget{
+		{Kind: WindowsTargetWinget, ID: "7zip.7zip"},
+		{Kind: WindowsTargetWinget, ID: "Gone.App"},
+		{Kind: WindowsTargetWinget, ID: "Same.App"},
+	}}, &recorder{}, &fakeWUA{}, g)
+	if len(g.calls) != 0 {
+		t.Fatalf("winget upgrade ran: %q", g.calls)
+	}
+	if it := itemByID(res, "7zip.7zip"); it.Status != itemSkipped || it.Message != msgPinned {
+		t.Errorf("pinned = %+v", it)
+	}
+	if it := itemByID(res, "Gone.App"); it.Status != itemNotApplicable || it.Message != msgUserScope {
+		t.Errorf("not installed = %+v", it)
+	}
+	if it := itemByID(res, "Same.App"); it.Status != itemNotApplicable {
+		t.Errorf("no upgrade = %+v", it)
+	}
+	if res.Stage != "completed" || res.ErrorMessage != "1 skipped: 7zip.7zip (pinned in winget)" {
+		t.Errorf("stage = %q, summary = %q", res.Stage, res.ErrorMessage)
+	}
+}
+
+func TestInstalledUpgradeState(t *testing.T) {
+	entries := []wingetEntry{{Name: "7-Zip", ID: "7zip.7zip", Version: "26.02", Available: "26.04"}, {Name: "Same", ID: "Same.App", Version: "2.0"}}
+	cases := map[string]wingetUpgradeState{"7zip.7zip": wingetStatePinned, "7ZIP.7ZIP": wingetStatePinned, "Same.App": wingetStateNone, "Missing.App": wingetStateNotInstalled}
+	for id, want := range cases {
+		if got := installedUpgradeState(entries, id); got != want {
+			t.Errorf("%s = %v, want %v", id, got, want)
+		}
+	}
+}
+
+func TestInventoryFlagsPinnedApps(t *testing.T) {
+	entries := []wingetEntry{
+		{Name: "7-Zip", ID: "7zip.7zip", Version: "26.02", Available: "26.04"},
+		{Name: "Notepad++", ID: "Notepad++.Notepad++", Version: "8.6", Available: "8.7"},
+		{Name: "Long", ID: "Some.VeryLongPublisher.App", Version: "1.0", Available: "2.0"},
+		{Name: "Current", ID: "Current.App", Version: "3.0"},
+	}
+	upgrades := map[string]string{"Notepad++.Notepad++": "8.7", "Some.VeryLong": "2.0"}
+	byID := map[string]models.Package{}
+	for _, r := range wingetEntriesToRows(entries, upgrades) {
+		byID[r.pkg.WingetID] = r.pkg
+	}
+	if p := byID["7zip.7zip"]; !p.WingetPinned || !p.NeedsUpdate || p.AvailableVersion != "26.04" {
+		t.Errorf("pinned app = %+v", p)
+	}
+	if p := byID["Notepad++.Notepad++"]; p.WingetPinned || !p.NeedsUpdate {
+		t.Errorf("upgradable app = %+v", p)
+	}
+	if p := byID["Some.VeryLongPublisher.App"]; p.WingetPinned {
+		t.Errorf("an Id truncated in --upgrade-available is not a pin: %+v", p)
+	}
+	if p := byID["Current.App"]; p.WingetPinned || p.NeedsUpdate {
+		t.Errorf("current app = %+v", p)
+	}
+	for _, r := range wingetEntriesToRows(entries, nil) {
+		if r.pkg.WingetPinned {
+			t.Errorf("without --upgrade-available output nothing can be called pinned: %+v", r.pkg)
+		}
 	}
 }
