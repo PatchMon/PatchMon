@@ -46,6 +46,11 @@ import React, {
 } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import HostStatusPills from "../components/HostStatusPills";
+import {
+	AgentVersionIndicators,
+	ConfigVersionValue,
+	HostIdentityBanners,
+} from "../components/host/HostIdentity";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import { PackageListDisplay } from "../components/PackageListDisplay";
@@ -1408,6 +1413,12 @@ const HostDetail = () => {
 				</div>
 			</div>
 
+			<HostIdentityBanners
+				host={host}
+				canManage={canManageHosts()}
+				onRegenerateCredentials={() => setShowCredentialsModal(true)}
+			/>
+
 			{/* Package Statistics Cards */}
 			<div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
 				<button
@@ -1600,9 +1611,19 @@ const HostDetail = () => {
 									<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
 										Agent Version
 									</p>
-									<p className="font-medium text-secondary-900 dark:text-white text-sm">
-										{host.agent_version || "Unknown"}
+									<div className="flex items-center gap-1.5 font-medium text-secondary-900 dark:text-white text-sm">
+										<span>{host.agent_version || "Unknown"}</span>
+										<AgentVersionIndicators host={host} />
+									</div>
+								</div>
+
+								<div>
+									<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+										Config Version
 									</p>
+									<div className="font-medium text-secondary-900 dark:text-white text-sm">
+										<ConfigVersionValue host={host} />
+									</div>
 								</div>
 
 								<div>
@@ -2730,9 +2751,19 @@ const HostDetail = () => {
 										<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
 											Agent Version
 										</p>
-										<p className="font-medium text-secondary-900 dark:text-white text-sm">
-											{host.agent_version || "Unknown"}
+										<div className="flex items-center gap-1.5 font-medium text-secondary-900 dark:text-white text-sm">
+											<span>{host.agent_version || "Unknown"}</span>
+											<AgentVersionIndicators host={host} />
+										</div>
+									</div>
+
+									<div>
+										<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+											Config Version
 										</p>
+										<div className="font-medium text-secondary-900 dark:text-white text-sm">
+											<ConfigVersionValue host={host} />
+										</div>
 									</div>
 
 									<div>
