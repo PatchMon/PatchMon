@@ -309,7 +309,7 @@ func TestEnroll_MachineIDGuardSurvivesReportOverwrite(t *testing.T) {
 		t.Fatalf("enrolment_machine_id = %v, want the enrolment value %q", row.EnrolmentMachineID, raw)
 	}
 
-	for _, sent := range []string{raw, dashed, strings.ToLower(dashed)} {
+	for _, sent := range []string{raw, dashed, strings.ToLower(dashed), " " + raw + "\n"} {
 		code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": strings.ToUpper(name), "machine_id": sent})
 		if code != http.StatusConflict || out["code"] != "machine_id_match" {
 			t.Fatalf("rerun with %q: %d %v, want 409 machine_id_match", sent, code, out)
@@ -335,5 +335,23 @@ func TestEnroll_JunkMachineIDsNeverMatch(t *testing.T) {
 				t.Fatalf("%s enrol %d: %d %v, want 201 (junk is not an identity)", junk, i, code, out)
 			}
 		}
+	}
+}
+
+func TestEnroll_StoresTrimmedEnrolmentMachineID(t *testing.T) {
+	f := newEnrolFixture(t)
+	_, key, secret := f.token(100, 0)
+	name := "trim-" + uuid.New().String()[:8]
+	raw := strings.ReplaceAll(uuid.New().String(), "-", "")
+	code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": name, "machine_id": "  " + raw + "\n"})
+	if code != http.StatusCreated {
+		t.Fatalf("enrol: %d %v", code, out)
+	}
+	row, _ := f.hosts.GetByID(context.Background(), hostField(out, "id"))
+	if row.EnrolmentMachineID == nil || *row.EnrolmentMachineID != raw {
+		t.Fatalf("enrolment_machine_id = %v, want %q", row.EnrolmentMachineID, raw)
+	}
+	if code, _ := f.enrol(key, secret, map[string]interface{}{"friendly_name": name, "machine_id": raw}); code != http.StatusConflict {
+		t.Fatalf("rerun with the clean ID: %d, want 409", code)
 	}
 }

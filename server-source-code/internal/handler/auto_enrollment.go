@@ -656,6 +656,7 @@ func (h *AutoEnrollmentHandler) reenrolExistingHost(ctx context.Context, w http.
 }
 
 func (h *AutoEnrollmentHandler) createEnrolledHost(ctx context.Context, w http.ResponseWriter, friendlyName, machineID string, defaultGroupID *string, tokenID string) (*models.Host, string, bool) {
+	machineID = strings.TrimSpace(machineID)
 	usable := usableMachineID(machineID)
 	if usable {
 		existing, err := h.hosts.GetByMachineIDAndName(ctx, machineID, friendlyName)
