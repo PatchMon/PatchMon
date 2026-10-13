@@ -100,7 +100,7 @@ func (m *WindowsManager) appPackages() []models.Package {
 	appPackages := m.mergeRegistryAndWinget(regPackages, wingetPackages)
 	if hasAppxUpdateCandidate(appPackages) {
 		if suppressed := applyAppxInstallState(appPackages, m.getAppxPackages()); len(suppressed) > 0 {
-			m.logger.WithField("packages", suppressed).Debug("Update flag cleared: winget version reflects a staged Appx copy")
+			m.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{"packages": suppressed})).Debug("Update flag cleared: winget version reflects a staged Appx copy")
 		}
 	}
 	m.logger.WithField("count", len(appPackages)).Info("Application packages after merge")

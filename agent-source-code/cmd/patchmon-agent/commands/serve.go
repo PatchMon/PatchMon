@@ -454,7 +454,7 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 						err = runPatch(msg.patchRunID, msg.patchType, msg.packageNames, msg.dryRun)
 					}
 					if err != nil {
-						logger.WithError(err).Warn("run_patch failed")
+						logger.WithField("error", logutil.Sanitize(err.Error())).Warn("run_patch failed")
 					} else {
 						logger.Info("run_patch completed successfully")
 					}
