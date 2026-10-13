@@ -57,6 +57,24 @@ export const runMessageNotice = (run) => {
 	return { tone: "error", title: "Run reported an error", detail: message };
 };
 
+// Summary of the items a successful dry run will leave alone, or null. Prefers
+// the server's error_message summary, else builds one from skipped items.
+export const skippedItemsSummary = (run) => {
+	const message = run?.error_message ? String(run.error_message).trim() : "";
+	if (message) return message;
+	const skipped = (Array.isArray(run?.items) ? run.items : []).filter(
+		(i) => i?.status === "skipped",
+	);
+	if (skipped.length === 0) return null;
+	const names = skipped
+		.map((i) => {
+			const name = i.title || i.identifier;
+			return i.message ? `${name} (${i.message})` : name;
+		})
+		.join(", ");
+	return `${skipped.length} skipped: ${names}`;
+};
+
 export const hasExtraDependencies = (run) =>
 	run?.status === "validated" &&
 	run.patch_type !== "patch_all" &&

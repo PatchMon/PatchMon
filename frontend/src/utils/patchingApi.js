@@ -1,4 +1,5 @@
 import api from "./api";
+import { skippedItemsSummary } from "./patchRun";
 
 const DRY_RUN_POLL_INTERVAL_MS = 2000;
 const DRY_RUN_TIMEOUT_MS = 30000;
@@ -30,6 +31,7 @@ export async function pollDryRunUntilDone(runId) {
 				status: "validated",
 				packages_affected: run.packages_affected || [],
 				shell_output: run.shell_output || "",
+				skip_note: skippedItemsSummary(run),
 				error: null,
 			};
 		}

@@ -1644,6 +1644,19 @@ export default function PatchWizard({
 												</div>
 												{isTerminal && (
 													<div className="px-3 py-2 bg-white dark:bg-secondary-800">
+														{v.status === "validated" && v.skip_note && (
+															<div
+																role="status"
+																className="mb-2 p-2 rounded border border-secondary-200 dark:border-secondary-600 bg-secondary-50 dark:bg-secondary-700/40 text-secondary-700 dark:text-secondary-200"
+															>
+																<p className="text-xs font-medium">
+																	Validated with skipped items
+																</p>
+																<p className="text-xs mt-0.5 break-words">
+																	{v.skip_note}
+																</p>
+															</div>
+														)}
 														{v.error ? (
 															<p className="text-amber-600 dark:text-amber-400 text-xs">
 																{v.error}

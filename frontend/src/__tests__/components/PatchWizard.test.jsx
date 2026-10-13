@@ -51,6 +51,7 @@ import {
 	extraDependencies,
 	hasExtraDependencies,
 	runMessageNotice,
+	skippedItemsSummary,
 } from "../../utils/patchRun";
 
 const HOSTS = [
@@ -598,6 +599,30 @@ describe("PatchWizard on Windows hosts", () => {
 			windows_scope: { updates: true, apps: true },
 		});
 		expect(screen.queryByText(/extra dep/)).toBeNull();
+		expect(screen.queryByText("Validated with skipped items")).toBeNull();
+	});
+
+	it("shows what validation will leave alone above the install list", async () => {
+		const { pollDryRunUntilDone } = await import("../../utils/patchingApi");
+		patchingAPI.trigger.mockResolvedValue({ patch_run_id: "v2" });
+		pollDryRunUntilDone.mockResolvedValue({
+			status: "validated",
+			packages_affected: ["2026-10 Cumulative Update (KB5044284)"],
+			shell_output: "",
+			skip_note: "1 skipped: 7zip.7zip (pinned in winget)",
+			error: null,
+		});
+		renderWizard(WIN, { initialStep: 0 });
+		await clickAndSettle(
+			screen.getByRole("button", { name: "Run validation" }),
+		);
+		const note = await screen.findByText("Validated with skipped items");
+		const box = note.closest('[role="status"]');
+		expect(box).toHaveTextContent("7zip.7zip (pinned in winget)");
+		const list = screen.getByText(/will be updated/);
+		expect(
+			box.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
 	});
 
 	it("keeps Linux Patch all without a Validate step or scope", () => {
@@ -715,5 +740,39 @@ describe("runMessageNotice", () => {
 			detail: "1 of 1 failed",
 		});
 		expect(runMessageNotice({ status: "completed" })).toBeNull();
+	});
+});
+
+describe("skippedItemsSummary", () => {
+	it("prefers the server summary", () => {
+		expect(
+			skippedItemsSummary({
+				status: "validated",
+				error_message: "1 skipped: 7zip.7zip (pinned in winget)",
+				items: [],
+			}),
+		).toBe("1 skipped: 7zip.7zip (pinned in winget)");
+	});
+
+	it("builds one from skipped items", () => {
+		expect(
+			skippedItemsSummary({
+				status: "validated",
+				items: [
+					{ status: "would_install", title: "KB5044284" },
+					{
+						status: "skipped",
+						identifier: "7zip.7zip",
+						message: "pinned in winget",
+					},
+					{ status: "skipped", title: "Driver X" },
+				],
+			}),
+		).toBe("2 skipped: 7zip.7zip (pinned in winget), Driver X");
+	});
+
+	it("is null when nothing is skipped", () => {
+		expect(skippedItemsSummary({ status: "validated", items: [] })).toBeNull();
+		expect(skippedItemsSummary({})).toBeNull();
 	});
 });
