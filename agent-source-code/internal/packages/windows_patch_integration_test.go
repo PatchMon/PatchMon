@@ -45,7 +45,7 @@ func TestWUAInstallRejectsBadIDLive(t *testing.T) {
 
 func hotfixIDs(t *testing.T) string {
 	t.Helper()
-	out, err := exec.Command(powershellPath(), "-NoProfile", "-NonInteractive", "-Command",
+	out, err := exec.Command(winexec.PowerShellPath(), "-NoProfile", "-NonInteractive", "-Command",
 		winexec.Script("(Get-HotFix | Sort-Object HotFixID | ForEach-Object { $_.HotFixID }) -join ','")).Output()
 	if err != nil {
 		t.Fatalf("Get-HotFix: %v", err)

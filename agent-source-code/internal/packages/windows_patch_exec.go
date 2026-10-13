@@ -7,23 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
+	"patchmon-agent/internal/winexec"
 	"patchmon-agent/pkg/models"
 )
 
 const childWaitDelay = 10 * time.Second
-
-func powershellPath() string {
-	if root := os.Getenv("SystemRoot"); root != "" {
-		return filepath.Join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-	}
-	return "powershell.exe"
-}
 
 type wuaScriptBackend struct{}
 
@@ -40,7 +32,7 @@ func (wuaScriptBackend) exec(ctx context.Context, req wuaRequest, log func(strin
 	if err != nil {
 		return wuaOutput{}, err
 	}
-	cmd := exec.CommandContext(ctx, powershellPath(), wuaPowerShellArgs()...)
+	cmd := exec.CommandContext(ctx, winexec.PowerShellPath(), wuaPowerShellArgs()...)
 	cmd.Stdin = bytes.NewReader(payload)
 	hideWindow(cmd)
 	cmd.WaitDelay = childWaitDelay

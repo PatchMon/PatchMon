@@ -29,7 +29,7 @@ $pkgs = @(Get-AppxPackage -AllUsers -Name Microsoft.DesktopAppInstaller | ForEac
 `
 
 func checkWingetTrust(exe string) error {
-	cmd, cancel := boundedCommand(collectorTimeout, powershellPath(), "-NoProfile", "-NonInteractive", "-Command", winexec.Script(wingetTrustScript))
+	cmd, cancel := boundedCommand(collectorTimeout, winexec.PowerShellPath(), "-NoProfile", "-NonInteractive", "-Command", winexec.Script(wingetTrustScript))
 	defer cancel()
 	cmd.Stdin = strings.NewReader(exe)
 	hideWindow(cmd)

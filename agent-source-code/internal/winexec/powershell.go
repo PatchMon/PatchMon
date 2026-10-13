@@ -1,7 +1,11 @@
 // Package winexec centralises how the agent shells out to Windows PowerShell.
 package winexec
 
-import "bytes"
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+)
 
 // utf8Preamble forces stdout to UTF-8 for the rest of the script.
 //
@@ -38,4 +42,13 @@ func Script(body string) string {
 // depending on host configuration, and it is not valid JSON.
 func TrimBOM(b []byte) []byte {
 	return bytes.TrimPrefix(b, bom)
+}
+
+// PowerShellPath returns Windows PowerShell under %SystemRoot%, so the agent never resolves
+// powershell.exe through PATH while running as SYSTEM.
+func PowerShellPath() string {
+	if root := os.Getenv("SystemRoot"); root != "" {
+		return filepath.Join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+	}
+	return `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`
 }

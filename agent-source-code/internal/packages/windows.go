@@ -338,7 +338,7 @@ Get-ChildItem -LiteralPath "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server" | Whe
 }
 $result | ConvertTo-Json -Compress -Depth 2
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
+	cmd, cancel := boundedCommand(networkCollectorTimeout, winexec.PowerShellPath(), "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
@@ -505,7 +505,7 @@ $ErrorActionPreference = "SilentlyContinue"
   }
 }) | ConvertTo-Json -Compress -Depth 2
 `
-	cmd, cancel := boundedCommand(collectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
+	cmd, cancel := boundedCommand(collectorTimeout, winexec.PowerShellPath(), "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
@@ -603,7 +603,7 @@ foreach ($path in $paths) {
 if ($result.Count -gt 5000) { $result = $result[0..4999] }
 $result | ConvertTo-Json -Compress -Depth 3
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
+	cmd, cancel := boundedCommand(networkCollectorTimeout, winexec.PowerShellPath(), "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
@@ -979,7 +979,7 @@ $server = (Get-ItemProperty -Path $wuKey -Name WUServer -ErrorAction SilentlyCon
 $useWU = (Get-ItemProperty -Path "$wuKey\AU" -Name UseWUServer -ErrorAction SilentlyContinue).UseWUServer
 if ($server -and $useWU -eq 1) { "WSUS_ACTIVE" } else { "WSUS_INACTIVE" }
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
+	cmd, cancel := boundedCommand(networkCollectorTimeout, winexec.PowerShellPath(), "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
@@ -1129,7 +1129,7 @@ if ($comFailed) {
 
 $result | ConvertTo-Json -Compress -Depth 4
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
+	cmd, cancel := boundedCommand(networkCollectorTimeout, winexec.PowerShellPath(), "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {

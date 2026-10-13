@@ -27,7 +27,7 @@ func requireWindowsIntegration(t *testing.T) {
 
 func runPS(t *testing.T, body string) []byte {
 	t.Helper()
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", Script(body))
+	cmd := exec.Command(PowerShellPath(), "-NoProfile", "-NonInteractive", "-Command", Script(body))
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("powershell failed: %v\noutput: %s", err, out)
