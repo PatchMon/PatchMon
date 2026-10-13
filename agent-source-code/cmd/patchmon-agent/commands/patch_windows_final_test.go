@@ -16,17 +16,21 @@ import (
 	"patchmon-agent/pkg/models"
 )
 
-func TestWindowsFinalStageOutlivesALongRun(t *testing.T) {
+type outputPost struct {
+	Stage        string `json:"stage"`
+	ErrorMessage string `json:"error_message"`
+}
+
+func fakeOutputServer(t *testing.T) (*sync.Mutex, *[]outputPost) {
+	t.Helper()
 	var mu sync.Mutex
-	var stages []string
+	var posts []outputPost
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/output") {
-			var body struct {
-				Stage string `json:"stage"`
-			}
+			var body outputPost
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			mu.Lock()
-			stages = append(stages, body.Stage)
+			posts = append(posts, body)
 			mu.Unlock()
 		}
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -43,6 +47,11 @@ func TestWindowsFinalStageOutlivesALongRun(t *testing.T) {
 	prevCfg, prevTimeout, prevRun := cfgManager, windowsFinalTimeout, runWindowsPatch
 	t.Cleanup(func() { cfgManager, windowsFinalTimeout, runWindowsPatch = prevCfg, prevTimeout, prevRun })
 	cfgManager = m
+	return &mu, &posts
+}
+
+func TestWindowsFinalStageOutlivesALongRun(t *testing.T) {
+	mu, posts := fakeOutputServer(t)
 	windowsFinalTimeout = 200 * time.Millisecond
 	runWindowsPatch = func(context.Context, context.Context, packages.WindowsPatchRequest, packages.WindowsPatchHooks, func() []models.Package) packages.WindowsPatchResult {
 		time.Sleep(3 * windowsFinalTimeout)
@@ -54,7 +63,24 @@ func TestWindowsFinalStageOutlivesALongRun(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(stages) == 0 || stages[len(stages)-1] != "dry_run_completed" {
-		t.Fatalf("stages = %v", stages)
+	if len(*posts) == 0 || (*posts)[len(*posts)-1].Stage != "dry_run_completed" {
+		t.Fatalf("posts = %+v", *posts)
+	}
+}
+
+func TestWindowsCompletedRunSendsItsSkipSummary(t *testing.T) {
+	mu, posts := fakeOutputServer(t)
+	runWindowsPatch = func(context.Context, context.Context, packages.WindowsPatchRequest, packages.WindowsPatchHooks, func() []models.Package) packages.WindowsPatchResult {
+		return packages.WindowsPatchResult{Stage: "completed", ErrorMessage: "1 skipped: 7zip.7zip (pinned in winget)"}
+	}
+	err := runPatchWindows("11111111-1111-4111-8111-111111111111", packages.WindowsPatchRequest{DryRun: true, Targets: []packages.WindowsPatchTarget{{Kind: "winget", ID: "7zip.7zip"}}}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	last := (*posts)[len(*posts)-1]
+	if last.Stage != "completed" || last.ErrorMessage != "1 skipped: 7zip.7zip (pinned in winget)" {
+		t.Fatalf("final post = %+v", last)
 	}
 }
