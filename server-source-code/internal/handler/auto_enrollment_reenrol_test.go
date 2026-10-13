@@ -1,0 +1,263 @@
+package handler
+
+import (
+	"context"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"strings"
+	"testing"
+
+	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
+	"golang.org/x/crypto/bcrypt"
+)
+
+func enrolToken(id string) db.AutoEnrollmentToken {
+	return db.AutoEnrollmentToken{ID: id, TokenName: "test"}
+}
+
+type enrolFixture struct {
+	t     *testing.T
+	d     *database.DB
+	hosts *store.HostsStore
+	h     *AutoEnrollmentHandler
+}
+
+func newEnrolFixture(t *testing.T) *enrolFixture {
+	d := testDatabase(t)
+	hosts := store.NewHostsStore(d)
+	h := NewAutoEnrollmentHandler(store.NewAutoEnrollmentStore(d), store.NewHostGroupsStore(d), hosts, store.NewSettingsStore(d), slog.Default(), &config.Config{})
+	return &enrolFixture{t: t, d: d, hosts: hosts, h: h}
+}
+
+func (f *enrolFixture) token(maxPerDay, createdToday int) (id, key, secret string) {
+	f.t.Helper()
+	id = uuid.New().String()
+	key = "patchmon_ae_" + uuid.New().String()[:12]
+	secret = "s-" + uuid.New().String()
+	hash, err := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.MinCost)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if _, err := f.d.Exec(context.Background(),
+		`INSERT INTO auto_enrollment_tokens (id, token_name, token_key, token_secret, allowed_ip_ranges, max_hosts_per_day, hosts_created_today, updated_at)
+		 VALUES ($1, $2, $3, $4, '{}', $5, $6, NOW())`,
+		id, "tok-"+id[:8], key, string(hash), maxPerDay, createdToday); err != nil {
+		f.t.Fatal(err)
+	}
+	return id, key, secret
+}
+
+func (f *enrolFixture) enrol(key, secret string, body map[string]interface{}) (int, map[string]interface{}) {
+	f.t.Helper()
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auto-enrollment/enroll", strings.NewReader(string(b)))
+	req.Header.Set("X-Auto-Enrollment-Key", key)
+	req.Header.Set("X-Auto-Enrollment-Secret", secret)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	f.h.Enroll(rec, req)
+	var out map[string]interface{}
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	return rec.Code, out
+}
+
+func (f *enrolFixture) createdToday(tokenID string) int {
+	f.t.Helper()
+	var n int
+	if err := f.d.RawQueryRow(context.Background(), `SELECT hosts_created_today FROM auto_enrollment_tokens WHERE id = $1`, tokenID).Scan(&n); err != nil {
+		f.t.Fatal(err)
+	}
+	return n
+}
+
+func hostField(out map[string]interface{}, k string) string {
+	h, _ := out["host"].(map[string]interface{})
+	s, _ := h[k].(string)
+	return s
+}
+
+func TestEnroll_HostIDReissueRules(t *testing.T) {
+	f := newEnrolFixture(t)
+	ctx := context.Background()
+	tokID, key, secret := f.token(100, 0)
+	name := "reenrol-" + uuid.New().String()[:8]
+
+	code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": name, "machine_id": "m-" + name})
+	if code != http.StatusCreated {
+		t.Fatalf("first enrol: %d %v", code, out)
+	}
+	hostID := hostField(out, "id")
+	apiID := hostField(out, "api_id")
+	created, _ := f.hosts.GetByID(ctx, hostID)
+	if created.EnrolmentTokenID == nil || *created.EnrolmentTokenID != tokID {
+		t.Fatalf("enrolment_token_id = %v, want %s", created.EnrolmentTokenID, tokID)
+	}
+	if n := f.createdToday(tokID); n != 1 {
+		t.Fatalf("hosts_created_today = %d, want 1", n)
+	}
+
+	t.Run("never reported and same token re-issues the key", func(t *testing.T) {
+		code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": name, "machine_id": "m-" + name, "host_id": hostID})
+		if code != http.StatusOK || out["reenrolled"] != true {
+			t.Fatalf("got %d %v, want 200 reenrolled", code, out)
+		}
+		if hostField(out, "id") != hostID || hostField(out, "api_id") != apiID {
+			t.Fatalf("re-issue must keep the row and API ID: %v", out)
+		}
+		row, _ := f.hosts.GetByID(ctx, hostID)
+		if ok, _ := util.VerifyAPIKey(hostField(out, "api_key"), row.ApiKey); !ok {
+			t.Fatal("the re-issued key does not verify")
+		}
+		if row.CredentialsReissuedAt == nil {
+			t.Fatal("credentials_reissued_at not set")
+		}
+		if n := f.createdToday(tokID); n != 1 {
+			t.Fatalf("re-issue consumed the daily cap: hosts_created_today = %d", n)
+		}
+	})
+
+	t.Run("a second re-issue within 60s is refused", func(t *testing.T) {
+		code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": name, "host_id": hostID})
+		if code != http.StatusTooManyRequests || out["code"] != "reenrol_cooldown" {
+			t.Fatalf("got %d %v, want 429 reenrol_cooldown", code, out)
+		}
+	})
+
+	if _, err := f.d.Exec(ctx, `UPDATE hosts SET credentials_reissued_at = NOW() - INTERVAL '2 minutes' WHERE id = $1`, hostID); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("another token cannot re-issue", func(t *testing.T) {
+		_, key2, secret2 := f.token(100, 0)
+		code, out := f.enrol(key2, secret2, map[string]interface{}{"friendly_name": name, "host_id": hostID})
+		if code != http.StatusConflict || out["code"] != "host_not_reenrollable" || out["host_id"] != hostID {
+			t.Fatalf("got %d %v, want 409 host_not_reenrollable", code, out)
+		}
+	})
+
+	t.Run("a UI-created host cannot be re-issued", func(t *testing.T) {
+		ui := newTestHost(t, f.hosts, "pending")
+		code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": ui.FriendlyName, "host_id": ui.ID})
+		if code != http.StatusConflict || out["code"] != "host_not_reenrollable" {
+			t.Fatalf("got %d %v, want 409 host_not_reenrollable", code, out)
+		}
+	})
+
+	t.Run("a host that has reported is never re-keyed", func(t *testing.T) {
+		if _, err := f.d.Exec(ctx, `UPDATE hosts SET status = 'active', agent_version = '2.1.5' WHERE id = $1`, hostID); err != nil {
+			t.Fatal(err)
+		}
+		before, _ := f.hosts.GetByID(ctx, hostID)
+		code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": name, "host_id": hostID})
+		if code != http.StatusConflict || out["code"] != "host_reporting" {
+			t.Fatalf("got %d %v, want 409 host_reporting", code, out)
+		}
+		after, _ := f.hosts.GetByID(ctx, hostID)
+		if after.ApiKey != before.ApiKey {
+			t.Fatal("api_key changed on a refused re-issue")
+		}
+	})
+
+	t.Run("an unknown host_id creates a new host", func(t *testing.T) {
+		code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": "new-" + name, "host_id": uuid.New().String()})
+		if code != http.StatusCreated || hostField(out, "id") == hostID {
+			t.Fatalf("got %d %v, want 201 with a new row", code, out)
+		}
+	})
+
+	t.Run("an invalid host_id is rejected", func(t *testing.T) {
+		code, _ := f.enrol(key, secret, map[string]interface{}{"friendly_name": name, "host_id": "bad id;"})
+		if code != http.StatusBadRequest {
+			t.Fatalf("got %d, want 400", code)
+		}
+	})
+
+	t.Run("no host_id falls back to the machine_id guard", func(t *testing.T) {
+		code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": name, "machine_id": "m-" + name})
+		if code != http.StatusConflict || out["code"] != "machine_id_match" {
+			t.Fatalf("got %d %v, want 409 machine_id_match", code, out)
+		}
+	})
+}
+
+func TestEnroll_ReissueIsNotBlockedByTheDailyCap(t *testing.T) {
+	f := newEnrolFixture(t)
+	tokID, key, secret := f.token(1, 0)
+	code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": "cap-" + uuid.New().String()[:8]})
+	if code != http.StatusCreated {
+		t.Fatalf("first enrol: %d %v", code, out)
+	}
+	hostID := hostField(out, "id")
+
+	if code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": "cap-2"}); code != http.StatusTooManyRequests || out["code"] != nil {
+		t.Fatalf("create past the cap: %d %v, want the plain 429", code, out)
+	}
+	if code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": "cap", "host_id": hostID}); code != http.StatusOK {
+		t.Fatalf("re-issue past the cap: %d %v, want 200", code, out)
+	}
+	if n := f.createdToday(tokID); n != 1 {
+		t.Fatalf("hosts_created_today = %d, want 1", n)
+	}
+}
+
+func TestServeInstall_InjectsHostID(t *testing.T) {
+	d := testDatabase(t)
+	hosts := store.NewHostsStore(d)
+	host := newTestHost(t, hosts, "pending")
+	t.Setenv("AI_ENCRYPTION_KEY", strings.Repeat("ab", 32))
+	enc, err := util.NewEncryption()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	h := NewInstallHandler(hosts, store.NewSettingsStore(d), store.NewBootstrapStore(&hostctx.RedisResolver{Default: rdb}, enc), store.NewReportStore(d))
+
+	for _, osParam := range []string{"linux", "windows"} {
+		t.Run(osParam, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/hosts/install?os="+osParam, nil)
+			req.Header.Set("X-API-ID", host.ApiID)
+			req.Header.Set("X-API-KEY", host.ApiKey)
+			rec := httptest.NewRecorder()
+			h.ServeInstall(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("install: %d %s", rec.Code, rec.Body.String())
+			}
+			body := rec.Body.String()
+			want := `export PATCHMON_HOST_ID="` + host.ID + `"`
+			if osParam == "windows" {
+				want = `$env:PATCHMON_HOST_ID = "` + host.ID + `"`
+			}
+			if !strings.Contains(body, want) {
+				t.Fatalf("served script lacks %q", want)
+			}
+			if osParam != "linux" {
+				return
+			}
+			sh, err := exec.LookPath("sh")
+			if err != nil {
+				t.Skip("sh not available")
+			}
+			tmp := t.TempDir() + "/install.sh"
+			if err := os.WriteFile(tmp, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if out, err := exec.Command(sh, "-n", tmp).CombinedOutput(); err != nil {
+				t.Fatalf("served script fails sh -n: %v\n%s", err, out)
+			}
+		})
+	}
+}

@@ -38,6 +38,12 @@ func (f *fakeEnrollHosts) Create(_ context.Context, h *models.Host) error {
 
 func (f *fakeEnrollHosts) SetHostGroups(context.Context, string, []string) error { return nil }
 
+func (f *fakeEnrollHosts) GetByID(context.Context, string) (*models.Host, error) { return nil, nil }
+
+func (f *fakeEnrollHosts) ReissueApiKey(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 func TestCreateEnrolledHost_DuplicateGuard(t *testing.T) {
 	sharedID := "lxc-100-abc"
 	tests := []struct {
@@ -58,7 +64,7 @@ func TestCreateEnrolledHost_DuplicateGuard(t *testing.T) {
 			friendlyName: "web-01",
 			existing:     &models.Host{ID: "host-1", MachineID: &sharedID, FriendlyName: "web-01"},
 			wantStatus:   http.StatusConflict,
-			wantBody:     `{"error":"Host already enrolled","friendly_name":"web-01"}`,
+			wantBody:     `{"code":"machine_id_match","error":"Host already enrolled","friendly_name":"web-01"}`,
 			wantLookups:  1,
 		},
 		{
@@ -67,7 +73,7 @@ func TestCreateEnrolledHost_DuplicateGuard(t *testing.T) {
 			friendlyName: "WEB-01",
 			existing:     &models.Host{ID: "host-1", MachineID: &sharedID, FriendlyName: "web-01"},
 			wantStatus:   http.StatusConflict,
-			wantBody:     `{"error":"Host already enrolled","friendly_name":"web-01"}`,
+			wantBody:     `{"code":"machine_id_match","error":"Host already enrolled","friendly_name":"web-01"}`,
 			wantLookups:  1,
 		},
 		{
@@ -116,7 +122,7 @@ func TestCreateEnrolledHost_DuplicateGuard(t *testing.T) {
 			if friendlyName == "" {
 				friendlyName = "web-01"
 			}
-			host, apiKey, ok := h.createEnrolledHost(context.Background(), rec, friendlyName, tt.machineID, nil)
+			host, apiKey, ok := h.createEnrolledHost(context.Background(), rec, friendlyName, tt.machineID, nil, "token-1")
 
 			if got := len(fake.lookups); got != tt.wantLookups {
 				t.Fatalf("lookups = %d, want %d", got, tt.wantLookups)
@@ -153,6 +159,9 @@ func TestCreateEnrolledHost_DuplicateGuard(t *testing.T) {
 			}
 			if host.ApiKey == apiKey {
 				t.Fatal("stored api_key must be the hash, not the plain key")
+			}
+			if host.EnrolmentTokenID == nil || *host.EnrolmentTokenID != "token-1" {
+				t.Fatalf("enrolment_token_id = %v, want token-1", host.EnrolmentTokenID)
 			}
 		})
 	}

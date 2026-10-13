@@ -173,6 +173,10 @@ func (h *InstallHandler) ServeInstall(w http.ResponseWriter, r *http.Request) {
 	if osParam != "linux" && osParam != "freebsd" && osParam != "windows" {
 		osParam = inferHostOS(host.ExpectedPlatform, host.OSType)
 	}
+	hostIDValue := ""
+	if util.ValidHostID(host.ID) {
+		hostIDValue = host.ID
+	}
 
 	// Windows: serve PowerShell script with env vars
 	if osParam == "windows" {
@@ -190,7 +194,7 @@ func (h *InstallHandler) ServeInstall(w http.ResponseWriter, r *http.Request) {
 			JSON(w, http.StatusNotFound, map[string]string{"error": "Windows installation script not found"})
 			return
 		}
-		envBlock := fmt.Sprintf("$env:PATCHMON_SERVER_URL = \"%s\"\n$env:PATCHMON_BOOTSTRAP_TOKEN = \"%s\"\n$env:PATCHMON_IGNORE_SSL = \"%s\"\n\n", serverURL, token, skipSSLVerify)
+		envBlock := fmt.Sprintf("$env:PATCHMON_SERVER_URL = \"%s\"\n$env:PATCHMON_BOOTSTRAP_TOKEN = \"%s\"\n$env:PATCHMON_IGNORE_SSL = \"%s\"\n$env:PATCHMON_HOST_ID = \"%s\"\n\n", serverURL, token, skipSSLVerify, hostIDValue)
 		// Remove shebang if present (PowerShell scripts may have # optional)
 		if bytes.HasPrefix(script, []byte("#!")) {
 			script = append([]byte("#"), script[1:]...)
@@ -228,6 +232,7 @@ export BOOTSTRAP_TOKEN="%s"
 export CURL_FLAGS="%s"
 export SKIP_SSL_VERIFY="%s"
 export FORCE_INSTALL="%s"
+export PATCHMON_HOST_ID="%s"
 %s
 # Fetch actual credentials using bootstrap token (one-time use, expires in 5 minutes)
 fetch_credentials() {
@@ -257,7 +262,7 @@ fetch_credentials() {
     fi
 }
 fetch_credentials
-`, serverURL, osParam, token, curlFlags, skipSSLVerify, forceStr, archExport)
+`, serverURL, osParam, token, curlFlags, skipSSLVerify, forceStr, hostIDValue, archExport)
 
 	// Remove shebang from original script and prepend env block
 	script := h.scriptBase
@@ -452,8 +457,11 @@ func (h *InstallHandler) ServePing(w http.ResponseWriter, r *http.Request) {
 	// Hash compare. If the agent shipped no body (legacy) we skip this and
 	// `requestFull` stays empty — matches previous behaviour exactly.
 	var requestFull []string
+	hostIDMismatch := false
 	if hasBody {
 		requestFull = computeRequestFull(checkin, &req.Hashes)
+		hostIDMismatch = h.observeAgentIdentity(r.Context(), checkin.ID, checkin.ReportedHostID,
+			claimedHostID(req.HostID), checkin.Identity, req.MachineID, req.Hashes.HostnameHash)
 	}
 
 	now := time.Now()
@@ -483,9 +491,13 @@ func (h *InstallHandler) ServePing(w http.ResponseWriter, r *http.Request) {
 			"docker":     checkin.DockerEnabled,
 			"compliance": checkin.ComplianceEnabled,
 		},
+		"hostId": checkin.ID,
 	}
 	if len(requestFull) > 0 {
 		resp["requestFull"] = requestFull
+	}
+	if hostIDMismatch {
+		resp["hostIdMismatch"] = true
 	}
 
 	// Record one update_history row per ping cycle for the Agent Activity
@@ -597,6 +609,13 @@ func buildMetricsParams(req *models.PingRequest) store.HostMetricsParams {
 	if req.AgentVersion != "" {
 		v := req.AgentVersion
 		mp.AgentVersion = &v
+	}
+	if util.ValidConfigVersion(req.ConfigVersion) {
+		v := req.ConfigVersion
+		mp.ConfigVersion = &v
+	}
+	if id := claimedHostID(req.HostID); id != "" {
+		mp.ReportedHostID = &id
 	}
 	return mp
 }
@@ -901,11 +920,24 @@ func (h *InstallHandler) ServeUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fullReportHostnameHash := ""
+	if reportType == "full" && payload.Hostname != "" {
+		fullReportHostnameHash = CanonicalHostnameHash(payload.Hostname)
+	}
+	h.observeAgentIdentity(r.Context(), host.ID, host.ReportedHostID, claimedHostID(payload.HostID),
+		store.IdentityFingerprintState{
+			Fingerprint:     host.IdentityFingerprint,
+			PrevFingerprint: host.IdentityPrevFingerprint,
+			ChangedAt:       host.IdentityFingerprintChangedAt,
+			ConflictAt:      host.IdentityConflictAt,
+		}, payload.MachineID, fullReportHostnameHash)
+
 	resp := map[string]interface{}{
 		"message":           "Host updated successfully",
 		"packagesProcessed": result.PackagesProcessed,
 		"updatesAvailable":  result.UpdatesAvailable,
 		"securityUpdates":   result.SecurityUpdates,
+		"hostId":            host.ID,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

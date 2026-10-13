@@ -542,6 +542,21 @@ func (h *HostsHandler) RegenerateCredentials(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+// DismissIdentityConflict handles POST /hosts/:hostId/identity-conflict/dismiss.
+func (h *HostsHandler) DismissIdentityConflict(w http.ResponseWriter, r *http.Request) {
+	hostID := chi.URLParam(r, "hostId")
+	found, err := h.hosts.DismissIdentityConflict(r.Context(), hostID)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to dismiss identity conflict")
+		return
+	}
+	if !found {
+		Error(w, http.StatusNotFound, "Host not found")
+		return
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{"message": "Identity conflict dismissed", "host_id": hostID})
+}
+
 // FetchReport handles POST /hosts/:hostId/fetch-report.
 func (h *HostsHandler) FetchReport(w http.ResponseWriter, r *http.Request) {
 	if h.queueClient == nil {
@@ -1369,6 +1384,11 @@ func hostToResponse(h *models.Host, groups []models.HostGroup, staleCutoff time.
 		"package_manager": h.PackageManager, "primary_interface": h.PrimaryInterface,
 		"awaiting_post_patch_report_run_id": h.AwaitingPostPatchReportRunID,
 		"expected_platform":                 h.ExpectedPlatform,
+		"config_version":                    h.ConfigVersion,
+		"reported_host_id":                  h.ReportedHostID,
+		"host_id_mismatch":                  h.HostIDMismatch(),
+		"identity_conflict_at":              h.IdentityConflictAt,
+		"credentials_reissued_at":           h.CredentialsReissuedAt,
 	}
 	hg := make([]map[string]interface{}, len(groups))
 	for i, g := range groups {

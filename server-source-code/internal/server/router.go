@@ -555,6 +555,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Patch("/hosts/{hostId}/auto-update", hostsHandler.UpdateAutoUpdate)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Patch("/hosts/{hostId}/host-down-alerts", hostsHandler.UpdateHostDownAlerts)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/{hostId}/regenerate-credentials", hostsHandler.RegenerateCredentials)
+			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/{hostId}/identity-conflict/dismiss", hostsHandler.DismissIdentityConflict)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/bulk/fetch-report", hostsHandler.FetchReportBulk)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/{hostId}/fetch-report", hostsHandler.FetchReport)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/{hostId}/refresh-integration-status", hostsHandler.RefreshIntegrationStatus)

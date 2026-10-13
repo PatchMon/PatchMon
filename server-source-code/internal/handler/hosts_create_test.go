@@ -19,7 +19,7 @@ func TestNewPendingHostEnablesAgentAutoUpdate(t *testing.T) {
 func TestCreateEnrolledHostEnablesAgentAutoUpdate(t *testing.T) {
 	fake := &fakeEnrollHosts{}
 	h := &AutoEnrollmentHandler{hosts: fake}
-	host, _, ok := h.createEnrolledHost(context.Background(), httptest.NewRecorder(), "web-01", "lxc-1", nil)
+	host, _, ok := h.createEnrolledHost(context.Background(), httptest.NewRecorder(), "web-01", "lxc-1", nil, "")
 	if !ok || host == nil || len(fake.created) != 1 {
 		t.Fatalf("expected one created host, ok=%v", ok)
 	}
