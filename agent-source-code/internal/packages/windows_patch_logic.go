@@ -548,7 +548,7 @@ func wingetListArgs(id string) []string {
 	return []string{"list", "--id", id, "--exact", "--source", "winget", "--upgrade-available", "--accept-source-agreements", "--disable-interactivity"}
 }
 
-func finalWindowsStage(items []models.PatchRunItem, runErrors []string, stopped, dryRun, _ bool) (stage, errMsg string) {
+func finalWindowsStage(items []models.PatchRunItem, runErrors []string, stopped, dryRun bool) (stage, errMsg string) {
 	if stopped {
 		return "cancelled", "stopped by user"
 	}
@@ -1086,7 +1086,7 @@ func (r *windowsPatchRun) run(runCtx, stopCtx context.Context) WindowsPatchResul
 	if res.RebootRequired {
 		r.out("\n[Restart required] A restart is required to finish installing updates. PatchMon does not restart the host.\n")
 	}
-	res.Stage, res.ErrorMessage = finalWindowsStage(res.Items, r.runErrors, r.stopped(), r.req.DryRun, !r.req.PatchAll)
+	res.Stage, res.ErrorMessage = finalWindowsStage(res.Items, r.runErrors, r.stopped(), r.req.DryRun)
 	r.post(r.items...)
 	return res
 }

@@ -342,26 +342,26 @@ func TestFinalWindowsStage(t *testing.T) {
 	code := int64(wingetPackageInUse)
 	inUse := models.PatchRunItem{ID: "d", Title: "Notepad++", Status: itemFailed, ExitCode: &code}
 	cases := []struct {
-		name     string
-		items    []models.PatchRunItem
-		errs     []string
-		stopped  bool
-		dry, pkg bool
-		stage    string
-		msg      string
+		name    string
+		items   []models.PatchRunItem
+		errs    []string
+		stopped bool
+		dry     bool
+		stage   string
+		msg     string
 	}{
-		{"stop wins", []models.PatchRunItem{failed}, nil, true, false, false, "cancelled", "stopped by user"},
-		{"failure", []models.PatchRunItem{ok, failed, inUse}, nil, false, false, false, "failed", "2 of 3 failed: KB5044284 (0x800f0922), Notepad++ (0x8A150101)"},
-		{"skip is not a failure in patch_all", []models.PatchRunItem{ok, skipped}, nil, false, false, false, "completed", "1 skipped: 7zip.7zip (pinned in winget)"},
-		{"skip is not a failure in patch_package", []models.PatchRunItem{skipped}, nil, false, false, true, "completed", "1 skipped: 7zip.7zip (pinned in winget)"},
-		{"failure and skip", []models.PatchRunItem{failed, skipped}, nil, false, false, true, "failed", "1 of 2 failed: KB5044284 (0x800f0922); 1 skipped: 7zip.7zip (pinned in winget)"},
-		{"dry run", []models.PatchRunItem{{Status: itemWouldInstall}}, nil, false, true, false, "dry_run_completed", ""},
-		{"already done is success", []models.PatchRunItem{{Status: itemAlreadyInstalled}, {Status: itemPendingReboot}}, nil, false, false, true, "completed", ""},
-		{"empty", nil, nil, false, false, false, "completed", ""},
-		{"run error", nil, []string{"Windows Update search failed: x"}, false, false, false, "failed", "Windows Update search failed: x"},
+		{"stop wins", []models.PatchRunItem{failed}, nil, true, false, "cancelled", "stopped by user"},
+		{"failure", []models.PatchRunItem{ok, failed, inUse}, nil, false, false, "failed", "2 of 3 failed: KB5044284 (0x800f0922), Notepad++ (0x8A150101)"},
+		{"skip is not a failure in patch_all", []models.PatchRunItem{ok, skipped}, nil, false, false, "completed", "1 skipped: 7zip.7zip (pinned in winget)"},
+		{"skip is not a failure in patch_package", []models.PatchRunItem{skipped}, nil, false, false, "completed", "1 skipped: 7zip.7zip (pinned in winget)"},
+		{"failure and skip", []models.PatchRunItem{failed, skipped}, nil, false, false, "failed", "1 of 2 failed: KB5044284 (0x800f0922); 1 skipped: 7zip.7zip (pinned in winget)"},
+		{"dry run", []models.PatchRunItem{{Status: itemWouldInstall}}, nil, false, true, "dry_run_completed", ""},
+		{"already done is success", []models.PatchRunItem{{Status: itemAlreadyInstalled}, {Status: itemPendingReboot}}, nil, false, false, "completed", ""},
+		{"empty", nil, nil, false, false, "completed", ""},
+		{"run error", nil, []string{"Windows Update search failed: x"}, false, false, "failed", "Windows Update search failed: x"},
 	}
 	for _, c := range cases {
-		stage, msg := finalWindowsStage(c.items, c.errs, c.stopped, c.dry, c.pkg)
+		stage, msg := finalWindowsStage(c.items, c.errs, c.stopped, c.dry)
 		if stage != c.stage || msg != c.msg {
 			t.Errorf("%s: got (%q, %q), want (%q, %q)", c.name, stage, msg, c.stage, c.msg)
 		}
