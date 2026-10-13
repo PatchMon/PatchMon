@@ -17,6 +17,7 @@ import (
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/patchstream"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
@@ -146,52 +147,77 @@ func isValidPackageName(s string) bool {
 	return len(s) > 0 && len(s) <= 256 && packageNameRegex.MatchString(s)
 }
 
-// ServePatchOutput handles POST /patching/runs/:id/output (agent-facing, API key auth).
-func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Request) {
+// authenticateAgent resolves the host behind X-API-ID / X-API-KEY, writing a 401 when it cannot.
+func (h *PatchingHandler) authenticateAgent(w http.ResponseWriter, r *http.Request) (*models.Host, bool) {
 	apiID := r.Header.Get("X-API-ID")
 	apiKey := r.Header.Get("X-API-KEY")
 	if apiID == "" || apiKey == "" {
 		JSON(w, http.StatusUnauthorized, map[string]string{"error": "API ID and Key required"})
-		return
+		return nil, false
 	}
 	host, err := h.hosts.GetByApiID(r.Context(), apiID)
 	if err != nil || host == nil {
 		JSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid API credentials"})
-		return
+		return nil, false
 	}
 	ok, err := util.VerifyAPIKey(apiKey, host.ApiKey)
 	if err != nil || !ok {
 		JSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid API credentials"})
-		return
+		return nil, false
 	}
+	return host, true
+}
 
+// agentRunFromRequest loads the run named in the URL and checks it belongs to the calling host.
+func (h *PatchingHandler) agentRunFromRequest(w http.ResponseWriter, r *http.Request, host *models.Host) (*db.GetPatchRunByIDRow, bool) {
 	patchRunID := chi.URLParam(r, "id")
 	if !isValidPatchUUID(patchRunID) {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid patch run ID"})
+		return nil, false
+	}
+	run, err := h.patchRuns.GetByID(r.Context(), patchRunID)
+	if err != nil || run == nil {
+		JSON(w, http.StatusNotFound, map[string]string{"error": "Patch run not found"})
+		return nil, false
+	}
+	if run.HostID != host.ID {
+		JSON(w, http.StatusForbidden, map[string]string{"error": "Patch run does not belong to this host"})
+		return nil, false
+	}
+	return run, true
+}
+
+var terminalPatchStages = map[string]bool{"completed": true, "failed": true, "cancelled": true, "dry_run_completed": true}
+
+// ServePatchOutput handles POST /patching/runs/:id/output (agent-facing, API key auth).
+func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Request) {
+	host, ok := h.authenticateAgent(w, r)
+	if !ok {
 		return
 	}
 
 	var body struct {
-		Stage        string `json:"stage"`
-		Output       string `json:"output"`
-		ErrorMessage string `json:"error_message"`
+		Stage          string `json:"stage"`
+		Output         string `json:"output"`
+		ErrorMessage   string `json:"error_message"`
+		RebootRequired *bool  `json:"reboot_required"`
+	}
+	if !isValidPatchUUID(chi.URLParam(r, "id")) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid patch run ID"})
+		return
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
 		return
 	}
 
-	run, err := h.patchRuns.GetByID(r.Context(), patchRunID)
-	if err != nil || run == nil {
-		JSON(w, http.StatusNotFound, map[string]string{"error": "Patch run not found"})
+	run, ok := h.agentRunFromRequest(w, r, host)
+	if !ok {
 		return
 	}
-	if run.HostID != host.ID {
-		JSON(w, http.StatusForbidden, map[string]string{"error": "Patch run does not belong to this host"})
-		return
-	}
+	patchRunID := run.ID
 
-	err = h.patchRuns.UpdateOutput(r.Context(), patchRunID, host.OSType, body.Stage, body.Output, body.ErrorMessage)
+	err := h.patchRuns.UpdateOutput(r.Context(), patchRunID, host.OSType, body.Stage, body.Output, body.ErrorMessage)
 	if errors.Is(err, store.ErrHostHasActivePatchRun) {
 		h.log.Warn("patching: started report ignored, another patch run is active on this host", "patch_run_id", patchRunID)
 		err = nil
@@ -239,6 +265,9 @@ func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Reques
 				ErrorMessage: body.ErrorMessage,
 			})
 		}
+	}
+	if terminalPatchStages[body.Stage] && body.RebootRequired != nil {
+		h.recordRunRebootRequired(r.Context(), host, run, *body.RebootRequired)
 	}
 	if body.Stage == "completed" && !run.DryRun {
 		if err := h.hosts.SetAwaitingPostPatchReport(r.Context(), run.HostID, &patchRunID); err != nil {
@@ -369,6 +398,87 @@ func (h *PatchingHandler) ServePatchOutput(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	JSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+const windowsRestartReason = "Windows Update installation requires a restart"
+
+func (h *PatchingHandler) recordRunRebootRequired(ctx context.Context, host *models.Host, run *db.GetPatchRunByIDRow, required bool) {
+	if run.RebootRequired != nil && *run.RebootRequired == required {
+		return
+	}
+	if err := h.patchRuns.SetRebootRequired(ctx, run.ID, required); err != nil {
+		h.log.Error("patching: failed to record reboot_required", "patch_run_id", run.ID, "error", err)
+	}
+	if !required || run.DryRun {
+		return
+	}
+	reason := windowsRestartReason
+	if err := h.hosts.SetRebootStatus(ctx, host.ID, true, &reason); err != nil {
+		h.log.Error("patching: failed to set host reboot status", "host_id", host.ID, "error", err)
+	}
+	if h.notify == nil {
+		return
+	}
+	d := hostctx.DBFromContext(ctx)
+	if d == nil {
+		return
+	}
+	hostName := host.FriendlyName
+	if hostName == "" && host.Hostname != nil {
+		hostName = *host.Hostname
+	}
+	h.notify.EmitEvent(ctx, d, hostctx.TenantHostKey(ctx), notifications.Event{
+		Type:          "patch_reboot_required",
+		Severity:      "warning",
+		Title:         "Reboot Required - " + hostName,
+		Message:       "Host \"" + hostName + "\" requires a reboot after Windows Update installation.",
+		ReferenceType: "host",
+		ReferenceID:   host.ID,
+		Metadata: map[string]interface{}{
+			"host_id":      host.ID,
+			"host_name":    hostName,
+			"patch_run_id": run.ID,
+		},
+	})
+}
+
+// ServePatchItems handles POST /patching/runs/:id/items (agent-facing, API key auth).
+func (h *PatchingHandler) ServePatchItems(w http.ResponseWriter, r *http.Request) {
+	host, ok := h.authenticateAgent(w, r)
+	if !ok {
+		return
+	}
+	if !isValidPatchUUID(chi.URLParam(r, "id")) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid patch run ID"})
+		return
+	}
+	var body struct {
+		Items []store.AgentItemReport `json:"items"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
+		return
+	}
+	run, ok := h.agentRunFromRequest(w, r, host)
+	if !ok {
+		return
+	}
+	res, err := h.patchRuns.RecordAgentItems(r.Context(), run.ID, host.ID, run.PatchType == "patch_all", body.Items)
+	if errors.Is(err, store.ErrRunNotAcceptingItems) {
+		JSON(w, http.StatusConflict, map[string]string{"error": "Patch run is not accepting item reports"})
+		return
+	}
+	var itemErr *store.ItemReportError
+	if errors.As(err, &itemErr) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid item report: " + itemErr.Error()})
+		return
+	}
+	if err != nil {
+		h.log.Error("patching: failed to record items", "patch_run_id", run.ID, "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to save patch items"})
+		return
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{"ok": true, "updated": res.Updated, "inserted": res.Inserted, "ignored": res.Ignored})
 }
 
 // Dashboard returns GET /patching/dashboard.
@@ -534,6 +644,13 @@ func (h *PatchingHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := patchRunToResponse(run)
+	items, err := h.patchRuns.ListItems(r.Context(), run.ID)
+	if err != nil {
+		h.log.Error("patching: failed to list run items", "patch_run_id", run.ID, "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load patch run"})
+		return
+	}
+	resp["items"] = patchRunItemsToResponse(items)
 	if host, err := h.hosts.GetByID(r.Context(), run.HostID); err == nil && host != nil {
 		if hosts, ok := resp["hosts"].(map[string]interface{}); ok {
 			hosts["awaiting_post_patch_report_run_id"] = host.AwaitingPostPatchReportRunID
@@ -1560,6 +1677,14 @@ func patchRunToResponse(r *db.GetPatchRunByIDRow) map[string]interface{} {
 		"validation_run_id":     r.ValidationRunID,
 		"policy_id":             r.PolicyID,
 		"policy_name":           r.PolicyName,
+		"reboot_required":       r.RebootRequired,
+		"windows_scope":         nil,
+	}
+	if r.WindowsIncludeUpdates != nil || r.WindowsIncludeApps != nil {
+		m["windows_scope"] = map[string]bool{
+			"updates": r.WindowsIncludeUpdates == nil || *r.WindowsIncludeUpdates,
+			"apps":    r.WindowsIncludeApps == nil || *r.WindowsIncludeApps,
+		}
 	}
 	if len(r.PolicySnapshot) > 0 {
 		var snap map[string]interface{}
@@ -1581,8 +1706,42 @@ func patchRunToResponse(r *db.GetPatchRunByIDRow) map[string]interface{} {
 		"id":            r.HostID,
 		"friendly_name": r.HostFriendlyName,
 		"hostname":      r.HostHostname,
+		"os_type":       r.HostOsType,
 	}
 	return m
+}
+
+func pgTimeToISOPtr(t pgtype.Timestamp) *string {
+	if !t.Valid {
+		return nil
+	}
+	s := t.Time.UTC().Format(time.RFC3339)
+	return &s
+}
+
+func patchRunItemsToResponse(items []db.PatchRunItem) []map[string]interface{} {
+	out := make([]map[string]interface{}, len(items))
+	for i, it := range items {
+		out[i] = map[string]interface{}{
+			"id":              it.ID,
+			"kind":            it.Kind,
+			"identifier":      it.Identifier,
+			"revision_number": it.RevisionNumber,
+			"title":           it.Title,
+			"kb":              it.Kb,
+			"status":          it.Status,
+			"result_code":     it.ResultCode,
+			"hresult":         it.Hresult,
+			"exit_code":       it.ExitCode,
+			"reboot_required": it.RebootRequired,
+			"download_bytes":  it.DownloadBytes,
+			"message":         it.Message,
+			"started_at":      pgTimeToISOPtr(it.StartedAt),
+			"completed_at":    pgTimeToISOPtr(it.CompletedAt),
+			"updated_at":      pgTimeToISOPtr(it.UpdatedAt),
+		}
+	}
+	return out
 }
 
 func patchRunsToResponse(rows []db.ListRecentPatchRunsRow) []map[string]interface{} {

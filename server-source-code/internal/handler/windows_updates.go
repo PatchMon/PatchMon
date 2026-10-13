@@ -4,101 +4,23 @@ import (
 	"net/http"
 	"time"
 
-	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
-	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
-	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
-	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
-	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// WindowsUpdatesHandler handles agent-facing and UI-facing Windows Update endpoints.
+// WindowsUpdatesHandler handles the UI-facing Windows Update endpoint.
 // These work entirely through the existing host_packages + packages tables - WUA-specific
 // fields (wua_guid, wua_kb, wua_severity, etc.) extend those rows transparently.
 type WindowsUpdatesHandler struct {
-	hosts  *store.HostsStore
-	db     database.DBProvider
-	notify *notifications.Emitter
+	hosts *store.HostsStore
+	db    database.DBProvider
 }
 
 // NewWindowsUpdatesHandler creates a new Windows updates handler.
-func NewWindowsUpdatesHandler(hosts *store.HostsStore, dbProvider database.DBProvider, notify *notifications.Emitter) *WindowsUpdatesHandler {
-	return &WindowsUpdatesHandler{hosts: hosts, db: dbProvider, notify: notify}
-}
-
-// resolveAgentHost authenticates the agent request via X-API-ID / X-API-KEY headers.
-func (h *WindowsUpdatesHandler) resolveAgentHost(r *http.Request) (*models.Host, bool) {
-	apiID := r.Header.Get("X-API-ID")
-	apiKey := r.Header.Get("X-API-KEY")
-	if apiID == "" || apiKey == "" {
-		return nil, false
-	}
-	host, err := h.hosts.GetByApiID(r.Context(), apiID)
-	if err != nil || host == nil {
-		return nil, false
-	}
-	ok, err := util.VerifyAPIKey(apiKey, host.ApiKey)
-	if err != nil || !ok {
-		return nil, false
-	}
-	return host, true
-}
-
-// RecordRebootStatus handles POST /patching/windows-updates/reboot (agent-facing).
-// The agent reports whether a reboot is required after installation.
-func (h *WindowsUpdatesHandler) RecordRebootStatus(w http.ResponseWriter, r *http.Request) {
-	host, ok := h.resolveAgentHost(r)
-	if !ok {
-		JSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid API credentials"})
-		return
-	}
-
-	var body struct {
-		PatchRunID  string `json:"patch_run_id"`
-		NeedsReboot bool   `json:"needs_reboot"`
-	}
-	if err := decodeJSON(r, &body); err != nil {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
-		return
-	}
-
-	d := h.db.DB(r.Context())
-	reboot := body.NeedsReboot
-	var reason *string
-	if reboot {
-		s := "Windows Update installation requires a restart"
-		reason = &s
-	}
-	_ = d.Queries.UpdateHostRebootStatus(r.Context(), db.UpdateHostRebootStatusParams{
-		ID:           host.ID,
-		NeedsReboot:  &reboot,
-		RebootReason: reason,
-	})
-
-	// Emit patch_reboot_required when a reboot is needed.
-	if reboot && h.notify != nil {
-		hostName := host.FriendlyName
-		if hostName == "" && host.Hostname != nil {
-			hostName = *host.Hostname
-		}
-		h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
-			Type:          "patch_reboot_required",
-			Severity:      "warning",
-			Title:         "Reboot Required - " + hostName,
-			Message:       "Host \"" + hostName + "\" requires a reboot after Windows Update installation.",
-			ReferenceType: "host",
-			ReferenceID:   host.ID,
-			Metadata: map[string]interface{}{
-				"host_id":   host.ID,
-				"host_name": hostName,
-			},
-		})
-	}
-
-	JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+func NewWindowsUpdatesHandler(hosts *store.HostsStore, dbProvider database.DBProvider) *WindowsUpdatesHandler {
+	return &WindowsUpdatesHandler{hosts: hosts, db: dbProvider}
 }
 
 // ListForHost handles GET /patching/windows-updates/{hostId} (UI-facing).

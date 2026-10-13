@@ -798,6 +798,7 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 		if err != nil {
 			return err
 		}
+		pending = dispatchableItems(pending)
 		if len(pending) == 0 {
 			if err := h.patchRuns.FailRun(ctx, p.PatchRunID, noPatchTargetsMessage); err != nil {
 				return err
@@ -823,6 +824,18 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 }
 
 const noPatchTargetsMessage = "No patch targets: none of the selected updates or apps are pending on this host"
+
+func dispatchableItems(items []db.PatchRunItem) []db.PatchRunItem {
+	out := items[:0]
+	for _, it := range items {
+		switch {
+		case it.Kind == store.PatchItemKindWUA && store.IsValidWUAGuid(it.Identifier),
+			it.Kind == store.PatchItemKindWinget && store.IsValidWingetID(it.Identifier):
+			out = append(out, it)
+		}
+	}
+	return out
+}
 
 type runPatchTarget struct {
 	Kind string `json:"kind"`

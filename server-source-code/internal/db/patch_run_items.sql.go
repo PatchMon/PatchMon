@@ -163,6 +163,17 @@ func (q *Queries) ListPendingPatchRunItems(ctx context.Context, patchRunID strin
 	return items, nil
 }
 
+const lockPatchRunStatus = `-- name: LockPatchRunStatus :one
+SELECT status FROM patch_runs WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) LockPatchRunStatus(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, lockPatchRunStatus, id)
+	var status string
+	err := row.Scan(&status)
+	return status, err
+}
+
 const resolveWindowsPatchTargets = `-- name: ResolveWindowsPatchTargets :many
 SELECT p.name,
     hp.needs_update, hp.wua_guid, hp.wua_revision_number, hp.wua_kb, hp.wua_categories, hp.winget_id,
@@ -280,7 +291,7 @@ FROM jsonb_to_recordset($3::jsonb)
          download_bytes bigint, message text, started_at timestamptz, completed_at timestamptz)
 ON CONFLICT (patch_run_id, kind, identifier) DO UPDATE SET
     revision_number = COALESCE(EXCLUDED.revision_number, patch_run_items.revision_number),
-    title           = EXCLUDED.title,
+    title           = CASE WHEN EXCLUDED.title = EXCLUDED.identifier THEN patch_run_items.title ELSE EXCLUDED.title END,
     kb              = COALESCE(EXCLUDED.kb, patch_run_items.kb),
     status          = EXCLUDED.status,
     result_code     = EXCLUDED.result_code,

@@ -355,6 +355,12 @@ func (s *HostsStore) UpdateComplianceScannerStatus(ctx context.Context, id strin
 	})
 }
 
+// SetRebootStatus records whether the host needs a restart and why.
+func (s *HostsStore) SetRebootStatus(ctx context.Context, hostID string, needsReboot bool, reason *string) error {
+	d := s.db.DB(ctx)
+	return d.Queries.UpdateHostRebootStatus(ctx, db.UpdateHostRebootStatusParams{ID: hostID, NeedsReboot: &needsReboot, RebootReason: reason})
+}
+
 // SetAwaitingPostPatchReport marks a host as awaiting a fresh inventory report after a real patch run completed.
 func (s *HostsStore) SetAwaitingPostPatchReport(ctx context.Context, hostID string, patchRunID *string) error {
 	d := s.db.DB(ctx)

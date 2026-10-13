@@ -64,7 +64,7 @@ FROM jsonb_to_recordset(sqlc.arg('payload')::jsonb)
          download_bytes bigint, message text, started_at timestamptz, completed_at timestamptz)
 ON CONFLICT (patch_run_id, kind, identifier) DO UPDATE SET
     revision_number = COALESCE(EXCLUDED.revision_number, patch_run_items.revision_number),
-    title           = EXCLUDED.title,
+    title           = CASE WHEN EXCLUDED.title = EXCLUDED.identifier THEN patch_run_items.title ELSE EXCLUDED.title END,
     kb              = COALESCE(EXCLUDED.kb, patch_run_items.kb),
     status          = EXCLUDED.status,
     result_code     = EXCLUDED.result_code,
@@ -93,3 +93,6 @@ WHERE hp.host_id = sqlc.arg('host_id')
 
 -- name: DeletePatchRunItems :exec
 DELETE FROM patch_run_items WHERE patch_run_id = $1;
+
+-- name: LockPatchRunStatus :one
+SELECT status FROM patch_runs WHERE id = $1 FOR UPDATE;

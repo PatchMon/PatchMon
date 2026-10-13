@@ -422,6 +422,9 @@ func (s *PatchRunsStore) GetByID(ctx context.Context, id string) (*db.GetPatchRu
 //     shell_output with the authoritative full output from the agent. This
 //     avoids duplication of progress chunks already appended during the run.
 func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, osType, stage, output, errorMessage string) error {
+	if IsWindowsOSType(osType) {
+		return s.updateWindowsOutput(ctx, id, stage, output, errorMessage)
+	}
 	d := s.db.DB(ctx)
 	switch stage {
 	case "started":
@@ -506,6 +509,68 @@ func (s *PatchRunsStore) UpdateOutput(ctx context.Context, id, osType, stage, ou
 	default:
 		return nil
 	}
+}
+
+// updateWindowsOutput applies the same stage transitions as UpdateOutput, but takes
+// packages_affected from the run's items instead of parsing package manager output.
+func (s *PatchRunsStore) updateWindowsOutput(ctx context.Context, id, stage, output, errorMessage string) error {
+	d := s.db.DB(ctx)
+	affected := func() ([]byte, error) {
+		items, err := d.Queries.ListPatchRunItems(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		pkgs := windowsPackagesAffected(stage, items)
+		if len(pkgs) == 0 {
+			return nil, nil
+		}
+		return json.Marshal(pkgs)
+	}
+	switch stage {
+	case "started":
+		return mapActiveRunConflict(d.Queries.UpdatePatchRunStarted(ctx, id))
+	case "progress":
+		if output == "" {
+			return nil
+		}
+		return d.Queries.UpdatePatchRunProgress(ctx, db.UpdatePatchRunProgressParams{ID: id, ShellOutput: output})
+	case "dry_run_completed":
+		b, err := affected()
+		if err != nil {
+			return err
+		}
+		return d.Queries.UpdatePatchRunValidated(ctx, db.UpdatePatchRunValidatedParams{ID: id, ShellOutput: output, PackagesAffected: b})
+	case "completed":
+		if err := d.Queries.UpdatePatchRunCompleted(ctx, db.UpdatePatchRunCompletedParams{ID: id, ShellOutput: output}); err != nil {
+			return err
+		}
+	case "failed":
+		if err := d.Queries.UpdatePatchRunFailed(ctx, db.UpdatePatchRunFailedParams{ID: id, ShellOutput: output, ErrorMessage: &errorMessage}); err != nil {
+			return err
+		}
+	case "cancelled":
+		errPtr := &errorMessage
+		if errorMessage == "" {
+			errPtr = nil
+		}
+		rows, err := d.Queries.UpdatePatchRunCancelled(ctx, db.UpdatePatchRunCancelledParams{ID: id, ShellOutput: output, ErrorMessage: errPtr})
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			outRows, err := d.Queries.UpdatePatchRunCancelledOutput(ctx, db.UpdatePatchRunCancelledOutputParams{ID: id, ShellOutput: output, ErrorMessage: errPtr})
+			if err != nil || outRows == 0 {
+				return err
+			}
+		}
+	default:
+		return nil
+	}
+	b, err := affected()
+	if err != nil || b == nil {
+		return err
+	}
+	return d.Queries.UpdatePatchRunPackagesAffected(ctx, db.UpdatePatchRunPackagesAffectedParams{ID: id, PackagesAffected: b})
 }
 
 // ActivateScheduledRun moves a scheduled run to queued when its window arrives;

@@ -53,3 +53,16 @@ func TestBuildRunPatchMessageWindowsScope(t *testing.T) {
 		})
 	}
 }
+
+func TestDispatchableItemsDropsInvalidIdentifiers(t *testing.T) {
+	got := dispatchableItems([]db.PatchRunItem{
+		{Kind: "wua", Identifier: "7f1b0c5e-1111-2222-3333-444455556666"},
+		{Kind: "wua", Identifier: "KB5044284"},
+		{Kind: "winget", Identifier: "7zip.7zip"},
+		{Kind: "winget", Identifier: "x';calc;'"},
+		{Kind: "apt", Identifier: "curl"},
+	})
+	if len(got) != 2 || got[0].Kind != "wua" || got[1].Identifier != "7zip.7zip" {
+		t.Fatalf("got %+v", got)
+	}
+}
