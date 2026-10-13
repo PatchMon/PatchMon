@@ -52,6 +52,11 @@ WHERE id = sqlc.arg('id');
 -- name: DeleteHostPackagesByHostID :exec
 DELETE FROM host_packages WHERE host_id = $1;
 
+-- name: DeleteHostPackagesExceptWindowsUpdates :exec
+DELETE FROM host_packages hp
+WHERE hp.host_id = $1
+  AND NOT EXISTS (SELECT 1 FROM packages p WHERE p.id = hp.package_id AND p.category = 'Windows Update');
+
 -- name: GetPackageByName :one
 SELECT id, name, description, category, latest_version, created_at, updated_at
 FROM packages WHERE name = $1;

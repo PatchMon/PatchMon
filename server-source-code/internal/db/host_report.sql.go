@@ -206,6 +206,17 @@ func (q *Queries) DeleteHostPackagesByHostID(ctx context.Context, hostID string)
 	return err
 }
 
+const deleteHostPackagesExceptWindowsUpdates = `-- name: DeleteHostPackagesExceptWindowsUpdates :exec
+DELETE FROM host_packages hp
+WHERE hp.host_id = $1
+  AND NOT EXISTS (SELECT 1 FROM packages p WHERE p.id = hp.package_id AND p.category = 'Windows Update')
+`
+
+func (q *Queries) DeleteHostPackagesExceptWindowsUpdates(ctx context.Context, hostID string) error {
+	_, err := q.db.Exec(ctx, deleteHostPackagesExceptWindowsUpdates, hostID)
+	return err
+}
+
 const getPackageByName = `-- name: GetPackageByName :one
 SELECT id, name, description, category, latest_version, created_at, updated_at
 FROM packages WHERE name = $1

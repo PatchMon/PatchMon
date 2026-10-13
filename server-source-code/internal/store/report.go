@@ -151,6 +151,9 @@ type ReportPayload struct {
 	// stored on the matching update_history row so the Agent Activity UI can
 	// show "agent took N ms" alongside the server-processing duration.
 	AgentExecutionMs *int `json:"agentExecutionMs,omitempty"`
+	// WindowsUpdatesOmitted means the agent left its Windows Update rows out of this report
+	// (it could not scan during a patch run); the host's stored ones are kept.
+	WindowsUpdatesOmitted bool `json:"windowsUpdatesOmitted,omitempty"`
 }
 
 // ReportHashes is the four "main report" canonical hashes the agent ships
@@ -345,6 +348,9 @@ func sortReportInputs(payload *ReportPayload) {
 // COALESCE in the UpdateHostFromReport SQL).
 func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload *ReportPayload, sections ReportSections, hashes ReportHashes) (*ProcessReportResult, error) {
 	d := s.db.DB(ctx)
+	if payload.WindowsUpdatesOmitted {
+		payload.Packages = withoutWindowsUpdates(payload.Packages)
+	}
 	securityCount := 0
 	updatesCount := 0
 	for _, p := range payload.Packages {
@@ -559,7 +565,11 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 	// packages section. Without this guard a partial report (e.g. interfaces
 	// only) would wipe the package list and reinsert nothing.
 	if sections.Packages {
-		if err := q.DeleteHostPackagesByHostID(ctx, hostID); err != nil {
+		if payload.WindowsUpdatesOmitted {
+			if err := q.DeleteHostPackagesExceptWindowsUpdates(ctx, hostID); err != nil {
+				return nil, fmt.Errorf("DeleteHostPackagesExceptWindowsUpdates: %w", err)
+			}
+		} else if err := q.DeleteHostPackagesByHostID(ctx, hostID); err != nil {
 			return nil, fmt.Errorf("DeleteHostPackagesByHostID: %w", err)
 		}
 	}
@@ -1064,4 +1074,17 @@ func buildHostPackagesPayload(
 		rows = append(rows, row)
 	}
 	return json.Marshal(rows)
+}
+
+// windowsUpdateCategory is the package category the Windows agent gives every Windows Update row.
+const windowsUpdateCategory = "Windows Update"
+
+func withoutWindowsUpdates(pkgs []ReportPackage) []ReportPackage {
+	out := pkgs[:0]
+	for _, p := range pkgs {
+		if p.Category != windowsUpdateCategory {
+			out = append(out, p)
+		}
+	}
+	return out
 }

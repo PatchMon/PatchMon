@@ -191,6 +191,7 @@ type Querier interface {
 	DeleteHostGroup(ctx context.Context, id string) error
 	DeleteHostGroupMemberships(ctx context.Context, hostID string) error
 	DeleteHostPackagesByHostID(ctx context.Context, hostID string) error
+	DeleteHostPackagesExceptWindowsUpdates(ctx context.Context, hostID string) error
 	DeleteHostRepositoriesByHostID(ctx context.Context, hostID string) error
 	DeleteHostsByIDs(ctx context.Context, dollar_1 []string) error
 	DeleteImageByID(ctx context.Context, id string) error

@@ -129,3 +129,26 @@ func TestBuildHostPackagesPayloadFeatureUpgradeType(t *testing.T) {
 		t.Fatalf("payload = %s", raw)
 	}
 }
+
+func TestWithoutWindowsUpdates(t *testing.T) {
+	got := withoutWindowsUpdates([]ReportPackage{
+		{Name: "7-Zip", Category: "Application"},
+		{Name: "CU (KB1)", Category: "Windows Update"},
+		{Name: "KB5043080", Category: "Windows Update"},
+		{Name: "curl"},
+	})
+	if len(got) != 2 || got[0].Name != "7-Zip" || got[1].Name != "curl" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestDeleteExceptWindowsUpdatesKeepsOnlyThatCategory(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "sqlc", "queries", "host_report.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := namedQueryIn(t, string(b), "DeleteHostPackagesExceptWindowsUpdates")
+	if !strings.Contains(q, "hp.host_id = $1") || !strings.Contains(q, "p.category = '"+windowsUpdateCategory+"'") {
+		t.Fatalf("query does not scope to the host and the Windows Update category:\n%s", q)
+	}
+}
