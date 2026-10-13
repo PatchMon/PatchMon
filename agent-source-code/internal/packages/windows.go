@@ -336,7 +336,11 @@ Get-ChildItem -LiteralPath "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server" | Whe
 }
 $result | ConvertTo-Json -Compress -Depth 2
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
+	cmd, cancel, err := powershellCommand(networkCollectorTimeout, psScript)
+	if err != nil {
+		m.logger.WithError(err).Debug("SQL Server setup registry query failed")
+		return nil
+	}
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
@@ -513,7 +517,11 @@ $ErrorActionPreference = "SilentlyContinue"
   }
 }) | ConvertTo-Json -Compress -Depth 2
 `
-	cmd, cancel := boundedCommand(collectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
+	cmd, cancel, err := powershellCommand(collectorTimeout, psScript)
+	if err != nil {
+		m.logger.WithError(err).Debug("Get-AppxPackage query failed")
+		return nil
+	}
 	defer cancel()
 	start := time.Now()
 	output, err := cmd.Output()
@@ -539,6 +547,15 @@ func parseAppxPackages(output []byte) []appxPackage {
 		return nil
 	}
 	return pkgs
+}
+
+func powershellCommand(timeout time.Duration, script string) (*exec.Cmd, context.CancelFunc, error) {
+	ps, err := powershellPath()
+	if err != nil {
+		return nil, nil, err
+	}
+	cmd, cancel := boundedCommand(timeout, ps, "-NoProfile", "-NonInteractive", "-Command", winexec.Script(script))
+	return cmd, cancel, nil
 }
 
 // normalizePackageName lowercases and trims for fuzzy matching between registry and WinGet names
@@ -614,7 +631,11 @@ foreach ($path in $paths) {
 if ($result.Count -gt 5000) { $result = $result[0..4999] }
 $result | ConvertTo-Json -Compress -Depth 3
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
+	cmd, cancel, err := powershellCommand(networkCollectorTimeout, psScript)
+	if err != nil {
+		m.logger.WithError(err).Warn("Registry Uninstall query failed")
+		return nil
+	}
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
@@ -1010,7 +1031,11 @@ $server = (Get-ItemProperty -Path $wuKey -Name WUServer -ErrorAction SilentlyCon
 $useWU = (Get-ItemProperty -Path "$wuKey\AU" -Name UseWUServer -ErrorAction SilentlyContinue).UseWUServer
 if ($server -and $useWU -eq 1) { "WSUS_ACTIVE" } else { "WSUS_INACTIVE" }
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
+	cmd, cancel, err := powershellCommand(networkCollectorTimeout, psScript)
+	if err != nil {
+		m.logger.WithError(err).Debug("Failed to check WSUS status")
+		return false
+	}
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
@@ -1142,7 +1167,11 @@ if ($comFailed) {
 
 $result | ConvertTo-Json -Compress -Depth 4
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
+	cmd, cancel, err := powershellCommand(networkCollectorTimeout, psScript)
+	if err != nil {
+		m.logger.WithError(err).Warn("Failed to query Windows updates")
+		return nil
+	}
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
