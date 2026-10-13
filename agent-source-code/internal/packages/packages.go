@@ -4,9 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"runtime"
-	"strings"
 
+	"patchmon-agent/internal/pkgmgr"
 	"patchmon-agent/internal/textsan"
 	"patchmon-agent/pkg/models"
 
@@ -87,55 +86,7 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 // DetectPackageManager detects which package manager is available on the system.
 // Returns one of: apt, dnf, yum, apk, pacman, pkg, windows, or unknown.
 func (m *Manager) DetectPackageManager() string {
-	// Check for Windows first (runtime check, no exec)
-	if runtime.GOOS == "windows" {
-		return "windows"
-	}
-	// Check for FreeBSD pkg first (avoid confusion with other 'pkg' tools).
-	// When the agent runs as an rc.d service, PATH may be minimal, so also check
-	// standard FreeBSD paths explicitly so package reports still work on pfSense/FreeBSD.
-	if runtime.GOOS == "freebsd" {
-		for _, pkgPath := range []string{"/usr/sbin/pkg", "/usr/local/sbin/pkg"} {
-			if info, err := os.Stat(pkgPath); err == nil && info.Mode().IsRegular() && (info.Mode()&0111) != 0 {
-				return "pkg"
-			}
-		}
-	}
-	if _, err := exec.LookPath("pkg"); err == nil {
-		if output, err := exec.Command("uname", "-s").Output(); err == nil {
-			if strings.TrimSpace(string(output)) == "FreeBSD" {
-				return "pkg"
-			}
-		}
-	}
-
-	// Check for APK (Alpine Linux)
-	if _, err := exec.LookPath("apk"); err == nil {
-		return "apk"
-	}
-
-	// Check for APT
-	if _, err := exec.LookPath("apt"); err == nil {
-		return "apt"
-	}
-	if _, err := exec.LookPath("apt-get"); err == nil {
-		return "apt"
-	}
-
-	// Check for DNF/YUM
-	if _, err := exec.LookPath("dnf"); err == nil {
-		return "dnf"
-	}
-	if _, err := exec.LookPath("yum"); err == nil {
-		return "yum"
-	}
-
-	// Check for Pacman
-	if _, err := exec.LookPath("pacman"); err == nil {
-		return "pacman"
-	}
-
-	return "unknown"
+	return pkgmgr.Detect()
 }
 
 // GetPkgBinaryPath returns the path to the FreeBSD pkg binary.
