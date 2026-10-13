@@ -704,7 +704,7 @@ func (m *WindowsManager) runWingetList(args ...string) (string, bool) {
 		m.logger.WithError(err).WithFields(logutil.SanitizeMap(fields)).Warn("winget failed")
 		return "", false
 	}
-	return string(output), true
+	return stripTerminalControls(string(output)), true
 }
 
 type wingetRow struct {
