@@ -382,7 +382,7 @@ func needsAppxState(pkgs []models.Package, origins []appOrigin) bool {
 		return true
 	}
 	for _, o := range origins {
-		if _, ok := appxNameFromFamily(o.wingetID); ok {
+		if _, ok := appxNameFromFamily(o.wingetID); ok && !o.registry {
 			return true
 		}
 	}
@@ -493,12 +493,15 @@ func indexAppxPackages(appx []appxPackage) map[string]*appxVersions {
 }
 
 func appxVersionsForRow(byName map[string]*appxVersions, p models.Package, o appOrigin) (*appxVersions, bool) {
+	if !o.registry {
+		if name, ok := appxNameFromFamily(o.wingetID); ok {
+			if v, found := byName[normalizePackageName(name)]; found {
+				return v, true
+			}
+		}
+	}
 	if looksLikeAppxName(p.Name) {
 		return appxVersionsFor(byName, normalizePackageName(p.Name))
-	}
-	if name, ok := appxNameFromFamily(o.wingetID); ok {
-		v, found := byName[normalizePackageName(name)]
-		return v, found
 	}
 	return nil, false
 }

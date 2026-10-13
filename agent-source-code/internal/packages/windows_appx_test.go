@@ -262,6 +262,28 @@ func TestApplyAppxInstallState(t *testing.T) {
 			wantNeeds: true,
 		},
 		{
+			name:   "registry row carrying a matched winget family Id keeps its own version",
+			pkg:    models.Package{Name: "Microsoft Teams classic", CurrentVersion: "1.7.00.13456", AvailableVersion: "1.8.00.1234", NeedsUpdate: true},
+			origin: appOrigin{registry: true, wingetID: "MSTeams_8wekyb3d8bbwe"},
+			appx: []appxPackage{
+				{"MSTeams", "24295.605.3225.8804", "Installed"},
+				{"MSTeams", "24243.1309.3132.617", "Staged"},
+			},
+			wantVer:   "1.7.00.13456",
+			wantAvail: "1.8.00.1234",
+			wantNeeds: true,
+		},
+		{
+			name:   "family Id is matched exactly before the name prefix",
+			pkg:    models.Package{Name: "Microsoft.Bing", CurrentVersion: "4.55.62231.0"},
+			origin: appOrigin{wingetID: "Microsoft.BingNews_8wekyb3d8bbwe"},
+			appx: []appxPackage{
+				{"Microsoft.BingNews", "4.55.62231.0", "Staged"},
+				{"Microsoft.BingWeather", "4.54.63045.0", "Staged"},
+			},
+			wantDrop: true,
+		},
+		{
 			name:     "friendly name with a family Id that is only a prefix is untouched",
 			pkg:      models.Package{Name: "Microsoft News", CurrentVersion: "4.55.62231.0"},
 			origin:   appOrigin{wingetID: "Microsoft.Bing_8wekyb3d8bbwe"},
@@ -476,6 +498,9 @@ func TestNeedsAppxStateForFamilyIDOnly(t *testing.T) {
 	}
 	if !needsAppxState(pkgs, []appOrigin{{wingetID: "Microsoft.WindowsTerminal_8wekyb3d8bbwe"}}) {
 		t.Error("a package family Id must trigger the Appx query")
+	}
+	if needsAppxState(pkgs, []appOrigin{{registry: true, wingetID: "Microsoft.WindowsTerminal_8wekyb3d8bbwe"}}) {
+		t.Error("a family Id on a registry row must not trigger the Appx query")
 	}
 }
 
