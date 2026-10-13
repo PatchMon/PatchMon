@@ -49,7 +49,9 @@ func TestPlanWindowsRunAgentVersionGate(t *testing.T) {
 		{"missing", nil, true},
 		{"empty", strp(""), true},
 		{"older", strp("2.1.4"), true},
-		{"pre-release of minimum", strp("2.1.5-rc.1"), true},
+		{"pre-release of older", strp("2.1.4-rc.9"), true},
+		{"pre-release of minimum", strp("2.1.5-rc.1"), false},
+		{"numeric pre-release of minimum", strp("2.1.5-1"), false},
 		{"minimum", strp(MinWindowsPatchAgentVersion), false},
 		{"newer", strp("2.2.0"), false},
 	}

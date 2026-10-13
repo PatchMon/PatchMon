@@ -15,6 +15,9 @@ import (
 // MinWindowsPatchAgentVersion is the oldest agent that may be sent a Windows patch run.
 const MinWindowsPatchAgentVersion = "2.1.5"
 
+// Lowest semver pre-release of the minimum, so 2.1.5-rc.N builds pass the gate.
+const minWindowsPatchAgentFloor = MinWindowsPatchAgentVersion + "-0"
+
 const (
 	maxPatchTargets          = 100
 	maxWindowsPackageNameLen = 512
@@ -57,7 +60,7 @@ func windowsAgentVersionError(agentVersion *string) *runRequestError {
 	if agentVersion != nil {
 		v = *agentVersion
 	}
-	if v != "" && util.CompareVersions(v, MinWindowsPatchAgentVersion) >= 0 {
+	if v != "" && util.CompareVersions(v, minWindowsPatchAgentFloor) >= 0 {
 		return nil
 	}
 	return badRunRequest("Update the PatchMon agent on this host to v" + MinWindowsPatchAgentVersion + " or later to patch Windows")
