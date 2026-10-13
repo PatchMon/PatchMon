@@ -296,21 +296,24 @@ func dbDashboardLayoutToModel(d db.DashboardLayout) models.DashboardLayout {
 
 func dbDockerContainerToModel(d db.DockerContainer) models.DockerContainer {
 	return models.DockerContainer{
-		ID:          d.ID,
-		HostID:      d.HostID,
-		ContainerID: d.ContainerID,
-		Name:        d.Name,
-		ImageID:     d.ImageID,
-		ImageName:   d.ImageName,
-		ImageTag:    d.ImageTag,
-		Status:      d.Status,
-		State:       d.State,
-		Ports:       models.JSON(d.Ports),
-		Labels:      models.JSON(d.Labels),
-		CreatedAt:   pgTime(d.CreatedAt),
-		StartedAt:   pgTimePtr(d.StartedAt),
-		UpdatedAt:   pgTime(d.UpdatedAt),
-		LastChecked: pgTime(d.LastChecked),
+		ID:           d.ID,
+		HostID:       d.HostID,
+		ContainerID:  d.ContainerID,
+		Name:         d.Name,
+		ImageID:      d.ImageID,
+		ImageName:    d.ImageName,
+		ImageTag:     d.ImageTag,
+		Status:       d.Status,
+		State:        d.State,
+		Ports:        models.JSON(d.Ports),
+		Labels:       models.JSON(d.Labels),
+		CreatedAt:    pgTime(d.CreatedAt),
+		StartedAt:    pgTimePtr(d.StartedAt),
+		UpdatedAt:    pgTime(d.UpdatedAt),
+		LastChecked:  pgTime(d.LastChecked),
+		ImageStale:   d.ImageStale,
+		RestartCount: int(d.RestartCount),
+		ImageDigest:  d.ImageDigest,
 	}
 }
 
@@ -327,20 +330,6 @@ func dbDockerImageToModel(d db.DockerImage) models.DockerImage {
 		LastPulled:  pgTimePtr(d.LastPulled),
 		LastChecked: pgTime(d.LastChecked),
 		UpdatedAt:   pgTime(d.UpdatedAt),
-	}
-}
-
-func dbDockerImageUpdateToModel(d db.DockerImageUpdate) models.DockerImageUpdate {
-	return models.DockerImageUpdate{
-		ID:               d.ID,
-		ImageID:          d.ImageID,
-		CurrentTag:       d.CurrentTag,
-		AvailableTag:     d.AvailableTag,
-		IsSecurityUpdate: d.IsSecurityUpdate,
-		Severity:         d.Severity,
-		ChangelogURL:     d.ChangelogUrl,
-		CreatedAt:        pgTime(d.CreatedAt),
-		UpdatedAt:        pgTime(d.UpdatedAt),
 	}
 }
 

@@ -19,6 +19,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 	"github.com/hibiken/asynq"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -675,6 +676,34 @@ func (h *HostsHandler) RefreshDocker(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"message": "Docker inventory refresh queued",
 		"jobId":   info.ID,
+		"host": map[string]interface{}{
+			"id":           host.ID,
+			"friendlyName": host.FriendlyName,
+			"apiId":        host.ApiID,
+		},
+	})
+}
+
+// DockerImageCheck handles POST /hosts/:hostId/docker-image-check.
+func (h *HostsHandler) DockerImageCheck(w http.ResponseWriter, r *http.Request) {
+	hostID := chi.URLParam(r, "hostId")
+	host, err := h.hosts.GetByID(r.Context(), hostID)
+	if err != nil || host == nil {
+		Error(w, http.StatusNotFound, "Host not found")
+		return
+	}
+	if h.registry == nil || !h.registry.IsConnected(host.ApiID) || h.registry.Get(host.ApiID).Scope != hostctx.TenantHostKey(r.Context()) {
+		Error(w, http.StatusConflict, "Agent is not connected, so the image update check cannot be started")
+		return
+	}
+	if err := h.registry.SendMessage(host.ApiID, websocket.TextMessage, dockerImageCheckCommand); err != nil {
+		slog.Warn("docker image check: send failed", "host_id", host.ID, "error", err)
+		Error(w, http.StatusServiceUnavailable, "Failed to send the image update check to the agent")
+		return
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "Docker image update check requested",
 		"host": map[string]interface{}{
 			"id":           host.ID,
 			"friendlyName": host.FriendlyName,

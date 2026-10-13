@@ -17,6 +17,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 
 	"golang.org/x/text/unicode/norm"
 	"patchmon-agent/pkg/models"
@@ -237,6 +238,8 @@ type DockerContainerHashRow struct {
 	ImageID         string `json:"imageId"`
 	Status          string `json:"status"`
 	State           string `json:"state"`
+	ImageStale      bool   `json:"imageStale,omitempty"`
+	StartedAt       string `json:"startedAt,omitempty"`
 }
 
 // DockerImageHashRow mirrors the server's row.
@@ -282,6 +285,13 @@ type dockerHashEnvelope struct {
 	Updates    []DockerImageUpdateHashRow `json:"updates"`
 }
 
+func canonicalTime(t *time.Time) string {
+	if t == nil || t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
 // DockerHash hashes the agent's docker payload.
 func DockerHash(d *models.DockerData) (string, error) {
 	if d == nil {
@@ -298,6 +308,8 @@ func DockerHash(d *models.DockerData) (string, error) {
 			ImageID:         nfc(c.ImageID),
 			Status:          nfc(c.Status),
 			State:           nfc(c.State),
+			ImageStale:      c.ImageStale,
+			StartedAt:       canonicalTime(c.StartedAt),
 		})
 	}
 	sort.SliceStable(containers, func(i, j int) bool {

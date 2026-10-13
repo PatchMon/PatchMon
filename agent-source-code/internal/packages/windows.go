@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"patchmon-agent/internal/logutil"
@@ -99,9 +100,9 @@ func (m *WindowsManager) appPackages() []models.Package {
 
 	// 3. Merge: start with registry baseline, enrich with WinGet update info
 	appPackages := m.mergeRegistryAndWinget(regPackages, wingetPackages)
-	if hasAppxUpdateCandidate(appPackages) {
+	if hasAppxStyleName(appPackages) {
 		if suppressed := applyAppxInstallState(appPackages, m.getAppxPackages()); len(suppressed) > 0 {
-			m.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{"packages": suppressed})).Debug("Update flag cleared: winget version reflects a staged Appx copy")
+			m.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{"packages": suppressed})).Debug("Update flag cleared: a newer Appx copy is installed than winget reports")
 		}
 	}
 	m.logger.WithField("count", len(appPackages)).Info("Application packages after merge")
@@ -364,9 +365,9 @@ func parseSQLServerSetups(output []byte) []sqlServerSetup {
 	return setups
 }
 
-func hasAppxUpdateCandidate(pkgs []models.Package) bool {
+func hasAppxStyleName(pkgs []models.Package) bool {
 	for _, p := range pkgs {
-		if p.NeedsUpdate && looksLikeAppxName(p.Name) {
+		if looksLikeAppxName(p.Name) {
 			return true
 		}
 	}
@@ -441,7 +442,7 @@ func applyAppxInstallState(pkgs []models.Package, appx []appxPackage) (suppresse
 		}
 	}
 	for i := range pkgs {
-		if !pkgs[i].NeedsUpdate || !looksLikeAppxName(pkgs[i].Name) {
+		if !looksLikeAppxName(pkgs[i].Name) {
 			continue
 		}
 		v, exact := appxVersionsFor(byName, normalizePackageName(pkgs[i].Name))
@@ -449,22 +450,23 @@ func applyAppxInstallState(pkgs []models.Package, appx []appxPackage) (suppresse
 			continue
 		}
 		current := pkgs[i].CurrentVersion
-		switch {
-		case v.hasStaged(current):
+		if v.hasStaged(current) {
 			if c, _ := compareDottedVersions(v.installed, current); c <= 0 {
 				continue
 			}
 			pkgs[i].CurrentVersion = v.installed
-			pkgs[i].NeedsUpdate = installedIsOlder(v.installed, pkgs[i].AvailableVersion)
-		case exact && isDottedNumeric(current) && !sameVersionScheme(current, v.installed) && v.newerThanAllStaged():
-			pkgs[i].CurrentVersion = v.installed
-			pkgs[i].NeedsUpdate = false
-			suppressed = append(suppressed, pkgs[i].Name)
-		default:
+			if pkgs[i].NeedsUpdate && !installedIsOlder(v.installed, pkgs[i].AvailableVersion) {
+				pkgs[i].NeedsUpdate = false
+				pkgs[i].AvailableVersion = ""
+				suppressed = append(suppressed, pkgs[i].Name)
+			}
 			continue
 		}
-		if !pkgs[i].NeedsUpdate {
+		if pkgs[i].NeedsUpdate && exact && isDottedNumeric(current) && !sameVersionScheme(current, v.installed) && v.newerThanAllStaged() {
+			pkgs[i].CurrentVersion = v.installed
+			pkgs[i].NeedsUpdate = false
 			pkgs[i].AvailableVersion = ""
+			suppressed = append(suppressed, pkgs[i].Name)
 		}
 	}
 	return suppressed
@@ -508,12 +510,15 @@ $ErrorActionPreference = "SilentlyContinue"
 `
 	cmd, cancel := boundedCommand(collectorTimeout, winexec.PowerShellPath(), "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
+	start := time.Now()
 	output, err := cmd.Output()
 	if err != nil {
 		m.logger.WithError(err).Debug("Get-AppxPackage query failed")
 		return nil
 	}
-	return parseAppxPackages(output)
+	pkgs := parseAppxPackages(output)
+	m.logger.WithFields(logrus.Fields{"count": len(pkgs), "elapsed_ms": time.Since(start).Milliseconds()}).Debug("Collected Appx install state")
+	return pkgs
 }
 
 func parseAppxPackages(output []byte) []appxPackage {

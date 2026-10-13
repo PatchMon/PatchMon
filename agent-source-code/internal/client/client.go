@@ -213,6 +213,36 @@ func (c *Client) SendDockerData(ctx context.Context, payload *models.DockerPaylo
 	return result, nil
 }
 
+// SendDockerImageChecks uploads the latest Docker image update check results.
+func (c *Client) SendDockerImageChecks(ctx context.Context, payload *models.DockerImageCheckPayload) (*models.DockerImageCheckResponse, error) {
+	url := fmt.Sprintf("%s/api/%s/integrations/docker/image-checks", c.config.PatchmonServer, c.config.APIVersion)
+
+	resp, err := c.client.R().
+		SetContext(ctx).
+		SetHeader("Content-Type", "application/json").
+		SetHeader("X-API-ID", c.credentials.APIID).
+		SetHeader("X-API-KEY", c.credentials.APIKey).
+		SetBody(payload).
+		SetResult(&models.DockerImageCheckResponse{}).
+		Post(url)
+
+	if err != nil {
+		return nil, fmt.Errorf("docker image check request failed: %w", err)
+	}
+
+	if resp.StatusCode() != 200 {
+		c.logger.WithField("response", resp.String()).Debug("Full error response from docker image check request")
+		return nil, fmt.Errorf("docker image check request failed with status %d: %s", resp.StatusCode(), truncateResponse(resp.String(), 200))
+	}
+
+	result, ok := resp.Result().(*models.DockerImageCheckResponse)
+	if !ok {
+		return nil, fmt.Errorf("invalid response format")
+	}
+
+	return result, nil
+}
+
 // GetIntegrationStatus gets the current integration status from server
 func (c *Client) GetIntegrationStatus(ctx context.Context) (*models.IntegrationStatusResponse, error) {
 	url := fmt.Sprintf("%s/api/%s/hosts/integrations", c.config.PatchmonServer, c.config.APIVersion)

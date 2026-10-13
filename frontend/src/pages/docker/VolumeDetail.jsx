@@ -24,7 +24,7 @@ const VolumeDetail = () => {
 	});
 
 	const volume = data?.volume;
-	const host = data?.host;
+	const host = data?.hosts;
 
 	if (isLoading) {
 		return (
@@ -279,7 +279,7 @@ const VolumeDetail = () => {
 										to={`/hosts/${host.id}`}
 										className="text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300"
 									>
-										{host.hostname}
+										{host.friendly_name || host.hostname}
 									</Link>
 								</dd>
 							</div>
@@ -288,7 +288,8 @@ const VolumeDetail = () => {
 									Operating System
 								</dt>
 								<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
-									{host.os_name} {host.os_version}
+									{[host.os_type, host.os_version].filter(Boolean).join(" ") ||
+										"Unknown"}
 								</dd>
 							</div>
 						</dl>

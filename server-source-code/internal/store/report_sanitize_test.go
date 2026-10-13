@@ -190,7 +190,6 @@ func TestSanitizeDockerPayload_StripsNulsEverywhere(t *testing.T) {
 		Images:   []DockerReceiveImage{{Repository: "nginx" + nul, Tag: "latest" + nul, Digest: "sha256:x" + nul}},
 		Volumes:  []DockerReceiveVolume{{Name: "data" + nul, Mountpoint: "/var/lib/x" + nul, Options: map[string]string{"o" + nul: "bind" + nul}}},
 		Networks: []DockerReceiveNetwork{{Name: "bridge" + nul, Driver: "bridge" + nul, Labels: map[string]string{"k" + nul: "v" + nul}}},
-		Updates:  []DockerReceiveImageUpdate{{Repository: "nginx" + nul, AvailableTag: "1.28" + nul}},
 	}
 
 	sanitizeDockerPayload(p)
@@ -202,8 +201,7 @@ func TestSanitizeDockerPayload_StripsNulsEverywhere(t *testing.T) {
 		"image.Repository": p.Images[0].Repository, "image.Tag": p.Images[0].Tag,
 		"image.Digest": p.Images[0].Digest, "volume.Name": p.Volumes[0].Name,
 		"volume.Mountpoint": p.Volumes[0].Mountpoint, "network.Name": p.Networks[0].Name,
-		"network.Driver": p.Networks[0].Driver, "update.Repository": p.Updates[0].Repository,
-		"update.AvailableTag": p.Updates[0].AvailableTag,
+		"network.Driver": p.Networks[0].Driver,
 	} {
 		if strings.ContainsRune(got, 0) {
 			t.Errorf("%s still contains NUL: %q", name, got)

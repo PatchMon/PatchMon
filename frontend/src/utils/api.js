@@ -222,6 +222,8 @@ export const adminHostsAPI = {
 	requestComplianceStatus: (hostId) =>
 		api.post(`/hosts/${hostId}/integrations/compliance/request-status`),
 	refreshDocker: (hostId) => api.post(`/hosts/${hostId}/refresh-docker`),
+	checkDockerImages: (hostId) =>
+		api.post(`/hosts/${hostId}/docker-image-check`),
 	setComplianceMode: (hostId, mode) =>
 		api.post(`/hosts/${hostId}/integrations/compliance/mode`, {
 			mode: mode,
@@ -234,6 +236,10 @@ export const adminHostsAPI = {
 		api.post(`/hosts/${hostId}/compliance/on-demand-only`, {
 			on_demand_only: onDemandOnly,
 		}),
+};
+
+export const dockerAPI = {
+	runImageChecks: () => api.post("/docker/image-checks/run"),
 };
 
 // Host Groups API

@@ -815,6 +815,8 @@ Appears only when the host has actually reported a working Docker integration on
 
 Sub-tabs: **Stacks**, **Containers**, **Images**, **Volumes**, **Networks**. Each sub-tab shows counts in a badge next to its name.
 
+The containers and images lists show an update status for each row, and users with `can_manage_hosts` get a **Check for updates** button that runs the image update check on this host straight away. See [Image Update Checks](#image-update-checks).
+
 Requires the `docker` module to be enabled on your plan. Plans without the module show a tier badge on the tab and an upgrade prompt inside.
 
 ### Patching
@@ -2309,7 +2311,7 @@ Terminal runs (`completed`, `failed`, `cancelled`, `dry_run_completed`) cannot b
 
 ### Overview
 
-The PatchMon agent includes an optional **Docker integration** that discovers containers, images, volumes, and networks on the host and reports them to the PatchMon server. When enabled, the agent also subscribes to the Docker event stream and relays container lifecycle events (start, stop, die, pause, unpause, kill, destroy) as status updates, keeping the fleet-wide Docker inventory broadly in sync with what is running.
+The PatchMon agent includes an optional **Docker integration** that discovers containers, images, volumes, and networks on the host and reports them to the PatchMon server. When enabled, the agent also watches the Docker event stream and sends a fresh inventory within seconds of a container being created, started, stopped or removed, and it checks each image's registry for a newer image behind the same tag.
 
 This page covers what the integration does, how to enable it per host from the PatchMon UI, what the agent needs on the host, how `config.yml` reflects the toggle, and what to check when the integration doesn't report.
 
@@ -2322,9 +2324,9 @@ This page covers what the integration does, how to enable it per host from the P
 When enabled on a host, the agent:
 
 1. **Discovers inventory on each report**: lists all containers (running and stopped), images (including intermediate layers PatchMon elects to ignore), volumes (local / NFS / custom driver), and networks (bridge / host / overlay / macvlan / user-defined).
-2. **Streams container events in real time**: subscribes to the Docker daemon's event bus. Each relevant event (start, stop, die, pause, unpause, kill, destroy) is translated into a `container_start` / `container_stop` / `container_die` / `container_pause` / `container_unpause` / `container_kill` / `container_destroy` status event and pushed to the server over the agent's WebSocket.
+2. **Reacts to container changes**: subscribes to the Docker daemon's event bus. When a container is created, started, stopped, paused, unpaused, killed, or destroyed, the agent waits five seconds (so a burst of events such as `docker compose up` becomes one update), collects the inventory again and sends it. Container state in PatchMon is normally current within seconds.
 3. **Resolves image provenance**: for each image, PatchMon attempts to attribute it to a registry (Docker Hub, GHCR, GitLab, Quay, ECR, ACR, GCR, local, private) and makes the registry entry clickable when possible.
-4. **Tracks available updates**: compares the running image tag against available tags in the registry (where the registry allows it) and flags images with newer versions.
+4. **Checks images for updates**: asks each image's registry which image its tag points at now and compares that with the image on the host. It also notices containers still running an older image after a newer one has been pulled. See [Image Update Checks](#image-update-checks).
 5. **Feeds the Compliance module**: if compliance scanning is also enabled for the host, Docker Bench for Security can run as an additional scanner (see the Compliance chapter).
 
 The resulting data powers two places in the UI:
@@ -2474,6 +2476,7 @@ Typical messages:
 - `Docker socket not found`: Docker isn't installed, or the socket has a non-standard path.
 - `Failed to create Docker client`: the socket exists but the agent can't open a client; check permissions.
 - `Docker container event`: confirms the event stream is active and receiving events.
+- `Docker image update check finished`: an update check completed, with counts of images found up to date, with an update, or unknown. Set `log_level: debug` to see the reason for each unknown result.
 - `Docker daemon ping failed, retrying`: Docker is installed but unresponsive. The agent will keep retrying.
 
 For the full logging reference, see Managing the PatchMon Agent.
@@ -2508,11 +2511,11 @@ Once the **Docker integration** is enabled on one or more hosts, PatchMon aggreg
 
 This page is a guided tour of `/docker` (the fleet view), `/docker/hosts/:id` (per-host view), and the detail pages for containers, images, volumes, and networks.
 
-Each Docker report from a host replaces that host's containers, volumes and networks, so anything removed on the host disappears from PatchMon on the next report. If the agent cannot read one of these lists from Docker, the previous entries are kept rather than cleared. Images are shared between hosts and are removed by the daily inventory cleanup once no container uses them.
+Each Docker report from a host replaces that host's containers, volumes and networks, so anything removed on the host disappears from PatchMon on the next report. If the agent cannot read one of these lists from Docker, the previous entries are kept rather than cleared. Images are shared between hosts. Each report also records which images are present on that host, and the daily inventory cleanup removes an image once no container uses it and no host still has it.
 
 **Module required:** `docker`. Plans without the module show a tier-badge prompt on the Docker tab and the `/docker` routes. Contact your PatchMon administrator to enable it.
 
-**Permission required:** `can_view_hosts` to view the inventory; `can_manage_hosts` to delete Docker resources from the UI.
+**Permission required:** `can_view_hosts` to view the inventory; `can_manage_docker` to delete Docker resources and to run **Check for updates** across the fleet; `can_manage_hosts` to run **Check for updates** on a single host.
 
 ### Getting to the Docker Page
 
@@ -2529,7 +2532,7 @@ Four summary cards sit above the tabs:
 | **Hosts with Docker** | Hosts actively reporting Docker inventory | – |
 | **Running Containers** | `running / total` counts across the fleet | – |
 | **Total Images** | Distinct images reported across all hosts | – |
-| **Updates Available** | Images PatchMon knows have newer tags in their registry | Opens the **Images** tab filtered to *Updates available* |
+| **Updates Available** | Images whose registry now has a different image for the tag in use. The line underneath shows how many containers need recreating and when the last update check reported | Opens the **Images** tab filtered to *Update available* |
 
 These figures come from the `/docker/dashboard` endpoint and are refreshed every **30 seconds** automatically while the page is open.
 
@@ -2575,7 +2578,7 @@ Filters:
 
 Actions:
 
-- **Delete** (trash icon): deletes the container via the agent. Requires `can_manage_hosts`. Errors are surfaced in an alert.
+- **Delete** (trash icon): deletes the container via the agent. Requires `can_manage_docker`. Errors are surfaced in an alert.
 
 #### Images tab
 
@@ -2585,9 +2588,11 @@ One row per image. Rows show:
 - Size.
 - Source (Docker Hub, GHCR, GitLab, Quay, ECR, ACR, GCR, local, private, unknown) as a coloured badge.
 - Container count: how many containers on which hosts reference this image.
-- Update indicator: a chip when a newer tag is available in the registry.
+- Update status: a badge such as **Update available** or **Up to date**, plus a **Recreate needed** badge when containers on some host are still running an older copy. See [Image Update Checks](#image-update-checks) for what each status means.
 
-Filters include source type and an **Updates available** filter (the same filter the top **Updates Available** card opens).
+Filters include source type and an update status filter: **Update available**, **Recreate needed**, **Up to date**, **Unknown**, and **Not checked**. The top **Updates Available** card opens the same view filtered to **Update available**.
+
+Users with `can_manage_docker` see a **Check for updates** button at the top of the page. It asks every connected Docker host to run its image update check now, and a message tells you how many hosts were asked and how many were skipped because their agent is offline. Results appear as each agent reports back.
 
 Clicking an image opens `/docker/images/:id`: the image detail page with a list of the hosts that have the image and the containers using it.
 
@@ -2625,8 +2630,9 @@ The URL `/docker/hosts/:id` (and the row link on the **Hosts** tab) opens a view
 
 - The host's friendly name, hostname, and a link back to the main Host Detail page.
 - Container and image counts, running / exited / paused breakdowns.
-- The host's container list, grouped by stack where available.
-- The host's image list.
+- The host's container list, grouped by stack where available, with each container's update status.
+- Every image on the host, including images no container uses, with the update status this host reported for each.
+- A **Check for updates** button (requires `can_manage_hosts`) that runs the image update check on this host now. The agent must be connected.
 
 This view is equivalent to the **Docker** tab on the host's main Host Detail page (see [Host Detail Page](#host-detail-page)). Either works. Pick whichever route you land on.
 
@@ -2636,7 +2642,7 @@ Each Docker resource has its own detail page. They follow the same pattern: top 
 
 #### Container detail: `/docker/containers/:id`
 
-Shows the container's name, image, status, ports, host, created and started timestamps, restart policy, command and entrypoint, labels, mounts, and networks.
+Shows the container's name, image, status, ports, host, created and started timestamps, restart count, restart policy, command and entrypoint, labels, mounts, and networks. The **Update Status** field shows **Recreate needed** when a newer image for the container's tag is already on the host, otherwise the update status of the container's image on that host.
 
 A **Similar containers** strip at the bottom lists other containers using the same image across the fleet, useful for "is this `redis:7` running anywhere else?" questions.
 
@@ -2646,10 +2652,10 @@ Shows repository, tag, digest, size, architecture, OS, labels, history (layers),
 
 Below, two lists:
 
-- **Hosts with this image**: every host pulling it, with the tag they currently have.
-- **Containers using this image**: every container across the fleet referencing this image.
+- **Hosts with this image**: every host that has the image, whether or not a container uses it.
+- **Containers using this image**: every container across the fleet referencing this image, with its update status.
 
-An **Updates** panel appears when a newer tag is available in the source registry.
+An update check table lists, for each host, the status, the digest of the image on the host, the digest the registry returned, the reason when the result is **Unknown**, and when the check ran. Digests are shortened; hover to see the full value.
 
 #### Volume detail: `/docker/volumes/:id`
 
@@ -2659,39 +2665,84 @@ Shows driver, mountpoint, size (when Docker reports it), labels, and options. Th
 
 Shows driver, scope, IPAM configuration, and options. The **Containers attached** list shows what's connected to the network.
 
+### Image Update Checks {#image-update-checks}
+
+PatchMon tells you when the tag a container runs, such as `nginx:1.27` or `postgres:16`, now points at a different image in its registry. That is how you find out that an image was rebuilt with security fixes under the same tag. It does not suggest newer version tags: it will not tell you that `nginx:1.28` exists when you run `nginx:1.27`.
+
+#### How a check works
+
+The agent on each host does the checking, not the PatchMon server:
+
+- For every tagged image on the host, the agent asks the image's registry which image the tag points at now (its digest) and compares it with the digest of the copy on the host.
+- It only asks for the digest. It does not pull or download the image, and the requests do not count towards Docker Hub's pull rate limits.
+- It uses the host's own network connection and the registry logins already on the host (from `docker login`), so private registries work wherever Docker itself can pull. Credentials are never sent to PatchMon.
+- Each image is checked once per run even when several containers use it.
+
+Checks run automatically on each agent about **2 minutes after the agent starts**, then **every 6 hours** by default. The interval, or switching the check off, is set per host in the agent's `config.yml` (see the Agent config.yml Reference in the Operator Guide). A check you request with **Check for updates** runs straight away, unless that host has the check switched off or a check is already running.
+
+The **Check for updates** button appears in two places:
+
+| Where | What it checks | Permission |
+|-------|----------------|------------|
+| Top of the `/docker` page | Every connected host with Docker data | `can_manage_docker` |
+| Per-host Docker view and the **Docker** tab on Host Detail | That host only | `can_manage_hosts` |
+
+Hosts whose agent is offline are skipped, so check them again once they reconnect.
+
+#### What the statuses mean
+
+| Status | Meaning |
+|--------|---------|
+| **Update available** | The registry has a different image for this tag than the one on the host. Pull the image and recreate the container to pick it up. |
+| **Recreate needed** | A newer image for the container's tag is already pulled on this host, but the container still runs the old one. Recreate the container (for example `docker compose up -d`). Shown for containers, and as a count on images. |
+| **Up to date** | The registry's image for this tag matches the one on the host. Hover to see when it was checked. |
+| **Unknown** | The check ran but could not reach a conclusion. Hover to see the reason (below). PatchMon never shows an inconclusive check as up to date. |
+| **Local build** | The image was built on the host rather than pulled, so there is no registry image to compare with. |
+| **Pinned digest** | A container refers to this image by its digest (`image@sha256:...`), so the image behind that reference cannot change. |
+| **Untagged** | The image has no tag to check, for example an old copy left behind after a newer pull took over its tag. |
+| **Not checked** | No check has reported for this image yet: the agent has not run one, the check is switched off, or the agent is older than this feature. |
+
+When different hosts report different results for the same image, the fleet-wide views show the most important one: **Update available** first, then **Unknown**, then **Up to date**. The image detail page shows each host's own result.
+
+Reasons for an **Unknown** result:
+
+| Reason shown | What to check |
+|--------------|---------------|
+| The registry rate limited the check | The registry refused more requests for now. The next run tries again. |
+| The registry rejected the credentials | The `docker login` on the host is wrong or has expired for this registry. |
+| The tag no longer exists in the registry | The tag was deleted or renamed upstream, or the image came from a registry you can no longer reach under that name. |
+| The registry could not be reached | The host has no outbound HTTPS access to the registry, DNS fails, or a proxy or firewall is in the way. |
+| An authentication method the agent does not support | The registry asked for a login scheme other than the standard token or basic login. |
+| Served over plain HTTP and not marked insecure | The registry has no HTTPS. Add it to `insecure-registries` in the Docker daemon configuration on the host, as you would to pull from it. |
+| The registry did not return a digest | The registry answered without identifying the image, or the local image has no digest for this repository. |
+
+When an image moves to **Update available** on a host, PatchMon raises a `container_image_update_available` event once for that host and image. It does not repeat on later checks while the update is still outstanding.
+
 ### How the Data Stays Current
 
 Docker data flows into PatchMon on two channels:
 
 #### Periodic inventory reports
 
-Every time the agent runs its regular report cycle (default: 60 minutes, configurable server-side), it enumerates containers, images, volumes, and networks and sends the snapshot to the server. The full inventory in `/docker` reflects the **last snapshot** from each host.
+On every check-in the agent collects containers, images, volumes, and networks and compares a fingerprint of them with what the server last received. When anything has changed, it sends the full snapshot. The inventory in `/docker` reflects the **last snapshot** from each host.
 
 To force an immediate refresh for a single host, open its **Host Detail** page and click **Fetch Report**.
 
-#### Real-time container events
+#### Container changes
 
-When the Docker integration is enabled, the agent also subscribes to the Docker event stream and pushes container lifecycle events over its existing WebSocket connection. The relevant event types are:
-
-- `container_start` (maps to `running`)
-- `container_stop` / `container_die` / `container_kill` (all map to `exited`)
-- `container_pause` (`paused`)
-- `container_unpause` (`running`)
-- `container_destroy` (`removed`)
-
-The server records these events against the container record so that, for example, a container crash is visible in the UI within seconds rather than waiting for the next full report.
+When the Docker integration is enabled, the agent also watches the Docker event stream. When a container is created, started, stopped, dies, is paused, unpaused, killed, or destroyed, the agent waits five seconds for any related events to finish, then collects and sends the whole inventory again. A container crash, or a stack brought up with `docker compose up`, is therefore visible in the UI within seconds, and the snapshot it sends also carries any image, volume, and network changes made at the same time.
 
 #### UI refresh cadence
 
 On top of those agent-driven pushes, the `/docker` page itself refreshes the dashboard summary every 30 seconds via polling, and per-tab queries refetch when you switch tabs. The manual **Refresh** button (top right, circular arrow) forces an immediate refetch of whichever tab is active.
 
-> **Tip:** If you change something on a host (start / stop a container, pull an image) and want to see it in the UI, the event should appear within a few seconds via the WebSocket push. A full refresh of image / volume / network inventory waits for the next report. Use **Fetch Report** on the Host Detail page if you can't wait.
+> **Tip:** Container changes appear within a few seconds. Changes that do not touch a container, such as pulling an image or creating a volume on its own, appear at the next check-in. Use **Fetch Report** on the Host Detail page if you can't wait.
 
 ### Deleting Docker Resources
 
 Containers, images, volumes, and networks can be deleted from their table rows (trash icon) or from their detail pages. Deletion:
 
-- Requires `can_manage_hosts`.
+- Requires `can_manage_docker`.
 - Opens a confirmation modal listing the resource and its host.
 - Sends a delete command to the agent over the WebSocket.
 - The agent executes the equivalent `docker rm` / `docker rmi` / `docker volume rm` / `docker network rm` and reports the outcome back.
@@ -3470,7 +3521,7 @@ The following alert types fire from the server code in 2.0. Each can be individu
 | `compliance_scan_failed` | compliance | A compliance scan errors out |
 | `container_stopped` | docker | A tracked Docker container stops unexpectedly |
 | `container_started` | docker | A previously-stopped container starts again |
-| `container_image_update_available` | docker | A newer image digest is available for a tracked container |
+| `container_image_update_available` | docker | An image update check finds that the registry has a different image for a tag on the host. Raised once per host and image |
 | `ssh_session_started` | remote_access | A user opens a web SSH session to a host |
 | `rdp_session_started` | remote_access | A user opens a web RDP session to a host |
 | `user_login` | system | A user signs in |

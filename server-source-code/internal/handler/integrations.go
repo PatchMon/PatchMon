@@ -59,6 +59,9 @@ type dockerContainerReq struct {
 	CreatedAt       *time.Time        `json:"created_at,omitempty"`
 	StartedAt       *time.Time        `json:"started_at,omitempty"`
 	Labels          map[string]string `json:"labels,omitempty"`
+	ImageStale      bool              `json:"image_stale,omitempty"`
+	ImageDigest     string            `json:"image_digest,omitempty"`
+	RestartCount    int               `json:"restart_count,omitempty"`
 }
 
 type dockerImageReq struct {
@@ -145,6 +148,8 @@ func canonicalDockerHashFromReq(p *dockerPayloadReq) (string, error) {
 			ImageID:         c.ImageID,
 			Status:          c.Status,
 			State:           c.State,
+			ImageStale:      c.ImageStale,
+			StartedAt:       c.StartedAt,
 		}
 	}
 	for i, img := range p.Images {
@@ -193,7 +198,6 @@ func convertDockerPayloadToStore(p *dockerPayloadReq) *store.DockerReceivePayloa
 		Images:     make([]store.DockerReceiveImage, len(p.Images)),
 		Volumes:    make([]store.DockerReceiveVolume, len(p.Volumes)),
 		Networks:   make([]store.DockerReceiveNetwork, len(p.Networks)),
-		Updates:    make([]store.DockerReceiveImageUpdate, len(p.Updates)),
 		Collected:  p.Collected,
 	}
 	for i, c := range p.Containers {
@@ -211,6 +215,9 @@ func convertDockerPayloadToStore(p *dockerPayloadReq) *store.DockerReceivePayloa
 			CreatedAt:       c.CreatedAt,
 			StartedAt:       c.StartedAt,
 			Labels:          c.Labels,
+			ImageStale:      c.ImageStale,
+			RestartCount:    c.RestartCount,
+			ImageDigest:     c.ImageDigest,
 		}
 	}
 	for i, img := range p.Images {
@@ -254,16 +261,6 @@ func convertDockerPayloadToStore(p *dockerPayloadReq) *store.DockerReceivePayloa
 			IPAM:           n.IPAM,
 			CreatedAt:      n.CreatedAt,
 			ContainerCount: n.ContainerCount,
-		}
-	}
-	for i, u := range p.Updates {
-		out.Updates[i] = store.DockerReceiveImageUpdate{
-			Repository:      u.Repository,
-			CurrentTag:      u.CurrentTag,
-			AvailableTag:    u.AvailableTag,
-			CurrentDigest:   u.CurrentDigest,
-			AvailableDigest: u.AvailableDigest,
-			ImageID:         u.ImageID,
 		}
 	}
 	return out
@@ -352,7 +349,7 @@ func (h *IntegrationsHandler) ReceiveDockerData(w http.ResponseWriter, r *http.R
 			}
 			containerLabel := sc.Name
 			if containerLabel == "" {
-				containerLabel = sc.ContainerID[:12]
+				containerLabel = shortContainerID(sc.ContainerID)
 			}
 			title := fmt.Sprintf("Container %s %s", containerLabel, eventType[len("container_"):])
 			msg := fmt.Sprintf("Container \"%s\" (%s) on host \"%s\" changed from %s to %s.",
@@ -376,29 +373,6 @@ func (h *IntegrationsHandler) ReceiveDockerData(w http.ResponseWriter, r *http.R
 				},
 			})
 		}
-	}
-
-	// Emit container_image_update_available when new image updates are detected.
-	if h.notify != nil && result.UpdatesFound > 0 {
-		d := h.db.DB(r.Context())
-		tenantHost := hostctx.TenantHostKey(r.Context())
-		hostName := host.FriendlyName
-		if hostName == "" && host.Hostname != nil {
-			hostName = *host.Hostname
-		}
-		h.notify.EmitEvent(r.Context(), d, tenantHost, notifications.Event{
-			Type:          "container_image_update_available",
-			Severity:      "informational",
-			Title:         fmt.Sprintf("Docker Image Updates - %s", hostName),
-			Message:       fmt.Sprintf("%d Docker image update(s) detected on host \"%s\".", result.UpdatesFound, hostName),
-			ReferenceType: "host",
-			ReferenceID:   host.ID,
-			Metadata: map[string]interface{}{
-				"host_id":       host.ID,
-				"host_name":     hostName,
-				"updates_found": result.UpdatesFound,
-			},
-		})
 	}
 
 	// Record one Agent Activity row for the docker integration cycle. The
@@ -431,8 +405,14 @@ func (h *IntegrationsHandler) ReceiveDockerData(w http.ResponseWriter, r *http.R
 		ImagesReceived:     result.ImagesReceived,
 		VolumesReceived:    result.VolumesReceived,
 		NetworksReceived:   result.NetworksReceived,
-		UpdatesFound:       result.UpdatesFound,
 	})
+}
+
+func shortContainerID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
 
 func isContainerRunning(status string) bool {

@@ -45,6 +45,7 @@ import React, {
 	useState,
 } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import UpdateStatusBadge from "../components/docker/UpdateStatusBadge";
 import HostStatusPills from "../components/HostStatusPills";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
@@ -73,6 +74,7 @@ import {
 	settingsAPI,
 } from "../utils/api";
 import { complianceAPI } from "../utils/complianceApi";
+import { shortImageId } from "../utils/docker";
 import { OSIcon } from "../utils/osIcons.jsx";
 import { patchingAPI } from "../utils/patchingApi";
 import { invalidateHostScope } from "../utils/queryScopes";
@@ -530,6 +532,21 @@ const HostDetail = () => {
 			safeSetTimeout(
 				() => setIntegrationRefreshMessage({ text: "", isError: false }),
 				5000,
+			);
+		},
+	});
+
+	const dockerImageCheckMutation = useMutation({
+		mutationFn: () =>
+			adminHostsAPI.checkDockerImages(hostId).then((res) => res.data),
+		onSuccess: () => {
+			toast.success(
+				"Update check requested. Results appear once the agent reports back.",
+			);
+		},
+		onError: (error) => {
+			toast.error(
+				error.response?.data?.error || "Failed to request an update check",
 			);
 		},
 	});
@@ -4171,6 +4188,22 @@ const HostDetail = () => {
 															/>
 															Re-sync
 														</button>
+														{canManageHosts() && (
+															<button
+																type="button"
+																onClick={() =>
+																	dockerImageCheckMutation.mutate()
+																}
+																disabled={dockerImageCheckMutation.isPending}
+																className="flex items-center gap-1.5 px-2 py-1.5 text-xs font-medium text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-900/20 hover:bg-primary-100 dark:hover:bg-primary-900/30 rounded border border-primary-200 dark:border-primary-800 transition-colors disabled:opacity-50"
+																title="Check this host's images against their registries"
+															>
+																<RefreshCw
+																	className={`h-3.5 w-3.5 ${dockerImageCheckMutation.isPending ? "animate-spin" : ""}`}
+																/>
+																Check for updates
+															</button>
+														)}
 													</div>
 												</div>
 											);
@@ -4361,6 +4394,7 @@ const HostDetail = () => {
 																	<th className="pb-2 font-medium">Name</th>
 																	<th className="pb-2 font-medium">Image</th>
 																	<th className="pb-2 font-medium">Ports</th>
+																	<th className="pb-2 font-medium">Updates</th>
 																	<th className="pb-2 font-medium text-right">
 																		Uptime
 																	</th>
@@ -4446,6 +4480,11 @@ const HostDetail = () => {
 																				</span>
 																			)}
 																		</td>
+																		<td className="py-2">
+																			<UpdateStatusBadge
+																				status={container.update_status}
+																			/>
+																		</td>
 																		<td className="py-2 text-xs text-secondary-500 dark:text-white text-right">
 																			{container.status || "-"}
 																		</td>
@@ -4475,6 +4514,7 @@ const HostDetail = () => {
 																	</th>
 																	<th className="pb-2 font-medium">Tag</th>
 																	<th className="pb-2 font-medium">ID</th>
+																	<th className="pb-2 font-medium">Updates</th>
 																	<th className="pb-2 font-medium text-right">
 																		Size
 																	</th>
@@ -4498,12 +4538,27 @@ const HostDetail = () => {
 																			</Link>
 																		</td>
 																		<td className="py-2">
-																			<span className="px-2 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 rounded text-xs font-mono">
-																				{image.tag || "latest"}
+																			<span
+																				className="px-2 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 rounded text-xs font-mono max-w-[12rem] truncate inline-block align-middle"
+																				title={image.tag}
+																			>
+																				{image.tag || "<none>"}
 																			</span>
 																		</td>
-																		<td className="py-2 text-xs font-mono text-secondary-500 dark:text-white">
-																			{image.id?.slice(7, 19) || "-"}
+																		<td
+																			className="py-2 text-xs font-mono text-secondary-500 dark:text-white"
+																			title={image.image_id}
+																		>
+																			{shortImageId(image.image_id) || "-"}
+																		</td>
+																		<td className="py-2">
+																			<UpdateStatusBadge
+																				status={image.update_status}
+																				checkedAt={
+																					image.update_check?.checked_at
+																				}
+																				reason={image.update_check?.reason}
+																			/>
 																		</td>
 																		<td className="py-2 text-xs text-secondary-500 dark:text-white text-right">
 																			{image.size || "-"}

@@ -155,6 +155,18 @@ func TestApplyAppxInstallState(t *testing.T) {
 			wantNeeds: true,
 		},
 		{
+			name:    "unflagged row reporting a staged copy takes the installed version",
+			pkg:     models.Package{Name: "Microsoft.WindowsAppRuntime.1.7", CurrentVersion: "7000.770.750.0"},
+			appx:    issue1149Appx(),
+			wantVer: "7000.785.2325.0",
+		},
+		{
+			name:    "unflagged row in a different scheme is untouched",
+			pkg:     models.Package{Name: "Microsoft.WindowsAppRuntime.1.7", CurrentVersion: "1.7.8"},
+			appx:    issue1149Appx(),
+			wantVer: "1.7.8",
+		},
+		{
 			name:      "unrelated app is untouched",
 			pkg:       models.Package{Name: "Mozilla Firefox", CurrentVersion: "120.0", AvailableVersion: "121.0", NeedsUpdate: true},
 			appx:      issue1149Appx(),
@@ -194,27 +206,29 @@ func TestApplyAppxInstallStateReportsSuppressed(t *testing.T) {
 	pkgs := []models.Package{
 		{Name: "Microsoft.WindowsAppRuntime.1.7", CurrentVersion: "1.7.8", AvailableVersion: "1.7.9", NeedsUpdate: true},
 		{Name: "Microsoft.VCLibs.140.00", CurrentVersion: "14.0.30704.0", AvailableVersion: "14.0.33519.0", NeedsUpdate: true},
+		{Name: "Microsoft.VCLibs.140.00.UWPDesktop", CurrentVersion: "14.0.30704.0", AvailableVersion: "14.0.40000.0", NeedsUpdate: true},
 	}
 	got := applyAppxInstallState(pkgs, issue1149Appx())
-	if len(got) != 1 || got[0] != "Microsoft.WindowsAppRuntime.1.7" {
-		t.Errorf("suppressed = %v, want only the WindowsAppRuntime row", got)
+	want := []string{"Microsoft.WindowsAppRuntime.1.7", "Microsoft.VCLibs.140.00"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("suppressed = %v, want %v", got, want)
 	}
 }
 
-func TestHasAppxUpdateCandidate(t *testing.T) {
+func TestHasAppxStyleName(t *testing.T) {
 	cases := []struct {
 		name string
 		pkgs []models.Package
 		want bool
 	}{
 		{"flagged Appx name", []models.Package{{Name: "Microsoft.VCLibs.140.00", NeedsUpdate: true}}, true},
-		{"unflagged Appx name", []models.Package{{Name: "Microsoft.VCLibs.140.00"}}, false},
-		{"flagged display name", []models.Package{{Name: "Mozilla Firefox", NeedsUpdate: true}}, false},
-		{"flagged name without a dot", []models.Package{{Name: "7zip", NeedsUpdate: true}}, false},
+		{"unflagged Appx name", []models.Package{{Name: "Microsoft.VCLibs.140.00"}}, true},
+		{"display name", []models.Package{{Name: "Mozilla Firefox", NeedsUpdate: true}}, false},
+		{"name without a dot", []models.Package{{Name: "7zip", NeedsUpdate: true}}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := hasAppxUpdateCandidate(tc.pkgs); got != tc.want {
+			if got := hasAppxStyleName(tc.pkgs); got != tc.want {
 				t.Errorf("got %v, want %v", got, tc.want)
 			}
 		})
