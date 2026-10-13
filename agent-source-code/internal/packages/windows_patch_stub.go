@@ -2,15 +2,8 @@
 
 package packages
 
-import (
-	"errors"
-	"os/exec"
-)
+import "errors"
 
 var errNotWindows = errors.New("windows patching is not supported on this platform")
-
-func hideWindow(*exec.Cmd) {}
-
-func checkWingetTrust(string) error { return errNotWindows }
 
 func wingetTempDir() (string, error) { return "", errNotWindows }

@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
+	"time"
 )
 
 var (
@@ -82,31 +84,41 @@ func newestAppxDir(paths []string, prefix string, archs ...string) (appxDir, boo
 	return best, found
 }
 
-// chooseWingetDir picks the newest App Installer directory for the host's architecture
-// (or neutral), falling back to any architecture. Dirs must already contain winget.exe.
-func chooseWingetDir(dirs []string, arch string) (appxDir, bool) {
-	if d, ok := newestAppxDir(dirs, wingetPackagePrefix, arch, "neutral"); ok {
-		return d, true
-	}
-	return newestAppxDir(dirs, wingetPackagePrefix)
-}
-
-func chooseVCLibsDir(dirs []string, arch string) (appxDir, bool) {
-	return newestAppxDir(dirs, vclibsPackagePrefix, arch)
-}
-
-// withTempDir points TEMP and TMP at dir. winget as SYSTEM otherwise stages installers in
-// C:\Windows\Temp, where a local user can pre-create folders and swap an installer.
-func withTempDir(environ []string, dir string) []string {
-	out := make([]string, 0, len(environ)+2)
-	for _, kv := range environ {
-		k, _, _ := strings.Cut(kv, "=")
-		if strings.EqualFold(k, "TEMP") || strings.EqualFold(k, "TMP") {
+func wingetCandidates(dirs []string, arch string) []appxDir {
+	var preferred, other []appxDir
+	for _, p := range dirs {
+		d, ok := parseAppxDir(p, wingetPackagePrefix)
+		if !ok {
 			continue
 		}
-		out = append(out, kv)
+		if d.arch == arch || d.arch == "neutral" {
+			preferred = append(preferred, d)
+		} else {
+			other = append(other, d)
+		}
 	}
-	return append(out, "TEMP="+dir, "TMP="+dir)
+	newestFirst := func(a, b appxDir) int {
+		c, _ := compareDottedVersions(b.version, a.version)
+		return c
+	}
+	slices.SortStableFunc(preferred, newestFirst)
+	slices.SortStableFunc(other, newestFirst)
+	return append(preferred, other...)
+}
+
+func firstTrustedWinget(cands []appxDir, verify func(exe string) error) (appxDir, error) {
+	if len(cands) == 0 {
+		return appxDir{}, errWingetNotFound
+	}
+	var errs []error
+	for _, d := range cands {
+		if err := verify(filepath.Join(d.path, "winget.exe")); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", filepath.Base(d.path), err))
+			continue
+		}
+		return d, nil
+	}
+	return appxDir{}, errors.Join(errs...)
 }
 
 func wingetChildEnv(environ []string, libDirs ...string) []string {
@@ -212,14 +224,17 @@ func evaluateWingetTrust(exe string, r wingetTrustReport) error {
 			return nil
 		}
 	}
-	if r.Authenticode == "Valid" && strings.TrimSpace(r.Signer) == microsoftPublisherName {
+	if r.Authenticode == "Valid" && r.Signer == microsoftPublisherName {
 		return nil
 	}
 	return fmt.Errorf("winget.exe is not inside a trusted Microsoft App Installer package (%d package(s) checked, Authenticode %s)", len(r.Packages), r.Authenticode)
 }
 
 func windowsAppsDir() string {
-	pf := os.Getenv("ProgramFiles")
+	pf := os.Getenv("ProgramW6432")
+	if pf == "" {
+		pf = os.Getenv("ProgramFiles")
+	}
 	if pf == "" {
 		pf = `C:\Program Files`
 	}
@@ -236,14 +251,11 @@ func resolveWinget() (string, []string, error) {
 		dirs = append(dirs, filepath.Dir(e))
 	}
 	arch := hostAppxArch()
-	d, ok := chooseWingetDir(dirs, arch)
-	if !ok {
-		return "", nil, errWingetNotFound
-	}
-	exe := filepath.Join(d.path, "winget.exe")
-	if err := verifyWingetSignature(exe); err != nil {
+	d, err := firstTrustedWinget(wingetCandidates(dirs, arch), verifyWingetSignature)
+	if err != nil {
 		return "", nil, err
 	}
+	exe := filepath.Join(d.path, "winget.exe")
 	libArch := d.arch
 	if libArch == "neutral" {
 		libArch = arch
@@ -273,4 +285,33 @@ func verifyWingetSignature(exe string) error {
 		wingetSigChecked[exe] = true
 	}
 	return err
+}
+
+const wingetRetryAfter = 10 * time.Minute
+
+var errWingetRecentlyFailed = errors.New("winget resolution failed recently")
+
+type wingetResolver struct {
+	mu       sync.Mutex
+	resolve  func() (string, []string, error)
+	now      func() time.Time
+	failedAt time.Time
+	lastErr  error
+}
+
+var sharedWingetResolver = &wingetResolver{resolve: resolveWinget, now: time.Now}
+
+func (r *wingetResolver) get() (string, []string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.lastErr != nil && r.now().Sub(r.failedAt) < wingetRetryAfter {
+		return "", nil, fmt.Errorf("%w: %w", errWingetRecentlyFailed, r.lastErr)
+	}
+	exe, env, err := r.resolve()
+	if err != nil {
+		r.failedAt, r.lastErr = r.now(), err
+		return "", nil, err
+	}
+	r.lastErr = nil
+	return exe, env, nil
 }

@@ -5,10 +5,28 @@ package packages
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
+	"syscall"
 
 	"patchmon-agent/internal/winexec"
 )
+
+func powershellPath() string {
+	if root := os.Getenv("SystemRoot"); root != "" {
+		return filepath.Join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+	}
+	return "powershell.exe"
+}
+
+func hideWindow(cmd *exec.Cmd) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.HideWindow = true
+}
 
 const wingetTrustScript = `$p = [Console]::In.ReadToEnd().Trim()
 $sig = $null
@@ -29,7 +47,7 @@ $pkgs = @(Get-AppxPackage -AllUsers -Name Microsoft.DesktopAppInstaller | ForEac
 `
 
 func checkWingetTrust(exe string) error {
-	cmd, cancel := boundedCommand(collectorTimeout, winexec.PowerShellPath(), "-NoProfile", "-NonInteractive", "-Command", winexec.Script(wingetTrustScript))
+	cmd, cancel := boundedCommand(collectorTimeout, powershellPath(), "-NoProfile", "-NonInteractive", "-Command", winexec.Script(wingetTrustScript))
 	defer cancel()
 	cmd.Stdin = strings.NewReader(exe)
 	hideWindow(cmd)

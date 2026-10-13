@@ -5,7 +5,6 @@ package packages
 import (
 	"context"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -74,25 +73,4 @@ func TestWindowsDryRunChangesNothingLive(t *testing.T) {
 		t.Errorf("Get-HotFix changed during a dry run:\nbefore %s\nafter  %s", before, after)
 	}
 	t.Logf("dry run items: %d\n%s", len(res.Items), out.String())
-}
-
-func TestResolveWingetLive(t *testing.T) {
-	requireWindowsIntegration(t)
-
-	exe, env, err := resolveWinget()
-	if err != nil {
-		t.Skipf("winget not resolvable on this host: %v", err)
-	}
-	if !strings.EqualFold(filepath.Dir(filepath.Dir(exe)), windowsAppsDir()) {
-		t.Errorf("winget resolved outside WindowsApps: %s", exe)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, exe, "--version")
-	cmd.Env = env
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("winget --version failed (0xC0000135 means VCLibs is not on PATH): %v\n%s", err, out)
-	}
-	t.Logf("winget %s at %s", strings.TrimSpace(string(out)), exe)
 }

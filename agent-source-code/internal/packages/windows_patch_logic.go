@@ -460,7 +460,7 @@ type wingetOutcome struct {
 
 const msgUserScope = "Not found for the system account: the app is probably installed for a single user, which the agent cannot upgrade"
 
-func classifyWingetExit(code uint32, dryRun bool, output, id string) wingetOutcome {
+func classifyWingetUpgradeExit(code uint32, dryRun bool, output, id string) wingetOutcome {
 	if dryRun {
 		switch code {
 		case 0:
@@ -526,51 +526,6 @@ func wingetUpgradeArgs(id string) []string {
 
 func wingetListArgs(id string) []string {
 	return []string{"list", "--id", id, "--exact", "--upgrade-available", "--accept-source-agreements", "--disable-interactivity"}
-}
-
-var (
-	ansiCSI = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
-	ansiOSC = regexp.MustCompile(`\x1b\][^\x07\x1b]*(\x07|\x1b\\)`)
-	ansiESC = regexp.MustCompile(`\x1b[@-Z\\-_]`)
-)
-
-func stripTerminalControls(s string) string {
-	s = ansiOSC.ReplaceAllString(s, "")
-	s = ansiCSI.ReplaceAllString(s, "")
-	s = ansiESC.ReplaceAllString(s, "")
-	lines := strings.Split(s, "\n")
-	out := lines[:0]
-	for _, line := range lines {
-		if i := strings.LastIndex(strings.TrimRight(line, "\r"), "\r"); i >= 0 {
-			line = line[i+1:]
-		}
-		line = strings.Map(func(r rune) rune {
-			if r == '\t' {
-				return r
-			}
-			if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
-				return -1
-			}
-			return r
-		}, line)
-		if isSpinnerLine(line) {
-			continue
-		}
-		out = append(out, line)
-	}
-	return strings.Join(out, "\n")
-}
-
-func isSpinnerLine(line string) bool {
-	t := strings.TrimSpace(line)
-	if t == "" {
-		return false
-	}
-	if strings.Trim(t, `-\|/ `) == "" {
-		return true
-	}
-	r := []rune(t)[0]
-	return r >= 0x2580 && r <= 0x259f
 }
 
 func finalWindowsStage(items []models.PatchRunItem, runErrors []string, stopped, dryRun, patchPackage bool) (stage, errMsg string) {
@@ -1196,7 +1151,7 @@ func (r *windowsPatchRun) runWingetPhase(runCtx, stopCtx context.Context, winget
 			r.out("  %s: %s\n", it.ID, it.Message)
 			continue
 		}
-		oc := classifyWingetExit(code, r.req.DryRun, output, it.ID)
+		oc := classifyWingetUpgradeExit(code, r.req.DryRun, output, it.ID)
 		ec := int64(code)
 		it.ExitCode = &ec
 		it.RebootRequired = oc.RebootRequired

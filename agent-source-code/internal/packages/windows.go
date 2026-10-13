@@ -1,6 +1,7 @@
 package packages
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -671,11 +672,12 @@ func buildAppDescription(publisher, installDate, size string) string {
 }
 
 // getPackagesFromWinget runs winget list and parses the text-table output.
-// Uses PowerShell wrapper for UTF-8 encoding to avoid U+FFFD mojibake.
-// Resolves the actual winget.exe path to work in SYSTEM/Session 0 context
-// where winget may not be on PATH (it's a per-user UWP app).
 func (m *WindowsManager) getPackagesFromWinget() []wingetRow {
-	output, ok := m.runWingetList("list")
+	w, ok := m.resolveWingetCommand()
+	if !ok {
+		return nil
+	}
+	output, ok := m.runWingetList(w, "list")
 	if !ok {
 		return nil
 	}
@@ -683,35 +685,60 @@ func (m *WindowsManager) getPackagesFromWinget() []wingetRow {
 	if len(entries) == 0 {
 		return nil
 	}
-	return wingetEntriesToRows(entries, m.getWingetUpgradeAvailable())
+	return wingetEntriesToRows(entries, m.getWingetUpgradeAvailable(w))
 }
 
-func (m *WindowsManager) runWingetList(args ...string) (string, bool) {
-	exe, env, err := resolveWinget()
-	if err != nil {
-		if errors.Is(err, errWingetNotFound) {
-			m.logger.WithError(err).Info("WinGet not available")
-		} else {
-			m.logger.WithError(err).Warn("WinGet not available")
-		}
-		return "", false
+type wingetCommand struct {
+	exe string
+	env []string
+}
+
+func (m *WindowsManager) resolveWingetCommand() (wingetCommand, bool) {
+	exe, env, err := sharedWingetResolver.get()
+	switch {
+	case err == nil:
+		return wingetCommand{exe: exe, env: env}, true
+	case errors.Is(err, errWingetRecentlyFailed), errors.Is(err, errWingetNotFound):
+		m.logger.WithError(err).Debug("WinGet not available")
+	default:
+		m.logger.WithError(err).Warn("WinGet not available")
 	}
+	return wingetCommand{}, false
+}
+
+func (m *WindowsManager) runWingetList(w wingetCommand, args ...string) (string, bool) {
 	args = append(args, "--accept-source-agreements", "--disable-interactivity")
-	cmd, cancel := boundedCommand(networkCollectorTimeout, exe, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), networkCollectorTimeout)
 	defer cancel()
-	cmd.Env = env
+	cmd := exec.CommandContext(ctx, w.exe, args...)
+	cmd.WaitDelay = commandKillDelay
+	cmd.Env = w.env
 	hideWindow(cmd)
 	output, err := cmd.Output()
+	fields := map[string]interface{}{"args": strings.Join(args, " ")}
+	if ctx.Err() != nil {
+		m.logger.WithError(ctx.Err()).WithFields(logutil.SanitizeMap(fields)).Warn("winget timed out")
+		return "", false
+	}
+	code := 0
 	if err != nil {
-		fields := map[string]interface{}{"args": strings.Join(args, " ")}
 		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			fields["exit_code"] = fmt.Sprintf("0x%08X", uint32(ee.ExitCode()))
+		if !errors.As(err, &ee) {
+			m.logger.WithError(err).WithFields(logutil.SanitizeMap(fields)).Warn("winget failed")
+			return "", false
 		}
+		code = ee.ExitCode()
+		fields["exit_code"] = fmt.Sprintf("0x%08X", uint32(code))
+	}
+	out, class := classifyWingetExit(code, string(output))
+	switch class {
+	case wingetExitPartial:
+		m.logger.WithFields(logutil.SanitizeMap(fields)).Debug("winget exited non-zero but printed a table; using it")
+	case wingetExitFailed:
 		m.logger.WithError(err).WithFields(logutil.SanitizeMap(fields)).Warn("winget failed")
 		return "", false
 	}
-	return stripTerminalControls(string(output)), true
+	return out, true
 }
 
 type wingetRow struct {
@@ -925,8 +952,8 @@ func (m *WindowsManager) parseWingetTable(output string) []wingetEntry {
 }
 
 // getWingetUpgradeAvailable runs winget list --upgrade-available and returns Id -> AvailableVersion map
-func (m *WindowsManager) getWingetUpgradeAvailable() map[string]string {
-	output, ok := m.runWingetList("list", "--upgrade-available")
+func (m *WindowsManager) getWingetUpgradeAvailable(w wingetCommand) map[string]string {
+	output, ok := m.runWingetList(w, "list", "--upgrade-available")
 	if !ok {
 		return nil
 	}

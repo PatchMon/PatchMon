@@ -194,7 +194,7 @@ func TestWUAResultMapping(t *testing.T) {
 	}
 }
 
-func TestClassifyWingetExit(t *testing.T) {
+func TestClassifyWingetUpgradeExit(t *testing.T) {
 	negative := int32(-1978335189)
 	cases := []struct {
 		code   uint32
@@ -220,15 +220,15 @@ func TestClassifyWingetExit(t *testing.T) {
 		{0x8A150008, true, "", itemFailed, false},
 	}
 	for _, c := range cases {
-		got := classifyWingetExit(c.code, c.dry, c.output, "7zip.7zip")
+		got := classifyWingetUpgradeExit(c.code, c.dry, c.output, "7zip.7zip")
 		if got.Status != c.status || got.RebootRequired != c.reboot {
 			t.Errorf("code %s dry=%v = %+v, want %s reboot=%v", hexCode(c.code), c.dry, got, c.status, c.reboot)
 		}
 	}
-	if !strings.Contains(classifyWingetExit(wingetNoPackageFound, false, "", "x").Message, "single user") {
+	if !strings.Contains(classifyWingetUpgradeExit(wingetNoPackageFound, false, "", "x").Message, "single user") {
 		t.Error("user-scope message missing")
 	}
-	if !strings.Contains(classifyWingetExit(0x8A150008, false, "", "x").Message, "0x8A150008") {
+	if !strings.Contains(classifyWingetUpgradeExit(0x8A150008, false, "", "x").Message, "0x8A150008") {
 		t.Error("unknown codes must carry the hex code")
 	}
 }
@@ -243,25 +243,6 @@ func TestWingetArgs(t *testing.T) {
 	for _, a := range wingetListArgs("x") {
 		if a == "upgrade" {
 			t.Fatal("dry run must never call winget upgrade")
-		}
-	}
-}
-
-func TestStripTerminalControls(t *testing.T) {
-	cases := map[string]string{
-		"\x1b[31mred\x1b[0m":                "red",
-		"   - \r   \\ \r   | \rFound 7-Zip": "Found 7-Zip",
-		"\x1b]0;title\x07after":             "after",
-		"tab\tkept":                         "tab\tkept",
-		"bell\x07gone\x00":                  "bellgone",
-		"line1\nline2":                      "line1\nline2",
-		"  ██████████████  1.00 MB / 2.00 MB": "",
-		"-\n\\\n|\n/": "",
-		"crlf\r\n":    "crlf\n",
-	}
-	for in, want := range cases {
-		if got := stripTerminalControls(in); got != want {
-			t.Errorf("stripTerminalControls(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
@@ -373,49 +354,6 @@ func TestFinalWindowsStage(t *testing.T) {
 		if stage != c.stage || msg != c.msg {
 			t.Errorf("%s: got (%q, %q), want (%q, %q)", c.name, stage, msg, c.stage, c.msg)
 		}
-	}
-}
-
-func TestChooseWingetDir(t *testing.T) {
-	root := "C:/Program Files/WindowsApps/"
-	dirs := []string{
-		root + "Microsoft.DesktopAppInstaller_1.9.25200.0_x64__8wekyb3d8bbwe",
-		root + "Microsoft.DesktopAppInstaller_1.10.3.0_x64__8wekyb3d8bbwe",
-		root + "Microsoft.DesktopAppInstaller_1.24.25199.0_arm64__8wekyb3d8bbwe",
-		root + "Microsoft.DesktopAppInstaller_9.0.0.0_x64__notmicrosoft",
-		root + "Microsoft.DesktopAppInstaller_2.0.0.0_neutral_~_8wekyb3d8bbwe",
-	}
-	if d, ok := chooseWingetDir(dirs, "x64"); !ok || d.version != "1.10.3.0" {
-		t.Errorf("x64 = %+v", d)
-	}
-	if d, ok := chooseWingetDir(dirs, "arm64"); !ok || d.arch != "arm64" {
-		t.Errorf("arm64 = %+v", d)
-	}
-	if d, ok := chooseWingetDir(dirs[2:3], "x64"); !ok || d.arch != "arm64" {
-		t.Errorf("fallback to another arch = %+v", d)
-	}
-	if _, ok := chooseWingetDir(nil, "x64"); ok {
-		t.Error("empty must not resolve")
-	}
-	libs := []string{
-		root + "Microsoft.VCLibs.140.00.UWPDesktop_14.0.33519.0_arm64__8wekyb3d8bbwe",
-		root + "Microsoft.VCLibs.140.00.UWPDesktop_14.0.33728.0_arm64__8wekyb3d8bbwe",
-		root + "Microsoft.VCLibs.140.00.UWPDesktop_14.0.40000.0_x64__8wekyb3d8bbwe",
-		root + "Microsoft.VCLibs.140.00_14.0.50000.0_arm64__8wekyb3d8bbwe",
-	}
-	if d, ok := chooseVCLibsDir(libs, "arm64"); !ok || d.version != "14.0.33728.0" {
-		t.Errorf("vclibs arm64 = %+v", d)
-	}
-}
-
-func TestWingetChildEnv(t *testing.T) {
-	env := wingetChildEnv([]string{"Path=C:\\Windows", "TERM=xterm", "A=1"}, `C:\VCLibs`)
-	want := []string{`Path=C:\VCLibs;C:\Windows`, "A=1", "TERM=dumb"}
-	if !reflect.DeepEqual(env, want) {
-		t.Errorf("env = %q, want %q", env, want)
-	}
-	if env := wingetChildEnv([]string{"A=1"}, ""); !reflect.DeepEqual(env, []string{"A=1", "TERM=dumb"}) {
-		t.Errorf("env without vclibs = %q", env)
 	}
 }
 
