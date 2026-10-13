@@ -91,7 +91,7 @@ func TestPatchablePredicateIdenticalAcrossQueries(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := string(b)
-	const predicate = "THEN hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL) AND NOT COALESCE(hp.winget_pinned, false)"
+	const predicate = "THEN hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL) AND NOT COALESCE(hp.winget_pinned, false) AND NOT COALESCE(hp.winget_store_app, false)"
 	for _, q := range []string{"GetHostPackagesWithHostsByPackageID", "GetHostRefsForPackageIDs", "ListHostsForPackage"} {
 		if !strings.Contains(namedQueryIn(t, src, q), predicate) {
 			t.Errorf("%s does not use the shared patchable predicate", q)
@@ -101,7 +101,7 @@ func TestPatchablePredicateIdenticalAcrossQueries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(namedQueryIn(t, string(items), "ResolveWindowsPatchTargets"), "hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL) AND NOT COALESCE(hp.winget_pinned, false)") {
+	if !strings.Contains(namedQueryIn(t, string(items), "ResolveWindowsPatchTargets"), "hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL) AND NOT COALESCE(hp.winget_pinned, false) AND NOT COALESCE(hp.winget_store_app, false)") {
 		t.Error("ResolveWindowsPatchTargets does not use the shared patchable predicate")
 	}
 }
@@ -192,5 +192,34 @@ func TestWingetPinnedIsStoredAndNotPatchable(t *testing.T) {
 	}
 	if !strings.Contains(namedQueryIn(t, string(items), "ResolveWindowsPatchTargets"), "THEN 'winget_pinned'") {
 		t.Error("ResolveWindowsPatchTargets does not reject pinned apps")
+	}
+}
+
+func TestWingetStoreAppIsStoredAndNotPatchable(t *testing.T) {
+	raw, err := buildHostPackagesPayload("h1", []ReportPackage{
+		{Name: "Windows Terminal", CurrentVersion: "1.20", NeedsUpdate: true, WingetID: "Microsoft.WindowsTerminal", WingetStoreApp: true},
+		{Name: "Free", CurrentVersion: "1", NeedsUpdate: true, WingetID: "c.d"},
+	}, map[string]string{"Windows Terminal": "p1", "Free": "p2"}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"winget_store_app":true`) || strings.Count(string(raw), `"winget_store_app":null`) != 1 {
+		t.Fatalf("payload = %s", raw)
+	}
+	b, err := os.ReadFile(filepath.Join("..", "sqlc", "queries", "packages.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{"GetHostPackagesWithHostsByPackageID", "GetHostRefsForPackageIDs", "ListHostsForPackage"} {
+		if !strings.Contains(namedQueryIn(t, string(b), q), "COALESCE(hp.winget_store_app, false) THEN 'store_app'") {
+			t.Errorf("%s does not give Store apps the store_app reason", q)
+		}
+	}
+	items, err := os.ReadFile(filepath.Join("..", "sqlc", "queries", "patch_run_items.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(namedQueryIn(t, string(items), "ResolveWindowsPatchTargets"), "THEN 'store_app'") {
+		t.Error("ResolveWindowsPatchTargets does not reject Store apps")
 	}
 }

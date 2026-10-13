@@ -94,6 +94,7 @@ type ReportPackage struct {
 	WUAType           string   `json:"wuaType,omitempty"`
 	WingetID          string   `json:"wingetId,omitempty"`
 	WingetPinned      bool     `json:"wingetPinned,omitempty"`
+	WingetStoreApp    bool     `json:"wingetStoreApp,omitempty"`
 }
 
 // ReportRepository is a single repository from the agent report.
@@ -1001,6 +1002,7 @@ type hostPackageRow struct {
 	WUARevisionNumber  int32    `json:"wua_revision_number"`
 	WingetID           string   `json:"winget_id"`
 	WingetPinned       *bool    `json:"winget_pinned"`
+	WingetStoreApp     *bool    `json:"winget_store_app"`
 	WUABrowseOnly      *bool    `json:"wua_browse_only"`
 	WUAUpdateType      string   `json:"wua_update_type"`
 }
@@ -1056,6 +1058,10 @@ func buildHostPackagesPayload(
 				pinned := true
 				row.WingetPinned = &pinned
 			}
+		}
+		if p.WingetStoreApp {
+			storeApp := true
+			row.WingetStoreApp = &storeApp
 		}
 
 		// Windows Update entries carry WUA metadata. The agent flags them by

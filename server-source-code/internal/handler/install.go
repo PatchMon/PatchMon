@@ -1173,4 +1173,4 @@ func agentAutoUpdateGate(serverAutoUpdate, hostAutoUpdate, patchRunActive bool) 
 	return false, ""
 }
 
-var agentCapabilities = []string{"wingetPinned"}
+var agentCapabilities = []string{"wingetPinned", "wingetStoreApp"}

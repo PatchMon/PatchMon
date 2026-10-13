@@ -48,11 +48,36 @@ func TestCanonicalPackagesHashWingetPinned(t *testing.T) {
 	}
 }
 
-func TestPingAdvertisesWingetPinnedCapability(t *testing.T) {
-	for _, c := range agentCapabilities {
-		if c == "wingetPinned" {
-			return
+func TestPingAdvertisesHashedPackageFieldCapabilities(t *testing.T) {
+	for _, want := range []string{"wingetPinned", "wingetStoreApp"} {
+		found := false
+		for _, c := range agentCapabilities {
+			found = found || c == want
+		}
+		if !found {
+			t.Errorf("ping no longer advertises %s; agents would stop hashing and sending it", want)
 		}
 	}
-	t.Fatal("ping no longer advertises wingetPinned; agents would stop hashing and sending winget pins")
+}
+
+const storeAppRowFixtureHash = "8eaaf876cf5fbc86692a8759c41e016c6fb1d6fe8496d7db3b9ad3dfca9b33d3"
+
+func TestCanonicalPackagesHashWingetStoreApp(t *testing.T) {
+	avail := "1.21"
+	row := store.ReportPackage{Name: "Windows Terminal", CurrentVersion: "1.20", AvailableVersion: &avail, NeedsUpdate: true}
+	plain, err := CanonicalPackagesHash([]store.ReportPackage{row})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row.WingetStoreApp = true
+	flagged, err := CanonicalPackagesHash([]store.ReportPackage{row})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flagged == plain {
+		t.Fatal("flagging a Store app does not change the packages hash")
+	}
+	if flagged != storeAppRowFixtureHash {
+		t.Fatalf("Store app row hash = %s; the agent's hashing test pins %s", flagged, storeAppRowFixtureHash)
+	}
 }

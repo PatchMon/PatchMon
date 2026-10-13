@@ -324,6 +324,7 @@ CREATE TABLE IF NOT EXISTS host_packages (
     source_repository_id TEXT REFERENCES repositories(id) ON DELETE SET NULL,
     winget_id TEXT,
     winget_pinned BOOLEAN,
+    winget_store_app BOOLEAN,
     wua_browse_only BOOLEAN,
     wua_update_type TEXT,
     UNIQUE(host_id, package_id)

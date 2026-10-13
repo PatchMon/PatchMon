@@ -29,6 +29,7 @@ const (
 	rejectNoWingetID        = "no_winget_id"
 	rejectInvalidIdentifier = "invalid_identifier"
 	rejectWingetPinned      = "winget_pinned"
+	rejectStoreApp          = "store_app"
 )
 
 type windowsScope struct {
