@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -247,6 +248,9 @@ func TestSaveWithoutLoadStampsConfigVersion(t *testing.T) {
 }
 
 func TestLoadConfig_UnsavedStampIsNotReported(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows ignores Unix directory permissions, so the save cannot be made to fail this way")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory permissions")
 	}
