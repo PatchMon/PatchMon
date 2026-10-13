@@ -462,6 +462,7 @@ func (f *fakeWUA) Install(ctx context.Context, id string, _ func(string)) (wuaOp
 }
 
 type fakeWinget struct {
+	store      map[string]bool
 	checkErr   error
 	states     map[string]wingetUpgradeState
 	checked    []string
@@ -482,6 +483,16 @@ func (f *fakeWinget) Run(_ context.Context, args []string, log func(string)) (ui
 }
 
 func (f *fakeWinget) UpdatableApps() []models.Package { return f.apps }
+
+func (f *fakeWinget) StoreApps(apps []models.Package) map[string]bool {
+	out := map[string]bool{}
+	for _, p := range apps {
+		if f.store[p.WingetID] {
+			out[strings.ToLower(p.WingetID)] = true
+		}
+	}
+	return out
+}
 
 func (f *fakeWinget) UpgradeState(_ context.Context, id string, _ func(string)) (wingetUpgradeState, error) {
 	f.checked = append(f.checked, id)
@@ -977,5 +988,22 @@ func TestRunCheckErrorFailsItemWithCode(t *testing.T) {
 	}
 	if len(g.calls) != 0 {
 		t.Errorf("upgrade ran after a failed check: %q", g.calls)
+	}
+}
+
+func TestRunSkipsStoreAppsWithoutRunningWinget(t *testing.T) {
+	g := &fakeWinget{store: map[string]bool{"Microsoft.WindowsTerminal": true}, codes: map[string]uint32{"7zip.7zip": 0}}
+	res := runFake(WindowsPatchRequest{Targets: []WindowsPatchTarget{
+		{Kind: WindowsTargetWinget, ID: "Microsoft.WindowsTerminal"},
+		{Kind: WindowsTargetWinget, ID: "7zip.7zip"},
+	}}, &recorder{}, &fakeWUA{}, g)
+	if it := itemByID(res, "Microsoft.WindowsTerminal"); it.Status != itemSkipped || it.Message != msgStoreApp {
+		t.Errorf("store app = %+v", it)
+	}
+	if !reflect.DeepEqual(g.checked, []string{"7zip.7zip"}) || len(g.calls) != 1 {
+		t.Errorf("winget touched the store app: checked %q, calls %q", g.checked, g.calls)
+	}
+	if res.Stage != "completed" || res.ErrorMessage != "1 skipped: Microsoft.WindowsTerminal (Microsoft Store app)" {
+		t.Errorf("stage %q summary %q", res.Stage, res.ErrorMessage)
 	}
 }

@@ -172,3 +172,16 @@ func (b *wingetExecBackend) UpgradeState(ctx context.Context, id string, log fun
 	quiet.SetOutput(io.Discard)
 	return installedUpgradeState(NewWindowsManager(quiet).parseWingetTable(out), id), nil
 }
+
+func (b *wingetExecBackend) StoreApps(apps []models.Package) map[string]bool {
+	quiet := logrus.New()
+	quiet.SetOutput(io.Discard)
+	appx := NewWindowsManager(quiet).getStoreAppx()
+	out := map[string]bool{}
+	for _, p := range apps {
+		if isStoreApp(p, appx, windowsAppsDir()) {
+			out[strings.ToLower(p.WingetID)] = true
+		}
+	}
+	return out
+}

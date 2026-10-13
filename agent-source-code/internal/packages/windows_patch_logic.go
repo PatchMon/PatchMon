@@ -601,7 +601,12 @@ func itemName(it models.PatchRunItem) string {
 	return it.ID
 }
 
+var skipReasons = map[string]string{msgStoreApp: "Microsoft Store app"}
+
 func skippedLabel(it models.PatchRunItem) string {
+	if r, ok := skipReasons[it.Message]; ok {
+		return itemName(it) + " (" + r + ")"
+	}
 	reason := it.Message
 	if r, _, ok := strings.Cut(reason, ":"); ok {
 		reason = r
@@ -635,7 +640,10 @@ type wingetBackend interface {
 	UpdatableApps() []models.Package
 	PendingFileRenames() []string
 	UpgradeState(ctx context.Context, id string, log func(string)) (wingetUpgradeState, error)
+	StoreApps(apps []models.Package) map[string]bool
 }
+
+const msgStoreApp = "Microsoft Store app: it updates through the Store for each user, not as SYSTEM"
 
 const msgDeferredReplace = "Installed; some files will be replaced at the next restart."
 
@@ -1253,9 +1261,23 @@ func (r *windowsPatchRun) runWingetPhase(runCtx, stopCtx context.Context, winget
 	}
 	r.out("[winget] %d application(s) to check\n", len(queue))
 
+	var store map[string]bool
+	if len(queue) > 0 {
+		apps := make([]models.Package, 0, len(queue))
+		for _, it := range queue {
+			apps = append(apps, models.Package{Name: it.Title, WingetID: it.ID})
+		}
+		store = r.winget.StoreApps(apps)
+	}
+
 	for _, it := range queue {
 		if reason := r.interruptReason(runCtx); reason != "" {
 			r.finish(it, itemSkipped, reason)
+			continue
+		}
+		if store[strings.ToLower(it.ID)] {
+			r.finish(it, itemSkipped, msgStoreApp)
+			r.out("  %s: %s\n", it.ID, it.Message)
 			continue
 		}
 		it.StartedAt = r.ts()
