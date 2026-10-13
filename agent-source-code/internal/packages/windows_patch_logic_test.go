@@ -151,7 +151,7 @@ func TestSelectWUAUpdatesBlockers(t *testing.T) {
 	for _, it := range decided {
 		byID[it.ID] = it
 	}
-	if it := byID[guidA]; it.Status != itemNotApplicable || !it.RebootRequired {
+	if it := byID[guidA]; it.Status != itemPendingReboot || !it.RebootRequired {
 		t.Errorf("installed-pending-reboot must never reinstall: %+v", it)
 	}
 	if it := byID[guidB]; it.Status != itemSkipped {
@@ -364,6 +364,7 @@ func TestFinalWindowsStage(t *testing.T) {
 		{"skip benign in patch_all", []models.PatchRunItem{ok, skipped}, nil, false, false, false, "completed", ""},
 		{"skip fails patch_package", []models.PatchRunItem{ok, skipped}, nil, false, false, true, "failed", "1 of 2 failed: 7-Zip (Pinned with winget pin)"},
 		{"dry run", []models.PatchRunItem{{Status: itemWouldInstall}}, nil, false, true, false, "dry_run_completed", ""},
+		{"already done is success", []models.PatchRunItem{{Status: itemAlreadyInstalled}, {Status: itemPendingReboot}}, nil, false, false, true, "completed", ""},
 		{"empty", nil, nil, false, false, false, "completed", ""},
 		{"run error", nil, []string{"Windows Update search failed: x"}, false, false, false, "failed", "Windows Update search failed: x"},
 	}
@@ -705,9 +706,9 @@ func TestRunAlreadyInstalledIsNotReinstalled(t *testing.T) {
 		},
 	}
 	res := runFake(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, &recorder{}, w, &fakeWinget{})
-	for _, id := range []string{guidA, guidB, guidC} {
-		if it := itemByID(res, id); it.Status != itemNotApplicable {
-			t.Errorf("%s = %+v", id, it)
+	for id, want := range map[string]string{guidA: itemAlreadyInstalled, guidB: itemPendingReboot, guidC: itemNotApplicable} {
+		if it := itemByID(res, id); it.Status != want {
+			t.Errorf("%s = %+v, want %s", id, it, want)
 		}
 	}
 	if !itemByID(res, guidB).RebootRequired || !res.RebootRequired {

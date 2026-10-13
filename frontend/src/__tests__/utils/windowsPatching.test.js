@@ -229,6 +229,8 @@ describe("run item results", () => {
 			"would_install",
 			"not_applicable",
 			"installed",
+			"already_installed",
+			"installed_pending_reboot",
 			"installed_with_errors",
 			"failed",
 			"aborted",
@@ -240,6 +242,14 @@ describe("run item results", () => {
 		expect(runItemStatus("installed_with_errors").className).toBe(
 			"badge-warning",
 		);
+		expect(runItemStatus("already_installed")).toEqual({
+			label: "Already installed",
+			className: "badge-secondary",
+		});
+		expect(runItemStatus("installed_pending_reboot")).toEqual({
+			label: "Installed, restart required",
+			className: "badge-warning",
+		});
 		expect(runItemStatus("would_install").className).toBe("badge-primary");
 		expect(runItemStatus("failed").className).toBe("badge-danger");
 		expect(runItemStatus("aborted").className).toBe("badge-danger");

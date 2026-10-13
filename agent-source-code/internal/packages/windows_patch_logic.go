@@ -30,6 +30,8 @@ const (
 	itemWouldInstall        = "would_install"
 	itemNotApplicable       = "not_applicable"
 	itemInstalled           = "installed"
+	itemAlreadyInstalled    = "already_installed"
+	itemPendingReboot       = "installed_pending_reboot"
 	itemInstalledWithErrors = "installed_with_errors"
 	itemFailed              = "failed"
 	itemAborted             = "aborted"
@@ -280,7 +282,7 @@ func wuaItem(u wuaUpdate, status, message string) models.PatchRunItem {
 
 const (
 	msgNoLongerOffered = "No longer offered by Windows Update: installed, superseded or withdrawn"
-	msgPendingReboot   = "Already installed; a restart is pending to finish it"
+	msgPendingReboot   = "Installed earlier; restart the host to finish"
 	msgInteractive     = "Needs interactive input"
 	msgRestartFirst    = "Restart pending from an earlier install; restart the host and run again"
 	msgStopped         = "Stopped"
@@ -312,7 +314,7 @@ func selectWUAUpdates(scan wuaScan, patchAll bool, targetIDs []string) (install 
 	for _, u := range chosen {
 		switch {
 		case u.PendingReboot:
-			it := wuaItem(u, itemNotApplicable, msgPendingReboot)
+			it := wuaItem(u, itemPendingReboot, msgPendingReboot)
 			it.RebootRequired = true
 			decided = append(decided, it)
 		case u.CanRequestUserInput:
@@ -1084,11 +1086,11 @@ func (r *windowsPatchRun) applyInstallResult(it *models.PatchRunItem, res wuaOpR
 		r.finish(it, itemNotApplicable, msgNoLongerOffered)
 		return
 	case res.AlreadyInstalled:
-		r.finish(it, itemNotApplicable, "Already installed")
+		r.finish(it, itemAlreadyInstalled, "Already installed")
 		return
 	case res.PendingReboot:
 		it.RebootRequired = true
-		r.finish(it, itemNotApplicable, msgPendingReboot)
+		r.finish(it, itemPendingReboot, msgPendingReboot)
 		return
 	}
 	rc := int32(res.ResultCode)

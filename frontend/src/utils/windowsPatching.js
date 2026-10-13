@@ -200,6 +200,14 @@ export const RUN_ITEM_STATUS = {
 	would_install: { label: "Would install", className: "badge-primary" },
 	not_applicable: { label: "Not applicable", className: "badge-secondary" },
 	installed: { label: "Installed", className: "badge-success" },
+	already_installed: {
+		label: "Already installed",
+		className: "badge-secondary",
+	},
+	installed_pending_reboot: {
+		label: "Installed, restart required",
+		className: "badge-warning",
+	},
 	installed_with_errors: {
 		label: "Installed with errors",
 		className: "badge-warning",
