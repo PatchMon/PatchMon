@@ -2,35 +2,20 @@ package handler
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
-	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
-	"github.com/PatchMon/PatchMon/server-source-code/internal/migrate"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtest"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/go-chi/chi/v5"
 )
 
 func testDatabase(t *testing.T) *database.DB {
 	t.Helper()
-	url := os.Getenv("PATCHMON_TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("PATCHMON_TEST_DATABASE_URL not set")
-	}
-	if err := migrate.Run(url, slog.Default()); err != nil {
-		t.Fatal(err)
-	}
-	d, err := database.NewFromURL(context.Background(), url, 2, 1, &config.Config{DBConnectTimeout: 5})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(d.Close)
-	return d
+	return pgtest.Open(t)
 }
 
 func patchEnvKey(h *SettingsHandler, key, body string) *httptest.ResponseRecorder {
