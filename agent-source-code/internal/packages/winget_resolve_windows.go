@@ -12,13 +12,20 @@ import (
 	"syscall"
 
 	"patchmon-agent/internal/winexec"
+
+	"golang.org/x/sys/windows"
 )
 
-func powershellPath() string {
-	if root := os.Getenv("SystemRoot"); root != "" {
-		return filepath.Join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+func powershellPath() (string, error) {
+	root := os.Getenv("SystemRoot")
+	if root == "" {
+		dir, err := windows.GetSystemWindowsDirectory()
+		if err != nil {
+			return "", fmt.Errorf("locate the Windows directory: %w", err)
+		}
+		root = dir
 	}
-	return "powershell.exe"
+	return filepath.Join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), nil
 }
 
 func hideWindow(cmd *exec.Cmd) {
@@ -47,7 +54,11 @@ $pkgs = @(Get-AppxPackage -AllUsers -Name Microsoft.DesktopAppInstaller | ForEac
 `
 
 func checkWingetTrust(exe string) error {
-	cmd, cancel := boundedCommand(collectorTimeout, powershellPath(), "-NoProfile", "-NonInteractive", "-Command", winexec.Script(wingetTrustScript))
+	ps, err := powershellPath()
+	if err != nil {
+		return fmt.Errorf("check winget package trust: %w", err)
+	}
+	cmd, cancel := boundedCommand(collectorTimeout, ps, "-NoProfile", "-NonInteractive", "-Command", winexec.Script(wingetTrustScript))
 	defer cancel()
 	cmd.Stdin = strings.NewReader(exe)
 	hideWindow(cmd)
