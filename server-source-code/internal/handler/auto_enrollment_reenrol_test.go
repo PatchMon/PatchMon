@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
@@ -22,6 +23,12 @@ import (
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 )
+
+type fakePresence struct{ seen map[string]bool }
+
+func (f *fakePresence) Get(apiID string) agentregistry.ConnectionInfo {
+	return agentregistry.ConnectionInfo{Connected: f.seen[apiID]}
+}
 
 func enrolToken(id string) db.AutoEnrollmentToken {
 	return db.AutoEnrollmentToken{ID: id, TokenName: "test"}
@@ -37,7 +44,7 @@ type enrolFixture struct {
 func newEnrolFixture(t *testing.T) *enrolFixture {
 	d := testDatabase(t)
 	hosts := store.NewHostsStore(d)
-	h := NewAutoEnrollmentHandler(store.NewAutoEnrollmentStore(d), store.NewHostGroupsStore(d), hosts, store.NewSettingsStore(d), slog.Default(), &config.Config{})
+	h := NewAutoEnrollmentHandler(store.NewAutoEnrollmentStore(d), store.NewHostGroupsStore(d), hosts, store.NewSettingsStore(d), &fakePresence{seen: map[string]bool{}}, slog.Default(), &config.Config{})
 	return &enrolFixture{t: t, d: d, hosts: hosts, h: h}
 }
 
@@ -129,7 +136,7 @@ func TestEnroll_HostIDReissueRules(t *testing.T) {
 	})
 
 	t.Run("a second re-issue within 60s is refused", func(t *testing.T) {
-		code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": name, "host_id": hostID})
+		code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": name, "machine_id": "m-" + name, "host_id": hostID})
 		if code != http.StatusTooManyRequests || out["code"] != "reenrol_cooldown" {
 			t.Fatalf("got %d %v, want 429 reenrol_cooldown", code, out)
 		}
@@ -139,11 +146,30 @@ func TestEnroll_HostIDReissueRules(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Run("another token cannot re-issue", func(t *testing.T) {
+	t.Run("another token cannot re-issue and learns no name", func(t *testing.T) {
 		_, key2, secret2 := f.token(100, 0)
-		code, out := f.enrol(key2, secret2, map[string]interface{}{"friendly_name": name, "host_id": hostID})
+		code, out := f.enrol(key2, secret2, map[string]interface{}{"friendly_name": name, "machine_id": "m-" + name, "host_id": hostID})
 		if code != http.StatusConflict || out["code"] != "host_not_reenrollable" || out["host_id"] != hostID {
 			t.Fatalf("got %d %v, want 409 host_not_reenrollable", code, out)
+		}
+		if _, ok := out["friendly_name"]; ok {
+			t.Fatalf("friendly_name leaked to another token: %v", out)
+		}
+	})
+
+	t.Run("a different machine cannot take the row", func(t *testing.T) {
+		code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": name, "machine_id": "sibling", "host_id": hostID})
+		if code != http.StatusConflict || out["code"] != "host_not_reenrollable" {
+			t.Fatalf("got %d %v, want 409 host_not_reenrollable", code, out)
+		}
+	})
+
+	t.Run("an agent seen on the WebSocket blocks re-issue", func(t *testing.T) {
+		f.h.presence.(*fakePresence).seen[apiID] = true
+		defer delete(f.h.presence.(*fakePresence).seen, apiID)
+		code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": name, "machine_id": "m-" + name, "host_id": hostID})
+		if code != http.StatusConflict || out["code"] != "host_reporting" {
+			t.Fatalf("got %d %v, want 409 host_reporting", code, out)
 		}
 	})
 
@@ -160,8 +186,8 @@ func TestEnroll_HostIDReissueRules(t *testing.T) {
 			t.Fatal(err)
 		}
 		before, _ := f.hosts.GetByID(ctx, hostID)
-		code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": name, "host_id": hostID})
-		if code != http.StatusConflict || out["code"] != "host_reporting" {
+		code, out := f.enrol(key, secret, map[string]interface{}{"friendly_name": name, "machine_id": "m-" + name, "host_id": hostID})
+		if code != http.StatusConflict || out["code"] != "host_reporting" || out["friendly_name"] != name {
 			t.Fatalf("got %d %v, want 409 host_reporting", code, out)
 		}
 		after, _ := f.hosts.GetByID(ctx, hostID)

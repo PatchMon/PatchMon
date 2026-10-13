@@ -47,7 +47,7 @@ func runShell(t *testing.T, sh, src string, args ...string) string {
 }
 
 func TestEnrolHelpersMatchBetweenScripts(t *testing.T) {
-	for _, name := range []string{"patchmon_identity", "enrol_outcome", "write_stub_config"} {
+	for _, name := range []string{"patchmon_identity", "identity_value", "same_server", "enrol_outcome", "write_stub_config"} {
 		direct := extractShellFunc(t, DirectHostAutoEnrollScript, name)
 		proxmox := extractShellFunc(t, ProxmoxAutoEnrollScript, name)
 		if direct != proxmox {
@@ -75,29 +75,33 @@ func TestPatchmonIdentity(t *testing.T) {
 		setup func(t *testing.T, dir string)
 		want  string
 	}{
-		{"nothing present", func(*testing.T, string) {}, "api_id=\napi_key=\nhost_id=\n"},
+		{"nothing present", func(*testing.T, string) {}, "api_id=\napi_key=\nhost_id=\nserver=\n"},
 		{"live files, quoted values", func(t *testing.T, dir string) {
 			write(t, filepath.Join(dir, "credentials.yml"), "# c\napi_id: \"patchmon_ab12\"\napi_key: \"deadbeef\"\n", 0)
-			write(t, filepath.Join(dir, "config.yml"), "patchmon_server: x\nhost_id: \""+hid+"\"\n", 0)
-		}, "api_id=patchmon_ab12\napi_key=deadbeef\nhost_id=" + hid + "\n"},
+			write(t, filepath.Join(dir, "config.yml"), "patchmon_server: \"https://pm.example/\"\nhost_id: \""+hid+"\"\n", 0)
+		}, "api_id=patchmon_ab12\napi_key=deadbeef\nhost_id=" + hid + "\nserver=https://pm.example/\n"},
 		{"agent-written unquoted values with CRLF", func(t *testing.T, dir string) {
 			write(t, filepath.Join(dir, "credentials.yml"), "api_id: patchmon_ab12\r\napi_key: deadbeef\r\n", 0)
-			write(t, filepath.Join(dir, "config.yml"), "config_version: 2.1.5\r\nhost_id: "+hid+"\r\n", 0)
-		}, "api_id=patchmon_ab12\napi_key=deadbeef\nhost_id=" + hid + "\n"},
+			write(t, filepath.Join(dir, "config.yml"), "config_version: 2.1.5\r\nhost_id: "+hid+"\r\npatchmon_server: http://10.0.0.5:3000\r\n", 0)
+		}, "api_id=patchmon_ab12\napi_key=deadbeef\nhost_id=" + hid + "\nserver=http://10.0.0.5:3000\n"},
 		{"falls back to the newest backups", func(t *testing.T, dir string) {
 			write(t, filepath.Join(dir, "credentials.yml.backup.20260101_000000"), "api_id: patchmon_old\napi_key: aaaa\n", 2*time.Hour)
 			write(t, filepath.Join(dir, "credentials.yml.backup.20260102_000000"), "api_id: patchmon_new\napi_key: bbbb\n", time.Hour)
-			write(t, filepath.Join(dir, "config.yml"), "patchmon_server: x\n", 0)
-			write(t, filepath.Join(dir, "config.yml.backup.20260102_000000"), "host_id: "+hid+"\n", time.Hour)
-		}, "api_id=patchmon_new\napi_key=bbbb\nhost_id=" + hid + "\n"},
+			write(t, filepath.Join(dir, "config.yml.backup.20260101_000000"), "patchmon_server: https://old\nhost_id: old-id\n", 2*time.Hour)
+			write(t, filepath.Join(dir, "config.yml.backup.20260102_000000"), "patchmon_server: https://pm\nhost_id: "+hid+"\n", time.Hour)
+		}, "api_id=patchmon_new\napi_key=bbbb\nhost_id=" + hid + "\nserver=https://pm\n"},
+		{"a config without a server is skipped", func(t *testing.T, dir string) {
+			write(t, filepath.Join(dir, "config.yml"), "host_id: stray\n", 0)
+			write(t, filepath.Join(dir, "config.yml.backup.20260102_000000"), "patchmon_server: https://pm\nhost_id: "+hid+"\n", time.Hour)
+		}, "api_id=\napi_key=\nhost_id=" + hid + "\nserver=https://pm\n"},
 		{"incomplete live credentials use a complete backup", func(t *testing.T, dir string) {
 			write(t, filepath.Join(dir, "credentials.yml"), "api_id: patchmon_ab12\n", 0)
 			write(t, filepath.Join(dir, "credentials.yml.backup.20260102_000000"), "api_id: patchmon_cd34\napi_key: cccc\n", time.Hour)
-		}, "api_id=patchmon_cd34\napi_key=cccc\nhost_id=\n"},
+		}, "api_id=patchmon_cd34\napi_key=cccc\nhost_id=\nserver=\n"},
 		{"unsafe values are dropped", func(t *testing.T, dir string) {
 			write(t, filepath.Join(dir, "credentials.yml"), "api_id: patchmon_ab;rm\napi_key: dead$(id)\n", 0)
-			write(t, filepath.Join(dir, "config.yml"), "host_id: ../../x\n", 0)
-		}, "api_id=\napi_key=\nhost_id=\n"},
+			write(t, filepath.Join(dir, "config.yml"), "patchmon_server: https://pm/$(id)\nhost_id: ../../x\n", 0)
+		}, "api_id=\napi_key=\nhost_id=\nserver=\n"},
 	}
 	for _, sh := range shells(t) {
 		for _, c := range cases {
@@ -193,6 +197,32 @@ func TestInstallScriptHostIDLine(t *testing.T) {
 			}
 			if string(out) != want {
 				t.Errorf("%s: PATCHMON_HOST_ID=%q gives %q, want %q", sh, in, out, want)
+			}
+		}
+	}
+}
+
+func TestIdentityValueAndSameServer(t *testing.T) {
+	fns := extractShellFunc(t, DirectHostAutoEnrollScript, "identity_value") + extractShellFunc(t, DirectHostAutoEnrollScript, "same_server")
+	ident := "api_id=patchmon_ab\napi_id=second\nhost_id=evil\r\nX-Injected: 1\nserver=https://pm.example/\n"
+	for _, sh := range shells(t) {
+		for key, want := range map[string]string{"api_id": "patchmon_ab", "host_id": "", "server": "https://pm.example/", "missing": ""} {
+			if got := runShell(t, sh, fns+`identity_value "$1" "$2"`, ident, key); got != want {
+				t.Errorf("%s: identity_value(%s) = %q, want %q", sh, key, got, want)
+			}
+		}
+		for _, c := range []struct {
+			a, b string
+			want bool
+		}{
+			{"https://pm.example/", "https://pm.example", true},
+			{"https://pm.example", "https://pm.example", true},
+			{"https://other", "https://pm.example", false},
+			{"", "https://pm.example", false},
+		} {
+			got := exec.Command(sh, "-c", fns+`same_server "$1" "$2"`, "_", c.a, c.b).Run() == nil
+			if got != c.want {
+				t.Errorf("%s: same_server(%q, %q) = %v, want %v", sh, c.a, c.b, got, c.want)
 			}
 		}
 	}

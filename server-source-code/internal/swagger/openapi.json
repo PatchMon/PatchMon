@@ -1582,7 +1582,7 @@
 			"post": {
 				"tags": ["Auto-enrollment"],
 				"summary": "Enroll a host",
-				"description": "Enroll a new host, or re-issue credentials for a host this token created that has never reported. Requires X-Auto-Enrollment-Key and X-Auto-Enrollment-Secret headers.\n\nWithout host_id, a new host is created (201), unless a host with the same machine_id and name exists (409, code machine_id_match). With host_id, the server looks the host up: if it is not found, a new host is created as usual; if it exists, has never reported and was created by this same token, a new API key is issued for it (200, reenrolled true; the API ID is kept). Otherwise the request is refused with a coded 409 or 429 and nothing is created. The token's max_hosts_per_day limit applies only when a host is created; a re-issue neither counts towards it nor is blocked by it. Every error response from the host_id path carries a machine-readable code.",
+				"description": "Enroll a new host, or re-issue credentials for a host this token created that has never reported. Requires X-Auto-Enrollment-Key and X-Auto-Enrollment-Secret headers.\n\nWithout host_id, a new host is created (201), unless a host with the same machine_id and name exists (409, code machine_id_match). With host_id, the server looks the host up: if it is not found, a new host is created as usual; if it exists, has never reported or connected, was created by this same token and was enrolled with the same machine_id, a new API key is issued for it (200, reenrolled true; the API ID is kept). Otherwise the request is refused with a coded 409 or 429 and nothing is created. The token's max_hosts_per_day limit applies only when a host is created; a re-issue neither counts towards it nor is blocked by it. Every error response from the host_id path carries a machine-readable code.",
 				"parameters": [
 					{
 						"name": "X-Auto-Enrollment-Key",
@@ -1695,7 +1695,7 @@
 						}
 					},
 					"409": {
-						"description": "Conflict. Nothing is created and no credentials are issued. code is one of: host_reporting (the host named by host_id has already reported, so it is never re-keyed by enrolment; usually a cloned machine, or credentials regenerated in the UI but not applied), host_not_reenrollable (the host was not created by this token, for example it was added in the UI), machine_id_match (no host_id was sent and a host with the same machine_id and name already exists). The host_id path also returns host_id.",
+						"description": "Conflict. Nothing is created and no credentials are issued. code is one of: host_reporting (the host named by host_id has already reported or its agent has connected, so it is never re-keyed by enrolment; usually a cloned machine, or credentials regenerated in the UI but not applied), host_not_reenrollable (the host was not created by this token, for example it was added in the UI, or the machine_id differs from the one it was enrolled with), machine_id_match (no host_id was sent and a host with the same machine_id and name already exists). The host_id path also returns host_id, and friendly_name only when this token created the host.",
 						"content": {
 							"application/json": {
 								"examples": {
@@ -1711,7 +1711,6 @@
 										"value": {
 											"error": "This host was added to PatchMon another way and cannot be re-enrolled with this token. Use the install command on the host's page.",
 											"code": "host_not_reenrollable",
-											"friendly_name": "webserver",
 											"host_id": "550e8400-e29b-41d4-a716-446655440000"
 										}
 									},

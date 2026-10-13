@@ -87,29 +87,42 @@ func TestDecideReenrol(t *testing.T) {
 	aWhileAgo := now.Add(-2 * time.Minute)
 	reportedAt := now.Add(-time.Hour)
 	pending := func(mut func(h *models.Host)) *models.Host {
-		h := &models.Host{ID: "h1", Status: "pending", EnrolmentTokenID: strp("tok")}
+		h := &models.Host{ID: "h1", Status: "pending", EnrolmentTokenID: strp("tok"), MachineID: strp("machine-a")}
 		if mut != nil {
 			mut(h)
 		}
 		return h
 	}
 	cases := []struct {
-		name string
-		host *models.Host
-		want reenrolOutcome
+		name      string
+		host      *models.Host
+		machineID string
+		agentSeen bool
+		want      reenrolOutcome
 	}{
-		{"never reported, same token", pending(nil), reenrolReissue},
-		{"re-issued over a minute ago", pending(func(h *models.Host) { h.CredentialsReissuedAt = &aWhileAgo }), reenrolReissue},
-		{"re-issued seconds ago", pending(func(h *models.Host) { h.CredentialsReissuedAt = &justNow }), reenrolCooldown},
-		{"other token", pending(func(h *models.Host) { h.EnrolmentTokenID = strp("other") }), reenrolNotReenrollable},
-		{"UI-created or pre-2.1.5 row", pending(func(h *models.Host) { h.EnrolmentTokenID = nil }), reenrolNotReenrollable},
-		{"has an agent version", pending(func(h *models.Host) { h.AgentVersion = strp("2.1.5") }), reenrolHostReporting},
-		{"has a full report", pending(func(h *models.Host) { h.LastFullReportAt = &reportedAt }), reenrolHostReporting},
-		{"active", pending(func(h *models.Host) { h.Status = "active" }), reenrolHostReporting},
-		{"reporting beats cooldown", pending(func(h *models.Host) { h.Status = "active"; h.CredentialsReissuedAt = &justNow }), reenrolHostReporting},
+		{"never reported, same token", pending(nil), "", false, reenrolReissue},
+		{"different machine_id", pending(nil), "machine-b", false, reenrolNotReenrollable},
+		{"no machine_id against a stored one", pending(nil), "-", false, reenrolNotReenrollable},
+		{"no machine_id against a placeholder", pending(func(h *models.Host) { h.MachineID = strp("pending-123") }), "-", false, reenrolReissue},
+		{"agent seen on the WebSocket", pending(nil), "", true, reenrolHostReporting},
+		{"re-issued over a minute ago", pending(func(h *models.Host) { h.CredentialsReissuedAt = &aWhileAgo }), "", false, reenrolReissue},
+		{"re-issued seconds ago", pending(func(h *models.Host) { h.CredentialsReissuedAt = &justNow }), "", false, reenrolCooldown},
+		{"other token", pending(func(h *models.Host) { h.EnrolmentTokenID = strp("other") }), "", false, reenrolNotReenrollable},
+		{"UI-created or pre-2.1.5 row", pending(func(h *models.Host) { h.EnrolmentTokenID = nil }), "", false, reenrolNotReenrollable},
+		{"has an agent version", pending(func(h *models.Host) { h.AgentVersion = strp("2.1.5") }), "", false, reenrolHostReporting},
+		{"has a full report", pending(func(h *models.Host) { h.LastFullReportAt = &reportedAt }), "", false, reenrolHostReporting},
+		{"active", pending(func(h *models.Host) { h.Status = "active" }), "", false, reenrolHostReporting},
+		{"reporting beats cooldown", pending(func(h *models.Host) { h.Status = "active"; h.CredentialsReissuedAt = &justNow }), "", false, reenrolHostReporting},
 	}
 	for _, c := range cases {
-		if got := decideReenrol(c.host, "tok", now); got != c.want {
+		mid := c.machineID
+		switch mid {
+		case "":
+			mid = "machine-a"
+		case "-":
+			mid = ""
+		}
+		if got := decideReenrol(c.host, "tok", mid, c.agentSeen, now); got != c.want {
 			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
 		}
 	}
@@ -136,8 +149,8 @@ func TestReenrolExistingHost_ZeroRowsRace(t *testing.T) {
 			fake := &raceEnrollHosts{byID: c.after}
 			h := &AutoEnrollmentHandler{hosts: fake}
 			rec := httptest.NewRecorder()
-			existing := &models.Host{ID: "h1", Status: "pending", EnrolmentTokenID: strp("tok")}
-			h.reenrolExistingHost(context.Background(), rec, httptest.NewRequest(http.MethodPost, "/", nil), existing, enrolToken("tok"))
+			existing := &models.Host{ID: "h1", Status: "pending", EnrolmentTokenID: strp("tok"), MachineID: strp("m")}
+			h.reenrolExistingHost(context.Background(), rec, httptest.NewRequest(http.MethodPost, "/", nil), existing, enrolToken("tok"), "m")
 			if rec.Code != c.wantCode || !strings.Contains(rec.Body.String(), c.wantBody) {
 				t.Fatalf("got %d %s, want %d %s", rec.Code, rec.Body.String(), c.wantCode, c.wantBody)
 			}

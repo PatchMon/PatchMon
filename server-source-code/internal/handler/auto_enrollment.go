@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agents"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/clientip"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
@@ -37,17 +38,22 @@ type enrollHostStore interface {
 	ReissueApiKey(ctx context.Context, id, apiKeyHash string) (bool, error)
 }
 
+type agentPresence interface {
+	Get(apiID string) agentregistry.ConnectionInfo
+}
+
 type AutoEnrollmentHandler struct {
 	tokens     *store.AutoEnrollmentStore
 	hostGroups *store.HostGroupsStore
 	hosts      enrollHostStore
 	settings   *store.SettingsStore
+	presence   agentPresence
 	log        *slog.Logger
 	cfg        *config.Config
 }
 
-func NewAutoEnrollmentHandler(tokens *store.AutoEnrollmentStore, hostGroups *store.HostGroupsStore, hosts *store.HostsStore, settings *store.SettingsStore, log *slog.Logger, cfg *config.Config) *AutoEnrollmentHandler {
-	return &AutoEnrollmentHandler{tokens: tokens, hostGroups: hostGroups, hosts: hosts, settings: settings, log: log, cfg: cfg}
+func NewAutoEnrollmentHandler(tokens *store.AutoEnrollmentStore, hostGroups *store.HostGroupsStore, hosts *store.HostsStore, settings *store.SettingsStore, presence agentPresence, log *slog.Logger, cfg *config.Config) *AutoEnrollmentHandler {
+	return &AutoEnrollmentHandler{tokens: tokens, hostGroups: hostGroups, hosts: hosts, settings: settings, presence: presence, log: log, cfg: cfg}
 }
 
 // List handles GET /auto-enrollment/tokens
@@ -459,7 +465,7 @@ func (h *AutoEnrollmentHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 				h.log.Info("Auto-enrollment host_id not found, enrolling as a new host", "host_id", req.HostID, "token", token.TokenName)
 			}
 		} else {
-			h.reenrolExistingHost(ctx, w, r, existing, token)
+			h.reenrolExistingHost(ctx, w, r, existing, token, req.MachineID)
 			return
 		}
 	}
@@ -551,11 +557,13 @@ const (
 	reenrolHostReportingMessage = "This host is already reporting to PatchMon. If its agent is broken, reinstall it with the install command on the host's page, or regenerate its credentials."
 )
 
-func decideReenrol(existing *models.Host, tokenID string, now time.Time) reenrolOutcome {
+func decideReenrol(existing *models.Host, tokenID, machineID string, agentSeen bool, now time.Time) reenrolOutcome {
 	switch {
-	case existing.HasReported():
+	case existing.HasReported() || agentSeen:
 		return reenrolHostReporting
 	case existing.EnrolmentTokenID == nil || *existing.EnrolmentTokenID != tokenID:
+		return reenrolNotReenrollable
+	case !sameEnrolMachine(existing.MachineID, machineID):
 		return reenrolNotReenrollable
 	case existing.CredentialsReissuedAt != nil && now.Sub(*existing.CredentialsReissuedAt) < reenrolCooldownPeriod:
 		return reenrolCooldown
@@ -563,7 +571,27 @@ func decideReenrol(existing *models.Host, tokenID string, now time.Time) reenrol
 	return reenrolReissue
 }
 
-func (h *AutoEnrollmentHandler) reenrolExistingHost(ctx context.Context, w http.ResponseWriter, r *http.Request, existing *models.Host, token db.AutoEnrollmentToken) {
+// A host_id alone is not secret, so re-issue is also bound to the machine_id
+// the row was enrolled with.
+func sameEnrolMachine(stored *string, machineID string) bool {
+	if stored == nil {
+		return false
+	}
+	if machineID == "" {
+		return strings.HasPrefix(*stored, "pending-")
+	}
+	return *stored == machineID
+}
+
+func (h *AutoEnrollmentHandler) agentSeen(apiID string) bool {
+	if h.presence == nil {
+		return false
+	}
+	info := h.presence.Get(apiID)
+	return info.Connected || info.LastConnectedAt != nil || info.DisconnectedAt != nil
+}
+
+func (h *AutoEnrollmentHandler) reenrolExistingHost(ctx context.Context, w http.ResponseWriter, r *http.Request, existing *models.Host, token db.AutoEnrollmentToken, machineID string) {
 	refuse := func(outcome reenrolOutcome) {
 		status, code, message := http.StatusConflict, reenrolCodeHostReporting, reenrolHostReportingMessage
 		switch outcome {
@@ -577,15 +605,14 @@ func (h *AutoEnrollmentHandler) reenrolExistingHost(ctx context.Context, w http.
 		if h.log != nil {
 			h.log.Info("Auto-enrollment re-enrol refused", "code", code, "host_id", existing.ID, "token", token.TokenName, "ip", clientIPFromRequest(r))
 		}
-		JSON(w, status, map[string]string{
-			"error":         message,
-			"code":          code,
-			"friendly_name": existing.FriendlyName,
-			"host_id":       existing.ID,
-		})
+		body := map[string]string{"error": message, "code": code, "host_id": existing.ID}
+		if existing.EnrolmentTokenID != nil && *existing.EnrolmentTokenID == token.ID {
+			body["friendly_name"] = existing.FriendlyName
+		}
+		JSON(w, status, body)
 	}
 
-	if outcome := decideReenrol(existing, token.ID, time.Now()); outcome != reenrolReissue {
+	if outcome := decideReenrol(existing, token.ID, machineID, h.agentSeen(existing.ApiID), time.Now()); outcome != reenrolReissue {
 		refuse(outcome)
 		return
 	}

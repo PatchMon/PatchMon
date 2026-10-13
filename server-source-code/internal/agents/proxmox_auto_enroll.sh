@@ -148,7 +148,7 @@ derive_machine_id() {
     printf 'proxmox-lxc-%s-%s\n' "$3" "$2"
 }
 
-# Run inside containers through pct exec, so keep these POSIX sh
+# Run inside containers through pct exec, so keep these POSIX sh; the node re-checks their output
 patchmon_identity() {
     _pi_dir="${1:-/etc/patchmon}"
     _pi_id=""
@@ -164,15 +164,29 @@ patchmon_identity() {
         _pi_id=""
         _pi_key=""
     done
+    _pi_server=""
     for _pi_file in "$_pi_dir/config.yml" $(ls -t "$_pi_dir"/config.yml.backup.* 2>/dev/null); do
         [ -f "$_pi_file" ] || continue
+        _pi_server=$(sed -n 's/^patchmon_server:[[:space:]]*//p' "$_pi_file" | head -n 1 | tr -d "\"' \r")
+        [ -n "$_pi_server" ] || continue
         _pi_host=$(sed -n 's/^host_id:[[:space:]]*//p' "$_pi_file" | head -n 1 | tr -d "\"' \r")
-        [ -n "$_pi_host" ] && break
+        break
     done
     case "$_pi_id" in *[!A-Za-z0-9_]*) _pi_id="" ;; esac
     case "$_pi_key" in *[!A-Za-z0-9]*) _pi_key="" ;; esac
     case "$_pi_host" in *[!A-Za-z0-9-]*) _pi_host="" ;; esac
-    printf 'api_id=%s\napi_key=%s\nhost_id=%s\n' "$_pi_id" "$_pi_key" "$_pi_host"
+    case "$_pi_server" in *[!A-Za-z0-9:/._-]*) _pi_server="" ;; esac
+    printf 'api_id=%s\napi_key=%s\nhost_id=%s\nserver=%s\n' "$_pi_id" "$_pi_key" "$_pi_host" "$_pi_server"
+}
+
+identity_value() {
+    _iv=$(printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -n 1)
+    case "$_iv" in *[!A-Za-z0-9:/._-]*) _iv="" ;; esac
+    printf '%s' "$_iv"
+}
+
+same_server() {
+    [ -n "$1" ] && [ "${1%/}" = "${2%/}" ]
 }
 
 enrol_outcome() {
@@ -318,9 +332,13 @@ while read -r vmid status; do
         warn "  FORCE_NEW_HOST=true: ignoring existing credentials and host_id, a new host will be created"
     else
         identity=$(timeout 10 pct exec "$vmid" -- sh -c "$(declare -f patchmon_identity); patchmon_identity /etc/patchmon" 2>/dev/null </dev/null || true)
-        existing_api_id=$(printf '%s\n' "$identity" | sed -n 's/^api_id=//p')
-        existing_api_key=$(printf '%s\n' "$identity" | sed -n 's/^api_key=//p')
-        existing_host_id=$(printf '%s\n' "$identity" | sed -n 's/^host_id=//p')
+        if same_server "$(identity_value "$identity" server)" "$PATCHMON_URL"; then
+            existing_api_id=$(identity_value "$identity" api_id)
+            existing_api_key=$(identity_value "$identity" api_key)
+            existing_host_id=$(identity_value "$identity" host_id)
+        elif [[ -n "$(identity_value "$identity" api_id)" ]]; then
+            warn "  Existing agent configuration points at a different PatchMon server; not reusing its credentials"
+        fi
     fi
 
     api_id=""

@@ -1336,8 +1336,9 @@ The script is safe to rerun, by hand or from cron. From PatchMon 2.1.5 (script v
 | Container state | What the script does |
 |-----------------|----------------------|
 | Agent installed and `patchmon-agent ping` succeeds | Skips it |
-| Credentials present in `/etc/patchmon/credentials.yml` (or its newest backup) and PatchMon still accepts them | Reinstalls the agent with those credentials. No enrolment call is made and no host is created |
+| Credentials present in `/etc/patchmon/credentials.yml` (or its newest backup), the container's `config.yml` points at the same PatchMon URL, and PatchMon still accepts them | Reinstalls the agent with those credentials. No enrolment call is made and no host is created |
 | Credentials rejected by PatchMon (HTTP 401) | Enrols, sending the `host_id` from `/etc/patchmon/config.yml` (or its newest backup) if there is one |
+| Configuration points at a different PatchMon URL | Ignores the old credentials and `host_id` and enrols as a new host |
 | Credentials could not be checked (network error, server error) | Fails the container for this run and does **not** enrol, so a temporary fault cannot create a duplicate. The next run retries |
 | No credentials | Enrols, sending `host_id` if there is one |
 
@@ -3090,7 +3091,7 @@ Content-Type: application/json
 
 **Response:** `200 OK` (credentials re-issued)
 
-Returned when `host_id` names a host that exists, has never reported, and was created by this same token. PatchMon issues a new API key for that host and returns the same body as `201`, with `"message": "Host credentials re-issued"` and `"reenrolled": true`. The host keeps its ID and its API ID; the old key stops working. Nothing new is created, so the token's daily host limit is neither checked nor consumed.
+Returned when `host_id` names a host that exists, has never reported or connected, was created by this same token, and was enrolled with the same `machine_id` as this request. PatchMon issues a new API key for that host and returns the same body as `201`, with `"message": "Host credentials re-issued"` and `"reenrolled": true`. The host keeps its ID and its API ID; the old key stops working. Nothing new is created, so the token's daily host limit is neither checked nor consumed.
 
 ```json
 {
@@ -3112,12 +3113,13 @@ Returned when `host_id` names a host that exists, has never reported, and was cr
 | Host named by `host_id` | Result |
 |-------------------------|--------|
 | Not found | Enrolled as a new host (`201`), exactly as if `host_id` were not sent |
-| Has reported | `409`, code `host_reporting`. A host that has reported is never re-keyed by enrolment |
+| Has reported, or its agent has connected to PatchMon | `409`, code `host_reporting`. Such a host is never re-keyed by enrolment |
 | Never reported, created by a different token, in the UI, or before 2.1.5 | `409`, code `host_not_reenrollable` |
+| Never reported, created by this token, but enrolled with a different `machine_id` | `409`, code `host_not_reenrollable` |
 | Never reported, created by this token, credentials re-issued less than 60 seconds ago | `429`, code `reenrol_cooldown` |
 | Never reported, created by this token | `200`, credentials re-issued |
 
-Responses from this path carry `code`, `friendly_name` and `host_id` alongside `error`:
+Responses from this path carry `code` and `host_id` alongside `error`, plus `friendly_name` when the host was created by this token:
 
 ```json
 {
