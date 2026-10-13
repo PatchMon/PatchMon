@@ -450,7 +450,11 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 				logger.Info("Running Docker image update check on server request...")
 				go triggerDockerImageCheck(ctx)
 			case "run_patch":
-				endPatchRun := beginPatchRun()
+				endPatchRun, ok := beginPatchRun()
+				if !ok {
+					go rejectPatchRun(m.patchRunID, msgAgentUpdating)
+					break
+				}
 				go func(msg wsMsg) {
 					defer endPatchRun()
 					var err error
