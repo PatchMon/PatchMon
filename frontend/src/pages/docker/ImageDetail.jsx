@@ -7,10 +7,28 @@ import {
 	Package,
 	RefreshCw,
 	Server,
-	Shield,
 } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
+import UpdateStatusBadge, {
+	RecreateNeededBadge,
+} from "../../components/docker/UpdateStatusBadge";
 import api, { formatRelativeTime } from "../../utils/api";
+import {
+	describeCheckReason,
+	generateRegistryLink,
+	getSourceDisplayName,
+	shortDigest,
+	shortImageId,
+} from "../../utils/docker";
+
+const Digest = ({ value }) =>
+	value ? (
+		<span className="font-mono" title={value}>
+			{shortDigest(value)}
+		</span>
+	) : (
+		<span className="text-secondary-400">-</span>
+	);
 
 const ImageDetail = () => {
 	const { id } = useParams();
@@ -27,7 +45,12 @@ const ImageDetail = () => {
 	const image = data?.image;
 	const hosts = data?.hosts || [];
 	const containers = image?.docker_containers || [];
-	const updates = image?.docker_image_updates || [];
+	const checks = image?.docker_image_checks || [];
+	const hostsById = new Map(hosts.map((h) => [h.id, h]));
+	const hostLabel = (hostId, host) => {
+		const h = host || hostsById.get(hostId);
+		return h?.friendly_name || h?.hostname || hostId;
+	};
 
 	if (isLoading) {
 		return (
@@ -40,11 +63,11 @@ const ImageDetail = () => {
 	if (error || !image) {
 		return (
 			<div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-				<div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+				<div className="bg-danger-50 dark:bg-danger-900/20 border border-danger-200 dark:border-danger-800 rounded-lg p-4">
 					<div className="flex">
-						<AlertTriangle className="h-5 w-5 text-red-400" />
+						<AlertTriangle className="h-5 w-5 text-danger-400" />
 						<div className="ml-3">
-							<h3 className="text-sm font-medium text-red-800 dark:text-red-200">
+							<h3 className="text-sm font-medium text-danger-800 dark:text-danger-200">
 								Image not found
 							</h3>
 						</div>
@@ -61,6 +84,9 @@ const ImageDetail = () => {
 		);
 	}
 
+	const registryLink = generateRegistryLink(image.repository, image.source);
+	const updateCheck = image.update_check;
+
 	return (
 		<div className="space-y-6">
 			<div>
@@ -72,15 +98,23 @@ const ImageDetail = () => {
 					Back to Docker
 				</Link>
 				<div className="flex items-start justify-between">
-					<div className="flex items-center">
-						<Package className="h-8 w-8 text-secondary-400 mr-3" />
-						<div>
-							<h1 className="text-2xl font-bold text-secondary-900 dark:text-white">
+					<div className="flex items-center min-w-0">
+						<Package className="h-8 w-8 text-secondary-400 mr-3 flex-shrink-0" />
+						<div className="min-w-0">
+							<h1 className="text-2xl font-bold text-secondary-900 dark:text-white [overflow-wrap:anywhere]">
 								{image.repository}:{image.tag}
 							</h1>
-							<p className="mt-1 text-sm text-secondary-600 dark:text-white">
-								Image ID: {image.image_id.substring(0, 12)}
-							</p>
+							<div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-secondary-600 dark:text-white">
+								<span>Image ID: {shortImageId(image.image_id)}</span>
+								<UpdateStatusBadge
+									status={image.update_status}
+									checkedAt={updateCheck?.checked_at}
+									reason={updateCheck?.reason}
+								/>
+								<RecreateNeededBadge
+									count={image.containers_needing_recreate}
+								/>
+							</div>
 						</div>
 					</div>
 				</div>
@@ -145,85 +179,26 @@ const ImageDetail = () => {
 						</div>
 						<div className="w-0 flex-1">
 							<p className="text-sm text-secondary-500 dark:text-white">
-								Updates
+								Update Status
 							</p>
-							<p className="text-xl font-semibold text-secondary-900 dark:text-white">
-								{updates.length}
-							</p>
+							<div className="mt-1">
+								<UpdateStatusBadge
+									status={image.update_status}
+									checkedAt={updateCheck?.checked_at}
+									reason={updateCheck?.reason}
+								/>
+							</div>
+							{updateCheck?.hosts_checked > 0 && (
+								<p className="mt-1 text-xs text-secondary-500 dark:text-white">
+									{updateCheck.hosts_update_available || 0} of{" "}
+									{updateCheck.hosts_checked} host
+									{updateCheck.hosts_checked !== 1 ? "s" : ""} behind
+								</p>
+							)}
 						</div>
 					</div>
 				</div>
 			</div>
-
-			{/* Available Updates with Digest Comparison */}
-			{updates.length > 0 && (
-				<div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
-					<div className="flex">
-						<AlertTriangle className="h-5 w-5 text-yellow-400" />
-						<div className="ml-3 flex-1">
-							<h3 className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
-								Updates Available
-							</h3>
-							<div className="mt-2 space-y-3">
-								{updates.map((update) => {
-									let digestInfo = null;
-									try {
-										if (update.changelog_url) {
-											digestInfo = JSON.parse(update.changelog_url);
-										}
-									} catch (_e) {
-										// Ignore parse errors
-									}
-
-									return (
-										<div
-											key={update.id}
-											className="bg-white dark:bg-secondary-800 rounded-lg p-3 border border-yellow-200 dark:border-yellow-700"
-										>
-											<div className="flex items-center justify-between mb-2">
-												<div className="flex items-center gap-2">
-													{update.is_security_update && (
-														<Shield className="h-4 w-4 text-red-500" />
-													)}
-													<span className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
-														New version available:{" "}
-														<span className="font-semibold">
-															{update.available_tag}
-														</span>
-													</span>
-												</div>
-												{update.is_security_update && (
-													<span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
-														Security
-													</span>
-												)}
-											</div>
-											{digestInfo &&
-												digestInfo.method === "digest_comparison" && (
-													<div className="mt-2 pt-2 border-t border-yellow-200 dark:border-yellow-700">
-														<p className="text-xs text-secondary-600 dark:text-white mb-1">
-															Detected via digest comparison:
-														</p>
-														<div className="font-mono text-xs space-y-1">
-															<div className="text-red-600 dark:text-red-400">
-																<span className="font-bold">- Current: </span>
-																{digestInfo.current_digest}
-															</div>
-															<div className="text-green-600 dark:text-green-400">
-																<span className="font-bold">+ Available: </span>
-																{digestInfo.available_digest}
-															</div>
-														</div>
-													</div>
-												)}
-										</div>
-									);
-								})}
-							</div>
-						</div>
-					</div>
-				</div>
-			)}
 
 			{/* Image Information */}
 			<div className="card">
@@ -238,15 +213,27 @@ const ImageDetail = () => {
 							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Repository
 							</dt>
-							<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
-								{image.repository}
+							<dd className="mt-1 text-sm text-secondary-900 dark:text-white [overflow-wrap:anywhere]">
+								{registryLink ? (
+									<a
+										href={registryLink}
+										target="_blank"
+										rel="noopener noreferrer"
+										className="inline-flex items-center gap-1 text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300"
+									>
+										{image.repository}
+										<ExternalLink className="h-3 w-3 flex-shrink-0" />
+									</a>
+								) : (
+									image.repository
+								)}
 							</dd>
 						</div>
 						<div>
 							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Tag
 							</dt>
-							<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
+							<dd className="mt-1 text-sm text-secondary-900 dark:text-white [overflow-wrap:anywhere]">
 								{image.tag}
 							</dd>
 						</div>
@@ -255,7 +242,7 @@ const ImageDetail = () => {
 								Source
 							</dt>
 							<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
-								{image.source}
+								{getSourceDisplayName(image.source)}
 							</dd>
 						</div>
 						<div>
@@ -272,17 +259,17 @@ const ImageDetail = () => {
 							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 								Image ID
 							</dt>
-							<dd className="mt-1 text-sm font-mono text-secondary-900 dark:text-white">
+							<dd className="mt-1 text-sm font-mono text-secondary-900 dark:text-white [overflow-wrap:anywhere]">
 								{image.image_id}
 							</dd>
 						</div>
 						<div>
 							<dt className="text-sm font-medium text-secondary-500 dark:text-white">
-								Last Checked
+								Last Update Check
 							</dt>
 							<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
-								{image.last_checked
-									? formatRelativeTime(image.last_checked)
+								{updateCheck?.checked_at
+									? formatRelativeTime(updateCheck.checked_at)
 									: "Never"}
 							</dd>
 						</div>
@@ -291,13 +278,133 @@ const ImageDetail = () => {
 								<dt className="text-sm font-medium text-secondary-500 dark:text-white">
 									Digest
 								</dt>
-								<dd className="mt-1 text-sm font-mono text-secondary-900 dark:text-white break-all">
+								<dd className="mt-1 text-sm font-mono text-secondary-900 dark:text-white [overflow-wrap:anywhere]">
 									{image.digest}
 								</dd>
 							</div>
 						)}
 					</div>
 				</div>
+			</div>
+
+			<div className="card">
+				<div className="px-6 py-5 border-b border-secondary-200 dark:border-secondary-700">
+					<h3 className="text-lg leading-6 font-medium text-secondary-900 dark:text-white">
+						Update Checks ({checks.length})
+					</h3>
+				</div>
+				{checks.length === 0 ? (
+					<div className="text-center py-8 px-4">
+						<p className="text-secondary-500 dark:text-white">
+							No update check has been reported for this image yet
+						</p>
+						<p className="text-sm text-secondary-400 dark:text-white mt-2">
+							Agents check their images every few hours, or on demand with Check
+							for updates.
+						</p>
+					</div>
+				) : (
+					<>
+						<div className="md:hidden p-4 space-y-3">
+							{checks.map((check) => (
+								<div key={check.host_id} className="card p-4 space-y-2 text-sm">
+									<div className="flex items-center justify-between gap-2">
+										<Link
+											to={`/hosts/${check.host_id}`}
+											className="font-semibold text-primary-600 dark:text-primary-400 min-h-[44px] inline-flex items-center"
+										>
+											{hostLabel(check.host_id, check.host)}
+										</Link>
+										<UpdateStatusBadge
+											status={check.status}
+											checkedAt={check.checked_at}
+											reason={check.reason}
+										/>
+									</div>
+									<div className="text-secondary-600 dark:text-white">
+										Local: <Digest value={check.local_digest} />
+									</div>
+									<div className="text-secondary-600 dark:text-white">
+										Registry: <Digest value={check.remote_digest} />
+									</div>
+									{check.reason && (
+										<div className="text-secondary-500 dark:text-white text-xs">
+											{describeCheckReason(check.reason)}
+										</div>
+									)}
+									<div className="text-xs text-secondary-500 dark:text-white">
+										Checked{" "}
+										{check.checked_at
+											? formatRelativeTime(check.checked_at)
+											: "never"}
+									</div>
+								</div>
+							))}
+						</div>
+						<div className="hidden md:block overflow-x-auto">
+							<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
+								<thead className="bg-secondary-50 dark:bg-secondary-700">
+									<tr>
+										{[
+											"Host",
+											"Status",
+											"Local Digest",
+											"Registry Digest",
+											"Reason",
+											"Checked",
+										].map((label) => (
+											<th
+												key={label}
+												scope="col"
+												className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap"
+											>
+												{label}
+											</th>
+										))}
+									</tr>
+								</thead>
+								<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
+									{checks.map((check) => (
+										<tr
+											key={check.host_id}
+											className="hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors"
+										>
+											<td className="px-3 sm:px-4 py-2 whitespace-nowrap text-sm">
+												<Link
+													to={`/hosts/${check.host_id}`}
+													className="font-medium text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300"
+												>
+													{hostLabel(check.host_id, check.host)}
+												</Link>
+											</td>
+											<td className="px-3 sm:px-4 py-2 whitespace-nowrap text-sm">
+												<UpdateStatusBadge
+													status={check.status}
+													checkedAt={check.checked_at}
+													reason={check.reason}
+												/>
+											</td>
+											<td className="px-3 sm:px-4 py-2 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
+												<Digest value={check.local_digest} />
+											</td>
+											<td className="px-3 sm:px-4 py-2 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
+												<Digest value={check.remote_digest} />
+											</td>
+											<td className="px-3 sm:px-4 py-2 text-sm text-secondary-500 dark:text-white">
+												{check.reason ? describeCheckReason(check.reason) : "-"}
+											</td>
+											<td className="px-3 sm:px-4 py-2 whitespace-nowrap text-sm text-secondary-500 dark:text-white">
+												{check.checked_at
+													? formatRelativeTime(check.checked_at)
+													: "Never"}
+											</td>
+										</tr>
+									))}
+								</tbody>
+							</table>
+						</div>
+					</>
+				)}
 			</div>
 
 			{/* Containers using this image */}
@@ -307,106 +414,151 @@ const ImageDetail = () => {
 						Containers ({containers.length})
 					</h3>
 				</div>
-				<div className="overflow-x-auto">
-					<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-700">
-						<thead className="bg-secondary-50 dark:bg-secondary-900">
-							<tr>
-								<th
-									scope="col"
-									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-								>
-									Container Name
-								</th>
-								<th
-									scope="col"
-									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-								>
-									Status
-								</th>
-								<th
-									scope="col"
-									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-								>
-									Host
-								</th>
-								<th
-									scope="col"
-									className="px-6 py-3 text-right text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-								>
-									Actions
-								</th>
-							</tr>
-						</thead>
-						<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-700">
+				{containers.length === 0 ? (
+					<div className="text-center py-8 px-4">
+						<p className="text-secondary-500 dark:text-white">
+							No containers use this image
+						</p>
+					</div>
+				) : (
+					<>
+						<div className="md:hidden p-4 space-y-3">
 							{containers.map((container) => (
-								<tr key={container.id}>
-									<td className="px-6 py-4 whitespace-nowrap">
+								<div key={container.id} className="card p-4 space-y-2">
+									<div className="flex items-center justify-between gap-2">
 										<Link
 											to={`/docker/containers/${container.id}`}
-											className="text-sm font-medium text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300"
+											className="text-base font-semibold text-primary-600 dark:text-primary-400 min-h-[44px] inline-flex items-center"
 										>
 											{container.name}
 										</Link>
-									</td>
-									<td className="px-6 py-4 whitespace-nowrap">
-										<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
+										<span className="badge-secondary w-fit">
 											{container.status}
 										</span>
-									</td>
-									<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">
-										{container.host_id}
-									</td>
-									<td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-										<Link
-											to={`/docker/containers/${container.id}`}
-											className="text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300 inline-flex items-center"
-										>
-											View
-											<ExternalLink className="ml-1 h-4 w-4" />
-										</Link>
-									</td>
-								</tr>
+									</div>
+									<div className="flex items-center justify-between gap-2 text-sm text-secondary-500 dark:text-white">
+										<span>{hostLabel(container.host_id, container.host)}</span>
+										<UpdateStatusBadge status={container.update_status} />
+									</div>
+								</div>
 							))}
-						</tbody>
-					</table>
-				</div>
+						</div>
+						<div className="hidden md:block overflow-x-auto">
+							<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
+								<thead className="bg-secondary-50 dark:bg-secondary-700">
+									<tr>
+										{["Container Name", "Status", "Host", "Update Status"].map(
+											(label) => (
+												<th
+													key={label}
+													scope="col"
+													className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap"
+												>
+													{label}
+												</th>
+											),
+										)}
+										<th
+											scope="col"
+											className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+										>
+											Actions
+										</th>
+									</tr>
+								</thead>
+								<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
+									{containers.map((container) => (
+										<tr
+											key={container.id}
+											className="hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors"
+										>
+											<td className="px-3 sm:px-4 py-2 whitespace-nowrap">
+												<Link
+													to={`/docker/containers/${container.id}`}
+													className="text-sm font-medium text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300"
+												>
+													{container.name}
+												</Link>
+											</td>
+											<td className="px-3 sm:px-4 py-2 whitespace-nowrap">
+												<span className="badge-secondary">
+													{container.status}
+												</span>
+											</td>
+											<td className="px-3 sm:px-4 py-2 whitespace-nowrap text-sm">
+												<Link
+													to={`/hosts/${container.host_id}`}
+													className="text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300"
+												>
+													{hostLabel(container.host_id, container.host)}
+												</Link>
+											</td>
+											<td className="px-3 sm:px-4 py-2 whitespace-nowrap">
+												<UpdateStatusBadge status={container.update_status} />
+											</td>
+											<td className="px-3 sm:px-4 py-2 whitespace-nowrap text-sm font-medium">
+												<Link
+													to={`/docker/containers/${container.id}`}
+													className="text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300 inline-flex items-center"
+												>
+													View
+													<ExternalLink className="ml-1 h-4 w-4" />
+												</Link>
+											</td>
+										</tr>
+									))}
+								</tbody>
+							</table>
+						</div>
+					</>
+				)}
 			</div>
 
-			{/* Hosts using this image */}
 			<div className="card">
 				<div className="px-6 py-5 border-b border-secondary-200 dark:border-secondary-700">
 					<h3 className="text-lg leading-6 font-medium text-secondary-900 dark:text-white">
 						Hosts ({hosts.length})
 					</h3>
 				</div>
-				<div className="overflow-x-auto">
-					<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-700">
-						<thead className="bg-secondary-50 dark:bg-secondary-900">
+				<div className="md:hidden p-4 space-y-3">
+					{hosts.map((host) => (
+						<div key={host.id} className="card p-4">
+							<Link
+								to={`/hosts/${host.id}`}
+								className="text-base font-semibold text-primary-600 dark:text-primary-400 min-h-[44px] inline-flex items-center"
+							>
+								{host.friendly_name || host.hostname}
+							</Link>
+							{host.ip && (
+								<p className="text-sm text-secondary-500 dark:text-white font-mono">
+									{host.ip}
+								</p>
+							)}
+						</div>
+					))}
+				</div>
+				<div className="hidden md:block overflow-x-auto">
+					<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
+						<thead className="bg-secondary-50 dark:bg-secondary-700">
 							<tr>
-								<th
-									scope="col"
-									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-								>
-									Host Name
-								</th>
-								<th
-									scope="col"
-									className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-								>
-									IP Address
-								</th>
-								<th
-									scope="col"
-									className="px-6 py-3 text-right text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
-								>
-									Actions
-								</th>
+								{["Host Name", "IP Address", "Actions"].map((label) => (
+									<th
+										key={label}
+										scope="col"
+										className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+									>
+										{label}
+									</th>
+								))}
 							</tr>
 						</thead>
-						<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-700">
+						<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
 							{hosts.map((host) => (
-								<tr key={host.id}>
-									<td className="px-6 py-4 whitespace-nowrap">
+								<tr
+									key={host.id}
+									className="hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors"
+								>
+									<td className="px-3 sm:px-4 py-2 whitespace-nowrap">
 										<Link
 											to={`/hosts/${host.id}`}
 											className="text-sm font-medium text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300"
@@ -414,10 +566,10 @@ const ImageDetail = () => {
 											{host.friendly_name || host.hostname}
 										</Link>
 									</td>
-									<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">
-										{host.ip}
+									<td className="px-3 sm:px-4 py-2 whitespace-nowrap text-sm font-mono text-secondary-500 dark:text-white">
+										{host.ip || "-"}
 									</td>
-									<td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+									<td className="px-3 sm:px-4 py-2 whitespace-nowrap text-sm font-medium">
 										<Link
 											to={`/hosts/${host.id}`}
 											className="text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300 inline-flex items-center"
