@@ -2901,7 +2901,7 @@ If you see `OIDC is enabled but missing required config: ...`, one or more of th
 4. Authenticate with your IdP credentials
 5. You'll be redirected back to PatchMon and logged in
 
-If `OIDC_AUTO_CREATE_USERS` is `true`, a PatchMon account is created automatically using your email address. The username is derived from the email prefix (e.g. `john.doe@example.com` becomes `john.doe`).
+If `OIDC_AUTO_CREATE_USERS` is `true`, a PatchMon account is created automatically using your email address. The username is taken from the `preferred_username` claim (e.g. `jdoe`). If your IdP does not send one, it is derived from the email prefix instead (e.g. `john.doe@example.com` becomes `john.doe`). The username is only set when the account is created; renaming it later is done in **Settings → Users**.
 
 ---
 
@@ -3468,7 +3468,7 @@ No Save button is needed for the toggles at the top (except **Enable OIDC / SSO*
 
 **First-login behaviour:**
 
-- A PatchMon account is created automatically. The username is derived from the email prefix (e.g. `alice@contoso.com` → `alice`).
+- A PatchMon account is created automatically. The username comes from `preferred_username` (only the part before any `@`), or from the email prefix if that claim is not sent (e.g. `alice@contoso.com` becomes `alice`).
 - The role is determined by group membership; if no group matches, the **Default (fallback)** role is used.
 - If **no admin exists yet in PatchMon**, the very first OIDC user is automatically promoted to **Super Admin** regardless of groups, so you cannot lock yourself out.
 

@@ -31,12 +31,13 @@ type SessionData struct {
 
 // UserInfo holds normalized user claims from OIDC.
 type UserInfo struct {
-	Sub           string
-	Email         string
-	Name          string
-	GivenName     string
-	FamilyName    string
-	EmailVerified bool
+	Sub               string
+	Email             string
+	Name              string
+	PreferredUsername string
+	GivenName         string
+	FamilyName        string
+	EmailVerified     bool
 	// For logs only; empty when EmailVerified is true.
 	EmailVerifiedReason string
 	Groups              []string
@@ -277,9 +278,10 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 	}
 
 	userInfo.EmailVerified, userInfo.EmailVerifiedReason = resolveEmailVerified(userInfoClaims, idClaims, emailFromIDToken, c.cfg.IssuerURL)
+	userInfo.PreferredUsername = getStringClaim(userInfoClaims, idClaims, "preferred_username")
 	userInfo.Name = getStringClaim(userInfoClaims, idClaims, "name")
 	if userInfo.Name == "" {
-		userInfo.Name = getStringClaim(userInfoClaims, idClaims, "preferred_username")
+		userInfo.Name = userInfo.PreferredUsername
 	}
 	if userInfo.Name == "" {
 		userInfo.Name = strings.Split(userInfo.Email, "@")[0]
