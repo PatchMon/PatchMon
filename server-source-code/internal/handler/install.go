@@ -479,6 +479,8 @@ func (h *InstallHandler) ServePing(w http.ResponseWriter, r *http.Request) {
 		// sending full reports. The key name and value are a fixed contract
 		// with the agent — do not rename or change the shape.
 		"hashGate": true,
+		// The agent hashes and sends a package field only when the server lists it here.
+		"capabilities": agentCapabilities,
 		"integrations": map[string]bool{
 			"docker":     checkin.DockerEnabled,
 			"compliance": checkin.ComplianceEnabled,
@@ -1170,3 +1172,5 @@ func agentAutoUpdateGate(serverAutoUpdate, hostAutoUpdate, patchRunActive bool) 
 	}
 	return false, ""
 }
+
+var agentCapabilities = []string{"wingetPinned"}

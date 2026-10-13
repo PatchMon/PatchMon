@@ -47,3 +47,12 @@ func TestCanonicalPackagesHashWingetPinned(t *testing.T) {
 		t.Fatalf("pinned row hash = %s; the agent's hashing test pins the same value", pinned)
 	}
 }
+
+func TestPingAdvertisesWingetPinnedCapability(t *testing.T) {
+	for _, c := range agentCapabilities {
+		if c == "wingetPinned" {
+			return
+		}
+	}
+	t.Fatal("ping no longer advertises wingetPinned; agents would stop hashing and sending winget pins")
+}
