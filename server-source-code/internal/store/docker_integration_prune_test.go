@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
@@ -36,8 +37,20 @@ func (r *recordingDBTX) Exec(_ context.Context, sql string, args ...interface{})
 	return pgconn.NewCommandTag("DELETE 0"), nil
 }
 
+type emptyRows struct{}
+
+func (emptyRows) Close()                                       {}
+func (emptyRows) Err() error                                   { return nil }
+func (emptyRows) CommandTag() pgconn.CommandTag                { return pgconn.NewCommandTag("SELECT 0") }
+func (emptyRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
+func (emptyRows) Next() bool                                   { return false }
+func (emptyRows) Scan(...any) error                            { return errors.New("no rows") }
+func (emptyRows) Values() ([]any, error)                       { return nil, nil }
+func (emptyRows) RawValues() [][]byte                          { return nil }
+func (emptyRows) Conn() *pgx.Conn                              { return nil }
+
 func (r *recordingDBTX) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
-	return nil, errors.New("not implemented")
+	return emptyRows{}, nil
 }
 
 func (r *recordingDBTX) QueryRow(context.Context, string, ...interface{}) pgx.Row {
@@ -72,6 +85,7 @@ func TestReceiveDockerDataPruneDecision(t *testing.T) {
 			name:    "empty successful collection prunes",
 			payload: DockerReceivePayload{Collected: []string{"containers", "images", "volumes", "networks"}},
 			want: []pruneCall{
+				{"docker_host_images", "h1", []string{}},
 				{"docker_containers", "h1", []string{}},
 				{"docker_volumes", "h1", []string{}},
 				{"docker_networks", "h1", []string{}},
@@ -80,16 +94,15 @@ func TestReceiveDockerDataPruneDecision(t *testing.T) {
 		{
 			name:    "failed kinds are left alone",
 			payload: DockerReceivePayload{Networks: networks, Collected: []string{"images", "networks"}},
-			want:    []pruneCall{{"docker_networks", "h1", []string{"n1"}}},
+			want:    []pruneCall{{"docker_host_images", "h1", []string{}}, {"docker_networks", "h1", []string{"n1"}}},
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := &recordingDBTX{}
-			s := NewDockerStore(staticDBProvider{d: &database.DB{Queries: db.New(rec)}})
 			p := tc.payload
-			if _, err := s.ReceiveDockerData(context.Background(), "h1", &p); err != nil {
+			if _, err := receiveDockerData(context.Background(), db.New(rec), "h1", &p, time.Now()); err != nil {
 				t.Fatal(err)
 			}
 			if len(rec.calls) != len(tc.want) {

@@ -432,7 +432,6 @@ func (h *DockerInvCleanupHandler) cleanupDB(ctx context.Context, d *database.DB)
 		return err
 	}
 	for _, img := range images {
-		_ = d.Queries.DeleteImageUpdatesByImageID(ctx, img.ID)
 		if err := d.Queries.DeleteImageByID(ctx, img.ID); err != nil {
 			h.log.Warn("failed to delete orphaned image", "id", img.ID, "error", err)
 			continue

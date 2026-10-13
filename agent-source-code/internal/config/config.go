@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"time"
 
 	"patchmon-agent/pkg/models"
 
@@ -474,6 +475,12 @@ func (m *Manager) saveConfigLocked() error {
 
 	configViper.Set("integrations", m.config.Integrations)
 
+	updateCheckEnabled, updateCheckHours := m.dockerUpdateCheckLocked()
+	configViper.Set("docker_update_check", map[string]interface{}{
+		"enabled":        updateCheckEnabled,
+		"interval_hours": updateCheckHours,
+	})
+
 	return writeConfigAtomically(configViper, m.configFile)
 }
 
@@ -610,6 +617,27 @@ func (m *Manager) GetPackageCacheRefreshMaxAge() int {
 		return 60
 	}
 	return m.config.PackageCacheRefreshMaxAge
+}
+
+// DefaultDockerUpdateCheckIntervalHours applies when interval_hours is unset or below 1.
+const DefaultDockerUpdateCheckIntervalHours = 6
+
+// GetDockerUpdateCheck reports the docker_update_check settings; it ignores integrations.docker.
+func (m *Manager) GetDockerUpdateCheck() (enabled bool, interval time.Duration) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	enabled, hours := m.dockerUpdateCheckLocked()
+	return enabled, time.Duration(hours) * time.Hour
+}
+
+func (m *Manager) dockerUpdateCheckLocked() (bool, int) {
+	c := m.config.DockerUpdateCheck
+	enabled := c.Enabled == nil || *c.Enabled
+	hours := c.IntervalHours
+	if hours < 1 {
+		hours = DefaultDockerUpdateCheckIntervalHours
+	}
+	return enabled, hours
 }
 
 // IsIntegrationEnabled checks if an integration is enabled

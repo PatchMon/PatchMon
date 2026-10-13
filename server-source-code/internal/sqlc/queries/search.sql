@@ -85,9 +85,10 @@ docker_image_results AS (
         'docker_image'::text AS type,
         COALESCE(source, '') AS description
     FROM docker_images
-    WHERE repository ILIKE '%' || @search::text || '%'
+    WHERE (repository ILIKE '%' || @search::text || '%'
        OR tag ILIKE '%' || @search::text || '%'
-       OR image_id ILIKE '%' || @search::text || '%'
+       OR image_id ILIKE '%' || @search::text || '%')
+      AND (EXISTS (SELECT 1 FROM docker_containers dc0 WHERE dc0.image_id = docker_images.id) OR EXISTS (SELECT 1 FROM docker_host_images dhi0 WHERE dhi0.image_id = docker_images.id))
     ORDER BY repository ASC
     LIMIT 5
 )

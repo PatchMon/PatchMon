@@ -221,3 +221,36 @@ func rateLimitClientIP(r *http.Request) string {
 	}
 	return r.RemoteAddr
 }
+
+// RateLimitPerContext caps a route's request rate across the whole calling context.
+func RateLimitPerContext(rdb *hostctx.RedisResolver, name string, max int, window time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			client := rdb.RDB(r.Context())
+			if client == nil {
+				rateLimitUnavailable(w, r, RateLimitGeneral)
+				next.ServeHTTP(w, r)
+				return
+			}
+			key := hostctx.TenantKey(r.Context(), "ratelimit:context:"+name)
+			count, ttl, err := rateLimitHit(r.Context(), client, key, int(window.Milliseconds()))
+			if err != nil {
+				rateLimitUnavailable(w, r, RateLimitGeneral)
+				next.ServeHTTP(w, r)
+				return
+			}
+			if count > int64(max) {
+				remainingSec := int(ttl.Seconds())
+				if remainingSec <= 0 {
+					remainingSec = int(window.Seconds())
+				}
+				w.Header().Set("Retry-After", strconv.Itoa(remainingSec))
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"message":"Too many requests. Try again later."}`))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
