@@ -1,6 +1,7 @@
 package packages
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -703,21 +704,37 @@ func (m *WindowsManager) resolveWingetCommand() (wingetCommand, bool) {
 
 func (m *WindowsManager) runWingetList(w wingetCommand, args ...string) (string, bool) {
 	args = append(args, "--accept-source-agreements", "--disable-interactivity")
-	cmd, cancel := boundedCommand(networkCollectorTimeout, w.exe, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), networkCollectorTimeout)
 	defer cancel()
+	cmd := exec.CommandContext(ctx, w.exe, args...)
+	cmd.WaitDelay = commandKillDelay
 	cmd.Env = w.env
 	hideWindow(cmd)
 	output, err := cmd.Output()
+	fields := map[string]interface{}{"args": strings.Join(args, " ")}
+	if ctx.Err() != nil {
+		m.logger.WithError(ctx.Err()).WithFields(logutil.SanitizeMap(fields)).Warn("winget timed out")
+		return "", false
+	}
+	code := 0
 	if err != nil {
-		fields := map[string]interface{}{"args": strings.Join(args, " ")}
 		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			fields["exit_code"] = fmt.Sprintf("0x%08X", uint32(ee.ExitCode()))
+		if !errors.As(err, &ee) {
+			m.logger.WithError(err).WithFields(logutil.SanitizeMap(fields)).Warn("winget failed")
+			return "", false
 		}
+		code = ee.ExitCode()
+		fields["exit_code"] = fmt.Sprintf("0x%08X", uint32(code))
+	}
+	out, class := classifyWingetExit(code, string(output))
+	switch class {
+	case wingetExitPartial:
+		m.logger.WithFields(logutil.SanitizeMap(fields)).Debug("winget exited non-zero but printed a table; using it")
+	case wingetExitFailed:
 		m.logger.WithError(err).WithFields(logutil.SanitizeMap(fields)).Warn("winget failed")
 		return "", false
 	}
-	return stripTerminalControls(string(output)), true
+	return out, true
 }
 
 type wingetRow struct {

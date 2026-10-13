@@ -49,3 +49,41 @@ func isSpinnerLine(line string) bool {
 	r := []rune(t)[0]
 	return r >= 0x2580 && r <= 0x259f
 }
+
+const wingetNoApplicationsFound = 0x8A150014
+
+type wingetExitClass int
+
+const (
+	wingetExitOK wingetExitClass = iota
+	wingetExitNoApps
+	wingetExitPartial
+	wingetExitFailed
+)
+
+func classifyWingetExit(code int, stdout string) (string, wingetExitClass) {
+	switch {
+	case code == 0:
+		return stripTerminalControls(stdout), wingetExitOK
+	case uint32(code) == wingetNoApplicationsFound:
+		return "", wingetExitNoApps
+	case hasWingetTable(stdout):
+		return stripTerminalControls(stdout), wingetExitPartial
+	}
+	return "", wingetExitFailed
+}
+
+// Looks at raw output: stripTerminalControls drops dash-only lines as spinner frames.
+func hasWingetTable(raw string) bool {
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if i := strings.LastIndex(line, "\r"); i >= 0 {
+			line = line[i+1:]
+		}
+		t := strings.TrimSpace(line)
+		if len(t) >= 10 && strings.Trim(t, "-") == "" {
+			return true
+		}
+	}
+	return false
+}
