@@ -334,10 +334,10 @@ func TestWUAScriptIsStatic(t *testing.T) {
 		t.Error("wua.ps1 contains a Go format verb; it must never be built with fmt")
 	}
 	args := wuaPowerShellArgs()
-	if args[len(args)-2] != "-Command" || args[len(args)-1] != winexec.Script(wuaScript) {
+	if args[len(args)-2] != "-Command" || args[len(args)-1] != winexec.Script(wuaPendingScript+wuaScript) {
 		t.Error("the executed script must be exactly the embedded file behind the UTF-8 preamble")
 	}
-	for _, want := range []string{"[Console]::In.ReadToEnd()", "IsInstalled=0 AND IsHidden=0", `{12}\z'`, "$guidPattern", "-notmatch $guidPattern"} {
+	for _, want := range []string{"[Console]::In.ReadToEnd()", "IsInstalled=0 AND IsHidden=0", "Get-InProgressIds $session", `{12}\z'`, "$guidPattern", "-notmatch $guidPattern"} {
 		if !strings.Contains(wuaScript, want) {
 			t.Errorf("wua.ps1 lacks %q", want)
 		}
@@ -847,5 +847,19 @@ func TestWindowsRunLimit(t *testing.T) {
 	got := WindowsRunLimit(WindowsPatchRequest{Targets: []WindowsPatchTarget{{Kind: WindowsTargetWUA, ID: guidA}}})
 	if got < defaultWindowsPatchTimeouts.downloadFeature+defaultWindowsPatchTimeouts.installFeature {
 		t.Errorf("named updates = %v, too short for a feature upgrade", got)
+	}
+}
+
+func TestPendingRestartRuleIsShared(t *testing.T) {
+	for _, want := range []string{"function Get-InProgressIds", "function Get-SystemRebootRequired", "$e.Operation -ne 1", "$latest[$k] -eq 1", "[Math]::Min($n, 500)"} {
+		if !strings.Contains(wuaPendingScript, want) {
+			t.Errorf("wua_pending.ps1 lacks %q", want)
+		}
+	}
+	if strings.Contains(wuaScript, "function Get-InProgressIds") {
+		t.Error("wua.ps1 must use the shared rule, not its own copy")
+	}
+	if regexp.MustCompile(`%[-+# 0-9.]*[sdvqxXtTwf]`).MatchString(wuaPendingScript) {
+		t.Error("wua_pending.ps1 contains a Go format verb")
 	}
 }

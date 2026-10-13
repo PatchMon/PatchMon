@@ -1052,18 +1052,7 @@ try {
   $searcher  = $session.CreateUpdateSearcher()
   $results   = $searcher.Search("IsInstalled=0 AND IsHidden=0")
   $pendingRebootIds = @{}
-  $rebootRequired = $false
-  try { $rebootRequired = (New-Object -ComObject Microsoft.Update.SystemInfo).RebootRequired } catch {}
-  if ($rebootRequired) {
-    try {
-      $historyCount = $searcher.GetTotalHistoryCount()
-      if ($historyCount -gt 0) {
-        foreach ($h in $searcher.QueryHistory(0, [Math]::Min($historyCount, 200))) {
-          if ($h.ResultCode -eq 1) { $pendingRebootIds[[string]$h.UpdateIdentity.UpdateID] = $true }
-        }
-      }
-    } catch {}
-  }
+  if (Get-SystemRebootRequired) { $pendingRebootIds = Get-InProgressIds $session }
   foreach ($u in $results.Updates) {
     $secFlag = ($u.MsrcSeverity -eq "Critical" -or $u.MsrcSeverity -eq "Important")
     $kbs = @($u.KBArticleIDs | ForEach-Object { "KB$_" })
@@ -1082,7 +1071,7 @@ try {
       CategoryIDs      = $catIds
       BrowseOnly       = [bool]$u.BrowseOnly
       TypeCode         = [int]$u.Type
-      PendingReboot    = [bool]$pendingRebootIds[[string]$guid]
+      PendingReboot    = [bool]$pendingRebootIds[([string]$guid).ToLower()]
       CurrentVersion   = "pending"
       AvailableVersion = ""
       NeedsUpdate      = $true
@@ -1129,7 +1118,7 @@ if ($comFailed) {
 
 $result | ConvertTo-Json -Compress -Depth 4
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, winexec.PowerShellPath(), "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
+	cmd, cancel := boundedCommand(networkCollectorTimeout, winexec.PowerShellPath(), "-NoProfile", "-NonInteractive", "-Command", winexec.Script(wuaPendingScript+psScript))
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {

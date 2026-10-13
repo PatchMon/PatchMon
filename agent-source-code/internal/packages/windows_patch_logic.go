@@ -50,8 +50,14 @@ const maxItemsPerPost = 200
 //go:embed wua.ps1
 var wuaScript string
 
+// wuaPendingScript is the one "installed, waiting for a restart" rule, shared by the patch
+// runner and the inventory so the two never disagree.
+//
+//go:embed wua_pending.ps1
+var wuaPendingScript string
+
 func wuaPowerShellArgs() []string {
-	return []string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", winexec.Script(wuaScript)}
+	return []string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", winexec.Script(wuaPendingScript + wuaScript)}
 }
 
 var wuaGUIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
