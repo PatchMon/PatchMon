@@ -682,7 +682,11 @@ func (m *WindowsManager) getPackagesFromWinget() []wingetRow {
 func (m *WindowsManager) runWingetList(args ...string) (string, bool) {
 	exe, env, err := resolveWinget()
 	if err != nil {
-		m.logger.WithError(err).Info("WinGet not available")
+		if errors.Is(err, errWingetNotFound) {
+			m.logger.WithError(err).Info("WinGet not available")
+		} else {
+			m.logger.WithError(err).Warn("WinGet not available")
+		}
 		return "", false
 	}
 	args = append(args, "--accept-source-agreements", "--disable-interactivity")

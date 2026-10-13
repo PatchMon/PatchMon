@@ -11,4 +11,4 @@ var errWingetNotWindows = errors.New("winget is only available on Windows")
 
 func hideWindow(*exec.Cmd) {}
 
-func checkAuthenticode(string) error { return errWingetNotWindows }
+func checkWingetTrust(string) error { return errWingetNotWindows }
