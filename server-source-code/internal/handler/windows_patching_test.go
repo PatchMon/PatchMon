@@ -124,6 +124,7 @@ func TestPlanWindowsRunPatchPackage(t *testing.T) {
 		db.ResolveWindowsPatchTargetsRow{Name: "Legacy App", NeedsUpdate: true, NotPatchableReason: "no_winget_id"},
 		db.ResolveWindowsPatchTargetsRow{Name: "Up To Date", NeedsUpdate: false, WingetID: strp("x.y"), NotPatchableReason: "not_pending"},
 		appRow("Tampered", "x';calc;'"),
+		db.ResolveWindowsPatchTargetsRow{Name: "Pinned App", NeedsUpdate: true, WingetID: strp("a.b"), NotPatchableReason: "winget_pinned"},
 	)
 
 	t.Run("resolves updates and apps to identifiers", func(t *testing.T) {
@@ -157,7 +158,7 @@ func TestPlanWindowsRunPatchPackage(t *testing.T) {
 	})
 
 	t.Run("rejects list every unpatchable name with its reason", func(t *testing.T) {
-		_, reqErr, err := planWindowsRun(v, "patch_package", []string{"7-Zip 24.08 (x64)", "Legacy App", "Up To Date", "Missing", "Tampered"}, nil, resolver)
+		_, reqErr, err := planWindowsRun(v, "patch_package", []string{"7-Zip 24.08 (x64)", "Legacy App", "Up To Date", "Missing", "Tampered", "Pinned App"}, nil, resolver)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -165,7 +166,7 @@ func TestPlanWindowsRunPatchPackage(t *testing.T) {
 			t.Fatal("want 400")
 		}
 		rejects := reqErr.Body["rejected"].([]windowsTargetReject)
-		want := map[string]string{"Legacy App": rejectNoWingetID, "Up To Date": rejectNotPending, "Missing": rejectNotFound, "Tampered": rejectInvalidIdentifier}
+		want := map[string]string{"Legacy App": rejectNoWingetID, "Up To Date": rejectNotPending, "Missing": rejectNotFound, "Tampered": rejectInvalidIdentifier, "Pinned App": rejectWingetPinned}
 		if len(rejects) != len(want) {
 			t.Fatalf("rejects = %+v", rejects)
 		}

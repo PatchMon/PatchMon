@@ -346,6 +346,7 @@ type HostPackage struct {
 	WuaDateInstalled   pgtype.Timestamp `json:"wua_date_installed"`
 	SourceRepositoryID *string          `json:"source_repository_id"`
 	WingetID           *string          `json:"winget_id"`
+	WingetPinned       *bool            `json:"winget_pinned"`
 	WuaBrowseOnly      *bool            `json:"wua_browse_only"`
 	WuaUpdateType      *string          `json:"wua_update_type"`
 }

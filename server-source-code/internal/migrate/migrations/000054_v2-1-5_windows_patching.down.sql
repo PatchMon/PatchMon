@@ -1,6 +1,7 @@
 ALTER TABLE host_packages ADD COLUMN IF NOT EXISTS wua_install_result TEXT;
 ALTER TABLE host_packages DROP COLUMN IF EXISTS wua_update_type;
 ALTER TABLE host_packages DROP COLUMN IF EXISTS wua_browse_only;
+ALTER TABLE host_packages DROP COLUMN IF EXISTS winget_pinned;
 ALTER TABLE host_packages DROP COLUMN IF EXISTS winget_id;
 ALTER TABLE patch_runs DROP COLUMN IF EXISTS windows_include_apps;
 ALTER TABLE patch_runs DROP COLUMN IF EXISTS windows_include_updates;

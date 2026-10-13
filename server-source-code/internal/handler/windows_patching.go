@@ -28,6 +28,7 @@ const (
 	rejectNotPending        = "not_pending"
 	rejectNoWingetID        = "no_winget_id"
 	rejectInvalidIdentifier = "invalid_identifier"
+	rejectWingetPinned      = "winget_pinned"
 )
 
 type windowsScope struct {

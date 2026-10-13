@@ -91,7 +91,7 @@ func TestPatchablePredicateIdenticalAcrossQueries(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := string(b)
-	const predicate = "THEN hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL)"
+	const predicate = "THEN hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL) AND NOT COALESCE(hp.winget_pinned, false)"
 	for _, q := range []string{"GetHostPackagesWithHostsByPackageID", "GetHostRefsForPackageIDs", "ListHostsForPackage"} {
 		if !strings.Contains(namedQueryIn(t, src, q), predicate) {
 			t.Errorf("%s does not use the shared patchable predicate", q)
@@ -101,7 +101,7 @@ func TestPatchablePredicateIdenticalAcrossQueries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(namedQueryIn(t, string(items), "ResolveWindowsPatchTargets"), "hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL)") {
+	if !strings.Contains(namedQueryIn(t, string(items), "ResolveWindowsPatchTargets"), "hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL) AND NOT COALESCE(hp.winget_pinned, false)") {
 		t.Error("ResolveWindowsPatchTargets does not use the shared patchable predicate")
 	}
 }
@@ -163,5 +163,34 @@ func TestPendingRestartPredicateInHostListings(t *testing.T) {
 		if !strings.Contains(body, "hp.current_version = 'pending restart'") || !strings.Contains(body, "wp.category = 'Windows Update'") || !strings.Contains(body, "pending_restart") {
 			t.Errorf("%s does not return pending_restart for restart-pending Windows Updates", q)
 		}
+	}
+}
+
+func TestWingetPinnedIsStoredAndNotPatchable(t *testing.T) {
+	raw, err := buildHostPackagesPayload("h1", []ReportPackage{
+		{Name: "Pinned", CurrentVersion: "1", NeedsUpdate: true, WingetID: "a.b", WingetPinned: true},
+		{Name: "Free", CurrentVersion: "1", NeedsUpdate: true, WingetID: "c.d"},
+	}, map[string]string{"Pinned": "p1", "Free": "p2"}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"winget_pinned":true`) || strings.Count(string(raw), `"winget_pinned":null`) != 1 {
+		t.Fatalf("payload = %s", raw)
+	}
+	b, err := os.ReadFile(filepath.Join("..", "sqlc", "queries", "packages.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{"GetHostPackagesWithHostsByPackageID", "GetHostRefsForPackageIDs", "ListHostsForPackage"} {
+		if !strings.Contains(namedQueryIn(t, string(b), q), "COALESCE(hp.winget_pinned, false) THEN 'winget_pinned'") {
+			t.Errorf("%s does not give pinned apps the winget_pinned reason", q)
+		}
+	}
+	items, err := os.ReadFile(filepath.Join("..", "sqlc", "queries", "patch_run_items.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(namedQueryIn(t, string(items), "ResolveWindowsPatchTargets"), "THEN 'winget_pinned'") {
+		t.Error("ResolveWindowsPatchTargets does not reject pinned apps")
 	}
 }

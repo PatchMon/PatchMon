@@ -27,6 +27,7 @@ ALTER TABLE patch_runs ADD COLUMN IF NOT EXISTS reboot_required BOOLEAN;
 ALTER TABLE patch_runs ADD COLUMN IF NOT EXISTS windows_include_updates BOOLEAN;
 ALTER TABLE patch_runs ADD COLUMN IF NOT EXISTS windows_include_apps BOOLEAN;
 ALTER TABLE host_packages ADD COLUMN IF NOT EXISTS winget_id TEXT;
+ALTER TABLE host_packages ADD COLUMN IF NOT EXISTS winget_pinned BOOLEAN;
 ALTER TABLE host_packages ADD COLUMN IF NOT EXISTS wua_browse_only BOOLEAN;
 ALTER TABLE host_packages ADD COLUMN IF NOT EXISTS wua_update_type TEXT;
 ALTER TABLE host_packages DROP COLUMN IF EXISTS wua_install_result;

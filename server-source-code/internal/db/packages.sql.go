@@ -118,10 +118,11 @@ SELECT hp.id, hp.host_id, hp.package_id, hp.current_version, hp.available_versio
     h.os_type as host_os_type, h.os_version as host_os_version,
     h.last_update as host_last_update, h.needs_reboot as host_needs_reboot,
     (CASE WHEN h.os_type ILIKE '%windows%'
-        THEN hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL)
+        THEN hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL) AND NOT COALESCE(hp.winget_pinned, false)
         ELSE hp.needs_update END)::boolean AS patchable,
     (CASE
         WHEN NOT hp.needs_update THEN 'not_pending'
+        WHEN h.os_type ILIKE '%windows%' AND COALESCE(hp.winget_pinned, false) THEN 'winget_pinned'
         WHEN h.os_type ILIKE '%windows%' AND hp.wua_guid IS NULL AND hp.winget_id IS NULL THEN 'no_winget_id'
         ELSE ''
     END)::text AS not_patchable_reason,
@@ -241,10 +242,11 @@ WITH ranked_refs AS (
     SELECT hp.package_id, h.id as host_id, h.friendly_name, h.os_type,
         hp.current_version, hp.available_version, hp.needs_update, hp.is_security_update,
         (CASE WHEN h.os_type ILIKE '%windows%'
-            THEN hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL)
+            THEN hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL) AND NOT COALESCE(hp.winget_pinned, false)
             ELSE hp.needs_update END)::boolean AS patchable,
         (CASE
             WHEN NOT hp.needs_update THEN 'not_pending'
+            WHEN h.os_type ILIKE '%windows%' AND COALESCE(hp.winget_pinned, false) THEN 'winget_pinned'
             WHEN h.os_type ILIKE '%windows%' AND hp.wua_guid IS NULL AND hp.winget_id IS NULL THEN 'no_winget_id'
             ELSE ''
         END)::text AS not_patchable_reason,
@@ -437,10 +439,11 @@ SELECT h.id, h.friendly_name, h.hostname, h.os_type, h.os_version, h.last_update
     hp.current_version, hp.available_version, hp.needs_update, hp.is_security_update, hp.last_checked,
     hp.source_repository_id, r.name as source_repo_name,
     (CASE WHEN h.os_type ILIKE '%windows%'
-        THEN hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL)
+        THEN hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL) AND NOT COALESCE(hp.winget_pinned, false)
         ELSE hp.needs_update END)::boolean AS patchable,
     (CASE
         WHEN NOT hp.needs_update THEN 'not_pending'
+        WHEN h.os_type ILIKE '%windows%' AND COALESCE(hp.winget_pinned, false) THEN 'winget_pinned'
         WHEN h.os_type ILIKE '%windows%' AND hp.wua_guid IS NULL AND hp.winget_id IS NULL THEN 'no_winget_id'
         ELSE ''
     END)::text AS not_patchable_reason,
