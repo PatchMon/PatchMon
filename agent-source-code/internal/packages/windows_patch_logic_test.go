@@ -337,7 +337,7 @@ func TestWUAScriptIsStatic(t *testing.T) {
 	if args[len(args)-2] != "-Command" || args[len(args)-1] != winexec.Script(wuaScript) {
 		t.Error("the executed script must be exactly the embedded file behind the UTF-8 preamble")
 	}
-	for _, want := range []string{"[Console]::In.ReadToEnd()", "IsInstalled=0 AND IsHidden=0", "$guidPattern", "-notmatch $guidPattern"} {
+	for _, want := range []string{"[Console]::In.ReadToEnd()", "IsInstalled=0 AND IsHidden=0", `{12}\z'`, "$guidPattern", "-notmatch $guidPattern"} {
 		if !strings.Contains(wuaScript, want) {
 			t.Errorf("wua.ps1 lacks %q", want)
 		}

@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$guidPattern = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+$guidPattern = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\z'
 
 function Emit($obj) {
     [Console]::Out.WriteLine(($obj | ConvertTo-Json -Compress -Depth 4))
