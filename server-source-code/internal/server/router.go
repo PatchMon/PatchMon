@@ -191,7 +191,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	)
 	hostGroupsHandler := handler.NewHostGroupsHandler(hostGroupsStore, hostsStore)
 	dashboardPrefsHandler := handler.NewDashboardPreferencesHandler(dashboardPrefsStore)
-	dockerHandler := handler.NewDockerHandler(dockerStore)
+	dockerHandler := handler.NewDockerHandler(dockerStore, registry)
 	reportStore := store.NewReportStore(dbProvider)
 	integrationsHandler := handler.NewIntegrationsHandler(hostsStore, store.NewDockerStore(dbProvider), integrationStatusStore, dbProvider, notifyEmit, reportStore, store.NewJobHistoryStore(dbProvider))
 	complianceStore := store.NewComplianceStore(dbProvider)
@@ -318,6 +318,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		r.Post("/hosts/bootstrap/exchange", installHandler.BootstrapExchange)
 		r.Get("/hosts/integrations", integrationsHandler.AgentGetIntegrationStatus)
 		r.Post("/integrations/docker", integrationsHandler.ReceiveDockerData)
+		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent), middleware.BodyLimitFor(cfgResolver, func(rc *config.ResolvedConfig) int64 { return rc.AgentUpdateBodyLimitBytes })).Post("/integrations/docker/image-checks", integrationsHandler.ReceiveDockerImageChecks)
 		r.Post("/hosts/integration-status", integrationsHandler.ReceiveIntegrationStatus)
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent), middleware.BodyLimitFor(cfgResolver, func(rc *config.ResolvedConfig) int64 { return rc.ComplianceBodyLimitBytes })).Post("/compliance/scans", complianceHandler.ReceiveScans)
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent)).Get("/compliance/ssg-version", complianceHandler.AgentSSGVersion)
@@ -559,6 +560,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/{hostId}/fetch-report", hostsHandler.FetchReport)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/{hostId}/refresh-integration-status", hostsHandler.RefreshIntegrationStatus)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/{hostId}/refresh-docker", hostsHandler.RefreshDocker)
+			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore), middleware.RateLimitPerContext(redisResolver, "docker-image-check", 6, time.Minute)).Post("/hosts/{hostId}/docker-image-check", hostsHandler.DockerImageCheck)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/{hostId}/force-agent-update", hostsHandler.ForceAgentUpdate)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Delete("/hosts/{hostId}", hostsHandler.Delete)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Delete("/hosts/bulk", hostsHandler.BulkDelete)
@@ -719,6 +721,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("docker")).Get("/docker/networks", dockerHandler.ListNetworks)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("docker")).Get("/docker/networks/{id}", dockerHandler.GetNetwork)
 			r.With(middleware.RequirePermission("can_manage_docker", permissionsStore), hostctx.RequireModule("docker")).Delete("/docker/networks/{id}", dockerHandler.DeleteNetwork)
+			r.With(middleware.RequirePermission("can_manage_docker", permissionsStore), hostctx.RequireModule("docker"), middleware.RateLimitPerContext(redisResolver, "docker-image-checks-run", 6, time.Minute)).Post("/docker/image-checks/run", dockerHandler.RunImageChecks)
 
 			// Auto-enrollment tokens
 			r.With(middleware.RequirePermission("can_manage_settings", permissionsStore)).Get("/auto-enrollment/tokens", autoEnrollmentHandler.List)
