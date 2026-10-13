@@ -278,14 +278,14 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 	}
 
 	// Send startup ping to notify server that agent has started
-	logger.Info("🚀 Agent starting up, notifying server...")
+	logger.Info("Agent starting up, notifying server...")
 	// Startup ping uses nil request body — no hashes available yet (collectors
 	// haven't run), and metrics will ride on the first tick's check-in.
 	// Server treats this empty-body ping as a legacy heartbeat.
 	if _, err := httpClient.Ping(ctx, nil); err != nil {
 		logger.WithError(err).Warn("startup ping failed, will retry")
 	} else {
-		logger.Info("✅ Startup notification sent to server")
+		logger.Info("Startup notification sent to server")
 	}
 
 	// Start websocket loop FIRST so agent appears online immediately
@@ -309,7 +309,7 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 		if err := sendReport(false); err != nil {
 			logger.WithError(err).Warn("initial report failed")
 		} else {
-			logger.Info("✅ Initial report sent successfully")
+			logger.Info("Initial report sent successfully")
 		}
 	}()
 
@@ -1189,7 +1189,7 @@ func reportIntegrationStatus(ctx context.Context) {
 		}); err != nil {
 			logger.WithError(err).Warn("Failed to report compliance status on startup")
 		} else {
-			logger.WithField("status", overallStatus).Info("✅ Compliance integration status reported")
+			logger.WithField("status", overallStatus).Info("Compliance integration status reported")
 		}
 	}
 
@@ -1205,7 +1205,7 @@ func reportIntegrationStatus(ctx context.Context) {
 			}); err != nil {
 				logger.WithError(err).Warn("Failed to report docker status on startup")
 			} else {
-				logger.Info("✅ Docker integration status reported")
+				logger.Info("Docker integration status reported")
 			}
 		}
 	}

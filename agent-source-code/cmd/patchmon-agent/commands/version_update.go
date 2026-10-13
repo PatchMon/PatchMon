@@ -424,7 +424,7 @@ try {
 		return fmt.Errorf("failed to launch Windows update script: %w", err)
 	}
 
-	logger.Info("Windows update script launched — exiting to allow service replacement")
+	logger.Info("Windows update script launched; exiting to allow service replacement")
 	time.Sleep(500 * time.Millisecond)
 	os.Exit(0)
 	return nil // unreachable

@@ -140,8 +140,8 @@ func configureCreds(apiID, apiKey, serverURL string) error {
 		return err
 	}
 
-	logger.Info("✅ Connectivity test successful")
-	logger.Info("✅ API credentials are valid")
+	logger.Info("Connectivity test successful")
+	logger.Info("API credentials are valid")
 
 	return nil
 }
