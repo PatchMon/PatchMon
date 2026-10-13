@@ -238,6 +238,15 @@ func itemsForApproval(validationStatus string, items []db.PatchRunItem) []store.
 	return out
 }
 
+// revalidationItems is what a retried Windows validation starts from: the freshly resolved targets
+// for patch_package, and nothing for patch_all, whose items the agent re-reports.
+func revalidationItems(patchType string, plan *windowsRunPlan) []store.NewPatchRunItem {
+	if patchType != "patch_package" || plan == nil {
+		return nil
+	}
+	return plan.Items
+}
+
 func itemTitles(items []store.NewPatchRunItem) []string {
 	out := make([]string, len(items))
 	for i, it := range items {

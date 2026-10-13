@@ -951,12 +951,10 @@ func (h *PatchingHandler) RetryValidation(w http.ResponseWriter, r *http.Request
 			writeRunRequestError(w, reqErr)
 			return
 		}
-		if run.PatchType == "patch_package" {
-			if err := h.patchRuns.ReplaceItems(r.Context(), id, run.HostID, plan.Items); err != nil {
-				h.log.Error("patching: reset validation items error", "patch_run_id", id, "error", err)
-				JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to reset patch targets"})
-				return
-			}
+		if err := h.patchRuns.ReplaceItems(r.Context(), id, run.HostID, revalidationItems(run.PatchType, plan)); err != nil {
+			h.log.Error("patching: reset validation items error", "patch_run_id", id, "error", err)
+			JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to reset patch targets"})
+			return
 		}
 	}
 

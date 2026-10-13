@@ -277,3 +277,13 @@ func TestNotifiesRunEnd(t *testing.T) {
 		}
 	}
 }
+
+func TestRevalidationItemsResetPatchAll(t *testing.T) {
+	plan := &windowsRunPlan{Items: []store.NewPatchRunItem{{Kind: "wua", Identifier: "x"}}}
+	if got := revalidationItems("patch_all", plan); got != nil {
+		t.Fatalf("patch_all retry must clear the earlier dry run's items, got %+v", got)
+	}
+	if got := revalidationItems("patch_package", plan); len(got) != 1 {
+		t.Fatalf("patch_package retry must re-create its targets, got %+v", got)
+	}
+}
