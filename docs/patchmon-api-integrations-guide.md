@@ -1338,7 +1338,7 @@ The script is safe to rerun, by hand or from cron. From PatchMon 2.1.5 (script v
 | Agent installed and `patchmon-agent ping` succeeds | Skips it |
 | Credentials present in `/etc/patchmon/credentials.yml` (or its newest backup), the container's `config.yml` points at the same PatchMon URL, and PatchMon still accepts them | Reinstalls the agent with those credentials. No enrolment call is made and no host is created |
 | Credentials rejected by PatchMon (HTTP 401) | Enrols, sending the `host_id` from `/etc/patchmon/config.yml` (or its newest backup) if there is one |
-| Configuration points at a different PatchMon URL | Ignores the old credentials and `host_id` and enrols as a new host |
+| Configuration points at a different PatchMon URL | Does not send the old credentials or `host_id` to this server, and enrols as if the container were new. If the URL changed but the server is the same (a new domain, or HTTP to HTTPS), the enrolment usually answers `409` and the container is skipped: repair it with the install command from its host page instead |
 | Credentials could not be checked (network error, server error) | Fails the container for this run and does **not** enrol, so a temporary fault cannot create a duplicate. The next run retries |
 | No credentials | Enrols, sending `host_id` if there is one |
 
@@ -3023,7 +3023,7 @@ curl "https://patchmon.example.com/api/v1/auto-enrollment/script?type=proxmox-lx
 
 **Response:** `200 OK`. Plain text bash script with credentials injected.
 
-Both scripts can be run again on a host that is already enrolled. They skip a host whose agent works, reuse its credentials if PatchMon still accepts them, and otherwise enrol with the host's `host_id` so that a host which never reported gets new credentials rather than a duplicate record. See [Running the Script Again](#running-the-script-again) in the Proxmox chapter; the `direct-host` script behaves the same way for the machine it runs on. To ignore existing credentials and `host_id` and create a new host (for example on a cloned machine), set `FORCE_NEW_HOST=true`:
+Both scripts can be run again on a host that is already enrolled. They skip a host whose agent works, reuse its credentials if PatchMon still accepts them, and otherwise enrol with the host's `host_id` so that a host which never reported gets new credentials rather than a duplicate record. See [Running the Script Again](#running-the-script-again) in the Proxmox chapter; the `direct-host` script behaves the same way for the machine it runs on. Existing credentials and `host_id` are only used when the agent's `config.yml` points at the same PatchMon URL the script was downloaded from, so after a change of server URL repair the host with the install command from its host page. To ignore existing credentials and `host_id` and create a new host (for example on a cloned machine), set `FORCE_NEW_HOST=true`:
 
 ```bash
 curl -s "https://patchmon.example.com/api/v1/auto-enrollment/script?type=direct-host&token_key=KEY&token_secret=SECRET" | FORCE_NEW_HOST=true sh

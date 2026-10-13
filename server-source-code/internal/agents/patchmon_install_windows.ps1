@@ -262,11 +262,14 @@ if ($ServerURL -and $APIID -and $APIKey) {
         $env:PATCHMON_SKIP_SSL_VERIFY = "true"
     }
     $setApiArgs = @("--config", $configFile, "config", "set-api", $APIID, $APIKey, $ServerURL)
-    if ($HostId) {
-        $setApiArgs += @("--host-id", $HostId)
-    }
     try {
-        Invoke-AgentBinary -Path $targetPath -AgentArgs $setApiArgs
+        if ($HostId) {
+            Invoke-AgentBinary -Path $targetPath -AgentArgs ($setApiArgs + @("--host-id", $HostId))
+        }
+        # An agent older than 2.1.5 rejects --host-id; it learns the host ID later instead.
+        if (-not $HostId -or $LASTEXITCODE -ne 0) {
+            Invoke-AgentBinary -Path $targetPath -AgentArgs $setApiArgs
+        }
     } catch {
         Show-AgentLaunchFailure -Path $targetPath -InstallDir $InstallPath -ConfigFile $configFile -Reason $_.Exception.Message
         exit 1

@@ -112,6 +112,11 @@ enrol_outcome() {
     esac
 }
 
+# Go sorts map keys, so host.id is the last "id" in the body, after any host_group.id.
+enrolled_host_id() {
+    printf '%s' "$1" | grep -o '"id":"[^"]*"' | tail -n 1 | cut -d'"' -f4 || true
+}
+
 write_stub_config() {
     [ -f "$1/config.yml" ] && return 0
     case "$3" in ""|*[!A-Za-z0-9-]*) return 0 ;; esac
@@ -333,7 +338,7 @@ run_install() {
     info "Installing PatchMon agent..."
     info "Using architecture: $architecture ($os_type)"
     install_exit_code=0
-    install_output=$(sh "$1" 2>&1) || install_exit_code=$?
+    install_output=$(sh "$1" </dev/null 2>&1) || install_exit_code=$?
     rm -f "$1"
     if [ "$install_exit_code" -eq 0 ] || echo "$install_output" | grep -q "PatchMon Agent installation completed successfully"; then
         success "Agent installed successfully"
@@ -433,7 +438,7 @@ case "$(enrol_outcome "$http_code" "$body")" in
         # Use grep and cut instead of jq since jq may not be installed
         api_id=$(echo "$body" | grep -o '"api_id":"[^"]*' | cut -d'"' -f4 || echo "")
         api_key=$(echo "$body" | grep -o '"api_key":"[^"]*' | cut -d'"' -f4 || echo "")
-        new_host_id=$(echo "$body" | grep -o '"id":"[^"]*"' | tail -n 1 | cut -d'"' -f4 || echo "")
+        new_host_id=$(enrolled_host_id "$body")
 
         if [ -z "$api_id" ] || [ -z "$api_key" ]; then
             error "Failed to parse API credentials from response"
