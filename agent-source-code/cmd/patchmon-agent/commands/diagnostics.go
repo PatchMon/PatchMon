@@ -60,6 +60,8 @@ func showDiagnostics() error {
 	// Agent Information
 	fmt.Printf("Agent Information:\n")
 	fmt.Printf("  Version: %s\n", pkgversion.Version)
+	fmt.Printf("  Config Version: %s\n", valueOrNone(cfg.ConfigVersion))
+	fmt.Printf("  Host ID: %s\n", valueOrNone(cfg.HostID))
 	fmt.Printf("  Config File: %s\n", cfgManager.GetConfigFile())
 	fmt.Printf("  Credentials File: %s\n", cfg.CredentialsFile)
 	fmt.Printf("  Log File: %s\n", cfg.LogFile)

@@ -64,6 +64,12 @@ func TestSave_RefusesAfterFailedLoad(t *testing.T) {
 		"SetPackageCacheRefresh": func(m *Manager) error { return m.SetPackageCacheRefresh("always", 60) },
 		"SetIntegrationEnabled":  func(m *Manager) error { return m.SetIntegrationEnabled("docker", true) },
 		"SaveConfig":             func(m *Manager) error { return m.SaveConfig() },
+		"AdoptHostID": func(m *Manager) error {
+			_, err := m.AdoptHostID("3b0c2f7e-6a1d-4c55-9a0e-2f1f7d9e8c41")
+			return err
+		},
+		"SetHostID":   func(m *Manager) error { return m.SetHostID("3b0c2f7e-6a1d-4c55-9a0e-2f1f7d9e8c41") },
+		"ClearHostID": func(m *Manager) error { return m.ClearHostID() },
 	}
 
 	for name, save := range savers {

@@ -262,16 +262,21 @@ func (h *ApiHostsHandler) GetHostInfo(w http.ResponseWriter, r *http.Request) {
 	if host.MachineID != nil {
 		machineID = *host.MachineID
 	}
+	configVersion := ""
+	if host.ConfigVersion != nil {
+		configVersion = *host.ConfigVersion
+	}
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"id":            host.ID,
-		"machine_id":    machineID,
-		"friendly_name": host.FriendlyName,
-		"hostname":      hostname,
-		"ip":            ip,
-		"os_type":       host.OSType,
-		"os_version":    host.OSVersion,
-		"agent_version": agentVersion,
-		"host_groups":   hg,
+		"id":             host.ID,
+		"machine_id":     machineID,
+		"friendly_name":  host.FriendlyName,
+		"hostname":       hostname,
+		"ip":             ip,
+		"os_type":        host.OSType,
+		"os_version":     host.OSVersion,
+		"agent_version":  agentVersion,
+		"config_version": configVersion,
+		"host_groups":    hg,
 	})
 }
 

@@ -3753,6 +3753,8 @@ If you close the wizard before reaching **Done**, the enrolment still completes 
 | `/usr/local/etc/rc.d/patchmon_agent` *(FreeBSD)* | | FreeBSD rc.d script |
 | | Windows Service `PatchMonAgent` | Service Control Manager entry |
 
+From PatchMon 2.1.5 the generated `config.yml` also records the host's identity. The install command carries the ID of the host record you created, and the installer writes it as `host_id`. The installer's connectivity check (`patchmon-agent ping`) then stamps `config_version` before the service is started, so a fresh install has both keys from the start. See [`host_id`](#host_id) and [`config_version`](#config_version).
+
 For the full reference of every `config.yml` parameter, see [Agent Configuration Reference (config.yml)](#agent-config-yml-reference).
 
 ### Troubleshooting First Check-in
@@ -3890,6 +3892,8 @@ sudo rm -f /etc/patchmon/config.yml /etc/patchmon/credentials.yml
 
 Or regenerate credentials from the UI first (this rotates the API key, and the next installer run will pick up the new one).
 
+A reinstall with the install command from the host's own page writes that host's `host_id` again, so the host keeps its record in PatchMon. Do not run one host's install command on a different machine: both machines would report as the same host.
+
 ### Next Steps
 
 - [Managing the PatchMon Agent](#managing-the-patchmon-agent): CLI commands, service control, logs, updates, removal.
@@ -3970,6 +3974,7 @@ patchmon-agent [command] [flags]
 | `diagnostics` | Show comprehensive system and agent diagnostics | Yes |
 | `config show` | Display current configuration and credential status | No |
 | `config set-api` | Configure API credentials and server URL | Yes |
+| `config sync-host-id` | Replace `host_id` in `config.yml` with the server's value (2.1.5+) | Yes |
 | `check-version` | Check if an agent update is available | Yes |
 | `update-agent` | Download and install the latest agent version | Yes |
 | `--version` | Print the agent version. A flag, not a subcommand | No |
@@ -4108,7 +4113,7 @@ Displays a comprehensive diagnostic report covering:
 | Section | Details |
 |---------|---------|
 | **System Information** | OS type/version, architecture, kernel version, hostname, machine ID |
-| **Agent Information** | Agent version, config file path, credentials file path, log file path, log level |
+| **Agent Information** | Agent version, config version, host ID, config file path, credentials file path, log file path, log level |
 | **Configuration Status** | Whether config and credentials files exist (✅/❌) |
 | **Network Connectivity** | Server URL, TCP reachability test, API credential validation |
 | **Recent Logs** | Last 10 log entries from the agent log file |
@@ -4126,7 +4131,9 @@ System Information:
   Machine ID: a1b2c3d4e5f6...
 
 Agent Information:
-  Version: 1.5.0
+  Version: 2.1.5
+  Config Version: 2.1.5
+  Host ID: 3b0c2f7e-6a1d-4c55-9a0e-2f1f7d9e8c41
   Config File: /etc/patchmon/config.yml
   Credentials File: /etc/patchmon/credentials.yml
   Log File: /etc/patchmon/logs/patchmon-agent.log
@@ -4161,7 +4168,9 @@ Displays the current configuration values and credential status:
 ```
 Configuration:
   Server: https://patchmon.example.com
-  Agent Version: 1.5.0
+  Agent Version: 2.1.5
+  Config Version: 2.1.5
+  Host ID: 3b0c2f7e-6a1d-4c55-9a0e-2f1f7d9e8c41
   Config File: /etc/patchmon/config.yml
   Credentials File: /etc/patchmon/credentials.yml
   Log File: /etc/patchmon/logs/patchmon-agent.log
@@ -4178,20 +4187,33 @@ Credentials:
 
 > **Security:** The API key is never shown. The output only confirms whether it is set.
 
+`Config Version` and `Host ID` show `(none)` when `config.yml` does not have them yet.
+
 ---
 
 #### `config set-api`: Configure Credentials
 
 ```bash
-sudo patchmon-agent config set-api <API_ID> <API_KEY> <SERVER_URL>
+sudo patchmon-agent config set-api <API_ID> <API_KEY> <SERVER_URL> [--host-id <HOST_ID>]
 ```
 
 Sets up the agent's API credentials and server URL. This command:
 
-1. Validates the inputs (non-empty, valid URL format)
+1. Validates the inputs (non-empty, valid URL format, and a valid host ID if `--host-id` is given)
 2. Saves the server URL to `/etc/patchmon/config.yml`
-3. Saves the credentials to `/etc/patchmon/credentials.yml` (with `600` permissions)
-4. Runs an automatic connectivity test (`ping`)
+3. Sets `host_id` in `config.yml` (see below)
+4. Saves the credentials to `/etc/patchmon/credentials.yml` (with `600` permissions)
+5. Runs an automatic connectivity test (`ping`), and records the server's host ID if `config.yml` has none
+
+How `host_id` is handled (agent 2.1.5 and later):
+
+| You run | Result |
+|---------|--------|
+| `set-api` with `--host-id <HOST_ID>` | `host_id` is set to that value |
+| `set-api` with the same API ID as before | `host_id` is kept |
+| `set-api` with a different API ID | `host_id` is cleared, then learned again from the server by the connectivity test |
+
+Switching to another API ID is a deliberate change of identity, which is why the old `host_id` is not kept.
 
 **Example:**
 
@@ -4203,6 +4225,18 @@ sudo patchmon-agent config set-api \
 ```
 
 > **Note:** This command is primarily useful for manual installations or credential rotation. The standard install script sets credentials automatically.
+
+---
+
+#### `config sync-host-id`: Adopt the Server's Host ID
+
+```bash
+sudo patchmon-agent config sync-host-id
+```
+
+Asks the PatchMon server which host the current credentials belong to and writes that host ID to `config.yml` as `host_id`, replacing any different value already there. It prints the old and new values, or `host_id is already <id>` when nothing changed.
+
+The agent never replaces a non-empty `host_id` on its own. Use this command to resolve a [Host ID mismatch](#host-id-mismatch) once you have confirmed the credentials on this machine are the right ones. It needs a PatchMon 2.1.5 or later server; an older server does not return a host ID, and the command exits with an error without changing anything.
 
 ---
 
@@ -4794,6 +4828,12 @@ sudo patchmon-agent config show
 
 ```bash
 sudo patchmon-agent config set-api <API_ID> <API_KEY> <SERVER_URL>
+```
+
+**Replace `host_id` with the server's value:**
+
+```bash
+sudo patchmon-agent config sync-host-id
 ```
 
 **Edit config file directly:**
@@ -5570,6 +5610,16 @@ patchmon_server: "https://patchmon.example.com"
 # Default: "v1". Do not change unless instructed.
 api_version: "v1"
 
+# ─── Host Identity (agent 2.1.5 and later) ───────────────────────────
+# ID of this host's record in PatchMon. Written by the installer, or
+# learned from the server on the first successful ping. Do not copy it
+# to another machine.
+host_id: "3b0c2f7e-6a1d-4c55-9a0e-2f1f7d9e8c41"
+
+# Version of the config file layout. Written by the agent only; it
+# equals the agent version once the agent has loaded this file.
+config_version: "2.1.5"
+
 # ─── File Paths ──────────────────────────────────────────────────────
 # Path to the credentials file containing api_id and api_key.
 # Default: "/etc/patchmon/credentials.yml"
@@ -5756,6 +5806,42 @@ If the value is `0` or negative, the agent falls back to the default of 60 minut
 A stagger offset calculated from the host's `api_id` and the current `update_interval`. This ensures agents across your fleet do not all report at the same moment (avoiding a thundering-herd problem on the server).
 
 **You should not set this manually.** The agent calculates it on first run and saves it. If the `update_interval` changes, the offset is recalculated automatically.
+
+#### `host_id`
+
+| | |
+|---|---|
+| **Type** | String |
+| **Required** | No |
+| **Default** | None (omitted when empty) |
+| **Written by** | Installer, or the agent (learned from the server) |
+| **Example** | `3b0c2f7e-6a1d-4c55-9a0e-2f1f7d9e8c41` |
+
+The ID of this host's record in PatchMon, the same ID that appears in the host's URL in the web UI. Added in agent 2.1.5.
+
+- **Installer**: the install command from a host's page writes that host's ID.
+- **Agent**: when `host_id` is empty, the agent records the ID the server returns on its next successful ping or report. Agents upgraded from an earlier release fill it in this way on their first start.
+- **Never overwritten automatically**: if `config.yml` already holds a different value, the agent keeps it, logs a warning once per run, and keeps reporting it, so PatchMon flags the host with a **Host ID mismatch**. Credentials still decide which host the data belongs to. To replace the value, run [`config sync-host-id`](#config-sync-host-id-adopt-the-servers-host-id) or `config set-api` with `--host-id`, or reinstall the agent.
+
+Enrolment scripts read `host_id` when they are run again on a machine whose agent is broken, so they can repair the existing host instead of creating a second one. See the Auto-Enrollment chapter of the API and integrations guide.
+
+Valid values are 1 to 64 letters, digits or hyphens. An invalid value is discarded when the agent first loads the file after upgrading to 2.1.5.
+
+#### `config_version`
+
+| | |
+|---|---|
+| **Type** | String |
+| **Required** | No |
+| **Default** | The running agent's version |
+| **Written by** | Agent only |
+| **Example** | `2.1.5` |
+
+The version of the config file layout. Added in agent 2.1.5. Do not edit it; neither the installer nor the server writes it.
+
+Every time the agent loads `config.yml` and finds a `config_version` different from its own version, it applies any config changes introduced in later releases, in order, and then sets `config_version` to its own version. This happens on upgrade (auto-update or `update-agent`), on downgrade, and on the first start of a fresh install. Each change is written so that running it twice does no harm, which is why a release candidate's config is processed again when the final release loads it.
+
+The agent reports `config_version` to the server, and the host page shows it next to the agent version. See [Config version out of date](#config-version-out-of-date) if they differ.
 
 #### `integrations`
 
@@ -5952,6 +6038,7 @@ Credentials are only sent to the registry they belong to, or to the login servic
 The `config.yml` file is created during agent installation by the `patchmon_install.sh` script. The installer generates a fresh config with:
 
 - `patchmon_server` set to the server URL used during installation
+- `host_id` set to the ID of the host the install command was generated for (2.1.5 and later)
 - `skip_ssl_verify` set based on whether `-k` curl flags were used
 - All integrations defaulted to `false` (Docker, SSH proxy, RDP proxy) or `"on-demand"` (compliance)
 - Standard file paths for credentials and logs
@@ -5961,6 +6048,7 @@ The `config.yml` file is created during agent installation by the `patchmon_inst
 cat > /etc/patchmon/config.yml << EOF
 # PatchMon Agent Configuration
 # Generated on $(date)
+host_id: "3b0c2f7e-6a1d-4c55-9a0e-2f1f7d9e8c41"
 patchmon_server: "https://patchmon.example.com"
 api_version: "v1"
 credentials_file: "/etc/patchmon/credentials.yml"
@@ -5979,6 +6067,8 @@ EOF
 
 chmod 600 /etc/patchmon/config.yml
 ```
+
+The installer does not write `config_version`. The agent adds it the first time it loads the file, which is during the installer's own connectivity check, before the service starts. The Windows installer writes the same `host_id` key, and passes `--host-id` to `config set-api` when it updates an existing configuration.
 
 #### Reinstallation Behaviour
 
@@ -6012,7 +6102,10 @@ The agent updates `config.yml` automatically in several scenarios. These are in-
 |---------|-------------|-----|
 | **First run** | `report_offset` | Calculated from `api_id` hash and `update_interval` to stagger reports. |
 | **Interval change** | `report_offset` | Recalculated whenever `update_interval` changes. |
-| **CLI: `config set-api`** | `patchmon_server`, credentials | Running `patchmon-agent config set-api` overwrites the server URL and saves new credentials. |
+| **Any load where the version differs** | `config_version` | Set to the running agent's version after any newer config changes have been applied. |
+| **Ping or report response** | `host_id` | Recorded from the server's response, only when `config.yml` has no `host_id` yet. |
+| **CLI: `config set-api`** | `patchmon_server`, credentials, `host_id` | Running `patchmon-agent config set-api` overwrites the server URL and saves new credentials. `host_id` is set from `--host-id`, kept when the API ID is unchanged, and cleared then re-learned when the API ID changes. |
+| **CLI: `config sync-host-id`** | `host_id` | Replaced with the server's value, even when a different value is present. |
 
 #### What Is Never Changed Automatically
 
@@ -6024,6 +6117,7 @@ The agent updates `config.yml` automatically in several scenarios. These are in-
 | `log_file` | Only changed by manual edit |
 | `credentials_file` | Only changed by manual edit or `config set-api` |
 | `skip_ssl_verify` | Only changed by manual edit |
+| `host_id` (when set) | A different value from the server is reported, not adopted. Only `config set-api`, `config sync-host-id`, or a reinstall replaces it |
 | `docker_update_check` | Only changed by manual edit (the agent writes the defaults into the file if the block is missing) |
 
 #### Important: How SaveConfig Works
@@ -6033,6 +6127,8 @@ When the agent calls `SaveConfig()` internally, it writes **all parameters** bac
 - Your `ssh-proxy-enabled` and `rdp-proxy-enabled` settings are **preserved** across server-driven updates.
 - New integrations added in agent updates are **automatically added** to the file with their defaults (you will see them appear after an agent update).
 - The file format may be slightly reorganised by the YAML serialiser (key ordering may change), but all values are preserved.
+- The agent rewrites the file every time it loads it, from the settings it knows about. **Comments, and keys the agent does not recognise, are not kept.** The installer's `# Generated on` header disappears on the agent's first start; keep notes about a host elsewhere.
+- A pre-2.1.5 agent does not know `host_id` or `config_version`, so if you downgrade to one (or serve an older binary through agent binary overrides), its first load removes both keys. Nothing breaks: when the agent is upgraded again, it stamps `config_version` and re-learns `host_id` from the server on its first ping.
 
 ### CLI Configuration Commands
 
@@ -6048,7 +6144,9 @@ sudo patchmon-agent config show
 ```
 Configuration:
   Server: https://patchmon.example.com
-  Agent Version: 1.4.0
+  Agent Version: 2.1.5
+  Config Version: 2.1.5
+  Host ID: 3b0c2f7e-6a1d-4c55-9a0e-2f1f7d9e8c41
   Config File: /etc/patchmon/config.yml
   Credentials File: /etc/patchmon/credentials.yml
   Log File: /etc/patchmon/logs/patchmon-agent.log
@@ -6077,6 +6175,8 @@ This command:
 3. Saves the credentials to `credentials.yml`
 4. Tests connectivity with a ping to the server
 5. Reports success or failure
+
+Add `--host-id <HOST_ID>` to set `host_id` at the same time. Without it, `host_id` is kept if the API ID is unchanged and cleared (then re-learned from the server) if it changes. See [`config set-api`](#config-set-api-configure-credentials).
 
 #### Custom Config File Path
 
@@ -6132,6 +6232,7 @@ If you notice settings being changed unexpectedly, check:
 1. **Server sync**: The `update_interval` and integration toggles (Docker, compliance) are synced from the server on startup and via WebSocket. Changes made in the PatchMon UI will override local values for these fields.
 2. **Agent updates**: After an agent update, new integration keys may appear in the file with default values.
 3. **Reinstallation**: A reinstall only overwrites config if the existing ping test fails.
+4. **Comments and unknown keys**: the agent rewrites the file from the settings it knows about every time it loads it, so comments and unrecognised keys are removed. This is expected.
 
 Your `ssh-proxy-enabled`, `rdp-proxy-enabled`, `log_level`, `skip_ssl_verify`, and file path settings are **never overwritten** by server sync.
 
@@ -6874,6 +6975,9 @@ The `diagnostics` output includes system info, configuration status, network rea
 | Agent runs but **logs not being written** | Wrong path, permission problem, or disk full | [Logs not being written](#logs-not-being-written) |
 | Service **keeps restarting** in a loop | Config error or unreachable server with `Restart=always` | [Service keeps restarting](#service-keeps-restarting) |
 | `Permission denied` on every command | Running without `sudo` / Administrator | [Permission denied](#permission-denied) |
+| Host page shows **Host ID mismatch** | `config.yml` names a different host than the credentials belong to | [Host ID mismatch](#host-id-mismatch) |
+| Host page warns of a **possible clone** | Two machines report with the same credentials | [Possible cloned machine](#possible-cloned-machine) |
+| Host page shows **config version out of date** or **not reported** | Agent could not save `config.yml`, or its version string cannot be recorded | [Config version out of date](#config-version-out-of-date) |
 
 ---
 
@@ -7190,6 +7294,62 @@ ls -la /etc/patchmon/config.yml /etc/patchmon/credentials.yml /usr/local/bin/pat
 ```
 
 **Full details:** [Managing the PatchMon Agent: "Permission Denied" Errors](#permission-denied-errors).
+
+### Host ID Mismatch
+
+The host page shows a **Host ID mismatch** warning, and the agent log contains `config.yml names a different host than these credentials belong to`.
+
+The agent's `config.yml` holds a `host_id` for one host, but its credentials (`credentials.yml`) belong to another. Reports are still accepted and land on the host the credentials belong to; nothing is blocked. Common causes:
+
+- `config.yml` was copied from another machine, or edited by hand.
+- `config set-api` was run with another host's credentials by an agent older than 2.1.5.
+
+**Check** which host the credentials belong to, and what the file says:
+
+```bash
+sudo patchmon-agent config show     # Host ID and API ID
+```
+
+**Fix**, once you are sure the credentials on this machine are the right ones:
+
+```bash
+sudo patchmon-agent config sync-host-id
+```
+
+This replaces `host_id` with the server's value. Alternatively, reinstall the agent with the install command from the correct host's page. The warning clears on the agent's next check-in. If the credentials are the wrong ones instead, run `config set-api` with this host's credentials.
+
+The agent never fixes this on its own, because a mismatch nearly always means a copied or edited file that someone should look at.
+
+### Possible Cloned Machine
+
+The host page warns that two machines appear to be reporting with this host's credentials. The server log contains `possible cloned agent: two machines are reporting with this host's credentials`.
+
+This happens when a VM or container that already had the agent installed is cloned, or made into a template and deployed. Every copy carries the same `credentials.yml` and `host_id`, so they all report as one host and its data alternates between them. PatchMon notices when the machine ID and hostname reported for the host keep switching between two values within 24 hours.
+
+**Fix:** give each copy its own host record.
+
+1. On each clone (not the original), remove the copied agent identity and enrol it as a new host:
+   - With an auto-enrolment script, rerun it with `FORCE_NEW_HOST=true` on the clone (for the Proxmox script, `FORCE_NEW_HOST=<vmid>`). This works even while the clone's agent is running: the script moves the copied `config.yml`, `credentials.yml` and their backups into `/etc/patchmon/pre-force-new-<timestamp>/`, then enrols and installs a new host. See the Auto-Enrollment chapter of the API and integrations guide.
+   - Otherwise, add a new host in PatchMon, remove `/etc/patchmon/config.yml` and `/etc/patchmon/credentials.yml` on the clone, and run the new host's install command.
+2. On the original host's page, dismiss the warning (needs `can_manage_hosts`). Alternatively, regenerate the original host's credentials and apply them to the original machine; that also clears the warning and locks out any copy you missed.
+
+If the machines keep alternating after you dismiss the warning, it comes back.
+
+**Limits:** detection relies on the machine ID and hostname. Two copies with the same hostname and the same machine ID cannot be told apart. Agents older than 2.1.5 only send what detection needs in full reports, not in every check-in, so the warning can take longer to appear for them.
+
+**Template hygiene:** never turn a machine into a template, golden image or snapshot for cloning while `/etc/patchmon` is present. Remove the agent first (see [Uninstalling the PatchMon Agent](#uninstalling-the-patchmon-agent)), or install the agent after cloning.
+
+### Config Version Out of Date
+
+The host page shows the config version alongside the agent version. Agents from 2.1.5 onwards set `config_version` in `config.yml` to their own version every time they load the file, so the two normally match from the first report after an upgrade.
+
+| Host page shows | Meaning | Action |
+|-----------------|---------|--------|
+| Config version differs from the agent version | The agent could not save `config.yml` after an upgrade (for example a read-only or full filesystem), so it reports the version still in the file | Check that `/etc/patchmon/config.yml` is writable by root and restart the agent |
+| Config version not reported, agent 2.1.5 or later | The agent's version string does not start with a `N.N.N` release number (for example a custom build), so PatchMon does not record it | None needed, or install a release build |
+| Requires agent 2.1.5 | The agent predates config versioning, including an agent downgraded to a release older than 2.1.5 (PatchMon clears the stored config version when such an agent reports) | Upgrade the agent when convenient |
+
+To see what the agent itself has, run `sudo patchmon-agent config show` and compare `Agent Version` with `Config Version`.
 
 ### Escalation
 

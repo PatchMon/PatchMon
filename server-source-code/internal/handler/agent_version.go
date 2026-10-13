@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"regexp"
 	"strings"
 	"time"
 
@@ -68,8 +67,7 @@ func (h *AgentVersionHandler) getLatestVersionFromDNS(ctx context.Context) (stri
 	}
 	v = strings.TrimSpace(strings.Trim(v, "\"'"))
 	// Validate semver format (x.y.z)
-	semverRe := regexp.MustCompile(`^\d+\.\d+\.\d+`)
-	if !semverRe.MatchString(v) {
+	if !util.HasVersionPrefix(v) {
 		return "", fmt.Errorf("invalid version format: %s", v)
 	}
 	return v, nil

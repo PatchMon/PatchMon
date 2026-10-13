@@ -99,6 +99,8 @@ type ReportPayload struct {
 	Architecture           string       `json:"architecture"`
 	AgentVersion           string       `json:"agentVersion"`
 	MachineID              string       `json:"machineId"`
+	HostID                 string       `json:"hostId,omitempty"`
+	ConfigVersion          string       `json:"configVersion,omitempty"`
 	KernelVersion          string       `json:"kernelVersion"`
 	InstalledKernelVersion string       `json:"installedKernelVersion,omitempty"`
 	SELinuxStatus          string       `json:"selinuxStatus"`
@@ -180,7 +182,10 @@ type PingRequest struct {
 	// AgentExecutionMs is the wall-clock time in milliseconds the agent
 	// spent collecting the data shipped in this ping. Used by the server's
 	// Agent Activity feed; older servers ignore it.
-	AgentExecutionMs *int `json:"agentExecutionMs,omitempty"`
+	AgentExecutionMs *int   `json:"agentExecutionMs,omitempty"`
+	HostID           string `json:"hostId,omitempty"`
+	ConfigVersion    string `json:"configVersion,omitempty"`
+	MachineID        string `json:"machineId,omitempty"`
 }
 
 // Section identifiers used in PingResponse.RequestFull and
@@ -215,6 +220,9 @@ type PingResponse struct {
 	// what the agent shipped. Empty array == nothing changed, agent stays
 	// quiet. Only meaningful when HashGate is true.
 	RequestFull []string `json:"requestFull,omitempty"`
+	// Servers older than 2.1.5 omit HostID.
+	HostID         string `json:"hostId,omitempty"`
+	HostIDMismatch bool   `json:"hostIdMismatch,omitempty"`
 }
 
 // UpdateResponse represents server update response
@@ -225,6 +233,7 @@ type UpdateResponse struct {
 	SecurityUpdates   int                `json:"securityUpdates,omitempty"`
 	AutoUpdate        *AutoUpdateInfo    `json:"autoUpdate,omitempty"`
 	CrontabUpdate     *CrontabUpdateInfo `json:"crontabUpdate,omitempty"`
+	HostID            string             `json:"hostId,omitempty"`
 }
 
 // AutoUpdateInfo represents agent auto-update information
@@ -377,6 +386,8 @@ type Config struct {
 	PackageCacheRefreshMaxAge int                     `yaml:"package_cache_refresh_max_age" mapstructure:"package_cache_refresh_max_age"` // minutes
 	Integrations              map[string]interface{}  `yaml:"integrations" mapstructure:"integrations"`                                   // Supports bool for simple integrations, string for compliance mode
 	DockerUpdateCheck         DockerUpdateCheckConfig `yaml:"docker_update_check" mapstructure:"docker_update_check"`
+	HostID                    string                  `yaml:"host_id" mapstructure:"host_id"`
+	ConfigVersion             string                  `yaml:"config_version" mapstructure:"config_version"`
 }
 
 // DockerUpdateCheckConfig controls the agent-side Docker image update check.

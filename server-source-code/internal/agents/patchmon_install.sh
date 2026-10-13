@@ -600,10 +600,17 @@ if [ -f "/etc/patchmon/credentials" ]; then
     info "Removed old credentials file"
 fi
 
+HOST_ID_LINE=""
+case "${PATCHMON_HOST_ID:-}" in
+    ""|*[!A-Za-z0-9-]*) ;;
+    *) HOST_ID_LINE="host_id: \"$PATCHMON_HOST_ID\"" ;;
+esac
+
 # Create main config file
 cat > /etc/patchmon/config.yml << EOF
 # PatchMon Agent Configuration
 # Generated on $(date)
+${HOST_ID_LINE}
 patchmon_server: "$PATCHMON_URL"
 api_version: "v1"
 credentials_file: "/etc/patchmon/credentials.yml"

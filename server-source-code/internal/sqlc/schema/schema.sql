@@ -253,11 +253,29 @@ CREATE TABLE IF NOT EXISTS hosts (
     hostname_hash TEXT,
     docker_hash TEXT,
     compliance_hash TEXT,
-    last_full_report_at TIMESTAMP(3)
+    last_full_report_at TIMESTAMP(3),
+    config_version TEXT,
+    reported_host_id TEXT,
+    enrolment_token_id TEXT REFERENCES auto_enrollment_tokens(id) ON DELETE SET NULL,
+    credentials_reissued_at TIMESTAMP(3),
+    identity_fingerprint TEXT,
+    identity_prev_fingerprint TEXT,
+    identity_fingerprint_changed_at TIMESTAMP(3),
+    identity_conflict_at TIMESTAMP(3),
+    enrolment_machine_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_hosts_machine_id
     ON hosts (machine_id);
+
+CREATE INDEX IF NOT EXISTS idx_hosts_enrolment_token_id
+    ON hosts (enrolment_token_id) WHERE enrolment_token_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_hosts_enrolment_machine_id_norm
+    ON hosts (lower(replace(enrolment_machine_id, '-', ''))) WHERE enrolment_machine_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_hosts_machine_id_norm
+    ON hosts (lower(replace(machine_id, '-', '')));
 
 -- dashboard_preferences
 CREATE TABLE IF NOT EXISTS dashboard_preferences (

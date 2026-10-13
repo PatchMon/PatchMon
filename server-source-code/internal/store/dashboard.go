@@ -325,7 +325,11 @@ type dashboardHostRow struct {
 	TotalPackagesCount     int32
 	// ReportingState is one of "reporting", "overdue", "stale" — derived from
 	// last_update vs the configured update interval. Independent of WS status.
-	ReportingState string
+	ReportingState     string
+	ConfigVersion      *string
+	ReportedHostID     *string
+	HostIDMismatch     bool
+	IdentityConflictAt pgtype.Timestamp
 	// UpdateState is one of "up_to_date", "updates_pending", "security_required"
 	// — derived from per-host package counts.
 	UpdateState string
@@ -380,6 +384,7 @@ type HostsListResult struct {
 // in queries/dashboard.sql:GetHostsWithCounts.
 var hostsListSortWhitelist = map[string]string{
 	"agent_version":    "agent_version",
+	"config_version":   "config_version",
 	"friendly_name":    "friendly_name",
 	"group":            "group",
 	"hostname":         "hostname",
@@ -521,6 +526,7 @@ func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsLis
 					SsgVersion: r.SsgVersion, UpdatesCount: r.UpdatesCount,
 					SecurityUpdatesCount: r.SecurityUpdatesCount, TotalPackagesCount: r.TotalPackagesCount,
 					ReportingState: r.ReportingState, UpdateState: r.UpdateState,
+					ConfigVersion: r.ConfigVersion, ReportedHostID: r.ReportedHostID, HostIDMismatch: r.HostIDMismatch, IdentityConflictAt: r.IdentityConflictAt,
 				}
 			}
 		} else {
@@ -541,6 +547,7 @@ func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsLis
 					SsgVersion: r.SsgVersion, UpdatesCount: r.UpdatesCount,
 					SecurityUpdatesCount: r.SecurityUpdatesCount, TotalPackagesCount: r.TotalPackagesCount,
 					ReportingState: r.ReportingState, UpdateState: r.UpdateState,
+					ConfigVersion: r.ConfigVersion, ReportedHostID: r.ReportedHostID, HostIDMismatch: r.HostIDMismatch, IdentityConflictAt: r.IdentityConflictAt,
 				}
 			}
 		}
@@ -611,8 +618,12 @@ func (s *DashboardStore) GetHostsWithCounts(ctx context.Context, params HostsLis
 			"totalPackagesCount": h.TotalPackagesCount,
 			// New independent host-status pills (additive, see backend/host-status redesign).
 			// Existing isStale / effectiveStatus / updatesCount remain byte-identical for back-compat.
-			"reportingState": h.ReportingState,
-			"updateState":    h.UpdateState,
+			"reportingState":       h.ReportingState,
+			"updateState":          h.UpdateState,
+			"config_version":       h.ConfigVersion,
+			"reported_host_id":     h.ReportedHostID,
+			"host_id_mismatch":     h.HostIDMismatch,
+			"identity_conflict_at": pgTimePtr(h.IdentityConflictAt),
 		}
 	}
 	return &HostsListResult{
@@ -758,6 +769,8 @@ func (s *DashboardStore) GetHostDetail(ctx context.Context, hostID string, histo
 			StaleCutoff(time.Now(), UpdateIntervalMinutes(ctx, s))),
 		"api_id":        host.ApiID,
 		"agent_version": host.AgentVersion, "auto_update": host.AutoUpdate, "notes": host.Notes,
+		"config_version": host.ConfigVersion, "reported_host_id": host.ReportedHostID, "host_id_mismatch": host.HostIDMismatch(),
+		"identity_conflict_at": host.IdentityConflictAt, "credentials_reissued_at": host.CredentialsReissuedAt,
 		"system_uptime": host.SystemUptime, "boot_time": host.BootTime, "needs_reboot": host.NeedsReboot,
 		"reboot_reason":  host.RebootReason,
 		"docker_enabled": host.DockerEnabled, "compliance_enabled": host.ComplianceEnabled,

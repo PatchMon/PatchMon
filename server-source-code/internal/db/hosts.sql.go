@@ -78,11 +78,13 @@ const createHost = `-- name: CreateHost :exec
 INSERT INTO hosts (
     id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status,
     api_id, api_key, agent_version, auto_update, created_at, updated_at,
-    docker_enabled, compliance_enabled, compliance_on_demand_only, expected_platform
+    docker_enabled, compliance_enabled, compliance_on_demand_only, expected_platform,
+    enrolment_token_id, enrolment_machine_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9,
     $10, $11, $12, $13, $14, $15,
-    $16, $17, $18, $19
+    $16, $17, $18, $19,
+    $20, $21
 )
 `
 
@@ -106,6 +108,8 @@ type CreateHostParams struct {
 	ComplianceEnabled      bool             `json:"compliance_enabled"`
 	ComplianceOnDemandOnly bool             `json:"compliance_on_demand_only"`
 	ExpectedPlatform       *string          `json:"expected_platform"`
+	EnrolmentTokenID       *string          `json:"enrolment_token_id"`
+	EnrolmentMachineID     *string          `json:"enrolment_machine_id"`
 }
 
 func (q *Queries) CreateHost(ctx context.Context, arg CreateHostParams) error {
@@ -129,6 +133,8 @@ func (q *Queries) CreateHost(ctx context.Context, arg CreateHostParams) error {
 		arg.ComplianceEnabled,
 		arg.ComplianceOnDemandOnly,
 		arg.ExpectedPlatform,
+		arg.EnrolmentTokenID,
+		arg.EnrolmentMachineID,
 	)
 	return err
 }
@@ -151,8 +157,25 @@ func (q *Queries) DeleteHostsByIDs(ctx context.Context, dollar_1 []string) error
 	return err
 }
 
+const dismissHostIdentityConflict = `-- name: DismissHostIdentityConflict :execrows
+UPDATE hosts SET
+    identity_conflict_at = NULL,
+    identity_prev_fingerprint = NULL,
+    identity_fingerprint_changed_at = NULL,
+    updated_at = NOW()
+WHERE id = $1
+`
+
+func (q *Queries) DismissHostIdentityConflict(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, dismissHostIdentityConflict, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getHostByApiID = `-- name: GetHostByApiID :one
-SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, boot_time, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id, packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash, last_full_report_at FROM hosts WHERE api_id = $1
+SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, boot_time, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id, packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash, last_full_report_at, config_version, reported_host_id, enrolment_token_id, credentials_reissued_at, identity_fingerprint, identity_prev_fingerprint, identity_fingerprint_changed_at, identity_conflict_at, enrolment_machine_id FROM hosts WHERE api_id = $1
 `
 
 func (q *Queries) GetHostByApiID(ctx context.Context, apiID string) (Host, error) {
@@ -212,12 +235,21 @@ func (q *Queries) GetHostByApiID(ctx context.Context, apiID string) (Host, error
 		&i.DockerHash,
 		&i.ComplianceHash,
 		&i.LastFullReportAt,
+		&i.ConfigVersion,
+		&i.ReportedHostID,
+		&i.EnrolmentTokenID,
+		&i.CredentialsReissuedAt,
+		&i.IdentityFingerprint,
+		&i.IdentityPrevFingerprint,
+		&i.IdentityFingerprintChangedAt,
+		&i.IdentityConflictAt,
+		&i.EnrolmentMachineID,
 	)
 	return i, err
 }
 
 const getHostByID = `-- name: GetHostByID :one
-SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, boot_time, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id, packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash, last_full_report_at FROM hosts WHERE id = $1
+SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, boot_time, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id, packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash, last_full_report_at, config_version, reported_host_id, enrolment_token_id, credentials_reissued_at, identity_fingerprint, identity_prev_fingerprint, identity_fingerprint_changed_at, identity_conflict_at, enrolment_machine_id FROM hosts WHERE id = $1
 `
 
 func (q *Queries) GetHostByID(ctx context.Context, id string) (Host, error) {
@@ -277,25 +309,35 @@ func (q *Queries) GetHostByID(ctx context.Context, id string) (Host, error) {
 		&i.DockerHash,
 		&i.ComplianceHash,
 		&i.LastFullReportAt,
+		&i.ConfigVersion,
+		&i.ReportedHostID,
+		&i.EnrolmentTokenID,
+		&i.CredentialsReissuedAt,
+		&i.IdentityFingerprint,
+		&i.IdentityPrevFingerprint,
+		&i.IdentityFingerprintChangedAt,
+		&i.IdentityConflictAt,
+		&i.EnrolmentMachineID,
 	)
 	return i, err
 }
 
 const getHostByMachineIDAndName = `-- name: GetHostByMachineIDAndName :one
-SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, boot_time, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id, packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash, last_full_report_at FROM hosts
-WHERE machine_id = $1
+SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, boot_time, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id, packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash, last_full_report_at, config_version, reported_host_id, enrolment_token_id, credentials_reissued_at, identity_fingerprint, identity_prev_fingerprint, identity_fingerprint_changed_at, identity_conflict_at, enrolment_machine_id FROM hosts
+WHERE (lower(replace(enrolment_machine_id, '-', '')) = $1::text
+       OR lower(replace(machine_id, '-', '')) = $1::text)
   AND lower(friendly_name) = lower($2)
 ORDER BY created_at ASC
 LIMIT 1
 `
 
 type GetHostByMachineIDAndNameParams struct {
-	MachineID    *string `json:"machine_id"`
-	FriendlyName string  `json:"friendly_name"`
+	NormalisedMachineID string `json:"normalised_machine_id"`
+	FriendlyName        string `json:"friendly_name"`
 }
 
 func (q *Queries) GetHostByMachineIDAndName(ctx context.Context, arg GetHostByMachineIDAndNameParams) (Host, error) {
-	row := q.db.QueryRow(ctx, getHostByMachineIDAndName, arg.MachineID, arg.FriendlyName)
+	row := q.db.QueryRow(ctx, getHostByMachineIDAndName, arg.NormalisedMachineID, arg.FriendlyName)
 	var i Host
 	err := row.Scan(
 		&i.ID,
@@ -351,6 +393,15 @@ func (q *Queries) GetHostByMachineIDAndName(ctx context.Context, arg GetHostByMa
 		&i.DockerHash,
 		&i.ComplianceHash,
 		&i.LastFullReportAt,
+		&i.ConfigVersion,
+		&i.ReportedHostID,
+		&i.EnrolmentTokenID,
+		&i.CredentialsReissuedAt,
+		&i.IdentityFingerprint,
+		&i.IdentityPrevFingerprint,
+		&i.IdentityFingerprintChangedAt,
+		&i.IdentityConflictAt,
+		&i.EnrolmentMachineID,
 	)
 	return i, err
 }
@@ -358,24 +409,31 @@ func (q *Queries) GetHostByMachineIDAndName(ctx context.Context, arg GetHostByMa
 const getHostCheckin = `-- name: GetHostCheckin :one
 SELECT
     id, api_key, friendly_name, hostname, docker_enabled, compliance_enabled,
-    packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash
+    packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash,
+    reported_host_id, identity_fingerprint, identity_prev_fingerprint,
+    identity_fingerprint_changed_at, identity_conflict_at
 FROM hosts
 WHERE api_id = $1
 `
 
 type GetHostCheckinRow struct {
-	ID                string  `json:"id"`
-	ApiKey            string  `json:"api_key"`
-	FriendlyName      string  `json:"friendly_name"`
-	Hostname          *string `json:"hostname"`
-	DockerEnabled     bool    `json:"docker_enabled"`
-	ComplianceEnabled bool    `json:"compliance_enabled"`
-	PackagesHash      *string `json:"packages_hash"`
-	ReposHash         *string `json:"repos_hash"`
-	InterfacesHash    *string `json:"interfaces_hash"`
-	HostnameHash      *string `json:"hostname_hash"`
-	DockerHash        *string `json:"docker_hash"`
-	ComplianceHash    *string `json:"compliance_hash"`
+	ID                           string           `json:"id"`
+	ApiKey                       string           `json:"api_key"`
+	FriendlyName                 string           `json:"friendly_name"`
+	Hostname                     *string          `json:"hostname"`
+	DockerEnabled                bool             `json:"docker_enabled"`
+	ComplianceEnabled            bool             `json:"compliance_enabled"`
+	PackagesHash                 *string          `json:"packages_hash"`
+	ReposHash                    *string          `json:"repos_hash"`
+	InterfacesHash               *string          `json:"interfaces_hash"`
+	HostnameHash                 *string          `json:"hostname_hash"`
+	DockerHash                   *string          `json:"docker_hash"`
+	ComplianceHash               *string          `json:"compliance_hash"`
+	ReportedHostID               *string          `json:"reported_host_id"`
+	IdentityFingerprint          *string          `json:"identity_fingerprint"`
+	IdentityPrevFingerprint      *string          `json:"identity_prev_fingerprint"`
+	IdentityFingerprintChangedAt pgtype.Timestamp `json:"identity_fingerprint_changed_at"`
+	IdentityConflictAt           pgtype.Timestamp `json:"identity_conflict_at"`
 }
 
 // Single-row read used on the per-ping hot path. Returns the host's identity
@@ -397,12 +455,17 @@ func (q *Queries) GetHostCheckin(ctx context.Context, apiID string) (GetHostChec
 		&i.HostnameHash,
 		&i.DockerHash,
 		&i.ComplianceHash,
+		&i.ReportedHostID,
+		&i.IdentityFingerprint,
+		&i.IdentityPrevFingerprint,
+		&i.IdentityFingerprintChangedAt,
+		&i.IdentityConflictAt,
 	)
 	return i, err
 }
 
 const getHostsByIDs = `-- name: GetHostsByIDs :many
-SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, boot_time, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id, packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash, last_full_report_at FROM hosts WHERE id = ANY($1::text[])
+SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, boot_time, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id, packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash, last_full_report_at, config_version, reported_host_id, enrolment_token_id, credentials_reissued_at, identity_fingerprint, identity_prev_fingerprint, identity_fingerprint_changed_at, identity_conflict_at, enrolment_machine_id FROM hosts WHERE id = ANY($1::text[])
 `
 
 func (q *Queries) GetHostsByIDs(ctx context.Context, dollar_1 []string) ([]Host, error) {
@@ -468,6 +531,15 @@ func (q *Queries) GetHostsByIDs(ctx context.Context, dollar_1 []string) ([]Host,
 			&i.DockerHash,
 			&i.ComplianceHash,
 			&i.LastFullReportAt,
+			&i.ConfigVersion,
+			&i.ReportedHostID,
+			&i.EnrolmentTokenID,
+			&i.CredentialsReissuedAt,
+			&i.IdentityFingerprint,
+			&i.IdentityPrevFingerprint,
+			&i.IdentityFingerprintChangedAt,
+			&i.IdentityConflictAt,
+			&i.EnrolmentMachineID,
 		); err != nil {
 			return nil, err
 		}
@@ -553,7 +625,7 @@ func (q *Queries) ListHostOptions(ctx context.Context, arg ListHostOptionsParams
 }
 
 const listHosts = `-- name: ListHosts :many
-SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, boot_time, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id, packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash, last_full_report_at FROM hosts ORDER BY friendly_name
+SELECT id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status, created_at, updated_at, api_id, api_key, agent_version, auto_update, cpu_cores, cpu_model, disk_details, dns_servers, gateway_ip, hostname, kernel_version, installed_kernel_version, load_average, network_interfaces, ram_installed, selinux_status, swap_size, system_uptime, boot_time, notes, needs_reboot, reboot_reason, docker_enabled, compliance_enabled, compliance_on_demand_only, compliance_openscap_enabled, compliance_docker_bench_enabled, compliance_scanner_status, compliance_scanner_updated_at, compliance_default_profile_id, host_down_alerts_enabled, expected_platform, package_manager, primary_interface, awaiting_post_patch_report_run_id, packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash, last_full_report_at, config_version, reported_host_id, enrolment_token_id, credentials_reissued_at, identity_fingerprint, identity_prev_fingerprint, identity_fingerprint_changed_at, identity_conflict_at, enrolment_machine_id FROM hosts ORDER BY friendly_name
 `
 
 func (q *Queries) ListHosts(ctx context.Context) ([]Host, error) {
@@ -619,6 +691,15 @@ func (q *Queries) ListHosts(ctx context.Context) ([]Host, error) {
 			&i.DockerHash,
 			&i.ComplianceHash,
 			&i.LastFullReportAt,
+			&i.ConfigVersion,
+			&i.ReportedHostID,
+			&i.EnrolmentTokenID,
+			&i.CredentialsReissuedAt,
+			&i.IdentityFingerprint,
+			&i.IdentityPrevFingerprint,
+			&i.IdentityFingerprintChangedAt,
+			&i.IdentityConflictAt,
+			&i.EnrolmentMachineID,
 		); err != nil {
 			return nil, err
 		}
@@ -750,6 +831,28 @@ func (q *Queries) ListHostsPaginated(ctx context.Context, arg ListHostsPaginated
 	return items, nil
 }
 
+const reissueHostApiKey = `-- name: ReissueHostApiKey :execrows
+UPDATE hosts SET api_key = $2, credentials_reissued_at = NOW(), updated_at = NOW()
+WHERE id = $1
+  AND status = 'pending'
+  AND agent_version IS NULL
+  AND last_full_report_at IS NULL
+  AND (credentials_reissued_at IS NULL OR credentials_reissued_at < NOW() - INTERVAL '60 seconds')
+`
+
+type ReissueHostApiKeyParams struct {
+	ID     string `json:"id"`
+	ApiKey string `json:"api_key"`
+}
+
+func (q *Queries) ReissueHostApiKey(ctx context.Context, arg ReissueHostApiKeyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, reissueHostApiKey, arg.ID, arg.ApiKey)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setHostAwaitingPostPatchReport = `-- name: SetHostAwaitingPostPatchReport :exec
 UPDATE hosts SET awaiting_post_patch_report_run_id = $1, updated_at = NOW() WHERE id = $2
 `
@@ -765,7 +868,16 @@ func (q *Queries) SetHostAwaitingPostPatchReport(ctx context.Context, arg SetHos
 }
 
 const updateHostApiCredentials = `-- name: UpdateHostApiCredentials :exec
-UPDATE hosts SET api_id = $1, api_key = $2, updated_at = NOW() WHERE id = $3
+UPDATE hosts SET
+    api_id = $1,
+    api_key = $2,
+    reported_host_id = NULL,
+    identity_fingerprint = NULL,
+    identity_prev_fingerprint = NULL,
+    identity_fingerprint_changed_at = NULL,
+    identity_conflict_at = NULL,
+    updated_at = NOW()
+WHERE id = $3
 `
 
 type UpdateHostApiCredentialsParams struct {
@@ -951,6 +1063,34 @@ func (q *Queries) UpdateHostFriendlyName(ctx context.Context, arg UpdateHostFrie
 	return err
 }
 
+const updateHostIdentityFingerprint = `-- name: UpdateHostIdentityFingerprint :exec
+UPDATE hosts SET
+    identity_fingerprint = $1,
+    identity_prev_fingerprint = $2,
+    identity_fingerprint_changed_at = $3,
+    identity_conflict_at = COALESCE(identity_conflict_at, $4::timestamp)
+WHERE id = $5
+`
+
+type UpdateHostIdentityFingerprintParams struct {
+	Fingerprint     *string          `json:"fingerprint"`
+	PrevFingerprint *string          `json:"prev_fingerprint"`
+	ChangedAt       pgtype.Timestamp `json:"changed_at"`
+	ConflictAt      pgtype.Timestamp `json:"conflict_at"`
+	ID              string           `json:"id"`
+}
+
+func (q *Queries) UpdateHostIdentityFingerprint(ctx context.Context, arg UpdateHostIdentityFingerprintParams) error {
+	_, err := q.db.Exec(ctx, updateHostIdentityFingerprint,
+		arg.Fingerprint,
+		arg.PrevFingerprint,
+		arg.ChangedAt,
+		arg.ConflictAt,
+		arg.ID,
+	)
+	return err
+}
+
 const updateHostMetrics = `-- name: UpdateHostMetrics :exec
 UPDATE hosts SET
     last_update    = NOW(),
@@ -974,23 +1114,31 @@ UPDATE hosts SET
              AND $10::text IS NULL THEN reboot_reason
         ELSE $10::text
     END,
-    agent_version  = COALESCE($11::text, agent_version)
-WHERE id = $12
+    agent_version  = COALESCE($11::text, agent_version),
+    config_version = CASE
+        WHEN $12::text IS NOT NULL THEN $12::text
+        WHEN $11::text IS NOT NULL THEN NULL
+        ELSE config_version
+    END,
+    reported_host_id = COALESCE($13::text, reported_host_id)
+WHERE id = $14
 `
 
 type UpdateHostMetricsParams struct {
-	CpuCores     *int32             `json:"cpu_cores"`
-	CpuModel     *string            `json:"cpu_model"`
-	RamInstalled *float64           `json:"ram_installed"`
-	SwapSize     *float64           `json:"swap_size"`
-	DiskDetails  []byte             `json:"disk_details"`
-	SystemUptime *string            `json:"system_uptime"`
-	BootTime     pgtype.Timestamptz `json:"boot_time"`
-	LoadAverage  []byte             `json:"load_average"`
-	NeedsReboot  *bool              `json:"needs_reboot"`
-	RebootReason *string            `json:"reboot_reason"`
-	AgentVersion *string            `json:"agent_version"`
-	ID           string             `json:"id"`
+	CpuCores       *int32             `json:"cpu_cores"`
+	CpuModel       *string            `json:"cpu_model"`
+	RamInstalled   *float64           `json:"ram_installed"`
+	SwapSize       *float64           `json:"swap_size"`
+	DiskDetails    []byte             `json:"disk_details"`
+	SystemUptime   *string            `json:"system_uptime"`
+	BootTime       pgtype.Timestamptz `json:"boot_time"`
+	LoadAverage    []byte             `json:"load_average"`
+	NeedsReboot    *bool              `json:"needs_reboot"`
+	RebootReason   *string            `json:"reboot_reason"`
+	AgentVersion   *string            `json:"agent_version"`
+	ConfigVersion  *string            `json:"config_version"`
+	ReportedHostID *string            `json:"reported_host_id"`
+	ID             string             `json:"id"`
 }
 
 // Ping-side write of volatile metrics. Every column is guarded so a ping that
@@ -1008,6 +1156,8 @@ func (q *Queries) UpdateHostMetrics(ctx context.Context, arg UpdateHostMetricsPa
 		arg.NeedsReboot,
 		arg.RebootReason,
 		arg.AgentVersion,
+		arg.ConfigVersion,
+		arg.ReportedHostID,
 		arg.ID,
 	)
 	return err

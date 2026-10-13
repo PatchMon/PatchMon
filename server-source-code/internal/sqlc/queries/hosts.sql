@@ -32,7 +32,8 @@ SELECT * FROM hosts WHERE api_id = $1;
 
 -- name: GetHostByMachineIDAndName :one
 SELECT * FROM hosts
-WHERE machine_id = sqlc.arg('machine_id')
+WHERE (lower(replace(enrolment_machine_id, '-', '')) = sqlc.arg('normalised_machine_id')::text
+       OR lower(replace(machine_id, '-', '')) = sqlc.arg('normalised_machine_id')::text)
   AND lower(friendly_name) = lower(sqlc.arg('friendly_name'))
 ORDER BY created_at ASC
 LIMIT 1;
@@ -44,11 +45,13 @@ SELECT api_id FROM hosts WHERE api_id = ANY($1::text[]);
 INSERT INTO hosts (
     id, machine_id, friendly_name, ip, os_type, os_version, architecture, last_update, status,
     api_id, api_key, agent_version, auto_update, created_at, updated_at,
-    docker_enabled, compliance_enabled, compliance_on_demand_only, expected_platform
+    docker_enabled, compliance_enabled, compliance_on_demand_only, expected_platform,
+    enrolment_token_id, enrolment_machine_id
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9,
     $10, $11, $12, $13, $14, $15,
-    $16, $17, $18, $19
+    $16, $17, $18, $19,
+    $20, $21
 );
 
 -- name: UpdateHostFriendlyName :exec
@@ -88,7 +91,40 @@ UPDATE hosts SET compliance_default_profile_id = $1, updated_at = NOW() WHERE id
 UPDATE hosts SET compliance_scanner_status = $1, compliance_scanner_updated_at = $2, updated_at = NOW() WHERE id = $3;
 
 -- name: UpdateHostApiCredentials :exec
-UPDATE hosts SET api_id = $1, api_key = $2, updated_at = NOW() WHERE id = $3;
+UPDATE hosts SET
+    api_id = $1,
+    api_key = $2,
+    reported_host_id = NULL,
+    identity_fingerprint = NULL,
+    identity_prev_fingerprint = NULL,
+    identity_fingerprint_changed_at = NULL,
+    identity_conflict_at = NULL,
+    updated_at = NOW()
+WHERE id = $3;
+
+-- name: ReissueHostApiKey :execrows
+UPDATE hosts SET api_key = $2, credentials_reissued_at = NOW(), updated_at = NOW()
+WHERE id = $1
+  AND status = 'pending'
+  AND agent_version IS NULL
+  AND last_full_report_at IS NULL
+  AND (credentials_reissued_at IS NULL OR credentials_reissued_at < NOW() - INTERVAL '60 seconds');
+
+-- name: UpdateHostIdentityFingerprint :exec
+UPDATE hosts SET
+    identity_fingerprint = sqlc.arg('fingerprint'),
+    identity_prev_fingerprint = sqlc.narg('prev_fingerprint'),
+    identity_fingerprint_changed_at = sqlc.arg('changed_at'),
+    identity_conflict_at = COALESCE(identity_conflict_at, sqlc.narg('conflict_at')::timestamp)
+WHERE id = sqlc.arg('id');
+
+-- name: DismissHostIdentityConflict :execrows
+UPDATE hosts SET
+    identity_conflict_at = NULL,
+    identity_prev_fingerprint = NULL,
+    identity_fingerprint_changed_at = NULL,
+    updated_at = NOW()
+WHERE id = $1;
 
 -- name: UpdateHostRebootStatus :exec
 UPDATE hosts SET needs_reboot = $2, reboot_reason = $3, updated_at = NOW() WHERE id = $1;
@@ -102,7 +138,9 @@ UPDATE hosts SET last_update = NOW(), updated_at = NOW(), status = 'active' WHER
 -- hashes.
 SELECT
     id, api_key, friendly_name, hostname, docker_enabled, compliance_enabled,
-    packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash
+    packages_hash, repos_hash, interfaces_hash, hostname_hash, docker_hash, compliance_hash,
+    reported_host_id, identity_fingerprint, identity_prev_fingerprint,
+    identity_fingerprint_changed_at, identity_conflict_at
 FROM hosts
 WHERE api_id = $1;
 
@@ -131,7 +169,13 @@ UPDATE hosts SET
              AND sqlc.narg('reboot_reason')::text IS NULL THEN reboot_reason
         ELSE sqlc.narg('reboot_reason')::text
     END,
-    agent_version  = COALESCE(sqlc.narg('agent_version')::text, agent_version)
+    agent_version  = COALESCE(sqlc.narg('agent_version')::text, agent_version),
+    config_version = CASE
+        WHEN sqlc.narg('config_version')::text IS NOT NULL THEN sqlc.narg('config_version')::text
+        WHEN sqlc.narg('agent_version')::text IS NOT NULL THEN NULL
+        ELSE config_version
+    END,
+    reported_host_id = COALESCE(sqlc.narg('reported_host_id')::text, reported_host_id)
 WHERE id = sqlc.arg('id');
 
 -- name: UpdateHostDockerHash :exec
