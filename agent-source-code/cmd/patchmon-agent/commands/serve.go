@@ -282,10 +282,11 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 	// Startup ping uses nil request body — no hashes available yet (collectors
 	// haven't run), and metrics will ride on the first tick's check-in.
 	// Server treats this empty-body ping as a legacy heartbeat.
-	if _, err := httpClient.Ping(ctx, nil); err != nil {
+	if resp, err := httpClient.Ping(ctx, nil); err != nil {
 		logger.WithError(err).Warn("startup ping failed, will retry")
 	} else {
 		logger.Info("✅ Startup notification sent to server")
+		reconcileHostID(resp.HostID)
 	}
 
 	// Start websocket loop FIRST so agent appears online immediately

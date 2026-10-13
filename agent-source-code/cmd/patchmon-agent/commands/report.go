@@ -173,6 +173,7 @@ func collectReportData() (*collectedReport, error) {
 	// feed (server stores it on update_history.agent_execution_ms). Kept as a
 	// pointer so older servers see the field omitted when collection failed.
 	executionMs := int(time.Since(startTime).Milliseconds())
+	cfg := cfgManager.GetConfig()
 	payload := &models.ReportPayload{
 		Packages:               packageList,
 		Repositories:           repoList,
@@ -183,6 +184,8 @@ func collectReportData() (*collectedReport, error) {
 		Architecture:           architecture,
 		AgentVersion:           pkgversion.Version,
 		MachineID:              machineID,
+		HostID:                 cfg.HostID,
+		ConfigVersion:          cfg.ConfigVersion,
 		KernelVersion:          systemInfo.KernelVersion,
 		InstalledKernelVersion: installedKernel,
 		SELinuxStatus:          systemInfo.SELinuxStatus,
@@ -305,6 +308,7 @@ func deliverReport(ctx context.Context, payload *models.ReportPayload) error {
 
 	logger.Info("Report sent successfully")
 	logger.WithField("count", response.PackagesProcessed).Info("Processed packages")
+	reconcileHostID(response.HostID)
 
 	// Handle agent auto-update (server-initiated)
 	if response.AutoUpdate != nil && response.AutoUpdate.ShouldUpdate {
@@ -648,6 +652,9 @@ func runCheckIn(ctx context.Context, forceFull bool) error {
 			RebootReason: strPtrIfNonEmpty(payload.RebootReason),
 		},
 		AgentExecutionMs: payload.AgentExecutionMs,
+		HostID:           payload.HostID,
+		ConfigVersion:    payload.ConfigVersion,
+		MachineID:        payload.MachineID,
 	}
 
 	httpClient := client.New(cfgManager, logger)
@@ -656,6 +663,7 @@ func runCheckIn(ctx context.Context, forceFull bool) error {
 		// Server unreachable / wrong creds — caller logs and retries.
 		return fmt.Errorf("check-in ping failed: %w", err)
 	}
+	reconcileHostID(resp.HostID)
 
 	if !serverSupportsHashGate(resp) {
 		// Pre-2.0.3 server. An empty requestFull from it means "unknown",
@@ -756,11 +764,13 @@ func sendPartialReport(ctx context.Context, httpClient *client.Client, full *mod
 		// Always-included identity fields. The server's UpdateHostFromReport
 		// COALESCEs these with prior values so omitting them is safe; we
 		// include them to keep the payload self-describing.
-		AgentVersion: full.AgentVersion,
-		MachineID:    full.MachineID,
-		OSType:       full.OSType,
-		OSVersion:    full.OSVersion,
-		Architecture: full.Architecture,
+		AgentVersion:  full.AgentVersion,
+		MachineID:     full.MachineID,
+		HostID:        full.HostID,
+		ConfigVersion: full.ConfigVersion,
+		OSType:        full.OSType,
+		OSVersion:     full.OSVersion,
+		Architecture:  full.Architecture,
 
 		// Section payload fields, gated on what was requested.
 		Sections: sections,
