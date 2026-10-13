@@ -1346,7 +1346,7 @@ When the script enrols with a `host_id`, PatchMon answers in one of these ways:
 
 | Response | Meaning | Script outcome |
 |----------|---------|----------------|
-| `200`, `reenrolled: true` | The host exists, has never reported, and was created by this same token (typically an earlier run whose install failed part-way). PatchMon issues a new API key for it | Installs the agent with the new credentials; same host record |
+| `200`, `reenrolled: true` | The host exists, has never reported or connected, was created by this same token, and was enrolled with the same machine ID (typically an earlier run whose install failed part-way). PatchMon issues a new API key for it | Installs the agent with the new credentials; same host record |
 | `201` | No host with that ID exists; a new host is created | Installs as for any new host |
 | `409`, code `host_reporting` | The host has already reported. PatchMon never re-keys such a host from enrolment. Usually a cloned container, or credentials regenerated in PatchMon but not applied | Skipped with a warning |
 | `409`, code `host_not_reenrollable` | The host was added another way (for example in the UI), by a different token, or before PatchMon 2.1.5 | Skipped with a warning; use the install command on the host's page |

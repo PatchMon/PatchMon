@@ -5,9 +5,8 @@ import (
 	"strings"
 )
 
-// Compare orders two agent versions: 1 if a > b, -1 if a < b, 0 if equal.
-// Pre-releases rank below their release (2.1.5-rc.1 < 2.1.5), build metadata
-// is ignored, and anything unparseable ranks as 0.0.0.
+// Compare returns 1 if a > b, -1 if a < b, 0 if equal. A port of the server's
+// util.CompareVersions: pre-releases rank below their release.
 func Compare(a, b string) int {
 	c1, pre1 := splitPreRelease(a)
 	c2, pre2 := splitPreRelease(b)
