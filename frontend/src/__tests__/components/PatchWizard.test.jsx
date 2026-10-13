@@ -684,6 +684,28 @@ describe("runMessageNotice", () => {
 		).toEqual({ tone: "info", title: "Run cancelled", detail: "Host deleted" });
 	});
 
+	it("shows a skip summary on a successful run as a neutral note", () => {
+		const detail = "1 skipped: 7zip.7zip (pinned in winget)";
+		expect(
+			runMessageNotice({ status: "completed", error_message: detail }),
+		).toEqual({ tone: "info", title: "Completed with skipped items", detail });
+		for (const status of ["validated", "dry_run_completed"]) {
+			expect(runMessageNotice({ status, error_message: detail })).toEqual({
+				tone: "info",
+				title: "Validated with skipped items",
+				detail,
+			});
+		}
+	});
+
+	it("keeps the error panel for a failed run with skips mixed in", () => {
+		const detail =
+			"1 of 2 failed: KB5044284 (0x800f0922); 1 skipped: 7zip.7zip (pinned in winget)";
+		expect(
+			runMessageNotice({ status: "failed", error_message: detail }),
+		).toEqual({ tone: "error", title: "Run reported an error", detail });
+	});
+
 	it("reports real failures as errors, and nothing when there is no message", () => {
 		expect(
 			runMessageNotice({ status: "failed", error_message: "1 of 1 failed" }),
