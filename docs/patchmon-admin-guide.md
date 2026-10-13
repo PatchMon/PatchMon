@@ -1587,7 +1587,7 @@ Run Detail shows an **Updates** card above the terminal, with one row per update
 | **Already installed** | Installed before the run reached it, for example by Windows' own automatic updates. |
 | **Would install** | Dry run only: this would be installed. |
 | **Not applicable** | No longer offered by Windows Update (installed, superseded or withdrawn), no upgrade available, or an app installed for a single user (see below). |
-| **Skipped** | The run was stopped, the run time limit was reached, a restart is needed before more updates can install, the update needs interactive input, the app was pinned with `winget pin` since the last report, or the app is a Microsoft Store app ("Microsoft Store app: it updates through the Store for each user, not as SYSTEM"). |
+| **Skipped** | The run was stopped, the run time limit was reached, a restart is needed before more updates can install, the update needs interactive input, an earlier update in the run timed out while installing, the app was pinned with `winget pin` since the last report, or the app is a Microsoft Store app ("Microsoft Store app: it updates through the Store for each user, not as SYSTEM"). |
 | **Failed** / **Aborted** | The install did not succeed. The Result column has the code and a hint, for example "Application is in use: close the app and retry". |
 
 One failed item does not stop the others. The run ends **Failed** if any item failed or was aborted, and its summary lists the first few ("2 of 7 failed: ..."). Skipped items never fail a run. They are listed in the run's summary instead, for example "1 skipped: 7zip.7zip (pinned in winget)", and a run whose only non-successful items were skipped ends **Completed** with that summary shown as a note.
@@ -1606,7 +1606,18 @@ Restart the host when it suits you. If a restart is still pending from an earlie
 
 ##### Stopping a run, and long runs
 
-**Stop Run** takes effect between items. The update or app being installed at that moment always finishes, because interrupting Windows servicing part-way is worse than waiting; the remaining items end **Skipped**. A Windows run is limited to 4 hours, or 8 hours for a **Patch selected** run that includes a Windows Update, to leave room for a feature upgrade. Cumulative updates and feature upgrades can run for a long time without output, so the agent writes a progress line every minute and the run is not timed out while it is still working.
+**Stop Run** takes effect between items. The update or app being installed at that moment always finishes, because interrupting Windows servicing part-way is worse than waiting; the remaining items end **Skipped**. Cumulative updates and feature upgrades can run for a long time without output, so the agent writes a progress line every minute and the run is not timed out while it is still working. Each step has its own limit:
+
+| Step | Limit |
+|---|---|
+| Whole run that installs Windows Updates (a Patch all with **Windows Updates** ticked, or a Patch selected that includes an update) | 8 hours |
+| Whole run that only upgrades apps | 4 hours |
+| Searching for Windows Updates | 15 minutes |
+| Downloading the run's Windows Updates | 60 minutes, or 180 minutes when a feature upgrade is included |
+| Installing one Windows Update | 180 minutes, or 240 minutes for a feature upgrade |
+| Upgrading one app with winget | 30 minutes |
+
+A step that runs out of time says so, for example "Install did not finish within 180 minutes. Windows may still be completing it; check after a restart." After an install times out, Windows usually carries on servicing in the background, so PatchMon does not start any more Windows Updates in that run: they end **Skipped** with "Not started: Windows Update was still installing a previous update". App upgrades still run, and the run ends **Failed**. Check the host after a restart and run the remaining updates again.
 
 ##### Apps installed for a single user
 
