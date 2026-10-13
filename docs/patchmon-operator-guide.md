@@ -3177,7 +3177,7 @@ services:
       - ./internal-ca.pem:/etc/patchmon/internal-ca.pem:ro
 ```
 
-Then recreate the container with `docker compose up -d`. The server reads the file the first time it opens a TLS connection, so a restart is needed whenever you change it. If you have several CA certificates, either concatenate them into one PEM file or mount them into a directory and set `SSL_CERT_DIR` to that directory instead.
+Then recreate the container with `docker compose up -d`. The server reads the file the first time it opens a TLS connection, so a restart is needed whenever you change it. If you have several CA certificates, either concatenate them into one PEM file or mount them into a directory and set `SSL_CERT_DIR` to that directory instead. The server runs as a non-root user (UID 65532), so the certificate file must be world-readable (`chmod 644 internal-ca.pem`). If it is not, PatchMon ignores it and logs the same `unknown authority` error.
 
 On the stock PatchMon image the system CA bundle in `/etc/ssl/certs` is still loaded alongside your file, so public certificates (for example your notification destinations) keep working. Do **not** mount your CA over `/etc/ssl/certs/ca-certificates.crt`: that replaces the public bundle, and every outbound connection to a publicly signed service will then fail with the same `unknown authority` error.
 
