@@ -420,9 +420,9 @@ func (h *InstallHandler) ServePing(w http.ResponseWriter, r *http.Request) {
 			var tooLarge *http.MaxBytesError
 			if errors.As(err, &tooLarge) {
 				slog.Warn("ping: body exceeded AGENT_PING_BODY_LIMIT", "host_id", checkin.ID, "limit_bytes", tooLarge.Limit)
-				JSON(w, http.StatusRequestEntityTooLarge, map[string]string{
-					"error": fmt.Sprintf("Check-in exceeds the %s AGENT_PING_BODY_LIMIT. Raise it in Settings then Environment. A host with many mounted volumes can need this.", formatBytesEnv(tooLarge.Limit)),
-				})
+				h.rejectUpdate(w, r, checkin.ID, "ping", nil, http.StatusRequestEntityTooLarge,
+					fmt.Sprintf("Check-in exceeds the %s AGENT_PING_BODY_LIMIT. Raise it in Settings then Environment. A host with many mounted volumes can need this.", formatBytesEnv(tooLarge.Limit)),
+					pingStart)
 				return
 			}
 			JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
@@ -672,7 +672,7 @@ func (h *InstallHandler) ServeUpdateInterval(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-// rejectUpdate writes an error response for a rejected /hosts/update AND
+// rejectUpdate writes an error response for a rejected /hosts/update or ping AND
 // records a matching "error" row in the Agent Activity feed.
 //
 // Without the activity row a rejection is completely invisible in the UI: the
@@ -700,7 +700,7 @@ func (h *InstallHandler) rejectUpdate(w http.ResponseWriter, r *http.Request, ho
 			Status:           "error",
 			ErrorMessage:     &msg,
 		}); err != nil {
-			slog.Warn("update: failed to record rejected-report activity row", "host_id", hostID, "error", err)
+			slog.Warn("agent check-in: failed to record rejected-request activity row", "host_id", hostID, "error", err)
 		}
 	}
 	JSON(w, status, map[string]string{"error": reason})
