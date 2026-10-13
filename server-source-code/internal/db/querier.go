@@ -198,7 +198,6 @@ type Querier interface {
 	DeleteHostRepositoriesByHostID(ctx context.Context, hostID string) error
 	DeleteHostsByIDs(ctx context.Context, dollar_1 []string) error
 	DeleteImageByID(ctx context.Context, id string) error
-	DeleteImageUpdatesByImageID(ctx context.Context, imageID string) error
 	DeleteImagesByIDs(ctx context.Context, dollar_1 []string) error
 	DeleteNetwork(ctx context.Context, id string) error
 	DeleteNotificationDestination(ctx context.Context, id string) error
@@ -228,6 +227,8 @@ type Querier interface {
 	DeleteRunningComplianceScansByHost(ctx context.Context, hostID string) error
 	DeleteScheduledReport(ctx context.Context, id string) error
 	DeleteStaleContainers(ctx context.Context, arg DeleteStaleContainersParams) error
+	DeleteStaleDockerHostImages(ctx context.Context, arg DeleteStaleDockerHostImagesParams) error
+	DeleteStaleDockerImageChecks(ctx context.Context, arg DeleteStaleDockerImageChecksParams) error
 	DeleteStaleNetworks(ctx context.Context, arg DeleteStaleNetworksParams) error
 	DeleteStaleVolumes(ctx context.Context, arg DeleteStaleVolumesParams) error
 	DeleteUser(ctx context.Context, id string) error
@@ -277,6 +278,7 @@ type Querier interface {
 	GetDockerDashboardStats(ctx context.Context) (GetDockerDashboardStatsRow, error)
 	GetDockerHostsByIDs(ctx context.Context, dollar_1 []string) ([]GetDockerHostsByIDsRow, error)
 	GetDockerHostsMinimalByIDs(ctx context.Context, dollar_1 []string) ([]GetDockerHostsMinimalByIDsRow, error)
+	GetDockerImageCheckStats(ctx context.Context) (GetDockerImageCheckStatsRow, error)
 	GetFirstComplianceProfileByType(ctx context.Context, type_ string) (ComplianceProfile, error)
 	GetFirstSettings(ctx context.Context) (Setting, error)
 	// The host counters here must match GetDashboardStats, otherwise a widget and
@@ -314,6 +316,7 @@ type Querier interface {
 	GetHostGroupsForHosts(ctx context.Context, dollar_1 []string) ([]GetHostGroupsForHostsRow, error)
 	GetHostIDsByGroup(ctx context.Context, hostGroupID string) ([]string, error)
 	GetHostIDsByGroupIDs(ctx context.Context, dollar_1 []string) ([]string, error)
+	GetHostIDsForImage(ctx context.Context, imageID string) ([]string, error)
 	GetHostPackageStats(ctx context.Context, hostID string) (GetHostPackageStatsRow, error)
 	GetHostPackageStatsByHostIDs(ctx context.Context, dollar_1 []string) ([]GetHostPackageStatsByHostIDsRow, error)
 	GetHostPackagesForScopedApi(ctx context.Context, hostID string) ([]GetHostPackagesForScopedApiRow, error)
@@ -363,8 +366,11 @@ type Querier interface {
 	GetHostsWithPageCounts(ctx context.Context, arg GetHostsWithPageCountsParams) ([]GetHostsWithPageCountsRow, error)
 	// Images
 	GetImageByID(ctx context.Context, id string) (DockerImage, error)
-	GetImageIDByRepositoryTagImageID(ctx context.Context, arg GetImageIDByRepositoryTagImageIDParams) (string, error)
-	GetImageUpdatesByImageID(ctx context.Context, imageID string) ([]DockerImageUpdate, error)
+	GetImageCheckAggregatesByImageIDs(ctx context.Context, imageIds []string) ([]GetImageCheckAggregatesByImageIDsRow, error)
+	GetImageCheckStatusesByImageIDs(ctx context.Context, dollar_1 []string) ([]GetImageCheckStatusesByImageIDsRow, error)
+	GetImageChecksByHostID(ctx context.Context, hostID string) ([]GetImageChecksByHostIDRow, error)
+	GetImageChecksByImageID(ctx context.Context, imageID string) ([]GetImageChecksByImageIDRow, error)
+	GetImagesByHostID(ctx context.Context, hostID string) ([]DockerImage, error)
 	GetImagesByIDs(ctx context.Context, dollar_1 []string) ([]DockerImage, error)
 	GetImagesBySource(ctx context.Context) ([]GetImagesBySourceRow, error)
 	GetLatestCompletedScans(ctx context.Context) ([]GetLatestCompletedScansRow, error)
@@ -431,11 +437,11 @@ type Querier interface {
 	GetSessionByID(ctx context.Context, arg GetSessionByIDParams) (UserSession, error)
 	GetSessionByRefreshToken(ctx context.Context, refreshToken string) (UserSession, error)
 	GetSourceReposByPackageIDs(ctx context.Context, arg GetSourceReposByPackageIDsParams) ([]GetSourceReposByPackageIDsRow, error)
+	GetStaleContainerCountsByImageIDs(ctx context.Context, dollar_1 []string) ([]GetStaleContainerCountsByImageIDsRow, error)
 	GetSystemStatisticsDaily(ctx context.Context, arg GetSystemStatisticsDailyParams) ([]GetSystemStatisticsDailyRow, error)
 	GetSystemStatsForInsert(ctx context.Context) (GetSystemStatsForInsertRow, error)
 	GetTopFailingRulesFromScans(ctx context.Context, dollar_1 []string) ([]GetTopFailingRulesFromScansRow, error)
 	GetTopWarningRulesFromScans(ctx context.Context, dollar_1 []string) ([]GetTopWarningRulesFromScansRow, error)
-	GetUpdateCountsByImageIDs(ctx context.Context, dollar_1 []string) ([]GetUpdateCountsByImageIDsRow, error)
 	GetUpdateHistory(ctx context.Context, arg GetUpdateHistoryParams) ([]GetUpdateHistoryRow, error)
 	GetUpdateHistoryDaily(ctx context.Context, arg GetUpdateHistoryDailyParams) ([]GetUpdateHistoryDailyRow, error)
 	GetUpdateTrends(ctx context.Context, timestamp pgtype.Timestamp) ([]GetUpdateTrendsRow, error)
@@ -459,6 +465,7 @@ type Querier interface {
 	IncrementAutoEnrollmentHostsCreated(ctx context.Context, id string) error
 	InsertAlertHistory(ctx context.Context, arg InsertAlertHistoryParams) (AlertHistory, error)
 	InsertDashboardPreference(ctx context.Context, arg InsertDashboardPreferenceParams) error
+	InsertDockerImageFromContainer(ctx context.Context, arg InsertDockerImageFromContainerParams) (string, error)
 	// ON CONFLICT: callers may pass the same group id twice, and the delete has
 	// already run by then.
 	InsertHostGroupMembership(ctx context.Context, arg InsertHostGroupMembershipParams) error
@@ -491,7 +498,9 @@ type Querier interface {
 	ListComplianceScansHistory(ctx context.Context, arg ListComplianceScansHistoryParams) ([]ListComplianceScansHistoryRow, error)
 	ListContainers(ctx context.Context, arg ListContainersParams) ([]DockerContainer, error)
 	ListDashboardPreferencesByUserID(ctx context.Context, userID string) ([]DashboardPreference, error)
+	ListDockerHostAPIIDs(ctx context.Context) ([]ListDockerHostAPIIDsRow, error)
 	ListDockerHostsPaginated(ctx context.Context, arg ListDockerHostsPaginatedParams) ([]ListDockerHostsPaginatedRow, error)
+	ListDockerImageChecksByHost(ctx context.Context, hostID string) ([]ListDockerImageChecksByHostRow, error)
 	ListExistingHostApiIDs(ctx context.Context, dollar_1 []string) ([]string, error)
 	ListHostGroups(ctx context.Context) ([]HostGroup, error)
 	ListHostGroupsWithHostCount(ctx context.Context) ([]ListHostGroupsWithHostCountRow, error)
@@ -566,6 +575,7 @@ type Querier interface {
 	MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) (int64, error)
 	ReissueHostApiKey(ctx context.Context, arg ReissueHostApiKeyParams) (int64, error)
 	RequeuePatchRun(ctx context.Context, arg RequeuePatchRunParams) (int64, error)
+	ResolveDockerImageIDs(ctx context.Context, arg ResolveDockerImageIDsParams) ([]ResolveDockerImageIDsRow, error)
 	RevokeAllSessionsForUser(ctx context.Context, userID string) error
 	RevokeAllSessionsForUserExcept(ctx context.Context, arg RevokeAllSessionsForUserExceptParams) error
 	RevokeAllTrustedDevicesForUser(ctx context.Context, userID string) error
@@ -688,8 +698,9 @@ type Querier interface {
 	UpsertComplianceRule(ctx context.Context, arg UpsertComplianceRuleParams) (string, error)
 	UpsertDashboardLayout(ctx context.Context, arg UpsertDashboardLayoutParams) error
 	UpsertDockerContainer(ctx context.Context, arg UpsertDockerContainerParams) error
+	UpsertDockerHostImage(ctx context.Context, arg UpsertDockerHostImageParams) error
 	UpsertDockerImage(ctx context.Context, arg UpsertDockerImageParams) (string, error)
-	UpsertDockerImageUpdate(ctx context.Context, arg UpsertDockerImageUpdateParams) error
+	UpsertDockerImageCheck(ctx context.Context, arg UpsertDockerImageCheckParams) error
 	UpsertDockerNetwork(ctx context.Context, arg UpsertDockerNetworkParams) error
 	UpsertDockerVolume(ctx context.Context, arg UpsertDockerVolumeParams) error
 	UpsertPendingConfig(ctx context.Context, arg UpsertPendingConfigParams) error

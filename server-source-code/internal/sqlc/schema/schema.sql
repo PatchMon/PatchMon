@@ -481,7 +481,34 @@ CREATE TABLE IF NOT EXISTS docker_containers (
     started_at TIMESTAMP(3),
     updated_at TIMESTAMP(3) NOT NULL,
     last_checked TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    image_stale BOOLEAN NOT NULL DEFAULT false,
+    restart_count INTEGER NOT NULL DEFAULT 0,
+    image_digest TEXT,
     UNIQUE(host_id, container_id)
+);
+
+-- docker_host_images
+CREATE TABLE IF NOT EXISTS docker_host_images (
+    host_id TEXT NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+    image_id TEXT NOT NULL REFERENCES docker_images(id) ON DELETE CASCADE,
+    last_seen TIMESTAMP(3) NOT NULL,
+    PRIMARY KEY(host_id, image_id)
+);
+
+-- docker_image_checks
+CREATE TABLE IF NOT EXISTS docker_image_checks (
+    id TEXT PRIMARY KEY,
+    host_id TEXT NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+    image_id TEXT NOT NULL REFERENCES docker_images(id) ON DELETE CASCADE,
+    status TEXT NOT NULL,
+    local_digest TEXT,
+    remote_digest TEXT,
+    registry TEXT,
+    reason TEXT,
+    checked_at TIMESTAMP(3) NOT NULL,
+    first_seen_update_at TIMESTAMP(3),
+    updated_at TIMESTAMP(3) NOT NULL,
+    UNIQUE(host_id, image_id)
 );
 
 -- docker_image_updates

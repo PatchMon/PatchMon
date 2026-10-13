@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"patchmon-agent/internal/logutil"
@@ -65,6 +66,11 @@ func (m *WindowsManager) GetPackages() []models.Package {
 
 	// 3. Merge: start with registry baseline, enrich with WinGet update info
 	appPackages := m.mergeRegistryAndWinget(regPackages, wingetPackages)
+	if hasAppxStyleName(appPackages) {
+		if suppressed := applyAppxInstallState(appPackages, m.getAppxPackages()); len(suppressed) > 0 {
+			m.logger.WithField("packages", suppressed).Debug("Update flag cleared: a newer Appx copy is installed than winget reports")
+		}
+	}
 	m.logger.WithField("count", len(appPackages)).Info("Application packages after merge")
 
 	// 4. Collect Windows OS updates (installed KBs + pending updates)
@@ -344,6 +350,177 @@ func parseSQLServerSetups(output []byte) []sqlServerSetup {
 		return nil
 	}
 	return setups
+}
+
+func hasAppxStyleName(pkgs []models.Package) bool {
+	for _, p := range pkgs {
+		if looksLikeAppxName(p.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikeAppxName(name string) bool {
+	return strings.Contains(name, ".") && !strings.ContainsAny(name, " \t")
+}
+
+type appxPackage struct {
+	Name    string `json:"Name"`
+	Version string `json:"Version"`
+	States  string `json:"States"`
+}
+
+type appxVersions struct {
+	installed string
+	staged    []string
+}
+
+func (v *appxVersions) hasStaged(version string) bool {
+	for _, s := range v.staged {
+		if versionsEqual(s, version) {
+			return true
+		}
+	}
+	return false
+}
+
+func (v *appxVersions) newerThanAllStaged() bool {
+	for _, s := range v.staged {
+		if c, _ := compareDottedVersions(v.installed, s); c <= 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func isDottedNumeric(v string) bool {
+	_, ok := parseDottedVersion(v)
+	return ok
+}
+
+func sameVersionScheme(a, b string) bool {
+	pa, okA := parseDottedVersion(a)
+	pb, okB := parseDottedVersion(b)
+	return okA && okB && pa[0] == pb[0]
+}
+
+// winget as SYSTEM reports machine-staged MSIX copies, not the per-user installs.
+func applyAppxInstallState(pkgs []models.Package, appx []appxPackage) (suppressed []string) {
+	byName := map[string]*appxVersions{}
+	for _, a := range appx {
+		if _, ok := parseDottedVersion(a.Version); !ok {
+			continue
+		}
+		key := normalizePackageName(a.Name)
+		v := byName[key]
+		if v == nil {
+			v = &appxVersions{}
+			byName[key] = v
+		}
+		states := strings.Split(strings.ToLower(a.States), ",")
+		switch {
+		case containsString(states, "installed"):
+			if c, _ := compareDottedVersions(a.Version, v.installed); v.installed == "" || c > 0 {
+				v.installed = a.Version
+			}
+		case containsString(states, "staged"):
+			v.staged = append(v.staged, a.Version)
+		}
+	}
+	for i := range pkgs {
+		if !looksLikeAppxName(pkgs[i].Name) {
+			continue
+		}
+		v, exact := appxVersionsFor(byName, normalizePackageName(pkgs[i].Name))
+		if v == nil || v.installed == "" || len(v.staged) == 0 {
+			continue
+		}
+		current := pkgs[i].CurrentVersion
+		if v.hasStaged(current) {
+			if c, _ := compareDottedVersions(v.installed, current); c <= 0 {
+				continue
+			}
+			pkgs[i].CurrentVersion = v.installed
+			if pkgs[i].NeedsUpdate && !installedIsOlder(v.installed, pkgs[i].AvailableVersion) {
+				pkgs[i].NeedsUpdate = false
+				pkgs[i].AvailableVersion = ""
+				suppressed = append(suppressed, pkgs[i].Name)
+			}
+			continue
+		}
+		if pkgs[i].NeedsUpdate && exact && isDottedNumeric(current) && !sameVersionScheme(current, v.installed) && v.newerThanAllStaged() {
+			pkgs[i].CurrentVersion = v.installed
+			pkgs[i].NeedsUpdate = false
+			pkgs[i].AvailableVersion = ""
+			suppressed = append(suppressed, pkgs[i].Name)
+		}
+	}
+	return suppressed
+}
+
+func appxVersionsFor(byName map[string]*appxVersions, name string) (*appxVersions, bool) {
+	if v, ok := byName[name]; ok {
+		return v, true
+	}
+	var found *appxVersions
+	for key, v := range byName {
+		if name != "" && strings.HasPrefix(key, name) {
+			if found != nil {
+				return nil, false
+			}
+			found = v
+		}
+	}
+	return found, false
+}
+
+func containsString(list []string, want string) bool {
+	for _, s := range list {
+		if strings.TrimSpace(s) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *WindowsManager) getAppxPackages() []appxPackage {
+	psScript := `
+$ErrorActionPreference = "SilentlyContinue"
+@(Get-AppxPackage -AllUsers | ForEach-Object {
+  @{
+    Name    = [string]$_.Name
+    Version = [string]$_.Version
+    States  = (@($_.PackageUserInformation | ForEach-Object { [string]$_.InstallState }) -join ',')
+  }
+}) | ConvertTo-Json -Compress -Depth 2
+`
+	cmd, cancel := boundedCommand(collectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
+	defer cancel()
+	start := time.Now()
+	output, err := cmd.Output()
+	if err != nil {
+		m.logger.WithError(err).Debug("Get-AppxPackage query failed")
+		return nil
+	}
+	pkgs := parseAppxPackages(output)
+	m.logger.WithFields(logrus.Fields{"count": len(pkgs), "elapsed_ms": time.Since(start).Milliseconds()}).Debug("Collected Appx install state")
+	return pkgs
+}
+
+func parseAppxPackages(output []byte) []appxPackage {
+	s := strings.TrimSpace(string(winexec.TrimBOM(output)))
+	if s == "" || s == "null" {
+		return nil
+	}
+	if !strings.HasPrefix(s, "[") {
+		s = "[" + s + "]"
+	}
+	var pkgs []appxPackage
+	if err := json.Unmarshal([]byte(s), &pkgs); err != nil {
+		return nil
+	}
+	return pkgs
 }
 
 // normalizePackageName lowercases and trims for fuzzy matching between registry and WinGet names

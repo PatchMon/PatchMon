@@ -282,6 +282,19 @@ func nocMetaStrSlice(m map[string]interface{}, key string) []string {
 	return nil
 }
 
+func nocImageUpdateList(m map[string]interface{}) string {
+	images := nocMetaStrSlice(m, "images")
+	if len(images) == 0 {
+		return ""
+	}
+	list := strings.Join(images, ", ")
+	var total int
+	if _, err := fmt.Sscanf(nocMetaStr(m, "update_count"), "%d", &total); err == nil && total > len(images) {
+		list += fmt.Sprintf(" and %d more", total-len(images))
+	}
+	return list
+}
+
 // severityEmoji returns a short icon for NOC-visible severity.
 func severityEmoji(sev string) string {
 	switch strings.ToLower(strings.TrimSpace(sev)) {
@@ -394,6 +407,10 @@ func buildNOCFields(p notifications.NotificationDeliverPayload) []map[string]int
 	case p.EventType == "host_recovered":
 		addField("Host", nocMetaStr(m, "host_name"), true)
 		addField("Status", "🟢 AGENT RECOVERED", true)
+
+	case p.EventType == "container_image_update_available":
+		addField("Host", nocMetaStr(m, "host_name"), true)
+		addField("Images", nocImageUpdateList(m), false)
 
 	case p.EventType == "server_update" || p.EventType == "agent_update":
 		addField("Current Version", nocMetaStr(m, "current_version"), true)
@@ -539,6 +556,10 @@ func buildSlackNOCFields(p notifications.NotificationDeliverPayload) string {
 	case p.EventType == "host_recovered":
 		addLine("Host", nocMetaStr(m, "host_name"))
 		addLine("Status", "🟢 AGENT RECOVERED")
+
+	case p.EventType == "container_image_update_available":
+		addLine("Host", nocMetaStr(m, "host_name"))
+		addLine("Images", nocImageUpdateList(m))
 
 	case p.EventType == "server_update" || p.EventType == "agent_update":
 		addLine("Current Version", nocMetaStr(m, "current_version"))
@@ -853,6 +874,10 @@ func buildEmailHTML(p notifications.NotificationDeliverPayload) string {
 	case p.EventType == "host_recovered":
 		addRow("Host", nocMetaStr(m, "host_name"))
 
+	case p.EventType == "container_image_update_available":
+		addRow("Host", nocMetaStr(m, "host_name"))
+		addRow("Images", nocImageUpdateList(m))
+
 	case p.EventType == "server_update" || p.EventType == "agent_update":
 		addRow("Current Version", nocMetaStr(m, "current_version"))
 		addRow("Available Version", nocMetaStr(m, "latest_version"))
@@ -1027,6 +1052,9 @@ func buildNtfyMessage(p notifications.NotificationDeliverPayload) string {
 	case p.EventType == "host_recovered":
 		addLine("Host", nocMetaStr(m, "host_name"))
 		addLine("Status", "AGENT RECOVERED")
+	case p.EventType == "container_image_update_available":
+		addLine("Host", nocMetaStr(m, "host_name"))
+		addLine("Images", nocImageUpdateList(m))
 	case p.EventType == "server_update" || p.EventType == "agent_update":
 		addLine("Current version", nocMetaStr(m, "current_version"))
 		addLine("Available version", nocMetaStr(m, "latest_version"))

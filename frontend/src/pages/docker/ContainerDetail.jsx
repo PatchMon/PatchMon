@@ -2,14 +2,15 @@ import { useQuery } from "@tanstack/react-query";
 import {
 	AlertTriangle,
 	ArrowLeft,
-	CheckCircle,
 	Container,
 	ExternalLink,
 	RefreshCw,
 	Server,
 } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
+import UpdateStatusBadge from "../../components/docker/UpdateStatusBadge";
 import api, { formatRelativeTime } from "../../utils/api";
+import { getSourceDisplayName, shortImageId } from "../../utils/docker";
 
 const ContainerDetail = () => {
 	const { id } = useParams();
@@ -37,14 +38,14 @@ const ContainerDetail = () => {
 	if (error || !container) {
 		return (
 			<div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-				<div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+				<div className="bg-danger-50 dark:bg-danger-900/20 border border-danger-200 dark:border-danger-800 rounded-lg p-4">
 					<div className="flex">
-						<AlertTriangle className="h-5 w-5 text-red-400" />
+						<AlertTriangle className="h-5 w-5 text-danger-400" />
 						<div className="ml-3">
-							<h3 className="text-sm font-medium text-red-800 dark:text-red-200">
+							<h3 className="text-sm font-medium text-danger-800 dark:text-danger-200">
 								Container not found
 							</h3>
-							<p className="mt-2 text-sm text-red-700 dark:text-red-300">
+							<p className="mt-2 text-sm text-danger-700 dark:text-danger-300">
 								The container you're looking for doesn't exist or has been
 								removed.
 							</p>
@@ -113,44 +114,25 @@ const ContainerDetail = () => {
 
 			{/* Overview Cards */}
 			<div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-				{/* Update Status Card */}
-				{container.docker_images?.docker_image_updates &&
-				container.docker_images.docker_image_updates.length > 0 ? (
-					<div className="card p-4 bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800">
-						<div className="flex items-center">
-							<div className="flex-shrink-0">
-								<AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400 mr-2" />
-							</div>
-							<div className="w-0 flex-1">
-								<p className="text-sm text-secondary-500 dark:text-yellow-200">
-									Update Available
-								</p>
-								<p className="text-sm font-medium text-secondary-900 dark:text-yellow-100 truncate">
-									{
-										container.docker_images.docker_image_updates[0]
-											.available_tag
-									}
-								</p>
+				<div className="card p-4">
+					<div className="flex items-center">
+						<div className="flex-shrink-0">
+							<AlertTriangle className="h-5 w-5 text-warning-600 mr-2" />
+						</div>
+						<div className="w-0 flex-1">
+							<p className="text-sm text-secondary-500 dark:text-white">
+								Update Status
+							</p>
+							<div className="mt-1">
+								<UpdateStatusBadge
+									status={container.update_status}
+									checkedAt={container.docker_images?.update_check?.checked_at}
+									reason={container.docker_images?.update_check?.reason}
+								/>
 							</div>
 						</div>
 					</div>
-				) : (
-					<div className="card p-4 bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800">
-						<div className="flex items-center">
-							<div className="flex-shrink-0">
-								<CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400 mr-2" />
-							</div>
-							<div className="w-0 flex-1">
-								<p className="text-sm text-secondary-500 dark:text-green-200">
-									Update Status
-								</p>
-								<p className="text-sm font-medium text-secondary-900 dark:text-green-100">
-									Up to date
-								</p>
-							</div>
-						</div>
-					</div>
-				)}
+				</div>
 
 				<div className="card p-4">
 					<div className="flex items-center">
@@ -244,6 +226,19 @@ const ContainerDetail = () => {
 									</dt>
 									<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
 										{formatRelativeTime(container.started_at)}
+										<span className="block text-xs text-secondary-500 dark:text-white">
+											{new Date(container.started_at).toLocaleString()}
+										</span>
+									</dd>
+								</div>
+							)}
+							{container.restart_count != null && (
+								<div>
+									<dt className="text-sm font-medium text-secondary-500 dark:text-white">
+										Restart Count
+									</dt>
+									<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
+										{container.restart_count}
 									</dd>
 								</div>
 							)}
@@ -257,9 +252,9 @@ const ContainerDetail = () => {
 											{Object.entries(container.ports).map(([key, value]) => (
 												<span
 													key={key}
-													className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+													className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-mono font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
 												>
-													{key} &gt; {value}
+													{value ? `${value}->${key}` : key}
 												</span>
 											))}
 										</div>
@@ -307,7 +302,7 @@ const ContainerDetail = () => {
 										Source
 									</dt>
 									<dd className="mt-1 text-sm text-secondary-900 dark:text-white">
-										{container.docker_images.source}
+										{getSourceDisplayName(container.docker_images.source)}
 									</dd>
 								</div>
 								{container.docker_images.size_bytes && (
@@ -330,7 +325,7 @@ const ContainerDetail = () => {
 										Image ID
 									</dt>
 									<dd className="mt-1 text-xs text-secondary-900 dark:text-white font-mono break-all">
-										{container.docker_images.image_id?.substring(0, 12)}...
+										{shortImageId(container.docker_images.image_id)}
 									</dd>
 								</div>
 								<div>

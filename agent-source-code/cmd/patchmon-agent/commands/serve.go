@@ -293,10 +293,12 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 	logger.Info("Establishing WebSocket connection...")
 	messages := make(chan wsMsg, 10)
 	dockerEvents := make(chan interface{}, 100)
-	go wsLoop(messages, dockerEvents)
+	go wsLoop(messages)
+	go consumeDockerEvents(ctx, dockerEvents)
 
 	// Start integration monitoring (Docker real-time events, etc.)
 	startIntegrationMonitoring(ctx, dockerEvents)
+	startDockerImageChecks(ctx)
 
 	// Report current integration status on startup (wait a moment for WebSocket)
 	go func() {
@@ -444,6 +446,9 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 			case "docker_inventory_refresh":
 				logger.Info("Refreshing Docker inventory on server request...")
 				go refreshDockerInventory(ctx)
+			case "docker_image_check":
+				logger.Info("Running Docker image update check on server request...")
+				go triggerDockerImageCheck(ctx)
 			case "run_patch":
 				go func(msg wsMsg) {
 					if err := runPatch(msg.patchRunID, msg.patchType, msg.packageNames, msg.dryRun); err != nil {
@@ -1656,14 +1661,14 @@ func dispatchWSMessage(out chan<- wsMsg, m wsMsg) {
 	}
 }
 
-func wsLoop(out chan<- wsMsg, dockerEvents <-chan interface{}) {
+func wsLoop(out chan<- wsMsg) {
 	backoff := time.Second
 	for {
 		// connectOnce resets backoff to 1s on successful dial so a long-lived
 		// agent that drops its WS (e.g. Windows bouncing TermService/firewall
 		// when RDP settings change) reconnects fast instead of waiting out the
 		// escalated backoff from its prior drops.
-		connected, err := connectOnce(out, dockerEvents, &backoff)
+		connected, err := connectOnce(out, &backoff)
 		if err != nil {
 			logger.WithError(err).Warn("ws disconnected; retrying")
 		}
@@ -1675,7 +1680,7 @@ func wsLoop(out chan<- wsMsg, dockerEvents <-chan interface{}) {
 	}
 }
 
-func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *time.Duration) (connected bool, err error) {
+func connectOnce(out chan<- wsMsg, backoff *time.Duration) (connected bool, err error) {
 	server := cfgManager.GetConfig().PatchmonServer
 	if server == "" {
 		return false, nil
@@ -1748,46 +1753,6 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 		globalWsConnMu.Lock()
 		globalWsConn = nil
 		globalWsConnMu.Unlock()
-	}()
-
-	// Create a goroutine to send Docker events through WebSocket - with cancellation support
-	go func() {
-		// OPTIMIZATION: Add a ticker to prevent goroutine buildup
-		ticker := time.NewTicker(1 * time.Minute)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-done:
-				return
-			case <-ticker.C:
-				// Periodic health check
-				continue
-			case event, ok := <-dockerEvents:
-				if !ok {
-					return // Channel closed
-				}
-				if dockerEvent, ok := event.(models.DockerStatusEvent); ok {
-					eventJSON, err := json.Marshal(map[string]interface{}{
-						"type":         "docker_status",
-						"event":        dockerEvent,
-						"container_id": dockerEvent.ContainerID,
-						"name":         dockerEvent.Name,
-						"status":       dockerEvent.Status,
-						"timestamp":    dockerEvent.Timestamp,
-					})
-					if err != nil {
-						logger.WithError(err).Warn("Failed to marshal Docker event")
-						continue
-					}
-
-					if err := writeWebSocketTextMessage(conn, eventJSON); err != nil {
-						logger.WithError(err).Debug("Failed to send Docker event via WebSocket")
-						return
-					}
-				}
-			}
-		}
 	}()
 
 	// Create a goroutine to send compliance scan progress updates through WebSocket
@@ -1897,6 +1862,9 @@ func connectOnce(out chan<- wsMsg, dockerEvents <-chan interface{}, backoff *tim
 		case "docker_inventory_refresh":
 			logger.Info("docker_inventory_refresh received")
 			dispatchWSMessage(out, wsMsg{kind: "docker_inventory_refresh"})
+		case "docker_image_check":
+			logger.Info("docker_image_check received")
+			dispatchWSMessage(out, wsMsg{kind: "docker_image_check"})
 		case "run_patch":
 			if payload.PatchRunID == "" {
 				logger.Warn("run_patch missing patch_run_id")

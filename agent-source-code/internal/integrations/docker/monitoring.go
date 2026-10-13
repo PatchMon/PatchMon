@@ -235,26 +235,24 @@ func (d *Integration) monitorEvents(ctx context.Context, eventChan chan<- interf
 				continue
 			}
 
-			if event.Type == events.ContainerEventType {
-				// OPTIMIZATION: Non-blocking send to prevent goroutine blockage
-				select {
-				case eventChan <- d.createContainerEvent(event):
-				default:
-					// Channel full, skip this event to prevent blocking
-					d.logger.Debug("Event channel full, skipping event")
-				}
+			if event.Type != events.ContainerEventType {
+				continue
+			}
+			statusEvent, ok := d.handleContainerEvent(event)
+			if !ok {
+				continue
+			}
+			select {
+			case eventChan <- statusEvent:
+			default:
+				d.logger.Debug("Event channel full, skipping event")
 			}
 		}
 	}
 }
 
-// createContainerEvent creates a container event from Docker event
-func (d *Integration) createContainerEvent(event events.Message) interface{} {
-	return d.handleContainerEvent(event)
-}
-
 // handleContainerEvent processes container events and creates status updates
-func (d *Integration) handleContainerEvent(event events.Message) interface{} {
+func (d *Integration) handleContainerEvent(event events.Message) (models.DockerStatusEvent, bool) {
 	// We're interested in these actions:
 	// - start: container started
 	// - stop: container stopped
@@ -265,6 +263,7 @@ func (d *Integration) handleContainerEvent(event events.Message) interface{} {
 	// - destroy: container destroyed
 
 	relevantActions := map[string]string{
+		"create":  "container_create",
 		"start":   "container_start",
 		"stop":    "container_stop",
 		"die":     "container_die",
@@ -276,7 +275,7 @@ func (d *Integration) handleContainerEvent(event events.Message) interface{} {
 
 	eventType, relevant := relevantActions[string(event.Action)]
 	if !relevant {
-		return nil
+		return models.DockerStatusEvent{}, false
 	}
 
 	// Extract container information
@@ -308,18 +307,20 @@ func (d *Integration) handleContainerEvent(event events.Message) interface{} {
 
 	d.logger.WithFields(logrus.Fields{
 		"type":         eventType,
-		"container_id": containerID[:12], // Short ID
+		"container_id": shortID(containerID),
 		"name":         containerName,
 		"image":        image,
 		"status":       status,
 	}).Info("Docker container event")
 
-	return statusEvent
+	return statusEvent, true
 }
 
 // mapActionToStatus maps Docker event actions to status strings
 func mapActionToStatus(action string) string {
 	switch action {
+	case "create":
+		return "created"
 	case "start":
 		return "running"
 	case "stop", "die", "kill":

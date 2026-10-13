@@ -244,6 +244,8 @@ func (h *DashboardHandler) HostDetail(w http.ResponseWriter, r *http.Request) {
 					"ports": c.Ports, "labels": c.Labels,
 					"created_at": c.CreatedAt, "started_at": c.StartedAt,
 					"updated_at": c.UpdatedAt, "last_checked": c.LastChecked,
+					"image_stale": c.ImageStale, "restart_count": c.RestartCount, "image_digest": c.ImageDigest,
+					"update_status": c.UpdateStatus,
 				}
 				if c.ImageTag != "" {
 					containers[i]["image"] = c.ImageName + ":" + c.ImageTag
@@ -259,6 +261,8 @@ func (h *DashboardHandler) HostDetail(w http.ResponseWriter, r *http.Request) {
 					"image_id": img.ImageID, "digest": img.Digest, "size_bytes": img.SizeBytes,
 					"source": img.Source, "created_at": img.CreatedAt,
 					"last_checked": img.LastChecked, "updated_at": img.UpdatedAt,
+					"update_status": img.UpdateStatus, "update_check": img.UpdateCheck,
+					"hasUpdates": img.HasUpdates, "containers_needing_recreate": img.ContainersNeedingRecreate,
 				}
 				if img.SizeBytes != nil {
 					images[i]["size"] = formatBytes(*img.SizeBytes)

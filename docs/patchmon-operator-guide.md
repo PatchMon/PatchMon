@@ -2901,7 +2901,7 @@ If you see `OIDC is enabled but missing required config: ...`, one or more of th
 4. Authenticate with your IdP credentials
 5. You'll be redirected back to PatchMon and logged in
 
-If `OIDC_AUTO_CREATE_USERS` is `true`, a PatchMon account is created automatically using your email address. The username is derived from the email prefix (e.g. `john.doe@example.com` becomes `john.doe`).
+If `OIDC_AUTO_CREATE_USERS` is `true`, a PatchMon account is created automatically using your email address. The username is taken from the `preferred_username` claim (e.g. `jdoe`). If your IdP does not send one, it is derived from the email prefix instead (e.g. `john.doe@example.com` becomes `john.doe`). The username is only set when the account is created; renaming it later is done in **Settings → Users**.
 
 ---
 
@@ -3468,7 +3468,7 @@ No Save button is needed for the toggles at the top (except **Enable OIDC / SSO*
 
 **First-login behaviour:**
 
-- A PatchMon account is created automatically. The username is derived from the email prefix (e.g. `alice@contoso.com` → `alice`).
+- A PatchMon account is created automatically. The username comes from `preferred_username` (only the part before any `@`), or from the email prefix if that claim is not sent (e.g. `alice@contoso.com` becomes `alice`).
 - The role is determined by group membership; if no group matches, the **Default (fallback)** role is used.
 - If **no admin exists yet in PatchMon**, the very first OIDC user is automatically promoted to **Super Admin** regardless of groups, so you cannot lock yourself out.
 
@@ -4175,6 +4175,10 @@ Configuration:
   Credentials File: /etc/patchmon/credentials.yml
   Log File: /etc/patchmon/logs/patchmon-agent.log
   Log Level: info
+
+Docker Update Check:
+  Enabled: true (requires integrations.docker)
+  Interval: 6 hours
 
 Credentials:
   API ID: patchmon_a1b2c3d4
@@ -5693,6 +5697,16 @@ integrations:
   #     the server and RDP enabled on the Windows host.
   # Default: false
   rdp-proxy-enabled: false
+
+# ─── Docker Image Update Check ───────────────────────────────────────
+# Checks each image's registry for a newer image behind the same tag.
+# Only runs when integrations.docker is true. Not pushed from the server.
+docker_update_check:
+  # Default: true
+  enabled: true
+  # Hours between automatic checks. Values below 1 use the default.
+  # Default: 6
+  interval_hours: 6
 ```
 
 ### Parameters In Detail
@@ -5843,7 +5857,7 @@ A map of integration names to their enabled/disabled state. See the [Integration
 | **Default** | `false` |
 | **Server-pushable** | Yes |
 
-When enabled, the agent monitors Docker containers, images, volumes, and networks on the host. It sends real-time container status events and periodic inventory snapshots to the PatchMon server.
+When enabled, the agent monitors Docker containers, images, volumes, and networks on the host. It sends an inventory snapshot at check-in whenever the inventory has changed, and again within seconds of any container being created, started, stopped or removed. It also runs the image update check described under [Docker image update check](#docker-image-update-check-docker_update_check) below.
 
 **Requirements:** Docker must be installed and the Docker socket must be accessible.
 
@@ -5992,6 +6006,31 @@ Restart-Service -Name PatchMonAgent
 
 Set `rdp-proxy-enabled` back to `false` in `config.yml` and restart the agent service. Existing RDP sessions will be terminated.
 
+### Docker Image Update Check (`docker_update_check`) {#docker-image-update-check-docker_update_check}
+
+Controls the Docker image update check. The check asks each image's registry which image its tag points at now and compares that with the image on the host, so PatchMon can show **Update available**, **Up to date** and the other statuses described in the Admin Guide (Docker Inventory Tour, Image Update Checks). It only requests the image digest: it never pulls an image, and the requests do not count towards Docker Hub pull rate limits. It does not look for newer version tags.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | Boolean | `true` | Runs the check whenever `integrations.docker` is `true`. Set to `false` to stop all checks on this host, including ones requested with **Check for updates** in the UI. |
+| `interval_hours` | Integer (hours) | `6` | Time between automatic checks. The first check runs about 2 minutes after the agent service starts. A value below `1` falls back to `6`. |
+
+These settings are **not server-pushable**: edit `config.yml` and restart the agent service to change them. The agent writes the block into `config.yml` with its current values whenever it saves its configuration, so it appears after an agent update even if you never added it.
+
+#### Network access
+
+The check runs from the host, not from the PatchMon server. Each host needs outbound HTTPS (TCP/443, or the registry's own port) to the registries its images come from, and to their login (token) service. For Docker Hub that is `registry-1.docker.io` and `auth.docker.io`. The agent honours the standard `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` environment variables.
+
+A registry served over plain HTTP is only contacted if the Docker daemon on the host lists it under `insecure-registries`. For those registries the agent first tries HTTPS without certificate verification, then plain HTTP.
+
+#### Registry credentials
+
+Private registries use the logins already on the host. The agent reads `$DOCKER_CONFIG/config.json` when `DOCKER_CONFIG` is set in the agent's environment, otherwise the root user's `/root/.docker/config.json`, because the agent runs as root. Run `sudo docker login <registry>` on the host so the login lands in that file. Stored logins and identity tokens are supported, as are credential helpers configured with `credHelpers` or `credsStore` (the matching `docker-credential-<name>` program must be on the agent's `PATH`).
+
+On macOS and Windows the agent runs as a system service, so it does not see a desktop user's `~/.docker/config.json`. Point it at the right file by setting `DOCKER_CONFIG` in the agent service's environment, otherwise private registries report **Unknown** because the registry rejected the request.
+
+Credentials are only sent to the registry they belong to, or to the login service that registry names. They are never written to the agent log and never sent to PatchMon. A registry with no login on the host is checked anonymously.
+
 ### How `config.yml` Is Generated
 
 #### Initial Generation (Installation)
@@ -6079,6 +6118,7 @@ The agent updates `config.yml` automatically in several scenarios. These are in-
 | `credentials_file` | Only changed by manual edit or `config set-api` |
 | `skip_ssl_verify` | Only changed by manual edit |
 | `host_id` (when set) | A different value from the server is reported, not adopted. Only `config set-api`, `config sync-host-id`, or a reinstall replaces it |
+| `docker_update_check` | Only changed by manual edit (the agent writes the defaults into the file if the block is missing) |
 
 #### Important: How SaveConfig Works
 
@@ -6111,6 +6151,10 @@ Configuration:
   Credentials File: /etc/patchmon/credentials.yml
   Log File: /etc/patchmon/logs/patchmon-agent.log
   Log Level: info
+
+Docker Update Check:
+  Enabled: true (requires integrations.docker)
+  Interval: 6 hours
 
 Credentials:
   API ID: patchmon_abc123def456

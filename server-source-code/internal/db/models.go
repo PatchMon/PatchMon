@@ -174,21 +174,30 @@ type DashboardPreference struct {
 }
 
 type DockerContainer struct {
-	ID          string           `json:"id"`
-	HostID      string           `json:"host_id"`
-	ContainerID string           `json:"container_id"`
-	Name        string           `json:"name"`
-	ImageID     *string          `json:"image_id"`
-	ImageName   string           `json:"image_name"`
-	ImageTag    string           `json:"image_tag"`
-	Status      string           `json:"status"`
-	State       *string          `json:"state"`
-	Ports       []byte           `json:"ports"`
-	Labels      []byte           `json:"labels"`
-	CreatedAt   pgtype.Timestamp `json:"created_at"`
-	StartedAt   pgtype.Timestamp `json:"started_at"`
-	UpdatedAt   pgtype.Timestamp `json:"updated_at"`
-	LastChecked pgtype.Timestamp `json:"last_checked"`
+	ID           string           `json:"id"`
+	HostID       string           `json:"host_id"`
+	ContainerID  string           `json:"container_id"`
+	Name         string           `json:"name"`
+	ImageID      *string          `json:"image_id"`
+	ImageName    string           `json:"image_name"`
+	ImageTag     string           `json:"image_tag"`
+	Status       string           `json:"status"`
+	State        *string          `json:"state"`
+	Ports        []byte           `json:"ports"`
+	Labels       []byte           `json:"labels"`
+	CreatedAt    pgtype.Timestamp `json:"created_at"`
+	StartedAt    pgtype.Timestamp `json:"started_at"`
+	UpdatedAt    pgtype.Timestamp `json:"updated_at"`
+	LastChecked  pgtype.Timestamp `json:"last_checked"`
+	ImageStale   bool             `json:"image_stale"`
+	RestartCount int32            `json:"restart_count"`
+	ImageDigest  *string          `json:"image_digest"`
+}
+
+type DockerHostImage struct {
+	HostID   string           `json:"host_id"`
+	ImageID  string           `json:"image_id"`
+	LastSeen pgtype.Timestamp `json:"last_seen"`
 }
 
 type DockerImage struct {
@@ -203,6 +212,20 @@ type DockerImage struct {
 	LastPulled  pgtype.Timestamp `json:"last_pulled"`
 	LastChecked pgtype.Timestamp `json:"last_checked"`
 	UpdatedAt   pgtype.Timestamp `json:"updated_at"`
+}
+
+type DockerImageCheck struct {
+	ID                string           `json:"id"`
+	HostID            string           `json:"host_id"`
+	ImageID           string           `json:"image_id"`
+	Status            string           `json:"status"`
+	LocalDigest       *string          `json:"local_digest"`
+	RemoteDigest      *string          `json:"remote_digest"`
+	Registry          *string          `json:"registry"`
+	Reason            *string          `json:"reason"`
+	CheckedAt         pgtype.Timestamp `json:"checked_at"`
+	FirstSeenUpdateAt pgtype.Timestamp `json:"first_seen_update_at"`
+	UpdatedAt         pgtype.Timestamp `json:"updated_at"`
 }
 
 type DockerImageUpdate struct {
