@@ -2836,6 +2836,12 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 	return nil
 }
 
+// The final stage gets its own deadline, started after the run: a run lasts far longer.
+var (
+	windowsFinalTimeout = 2 * time.Minute
+	runWindowsPatch     = packages.RunWindowsPatch
+)
+
 // runPatchWindows runs a Windows patch run. A stop cancels searches and downloads between
 // items but never an install in progress.
 func runPatchWindows(patchRunID string, req packages.WindowsPatchRequest, parseErr string) error {
@@ -2847,12 +2853,12 @@ func runPatchWindows(patchRunID string, req packages.WindowsPatchRequest, parseE
 	defer patchRunCancels.Delete(patchRunID)
 
 	httpClient := client.New(cfgManager, logger)
-	finalCtx, finalCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer finalCancel()
 
 	if parseErr != "" {
 		patchRunStopped.Delete(patchRunID)
-		if err := httpClient.SendPatchOutput(finalCtx, patchRunID, "failed", "", parseErr); err != nil {
+		failCtx, failCancel := context.WithTimeout(context.Background(), windowsFinalTimeout)
+		defer failCancel()
+		if err := httpClient.SendPatchOutput(failCtx, patchRunID, "failed", "", parseErr); err != nil {
 			logger.WithError(err).Warn("Failed to send patch failed output to server")
 		}
 		return errors.New(parseErr)
@@ -2885,7 +2891,7 @@ func runPatchWindows(patchRunID string, req packages.WindowsPatchRequest, parseE
 	apps := func() []models.Package {
 		return packages.NewWindowsManager(logger).UpdatableWingetApps()
 	}
-	res := packages.RunWindowsPatch(runCtx, stopCtx, req, hooks, apps)
+	res := runWindowsPatch(runCtx, stopCtx, req, hooks, apps)
 	_, wasStopped := patchRunStopped.LoadAndDelete(patchRunID)
 
 	var stageErr error
@@ -2899,6 +2905,8 @@ func runPatchWindows(patchRunID string, req packages.WindowsPatchRequest, parseE
 	if !req.DryRun {
 		reboot = &res.RebootRequired
 	}
+	finalCtx, finalCancel := context.WithTimeout(context.Background(), windowsFinalTimeout)
+	defer finalCancel()
 	finalErr := httpClient.SendPatchFinal(finalCtx, patchRunID, res.Stage, fullOutput.String(), res.ErrorMessage, reboot)
 	if finalErr != nil {
 		logger.WithError(finalErr).Warn("Failed to send Windows patch output to server")
