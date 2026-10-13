@@ -1794,7 +1794,9 @@
 					"403": {
 						"description": "Forbidden",
 						"content": {
-							"application/json": { "example": { "error": "Insufficient permissions" } }
+							"application/json": {
+								"example": { "error": "Insufficient permissions" }
+							}
 						}
 					},
 					"404": {
