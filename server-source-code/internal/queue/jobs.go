@@ -887,13 +887,13 @@ func buildRunPatchMessage(p RunPatchPayload, run *db.GetPatchRunByIDRow, windows
 		"patch_type":   p.PatchType,
 		"dry_run":      p.DryRun,
 	}
-	if p.PackageName != nil {
-		payload["package_name"] = *p.PackageName
-	}
-	if len(p.PackageNames) > 0 {
-		payload["package_names"] = p.PackageNames
-	}
 	if !windows {
+		if p.PackageName != nil {
+			payload["package_name"] = *p.PackageName
+		}
+		if len(p.PackageNames) > 0 {
+			payload["package_names"] = p.PackageNames
+		}
 		return payload
 	}
 	switch p.PatchType {

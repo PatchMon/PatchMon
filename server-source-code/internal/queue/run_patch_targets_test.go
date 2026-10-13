@@ -9,6 +9,9 @@ import (
 
 func TestBuildRunPatchMessageLinuxUnchanged(t *testing.T) {
 	msg := buildRunPatchMessage(RunPatchPayload{PatchRunID: "r", PatchType: "patch_package", PackageNames: []string{"curl"}}, &db.GetPatchRunByIDRow{}, false, nil)
+	if names, ok := msg["package_names"].([]string); !ok || len(names) != 1 || names[0] != "curl" {
+		t.Fatalf("Linux run_patch lost package_names: %+v", msg)
+	}
 	for _, k := range []string{"targets", "include_updates", "include_apps"} {
 		if _, ok := msg[k]; ok {
 			t.Errorf("Linux run_patch carries %s", k)
@@ -21,7 +24,13 @@ func TestBuildRunPatchMessageLinuxUnchanged(t *testing.T) {
 
 func TestBuildRunPatchMessageWindowsTargets(t *testing.T) {
 	pending := []db.PatchRunItem{{Kind: "wua", Identifier: "7f1b0c5e-1111-2222-3333-444455556666"}, {Kind: "winget", Identifier: "7zip.7zip"}}
-	msg := buildRunPatchMessage(RunPatchPayload{PatchType: "patch_package"}, &db.GetPatchRunByIDRow{}, true, pending)
+	name := "7-Zip"
+	msg := buildRunPatchMessage(RunPatchPayload{PatchType: "patch_package", PackageName: &name, PackageNames: []string{"2026-10 Cumulative Update (KB5044284)", "7-Zip"}}, &db.GetPatchRunByIDRow{}, true, pending)
+	for _, k := range []string{"package_name", "package_names"} {
+		if _, ok := msg[k]; ok {
+			t.Errorf("Windows run_patch carries %s; only validated targets may reach the agent", k)
+		}
+	}
 	targets, ok := msg["targets"].([]runPatchTarget)
 	if !ok || len(targets) != 2 || targets[0] != (runPatchTarget{Kind: "wua", ID: pending[0].Identifier}) || targets[1] != (runPatchTarget{Kind: "winget", ID: "7zip.7zip"}) {
 		t.Fatalf("targets = %#v", msg["targets"])
