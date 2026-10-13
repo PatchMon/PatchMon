@@ -146,14 +146,14 @@ func packagesListWhereSQL(filters packagesListFilters, tableAlias string) (strin
 	// EXISTS branch below. Emitted as a NOT EXISTS so the planner can
 	// use idx_host_packages_needs_update_security_package (partial on
 	// package_id WHERE needs_update AND is_security_update).
-	if filters.IsSecurityUpdate != nil && *filters.IsSecurityUpdate == "false" {
+	if filters.IsSecurityUpdate != nil && *filters.IsSecurityUpdate == "false" && !hostScoped(filters) {
 		b.WriteString(" AND NOT EXISTS (SELECT 1 FROM host_packages hps WHERE hps.package_id = ")
 		b.WriteString(tableAlias)
 		b.WriteString(".id AND hps.needs_update = true AND hps.is_security_update = true)")
 	}
 
 	// EXISTS branch: only emit when at least one of the host_packages
-	// filters is active. When none are set, the planner sees no
+	// filters is active. Fleet view with none set: the planner sees no
 	// host_packages join at all — it just walks `packages` (filtered by
 	// the lighter predicates above) and joins mv_package_stats for the
 	// per-package counters. This is the fast path for the default
@@ -165,20 +165,29 @@ func packagesListWhereSQL(filters packagesListFilters, tableAlias string) (strin
 	// non-security pending update). Preserving the second half here so
 	// the result set is identical: a package with zero pending updates
 	// is excluded by the 'false' filter, matching the original query.
-	hostExistsActive := (filters.HostID != nil && *filters.HostID != "") ||
-		(filters.NeedsUpdate != nil && *filters.NeedsUpdate == "true") ||
+	hostExistsActive := (filters.NeedsUpdate != nil && *filters.NeedsUpdate == "true") ||
 		(filters.IsSecurityUpdate != nil && (*filters.IsSecurityUpdate == "true" || *filters.IsSecurityUpdate == "false")) ||
 		(filters.RepositoryID != nil && *filters.RepositoryID != "")
 
-	if hostExistsActive {
+	if hostScoped(filters) {
+		if filters.NeedsUpdate != nil && *filters.NeedsUpdate == "true" {
+			b.WriteString(" AND hph.needs_update = true")
+		}
+		if filters.IsSecurityUpdate != nil && *filters.IsSecurityUpdate == "true" {
+			b.WriteString(" AND hph.needs_update = true AND hph.is_security_update = true")
+		}
+		if filters.IsSecurityUpdate != nil && *filters.IsSecurityUpdate == "false" {
+			b.WriteString(" AND hph.needs_update = true AND hph.is_security_update = false")
+		}
+		if filters.RepositoryID != nil && *filters.RepositoryID != "" {
+			p := addArg(*filters.RepositoryID)
+			b.WriteString(" AND hph.source_repository_id = ")
+			b.WriteString(p)
+		}
+	} else if hostExistsActive {
 		b.WriteString(" AND EXISTS (SELECT 1 FROM host_packages hp WHERE hp.package_id = ")
 		b.WriteString(tableAlias)
 		b.WriteString(".id")
-		if filters.HostID != nil && *filters.HostID != "" {
-			p := addArg(*filters.HostID)
-			b.WriteString(" AND hp.host_id = ")
-			b.WriteString(p)
-		}
 		// needs_update='true' is the only meaningful value (matches the
 		// previous SQL which only honoured 'true').
 		if filters.NeedsUpdate != nil && *filters.NeedsUpdate == "true" {
@@ -205,6 +214,19 @@ func packagesListWhereSQL(filters packagesListFilters, tableAlias string) (strin
 	return b.String(), args
 }
 
+// hostScoped reports whether the list is filtered to one host, in which case
+// each row describes that host's host_packages row instead of mv_package_stats.
+func hostScoped(filters packagesListFilters) bool {
+	return filters.HostID != nil && *filters.HostID != ""
+}
+
+// hostPackagesJoinSQL returns the join to the filtered host's own row, which
+// UNIQUE(host_id, package_id) keeps to one row per package.
+func hostPackagesJoinSQL(filters packagesListFilters, args []any) (string, []any) {
+	args = append(args, *filters.HostID)
+	return "JOIN host_packages hph ON hph.package_id = p.id AND hph.host_id = $" + strconv.Itoa(len(args)), args
+}
+
 // listPackagesSQL builds the parameterised SELECT for the Packages list
 // page. The ORDER BY column / direction is interpolated from a whitelist
 // (resolvePackagesListSort) — never raw user input — so the planner can
@@ -217,17 +239,32 @@ func listPackagesSQL(filters packagesListFilters, sortKey, sortDir string, limit
 	offsetP := "$" + strconv.Itoa(len(args)+2)
 	args = append(args, limit, offset)
 
-	// We deliberately do not wrap this in a CTE. With the per-sort-key
-	// whitelisted ORDER BY column, the planner can either:
-	//   - For sort=name ASC: walk the implicit btree on packages.name
-	//     UNIQUE in order, hash-join mv_package_stats, stop at LIMIT.
-	//     No top-level Sort node, no Gather, no parallel workers — the
-	//     ones that previously blew Docker's default 64 MB /dev/shm.
-	//   - For sort=total_installs / status_rank: an in-memory sort over
-	//     the filtered set; with the EXISTS clause only emitted when a
-	//     host filter is active, this stays well within work_mem.
+	// No CTE, so LIMIT pushes down. Fleet view: per-row figures from
+	// mv_package_stats. Host filter: from that host's own host_packages row.
 	var b strings.Builder
-	b.WriteString(`SELECT p.id, p.name, p.description, p.category, p.latest_version, p.created_at,
+	if hostScoped(filters) {
+		var hostJoin string
+		hostJoin, args = hostPackagesJoinSQL(filters, args)
+		b.WriteString(`SELECT p.id, p.name, p.description, p.category,
+       CASE WHEN hph.needs_update THEN COALESCE(hph.available_version, p.latest_version)
+            ELSE hph.current_version
+       END AS latest_version,
+       p.created_at,
+       1 AS total_installs,
+       hph.needs_update::int AS updates_needed,
+       (hph.needs_update AND hph.is_security_update)::int AS security_updates,
+       CASE
+           WHEN hph.needs_update AND hph.is_security_update THEN 0
+           WHEN hph.needs_update THEN 1
+           ELSE 2
+       END AS status_rank
+FROM packages p
+`)
+		b.WriteString(hostJoin)
+		b.WriteString(`
+WHERE `)
+	} else {
+		b.WriteString(`SELECT p.id, p.name, p.description, p.category, p.latest_version, p.created_at,
        COALESCE(s.total_installs, 0)::int   AS total_installs,
        COALESCE(s.updates_needed, 0)::int   AS updates_needed,
        COALESCE(s.security_updates, 0)::int AS security_updates,
@@ -239,6 +276,7 @@ func listPackagesSQL(filters packagesListFilters, sortKey, sortDir string, limit
 FROM packages p
 LEFT JOIN mv_package_stats s ON s.package_id = p.id
 WHERE `)
+	}
 	b.WriteString(where)
 	b.WriteString(" ORDER BY ")
 	b.WriteString(orderBy)
@@ -257,6 +295,11 @@ WHERE `)
 // cannot fan out the COUNT.
 func countPackagesSQL(filters packagesListFilters) (string, []any) {
 	where, args := packagesListWhereSQL(filters, "p")
+	if hostScoped(filters) {
+		var hostJoin string
+		hostJoin, args = hostPackagesJoinSQL(filters, args)
+		return `SELECT COUNT(*)::int, COUNT(*)::bigint FROM packages p ` + hostJoin + ` WHERE ` + where, args
+	}
 	return `SELECT COUNT(*)::int,
        COALESCE(SUM(COALESCE(s.total_installs, 0)), 0)::bigint
 FROM packages p
