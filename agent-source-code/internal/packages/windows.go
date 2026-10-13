@@ -1,7 +1,11 @@
 package packages
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"os/exec"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -664,64 +668,73 @@ func buildAppDescription(publisher, installDate, size string) string {
 }
 
 // getPackagesFromWinget runs winget list and parses the text-table output.
-// Uses PowerShell wrapper for UTF-8 encoding to avoid U+FFFD mojibake.
-// Resolves the actual winget.exe path to work in SYSTEM/Session 0 context
-// where winget may not be on PATH (it's a per-user UWP app).
 func (m *WindowsManager) getPackagesFromWinget() []wingetRow {
-	// Resolve winget.exe — it's installed as a UWP app (App Installer) and not always on SYSTEM PATH.
-	// Try PATH first, then known WindowsApps locations.
-	psScript := `
-$ErrorActionPreference = "SilentlyContinue"
-$env:TERM = 'dumb'
-
-# Resolve winget.exe path — handle SYSTEM/Session 0 where it's not on PATH
-$wingetPath = $null
-$candidate = Get-Command winget.exe -ErrorAction SilentlyContinue
-if ($candidate) {
-    $wingetPath = $candidate.Source
-} else {
-    # UWP package location (works for SYSTEM when App Installer is installed machine-wide)
-    $candidates = @(
-        "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe",
-        "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe",
-        "C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe"
-    )
-    foreach ($pattern in $candidates) {
-        $found = Get-Item $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($found) {
-            $wingetPath = $found.FullName
-            break
-        }
-    }
-}
-if (-not $wingetPath) {
-    Write-Output "WINGET_NOT_FOUND"
-    exit 0
-}
-$out = & $wingetPath list --accept-source-agreements --disable-interactivity 2>&1
-if ($out) { $out | Out-String }
-`
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
-	defer cancel()
-	output, err := cmd.Output()
-	if err != nil {
-		m.logger.WithError(err).Debug("winget list failed")
+	w, ok := m.resolveWingetCommand()
+	if !ok {
 		return nil
 	}
-
-	outputStr := string(output)
-	if strings.Contains(outputStr, "WINGET_NOT_FOUND") {
-		m.logger.Debug("WinGet not available (not found on PATH or in WindowsApps)")
+	output, ok := m.runWingetList(w, "list")
+	if !ok {
 		return nil
 	}
-
-	entries := m.parseWingetTable(outputStr)
+	entries := m.parseWingetTable(output)
 	if len(entries) == 0 {
 		return nil
 	}
+	return wingetEntriesToRows(entries, m.getWingetUpgradeAvailable(w))
+}
 
-	// Second pass: winget list --upgrade-available for accurate NeedsUpdate/AvailableVersion
-	return wingetEntriesToRows(entries, m.getWingetUpgradeAvailable())
+type wingetCommand struct {
+	exe string
+	env []string
+}
+
+func (m *WindowsManager) resolveWingetCommand() (wingetCommand, bool) {
+	exe, env, err := sharedWingetResolver.get()
+	switch {
+	case err == nil:
+		return wingetCommand{exe: exe, env: env}, true
+	case errors.Is(err, errWingetRecentlyFailed), errors.Is(err, errWingetNotFound):
+		m.logger.WithError(err).Debug("WinGet not available")
+	default:
+		m.logger.WithError(err).Warn("WinGet not available")
+	}
+	return wingetCommand{}, false
+}
+
+func (m *WindowsManager) runWingetList(w wingetCommand, args ...string) (string, bool) {
+	args = append(args, "--accept-source-agreements", "--disable-interactivity")
+	ctx, cancel := context.WithTimeout(context.Background(), networkCollectorTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, w.exe, args...)
+	cmd.WaitDelay = commandKillDelay
+	cmd.Env = w.env
+	hideWindow(cmd)
+	output, err := cmd.Output()
+	fields := map[string]interface{}{"args": strings.Join(args, " ")}
+	if ctx.Err() != nil {
+		m.logger.WithError(ctx.Err()).WithFields(logutil.SanitizeMap(fields)).Warn("winget timed out")
+		return "", false
+	}
+	code := 0
+	if err != nil {
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) {
+			m.logger.WithError(err).WithFields(logutil.SanitizeMap(fields)).Warn("winget failed")
+			return "", false
+		}
+		code = ee.ExitCode()
+		fields["exit_code"] = fmt.Sprintf("0x%08X", uint32(code))
+	}
+	out, class := classifyWingetExit(code, string(output))
+	switch class {
+	case wingetExitPartial:
+		m.logger.WithFields(logutil.SanitizeMap(fields)).Debug("winget exited non-zero but printed a table; using it")
+	case wingetExitFailed:
+		m.logger.WithError(err).WithFields(logutil.SanitizeMap(fields)).Warn("winget failed")
+		return "", false
+	}
+	return out, true
 }
 
 type wingetRow struct {
@@ -929,42 +942,12 @@ func (m *WindowsManager) parseWingetTable(output string) []wingetEntry {
 }
 
 // getWingetUpgradeAvailable runs winget list --upgrade-available and returns Id -> AvailableVersion map
-func (m *WindowsManager) getWingetUpgradeAvailable() map[string]string {
-	psScript := `
-$ErrorActionPreference = "SilentlyContinue"
-$env:TERM = 'dumb'
-
-# Resolve winget.exe path (same logic as main list)
-$wingetPath = $null
-$candidate = Get-Command winget.exe -ErrorAction SilentlyContinue
-if ($candidate) {
-    $wingetPath = $candidate.Source
-} else {
-    $candidates = @(
-        "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe",
-        "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe",
-        "C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_*\winget.exe"
-    )
-    foreach ($pattern in $candidates) {
-        $found = Get-Item $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($found) {
-            $wingetPath = $found.FullName
-            break
-        }
-    }
-}
-if (-not $wingetPath) { exit 0 }
-$out = & $wingetPath list --upgrade-available --accept-source-agreements --disable-interactivity 2>&1
-if ($out) { $out | Out-String }
-`
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
-	defer cancel()
-	output, err := cmd.Output()
-	if err != nil {
-		m.logger.WithError(err).Debug("winget list --upgrade-available failed")
+func (m *WindowsManager) getWingetUpgradeAvailable(w wingetCommand) map[string]string {
+	output, ok := m.runWingetList(w, "list", "--upgrade-available")
+	if !ok {
 		return nil
 	}
-	entries := m.parseWingetTable(string(output))
+	entries := m.parseWingetTable(output)
 	upgradeMap := make(map[string]string)
 	for _, e := range entries {
 		id := strings.TrimSpace(stripEllipsis(e.ID))
