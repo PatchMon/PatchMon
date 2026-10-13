@@ -233,6 +233,7 @@ type Querier interface {
 	DeleteUser(ctx context.Context, id string) error
 	DeleteVolume(ctx context.Context, id string) error
 	DisableTfa(ctx context.Context, id string) error
+	DismissHostIdentityConflict(ctx context.Context, id string) (int64, error)
 	ExistsByUsernameOrEmail(ctx context.Context, arg ExistsByUsernameOrEmailParams) (bool, error)
 	ExistsPatchPolicyExclusion(ctx context.Context, arg ExistsPatchPolicyExclusionParams) (bool, error)
 	FindSessionByUserAndDevice(ctx context.Context, arg FindSessionByUserAndDeviceParams) (UserSession, error)
@@ -563,6 +564,7 @@ type Querier interface {
 	// only one of them updates a row here, and the loser must be told so rather
 	// than going on to create a second patch run and enqueue a second task.
 	MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) (int64, error)
+	ReissueHostApiKey(ctx context.Context, arg ReissueHostApiKeyParams) (int64, error)
 	RequeuePatchRun(ctx context.Context, arg RequeuePatchRunParams) (int64, error)
 	RevokeAllSessionsForUser(ctx context.Context, userID string) error
 	RevokeAllSessionsForUserExcept(ctx context.Context, arg RevokeAllSessionsForUserExceptParams) error
@@ -599,6 +601,7 @@ type Querier interface {
 	// Host report/update flow (agent sends package and system info)
 	UpdateHostFromReport(ctx context.Context, arg UpdateHostFromReportParams) error
 	UpdateHostGroup(ctx context.Context, arg UpdateHostGroupParams) error
+	UpdateHostIdentityFingerprint(ctx context.Context, arg UpdateHostIdentityFingerprintParams) error
 	// Ping-side write of volatile metrics. Every column is guarded so a ping that
 	// omits a metric leaves the stored value intact.
 	UpdateHostMetrics(ctx context.Context, arg UpdateHostMetricsParams) error

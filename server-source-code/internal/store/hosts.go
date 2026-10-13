@@ -233,7 +233,53 @@ func (s *HostsStore) Create(ctx context.Context, h *models.Host) error {
 		ComplianceEnabled:      h.ComplianceEnabled,
 		ComplianceOnDemandOnly: h.ComplianceOnDemandOnly,
 		ExpectedPlatform:       h.ExpectedPlatform,
+		EnrolmentTokenID:       h.EnrolmentTokenID,
 	})
+}
+
+// ReissueApiKey replaces the API key of a host that no agent has ever reported
+// for and that was not re-issued in the last 60 seconds. It returns false when
+// the row no longer qualifies, so a report racing the re-issue always wins.
+func (s *HostsStore) ReissueApiKey(ctx context.Context, id, apiKeyHash string) (bool, error) {
+	d := s.db.DB(ctx)
+	n, err := d.Queries.ReissueHostApiKey(ctx, db.ReissueHostApiKeyParams{ID: id, ApiKey: apiKeyHash})
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// IdentityFingerprintUpdate is the new clone-detection state for a host.
+type IdentityFingerprintUpdate struct {
+	Fingerprint     string
+	PrevFingerprint *string
+	ChangedAt       time.Time
+	ConflictAt      *time.Time
+}
+
+// UpdateIdentityFingerprint stores the host's machine fingerprint state. An
+// existing identity_conflict_at is kept.
+func (s *HostsStore) UpdateIdentityFingerprint(ctx context.Context, id string, u IdentityFingerprintUpdate) error {
+	d := s.db.DB(ctx)
+	fp := u.Fingerprint
+	return d.Queries.UpdateHostIdentityFingerprint(ctx, db.UpdateHostIdentityFingerprintParams{
+		Fingerprint:     &fp,
+		PrevFingerprint: u.PrevFingerprint,
+		ChangedAt:       pgtime.From(u.ChangedAt),
+		ConflictAt:      pgtime.FromPtr(u.ConflictAt),
+		ID:              id,
+	})
+}
+
+// DismissIdentityConflict clears the possible-clone flag. It returns false
+// when no host has that ID.
+func (s *HostsStore) DismissIdentityConflict(ctx context.Context, id string) (bool, error) {
+	d := s.db.DB(ctx)
+	n, err := d.Queries.DismissHostIdentityConflict(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // UpdateFriendlyName updates a host's friendly name.
@@ -404,6 +450,16 @@ type HostCheckin struct {
 	DockerEnabled     bool
 	ComplianceEnabled bool
 	Hashes            HostHashes
+	ReportedHostID    *string
+	Identity          IdentityFingerprintState
+}
+
+// IdentityFingerprintState is the stored clone-detection state for a host.
+type IdentityFingerprintState struct {
+	Fingerprint     *string
+	PrevFingerprint *string
+	ChangedAt       *time.Time
+	ConflictAt      *time.Time
 }
 
 // GetCheckin returns the host snapshot used by ServePing's hash compare.
@@ -429,6 +485,13 @@ func (s *HostsStore) GetCheckin(ctx context.Context, apiID string) (*HostCheckin
 			DockerHash:     row.DockerHash,
 			ComplianceHash: row.ComplianceHash,
 		},
+		ReportedHostID: row.ReportedHostID,
+		Identity: IdentityFingerprintState{
+			Fingerprint:     row.IdentityFingerprint,
+			PrevFingerprint: row.IdentityPrevFingerprint,
+			ChangedAt:       pgTimePtr(row.IdentityFingerprintChangedAt),
+			ConflictAt:      pgTimePtr(row.IdentityConflictAt),
+		},
 	}, nil
 }
 
@@ -451,6 +514,9 @@ type HostMetricsParams struct {
 	NeedsReboot  *bool
 	RebootReason *string
 	AgentVersion *string
+	// ConfigVersion and ReportedHostID must already be validated.
+	ConfigVersion  *string
+	ReportedHostID *string
 }
 
 // UpdateMetrics writes ping-side volatile metrics. Every column is guarded so a
@@ -458,18 +524,20 @@ type HostMetricsParams struct {
 func (s *HostsStore) UpdateMetrics(ctx context.Context, id string, m HostMetricsParams) error {
 	d := s.db.DB(ctx)
 	return d.Queries.UpdateHostMetrics(ctx, db.UpdateHostMetricsParams{
-		CpuCores:     m.CPUCores,
-		CpuModel:     m.CPUModel,
-		RamInstalled: m.RAMInstalled,
-		SwapSize:     m.SwapSize,
-		DiskDetails:  m.DiskDetails,
-		SystemUptime: m.SystemUptime,
-		BootTime:     pgtime.FromPtrTz(m.BootTime),
-		LoadAverage:  m.LoadAverage,
-		NeedsReboot:  m.NeedsReboot,
-		RebootReason: m.RebootReason,
-		AgentVersion: m.AgentVersion,
-		ID:           id,
+		CpuCores:       m.CPUCores,
+		CpuModel:       m.CPUModel,
+		RamInstalled:   m.RAMInstalled,
+		SwapSize:       m.SwapSize,
+		DiskDetails:    m.DiskDetails,
+		SystemUptime:   m.SystemUptime,
+		BootTime:       pgtime.FromPtrTz(m.BootTime),
+		LoadAverage:    m.LoadAverage,
+		NeedsReboot:    m.NeedsReboot,
+		RebootReason:   m.RebootReason,
+		AgentVersion:   m.AgentVersion,
+		ConfigVersion:  m.ConfigVersion,
+		ReportedHostID: m.ReportedHostID,
+		ID:             id,
 	})
 }
 

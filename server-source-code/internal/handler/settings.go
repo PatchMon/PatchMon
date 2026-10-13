@@ -171,8 +171,6 @@ func (h *SettingsHandler) VersionCurrent(version string) http.HandlerFunc {
 
 const serverVersionDNS = "server.vcheck.patchmon.net"
 
-var semverRe = regexp.MustCompile(`^\d+\.\d+\.\d+`)
-
 // VersionCheckUpdates handles GET /version/check-updates (matches Node backend).
 // Fetches latest server version from DNS (server.vcheck.patchmon.net) and returns update info.
 func (h *SettingsHandler) VersionCheckUpdates(currentVersion string) http.HandlerFunc {
@@ -195,7 +193,7 @@ func (h *SettingsHandler) VersionCheckUpdates(currentVersion string) http.Handle
 			}
 		} else {
 			latestVersion = strings.TrimSpace(strings.Trim(latestVersion, "\"'"))
-			if !semverRe.MatchString(latestVersion) {
+			if !util.HasVersionPrefix(latestVersion) {
 				latestVersion = ""
 				if s.LatestVersion != nil {
 					latestVersion = *s.LatestVersion

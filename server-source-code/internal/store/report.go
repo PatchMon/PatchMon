@@ -14,6 +14,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -114,6 +115,8 @@ type ReportPayload struct {
 	Architecture           string             `json:"architecture"`
 	AgentVersion           string             `json:"agentVersion"`
 	MachineID              string             `json:"machineId"`
+	HostID                 string             `json:"hostId,omitempty"`
+	ConfigVersion          string             `json:"configVersion,omitempty"`
 	KernelVersion          string             `json:"kernelVersion"`
 	InstalledKernelVersion string             `json:"installedKernelVersion"`
 	SELinuxStatus          string             `json:"selinuxStatus"`
@@ -417,6 +420,12 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 	}
 	if payload.MachineID != "" {
 		params.MachineID = &payload.MachineID
+	}
+	if util.ValidConfigVersion(payload.ConfigVersion) {
+		params.ConfigVersion = &payload.ConfigVersion
+	}
+	if util.ValidHostID(payload.HostID) {
+		params.ReportedHostID = &payload.HostID
 	}
 	if payload.OSType != "" {
 		params.OsType = &payload.OSType

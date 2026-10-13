@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"strings"
 	"time"
 
@@ -16,8 +15,6 @@ import (
 )
 
 const serverVersionDNS = "server.vcheck.patchmon.net"
-
-var semverRe = regexp.MustCompile(`^\d+\.\d+\.\d+`)
 
 // ProcessServerUpdate runs the server version check: DNS lookup, settings update, and alert create/resolve.
 // Called by the version-update-check queue job.
@@ -34,7 +31,7 @@ func ProcessServerUpdate(ctx context.Context, db *database.DB, serverVersion str
 		log.Warn("server_update: DNS lookup failed", "error", dnsErr)
 	} else if latest != "" {
 		latest = strings.TrimSpace(strings.Trim(latest, "\"'"))
-		if !semverRe.MatchString(latest) {
+		if !util.HasVersionPrefix(latest) {
 			latest = ""
 		}
 	}

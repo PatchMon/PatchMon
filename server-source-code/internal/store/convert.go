@@ -506,6 +506,14 @@ func dbHostToModel(h db.Host) *models.Host {
 		DockerHash:                   h.DockerHash,
 		ComplianceHash:               h.ComplianceHash,
 		LastFullReportAt:             pgTimePtr(h.LastFullReportAt),
+		ConfigVersion:                h.ConfigVersion,
+		ReportedHostID:               h.ReportedHostID,
+		EnrolmentTokenID:             h.EnrolmentTokenID,
+		CredentialsReissuedAt:        pgTimePtr(h.CredentialsReissuedAt),
+		IdentityFingerprint:          h.IdentityFingerprint,
+		IdentityPrevFingerprint:      h.IdentityPrevFingerprint,
+		IdentityFingerprintChangedAt: pgTimePtr(h.IdentityFingerprintChangedAt),
+		IdentityConflictAt:           pgTimePtr(h.IdentityConflictAt),
 	}
 }
 

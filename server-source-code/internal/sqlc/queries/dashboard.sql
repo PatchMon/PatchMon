@@ -89,6 +89,7 @@ WITH base_hosts AS (
         h.status, h.agent_version, h.auto_update, h.notes, h.api_id,
         h.needs_reboot, h.reboot_reason, h.system_uptime, h.boot_time, h.docker_enabled, h.compliance_enabled, h.compliance_on_demand_only,
         h.last_update,
+        h.config_version, h.reported_host_id, (h.reported_host_id IS NOT NULL AND h.reported_host_id <> h.id)::boolean AS host_id_mismatch, h.identity_conflict_at,
         h.compliance_scanner_status->'scanner_info'->>'ssg_version' as ssg_version,
         COALESCE((
             SELECT MIN(hg.name)
@@ -166,7 +167,8 @@ SELECT id, machine_id, friendly_name, hostname, ip, os_type, os_version,
     status, agent_version, auto_update, notes, api_id,
     needs_reboot, reboot_reason, system_uptime, boot_time, docker_enabled, compliance_enabled, compliance_on_demand_only,
     last_update, ssg_version, updates_count, security_updates_count, total_packages_count,
-    reporting_state, update_state
+    reporting_state, update_state,
+    config_version, reported_host_id, host_id_mismatch, identity_conflict_at
 FROM filtered_hosts
 ORDER BY
     CASE WHEN sqlc.arg('sort_key')::text = 'friendly_name'      AND sqlc.arg('sort_dir')::text = 'asc'  THEN friendly_name END ASC,
@@ -220,6 +222,7 @@ WITH base_hosts AS (
         h.status, h.agent_version, h.auto_update, h.notes, h.api_id,
         h.needs_reboot, h.reboot_reason, h.system_uptime, h.boot_time, h.docker_enabled, h.compliance_enabled, h.compliance_on_demand_only,
         h.last_update,
+        h.config_version, h.reported_host_id, (h.reported_host_id IS NOT NULL AND h.reported_host_id <> h.id)::boolean AS host_id_mismatch, h.identity_conflict_at,
         h.compliance_scanner_status->'scanner_info'->>'ssg_version' as ssg_version,
         COALESCE((
             SELECT MIN(hg.name)
@@ -329,6 +332,7 @@ SELECT op.id, op.machine_id, op.friendly_name, op.hostname, op.ip, op.os_type, o
     op.status, op.agent_version, op.auto_update, op.notes, op.api_id,
     op.needs_reboot, op.reboot_reason, op.system_uptime, op.boot_time, op.docker_enabled, op.compliance_enabled, op.compliance_on_demand_only,
     op.last_update, op.ssg_version,
+    op.config_version, op.reported_host_id, op.host_id_mismatch, op.identity_conflict_at,
     COALESCE(pc.updates_count, 0)::int AS updates_count,
     COALESCE(pc.security_count, 0)::int AS security_updates_count,
     COALESCE(pc.total_count, 0)::int AS total_packages_count,

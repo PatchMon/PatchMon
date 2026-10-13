@@ -57,6 +57,25 @@ type Host struct {
 	DockerHash                   *string    `db:"docker_hash"`
 	ComplianceHash               *string    `db:"compliance_hash"`
 	LastFullReportAt             *time.Time `db:"last_full_report_at"`
+	ConfigVersion                *string    `db:"config_version"`
+	ReportedHostID               *string    `db:"reported_host_id"`
+	EnrolmentTokenID             *string    `db:"enrolment_token_id"`
+	CredentialsReissuedAt        *time.Time `db:"credentials_reissued_at"`
+	IdentityFingerprint          *string    `db:"identity_fingerprint"`
+	IdentityPrevFingerprint      *string    `db:"identity_prev_fingerprint"`
+	IdentityFingerprintChangedAt *time.Time `db:"identity_fingerprint_changed_at"`
+	IdentityConflictAt           *time.Time `db:"identity_conflict_at"`
+}
+
+// HostIDMismatch reports whether the agent last claimed a host_id other than
+// this row's ID.
+func (h *Host) HostIDMismatch() bool {
+	return h.ReportedHostID != nil && *h.ReportedHostID != "" && *h.ReportedHostID != h.ID
+}
+
+// HasReported reports whether any agent has ever reported for this host.
+func (h *Host) HasReported() bool {
+	return h.AgentVersion != nil || h.LastFullReportAt != nil || h.Status != "pending"
 }
 
 // NetworkInterface mirrors the agent's outbound NetworkInterface struct for
