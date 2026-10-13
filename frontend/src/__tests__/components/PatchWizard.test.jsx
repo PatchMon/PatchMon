@@ -47,7 +47,11 @@ vi.mock("../../utils/patchingApi", () => ({
 
 import PatchWizard from "../../components/PatchWizard";
 import { patchingAPI } from "../../utils/patchingApi";
-import { extraDependencies, hasExtraDependencies } from "../../utils/patchRun";
+import {
+	extraDependencies,
+	hasExtraDependencies,
+	runMessageNotice,
+} from "../../utils/patchRun";
 
 const HOSTS = [
 	{ id: "h1", friendly_name: "alpha", hostname: "alpha.local" },
@@ -655,5 +659,39 @@ describe("PatchWizard on Windows hosts", () => {
 			screen.getByText(/cannot be patched on any of the hosts/),
 		).toBeInTheDocument();
 		expect(screen.getByText(/not found in winget/)).toBeInTheDocument();
+	});
+});
+
+describe("runMessageNotice", () => {
+	it("treats a user stop as neutral, not an error", () => {
+		for (const error_message of [
+			"Cancelled by user",
+			"Run stopped by user",
+			"cancelled by the user",
+			null,
+		]) {
+			expect(runMessageNotice({ status: "cancelled", error_message })).toEqual({
+				tone: "info",
+				title: "Stopped by user",
+				detail: null,
+			});
+		}
+	});
+
+	it("keeps another cancel reason as neutral detail", () => {
+		expect(
+			runMessageNotice({ status: "cancelled", error_message: "Host deleted" }),
+		).toEqual({ tone: "info", title: "Run cancelled", detail: "Host deleted" });
+	});
+
+	it("reports real failures as errors, and nothing when there is no message", () => {
+		expect(
+			runMessageNotice({ status: "failed", error_message: "1 of 1 failed" }),
+		).toEqual({
+			tone: "error",
+			title: "Run reported an error",
+			detail: "1 of 1 failed",
+		});
+		expect(runMessageNotice({ status: "completed" })).toBeNull();
 	});
 });

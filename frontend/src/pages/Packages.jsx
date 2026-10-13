@@ -34,6 +34,8 @@ import { useToast } from "../contexts/ToastContext";
 import { usePageRefresh } from "../hooks/usePageRefresh";
 import { dashboardAPI, packagesAPI } from "../utils/api";
 import {
+	isPendingRestart,
+	RESTART_REQUIRED_BADGE,
 	windowsBadges,
 	windowsPatchInfo,
 	windowsSourceLabel,
@@ -622,7 +624,16 @@ const Packages = () => {
 				const needsUpdates = (pkg.stats?.updatesNeeded || 0) > 0;
 
 				if (!needsUpdates) {
-					return <span className="badge-success">Up to Date</span>;
+					return pkg.packageHosts?.some(isPendingRestart) ? (
+						<span
+							className={RESTART_REQUIRED_BADGE.className}
+							title={RESTART_REQUIRED_BADGE.title}
+						>
+							{RESTART_REQUIRED_BADGE.label}
+						</span>
+					) : (
+						<span className="badge-success">Up to Date</span>
+					);
 				}
 
 				return (pkg.stats?.securityUpdates || 0) > 0 ? (
@@ -1137,7 +1148,16 @@ const Packages = () => {
 															const needsUpdates =
 																(pkg.stats?.updatesNeeded || 0) > 0;
 															if (!needsUpdates) {
-																return (
+																return pkg.packageHosts?.some(
+																	isPendingRestart,
+																) ? (
+																	<span
+																		className={`${RESTART_REQUIRED_BADGE.className} text-xs`}
+																		title={RESTART_REQUIRED_BADGE.title}
+																	>
+																		{RESTART_REQUIRED_BADGE.label}
+																	</span>
+																) : (
 																	<span className="badge-success text-xs">
 																		Up to Date
 																	</span>

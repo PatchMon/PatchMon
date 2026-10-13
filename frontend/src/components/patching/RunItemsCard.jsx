@@ -1,11 +1,13 @@
 import { RotateCcw } from "lucide-react";
 import {
-	runItemResultCode,
+	runItemResultParts,
 	runItemSourceLabel,
 	runItemStatus,
 } from "../../utils/windowsPatching";
 
 const itemKey = (item) => `${item.kind}:${item.identifier || item.id}`;
+
+const itemName = (item) => item.title || item.identifier;
 
 const StatusBadge = ({ status }) => {
 	const s = runItemStatus(status);
@@ -14,7 +16,7 @@ const StatusBadge = ({ status }) => {
 
 const RestartCell = ({ required }) =>
 	required ? (
-		<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
+		<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium whitespace-nowrap bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
 			<RotateCcw className="h-3 w-3" />
 			Required
 		</span>
@@ -23,8 +25,8 @@ const RestartCell = ({ required }) =>
 	);
 
 const ResultText = ({ item }) => {
-	const code = runItemResultCode(item);
-	if (!item.message && !code) {
+	const { message, code } = runItemResultParts(item);
+	if (!message && !code) {
 		return (
 			<span className="text-sm text-secondary-400 dark:text-secondary-400">
 				-
@@ -32,10 +34,14 @@ const ResultText = ({ item }) => {
 		);
 	}
 	return (
-		<div className="text-sm text-secondary-700 dark:text-secondary-300 break-words">
-			{item.message && <span>{item.message}</span>}
+		<div className="text-sm text-secondary-700 dark:text-secondary-300 [overflow-wrap:anywhere]">
+			{message && <span>{message}</span>}
 			{code && (
-				<span className="ml-1 font-mono text-xs text-secondary-500 dark:text-secondary-400">
+				<span
+					className={`font-mono text-xs text-secondary-500 dark:text-secondary-400 ${
+						message ? "ml-1" : ""
+					}`}
+				>
 					{code}
 				</span>
 			)}
@@ -43,11 +49,18 @@ const ResultText = ({ item }) => {
 	);
 };
 
+const SourceLine = ({ item }) => (
+	<span className="text-xs text-secondary-500 dark:text-secondary-400">
+		{runItemSourceLabel(item.kind)}
+		{item.kb && <span className="font-mono"> · {item.kb}</span>}
+	</span>
+);
+
 const RunItemsCard = ({ items }) => {
 	if (!Array.isArray(items) || items.length === 0) return null;
 
 	return (
-		<div className="card p-4 sm:p-6 flex flex-col">
+		<div className="card p-4 sm:p-6 flex flex-col min-w-0">
 			<h3 className="text-lg font-medium text-secondary-900 dark:text-white mb-4 flex-shrink-0">
 				Updates ({items.length})
 			</h3>
@@ -60,15 +73,12 @@ const RunItemsCard = ({ items }) => {
 						className="rounded-lg border border-secondary-200 dark:border-secondary-600 p-4 space-y-3"
 					>
 						<div className="flex items-start justify-between gap-3">
-							<p className="text-base font-semibold text-secondary-900 dark:text-white break-words min-w-0">
-								{item.title || item.identifier}
+							<p className="text-base font-semibold text-secondary-900 dark:text-white [overflow-wrap:anywhere] min-w-0">
+								{itemName(item)}
 							</p>
 							<StatusBadge status={item.status} />
 						</div>
-						<div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-secondary-500 dark:text-white">
-							<span>{runItemSourceLabel(item.kind)}</span>
-							{item.kb && <span className="font-mono">{item.kb}</span>}
-						</div>
+						<SourceLine item={item} />
 						<ResultText item={item} />
 						<div className="flex items-center gap-2 pt-2 border-t border-secondary-200 dark:border-secondary-600">
 							<span className="text-xs text-secondary-500 dark:text-white">
@@ -80,20 +90,24 @@ const RunItemsCard = ({ items }) => {
 				))}
 			</div>
 
-			<div className="hidden md:block overflow-auto">
-				<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
+			<div className="hidden md:block overflow-x-auto">
+				<table className="w-full min-w-[40rem] table-fixed divide-y divide-secondary-200 dark:divide-secondary-600">
+					<colgroup>
+						<col />
+						<col className="w-44" />
+						<col className="w-52" />
+						<col className="w-24" />
+					</colgroup>
 					<thead className="bg-secondary-50 dark:bg-secondary-700">
 						<tr>
-							{["Name", "Source", "KB", "Status", "Result", "Restart"].map(
-								(label) => (
-									<th
-										key={label}
-										className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap"
-									>
-										{label}
-									</th>
-								),
-							)}
+							{["Name", "Status", "Result", "Restart"].map((label) => (
+								<th
+									key={label}
+									className="px-3 sm:px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap"
+								>
+									{label}
+								</th>
+							))}
 						</tr>
 					</thead>
 					<tbody className="bg-white dark:bg-secondary-800 divide-y divide-secondary-200 dark:divide-secondary-600">
@@ -101,18 +115,18 @@ const RunItemsCard = ({ items }) => {
 							<tr
 								key={itemKey(item)}
 								data-testid="run-item-row"
-								className="hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors"
+								className="hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors align-top"
 							>
-								<td className="px-3 sm:px-4 py-2 text-sm text-secondary-900 dark:text-white break-words">
-									{item.title || item.identifier}
+								<td className="px-3 sm:px-4 py-2">
+									<p
+										className="text-sm text-secondary-900 dark:text-white truncate"
+										title={itemName(item)}
+									>
+										{itemName(item)}
+									</p>
+									<SourceLine item={item} />
 								</td>
-								<td className="px-3 sm:px-4 py-2 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
-									{runItemSourceLabel(item.kind)}
-								</td>
-								<td className="px-3 sm:px-4 py-2 whitespace-nowrap text-sm font-mono text-secondary-900 dark:text-white">
-									{item.kb || "-"}
-								</td>
-								<td className="px-3 sm:px-4 py-2 whitespace-nowrap">
+								<td className="px-3 sm:px-4 py-2">
 									<StatusBadge status={item.status} />
 								</td>
 								<td className="px-3 sm:px-4 py-2">

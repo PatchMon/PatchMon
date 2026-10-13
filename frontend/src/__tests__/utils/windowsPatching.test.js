@@ -3,10 +3,12 @@ import {
 	dryRunPackageLimit,
 	formatResultCode,
 	isFeatureUpgradeRow,
+	isPendingRestart,
 	isWindowsScopeValid,
 	partitionPatchableHosts,
 	patchErrorMessage,
 	runItemResultCode,
+	runItemResultParts,
 	runItemStatus,
 	windowsBadges,
 	windowsPatchAllSummary,
@@ -300,5 +302,29 @@ describe("patchErrorMessage", () => {
 			"Network Error",
 		);
 		expect(patchErrorMessage({})).toBe("Request failed");
+	});
+});
+
+describe("pending restart and result parts", () => {
+	it("reads pendingRestart in either case", () => {
+		expect(isPendingRestart({ pendingRestart: true })).toBe(true);
+		expect(isPendingRestart({ pending_restart: true })).toBe(true);
+		expect(isPendingRestart({ needsUpdate: false })).toBe(false);
+		expect(isPendingRestart(undefined)).toBe(false);
+	});
+
+	it("drops a code the message already contains", () => {
+		expect(
+			runItemResultParts({
+				message: "winget exited with 0x80072ee7",
+				exit_code: -2147012889,
+			}),
+		).toEqual({ message: "winget exited with 0x80072ee7", code: null });
+		expect(
+			runItemResultParts({
+				message: "Installation failed",
+				hresult: "0x800F0922",
+			}),
+		).toEqual({ message: "Installation failed", code: "0x800F0922" });
 	});
 });

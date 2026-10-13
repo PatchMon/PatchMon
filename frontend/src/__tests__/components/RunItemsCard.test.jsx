@@ -45,13 +45,13 @@ describe("RunItemsCard", () => {
 		for (const view of [rows[0], cards[0]]) {
 			const w = within(view);
 			expect(w.getByText(/KB5044284\)$/)).toBeInTheDocument();
-			expect(w.getByText("Windows Update")).toBeInTheDocument();
+			expect(w.getByText(/^Windows Update/)).toBeInTheDocument();
 			expect(w.getByText("Failed")).toHaveClass("badge-danger");
 			expect(w.getByText("0x800F0922")).toBeInTheDocument();
 		}
 		for (const view of [rows[1], cards[1]]) {
 			const w = within(view);
-			expect(w.getByText("winget")).toBeInTheDocument();
+			expect(w.getByText(/^winget/)).toBeInTheDocument();
 			expect(w.getByText("Installed")).toHaveClass("badge-success");
 			expect(w.getByText("Required")).toBeInTheDocument();
 		}
@@ -62,5 +62,35 @@ describe("RunItemsCard", () => {
 		for (const th of screen.getAllByRole("columnheader")) {
 			expect(th).toHaveClass("text-left");
 		}
+	});
+
+	it("gives the name the flexible width, truncated with a tooltip", () => {
+		render(<RunItemsCard items={ITEMS} />);
+		const table = screen.getAllByTestId("run-item-row")[0].closest("table");
+		expect(table).toHaveClass("table-fixed");
+		expect(table.parentElement).toHaveClass("overflow-x-auto");
+		const name = within(screen.getAllByTestId("run-item-row")[0]).getByTitle(
+			ITEMS[0].title,
+		);
+		expect(name).toHaveClass("truncate");
+	});
+
+	it("shows the result code once when the message already contains it", () => {
+		render(
+			<RunItemsCard
+				items={[
+					{
+						kind: "winget",
+						identifier: "Notepad++.Notepad++",
+						title: "Notepad++ (ARM 64-bit)",
+						status: "failed",
+						exit_code: -2147012889,
+						message: "winget exited with 0x80072EE7",
+					},
+				]}
+			/>,
+		);
+		const row = screen.getByTestId("run-item-row");
+		expect(row.textContent.match(/0x80072EE7/gi)).toHaveLength(1);
 	});
 });

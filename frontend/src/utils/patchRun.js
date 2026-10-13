@@ -26,6 +26,23 @@ export const extraDependencies = (run) => {
 // Scoped to `validated` because only there is the list a pre-approval
 // prediction. On completed runs it records what was applied, so a badge would
 // be both retrospective and near-universal.
+// How the run detail page presents error_message. A run the user stopped is
+// not an error, so it gets a neutral notice instead of the danger panel.
+export const runMessageNotice = (run) => {
+	const message = run?.error_message ? String(run.error_message).trim() : "";
+	if (run?.status === "cancelled") {
+		const byUser =
+			!message || /(cancel|stop)\w*\s+by\s+(the\s+)?user/i.test(message);
+		return {
+			tone: "info",
+			title: byUser ? "Stopped by user" : "Run cancelled",
+			detail: byUser ? null : message,
+		};
+	}
+	if (!message) return null;
+	return { tone: "error", title: "Run reported an error", detail: message };
+};
+
 export const hasExtraDependencies = (run) =>
 	run?.status === "validated" &&
 	run.patch_type !== "patch_all" &&

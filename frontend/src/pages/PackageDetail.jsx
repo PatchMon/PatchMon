@@ -30,7 +30,9 @@ import { usePageRefresh } from "../hooks/usePageRefresh";
 import { formatRelativeTime, packagesAPI } from "../utils/api";
 import {
 	hostOsType,
+	isPendingRestart,
 	isWindowsOs,
+	RESTART_REQUIRED_BADGE,
 	windowsBadges,
 	windowsPatchInfo,
 	windowsSourceLabel,
@@ -81,6 +83,18 @@ const SourceCell = ({ host }) => {
 	}
 	return null;
 };
+
+const UpToDateBadge = ({ host, className = "" }) =>
+	isPendingRestart(host) ? (
+		<span
+			className={`${RESTART_REQUIRED_BADGE.className} ${className}`}
+			title={RESTART_REQUIRED_BADGE.title}
+		>
+			{RESTART_REQUIRED_BADGE.label}
+		</span>
+	) : (
+		<span className={`badge-success ${className}`}>Up to Date</span>
+	);
 
 const NotPatchableTag = ({ host }) => {
 	if (!isWindowsHost(host) || !host.needsUpdate) return null;
@@ -348,6 +362,13 @@ const PackageDetail = () => {
 						) : (
 							<span className="badge-warning">Update Available</span>
 						)
+					) : (packageData.host_packages || []).some(isPendingRestart) ? (
+						<span
+							className={RESTART_REQUIRED_BADGE.className}
+							title={RESTART_REQUIRED_BADGE.title}
+						>
+							{RESTART_REQUIRED_BADGE.label}
+						</span>
 					) : (
 						<span className="badge-success">Up to Date</span>
 					)}
@@ -655,9 +676,10 @@ const PackageDetail = () => {
 																	</span>
 																)
 															) : (
-																<span className="badge-success text-xs">
-																	Up to Date
-																</span>
+																<UpToDateBadge
+																	host={host}
+																	className="text-xs"
+																/>
 															)}
 															<WindowsBadges host={host} />
 														</div>
@@ -826,9 +848,7 @@ const PackageDetail = () => {
 																	</span>
 																)
 															) : (
-																<span className="badge-success w-fit">
-																	Up to Date
-																</span>
+																<UpToDateBadge host={host} className="w-fit" />
 															)}
 															<div className="flex flex-wrap gap-1 mt-1 empty:hidden">
 																<WindowsBadges host={host} />

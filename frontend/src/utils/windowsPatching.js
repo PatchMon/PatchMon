@@ -40,6 +40,15 @@ export const DEFAULT_WINDOWS_SCOPE = Object.freeze({
 	apps: true,
 });
 
+export const RESTART_REQUIRED_BADGE = Object.freeze({
+	label: "Restart required",
+	className: "badge-warning",
+	title: "Installed, but the host must restart to finish installing it",
+});
+
+export const isPendingRestart = (row) =>
+	!!(row?.pendingRestart ?? row?.pending_restart);
+
 export const isWindowsOs = (osType) =>
 	String(osType || "")
 		.toLowerCase()
@@ -239,6 +248,17 @@ export const formatResultCode = (value) => {
 	if (!Number.isFinite(value)) return null;
 	const u = value < 0 ? value >>> 0 : value;
 	return `0x${u.toString(16).toUpperCase().padStart(8, "0")}`;
+};
+
+// Message and code for the Result column. The code is dropped when the
+// message already contains it, so it never shows twice.
+export const runItemResultParts = (item) => {
+	const message = item?.message ? String(item.message) : "";
+	const code = runItemResultCode(item);
+	if (code && message.toLowerCase().includes(code.toLowerCase())) {
+		return { message, code: null };
+	}
+	return { message, code };
 };
 
 // The hex code to show for a run item: the HRESULT when it reports a failure,
