@@ -353,7 +353,10 @@ func TestApplyAppxInstallState(t *testing.T) {
 
 func TestApplyAppxInstallStateAmbiguousPrefix(t *testing.T) {
 	pkgs, _, _ := applyAppxInstallState([]models.Package{{Name: "Microsoft.VCLibs.140", CurrentVersion: "14.0.30704.0", AvailableVersion: "14.0.33519.0", NeedsUpdate: true}}, nil, issue1149Appx())
-	if len(pkgs) != 1 || !pkgs[0].NeedsUpdate || pkgs[0].CurrentVersion != "14.0.30704.0" {
+	if len(pkgs) != 1 {
+		t.Fatalf("want one row, got %+v", pkgs)
+	}
+	if !pkgs[0].NeedsUpdate || pkgs[0].CurrentVersion != "14.0.30704.0" {
 		t.Errorf("ambiguous prefix should not match, got %+v", pkgs[0])
 	}
 }

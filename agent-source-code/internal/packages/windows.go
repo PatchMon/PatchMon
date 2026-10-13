@@ -74,10 +74,10 @@ func (m *WindowsManager) GetPackages() []models.Package {
 		var suppressed, dropped []string
 		appPackages, suppressed, dropped = applyAppxInstallState(appPackages, origins, m.getAppxPackages())
 		if len(suppressed) > 0 {
-			m.logger.WithField("packages", suppressed).Debug("Update flag cleared: a newer Appx copy is installed than winget reports")
+			m.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{"packages": suppressed})).Debug("Update flag cleared: a newer Appx copy is installed than winget reports")
 		}
-		for _, name := range dropped {
-			m.logger.WithField("package", logutil.Sanitize(name)).Debug("Dropped Appx package that is staged but not installed for any user")
+		if len(dropped) > 0 {
+			m.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{"packages": dropped})).Debug("Dropped Appx packages that are staged but not installed for any user")
 		}
 	}
 	m.logger.WithField("count", len(appPackages)).Info("Application packages after merge")
