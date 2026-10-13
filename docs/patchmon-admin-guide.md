@@ -1522,10 +1522,18 @@ Windows hosts are patched from the same places as Linux hosts: Host Detail, the 
 | Windows Updates: cumulative, security, .NET, definition, driver and optional updates, and feature upgrades | The Windows Update Agent on the host, from the host's configured update source (Microsoft Update or WSUS) | Source **Windows Update** |
 | Applications that winget can upgrade | winget, by the app's exact winget Id | Source **winget** |
 | Applications found only in the registry | Nothing | **Not patchable** |
+| Microsoft Store apps | Nothing: they update through the Microsoft Store | The available update, with a **Microsoft Store app** badge; not selectable |
+| Apps pinned with `winget pin` | Nothing until the pin is removed | The available update, with a **Pinned in winget** badge; not selectable |
 
 The agent reads installed applications from the Windows registry and matches them against winget. PatchMon only ever asks winget to upgrade a package by its exact winget Id. An app that winget has no match for has no Id, so there is no safe way to tell winget which package to upgrade. These apps still report their available version, but they cannot be selected; the tooltip reads "Not patchable: this app was not found in winget. Update it with its own updater." Use the vendor's updater or your software deployment tool for them.
 
 Hosts without winget (it ships with the App Installer package, which Windows Server 2019 and 2022, Server Core and LTSC editions often do not have) list every app as Not patchable. Windows Updates still patch. Windows Server 2025 includes winget as standard.
+
+**Microsoft Store apps** (apps installed from the Store or as MSIX packages) keep showing their available update, but cannot be patched: "Microsoft Store app: updates through the Microsoft Store". The agent runs as the Local System account, and winget run as Local System only updates the machine's staged copy of a Store app, never the copy each user runs, so an upgrade would report success and change nothing. Let the Microsoft Store update them, or manage them with your Store or Intune policy.
+
+**Pinned apps.** An app you have pinned on the host with `winget pin add` also keeps showing its update, with a **Pinned in winget** badge, and cannot be selected: "Pinned with winget pin; remove the pin on the host to update it". Pinned apps are left out of Patch all. Remove the pin (`winget pin remove`) and wait for the next report to patch it.
+
+If you select a Store app or a pinned app anyway, for example from an out-of-date page, the wizard refuses the run and lists the app with the same reason.
 
 Windows Update rows also carry badges: **Security**, **Optional**, **Driver** and **Feature upgrade**.
 
@@ -1540,7 +1548,7 @@ Patch all checks the host again when the run starts, so it installs whatever is 
 
 **Drivers, optional updates and feature upgrades are never part of Patch all.** Select them individually with **Patch selected**. Selecting a feature upgrade (for example a move to a new Windows 11 version) shows a warning in the wizard: "Feature upgrades download several GB, can take over an hour and need one or more restarts to finish."
 
-To keep something out of Patch all on one host, hide the update in Windows (hidden updates disappear from PatchMon too), or pin the app with `winget pin add` (the item then ends **Skipped**).
+To keep something out of Patch all on one host, hide the update in Windows (hidden updates disappear from PatchMon too), or pin the app with `winget pin add`. Once the next report has seen the pin, the app is shown as pinned and Patch all leaves it out. If the pin was added after the last report, the agent still checks it before upgrading: the app is not upgraded and the item ends **Skipped** with "Pinned in winget: remove the pin to update it".
 
 ##### Validate first
 
@@ -1560,10 +1568,10 @@ Run Detail shows an **Updates** card above the terminal, with one row per update
 | **Already installed** | Installed before the run reached it, for example by Windows' own automatic updates. |
 | **Would install** | Dry run only: this would be installed. |
 | **Not applicable** | No longer offered by Windows Update (installed, superseded or withdrawn), no upgrade available, or an app installed for a single user (see below). |
-| **Skipped** | The run was stopped, the run time limit was reached, a restart is needed before more updates can install, the update needs interactive input, or the app is pinned with `winget pin`. |
+| **Skipped** | The run was stopped, the run time limit was reached, a restart is needed before more updates can install, the update needs interactive input, the app was pinned with `winget pin` since the last report, or the app is a Microsoft Store app ("Microsoft Store app: it updates through the Store for each user, not as SYSTEM"). |
 | **Failed** / **Aborted** | The install did not succeed. The Result column has the code and a hint, for example "Application is in use: close the app and retry". |
 
-One failed item does not stop the others. The run ends **Failed** if any item failed or was aborted, and its error message lists the first few ("2 of 7 failed: ..."). For **Patch selected**, a skipped item also fails the run, because you asked for it by name; for **Patch all** it does not.
+One failed item does not stop the others. The run ends **Failed** if any item failed or was aborted, and its summary lists the first few ("2 of 7 failed: ..."). Skipped items never fail a run. They are listed in the run's summary instead, for example "1 skipped: 7zip.7zip (pinned in winget)", and a run whose only non-successful items were skipped ends **Completed** with that summary shown as a note.
 
 ##### Restarts
 
@@ -1571,13 +1579,15 @@ One failed item does not stop the others. The run ends **Failed** if any item fa
 
 - Run Detail shows a banner: "A restart is required to finish installing updates." and the item's **Restart** column is marked.
 - The host is flagged as needing a reboot as soon as the run ends, without waiting for the next report, and a `patch_reboot_required` notification is sent.
+- The host keeps showing **Reboot pending** until it has actually restarted, even if Windows' own restart signals clear earlier, with the reason "Restart required to finish a patch run". PatchMon notices the restart from the host's boot time on its next report or ping.
+- An app upgrade that finished while the app was open may leave some files to be replaced at the next restart. That item is marked as needing a restart with "Installed; some files will be replaced at the next restart."
 - An update that has installed and is waiting for the restart shows as **pending restart** in the host's package list and is not offered again.
 
 Restart the host when it suits you. If a restart is still pending from an earlier install, Windows may refuse further installs; those items end **Skipped** with "Restart pending from an earlier install; restart the host and run again."
 
 ##### Stopping a run, and long runs
 
-**Stop Run** takes effect between items. The update or app being installed at that moment always finishes, because interrupting Windows servicing part-way is worse than waiting; the remaining items end **Skipped**. A Windows run is limited to 4 hours. Cumulative updates and feature upgrades can run for a long time without output, so the agent writes a progress line every minute and the run is not timed out while it is still working.
+**Stop Run** takes effect between items. The update or app being installed at that moment always finishes, because interrupting Windows servicing part-way is worse than waiting; the remaining items end **Skipped**. A Windows run is limited to 4 hours, or 8 hours for a **Patch selected** run that includes a Windows Update, to leave room for a feature upgrade. Cumulative updates and feature upgrades can run for a long time without output, so the agent writes a progress line every minute and the run is not timed out while it is still working.
 
 ##### Apps installed for a single user
 
