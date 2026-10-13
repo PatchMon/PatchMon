@@ -434,7 +434,7 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					logger.WithError(err).Warn("report_now failed")
 				}
 			case "update_agent":
-				if err := updateAgent(); err != nil {
+				if _, err := updateAgentUnlessPatching(); err != nil {
 					logger.WithError(err).Warn("update_agent failed")
 				}
 			case "refresh_integration_status":
@@ -444,7 +444,9 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 				logger.Info("Refreshing Docker inventory on server request...")
 				go refreshDockerInventory(ctx)
 			case "run_patch":
+				endPatchRun := beginPatchRun()
 				go func(msg wsMsg) {
+					defer endPatchRun()
 					var err error
 					if runtime.GOOS == "windows" {
 						err = runPatchWindows(msg.patchRunID, msg.windowsPatch, msg.patchParseError)

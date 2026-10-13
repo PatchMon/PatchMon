@@ -315,9 +315,9 @@ func deliverReport(ctx context.Context, payload *models.ReportPayload) error {
 		}).Info("PatchMon agent update detected")
 
 		logger.Info("Automatically updating PatchMon agent to latest version...")
-		if err := updateAgent(); err != nil {
+		if deferred, err := updateAgentUnlessPatching(); err != nil {
 			logger.WithError(err).Warn("PatchMon agent update failed, but data was sent successfully")
-		} else {
+		} else if !deferred {
 			logger.Info("PatchMon agent update completed successfully")
 			// updateAgent() will exit the process after restart, so we won't reach here
 			// But if it does return, skip the update check to prevent loops
@@ -357,9 +357,9 @@ func deliverReport(ctx context.Context, payload *models.ReportPayload) error {
 					"latest":  versionInfo.LatestVersion,
 				}).Info("Update available, automatically updating...")
 
-				if err := updateAgent(); err != nil {
+				if deferred, err := updateAgentUnlessPatching(); err != nil {
 					logger.WithError(err).Warn("PatchMon agent update failed, but data was sent successfully")
-				} else {
+				} else if !deferred {
 					logger.Info("PatchMon agent update completed successfully")
 					// updateAgent() will exit after restart, so this won't be reached
 				}
