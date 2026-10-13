@@ -69,10 +69,10 @@ func (m *WindowsManager) GetPackages() []models.Package {
 	}
 
 	// 3. Merge: start with registry baseline, enrich with WinGet update info
-	appPackages := m.mergeRegistryAndWinget(regPackages, wingetPackages)
-	if hasAppxStyleName(appPackages) {
+	appPackages, origins := m.mergeRegistryAndWinget(regPackages, wingetPackages)
+	if needsAppxState(appPackages, origins) {
 		var suppressed, dropped []string
-		appPackages, suppressed, dropped = applyAppxInstallState(appPackages, m.getAppxPackages())
+		appPackages, suppressed, dropped = applyAppxInstallState(appPackages, origins, m.getAppxPackages())
 		if len(suppressed) > 0 {
 			m.logger.WithField("packages", suppressed).Debug("Update flag cleared: a newer Appx copy is installed than winget reports")
 		}
@@ -110,12 +110,16 @@ func (m *WindowsManager) GetPackages() []models.Package {
 // Registry provides the reliable baseline; WinGet enriches with update availability.
 // Any WinGet-only entries (not in registry) are also included.
 // SourceRepository is set to the WinGet source for matched packages, or "local" for registry-only.
-func (m *WindowsManager) mergeRegistryAndWinget(regPkgs []models.Package, rows []wingetRow) []models.Package {
+func (m *WindowsManager) mergeRegistryAndWinget(regPkgs []models.Package, rows []wingetRow) ([]models.Package, []appOrigin) {
+	origins := make([]appOrigin, len(regPkgs), len(regPkgs)+len(rows))
+	for i := range origins {
+		origins[i].registry = true
+	}
 	if len(rows) == 0 {
 		for i := range regPkgs {
 			regPkgs[i].SourceRepository = "local"
 		}
-		return regPkgs
+		return regPkgs, origins
 	}
 
 	used := make([]bool, len(rows))
@@ -145,6 +149,7 @@ func (m *WindowsManager) mergeRegistryAndWinget(regPkgs []models.Package, rows [
 			continue
 		}
 		row := rows[j].pkg
+		origins[i].wingetID = rows[j].id
 		matchedNames[normalizePackageName(row.Name)] = true
 		regPkgs[i].SourceRepository = row.SourceRepository
 		if row.NeedsUpdate && installedIsOlder(regPkgs[i].CurrentVersion, row.AvailableVersion) {
@@ -169,14 +174,16 @@ func (m *WindowsManager) mergeRegistryAndWinget(regPkgs []models.Package, rows [
 		if k, seen := appended[key]; seen {
 			if rows[j].pkg.NeedsUpdate && !regPkgs[k].NeedsUpdate {
 				regPkgs[k] = rows[j].pkg
+				origins[k].wingetID = rows[j].id
 			}
 			continue
 		}
 		regPkgs = append(regPkgs, rows[j].pkg)
+		origins = append(origins, appOrigin{wingetID: rows[j].id})
 		appended[key] = len(regPkgs) - 1
 	}
 
-	return regPkgs
+	return regPkgs, origins
 }
 
 // A truncated-name prefix also requires an equal version; a prefix alone is too loose.
@@ -365,6 +372,23 @@ func parseSQLServerSetups(output []byte) []sqlServerSetup {
 	return setups
 }
 
+type appOrigin struct {
+	registry bool
+	wingetID string
+}
+
+func needsAppxState(pkgs []models.Package, origins []appOrigin) bool {
+	if hasAppxStyleName(pkgs) {
+		return true
+	}
+	for _, o := range origins {
+		if _, ok := appxNameFromFamily(o.wingetID); ok {
+			return true
+		}
+	}
+	return false
+}
+
 func hasAppxStyleName(pkgs []models.Package) bool {
 	for _, p := range pkgs {
 		if looksLikeAppxName(p.Name) {
@@ -378,6 +402,16 @@ func looksLikeAppxName(name string) bool {
 	return strings.Contains(name, ".") && !strings.ContainsAny(name, " \t")
 }
 
+var packageFamilyRe = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9.-]*)_[a-z0-9]{13}$`)
+
+func appxNameFromFamily(id string) (string, bool) {
+	m := packageFamilyRe.FindStringSubmatch(id)
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
+
 type appxPackage struct {
 	Name    string `json:"Name"`
 	Version string `json:"Version"`
@@ -386,6 +420,7 @@ type appxPackage struct {
 
 type appxVersions struct {
 	installed string
+	present   bool
 	staged    []string
 }
 
@@ -418,8 +453,7 @@ func sameVersionScheme(a, b string) bool {
 	return okA && okB && pa[0] == pb[0]
 }
 
-// winget as SYSTEM reports machine-staged MSIX copies, not the per-user installs.
-func applyAppxInstallState(pkgs []models.Package, appx []appxPackage) (kept []models.Package, suppressed, dropped []string) {
+func indexAppxPackages(appx []appxPackage) map[string]*appxVersions {
 	byName := map[string]*appxVersions{}
 	for _, a := range appx {
 		if _, ok := parseDottedVersion(a.Version); !ok {
@@ -431,46 +465,76 @@ func applyAppxInstallState(pkgs []models.Package, appx []appxPackage) (kept []mo
 			v = &appxVersions{}
 			byName[key] = v
 		}
-		states := strings.Split(strings.ToLower(a.States), ",")
+		var installed, present, staged bool
+		for _, st := range strings.Split(strings.ToLower(a.States), ",") {
+			switch st = strings.TrimSpace(st); st {
+			case "", "notinstalled":
+			case "staged":
+				staged = true
+			case "installed":
+				installed, present = true, true
+			default:
+				present = true
+			}
+		}
+		if present {
+			v.present = true
+		}
 		switch {
-		case containsString(states, "installed"):
+		case installed:
 			if c, _ := compareDottedVersions(a.Version, v.installed); v.installed == "" || c > 0 {
 				v.installed = a.Version
 			}
-		case containsString(states, "staged"):
+		case staged && !present:
 			v.staged = append(v.staged, a.Version)
 		}
 	}
+	return byName
+}
+
+func appxVersionsForRow(byName map[string]*appxVersions, p models.Package, o appOrigin) (*appxVersions, bool) {
+	if looksLikeAppxName(p.Name) {
+		return appxVersionsFor(byName, normalizePackageName(p.Name))
+	}
+	if name, ok := appxNameFromFamily(o.wingetID); ok {
+		v, found := byName[normalizePackageName(name)]
+		return v, found
+	}
+	return nil, false
+}
+
+// winget as SYSTEM reports machine-staged MSIX copies, not the per-user installs.
+func applyAppxInstallState(pkgs []models.Package, origins []appOrigin, appx []appxPackage) (kept []models.Package, suppressed, dropped []string) {
+	byName := indexAppxPackages(appx)
 	kept = pkgs[:0]
 	for i := range pkgs {
 		p := pkgs[i]
-		if !looksLikeAppxName(p.Name) || !isDottedNumeric(p.CurrentVersion) {
+		var o appOrigin
+		if i < len(origins) {
+			o = origins[i]
+		}
+		if !isDottedNumeric(p.CurrentVersion) {
 			kept = append(kept, p)
 			continue
 		}
-		v, exact := appxVersionsFor(byName, normalizePackageName(p.Name))
+		v, exact := appxVersionsForRow(byName, p, o)
 		if v == nil || len(v.staged) == 0 {
 			kept = append(kept, p)
 			continue
 		}
-		if v.installed == "" {
-			if exact || v.hasStaged(p.CurrentVersion) {
+		if !v.present {
+			if !o.registry && (exact || v.hasStaged(p.CurrentVersion)) {
 				dropped = append(dropped, p.Name)
 				continue
 			}
 			kept = append(kept, p)
 			continue
 		}
-		if v.hasStaged(p.CurrentVersion) {
-			if !versionsEqual(v.installed, p.CurrentVersion) {
-				p.CurrentVersion = v.installed
-				if p.NeedsUpdate && p.AvailableVersion != "" && !installedIsOlder(v.installed, p.AvailableVersion) {
-					p.NeedsUpdate = false
-					p.AvailableVersion = ""
-					suppressed = append(suppressed, p.Name)
-				}
-			}
-		} else if p.NeedsUpdate && exact && !sameVersionScheme(p.CurrentVersion, v.installed) && v.newerThanAllStaged() {
+		switch {
+		case v.installed == "":
+		case v.hasStaged(p.CurrentVersion):
+			p = applyInstalledOverStaged(p, v.installed, &suppressed)
+		case p.NeedsUpdate && exact && !sameVersionScheme(p.CurrentVersion, v.installed) && v.newerThanAllStaged():
 			p.CurrentVersion = v.installed
 			p.NeedsUpdate = false
 			p.AvailableVersion = ""
@@ -479,6 +543,26 @@ func applyAppxInstallState(pkgs []models.Package, appx []appxPackage) (kept []mo
 		kept = append(kept, p)
 	}
 	return kept, suppressed, dropped
+}
+
+func applyInstalledOverStaged(p models.Package, installed string, suppressed *[]string) models.Package {
+	staged := p.CurrentVersion
+	if versionsEqual(installed, staged) {
+		return p
+	}
+	p.CurrentVersion = installed
+	switch {
+	case p.AvailableVersion == "":
+		if c, _ := compareDottedVersions(installed, staged); c < 0 {
+			p.NeedsUpdate = true
+			p.AvailableVersion = staged
+		}
+	case p.NeedsUpdate && !installedIsOlder(installed, p.AvailableVersion):
+		p.NeedsUpdate = false
+		p.AvailableVersion = ""
+		*suppressed = append(*suppressed, p.Name)
+	}
+	return p
 }
 
 func appxVersionsFor(byName map[string]*appxVersions, name string) (*appxVersions, bool) {
@@ -495,15 +579,6 @@ func appxVersionsFor(byName map[string]*appxVersions, name string) (*appxVersion
 		}
 	}
 	return found, false
-}
-
-func containsString(list []string, want string) bool {
-	for _, s := range list {
-		if strings.TrimSpace(s) == want {
-			return true
-		}
-	}
-	return false
 }
 
 func (m *WindowsManager) getAppxPackages() []appxPackage {
@@ -774,6 +849,7 @@ func (m *WindowsManager) runWingetList(w wingetCommand, args ...string) (string,
 
 type wingetRow struct {
 	pkg       models.Package
+	id        string
 	truncated bool
 }
 
@@ -822,6 +898,7 @@ func wingetEntriesToRows(entries []wingetEntry, upgradeMap map[string]string) []
 				NeedsUpdate:      needsUpdate,
 				SourceRepository: source,
 			},
+			id:        id,
 			truncated: truncated,
 		})
 	}

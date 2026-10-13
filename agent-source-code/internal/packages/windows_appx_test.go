@@ -1,10 +1,13 @@
 package packages
 
 import (
+	"io"
 	"reflect"
 	"testing"
 
 	"patchmon-agent/pkg/models"
+
+	"github.com/sirupsen/logrus"
 )
 
 func issue1149Appx() []appxPackage {
@@ -32,6 +35,7 @@ func TestApplyAppxInstallState(t *testing.T) {
 		wantAvail string
 		wantNeeds bool
 		wantDrop  bool
+		origin    appOrigin
 	}{
 		{
 			name:    "staged copy in the same scheme takes the installed version",
@@ -188,13 +192,82 @@ func TestApplyAppxInstallState(t *testing.T) {
 			wantNeeds: true,
 		},
 		{
-			name: "unflagged row reporting a newer staged copy takes the installed version",
+			name: "unflagged row reporting a newer staged copy is flagged for the staged version",
 			pkg:  models.Package{Name: "Microsoft.WindowsTerminal", CurrentVersion: "1.24.12741.0"},
 			appx: []appxPackage{
 				{"Microsoft.WindowsTerminal", "1.18.10301.0", "Installed"},
 				{"Microsoft.WindowsTerminal", "1.24.12741.0", "Staged"},
 			},
-			wantVer: "1.18.10301.0",
+			wantVer:   "1.18.10301.0",
+			wantAvail: "1.24.12741.0",
+			wantNeeds: true,
+		},
+		{
+			name:    "registry row matching a staged-only package is kept",
+			pkg:     models.Package{Name: "Contoso.Widget", CurrentVersion: "3.1.0.0"},
+			origin:  appOrigin{registry: true},
+			appx:    []appxPackage{{"Contoso.Widget", "3.1.0.0", "Staged"}},
+			wantVer: "3.1.0.0",
+		},
+		{
+			name: "a paused copy counts as present and is never dropped",
+			pkg:  models.Package{Name: "Microsoft.WindowsTerminal", CurrentVersion: "1.24.12741.0"},
+			appx: []appxPackage{
+				{"Microsoft.WindowsTerminal", "1.18.10301.0", "Paused"},
+				{"Microsoft.WindowsTerminal", "1.24.12741.0", "Staged"},
+			},
+			wantVer: "1.24.12741.0",
+		},
+		{
+			name:    "a copy paused for one user and staged for another is not staged-only",
+			pkg:     models.Package{Name: "Microsoft.BingNews", CurrentVersion: "4.55.62231.0"},
+			appx:    []appxPackage{{"Microsoft.BingNews", "4.55.62231.0", "Staged,Paused"}},
+			wantVer: "4.55.62231.0",
+		},
+		{
+			name:     "NotInstalled alongside Staged is still staged-only",
+			pkg:      models.Package{Name: "Microsoft.BingNews", CurrentVersion: "4.55.62231.0"},
+			appx:     []appxPackage{{"Microsoft.BingNews", "4.55.62231.0", "Staged,NotInstalled"}},
+			wantDrop: true,
+		},
+		{
+			name:   "friendly name matched by its package family Id",
+			pkg:    models.Package{Name: "Windows Terminal", CurrentVersion: "1.24.12741.0", AvailableVersion: "1.25.2733.0", NeedsUpdate: true},
+			origin: appOrigin{wingetID: "Microsoft.WindowsTerminal_8wekyb3d8bbwe"},
+			appx: []appxPackage{
+				{"Microsoft.WindowsTerminal", "1.18.10301.0", "Installed"},
+				{"Microsoft.WindowsTerminal", "1.24.12741.0", "Staged"},
+			},
+			wantVer:   "1.18.10301.0",
+			wantAvail: "1.25.2733.0",
+			wantNeeds: true,
+		},
+		{
+			name:     "staged-only friendly name matched by its package family Id is dropped",
+			pkg:      models.Package{Name: "Microsoft News", CurrentVersion: "4.55.62231.0"},
+			origin:   appOrigin{wingetID: "Microsoft.BingNews_8wekyb3d8bbwe"},
+			appx:     []appxPackage{{"Microsoft.BingNews", "4.55.62231.0", "Staged"}},
+			wantDrop: true,
+		},
+		{
+			name:   "friendly name with a non-family Id is untouched",
+			pkg:    models.Package{Name: "Windows Terminal", CurrentVersion: "1.24.12741.0", AvailableVersion: "1.25.2733.0", NeedsUpdate: true},
+			origin: appOrigin{wingetID: "Microsoft.WindowsTerminal"},
+			appx: []appxPackage{
+				{"Microsoft.WindowsTerminal", "1.18.10301.0", "Installed"},
+				{"Microsoft.WindowsTerminal", "1.24.12741.0", "Staged"},
+			},
+			wantVer:   "1.24.12741.0",
+			wantAvail: "1.25.2733.0",
+			wantNeeds: true,
+		},
+		{
+			name:     "friendly name with a family Id that is only a prefix is untouched",
+			pkg:      models.Package{Name: "Microsoft News", CurrentVersion: "4.55.62231.0"},
+			origin:   appOrigin{wingetID: "Microsoft.Bing_8wekyb3d8bbwe"},
+			appx:     []appxPackage{{"Microsoft.BingNews", "4.55.62231.0", "Staged"}},
+			wantVer:  "4.55.62231.0",
+			wantDrop: false,
 		},
 		{
 			name: "mixed architectures take the highest installed version",
@@ -260,7 +333,7 @@ func TestApplyAppxInstallState(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			kept, _, dropped := applyAppxInstallState([]models.Package{tc.pkg}, tc.appx)
+			kept, _, dropped := applyAppxInstallState([]models.Package{tc.pkg}, []appOrigin{tc.origin}, tc.appx)
 			if tc.wantDrop {
 				if len(kept) != 0 || len(dropped) != 1 || dropped[0] != tc.pkg.Name {
 					t.Errorf("want dropped, got kept %+v, dropped %v", kept, dropped)
@@ -279,7 +352,7 @@ func TestApplyAppxInstallState(t *testing.T) {
 }
 
 func TestApplyAppxInstallStateAmbiguousPrefix(t *testing.T) {
-	pkgs, _, _ := applyAppxInstallState([]models.Package{{Name: "Microsoft.VCLibs.140", CurrentVersion: "14.0.30704.0", AvailableVersion: "14.0.33519.0", NeedsUpdate: true}}, issue1149Appx())
+	pkgs, _, _ := applyAppxInstallState([]models.Package{{Name: "Microsoft.VCLibs.140", CurrentVersion: "14.0.30704.0", AvailableVersion: "14.0.33519.0", NeedsUpdate: true}}, nil, issue1149Appx())
 	if len(pkgs) != 1 || !pkgs[0].NeedsUpdate || pkgs[0].CurrentVersion != "14.0.30704.0" {
 		t.Errorf("ambiguous prefix should not match, got %+v", pkgs[0])
 	}
@@ -291,7 +364,7 @@ func TestApplyAppxInstallStateReportsSuppressed(t *testing.T) {
 		{Name: "Microsoft.VCLibs.140.00", CurrentVersion: "14.0.30704.0", AvailableVersion: "14.0.33519.0", NeedsUpdate: true},
 		{Name: "Microsoft.VCLibs.140.00.UWPDesktop", CurrentVersion: "14.0.30704.0", AvailableVersion: "14.0.40000.0", NeedsUpdate: true},
 	}
-	_, got, _ := applyAppxInstallState(pkgs, issue1149Appx())
+	_, got, _ := applyAppxInstallState(pkgs, nil, issue1149Appx())
 	want := []string{"Microsoft.WindowsAppRuntime.1.7", "Microsoft.VCLibs.140.00"}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Errorf("suppressed = %v, want %v", got, want)
@@ -312,7 +385,7 @@ func TestApplyAppxInstallStateDropsStagedOnlyAndKeepsOrder(t *testing.T) {
 		{Name: "Microsoft.ZuneVideo", CurrentVersion: "10.22091.10061.0"},
 		{Name: "Microsoft.VCLibs.140.00", CurrentVersion: "14.0.30704.0", AvailableVersion: "14.0.33519.0", NeedsUpdate: true},
 	}
-	kept, suppressed, dropped := applyAppxInstallState(pkgs, appx)
+	kept, suppressed, dropped := applyAppxInstallState(pkgs, nil, appx)
 	var names []string
 	for _, p := range kept {
 		names = append(names, p.Name+"@"+p.CurrentVersion)
@@ -371,5 +444,56 @@ func TestParseAppxPackages(t *testing.T) {
 				t.Errorf("got %d packages, want %d", len(got), tc.want)
 			}
 		})
+	}
+}
+
+func TestAppxNameFromFamily(t *testing.T) {
+	cases := map[string]string{
+		"Microsoft.WindowsTerminal_8wekyb3d8bbwe":                        "Microsoft.WindowsTerminal",
+		"Clipchamp.Clipchamp_yxz26nhyzhsrt":                              "Clipchamp.Clipchamp",
+		"Microsoft.WindowsTerminal":                                      "",
+		"9N0DX20HK701":                                                   "",
+		"Microsoft.WindowsTerminal_8wekyb3d8bbw":                         "",
+		"Microsoft.WindowsTerminal_8WEKYB3D8BBWE":                        "",
+		`MSIX\Microsoft.WindowsTerminal_1.18.10301.0_x64__8wekyb3d8bbwe`: "",
+		"": "",
+	}
+	for id, want := range cases {
+		got, ok := appxNameFromFamily(id)
+		if got != want || ok != (want != "") {
+			t.Errorf("appxNameFromFamily(%q) = %q, %v; want %q", id, got, ok, want)
+		}
+	}
+}
+
+func TestNeedsAppxStateForFamilyIDOnly(t *testing.T) {
+	pkgs := []models.Package{{Name: "Windows Terminal"}}
+	if needsAppxState(pkgs, []appOrigin{{}}) {
+		t.Error("display name without a family Id must not trigger the Appx query")
+	}
+	if !needsAppxState(pkgs, []appOrigin{{wingetID: "Microsoft.WindowsTerminal_8wekyb3d8bbwe"}}) {
+		t.Error("a package family Id must trigger the Appx query")
+	}
+}
+
+func TestMergeKeepsRegistryRowsOutOfTheStagedOnlyDrop(t *testing.T) {
+	m := &WindowsManager{logger: logrus.New()}
+	m.logger.SetOutput(io.Discard)
+	reg := []models.Package{{Name: "Contoso.Widget", CurrentVersion: "3.1.0.0"}}
+	rows := []wingetRow{
+		{pkg: models.Package{Name: "Contoso.Widget", CurrentVersion: "3.1.0.0", SourceRepository: "winget"}, id: "Contoso.Widget"},
+		{pkg: models.Package{Name: "Microsoft.BingNews", CurrentVersion: "4.55.62231.0", SourceRepository: "winget"}, id: "Microsoft.BingNews_8wekyb3d8bbwe"},
+	}
+	merged, origins := m.mergeRegistryAndWinget(reg, rows)
+	if len(origins) != len(merged) || !origins[0].registry || origins[0].wingetID != "Contoso.Widget" || origins[1].registry {
+		t.Fatalf("origins = %+v for %+v", origins, merged)
+	}
+	appx := []appxPackage{
+		{"Contoso.Widget", "3.1.0.0", "Staged"},
+		{"Microsoft.BingNews", "4.55.62231.0", "Staged"},
+	}
+	kept, _, dropped := applyAppxInstallState(merged, origins, appx)
+	if len(kept) != 1 || kept[0].Name != "Contoso.Widget" || !reflect.DeepEqual(dropped, []string{"Microsoft.BingNews"}) {
+		t.Errorf("kept = %+v, dropped = %v", kept, dropped)
 	}
 }
