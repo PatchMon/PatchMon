@@ -6602,7 +6602,7 @@ PatchMon caps JSON request bodies to protect against memory exhaustion. Four sep
 
 An unsuffixed value is read as **megabytes**, except `AGENT_PING_BODY_LIMIT`, where it is read as kilobytes. You can also write the unit explicitly, e.g. `20mb`.
 
-No limit can be set above **32 MB**. A larger value is reduced to 32 MB rather than rejected, so an existing setting keeps working after an upgrade. A value that is not a positive number (blank, zero, negative, or not a size at all) is ignored and the default applies. The 32 MB ceiling exists because the server runs under a 256 MB memory limit and a single request is several times its own size once decoded.
+No limit can be set above **32 MB**. A larger value is reduced to 32 MB rather than rejected, so an existing setting keeps working after an upgrade. In `.env`, a value that is not a positive number (blank, zero, negative, or not a size at all) is ignored and the default applies. **Settings > Environment** refuses such a value instead and the save fails with a message naming the setting. The 32 MB ceiling exists because the server runs under a 256 MB memory limit and a single request is several times its own size once decoded.
 
 A host with thousands of packages + Docker can breach the 5 MB agent report default. Compliance is the more common cause of a breach: a 900-rule OpenSCAP profile carries roughly 14 KB of description and remediation text per rule, so results comfortably exceed 10 MB, and one submission can carry an OpenSCAP scan and a Docker Bench scan together. When the compliance limit is the one being hit, the agent log names it:
 
@@ -7320,7 +7320,7 @@ You need both to see the whole picture, because neither one is complete on its o
 
 The npm tree does not appear in the image scan. The web interface is bundled by Vite and then compiled directly into the Go binary, so by the time it reaches the image there is no npm metadata left for a scanner to find. Scanning the source tree is the only way to enumerate those dependencies.
 
-One component is in neither file: the SCAP security policy content used for compliance scanning is downloaded from the ComplianceAsCode project during the image build. It is data rather than a package, so it carries no metadata for a scanner to catalogue. The version is fixed per release by the `SSG_VERSION` build argument.
+One component is in neither file: the SCAP security policy content used for compliance scanning is downloaded from the ComplianceAsCode project during the image build. It is data rather than a package, so it carries no metadata for a scanner to catalogue. Each image build fetches whichever ComplianceAsCode release is the latest at build time, so two builds of the same PatchMon version can carry different content. To see the version a running image has, open **Security Compliance → Settings → OpenSCAP Content**, which shows it as **SSG *x.y.z***.
 
 ### Verifying an image you have already pulled
 

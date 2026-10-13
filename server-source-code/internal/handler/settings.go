@@ -622,14 +622,13 @@ func boolStr(b bool) string {
 }
 
 func formatBytesEnv(n int64) string {
-	if n >= 1024*1024*1024 {
-		return strconv.FormatInt(n/(1024*1024*1024), 10) + "gb"
-	}
-	if n >= 1024*1024 {
-		return strconv.FormatInt(n/(1024*1024), 10) + "mb"
-	}
-	if n >= 1024 {
-		return strconv.FormatInt(n/1024, 10) + "kb"
+	for _, u := range []struct {
+		size   int64
+		suffix string
+	}{{1 << 30, "gb"}, {1 << 20, "mb"}, {1 << 10, "kb"}} {
+		if n != 0 && n%u.size == 0 {
+			return strconv.FormatInt(n/u.size, 10) + u.suffix
+		}
 	}
 	return strconv.FormatInt(n, 10) + "b"
 }
@@ -663,6 +662,13 @@ func (h *SettingsHandler) UpdateEnvironmentConfig(w http.ResponseWriter, r *http
 			return
 		}
 		if err := middleware.ValidateOrigins(v); err != nil {
+			Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if config.IsBodyLimitKey(key) {
+		v, _ := req.Value.(string)
+		if err := config.ValidateBodyLimit(key, v); err != nil {
 			Error(w, http.StatusBadRequest, err.Error())
 			return
 		}

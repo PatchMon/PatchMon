@@ -310,7 +310,7 @@ func Load() (*Config, error) {
 		JSONBodyLimitBytes:          getEnvBytes("JSON_BODY_LIMIT", 5),
 		AgentUpdateBodyLimitBytes:   getEnvBytes("AGENT_UPDATE_BODY_LIMIT", 5),
 		ComplianceBodyLimitBytes:    getEnvBytes("COMPLIANCE_BODY_LIMIT", 20),
-		AgentPingBodyLimitBytes:     getEnvBytesKBDefault("AGENT_PING_BODY_LIMIT", 64),
+		AgentPingBodyLimitBytes:     getEnvBytesKBDefault("AGENT_PING_BODY_LIMIT", defaultAgentPingBodyLimitKB),
 		RedisTLSCA:                  getEnv("REDIS_TLS_CA", ""),
 		Timezone:                    getEnv("TZ", getEnv("TIMEZONE", "UTC")),
 		DefaultUserRole:             getEnv("DEFAULT_USER_ROLE", "user"),
@@ -421,6 +421,8 @@ func getEnvInt(key string, defaultVal int) int {
 	}
 	return v
 }
+
+const defaultAgentPingBodyLimitKB = 64
 
 // getEnvBytes parses size strings like "5mb", "2mb", "1gb" into bytes.
 // defaultMB is used when env is empty or parse fails.

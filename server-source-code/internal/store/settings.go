@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
@@ -145,11 +146,17 @@ func (s *SettingsStore) UpdateConfigKey(ctx context.Context, settingsID, key str
 		if !ok {
 			return fmt.Errorf("%s requires a string value", key)
 		}
+		if err := config.ValidateBodyLimit(key, v); err != nil {
+			return err
+		}
 		arg.JsonBodyLimit = &v
 	case "AGENT_UPDATE_BODY_LIMIT":
 		v, ok := toStr(value)
 		if !ok {
 			return fmt.Errorf("%s requires a string value", key)
+		}
+		if err := config.ValidateBodyLimit(key, v); err != nil {
+			return err
 		}
 		arg.AgentUpdateBodyLimit = &v
 	case "COMPLIANCE_BODY_LIMIT":
@@ -157,11 +164,17 @@ func (s *SettingsStore) UpdateConfigKey(ctx context.Context, settingsID, key str
 		if !ok {
 			return fmt.Errorf("%s requires a string value", key)
 		}
+		if err := config.ValidateBodyLimit(key, v); err != nil {
+			return err
+		}
 		arg.ComplianceBodyLimit = &v
 	case "AGENT_PING_BODY_LIMIT":
 		v, ok := toStr(value)
 		if !ok {
 			return fmt.Errorf("%s requires a string value", key)
+		}
+		if err := config.ValidateBodyLimit(key, v); err != nil {
+			return err
 		}
 		arg.AgentPingBodyLimit = &v
 	case "DB_TRANSACTION_LONG_TIMEOUT":
