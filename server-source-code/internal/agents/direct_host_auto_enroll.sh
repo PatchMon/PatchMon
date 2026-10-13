@@ -5,7 +5,7 @@
 
 set -e
 
-SCRIPT_VERSION="1.1.0"
+SCRIPT_VERSION="1.2.0"
 
 # =============================================================================
 # PatchMon Direct Host Auto-Enrollment Script
@@ -18,6 +18,10 @@ SCRIPT_VERSION="1.1.0"
 #
 #   With custom friendly name:
 #   curl -s "https://patchmon.example.com/api/v1/auto-enrollment/script?type=direct-host&token_key=KEY&token_secret=SECRET" | FRIENDLY_NAME="My Server" sh
+#
+#   Enrol as a new host, ignoring any existing credentials and host_id (for
+#   example on a cloned machine):
+#   curl -s "...same URL..." | FORCE_NEW_HOST=true sh
 #
 # Requirements:
 #   - Run as root or with sudo
@@ -32,6 +36,7 @@ AUTO_ENROLLMENT_SECRET="${AUTO_ENROLLMENT_SECRET:-}"
 CURL_FLAGS="${CURL_FLAGS:--s}"
 FORCE_INSTALL="${FORCE_INSTALL:-false}"
 FRIENDLY_NAME="${FRIENDLY_NAME:-}" # Optional: Custom friendly name for the host
+FORCE_NEW_HOST="${FORCE_NEW_HOST:-false}"
 
 # ===== COLOR OUTPUT =====
 RED='\033[0;31m'
@@ -49,6 +54,55 @@ debug() { [ "${DEBUG:-false}" = "true" ] && printf "%b\n" "${BLUE}[DEBUG]${NC} $
 
 json_escape() {
     printf '%s' "$1" | tr -d '\n\r\t' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+patchmon_identity() {
+    _pi_dir="${1:-/etc/patchmon}"
+    _pi_id=""
+    _pi_key=""
+    _pi_host=""
+    for _pi_file in "$_pi_dir/credentials.yml" $(ls -t "$_pi_dir"/credentials.yml.backup.* 2>/dev/null); do
+        [ -f "$_pi_file" ] || continue
+        _pi_id=$(sed -n 's/^api_id:[[:space:]]*//p' "$_pi_file" | head -n 1 | tr -d "\"' \r")
+        _pi_key=$(sed -n 's/^api_key:[[:space:]]*//p' "$_pi_file" | head -n 1 | tr -d "\"' \r")
+        if [ -n "$_pi_id" ] && [ -n "$_pi_key" ]; then
+            break
+        fi
+        _pi_id=""
+        _pi_key=""
+    done
+    for _pi_file in "$_pi_dir/config.yml" $(ls -t "$_pi_dir"/config.yml.backup.* 2>/dev/null); do
+        [ -f "$_pi_file" ] || continue
+        _pi_host=$(sed -n 's/^host_id:[[:space:]]*//p' "$_pi_file" | head -n 1 | tr -d "\"' \r")
+        [ -n "$_pi_host" ] && break
+    done
+    case "$_pi_id" in *[!A-Za-z0-9_]*) _pi_id="" ;; esac
+    case "$_pi_key" in *[!A-Za-z0-9]*) _pi_key="" ;; esac
+    case "$_pi_host" in *[!A-Za-z0-9-]*) _pi_host="" ;; esac
+    printf 'api_id=%s\napi_key=%s\nhost_id=%s\n' "$_pi_id" "$_pi_key" "$_pi_host"
+}
+
+enrol_outcome() {
+    case "$1" in
+        201) echo "created" ;;
+        200) echo "reenrolled" ;;
+        409)
+            _eo_code=$(printf '%s' "$2" | grep -o '"code":"[^"]*"' | head -n 1 | cut -d'"' -f4 || true)
+            case "$_eo_code" in
+                host_reporting|host_not_reenrollable) echo "$_eo_code" ;;
+                *) echo "already_enrolled" ;;
+            esac
+            ;;
+        429) echo "retry_later" ;;
+        *) echo "failed" ;;
+    esac
+}
+
+write_stub_config() {
+    [ -f "$1/config.yml" ] && return 0
+    case "$3" in ""|*[!A-Za-z0-9-]*) return 0 ;; esac
+    mkdir -p "$1" || return 0
+    (umask 077 && printf 'patchmon_server: "%s"\nhost_id: "%s"\n' "$2" "$3" > "$1/config.yml") || true
 }
 
 # ===== BANNER =====
@@ -245,11 +299,9 @@ if [ "$config_check" = "ping_success" ]; then
     success "Host already enrolled and agent ping successful - nothing to do"
     exit 0
 elif [ "$config_check" = "ping_failed" ]; then
-    warn "Agent configuration exists but ping failed - enrolling again"
-    warn "If PatchMon still lists this host, remove it there first, or a second entry may be created"
+    warn "Agent configuration exists but ping failed - repairing"
 elif [ "$config_check" = "binary_missing" ]; then
-    warn "Config exists but agent binary missing - enrolling again"
-    warn "If PatchMon still lists this host, remove it there first, or a second entry may be created"
+    warn "Config exists but agent binary missing - repairing"
 elif [ "$config_check" = "not_configured" ]; then
     info "Agent not yet configured - proceeding with enrollment"
 else
@@ -257,12 +309,85 @@ else
 fi
 echo ""
 
+install_url="$PATCHMON_URL/api/v1/hosts/install?arch=$architecture&os=$os_type"
+if [ "$FORCE_INSTALL" = "true" ]; then
+    install_url="$install_url&force=true"
+    info "Using force mode - will bypass broken packages"
+fi
+
+run_install() {
+    info "Installing PatchMon agent..."
+    info "Using architecture: $architecture ($os_type)"
+    install_exit_code=0
+    install_output=$(sh "$1" 2>&1) || install_exit_code=$?
+    rm -f "$1"
+    if [ "$install_exit_code" -eq 0 ] || echo "$install_output" | grep -q "PatchMon Agent installation completed successfully"; then
+        success "Agent installed successfully"
+    else
+        error "Failed to install agent (exit: $install_exit_code)"
+    fi
+}
+
+fetch_install_script() {
+    install_script=$(mktemp)
+    fetch_exit=0
+    fetch_code=$(curl $CURL_FLAGS -o "$install_script" -w "%{http_code}" \
+        -H "X-API-ID: $1" \
+        -H "X-API-KEY: $2" \
+        "$install_url") || fetch_exit=$?
+    if [ "$fetch_exit" -ne 0 ]; then
+        fetch_code="000"
+    fi
+}
+
+existing_api_id=""
+existing_api_key=""
+existing_host_id=""
+if [ "$FORCE_NEW_HOST" = "true" ]; then
+    warn "FORCE_NEW_HOST=true: ignoring any existing credentials and host_id, a new host will be created"
+else
+    identity=$(patchmon_identity /etc/patchmon)
+    existing_api_id=$(printf '%s\n' "$identity" | sed -n 's/^api_id=//p')
+    existing_api_key=$(printf '%s\n' "$identity" | sed -n 's/^api_key=//p')
+    existing_host_id=$(printf '%s\n' "$identity" | sed -n 's/^host_id=//p')
+fi
+
+# ===== REUSE EXISTING CREDENTIALS =====
+if [ -n "$existing_api_id" ] && [ -n "$existing_api_key" ]; then
+    info "Found existing credentials ($existing_api_id), checking them with PatchMon..."
+    fetch_install_script "$existing_api_id" "$existing_api_key"
+    case "$fetch_code" in
+        200)
+            success "Existing credentials are valid - reinstalling the agent with them"
+            run_install "$install_script"
+            echo ""
+            success "Agent repaired with its existing credentials, no new enrolment was needed"
+            exit 0
+            ;;
+        401)
+            rm -f "$install_script"
+            warn "Existing credentials are no longer valid - enrolling"
+            ;;
+        *)
+            rm -f "$install_script"
+            error "Could not check the existing credentials with $PATCHMON_URL (HTTP $fetch_code). Not enrolling, so that a temporary failure cannot create a duplicate host. Retry later."
+            ;;
+    esac
+fi
+
 # ===== ENROLL HOST =====
 info "Enrolling $friendly_name in PatchMon..."
 
-json_payload=$(printf '{"friendly_name":"%s","machine_id":"%s","metadata":{"hostname":"%s","ip_address":"%s","os_info":"%s","architecture":"%s"}}' \
+host_id_field=""
+if [ -n "$existing_host_id" ]; then
+    info "Sending existing host_id $existing_host_id"
+    host_id_field=$(printf ',"host_id":"%s"' "$existing_host_id")
+fi
+
+json_payload=$(printf '{"friendly_name":"%s","machine_id":"%s"%s,"metadata":{"hostname":"%s","ip_address":"%s","os_info":"%s","architecture":"%s"}}' \
     "$(json_escape "$friendly_name")" \
     "$(json_escape "$machine_id")" \
+    "$host_id_field" \
     "$(json_escape "$hostname")" \
     "$(json_escape "$ip_address")" \
     "$(json_escape "$os_info")" \
@@ -283,57 +408,64 @@ fi
 
 http_code=$(echo "$response" | tail -n 1)
 body=$(echo "$response" | sed '$d')
+existing_name=$(echo "$body" | grep -o '"friendly_name":"[^"]*"' | cut -d'"' -f4 || echo "")
 
-if [ "$http_code" = "201" ]; then
-    # Use grep and cut instead of jq since jq may not be installed
-    api_id=$(echo "$body" | grep -o '"api_id":"[^"]*' | cut -d'"' -f4 || echo "")
-    api_key=$(echo "$body" | grep -o '"api_key":"[^"]*' | cut -d'"' -f4 || echo "")
+case "$(enrol_outcome "$http_code" "$body")" in
+    created|reenrolled)
+        # Use grep and cut instead of jq since jq may not be installed
+        api_id=$(echo "$body" | grep -o '"api_id":"[^"]*' | cut -d'"' -f4 || echo "")
+        api_key=$(echo "$body" | grep -o '"api_key":"[^"]*' | cut -d'"' -f4 || echo "")
+        new_host_id=$(echo "$body" | grep -o '"id":"[^"]*"' | tail -n 1 | cut -d'"' -f4 || echo "")
 
-    if [ -z "$api_id" ] || [ -z "$api_key" ]; then
-        error "Failed to parse API credentials from response"
-    fi
+        if [ -z "$api_id" ] || [ -z "$api_key" ]; then
+            error "Failed to parse API credentials from response"
+        fi
 
-    success "Host enrolled successfully: $api_id"
-    echo ""
+        if [ "$http_code" = "200" ]; then
+            success "Credentials re-issued for the existing host: $api_id"
+        else
+            success "Host enrolled successfully: $api_id"
+        fi
+        write_stub_config /etc/patchmon "$PATCHMON_URL" "$new_host_id"
+        echo ""
 
-    # ===== INSTALL AGENT =====
-    info "Installing PatchMon agent..."
-
-    # Build install URL with force flag, architecture and OS
-    install_url="$PATCHMON_URL/api/v1/hosts/install?arch=$architecture&os=$os_type"
-    if [ "$FORCE_INSTALL" = "true" ]; then
-        install_url="$install_url&force=true"
-        info "Using force mode - will bypass broken packages"
-    fi
-    info "Using architecture: $architecture ($os_type)"
-    
-    # Download and execute installation script
-    install_exit_code=0
-    install_output=$(curl $CURL_FLAGS \
-        -H "X-API-ID: $api_id" \
-        -H "X-API-KEY: $api_key" \
-        "$install_url" | sh 2>&1) || install_exit_code=$?
-
-    # Check both exit code AND success message in output
-    if [ "$install_exit_code" -eq 0 ] || echo "$install_output" | grep -q "PatchMon Agent installation completed successfully"; then
-        success "Agent installed successfully"
-    else
-        error "Failed to install agent (exit: $install_exit_code)"
-    fi
-elif [ "$http_code" = "409" ]; then
-    existing_name=$(echo "$body" | grep -o '"friendly_name":"[^"]*"' | cut -d'"' -f4 || echo "")
-    if [ -n "$existing_name" ]; then
-        warn "This host is already enrolled in PatchMon as '$existing_name'; skipping"
-    else
-        warn "This host is already enrolled in PatchMon; skipping"
-    fi
-    warn "Remove the host in PatchMon before it can be enrolled again"
-    exit 0
-else
-    printf "%b\n" "${RED}[ERROR]${NC} Failed to enroll $friendly_name - HTTP $http_code" >&2
-    printf "%b\n" "Response: $body" >&2
-    exit 1
-fi
+        fetch_install_script "$api_id" "$api_key"
+        if [ "$fetch_code" != "200" ]; then
+            rm -f "$install_script"
+            error "Failed to download the install script (HTTP $fetch_code). Rerun this script to retry; the host will not be enrolled twice."
+        fi
+        run_install "$install_script"
+        ;;
+    host_reporting)
+        warn "PatchMon says this host${existing_name:+ ($existing_name)} is already reporting; skipping"
+        warn "This is usually a cloned machine, or credentials regenerated in PatchMon but not applied here."
+        warn "Reinstall it with the install command on the host's page, or rerun with FORCE_NEW_HOST=true to enrol this machine as a separate host."
+        exit 0
+        ;;
+    host_not_reenrollable)
+        warn "This host${existing_name:+ ($existing_name)} was added to PatchMon another way; skipping"
+        warn "Use the install command on the host's page in PatchMon."
+        exit 0
+        ;;
+    already_enrolled)
+        if [ -n "$existing_name" ]; then
+            warn "This host is already enrolled in PatchMon as '$existing_name'; skipping"
+        else
+            warn "This host is already enrolled in PatchMon; skipping"
+        fi
+        warn "Remove the host in PatchMon before it can be enrolled again"
+        exit 0
+        ;;
+    retry_later)
+        printf "%b\n" "${RED}[ERROR]${NC} PatchMon asked to retry later (HTTP 429): $body" >&2
+        exit 1
+        ;;
+    *)
+        printf "%b\n" "${RED}[ERROR]${NC} Failed to enroll $friendly_name - HTTP $http_code" >&2
+        printf "%b\n" "Response: $body" >&2
+        exit 1
+        ;;
+esac
 
 echo ""
 success "Auto-enrollment complete!"

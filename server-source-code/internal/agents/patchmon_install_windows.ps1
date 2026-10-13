@@ -1,6 +1,6 @@
 # PatchMon Agent Installation Script for Windows (Server-Provided Version)
 # The server injects PATCHMON_SERVER_URL, PATCHMON_BOOTSTRAP_TOKEN, PATCHMON_IGNORE_SSL
-# as env vars at the top of this script before serving it.
+# and PATCHMON_HOST_ID as env vars at the top of this script before serving it.
 
 $ErrorActionPreference = "Stop"
 
@@ -84,6 +84,7 @@ $APIKey        = $env:PATCHMON_API_KEY
 $InstallPath   = "C:\Program Files\PatchMon"
 $ConfigPath    = "C:\ProgramData\PatchMon"
 $SkipSslVerify = ($env:PATCHMON_IGNORE_SSL -eq "true" -or $env:PATCHMON_IGNORE_SSL -eq "1")
+$HostId        = if ($env:PATCHMON_HOST_ID -match '^[A-Za-z0-9-]{1,64}$') { $env:PATCHMON_HOST_ID } else { "" }
 
 # Check if running as Administrator
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -222,6 +223,7 @@ credentials_file: '$($ConfigPath -replace "'", "''")\credentials.yml'
 log_file: '$($ConfigPath -replace "'", "''")\patchmon-agent.log'
 log_level: 'info'
 skip_ssl_verify: $($SkipSslVerify.ToString().ToLower())
+host_id: '$HostId'
 "@
     Set-Content -Path $configFile -Value $configContent -Encoding UTF8
 } else {
@@ -259,8 +261,12 @@ if ($ServerURL -and $APIID -and $APIKey) {
     if ($SkipSslVerify) {
         $env:PATCHMON_SKIP_SSL_VERIFY = "true"
     }
+    $setApiArgs = @("--config", $configFile, "config", "set-api", $APIID, $APIKey, $ServerURL)
+    if ($HostId) {
+        $setApiArgs += @("--host-id", $HostId)
+    }
     try {
-        Invoke-AgentBinary -Path $targetPath -AgentArgs @("--config", $configFile, "config", "set-api", $APIID, $APIKey, $ServerURL)
+        Invoke-AgentBinary -Path $targetPath -AgentArgs $setApiArgs
     } catch {
         Show-AgentLaunchFailure -Path $targetPath -InstallDir $InstallPath -ConfigFile $configFile -Reason $_.Exception.Message
         exit 1
