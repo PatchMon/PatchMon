@@ -1166,3 +1166,31 @@ func TestWUATimeoutsHaveReadableMessages(t *testing.T) {
 		t.Error("the raw error must still reach the run output")
 	}
 }
+
+func TestInstallTimeoutStopsTheRestOfWindowsUpdate(t *testing.T) {
+	scan := wuaScan{Updates: []wuaUpdate{{ID: guidA, Title: "A", KBs: jsonStrings{"KB1"}, Type: 1}, {ID: guidB, Title: "B", KBs: jsonStrings{"KB2"}, Type: 1}}}
+	w := &fakeWUA{scan: scan, hang: map[string]bool{"install:" + guidA: true}}
+	rec := &recorder{}
+	g := &fakeWinget{apps: []models.Package{{Name: "7-Zip", WingetID: "7zip.7zip", NeedsUpdate: true}}}
+	r := newWindowsPatchRun(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true, IncludeApps: true}, rec.hooks(), w, g)
+	r.timeouts.install = 20 * time.Millisecond
+	res := r.run(context.Background(), context.Background())
+	if !reflect.DeepEqual(w.installs, []string{guidA}) {
+		t.Fatalf("installs = %v; nothing may start while Windows is still servicing", w.installs)
+	}
+	if it := itemByID(res, guidB); it.Status != itemSkipped || it.Message != msgStillInstalling {
+		t.Errorf("next update = %+v", it)
+	}
+	if it := itemByID(res, "7zip.7zip"); it.Status != itemInstalled {
+		t.Errorf("the winget phase must still run: %+v", it)
+	}
+	if res.Stage != "failed" || !strings.Contains(res.ErrorMessage, "1 skipped: KB2 (not started, Windows Update was still installing)") {
+		t.Errorf("stage %q summary %q", res.Stage, res.ErrorMessage)
+	}
+
+	w = &fakeWUA{scan: scan, installRes: map[string]wuaOpResult{guidA: {Found: true, ResultCode: 4}}}
+	runFake(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, &recorder{}, w, &fakeWinget{})
+	if len(w.installs) != 2 {
+		t.Errorf("an ordinary failure must not stop the next update: %v", w.installs)
+	}
+}

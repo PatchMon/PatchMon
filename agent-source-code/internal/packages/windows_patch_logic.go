@@ -300,6 +300,7 @@ const (
 	msgRestartFirst    = "Restart pending from an earlier install; restart the host and run again"
 	msgStopped         = "Stopped"
 	msgTimeLimit       = "The run time limit was reached"
+	msgStillInstalling = "Not started: Windows Update was still installing a previous update"
 )
 
 func selectWUAUpdates(scan wuaScan, patchAll bool, targetIDs []string) (install []wuaUpdate, decided []models.PatchRunItem) {
@@ -601,7 +602,10 @@ func itemName(it models.PatchRunItem) string {
 	return it.ID
 }
 
-var skipReasons = map[string]string{msgStoreApp: "Microsoft Store app"}
+var skipReasons = map[string]string{
+	msgStoreApp:        "Microsoft Store app",
+	msgStillInstalling: "not started, Windows Update was still installing",
+}
 
 func skippedLabel(it models.PatchRunItem) string {
 	if r, ok := skipReasons[it.Message]; ok {
@@ -1251,6 +1255,7 @@ func (r *windowsPatchRun) runWUAPhase(runCtx, stopCtx context.Context, wuaIDs []
 		})
 		if timedOut {
 			r.finish(it, itemFailed, fmt.Sprintf("Install did not finish within %d minutes. Windows may still be completing it; check after a restart.", minutes(timeout)))
+			blocked = msgStillInstalling
 		} else {
 			r.applyInstallResult(it, res, ierr)
 		}
