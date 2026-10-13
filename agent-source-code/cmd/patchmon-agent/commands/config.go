@@ -77,6 +77,11 @@ func showConfig() error {
 	fmt.Printf("  Log File: %s\n", cfg.LogFile)
 	fmt.Printf("  Log Level: %s\n", cfg.LogLevel)
 
+	updateCheckEnabled, updateCheckInterval := cfgManager.GetDockerUpdateCheck()
+	fmt.Printf("\nDocker Update Check:\n")
+	fmt.Printf("  Enabled: %t (requires integrations.docker)\n", updateCheckEnabled)
+	fmt.Printf("  Interval: %d hours\n", int(updateCheckInterval.Hours()))
+
 	fmt.Printf("\nCredentials:\n")
 	if creds != nil {
 		fmt.Printf("  API ID: %s\n", creds.APIID)

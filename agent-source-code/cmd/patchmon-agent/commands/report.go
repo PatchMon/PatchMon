@@ -434,6 +434,43 @@ func sendIntegrationData() {
 	// Future: Send other integration data here
 }
 
+func collectDockerInventory(ctx context.Context) *models.IntegrationData {
+	d := docker.New(logger)
+	defer func() { _ = d.Close() }()
+	if !d.IsAvailable() {
+		return nil
+	}
+	cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	data, err := d.Collect(cctx)
+	if err != nil {
+		logger.WithError(err).Warn("Failed to collect Docker data")
+		return nil
+	}
+	return data
+}
+
+func dockerDataOf(data *models.IntegrationData) (*models.DockerData, bool) {
+	if data == nil || data.Error != "" {
+		return nil, false
+	}
+	dd, ok := data.Data.(*models.DockerData)
+	return dd, ok && dd != nil
+}
+
+func uploadDockerInventory(ctx context.Context) {
+	if !cfgManager.IsIntegrationEnabled("docker") {
+		return
+	}
+	data := collectDockerInventory(ctx)
+	if data == nil {
+		return
+	}
+	systemDetector := system.New(logger)
+	hostname, _ := systemDetector.GetHostname()
+	sendDockerData(client.New(cfgManager, logger), data, hostname, systemDetector.GetMachineID())
+}
+
 // sendDockerData sends Docker integration data to server
 func sendDockerData(httpClient *client.Client, integrationData *models.IntegrationData, hostname, machineID string) {
 	// Extract Docker data from integration data
@@ -614,11 +651,18 @@ func runCheckIn(ctx context.Context, forceFull bool) error {
 		return deliverReport(ctx, payload)
 	}
 
-	// Docker / compliance hashes are computed from cached integration data
-	// (the agent does not re-collect docker or run a scan just to hash). If
-	// the agent has no cache yet (cold start) the hash stays empty and the
-	// server will request a fresh upload.
 	dockerHash := lastDockerHash()
+	var dockerTick *models.IntegrationData
+	if cfgManager.IsIntegrationEnabled("docker") {
+		dockerTick = collectDockerInventory(ctx)
+		if dd, ok := dockerDataOf(dockerTick); ok {
+			if h, err := hashing.DockerHash(dd); err != nil {
+				logger.WithError(err).Debug("docker hash computation failed; using last uploaded hash")
+			} else {
+				dockerHash = h
+			}
+		}
+	}
 	complianceHash := lastComplianceHash()
 
 	// Surface agent-side data-collection time on the ping for the server's
@@ -708,17 +752,13 @@ func runCheckIn(ctx context.Context, forceFull bool) error {
 	}
 
 	if sendDockerNow && cfgManager.IsIntegrationEnabled("docker") {
-		systemDetector := system.New(logger)
-		hostname, _ := systemDetector.GetHostname()
-		machineID := systemDetector.GetMachineID()
-		integrationMgr := integrations.NewManager(logger)
-		integrationMgr.SetEnabledChecker(func(name string) bool { return cfgManager.IsIntegrationEnabled(name) })
-		integrationMgr.Register(docker.New(logger))
-		dctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		integData := integrationMgr.CollectAll(dctx)
-		cancel()
-		if dd, ok := integData["docker"]; ok && dd.Error == "" {
-			sendDockerData(httpClient, dd, hostname, machineID)
+		if dockerTick == nil {
+			dockerTick = collectDockerInventory(ctx)
+		}
+		if dockerTick != nil {
+			systemDetector := system.New(logger)
+			hostname, _ := systemDetector.GetHostname()
+			sendDockerData(httpClient, dockerTick, hostname, systemDetector.GetMachineID())
 		}
 	}
 

@@ -11,7 +11,7 @@ import (
 )
 
 // collectVolumes collects all Docker volumes
-func (d *Integration) collectVolumes(ctx context.Context) ([]models.DockerVolume, error) {
+func (d *Integration) collectVolumes(ctx context.Context, usage *containerUsage) ([]models.DockerVolume, error) {
 	// List all volumes
 	volumeResult, err := d.client.VolumeList(ctx, client.VolumeListOptions{})
 	if err != nil {
@@ -71,11 +71,12 @@ func (d *Integration) collectVolumes(ctx context.Context) ([]models.DockerVolume
 			Options:    vol.Options,
 			CreatedAt:  createdAt,
 			SizeBytes:  sizeBytes,
-			RefCount:   0, // Will be set below if available
 		}
 
-		// Get reference count from usage data if available
-		if vol.UsageData != nil && vol.UsageData.RefCount >= 0 {
+		switch {
+		case usage != nil:
+			volumeData.RefCount = usage.volumes[vol.Name]
+		case vol.UsageData != nil && vol.UsageData.RefCount >= 0:
 			volumeData.RefCount = int(vol.UsageData.RefCount)
 		}
 

@@ -10,7 +10,7 @@ import (
 )
 
 // collectNetworks collects all Docker networks
-func (d *Integration) collectNetworks(ctx context.Context) ([]models.DockerNetwork, error) {
+func (d *Integration) collectNetworks(ctx context.Context, usage *containerUsage) ([]models.DockerNetwork, error) {
 	// List all networks
 	networkResult, err := d.client.NetworkList(ctx, client.NetworkListOptions{})
 	if err != nil {
@@ -39,11 +39,15 @@ func (d *Integration) collectNetworks(ctx context.Context) ([]models.DockerNetwo
 					}
 				}
 
-				ipamConfigData := models.DockerIPAMConfig{
-					Subnet:       ipamConfig.Subnet.String(),
-					Gateway:      ipamConfig.Gateway.String(),
-					IPRange:      ipamConfig.IPRange.String(),
-					AuxAddresses: auxAddresses,
+				ipamConfigData := models.DockerIPAMConfig{AuxAddresses: auxAddresses}
+				if ipamConfig.Subnet.IsValid() {
+					ipamConfigData.Subnet = ipamConfig.Subnet.String()
+				}
+				if ipamConfig.Gateway.IsValid() {
+					ipamConfigData.Gateway = ipamConfig.Gateway.String()
+				}
+				if ipamConfig.IPRange.IsValid() {
+					ipamConfigData.IPRange = ipamConfig.IPRange.String()
 				}
 				ipam.Config = append(ipam.Config, ipamConfigData)
 			}
@@ -61,6 +65,13 @@ func (d *Integration) collectNetworks(ctx context.Context) ([]models.DockerNetwo
 			ConfigOnly:  net.ConfigOnly,
 			Labels:      net.Labels,
 			IPAM:        ipam,
+		}
+		if !net.Created.IsZero() {
+			created := net.Created
+			networkData.CreatedAt = &created
+		}
+		if usage != nil {
+			networkData.ContainerCount = usage.networks[net.ID] + usage.networks[net.Name]
 		}
 
 		result = append(result, networkData)
