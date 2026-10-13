@@ -95,6 +95,20 @@ func chooseVCLibsDir(dirs []string, arch string) (appxDir, bool) {
 	return newestAppxDir(dirs, vclibsPackagePrefix, arch)
 }
 
+// withTempDir points TEMP and TMP at dir. winget as SYSTEM otherwise stages installers in
+// C:\Windows\Temp, where a local user can pre-create folders and swap an installer.
+func withTempDir(environ []string, dir string) []string {
+	out := make([]string, 0, len(environ)+2)
+	for _, kv := range environ {
+		k, _, _ := strings.Cut(kv, "=")
+		if strings.EqualFold(k, "TEMP") || strings.EqualFold(k, "TMP") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, "TEMP="+dir, "TMP="+dir)
+}
+
 func wingetChildEnv(environ []string, libDirs ...string) []string {
 	var dirs []string
 	for _, d := range libDirs {
@@ -241,7 +255,11 @@ func resolveWinget() (string, []string, error) {
 			libDirs = append(libDirs, v.path)
 		}
 	}
-	return exe, wingetChildEnv(os.Environ(), libDirs...), nil
+	tmp, err := wingetTempDir()
+	if err != nil {
+		return "", nil, fmt.Errorf("prepare a private temp directory for winget: %w", err)
+	}
+	return exe, withTempDir(wingetChildEnv(os.Environ(), libDirs...), tmp), nil
 }
 
 func verifyWingetSignature(exe string) error {

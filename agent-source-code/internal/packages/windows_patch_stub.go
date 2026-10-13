@@ -12,3 +12,5 @@ var errNotWindows = errors.New("windows patching is not supported on this platfo
 func hideWindow(*exec.Cmd) {}
 
 func checkWingetTrust(string) error { return errNotWindows }
+
+func wingetTempDir() (string, error) { return "", errNotWindows }
