@@ -23,8 +23,11 @@ func TestDockerUpdateCheckConfig(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "config.yml")
-			body := "patchmon_server: https://pm.example.com\n" + tt.yaml
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yml")
+			body := "patchmon_server: https://pm.example.com\n" +
+				"credentials_file: " + filepath.Join(dir, "credentials.yml") + "\n" +
+				"log_file: " + filepath.Join(dir, "logs", "agent.log") + "\n" + tt.yaml
 			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 				t.Fatal(err)
 			}
