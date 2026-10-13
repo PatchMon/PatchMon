@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -815,9 +816,16 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 		if err != nil {
 			return err
 		}
-		pending = dispatchableItems(pending)
+		var invalid []string
+		pending, invalid = splitDispatchableItems(pending)
+		if len(invalid) > 0 {
+			if err := h.patchRuns.AbortPendingItems(ctx, invalid, invalidTargetMessage); err != nil {
+				return err
+			}
+			h.log.Warn("run_patch: dropped items with an invalid identifier", "api_id", p.ApiID, "patch_run_id", p.PatchRunID, "count", len(invalid))
+		}
 		if len(pending) == 0 {
-			if err := h.patchRuns.FailRun(ctx, p.PatchRunID, noPatchTargetsMessage); err != nil {
+			if err := h.patchRuns.FailRun(ctx, p.PatchRunID, noTargetsMessage(len(invalid))); err != nil {
 				return err
 			}
 			h.log.Warn("run_patch: windows run has no patch targets, marked failed", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
@@ -840,18 +848,32 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 	return nil
 }
 
-const noPatchTargetsMessage = "No patch targets: none of the selected updates or apps are pending on this host"
+const (
+	noPatchTargetsMessage = "No patch targets: none of the selected updates or apps are pending on this host"
+	invalidTargetMessage  = "Invalid target identifier"
+)
 
-func dispatchableItems(items []db.PatchRunItem) []db.PatchRunItem {
-	out := items[:0]
+func noTargetsMessage(invalid int) string {
+	switch invalid {
+	case 0:
+		return noPatchTargetsMessage
+	case 1:
+		return "No valid patch targets: 1 item had an invalid identifier"
+	}
+	return fmt.Sprintf("No valid patch targets: %d items had an invalid identifier", invalid)
+}
+
+func splitDispatchableItems(items []db.PatchRunItem) (valid []db.PatchRunItem, invalidIDs []string) {
 	for _, it := range items {
 		switch {
 		case it.Kind == store.PatchItemKindWUA && store.IsValidWUAGuid(it.Identifier),
 			it.Kind == store.PatchItemKindWinget && store.IsValidWingetID(it.Identifier):
-			out = append(out, it)
+			valid = append(valid, it)
+		default:
+			invalidIDs = append(invalidIDs, it.ID)
 		}
 	}
-	return out
+	return valid, invalidIDs
 }
 
 type runPatchTarget struct {

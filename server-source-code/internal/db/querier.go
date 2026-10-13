@@ -11,6 +11,7 @@ import (
 )
 
 type Querier interface {
+	AbortPendingPatchRunItems(ctx context.Context, arg AbortPendingPatchRunItemsParams) error
 	ActivateScheduledPatchRun(ctx context.Context, id string) (int64, error)
 	// Bulk insert N host_packages rows in a single statement. Replaces the legacy
 	// InsertHostPackage and InsertHostPackageWithWUA per-row inserts — one path

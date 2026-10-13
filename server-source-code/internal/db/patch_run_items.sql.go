@@ -9,6 +9,22 @@ import (
 	"context"
 )
 
+const abortPendingPatchRunItems = `-- name: AbortPendingPatchRunItems :exec
+UPDATE patch_run_items
+SET status = 'aborted', message = $1, completed_at = NOW(), updated_at = NOW()
+WHERE id = ANY($2::text[]) AND status = 'pending'
+`
+
+type AbortPendingPatchRunItemsParams struct {
+	Message *string  `json:"message"`
+	Ids     []string `json:"ids"`
+}
+
+func (q *Queries) AbortPendingPatchRunItems(ctx context.Context, arg AbortPendingPatchRunItemsParams) error {
+	_, err := q.db.Exec(ctx, abortPendingPatchRunItems, arg.Message, arg.Ids)
+	return err
+}
+
 const deletePatchRunItems = `-- name: DeletePatchRunItems :exec
 DELETE FROM patch_run_items WHERE patch_run_id = $1
 `

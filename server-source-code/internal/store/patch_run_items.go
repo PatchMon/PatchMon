@@ -77,6 +77,15 @@ func (s *PatchRunsStore) ReplaceItems(ctx context.Context, runID, hostID string,
 	return tx.Commit(ctx)
 }
 
+// AbortPendingItems marks the given still-pending items aborted with a reason.
+func (s *PatchRunsStore) AbortPendingItems(ctx context.Context, ids []string, message string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	d := s.db.DB(ctx)
+	return d.Queries.AbortPendingPatchRunItems(ctx, db.AbortPendingPatchRunItemsParams{Ids: ids, Message: &message})
+}
+
 // FailRun marks a run that never reached the agent as failed.
 func (s *PatchRunsStore) FailRun(ctx context.Context, id, errorMessage string) error {
 	d := s.db.DB(ctx)

@@ -97,3 +97,8 @@ DELETE FROM patch_run_items WHERE patch_run_id = $1;
 SELECT status,
     (COALESCE(completed_at, updated_at) > NOW() - make_interval(secs => sqlc.arg('grace_seconds')::int))::boolean AS within_grace
 FROM patch_runs WHERE id = sqlc.arg('id') FOR UPDATE;
+
+-- name: AbortPendingPatchRunItems :exec
+UPDATE patch_run_items
+SET status = 'aborted', message = sqlc.arg('message'), completed_at = NOW(), updated_at = NOW()
+WHERE id = ANY(sqlc.arg('ids')::text[]) AND status = 'pending';

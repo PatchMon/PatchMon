@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
@@ -54,15 +55,30 @@ func TestBuildRunPatchMessageWindowsScope(t *testing.T) {
 	}
 }
 
-func TestDispatchableItemsDropsInvalidIdentifiers(t *testing.T) {
-	got := dispatchableItems([]db.PatchRunItem{
-		{Kind: "wua", Identifier: "7f1b0c5e-1111-2222-3333-444455556666"},
-		{Kind: "wua", Identifier: "KB5044284"},
-		{Kind: "winget", Identifier: "7zip.7zip"},
-		{Kind: "winget", Identifier: "x';calc;'"},
-		{Kind: "apt", Identifier: "curl"},
+func TestSplitDispatchableItemsSeparatesInvalidIdentifiers(t *testing.T) {
+	valid, invalid := splitDispatchableItems([]db.PatchRunItem{
+		{ID: "1", Kind: "wua", Identifier: "7f1b0c5e-1111-2222-3333-444455556666"},
+		{ID: "2", Kind: "wua", Identifier: "KB5044284"},
+		{ID: "3", Kind: "winget", Identifier: "7zip.7zip"},
+		{ID: "4", Kind: "winget", Identifier: "x';calc;'"},
+		{ID: "5", Kind: "apt", Identifier: "curl"},
 	})
-	if len(got) != 2 || got[0].Kind != "wua" || got[1].Identifier != "7zip.7zip" {
-		t.Fatalf("got %+v", got)
+	if len(valid) != 2 || valid[0].ID != "1" || valid[1].ID != "3" {
+		t.Fatalf("valid = %+v", valid)
+	}
+	if strings.Join(invalid, ",") != "2,4,5" {
+		t.Fatalf("invalid = %v", invalid)
+	}
+}
+
+func TestNoTargetsMessage(t *testing.T) {
+	for n, want := range map[int]string{
+		0: noPatchTargetsMessage,
+		1: "No valid patch targets: 1 item had an invalid identifier",
+		3: "No valid patch targets: 3 items had an invalid identifier",
+	} {
+		if got := noTargetsMessage(n); got != want {
+			t.Errorf("noTargetsMessage(%d) = %q, want %q", n, got, want)
+		}
 	}
 }
