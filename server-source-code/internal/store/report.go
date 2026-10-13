@@ -353,16 +353,8 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 	if payload.WindowsUpdatesOmitted {
 		payload.Packages = withoutWindowsUpdates(payload.Packages)
 	}
-	securityCount := 0
-	updatesCount := 0
-	for _, p := range payload.Packages {
-		if p.NeedsUpdate {
-			updatesCount++
-		}
-		if p.IsSecurityUpdate {
-			securityCount++
-		}
-	}
+	counts := countReportPackages(payload.Packages)
+	keptTotal := 0
 
 	// Strip NUL and invalid UTF-8 before anything touches a query parameter.
 	// Postgres cannot store either, and one bad byte from one Windows host
@@ -568,6 +560,12 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 	// only) would wipe the package list and reinsert nothing.
 	if sections.Packages {
 		if payload.WindowsUpdatesOmitted {
+			kept, err := q.CountHostWindowsUpdateRows(ctx, hostID)
+			if err != nil {
+				return nil, fmt.Errorf("CountHostWindowsUpdateRows: %w", err)
+			}
+			counts = counts.plus(reportCounts{updates: int(kept.NeedsUpdate), security: int(kept.Security)})
+			keptTotal = int(kept.Total)
 			if err := q.DeleteHostPackagesExceptWindowsUpdates(ctx, hostID); err != nil {
 				return nil, fmt.Errorf("DeleteHostPackagesExceptWindowsUpdates: %w", err)
 			}
@@ -736,7 +734,7 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 		}
 	}
 
-	totalPkg := int32(len(payload.Packages))
+	totalPkg := int32(len(payload.Packages) + keptTotal)
 	execTime := payload.ExecutionTime
 	// Discriminate full vs partial for the Agent Activity feed: a payload
 	// without a Sections list is a legacy/full report, anything that arrived
@@ -762,8 +760,8 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 	if err := q.InsertUpdateHistory(ctx, db.InsertUpdateHistoryParams{
 		ID:                uuid.New().String(),
 		HostID:            hostID,
-		PackagesCount:     int32(updatesCount),
-		SecurityCount:     int32(securityCount),
+		PackagesCount:     int32(counts.updates),
+		SecurityCount:     int32(counts.security),
 		TotalPackages:     &totalPkg,
 		PayloadSizeKb:     &payloadSizeKb,
 		ExecutionTime:     &execTime,
@@ -783,8 +781,8 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 
 	return &ProcessReportResult{
 		PackagesProcessed: len(payload.Packages),
-		UpdatesAvailable:  updatesCount,
-		SecurityUpdates:   securityCount,
+		UpdatesAvailable:  counts.updates,
+		SecurityUpdates:   counts.security,
 	}, nil
 }
 
@@ -1099,4 +1097,25 @@ func withoutWindowsUpdates(pkgs []ReportPackage) []ReportPackage {
 		}
 	}
 	return out
+}
+
+type reportCounts struct {
+	updates, security int
+}
+
+func (c reportCounts) plus(o reportCounts) reportCounts {
+	return reportCounts{updates: c.updates + o.updates, security: c.security + o.security}
+}
+
+func countReportPackages(pkgs []ReportPackage) reportCounts {
+	var c reportCounts
+	for _, p := range pkgs {
+		if p.NeedsUpdate {
+			c.updates++
+		}
+		if p.IsSecurityUpdate {
+			c.security++
+		}
+	}
+	return c
 }

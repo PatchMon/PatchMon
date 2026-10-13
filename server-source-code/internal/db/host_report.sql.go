@@ -199,6 +199,29 @@ func (q *Queries) BulkUpsertPackages(ctx context.Context, payload []byte) ([]Bul
 	return items, nil
 }
 
+const countHostWindowsUpdateRows = `-- name: CountHostWindowsUpdateRows :one
+SELECT
+    COUNT(*)::int AS total,
+    COUNT(*) FILTER (WHERE hp.needs_update)::int AS needs_update,
+    COUNT(*) FILTER (WHERE hp.is_security_update)::int AS security
+FROM host_packages hp
+JOIN packages p ON p.id = hp.package_id
+WHERE hp.host_id = $1 AND p.category = 'Windows Update'
+`
+
+type CountHostWindowsUpdateRowsRow struct {
+	Total       int32 `json:"total"`
+	NeedsUpdate int32 `json:"needs_update"`
+	Security    int32 `json:"security"`
+}
+
+func (q *Queries) CountHostWindowsUpdateRows(ctx context.Context, hostID string) (CountHostWindowsUpdateRowsRow, error) {
+	row := q.db.QueryRow(ctx, countHostWindowsUpdateRows, hostID)
+	var i CountHostWindowsUpdateRowsRow
+	err := row.Scan(&i.Total, &i.NeedsUpdate, &i.Security)
+	return i, err
+}
+
 const deleteHostPackagesByHostID = `-- name: DeleteHostPackagesByHostID :exec
 DELETE FROM host_packages WHERE host_id = $1
 `

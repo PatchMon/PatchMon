@@ -134,6 +134,7 @@ type Querier interface {
 	// Dashboard stats
 	CountDockerHosts(ctx context.Context) (int32, error)
 	CountEnabledHostRepositories(ctx context.Context) (int32, error)
+	CountHostWindowsUpdateRows(ctx context.Context, hostID string) (CountHostWindowsUpdateRowsRow, error)
 	CountHosts(ctx context.Context) (int64, error)
 	// Total count matching the same filter set as GetHostsWithCounts. Used by
 	// the paginated UI so it can render "Showing X-Y of Z" and a correct page

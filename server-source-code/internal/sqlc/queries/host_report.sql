@@ -252,3 +252,12 @@ VALUES (
     $6, $7, NOW(), $8, $9,
     $10, $11, $12, $13
 );
+
+-- name: CountHostWindowsUpdateRows :one
+SELECT
+    COUNT(*)::int AS total,
+    COUNT(*) FILTER (WHERE hp.needs_update)::int AS needs_update,
+    COUNT(*) FILTER (WHERE hp.is_security_update)::int AS security
+FROM host_packages hp
+JOIN packages p ON p.id = hp.package_id
+WHERE hp.host_id = $1 AND p.category = 'Windows Update';

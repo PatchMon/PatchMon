@@ -223,3 +223,22 @@ func TestWingetStoreAppIsStoredAndNotPatchable(t *testing.T) {
 		t.Error("ResolveWindowsPatchTargets does not reject Store apps")
 	}
 }
+
+func TestReportCountsIncludeKeptWindowsUpdates(t *testing.T) {
+	sent := []ReportPackage{
+		{Name: "7-Zip", NeedsUpdate: true},
+		{Name: "Notepad++"},
+	}
+	got := countReportPackages(sent).plus(reportCounts{updates: 3, security: 2})
+	if got.updates != 4 || got.security != 2 {
+		t.Fatalf("counts = %+v, want updates 4 security 2", got)
+	}
+	b, err := os.ReadFile(filepath.Join("..", "sqlc", "queries", "host_report.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := namedQueryIn(t, string(b), "CountHostWindowsUpdateRows")
+	if !strings.Contains(q, "hp.host_id = $1") || !strings.Contains(q, "p.category = '"+windowsUpdateCategory+"'") {
+		t.Fatalf("CountHostWindowsUpdateRows must count exactly the rows DeleteHostPackagesExceptWindowsUpdates keeps:\n%s", q)
+	}
+}
