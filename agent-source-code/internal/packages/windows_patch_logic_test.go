@@ -832,15 +832,28 @@ func TestRunDryRunSkipsSystemRestartCheck(t *testing.T) {
 }
 
 func TestWindowsRunLimit(t *testing.T) {
-	if got := WindowsRunLimit(WindowsPatchRequest{PatchAll: true}); got != 4*time.Hour {
-		t.Errorf("patch_all = %v", got)
+	long := 8 * time.Hour
+	cases := []struct {
+		name string
+		req  WindowsPatchRequest
+		want time.Duration
+	}{
+		{"patch all, apps only", WindowsPatchRequest{PatchAll: true, IncludeApps: true}, 4 * time.Hour},
+		{"patch all with updates", WindowsPatchRequest{PatchAll: true, IncludeUpdates: true, IncludeApps: true}, long},
+		{"named apps", WindowsPatchRequest{Targets: []WindowsPatchTarget{{Kind: WindowsTargetWinget, ID: "a.b"}}}, 4 * time.Hour},
+		{"named updates", WindowsPatchRequest{Targets: []WindowsPatchTarget{{Kind: WindowsTargetWinget, ID: "a.b"}, {Kind: WindowsTargetWUA, ID: guidA}}}, long},
 	}
-	if got := WindowsRunLimit(WindowsPatchRequest{Targets: []WindowsPatchTarget{{Kind: WindowsTargetWinget, ID: "a.b"}}}); got != 4*time.Hour {
-		t.Errorf("apps only = %v", got)
+	for _, c := range cases {
+		if got := WindowsRunLimit(c.req); got != c.want {
+			t.Errorf("%s = %v, want %v", c.name, got, c.want)
+		}
 	}
-	got := WindowsRunLimit(WindowsPatchRequest{Targets: []WindowsPatchTarget{{Kind: WindowsTargetWUA, ID: guidA}}})
-	if got < defaultWindowsPatchTimeouts.downloadFeature+defaultWindowsPatchTimeouts.installFeature {
-		t.Errorf("named updates = %v, too short for a feature upgrade", got)
+	d := defaultWindowsPatchTimeouts
+	if d.install != 180*time.Minute || d.installFeature < d.install {
+		t.Errorf("install budgets = %v / %v", d.install, d.installFeature)
+	}
+	if long < d.downloadFeature+d.installFeature {
+		t.Error("the cap must cover a feature upgrade's download and install")
 	}
 }
 

@@ -708,7 +708,7 @@ var defaultWindowsPatchTimeouts = windowsPatchTimeouts{
 	scan:            15 * time.Minute,
 	download:        60 * time.Minute,
 	downloadFeature: 180 * time.Minute,
-	install:         90 * time.Minute,
+	install:         180 * time.Minute,
 	installFeature:  240 * time.Minute,
 	wingetUpgrade:   30 * time.Minute,
 	wingetList:      5 * time.Minute,
@@ -1473,19 +1473,27 @@ func (r *windowsPatchRun) upgradeApp(runCtx context.Context, it *models.PatchRun
 	r.out("  %s: %s\n", it.ID, it.Message)
 }
 
-// WindowsRunLimit is the overall time cap for a run. Named targets may include a feature
-// upgrade, which needs its own download and install budget.
+// WindowsRunLimit is the overall time cap for a run. A run that installs Windows Updates may
+// include a feature upgrade or a cumulative update on a slow host, so it gets room for a
+// feature upgrade's download and install.
 func WindowsRunLimit(req WindowsPatchRequest) time.Duration {
 	const base = 4 * time.Hour
-	if req.PatchAll {
+	if !includesWindowsUpdates(req) {
 		return base
+	}
+	return max(base, defaultWindowsPatchTimeouts.downloadFeature+defaultWindowsPatchTimeouts.installFeature+time.Hour)
+}
+
+func includesWindowsUpdates(req WindowsPatchRequest) bool {
+	if req.PatchAll {
+		return req.IncludeUpdates
 	}
 	for _, t := range req.Targets {
 		if t.Kind == WindowsTargetWUA {
-			return max(base, defaultWindowsPatchTimeouts.downloadFeature+defaultWindowsPatchTimeouts.installFeature+time.Hour)
+			return true
 		}
 	}
-	return base
+	return false
 }
 
 // RunWindowsPatch runs a Windows patch run with the host's WUA and winget backends.
