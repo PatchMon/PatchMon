@@ -7,7 +7,18 @@ export const UNPATCHABLE_REASON_TEXT = {
 	not_pending: "Up to date",
 	winget_pinned:
 		"Pinned with winget pin; remove the pin on the host to update it",
+	store_app: "Microsoft Store app: updates through the Microsoft Store",
 };
+
+// Reasons that keep a pending update visible but block patching, each with
+// its own neutral badge instead of "Not patchable".
+const BLOCKED_UPDATE_BADGES = {
+	winget_pinned: { key: "pinned", label: "Pinned in winget" },
+	store_app: { key: "store-app", label: "Microsoft Store app" },
+};
+
+export const isBlockedUpdateReason = (reason) =>
+	Object.hasOwn(BLOCKED_UPDATE_BADGES, reason || "");
 
 const REJECT_REASON_TEXT = {
 	...UNPATCHABLE_REASON_TEXT,
@@ -145,10 +156,10 @@ export const windowsBadges = (info) => {
 		});
 		return out;
 	}
-	if (info.reason === "winget_pinned") {
+	const blocked = BLOCKED_UPDATE_BADGES[info.reason];
+	if (blocked) {
 		out.push({
-			key: "pinned",
-			label: "Pinned in winget",
+			...blocked,
 			className: "badge-secondary",
 			title: info.reasonText,
 		});

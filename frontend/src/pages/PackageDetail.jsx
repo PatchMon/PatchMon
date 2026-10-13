@@ -30,6 +30,7 @@ import { usePageRefresh } from "../hooks/usePageRefresh";
 import { formatRelativeTime, packagesAPI } from "../utils/api";
 import {
 	hostOsType,
+	isBlockedUpdateReason,
 	isPendingRestart,
 	isWindowsOs,
 	RESTART_REQUIRED_BADGE,
@@ -99,7 +100,7 @@ const UpToDateBadge = ({ host, className = "" }) =>
 const NotPatchableTag = ({ host }) => {
 	if (!isWindowsHost(host) || !host.needsUpdate) return null;
 	const info = windowsPatchInfo(host);
-	if (info.patchable || info.reason === "winget_pinned") return null;
+	if (info.patchable || isBlockedUpdateReason(info.reason)) return null;
 	return (
 		<span className="badge-secondary w-fit" title={info.reasonText}>
 			Not patchable

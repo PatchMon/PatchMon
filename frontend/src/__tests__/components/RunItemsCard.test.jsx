@@ -114,4 +114,24 @@ describe("RunItemsCard", () => {
 		expect(row.queryByText("Failed")).toBeNull();
 		expect(row.getByText(/Pinned in winget/)).toBeInTheDocument();
 	});
+
+	it("shows a skipped Store app as Skipped with its message", () => {
+		render(
+			<RunItemsCard
+				items={[
+					{
+						kind: "winget",
+						identifier: "Microsoft.WindowsTerminal",
+						title: "Windows Terminal",
+						status: "skipped",
+						message:
+							"Microsoft Store app: it updates through the Store for each user, not as SYSTEM",
+					},
+				]}
+			/>,
+		);
+		const row = within(screen.getByTestId("run-item-row"));
+		expect(row.getByText("Skipped")).toHaveClass("badge-secondary");
+		expect(row.getByText(/updates through the Store/)).toBeInTheDocument();
+	});
 });

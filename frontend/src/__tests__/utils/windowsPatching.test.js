@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	dryRunPackageLimit,
 	formatResultCode,
+	isBlockedUpdateReason,
 	isFeatureUpgradeRow,
 	isPendingRestart,
 	isWindowsScopeValid,
@@ -381,5 +382,49 @@ describe("winget pinned apps", () => {
 			label: "Skipped",
 			className: "badge-secondary",
 		});
+	});
+});
+
+describe("Microsoft Store apps", () => {
+	const store = {
+		needsUpdate: true,
+		patchable: false,
+		notPatchableReason: "store_app",
+		patchSource: "winget",
+		wingetStoreApp: true,
+	};
+
+	it("shows a neutral Store badge with the Store tooltip", () => {
+		const info = windowsPatchInfo(store);
+		expect(info.patchable).toBe(false);
+		expect(info.reasonText).toBe(
+			"Microsoft Store app: updates through the Microsoft Store",
+		);
+		expect(windowsSourceLabel(info)).toBe("winget");
+		expect(windowsBadges(info)).toEqual([
+			{
+				key: "store-app",
+				label: "Microsoft Store app",
+				className: "badge-secondary",
+				title: info.reasonText,
+			},
+		]);
+		expect(isBlockedUpdateReason("store_app")).toBe(true);
+		expect(isBlockedUpdateReason("winget_pinned")).toBe(true);
+		expect(isBlockedUpdateReason("no_winget_id")).toBe(false);
+		expect(isBlockedUpdateReason(undefined)).toBe(false);
+	});
+
+	it("names the Store when the server rejects a trigger", () => {
+		expect(
+			patchErrorMessage({
+				response: {
+					data: {
+						error: "Some packages cannot be patched",
+						rejected: [{ name: "Windows Terminal", reason: "store_app" }],
+					},
+				},
+			}),
+		).toMatch(/Windows Terminal: Microsoft Store app: updates through/);
 	});
 });
