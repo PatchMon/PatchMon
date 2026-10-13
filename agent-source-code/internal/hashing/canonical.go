@@ -52,6 +52,8 @@ type PackageHashRow struct {
 	WUACategories     []string `json:"wuaCategories"`
 	WUASupportURL     string   `json:"wuaSupportUrl"`
 	WUARevisionNumber int32    `json:"wuaRevisionNumber"`
+	// omitempty on purpose: unpinned rows must encode exactly as before this field existed.
+	WingetPinned bool `json:"wingetPinned,omitempty"`
 }
 
 // PackagesHash hashes the agent's package list. Pre-sorts by name and dedupes
@@ -80,6 +82,7 @@ func PackagesHash(pkgs []models.Package) (string, error) {
 			WUACategories:     cats,
 			WUASupportURL:     nfc(p.WUASupportURL),
 			WUARevisionNumber: p.WUARevisionNumber,
+			WingetPinned:      p.WingetPinned,
 		})
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
