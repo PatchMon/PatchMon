@@ -50,6 +50,34 @@ func (m *WindowsManager) GetPackages() []models.Package {
 		return nil
 	}
 
+	appPackages := m.appPackages()
+
+	// 4. Collect Windows OS updates (installed KBs + pending updates)
+	winUpdates := m.windowsUpdatesGuarded()
+	m.logger.WithField("count", len(winUpdates)).Info("Collected Windows OS updates")
+
+	// 5. Set SourceRepository for Windows Update entries based on WSUS config
+	wsusActive := m.isWSUSActive()
+	wuRepo := "Microsoft Update"
+	if wsusActive {
+		wuRepo = "WSUS"
+	}
+	for i := range winUpdates {
+		winUpdates[i].SourceRepository = wuRepo
+	}
+
+	all := make([]models.Package, 0, len(appPackages)+len(winUpdates))
+	all = append(all, appPackages...)
+	all = append(all, winUpdates...)
+
+	if len(all) == 0 {
+		return []models.Package{}
+	}
+	return all
+}
+
+// appPackages collects installed applications from the registry, enriched with WinGet.
+func (m *WindowsManager) appPackages() []models.Package {
 	// 1. Registry is the primary source — works reliably as SYSTEM in Session 0
 	//    (same approach as rmmagent's go-win64api which reads Uninstall registry keys)
 	regPackages := m.getPackagesFromRegistry()
@@ -73,29 +101,7 @@ func (m *WindowsManager) GetPackages() []models.Package {
 		}
 	}
 	m.logger.WithField("count", len(appPackages)).Info("Application packages after merge")
-
-	// 4. Collect Windows OS updates (installed KBs + pending updates)
-	winUpdates := m.getWindowsUpdates()
-	m.logger.WithField("count", len(winUpdates)).Info("Collected Windows OS updates")
-
-	// 5. Set SourceRepository for Windows Update entries based on WSUS config
-	wsusActive := m.isWSUSActive()
-	wuRepo := "Microsoft Update"
-	if wsusActive {
-		wuRepo = "WSUS"
-	}
-	for i := range winUpdates {
-		winUpdates[i].SourceRepository = wuRepo
-	}
-
-	all := make([]models.Package, 0, len(appPackages)+len(winUpdates))
-	all = append(all, appPackages...)
-	all = append(all, winUpdates...)
-
-	if len(all) == 0 {
-		return []models.Package{}
-	}
-	return all
+	return appPackages
 }
 
 // mergeRegistryAndWinget merges registry-discovered packages with WinGet data.

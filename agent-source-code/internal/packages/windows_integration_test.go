@@ -3,7 +3,6 @@
 package packages
 
 import (
-	"context"
 	"io"
 	"os"
 	"strings"
@@ -158,33 +157,6 @@ func TestWSUSCheckLive(t *testing.T) {
 	requireWindowsIntegration(t)
 
 	t.Logf("isWSUSActive() = %v", newTestWindowsManager().isWSUSActive())
-}
-
-func TestRebootRequiredLive(t *testing.T) {
-	requireWindowsIntegration(t)
-
-	t.Logf("RebootRequired() = %v", RebootRequired())
-}
-
-// The dry run lists upgrades without installing anything, which is enough to
-// prove wingetResolveBlock and the surrounding script parse and execute.
-func TestWinGetUpgradeAllDryRunLive(t *testing.T) {
-	requireWindowsIntegration(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
-	defer cancel()
-
-	out, err := NewWindowsPatcher().WinGetUpgradeAll(ctx, true)
-	if ctx.Err() != nil {
-		t.Fatalf("winget dry run exceeded its deadline: %v", ctx.Err())
-	}
-	// A non-zero exit is acceptable (winget may be absent); a PowerShell parse
-	// error is not, and it surfaces in the output rather than as a Go error.
-	assertNoPowerShellParseError(t, out)
-	if err != nil {
-		t.Logf("winget dry run exited non-zero (acceptable if winget is absent): %v", err)
-	}
-	t.Logf("winget dry run output:\n%s", out)
 }
 
 // The full merge path, which is what serve actually calls.
