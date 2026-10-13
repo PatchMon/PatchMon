@@ -29,8 +29,8 @@ func TestListPackagesSQLHostScopedSource(t *testing.T) {
 
 	sec := "false"
 	where, _ := packagesListWhereSQL(packagesListFilters{HostID: &host, IsSecurityUpdate: &sec}, "p")
-	if strings.Contains(where, "NOT EXISTS") {
-		t.Fatal("regular-updates filter on one host must not exclude packages with security updates on other hosts")
+	if strings.Contains(where, "EXISTS") {
+		t.Fatal("host-filtered predicates must apply to the joined host row, not an EXISTS over every host")
 	}
 }
 
@@ -96,7 +96,6 @@ func TestListPackagesHostScopedStatus(t *testing.T) {
 	fleet, _ := list("", "", "", "")
 	want(fleet["x"], 2, 1, 1, "2.0")
 	want(fleet["y"], 2, 1, 0, "5.0")
-
 	want(fleet["z"], 2, 2, 1, "9.0")
 
 	onB, order := list(b.ID, "status", "asc", "")
@@ -121,5 +120,9 @@ func TestListPackagesHostScopedStatus(t *testing.T) {
 
 	if _, names := list(b.ID, "", "", "false"); strings.Join(names, ",") != "y,z" {
 		t.Fatalf("regular updates on host B = %v, want y,z", names)
+	}
+
+	if _, names := list("", "", "", "false"); strings.Join(names, ",") != "y" {
+		t.Fatalf("fleet regular updates = %v, want y (x and z have a security update somewhere)", names)
 	}
 }
