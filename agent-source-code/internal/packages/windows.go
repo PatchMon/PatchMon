@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -50,6 +51,9 @@ func (m *WindowsManager) GetPackages() []models.Package {
 	// 1. Registry is the primary source — works reliably as SYSTEM in Session 0
 	//    (same approach as rmmagent's go-win64api which reads Uninstall registry keys)
 	regPackages := m.getPackagesFromRegistry()
+	if hasUnversionedSQLServer(regPackages) {
+		applySQLServerPatchLevels(regPackages, m.getSQLServerSetups())
+	}
 	m.logger.WithField("count", len(regPackages)).Info("Collected packages via registry")
 
 	// 2. Try WinGet for update availability enrichment
@@ -91,71 +95,255 @@ func (m *WindowsManager) GetPackages() []models.Package {
 // Registry provides the reliable baseline; WinGet enriches with update availability.
 // Any WinGet-only entries (not in registry) are also included.
 // SourceRepository is set to the WinGet source for matched packages, or "local" for registry-only.
-func (m *WindowsManager) mergeRegistryAndWinget(regPkgs, wingetPkgs []models.Package) []models.Package {
-	if len(wingetPkgs) == 0 {
-		// No WinGet data: all registry packages are local
+func (m *WindowsManager) mergeRegistryAndWinget(regPkgs []models.Package, rows []wingetRow) []models.Package {
+	if len(rows) == 0 {
 		for i := range regPkgs {
 			regPkgs[i].SourceRepository = "local"
 		}
 		return regPkgs
 	}
 
-	// Build lookup from WinGet by normalized name for fuzzy matching
-	type wingetInfo struct {
-		AvailableVersion string
-		NeedsUpdate      bool
-		SourceRepository string
-		// matched: enriched a registry entry, so it is already represented.
-		matched bool
-		// appended: already emitted as a winget-only entry.
-		appended bool
+	used := make([]bool, len(rows))
+	matchOf := make([]int, len(regPkgs))
+	for i := range matchOf {
+		matchOf[i] = -1
 	}
-	// One record per normalised name. winget truncates names to its column
-	// width, so distinct packages can collapse onto the same key here.
-	wingetByName := make(map[string]*wingetInfo, len(wingetPkgs))
-	for i := range wingetPkgs {
-		key := normalizePackageName(wingetPkgs[i].Name)
-		wingetByName[key] = &wingetInfo{
-			AvailableVersion: wingetPkgs[i].AvailableVersion,
-			NeedsUpdate:      wingetPkgs[i].NeedsUpdate,
-			SourceRepository: wingetPkgs[i].SourceRepository,
-		}
-	}
-
-	// Enrich registry entries with WinGet update info and source repo
-	for i := range regPkgs {
-		key := normalizePackageName(regPkgs[i].Name)
-		if winfo, ok := wingetByName[key]; ok {
-			if winfo.NeedsUpdate {
-				regPkgs[i].NeedsUpdate = true
-				if regPkgs[i].AvailableVersion == "" {
-					regPkgs[i].AvailableVersion = winfo.AvailableVersion
+	for rank := 3; rank > 0; rank-- {
+		for i := range regPkgs {
+			if matchOf[i] >= 0 {
+				continue
+			}
+			for j := range rows {
+				if !used[j] && matchRank(regPkgs[i], rows[j]) == rank {
+					matchOf[i], used[j] = j, true
+					break
 				}
 			}
-			regPkgs[i].SourceRepository = winfo.SourceRepository
-			winfo.matched = true
-		} else {
-			// Not found in WinGet: local/registry-only install
-			regPkgs[i].SourceRepository = "local"
 		}
 	}
 
-	// Add WinGet-only entries that weren't in registry.
-	//
-	// Guarded by appended as well as matched: the lookup holds one record per
-	// normalised name, so two winget rows whose names truncate to the same
-	// string both find the same unmatched record and would each be appended,
-	// reaching the server as two identical packages. Observed on CI as two
-	// copies of "Microsoft Visual C++ v14 Redistributabl" at the same version.
-	for i := range wingetPkgs {
-		key := normalizePackageName(wingetPkgs[i].Name)
-		if winfo, ok := wingetByName[key]; ok && !winfo.matched && !winfo.appended {
-			regPkgs = append(regPkgs, wingetPkgs[i])
-			winfo.appended = true
+	matchedNames := make(map[string]bool)
+	for i := range regPkgs {
+		j := matchOf[i]
+		if j < 0 {
+			regPkgs[i].SourceRepository = "local"
+			continue
 		}
+		row := rows[j].pkg
+		matchedNames[normalizePackageName(row.Name)] = true
+		regPkgs[i].SourceRepository = row.SourceRepository
+		if row.NeedsUpdate && installedIsOlder(regPkgs[i].CurrentVersion, row.AvailableVersion) {
+			regPkgs[i].NeedsUpdate = true
+			if regPkgs[i].AvailableVersion == "" {
+				regPkgs[i].AvailableVersion = row.AvailableVersion
+			}
+		}
+	}
+
+	// winget truncates names to its column width, so unmatched rows can share a
+	// name; the server needs one package per name.
+	appended := make(map[string]int)
+	for j := range rows {
+		if used[j] {
+			continue
+		}
+		key := normalizePackageName(rows[j].pkg.Name)
+		if matchedNames[key] {
+			continue
+		}
+		if k, seen := appended[key]; seen {
+			if rows[j].pkg.NeedsUpdate && !regPkgs[k].NeedsUpdate {
+				regPkgs[k] = rows[j].pkg
+			}
+			continue
+		}
+		regPkgs = append(regPkgs, rows[j].pkg)
+		appended[key] = len(regPkgs) - 1
 	}
 
 	return regPkgs
+}
+
+// A truncated-name prefix also requires an equal version; a prefix alone is too loose.
+func matchRank(reg models.Package, row wingetRow) int {
+	name := normalizePackageName(reg.Name)
+	rowName := normalizePackageName(row.pkg.Name)
+	sameVersion := versionsEqual(reg.CurrentVersion, row.pkg.CurrentVersion)
+	switch {
+	case rowName == name && sameVersion:
+		return 3
+	case rowName == name:
+		return 2
+	case row.truncated && rowName != "" && strings.HasPrefix(name, rowName) && sameVersion:
+		return 1
+	}
+	return 0
+}
+
+func versionsEqual(a, b string) bool {
+	if c, ok := compareDottedVersions(a, b); ok {
+		return c == 0
+	}
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+}
+
+// installedIsOlder is true unless both versions are numeric and the installed
+// one is not below the available one. Non-numeric versions defer to winget.
+func installedIsOlder(installed, available string) bool {
+	if isUnknownVersion(installed) {
+		return false
+	}
+	if c, ok := compareDottedVersions(installed, available); ok {
+		return c < 0
+	}
+	return true
+}
+
+func isUnknownVersion(v string) bool {
+	v = strings.TrimSpace(v)
+	return v == "" || strings.EqualFold(v, "unknown")
+}
+
+// compareDottedVersions compares purely numeric dotted versions, treating
+// missing components as zero. ok is false when either side is not numeric.
+func compareDottedVersions(a, b string) (cmp int, ok bool) {
+	pa, okA := parseDottedVersion(a)
+	pb, okB := parseDottedVersion(b)
+	if !okA || !okB {
+		return 0, false
+	}
+	for i := 0; i < len(pa) || i < len(pb); i++ {
+		var x, y uint64
+		if i < len(pa) {
+			x = pa[i]
+		}
+		if i < len(pb) {
+			y = pb[i]
+		}
+		if x != y {
+			if x < y {
+				return -1, true
+			}
+			return 1, true
+		}
+	}
+	return 0, true
+}
+
+func parseDottedVersion(v string) ([]uint64, bool) {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if v == "" {
+		return nil, false
+	}
+	fields := strings.Split(v, ".")
+	out := make([]uint64, 0, len(fields))
+	for _, f := range fields {
+		n, err := strconv.ParseUint(f, 10, 64)
+		if err != nil {
+			return nil, false
+		}
+		out = append(out, n)
+	}
+	return out, true
+}
+
+type sqlServerSetup struct {
+	Instance   string `json:"Instance"`
+	Version    string `json:"Version"`
+	PatchLevel string `json:"PatchLevel"`
+}
+
+var (
+	sqlServerProductRe   = regexp.MustCompile(`^Microsoft SQL Server (\d{4}) \((?:64|32)-bit\)$`)
+	sqlServerInstanceRe  = regexp.MustCompile(`^MSSQL(\d+)\.`)
+	sqlServerMajorByYear = map[string]string{
+		"2012": "11", "2014": "12", "2016": "13", "2017": "14", "2019": "15", "2022": "16", "2025": "17",
+	}
+)
+
+func hasUnversionedSQLServer(pkgs []models.Package) bool {
+	for _, p := range pkgs {
+		if isUnknownVersion(p.CurrentVersion) && sqlServerProductRe.MatchString(p.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+// With several instances of one major version the lowest PatchLevel wins.
+func applySQLServerPatchLevels(pkgs []models.Package, setups []sqlServerSetup) {
+	lowest := map[string]string{}
+	for _, s := range setups {
+		m := sqlServerInstanceRe.FindStringSubmatch(s.Instance)
+		if m == nil {
+			continue
+		}
+		level := strings.TrimSpace(s.PatchLevel)
+		if _, ok := parseDottedVersion(level); !ok {
+			level = strings.TrimSpace(s.Version)
+		}
+		if _, ok := parseDottedVersion(level); !ok {
+			continue
+		}
+		if cur, seen := lowest[m[1]]; !seen {
+			lowest[m[1]] = level
+		} else if c, _ := compareDottedVersions(level, cur); c < 0 {
+			lowest[m[1]] = level
+		}
+	}
+	for i := range pkgs {
+		if !isUnknownVersion(pkgs[i].CurrentVersion) {
+			continue
+		}
+		m := sqlServerProductRe.FindStringSubmatch(pkgs[i].Name)
+		if m == nil {
+			continue
+		}
+		if level, ok := lowest[sqlServerMajorByYear[m[1]]]; ok {
+			pkgs[i].CurrentVersion = level
+		}
+	}
+}
+
+func (m *WindowsManager) getSQLServerSetups() []sqlServerSetup {
+	psScript := `
+$ErrorActionPreference = "SilentlyContinue"
+$result = @()
+Get-ChildItem -LiteralPath "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server" | Where-Object { $_.PSChildName -match '^MSSQL\d+\.' } | ForEach-Object {
+  $setup = Get-ItemProperty -LiteralPath (Join-Path $_.PSPath "Setup")
+  if ($setup) {
+    $result += @{
+      Instance   = [string]$_.PSChildName
+      Version    = [string]$setup.Version
+      PatchLevel = [string]$setup.PatchLevel
+    }
+  }
+}
+$result | ConvertTo-Json -Compress -Depth 2
+`
+	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
+	defer cancel()
+	output, err := cmd.Output()
+	if err != nil {
+		m.logger.WithError(err).Debug("SQL Server setup registry query failed")
+		return nil
+	}
+	return parseSQLServerSetups(output)
+}
+
+func parseSQLServerSetups(output []byte) []sqlServerSetup {
+	s := strings.TrimSpace(string(winexec.TrimBOM(output)))
+	if s == "" || s == "null" {
+		return nil
+	}
+	if !strings.HasPrefix(s, "[") {
+		s = "[" + s + "]"
+	}
+	var setups []sqlServerSetup
+	if err := json.Unmarshal([]byte(s), &setups); err != nil {
+		return nil
+	}
+	return setups
 }
 
 // normalizePackageName lowercases and trims for fuzzy matching between registry and WinGet names
@@ -302,7 +490,7 @@ func buildAppDescription(publisher, installDate, size string) string {
 // Uses PowerShell wrapper for UTF-8 encoding to avoid U+FFFD mojibake.
 // Resolves the actual winget.exe path to work in SYSTEM/Session 0 context
 // where winget may not be on PATH (it's a per-user UWP app).
-func (m *WindowsManager) getPackagesFromWinget() []models.Package {
+func (m *WindowsManager) getPackagesFromWinget() []wingetRow {
 	// Resolve winget.exe — it's installed as a UWP app (App Installer) and not always on SYSTEM PATH.
 	// Try PATH first, then known WindowsApps locations.
 	psScript := `
@@ -356,13 +544,23 @@ if ($out) { $out | Out-String }
 	}
 
 	// Second pass: winget list --upgrade-available for accurate NeedsUpdate/AvailableVersion
-	upgradeMap := m.getWingetUpgradeAvailable()
+	return wingetEntriesToRows(entries, m.getWingetUpgradeAvailable())
+}
 
-	var packages []models.Package
+type wingetRow struct {
+	pkg       models.Package
+	truncated bool
+}
+
+func wingetEntriesToRows(entries []wingetEntry, upgradeMap map[string]string) []wingetRow {
+	var rows []wingetRow
 	for _, e := range entries {
-		name := strings.TrimSpace(stripEllipsis(e.Name))
+		rawName := strings.TrimSpace(e.Name)
+		name := strings.TrimSpace(stripEllipsis(rawName))
+		truncated := name != rawName
 		if name == "" {
 			name = strings.TrimSpace(stripEllipsis(e.ID))
+			truncated = false
 		}
 		if name == "" {
 			continue
@@ -372,32 +570,48 @@ if ($out) { $out | Out-String }
 			version = "unknown"
 		}
 		avail := strings.TrimSpace(stripEllipsis(e.Available))
-		needsUpdate := false
 		id := strings.TrimSpace(stripEllipsis(e.ID))
-		if up, ok := upgradeMap[id]; ok {
-			needsUpdate = true
+		var needsUpdate bool
+		if up, listed := upgradeMap[id]; listed {
 			if avail == "" {
 				avail = up
 			}
-		} else if avail != "" && avail != version {
-			needsUpdate = true
+			needsUpdate = installedIsOlder(version, avail)
+		} else {
+			needsUpdate = availableIsNewer(avail, version)
 		}
-		// Forward WinGet source as SourceRepository
+		if !needsUpdate {
+			avail = ""
+		}
 		source := strings.TrimSpace(e.Source)
 		if source == "" {
-			source = "winget" // Default for WinGet-discovered packages
+			source = "winget"
 		}
 
-		packages = append(packages, models.Package{
-			Name:             name,
-			Category:         "Application",
-			CurrentVersion:   version,
-			AvailableVersion: avail,
-			NeedsUpdate:      needsUpdate,
-			SourceRepository: source,
+		rows = append(rows, wingetRow{
+			pkg: models.Package{
+				Name:             name,
+				Category:         "Application",
+				CurrentVersion:   version,
+				AvailableVersion: avail,
+				NeedsUpdate:      needsUpdate,
+				SourceRepository: source,
+			},
+			truncated: truncated,
 		})
 	}
-	return packages
+	return rows
+}
+
+// Non-numeric versions keep the plain inequality so winget's own ordering is not second-guessed.
+func availableIsNewer(available, installed string) bool {
+	if available == "" || isUnknownVersion(installed) {
+		return false
+	}
+	if c, ok := compareDottedVersions(available, installed); ok {
+		return c > 0
+	}
+	return available != installed
 }
 
 // parseWingetTable parses winget list fixed-width text output.

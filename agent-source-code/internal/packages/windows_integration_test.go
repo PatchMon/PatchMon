@@ -85,7 +85,14 @@ func TestWingetCollectorLive(t *testing.T) {
 	requireWindowsIntegration(t)
 
 	done := make(chan []models.Package, 1)
-	go func() { done <- newTestWindowsManager().getPackagesFromWinget() }()
+	go func() {
+		rows := newTestWindowsManager().getPackagesFromWinget()
+		pkgs := make([]models.Package, len(rows))
+		for i, r := range rows {
+			pkgs[i] = r.pkg
+		}
+		done <- pkgs
+	}()
 
 	select {
 	case pkgs := <-done:
