@@ -384,6 +384,7 @@ type HostsListResult struct {
 // in queries/dashboard.sql:GetHostsWithCounts.
 var hostsListSortWhitelist = map[string]string{
 	"agent_version":    "agent_version",
+	"config_version":   "config_version",
 	"friendly_name":    "friendly_name",
 	"group":            "group",
 	"hostname":         "hostname",

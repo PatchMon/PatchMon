@@ -950,6 +950,10 @@ const Hosts = () => {
 					aValue = a.agent_version?.toLowerCase() || "zzz_no_version";
 					bValue = b.agent_version?.toLowerCase() || "zzz_no_version";
 					break;
+				case "config_version":
+					aValue = a.config_version?.toLowerCase() || "zzz_no_version";
+					bValue = b.config_version?.toLowerCase() || "zzz_no_version";
+					break;
 				case "status":
 					aValue = a.effectiveStatus || a.status;
 					bValue = b.effectiveStatus || b.status;
@@ -2495,6 +2499,17 @@ const Hosts = () => {
 																			>
 																				{column.label}
 																				{getSortIcon("agent_version")}
+																			</button>
+																		) : column.id === "config_version" ? (
+																			<button
+																				type="button"
+																				onClick={() =>
+																					handleSort("config_version")
+																				}
+																				className="flex items-center gap-2 hover:text-secondary-700"
+																			>
+																				{column.label}
+																				{getSortIcon("config_version")}
 																			</button>
 																		) : column.id === "auto_update" ? (
 																			<div className="flex items-center gap-2 font-normal text-xs text-secondary-500 dark:text-white normal-case tracking-wider">

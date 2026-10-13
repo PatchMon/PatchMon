@@ -1,9 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import {
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+	within,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Hosts from "../../pages/Hosts";
-import { userPreferencesAPI } from "../../utils/api";
+import { dashboardAPI, userPreferencesAPI } from "../../utils/api";
 
 const { HOSTS } = vi.hoisted(() => {
 	const host = (overrides) => ({
@@ -138,6 +144,32 @@ describe("Hosts table config version", () => {
 		).toBeGreaterThan(0);
 		const row = desktopRow("old-agent");
 		expect(within(row).getByText("Requires agent 2.1.5")).toBeInTheDocument();
+	});
+
+	it("sorts by config version from its header, like Agent Version", async () => {
+		userPreferencesAPI.get.mockImplementation(() =>
+			Promise.resolve({
+				data: {
+					hosts_column_config: [
+						{ id: "agent_version", visible: true, order: 7 },
+						{ id: "config_version", visible: true, order: 8 },
+					],
+				},
+			}),
+		);
+		renderHosts();
+		const header = (
+			await screen.findAllByRole("columnheader", { name: /config version/i })
+		)[0];
+		const sortButton = within(header).getByRole("button", {
+			name: /config version/i,
+		});
+		fireEvent.click(sortButton);
+		await waitFor(() =>
+			expect(dashboardAPI.getHosts).toHaveBeenLastCalledWith(
+				expect.objectContaining({ sort: "config_version" }),
+			),
+		);
 	});
 
 	it("keeps a saved layout from before the column existed hidden", async () => {
