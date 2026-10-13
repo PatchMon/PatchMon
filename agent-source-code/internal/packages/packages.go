@@ -27,6 +27,8 @@ type Manager struct {
 	pacmanManager  *PacmanManager
 	freebsdManager *FreeBSDManager
 	winManager     *WindowsManager
+
+	windowsUpdatesOmitted bool
 }
 
 // New creates a new package manager
@@ -61,7 +63,7 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 	)
 	switch packageManager {
 	case "windows":
-		pkgs = m.winManager.GetPackages()
+		pkgs, m.windowsUpdatesOmitted = m.winManager.GetPackages()
 	case "apt":
 		pkgs, err = m.aptManager.GetPackages()
 	case "dnf", "yum":
@@ -82,6 +84,10 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 	// hash and the report payload consistent — both are derived downstream.
 	return textsan.CleanPackages(pkgs), nil
 }
+
+// WindowsUpdatesOmitted reports whether the last GetPackages left out Windows Update rows
+// because a patch run was using Windows Update.
+func (m *Manager) WindowsUpdatesOmitted() bool { return m.windowsUpdatesOmitted }
 
 // DetectPackageManager detects which package manager is available on the system.
 // Returns one of: apt, dnf, yum, apk, pacman, pkg, windows, or unknown.

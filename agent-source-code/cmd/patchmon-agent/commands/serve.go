@@ -2862,12 +2862,10 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 	return nil
 }
 
-const windowsPatchRunLimit = 4 * time.Hour
-
 // runPatchWindows runs a Windows patch run. A stop cancels searches and downloads between
 // items but never an install in progress.
 func runPatchWindows(patchRunID string, req packages.WindowsPatchRequest, parseErr string) error {
-	runCtx, runCancel := context.WithTimeout(context.Background(), windowsPatchRunLimit)
+	runCtx, runCancel := context.WithTimeout(context.Background(), packages.WindowsRunLimit(req))
 	defer runCancel()
 	stopCtx, stopCancel := context.WithCancel(runCtx)
 	defer stopCancel()
@@ -2923,10 +2921,13 @@ func runPatchWindows(patchRunID string, req packages.WindowsPatchRequest, parseE
 	sink.WriteString(patchRunTrailer(wasStopped, stageErr, req.DryRun))
 	sink.Flush()
 
-	reboot := res.RebootRequired
-	if err := httpClient.SendPatchFinal(finalCtx, patchRunID, res.Stage, fullOutput.String(), res.ErrorMessage, &reboot); err != nil {
-		logger.WithError(err).Warn("Failed to send Windows patch output to server")
-		return err
+	var reboot *bool
+	if !req.DryRun {
+		reboot = &res.RebootRequired
+	}
+	finalErr := httpClient.SendPatchFinal(finalCtx, patchRunID, res.Stage, fullOutput.String(), res.ErrorMessage, reboot)
+	if finalErr != nil {
+		logger.WithError(finalErr).Warn("Failed to send Windows patch output to server")
 	}
 
 	if !req.DryRun {
@@ -2951,7 +2952,7 @@ func runPatchWindows(patchRunID string, req packages.WindowsPatchRequest, parseE
 	case stageErr != nil:
 		return stageErr
 	}
-	return nil
+	return finalErr
 }
 
 // applyConfig applies a full config update from the server and restarts the service.

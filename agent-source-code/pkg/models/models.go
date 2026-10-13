@@ -134,6 +134,9 @@ type ReportPayload struct {
 	// spent collecting the data shipped in this report. Used by the server's
 	// Agent Activity feed; older servers ignore it.
 	AgentExecutionMs *int `json:"agentExecutionMs,omitempty"`
+	// WindowsUpdatesOmitted tells the server this report has no Windows Update rows
+	// because a patch run held Windows Update, so it keeps the stored ones.
+	WindowsUpdatesOmitted bool `json:"windowsUpdatesOmitted,omitempty"`
 }
 
 // ReportHashes is the four "main report" canonical hashes the agent ships

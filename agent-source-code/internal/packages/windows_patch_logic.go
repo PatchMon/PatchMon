@@ -652,30 +652,37 @@ var defaultWindowsPatchTimeouts = windowsPatchTimeouts{
 var wuaMu sync.Mutex
 
 var (
-	lastWindowsUpdatesMu sync.Mutex
-	lastWindowsUpdates   []models.Package
+	lastWindowsUpdatesMu  sync.Mutex
+	lastWindowsUpdates    []models.Package
+	lastWindowsUpdatesSet bool
 )
 
-// While a patch run holds wuaMu, a report gets the last pending list: an empty one would
-// wipe every pending update row on the server mid-run.
-func (m *WindowsManager) windowsUpdatesGuarded() []models.Package {
+// While a patch run holds wuaMu, a report gets the last pending list instead of searching.
+// With no list cached yet, it reports the updates as omitted so the server keeps its rows.
+func (m *WindowsManager) windowsUpdatesGuarded() (pkgs []models.Package, omitted bool) {
 	return guardedWindowsUpdates(m.getWindowsUpdates)
 }
 
-func guardedWindowsUpdates(collect func() []models.Package) []models.Package {
+func guardedWindowsUpdates(collect func() []models.Package) ([]models.Package, bool) {
 	if !wuaMu.TryLock() {
 		lastWindowsUpdatesMu.Lock()
 		defer lastWindowsUpdatesMu.Unlock()
-		return append([]models.Package(nil), lastWindowsUpdates...)
+		if !lastWindowsUpdatesSet {
+			return nil, true
+		}
+		out := make([]models.Package, len(lastWindowsUpdates))
+		copy(out, lastWindowsUpdates)
+		return out, false
 	}
 	defer wuaMu.Unlock()
 	pkgs := collect()
 	if pkgs != nil {
 		lastWindowsUpdatesMu.Lock()
 		lastWindowsUpdates = append([]models.Package(nil), pkgs...)
+		lastWindowsUpdatesSet = true
 		lastWindowsUpdatesMu.Unlock()
 	}
-	return pkgs
+	return pkgs, false
 }
 
 // UpdatableWingetApps returns installed applications without querying Windows Update.
@@ -908,7 +915,7 @@ func (r *windowsPatchRun) run(runCtx, stopCtx context.Context) WindowsPatchResul
 			res.RebootRequired = true
 		}
 	}
-	if !res.RebootRequired && r.hooks.RebootRequired != nil {
+	if !r.req.DryRun && !res.RebootRequired && r.hooks.RebootRequired != nil {
 		res.RebootRequired = r.hooks.RebootRequired()
 	}
 	if len(res.Items) == 0 && len(r.runErrors) == 0 {
@@ -918,6 +925,7 @@ func (r *windowsPatchRun) run(runCtx, stopCtx context.Context) WindowsPatchResul
 		r.out("\n[Restart required] A restart is required to finish installing updates. PatchMon does not restart the host.\n")
 	}
 	res.Stage, res.ErrorMessage = finalWindowsStage(res.Items, r.runErrors, r.stopped(), r.req.DryRun, !r.req.PatchAll)
+	r.post(r.items...)
 	return res
 }
 
@@ -1189,6 +1197,21 @@ func (r *windowsPatchRun) runWingetPhase(runCtx, stopCtx context.Context, winget
 		r.finish(it, oc.Status, oc.Message)
 		r.out("  %s: %s\n", it.ID, it.Message)
 	}
+}
+
+// WindowsRunLimit is the overall time cap for a run. Named targets may include a feature
+// upgrade, which needs its own download and install budget.
+func WindowsRunLimit(req WindowsPatchRequest) time.Duration {
+	const base = 4 * time.Hour
+	if req.PatchAll {
+		return base
+	}
+	for _, t := range req.Targets {
+		if t.Kind == WindowsTargetWUA {
+			return max(base, defaultWindowsPatchTimeouts.downloadFeature+defaultWindowsPatchTimeouts.installFeature+time.Hour)
+		}
+	}
+	return base
 }
 
 // RunWindowsPatch runs a Windows patch run with the host's WUA and winget backends.

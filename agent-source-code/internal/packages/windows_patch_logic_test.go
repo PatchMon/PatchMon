@@ -419,20 +419,51 @@ func TestWingetChildEnv(t *testing.T) {
 	}
 }
 
+func resetWindowsUpdatesCache(t *testing.T) {
+	t.Helper()
+	reset := func() {
+		lastWindowsUpdatesMu.Lock()
+		lastWindowsUpdates, lastWindowsUpdatesSet = nil, false
+		lastWindowsUpdatesMu.Unlock()
+	}
+	reset()
+	t.Cleanup(reset)
+}
+
 func TestGuardedWindowsUpdatesUsesCacheWhileLocked(t *testing.T) {
+	resetWindowsUpdatesCache(t)
 	first := []models.Package{{Name: "KB1", NeedsUpdate: true}}
-	if got := guardedWindowsUpdates(func() []models.Package { return first }); len(got) != 1 {
-		t.Fatalf("got %+v", got)
+	if got, omitted := guardedWindowsUpdates(func() []models.Package { return first }); omitted || len(got) != 1 {
+		t.Fatalf("got %+v, omitted %v", got, omitted)
 	}
 	wuaMu.Lock()
 	called := false
-	got := guardedWindowsUpdates(func() []models.Package { called = true; return nil })
+	got, omitted := guardedWindowsUpdates(func() []models.Package { called = true; return nil })
 	wuaMu.Unlock()
 	if called {
 		t.Error("collector must not search while a patch run holds wuaMu")
 	}
-	if len(got) != 1 || got[0].Name != "KB1" {
-		t.Errorf("locked result = %+v, want the cached list", got)
+	if omitted || len(got) != 1 || got[0].Name != "KB1" {
+		t.Errorf("locked result = %+v, omitted %v, want the cached list", got, omitted)
+	}
+}
+
+func TestGuardedWindowsUpdatesWithoutCacheIsOmitted(t *testing.T) {
+	resetWindowsUpdatesCache(t)
+	wuaMu.Lock()
+	got, omitted := guardedWindowsUpdates(func() []models.Package { return nil })
+	wuaMu.Unlock()
+	if !omitted || got != nil {
+		t.Fatalf("got %+v, omitted %v; an empty list without the flag would wipe the server's update rows", got, omitted)
+	}
+	if _, omitted := guardedWindowsUpdates(func() []models.Package { return []models.Package{} }); omitted {
+		t.Fatal("a fresh scan is never omitted")
+	}
+	wuaMu.Lock()
+	got, omitted = guardedWindowsUpdates(func() []models.Package { return nil })
+	wuaMu.Unlock()
+	if omitted || got == nil || len(got) != 0 {
+		t.Errorf("a cached empty list is a real answer: %#v, omitted %v", got, omitted)
 	}
 }
 
@@ -785,5 +816,36 @@ func TestRunTimeLimitFailsRun(t *testing.T) {
 	res := newWindowsPatchRun(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, (&recorder{}).hooks(), w, &fakeWinget{}).run(runCtx, context.Background())
 	if len(w.installs) != 0 || res.Stage != "failed" || !strings.Contains(res.ErrorMessage, msgTimeLimit) {
 		t.Errorf("time limit = %+v, installs %v", res, w.installs)
+	}
+}
+
+func TestRunRepostsEveryItemLast(t *testing.T) {
+	w := &fakeWUA{scan: wuaScan{Updates: []wuaUpdate{{ID: guidA, Title: "A", Type: 1}, {ID: guidB, Title: "B", Type: 1}}}}
+	rec := &recorder{}
+	res := runFake(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, rec, w, &fakeWinget{})
+	last := rec.posts[len(rec.posts)-1]
+	if !reflect.DeepEqual(last, res.Items) {
+		t.Errorf("last post = %+v, want every final item %+v", last, res.Items)
+	}
+}
+
+func TestRunDryRunSkipsSystemRestartCheck(t *testing.T) {
+	rec := &recorder{reboot: true}
+	res := runFake(WindowsPatchRequest{PatchAll: true, DryRun: true, IncludeUpdates: true}, rec, &fakeWUA{scan: sampleScan()}, &fakeWinget{})
+	if res.RebootRequired {
+		t.Error("a dry run must not report the host's restart state")
+	}
+}
+
+func TestWindowsRunLimit(t *testing.T) {
+	if got := WindowsRunLimit(WindowsPatchRequest{PatchAll: true}); got != 4*time.Hour {
+		t.Errorf("patch_all = %v", got)
+	}
+	if got := WindowsRunLimit(WindowsPatchRequest{Targets: []WindowsPatchTarget{{Kind: WindowsTargetWinget, ID: "a.b"}}}); got != 4*time.Hour {
+		t.Errorf("apps only = %v", got)
+	}
+	got := WindowsRunLimit(WindowsPatchRequest{Targets: []WindowsPatchTarget{{Kind: WindowsTargetWUA, ID: guidA}}})
+	if got < defaultWindowsPatchTimeouts.downloadFeature+defaultWindowsPatchTimeouts.installFeature {
+		t.Errorf("named updates = %v, too short for a feature upgrade", got)
 	}
 }

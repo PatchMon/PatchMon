@@ -174,6 +174,7 @@ func collectReportData() (*collectedReport, error) {
 	// pointer so older servers see the field omitted when collection failed.
 	executionMs := int(time.Since(startTime).Milliseconds())
 	payload := &models.ReportPayload{
+		WindowsUpdatesOmitted:  packageMgr.WindowsUpdatesOmitted(),
 		Packages:               packageList,
 		Repositories:           repoList,
 		OSType:                 osType,
@@ -777,6 +778,7 @@ func sendPartialReport(ctx context.Context, httpClient *client.Client, full *mod
 	if wantPackages {
 		partial.Packages = full.Packages
 		partial.PackageManager = full.PackageManager
+		partial.WindowsUpdatesOmitted = full.WindowsUpdatesOmitted
 	} else {
 		partial.Packages = nil
 	}

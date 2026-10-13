@@ -48,15 +48,15 @@ type wingetEntry struct {
 //  2. Try WinGet as supplementary source for update availability enrichment
 //  3. Merge: registry provides the baseline, WinGet adds NeedsUpdate/AvailableVersion
 //  4. Collect Windows OS updates (installed KBs + pending via WUA COM API)
-func (m *WindowsManager) GetPackages() []models.Package {
+func (m *WindowsManager) GetPackages() (pkgs []models.Package, windowsUpdatesOmitted bool) {
 	if runtime.GOOS != "windows" {
-		return nil
+		return nil, false
 	}
 
 	appPackages := m.appPackages()
 
 	// 4. Collect Windows OS updates (installed KBs + pending updates)
-	winUpdates := m.windowsUpdatesGuarded()
+	winUpdates, omitted := m.windowsUpdatesGuarded()
 	m.logger.WithField("count", len(winUpdates)).Info("Collected Windows OS updates")
 
 	// 5. Set SourceRepository for Windows Update entries based on WSUS config
@@ -74,9 +74,9 @@ func (m *WindowsManager) GetPackages() []models.Package {
 	all = append(all, winUpdates...)
 
 	if len(all) == 0 {
-		return []models.Package{}
+		return []models.Package{}, omitted
 	}
-	return all
+	return all, omitted
 }
 
 // appPackages collects installed applications from the registry, enriched with WinGet.

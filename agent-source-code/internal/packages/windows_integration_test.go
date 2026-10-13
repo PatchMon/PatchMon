@@ -136,7 +136,7 @@ func TestWindowsUpdatesCollectorLive(t *testing.T) {
 			}
 			if p.WUAGuid == "" {
 				missingGUID++
-				t.Logf("update %d (%s) has no WUA GUID, so InstallWindowsUpdate cannot act on it", i, p.Name)
+				t.Logf("update %d (%s) has no WUA GUID, so the patch runner cannot target it", i, p.Name)
 			}
 		}
 		// Logged rather than failed: a hosted runner has a constrained Windows
@@ -163,7 +163,10 @@ func TestWSUSCheckLive(t *testing.T) {
 func TestGetPackagesLive(t *testing.T) {
 	requireWindowsIntegration(t)
 
-	pkgs := newTestWindowsManager().GetPackages()
+	pkgs, omitted := newTestWindowsManager().GetPackages()
+	if omitted {
+		t.Fatal("Windows Updates omitted with no patch run active")
+	}
 	if len(pkgs) == 0 {
 		t.Fatal("GetPackages returned nothing; the registry collector alone should have populated it")
 	}
