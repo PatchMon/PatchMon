@@ -1678,13 +1678,7 @@ func patchRunToResponse(r *db.GetPatchRunByIDRow) map[string]interface{} {
 		"policy_id":             r.PolicyID,
 		"policy_name":           r.PolicyName,
 		"reboot_required":       r.RebootRequired,
-		"windows_scope":         nil,
-	}
-	if r.WindowsIncludeUpdates != nil || r.WindowsIncludeApps != nil {
-		m["windows_scope"] = map[string]bool{
-			"updates": r.WindowsIncludeUpdates == nil || *r.WindowsIncludeUpdates,
-			"apps":    r.WindowsIncludeApps == nil || *r.WindowsIncludeApps,
-		}
+		"windows_scope":         windowsScopeResponse(r.WindowsIncludeUpdates, r.WindowsIncludeApps),
 	}
 	if len(r.PolicySnapshot) > 0 {
 		var snap map[string]interface{}
@@ -1709,6 +1703,16 @@ func patchRunToResponse(r *db.GetPatchRunByIDRow) map[string]interface{} {
 		"os_type":       r.HostOsType,
 	}
 	return m
+}
+
+func windowsScopeResponse(updates, apps *bool) map[string]bool {
+	if updates == nil && apps == nil {
+		return nil
+	}
+	return map[string]bool{
+		"updates": updates == nil || *updates,
+		"apps":    apps == nil || *apps,
+	}
 }
 
 func pgTimeToISOPtr(t pgtype.Timestamp) *string {
@@ -1780,6 +1784,7 @@ func patchRunsListToResponse(rows []db.ListPatchRunsRow) []map[string]interface{
 		m := patchRunRowToMap(r.ID, r.HostID, r.JobID, r.PatchType, r.PackageName, r.PackageNames, r.Status, r.ShellOutput, r.ErrorMessage, r.StartedAt, r.CompletedAt, r.ScheduledAt, r.CreatedAt, r.UpdatedAt, r.HostFriendlyName, r.HostHostname, r.TriggeredByUsername)
 		m["dry_run"] = r.DryRun
 		m["validation_run_id"] = r.ValidationRunID
+		m["windows_scope"] = windowsScopeResponse(r.WindowsIncludeUpdates, r.WindowsIncludeApps)
 		if len(r.PackagesAffected) > 0 {
 			var pkgs []string
 			_ = json.Unmarshal(r.PackagesAffected, &pkgs)

@@ -1057,7 +1057,7 @@ func buildHostPackagesPayload(
 			}
 			browseOnly := p.WUABrowseOnly
 			row.WUABrowseOnly = &browseOnly
-			if p.WUAType == WUAUpdateTypeSoftware || p.WUAType == WUAUpdateTypeDriver {
+			if p.WUAType == WUAUpdateTypeSoftware || p.WUAType == WUAUpdateTypeDriver || p.WUAType == WUAUpdateTypeFeature {
 				row.WUAUpdateType = p.WUAType
 			}
 		}

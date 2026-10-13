@@ -9,6 +9,7 @@ import (
 const (
 	WUAUpdateTypeSoftware = "Software"
 	WUAUpdateTypeDriver   = "Driver"
+	WUAUpdateTypeFeature  = "FeatureUpgrade"
 )
 
 var (

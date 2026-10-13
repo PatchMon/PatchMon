@@ -235,3 +235,13 @@ func TestPackageNameRegexIsNotACharacterRange(t *testing.T) {
 		}
 	}
 }
+
+func TestWindowsScopeResponse(t *testing.T) {
+	if windowsScopeResponse(nil, nil) != nil {
+		t.Error("non-Windows run got a scope")
+	}
+	got := windowsScopeResponse(boolp(false), nil)
+	if got["updates"] || !got["apps"] {
+		t.Errorf("got %v", got)
+	}
+}

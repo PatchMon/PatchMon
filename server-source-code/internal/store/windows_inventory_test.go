@@ -119,3 +119,13 @@ func namedQueryIn(t *testing.T, src, name string) string {
 	}
 	return rest
 }
+
+func TestBuildHostPackagesPayloadFeatureUpgradeType(t *testing.T) {
+	raw, err := buildHostPackagesPayload("h1", []ReportPackage{{Name: "24H2", CurrentVersion: "pending", NeedsUpdate: true, WUAGuid: "aaaaaaaa-1111-2222-3333-444455556666", WUAType: "FeatureUpgrade"}}, map[string]string{"24H2": "p1"}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"wua_update_type":"FeatureUpgrade"`) {
+		t.Fatalf("payload = %s", raw)
+	}
+}

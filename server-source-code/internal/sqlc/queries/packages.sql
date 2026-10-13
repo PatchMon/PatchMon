@@ -57,7 +57,7 @@ SELECT hp.id, hp.host_id, hp.package_id, hp.current_version, hp.available_versio
     (CASE WHEN hp.wua_guid IS NOT NULL THEN 'wua' WHEN hp.winget_id IS NOT NULL THEN 'winget' ELSE '' END)::text AS patch_source,
     COALESCE(hp.wua_browse_only, false)::boolean AS wua_browse_only,
     COALESCE(hp.wua_update_type, '')::text AS wua_update_type,
-    COALESCE(hp.wua_categories @> '["Upgrades"]'::jsonb, false)::boolean AS is_feature_upgrade
+    (hp.wua_update_type IS NOT DISTINCT FROM 'FeatureUpgrade' OR COALESCE(hp.wua_categories @> '["Upgrades"]'::jsonb, false))::boolean AS is_feature_upgrade
 FROM host_packages hp
 JOIN hosts h ON h.id = hp.host_id
 LEFT JOIN repositories r ON r.id = hp.source_repository_id
@@ -86,7 +86,7 @@ WITH ranked_refs AS (
         (CASE WHEN hp.wua_guid IS NOT NULL THEN 'wua' WHEN hp.winget_id IS NOT NULL THEN 'winget' ELSE '' END)::text AS patch_source,
         COALESCE(hp.wua_browse_only, false)::boolean AS wua_browse_only,
         COALESCE(hp.wua_update_type, '')::text AS wua_update_type,
-        COALESCE(hp.wua_categories @> '["Upgrades"]'::jsonb, false)::boolean AS is_feature_upgrade,
+        (hp.wua_update_type IS NOT DISTINCT FROM 'FeatureUpgrade' OR COALESCE(hp.wua_categories @> '["Upgrades"]'::jsonb, false))::boolean AS is_feature_upgrade,
         row_number() OVER (
             PARTITION BY hp.package_id
             ORDER BY hp.needs_update DESC, h.friendly_name ASC, h.id ASC
@@ -125,7 +125,7 @@ SELECT h.id, h.friendly_name, h.hostname, h.os_type, h.os_version, h.last_update
     (CASE WHEN hp.wua_guid IS NOT NULL THEN 'wua' WHEN hp.winget_id IS NOT NULL THEN 'winget' ELSE '' END)::text AS patch_source,
     COALESCE(hp.wua_browse_only, false)::boolean AS wua_browse_only,
     COALESCE(hp.wua_update_type, '')::text AS wua_update_type,
-    COALESCE(hp.wua_categories @> '["Upgrades"]'::jsonb, false)::boolean AS is_feature_upgrade
+    (hp.wua_update_type IS NOT DISTINCT FROM 'FeatureUpgrade' OR COALESCE(hp.wua_categories @> '["Upgrades"]'::jsonb, false))::boolean AS is_feature_upgrade
 FROM host_packages hp
 JOIN hosts h ON h.id = hp.host_id
 LEFT JOIN repositories r ON r.id = hp.source_repository_id
