@@ -887,13 +887,17 @@ func (r *windowsPatchRun) run(runCtx, stopCtx context.Context) WindowsPatchResul
 	}
 
 	res := WindowsPatchResult{}
+	installedUpdate := false
 	for _, it := range r.items {
 		res.Items = append(res.Items, *it)
 		if it.RebootRequired {
 			res.RebootRequired = true
 		}
+		if it.Kind == WindowsTargetWUA && (it.Status == itemInstalled || it.Status == itemInstalledWithErrors) {
+			installedUpdate = true
+		}
 	}
-	if !r.req.DryRun && !res.RebootRequired && r.hooks.RebootRequired != nil {
+	if !r.req.DryRun && !res.RebootRequired && installedUpdate && r.hooks.RebootRequired != nil {
 		res.RebootRequired = r.hooks.RebootRequired()
 	}
 	if len(res.Items) == 0 && len(r.runErrors) == 0 {

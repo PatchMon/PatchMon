@@ -808,3 +808,19 @@ func TestPendingRestartRuleIsShared(t *testing.T) {
 		t.Error("wua_pending.ps1 contains a Go format verb")
 	}
 }
+
+func TestRunRestartReflectsThisRunOnly(t *testing.T) {
+	g := &fakeWinget{apps: []models.Package{{Name: "7-Zip", WingetID: "7zip.7zip", NeedsUpdate: true}}}
+	res := runFake(WindowsPatchRequest{PatchAll: true, IncludeApps: true}, &recorder{reboot: true}, &fakeWUA{}, g)
+	if res.RebootRequired {
+		t.Error("an apps-only run must not report the host's pending restart")
+	}
+	w := &fakeWUA{scan: wuaScan{Updates: []wuaUpdate{{ID: guidA, Title: "A", Type: 1}}}, installRes: map[string]wuaOpResult{guidA: {Found: true, AlreadyInstalled: true}}}
+	if res := runFake(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, &recorder{reboot: true}, w, &fakeWinget{}); res.RebootRequired {
+		t.Error("a run that installed no update must not report the host's pending restart")
+	}
+	w = &fakeWUA{scan: wuaScan{Updates: []wuaUpdate{{ID: guidA, Title: "A", Type: 1}}}}
+	if res := runFake(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, &recorder{reboot: true}, w, &fakeWinget{}); !res.RebootRequired {
+		t.Error("an installed update followed by a pending restart must report it")
+	}
+}
