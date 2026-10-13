@@ -695,9 +695,8 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 	}
 
-	host, err := h.hosts.GetByID(r.Context(), valRun.HostID)
-	if err != nil || host == nil {
-		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Host not found for run"})
+	host, ok := loadHost(w, r, h.hosts, valRun.HostID)
+	if !ok {
 		return
 	}
 
@@ -908,9 +907,8 @@ func (h *PatchingHandler) RetryValidation(w http.ResponseWriter, r *http.Request
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Only pending-validation runs can be retried"})
 		return
 	}
-	host, err := h.hosts.GetByID(r.Context(), run.HostID)
-	if err != nil || host == nil {
-		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Host not found for run"})
+	host, ok := loadHost(w, r, h.hosts, run.HostID)
+	if !ok {
 		return
 	}
 	windows := store.IsWindowsOSType(host.OSType)
@@ -1080,9 +1078,8 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	host, err := h.hosts.GetByID(r.Context(), body.HostID)
-	if err != nil || host == nil {
-		JSON(w, http.StatusNotFound, map[string]string{"error": "Host not found"})
+	host, ok := loadHost(w, r, h.hosts, body.HostID)
+	if !ok {
 		return
 	}
 	windows := store.IsWindowsOSType(host.OSType)
@@ -1215,7 +1212,7 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		}
 		createOpts.InitialStatus = "pending_approval"
 	}
-	_, err = h.patchRuns.CreateRun(r.Context(), patchRunID, body.HostID, jobID, body.PatchType, pkgName, pkgNames, triggeredBy, body.DryRun, scheduledAt, policyID, policyNamePtr, policySnapshot, createOpts)
+	_, err := h.patchRuns.CreateRun(r.Context(), patchRunID, body.HostID, jobID, body.PatchType, pkgName, pkgNames, triggeredBy, body.DryRun, scheduledAt, policyID, policyNamePtr, policySnapshot, createOpts)
 	if errors.Is(err, store.ErrHostHasActivePatchRun) {
 		JSON(w, http.StatusConflict, map[string]string{"error": activePatchRunMessage})
 		return

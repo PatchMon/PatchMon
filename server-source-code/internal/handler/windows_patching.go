@@ -2,12 +2,14 @@ package handler
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 )
@@ -253,6 +255,21 @@ func itemTitles(items []store.NewPatchRunItem) []string {
 		out[i] = it.Title
 	}
 	return out
+}
+
+// loadHost writes 404 only for a host that does not exist; a failed lookup is logged and answered with 500.
+func loadHost(w http.ResponseWriter, r *http.Request, hosts *store.HostsStore, hostID string) (*models.Host, bool) {
+	host, err := hosts.GetByID(r.Context(), hostID)
+	if err != nil {
+		slog.Error("host lookup failed", "host_id", hostID, "path", r.URL.Path, "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load host"})
+		return nil, false
+	}
+	if host == nil {
+		JSON(w, http.StatusNotFound, map[string]string{"error": "Host not found"})
+		return nil, false
+	}
+	return host, true
 }
 
 func writeRunRequestError(w http.ResponseWriter, e *runRequestError) {
