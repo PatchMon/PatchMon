@@ -734,10 +734,12 @@ func guardedWindowsUpdates(collect func() []models.Package) ([]models.Package, b
 		}
 		out := make([]models.Package, len(lastWindowsUpdates))
 		copy(out, lastWindowsUpdates)
+		applyRestartPending(out)
 		return out, false
 	}
 	defer wuaMu.Unlock()
 	pkgs := collect()
+	applyRestartPending(pkgs)
 	if pkgs != nil {
 		lastWindowsUpdatesMu.Lock()
 		lastWindowsUpdates = append([]models.Package(nil), pkgs...)
@@ -745,6 +747,39 @@ func guardedWindowsUpdates(collect func() []models.Package) ([]models.Package, b
 		lastWindowsUpdatesMu.Unlock()
 	}
 	return pkgs, false
+}
+
+func invalidateWindowsUpdatesCache() {
+	lastWindowsUpdatesMu.Lock()
+	lastWindowsUpdates, lastWindowsUpdatesSet = nil, false
+	lastWindowsUpdatesMu.Unlock()
+}
+
+var (
+	restartPendingMu  sync.Mutex
+	restartPendingIDs = map[string]bool{}
+)
+
+// noteRestartPending records an update this process installed that waits for a restart.
+// Windows Update keeps offering it until then, and its history can lag the install.
+func noteRestartPending(id string) {
+	restartPendingMu.Lock()
+	restartPendingIDs[strings.ToLower(id)] = true
+	restartPendingMu.Unlock()
+}
+
+func applyRestartPending(pkgs []models.Package) {
+	restartPendingMu.Lock()
+	defer restartPendingMu.Unlock()
+	if len(restartPendingIDs) == 0 {
+		return
+	}
+	for i := range pkgs {
+		if pkgs[i].WUAGuid != "" && pkgs[i].NeedsUpdate && restartPendingIDs[strings.ToLower(pkgs[i].WUAGuid)] {
+			pkgs[i].NeedsUpdate = false
+			pkgs[i].CurrentVersion = wuaPendingRestartVersion
+		}
+	}
 }
 
 // UpdatableWingetApps returns the apps winget would upgrade unattended: flagged for update,
@@ -1068,6 +1103,7 @@ func (r *windowsPatchRun) failWUATargets(wuaIDs []string, status, message string
 func (r *windowsPatchRun) runWUAPhase(runCtx, stopCtx context.Context, wuaIDs []string) {
 	wuaMu.Lock()
 	defer wuaMu.Unlock()
+	defer r.recordWUAOutcome()
 
 	r.out("[Windows Update] Searching for updates...\n")
 	var scan wuaScan
@@ -1204,6 +1240,30 @@ func (r *windowsPatchRun) runWUAPhase(runCtx, stopCtx context.Context, wuaIDs []
 		if it.Status == itemFailed && isInstallBlockedHResult(it.HResult) {
 			blocked = msgRestartFirst
 		}
+	}
+}
+
+// recordWUAOutcome runs while the run still holds wuaMu, so the next report searches afresh
+// and shows what this run installed as waiting for a restart.
+func (r *windowsPatchRun) recordWUAOutcome() {
+	if r.req.DryRun {
+		return
+	}
+	attempted := false
+	for _, it := range r.items {
+		if it.Kind != WindowsTargetWUA {
+			continue
+		}
+		if it.StartedAt != "" {
+			attempted = true
+		}
+		installed := it.Status == itemInstalled || it.Status == itemInstalledWithErrors
+		if (installed && it.RebootRequired) || it.Status == itemPendingReboot {
+			noteRestartPending(it.ID)
+		}
+	}
+	if attempted {
+		invalidateWindowsUpdatesCache()
 	}
 }
 

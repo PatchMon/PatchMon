@@ -1041,3 +1041,78 @@ func TestSignificantRenames(t *testing.T) {
 		t.Error("new NSIS temp deletes must not be noticed")
 	}
 }
+
+func resetRestartPending(t *testing.T) {
+	t.Helper()
+	reset := func() {
+		restartPendingMu.Lock()
+		restartPendingIDs = map[string]bool{}
+		restartPendingMu.Unlock()
+	}
+	reset()
+	t.Cleanup(reset)
+}
+
+func TestReportAfterRunSearchesAfreshAndShowsRestartPending(t *testing.T) {
+	resetWindowsUpdatesCache(t)
+	resetRestartPending(t)
+	stale := []models.Package{
+		{Name: "KB5127690", WUAGuid: guidA, NeedsUpdate: true, CurrentVersion: "pending"},
+		{Name: "KB2", WUAGuid: guidB, NeedsUpdate: true, CurrentVersion: "pending"},
+	}
+	if _, omitted := guardedWindowsUpdates(func() []models.Package { return stale }); omitted {
+		t.Fatal("setup scan omitted")
+	}
+
+	w := &fakeWUA{
+		scan:       wuaScan{Updates: []wuaUpdate{{ID: guidA, Title: ".NET", Type: 1}}},
+		installRes: map[string]wuaOpResult{guidA: {Found: true, ResultCode: 2, RebootRequired: true}},
+	}
+	runFake(WindowsPatchRequest{Targets: []WindowsPatchTarget{{Kind: WindowsTargetWUA, ID: guidA}}}, &recorder{}, w, &fakeWinget{})
+
+	searched := false
+	wuaStillOffers := func() []models.Package {
+		searched = true
+		return []models.Package{
+			{Name: "KB5127690", WUAGuid: strings.ToUpper(guidA), NeedsUpdate: true, CurrentVersion: "pending"},
+			{Name: "KB2", WUAGuid: guidB, NeedsUpdate: true, CurrentVersion: "pending"},
+		}
+	}
+	got, omitted := guardedWindowsUpdates(wuaStillOffers)
+	if !searched || omitted {
+		t.Fatalf("the report after a run must search Windows Update again (searched %v, omitted %v)", searched, omitted)
+	}
+	if got[0].NeedsUpdate || got[0].CurrentVersion != wuaPendingRestartVersion {
+		t.Errorf("installed update = %+v, want pending restart", got[0])
+	}
+	if !got[1].NeedsUpdate {
+		t.Errorf("an untouched update must stay pending: %+v", got[1])
+	}
+
+	wuaMu.Lock()
+	cached, omitted := guardedWindowsUpdates(func() []models.Package { return nil })
+	wuaMu.Unlock()
+	if omitted || cached[0].NeedsUpdate {
+		t.Errorf("a report during a later run must also show the restart: %+v", cached)
+	}
+}
+
+func TestRunInvalidatesTheUpdateCacheAfterInstalling(t *testing.T) {
+	resetWindowsUpdatesCache(t)
+	resetRestartPending(t)
+	guardedWindowsUpdates(func() []models.Package { return []models.Package{{Name: "KB1"}} })
+	w := &fakeWUA{scan: wuaScan{Updates: []wuaUpdate{{ID: guidA, Title: "A", Type: 1}}}, installRes: map[string]wuaOpResult{guidA: {Found: true, ResultCode: 4}}}
+	runFake(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, &recorder{}, w, &fakeWinget{})
+	wuaMu.Lock()
+	_, omitted := guardedWindowsUpdates(func() []models.Package { return nil })
+	wuaMu.Unlock()
+	if !omitted {
+		t.Error("the pre-run update list must not be reused after an install attempt")
+	}
+	restartPendingMu.Lock()
+	n := len(restartPendingIDs)
+	restartPendingMu.Unlock()
+	if n != 0 {
+		t.Error("a failed install must not be recorded as waiting for a restart")
+	}
+}
