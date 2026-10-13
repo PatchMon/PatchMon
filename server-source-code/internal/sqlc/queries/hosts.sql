@@ -170,7 +170,11 @@ UPDATE hosts SET
         ELSE sqlc.narg('reboot_reason')::text
     END,
     agent_version  = COALESCE(sqlc.narg('agent_version')::text, agent_version),
-    config_version = COALESCE(sqlc.narg('config_version')::text, config_version),
+    config_version = CASE
+        WHEN sqlc.narg('config_version')::text IS NOT NULL THEN sqlc.narg('config_version')::text
+        WHEN sqlc.narg('agent_version')::text IS NOT NULL THEN NULL
+        ELSE config_version
+    END,
     reported_host_id = COALESCE(sqlc.narg('reported_host_id')::text, reported_host_id)
 WHERE id = sqlc.arg('id');
 

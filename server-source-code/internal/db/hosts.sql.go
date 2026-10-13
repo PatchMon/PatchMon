@@ -1115,7 +1115,11 @@ UPDATE hosts SET
         ELSE $10::text
     END,
     agent_version  = COALESCE($11::text, agent_version),
-    config_version = COALESCE($12::text, config_version),
+    config_version = CASE
+        WHEN $12::text IS NOT NULL THEN $12::text
+        WHEN $11::text IS NOT NULL THEN NULL
+        ELSE config_version
+    END,
     reported_host_id = COALESCE($13::text, reported_host_id)
 WHERE id = $14
 `

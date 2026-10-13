@@ -12,7 +12,12 @@ UPDATE hosts SET
     ip = COALESCE(sqlc.narg('ip')::text, ip),
     architecture = COALESCE(sqlc.narg('architecture')::text, architecture),
     agent_version = COALESCE(sqlc.narg('agent_version')::text, agent_version),
-    config_version = COALESCE(sqlc.narg('config_version')::text, config_version),
+    -- An agent version without a config version is a pre-2.1.5 agent, which has none.
+    config_version = CASE
+        WHEN sqlc.narg('config_version')::text IS NOT NULL THEN sqlc.narg('config_version')::text
+        WHEN sqlc.narg('agent_version')::text IS NOT NULL THEN NULL
+        ELSE config_version
+    END,
     reported_host_id = COALESCE(sqlc.narg('reported_host_id')::text, reported_host_id),
     cpu_model = COALESCE(sqlc.narg('cpu_model')::text, cpu_model),
     cpu_cores = COALESCE(sqlc.narg('cpu_cores')::int, cpu_cores),

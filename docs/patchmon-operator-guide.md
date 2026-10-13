@@ -6933,7 +6933,7 @@ The `diagnostics` output includes system info, configuration status, network rea
 | `Permission denied` on every command | Running without `sudo` / Administrator | [Permission denied](#permission-denied) |
 | Host page shows **Host ID mismatch** | `config.yml` names a different host than the credentials belong to | [Host ID mismatch](#host-id-mismatch) |
 | Host page warns of a **possible clone** | Two machines report with the same credentials | [Possible cloned machine](#possible-cloned-machine) |
-| Host page shows **config version out of date** or **not reported** | Agent downgraded, or its version string cannot be recorded | [Config version out of date](#config-version-out-of-date) |
+| Host page shows **config version out of date** or **not reported** | Agent could not save `config.yml`, or its version string cannot be recorded | [Config version out of date](#config-version-out-of-date) |
 
 ---
 
@@ -7301,9 +7301,9 @@ The host page shows the config version alongside the agent version. Agents from 
 
 | Host page shows | Meaning | Action |
 |-----------------|---------|--------|
-| Config version differs from the agent version | The agent could not save `config.yml` after an upgrade (for example a read-only or full filesystem), so it reports the version still in the file. Or the agent was downgraded to a release older than 2.1.5, which does not report a config version, so PatchMon keeps showing the last one it received | Check that `/etc/patchmon/config.yml` is writable by root and restart the agent; for a downgrade, upgrade it (`sudo patchmon-agent update-agent`) |
+| Config version differs from the agent version | The agent could not save `config.yml` after an upgrade (for example a read-only or full filesystem), so it reports the version still in the file | Check that `/etc/patchmon/config.yml` is writable by root and restart the agent |
 | Config version not reported, agent 2.1.5 or later | The agent's version string does not start with a `N.N.N` release number (for example a custom build), so PatchMon does not record it | None needed, or install a release build |
-| Requires agent 2.1.5 | The agent predates config versioning | Upgrade the agent when convenient |
+| Requires agent 2.1.5 | The agent predates config versioning, including an agent downgraded to a release older than 2.1.5 (PatchMon clears the stored config version when such an agent reports) | Upgrade the agent when convenient |
 
 To see what the agent itself has, run `sudo patchmon-agent config show` and compare `Agent Version` with `Config Version`.
 

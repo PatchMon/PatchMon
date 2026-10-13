@@ -716,7 +716,7 @@ Quick reference panel for the host's identity and agent settings. Fields include
 - **Agent Version**: version of `patchmon-agent` currently reporting.
 - **Config Version**: the version of the agent's `config.yml` layout, as last reported (agent 2.1.5 and later). The agent sets it to its own version whenever it loads its configuration, so it normally matches **Agent Version**. The field shows:
   - the version alone when the two match;
-  - an **out of date** warning when they differ, usually because the agent could not save its `config.yml` after an upgrade, or was downgraded to a release older than 2.1.5;
+  - an **out of date** warning when they differ, usually because the agent could not save its `config.yml` after an upgrade;
   - a **not reported** warning when the agent is 2.1.5 or later but no config version has been recorded;
   - a note that agent 2.1.5 is required when the agent is older.
 - **Agent Auto-update**: per-host toggle, on by default for new hosts so the global setting alone decides whether agents update. Turn it off to keep a single host on its current agent version. If global auto-update is disabled, a yellow warning badge is shown with a tooltip pointing to **Settings → Agent Updates**.

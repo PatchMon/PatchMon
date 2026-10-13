@@ -265,6 +265,23 @@ func TestServePing_HostIdentity(t *testing.T) {
 		}
 	})
 
+	t.Run("downgrade to an agent without config versioning clears config_version", func(t *testing.T) {
+		host := newTestHost(t, hosts, "active")
+		ping(t, h, host, `{"agentVersion":"2.1.5","configVersion":"2.1.5"}`)
+		ping(t, h, host, "")
+		if cv, _, _, _ := identityRow(t, d, host.ID); cv == nil || *cv != "2.1.5" {
+			t.Fatalf("an empty heartbeat changed config_version to %v", cv)
+		}
+		ping(t, h, host, `{"hashes":{"packagesHash":"x"}}`)
+		if cv, _, _, _ := identityRow(t, d, host.ID); cv == nil {
+			t.Fatal("a body without an agent version cleared config_version")
+		}
+		ping(t, h, host, `{"agentVersion":"2.1.4"}`)
+		if cv, _, _, _ := identityRow(t, d, host.ID); cv != nil {
+			t.Fatalf("config_version = %q after a pre-2.1.5 agent pinged, want NULL", *cv)
+		}
+	})
+
 	t.Run("invalid configVersion and hostId are ignored", func(t *testing.T) {
 		host := newTestHost(t, hosts, "active")
 		ping(t, h, host, `{"configVersion":"<script>","hostId":"../x"}`)
@@ -405,5 +422,18 @@ func TestServeUpdate_ReturnsHostIDAndStoresConfigVersion(t *testing.T) {
 	cv, rep, _, fp := identityRow(t, d, host.ID)
 	if cv == nil || *cv != "2.1.5" || rep == nil || *rep != host.ID || fp == nil {
 		t.Fatalf("config_version=%v reported_host_id=%v fingerprint=%v", cv, rep, fp)
+	}
+
+	old := `{"packages":[{"name":"bash","currentVersion":"5.2"}],"repositories":[],"osType":"debian","osVersion":"12","hostname":"web-01","agentVersion":"2.1.4","machineId":"abcd"}`
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/hosts/update", strings.NewReader(old))
+	req.Header.Set("X-API-ID", host.ApiID)
+	req.Header.Set("X-API-KEY", host.ApiKey)
+	rec = httptest.NewRecorder()
+	h.ServeUpdate(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("old-agent update: %d %s", rec.Code, rec.Body.String())
+	}
+	if cv, _, _, _ := identityRow(t, d, host.ID); cv != nil {
+		t.Fatalf("config_version = %q after a pre-2.1.5 report, want NULL", *cv)
 	}
 }

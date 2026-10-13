@@ -327,7 +327,12 @@ UPDATE hosts SET
     ip = COALESCE($5::text, ip),
     architecture = COALESCE($6::text, architecture),
     agent_version = COALESCE($7::text, agent_version),
-    config_version = COALESCE($8::text, config_version),
+    -- An agent version without a config version is a pre-2.1.5 agent, which has none.
+    config_version = CASE
+        WHEN $8::text IS NOT NULL THEN $8::text
+        WHEN $7::text IS NOT NULL THEN NULL
+        ELSE config_version
+    END,
     reported_host_id = COALESCE($9::text, reported_host_id),
     cpu_model = COALESCE($10::text, cpu_model),
     cpu_cores = COALESCE($11::int, cpu_cores),
