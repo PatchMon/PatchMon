@@ -245,9 +245,11 @@ if [ "$config_check" = "ping_success" ]; then
     success "Host already enrolled and agent ping successful - nothing to do"
     exit 0
 elif [ "$config_check" = "ping_failed" ]; then
-    warn "Agent configuration exists but ping failed - will reinstall"
+    warn "Agent configuration exists but ping failed - enrolling again"
+    warn "If PatchMon still lists this host, remove it there first, or a second entry may be created"
 elif [ "$config_check" = "binary_missing" ]; then
-    warn "Config exists but agent binary missing - will reinstall"
+    warn "Config exists but agent binary missing - enrolling again"
+    warn "If PatchMon still lists this host, remove it there first, or a second entry may be created"
 elif [ "$config_check" = "not_configured" ]; then
     info "Agent not yet configured - proceeding with enrollment"
 else

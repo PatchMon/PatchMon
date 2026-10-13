@@ -1,6 +1,8 @@
 package agents
 
 import (
+	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -39,5 +41,56 @@ func TestWindowsScriptsAreASCII(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestProxmoxDeriveMachineIDIsStable(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash not available")
+	}
+	script := string(ProxmoxAutoEnrollScript)
+	start := strings.Index(script, "derive_machine_id() {")
+	if start < 0 {
+		t.Fatal("derive_machine_id not found in proxmox_auto_enroll.sh")
+	}
+	end := strings.Index(script[start:], "\n}\n")
+	if end < 0 {
+		t.Fatal("derive_machine_id has no closing brace")
+	}
+	fn := script[start : start+end+3]
+
+	derive := func(raw, vmid, node string) string {
+		t.Helper()
+		out, err := exec.Command(bash, "-c", fn+`derive_machine_id "$1" "$2" "$3"`, "_", raw, vmid, node).Output()
+		if err != nil {
+			t.Fatalf("derive_machine_id(%q, %q, %q): %v", raw, vmid, node, err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	cases := []struct {
+		name, raw, vmid, node, want string
+	}{
+		{"etc machine-id", "0123abcd\n\ndbus456\n", "101", "nodeA", "0123abcd"},
+		{"empty etc machine-id falls to dbus", "\ndbus456\n", "101", "nodeA", "dbus456"},
+		{"uninitialized is ignored", "uninitialized\n\n", "101", "nodeA", "proxmox-lxc-nodeA-101"},
+		{"no ids", "", "101", "nodeA", "proxmox-lxc-nodeA-101"},
+		{"whitespace only", " \n\t\n", "102", "nodeA", "proxmox-lxc-nodeA-102"},
+	}
+	for _, c := range cases {
+		if got := derive(c.raw, c.vmid, c.node); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+
+	if a, b := derive("", "101", "nodeA"), derive("", "101", "nodeA"); a != b {
+		t.Errorf("fallback changed between runs: %q then %q", a, b)
+	}
+	if derive("", "101", "nodeA") == derive("", "101", "nodeB") {
+		t.Error("same vmid on two nodes produced the same fallback")
+	}
+	if derive("", "101", "nodeA") == derive("", "1011", "nodeA") || derive("", "10", "nodeA-1") == derive("", "1", "nodeA-10") {
+		t.Error("fallback is ambiguous between vmids")
 	}
 }

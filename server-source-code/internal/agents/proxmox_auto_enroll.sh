@@ -134,6 +134,22 @@ declare -A dpkg_error_containers
 declare -A failed_containers
 info "Statistics initialized"
 
+# Must stay stable across reruns: the server dedupes enrolments on machine_id and name
+derive_machine_id() {
+    local line
+    while IFS= read -r line; do
+        line=$(printf '%s' "$line" | tr -d '[:space:]')
+        if [[ -n "$line" && "$line" != "uninitialized" ]]; then
+            printf '%s\n' "$line"
+            return 0
+        fi
+    done <<< "$1"
+    printf 'proxmox-lxc-%s-%s\n' "$3" "$2"
+}
+
+node_id=$( (tr -d '[:space:]' < /etc/machine-id) 2>/dev/null || true)
+[[ -n "$node_id" ]] || node_id=$(hostname)
+
 # ===== PROCESS CONTAINERS =====
 info "Starting container processing loop..."
 while read -r vmid status; do
@@ -187,8 +203,8 @@ while read -r vmid status; do
     
     debug "  Detected architecture: $arch_raw -> $architecture"
     
-    # Get machine ID from container (use sh -c for POSIX compatibility with Alpine/ash)
-    machine_id=$(timeout 5 pct exec "$vmid" -- sh -c "cat /etc/machine-id 2>/dev/null || cat /var/lib/dbus/machine-id 2>/dev/null || echo 'proxmox-lxc-$vmid-'$(cat /proc/sys/kernel/random/uuid)" </dev/null 2>/dev/null || echo "proxmox-lxc-$vmid-unknown")
+    container_ids=$(timeout 5 pct exec "$vmid" -- sh -c "cat /etc/machine-id 2>/dev/null; echo; cat /var/lib/dbus/machine-id 2>/dev/null" </dev/null 2>/dev/null || true)
+    machine_id=$(derive_machine_id "$container_ids" "$vmid" "$node_id")
 
     friendly_name="${HOST_PREFIX}${hostname}"
 
@@ -230,9 +246,11 @@ while read -r vmid status; do
         echo ""
         continue
     elif [[ "$config_check" == "ping_failed" ]]; then
-        warn "  ⚠ Agent configuration exists but ping failed - will re-enroll and reinstall"
+        warn "  ⚠ Agent configuration exists but ping failed - enrolling again"
+        warn "    If PatchMon still lists this host, remove it there first, or a second entry may be created"
     elif [[ "$config_check" == "binary_missing" ]]; then
-        warn "  ⚠ Config exists but agent binary missing - will re-enroll and reinstall"
+        warn "  ⚠ Config exists but agent binary missing - enrolling again"
+        warn "    If PatchMon still lists this host, remove it there first, or a second entry may be created"
     elif [[ "$config_check" == "not_configured" ]]; then
         info "  ℹ Agent not yet configured - proceeding with enrollment"
     else
