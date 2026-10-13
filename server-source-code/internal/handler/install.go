@@ -29,16 +29,21 @@ type InstallHandler struct {
 	bootstrap  *store.BootstrapStore
 	reports    *store.ReportStore
 	scriptBase []byte // base script (embedded or from AGENTS_DIR)
+	log        *slog.Logger
 }
 
 // NewInstallHandler creates a new install handler.
-func NewInstallHandler(hosts *store.HostsStore, settings *store.SettingsStore, bootstrap *store.BootstrapStore, reports *store.ReportStore) *InstallHandler {
+func NewInstallHandler(hosts *store.HostsStore, settings *store.SettingsStore, bootstrap *store.BootstrapStore, reports *store.ReportStore, log *slog.Logger) *InstallHandler {
+	if log == nil {
+		log = slog.Default()
+	}
 	return &InstallHandler{
 		hosts:      hosts,
 		settings:   settings,
 		bootstrap:  bootstrap,
 		reports:    reports,
 		scriptBase: loadScript(),
+		log:        log,
 	}
 }
 

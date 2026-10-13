@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -53,7 +52,7 @@ func claimedHostID(id string) string {
 func (h *InstallHandler) observeAgentIdentity(ctx context.Context, hostID string, storedReported *string, claimed string, state store.IdentityFingerprintState, machineID, hostnameHash string) bool {
 	mismatch := claimed != "" && claimed != hostID
 	if mismatch && (storedReported == nil || *storedReported != claimed) {
-		slog.Warn("agent reported a different host_id", "host_id", hostID, "reported_host_id", claimed)
+		h.log.Warn("agent reported a different host_id", "host_id", hostID, "reported_host_id", claimed)
 	}
 	if len(machineID) > 255 {
 		return mismatch
@@ -63,11 +62,11 @@ func (h *InstallHandler) observeAgentIdentity(ctx context.Context, hostID string
 		return mismatch
 	}
 	if err := h.hosts.UpdateIdentityFingerprint(ctx, hostID, *update); err != nil {
-		slog.Warn("failed to record host identity fingerprint", "host_id", hostID, "error", err)
+		h.log.Warn("failed to record host identity fingerprint", "host_id", hostID, "error", err)
 		return mismatch
 	}
 	if flagged {
-		slog.Warn("possible cloned agent: two machines are reporting with this host's credentials", "host_id", hostID)
+		h.log.Warn("possible cloned agent: two machines are reporting with this host's credentials", "host_id", hostID)
 	}
 	return mismatch
 }

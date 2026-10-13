@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -216,7 +218,7 @@ func identityRow(t *testing.T, d *database.DB, id string) (configVersion, report
 
 func TestServePing_HostIdentity(t *testing.T) {
 	d, hosts := identityDB(t)
-	h := NewInstallHandler(hosts, store.NewSettingsStore(d), nil, store.NewReportStore(d))
+	h := NewInstallHandler(hosts, store.NewSettingsStore(d), nil, store.NewReportStore(d), nil)
 
 	t.Run("empty-body heartbeat returns hostId", func(t *testing.T) {
 		host := newTestHost(t, hosts, "active")
@@ -401,7 +403,7 @@ func TestRegenerateCredentialsClearsIdentityFlags(t *testing.T) {
 
 func TestServeUpdate_ReturnsHostIDAndStoresConfigVersion(t *testing.T) {
 	d, hosts := identityDB(t)
-	h := NewInstallHandler(hosts, store.NewSettingsStore(d), nil, store.NewReportStore(d))
+	h := NewInstallHandler(hosts, store.NewSettingsStore(d), nil, store.NewReportStore(d), nil)
 	host := newTestHost(t, hosts, "pending")
 
 	body := `{"packages":[{"name":"bash","currentVersion":"5.2"}],"repositories":[],"osType":"debian","osVersion":"12",` +
@@ -435,5 +437,24 @@ func TestServeUpdate_ReturnsHostIDAndStoresConfigVersion(t *testing.T) {
 	}
 	if cv, _, _, _ := identityRow(t, d, host.ID); cv != nil {
 		t.Fatalf("config_version = %q after a pre-2.1.5 report, want NULL", *cv)
+	}
+}
+
+func TestHostIdentityWarningsUseTheInjectedLogger(t *testing.T) {
+	d, hosts := identityDB(t)
+	var buf bytes.Buffer
+	h := NewInstallHandler(hosts, store.NewSettingsStore(d), nil, store.NewReportStore(d), slog.New(slog.NewTextHandler(&buf, nil)))
+	host := newTestHost(t, hosts, "active")
+
+	ping(t, h, host, `{"hostId":"`+uuid.New().String()+`"}`)
+	a := `{"machineId":"aaaa","hashes":{"hostnameHash":"h-one"}}`
+	ping(t, h, host, a)
+	ping(t, h, host, `{"machineId":"bbbb","hashes":{"hostnameHash":"h-two"}}`)
+	ping(t, h, host, a)
+
+	for _, want := range []string{"agent reported a different host_id", "possible cloned agent"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("injected logger did not receive %q:\n%s", want, buf.String())
+		}
 	}
 }

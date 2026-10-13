@@ -207,7 +207,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	if rdb != nil {
 		sshTicketStore = store.NewSshTicketStore(redisResolver)
 	}
-	installHandler := handler.NewInstallHandler(hostsStore, settingsStore, bootstrapStore, reportStore)
+	installHandler := handler.NewInstallHandler(hostsStore, settingsStore, bootstrapStore, reportStore, log)
 	sshProxySessions := sshproxy.NewSessions()
 	alertsStore := store.NewAlertsStore(dbProvider)
 	alertConfigStore := store.NewAlertConfigStore(dbProvider)

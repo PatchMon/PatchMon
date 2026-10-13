@@ -250,7 +250,7 @@ func TestServeInstall_InjectsHostID(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
-	h := NewInstallHandler(hosts, store.NewSettingsStore(d), store.NewBootstrapStore(&hostctx.RedisResolver{Default: rdb}, enc), store.NewReportStore(d))
+	h := NewInstallHandler(hosts, store.NewSettingsStore(d), store.NewBootstrapStore(&hostctx.RedisResolver{Default: rdb}, enc), store.NewReportStore(d), nil)
 
 	for _, osParam := range []string{"linux", "windows"} {
 		t.Run(osParam, func(t *testing.T) {
