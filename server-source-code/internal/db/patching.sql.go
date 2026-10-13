@@ -2133,14 +2133,15 @@ func (q *Queries) UpdatePatchRunCancelledOutput(ctx context.Context, arg UpdateP
 }
 
 const updatePatchRunCompleted = `-- name: UpdatePatchRunCompleted :execrows
-UPDATE patch_runs SET status = 'completed', shell_output = $2, completed_at = NOW(), updated_at = NOW()
-WHERE id = $1
+UPDATE patch_runs SET status = 'completed', shell_output = $1, error_message = COALESCE($2::text, error_message), completed_at = NOW(), updated_at = NOW()
+WHERE id = $3
   AND status NOT IN ('cancelled','completed','failed','validated','dry_run_completed')
 `
 
 type UpdatePatchRunCompletedParams struct {
-	ID          string `json:"id"`
-	ShellOutput string `json:"shell_output"`
+	ShellOutput  string  `json:"shell_output"`
+	ErrorMessage *string `json:"error_message"`
+	ID           string  `json:"id"`
 }
 
 // REPLACE (not append) - agent streams progress chunks then sends final full output.
@@ -2148,7 +2149,7 @@ type UpdatePatchRunCompletedParams struct {
 // server-side "we gave up waiting" markers, so a recovering agent posting a late
 // genuine "completed" must be able to unwedge the row and deliver the real output.
 func (q *Queries) UpdatePatchRunCompleted(ctx context.Context, arg UpdatePatchRunCompletedParams) (int64, error) {
-	result, err := q.db.Exec(ctx, updatePatchRunCompleted, arg.ID, arg.ShellOutput)
+	result, err := q.db.Exec(ctx, updatePatchRunCompleted, arg.ShellOutput, arg.ErrorMessage, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -2236,19 +2237,25 @@ func (q *Queries) UpdatePatchRunStarted(ctx context.Context, id string) error {
 }
 
 const updatePatchRunValidated = `-- name: UpdatePatchRunValidated :exec
-UPDATE patch_runs SET status = 'validated', shell_output = $2, packages_affected = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1
+UPDATE patch_runs SET status = 'validated', shell_output = $1, packages_affected = $2, error_message = COALESCE($3::text, error_message), completed_at = NOW(), updated_at = NOW() WHERE id = $4
 `
 
 type UpdatePatchRunValidatedParams struct {
-	ID               string `json:"id"`
-	ShellOutput      string `json:"shell_output"`
-	PackagesAffected []byte `json:"packages_affected"`
+	ShellOutput      string  `json:"shell_output"`
+	PackagesAffected []byte  `json:"packages_affected"`
+	ErrorMessage     *string `json:"error_message"`
+	ID               string  `json:"id"`
 }
 
 // Agent streams progress chunks during the run, then sends the final authoritative
 // output on the terminal stage; REPLACE (not append) so the final record is never
 // a duplicate of the streamed progress.
 func (q *Queries) UpdatePatchRunValidated(ctx context.Context, arg UpdatePatchRunValidatedParams) error {
-	_, err := q.db.Exec(ctx, updatePatchRunValidated, arg.ID, arg.ShellOutput, arg.PackagesAffected)
+	_, err := q.db.Exec(ctx, updatePatchRunValidated,
+		arg.ShellOutput,
+		arg.PackagesAffected,
+		arg.ErrorMessage,
+		arg.ID,
+	)
 	return err
 }

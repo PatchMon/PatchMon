@@ -545,9 +545,9 @@ func (s *PatchRunsStore) updateWindowsOutput(ctx context.Context, id, stage, out
 		if err != nil {
 			return false, err
 		}
-		return false, d.Queries.UpdatePatchRunValidated(ctx, db.UpdatePatchRunValidatedParams{ID: id, ShellOutput: output, PackagesAffected: b})
+		return false, d.Queries.UpdatePatchRunValidated(ctx, db.UpdatePatchRunValidatedParams{ID: id, ShellOutput: output, PackagesAffected: b, ErrorMessage: nonEmpty(errorMessage)})
 	case "completed":
-		rows, err = d.Queries.UpdatePatchRunCompleted(ctx, db.UpdatePatchRunCompletedParams{ID: id, ShellOutput: output})
+		rows, err = d.Queries.UpdatePatchRunCompleted(ctx, db.UpdatePatchRunCompletedParams{ID: id, ShellOutput: output, ErrorMessage: nonEmpty(errorMessage)})
 	case "failed":
 		rows, err = d.Queries.UpdatePatchRunFailed(ctx, db.UpdatePatchRunFailedParams{ID: id, ShellOutput: output, ErrorMessage: &errorMessage})
 	case "cancelled":
@@ -1309,4 +1309,11 @@ func (s *PatchPolicyExclusionsStore) Delete(ctx context.Context, policyID, hostI
 		PatchPolicyID: policyID,
 		HostID:        hostID,
 	})
+}
+
+func nonEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

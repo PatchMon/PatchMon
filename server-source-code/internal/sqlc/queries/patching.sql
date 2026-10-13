@@ -7,7 +7,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $
 -- Agent streams progress chunks during the run, then sends the final authoritative
 -- output on the terminal stage; REPLACE (not append) so the final record is never
 -- a duplicate of the streamed progress.
-UPDATE patch_runs SET status = 'validated', shell_output = $2, packages_affected = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1;
+UPDATE patch_runs SET status = 'validated', shell_output = sqlc.arg('shell_output'), packages_affected = sqlc.arg('packages_affected'), error_message = COALESCE(sqlc.narg('error_message')::text, error_message), completed_at = NOW(), updated_at = NOW() WHERE id = sqlc.arg('id');
 
 -- name: MarkValidationApproved :execrows
 -- Declared :execrows, not :exec, because the status guard IS the concurrency
@@ -78,8 +78,8 @@ UPDATE patch_runs SET shell_output = shell_output || $2, updated_at = NOW() WHER
 -- agent_disconnected and timed_out are intentionally NOT in the guard: both are
 -- server-side "we gave up waiting" markers, so a recovering agent posting a late
 -- genuine "completed" must be able to unwedge the row and deliver the real output.
-UPDATE patch_runs SET status = 'completed', shell_output = $2, completed_at = NOW(), updated_at = NOW()
-WHERE id = $1
+UPDATE patch_runs SET status = 'completed', shell_output = sqlc.arg('shell_output'), error_message = COALESCE(sqlc.narg('error_message')::text, error_message), completed_at = NOW(), updated_at = NOW()
+WHERE id = sqlc.arg('id')
   AND status NOT IN ('cancelled','completed','failed','validated','dry_run_completed');
 
 -- name: UpdatePatchRunFailed :execrows
