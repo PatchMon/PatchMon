@@ -382,12 +382,12 @@ func resetWindowsUpdatesCache(t *testing.T) {
 func TestGuardedWindowsUpdatesUsesCacheWhileLocked(t *testing.T) {
 	resetWindowsUpdatesCache(t)
 	first := []models.Package{{Name: "KB1", NeedsUpdate: true}}
-	if got, omitted := guardedWindowsUpdates(func() []models.Package { return first }); omitted || len(got) != 1 {
+	if got, omitted := guardedWindowsUpdates(func() ([]models.Package, bool) { return first, true }); omitted || len(got) != 1 {
 		t.Fatalf("got %+v, omitted %v", got, omitted)
 	}
 	wuaMu.Lock()
 	called := false
-	got, omitted := guardedWindowsUpdates(func() []models.Package { called = true; return nil })
+	got, omitted := guardedWindowsUpdates(func() ([]models.Package, bool) { called = true; return nil, true })
 	wuaMu.Unlock()
 	if called {
 		t.Error("collector must not search while a patch run holds wuaMu")
@@ -400,16 +400,16 @@ func TestGuardedWindowsUpdatesUsesCacheWhileLocked(t *testing.T) {
 func TestGuardedWindowsUpdatesWithoutCacheIsOmitted(t *testing.T) {
 	resetWindowsUpdatesCache(t)
 	wuaMu.Lock()
-	got, omitted := guardedWindowsUpdates(func() []models.Package { return nil })
+	got, omitted := guardedWindowsUpdates(func() ([]models.Package, bool) { return nil, true })
 	wuaMu.Unlock()
 	if !omitted || got != nil {
 		t.Fatalf("got %+v, omitted %v; an empty list without the flag would wipe the server's update rows", got, omitted)
 	}
-	if _, omitted := guardedWindowsUpdates(func() []models.Package { return []models.Package{} }); omitted {
+	if _, omitted := guardedWindowsUpdates(func() ([]models.Package, bool) { return []models.Package{}, true }); omitted {
 		t.Fatal("a fresh scan is never omitted")
 	}
 	wuaMu.Lock()
-	got, omitted = guardedWindowsUpdates(func() []models.Package { return nil })
+	got, omitted = guardedWindowsUpdates(func() ([]models.Package, bool) { return nil, true })
 	wuaMu.Unlock()
 	if omitted || got == nil || len(got) != 0 {
 		t.Errorf("a cached empty list is a real answer: %#v, omitted %v", got, omitted)
@@ -1103,7 +1103,7 @@ func TestReportAfterRunSearchesAfreshAndShowsRestartPending(t *testing.T) {
 		{Name: "KB5127690", WUAGuid: guidA, NeedsUpdate: true, CurrentVersion: "pending"},
 		{Name: "KB2", WUAGuid: guidB, NeedsUpdate: true, CurrentVersion: "pending"},
 	}
-	if _, omitted := guardedWindowsUpdates(func() []models.Package { return stale }); omitted {
+	if _, omitted := guardedWindowsUpdates(func() ([]models.Package, bool) { return stale, true }); omitted {
 		t.Fatal("setup scan omitted")
 	}
 
@@ -1114,12 +1114,12 @@ func TestReportAfterRunSearchesAfreshAndShowsRestartPending(t *testing.T) {
 	runFake(WindowsPatchRequest{Targets: []WindowsPatchTarget{{Kind: WindowsTargetWUA, ID: guidA}}}, &recorder{}, w, &fakeWinget{})
 
 	searched := false
-	wuaStillOffers := func() []models.Package {
+	wuaStillOffers := func() ([]models.Package, bool) {
 		searched = true
 		return []models.Package{
 			{Name: "KB5127690", WUAGuid: strings.ToUpper(guidA), NeedsUpdate: true, CurrentVersion: "pending"},
 			{Name: "KB2", WUAGuid: guidB, NeedsUpdate: true, CurrentVersion: "pending"},
-		}
+		}, true
 	}
 	got, omitted := guardedWindowsUpdates(wuaStillOffers)
 	if !searched || omitted {
@@ -1133,7 +1133,7 @@ func TestReportAfterRunSearchesAfreshAndShowsRestartPending(t *testing.T) {
 	}
 
 	wuaMu.Lock()
-	cached, omitted := guardedWindowsUpdates(func() []models.Package { return nil })
+	cached, omitted := guardedWindowsUpdates(func() ([]models.Package, bool) { return nil, true })
 	wuaMu.Unlock()
 	if omitted || cached[0].NeedsUpdate {
 		t.Errorf("a report during a later run must also show the restart: %+v", cached)
@@ -1143,11 +1143,11 @@ func TestReportAfterRunSearchesAfreshAndShowsRestartPending(t *testing.T) {
 func TestRunInvalidatesTheUpdateCacheAfterInstalling(t *testing.T) {
 	resetWindowsUpdatesCache(t)
 	resetRestartPending(t)
-	guardedWindowsUpdates(func() []models.Package { return []models.Package{{Name: "KB1"}} })
+	guardedWindowsUpdates(func() ([]models.Package, bool) { return []models.Package{{Name: "KB1"}}, true })
 	w := &fakeWUA{scan: wuaScan{Updates: []wuaUpdate{{ID: guidA, Title: "A", Type: 1}}}, installRes: map[string]wuaOpResult{guidA: {Found: true, ResultCode: 4}}}
 	runFake(WindowsPatchRequest{PatchAll: true, IncludeUpdates: true}, &recorder{}, w, &fakeWinget{})
 	wuaMu.Lock()
-	_, omitted := guardedWindowsUpdates(func() []models.Package { return nil })
+	_, omitted := guardedWindowsUpdates(func() ([]models.Package, bool) { return nil, true })
 	wuaMu.Unlock()
 	if !omitted {
 		t.Error("the pre-run update list must not be reused after an install attempt")
@@ -1263,5 +1263,28 @@ func TestInstallTimeoutRechecksWindows(t *testing.T) {
 				t.Errorf("%s: polled %d times", c.name, w.statusCalls)
 			}
 		}
+	}
+}
+
+func TestFailedWindowsUpdateQueryIsOmittedNotEmpty(t *testing.T) {
+	resetWindowsUpdatesCache(t)
+	if _, omitted := guardedWindowsUpdates(func() ([]models.Package, bool) {
+		return []models.Package{{Name: "KB1", WUAGuid: guidA, NeedsUpdate: true}}, true
+	}); omitted {
+		t.Fatal("setup")
+	}
+	got, omitted := guardedWindowsUpdates(func() ([]models.Package, bool) { return nil, false })
+	if !omitted || len(got) != 0 {
+		t.Fatalf("a failed query must send no Windows Update rows and mark them omitted: %+v, %v", got, omitted)
+	}
+	got, omitted = guardedWindowsUpdates(func() ([]models.Package, bool) { return []models.Package{}, true })
+	if omitted || got == nil || len(got) != 0 {
+		t.Fatalf("a successful empty search is a real empty list: %#v, %v", got, omitted)
+	}
+	wuaMu.Lock()
+	cached, omitted := guardedWindowsUpdates(func() ([]models.Package, bool) { return nil, false })
+	wuaMu.Unlock()
+	if omitted || len(cached) != 0 {
+		t.Errorf("the cache must hold the last successful search, not the failed one: %+v, %v", cached, omitted)
 	}
 }

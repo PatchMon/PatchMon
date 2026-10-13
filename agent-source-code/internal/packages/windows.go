@@ -1047,7 +1047,7 @@ func wuaErrorHint(msg string) string {
 
 // getWindowsUpdates queries installed KB patches and pending Windows updates.
 // Uses Get-HotFix for installed; Microsoft.Update.Session for pending (may fail in Session 0).
-func (m *WindowsManager) getWindowsUpdates() []models.Package {
+func (m *WindowsManager) getWindowsUpdates() ([]models.Package, bool) {
 	psScript := `
 $ErrorActionPreference = "SilentlyContinue"
 $result = @()
@@ -1159,8 +1159,8 @@ $result | ConvertTo-Json -Compress -Depth 4
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
-		m.logger.WithError(err).Warn("Failed to query Windows updates")
-		return nil
+		m.logger.WithError(err).Warn("Failed to query Windows updates; this report keeps the server's Windows Update rows")
+		return nil, false
 	}
 
 	outputStr := strings.TrimSpace(string(winexec.TrimBOM(output)))
@@ -1176,17 +1176,12 @@ $result | ConvertTo-Json -Compress -Depth 4
 		m.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 			"detail": msg,
 			"hint":   hint,
-		})).Warn("Windows Update COM API failed")
-		// Extract JSON array (Get-HotFix results) - it starts with [
-		if jsonStart := strings.Index(outputStr, "["); jsonStart >= 0 {
-			outputStr = outputStr[jsonStart:]
-		} else {
-			outputStr = ""
-		}
+		})).Warn("Windows Update COM API failed; this report keeps the server's Windows Update rows")
+		return nil, false
 	}
 
 	if outputStr == "" || outputStr == "null" || outputStr == "[]" {
-		return nil
+		return []models.Package{}, true
 	}
 
 	// PowerShell may output a single object (not array) when there is exactly one result
@@ -1196,8 +1191,8 @@ $result | ConvertTo-Json -Compress -Depth 4
 
 	var raw []wuaRawUpdate
 	if err := json.Unmarshal([]byte(outputStr), &raw); err != nil {
-		m.logger.WithError(err).Warn("Failed to parse Windows updates JSON")
-		return nil
+		m.logger.WithError(err).Warn("Failed to parse Windows updates JSON; this report keeps the server's Windows Update rows")
+		return nil, false
 	}
 
 	var packages []models.Package
@@ -1206,5 +1201,8 @@ $result | ConvertTo-Json -Compress -Depth 4
 			packages = append(packages, pkg)
 		}
 	}
-	return packages
+	if packages == nil {
+		packages = []models.Package{}
+	}
+	return packages, true
 }

@@ -729,12 +729,13 @@ var (
 )
 
 // While a patch run holds wuaMu, a report gets the last pending list instead of searching.
-// With no list cached yet, it reports the updates as omitted so the server keeps its rows.
+// With no list cached yet, or when the search fails, the updates are reported as omitted so
+// the server keeps its rows instead of having them all removed.
 func (m *WindowsManager) windowsUpdatesGuarded() (pkgs []models.Package, omitted bool) {
 	return guardedWindowsUpdates(m.getWindowsUpdates)
 }
 
-func guardedWindowsUpdates(collect func() []models.Package) ([]models.Package, bool) {
+func guardedWindowsUpdates(collect func() ([]models.Package, bool)) ([]models.Package, bool) {
 	if !wuaMu.TryLock() {
 		lastWindowsUpdatesMu.Lock()
 		defer lastWindowsUpdatesMu.Unlock()
@@ -747,14 +748,15 @@ func guardedWindowsUpdates(collect func() []models.Package) ([]models.Package, b
 		return out, false
 	}
 	defer wuaMu.Unlock()
-	pkgs := collect()
-	applyRestartPending(pkgs)
-	if pkgs != nil {
-		lastWindowsUpdatesMu.Lock()
-		lastWindowsUpdates = append([]models.Package(nil), pkgs...)
-		lastWindowsUpdatesSet = true
-		lastWindowsUpdatesMu.Unlock()
+	pkgs, ok := collect()
+	if !ok {
+		return nil, true
 	}
+	applyRestartPending(pkgs)
+	lastWindowsUpdatesMu.Lock()
+	lastWindowsUpdates = append([]models.Package(nil), pkgs...)
+	lastWindowsUpdatesSet = true
+	lastWindowsUpdatesMu.Unlock()
 	return pkgs, false
 }
 
