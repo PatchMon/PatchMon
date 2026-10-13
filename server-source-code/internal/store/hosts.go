@@ -355,6 +355,15 @@ func (s *HostsStore) UpdateComplianceScannerStatus(ctx context.Context, id strin
 	})
 }
 
+// PatchRunInProgressMessage is returned when an agent update is refused because the host is patching.
+const PatchRunInProgressMessage = "A patch run is in progress on this host. Try again when it finishes."
+
+// HasActivePatchRun reports whether the host has a queued, validating or running patch run.
+func (s *HostsStore) HasActivePatchRun(ctx context.Context, hostID string) (bool, error) {
+	d := s.db.DB(ctx)
+	return d.Queries.HostHasActivePatchRun(ctx, hostID)
+}
+
 // SetRebootStatus records whether the host needs a restart and why.
 func (s *HostsStore) SetRebootStatus(ctx context.Context, hostID string, needsReboot bool, reason *string) error {
 	d := s.db.DB(ctx)

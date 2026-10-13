@@ -642,6 +642,23 @@ func (h *UpdateAgentHandler) ProcessTask(ctx context.Context, t *asynq.Task) err
 		}
 	}
 
+	if d != nil {
+		if host, err := d.Queries.GetHostByApiID(ctx, p.ApiID); err == nil {
+			active, err := d.Queries.HostHasActivePatchRun(ctx, host.ID)
+			if err != nil {
+				return err
+			}
+			if active {
+				msg := store.PatchRunInProgressMessage
+				if taskID != "" {
+					_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
+				}
+				h.log.Info("update_agent: skipped, patch run in progress", "api_id", p.ApiID)
+				return nil
+			}
+		}
+	}
+
 	if !h.registry.IsConnected(p.ApiID) {
 		h.log.Warn("update_agent: agent not connected", "api_id", p.ApiID)
 		if taskID != "" && d != nil {

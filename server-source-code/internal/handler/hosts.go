@@ -695,6 +695,15 @@ func (h *HostsHandler) ForceAgentUpdate(w http.ResponseWriter, r *http.Request) 
 		Error(w, http.StatusNotFound, "Host not found")
 		return
 	}
+	active, err := h.hosts.HasActivePatchRun(r.Context(), host.ID)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to check for an active patch run")
+		return
+	}
+	if active {
+		Error(w, http.StatusConflict, store.PatchRunInProgressMessage)
+		return
+	}
 	task, err := queue.NewUpdateAgentTask(host.ApiID, hostFromRequest(r), true) // bypass_settings=true for force update
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to create agent update task")

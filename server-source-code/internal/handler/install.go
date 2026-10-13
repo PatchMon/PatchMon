@@ -944,19 +944,12 @@ func (h *InstallHandler) ServeAgentVersion(w http.ResponseWriter, r *http.Reques
 
 	// Check auto_update settings
 	settings, _ := h.settings.GetFirst(r.Context())
-	serverAutoUpdate := settings != nil && settings.AutoUpdate
-	hostAutoUpdate := host.AutoUpdate
-	autoUpdateDisabled := !serverAutoUpdate || !hostAutoUpdate
-	var autoUpdateDisabledReason string
-	if autoUpdateDisabled {
-		if !serverAutoUpdate && !hostAutoUpdate {
-			autoUpdateDisabledReason = "Auto-update is disabled in server settings and for this host"
-		} else if !serverAutoUpdate {
-			autoUpdateDisabledReason = "Auto-update is disabled in server settings"
-		} else {
-			autoUpdateDisabledReason = "Auto-update is disabled for this host"
-		}
+	patching, err := h.hosts.HasActivePatchRun(r.Context(), host.ID)
+	if err != nil {
+		slog.Warn("agent version: active patch run check failed", "host_id", host.ID, "error", err)
+		patching = true
 	}
+	autoUpdateDisabled, autoUpdateDisabledReason := agentAutoUpdateGate(settings != nil && settings.AutoUpdate, host.AutoUpdate, patching)
 
 	architecture := r.URL.Query().Get("arch")
 	if architecture == "" {
@@ -1162,4 +1155,18 @@ func (h *InstallHandler) ServeAgentDownload(w http.ResponseWriter, r *http.Reque
 	defer func() { _ = f.Close() }()
 
 	serveAgentBinary(w, r, binaryPath, info, f)
+}
+
+func agentAutoUpdateGate(serverAutoUpdate, hostAutoUpdate, patchRunActive bool) (bool, string) {
+	switch {
+	case !serverAutoUpdate && !hostAutoUpdate:
+		return true, "Auto-update is disabled in server settings and for this host"
+	case !serverAutoUpdate:
+		return true, "Auto-update is disabled in server settings"
+	case !hostAutoUpdate:
+		return true, "Auto-update is disabled for this host"
+	case patchRunActive:
+		return true, store.PatchRunInProgressMessage
+	}
+	return false, ""
 }

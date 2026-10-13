@@ -259,6 +259,9 @@ WHERE (sqlc.arg('host_id')::text = '' OR host_id = sqlc.arg('host_id'))
   )
   AND (sqlc.arg('patch_type')::text = '' OR patch_type = sqlc.arg('patch_type'));
 
+-- name: HostHasActivePatchRun :one
+SELECT EXISTS(SELECT 1 FROM patch_runs WHERE host_id = $1 AND status IN ('queued', 'pending_validation', 'running'));
+
 -- name: ListActivePatchRuns :many
 SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
 FROM patch_runs pr

@@ -448,6 +448,7 @@ type Querier interface {
 	GetVolumeByID(ctx context.Context, id string) (DockerVolume, error)
 	GetVolumesByHostID(ctx context.Context, hostID string) ([]DockerVolume, error)
 	GlobalSearch(ctx context.Context, search string) ([]GlobalSearchRow, error)
+	HostHasActivePatchRun(ctx context.Context, hostID string) (bool, error)
 	HostInHostGroup(ctx context.Context, arg HostInHostGroupParams) (bool, error)
 	IncrementAutoEnrollmentHostsCreated(ctx context.Context, id string) error
 	InsertAlertHistory(ctx context.Context, arg InsertAlertHistoryParams) (AlertHistory, error)

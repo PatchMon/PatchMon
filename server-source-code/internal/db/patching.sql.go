@@ -475,6 +475,17 @@ func (q *Queries) GetPatchRunByIDSimple(ctx context.Context, id string) (PatchRu
 	return i, err
 }
 
+const hostHasActivePatchRun = `-- name: HostHasActivePatchRun :one
+SELECT EXISTS(SELECT 1 FROM patch_runs WHERE host_id = $1 AND status IN ('queued', 'pending_validation', 'running'))
+`
+
+func (q *Queries) HostHasActivePatchRun(ctx context.Context, hostID string) (bool, error) {
+	row := q.db.QueryRow(ctx, hostHasActivePatchRun, hostID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const listActivePatchRuns = `-- name: ListActivePatchRuns :many
 SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
 FROM patch_runs pr
