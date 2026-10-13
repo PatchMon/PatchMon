@@ -48,8 +48,14 @@ export const ConfigVersionValue = ({ host, emptyLabel = "Unknown" }) => {
 	}
 	if (state === CONFIG_VERSION_STATE.REQUIRES_UPGRADE) {
 		return (
-			<span className="text-secondary-500 dark:text-secondary-400 font-normal">
-				Requires agent {CONFIG_VERSION_MIN_AGENT}
+			<span className="inline-flex items-center gap-1.5">
+				<span className="text-secondary-500 dark:text-secondary-400 font-normal">
+					Requires agent {CONFIG_VERSION_MIN_AGENT}
+				</span>
+				<InfoTooltip
+					content={CONFIG_VERSION_COPY.requiresUpgrade}
+					label="About config version on older agents"
+				/>
 			</span>
 		);
 	}

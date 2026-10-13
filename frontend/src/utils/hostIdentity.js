@@ -42,7 +42,7 @@ export const hasConfigVersionMismatch = (host) =>
 export const hasHostIdMismatch = (host) => {
 	if (!host) return false;
 	if (host.host_id_mismatch === true) return true;
-	const reported = normalise(host.reported_host_id);
+	const reported = String(host.reported_host_id ?? "").trim();
 	return !!reported && !!host.id && reported !== host.id;
 };
 
