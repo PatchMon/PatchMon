@@ -5,6 +5,8 @@ export const UNPATCHABLE_REASON_TEXT = {
 	no_winget_id:
 		"Not patchable: this app was not found in winget. Update it with its own updater.",
 	not_pending: "Up to date",
+	winget_pinned:
+		"Pinned with winget pin; remove the pin on the host to update it",
 };
 
 const REJECT_REASON_TEXT = {
@@ -142,6 +144,14 @@ export const windowsBadges = (info) => {
 			title: info.reasonText,
 		});
 		return out;
+	}
+	if (info.reason === "winget_pinned") {
+		out.push({
+			key: "pinned",
+			label: "Pinned in winget",
+			className: "badge-secondary",
+			title: info.reasonText,
+		});
 	}
 	if (info.featureUpgrade) {
 		out.push({

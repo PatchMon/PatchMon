@@ -93,4 +93,25 @@ describe("RunItemsCard", () => {
 		const row = screen.getByTestId("run-item-row");
 		expect(row.textContent.match(/0x80072EE7/gi)).toHaveLength(1);
 	});
+
+	it("shows a skipped pinned app as Skipped with its message", () => {
+		render(
+			<RunItemsCard
+				items={[
+					{
+						kind: "winget",
+						identifier: "7zip.7zip",
+						title: "7-Zip 26.04 (arm64)",
+						status: "skipped",
+						exit_code: -1978335166,
+						message: "Pinned in winget; not upgraded",
+					},
+				]}
+			/>,
+		);
+		const row = within(screen.getByTestId("run-item-row"));
+		expect(row.getByText("Skipped")).toHaveClass("badge-secondary");
+		expect(row.queryByText("Failed")).toBeNull();
+		expect(row.getByText(/Pinned in winget/)).toBeInTheDocument();
+	});
 });

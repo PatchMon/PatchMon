@@ -99,7 +99,7 @@ const UpToDateBadge = ({ host, className = "" }) =>
 const NotPatchableTag = ({ host }) => {
 	if (!isWindowsHost(host) || !host.needsUpdate) return null;
 	const info = windowsPatchInfo(host);
-	if (info.patchable) return null;
+	if (info.patchable || info.reason === "winget_pinned") return null;
 	return (
 		<span className="badge-secondary w-fit" title={info.reasonText}>
 			Not patchable

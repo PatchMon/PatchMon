@@ -328,3 +328,58 @@ describe("pending restart and result parts", () => {
 		).toEqual({ message: "Installation failed", code: "0x800F0922" });
 	});
 });
+
+describe("winget pinned apps", () => {
+	const pinned = {
+		needsUpdate: true,
+		availableVersion: "26.05",
+		patchable: false,
+		notPatchableReason: "winget_pinned",
+		patchSource: "winget",
+	};
+
+	it("is not patchable, keeps its winget source and shows a neutral pin badge", () => {
+		const info = windowsPatchInfo(pinned);
+		expect(info.patchable).toBe(false);
+		expect(info.reasonText).toBe(
+			"Pinned with winget pin; remove the pin on the host to update it",
+		);
+		expect(windowsSourceLabel(info)).toBe("winget");
+		expect(windowsBadges(info)).toEqual([
+			{
+				key: "pinned",
+				label: "Pinned in winget",
+				className: "badge-secondary",
+				title: info.reasonText,
+			},
+		]);
+	});
+
+	it("is skipped by the wizard with its reason", () => {
+		const { patchable, unpatchable } = partitionPatchableHosts([
+			{ ...pinned, hostId: "w1", osType: "Windows 11" },
+		]);
+		expect(patchable).toHaveLength(0);
+		expect(unpatchable[0].reason).toBe("winget_pinned");
+	});
+
+	it("names the pin when the server rejects a trigger", () => {
+		expect(
+			patchErrorMessage({
+				response: {
+					data: {
+						error: "Some packages cannot be patched",
+						rejected: [{ name: "7-Zip", reason: "winget_pinned" }],
+					},
+				},
+			}),
+		).toMatch(/7-Zip: Pinned with winget pin/);
+	});
+
+	it("renders a skipped pinned item as neutral, not failed", () => {
+		expect(runItemStatus("skipped")).toEqual({
+			label: "Skipped",
+			className: "badge-secondary",
+		});
+	});
+});
