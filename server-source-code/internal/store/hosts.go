@@ -279,8 +279,9 @@ func (s *HostsStore) UpdateIdentityFingerprint(ctx context.Context, id string, u
 	})
 }
 
-// DismissIdentityConflict clears the possible-clone flag. It returns false
-// when no host has that ID.
+// DismissIdentityConflict clears the possible-clone flag and the fingerprint
+// history, so one more change is not read as a flap. It returns false when no
+// host has that ID.
 func (s *HostsStore) DismissIdentityConflict(ctx context.Context, id string) (bool, error) {
 	d := s.db.DB(ctx)
 	n, err := d.Queries.DismissHostIdentityConflict(ctx, id)

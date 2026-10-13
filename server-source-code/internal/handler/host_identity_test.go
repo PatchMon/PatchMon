@@ -318,6 +318,19 @@ func TestServePing_HostIdentity(t *testing.T) {
 		if _, _, conflict, _ := identityRow(t, d, host.ID); conflict {
 			t.Fatal("dismiss did not clear the flag")
 		}
+
+		ping(t, h, host, b)
+		if _, _, conflict, _ := identityRow(t, d, host.ID); conflict {
+			t.Fatal("one report after dismiss re-flagged the host")
+		}
+		ping(t, h, host, b)
+		if _, _, conflict, _ := identityRow(t, d, host.ID); conflict {
+			t.Fatal("the machine that stayed re-flagged the host")
+		}
+		ping(t, h, host, a)
+		if _, _, conflict, _ := identityRow(t, d, host.ID); !conflict {
+			t.Fatal("two machines still alternating after dismiss must flag again")
+		}
 	})
 
 	t.Run("flip-flop older than 24h is not flagged", func(t *testing.T) {

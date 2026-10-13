@@ -158,7 +158,12 @@ func (q *Queries) DeleteHostsByIDs(ctx context.Context, dollar_1 []string) error
 }
 
 const dismissHostIdentityConflict = `-- name: DismissHostIdentityConflict :execrows
-UPDATE hosts SET identity_conflict_at = NULL, updated_at = NOW() WHERE id = $1
+UPDATE hosts SET
+    identity_conflict_at = NULL,
+    identity_prev_fingerprint = NULL,
+    identity_fingerprint_changed_at = NULL,
+    updated_at = NOW()
+WHERE id = $1
 `
 
 func (q *Queries) DismissHostIdentityConflict(ctx context.Context, id string) (int64, error) {
