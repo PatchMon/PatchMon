@@ -1166,6 +1166,8 @@ Default columns:
 | **Latest Version** | The newest version PatchMon has seen reported across all hosts for this package. |
 | **Source Repos** | Repo chips. Each chip links to that repository. If more than three sources are reported, the overflow is shown as `+N`. |
 
+With a host filter active, **Installed On**, **Status** and **Latest Version** describe that host alone: Status is that host's own update state, and Latest Version is the version available to that host (or its installed version when it is up to date).
+
 The **Columns** button lets you hide any column except the select checkbox, drag to reorder, and reset to default. The column layout is persisted locally in your browser.
 
 #### How "Installed On" is calculated

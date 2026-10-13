@@ -146,7 +146,7 @@ func packagesListWhereSQL(filters packagesListFilters, tableAlias string) (strin
 	// EXISTS branch below. Emitted as a NOT EXISTS so the planner can
 	// use idx_host_packages_needs_update_security_package (partial on
 	// package_id WHERE needs_update AND is_security_update).
-	if filters.IsSecurityUpdate != nil && *filters.IsSecurityUpdate == "false" {
+	if filters.IsSecurityUpdate != nil && *filters.IsSecurityUpdate == "false" && !hostScoped(filters) {
 		b.WriteString(" AND NOT EXISTS (SELECT 1 FROM host_packages hps WHERE hps.package_id = ")
 		b.WriteString(tableAlias)
 		b.WriteString(".id AND hps.needs_update = true AND hps.is_security_update = true)")
@@ -205,6 +205,12 @@ func packagesListWhereSQL(filters packagesListFilters, tableAlias string) (strin
 	return b.String(), args
 }
 
+// hostScoped reports whether the list is filtered to one host, in which case
+// each row describes that host's host_packages row instead of mv_package_stats.
+func hostScoped(filters packagesListFilters) bool {
+	return filters.HostID != nil && *filters.HostID != ""
+}
+
 // listPackagesSQL builds the parameterised SELECT for the Packages list
 // page. The ORDER BY column / direction is interpolated from a whitelist
 // (resolvePackagesListSort) — never raw user input — so the planner can
@@ -227,7 +233,29 @@ func listPackagesSQL(filters packagesListFilters, sortKey, sortDir string, limit
 	//     the filtered set; with the EXISTS clause only emitted when a
 	//     host filter is active, this stays well within work_mem.
 	var b strings.Builder
-	b.WriteString(`SELECT p.id, p.name, p.description, p.category, p.latest_version, p.created_at,
+	if hostScoped(filters) {
+		hostP := "$" + strconv.Itoa(len(args)+1)
+		args = append(args, *filters.HostID)
+		b.WriteString(`SELECT p.id, p.name, p.description, p.category,
+       CASE WHEN hph.needs_update THEN COALESCE(hph.available_version, p.latest_version)
+            ELSE hph.current_version
+       END AS latest_version,
+       p.created_at,
+       1 AS total_installs,
+       hph.needs_update::int AS updates_needed,
+       (hph.needs_update AND hph.is_security_update)::int AS security_updates,
+       CASE
+           WHEN hph.needs_update AND hph.is_security_update THEN 0
+           WHEN hph.needs_update THEN 1
+           ELSE 2
+       END AS status_rank
+FROM packages p
+JOIN host_packages hph ON hph.package_id = p.id AND hph.host_id = `)
+		b.WriteString(hostP)
+		b.WriteString(`
+WHERE `)
+	} else {
+		b.WriteString(`SELECT p.id, p.name, p.description, p.category, p.latest_version, p.created_at,
        COALESCE(s.total_installs, 0)::int   AS total_installs,
        COALESCE(s.updates_needed, 0)::int   AS updates_needed,
        COALESCE(s.security_updates, 0)::int AS security_updates,
@@ -239,6 +267,7 @@ func listPackagesSQL(filters packagesListFilters, sortKey, sortDir string, limit
 FROM packages p
 LEFT JOIN mv_package_stats s ON s.package_id = p.id
 WHERE `)
+	}
 	b.WriteString(where)
 	b.WriteString(" ORDER BY ")
 	b.WriteString(orderBy)
@@ -257,6 +286,9 @@ WHERE `)
 // cannot fan out the COUNT.
 func countPackagesSQL(filters packagesListFilters) (string, []any) {
 	where, args := packagesListWhereSQL(filters, "p")
+	if hostScoped(filters) {
+		return `SELECT COUNT(*)::int, COUNT(*)::bigint FROM packages p WHERE ` + where, args
+	}
 	return `SELECT COUNT(*)::int,
        COALESCE(SUM(COALESCE(s.total_installs, 0)), 0)::bigint
 FROM packages p
