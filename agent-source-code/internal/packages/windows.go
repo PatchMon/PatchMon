@@ -65,7 +65,7 @@ func (m *WindowsManager) GetPackages() []models.Package {
 
 	// 3. Merge: start with registry baseline, enrich with WinGet update info
 	appPackages := m.mergeRegistryAndWinget(regPackages, wingetPackages)
-	if hasAppxUpdateCandidate(appPackages) {
+	if hasAppxStyleName(appPackages) {
 		if suppressed := applyAppxInstallState(appPackages, m.getAppxPackages()); len(suppressed) > 0 {
 			m.logger.WithField("packages", suppressed).Debug("Update flag cleared: winget version reflects a staged Appx copy")
 		}
@@ -351,9 +351,9 @@ func parseSQLServerSetups(output []byte) []sqlServerSetup {
 	return setups
 }
 
-func hasAppxUpdateCandidate(pkgs []models.Package) bool {
+func hasAppxStyleName(pkgs []models.Package) bool {
 	for _, p := range pkgs {
-		if p.NeedsUpdate && looksLikeAppxName(p.Name) {
+		if looksLikeAppxName(p.Name) {
 			return true
 		}
 	}
@@ -428,7 +428,7 @@ func applyAppxInstallState(pkgs []models.Package, appx []appxPackage) (suppresse
 		}
 	}
 	for i := range pkgs {
-		if !pkgs[i].NeedsUpdate || !looksLikeAppxName(pkgs[i].Name) {
+		if !looksLikeAppxName(pkgs[i].Name) {
 			continue
 		}
 		v, exact := appxVersionsFor(byName, normalizePackageName(pkgs[i].Name))
@@ -436,25 +436,23 @@ func applyAppxInstallState(pkgs []models.Package, appx []appxPackage) (suppresse
 			continue
 		}
 		current := pkgs[i].CurrentVersion
-		switch {
-		case v.hasStaged(current):
+		if v.hasStaged(current) {
 			if c, _ := compareDottedVersions(v.installed, current); c <= 0 {
 				continue
 			}
 			pkgs[i].CurrentVersion = v.installed
-			pkgs[i].NeedsUpdate = installedIsOlder(v.installed, pkgs[i].AvailableVersion)
-			if !pkgs[i].NeedsUpdate {
+			if pkgs[i].NeedsUpdate && !installedIsOlder(v.installed, pkgs[i].AvailableVersion) {
+				pkgs[i].NeedsUpdate = false
+				pkgs[i].AvailableVersion = ""
 				suppressed = append(suppressed, pkgs[i].Name)
 			}
-		case exact && isDottedNumeric(current) && !sameVersionScheme(current, v.installed) && v.newerThanAllStaged():
-			pkgs[i].CurrentVersion = v.installed
-			pkgs[i].NeedsUpdate = false
-			suppressed = append(suppressed, pkgs[i].Name)
-		default:
 			continue
 		}
-		if !pkgs[i].NeedsUpdate {
+		if pkgs[i].NeedsUpdate && exact && isDottedNumeric(current) && !sameVersionScheme(current, v.installed) && v.newerThanAllStaged() {
+			pkgs[i].CurrentVersion = v.installed
+			pkgs[i].NeedsUpdate = false
 			pkgs[i].AvailableVersion = ""
+			suppressed = append(suppressed, pkgs[i].Name)
 		}
 	}
 	return suppressed
