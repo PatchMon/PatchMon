@@ -67,7 +67,7 @@ func (m *WindowsManager) GetPackages() []models.Package {
 	appPackages := m.mergeRegistryAndWinget(regPackages, wingetPackages)
 	if hasAppxStyleName(appPackages) {
 		if suppressed := applyAppxInstallState(appPackages, m.getAppxPackages()); len(suppressed) > 0 {
-			m.logger.WithField("packages", suppressed).Debug("Update flag cleared: winget version reflects a staged Appx copy")
+			m.logger.WithField("packages", suppressed).Debug("Update flag cleared: a newer Appx copy is installed than winget reports")
 		}
 	}
 	m.logger.WithField("count", len(appPackages)).Info("Application packages after merge")

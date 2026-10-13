@@ -206,8 +206,8 @@ func TestApplyAppxInstallStateReportsSuppressed(t *testing.T) {
 	pkgs := []models.Package{
 		{Name: "Microsoft.WindowsAppRuntime.1.7", CurrentVersion: "1.7.8", AvailableVersion: "1.7.9", NeedsUpdate: true},
 		{Name: "Microsoft.VCLibs.140.00", CurrentVersion: "14.0.30704.0", AvailableVersion: "14.0.33519.0", NeedsUpdate: true},
+		{Name: "Microsoft.VCLibs.140.00.UWPDesktop", CurrentVersion: "14.0.30704.0", AvailableVersion: "14.0.40000.0", NeedsUpdate: true},
 	}
-	pkgs = append(pkgs, models.Package{Name: "Microsoft.VCLibs.140.00.UWPDesktop", CurrentVersion: "14.0.30704.0", AvailableVersion: "14.0.40000.0", NeedsUpdate: true})
 	got := applyAppxInstallState(pkgs, issue1149Appx())
 	want := []string{"Microsoft.WindowsAppRuntime.1.7", "Microsoft.VCLibs.140.00"}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
@@ -215,7 +215,7 @@ func TestApplyAppxInstallStateReportsSuppressed(t *testing.T) {
 	}
 }
 
-func TestHasAppxUpdateCandidate(t *testing.T) {
+func TestHasAppxStyleName(t *testing.T) {
 	cases := []struct {
 		name string
 		pkgs []models.Package
