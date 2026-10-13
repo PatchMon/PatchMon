@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseBodyLimit_UnsuffixedIsMB(t *testing.T) {
 	cases := []struct {
@@ -225,5 +228,43 @@ func TestScaleBodyLimit_CeilingIsExactlyInclusive(t *testing.T) {
 	}
 	if got := parseBodyLimit("0", 5<<20); got != 5<<20 {
 		t.Errorf("parseBodyLimit(\"0\") = %d, want the fallback", got)
+	}
+}
+
+func TestValidateBodyLimit(t *testing.T) {
+	cases := []struct {
+		key, value string
+		ok         bool
+	}{
+		{"JSON_BODY_LIMIT", "5mb", true},
+		{"JSON_BODY_LIMIT", "5", true},
+		{"JSON_BODY_LIMIT", "512kb", true},
+		{"JSON_BODY_LIMIT", "1gb", true},
+		{"COMPLIANCE_BODY_LIMIT", "50mb", true},
+		{"AGENT_UPDATE_BODY_LIMIT", " 2MB ", true},
+		{"AGENT_PING_BODY_LIMIT", "64", true},
+		{"AGENT_PING_BODY_LIMIT", "128kb", true},
+		{"JSON_BODY_LIMIT", "", false},
+		{"JSON_BODY_LIMIT", "abc", false},
+		{"JSON_BODY_LIMIT", "0", false},
+		{"JSON_BODY_LIMIT", "-1mb", false},
+		{"JSON_BODY_LIMIT", "5 megabytes", false},
+		{"AGENT_PING_BODY_LIMIT", "0kb", false},
+		{"AGENT_PING_BODY_LIMIT", "64kib", false},
+	}
+	for _, c := range cases {
+		err := ValidateBodyLimit(c.key, c.value)
+		if (err == nil) != c.ok {
+			t.Errorf("ValidateBodyLimit(%s, %q) err = %v, want ok=%v", c.key, c.value, err, c.ok)
+		}
+		if err != nil && !strings.Contains(err.Error(), c.key) {
+			t.Errorf("error %q does not name %s", err, c.key)
+		}
+	}
+	if err := ValidateBodyLimit("AGENT_PING_BODY_LIMIT", "x"); err == nil || !strings.Contains(err.Error(), "bare number means KB") {
+		t.Errorf("ping error = %v, want it to say a bare number means KB", err)
+	}
+	if err := ValidateBodyLimit("JSON_BODY_LIMIT", "x"); err == nil || !strings.Contains(err.Error(), "bare number means MB") {
+		t.Errorf("json error = %v, want it to say a bare number means MB", err)
 	}
 }

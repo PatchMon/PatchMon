@@ -667,6 +667,13 @@ func (h *SettingsHandler) UpdateEnvironmentConfig(w http.ResponseWriter, r *http
 			return
 		}
 	}
+	if config.IsBodyLimitKey(key) {
+		v, _ := req.Value.(string)
+		if err := config.ValidateBodyLimit(key, v); err != nil {
+			Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	slog.Debug("env config update", "key", key, "value", req.Value)
 	s, err := h.settings.GetFirst(r.Context())
 	if err != nil {

@@ -3,6 +3,7 @@ package config
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
@@ -258,6 +259,28 @@ func scaleBodyLimit(v, mult, fallback int64) int64 {
 		return maxBodyLimitBytes
 	}
 	return v * mult
+}
+
+// IsBodyLimitKey reports whether key is one of the four request body size settings.
+func IsBodyLimitKey(key string) bool {
+	switch key {
+	case "JSON_BODY_LIMIT", "AGENT_UPDATE_BODY_LIMIT", "COMPLIANCE_BODY_LIMIT", "AGENT_PING_BODY_LIMIT":
+		return true
+	}
+	return false
+}
+
+// ValidateBodyLimit rejects a value the resolver would discard in favour of the
+// default. Values above the ceiling are accepted and clamped, as the resolver does.
+func ValidateBodyLimit(key, value string) error {
+	parse, bareUnit := parseBodyLimit, "MB"
+	if key == "AGENT_PING_BODY_LIMIT" {
+		parse, bareUnit = parseBodyLimitKB, "KB"
+	}
+	if parse(value, -1) < 1 {
+		return fmt.Errorf("%s must be a positive size such as 512kb or 5mb (a bare number means %s); values above 32mb are reduced to 32mb", key, bareUnit)
+	}
+	return nil
 }
 
 func resolveBodyLimitKB(envKey string, dbVal *string, defaultBytes int64) int64 {
