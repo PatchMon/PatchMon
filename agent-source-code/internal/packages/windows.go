@@ -1047,20 +1047,38 @@ try {
   $session   = New-Object -ComObject Microsoft.Update.Session
   $searcher  = $session.CreateUpdateSearcher()
   $results   = $searcher.Search("IsInstalled=0 AND IsHidden=0")
+  $pendingRebootIds = @{}
+  $rebootRequired = $false
+  try { $rebootRequired = (New-Object -ComObject Microsoft.Update.SystemInfo).RebootRequired } catch {}
+  if ($rebootRequired) {
+    try {
+      $historyCount = $searcher.GetTotalHistoryCount()
+      if ($historyCount -gt 0) {
+        foreach ($h in $searcher.QueryHistory(0, [Math]::Min($historyCount, 200))) {
+          if ($h.ResultCode -eq 1) { $pendingRebootIds[[string]$h.UpdateIdentity.UpdateID] = $true }
+        }
+      }
+    } catch {}
+  }
   foreach ($u in $results.Updates) {
     $secFlag = ($u.MsrcSeverity -eq "Critical" -or $u.MsrcSeverity -eq "Important")
     $kbs = @($u.KBArticleIDs | ForEach-Object { "KB$_" })
-    $kbStr = ($kbs -join ", ")
-    $displayName = if ($kbStr) { "$($u.Title) ($kbStr)" } else { $u.Title }
     $guid = ""
     try { $guid = $u.Identity.UpdateID } catch {}
     $cats = @($u.Categories | ForEach-Object { $_.Name })
+    $catIds = @($u.Categories | ForEach-Object { [string]$_.CategoryID })
     $supportUrl = ""
     try { $supportUrl = $u.SupportURL } catch {}
     $revNum = 0
     try { $revNum = [int]$u.Identity.RevisionNumber } catch {}
     $result += @{
-      Name             = $displayName
+      Name             = $u.Title
+      Title            = $u.Title
+      KBIDs            = @($u.KBArticleIDs | ForEach-Object { [string]$_ })
+      CategoryIDs      = $catIds
+      BrowseOnly       = [bool]$u.BrowseOnly
+      TypeCode         = [int]$u.Type
+      PendingReboot    = [bool]$pendingRebootIds[[string]$guid]
       CurrentVersion   = "pending"
       AvailableVersion = ""
       NeedsUpdate      = $true
@@ -1071,8 +1089,6 @@ try {
       WUACategories    = $cats
       WUASupportURL    = $supportUrl
       WUARevisionNumber = $revNum
-      WUABrowseOnly    = [bool]$u.BrowseOnly
-      WUAType          = if ($u.Type -eq 2) { "Driver" } else { "Software" }
     }
   }
 } catch {
@@ -1148,21 +1164,7 @@ $result | ConvertTo-Json -Compress -Depth 4
 		outputStr = "[" + outputStr + "]"
 	}
 
-	var raw []struct {
-		Name              string   `json:"Name"`
-		CurrentVersion    string   `json:"CurrentVersion"`
-		AvailableVersion  string   `json:"AvailableVersion"`
-		NeedsUpdate       bool     `json:"NeedsUpdate"`
-		IsSecurityUpdate  bool     `json:"IsSecurityUpdate"`
-		WUAGuid           string   `json:"WUAGuid"`
-		WUAKb             string   `json:"WUAKb"`
-		WUASeverity       string   `json:"WUASeverity"`
-		WUACategories     []string `json:"WUACategories"`
-		WUASupportURL     string   `json:"WUASupportURL"`
-		WUARevisionNumber int32    `json:"WUARevisionNumber"`
-		WUABrowseOnly     bool     `json:"WUABrowseOnly"`
-		WUAType           string   `json:"WUAType"`
-	}
+	var raw []wuaRawUpdate
 	if err := json.Unmarshal([]byte(outputStr), &raw); err != nil {
 		m.logger.WithError(err).Warn("Failed to parse Windows updates JSON")
 		return nil
@@ -1170,29 +1172,9 @@ $result | ConvertTo-Json -Compress -Depth 4
 
 	var packages []models.Package
 	for _, u := range raw {
-		if u.Name == "" {
-			continue
+		if pkg, ok := wuaRawToPackage(u); ok {
+			packages = append(packages, pkg)
 		}
-		cv := u.CurrentVersion
-		if cv == "" {
-			cv = "pending"
-		}
-		packages = append(packages, models.Package{
-			Name:              u.Name,
-			Category:          "Windows Update",
-			CurrentVersion:    cv,
-			AvailableVersion:  u.AvailableVersion,
-			NeedsUpdate:       u.NeedsUpdate,
-			IsSecurityUpdate:  u.IsSecurityUpdate,
-			WUAGuid:           u.WUAGuid,
-			WUAKb:             u.WUAKb,
-			WUASeverity:       u.WUASeverity,
-			WUACategories:     u.WUACategories,
-			WUASupportURL:     u.WUASupportURL,
-			WUARevisionNumber: u.WUARevisionNumber,
-			WUABrowseOnly:     u.WUABrowseOnly,
-			WUAType:           u.WUAType,
-		})
 	}
 	return packages
 }
