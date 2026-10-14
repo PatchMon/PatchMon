@@ -4305,7 +4305,7 @@ In Direct mode, the PatchMon server dials the host directly:
 4. Browser sends the `connect` message with auth credentials, terminal size, and connection mode.
 5. Server dials `host.ip` (falling back to `host.hostname`) on the chosen port, authenticates with password or private key, and starts an interactive shell.
 
-**Host key verification**: the server uses `~/.ssh/known_hosts` on the PatchMon container if it exists, and falls back to `InsecureIgnoreHostKey` otherwise. Direct mode does **not** prompt the user to accept host keys. Keys are accepted on first use when the fallback is active. Supply a `known_hosts` file via volume mount for production deployments that require strict verification.
+**Host key verification (trust on first use)**: host keys are now always verified against a PatchMon-managed `known_hosts` file. The first time a host is contacted its key is recorded and the connection is accepted; on later connections a key that no longer matches is rejected as a possible man-in-the-middle and the session fails. The insecure "accept any key" behaviour has been removed. In the stock Docker image this file is not on a persistent volume, so recorded keys reset when the container is recreated and the next connection re-records them. To keep keys across upgrades, set `PATCHMON_SSH_KNOWN_HOSTS` to a path on a mounted volume.
 
 **Use Direct mode when:**
 - The PatchMon server has network reach to the host on the SSH port.
@@ -4320,7 +4320,7 @@ Flow:
 1. Browser → ticket + WebSocket as in Direct mode.
 2. Server receives the `connect` message with `connection_mode: "proxy"`.
 3. Server generates a 16-byte session ID, stores a proxy session record, and sends `{ "type": "ssh_proxy", "session_id": …, "host": "localhost", "port": 22, "username": … }` over the agent's existing WebSocket.
-4. The agent dials `<proxy_host>:<proxy_port>` (defaults `localhost:22`) **on its own host** and pipes the stream back to the server over the WebSocket as `ssh_proxy_data` frames.
+4. The agent dials `<proxy_host>:<proxy_port>` (defaults `localhost:22`) **on its own host** and pipes the stream back to the server over the WebSocket as `ssh_proxy_data` frames. For security, `proxy_host` is restricted to the host's own registered address (its IP, hostname or interface address) or `localhost`; it cannot be used to reach other machines through the agent.
 5. The server forwards those frames to the browser as terminal `data` events.
 
 **Agent config requirement.** Proxy mode requires `integrations.ssh-proxy-enabled: true` in the agent's `/etc/patchmon/config.yml`. This setting is not pushed from the server. It has to be set manually and the agent service restarted. If the agent rejects the request, the terminal shows *"Agent not connected"* or an agent-supplied error.
@@ -4391,7 +4391,8 @@ Server logs also record each upgrade and ticket consumption under `ssh-terminal 
 | *"Agent not connected."* in Proxy mode | Host's agent WebSocket is down. Verify from **Host Detail → Status**; restart the agent service on the host. |
 | Agent rejects with *"ssh-proxy-enabled must be true"* | Set `integrations.ssh-proxy-enabled: true` in the agent's `config.yml` and restart the agent service. |
 | *"Failed to parse private key"* | Key is encrypted: add the passphrase. Or the key format is unsupported; use OpenSSH or PEM PKCS#8. |
-| Connection established but first-time host key warning on server log | The PatchMon container has no `known_hosts` for this host. Add one via a volume mount, or accept that first-use keys are auto-trusted. |
+| *"host key verification failed … (possible man-in-the-middle)"* | The host presented a different SSH key than the one recorded on first use. If the host was legitimately rebuilt or its key rotated, remove its line from the PatchMon-managed `known_hosts` file and reconnect to record the new key. |
+| *"Proxy host must be the host's own address or localhost"* | In Proxy mode the agent will only connect to the host's own registered address or `localhost`. Connecting to an unrelated address through the agent is blocked by design. |
 
 ### Related pages
 
