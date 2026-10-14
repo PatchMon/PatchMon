@@ -2,9 +2,12 @@ package sshproxy
 
 import (
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+const connWriteWait = 10 * time.Second
 
 // ConnWriter serialises writes to a frontend WebSocket connection.
 //
@@ -30,6 +33,8 @@ func (w *ConnWriter) WriteJSON(v interface{}) error {
 	if w.conn == nil {
 		return nil
 	}
+	// Bounded so a dead browser cannot stall the agent read loop that also writes here.
+	_ = w.conn.SetWriteDeadline(time.Now().Add(connWriteWait))
 	return w.conn.WriteJSON(v)
 }
 

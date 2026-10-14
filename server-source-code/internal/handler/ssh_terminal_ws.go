@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
@@ -44,6 +45,12 @@ func hostKeyCallback(log *slog.Logger) ssh.HostKeyCallback {
 	return ssh.InsecureIgnoreHostKey()
 }
 
+const (
+	sshTerminalPongWait   = 90 * time.Second
+	sshTerminalPingPeriod = 30 * time.Second
+	sshTerminalWriteWait  = 10 * time.Second
+)
+
 // SshTerminalWSHandler handles SSH terminal WebSocket connections.
 type SshTerminalWSHandler struct {
 	tickets     *store.SshTicketStore
@@ -54,6 +61,8 @@ type SshTerminalWSHandler struct {
 	proxySess   *sshproxy.Sessions
 	upgrader    websocket.Upgrader
 	log         *slog.Logger
+	pongWait    time.Duration
+	pingPeriod  time.Duration
 }
 
 // NewSshTerminalWSHandler creates a new SSH terminal WebSocket handler.
@@ -74,6 +83,8 @@ func NewSshTerminalWSHandler(
 		registry:    registry,
 		proxySess:   proxySess,
 		log:         log,
+		pongWait:    sshTerminalPongWait,
+		pingPeriod:  sshTerminalPingPeriod,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -188,7 +199,30 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 
 	conn.SetReadLimit(512 * 1024)
 
+	// Browsers answer pings automatically, so an idle but open terminal stays up;
+	// a vanished client stops answering and the read deadline tears the session down.
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(h.pongWait))
+	})
+	pingStop := make(chan struct{})
+	defer close(pingStop)
+	go func() {
+		t := time.NewTicker(h.pingPeriod)
+		defer t.Stop()
+		for {
+			select {
+			case <-pingStop:
+				return
+			case <-t.C:
+				if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(sshTerminalWriteWait)); err != nil {
+					return
+				}
+			}
+		}
+	}()
+
 	for {
+		_ = conn.SetReadDeadline(time.Now().Add(h.pongWait))
 		_, message, err := conn.ReadMessage()
 		if err != nil {
 			break
