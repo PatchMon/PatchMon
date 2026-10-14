@@ -73,3 +73,40 @@ func TestRDPTicketConsumeRoundTrip(t *testing.T) {
 		t.Fatalf("second consume err = %v, want ErrInvalidRDPTicket", err)
 	}
 }
+
+func TestRDPTicketCarriesKeyboardLayout(t *testing.T) {
+	s := newRDPTicketStore(t)
+	ctx := context.Background()
+	ticket, err := s.CreateTicket(ctx, "u1", "h1", "s1", 4321, "admin", "secret", 1280, 800, "de-de-qwertz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := s.ConsumeTicket(ctx, ticket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.KeyboardLayout != "de-de-qwertz" {
+		t.Fatalf("keyboard layout = %q, want de-de-qwertz", d.KeyboardLayout)
+	}
+}
+
+func TestRDPTicketWithoutLayoutStillDecodes(t *testing.T) {
+	s := newRDPTicketStore(t)
+	ctx := context.Background()
+	legacy := `{"userId":"u1","hostId":"h1","sessionId":"s1","proxyPort":4321,"username":"admin","password":"secret","width":1280,"height":800,"createdAt":1}`
+	encrypted, err := s.enc.Encrypt(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const ticket = "legacyticket"
+	if err := s.rdb.RDB(ctx).Set(ctx, hostctx.TenantKey(ctx, rdpTicketPrefix+ticket), encrypted, rdpTicketTTL).Err(); err != nil {
+		t.Fatal(err)
+	}
+	d, err := s.ConsumeTicket(ctx, ticket)
+	if err != nil {
+		t.Fatalf("consume a ticket issued before keyboard layouts: %v", err)
+	}
+	if d.SessionID != "s1" || d.ProxyPort != 4321 || d.Password != "secret" || d.KeyboardLayout != "" {
+		t.Fatalf("unexpected legacy ticket data %+v", d)
+	}
+}
