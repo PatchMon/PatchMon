@@ -31,6 +31,21 @@ import {
 import { isRenderableAvatarSrc } from "../../utils/avatar";
 import ModalPortal from "../ui/ModalPortal";
 
+const ROLE_RANK = {
+	superadmin: 100,
+	admin: 90,
+	host_manager: 50,
+	user: 20,
+	readonly: 10,
+};
+const roleRank = (role) => ROLE_RANK[role] ?? 30;
+
+// Mirrors canResetTfaOf on the server.
+const canResetTfaOf = (actor, target) =>
+	!!actor &&
+	actor.id !== target.id &&
+	(actor.role === "superadmin" || roleRank(target.role) < roleRank(actor.role));
+
 const UsersTab = () => {
 	const confirm = useConfirm();
 	const toast = useToast();
@@ -378,7 +393,7 @@ const UsersTab = () => {
 											<Key className="h-4 w-4" />
 											Reset
 										</button>
-										{user.tfa_enabled && user.id !== currentUser?.id && (
+										{user.tfa_enabled && canResetTfaOf(currentUser, user) && (
 											<button
 												type="button"
 												onClick={() => setResetTfaUser(user)}
@@ -556,17 +571,18 @@ const UsersTab = () => {
 													>
 														<Key className="h-4 w-4" />
 													</button>
-													{user.tfa_enabled && user.id !== currentUser?.id && (
-														<button
-															type="button"
-															onClick={() => setResetTfaUser(user)}
-															className="text-warning-500 hover:text-warning-700 dark:text-warning-400 dark:hover:text-warning-300"
-															title="Reset two-factor authentication"
-															aria-label={`Reset two-factor authentication for ${user.username}`}
-														>
-															<ShieldOff className="h-4 w-4" />
-														</button>
-													)}
+													{user.tfa_enabled &&
+														canResetTfaOf(currentUser, user) && (
+															<button
+																type="button"
+																onClick={() => setResetTfaUser(user)}
+																className="text-warning-500 hover:text-warning-700 dark:text-warning-400 dark:hover:text-warning-300"
+																title="Reset two-factor authentication"
+																aria-label={`Reset two-factor authentication for ${user.username}`}
+															>
+																<ShieldOff className="h-4 w-4" />
+															</button>
+														)}
 													<button
 														type="button"
 														onClick={() =>
@@ -1509,6 +1525,7 @@ const ResetTfaModal = ({
 		} catch (err) {
 			setError(
 				err.response?.data?.error ||
+					err.response?.data?.message ||
 					"Failed to reset two-factor authentication",
 			);
 		}

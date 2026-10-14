@@ -5,7 +5,7 @@ import UsersTab from "../../components/settings/UsersTab";
 import { adminUsersAPI } from "../../utils/api";
 
 const toast = { success: vi.fn(), error: vi.fn() };
-let currentUser = { id: "me", has_password: true };
+let currentUser = { id: "me", role: "admin", has_password: true };
 
 vi.mock("../../contexts/AuthContext", () => ({
 	useAuth: () => ({ user: currentUser }),
@@ -59,6 +59,22 @@ const setUsers = (meTfa) =>
 				},
 				{
 					...baseUser,
+					id: "peer",
+					username: "peer",
+					email: "p@x",
+					role: "admin",
+					tfa_enabled: true,
+				},
+				{
+					...baseUser,
+					id: "boss",
+					username: "boss",
+					email: "s@x",
+					role: "superadmin",
+					tfa_enabled: true,
+				},
+				{
+					...baseUser,
 					id: "bob",
 					username: "bob",
 					email: "b@x",
@@ -90,7 +106,7 @@ const openFor = async (username) => {
 describe("UsersTab reset 2FA", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		currentUser = { id: "me", has_password: true };
+		currentUser = { id: "me", role: "admin", has_password: true };
 		global.fetch = vi.fn(() =>
 			Promise.resolve({ ok: true, json: () => ({ enabled: false }) }),
 		);
@@ -113,6 +129,43 @@ describe("UsersTab reset 2FA", () => {
 				name: "Reset two-factor authentication for me",
 			}),
 		).toBeNull();
+		for (const name of ["peer", "boss"]) {
+			expect(
+				screen.queryByRole("button", {
+					name: `Reset two-factor authentication for ${name}`,
+				}),
+			).toBeNull();
+		}
+	});
+
+	it("lets a superadmin reset another superadmin", async () => {
+		currentUser = { id: "me", role: "superadmin", has_password: true };
+		setUsers(true);
+		renderTab();
+		expect(
+			await screen.findAllByRole("button", {
+				name: "Reset two-factor authentication for boss",
+			}),
+		).toHaveLength(2);
+	});
+
+	it("shows the rate-limit message", async () => {
+		setUsers(false);
+		adminUsersAPI.resetTfa.mockRejectedValue({
+			response: {
+				status: 429,
+				data: { message: "Too many requests. Try again later." },
+			},
+		});
+		renderTab();
+		await openFor("alice");
+		fireEvent.change(screen.getByLabelText("Your password"), {
+			target: { value: "pw" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Reset 2FA" }));
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"Too many requests. Try again later.",
+		);
 	});
 
 	it("requires the actor's password and code before calling the API", async () => {
@@ -216,7 +269,7 @@ describe("UsersTab reset 2FA", () => {
 	});
 
 	it("explains why an SSO-only admin cannot confirm", async () => {
-		currentUser = { id: "me", has_password: false };
+		currentUser = { id: "me", role: "admin", has_password: false };
 		setUsers(false);
 		renderTab();
 		await openFor("alice");
