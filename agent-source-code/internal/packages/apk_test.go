@@ -308,8 +308,11 @@ func TestParseAPKPlan(t *testing.T) {
 }
 
 func TestParseAPKWorldNames(t *testing.T) {
-	got := ParseAPKWorldNames("alpine-base\nbusybox=1.37.0-r29\n!nano\ncurl@edge>8.0\nzlib~1.3\n.tmp-test=20261014.134913\n")
-	want := map[string]bool{"alpine-base": true, "busybox": true, "nano": true, "curl": true, "zlib": true, ".tmp-test": true}
+	got := ParseAPKWorldNames("alpine-base\nbusybox=1.37.0-r29\n!nano\ncurl@edge>8.0\nzlib~1.3\n.tmp-test=20261014.134913\nfoo<2\nbar><Q1abc=\n!baz@edge\nso:libz.so.1\n")
+	want := map[string]bool{
+		"alpine-base": true, "busybox": true, "nano": true, "curl": true, "zlib": true, ".tmp-test": true,
+		"foo": true, "bar": true, "baz": true, "so:libz.so.1": true,
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ParseAPKWorldNames = %v, want %v", got, want)
 	}

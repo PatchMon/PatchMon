@@ -1537,7 +1537,7 @@ Alpine hosts are patched with `apk` on Alpine 3.21 and later, with agent 2.1.4 o
 2. `apk upgrade --simulate` works out the transaction. On a real run, if apk says the plan is unreliable because apk-tools itself has an update, the agent installs that update first (`--self-upgrade-only` on apk-tools 2, `--preupgrade-only` on apk-tools 3), says so in the run output, and plans again. If it cannot tell which apk-tools version is installed, it stops instead.
 3. The agent refuses the run, before changing anything, if the plan would **downgrade** or **replace** a package, **remove** a package listed in `/etc/apk/world`, or contains a step it does not recognise. The error names each step and its likely cause. Review the plan with `apk upgrade --simulate` on the host.
 
-   apk also removes packages that nothing needs any more, for example a library a newer package no longer depends on. That is normal clean-up, so the agent lets it happen when the package is not in `/etc/apk/world`, and names each one in the run output: `Removing gdbm 1.26-r0: no longer required by any package and not in /etc/apk/world.` Removed packages are listed under the run's affected packages.
+   apk also removes packages that nothing needs any more, for example a library a newer package no longer depends on. That is normal clean-up, so the agent lets it happen when the package is not in `/etc/apk/world`, and names each one in the run output: `Removing gdbm 1.26-r0: no longer required by any package and not in /etc/apk/world.` A dry run says `Would remove` instead. Removed packages are listed under the run's affected packages.
 4. A real run then applies the plan with `apk upgrade`.
 
 **Patch selected** runs `apk upgrade <packages>`, never `apk add`, so `/etc/apk/world` is not changed. Packages built from the same source as a selected package are upgraded with it: selecting `libssl3` also upgrades `libcrypto3`, because apk will not upgrade one without the other. If apk still leaves a selected package alone, the run output says so; select the packages it needs as well, or use **Patch all**.
@@ -1899,7 +1899,7 @@ A version constraint in `/etc/apk/world` no longer matches the installed package
 The simulated plan contained a step the agent does not apply on its own, so it stopped before changing anything. The message lists the steps and the likely cause of each:
 
 - `Downgrading`: usually a repository, often a tagged one such as `@edge`, was removed or changed in `/etc/apk/repositories` while packages from it are still installed. Restore the repository or deal with those packages by hand.
-- `Purging` a package listed in `/etc/apk/world`: usually a conflict (`!name`) or a changed constraint in `/etc/apk/world`. Packages that are not in world are removed as normal clean-up and do not stop the run.
+- `Purging` a package listed in `/etc/apk/world`: usually a conflict (`!name`) or a changed constraint in `/etc/apk/world`, or the package was renamed or replaced by another. Packages that are not in world are removed as normal clean-up and do not stop the run.
 - `Replacing`: a repository now serves a different build of a version that is already installed.
 - Anything else: apk printed a step this agent does not recognise.
 

@@ -115,8 +115,12 @@ func runAPKPatch(io apkPatchIO, patchType string, packageNames []string, dryRun 
 	if refused := plan.Refused(inv.WorldNames); len(refused) > 0 {
 		return apkRefusalError(refused)
 	}
+	verb := "Removing"
+	if dryRun {
+		verb = "Would remove"
+	}
 	for _, s := range plan.Orphans(inv.WorldNames) {
-		io.note(fmt.Sprintf("Removing %s %s: no longer required by any package and not in /etc/apk/world.", s.Name, strings.Trim(s.Detail, "()")))
+		io.note(fmt.Sprintf("%s %s %s: no longer required by any package and not in /etc/apk/world.", verb, s.Name, strings.Trim(s.Detail, "()")))
 	}
 
 	for _, h := range holds {
@@ -148,7 +152,7 @@ func apkRefusalError(refused []packages.APKPlanStep) error {
 		case "Downgrading":
 			cause = "a downgrade usually means a repository was removed or changed in /etc/apk/repositories, or a package came from a tagged repository that is no longer configured"
 		case "Purging":
-			cause = "apk would remove a package listed in /etc/apk/world, usually because of a conflict (!name) or a changed constraint there"
+			cause = "apk would remove a package listed in /etc/apk/world, usually because of a conflict (!name) or a changed constraint there, or the package was renamed or replaced by another"
 		case "Replacing":
 			cause = "a same-version replace means a repository now serves a different build of a version that is already installed"
 		default:
