@@ -3831,6 +3831,17 @@ The generic JSON body also carries a top-level `text` key, alongside the structu
 | **To** | Yes | Comma-separated list of recipients. |
 | **TLS mode** | Yes | Choose how the SMTP transport secures the connection. See **TLS modes** below. Defaults to **STARTTLS** for new destinations. |
 
+##### Authentication mechanisms
+
+When a username or password is set, PatchMon reads the `AUTH` mechanisms the relay advertises and picks one:
+
+- **PLAIN** whenever the relay offers it.
+- **LOGIN** when the relay offers LOGIN but not PLAIN. Microsoft 365 SMTP AUTH, for example, advertises LOGIN and XOAUTH2 but not PLAIN.
+
+Both mechanisms follow the same TLS rules: credentials are only sent once the connection is encrypted, or in **None (insecure)** mode with the cleartext opt-in described below. If the relay offers neither PLAIN nor LOGIN (for example only `CRAM-MD5` or `XOAUTH2`), PatchMon does not attempt to authenticate and the send fails at the `auth` stage with a message listing what the relay offered.
+
+If the relay does not advertise `AUTH` at all, PatchMon skips authentication and sends the message unauthenticated, even when a username and password are set. The relay then decides whether to accept it.
+
 ##### TLS modes
 
 PatchMon offers four TLS modes on every email destination. Pick the one your relay actually supports rather than leaving it on **Auto**, so a misconfigured server fails closed instead of silently downgrading to plaintext.
@@ -3842,7 +3853,7 @@ PatchMon offers four TLS modes on every email destination. Pick the one your rel
 
 ##### Authenticated relays without TLS
 
-Some internal relays require SMTP AUTH but do not offer TLS at all. By default PatchMon refuses that combination, because PLAIN authentication over cleartext puts the username and password on the wire in a form anyone on the network path can read.
+Some internal relays require SMTP AUTH but do not offer TLS at all. By default PatchMon refuses that combination, because PLAIN or LOGIN authentication over cleartext puts the username and password on the wire in a form anyone on the network path can read.
 
 If the relay is on a network you trust and you accept that trade-off, set **TLS mode** to **None (insecure)** and tick **Send credentials over an unencrypted connection** on the destination. PatchMon then authenticates in cleartext for that destination only.
 
@@ -3861,7 +3872,7 @@ Points worth knowing before you enable it:
 Saved email destinations have a **Send test email** button next to the standard **Test** action. Unlike **Test**, which enqueues a synthetic notification through the worker, **Send test email** performs a synchronous live SMTP probe directly from the API request and reports the result inline:
 
 - On success the toast confirms delivery and the recipients should receive a short test message.
-- On failure PatchMon reports which stage of the SMTP exchange failed: `validate` (the configuration is rejected before any network activity, for example a missing host, or a username set with TLS mode **None** without the cleartext credentials opt-in), `dial` (the TCP connection or implicit TLS handshake could not be established), `starttls` (the server did not advertise `STARTTLS` in the chosen mode), `auth` (the relay rejected the credentials), or `send` (the relay accepted the session but rejected the recipients or message). The toast includes the underlying error message returned by the relay.
+- On failure PatchMon reports which stage of the SMTP exchange failed: `validate` (the configuration is rejected before any network activity, for example a missing host, or a username set with TLS mode **None** without the cleartext credentials opt-in), `dial` (the TCP connection or implicit TLS handshake could not be established), `starttls` (the server did not advertise `STARTTLS` in the chosen mode), `auth` (the relay rejected the credentials, or offers neither PLAIN nor LOGIN), or `send` (the relay accepted the session but rejected the recipients or message). The toast includes the underlying error message returned by the relay.
 
 This is the fastest way to diagnose a TLS or auth misconfiguration without trawling through server logs. The probe respects the same `can_manage_notifications` permission as editing the destination.
 

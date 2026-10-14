@@ -481,7 +481,7 @@ type testSMTPRequest struct {
 	To       string `json:"to"`
 	UseTLS   *bool  `json:"use_tls"`
 	TLSMode  string `json:"tls_mode"`
-	// AllowInsecureAuth permits PLAIN auth over cleartext. Only meaningful
+	// AllowInsecureAuth permits PLAIN or LOGIN auth over cleartext. Only meaningful
 	// with tls_mode=none; see mailer.Config.AllowInsecureAuth.
 	AllowInsecureAuth bool `json:"allow_insecure_auth"`
 }
