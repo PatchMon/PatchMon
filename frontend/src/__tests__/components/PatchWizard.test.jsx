@@ -43,6 +43,7 @@ vi.mock("../../utils/patchingApi", () => ({
 		getPreviewRun: vi.fn(),
 	},
 	pollDryRunUntilDone: vi.fn(),
+	STILL_RUNNING_MESSAGE: "Validation is still running on the host.",
 }));
 
 import PatchWizard from "../../components/PatchWizard";
@@ -594,7 +595,7 @@ describe("PatchWizard on Windows hosts", () => {
 		await waitFor(() =>
 			expect(pollDryRunUntilDone).toHaveBeenCalledWith(
 				"v1",
-				expect.any(AbortSignal),
+				expect.objectContaining({ signal: expect.any(AbortSignal) }),
 			),
 		);
 		const [, patchType, , , opts] = patchingAPI.trigger.mock.calls[0];
@@ -827,5 +828,147 @@ describe("skippedItemsSummary", () => {
 	it("is null when nothing is skipped", () => {
 		expect(skippedItemsSummary({ status: "validated", items: [] })).toBeNull();
 		expect(skippedItemsSummary({})).toBeNull();
+	});
+});
+
+describe("PatchWizard validation lifecycle", () => {
+	const WIN2 = [
+		{
+			id: "w1",
+			friendly_name: "win-a",
+			hostname: "win-a",
+			os_type: "Windows 11",
+		},
+		{
+			id: "w2",
+			friendly_name: "win-b",
+			hostname: "win-b",
+			os_type: "Windows 11",
+		},
+	];
+	let pollDryRunUntilDone;
+	let signals;
+
+	const hangUntilAborted =
+		(onStart) =>
+		(_runId, { signal, onStatus } = {}) => {
+			signals.push(signal);
+			onStart?.(onStatus);
+			return new Promise((resolve) => {
+				signal?.addEventListener("abort", () => resolve(null));
+			});
+		};
+
+	const props = (extra = {}) => ({
+		mode: "trigger",
+		patchType: "patch_all",
+		lockHosts: true,
+		presetHosts: WIN2,
+		initialStep: 0,
+		onClose: vi.fn(),
+		onSuccess: vi.fn(),
+		...extra,
+	});
+
+	const renderOpen = (p) => {
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		const ui = (open) => (
+			<QueryClientProvider client={queryClient}>
+				<PatchWizard isOpen={open} {...p} />
+			</QueryClientProvider>
+		);
+		const view = render(ui(true));
+		return {
+			...view,
+			reopen: () => {
+				view.rerender(ui(false));
+				view.rerender(ui(true));
+			},
+		};
+	};
+
+	const startValidation = async () => {
+		await clickAndSettle(
+			screen.getByRole("button", { name: "Run validation" }),
+		);
+		await waitFor(() =>
+			expect(screen.getAllByText("Validating…").length).toBeGreaterThan(0),
+		);
+	};
+
+	beforeEach(async () => {
+		vi.clearAllMocks();
+		signals = [];
+		patchingAPI.getPreviewRun.mockResolvedValue({});
+		patchingAPI.trigger.mockImplementation(async (hostId) => ({
+			patch_run_id: `v-${hostId}`,
+		}));
+		patchingAPI.approveRun.mockImplementation(async (id) => ({
+			patch_run_id: `run-${id}`,
+		}));
+		({ pollDryRunUntilDone } = await import("../../utils/patchingApi"));
+	});
+
+	it("can be cancelled mid-validation and reopens with re-run available", async () => {
+		pollDryRunUntilDone.mockImplementation(hangUntilAborted());
+		const p = props();
+		const { reopen } = renderOpen(p);
+		await startValidation();
+		const cancel = screen.getByRole("button", { name: "Cancel" });
+		expect(cancel).toBeEnabled();
+		await clickAndSettle(cancel);
+		expect(p.onClose).toHaveBeenCalledTimes(1);
+		expect(signals.length).toBe(2);
+		expect(signals.every((sig) => sig.aborted)).toBe(true);
+		await act(async () => reopen());
+		expect(screen.getAllByText("Still running")).toHaveLength(2);
+		expect(screen.queryByText("Validating…")).toBeNull();
+		expect(
+			screen.getByRole("button", { name: /Re-run validation/ }),
+		).toBeInTheDocument();
+	});
+
+	it("moves on without waiting and stops polling", async () => {
+		pollDryRunUntilDone.mockImplementation(hangUntilAborted());
+		renderOpen(props());
+		await startValidation();
+		await clickAndSettle(
+			screen.getByRole("button", { name: "Continue without waiting" }),
+		);
+		expect(signals.every((sig) => sig.aborted)).toBe(true);
+		expect(screen.getByTitle("Timing").firstChild).toHaveClass(
+			"bg-primary-100",
+		);
+		expect(
+			screen.queryByRole("button", { name: "Continue without waiting" }),
+		).toBeNull();
+	});
+
+	it("closes on Escape while validating", async () => {
+		pollDryRunUntilDone.mockImplementation(hangUntilAborted());
+		const p = props();
+		renderOpen(p);
+		await startValidation();
+		await act(async () => {
+			fireEvent.keyDown(window, { key: "Escape" });
+		});
+		expect(p.onClose).toHaveBeenCalledTimes(1);
+		expect(signals.every((sig) => sig.aborted)).toBe(true);
+	});
+
+	it("shows an agent reconnect instead of failing the host", async () => {
+		pollDryRunUntilDone.mockImplementation(
+			hangUntilAborted((onStatus) => onStatus?.("agent_disconnected")),
+		);
+		renderOpen(props());
+		await clickAndSettle(
+			screen.getByRole("button", { name: "Run validation" }),
+		);
+		await waitFor(() =>
+			expect(screen.getAllByText("Agent reconnecting…")).toHaveLength(2),
+		);
+		expect(screen.queryByText("Failed")).toBeNull();
 	});
 });

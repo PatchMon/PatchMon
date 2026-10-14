@@ -2,9 +2,14 @@ import api from "./api";
 import { skippedItemsSummary } from "./patchRun";
 
 const DRY_RUN_POLL_INTERVAL_MS = 2000;
+const DRY_RUN_MAX_POLL_INTERVAL_MS = 10000;
 const DRY_RUN_TIMEOUT_MS = 30000;
 // Covers the agent's Windows Update search (15 min) and winget list (5 min) limits.
 const DRY_RUN_RUNNING_CAP_MS = 25 * 60 * 1000;
+const DRY_RUN_MAX_FETCH_ERRORS = 3;
+
+export const STILL_RUNNING_MESSAGE =
+	"Validation is still running on the host. Check Runs & History for the result.";
 
 /**
  * Build the absolute WebSocket URL for the live patch-run output stream.
@@ -19,24 +24,46 @@ export function buildRunStreamURL(runId) {
 	)}/stream`;
 }
 
-const DRY_RUN_FAILED_STATUSES = [
-	"failed",
-	"cancelled",
-	"timed_out",
-	"agent_disconnected",
-];
+const DRY_RUN_FAILED_STATUSES = ["failed", "cancelled", "timed_out"];
+// The server lets a reconnecting agent move agent_disconnected back to running.
+const DRY_RUN_ACTIVE_STATUSES = ["running", "agent_disconnected"];
+
+const sleep = (ms, signal) =>
+	new Promise((resolve) => {
+		const timer = setTimeout(done, ms);
+		function done() {
+			clearTimeout(timer);
+			signal?.removeEventListener("abort", done);
+			resolve();
+		}
+		signal?.addEventListener("abort", done);
+	});
 
 /**
  * Poll a patch run until it reaches a terminal state or timeout.
- * The 30s offline timeout only applies until the agent picks the run up: a
- * Windows Update search can take minutes.
+ * The 30s offline timeout only applies until the server has dispatched the run
+ * to the agent: a Windows Update search can take minutes.
+ * onStatus receives each raw run status while the run is still in progress.
  * Returns { status, packages_affected, error }, or null once signal aborts.
  */
-export async function pollDryRunUntilDone(runId, signal) {
+export async function pollDryRunUntilDone(runId, { signal, onStatus } = {}) {
 	const start = Date.now();
+	let interval = DRY_RUN_POLL_INTERVAL_MS;
+	let fetchErrors = 0;
 	for (;;) {
 		if (signal?.aborted) return null;
-		const run = await api.get(`/patching/runs/${runId}`).then((r) => r.data);
+		let run;
+		try {
+			run = await api.get(`/patching/runs/${runId}`).then((r) => r.data);
+			fetchErrors = 0;
+		} catch (err) {
+			if (signal?.aborted) return null;
+			fetchErrors += 1;
+			if (fetchErrors >= DRY_RUN_MAX_FETCH_ERRORS) throw err;
+			await sleep(DRY_RUN_POLL_INTERVAL_MS * 2 ** fetchErrors, signal);
+			continue;
+		}
+		if (signal?.aborted) return null;
 		const status = run?.status;
 		if (
 			status === "validated" ||
@@ -59,17 +86,25 @@ export async function pollDryRunUntilDone(runId, signal) {
 				error: run.error_message || "Dry run failed",
 			};
 		}
+		const active = DRY_RUN_ACTIVE_STATUSES.includes(status);
 		const elapsed = Date.now() - start;
-		if (status === "running" && elapsed >= DRY_RUN_RUNNING_CAP_MS) {
+		if (active && elapsed >= DRY_RUN_RUNNING_CAP_MS) {
+			if (status === "agent_disconnected") {
+				return {
+					status: "failed",
+					packages_affected: [],
+					shell_output: run.shell_output || "",
+					error: run.error_message || "Agent disconnected during validation",
+				};
+			}
 			return {
 				status: "still_running",
 				packages_affected: [],
 				shell_output: run.shell_output || "",
-				error:
-					"Validation is still running on the host. Check Runs & History for the result.",
+				error: STILL_RUNNING_MESSAGE,
 			};
 		}
-		if (status !== "running" && elapsed >= DRY_RUN_TIMEOUT_MS) {
+		if (!active && elapsed >= DRY_RUN_TIMEOUT_MS) {
 			return {
 				status: "timeout",
 				packages_affected: [],
@@ -77,7 +112,14 @@ export async function pollDryRunUntilDone(runId, signal) {
 				error: "Validation skipped (host offline)",
 			};
 		}
-		await new Promise((r) => setTimeout(r, DRY_RUN_POLL_INTERVAL_MS));
+		onStatus?.(status);
+		if (active) {
+			interval = Math.min(
+				interval + DRY_RUN_POLL_INTERVAL_MS,
+				DRY_RUN_MAX_POLL_INTERVAL_MS,
+			);
+		}
+		await sleep(interval, signal);
 	}
 }
 

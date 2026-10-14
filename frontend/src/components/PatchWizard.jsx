@@ -31,7 +31,11 @@ import {
 } from "react";
 import { useToast } from "../contexts/ToastContext";
 import { formatDate, packagesAPI } from "../utils/api";
-import { patchingAPI, pollDryRunUntilDone } from "../utils/patchingApi";
+import {
+	patchingAPI,
+	pollDryRunUntilDone,
+	STILL_RUNNING_MESSAGE,
+} from "../utils/patchingApi";
 import { extraDependencies } from "../utils/patchRun";
 import {
 	DEFAULT_WINDOWS_SCOPE,
@@ -50,6 +54,14 @@ import {
 import ModalPortal from "./ui/ModalPortal";
 
 const VALIDATION_CONCURRENCY = 5;
+
+const stillRunningRow = (patchRunId) => ({
+	status: "still_running",
+	packages_affected: [],
+	shell_output: "",
+	error: STILL_RUNNING_MESSAGE,
+	patch_run_id: patchRunId,
+});
 
 const isWindowsTarget = (target) => isWindowsOs(target?.osType);
 
@@ -454,9 +466,29 @@ export default function PatchWizard({
 	const [validationByTarget, setValidationByTarget] = useState({});
 	const [isValidating, setIsValidating] = useState(false);
 	const validationAbort = useRef(null);
+	// Rows whose dry run exists on the server become still_running; rows never
+	// triggered are dropped so Run/Re-run validation stays reachable.
+	const stopValidation = useCallback(() => {
+		if (!validationAbort.current || validationAbort.current.signal.aborted) {
+			return;
+		}
+		validationAbort.current.abort();
+		setIsValidating(false);
+		setValidationByTarget((prev) => {
+			const next = {};
+			for (const [id, v] of Object.entries(prev)) {
+				if (v.status !== "pending" && v.status !== "validating") {
+					next[id] = v;
+				} else if (v.patch_run_id) {
+					next[id] = stillRunningRow(v.patch_run_id);
+				}
+			}
+			return next;
+		});
+	}, []);
 	useEffect(() => {
-		if (!isOpen) validationAbort.current?.abort();
-	}, [isOpen]);
+		if (!isOpen) stopValidation();
+	}, [isOpen, stopValidation]);
 	useEffect(() => () => validationAbort.current?.abort(), []);
 	const [expandedOutput, setExpandedOutput] = useState(null);
 	// Per-target policy override: targetId -> "default" | policyId | "immediate"
@@ -525,12 +557,19 @@ export default function PatchWizard({
 	);
 
 	const handleClose = useCallback(() => {
+		stopValidation();
 		if (submittedRuns.length > 0) {
 			finishAndClose(submitResultByTarget);
 			return;
 		}
 		onClose?.();
-	}, [submittedRuns, submitResultByTarget, finishAndClose, onClose]);
+	}, [
+		submittedRuns,
+		submitResultByTarget,
+		finishAndClose,
+		onClose,
+		stopValidation,
+	]);
 
 	const currentStepId = steps[step]?.id;
 	// Find the current interactive step's index within allSteps so the
@@ -608,13 +647,13 @@ export default function PatchWizard({
 		if (!isOpen) return;
 		const onKeyDown = (e) => {
 			if (e.key !== "Escape") return;
-			if (isPatching || isValidating) return;
+			if (isPatching) return;
 			e.stopPropagation();
 			handleClose();
 		};
 		window.addEventListener("keydown", onKeyDown);
 		return () => window.removeEventListener("keydown", onKeyDown);
-	}, [isOpen, isPatching, isValidating, handleClose]);
+	}, [isOpen, isPatching, handleClose]);
 
 	// --- Navigation helpers ----------------------------------------------
 	// goNext/goBack walk the step list, skipping past steps that are
@@ -794,6 +833,7 @@ export default function PatchWizard({
 						status: "validating",
 					},
 				}));
+				let runId;
 				try {
 					// Send only the packages this host actually has outdated —
 					// the wizard already knows from host discovery, so there's
@@ -816,7 +856,16 @@ export default function PatchWizard({
 								packagesForTarget(target),
 								{ dry_run: true },
 							);
-					const runId = res?.patch_run_id;
+					runId = res?.patch_run_id;
+					if (signal.aborted) {
+						if (runId) {
+							setValidationByTarget((prev) => ({
+								...prev,
+								[target.id]: stillRunningRow(runId),
+							}));
+						}
+						return;
+					}
 					if (!runId) {
 						setValidationByTarget((prev) => ({
 							...prev,
@@ -829,13 +878,32 @@ export default function PatchWizard({
 						}));
 						return;
 					}
-					const result = await pollDryRunUntilDone(runId, signal);
+					setValidationByTarget((prev) => ({
+						...prev,
+						[target.id]: { ...prev[target.id], patch_run_id: runId },
+					}));
+					const result = await pollDryRunUntilDone(runId, {
+						signal,
+						onStatus: (status) =>
+							setValidationByTarget((prev) =>
+								prev[target.id]?.status === "validating"
+									? {
+											...prev,
+											[target.id]: {
+												...prev[target.id],
+												reconnecting: status === "agent_disconnected",
+											},
+										}
+									: prev,
+							),
+					});
 					if (!result) return;
 					setValidationByTarget((prev) => ({
 						...prev,
 						[target.id]: { ...result, patch_run_id: runId },
 					}));
 				} catch (err) {
+					if (signal.aborted) return;
 					setValidationByTarget((prev) => ({
 						...prev,
 						[target.id]: {
@@ -849,7 +917,12 @@ export default function PatchWizard({
 			},
 		);
 
-		setIsValidating(false);
+		if (!signal.aborted) setIsValidating(false);
+	};
+
+	const continueWithoutWaiting = () => {
+		stopValidation();
+		goNext();
 	};
 
 	const handleConfirm = async () => {
@@ -1259,7 +1332,7 @@ export default function PatchWizard({
 		<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120]">
 			<button
 				type="button"
-				onClick={() => !isPatching && !isValidating && handleClose()}
+				onClick={() => !isPatching && handleClose()}
 				className="fixed inset-0 cursor-default"
 				aria-label="Close modal"
 			/>
@@ -1277,7 +1350,7 @@ export default function PatchWizard({
 						</h3>
 						<button
 							type="button"
-							onClick={() => !isPatching && !isValidating && handleClose()}
+							onClick={() => !isPatching && handleClose()}
 							className="p-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-700 text-secondary-400 hover:text-secondary-600"
 						>
 							<X className="h-5 w-5" />
@@ -1660,7 +1733,9 @@ export default function PatchWizard({
 													{v.status === "validating" && (
 														<span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-primary-100 text-primary-700 dark:bg-primary-800 dark:text-primary-200">
 															<RefreshCw className="h-3 w-3 animate-spin" />
-															Validating…
+															{v.reconnecting
+																? "Agent reconnecting…"
+																: "Validating…"}
 														</span>
 													)}
 													{v.status === "validated" && extraDeps.length > 0 && (
@@ -1772,7 +1847,7 @@ export default function PatchWizard({
 										);
 									})}
 
-									{validationDone && !isValidating && (
+									{!isValidating && (
 										<button
 											type="button"
 											onClick={handleValidate}
@@ -2512,7 +2587,7 @@ export default function PatchWizard({
 						<button
 							type="button"
 							onClick={handleClose}
-							disabled={isPatching || isValidating}
+							disabled={isPatching}
 							className="btn-outline"
 						>
 							{submittedRuns.length > 0 ? "Done" : "Cancel"}
@@ -2550,6 +2625,16 @@ export default function PatchWizard({
 						    regardless of whether the user ran it. */}
 						{currentStepId === "validate" && (
 							<div className="flex gap-2">
+								{isValidating && (
+									<button
+										type="button"
+										onClick={continueWithoutWaiting}
+										disabled={!scopeValid}
+										className="btn-outline text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+									>
+										Continue without waiting
+									</button>
+								)}
 								{!validationDone &&
 									!isValidating &&
 									(canValidate || windowsPatchAll) && (
