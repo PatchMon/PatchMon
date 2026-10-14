@@ -27,3 +27,29 @@ func TestResolveWindowsOSVersion(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveLinuxOSVersion(t *testing.T) {
+	cases := []struct {
+		name          string
+		info          OSReleaseInfo
+		alpineRelease string
+		want          string
+	}{
+		{"debian VERSION wins", OSReleaseInfo{Version: "12 (bookworm)", VersionID: "12"}, "", "12 (bookworm)"},
+		{"ubuntu", OSReleaseInfo{Version: "24.04.1 LTS (Noble Numbat)", VersionID: "24.04"}, "", "24.04.1 LTS (Noble Numbat)"},
+		{"alpine has only VERSION_ID", OSReleaseInfo{Name: "Alpine Linux", ID: "alpine", VersionID: "3.23.0", PrettyName: "Alpine Linux v3.23"}, "", "3.23.0"},
+		{"alpine edge", OSReleaseInfo{ID: "alpine", VersionID: "3.25.0_alpha20260805"}, "", "3.25.0_alpha20260805"},
+		{"alpine without VERSION_ID reads alpine-release", OSReleaseInfo{ID: "alpine"}, "3.21.8", "3.21.8"},
+		{"arch host", OSReleaseInfo{Name: "Arch Linux", ID: "arch", BuildID: "rolling"}, "", "rolling"},
+		{"arch container image", OSReleaseInfo{ID: "arch", BuildID: "rolling", VersionID: "20261011.0.609700"}, "", "rolling"},
+		{"build id only", OSReleaseInfo{BuildID: "2026.10"}, "", "2026.10"},
+		{"nothing", OSReleaseInfo{}, "", "Unknown"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveLinuxOSVersion(&tc.info, tc.alpineRelease); got != tc.want {
+				t.Errorf("resolveLinuxOSVersion() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

@@ -131,6 +131,9 @@ func showConfig() error {
 	fmt.Printf("  Enabled: %t (requires integrations.docker)\n", updateCheckEnabled)
 	fmt.Printf("  Interval: %d hours\n", int(updateCheckInterval.Hours()))
 
+	fmt.Printf("\nAlpine secdb:\n")
+	fmt.Printf("  Enabled: %t (Alpine hosts only)\n", cfgManager.GetAPKSecDBEnabled())
+
 	fmt.Printf("\nCredentials:\n")
 	if creds != nil {
 		fmt.Printf("  API ID: %s\n", creds.APIID)

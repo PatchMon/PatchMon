@@ -396,8 +396,14 @@ type Config struct {
 	PackageCacheRefreshMaxAge int                     `yaml:"package_cache_refresh_max_age" mapstructure:"package_cache_refresh_max_age"` // minutes
 	Integrations              map[string]interface{}  `yaml:"integrations" mapstructure:"integrations"`                                   // Supports bool for simple integrations, string for compliance mode
 	DockerUpdateCheck         DockerUpdateCheckConfig `yaml:"docker_update_check" mapstructure:"docker_update_check"`
+	APKSecDB                  APKSecDBConfig          `yaml:"apk_secdb" mapstructure:"apk_secdb"`
 	HostID                    string                  `yaml:"host_id" mapstructure:"host_id"`
 	ConfigVersion             string                  `yaml:"config_version" mapstructure:"config_version"`
+}
+
+// APKSecDBConfig controls the Alpine secdb lookup that flags security updates.
+type APKSecDBConfig struct {
+	Enabled *bool `yaml:"enabled" mapstructure:"enabled"`
 }
 
 // DockerUpdateCheckConfig controls the agent-side Docker image update check.

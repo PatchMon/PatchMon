@@ -1501,6 +1501,7 @@ A **dry-run** (also called a validation run) asks the agent to simulate the pack
 - For `dnf`/`yum`, the agent runs the planning step that reports "what would be installed" without committing.
 - For `pkg` on FreeBSD, the agent runs `pkg upgrade -n` or the equivalent install-no-run.
 - For `pacman`, the agent uses `pacman -S -p` / `pacman -Syu -p` (print-only) as the validation step.
+- For `apk` on Alpine, the agent runs `apk upgrade --simulate <packages>`, which opens the package database read-only. A validation fails if apk reports an error (for example an unknown package or a conflict with `/etc/apk/world`), or if the plan would downgrade or replace a package, or remove one listed in `/etc/apk/world`.
 
 When the dry-run completes the run transitions to `validated` and shows you the list of packages that *would* be installed, including dependencies that were pulled in. If more packages would be installed than you originally asked for, the UI badges the run with **Extra deps** (Linux and FreeBSD `patch_package` runs only) and surfaces the full list in the run detail "Packages affected" panel so you can review before approving.
 
@@ -1524,11 +1525,30 @@ The agent chooses the patching back-end by detecting the host's package manager.
 | `yum` | RHEL 7, CentOS 7 | Yes |
 | `pacman` | Arch Linux, Manjaro | Yes |
 | `pkg` | FreeBSD 13+ (plus `freebsd-update` for the base system on `patch_all`) | Yes |
-| `apk` | Alpine Linux | **No.** The agent reports `apk` inventory but rejects patch runs with `package manager "apk" not supported for patching (apt, dnf, yum, pkg, pacman required)`. Alpine hosts are visible in PatchMon and get compliance scans, but patch runs on them fail on the agent side. |
+| `apk` | Alpine Linux 3.21 and later (apk-tools 2 on 3.21 and 3.22, apk-tools 3 from 3.23) | Yes, with agent 2.1.4 or later. See [Alpine patching](#alpine-patching). |
 | `zypper` | openSUSE Leap, openSUSE Tumbleweed, SLES | **No, and no inventory either. Coming soon.** The installer detects zypper and completes, and the agent detects the OS correctly, but the agent has no zypper backend. Package collection therefore fails with `unsupported package manager: unknown` and the host never completes its first report, so it sits at "Waiting for initial system report". Follow and vote for zypper support at [feedback.patchmon.net](https://feedback.patchmon.net/b/feature-requests/posts/post_01kyza53c0fzst214afbr1qn9a). |
 | Windows Update Agent (WUA) + winget | Windows 10/11, Server 2019/2022/2025 | Yes, with agent 2.1.4 or later (separate path) |
 
-> **Note:** The 2.0 release notes describe Linux patching generally. If you need to patch Alpine hosts, track the package manager roadmap or use your existing Alpine tooling until `apk` support lands.
+#### Alpine patching {#alpine-patching}
+
+Alpine hosts are patched with `apk` on Alpine 3.21 and later, with agent 2.1.4 or later: apk-tools 2 on 3.21 and 3.22, apk-tools 3 from 3.23. Every run, real or dry, plans before it changes anything:
+
+1. `apk update` refreshes the package indexes.
+2. `apk upgrade --simulate` works out the transaction. On a real run, if apk says the plan is unreliable because apk-tools itself has an update, the agent installs that update first (`--self-upgrade-only` on apk-tools 2, `--preupgrade-only` on apk-tools 3), says so in the run output, and plans again. If it cannot tell which apk-tools version is installed, it stops instead.
+3. The agent refuses the run, before changing anything, if the plan would **downgrade** or **replace** a package, **remove** a package listed in `/etc/apk/world`, or contains a step it does not recognise. The error names each step and its likely cause. Review the plan with `apk upgrade --simulate` on the host.
+
+   apk also removes packages that nothing needs any more, for example a library a newer package no longer depends on. That is normal clean-up, so the agent lets it happen when the package is not in `/etc/apk/world`, and names each one in the run output: `Removing gdbm 1.26-r0: no longer required by any package and not in /etc/apk/world.` A dry run says `Would remove` instead. Removed packages are listed under the run's affected packages.
+4. A real run then applies the plan with `apk upgrade`.
+
+**Patch selected** runs `apk upgrade <packages>`, never `apk add`, so `/etc/apk/world` is not changed. Packages built from the same source as a selected package are upgraded with it: selecting `libssl3` also upgrades `libcrypto3`, because apk will not upgrade one without the other. If apk still leaves a selected package alone, the run output says so; select the packages it needs as well, or use **Patch all**.
+
+**Held packages.** A version constraint in `/etc/apk/world` (for example `busybox=1.37.0-r29`) holds a package at that version. apk skips held packages, and so does PatchMon: the run succeeds and its output names each one, for example `Held by /etc/apk/world: busybox=1.37.0-r29 (1.37.0-r30 available)`, along with any package held back with it. Held packages are reported as up to date in the package inventory rather than offered for patching.
+
+If the installed version of a package breaks its own constraint in `/etc/apk/world`, apk refuses every upgrade. PatchMon then fails the run before changing anything and names the line to correct, for example change `busybox<1.0` to `busybox=1.37.0-r29` or remove the version, then retry.
+
+**Security updates** on Alpine come from the Alpine security database (`secdb.alpinelinux.org`). An update is marked as a security update when it moves the package past a version that fixed a published issue. The agent fetches the database for the branch in `/etc/apk/repositories` at most every 6 hours. If it cannot reach it, it tries again after an hour, and meanwhile the report still goes through, using the last copy it fetched or, without one, marking no updates as security updates. See `apk_secdb` in the Operator Guide to turn the lookup off.
+
+**Reboot required** is set when the installed kernel package (`linux-lts`, `linux-virt` and so on) is newer than the running kernel. Alpine containers (Docker or LXC) run the host's kernel, so they never report a reboot as required.
 
 #### Windows patching {#windows-patching}
 
@@ -1742,7 +1762,7 @@ What happens next on the server:
 - If the policy introduces a delay, the task is scheduled for the future and the run is shown as `scheduled` in Runs & History. Otherwise it goes straight to `queued`.
 - The browser deep-links into the **Run Detail** page so you can watch the live terminal.
 
-> **Note:** On Linux and FreeBSD, `patch_all` cannot be dry-run. The agent's bulk-upgrade path (`apt-get --with-new-pkgs upgrade`, `dnf upgrade`, `pkg upgrade`, `pacman -Syu`) does not support a reliable simulation mode. If you want a dry-run, patch specific packages instead. Windows hosts can validate a Patch all; see [Windows patching](#windows-patching).
+> **Note:** On Linux and FreeBSD, `patch_all` cannot be dry-run. The agent's bulk-upgrade path (`apt-get --with-new-pkgs upgrade`, `dnf upgrade`, `pkg upgrade`, `pacman -Syu`, `apk upgrade`) does not support a reliable simulation mode. On Alpine a real `patch_all` still runs `apk upgrade --simulate` first and stops before changing anything if the plan would downgrade or replace a package, or remove one listed in `/etc/apk/world`. If you want a dry-run, patch specific packages instead. Windows hosts can validate a Patch all; see [Windows patching](#windows-patching).
 
 ---
 
@@ -1868,7 +1888,26 @@ The asynq worker picked up the task but cannot reach the agent, or the agent nev
 
 #### "package manager ... not supported for patching"
 
-The agent rejected the run because the host's detected package manager is not in the supported list (`apt`, `dnf`, `yum`, `pkg`, `pacman`). This is the error you see on Alpine (`apk`) hosts today. The run immediately transitions to `failed` with the message in `error_message`.
+The agent rejected the run because the host's detected package manager is not in the supported list (`apt`, `dnf`, `yum`, `pkg`, `pacman`, `apk`). Alpine hosts show this error until their agent is updated to 2.1.4 or later. The run immediately transitions to `failed` with the message in `error_message`.
+
+#### Alpine: "/etc/apk/world requires ... but ... is installed"
+
+A version constraint in `/etc/apk/world` no longer matches the installed package, so apk refuses every transaction. Nothing was changed. Edit that line in `/etc/apk/world` as the message suggests (pin it to the installed version, or remove the version), then run the patch again. `apk fix` fails the same way, so it does not help here.
+
+#### Alpine: "apk plans changes PatchMon does not apply automatically"
+
+The simulated plan contained a step the agent does not apply on its own, so it stopped before changing anything. The message lists the steps and the likely cause of each:
+
+- `Downgrading`: usually a repository, often a tagged one such as `@edge`, was removed or changed in `/etc/apk/repositories` while packages from it are still installed. Restore the repository or deal with those packages by hand.
+- `Purging` a package listed in `/etc/apk/world`: usually a conflict (`!name`) or a changed constraint in `/etc/apk/world`, or the package was renamed or replaced by another. Packages that are not in world are removed as normal clean-up and do not stop the run.
+- `Replacing`: a repository now serves a different build of a version that is already installed.
+- Anything else: apk printed a step this agent does not recognise.
+
+Run `apk upgrade --simulate` on the host to see the whole plan.
+
+#### Alpine: "another apk process held the package database"
+
+Another `apk` command held the database lock (`/lib/apk/db/lock`) for more than 30 seconds, for example an install someone was running by hand. Wait for it to finish and run the patch again.
 
 #### The run completes but the package inventory hasn't updated
 

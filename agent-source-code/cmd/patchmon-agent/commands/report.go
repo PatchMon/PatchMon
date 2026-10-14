@@ -75,6 +75,7 @@ func collectReportData() (*collectedReport, error) {
 		Mode:   cfgManager.GetPackageCacheRefreshMode(),
 		MaxAge: cfgManager.GetPackageCacheRefreshMaxAge(),
 	})
+	packageMgr.SetAPKSecDBEnabled(cfgManager.GetAPKSecDBEnabled())
 	repoMgr := repositories.New(logger)
 	hardwareMgr := hardware.New(logger)
 	networkMgr := network.New(logger)

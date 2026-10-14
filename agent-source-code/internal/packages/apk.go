@@ -2,11 +2,14 @@
 package packages
 
 import (
-	"bufio"
+	"context"
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 
+	"patchmon-agent/internal/logutil"
+	"patchmon-agent/internal/repositories"
 	"patchmon-agent/pkg/models"
 
 	"github.com/sirupsen/logrus"
@@ -14,60 +17,166 @@ import (
 
 // APKManager handles APK package information collection
 type APKManager struct {
-	logger *logrus.Logger
+	logger       *logrus.Logger
+	secdb        *apkSecDB
+	secdbEnabled bool
 }
 
 // NewAPKManager creates a new APK package manager
 func NewAPKManager(logger *logrus.Logger) *APKManager {
 	return &APKManager{
-		logger: logger,
+		logger:       logger,
+		secdb:        newAPKSecDB(logger),
+		secdbEnabled: true,
+	}
+}
+
+// apkBusy is held by a patch run for its whole apk transaction, so a report in the
+// same process skips its apk update instead of racing the run for the database lock.
+var apkBusy = make(chan struct{}, 1)
+
+// AcquireAPK waits for any in-process apk work to finish and keeps reports from starting
+// another until release is called. onWait, if set, runs once when it has to wait.
+func AcquireAPK(ctx context.Context, onWait func()) (release func(), err error) {
+	var once sync.Once
+	release = func() { once.Do(func() { <-apkBusy }) }
+	select {
+	case apkBusy <- struct{}{}:
+		return release, nil
+	default:
+	}
+	if onWait != nil {
+		onWait()
+	}
+	select {
+	case apkBusy <- struct{}{}:
+		return release, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 
 // GetPackages gets package information for APK-based systems
 func (m *APKManager) GetPackages() ([]models.Package, error) {
-	// Update package index
-	m.logger.Debug("Updating package index...")
+	ctx := context.Background()
+	m.refreshIndexes()
+
+	major := 0
+	if out, err := apkOutput(ctx, "--version"); err == nil {
+		major = APKToolsMajor(out)
+	}
+	cmp := apkVersionComparer(major)
+
+	installedOutput, err := apkOutput(ctx, "list", "--installed")
+	if err != nil {
+		// See apt.go: an empty inventory reads as "fully patched".
+		return nil, commandError("apk list --installed", err)
+	}
+	installedPackages := m.parseInstalledPackages(installedOutput)
+	m.logger.WithField("count", len(installedPackages)).Debug("Found installed packages")
+
+	upgradableOutput, err := apkOutput(ctx, "list", "--upgradable")
+	if err != nil {
+		return nil, commandError("apk list --upgradable", err)
+	}
+	upgradable := parseAPKListLines(upgradableOutput)
+
+	held := m.heldPackages(ctx, upgradable, installedPackages, cmp)
+
+	var fixes map[string][]string
+	if m.secdbEnabled && len(upgradable) > len(held) {
+		if branch, repos := apkSecDBSources(repositories.ReadAPKRepositoryLines()); branch != "" {
+			fixes = m.secdb.fixes(ctx, branch, repos)
+		}
+	}
+
+	upgradablePackages := make([]models.Package, 0, len(upgradable))
+	for _, e := range upgradable {
+		if e.From == "" || held[e.Name] {
+			continue
+		}
+		current := e.From
+		if p, ok := installedPackages[e.Name]; ok {
+			current = p.CurrentVersion
+		}
+		upgradablePackages = append(upgradablePackages, models.Package{
+			Name:             e.Name,
+			CurrentVersion:   current,
+			AvailableVersion: e.Version,
+			NeedsUpdate:      true,
+			IsSecurityUpdate: apkFixesSecurity(fixes[e.Origin], current, e.Version, cmp),
+		})
+	}
+	m.logger.WithField("count", len(upgradablePackages)).Debug("Found upgradable packages")
+
+	packages := CombinePackageData(installedPackages, upgradablePackages)
+	m.enrichWithRepoAttribution(packages)
+	m.logger.WithField("total", len(packages)).Debug("Total packages collected")
+	return packages, nil
+}
+
+// SetSecDBEnabled turns the Alpine secdb lookup for security updates on or off.
+func (m *APKManager) SetSecDBEnabled(enabled bool) {
+	m.secdbEnabled = enabled
+}
+
+func (m *APKManager) refreshIndexes() {
+	select {
+	case apkBusy <- struct{}{}:
+		defer func() { <-apkBusy }()
+	default:
+		m.logger.Debug("Patch run in progress, using the indexes it refreshed")
+		return
+	}
 	updateCmd, cancel := boundedCommand(networkCollectorTimeout, "apk", "update", "-q")
 	defer cancel()
 	if err := updateCmd.Run(); err != nil {
 		m.logger.WithError(err).Warn("Failed to update package index")
 	}
+}
 
-	// Get installed packages
-	m.logger.Debug("Getting installed packages...")
-	installedCmd, cancelInstalled := boundedCommand(collectorTimeout, "apk", "list", "--installed")
-	defer cancelInstalled()
-	installedOutput, err := installedCmd.Output()
-	if err != nil {
-		// See apt.go: an empty inventory reads as "fully patched".
-		return nil, commandError("apk list --installed", err)
+// Held packages are reported as current rather than offered for patching.
+func (m *APKManager) heldPackages(ctx context.Context, upgradable []apkListEntry, installed map[string]models.Package, cmp func(a, b string) int) map[string]bool {
+	world, err := ReadAPKWorld()
+	if err != nil || len(world) == 0 {
+		return nil
 	}
-	m.logger.Debug("Parsing installed packages...")
-	installedPackages := m.parseInstalledPackages(string(installedOutput))
-	m.logger.WithField("count", len(installedPackages)).Debug("Found installed packages")
-
-	// Get upgradable packages (must run after apk update)
-	m.logger.Debug("Getting upgradable packages...")
-	upgradableCmd, cancelUpgradable := boundedCommand(collectorTimeout, "apk", "-u", "list")
-	defer cancelUpgradable()
-	upgradableOutput, err := upgradableCmd.Output()
-	if err != nil {
-		return nil, commandError("apk -u list", err)
+	installedVersions := make(map[string]string, len(installed))
+	for name, p := range installed {
+		installedVersions[name] = p.CurrentVersion
 	}
-	m.logger.Debug("Parsing apk upgradable packages output...")
-	upgradablePackages := m.parseUpgradablePackages(string(upgradableOutput), installedPackages)
-	m.logger.WithField("count", len(upgradablePackages)).Debug("Found upgradable packages")
-
-	// Merge and deduplicate packages (pass full installed packages to preserve descriptions)
-	packages := CombinePackageData(installedPackages, upgradablePackages)
-
-	// Enrich packages with repository attribution
-	m.enrichWithRepoAttribution(packages)
-
-	m.logger.WithField("total", len(packages)).Debug("Total packages collected")
-
-	return packages, nil
+	available := make(map[string]string, len(upgradable))
+	for _, e := range upgradable {
+		if e.From != "" {
+			available[e.Name] = e.Version
+		}
+	}
+	holds, conflicts := apkWorldHolds(world, installedVersions, available, cmp)
+	held := make(map[string]bool)
+	for _, h := range append(holds, conflicts...) {
+		if h.Available != "" {
+			held[h.Name] = true
+			m.logger.WithField("hold", logutil.Sanitize(h.String())).Info("Held by /etc/apk/world")
+		}
+	}
+	for _, c := range conflicts {
+		m.logger.Warn(logutil.Sanitize(APKConflictMessage(c)))
+	}
+	if len(holds) == 0 || len(conflicts) > 0 {
+		return held
+	}
+	out, err := apkOutput(ctx, "upgrade", "--simulate", "--no-progress")
+	if err != nil {
+		return held
+	}
+	planned := ParseAPKPlan(out).Names()
+	for name := range available {
+		if !planned[name] && !held[name] {
+			held[name] = true
+			m.logger.WithField("package", logutil.Sanitize(name)).Info("Held back with a package pinned in /etc/apk/world")
+		}
+	}
+	return held
 }
 
 // enrichWithRepoAttribution populates SourceRepository for each package by running
@@ -91,13 +200,8 @@ func (m *APKManager) enrichWithRepoAttribution(packages []models.Package) {
 	repoMap := make(map[string]string, len(packages))
 
 	for start := 0; start < len(names); start += batchSize {
-		end := start + batchSize
-		if end > len(names) {
-			end = len(names)
-		}
-		batch := names[start:end]
-
-		args := append([]string{"policy"}, batch...)
+		end := min(start+batchSize, len(names))
+		args := append([]string{"policy"}, names[start:end]...)
 		// Scoped so each batch releases its context.
 		output, err := func() ([]byte, error) {
 			cmd, cancel := boundedCommand(collectorTimeout, "apk", args...)
@@ -113,7 +217,6 @@ func (m *APKManager) enrichWithRepoAttribution(packages []models.Package) {
 		m.parseApkPolicy(string(output), repoMap)
 	}
 
-	// Apply results
 	for name, repo := range repoMap {
 		for _, idx := range pkgIdx[name] {
 			packages[idx].SourceRepository = repo
@@ -126,220 +229,137 @@ func (m *APKManager) enrichWithRepoAttribution(packages []models.Package) {
 // parseApkPolicy parses apk policy output and populates repoMap.
 // Output format per package:
 //
-//	curl policy:
-//	  8.12.1-r0:
+//	busybox policy:
+//	  1.37.0-r29:
 //	    lib/apk/db/installed
-//	    https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/APKINDEX.tar.gz
-//
-// Extracts the logical repo name (e.g. "main", "community") from the URL path.
+//	  1.37.0-r30:
+//	    https://dl-cdn.alpinelinux.org/alpine/v3.23/main
 func (m *APKManager) parseApkPolicy(output string, repoMap map[string]string) {
-	lines := strings.Split(output, "\n")
-
 	var currentPkg string
-
-	for _, line := range lines {
+	for line := range strings.Lines(output) {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
 		}
-
-		// Package header: "packagename policy:"
 		if strings.HasSuffix(trimmed, " policy:") {
 			currentPkg = strings.TrimSuffix(trimmed, " policy:")
 			continue
 		}
-
-		if currentPkg == "" {
+		if currentPkg == "" || strings.HasSuffix(trimmed, ":") || strings.Contains(trimmed, "lib/apk/db/installed") {
 			continue
 		}
-
-		// Already resolved this package
 		if _, ok := repoMap[currentPkg]; ok {
 			continue
 		}
-
-		// Skip version lines (end with ":")
-		if strings.HasSuffix(trimmed, ":") {
-			continue
-		}
-
-		// Skip local install marker
-		if strings.Contains(trimmed, "lib/apk/db/installed") {
-			continue
-		}
-
-		// URL line: extract logical repo name from path
-		// e.g. https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/APKINDEX.tar.gz -> "main"
-		repo := m.extractRepoNameFromURL(trimmed)
-		if repo != "" {
+		if repo := m.extractRepoNameFromURL(trimmed); repo != "" {
 			repoMap[currentPkg] = repo
 		}
 	}
 }
 
-// extractRepoNameFromURL extracts the logical repository name from an APK repository URL.
-// The repo name is the path segment before the architecture directory.
-// e.g. .../v3.22/main/x86_64/APKINDEX.tar.gz -> "main"
-// e.g. .../v3.22/community/aarch64/APKINDEX.tar.gz -> "community"
-func (m *APKManager) extractRepoNameFromURL(url string) string {
-	// Known architectures to look for
-	archTokens := map[string]bool{
-		"x86_64": true, "x86": true, "aarch64": true, "armhf": true,
-		"armv7": true, "ppc64le": true, "s390x": true, "riscv64": true,
-	}
+var apkArchSegments = map[string]bool{
+	"x86_64": true, "x86": true, "aarch64": true, "armhf": true, "armv7": true,
+	"ppc64le": true, "s390x": true, "riscv64": true, "loongarch64": true,
+}
 
-	parts := strings.Split(url, "/")
+func (m *APKManager) extractRepoNameFromURL(line string) string {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return ""
+	}
+	url := fields[len(fields)-1]
+	if !strings.Contains(url, "://") {
+		return ""
+	}
+	if _, comp := repositories.APKBranchAndComponent(url); comp != "" {
+		return comp
+	}
+	parts := strings.Split(strings.TrimRight(url, "/"), "/")
 	for i, part := range parts {
-		if archTokens[part] && i > 0 {
+		if apkArchSegments[part] && i > 0 {
 			return parts[i-1]
 		}
+	}
+	if n := len(parts); n > 3 && !strings.HasSuffix(parts[n-1], ".tar.gz") {
+		return parts[n-1]
 	}
 	return ""
 }
 
-// parseInstalledPackages parses apk list --installed output
-// Format: package-name-version-release arch {origin} (license) [installed]
-// Example: alpine-base-3.22.2-r0 x86_64// parseInstalledPackages parses apk info -v output
-func (m *APKManager) parseInstalledPackages(output string) map[string]models.Package {
-	installedPackages := make(map[string]models.Package)
-
-	scanner := bufio.NewScanner(strings.NewReader(output))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-
-		// Skip lines that don't have [installed] marker (shouldn't happen with --installed flag, but be safe)
-		if !strings.Contains(line, "[installed]") {
-			continue
-		}
-
-		// Parse the line: package-name-version-release arch {origin} (license) [installed]
-		// Example: alpine-base-3.22.2-r0 x86_64 {alpine-base} (MIT) [installed]
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			m.logger.WithField("line", line).Debug("Skipping malformed installed package line")
-			continue
-		}
-
-		// First field contains package-name-version-release
-		packageWithVersion := fields[0]
-
-		// Extract package name and version-release
-		packageName, version := m.extractPackageNameAndVersion(packageWithVersion)
-		if packageName == "" || version == "" {
-			m.logger.WithField("line", line).Debug("Failed to extract package name or version")
-			continue
-		}
-
-		installedPackages[packageName] = models.Package{
-			Name:           packageName,
-			CurrentVersion: version,
-			NeedsUpdate:    false,
-		}
-	}
-
-	return installedPackages
+type apkListEntry struct {
+	Name    string
+	Version string
+	Origin  string
+	From    string
 }
 
-// parseUpgradablePackages parses apk -u list output
-// Format: package-name-new-version arch {origin} (license) [upgradable from: package-name-old-version]
-// Example: alpine-conf-3.20.0-r1 x86_64 {alpine-conf} (MIT) [upgradable from: alpine-conf-3.20.0-r0]
-func (m *APKManager) parseUpgradablePackages(output string, installedPackages map[string]models.Package) []models.Package {
-	var packages []models.Package
-
-	// Regex to match the upgradable from pattern
-	upgradableFromRegex := regexp.MustCompile(`\[upgradable from: (.+)\]`)
-
-	scanner := bufio.NewScanner(strings.NewReader(output))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-
-		// Check if line contains upgradable from pattern
-		matches := upgradableFromRegex.FindStringSubmatch(line)
-		if len(matches) < 2 {
-			// Not an upgradable package line
-			continue
-		}
-
-		// Extract the old version package name
-		oldPackageWithVersion := matches[1]
-
-		// Parse the main line to get new version
-		// Format: package-name-new-version arch {origin} (license) [upgradable from: ...]
+// The licence can contain spaces and parentheses, so origin and status are found by their brackets.
+func parseAPKListLines(output string) []apkListEntry {
+	var out []apkListEntry
+	for line := range strings.Lines(output) {
+		line = strings.TrimSpace(line)
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
-			m.logger.WithField("line", line).Debug("Skipping malformed upgradable package line")
 			continue
 		}
-
-		// First field contains package-name-new-version
-		newPackageWithVersion := fields[0]
-
-		// Extract package name and versions
-		newPackageName, newVersion := m.extractPackageNameAndVersion(newPackageWithVersion)
-		oldPackageName, oldVersion := m.extractPackageNameAndVersion(oldPackageWithVersion)
-
-		// Verify package names match
-		if newPackageName == "" || newVersion == "" || oldPackageName == "" || oldVersion == "" {
-			m.logger.WithField("line", line).Debug("Failed to extract package name or version from upgradable line")
+		name, version := splitAPKNameVersion(fields[0])
+		if name == "" || version == "" {
 			continue
 		}
-
-		if newPackageName != oldPackageName {
-			m.logger.WithFields(logrus.Fields{
-				"newPackage": newPackageName,
-				"oldPackage": oldPackageName,
-			}).Debug("Package names don't match in upgradable line, using new package name")
-		}
-
-		// Use the current version from installed packages if available, otherwise use old version
-		currentVersion := oldVersion
-		if installedPkg, found := installedPackages[newPackageName]; found {
-			currentVersion = installedPkg.CurrentVersion
-		}
-
-		// Alpine doesn't have built-in security update tracking
-		// We'll mark all updates as potentially security updates (conservative approach)
-		isSecurityUpdate := false
-
-		packages = append(packages, models.Package{
-			Name:             newPackageName,
-			CurrentVersion:   currentVersion,
-			AvailableVersion: newVersion,
-			NeedsUpdate:      true,
-			IsSecurityUpdate: isSecurityUpdate,
-		})
-	}
-
-	return packages
-}
-
-// extractPackageNameAndVersion extracts package name and version from a package string
-// Format: package-name-version-release
-// Example: alpine-conf-3.20.0-r1 -> packageName: "alpine-conf", version: "3.20.0-r1"
-// Example: zzz-doc-0.2.0-r0 -> packageName: "zzz-doc", version: "0.2.0-r0"
-func (m *APKManager) extractPackageNameAndVersion(packageWithVersion string) (packageName, version string) {
-	// Find the first dash followed by a digit (version starts)
-	// This handles packages with dashes in their names
-	for i := 0; i < len(packageWithVersion); i++ {
-		if packageWithVersion[i] == '-' && i+1 < len(packageWithVersion) {
-			nextChar := packageWithVersion[i+1]
-			// Check if the next character is a digit (version starts)
-			if nextChar >= '0' && nextChar <= '9' {
-				// This is the start of version
-				packageName = packageWithVersion[:i]
-				version = packageWithVersion[i+1:]
-				return
+		e := apkListEntry{Name: name, Version: version}
+		if i := strings.IndexByte(line, '{'); i >= 0 {
+			if j := strings.IndexByte(line[i:], '}'); j > 0 {
+				e.Origin = line[i+1 : i+j]
 			}
 		}
+		if i := strings.LastIndex(line, "[upgradable from: "); i >= 0 {
+			old := strings.TrimSuffix(strings.TrimSpace(line[i+len("[upgradable from: "):]), "]")
+			_, e.From = splitAPKNameVersion(old)
+			if e.From == "" {
+				continue
+			}
+		} else if !strings.HasSuffix(line, "[installed]") {
+			continue
+		}
+		out = append(out, e)
 	}
+	return out
+}
 
-	// If no version pattern found, return the whole string as package name
-	packageName = packageWithVersion
-	return
+var apkRevisionRe = regexp.MustCompile(`^r\d+$`)
+
+// Split from the right: names can contain "-digit" (font-adobe-100dpi), and virtual
+// packages from apk add -t have no -rN.
+func splitAPKNameVersion(s string) (name, version string) {
+	i := strings.LastIndexByte(s, '-')
+	if i <= 0 || i+1 >= len(s) {
+		return "", ""
+	}
+	if apkRevisionRe.MatchString(s[i+1:]) {
+		j := strings.LastIndexByte(s[:i], '-')
+		if j <= 0 {
+			return "", ""
+		}
+		i = j
+	}
+	if c := s[i+1]; c < '0' || c > '9' {
+		return "", ""
+	}
+	return s[:i], s[i+1:]
+}
+
+// parseInstalledPackages parses apk list --installed output
+// Format: package-name-version-release arch {origin} (license) [installed]
+func (m *APKManager) parseInstalledPackages(output string) map[string]models.Package {
+	installedPackages := make(map[string]models.Package)
+	for _, e := range parseAPKListLines(output) {
+		if e.From != "" {
+			continue
+		}
+		installedPackages[e.Name] = models.Package{
+			Name:           e.Name,
+			CurrentVersion: e.Version,
+		}
+	}
+	return installedPackages
 }

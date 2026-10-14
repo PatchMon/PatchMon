@@ -497,6 +497,9 @@ func (m *Manager) saveConfigLocked() error {
 		"enabled":        updateCheckEnabled,
 		"interval_hours": updateCheckHours,
 	})
+	configViper.Set("apk_secdb", map[string]interface{}{
+		"enabled": m.apkSecDBEnabledLocked(),
+	})
 
 	return writeConfigAtomically(configViper, m.configFile)
 }
@@ -727,6 +730,17 @@ func (m *Manager) dockerUpdateCheckLocked() (bool, int) {
 		hours = DefaultDockerUpdateCheckIntervalHours
 	}
 	return enabled, hours
+}
+
+// GetAPKSecDBEnabled reports whether Alpine hosts fetch secdb to flag security updates.
+func (m *Manager) GetAPKSecDBEnabled() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.apkSecDBEnabledLocked()
+}
+
+func (m *Manager) apkSecDBEnabledLocked() bool {
+	return m.config.APKSecDB.Enabled == nil || *m.config.APKSecDB.Enabled
 }
 
 // IsIntegrationEnabled checks if an integration is enabled

@@ -9,3 +9,7 @@ import "time"
 func containerUptime() (time.Duration, bool) {
 	return 0, false
 }
+
+func runningInContainer() bool {
+	return false
+}

@@ -23,6 +23,10 @@ const freeBSDBasePackageName = "freebsd-base"
 var freeBSDPkgSummaryLinePattern = regexp.MustCompile(`^\s+(\S+):\s+`)
 var freeBSDPkgActionLinePattern = regexp.MustCompile(`^\[\d+/\d+\]\s+(?:Installing|Upgrading|Reinstalling)\s+(\S+)`)
 
+// apk v3 pads the counter ("( 1/14)") and tags packages from tagged repositories ("busybox@edge").
+// Purging counts: the agent lets apk remove orphans, and a reviewer should see them.
+var apkActionLinePattern = regexp.MustCompile(`^\(\s*\d+/\d+\)\s+(?:Installing|Upgrading|Reinstalling|Downgrading|Replacing|Purging)\s+([^\s@]+)`)
+
 // isFreeBSD reports whether the host OS type represents FreeBSD. The synthetic
 // "freebsd-base" package must only be emitted for FreeBSD hosts; otherwise
 // generic phrases like "will be installed" from apt/dnf/yum/pkg output would
@@ -57,6 +61,12 @@ func parsePackagesAffectedFromDryRunOutput(osType, output string) []string {
 			if len(fields) >= 2 {
 				addPkg(fields[1])
 			}
+			continue
+		}
+
+		// apk (--simulate and real): "(1/3) Upgrading pkgname (oldver -> newver)"
+		if matches := apkActionLinePattern.FindStringSubmatch(trimmed); len(matches) == 2 {
+			addPkg(matches[1])
 			continue
 		}
 
@@ -112,8 +122,13 @@ func parsePackagesAffectedFromRealOutput(osType, output string) []string {
 	}
 
 	inFreeBSDPkgSection := false
+	// A real apk run also echoes its --simulate plans, which use the same step lines.
+	apkApplying := true
 	for _, line := range strings.Split(output, "\n") {
 		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "$ ") {
+			apkApplying = strings.HasPrefix(trimmed, "$ apk upgrade") && !strings.Contains(trimmed, "--simulate")
+		}
 		// apt-get simulate: "Inst pkgname ..."
 		if strings.HasPrefix(trimmed, "Inst ") {
 			fields := strings.Fields(trimmed)
@@ -135,6 +150,14 @@ func parsePackagesAffectedFromRealOutput(osType, output string) []string {
 			fields := strings.Fields(trimmed)
 			if len(fields) >= 3 {
 				addPkg(fields[2])
+			}
+			continue
+		}
+		// Added as-is: apk names such as lua5.4 contain dots that addPkg would cut.
+		if matches := apkActionLinePattern.FindStringSubmatch(trimmed); len(matches) == 2 {
+			if apkApplying && !seen[matches[1]] {
+				seen[matches[1]] = true
+				pkgs = append(pkgs, matches[1])
 			}
 			continue
 		}

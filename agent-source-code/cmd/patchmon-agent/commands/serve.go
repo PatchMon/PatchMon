@@ -2242,6 +2242,8 @@ var dryRunErrorPhrases = []string{
 	"failed to prepare transaction",
 	"failed to commit transaction",
 	"failed to synchronize",
+	"unable to select packages",
+	"breaks: world[",
 }
 
 // dryRunOutputIndicatesError returns true if the output reports a dependency or
@@ -2322,8 +2324,6 @@ func splitFreeBSDPatchTargets(packageNames []string) ([]string, bool) {
 	return filtered, includeBase
 }
 
-// runPatch runs package manager update and upgrade (patch_all) or install (patch_package).
-// Supports apt-get (Debian/Ubuntu), dnf, yum (RHEL-based), pkg (FreeBSD) and pacman (Arch).
 // formatCmd returns a shell-style "$ command args..." line for display in output.
 func formatCmd(name string, args ...string) string {
 	parts := append([]string{name}, args...)
@@ -2516,7 +2516,9 @@ func aptOnlyUpgradeArgs(dryRun bool, packageNames []string) []string {
 	return append(args, packageNames...)
 }
 
-// When dryRun is true, simulates and sends dry_run_completed instead of completed.
+// runPatch runs package manager update and upgrade (patch_all) or install (patch_package).
+// Supports apt-get (Debian/Ubuntu), dnf, yum (RHEL-based), pkg (FreeBSD), pacman (Arch)
+// and apk (Alpine). When dryRun is true, simulates and sends dry_run_completed instead of completed.
 func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -2532,8 +2534,8 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 	})
 	pkgManager := packageMgr.DetectPackageManager()
 
-	if pkgManager != "apt" && pkgManager != "dnf" && pkgManager != "yum" && pkgManager != "pkg" && pkgManager != "pacman" {
-		errMsg := fmt.Sprintf("package manager %q not supported for patching (apt, dnf, yum, pkg, pacman required)", pkgManager)
+	if pkgManager != "apt" && pkgManager != "dnf" && pkgManager != "yum" && pkgManager != "pkg" && pkgManager != "pacman" && pkgManager != "apk" {
+		errMsg := fmt.Sprintf("package manager %q not supported for patching (apt, dnf, yum, pkg, pacman, apk required)", pkgManager)
 		_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
@@ -2562,6 +2564,11 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 				_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "freebsd-update not found: cannot patch FreeBSD base system")
 				return fmt.Errorf("freebsd-update not found: %w", err)
 			}
+		}
+	case "apk":
+		if _, err := exec.LookPath("apk"); err != nil {
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "apk not found: Alpine Linux package manager not installed")
+			return fmt.Errorf("apk not found: %w", err)
 		}
 	case "pacman":
 		if _, err := exec.LookPath("pacman"); err != nil {
@@ -2634,7 +2641,11 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		}
 	}
 
-	needsPkgTransaction := pkgManager != "pkg" || patchType == "patch_all" || len(freeBSDPkgTargets) > 0
+	if pkgManager == "apk" {
+		stepErr = runPatchAPK(ctx, sink, env, patchType, packageNames, dryRun)
+	}
+
+	needsPkgTransaction := pkgManager != "apk" && (pkgManager != "pkg" || patchType == "patch_all" || len(freeBSDPkgTargets) > 0)
 	if stepErr == nil && needsPkgTransaction {
 		// Update package cache
 		switch pkgManager {
@@ -2660,7 +2671,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		}
 	}
 
-	if stepErr == nil {
+	if stepErr == nil && pkgManager != "apk" {
 		if patchType == "patch_all" {
 			switch pkgManager {
 			case "apt":

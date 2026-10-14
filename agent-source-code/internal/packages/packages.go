@@ -85,6 +85,9 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 	return textsan.CleanPackages(pkgs), nil
 }
 
+// SetAPKSecDBEnabled controls whether Alpine hosts look up security fixes in secdb.
+func (m *Manager) SetAPKSecDBEnabled(enabled bool) { m.apkManager.SetSecDBEnabled(enabled) }
+
 // WindowsUpdatesOmitted reports whether the last GetPackages left out Windows Update rows
 // because a patch run was using Windows Update.
 func (m *Manager) WindowsUpdatesOmitted() bool { return m.windowsUpdatesOmitted }
