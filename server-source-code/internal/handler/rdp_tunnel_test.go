@@ -61,3 +61,38 @@ func TestRDPTunnelInvalidTicketSendsGuacError(t *testing.T) {
 		_ = ws.Close()
 	}
 }
+
+type fakeReader struct {
+	msgs [][]byte
+	err  error
+}
+
+func (f *fakeReader) ReadSome() ([]byte, error) {
+	if len(f.msgs) == 0 {
+		return nil, f.err
+	}
+	m := f.msgs[0]
+	f.msgs = f.msgs[1:]
+	return m, nil
+}
+func (f *fakeReader) Available() bool { return len(f.msgs) > 0 }
+func (f *fakeReader) Flush()          {}
+
+func TestAbortableReaderEmitsErrorOnce(t *testing.T) {
+	tun := &rdpTunnel{}
+	ins := []byte("5.error,3.bye,3.515;")
+	tun.abortIns.Store(&ins)
+	r := &abortableReader{InstructionReader: &fakeReader{msgs: [][]byte{[]byte("4.sync,1.1;")}, err: errors.New("closed")}, t: tun}
+	if m, err := r.ReadSome(); err != nil || string(m) != "4.sync,1.1;" {
+		t.Fatalf("first read = %q, %v", m, err)
+	}
+	if m, err := r.ReadSome(); err != nil || string(m) != string(ins) {
+		t.Fatalf("second read = %q, %v; want the abort instruction", m, err)
+	}
+	if r.Available() {
+		t.Fatal("Available after abort")
+	}
+	if _, err := r.ReadSome(); err == nil {
+		t.Fatal("third read succeeded; want the underlying error")
+	}
+}

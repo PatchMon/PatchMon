@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
@@ -42,6 +43,41 @@ var ErrRDPTicketRequired = errors.New("valid RDP ticket required")
 type rdpTunnel struct {
 	guac.Tunnel
 	sessionID string
+	guacdConn net.Conn
+	abortIns  atomic.Pointer[[]byte]
+}
+
+func (t *rdpTunnel) AcquireReader() guac.InstructionReader {
+	return &abortableReader{InstructionReader: t.Tunnel.AcquireReader(), t: t}
+}
+
+// abort ends the browser side with a Guacamole error. guacd does not notice
+// the proxy socket closing, so the tunnel is ended from this side.
+func (t *rdpTunnel) abort(status guac.Status, msg string) {
+	ins := []byte(guac.NewInstruction("error", msg, strconv.Itoa(status.GetGuacamoleStatusCode())).String())
+	t.abortIns.Store(&ins)
+	_ = t.guacdConn.Close()
+}
+
+type abortableReader struct {
+	guac.InstructionReader
+	t    *rdpTunnel
+	sent bool
+}
+
+func (r *abortableReader) ReadSome() ([]byte, error) {
+	ins, err := r.InstructionReader.ReadSome()
+	if err != nil && !r.sent {
+		if p := r.t.abortIns.Load(); p != nil {
+			r.sent = true
+			return *p, nil
+		}
+	}
+	return ins, err
+}
+
+func (r *abortableReader) Available() bool {
+	return !r.sent && r.InstructionReader.Available()
 }
 
 // RDPHandler handles RDP ticket creation and WebSocket tunnel.
@@ -440,6 +476,14 @@ func (h *RDPHandler) connectTunnel(ws *websocket.Conn, r *http.Request) (guac.Tu
 		writeGuacError(ws, err)
 		return nil, err
 	}
+	abortOnAgentLoss := func(reason string) {
+		if reason == rdpproxy.ReasonAgentGone {
+			t.abort(guac.UpstreamError, "The PatchMon agent on this host disconnected. Connect again once it is back online.")
+		}
+	}
+	if !h.rdpSessions.OnClose(t.sessionID, abortOnAgentLoss) {
+		t.abort(guac.UpstreamError, "The RDP session ended before it could start. Connect again.")
+	}
 	return t, nil
 }
 
@@ -461,7 +505,7 @@ func writeGuacError(ws *websocket.Conn, err error) {
 
 // doGuacConnect resolves the ticket and opens the guacd connection. Once the
 // ticket is consumed, every failure deletes the proxy session it names.
-func (h *RDPHandler) doGuacConnect(r *http.Request) (guac.Tunnel, error) {
+func (h *RDPHandler) doGuacConnect(r *http.Request) (*rdpTunnel, error) {
 	ticket := r.URL.Query().Get("ticket")
 	if ticket == "" {
 		return nil, ErrRDPTicketRequired
@@ -480,7 +524,7 @@ func (h *RDPHandler) doGuacConnect(r *http.Request) (guac.Tunnel, error) {
 	return t, nil
 }
 
-func (h *RDPHandler) openGuacTunnel(r *http.Request, data *store.RDPTicketData) (guac.Tunnel, error) {
+func (h *RDPHandler) openGuacTunnel(r *http.Request, data *store.RDPTicketData) (*rdpTunnel, error) {
 
 	// Verify the user who created this ticket is still active.
 	// This closes the window where a revoked/deactivated user could use
@@ -592,7 +636,7 @@ func (h *RDPHandler) openGuacTunnel(r *http.Request, data *store.RDPTicketData) 
 		"missing_username_or_password", data.Username == "" || data.Password == "",
 	)
 
-	return &rdpTunnel{Tunnel: guac.NewSimpleTunnel(stream), sessionID: data.SessionID}, nil
+	return &rdpTunnel{Tunnel: guac.NewSimpleTunnel(stream), sessionID: data.SessionID, guacdConn: conn}, nil
 }
 
 // WebsocketTunnelHandlerWithQuery builds the WebSocket URL with ticket and params.

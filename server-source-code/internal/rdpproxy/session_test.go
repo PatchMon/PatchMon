@@ -211,3 +211,19 @@ func TestCloseAgentSessionsRespectsCutoff(t *testing.T) {
 		t.Fatal("guacd side of a dropped session is still open")
 	}
 }
+
+func TestOnCloseReportsReason(t *testing.T) {
+	s := NewSessions(nil, &recSender{})
+	id, _ := create(t, s, "api1", "")
+	got := make(chan string, 1)
+	if !s.OnClose(id, func(reason string) { got <- reason }) {
+		t.Fatal("OnClose refused a live session")
+	}
+	s.CloseAgentSessions("api1", time.Now().Add(time.Second))
+	if r := <-got; r != ReasonAgentGone {
+		t.Fatalf("reason = %q, want %q", r, ReasonAgentGone)
+	}
+	if s.OnClose(id, func(string) {}) {
+		t.Fatal("OnClose accepted a closed session")
+	}
+}

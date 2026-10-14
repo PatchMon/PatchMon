@@ -99,6 +99,8 @@ type Session struct {
 	sender        AgentSender
 	removeFromMap func()
 	cleanupOnce   sync.Once
+	closed        bool
+	onClose       func(reason string)
 	// agentReady delivers the initial agent handshake result exactly once.
 	// Buffer of 1 so a signal never blocks even if nobody is waiting yet.
 	agentReady chan AgentResult
@@ -353,6 +355,13 @@ func (s *Session) timeoutLoop(ctx context.Context) {
 // agent itself reported the close, so it is not told about its own teardown.
 func (s *Session) cleanup(reason string, notifyAgent bool) {
 	s.cleanupOnce.Do(func() {
+		s.mu.Lock()
+		s.closed = true
+		onClose := s.onClose
+		s.mu.Unlock()
+		if onClose != nil {
+			onClose(reason)
+		}
 		if notifyAgent && s.sender != nil {
 			if err := s.sendToAgent("rdp_proxy_disconnect", ""); err != nil && s.log != nil {
 				s.log.Debug("rdp proxy disconnect send failed", "session_id", s.SessionID, "error", err)
@@ -507,6 +516,24 @@ func (s *Sessions) Get(sessionID string) (port int, ok bool) {
 		return 0, false
 	}
 	return sess.Port, true
+}
+
+// OnClose registers fn to run once with the close reason when the session ends.
+// It returns false, without registering, if the session is already gone.
+func (s *Sessions) OnClose(sessionID string, fn func(reason string)) bool {
+	s.mu.RLock()
+	sess, ok := s.sessions[sessionID]
+	s.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.closed {
+		return false
+	}
+	sess.onClose = fn
+	return true
 }
 
 // Count returns the number of live sessions.
