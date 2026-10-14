@@ -312,38 +312,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			identifier := h.loginLockout.Identifier(h.clientIP(r), req.Username)
 			_, locked := h.loginLockout.RecordFailedAttempt(r.Context(), identifier)
 			if locked {
-				// Emit account_locked event
-				if h.notify != nil {
-					if d := h.db.DB(r.Context()); d != nil {
-						h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
-							Type:          "account_locked",
-							Severity:      "error",
-							Title:         "Account Locked",
-							Message:       "Account locked due to too many failed login attempts for user " + user.Username + ".",
-							ReferenceType: "user",
-							ReferenceID:   user.ID,
-							Metadata: map[string]interface{}{
-								"user_id":    user.ID,
-								"username":   user.Username,
-								"ip_address": h.clientIP(r),
-								"user_agent": r.UserAgent(),
-							},
-						})
-					}
-				}
-				h.logLoginFailure(r, "invalid_password", req.Username, user.ID, "locked", true)
-				writeLoginLockedResponse(w, h.lockoutRemaining(r.Context(), identifier))
-				return
-			}
-		}
-		// Emit user_login_failed event
-		if h.notify != nil {
-			if d := h.db.DB(r.Context()); d != nil {
-				h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
-					Type:          "user_login_failed",
-					Severity:      "warning",
-					Title:         "Failed Login Attempt",
-					Message:       "Failed login attempt for user " + user.Username + ".",
+				h.emitEventAsync(r, notifications.Event{
+					Type:          "account_locked",
+					Severity:      "error",
+					Title:         "Account Locked",
+					Message:       "Account locked due to too many failed login attempts for user " + user.Username + ".",
 					ReferenceType: "user",
 					ReferenceID:   user.ID,
 					Metadata: map[string]interface{}{
@@ -351,11 +324,28 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 						"username":   user.Username,
 						"ip_address": h.clientIP(r),
 						"user_agent": r.UserAgent(),
-						"reason":     "invalid_password",
 					},
 				})
+				h.logLoginFailure(r, "invalid_password", req.Username, user.ID, "locked", true)
+				writeLoginLockedResponse(w, h.lockoutRemaining(r.Context(), identifier))
+				return
 			}
 		}
+		h.emitEventAsync(r, notifications.Event{
+			Type:          "user_login_failed",
+			Severity:      "warning",
+			Title:         "Failed Login Attempt",
+			Message:       "Failed login attempt for user " + user.Username + ".",
+			ReferenceType: "user",
+			ReferenceID:   user.ID,
+			Metadata: map[string]interface{}{
+				"user_id":    user.ID,
+				"username":   user.Username,
+				"ip_address": h.clientIP(r),
+				"user_agent": r.UserAgent(),
+				"reason":     "invalid_password",
+			},
+		})
 		h.logLoginFailure(r, "invalid_password", req.Username, user.ID)
 		if h.log != nil {
 			h.log.Debug("auth login bcrypt failed", "user_id", user.ID, "hash_len", len(hash), "bcrypt_err", err.Error())
@@ -747,6 +737,25 @@ func truncateForLog(s string, max int) string {
 		return s
 	}
 	return strings.ToValidUTF8(s[:max], "") + "..."
+}
+
+// emitEventAsync sends a notification event without making the caller wait on
+// it, so a wrong password for a real account answers as fast as any other.
+func (h *AuthHandler) emitEventAsync(r *http.Request, ev notifications.Event) {
+	if h.notify == nil || h.db == nil {
+		return
+	}
+	d := h.db.DB(r.Context())
+	if d == nil {
+		return
+	}
+	ctx := context.WithoutCancel(r.Context())
+	host := hostctx.TenantHostKey(r.Context())
+	go func() {
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		h.notify.EmitEvent(ctx, d, host, ev)
+	}()
 }
 
 // logLoginFailure records a rejected sign-in at Warn, so it is visible at the
