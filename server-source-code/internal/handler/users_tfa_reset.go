@@ -96,7 +96,7 @@ func (h *UsersHandler) ResetTfa(w http.ResponseWriter, r *http.Request) {
 			Error(w, http.StatusInternalServerError, "Failed to reset two-factor authentication")
 			return
 		}
-		h.logTfaReset(r, "target_not_found", actorID, targetID)
+		h.denyTfaReset(r, "target_not_found", actorID, targetID)
 		Error(w, http.StatusNotFound, "User not found")
 		return
 	}
@@ -106,6 +106,7 @@ func (h *UsersHandler) ResetTfa(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !target.TfaEnabled {
+		h.denyTfaReset(r, "target_tfa_not_enabled", actorID, target.ID)
 		Error(w, http.StatusBadRequest, "Two-factor authentication is not enabled for this user")
 		return
 	}
@@ -119,6 +120,7 @@ func (h *UsersHandler) ResetTfa(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !reset {
+		h.denyTfaReset(r, "target_tfa_not_enabled", actorID, target.ID)
 		Error(w, http.StatusBadRequest, "Two-factor authentication is not enabled for this user")
 		return
 	}

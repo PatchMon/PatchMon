@@ -418,6 +418,9 @@ func TestAdminResetTfa(t *testing.T) {
 		if rec := x.post(ctx, admin, missing, pw); rec.Code != http.StatusNotFound {
 			t.Fatalf("got %d %s", rec.Code, rec.Body.String())
 		}
+		if n := x.count(ctx, `SELECT count(*) FROM audit_logs WHERE user_id=$1 AND target_user_id=$2 AND NOT success AND details LIKE '%target_not_found%'`, admin.ID, missing); n != 1 {
+			t.Fatalf("want one target_not_found audit row, got %d", n)
+		}
 	})
 
 	t.Run("target without TFA", func(t *testing.T) {
@@ -426,6 +429,9 @@ func TestAdminResetTfa(t *testing.T) {
 		session := x.mkSession(ctx, target.ID)
 		if rec := x.post(ctx, admin, target.ID, pw); rec.Code != http.StatusBadRequest {
 			t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+		}
+		if n := x.count(ctx, `SELECT count(*) FROM audit_logs WHERE user_id=$1 AND target_user_id=$2 AND NOT success AND details LIKE '%target_tfa_not_enabled%'`, admin.ID, target.ID); n != 1 {
+			t.Fatalf("want one target_tfa_not_enabled audit row, got %d", n)
 		}
 		if n := x.count(ctx, `SELECT count(*) FROM user_sessions WHERE id=$1 AND is_revoked=false`, session); n != 1 {
 			t.Fatal("sessions revoked although nothing was reset")

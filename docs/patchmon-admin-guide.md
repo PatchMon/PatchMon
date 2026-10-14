@@ -5238,7 +5238,7 @@ Rules the server enforces:
 | Deactivated users | Can be reset, so you can clear 2FA before reactivating an account. |
 | Rate limit | 10 attempts per administrator per 15 minutes, counted per signed-in administrator rather than per IP. |
 
-Every reset, and every refused attempt that got as far as checking your password, is written to the server log and to the `audit_logs` table (event `user_tfa_reset`). A successful reset also raises the `user_tfa_disabled` notification event, so any alert route you have for "2FA disabled" fires for it.
+Every reset is written to the server log and to the `audit_logs` table (event `user_tfa_reset`), and so is every refused attempt from the password check onwards: a wrong password or 2FA code, a role you cannot reset, an unknown user, or a user without 2FA. A successful reset also raises the `user_tfa_disabled` notification event, so any alert route you have for "2FA disabled" fires for it.
 
 #### Direct database workaround (self-hosted only)
 
