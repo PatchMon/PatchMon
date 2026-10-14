@@ -4575,7 +4575,7 @@ Once connected you see the Windows sign-in screen (or desktop, if NLA authentica
 - The ticket is **single-use** and expires after **5 minutes** if it is not used. When the browser opens the tunnel, the server consumes the ticket and forwards the stored credentials to `guacd` and then to RDP. PatchMon itself does not keep them after the session starts.
 - For environments where Windows asks for a certificate, the default guacd config uses `ignore-cert=true` to accept the self-signed certificate Windows generates out of the box, matching `mstsc.exe` behaviour. Hardened per-host overrides are a candidate for a future release.
 - Security mode is negotiated as `any`, which lets FreeRDP pick the strongest common mode (NLA → TLS → legacy RDP). Hardcoding NLA would break hosts with Negotiate/TLS-only security layers and refuses blank-credential sessions.
-- Empty username and password are allowed (some hosts accept blank-credential sessions) but `guacd` usually fails handshake in that case; the server logs `missing_username_or_password: true` so you can spot it in the audit trail.
+- Empty username and password are allowed (some hosts accept blank-credential sessions) but `guacd` usually fails handshake in that case; the server logs `missing_username: true` when the username is empty so you can spot it in the audit trail.
 
 ### One-time tickets
 
@@ -4630,7 +4630,7 @@ Every successful RDP ticket creation fires an `rdp_session_started` event:
 
 Route this event type in [Notification Routes and Delivery Log](#notification-routes-and-delivery-log) if you want a live audit trail of who is signing into Windows hosts from PatchMon.
 
-Server logs include `rdp-ticket` and `rdp session opened` lines with the session ID, user ID, host ID, the requested security posture, and a `missing_username_or_password` field. When a session ends, an `rdp proxy session closed` line records the session ID, user ID, host ID, the reason (`guacd_closed`, `server_closed`, `agent_closed`, `agent_disconnected`, `idle_timeout`, `ticket_unused` or `agent_error`) and the duration in seconds. Use these to triage incidents; the session ID ties everything together.
+Server logs include `rdp-ticket` and `rdp session opened` lines with the session ID, user ID, host ID, the requested security posture, and a `missing_username` field. When a session ends, an `rdp proxy session closed` line records the session ID, user ID, host ID, the reason (`guacd_closed`, `server_closed`, `agent_closed`, `agent_disconnected`, `idle_timeout`, `ticket_unused` or `agent_error`) and the duration in seconds. Use these to triage incidents; the session ID ties everything together.
 
 ### Troubleshooting
 

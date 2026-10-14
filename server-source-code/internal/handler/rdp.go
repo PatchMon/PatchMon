@@ -572,14 +572,19 @@ func validRDPKeyboardLayout(layout string) bool {
 	return layout == "" || rdpKeyboardLayouts[layout]
 }
 
+const (
+	rdpSecurityMode = "any"
+	rdpIgnoreCert   = "true"
+)
+
 func rdpConnectionParameters(port int, username, password, keyboardLayout string) map[string]string {
 	params := map[string]string{
 		"hostname":    "127.0.0.1",
 		"port":        strconv.Itoa(port),
 		"username":    username,
 		"password":    password,
-		"security":    "any",
-		"ignore-cert": "true",
+		"security":    rdpSecurityMode,
+		"ignore-cert": rdpIgnoreCert,
 		// Without a resize method guacd ignores the browser's size updates.
 		"resize-method": "display-update",
 	}
@@ -694,9 +699,9 @@ func (h *RDPHandler) openGuacTunnel(r *http.Request, data *store.RDPTicketData) 
 			"session_id", data.SessionID,
 			"user_id", data.UserID,
 			"host_id", data.HostID,
-			"requested_security_mode", config.Parameters["security"],
-			"requested_ignore_cert", config.Parameters["ignore-cert"],
-			"missing_username_or_password", data.Username == "" || data.Password == "",
+			"requested_security_mode", rdpSecurityMode,
+			"requested_ignore_cert", rdpIgnoreCert,
+			"missing_username", data.Username == "",
 			"error", err,
 		)
 		return nil, err
@@ -710,9 +715,9 @@ func (h *RDPHandler) openGuacTunnel(r *http.Request, data *store.RDPTicketData) 
 		"session_id", data.SessionID,
 		"user_id", data.UserID,
 		"host_id", data.HostID,
-		"requested_security_mode", config.Parameters["security"],
-		"requested_ignore_cert", config.Parameters["ignore-cert"],
-		"missing_username_or_password", data.Username == "" || data.Password == "",
+		"requested_security_mode", rdpSecurityMode,
+		"requested_ignore_cert", rdpIgnoreCert,
+		"missing_username", data.Username == "",
 	)
 
 	return &rdpTunnel{Tunnel: guac.NewSimpleTunnel(stream), sessionID: data.SessionID, guacdConn: conn}, nil
