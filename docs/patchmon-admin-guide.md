@@ -255,7 +255,7 @@ Full OpenID Connect configuration: issuer URL, client ID and secret, redirect UR
 The toggles at the top of the page that control password sign-in:
 
 - **Disable local auth**: once SSO is fully configured, the login page shows only the SSO button and the server refuses password sign-in and self-service signup.
-- **Superadmin password login if SSO is down**: only matters while **Disable local auth** is on. Off by default. When on, superadmins who have two-factor authentication set up can sign in with their PatchMon password while your identity provider cannot be reached (a network failure, or the provider returning a server error). Nobody else can. Each such sign-in raises a `sso_fallback_login` event. Anyone who can cut PatchMon off from your provider and holds a superadmin's password and second factor can get in this way, so only enable it if that risk is acceptable. See [Password Login When the SSO Provider Is Unreachable](https://patchmon.net/docs/patchmon-operator-guide#sso-provider-unreachable-password-login) in the operator guide.
+- **Superadmin password login if SSO is down**: only matters while **Disable local auth** is on. Off by default. When on, superadmins who have two-factor authentication set up can sign in with their PatchMon password while your identity provider cannot be reached (a network failure, or the provider returning a server error). Nobody else can. Each such sign-in raises a `sso_fallback_login` event. Changing this setting needs the Manage Superusers permission. Anyone who can cut PatchMon off from your provider and holds a superadmin's password and second factor can get in this way, so only enable it if that risk is acceptable. See [Password Login When the SSO Provider Is Unreachable](https://patchmon.net/docs/patchmon-operator-guide#sso-provider-unreachable-password-login) in the operator guide.
 
 For a step-by-step walk-through (Authentik, Keycloak, Entra ID, Okta), see Setting up OIDC SSO.
 
@@ -4891,7 +4891,7 @@ Organisation-wide control.
 |----------------|-------|--------------------------|
 | `can_view_users` | View Users | See the user list and account details |
 | `can_manage_users` | Manage Users | Create, edit and delete user accounts |
-| `can_manage_superusers` | Manage Superusers | Manage `superadmin` accounts and elevated privileges, and turn OIDC / SSO on or off or change its provider, client credentials, redirect URI, local login, user auto-creation, email trust, role sync and role mapping |
+| `can_manage_superusers` | Manage Superusers | Manage `superadmin` accounts and elevated privileges, and turn OIDC / SSO on or off or change its provider, client credentials, redirect URI, local login, the password fallback during an SSO outage, user auto-creation, email trust, role sync and role mapping |
 | `can_manage_settings` | Manage Settings | System configuration, OIDC / SSO (the provider and role mapping also need `can_manage_superusers`), AI, alert config, enrollment tokens |
 | `can_manage_notifications` | Manage Notifications | Configure notification destinations and routing rules |
 | `can_export_data` | Export Data | Download and export data and reports |
