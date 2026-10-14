@@ -429,3 +429,55 @@ func TestOidcProviderProbeIgnoresCallerCancellation(t *testing.T) {
 		t.Fatalf("a cancelled request recorded an outage: %q", reason)
 	}
 }
+
+func TestBcryptGateGivesUpWhenTheRequestGoes(t *testing.T) {
+	t.Parallel()
+	full := make(bcryptGate, 1)
+	full <- struct{}{}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := full.compare(ctx, dummyPasswordHash, "x"); err == nil {
+		t.Fatal("a queued compare must give up when its request goes away")
+	}
+}
+
+// Both the dummy and the real comparison must queue on the shared gate.
+func TestLoginComparesGoThroughTheBcryptGate(t *testing.T) {
+	f := newLoginFixture(t, 1000)
+	for i := 0; i < cap(loginBcrypt); i++ {
+		loginBcrypt <- struct{}{}
+	}
+	released := false
+	release := func() {
+		if !released {
+			for i := 0; i < cap(loginBcrypt); i++ {
+				<-loginBcrypt
+			}
+			released = true
+		}
+	}
+	t.Cleanup(release)
+
+	for name, username := range map[string]string{"real account": f.active, "unknown user": "nobody-" + uuid.New().String()[:8]} {
+		done := make(chan int, 1)
+		go func() { done <- postLogin(f.h, username, "wrong-password").Code }()
+		select {
+		case code := <-done:
+			t.Fatalf("%s: login finished (%d) while every bcrypt slot was taken", name, code)
+		case <-time.After(100 * time.Millisecond):
+		}
+		release()
+		select {
+		case code := <-done:
+			if code != http.StatusUnauthorized {
+				t.Fatalf("%s: got %d after the gate opened, want 401", name, code)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s: login never completed after the gate opened", name)
+		}
+		for i := 0; i < cap(loginBcrypt); i++ {
+			loginBcrypt <- struct{}{}
+		}
+		released = false
+	}
+}

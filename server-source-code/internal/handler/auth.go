@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -78,8 +79,24 @@ func (h *AuthHandler) localAuthDecision(ctx context.Context) (disabled bool, fal
 // or the comparison against it returns early and the timing leak reopens.
 const dummyPasswordHash = "$2a$12$Jf3V8YDiVO/jiJmbThjnYeiiuNro41Hsodwjpw3O977bmeZiXvPLC"
 
-func spendPasswordCheck(password string) {
-	_ = bcrypt.CompareHashAndPassword([]byte(dummyPasswordHash), []byte(strings.TrimSpace(password)))
+func spendPasswordCheck(ctx context.Context, password string) {
+	_ = loginBcrypt.compare(ctx, dummyPasswordHash, strings.TrimSpace(password))
+}
+
+// bcryptGate caps concurrent sign-in bcrypt work for the whole process, so a
+// username spray queues instead of starving every context of CPU.
+type bcryptGate chan struct{}
+
+var loginBcrypt = make(bcryptGate, max(1, runtime.GOMAXPROCS(0)))
+
+func (g bcryptGate) compare(ctx context.Context, hash, password string) error {
+	select {
+	case g <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-g }()
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
 }
 
 // WithConfigResolver wires the per-context config resolver.
@@ -243,7 +260,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// A DB failure is not a wrong username. Counting it would let an outage
 		// lock out the very people retrying a correct password.
-		spendPasswordCheck(req.Password)
+		spendPasswordCheck(r.Context(), req.Password)
 		if !errors.Is(err, pgx.ErrNoRows) {
 			if h.log != nil {
 				h.log.Error("auth login lookup failed", "ip", h.clientIP(r), "error", err)
@@ -273,7 +290,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// Consumes an attempt as well. If it did not, the absence of a lockout would
 	// identify exactly the SSO-only accounts, now that unknown usernames do lock out.
 	if user.PasswordHash == nil {
-		spendPasswordCheck(req.Password)
+		spendPasswordCheck(r.Context(), req.Password)
 		if locked := h.recordLoginFailure(w, r, req.Username); locked {
 			h.logLoginFailure(r, "no_password_set", req.Username, user.ID, "locked", true)
 			return
@@ -287,7 +304,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	hash := strings.TrimSpace(*user.PasswordHash)
 	// Trim password - forms often introduce accidental leading/trailing whitespace
 	password := strings.TrimSpace(req.Password)
-	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)); err != nil {
+	if err := loginBcrypt.compare(r.Context(), hash, password); err != nil {
+		if r.Context().Err() != nil {
+			return
+		}
 		if h.loginLockout != nil {
 			identifier := h.loginLockout.Identifier(h.clientIP(r), req.Username)
 			_, locked := h.loginLockout.RecordFailedAttempt(r.Context(), identifier)
