@@ -3160,7 +3160,7 @@ The `sub` changes, and this refusal appears, when:
 - The account was first linked through a different IdP, and you have since switched provider. Releases before 2.1.0 let these logins through without checking, so the mismatch may predate your upgrade
 - You pointed PatchMon at a different IdP, or a different realm or application on the same IdP. From 2.1.4 every user already linked through the old issuer is refused until you unlink them, even if the new IdP sends the same `sub`. This is deliberate: otherwise whoever controls the new IdP could sign in as any linked user, including a superadmin
 
-Accounts linked before 2.1.4 recorded only the IdP's hostname. If SSO is configured in **Settings > OIDC**, the upgrade to 2.1.4 records the configured issuer for every such account whose hostname matches it. Otherwise, including when SSO is configured through environment variables, PatchMon checks the hostname against the current issuer on each user's next successful login and, if it matches, records the full issuer from then on.
+Accounts linked before 2.1.4 recorded only the IdP's hostname. On each user's next successful login PatchMon checks the hostname against the current issuer and, if it matches, records the full issuer from then on.
 
 If you are sure the new identity is the same person, unlink the old one:
 
