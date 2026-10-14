@@ -1501,7 +1501,7 @@ A **dry-run** (also called a validation run) asks the agent to simulate the pack
 - For `dnf`/`yum`, the agent runs the planning step that reports "what would be installed" without committing.
 - For `pkg` on FreeBSD, the agent runs `pkg upgrade -n` or the equivalent install-no-run.
 - For `pacman`, the agent uses `pacman -S -p` / `pacman -Syu -p` (print-only) as the validation step.
-- For `apk` on Alpine, the agent runs `apk upgrade --simulate <packages>`, which opens the package database read-only. A validation fails if apk reports an error (for example an unknown package or a conflict with `/etc/apk/world`), or if the plan would downgrade or remove a package.
+- For `apk` on Alpine, the agent runs `apk upgrade --simulate <packages>`, which opens the package database read-only. A validation fails if apk reports an error (for example an unknown package or a conflict with `/etc/apk/world`), or if the plan would downgrade, remove or replace a package.
 
 When the dry-run completes the run transitions to `validated` and shows you the list of packages that *would* be installed, including dependencies that were pulled in. If more packages would be installed than you originally asked for, the UI badges the run with **Extra deps** (Linux and FreeBSD `patch_package` runs only) and surfaces the full list in the run detail "Packages affected" panel so you can review before approving.
 
@@ -1535,7 +1535,7 @@ Alpine hosts are patched with `apk`, on both apk-tools 2 (Alpine 3.21 and 3.22) 
 
 1. `apk update` refreshes the package indexes.
 2. `apk upgrade --simulate` works out the transaction. On a real run, if apk says the plan is unreliable because apk-tools itself has an update, the agent installs that update first (`--self-upgrade-only` on apk-tools 2, `--preupgrade-only` on apk-tools 3) and plans again.
-3. The agent refuses the run, before changing anything, if the plan would **downgrade** or **remove** a package. This usually means a repository was removed from `/etc/apk/repositories`. Review the plan with `apk upgrade --simulate` on the host and fix the repositories file first.
+3. The agent refuses the run, before changing anything, if the plan would **downgrade**, **remove** or **replace** a package, or contains a step it does not recognise. This usually means a repository was removed from `/etc/apk/repositories`. Review the plan with `apk upgrade --simulate` on the host and fix the repositories file first.
 4. A real run then applies the plan with `apk upgrade`.
 
 **Patch selected** runs `apk upgrade <packages>`, never `apk add`, so `/etc/apk/world` is not changed. Packages built from the same source as a selected package are upgraded with it: selecting `libssl3` also upgrades `libcrypto3`, because apk will not upgrade one without the other. If apk still leaves a selected package alone, the run output says so; select the packages it needs as well, or use **Patch all**.
@@ -1760,7 +1760,7 @@ What happens next on the server:
 - If the policy introduces a delay, the task is scheduled for the future and the run is shown as `scheduled` in Runs & History. Otherwise it goes straight to `queued`.
 - The browser deep-links into the **Run Detail** page so you can watch the live terminal.
 
-> **Note:** On Linux and FreeBSD, `patch_all` cannot be dry-run. The agent's bulk-upgrade path (`apt-get --with-new-pkgs upgrade`, `dnf upgrade`, `pkg upgrade`, `pacman -Syu`, `apk upgrade`) does not support a reliable simulation mode. On Alpine a real `patch_all` still runs `apk upgrade --simulate` first and stops before changing anything if the plan would downgrade or remove a package. If you want a dry-run, patch specific packages instead. Windows hosts can validate a Patch all; see [Windows patching](#windows-patching).
+> **Note:** On Linux and FreeBSD, `patch_all` cannot be dry-run. The agent's bulk-upgrade path (`apt-get --with-new-pkgs upgrade`, `dnf upgrade`, `pkg upgrade`, `pacman -Syu`, `apk upgrade`) does not support a reliable simulation mode. On Alpine a real `patch_all` still runs `apk upgrade --simulate` first and stops before changing anything if the plan would downgrade, remove or replace a package. If you want a dry-run, patch specific packages instead. Windows hosts can validate a Patch all; see [Windows patching](#windows-patching).
 
 ---
 
@@ -1892,9 +1892,9 @@ The agent rejected the run because the host's detected package manager is not in
 
 A version constraint in `/etc/apk/world` no longer matches the installed package, so apk refuses every transaction. Nothing was changed. Edit that line in `/etc/apk/world` as the message suggests (pin it to the installed version, or remove the version), then run the patch again. `apk fix` fails the same way, so it does not help here.
 
-#### Alpine: "apk plans to downgrade or remove packages"
+#### Alpine: "apk plans to downgrade, remove or replace packages"
 
-The simulated plan contained `Downgrading` or `Purging` steps. PatchMon only applies upgrades, so it stopped before changing anything. This usually follows a repository, often a tagged one such as `@edge`, being removed from `/etc/apk/repositories` while packages from it are still installed. Run `apk upgrade --simulate` on the host to see the plan, and restore the repository or deal with those packages by hand.
+The simulated plan contained `Downgrading`, `Purging` or `Replacing` steps, or a step the agent does not recognise. PatchMon only applies upgrades, so it stopped before changing anything. This usually follows a repository, often a tagged one such as `@edge`, being removed from `/etc/apk/repositories` while packages from it are still installed. Run `apk upgrade --simulate` on the host to see the plan, and restore the repository or deal with those packages by hand.
 
 #### Alpine: "another apk process held the package database"
 
