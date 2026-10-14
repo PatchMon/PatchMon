@@ -1,0 +1,94 @@
+<?xml version='1.0'?>
+<stream>
+<message type="info">Loading repository data...</message>
+<message type="info">Reading installed packages...</message>
+<message type="warning">You are about to do a distribution upgrade with all enabled repositories. Make sure these repositories are compatible before you continue. See &apos;man zypper&apos; for more information about this command.</message>
+<message type="info">Computing distribution upgrade...</message>
+<install-summary download-size="1963515" space-usage-diff="4650043" space-usage-installed="5547274" space-usage-removed="897231" packages-to-change="13" need-restart="0" need-reboot="0">
+<to-upgrade>
+<solvable type="package" name="openSUSE-build-key" edition="1.0-69.1" arch="aarch64" repository="repo-update" edition-old="1.0-68.1" arch-old="aarch64" summary="The public gpg keys for rpm package signature verification">
+<description>This package contains the gpg keys that are used to sign the
+openSUSE rpm packages. The keys installed here are not actually
+used by anything. rpm/zypper use the keys in the rpm db instead.</description></solvable>
+</to-upgrade>
+<to-install>
+<solvable type="package" name="krb5" edition="1.22.2-4.2" arch="aarch64" repository="repo-oss" summary="MIT Kerberos5 implementation">
+<description>Kerberos V5 is a trusted-third-party network authentication system,
+which can improve network security by eliminating the insecure
+practice of clear text passwords.</description></solvable>
+<solvable type="package" name="libbrotlicommon1" edition="1.2.0-2.3" arch="aarch64" repository="repo-oss" summary="Common Library for Brotli Compression">
+<description>Common library for the Brotli general purpose lossless data
+compression algorithm.</description></solvable>
+<solvable type="package" name="libbrotlidec1" edition="1.2.0-2.3" arch="aarch64" repository="repo-oss" summary="Library for Brotli Decompression">
+<description>Decompression library for the Brotli general purpose lossless data
+compression algorithm.
+
+The specification of the Brotli Compressed Data Format is defined in
+RFC 7932.</description></solvable>
+<solvable type="package" name="libcom_err2" edition="1.47.3-2.2" arch="aarch64" repository="repo-oss" summary="E2fsprogs error reporting library">
+<description>com_err is an error message display library.</description></solvable>
+<solvable type="package" name="libcurl4" edition="8.22.0-1.1" arch="aarch64" repository="repo-oss" summary="Library for transferring data from URLs">
+<description>The cURL shared library for accessing data using different
+network protocols.</description></solvable>
+<solvable type="package" name="libkeyutils1" edition="1.6.3-7.10" arch="aarch64" repository="repo-oss" summary="Key utilities library">
+<description>This package provides a wrapper library for the key management facility
+system calls.</description></solvable>
+<solvable type="package" name="libldap2" edition="2.6.13-1.6" arch="aarch64" repository="repo-oss" summary="OpenLDAP Client Libraries">
+<description>This package contains the OpenLDAP client libraries.</description></solvable>
+<solvable type="package" name="libsasl2-3" edition="2.1.28-13.1" arch="aarch64" repository="repo-oss" summary="Simple Authentication and Security Layer (SASL) library">
+<description>Simple Authentication and Security Layer (SASL) is a framework for
+authentication and data security in Internet protocols.
+
+This is the Cyrus SASL API implementation. It can be used on the client
+or server side to provide authentication. See RFC 2222 for more
+information.</description></solvable>
+<solvable type="package" name="libssh-config" edition="0.11.5-3.1" arch="noarch" repository="repo-oss" summary="SSH library configuration files">
+<description>Configuration files for the SSH library.</description></solvable>
+<solvable type="package" name="libssh4" edition="0.11.5-3.1" arch="aarch64" repository="repo-oss" summary="SSH library">
+<description>An SSH implementation in the form of a library. With libssh, you can remotely
+execute programs, transfer files, use a secure and transparent tunnel for your
+remote programs. It supports SFTP as well.
+
+This package provides libssh from https://www.libssh.org that should not be
+confused with libssh2 available from https://www.libssh2.org (libssh2 package)</description></solvable>
+<solvable type="package" name="libverto1" edition="0.3.2-3.11" arch="aarch64" repository="repo-oss" summary="Runtime libraries for libverto">
+<description>libverto provides a way for libraries to expose asynchronous
+interfaces without having to choose a particular event loop,
+offloading this decision to the end application which consumes the
+library.
+
+If you are packaging an application, not library, based on libverto,
+you should depend either on a specific implementation module or you
+can depend on the virtual provides &apos;libverto-module-base&apos;. This will
+ensure that you have at least one module installed that provides io,
+timeout and signal functionality. Currently glib is the only module
+that does not provide these three because it lacks signal. However,
+glib will support signal in the future.</description></solvable>
+</to-install>
+<to-remove>
+<solvable type="package" name="libcurl-mini4" edition="8.22.0-1.1" arch="aarch64" repository="@System" summary="Library for transferring data from URLs">
+<description>The cURL shared library for accessing data using different
+network protocols.</description></solvable>
+</to-remove>
+</install-summary>
+<prompt id="0">
+<text>Backend:  classic_rpmtrans --dry-run
+Continue?</text>
+<option default="1" value="y" desc="Yes, accept the summary and proceed with installation/removal of packages."/>
+<option value="n" desc="No, cancel the operation."/>
+<option value="v" desc="Toggle display of package versions."/>
+<option value="a" desc="Toggle display of package architectures."/>
+<option value="r" desc="Toggle display of repositories from which the packages will be installed."/>
+<option value="m" desc="Toggle display of package vendor names."/>
+<option value="d" desc="Toggle between showing all details and as few details as possible."/>
+<option value="g" desc="View the summary in pager."/>
+</prompt>
+<progress id="fileconflict-check" name="Checking for file conflicts:"/>
+<progress id="fileconflict-check" name="Checking for file conflicts:" value="0"/>
+<progress id="fileconflict-check" name="Checking for file conflicts: (1 skipped)" value="0"/>
+<progress id="fileconflict-check" name="Checking for file conflicts: (1 skipped)" done="1"/>
+<fileconflict-summary><message type="warning">12 packages had to be excluded from file conflicts check because they are not yet downloaded.</message>
+<message type="info">    Note: Checking for file conflicts requires not installed packages to be downloaded in advance in
+    order to access their file lists. See option &apos;--download-in-advance / --dry-run --download-only&apos;
+    in the zypper manual page for details.</message>
+</fileconflict-summary></stream>

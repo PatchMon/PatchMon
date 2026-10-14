@@ -1,0 +1,5 @@
+<?xml version='1.0'?>
+<stream>
+<message type="error">System management is locked by the application with pid 749 (zypper).
+Close this application before trying again.</message>
+</stream>
