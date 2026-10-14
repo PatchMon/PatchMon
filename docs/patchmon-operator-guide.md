@@ -212,12 +212,19 @@ services:
     depends_on:
       server:
         condition: service_started
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        /opt/guacamole/entrypoint.sh & pid=$$!
+        trap 'kill $$pid; wait $$pid; exit 0' TERM INT
+        while kill -0 $$pid 2>/dev/null && ls /sys/class/net | grep -q '^eth'; do sleep 5 & wait $$!; done
+        kill $$pid 2>/dev/null; exit 1
     read_only: true
     tmpfs:
       - /tmp:size=64m
       - /home/guacd:size=16m,uid=1000,gid=1000
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 4822 || exit 1"]
+      test: ["CMD-SHELL", "nc -z localhost 4822 && ls /sys/class/net | grep -q '^eth' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -304,7 +311,7 @@ Up to 2.1.3, the `guacd` service in the shipped `docker-compose.yml` could not o
 
    If the service already has an `environment:` block, add the `GUACD_ADDRESS` line to it.
 
-2. In the `guacd` service, delete the `networks:` block (the `- patchmon-internal` line under it), then add `network_mode`, `depends_on` and the second `tmpfs` entry so it reads:
+2. In the `guacd` service, delete the `networks:` block (the `- patchmon-internal` line under it), then add `network_mode`, `depends_on`, `entrypoint`, `command` and the second `tmpfs` entry, and change the healthcheck, so it reads:
 
    ```yaml
      guacd:
@@ -314,13 +321,22 @@ Up to 2.1.3, the `guacd` service in the shipped `docker-compose.yml` could not o
        depends_on:
          server:
            condition: service_started
+       entrypoint: ["/bin/sh", "-c"]
+       command:
+         - |
+           /opt/guacamole/entrypoint.sh & pid=$$!
+           trap 'kill $$pid; wait $$pid; exit 0' TERM INT
+           while kill -0 $$pid 2>/dev/null && ls /sys/class/net | grep -q '^eth'; do sleep 5 & wait $$!; done
+           kill $$pid 2>/dev/null; exit 1
        read_only: true
        tmpfs:
          - /tmp:size=64m
          - /home/guacd:size=16m,uid=1000,gid=1000
+       healthcheck:
+         test: ["CMD-SHELL", "nc -z localhost 4822 && ls /sys/class/net | grep -q '^eth' || exit 1"]
    ```
 
-   Keep the rest of the service (`security_opt`, `cap_drop`, limits, `healthcheck`, `logging`) as it is.
+   Keep the rest of the service (`security_opt`, `cap_drop`, limits, the healthcheck timings, `logging`) as it is. The `command` keeps `guacd` attached to the server container: if the server container is restarted or recreated on its own, `guacd` exits within a few seconds and Docker restarts it in the server's new network namespace.
 
 3. In `.env`, delete the `GUACD_ADDRESS=guacd:4822` line, or change it to `GUACD_ADDRESS=127.0.0.1:4822`. The compose `environment:` entry overrides it either way, but leaving the old value in place is confusing.
 
@@ -333,7 +349,7 @@ Up to 2.1.3, the `guacd` service in the shipped `docker-compose.yml` could not o
 
 Alternatively, download the current `docker/docker-compose.yml` from the repository and re-apply any local edits you had made.
 
-To check it worked, run `docker compose exec server sh -c 'nc -z 127.0.0.1 4822 && echo guacd reachable'`, then open an RDP session from a Windows host's **RDP** tab. If you later restart only the `server` container (`docker compose restart server`), restart `guacd` as well, because it lives in the server container's network namespace.
+To check it worked, run `docker compose exec server sh -c 'nc -z 127.0.0.1 4822 && echo guacd reachable'`, then open an RDP session from a Windows host's **RDP** tab.
 
 #### Migrating from 1.4.2 to 2.0.0 {#migrating-from-1-4-2-to-2-0-0}
 
