@@ -1044,6 +1044,11 @@ describe("PatchWizard validation lifecycle", () => {
 		);
 		await waitFor(() => expect(screen.getAllByText("Offline")).toHaveLength(2));
 		await nextUntilConfirm();
+		expect(
+			screen.getByText(
+				/They will patch without validation once the hosts are back online/,
+			),
+		).toBeInTheDocument();
 		await clickAndSettle(screen.getByRole("button", { name: /Queue & patch/ }));
 		await waitFor(() =>
 			expect(patchingAPI.approveRun).toHaveBeenCalledTimes(2),
@@ -1133,7 +1138,9 @@ describe("PatchWizard validation lifecycle", () => {
 				screen.getByText("Host offline, will patch without validation"),
 			).toBeInTheDocument();
 			expect(
-				screen.getByText(/will patch without validation, once/),
+				screen.getByText(
+					/It will patch without validation once the host is back online/,
+				),
 			).toBeInTheDocument();
 		});
 
@@ -1151,6 +1158,19 @@ describe("PatchWizard validation lifecycle", () => {
 			expect(screen.queryByText(/will patch without validation/)).toBeNull();
 			expect(patchingAPI.approveRun).not.toHaveBeenCalled();
 			expect(patchingAPI.trigger).toHaveBeenCalledTimes(1);
+		});
+
+		it("shows the server's refusal for a host that had validated", async () => {
+			const refusal =
+				"Only validated, pending-validation, or pending-approval runs can be approved";
+			patchingAPI.approveRun.mockRejectedValue({
+				response: { status: 400, data: { error: refusal } },
+			});
+			await validateAndSubmit(cleanResult);
+			await waitFor(() =>
+				expect(screen.getByText(refusal)).toBeInTheDocument(),
+			);
+			expect(screen.queryByText(/The host came back/)).toBeNull();
 		});
 
 		it("explains when the host came back before the approval", async () => {

@@ -1124,7 +1124,11 @@ export default function PatchWizard({
 				attempt[target.id] = {
 					status: "failed",
 					hostId: target.hostId,
-					error: approveRefusedMessage(err) ?? patchErrorMessage(err),
+					error:
+						(!isApprove &&
+							validationByTarget[target.id]?.status === "timeout" &&
+							approveRefusedMessage(err)) ||
+						patchErrorMessage(err),
 				};
 			}
 		}
@@ -2294,9 +2298,10 @@ export default function PatchWizard({
 													{offline.length} host
 													{offline.length !== 1 ? "s" : ""}
 												</strong>{" "}
-												did not respond to validation and may be offline. They
-												will patch without validation, once the host is back
-												online.
+												did not respond to validation and may be offline.{" "}
+												{offline.length !== 1
+													? "They will patch without validation once the hosts are back online."
+													: "It will patch without validation once the host is back online."}
 											</p>
 										</div>
 									);
