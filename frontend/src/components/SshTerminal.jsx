@@ -36,7 +36,9 @@ const WindowsSshNote = () => (
 		<Info className="h-4 w-4 flex-shrink-0 mt-0.5 text-blue-400" />
 		<p>
 			Windows hosts need the OpenSSH Server feature enabled and running. Sign in
-			as Administrator or another local administrator.{" "}
+			as Administrator or another local administrator. On Windows 10 and 11 the
+			built-in Administrator is disabled by default and its name is localised on
+			non-English installs, so use your own admin account.{" "}
 			<a
 				href="https://patchmon.net/docs/patchmon-admin-guide#web-ssh-terminal-windows"
 				target="_blank"

@@ -4357,7 +4357,7 @@ if (-not (Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction Silentl
 
 The firewall rule matters for **Direct** mode, where the PatchMon server dials the host. **Proxy** mode connects to `localhost:22` from the agent on the host itself, so it needs only the service running and `ssh-proxy-enabled: true` in `C:\ProgramData\PatchMon\config.yml`.
 
-**Username.** On Windows hosts the username defaults to `Administrator`. Any local administrator or domain account allowed to log on works; for a domain account use `DOMAIN\user` or `user@domain`. A username you have used before on that host is remembered and takes precedence.
+**Username.** On Windows hosts the username defaults to `Administrator`. Any local administrator or domain account allowed to log on works; for a domain account use `DOMAIN\user` or `user@domain`. On Windows client editions (Windows 10 and 11) the built-in Administrator account is disabled by default, and on non-English installs it has a localised name (for example `Administrateur`), so sign in with your own administrator account instead. A username you have used before on that host is remembered and takes precedence.
 
 **Key authentication.** For an account in the local Administrators group, Windows OpenSSH ignores the user's own `~\.ssh\authorized_keys` and reads `C:\ProgramData\ssh\administrators_authorized_keys` instead. The file must be writable only by Administrators and SYSTEM, or sshd silently refuses the key:
 
