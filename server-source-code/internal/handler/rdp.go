@@ -412,6 +412,19 @@ func (h *RDPHandler) WebsocketTunnelHandler() http.Handler {
 	})
 }
 
+func rdpConnectionParameters(port int, username, password string) map[string]string {
+	return map[string]string{
+		"hostname":    "127.0.0.1",
+		"port":        strconv.Itoa(port),
+		"username":    username,
+		"password":    password,
+		"security":    "any",
+		"ignore-cert": "true",
+		// Without a resize method guacd ignores the browser's size updates.
+		"resize-method": "display-update",
+	}
+}
+
 // doGuacConnect is the guac.DoConnect callback for the WebSocket tunnel.
 func (h *RDPHandler) doGuacConnect(r *http.Request) (guac.Tunnel, error) {
 	ticket := r.URL.Query().Get("ticket")
@@ -465,14 +478,7 @@ func (h *RDPHandler) doGuacConnect(r *http.Request) (guac.Tunnel, error) {
 	// Negotiate/TLS-only security layers and refuses blank-credential sessions.
 	// ignore-cert=true accepts the self-signed RDP cert Windows generates by
 	// default. If a customer needs hardened RDP later, expose per-host overrides.
-	config.Parameters = map[string]string{
-		"hostname":    "127.0.0.1",
-		"port":        strconv.Itoa(port),
-		"username":    data.Username,
-		"password":    data.Password,
-		"security":    "any",
-		"ignore-cert": "true",
-	}
+	config.Parameters = rdpConnectionParameters(port, data.Username, data.Password)
 	// Resolve screen dimensions: ticket data > query params > defaults.
 	screenW, screenH := 1024, 768
 	if data.Width > 0 {
