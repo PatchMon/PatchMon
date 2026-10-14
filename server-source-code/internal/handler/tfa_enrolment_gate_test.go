@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtest"
 	"github.com/go-chi/chi/v5"
@@ -87,6 +88,40 @@ func TestTfaEnrolmentGate(t *testing.T) {
 			t.Errorf("pending %s %s = %d, want 403", c[0], c[1], got)
 		}
 	}
+
+	t.Run("a non-canonically encoded allowlisted path is refused", func(t *testing.T) {
+		if got := do(tok, http.MethodGet, "/api/v1/auth/%70rofile"); got != http.StatusForbidden {
+			t.Fatalf("got %d, want 403", got)
+		}
+	})
+
+	t.Run("an inactive restricted session is revoked, not just refused", func(t *testing.T) {
+		u := x.mkUser(ctx, "user", true)
+		if rec := x.post(ctx, admin, u.ID, map[string]string{"password": tfaResetTestPassword}); rec.Code != http.StatusOK {
+			t.Fatalf("reset: %d", rec.Code)
+		}
+		sid := x.mkSession(ctx, u.ID)
+		if _, err := d.Exec(ctx, `UPDATE user_sessions SET last_activity = NOW() - INTERVAL '2 hours' WHERE id=$1`, sid); err != nil {
+			t.Fatal(err)
+		}
+		itok, err := mint.createAccessToken(u.ID, u.Role, sid, 600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resolver := hostctx.NewConfigResolver(cfg, &config.ResolvedConfig{SessionInactivityTimeoutMin: 30}, nil)
+		ir := chi.NewRouter()
+		ir.With(middleware.AuthWithSessionCheck(cfg, x.sessions, resolver, nil)).Get("/api/v1/hosts", ok)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/hosts", nil)
+		req.Header.Set("Authorization", "Bearer "+itok)
+		rec := httptest.NewRecorder()
+		ir.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("got %d %s, want 401", rec.Code, rec.Body.String())
+		}
+		if n := x.count(ctx, `SELECT count(*) FROM user_sessions WHERE id=$1 AND is_revoked`, sid); n != 1 {
+			t.Fatal("inactive session was not revoked")
+		}
+	})
 
 	t.Run("an unflagged user is not restricted", func(t *testing.T) {
 		if got := do(tokenFor(admin), http.MethodGet, "/api/v1/hosts"); got != http.StatusOK {

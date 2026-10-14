@@ -104,17 +104,6 @@ func AuthWithSessionCheck(cfg *config.Config, sessionsStore *store.SessionsStore
 					http.Error(w, `{"error":"Session expired"}`, http.StatusUnauthorized)
 					return
 				}
-				route := r.Method + " " + r.URL.Path
-				if sess.PasswordChangePending {
-					if !passwordChangeRoutes[route] {
-						writeAccountSetupRequired(w, PasswordChangeRequiredCode, "A new password is required")
-						return
-					}
-				} else if sess.TfaEnrolmentPending && !tfaEnrolmentRoutes[route] {
-					writeAccountSetupRequired(w, TfaEnrolmentRequiredCode, "Two-factor authentication setup is required")
-					return
-				}
-
 				// The inactivity comparison is opt-in.
 				resolved := cfgResolver.Resolve(r.Context())
 				if resolved != nil && resolved.SessionInactivityTimeoutMin > 0 {
@@ -126,6 +115,20 @@ func AuthWithSessionCheck(cfg *config.Config, sessionsStore *store.SessionsStore
 						http.Error(w, `{"error":"Session expired due to inactivity"}`, http.StatusUnauthorized)
 						return
 					}
+				}
+
+				route := ""
+				if r.URL.RawPath == "" {
+					route = r.Method + " " + r.URL.Path
+				}
+				if sess.PasswordChangePending {
+					if !passwordChangeRoutes[route] {
+						writeAccountSetupRequired(w, PasswordChangeRequiredCode, "A new password is required")
+						return
+					}
+				} else if sess.TfaEnrolmentPending && !tfaEnrolmentRoutes[route] {
+					writeAccountSetupRequired(w, TfaEnrolmentRequiredCode, "Two-factor authentication setup is required")
+					return
 				}
 
 				if userActivity(r) {
