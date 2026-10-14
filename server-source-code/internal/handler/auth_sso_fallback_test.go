@@ -392,6 +392,18 @@ func (f *ssoFallbackFixture) auditRows(t *testing.T, username string) []string {
 	return strings.Split(joined, "\n")
 }
 
+func (f *ssoFallbackFixture) waitAuditRows(t *testing.T, username string, n int) []string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		rows := f.auditRows(t, username)
+		if len(rows) >= n || time.Now().After(deadline) {
+			return rows
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func TestSSOFallbackWritesAuditRows(t *testing.T) {
 	f := newSSOFallbackFixture(t, 1000)
 
@@ -404,13 +416,13 @@ func TestSSOFallbackWritesAuditRows(t *testing.T) {
 
 	postLogin(f.h, f.userTFA, hardeningPassword)
 	want := `sso_fallback_refused false {"reason":"not_superadmin","sso_reason":"discovery returned HTTP 503"}`
-	if rows := f.auditRows(t, f.userTFA); len(rows) != 1 || rows[0] != want {
+	if rows := f.waitAuditRows(t, f.userTFA, 1); len(rows) != 1 || rows[0] != want {
 		t.Fatalf("non-superadmin refusal: got %v, want [%s]", rows, want)
 	}
 
 	postLogin(f.h, f.superNoTFA, hardeningPassword)
 	want = `sso_fallback_refused false {"reason":"tfa_required","sso_reason":"discovery returned HTTP 503"}`
-	if rows := f.auditRows(t, f.superNoTFA); len(rows) != 1 || rows[0] != want {
+	if rows := f.waitAuditRows(t, f.superNoTFA, 1); len(rows) != 1 || rows[0] != want {
 		t.Fatalf("superadmin without 2FA: got %v, want [%s]", rows, want)
 	}
 
@@ -430,5 +442,26 @@ func TestSSOFallbackWritesAuditRows(t *testing.T) {
 	want = `sso_fallback_login true {"sso_reason":"discovery returned HTTP 503"}`
 	if rows := f.auditRows(t, f.superTFA); len(rows) != 1 || rows[0] != want {
 		t.Fatalf("fallback login: got %v, want [%s]", rows, want)
+	}
+}
+
+func TestSSOFallbackRefusalAuditDropsWhenPoolFull(t *testing.T) {
+	f := newSSOFallbackFixture(t, 1000)
+	for i := 0; i < cap(pendingAuditWrites); i++ {
+		pendingAuditWrites <- struct{}{}
+	}
+	t.Cleanup(func() {
+		for i := 0; i < cap(pendingAuditWrites); i++ {
+			<-pendingAuditWrites
+		}
+	})
+	if rec := postLogin(f.h, f.userTFA, hardeningPassword); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("got %d, want 401", rec.Code)
+	}
+	if !strings.Contains(f.logs.String(), "audit write dropped: too many pending") {
+		t.Fatal("a full audit pool did not drop with a warning")
+	}
+	if rows := f.auditRows(t, f.userTFA); len(rows) != 0 {
+		t.Fatalf("audit row written despite a full pool: %v", rows)
 	}
 }

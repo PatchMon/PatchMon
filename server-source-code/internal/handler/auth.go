@@ -429,7 +429,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if localAuthFallback != "" {
 		// Answered like a wrong password, so an outage is not a password oracle for ordinary accounts.
 		if user.Role != "superadmin" {
-			h.recordAudit(r, auditEventSSOFallbackRefused, user, false, map[string]any{"reason": "not_superadmin", "sso_reason": localAuthFallback})
+			h.recordAuditAsync(r, auditEventSSOFallbackRefused, user, false, map[string]any{"reason": "not_superadmin", "sso_reason": localAuthFallback})
 			if locked := h.recordLoginFailure(w, r, req.Username); locked {
 				h.logLoginFailure(r, "sso_fallback_not_superadmin", req.Username, user.ID, "locked", true)
 				return
@@ -439,7 +439,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !user.TfaEnabled {
-			h.recordAudit(r, auditEventSSOFallbackRefused, user, false, map[string]any{"reason": "tfa_required", "sso_reason": localAuthFallback})
+			h.recordAuditAsync(r, auditEventSSOFallbackRefused, user, false, map[string]any{"reason": "tfa_required", "sso_reason": localAuthFallback})
 			h.emitEventAsync(r, notifications.Event{
 				Type:          "sso_fallback_refused",
 				Severity:      "warning",
@@ -658,6 +658,34 @@ func (h *AuthHandler) recordAudit(r *http.Request, event string, user *models.Us
 	if err := h.audit.Record(r.Context(), newAuditEntry(r, event, user.ID, user.ID, success, metadata)); err != nil && h.log != nil {
 		h.log.Error("auth: audit write failed", "event", event, "user_id", user.ID, "error", err)
 	}
+}
+
+// pendingAuditWrites bounds background audit writes on sign-in paths, which must
+// stay off the request so a correct password answers as fast as a wrong one.
+var pendingAuditWrites = make(chan struct{}, 16)
+
+func (h *AuthHandler) recordAuditAsync(r *http.Request, event string, user *models.User, success bool, metadata map[string]any) {
+	if h.audit == nil {
+		return
+	}
+	select {
+	case pendingAuditWrites <- struct{}{}:
+	default:
+		if h.log != nil {
+			h.log.Warn("audit write dropped: too many pending", "event", event, "user_id", user.ID)
+		}
+		return
+	}
+	entry := newAuditEntry(r, event, user.ID, user.ID, success, metadata)
+	ctx := context.WithoutCancel(r.Context())
+	go func() {
+		defer func() { <-pendingAuditWrites }()
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if err := h.audit.Record(ctx, entry); err != nil && h.log != nil {
+			h.log.Error("auth: audit write failed", "event", event, "user_id", user.ID, "error", err)
+		}
+	}()
 }
 
 // recordSSOFallbackLogin marks a session issued only because the SSO provider
