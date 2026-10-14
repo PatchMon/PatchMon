@@ -672,7 +672,7 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 				wsConn := globalWsConn
 				globalWsConnMu.RUnlock()
 				if wsConn != nil {
-					go handleRDPProxy(m, wsConn)
+					handleRDPProxy(m, wsConn)
 				}
 			case "rdp_proxy_input":
 				globalWsConnMu.RLock()
@@ -1773,6 +1773,7 @@ func connectOnce(out chan<- wsMsg, backoff *time.Duration) (connected bool, err 
 		globalWsConnMu.Lock()
 		globalWsConn = nil
 		globalWsConnMu.Unlock()
+		closeRDPProxySessionsForConn(conn)
 	}()
 
 	// Create a goroutine to send compliance scan progress updates through WebSocket
@@ -3780,6 +3781,22 @@ func handleRDPProxy(m wsMsg, conn *websocket.Conn) {
 		"port":       port,
 	})).Info("Establishing RDP proxy connection")
 
+	// Registered synchronously, before the dial goroutine, so an rdp_proxy_disconnect
+	// processed right after this message is not lost.
+	proxySession := &rdpProxySession{
+		conn:      conn,
+		sessionID: sessionID,
+	}
+	rdpProxySessionsMu.Lock()
+	rdpProxySessions[sessionID] = proxySession
+	rdpProxySessionsMu.Unlock()
+
+	go dialRDPProxy(proxySession, host, port)
+}
+
+func dialRDPProxy(proxySession *rdpProxySession, host string, port int) {
+	sessionID := proxySession.sessionID
+	conn := proxySession.conn
 	// Dial localhost:3389. Kept at 8s so the server's 12s handshake budget has
 	// room for the WebSocket round trip; a slow-to-accept TermService still gets
 	// through, and an actually-closed port fails fast with a specific error
@@ -3787,19 +3804,26 @@ func handleRDPProxy(m wsMsg, conn *websocket.Conn) {
 	address := net.JoinHostPort(host, strconv.Itoa(port))
 	tcpConn, err := net.DialTimeout("tcp", address, 8*time.Second)
 	if err != nil {
+		rdpProxySessionsMu.Lock()
+		if rdpProxySessions[sessionID] == proxySession {
+			delete(rdpProxySessions, sessionID)
+		}
+		rdpProxySessionsMu.Unlock()
 		logger.WithError(err).Error("Failed to connect to RDP server")
 		sendRDPProxyError(conn, sessionID, fmt.Sprintf("Failed to connect: %v", err))
 		return
 	}
 
-	proxySession := &rdpProxySession{
-		tcpConn:   tcpConn,
-		conn:      conn,
-		sessionID: sessionID,
-	}
-
 	rdpProxySessionsMu.Lock()
-	rdpProxySessions[sessionID] = proxySession
+	if rdpProxySessions[sessionID] != proxySession {
+		rdpProxySessionsMu.Unlock()
+		_ = tcpConn.Close()
+		logger.WithField("session_id", logutil.Sanitize(sessionID)).Info("RDP proxy session cancelled before it connected")
+		return
+	}
+	proxySession.mu.Lock()
+	proxySession.tcpConn = tcpConn
+	proxySession.mu.Unlock()
 	rdpProxySessionsMu.Unlock()
 
 	sendRDPProxyConnected(conn, sessionID)
@@ -3880,11 +3904,39 @@ func handleRDPProxyDisconnect(m wsMsg, conn *websocket.Conn) {
 
 	logger.WithField("session_id", logutil.Sanitize(sessionID)).Info("Closing RDP proxy session")
 
-	if proxySession.tcpConn != nil {
-		if err := proxySession.tcpConn.Close(); err != nil {
+	proxySession.mu.Lock()
+	tcpConn := proxySession.tcpConn
+	proxySession.mu.Unlock()
+	if tcpConn != nil {
+		if err := tcpConn.Close(); err != nil {
 			logger.WithError(err).Warn("Failed to close RDP proxy TCP connection")
 		}
 	}
 
 	sendRDPProxyClosed(conn, sessionID)
+}
+
+// closeRDPProxySessionsForConn closes every RDP session bound to a WebSocket
+// that has gone away; their data can no longer reach the server.
+func closeRDPProxySessionsForConn(conn *websocket.Conn) {
+	rdpProxySessionsMu.Lock()
+	var stale []*rdpProxySession
+	for id, ps := range rdpProxySessions {
+		if ps.conn == conn {
+			stale = append(stale, ps)
+			delete(rdpProxySessions, id)
+		}
+	}
+	rdpProxySessionsMu.Unlock()
+	for _, ps := range stale {
+		ps.mu.Lock()
+		tcpConn := ps.tcpConn
+		ps.mu.Unlock()
+		if tcpConn != nil {
+			_ = tcpConn.Close()
+		}
+	}
+	if len(stale) > 0 {
+		logger.WithField("sessions", len(stale)).Info("Closed RDP proxy sessions after WebSocket disconnect")
+	}
 }
