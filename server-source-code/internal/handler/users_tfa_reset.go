@@ -64,6 +64,8 @@ func (h *UsersHandler) ResetTfa(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+	req.Password = strings.TrimSpace(req.Password)
+	req.NewPassword = strings.TrimSpace(req.NewPassword)
 	if req.Password == "" {
 		Error(w, http.StatusBadRequest, "Your password is required to confirm this action")
 		return

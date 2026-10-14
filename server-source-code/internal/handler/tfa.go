@@ -166,6 +166,7 @@ func (h *TfaHandler) Disable(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+	req.Password = strings.TrimSpace(req.Password)
 	if req.Password == "" {
 		Error(w, http.StatusBadRequest, "Password is required to disable TFA")
 		return

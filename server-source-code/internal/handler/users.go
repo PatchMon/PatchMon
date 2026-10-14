@@ -148,6 +148,7 @@ func (h *UsersHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+	req.Password = strings.TrimSpace(req.Password)
 	if len(req.Username) < 3 {
 		Error(w, http.StatusBadRequest, "Username must be at least 3 characters")
 		return
@@ -541,6 +542,7 @@ func (h *UsersHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+	req.NewPassword = strings.TrimSpace(req.NewPassword)
 	if req.NewPassword == "" {
 		Error(w, http.StatusBadRequest, "New password is required")
 		return

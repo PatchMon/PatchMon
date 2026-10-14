@@ -1569,6 +1569,8 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+	req.CurrentPassword = strings.TrimSpace(req.CurrentPassword)
+	req.NewPassword = strings.TrimSpace(req.NewPassword)
 	if req.CurrentPassword == "" {
 		Error(w, http.StatusBadRequest, "Current password is required")
 		return
@@ -1920,6 +1922,7 @@ func (h *AuthHandler) SetupAdmin(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+	req.Password = strings.TrimSpace(req.Password)
 	if req.FirstName == "" || req.LastName == "" || req.Username == "" || req.Email == "" || req.Password == "" {
 		Error(w, http.StatusBadRequest, "All fields are required")
 		return
@@ -2011,6 +2014,7 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+	req.Password = strings.TrimSpace(req.Password)
 	if req.FirstName == "" || req.LastName == "" || req.Username == "" || req.Email == "" || req.Password == "" {
 		Error(w, http.StatusBadRequest, "All fields are required")
 		return

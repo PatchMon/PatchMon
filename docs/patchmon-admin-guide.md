@@ -234,7 +234,7 @@ Your own account settings. Every authenticated user has access. Covers:
 - **Trusted Devices**: list and revoke "remember this device" exemptions from MFA challenges
 - **Dashboard preferences**: light/dark mode, card layout, default landing tab
 
-Password policy rules are live: you cannot save a password that fails the server's policy. See PatchMon Environment Variables Reference: Password Policy.
+Password policy rules are live: you cannot save a password that fails the server's policy. Spaces at the start or end of a password are ignored, both when it is set and when you sign in, and the policy is checked on the password without them. See PatchMon Environment Variables Reference: Password Policy.
 
 #### Discord Auth
 
