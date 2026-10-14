@@ -531,7 +531,7 @@ func (h *UsersHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		callerID, _ := r.Context().Value(middleware.UserIDKey).(string)
 		caller, err := h.users.GetByID(r.Context(), callerID)
 		if err != nil || caller == nil || !canResetTfaOf(caller, existing) {
-			Error(w, http.StatusForbidden, "This user is part-way through a two-factor reset. Only a user with a higher role can reset their password now.")
+			Error(w, http.StatusForbidden, "This user is part-way through a two-factor reset. Only a superadmin or a user with a higher role can reset their password now.")
 			return
 		}
 	}
