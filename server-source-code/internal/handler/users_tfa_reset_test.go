@@ -429,6 +429,18 @@ func TestAdminResetTfa(t *testing.T) {
 	})
 
 	t.Run("role hierarchy", func(t *testing.T) {
+		readonly, err := x.perms.GetByRole(ctx, "readonly")
+		if err != nil {
+			t.Fatal(err)
+		}
+		auditor, other := *readonly, *readonly
+		auditor.Role, auditor.CanViewUsers = "custom_auditor", true
+		other.Role, other.CanManageAlerts = "custom_other", true
+		for _, p := range []*models.RolePermission{&auditor, &other} {
+			if err := x.perms.UpsertRole(ctx, p); err != nil {
+				t.Fatal(err)
+			}
+		}
 		cases := []struct {
 			actor, target string
 			want          int
@@ -445,6 +457,7 @@ func TestAdminResetTfa(t *testing.T) {
 			{"host_manager", "host_manager", http.StatusForbidden},
 			{"host_manager", "admin", http.StatusForbidden},
 			{"custom_auditor", "custom_other", http.StatusForbidden},
+			{"custom_auditor", "user", http.StatusForbidden},
 			{"user", "user", http.StatusForbidden},
 			{"user", "readonly", http.StatusOK},
 		}

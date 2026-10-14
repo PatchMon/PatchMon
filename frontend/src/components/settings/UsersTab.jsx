@@ -31,20 +31,28 @@ import {
 import { isRenderableAvatarSrc } from "../../utils/avatar";
 import ModalPortal from "../ui/ModalPortal";
 
-const ROLE_RANK = {
-	superadmin: 100,
-	admin: 90,
-	host_manager: 50,
-	user: 20,
-	readonly: 10,
+// Mirrors roleCovers and roleOutranks in role_guard.go on the server.
+const roleCovers = (roles, callerRole, targetRole) => {
+	if (callerRole === "superadmin") return true;
+	const caller = roles?.find((r) => r.role === callerRole);
+	if (!caller) return false;
+	const target = roles.find((r) => r.role === targetRole);
+	if (!target) return targetRole !== "admin" && targetRole !== "superadmin";
+	return Object.entries(target).every(
+		([key, value]) =>
+			!key.startsWith("can_") || value !== true || caller[key] === true,
+	);
 };
-const roleRank = (role) => ROLE_RANK[role] ?? 30;
 
-// Mirrors canResetTfaOf on the server.
-const canResetTfaOf = (actor, target) =>
+const roleOutranks = (roles, callerRole, targetRole) =>
+	callerRole === "superadmin" ||
+	(roleCovers(roles, callerRole, targetRole) &&
+		!roleCovers(roles, targetRole, callerRole));
+
+const canResetTfaOf = (roles, actor, target) =>
 	!!actor &&
 	actor.id !== target.id &&
-	(actor.role === "superadmin" || roleRank(target.role) < roleRank(actor.role));
+	roleOutranks(roles, actor.role, target.role);
 
 const UsersTab = () => {
 	const confirm = useConfirm();
@@ -410,18 +418,19 @@ const UsersTab = () => {
 											<Key className="h-4 w-4" />
 											Reset
 										</button>
-										{user.tfa_enabled && canResetTfaOf(currentUser, user) && (
-											<button
-												type="button"
-												onClick={() => setResetTfaUser(user)}
-												className="text-warning-500 hover:text-warning-700 dark:text-warning-400 dark:hover:text-warning-300 inline-flex items-center gap-1 text-sm min-h-[44px]"
-												title="Reset two-factor authentication"
-												aria-label={`Reset two-factor authentication for ${user.username}`}
-											>
-												<ShieldOff className="h-4 w-4" />
-												Reset 2FA
-											</button>
-										)}
+										{user.tfa_enabled &&
+											canResetTfaOf(roles, currentUser, user) && (
+												<button
+													type="button"
+													onClick={() => setResetTfaUser(user)}
+													className="text-warning-500 hover:text-warning-700 dark:text-warning-400 dark:hover:text-warning-300 inline-flex items-center gap-1 text-sm min-h-[44px]"
+													title="Reset two-factor authentication"
+													aria-label={`Reset two-factor authentication for ${user.username}`}
+												>
+													<ShieldOff className="h-4 w-4" />
+													Reset 2FA
+												</button>
+											)}
 										<button
 											type="button"
 											onClick={() => handleDeleteUser(user.id, user.username)}
@@ -589,7 +598,7 @@ const UsersTab = () => {
 														<Key className="h-4 w-4" />
 													</button>
 													{user.tfa_enabled &&
-														canResetTfaOf(currentUser, user) && (
+														canResetTfaOf(roles, currentUser, user) && (
 															<button
 																type="button"
 																onClick={() => setResetTfaUser(user)}

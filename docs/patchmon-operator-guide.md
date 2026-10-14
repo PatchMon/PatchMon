@@ -3230,7 +3230,7 @@ If the new identity is a different IdP, or the user was re-created, and you are 
 2. Under **SSO identity**, click **Unlink SSO identity** and confirm
 3. Ask the user to sign in with SSO again. PatchMon links the account to the new identity, keeping its role and settings
 
-You can only unlink users whose role ranks strictly below yours, and never your own account. A superadmin can unlink anyone except themselves. The rule is stricter than for other user changes because, where SSO is the only way to sign in, unlinking an account and changing its email address hands it to whoever owns the new address.
+You can only unlink users whose role is strictly below yours (your role holds every permission theirs grants, and at least one more), and never your own account. A superadmin can unlink anyone except themselves. The rule is stricter than for other user changes because, where SSO is the only way to sign in, unlinking an account and changing its email address hands it to whoever owns the new address.
 
 The re-link normally requires the IdP to assert a verified email, as described in [The verified email requirement](#the-verified-email-requirement). **If you have turned on `OIDC_TRUST_UNVERIFIED_EMAIL`, that check is skipped:** an unlinked account goes to the first identity at your IdP that claims its email address, verified or not. Ask the user to sign in straight after you unlink, and check the server log shows them re-linked. While that setting is on, PatchMon refuses to unlink a superadmin; turn it off first.
 

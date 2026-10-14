@@ -101,21 +101,3 @@ func roleOutranks(ctx context.Context, perms *store.PermissionsStore, callerRole
 	}
 	return roleCovers(ctx, perms, callerRole, targetRole) && !roleCovers(ctx, perms, targetRole, callerRole)
 }
-
-// roleRank returns a numeric rank for role hierarchy (higher = more privileged).
-func roleRank(role string) int {
-	switch role {
-	case "superadmin":
-		return 100
-	case "admin":
-		return 90
-	case "host_manager":
-		return 50
-	case "user":
-		return 20
-	case "readonly":
-		return 10
-	default:
-		return 30 // custom roles sit mid-tier
-	}
-}

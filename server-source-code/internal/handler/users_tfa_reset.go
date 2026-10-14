@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -17,12 +18,12 @@ import (
 
 const auditEventUserTfaReset = "user_tfa_reset"
 
-// canResetTfaOf: superadmin may act on anyone else; everyone else only on a lower role.
-func canResetTfaOf(actor, target *models.User) bool {
+// canResetTfaOf: superadmin may act on anyone else; everyone else only on a role it outranks.
+func (h *UsersHandler) canResetTfaOf(ctx context.Context, actor, target *models.User) bool {
 	if actor.ID == target.ID {
 		return false
 	}
-	return actor.Role == "superadmin" || roleRank(target.Role) < roleRank(actor.Role)
+	return roleOutranks(ctx, h.permissions, actor.Role, target.Role)
 }
 
 // WithTfaReset wires the stores used by ResetTfa.
@@ -114,7 +115,7 @@ func (h *UsersHandler) ResetTfa(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusNotFound, "User not found")
 		return
 	}
-	if !canResetTfaOf(actor, target) {
+	if !h.canResetTfaOf(ctx, actor, target) {
 		h.denyTfaReset(r, "insufficient_role", actorID, targetID)
 		Error(w, http.StatusForbidden, "Cannot reset two-factor authentication for a user with an equal or higher-privilege role")
 		return

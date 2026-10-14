@@ -27,7 +27,21 @@ vi.mock("../../utils/api", () => ({
 		update: vi.fn(),
 		resetPassword: vi.fn(),
 	},
-	permissionsAPI: { getRoles: vi.fn(() => Promise.resolve({ data: [] })) },
+	permissionsAPI: {
+		getRoles: vi.fn(() =>
+			Promise.resolve({
+				data: [
+					{
+						role: "superadmin",
+						can_manage_users: true,
+						can_manage_superusers: true,
+					},
+					{ role: "admin", can_manage_users: true, can_view_hosts: true },
+					{ role: "user", can_view_hosts: true },
+				],
+			}),
+		),
+	},
 	settingsAPI: { get: vi.fn(() => Promise.resolve({ data: {} })) },
 	formatDateOnly: () => "2026-01-01",
 }));

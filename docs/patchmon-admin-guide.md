@@ -5020,7 +5020,7 @@ When a user signs in with OIDC / SSO, PatchMon binds their account to that ident
 
 Their next SSO login links the account to the new identity, keeping their role and settings, provided the identity provider sends a verified email address that matches the account. The section only appears for accounts that are linked.
 
-- You can only unlink users whose role ranks strictly below yours, and never your own account. A superadmin can unlink anyone except themselves. This is stricter than editing, because unlinking and then changing the email address would hand an SSO-only account to someone else.
+- You can only unlink users whose role is strictly below yours (your role holds every permission theirs grants, and at least one more), and never your own account. A superadmin can unlink anyone except themselves. This is stricter than editing, because unlinking and then changing the email address would hand an SSO-only account to someone else.
 - If **Trust unverified email** is on in **Settings > OIDC / SSO**, the verified-email check is skipped, so whoever next signs in with that address claims the account. Ask the user to sign in straight after you unlink. While the setting is on, superadmins cannot be unlinked.
 
 ---
@@ -5332,7 +5332,7 @@ Rules the server enforces:
 | Rule | Detail |
 |------|--------|
 | Permission | `can_manage_users` is required. |
-| Role | You can only reset users whose role is lower than yours. An admin cannot reset another admin or a superadmin. A superadmin can reset anyone except themselves. Custom roles rank between `host_manager` and `user`, so they cannot reset each other. |
+| Role | You can only reset users whose role is strictly below yours: your role must hold every permission theirs grants, and at least one more. An admin cannot reset another admin or a superadmin. A superadmin can reset anyone except themselves. Two roles with the same permissions, or with different ones, cannot reset each other. |
 | Your own account | Not allowed here. Use your profile instead. |
 | Confirmation | Your password is always required, and your 2FA code (or a backup code) if you have 2FA. Wrong 2FA codes count towards your own `MAX_TFA_ATTEMPTS` lockout. |
 | SSO-only administrators | An administrator who signs in only through OIDC has no local password to confirm with, so cannot use this action. Ask an administrator with a local password. |

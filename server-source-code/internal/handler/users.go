@@ -467,10 +467,10 @@ func (h *UsersHandler) UnlinkOidc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Strictly higher rank: with SSO as the only login, unlink plus an email
+	// Strictly outrank: with SSO as the only login, unlink plus an email
 	// change hands the account to whoever owns the new address.
 	callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
-	if callerRole != "superadmin" && roleRank(existing.Role) >= roleRank(callerRole) {
+	if !roleOutranks(r.Context(), h.permissions, callerRole, existing.Role) {
 		Error(w, http.StatusForbidden, "Cannot unlink the SSO identity of a user with an equal or higher-privilege role")
 		return
 	}
@@ -548,7 +548,7 @@ func (h *UsersHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	if existing.TfaEnrolmentRequired || existing.PasswordChangeRequired {
 		callerID, _ := r.Context().Value(middleware.UserIDKey).(string)
 		caller, err := h.users.GetByID(r.Context(), callerID)
-		if err != nil || caller == nil || !canResetTfaOf(caller, existing) {
+		if err != nil || caller == nil || !h.canResetTfaOf(r.Context(), caller, existing) {
 			Error(w, http.StatusForbidden, "This user is part-way through a two-factor reset. Only a superadmin or a user with a higher role can reset their password now.")
 			return
 		}

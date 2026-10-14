@@ -22,7 +22,7 @@ func TestUnlinkOidcAgainstPostgres(t *testing.T) {
 	d := pgtest.Open(t)
 	users := store.NewUsersStore(d)
 	trust := false
-	h := &UsersHandler{users: users, trustUnverifiedEmail: func(context.Context) bool { return trust }}
+	h := &UsersHandler{users: users, permissions: store.NewPermissionsStore(d), trustUnverifiedEmail: func(context.Context) bool { return trust }}
 	oidcHandler := &OidcHandler{
 		cfg:   &config.Config{},
 		users: users,
