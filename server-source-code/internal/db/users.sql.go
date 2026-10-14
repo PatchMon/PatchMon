@@ -720,7 +720,7 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, e
 
 const resetUserTfa = `-- name: ResetUserTfa :one
 UPDATE users SET tfa_enabled = false, tfa_secret = NULL, tfa_backup_codes = NULL,
-    tfa_enrolment_required = (password_hash IS NOT NULL AND oidc_sub IS NULL), updated_at = NOW()
+    tfa_enrolment_required = (password_hash IS NOT NULL AND oidc_sub IS NULL AND oidc_provider IS NULL), updated_at = NOW()
 WHERE id = $1 AND tfa_enabled = true
 RETURNING tfa_enrolment_required
 `

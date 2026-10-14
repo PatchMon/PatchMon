@@ -42,7 +42,7 @@ func (u *User) PasswordChangePending() bool {
 
 // TfaEnrolmentPending mirrors GetSessionAuthState: IdP-linked and password-less accounts are exempt.
 func (u *User) TfaEnrolmentPending() bool {
-	return u.TfaEnrolmentRequired && u.PasswordHash != nil && u.OidcSub == nil
+	return u.TfaEnrolmentRequired && u.PasswordHash != nil && u.OidcSub == nil && u.OidcProvider == nil
 }
 
 // UserSession matches user_sessions table.

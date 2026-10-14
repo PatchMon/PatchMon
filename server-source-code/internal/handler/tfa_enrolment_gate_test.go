@@ -146,6 +146,16 @@ func TestTfaEnrolmentGate(t *testing.T) {
 		}
 	})
 
+	t.Run("a legacy provider-only IdP link lifts the restriction", func(t *testing.T) {
+		other := x.mkUser(ctx, "user", false)
+		if _, err := d.Exec(ctx, `UPDATE users SET tfa_enrolment_required=true, oidc_provider='idp.example.com' WHERE id=$1`, other.ID); err != nil {
+			t.Fatal(err)
+		}
+		if got := do(tokenFor(other), http.MethodGet, "/api/v1/hosts"); got != http.StatusOK {
+			t.Fatalf("provider-only IdP-linked user: got %d", got)
+		}
+	})
+
 	t.Run("a temporary password confines the session to changing it, then to enrolment", func(t *testing.T) {
 		u := x.mkUser(ctx, "user", true)
 		if rec := x.post(ctx, admin, u.ID, map[string]string{"password": tfaResetTestPassword, "newPassword": "Temp-Passw0rd!x"}); rec.Code != http.StatusOK {

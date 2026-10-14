@@ -541,6 +541,20 @@ func TestAdminResetTfa(t *testing.T) {
 		}
 	})
 
+	t.Run("legacy provider-only OIDC target is not forced to enrol", func(t *testing.T) {
+		admin := x.mkUser(ctx, "admin", false)
+		target := x.mkUser(ctx, "user", true)
+		if _, err := d.Exec(ctx, `UPDATE users SET oidc_provider='idp.example.com' WHERE id=$1`, target.ID); err != nil {
+			t.Fatal(err)
+		}
+		if rec := x.post(ctx, admin, target.ID, pw); rec.Code != http.StatusOK {
+			t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+		}
+		if x.reload(ctx, target.ID).TfaEnrolmentRequired {
+			t.Fatal("a provider-only IdP link cannot set up local 2FA, so it must not be required")
+		}
+	})
+
 	t.Run("OIDC-only actor cannot re-authenticate", func(t *testing.T) {
 		admin := x.mkUser(ctx, "admin", false)
 		target := x.mkUser(ctx, "user", true)
