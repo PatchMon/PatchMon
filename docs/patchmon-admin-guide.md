@@ -3819,6 +3819,8 @@ Pick this for **generic JSON webhooks, Discord, Slack, Mattermost or Rocket.Chat
 
 The generic JSON body also carries a top-level `text` key, alongside the structured `event_type`, `severity`, `title`, `message`, `reference` and `metadata` fields. Receivers that read the structured fields are unaffected, and any receiver that requires a `text` key works without extra configuration. Note that `text` is formatted in Slack-style markdown, so it contains `*bold*` markers and Slack link syntax such as `<https://…|View in PatchMon>`; a receiver that renders it as literal text will show that markup. On scheduled reports the `text` key is a short preview only, because the full report is already present in the `html` and `csv` fields.
 
+> **Blocked destination addresses.** For security, PatchMon rejects webhook and ntfy server URLs that point at the server's own loopback interface (`127.0.0.1`, `::1`) or at cloud-metadata and link-local addresses (`169.254.169.254`, the rest of `169.254.0.0/16`, `fe80::/10`, and the name `metadata.google.internal`). The URL is checked when you save the destination and again at delivery, against the address the hostname actually resolves to. Private LAN addresses (for example `10.x`, `172.16.x`, `192.168.x`) stay allowed, so you can still send notifications to an internal ntfy, Gotify or webhook receiver.
+
 #### Email (SMTP)
 
 | Field | Required | Notes |

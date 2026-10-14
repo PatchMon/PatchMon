@@ -330,7 +330,7 @@ func sendScheduledWebhook(ctx context.Context, plain, subject, html, csv string)
 		sig := hex.EncodeToString(mac.Sum(nil))
 		req.Header.Set("X-PatchMon-Signature", "sha256="+sig)
 	}
-	client := &http.Client{Timeout: 45 * time.Second}
+	client := outboundClient(45 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -450,7 +450,7 @@ func sendScheduledNtfy(ctx context.Context, plain, subject, html, csv string) er
 		req.SetBasicAuth(cfg.Username, cfg.Password)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := outboundClient(30 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return err

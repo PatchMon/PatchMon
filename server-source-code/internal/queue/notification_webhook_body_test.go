@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
@@ -51,9 +52,14 @@ type capture struct {
 }
 
 // captureWith posts through post to a stub receiver mounted at path and returns
-// what the receiver saw.
+// what the receiver saw. The stub binds to loopback, which the SSRF dial guard
+// refuses, so these body-shape tests swap in a plain client for the duration.
 func captureWith(t *testing.T, path, signingSecret string, post func(t *testing.T, cfg string)) capture {
 	t.Helper()
+
+	prev := outboundClient
+	outboundClient = func(d time.Duration) *http.Client { return &http.Client{Timeout: d} }
+	t.Cleanup(func() { outboundClient = prev })
 
 	type seen struct {
 		body []byte
