@@ -134,6 +134,11 @@ func TestDefaultRoleAndOidcMappingGuards(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("create drg_settings: %d", rec.Code)
 	}
+	rec = httptest.NewRecorder()
+	ph.UpdateRole(rec, roleRequest(http.MethodPut, "drg_full", "superadmin", allPermsJSON))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create drg_full: %d", rec.Code)
+	}
 
 	send := func(h http.HandlerFunc, method, path, callerRole, body string, params ...string) int {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -172,9 +177,18 @@ func TestDefaultRoleAndOidcMappingGuards(t *testing.T) {
 		{"admin cannot map a group to superadmin", putOidc("admin", `{"oidc_superadmin_group":"g"}`), http.StatusForbidden},
 		{"admin cannot map a group to admin", putOidc("admin", `{"oidc_admin_group":"g"}`), http.StatusForbidden},
 		{"admin cannot set the OIDC default role to superadmin", putOidc("admin", `{"oidc_default_role":"superadmin"}`), http.StatusForbidden},
-		{"admin may map host_manager and readonly", putOidc("admin", `{"oidc_host_manager_group":"ops","oidc_default_role":"readonly"}`), http.StatusOK},
+		{"admin cannot map host_manager without can_manage_superusers", putOidc("admin", `{"oidc_host_manager_group":"ops","oidc_default_role":"readonly"}`), http.StatusForbidden},
 		{"settings-only role cannot map host_manager", putOidc("drg_settings", `{"oidc_host_manager_group":"x"}`), http.StatusForbidden},
 		{"superadmin maps superadmin", putOidc("superadmin", `{"oidc_superadmin_group":"supers"}`), http.StatusOK},
+		{"superadmin sets the provider", putOidc("superadmin", `{"oidc_issuer_url":"https://idp.example","oidc_client_id":"pm","oidc_client_secret":"s"}`), http.StatusOK},
+		{"admin cannot repoint the issuer", putOidc("admin", `{"oidc_issuer_url":"https://attacker.example"}`), http.StatusForbidden},
+		{"admin cannot change the client id", putOidc("admin", `{"oidc_client_id":"evil"}`), http.StatusForbidden},
+		{"admin cannot change the client secret", putOidc("admin", `{"oidc_client_secret":"evil"}`), http.StatusForbidden},
+		{"admin cannot change the redirect uri", putOidc("admin", `{"oidc_redirect_uri":"https://attacker.example/cb"}`), http.StatusForbidden},
+		{"admin cannot trust unverified email", putOidc("admin", `{"oidc_trust_unverified_email":true}`), http.StatusForbidden},
+		{"admin cannot toggle role sync", putOidc("admin", `{"oidc_sync_roles":true}`), http.StatusForbidden},
+		{"admin may change presentation settings", putOidc("admin", `{"oidc_button_text":"Company SSO","oidc_issuer_url":"https://idp.example","oidc_client_id":"pm"}`), http.StatusOK},
+		{"full custom role with can_manage_superusers may repoint the issuer", putOidc("drg_full", `{"oidc_issuer_url":"https://idp2.example","oidc_host_manager_group":"ops"}`), http.StatusOK},
 		{"admin may resend the existing superadmin mapping", putOidc("admin", `{"oidc_superadmin_group":"supers","oidc_button_text":"SSO"}`), http.StatusOK},
 	}
 	for _, c := range cases {

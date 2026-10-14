@@ -545,7 +545,7 @@ func (h *OidcHandler) ImportFromEnv(w http.ResponseWriter, r *http.Request) {
 			s.OidcClientSecret = &encrypted
 		}
 	}
-	if h.rejectUngrantableRoleChange(w, r, &before, s) {
+	if h.rejectRestrictedOidcChange(w, r, &before, s) {
 		return
 	}
 	if err := h.settings.Update(r.Context(), s); err != nil {
@@ -568,10 +568,48 @@ func (h *OidcHandler) WithPermissions(p *store.PermissionsStore) *OidcHandler {
 	return h
 }
 
-// rejectUngrantableRoleChange writes a 403 and returns true when before -> after changes a role
-// mapping the caller may not grant.
-func (h *OidcHandler) rejectUngrantableRoleChange(w http.ResponseWriter, r *http.Request, before, after *models.Settings) bool {
+// oidcTrustChanged reports whether before -> after changes which identity provider PatchMon trusts
+// or how its claims become roles; repointing these lets the editor sign in as any user.
+func oidcTrustChanged(before, after *models.Settings) bool {
+	d := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return *p
+	}
+	return d(before.OidcIssuerURL) != d(after.OidcIssuerURL) ||
+		d(before.OidcClientID) != d(after.OidcClientID) ||
+		d(before.OidcClientSecret) != d(after.OidcClientSecret) ||
+		d(before.OidcRedirectURI) != d(after.OidcRedirectURI) ||
+		before.OidcTrustUnverifiedEmail != after.OidcTrustUnverifiedEmail ||
+		before.OidcSyncRoles != after.OidcSyncRoles ||
+		d(before.OidcDefaultRole) != d(after.OidcDefaultRole) ||
+		d(before.OidcSuperadminGroup) != d(after.OidcSuperadminGroup) ||
+		d(before.OidcAdminGroup) != d(after.OidcAdminGroup) ||
+		d(before.OidcHostManagerGroup) != d(after.OidcHostManagerGroup) ||
+		d(before.OidcReadonlyGroup) != d(after.OidcReadonlyGroup) ||
+		d(before.OidcUserGroup) != d(after.OidcUserGroup)
+}
+
+func (h *OidcHandler) canManageSuperusers(ctx context.Context, role string) bool {
+	if role == "superadmin" {
+		return true
+	}
+	if h.permissions == nil {
+		return false
+	}
+	p, err := h.permissions.GetByRole(ctx, role)
+	return err == nil && p != nil && p.CanManageSuperusers
+}
+
+// rejectRestrictedOidcChange writes a 403 and returns true when before -> after changes the
+// provider trust settings without can_manage_superusers, or a role mapping the caller may not grant.
+func (h *OidcHandler) rejectRestrictedOidcChange(w http.ResponseWriter, r *http.Request, before, after *models.Settings) bool {
 	callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
+	if oidcTrustChanged(before, after) && !h.canManageSuperusers(r.Context(), callerRole) {
+		Error(w, http.StatusForbidden, "Changing the SSO provider, client credentials, redirect URI, email trust or role mapping requires the Manage Superusers permission")
+		return true
+	}
 	role := ungrantableRoleChange(r.Context(), h.permissions, callerRole, before, after)
 	if role == "" {
 		return false
@@ -598,7 +636,7 @@ func (h *OidcHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	before := *s
 	applyOidcSettingsUpdate(s, req, h.enc)
-	if h.rejectUngrantableRoleChange(w, r, &before, s) {
+	if h.rejectRestrictedOidcChange(w, r, &before, s) {
 		return
 	}
 	if err := h.settings.Update(r.Context(), s); err != nil {
