@@ -158,6 +158,12 @@ func (s *UsersStore) UpdateOidcLink(ctx context.Context, userID, oidcSub, oidcPr
 	})
 }
 
+// ClearOidcLink removes a user's OIDC subject binding.
+func (s *UsersStore) ClearOidcLink(ctx context.Context, userID string) error {
+	d := s.db.DB(ctx)
+	return d.Queries.ClearUserOidcLink(ctx, userID)
+}
+
 // UpdateOidcProfile updates user profile from OIDC (last_login, avatar, name, role).
 func (s *UsersStore) UpdateOidcProfile(ctx context.Context, userID string, lastLogin time.Time, avatarURL, firstName, lastName *string, role string) error {
 	d := s.db.DB(ctx)

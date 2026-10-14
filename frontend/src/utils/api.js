@@ -264,6 +264,7 @@ export const adminUsersAPI = {
 	delete: (userId) => api.delete(`/auth/admin/users/${userId}`),
 	resetPassword: (userId, newPassword) =>
 		api.post(`/auth/admin/users/${userId}/reset-password`, { newPassword }),
+	unlinkOidc: (userId) => api.post(`/auth/admin/users/${userId}/unlink-oidc`),
 };
 
 // Permissions API (for role management)

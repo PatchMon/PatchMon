@@ -4923,6 +4923,15 @@ After a reset, all of that user's sessions and trusted-device records are revoke
 
 > You cannot reset the password of an inactive user. Reactivate them first.
 
+#### Unlinking a User's SSO Identity
+
+When a user signs in with OIDC / SSO, PatchMon binds their account to that identity. If the identity changes at the provider, for example because the user was deleted and re-created there or you moved to a different provider, their SSO login is refused with "Unable to sign in with this account".
+
+1. Click the **Edit** (pencil) icon on the user's row.
+2. Under **SSO identity**, click **Unlink SSO identity** and confirm.
+
+Their next SSO login links the account to the new identity, keeping their role and settings, provided the identity provider sends a verified email address that matches the account. The same role-hierarchy rules as editing apply. The section only appears for accounts that are linked.
+
 ---
 
 ### Disabling (Deactivating) a User
@@ -4970,7 +4979,7 @@ Restrictions:
   - `user` → rank 20
   - `readonly` → rank 10
 
-You can only modify, delete, or reset the password of users whose role rank is less than or equal to your own. This is distinct from the permission checks. Even if a custom role were granted `can_manage_users`, its holder still could not touch `admin` or `superadmin` accounts unless they additionally had `can_manage_superusers`.
+You can only modify, delete, unlink the SSO identity of, or reset the password of users whose role rank is less than or equal to your own. This is distinct from the permission checks. Even if a custom role were granted `can_manage_users`, its holder still could not touch `admin` or `superadmin` accounts unless they additionally had `can_manage_superusers`.
 
 ---
 

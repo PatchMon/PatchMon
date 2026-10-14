@@ -11,6 +11,16 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const clearUserOidcLink = `-- name: ClearUserOidcLink :exec
+UPDATE users SET oidc_sub = NULL, oidc_provider = NULL, updated_at = NOW()
+WHERE id = $1
+`
+
+func (q *Queries) ClearUserOidcLink(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, clearUserOidcLink, id)
+	return err
+}
+
 const countActiveAdmins = `-- name: CountActiveAdmins :one
 SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = true
 `

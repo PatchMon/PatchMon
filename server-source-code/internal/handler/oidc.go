@@ -451,7 +451,9 @@ func (h *OidcHandler) resolveOidcUser(ctx context.Context, userInfo *oidc.UserIn
 		if user.OidcSub != nil {
 			if h.log != nil {
 				h.log.Error("oidc login rejected: account is linked to a different subject",
-					"email", userInfo.Email, "sub", userInfo.Sub)
+					"email", userInfo.Email, "sub", userInfo.Sub,
+					"linked_sub", *user.OidcSub, "linked_provider", strVal(user.OidcProvider, ""),
+					"hint", "if the IdP user was re-created or the IdP changed, an admin can unlink the SSO identity under Settings > Users; see the operator guide")
 			}
 			return nil, "/login?error=Unable+to+sign+in+with+this+account"
 		}

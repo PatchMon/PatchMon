@@ -99,6 +99,10 @@ UPDATE users SET
     oidc_sub = $1, oidc_provider = $2, avatar_url = $3, updated_at = NOW()
 WHERE id = $4;
 
+-- name: ClearUserOidcLink :exec
+UPDATE users SET oidc_sub = NULL, oidc_provider = NULL, updated_at = NOW()
+WHERE id = $1;
+
 -- name: UpdateUserOidcProfile :exec
 UPDATE users SET
     last_login = $1, avatar_url = COALESCE($2, avatar_url),

@@ -3130,6 +3130,8 @@ This is the generic error for any failure during the token exchange, after your 
 - The **Redirect URI** in your IdP does not match `OIDC_REDIRECT_URI` exactly (including trailing slashes)
 - Cookies are being blocked (OIDC uses httpOnly cookies for session state)
 - Your IdP does not support PKCE (PatchMon uses the S256 code challenge)
+- **The log says `oidc: UserInfo response has no sub claim` or `UserInfo sub does not match id_token sub`.** OpenID Connect requires the IdP's UserInfo endpoint to return the same `sub` as the ID token, and from 2.1.3 PatchMon refuses the login when it is missing or different. Check the IdP's UserInfo mapping
+- **The log says `oidc: provider response exceeds size limit`.** A response from the IdP (discovery document, signing keys, token or UserInfo) was larger than 2 MiB. Usually an oversized groups claim or a proxy returning an error page in place of the IdP. Trim the claims the IdP sends
 
 #### "Unable to sign in with this account" After a Successful IdP Login
 
@@ -3140,10 +3142,38 @@ You signed in at your IdP, it sent you back, and PatchMon refused you. The token
 | `oidc login rejected: unverified email claim` | Your IdP sent neither `email_verified` nor `xms_edov`. From 2.1.0 PatchMon requires one of these when it has to identify you by email. Affects Authentik and Microsoft Entra ID out of the box | [The verified email requirement](#the-verified-email-requirement) |
 | `oidc accepting unverified email: trust_unverified_email is enabled` | Not an error. Records that a login was allowed through with an unverified address because the opt-in is on | Expected if you enabled it deliberately. If not, turn it off in **Settings > OIDC** |
 | `oidc user not found and auto-create disabled` | No PatchMon account matches, and `OIDC_AUTO_CREATE_USERS` is off | Create the user in PatchMon first, or set `OIDC_AUTO_CREATE_USERS=true` |
+| `oidc login rejected: account is linked to a different subject` | The PatchMon account with this email is already bound to another identity at the IdP. The line shows the incoming `sub` and the stored `linked_sub` | [Account linked to a different subject](#account-linked-to-a-different-subject) |
 
 A deactivated account is a different case and shows **"Account disabled"** rather than this message, logged as `oidc login inactive user`.
 
 If your logs show nothing at all, raise `LOG_LEVEL` to `debug` and try again.
+
+#### Account Linked to a Different Subject
+
+The first time someone signs in with SSO, PatchMon stores the IdP's subject identifier (`sub`) against their account, and from then on recognises them by it. If a later login arrives with the same verified email but a different `sub`, PatchMon refuses it rather than hand the account to a new identity. That is deliberate: an email address that has been reassigned at the IdP must not inherit someone else's PatchMon account.
+
+The `sub` changes, and this refusal appears, when:
+
+- The user was deleted and re-created at the IdP. PocketID, for example, uses its internal user ID as the `sub`, so a re-created user gets a new one
+- The IdP was reinstalled or restored without its user database
+- The account was first linked through a different IdP, and you have since switched provider. Releases before 2.1.0 let these logins through without checking, so the mismatch may predate your upgrade
+
+If you are sure the new identity is the same person, unlink the old one:
+
+1. Sign in as an admin, go to **Settings > Users** and click **Edit** on the user
+2. Under **SSO identity**, click **Unlink SSO identity** and confirm
+3. Ask the user to sign in with SSO again. PatchMon links the account to the new identity, keeping its role and settings
+
+Unlinking follows the same rules as other user changes: you cannot unlink someone whose role ranks above yours. The re-link still requires the IdP to assert a verified email, as described in [The verified email requirement](#the-verified-email-requirement).
+
+**If the locked-out account is the only superadmin**, and nobody can sign in to reach **Settings > Users**, clear the link from the database instead. With the stock Docker Compose stack:
+
+```bash
+docker compose exec database psql -U patchmon_user -d patchmon_db \
+  -c "UPDATE users SET oidc_sub = NULL, oidc_provider = NULL WHERE LOWER(email) = LOWER('admin@example.com');"
+```
+
+Replace the address with the account's email, check that it reports `UPDATE 1`, then sign in with SSO again.
 
 #### "Failed to reach the OIDC provider" When Clicking the SSO Button
 

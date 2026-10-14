@@ -479,6 +479,47 @@ func (h *UsersHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]string{"message": "User deleted successfully"})
 }
 
+// UnlinkOidc handles POST /auth/admin/users/{userId}/unlink-oidc. The user's
+// next SSO login links again through the verified-email path.
+func (h *UsersHandler) UnlinkOidc(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "userId")
+	existing, err := h.users.GetByID(r.Context(), userID)
+	if err != nil || existing == nil {
+		Error(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
+	if roleRank(existing.Role) > roleRank(callerRole) {
+		Error(w, http.StatusForbidden, "Cannot unlink a user with a higher-privilege role")
+		return
+	}
+	if existing.Role == "superadmin" && callerRole != "superadmin" {
+		perm, permErr := h.permissions.GetByRole(r.Context(), callerRole)
+		if permErr != nil || perm == nil || !perm.CanManageSuperusers {
+			Error(w, http.StatusForbidden, "You do not have permission to modify superadmin users")
+			return
+		}
+	}
+
+	if existing.OidcSub == nil && existing.OidcProvider == nil {
+		Error(w, http.StatusBadRequest, "User is not linked to an SSO identity")
+		return
+	}
+	if err := h.users.ClearOidcLink(r.Context(), userID); err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to unlink SSO identity")
+		return
+	}
+
+	if h.log != nil {
+		callerID, _ := r.Context().Value(middleware.UserIDKey).(string)
+		h.log.Info("oidc identity unlinked by admin",
+			"actor_id", callerID, "user_id", existing.ID, "email", existing.Email,
+			"previous_sub", strVal(existing.OidcSub, ""), "previous_provider", strVal(existing.OidcProvider, ""))
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{"message": "SSO identity unlinked"})
+}
+
 // ResetPassword resets a user's password.
 func (h *UsersHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	userID := chi.URLParam(r, "userId")
@@ -567,5 +608,9 @@ func userToAdminResponse(u *models.User) map[string]interface{} {
 		res["last_login"] = u.LastLogin.Format(time.RFC3339)
 	}
 	res["avatar_url"] = u.AvatarURL
+	res["oidc_linked"] = u.OidcSub != nil || u.OidcProvider != nil
+	if u.OidcProvider != nil {
+		res["oidc_provider"] = *u.OidcProvider
+	}
 	return res
 }
