@@ -1,0 +1,131 @@
+<?xml version='1.0'?>
+<stream>
+<message type="info">Loading repository data...</message>
+<message type="warning">Repository &apos;Update repository of openSUSE Backports&apos; metadata expired since 2025-03-02 19:18:12 UTC.</message>
+<message type="warning">Repository &apos;Main Update Repository&apos; metadata expired since 2025-08-30 08:17:31 UTC.</message>
+<message type="warning">Repository &apos;Update Repository (Non-Oss)&apos; metadata expired since 2025-04-10 11:03:28 UTC.</message>
+<message type="info">    Warning: Repository metadata expired: Check if &apos;autorefresh&apos; is turned on (zypper lr), otherwise
+    manually refresh the repository (zypper ref). If this does not solve the issue, it could be that
+    you are using a broken mirror or the server has actually discontinued to support the repository.</message>
+<message type="info">Reading installed packages...</message>
+<update-status version="0.6">
+<update-list>
+<update kind="patch" name="openSUSE-SLE-15.5-2024-3420" edition="1" arch="noarch" status="needed" category="recommended" severity="moderate" pkgmanager="true" restart="false" interactive="false"><summary>Recommended update for libzypp, zypper</summary><description>This update for libzypp, zypper fixes the following issues:
+
+- API refactoring. Prevent zypper from using now private libzypp symbols (bsc#1230267)
+- single_rpmtrans: fix installation of .src.rpms (bsc#1228647)
+</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/><issue-date time_t="1727187204" text="2024-09-24T14:13:24Z"/><issue-list><issue type="bugzilla" id="1228647"><title>RpmDb issues after zypper source-install with single_rpmtrans backend</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1228647</href></issue><issue type="bugzilla" id="1230267"><title>[ZYPP-CODE15] Tracker bug for new revisions of the zypp stack due to code refactoring and renewal</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1230267</href></issue></issue-list></update><update kind="patch" name="openSUSE-SLE-15.5-2024-3718" edition="1" arch="noarch" status="needed" category="recommended" severity="important" pkgmanager="true" restart="false" interactive="false"><summary>Recommended update for libzypp</summary><description>This update for libzypp fixes the following issues:
+
+- Send unescaped colons in header values. According to the STOMP protocol, it
+  would be correct to escape colon here but the practice broke plugin receivers
+  that didn&apos;t expect this. The incompatiblity affected customers who were
+  running spacewalk-repo-sync and experienced issues when accessing the cloud
+  URL. [bsc#1231043]
+  
+- Fix hang in curl code with no network connection. [bsc#1230912]
+</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/><issue-date time_t="1729217069" text="2024-10-18T02:04:29Z"/><issue-list><issue type="bugzilla" id="1230912"><title>zypper hangs if no network connection</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1230912</href></issue><issue type="bugzilla" id="1231043"><title>SUMA 4.3 on Azure, Channel URL &quot;SMT cloud server&quot; Valid Metadata not found after update</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1231043</href></issue></issue-list></update><update kind="patch" name="openSUSE-SLE-15.5-2024-4198" edition="1" arch="noarch" status="needed" category="recommended" severity="moderate" pkgmanager="true" restart="false" interactive="false"><summary>Recommended update for libsolv, libzypp, zypper</summary><description>This update for libsolv, libzypp, zypper fixes the following issues:
+
+- Fix replaces_installed_package using the wrong solvable id when checking the noupdate map
+- Make POOL_FLAG_ADDFILEPROVIDESFILTERED behaviour more standard
+- Add rpm_query_idarray query function
+- Support rpm&apos;s &quot;orderwithrequires&quot; dependency
+- BuildCache: Don&apos;t try to retrieve missing raw metadata if no permission to write the cache (bsc#1225451)
+- RepoManager: Throw RepoNoPermissionException if the user has no permission to update(write) the caches (bsc#1225451)
+- The 20MB download limit must not apply to non-metadata files like package URLs provided via the CLI (bsc#1233393)
+- Don&apos;t try to download missing raw metadata if cache is not writable (bsc#1225451)
+</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/><issue-date time_t="1733406381" text="2024-12-05T13:46:21Z"/><issue-list><issue type="bugzilla" id="1225451"><title>zypper invoked as non-root no more warns about outdated repositories</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1225451</href></issue><issue type="bugzilla" id="1233393"><title>[Build 20241114] Zypper fails to install package coming straight from remote URL</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1233393</href></issue></issue-list></update><update kind="patch" name="openSUSE-SLE-15.5-2024-4403" edition="1" arch="noarch" status="needed" category="recommended" severity="moderate" pkgmanager="true" restart="false" interactive="false"><summary>Recommended update for libzypp</summary><description>This update for libzypp fixes the following issues:
+
+- Url: queryparams without value should not have a trailing &quot;=&quot;
+</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/><issue-date time_t="1734709329" text="2024-12-20T15:42:09Z"/><issue-list><issue type="bugzilla" id="1234749"><title>repository url query parameter corruption in libzypp 17.35.15</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1234749</href></issue></issue-list></update></update-list>
+<blocked-update-list>
+<update kind="patch" name="openSUSE-SLE-15.5-2024-3597" edition="1" arch="noarch" status="needed" category="recommended" severity="moderate" pkgmanager="false" restart="false" interactive="false"><summary>Recommended update for bash</summary><description>This update for bash fixes the following issues:
+
+- Load completion file eveh if a brace expansion is in the
+  command line included (bsc#1227807).
+</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/><issue-date time_t="1728635995" text="2024-10-11T08:39:55Z"/><issue-list><issue type="bugzilla" id="1227807"><title>bash-completion: Zypper all auto-completion fails after &quot;{}&quot;.</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1227807</href></issue></issue-list></update><update kind="patch" name="openSUSE-SLE-15.5-2024-3659" edition="1" arch="noarch" status="needed" category="recommended" severity="moderate" pkgmanager="false" restart="false" interactive="false"><summary>Recommended update for gcc14</summary><description>This update for gcc14 fixes the following issues:
+
+This update ships the GNU Compiler Collection GCC 14.2. (jsc#PED-10474)
+
+The compiler runtime libraries are provided for all SUSE Linux Enterprise 15
+versions and replace the same named GCC 13 ones.
+
+The new compilers for C, C++, and Fortran are provided for SUSE Linux
+Enterprise 15 SP5 and SP6, and provided in the &quot;Development Tools&quot; module.
+
+The Go, D, Ada and Modula 2 language compiler parts are available
+unsupported via the PackageHub repositories.
+
+To use gcc14 compilers use:
+
+- install &quot;gcc14&quot; or &quot;gcc14-c++&quot; or one of the other &quot;gcc14-COMPILER&quot; frontend packages.
+- override your Makefile to use CC=gcc14, CXX=g++14 and similar overrides for the other languages.
+
+For a full changelog with all new GCC14 features, check out
+
+	https://gcc.gnu.org/gcc-14/changes.html
+
+
+- Add libquadmath0-devel-gcc14 sub-package to allow installing
+  quadmath.h and SO link without installing the fortran frontend
+
+- Avoid combine spending too much compile-time and memory doing nothing on s390x.  [bsc#1188441]
+- Remove timezone Recommends from the libstdc++6 package.  [bsc#1221601]
+- Revert libgccjit dependency change.  [bsc#1220724]
+- Fix libgccjit-devel dependency, a newer shared library is OK.
+- Fix libgccjit dependency, the corresponding compiler isn&apos;t required.
+- Add cross-X-newlib-devel requires to newlib cross compilers.
+  [bsc#1219031]
+- Re-enable AutoReqProv for cross packages but filter files processed
+  via __requires_exclude_from and __provides_exclude_from.
+  [bsc#1219031]
+- Package m2rte.so plugin in the gcc14-m2 sub-package rather than
+  in gcc13-devel.  [bsc#1210959]
+- Require libstdc++6-devel-gcc14 from gcc14-m2 as m2 programs
+  are linked against libstdc++6.
+</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/><issue-date time_t="1729084369" text="2024-10-16T13:12:49Z"/><issue-list><issue type="bugzilla" id="1188441"><title>GCC requires 11GB of memory for building libecpint for s390x in comparison to 3.3GB on x86</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1188441</href></issue><issue type="bugzilla" id="1214915"><title>Please build Qt5 with configure option -xcb-native-painting</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1214915</href></issue><issue type="bugzilla" id="1221601"><title>libstdc++6: recommends timezone</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1221601</href></issue><issue type="bugzilla" id="1220724"><title>Packages pulling gcc14 (like emacs-x11 and emacs-nox) break clang</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1220724</href></issue><issue type="bugzilla" id="1210959"><title>Modula-2 compiler doesn’t compile</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1210959</href></issue><issue type="bugzilla" id="1219031"><title>Multiple cross-arm-none-gcc13 bugs</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1219031</href></issue><issue type="jira" id="PED-10474"><title>https://jira.suse.com/browse/PED-10474</title><href>https://jira.suse.com/browse/PED-10474</href></issue></issue-list></update><update kind="patch" name="openSUSE-SLE-15.5-2024-3503" edition="1" arch="noarch" status="needed" category="recommended" severity="moderate" pkgmanager="false" restart="false" interactive="false"><summary>Recommended update for glibc</summary><description>This update for glibc fixes the following issue:
+
+- fix memory malloc problem: Initiate tcache shutdown even
+  without allocations (bsc#1228661).
+</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/><issue-date time_t="1727791998" text="2024-10-01T14:13:18Z"/><issue-list><issue type="bugzilla" id="1228661"><title>The pthread library leaks memory when detached threads are used</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1228661</href></issue></issue-list></update><update kind="patch" name="openSUSE-SLE-15.5-2024-3477" edition="1" arch="noarch" status="needed" category="recommended" severity="moderate" pkgmanager="false" restart="false" interactive="false"><summary>Recommended update for curl</summary><description>This update for curl fixes the following issue:
+
+- Make special characters in URL work with aws-sigv4 (bsc#1230516).
+</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/><issue-date time_t="1727443345" text="2024-09-27T13:22:25Z"/><issue-list><issue type="bugzilla" id="1230516"><title>curl: aws-sigv4 does not work with URLs containing &quot;=&quot; and other special characters</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1230516</href></issue></issue-list></update><update kind="patch" name="openSUSE-SLE-15.5-2024-3527" edition="1" arch="noarch" status="needed" category="recommended" severity="moderate" pkgmanager="false" restart="false" interactive="false"><summary>Recommended update for e2fsprogs</summary><description>This update for e2fsprogs fixes the following issue:
+
+- resize2fs: Check number of group descriptors only if meta_bg is disabled
+  (bsc#1230145).
+</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/><issue-date time_t="1728048430" text="2024-10-04T13:27:10Z"/><issue-list><issue type="bugzilla" id="1230145"><title>resize2fs: New size results in too many block group descriptors.</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1230145</href></issue></issue-list></update><update kind="patch" name="openSUSE-SLE-15.5-2024-3897" edition="1" arch="noarch" status="needed" category="recommended" severity="moderate" pkgmanager="false" restart="false" interactive="false"><summary>Recommended update for shadow</summary><description>This update for shadow fixes the following issues:
+
+- Add useradd warnings when requested UID is outside the default range (bsc#1230972)
+- Chage -d date vs passwd -S output is off by one (bsc#1228337)
+</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/><issue-date time_t="1730718539" text="2024-11-04T11:08:59Z"/><issue-list><issue type="bugzilla" id="1228337"><title>chage -d date vs passwd -S  output is off by one after installing shadow-4.8.1-150401.10.15.1</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1228337</href></issue><issue type="bugzilla" id="1230972"><title>useradd doesn&apos;t print warnings when the requested UID is above the default limit or falls inside the default systemd UID ranges</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1230972</href></issue></issue-list></update><update kind="patch" name="openSUSE-SLE-15.5-2024-3865" edition="1" arch="noarch" status="needed" category="recommended" severity="moderate" pkgmanager="false" restart="false" interactive="false"><summary>Recommended update for gcc14</summary><description>This update for gcc14 fixes the following issues:
+
+- Fixed parsing timezone tzdata 2024b [gcc#116657 bsc#1231833]
+</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/><issue-date time_t="1730473847" text="2024-11-01T15:10:47Z"/><issue-list><issue type="bugzilla" id="1231833"><title>gcc: fixed timezone parsing in libstdc++</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1231833</href></issue></issue-list></update><update kind="patch" name="openSUSE-SLE-15.5-2024-3765" edition="1" arch="noarch" status="needed" category="security" severity="moderate" pkgmanager="false" restart="false" interactive="false"><summary>Security update for openssl-1_1</summary><description>This update for openssl-1_1 fixes the following issues:
+
+- CVE-2023-50782: Implicit rejection in PKCS#1 v1.5 (bsc#1220262)
+</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/><issue-date time_t="1730165646" text="2024-10-29T01:34:06Z"/><issue-list><issue type="bugzilla" id="1220262"><title>VUL-0: CVE-2023-50782: openssl: consider backporting implicit rejection in PKCS#1 v1.5</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1220262</href></issue><issue type="cve" id="CVE-2023-50782"><title>http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-50782</title><href>http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-50782</href></issue></issue-list></update><update kind="patch" name="openSUSE-SLE-15.5-2024-3926" edition="1" arch="noarch" status="needed" category="security" severity="moderate" pkgmanager="false" restart="false" interactive="false"><summary>Security update for curl</summary><description>This update for curl fixes the following issues:
+
+- CVE-2024-9681: Fixed HSTS subdomain overwrites parent cache entry (bsc#1232528)
+</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/><issue-date time_t="1730888127" text="2024-11-06T10:15:27Z"/><issue-list><issue type="bugzilla" id="1232528"><title>VUL-0: EMBARGOED: CVE-2024-9681: curl: HSTS subdomain overwrites parent cache entry</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1232528</href></issue><issue type="cve" id="CVE-2024-9681"><title>http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-9681</title><href>http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-9681</href></issue></issue-list></update><update kind="patch" name="openSUSE-SLE-15.5-2024-4078" edition="1" arch="noarch" status="needed" category="security" severity="important" pkgmanager="false" restart="false" interactive="false"><summary>Security update for glib2</summary><description>This update for glib2 fixes the following issues:
+
+- CVE-2024-52533: Fixed a single byte buffer overflow (bsc#1233282).
+</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/><issue-date time_t="1732711996" text="2024-11-27T12:53:16Z"/><issue-list><issue type="cve" id="CVE-2024-52533"><title>http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-52533</title><href>http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-52533</href></issue><issue type="bugzilla" id="1233282"><title>VUL-0: CVE-2024-52533: glib2: single byte buffer overflow in set_connect_msg()</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1233282</href></issue></issue-list></update><update kind="patch" name="openSUSE-SLE-15.5-2024-4065" edition="1" arch="noarch" status="needed" category="recommended" severity="moderate" pkgmanager="false" restart="false" interactive="false"><summary>Recommended update for crypto-policies</summary><description>
+This update for crypto-policies ships the missing crypto-policies scripts to SUSE Linux Enterprise Micro,
+which allows configuration of the policies. (bsc#1233499)
+</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/><issue-date time_t="1732615860" text="2024-11-26T10:11:00Z"/><issue-list><issue type="bugzilla" id="1233499"><title>crypto-policies-scripts missing to configure crypto policies</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1233499</href></issue></issue-list></update><update kind="patch" name="openSUSE-SLE-15.5-2024-4338" edition="1" arch="noarch" status="needed" category="recommended" severity="important" pkgmanager="false" restart="false" interactive="false"><summary>Recommended update for systemd</summary><description>This update for systemd fixes the following issues:
+
+- core/unit: increase the NameOwnerChanged/GetNameOwner timeout to the unit&apos;s start timeout (bsc#1230272)
+- core/unit: add get_timeout_start_usec in UnitVTable and define it for service
+- sd-bus: make bus_add_match_full accept timeout
+- udev-builtin-path_id: SAS wide ports must have num_phys &gt; 1 (bsc#1231610)
+- sd-device: add helper to read a unsigned int attribute
+</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/><issue-date time_t="1734419928" text="2024-12-17T07:18:48Z"/><issue-list><issue type="bugzilla" id="1230272"><title>System got unstable due to systemd/dbus/kernel issue: Unexpected error response from GetNameOwner(): Connection terminated</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1230272</href></issue><issue type="bugzilla" id="1231610"><title>num_phys not set correctly for SAS ports with 1+ PHY with smartpqi driver</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1231610</href></issue></issue-list></update><update kind="patch" name="openSUSE-SLE-15.5-2024-4359" edition="1" arch="noarch" status="needed" category="security" severity="moderate" pkgmanager="false" restart="false" interactive="false"><summary>Security update for curl</summary><description>This update for curl fixes the following issues:
+
+ - CVE-2024-11053: Fixed password leak in curl used for the first host to the followed-to host under certain circumstances (bsc#1234068)
+
+</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/><issue-date time_t="1734441574" text="2024-12-17T13:19:34Z"/><issue-list><issue type="bugzilla" id="1234068"><title>VUL-0: EMBARGOED: CVE-2024-11053: curl: curl could leak the password used for the first host to the followed-to host under certain circumstances</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1234068</href></issue><issue type="cve" id="CVE-2024-11053"><title>http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-11053</title><href>http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-11053</href></issue></issue-list></update><update kind="patch" name="openSUSE-SLE-15.5-2024-4378" edition="1" arch="noarch" status="needed" category="recommended" severity="moderate" pkgmanager="false" restart="false" interactive="false"><summary>Recommended update for aaa_base</summary><description>This update for aaa_base fixes the following issues:
+
+- Added Midnigh Commander helpers for tcsh and bash resources (bsc#1203617)
+</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/><issue-date time_t="1734593041" text="2024-12-19T07:24:01Z"/><issue-list><issue type="bugzilla" id="1203617"><title>In plasma5 midnight commander doesn&apos;t exit to current directory anymore</title><href>https://bugzilla.suse.com/show_bug.cgi?id=1203617</href></issue></issue-list></update></blocked-update-list>
+</update-status>
+</stream>

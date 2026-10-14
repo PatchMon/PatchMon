@@ -2,6 +2,9 @@ package system
 
 import (
 	"io"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -464,5 +467,30 @@ ii  linux-image-6.18.39+rpt-rpi-v8:arm64 1:6.18.39-1+rpt1                       
 				t.Errorf("kernelIsOutdated(%q, %q) = %v, want %v", tt.running, latest, stale, tt.wantStale)
 			}
 		})
+	}
+}
+
+func TestZyppRebootFlag(t *testing.T) {
+	if runtime.GOOS == "windows" || isAlpine() {
+		t.Skip("the zypp reboot flag is read on non-Alpine Unix hosts")
+	}
+	if _, err := os.Stat("/var/run/reboot-required"); err == nil {
+		t.Skip("host has the Debian reboot flag")
+	}
+	flag := filepath.Join(t.TempDir(), "reboot-needed")
+	old := zyppRebootFlag
+	zyppRebootFlag = flag
+	t.Cleanup(func() { zyppRebootFlag = old })
+
+	d := New(newTestLogger())
+	if needs, reason := d.CheckRebootRequired(); needs && strings.Contains(reason, flag) {
+		t.Fatalf("flag reported before it exists: %s", reason)
+	}
+	if err := os.WriteFile(flag, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	needs, reason := d.CheckRebootRequired()
+	if !needs || !strings.Contains(reason, flag) {
+		t.Errorf("got %v %q, want the zypp flag reported", needs, reason)
 	}
 }

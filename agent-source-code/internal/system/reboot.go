@@ -15,6 +15,9 @@ import (
 	"patchmon-agent/internal/winexec"
 )
 
+// libzypp touches this after installing a kernel or a package flagged as needing a reboot.
+var zyppRebootFlag = "/run/reboot-needed"
+
 // CheckRebootRequired checks if the system requires a reboot
 // Returns (needsReboot bool, reason string)
 func (d *Detector) CheckRebootRequired() (bool, string) {
@@ -34,6 +37,14 @@ func (d *Detector) CheckRebootRequired() (bool, string) {
 	if _, err := os.Stat("/var/run/reboot-required"); err == nil {
 		d.logger.Debug("Reboot required: /var/run/reboot-required file exists")
 		reason := "Reboot flag file exists (/var/run/reboot-required)"
+		if kernelStale {
+			reason += fmt.Sprintf(" | Running kernel: %s, Installed kernel: %s", runningKernel, latestKernel)
+		}
+		return true, reason
+	}
+
+	if _, err := os.Stat(zyppRebootFlag); err == nil {
+		reason := "Reboot flag file exists (" + zyppRebootFlag + ")"
 		if kernelStale {
 			reason += fmt.Sprintf(" | Running kernel: %s, Installed kernel: %s", runningKernel, latestKernel)
 		}
