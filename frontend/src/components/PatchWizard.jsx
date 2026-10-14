@@ -55,6 +55,14 @@ import ModalPortal from "./ui/ModalPortal";
 
 const VALIDATION_CONCURRENCY = 5;
 
+// A timed-out validation is still pending_validation on the server, so it is
+// approved rather than re-triggered, which the one-active-run rule would refuse.
+const REUSABLE_VALIDATION_STATUSES = [
+	"validated",
+	"pending_validation",
+	"timeout",
+];
+
 const stillRunningRow = (patchRunId) => ({
 	status: "still_running",
 	packages_affected: [],
@@ -605,15 +613,19 @@ export default function PatchWizard({
 		let n = 0;
 		for (const id of selectedTargetIds) {
 			const v = validationByTarget[id];
-			if (
-				v?.patch_run_id &&
-				(v.status === "validated" || v.status === "pending_validation")
-			) {
+			if (v?.patch_run_id && REUSABLE_VALIDATION_STATUSES.includes(v.status)) {
 				n += 1;
 			}
 		}
 		return n;
 	}, [selectedTargetIds, validationByTarget]);
+	const stillValidatingIds = useMemo(
+		() =>
+			[...selectedTargetIds].filter(
+				(id) => validationByTarget[id]?.status === "still_running",
+			),
+		[selectedTargetIds, validationByTarget],
+	);
 	// Submit for approval is always a real choice for any fresh trigger.
 	// patch_all and patch_package without a prior dry-run create a new
 	// "pending_approval" run; patch_package after validation reuses the
@@ -941,8 +953,7 @@ export default function PatchWizard({
 		const targetHasPendingRun = (id) => {
 			const v = validationByTarget[id];
 			return (
-				!!v?.patch_run_id &&
-				(v.status === "validated" || v.status === "pending_validation")
+				!!v?.patch_run_id && REUSABLE_VALIDATION_STATUSES.includes(v.status)
 			);
 		};
 
@@ -950,9 +961,17 @@ export default function PatchWizard({
 		// partial failure never fires a second request at a target we already
 		// patched.
 		const pending = selectedTargets.filter(
-			(t) => submitResultByTarget[t.id]?.status !== "success",
+			(t) =>
+				submitResultByTarget[t.id]?.status !== "success" &&
+				!stillValidatingIds.includes(t.id),
 		);
 		if (pending.length === 0) {
+			if (submittedRuns.length === 0 && stillValidatingIds.length > 0) {
+				setError(
+					"Every selected host is still validating. Patch them from Runs & History once validation finishes.",
+				);
+				return;
+			}
 			finishAndClose(submitResultByTarget);
 			return;
 		}
@@ -1021,8 +1040,7 @@ export default function PatchWizard({
 				const validationRunId = validation?.patch_run_id;
 				if (
 					validationRunId &&
-					(validation.status === "validated" ||
-						validation.status === "pending_validation")
+					REUSABLE_VALIDATION_STATUSES.includes(validation.status)
 				) {
 					response = await patchingAPI.approveRun(
 						validationRunId,
@@ -1215,7 +1233,7 @@ export default function PatchWizard({
 				isApprove,
 			)}`;
 		}
-		const n = selectedTargetIds.size;
+		const n = selectedTargetIds.size - stillValidatingIds.length;
 		if (isApprove) {
 			return n === 1 ? "Approve & patch" : `Approve & patch ${n} runs`;
 		}
@@ -2249,6 +2267,21 @@ export default function PatchWizard({
 										</div>
 									);
 								})()}
+
+							{!isApprove && stillValidatingIds.length > 0 && (
+								<div className="flex items-start gap-2 p-3 rounded-lg bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-700">
+									<Clock className="h-4 w-4 text-primary-600 dark:text-primary-400 mt-0.5 shrink-0" />
+									<p className="text-sm text-primary-700 dark:text-primary-200">
+										<strong>
+											{stillValidatingIds.length} host
+											{stillValidatingIds.length !== 1 ? "s are" : " is"}
+										</strong>{" "}
+										still validating and will be left out. Patch{" "}
+										{stillValidatingIds.length !== 1 ? "them" : "it"} from Runs
+										&amp; History once validation finishes.
+									</p>
+								</div>
+							)}
 
 							{isApprove && (
 								<p className="text-sm text-secondary-600 dark:text-secondary-400">

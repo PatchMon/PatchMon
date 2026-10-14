@@ -859,6 +859,13 @@ describe("PatchWizard validation lifecycle", () => {
 			});
 		};
 
+	const validated = {
+		status: "validated",
+		packages_affected: ["KB1"],
+		shell_output: "",
+		error: null,
+	};
+
 	const props = (extra = {}) => ({
 		mode: "trigger",
 		patchType: "patch_all",
@@ -896,6 +903,13 @@ describe("PatchWizard validation lifecycle", () => {
 		await waitFor(() =>
 			expect(screen.getAllByText("Validating…").length).toBeGreaterThan(0),
 		);
+	};
+
+	const nextUntilConfirm = async () => {
+		for (let i = 0; i < 4; i++) {
+			if (screen.queryByRole("button", { name: /Queue & patch/ })) return;
+			await clickAndSettle(screen.getByRole("button", { name: /Next/ }));
+		}
 	};
 
 	beforeEach(async () => {
@@ -970,5 +984,69 @@ describe("PatchWizard validation lifecycle", () => {
 			expect(screen.getAllByText("Agent reconnecting…")).toHaveLength(2),
 		);
 		expect(screen.queryByText("Failed")).toBeNull();
+	});
+
+	it("continues without waiting and leaves still-validating hosts out", async () => {
+		pollDryRunUntilDone.mockImplementation((runId, opts) =>
+			runId === "v-w1"
+				? Promise.resolve(validated)
+				: hangUntilAborted()(runId, opts),
+		);
+		renderOpen(props());
+		await startValidation();
+		await waitFor(() => expect(screen.getByText("Clean")).toBeInTheDocument());
+		await clickAndSettle(
+			screen.getByRole("button", { name: "Continue without waiting" }),
+		);
+		expect(signals.every((sig) => sig.aborted)).toBe(true);
+		await nextUntilConfirm();
+		expect(
+			screen.getByText(/still validating and will be left out/),
+		).toBeInTheDocument();
+		const confirm = screen.getByRole("button", { name: /Queue & patch/ });
+		expect(confirm).toHaveTextContent("Queue & patch 1 host");
+		await clickAndSettle(confirm);
+		await waitFor(() =>
+			expect(patchingAPI.approveRun).toHaveBeenCalledTimes(1),
+		);
+		expect(patchingAPI.approveRun.mock.calls[0][0]).toBe("v-w1");
+		expect(patchingAPI.trigger).toHaveBeenCalledTimes(2);
+	});
+
+	it("refuses to submit when every host is still validating", async () => {
+		pollDryRunUntilDone.mockImplementation(hangUntilAborted());
+		renderOpen(props());
+		await startValidation();
+		await clickAndSettle(
+			screen.getByRole("button", { name: "Continue without waiting" }),
+		);
+		await nextUntilConfirm();
+		await clickAndSettle(screen.getByRole("button", { name: /Queue & patch/ }));
+		expect(
+			screen.getByText(/Every selected host is still validating/),
+		).toBeInTheDocument();
+		expect(patchingAPI.approveRun).not.toHaveBeenCalled();
+		expect(patchingAPI.trigger).toHaveBeenCalledTimes(2);
+	});
+
+	it("approves an offline host's pending validation instead of re-triggering", async () => {
+		pollDryRunUntilDone.mockResolvedValue({
+			status: "timeout",
+			packages_affected: [],
+			shell_output: "",
+			error: "Validation skipped (host offline)",
+		});
+		renderOpen(props());
+		await clickAndSettle(
+			screen.getByRole("button", { name: "Run validation" }),
+		);
+		await waitFor(() => expect(screen.getAllByText("Offline")).toHaveLength(2));
+		await nextUntilConfirm();
+		await clickAndSettle(screen.getByRole("button", { name: /Queue & patch/ }));
+		await waitFor(() =>
+			expect(patchingAPI.approveRun).toHaveBeenCalledTimes(2),
+		);
+		expect(approvedRunIds().sort()).toEqual(["v-w1", "v-w2"]);
+		expect(patchingAPI.trigger).toHaveBeenCalledTimes(2);
 	});
 });
