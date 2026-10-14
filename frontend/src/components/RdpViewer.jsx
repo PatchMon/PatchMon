@@ -40,7 +40,6 @@ const KEYSYM_V_UPPER = 0x56;
 const KEYSYM_CTRL_L = 0xffe3;
 const CTRL_KEYSYMS = [0xffe3, 0xffe4];
 const COMMAND_KEYSYMS = [0xffe7, 0xffe8, 0xffeb, 0xffec];
-const PASTE_MODIFIER_KEYSYMS = [...CTRL_KEYSYMS, ...COMMAND_KEYSYMS];
 const PASTE_FALLBACK_MS = 300;
 const RESIZE_DEBOUNCE_MS = 400;
 const MIN_REMOTE_DIMENSION = 200;
@@ -408,10 +407,7 @@ const RdpViewer = ({ host, isOpen }) => {
 	const mouseRef = useRef(null);
 	const keyboardRef = useRef(null);
 	const resizeObserverRef = useRef(null);
-	const pasteHandlerRef = useRef(null);
-	const pendingPasteKeyRef = useRef(null);
-	const flushPendingPasteKeyRef = useRef(null);
-	const pasteFallbackTimerRef = useRef(null);
+	const teardownInputRef = useRef(null);
 	const resizeTimerRef = useRef(null);
 	const sentSizeRef = useRef(null);
 
@@ -456,18 +452,11 @@ const RdpViewer = ({ host, isOpen }) => {
 
 	const disconnect = useCallback(
 		(options = {}) => {
-			window.clearTimeout(pasteFallbackTimerRef.current);
 			window.clearTimeout(resizeTimerRef.current);
-			pendingPasteKeyRef.current = null;
 			sentSizeRef.current = null;
 			setRemoteClipboard(null);
-			if (pasteHandlerRef.current && displayRef.current) {
-				displayRef.current.removeEventListener(
-					"paste",
-					pasteHandlerRef.current,
-				);
-				pasteHandlerRef.current = null;
-			}
+			teardownInputRef.current?.();
+			teardownInputRef.current = null;
 			if (resizeObserverRef.current) {
 				resizeObserverRef.current.disconnect();
 				resizeObserverRef.current = null;
@@ -491,9 +480,7 @@ const RdpViewer = ({ host, isOpen }) => {
 			if (mouseRef.current) {
 				mouseRef.current = null;
 			}
-			if (keyboardRef.current) {
-				keyboardRef.current = null;
-			}
+			keyboardRef.current = null;
 			if (options.clearCredentials) {
 				clearCredentials();
 			}
@@ -609,7 +596,27 @@ const RdpViewer = ({ host, isOpen }) => {
 			const client = new Guacamole.Client(tunnel);
 			clientRef.current = client;
 
+			let clientConnected = false;
+			const syncRemoteSize = () => {
+				if (!clientConnected) return;
+				const size = {
+					width: evenFloor(displayRef.current?.offsetWidth ?? 0),
+					height: evenFloor(displayRef.current?.offsetHeight ?? 0),
+				};
+				const last = sentSizeRef.current;
+				if (
+					size.width < MIN_REMOTE_DIMENSION ||
+					size.height < MIN_REMOTE_DIMENSION ||
+					(last && last.width === size.width && last.height === size.height)
+				) {
+					return;
+				}
+				sentSizeRef.current = size;
+				client.sendSize(size.width, size.height);
+			};
+
 			client.onstatechange = (state) => {
+				clientConnected = state === Guacamole.Client.State.CONNECTED;
 				if (state === Guacamole.Client.State.CONNECTED) {
 					setIsConnecting(false);
 					setIsConnected(true);
@@ -623,6 +630,7 @@ const RdpViewer = ({ host, isOpen }) => {
 
 					// Scale display to fit after connection
 					scaleDisplay();
+					syncRemoteSize();
 				} else if (
 					state === Guacamole.Client.State.DISCONNECTED ||
 					state === Guacamole.Client.State.CONNECTING
@@ -699,94 +707,122 @@ const RdpViewer = ({ host, isOpen }) => {
 						};
 				mouseRef.current = mouse;
 
-				// Ctrl/Cmd+V is let through to the browser so its paste event can
-				// sync the local clipboard before the key reaches the remote.
+				// Ctrl+V (and Cmd+V on macOS) is let through to the browser so its
+				// paste event can sync the local clipboard before V reaches the remote.
+				const isMac = /^mac/i.test(navigator.platform || "");
+				const pasteModifiers = isMac
+					? [...CTRL_KEYSYMS, ...COMMAND_KEYSYMS]
+					: CTRL_KEYSYMS;
 				const heldKeys = new Set();
+				const commandUpRemotely = new Set();
+				let pendingPasteKey = null;
+				let pasteReleaseOwed = false;
 				let translatedPasteKey = null;
-				const flushPendingPasteKey = () => {
-					window.clearTimeout(pasteFallbackTimerRef.current);
-					const pending = pendingPasteKeyRef.current;
-					if (pending === null) return;
-					pendingPasteKeyRef.current = null;
-					const commandHeld = COMMAND_KEYSYMS.filter((k) => heldKeys.has(k));
-					if (
-						commandHeld.length > 0 &&
-						!CTRL_KEYSYMS.some((k) => heldKeys.has(k))
-					) {
-						// Windows reads Win+V as clipboard history, so macOS Cmd+V is sent as Ctrl+V.
-						client.sendKeyEvent(1, KEYSYM_CTRL_L);
-						for (const k of commandHeld) client.sendKeyEvent(0, k);
-						translatedPasteKey = pending;
-					}
-					client.sendKeyEvent(1, pending);
+				let pasteFallbackTimer = null;
+
+				const endTranslatedPaste = () => {
+					client.sendKeyEvent(0, KEYSYM_CTRL_L);
 				};
-				flushPendingPasteKeyRef.current = flushPendingPasteKey;
+				const sendPendingPasteKey = () => {
+					window.clearTimeout(pasteFallbackTimer);
+					if (pendingPasteKey === null) return;
+					const key = pendingPasteKey;
+					pendingPasteKey = null;
+					const commandHeld = isMac
+						? COMMAND_KEYSYMS.filter((k) => heldKeys.has(k))
+						: [];
+					const translate =
+						commandHeld.length > 0 &&
+						!CTRL_KEYSYMS.some((k) => heldKeys.has(k));
+					if (translate) {
+						// Windows reads Win+V as clipboard history, so Cmd+V is sent as Ctrl+V.
+						client.sendKeyEvent(1, KEYSYM_CTRL_L);
+						for (const k of commandHeld) {
+							client.sendKeyEvent(0, k);
+							commandUpRemotely.add(k);
+						}
+					}
+					client.sendKeyEvent(1, key);
+					if (pasteReleaseOwed) {
+						pasteReleaseOwed = false;
+						client.sendKeyEvent(0, key);
+						if (translate) endTranslatedPaste();
+					} else if (translate) {
+						translatedPasteKey = key;
+					}
+				};
 
 				const keyboard = new Guacamole.Keyboard(displayRef.current);
 				keyboard.onkeydown = (keysym) => {
 					heldKeys.add(keysym);
 					const isPaste =
 						(keysym === KEYSYM_V || keysym === KEYSYM_V_UPPER) &&
-						PASTE_MODIFIER_KEYSYMS.some((k) => heldKeys.has(k));
-					if (isPaste && pendingPasteKeyRef.current === null) {
-						pendingPasteKeyRef.current = keysym;
-						pasteFallbackTimerRef.current = window.setTimeout(
-							flushPendingPasteKey,
+						pasteModifiers.some((k) => heldKeys.has(k));
+					if (isPaste && pendingPasteKey === null) {
+						pendingPasteKey = keysym;
+						pasteReleaseOwed = false;
+						pasteFallbackTimer = window.setTimeout(
+							sendPendingPasteKey,
 							PASTE_FALLBACK_MS,
 						);
 						return true;
+					}
+					if (commandUpRemotely.size > 0 && !COMMAND_KEYSYMS.includes(keysym)) {
+						for (const k of commandUpRemotely) client.sendKeyEvent(1, k);
+						commandUpRemotely.clear();
 					}
 					client.sendKeyEvent(1, keysym);
 					return false;
 				};
 				keyboard.onkeyup = (keysym) => {
 					heldKeys.delete(keysym);
-					if (keysym === pendingPasteKeyRef.current) flushPendingPasteKey();
+					// With Meta held, Guacamole releases V synchronously inside the
+					// keydown, before the browser's paste event.
+					if (keysym === pendingPasteKey) {
+						pasteReleaseOwed = true;
+						return;
+					}
+					if (commandUpRemotely.delete(keysym)) return;
 					client.sendKeyEvent(0, keysym);
 					if (keysym === translatedPasteKey) {
 						translatedPasteKey = null;
-						client.sendKeyEvent(0, KEYSYM_CTRL_L);
+						endTranslatedPaste();
 					}
 				};
 				keyboardRef.current = keyboard;
 
+				const handlePaste = (e) => {
+					const text = e.clipboardData?.getData("text/plain");
+					if (text) {
+						const stream = client.createClipboardStream("text/plain");
+						const writer = new Guacamole.StringWriter(stream);
+						writer.sendText(text);
+						writer.sendEnd();
+					}
+					sendPendingPasteKey();
+				};
+				const displayElement = displayRef.current;
+				displayElement.addEventListener("paste", handlePaste);
+
+				teardownInputRef.current = () => {
+					window.clearTimeout(pasteFallbackTimer);
+					keyboard.onkeydown = null;
+					keyboard.onkeyup = null;
+					keyboard.reset();
+					displayElement.removeEventListener("paste", handlePaste);
+				};
+
 				const observer = new ResizeObserver(() => {
 					scaleDisplay();
 					window.clearTimeout(resizeTimerRef.current);
-					resizeTimerRef.current = window.setTimeout(() => {
-						const size = {
-							width: evenFloor(displayRef.current?.offsetWidth ?? 0),
-							height: evenFloor(displayRef.current?.offsetHeight ?? 0),
-						};
-						const last = sentSizeRef.current;
-						if (
-							size.width < MIN_REMOTE_DIMENSION ||
-							size.height < MIN_REMOTE_DIMENSION ||
-							(last && last.width === size.width && last.height === size.height)
-						) {
-							return;
-						}
-						sentSizeRef.current = size;
-						clientRef.current?.sendSize(size.width, size.height);
-					}, RESIZE_DEBOUNCE_MS);
+					resizeTimerRef.current = window.setTimeout(
+						syncRemoteSize,
+						RESIZE_DEBOUNCE_MS,
+					);
 				});
 				observer.observe(displayRef.current);
 				resizeObserverRef.current = observer;
 			}
-
-			// Clipboard sync: send local clipboard on paste
-			const handlePaste = (e) => {
-				const text = e.clipboardData?.getData("text/plain");
-				if (text && clientRef.current) {
-					const stream = clientRef.current.createClipboardStream("text/plain");
-					const writer = new Guacamole.StringWriter(stream);
-					writer.sendText(text);
-					writer.sendEnd();
-				}
-				flushPendingPasteKeyRef.current?.();
-			};
-			pasteHandlerRef.current = handlePaste;
-			displayRef.current?.addEventListener("paste", handlePaste);
 
 			client.connect(connectData);
 		} catch (err) {
