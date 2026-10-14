@@ -233,6 +233,23 @@ func TestAdminResetTfa(t *testing.T) {
 		}
 	})
 
+	t.Run("reset lifts an active TFA lockout on the target", func(t *testing.T) {
+		admin := x.mkUser(ctx, "admin", false)
+		target := x.mkUser(ctx, "user", true)
+		for range 3 {
+			x.lockout.RecordFailedAttempt(ctx, target.ID)
+		}
+		if locked, _ := x.lockout.IsTFALocked(ctx, target.ID); !locked {
+			t.Fatal("setup: target should be locked")
+		}
+		if rec := x.post(ctx, admin, target.ID, pw); rec.Code != http.StatusOK {
+			t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+		}
+		if locked, _ := x.lockout.IsTFALocked(ctx, target.ID); locked {
+			t.Fatal("target is still locked out after the reset")
+		}
+	})
+
 	t.Run("actor with TFA must supply a valid TOTP", func(t *testing.T) {
 		admin := x.mkUser(ctx, "admin", true)
 		target := x.mkUser(ctx, "user", true)

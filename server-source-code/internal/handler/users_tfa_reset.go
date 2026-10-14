@@ -123,7 +123,7 @@ func (h *UsersHandler) ResetTfa(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.tfaLockout != nil {
-		h.tfaLockout.ClearFailedAttempts(ctx, target.ID)
+		h.tfaLockout.ClearLockout(ctx, target.ID)
 	}
 
 	if h.log != nil {
