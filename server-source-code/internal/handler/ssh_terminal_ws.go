@@ -461,6 +461,7 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 		case "resize":
 			mu.Lock()
 			pid := proxySessionID
+			sess := sshSession
 			mu.Unlock()
 			if pid != "" {
 				_ = h.registry.SendJSON(host.ApiID, map[string]interface{}{
@@ -469,8 +470,9 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 					"cols":       orInt(msg.Cols, 80),
 					"rows":       orInt(msg.Rows, 24),
 				})
+			} else if sess != nil {
+				_ = sess.WindowChange(orInt(msg.Rows, 24), orInt(msg.Cols, 80))
 			}
-			// Direct mode: ssh session doesn't support resize after start easily; skip
 
 		case "disconnect":
 			cleanup()
