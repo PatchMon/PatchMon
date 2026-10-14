@@ -31,16 +31,8 @@ var apkActionLinePattern = regexp.MustCompile(`^\(\s*\d+/\d+\)\s+(?:Installing|U
 var zypperPlanLinePattern = regexp.MustCompile(`^  (?:upgrade|install|reinstall|remove) (\S+) `)
 var zypperCommitLinePattern = regexp.MustCompile(`^\(\s*\d+/\d+\) (?:Installing|Removing): (\S+)`)
 
-var rpmArches = map[string]bool{
-	"x86_64": true, "i586": true, "i686": true, "aarch64": true, "noarch": true,
-	"ppc64le": true, "s390x": true, "armv7hl": true, "riscv64": true,
-}
-
 // rpmNameFromNVRA turns libsolv-tools-base-0.7.31-150500.6.5.1.aarch64 into libsolv-tools-base.
 func rpmNameFromNVRA(nvra string) string {
-	if i := strings.LastIndex(nvra, "."); i > 0 && rpmArches[nvra[i+1:]] {
-		nvra = nvra[:i]
-	}
 	for range 2 {
 		i := strings.LastIndex(nvra, "-")
 		if i <= 0 {
