@@ -2424,7 +2424,6 @@ OpenID Connect configuration for Single Sign-On. When `OIDC_ENABLED=true`, the f
 | `OIDC_AUTO_CREATE_USERS` | `false` | No | When `true`, a PatchMon account is automatically created the first time an OIDC user logs in. When `false`, an administrator must create the account first. |
 | `OIDC_DEFAULT_ROLE` | `user` | No | Role assigned to automatically created OIDC users when no group mapping matches. Accepted values: `superadmin`, `admin`, `host_manager`, `user`, `readonly`. |
 | `OIDC_DISABLE_LOCAL_AUTH` | `false` | No | When `true`, local username/password authentication is disabled. Only OIDC login is accepted. Useful when enforcing SSO organisation-wide. The server refuses password sign-in, the two-factor step and self-service signup with `403`. The **Disable local auth** toggle in **Settings → OIDC / SSO** is enforced the same way when OIDC is configured in the UI. |
-| `OIDC_LOCAL_AUTH_FALLBACK` | `false` | No | When `true` and `OIDC_DISABLE_LOCAL_AUTH` is in force, password login is allowed while the SSO provider is unreachable (network failure or HTTP 5xx from its discovery document). Anyone who can make the provider unreachable from the server can re-enable password login, so leave it off unless that risk is acceptable. Also available as **Allow password login if SSO is down** in **Settings → OIDC / SSO**. See [Password Login When the SSO Provider Is Unreachable](#sso-provider-unreachable-password-login). |
 
 #### Login Page
 
@@ -2793,7 +2792,6 @@ OIDC_SYNC_ROLES=false
 | `OIDC_AUTO_CREATE_USERS` | `false` | When `true`, automatically creates a PatchMon account on first OIDC login. When `false`, the user must already exist in PatchMon (matched by email) |
 | `OIDC_DEFAULT_ROLE` | `user` | Role assigned when a user doesn't match any group mapping |
 | `OIDC_DISABLE_LOCAL_AUTH` | `false` | When `true`, hides the username/password fields, only shows the SSO button, and the server refuses password sign-in |
-| `OIDC_LOCAL_AUTH_FALLBACK` | `false` | When `true` and local auth is disabled, allows password login while the SSO provider is unreachable. See [Password Login When the SSO Provider Is Unreachable](#sso-provider-unreachable-password-login) |
 | `OIDC_BUTTON_TEXT` | `Login with SSO` | Label shown on the SSO login button |
 | `OIDC_SESSION_TTL` | `600` | Seconds the OIDC login state is valid. If the user takes longer than this at the IdP, the session expires and they must try again |
 | `OIDC_POST_LOGOUT_URI` | `<CORS_ORIGIN>/login` | Where to redirect after a logout. Defaults to the PatchMon login page |
@@ -3043,23 +3041,29 @@ This hides the username/password fields on the login page and only shows the SSO
 
 #### Password Login When the SSO Provider Is Unreachable {#sso-provider-unreachable-password-login}
 
-With local authentication disabled, an outage at your identity provider means nobody can sign in, because the SSO configuration is still complete. If you would rather let people use their PatchMon password while the provider is down, turn on **Allow password login if SSO is down** in **Settings → OIDC / SSO**, or set:
+With local authentication disabled, an outage at your identity provider means nobody can sign in, because the SSO configuration is still complete. If you want your superadmins to keep a way in during an outage, turn on **Superadmin password login if SSO is down** in **Settings → OIDC / SSO**.
 
-```bash
-OIDC_LOCAL_AUTH_FALLBACK=true
-```
-
-It is **off by default** and has no effect unless local authentication is disabled. Like every other OIDC setting, set it in the same place you configured OIDC: environment variables or the Settings page, not a mix.
+- It is **off by default** and has no effect unless **Disable local auth** is on.
+- It is a database setting only, changed on that page. There is no environment variable for it.
+- Only **superadmin** accounts can use it, and only with **two-factor authentication**. A superadmin who has not set up two-factor authentication is refused with a message saying so. Every other account is refused with the usual `Invalid credentials` message, and the attempt counts towards the account lockout.
+- The second factor is always asked for on this path, even on a device that was remembered earlier, and "Remember me" is ignored.
+- Self-service signup and Discord sign-in stay closed.
 
 **What counts as unreachable.** PatchMon fetches your provider's discovery document (`<issuer>/.well-known/openid-configuration`) with a 3 second timeout. The provider is treated as unreachable only if that request fails at the network level (DNS failure, connection refused, timeout, TLS error) or the provider answers with an HTTP 5xx error. Any other answer, including a 404 from a mistyped issuer URL, means the provider is up, and password login stays disabled. A provider that rejects a user, wrong credentials and a misconfigured client never count.
 
-The result is cached for 30 seconds per PatchMon instance, so a burst of sign-in attempts causes at most one request to your provider, and repeated logins cannot be used to probe it. Saving the OIDC settings clears the cached result. While the fallback is active, the login page shows the username and password fields again, existing users can sign in with their password (two-factor authentication still applies), and self-service signup stays closed. Each password login let through this way is logged at `warn` level with the reason:
+The result is cached for 30 seconds, so a burst of sign-in attempts causes at most one request to your provider, and repeated logins cannot be used to probe it. Saving the OIDC settings clears the cached result. While the provider is unreachable, the login page shows the username and password fields again, with a notice that only superadmins with two-factor authentication can sign in.
 
-```
-password login allowed because the SSO provider is unreachable  reason="discovery request failed: ..."
-```
+Every sign-in completed this way is recorded:
 
-> **Trade-off:** anyone who can make your identity provider unreachable from the PatchMon server, for example by disrupting DNS or the network path between them, can bring password login back. Only turn this on if that risk is acceptable for your deployment, and make sure every PatchMon password is strong.
+- a `warn` line in the server log, with the reason the provider was considered unreachable:
+
+  ```
+  password login allowed because the SSO provider is unreachable  audit_action=sso_fallback_login username=... reason="discovery request failed: ..."
+  ```
+
+- a `sso_fallback_login` notification event, which you can route to an alert channel like any other event (see the admin guide).
+
+> **Trade-off:** anyone who can make your identity provider unreachable from the PatchMon server, for example by disrupting DNS or the network path between them, can bring password login back for superadmin accounts. They would still need a superadmin's password and second factor. Only turn this on if that risk is acceptable for your deployment, and route the `sso_fallback_login` event to a channel someone watches.
 
 With the setting off, an outage still locks everyone out until the provider recovers. In that case use the database recovery step in [Re-enable Local Login When OIDC is Broken](#workaround-re-enable-local-login-when-oidc-is-broken).
 
@@ -3514,7 +3518,7 @@ The login page will now only show the **Sign in with Microsoft** button. Local u
 
 The server enforces this too: password sign-in, the two-factor step and self-service signup are refused with `403 Local authentication is disabled. Please use SSO.`
 
-> **Safety:** PatchMon only enforces this flag while OIDC is **also** enabled and fully configured (issuer URL, client ID, client secret and redirect URI all set). If any of those is missing, or the stored client secret cannot be decrypted, password login comes back automatically. An outage at your identity provider does **not** re-enable password login, because the configuration is still complete, unless you also turn on **Allow password login if SSO is down** (see [Password Login When the SSO Provider Is Unreachable](#sso-provider-unreachable-password-login)). If an outage locks you out, see [Re-enable Local Login When OIDC is Broken](#workaround-re-enable-local-login-when-oidc-is-broken).
+> **Safety:** PatchMon only enforces this flag while OIDC is **also** enabled and fully configured (issuer URL, client ID, client secret and redirect URI all set). If any of those is missing, or the stored client secret cannot be decrypted, password login comes back automatically. An outage at your identity provider does **not** re-enable password login, because the configuration is still complete, unless you also turn on **Superadmin password login if SSO is down** (see [Password Login When the SSO Provider Is Unreachable](#sso-provider-unreachable-password-login)). If an outage locks you out, see [Re-enable Local Login When OIDC is Broken](#workaround-re-enable-local-login-when-oidc-is-broken).
 
 ---
 

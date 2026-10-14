@@ -167,7 +167,6 @@ type Config struct {
 	OidcUserGroup            string
 	OidcEnforceHTTPS         bool
 	OidcTrustUnverifiedEmail bool
-	OidcLocalAuthFallback    bool
 
 	// SSG (SCAP Security Guide) content directory for compliance scanning
 	SSGContentDir string
@@ -271,7 +270,6 @@ func Load() (*Config, error) {
 		OidcUserGroup:            getEnv("OIDC_USER_GROUP", ""),
 		OidcEnforceHTTPS:         getEnv("OIDC_ENFORCE_HTTPS", "true") != "false",
 		OidcTrustUnverifiedEmail: getEnv("OIDC_TRUST_UNVERIFIED_EMAIL", "") == "true",
-		OidcLocalAuthFallback:    getEnv("OIDC_LOCAL_AUTH_FALLBACK", "") == "true",
 
 		SSGContentDir:         getEnv("SSG_CONTENT_DIR", "./ssg-content"),
 		AdminMode:             getEnv("ADMIN_MODE", "") == "on",

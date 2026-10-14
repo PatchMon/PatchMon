@@ -32,8 +32,9 @@ type ResolvedOidcConfig struct {
 	// TrustUnverifiedEmail relaxes the verified-email requirement for account
 	// linking and auto-creation. Off by default; see the operator guide.
 	TrustUnverifiedEmail bool
-	// LocalAuthFallback re-allows password sign-in while DisableLocalAuth is on
-	// and the provider's discovery document cannot be fetched.
+	// LocalAuthFallback lets superadmins sign in with a password while the
+	// provider is unreachable. Database only, never env: one env var would turn
+	// it on for every context at once.
 	LocalAuthFallback bool
 	// ConfiguredViaEnv is true when any OIDC_* env var is set (for import banner).
 	ConfiguredViaEnv bool
@@ -84,7 +85,7 @@ func (r *Resolver) Resolve() ResolvedOidcConfig {
 		out.UserGroup = strings.TrimSpace(r.cfg.OidcUserGroup)
 		out.EnforceHTTPS = r.cfg.OidcEnforceHTTPS
 		out.TrustUnverifiedEmail = r.cfg.OidcTrustUnverifiedEmail
-		out.LocalAuthFallback = r.cfg.OidcLocalAuthFallback
+		out.LocalAuthFallback = r.settings != nil && r.settings.OidcLocalAuthFallback
 	} else {
 		out.IssuerURL = r.ptrStr(r.settings.OidcIssuerURL)
 		out.ClientID = r.ptrStr(r.settings.OidcClientID)

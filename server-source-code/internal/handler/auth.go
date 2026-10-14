@@ -394,6 +394,24 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		h.upgradePasswordHash(r.Context(), user, password)
 	}
 
+	if localAuthFallback != "" {
+		// Answered like a wrong password, so an outage is not a password oracle for ordinary accounts.
+		if user.Role != "superadmin" {
+			if locked := h.recordLoginFailure(w, r, req.Username); locked {
+				h.logLoginFailure(r, "sso_fallback_not_superadmin", req.Username, user.ID, "locked", true)
+				return
+			}
+			h.logLoginFailure(r, "sso_fallback_not_superadmin", req.Username, user.ID)
+			Error(w, http.StatusUnauthorized, "Invalid credentials")
+			return
+		}
+		if !user.TfaEnabled {
+			h.logLoginFailure(r, "sso_fallback_tfa_required", req.Username, user.ID, "sso_reason", localAuthFallback)
+			Error(w, http.StatusForbidden, "Your identity provider is unreachable. Password sign-in is only allowed in that case for superadmins with two-factor authentication, which is not set up on this account.")
+			return
+		}
+	}
+
 	// Clear lockout on success
 	if h.loginLockout != nil {
 		identifier := h.loginLockout.Identifier(h.clientIP(r), req.Username)
@@ -407,7 +425,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		}
 		h.log.Info("login succeeded", attrs...)
 		if localAuthFallback != "" {
-			h.log.Warn("password login allowed because the SSO provider is unreachable", append(attrs, "reason", localAuthFallback)...)
+			h.log.Warn("sso fallback: superadmin password accepted, two-factor pending", append(attrs, "reason", localAuthFallback)...)
 		}
 	}
 
@@ -415,7 +433,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// cookie is present. Trust is keyed on (user_id, sha256(cookie_value)) only;
 	// it is independent from the user_sessions table, network, and user-agent.
 	if user.TfaEnabled {
-		td := h.hasValidDeviceTrust(r, user.ID)
+		var td *models.TrustedDevice
+		if localAuthFallback == "" {
+			td = h.hasValidDeviceTrust(r, user.ID)
+		}
 		if td == nil {
 			// Single-use proof the password was verified; VerifyTfa requires it.
 			if h.pendingLogin == nil {
@@ -461,7 +482,8 @@ type VerifyTfaRequest struct {
 
 // VerifyTfa handles POST /auth/verify-tfa.
 func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
-	if off, _ := h.localAuthDecision(r.Context()); off {
+	off, ssoFallback := h.localAuthDecision(r.Context())
+	if off {
 		h.logLoginFailure(r, "local_auth_disabled", "", "")
 		Error(w, http.StatusForbidden, "Local authentication is disabled. Please use SSO.")
 		return
@@ -501,7 +523,7 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, err := h.users.GetByID(r.Context(), userID)
-	if err != nil || user == nil || !user.IsActive || !user.TfaEnabled || user.TfaSecret == nil {
+	if err != nil || user == nil || !user.IsActive || !user.TfaEnabled || user.TfaSecret == nil || (ssoFallback != "" && user.Role != "superadmin") {
 		h.logLoginFailure(r, "tfa_user_ineligible", "", userID)
 		Error(w, http.StatusUnauthorized, "Invalid credentials or TFA not enabled")
 		return
@@ -560,7 +582,39 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 		h.tfaLockout.ClearFailedAttempts(r.Context(), user.ID)
 	}
 
+	if ssoFallback != "" {
+		h.recordSSOFallbackLogin(r, user, ssoFallback)
+		req.RememberMe = false
+	}
 	h.completeLogin(w, r, user, req.RememberMe)
+}
+
+// recordSSOFallbackLogin marks a session issued only because the SSO provider
+// was unreachable. TODO(audit): also write to audit_logs once the shared writer lands.
+func (h *AuthHandler) recordSSOFallbackLogin(r *http.Request, user *models.User, reason string) {
+	ip := h.clientIP(r)
+	if h.log != nil {
+		attrs := []any{"audit_action", "sso_fallback_login", "user_id", user.ID, "username", user.Username, "ip", ip, "reason", reason}
+		if host := hostctx.TenantHostKey(r.Context()); host != "" {
+			attrs = append(attrs, "host", host)
+		}
+		h.log.Warn("password login allowed because the SSO provider is unreachable", attrs...)
+	}
+	h.emitEventAsync(r, notifications.Event{
+		Type:          "sso_fallback_login",
+		Severity:      "warning",
+		Title:         "Password Login During SSO Outage",
+		Message:       "Superadmin " + user.Username + " signed in with a password because the SSO provider is unreachable.",
+		ReferenceType: "user",
+		ReferenceID:   user.ID,
+		Metadata: map[string]interface{}{
+			"user_id":    user.ID,
+			"username":   user.Username,
+			"ip_address": ip,
+			"user_agent": r.UserAgent(),
+			"reason":     reason,
+		},
+	})
 }
 
 func cookieSameSite(env string, useLax, secure bool) http.SameSite {

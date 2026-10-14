@@ -20,6 +20,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/auth/oidc"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtest"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
@@ -36,6 +37,7 @@ var hardeningHash = sync.OnceValue(func() string {
 })
 
 type loginFixture struct {
+	db       *database.DB
 	h        *AuthHandler
 	active   string
 	disabled string
@@ -72,6 +74,7 @@ func newLoginFixture(t *testing.T, maxAttempts int) *loginFixture {
 	}
 
 	return &loginFixture{
+		db:       d,
 		h:        &AuthHandler{cfg: &config.Config{JWTSecret: "hardening-test-secret-0123456789"}, users: users, sessions: store.NewSessionsStore(d), loginLockout: lockout},
 		active:   create("act", true, &hashStr),
 		disabled: create("dis", false, &hashStr),

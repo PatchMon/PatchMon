@@ -350,10 +350,10 @@ const OidcSettings = () => {
 					/>
 					{/* Password login while the IdP is unreachable */}
 					<ToggleCard
-						label="Allow password login if SSO is down"
+						label="Superadmin password login if SSO is down"
 						description={
 							<>
-								Only while local auth is disabled.{" "}
+								Superadmins with 2FA, while local auth is disabled.{" "}
 								<a
 									href={SSO_FALLBACK_DOCS_URL}
 									target="_blank"
@@ -413,9 +413,10 @@ const OidcSettings = () => {
 				{form.oidc_disable_local_auth && form.oidc_local_auth_fallback && (
 					<div className="mt-4 p-3 rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
 						<p className="text-sm font-medium text-amber-800 dark:text-amber-200">
-							Password login comes back whenever PatchMon cannot reach your
-							identity provider. Anyone who can cut PatchMon off from your
-							provider can use that to sign in with a password.
+							Superadmins with two-factor authentication can sign in with a
+							password whenever PatchMon cannot reach your identity provider.
+							Anyone who can cut PatchMon off from your provider, and holds a
+							superadmin password and second factor, can use that to get in.
 						</p>
 					</div>
 				)}

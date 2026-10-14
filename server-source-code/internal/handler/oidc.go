@@ -309,7 +309,7 @@ func (h *OidcHandler) Config(w http.ResponseWriter, r *http.Request) {
 	configuredValid := e.configuredValid
 
 	enabled := configuredValid
-	disableLocalAuth, _ := h.LocalAuthDecision(r.Context())
+	disableLocalAuth, fallback := h.LocalAuthDecision(r.Context())
 	var buttonText string
 	var syncRoles bool
 	if resolved != nil {
@@ -327,6 +327,8 @@ func (h *OidcHandler) Config(w http.ResponseWriter, r *http.Request) {
 		"buttonText":       buttonText,
 		"disableLocalAuth": disableLocalAuth,
 		"syncRoles":        syncRoles,
+		// The login form is back, for superadmins only, because SSO is unreachable.
+		"passwordFallback": fallback != "",
 	})
 }
 
@@ -632,7 +634,6 @@ func (h *OidcHandler) ImportFromEnv(w http.ResponseWriter, r *http.Request) {
 	s.OidcUserGroup = strOrNil(strings.TrimSpace(h.cfg.OidcUserGroup))
 	s.OidcEnforceHTTPS = h.cfg.OidcEnforceHTTPS
 	s.OidcTrustUnverifiedEmail = h.cfg.OidcTrustUnverifiedEmail
-	s.OidcLocalAuthFallback = h.cfg.OidcLocalAuthFallback
 	if secret := strings.TrimSpace(h.cfg.OidcClientSecret); secret != "" && h.enc != nil {
 		encrypted, err := h.enc.Encrypt(secret)
 		if err == nil {
