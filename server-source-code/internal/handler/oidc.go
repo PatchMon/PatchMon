@@ -43,6 +43,24 @@ type OidcHandler struct {
 	// entryMu holds a per-context mutex, so a slow provider discovery in one
 	// context does not block another. Mirrors PoolCache.hostLock.
 	entryMu sync.Map
+
+	probeMu    sync.Mutex
+	probes     map[string]*providerProbe
+	probeLocks sync.Map
+	probeHTTP  *http.Client
+}
+
+// The TTL also caps how often unauthenticated callers can make us probe the provider.
+const (
+	providerProbeTimeout = 3 * time.Second
+	providerProbeTTL     = 30 * time.Second
+)
+
+type providerProbe struct {
+	issuer      string
+	unreachable bool
+	reason      string
+	expiresAt   time.Time
 }
 
 // Eviction on settings save is the primary invalidation; the TTL is a backstop.
@@ -203,6 +221,53 @@ func (h *OidcHandler) EvictHost(host string) {
 	h.clientMu.Lock()
 	delete(h.entries, host)
 	h.clientMu.Unlock()
+
+	h.probeMu.Lock()
+	delete(h.probes, host)
+	h.probeMu.Unlock()
+}
+
+func (h *OidcHandler) cachedProbe(key, issuer string) *providerProbe {
+	h.probeMu.Lock()
+	defer h.probeMu.Unlock()
+	if p := h.probes[key]; p != nil && p.issuer == issuer && time.Now().Before(p.expiresAt) {
+		return p
+	}
+	return nil
+}
+
+// providerUnreachable probes the context's provider at most once per
+// providerProbeTTL, however many sign-in attempts arrive meanwhile.
+func (h *OidcHandler) providerUnreachable(ctx context.Context, e *oidcContextEntry) (bool, string) {
+	key := hostctx.TenantHostKey(ctx)
+	issuer := e.resolved.IssuerURL
+	if p := h.cachedProbe(key, issuer); p != nil {
+		return p.unreachable, p.reason
+	}
+	v, _ := h.probeLocks.LoadOrStore(key, &sync.Mutex{})
+	lock := v.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
+	if p := h.cachedProbe(key, issuer); p != nil {
+		return p.unreachable, p.reason
+	}
+
+	// Detached from the request, so a caller hanging up cannot record a false outage.
+	probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), providerProbeTimeout)
+	defer cancel()
+	hc := h.probeHTTP
+	if hc == nil {
+		hc = http.DefaultClient
+	}
+	unreachable, reason := e.client.ProbeDiscovery(probeCtx, hc)
+
+	h.probeMu.Lock()
+	if h.probes == nil {
+		h.probes = map[string]*providerProbe{}
+	}
+	h.probes[key] = &providerProbe{issuer: issuer, unreachable: unreachable, reason: reason, expiresAt: time.Now().Add(providerProbeTTL)}
+	h.probeMu.Unlock()
+	return unreachable, reason
 }
 
 // entryDisablesLocalAuth holds only while SSO is fully configured, so a context
@@ -217,12 +282,24 @@ func (h *OidcHandler) entryDisablesLocalAuth(e *oidcContextEntry) bool {
 	return h.cfg.OidcDisableLocalAuth
 }
 
-// LocalAuthDisabled reports whether ctx's context has turned off password sign-in.
-func (h *OidcHandler) LocalAuthDisabled(ctx context.Context) bool {
+// LocalAuthDecision reports whether ctx's context refuses password sign-in. A
+// non-empty fallback means it would, but the provider is unreachable and the
+// context allows passwords in that case; it carries the reason.
+func (h *OidcHandler) LocalAuthDecision(ctx context.Context) (disabled bool, fallback string) {
 	if h == nil {
-		return false
+		return false, ""
 	}
-	return h.entryDisablesLocalAuth(h.entryFor(ctx))
+	e := h.entryFor(ctx)
+	if !h.entryDisablesLocalAuth(e) {
+		return false, ""
+	}
+	if e.client == nil || e.resolved == nil || !e.resolved.LocalAuthFallback {
+		return true, ""
+	}
+	if unreachable, reason := h.providerUnreachable(ctx, e); unreachable {
+		return false, reason
+	}
+	return true, ""
 }
 
 // Config handles GET /api/v1/auth/oidc/config.
@@ -232,7 +309,7 @@ func (h *OidcHandler) Config(w http.ResponseWriter, r *http.Request) {
 	configuredValid := e.configuredValid
 
 	enabled := configuredValid
-	disableLocalAuth := h.entryDisablesLocalAuth(e)
+	disableLocalAuth, _ := h.LocalAuthDecision(r.Context())
 	var buttonText string
 	var syncRoles bool
 	if resolved != nil {
@@ -555,6 +632,7 @@ func (h *OidcHandler) ImportFromEnv(w http.ResponseWriter, r *http.Request) {
 	s.OidcUserGroup = strOrNil(strings.TrimSpace(h.cfg.OidcUserGroup))
 	s.OidcEnforceHTTPS = h.cfg.OidcEnforceHTTPS
 	s.OidcTrustUnverifiedEmail = h.cfg.OidcTrustUnverifiedEmail
+	s.OidcLocalAuthFallback = h.cfg.OidcLocalAuthFallback
 	if secret := strings.TrimSpace(h.cfg.OidcClientSecret); secret != "" && h.enc != nil {
 		encrypted, err := h.enc.Encrypt(secret)
 		if err == nil {
@@ -628,6 +706,7 @@ func oidcSettingsResponse(s *models.Settings, secretSet *bool, configuredViaEnv 
 		"oidc_user_group":             nil,
 		"oidc_enforce_https":          true,
 		"oidc_trust_unverified_email": false,
+		"oidc_local_auth_fallback":    false,
 		"callback_url":                "",
 	}
 	if s != nil {
@@ -648,6 +727,7 @@ func oidcSettingsResponse(s *models.Settings, secretSet *bool, configuredViaEnv 
 		res["oidc_user_group"] = s.OidcUserGroup
 		res["oidc_enforce_https"] = s.OidcEnforceHTTPS
 		res["oidc_trust_unverified_email"] = s.OidcTrustUnverifiedEmail
+		res["oidc_local_auth_fallback"] = s.OidcLocalAuthFallback
 	}
 	if secretSet != nil {
 		res["oidc_client_secret_set"] = *secretSet
@@ -752,6 +832,9 @@ func applyOidcSettingsUpdate(s *models.Settings, req map[string]interface{}, enc
 	}
 	if v, ok := getReqBool(req, "oidc_trust_unverified_email", "oidcTrustUnverifiedEmail"); ok {
 		s.OidcTrustUnverifiedEmail = v
+	}
+	if v, ok := getReqBool(req, "oidc_local_auth_fallback", "oidcLocalAuthFallback"); ok {
+		s.OidcLocalAuthFallback = v
 	}
 }
 

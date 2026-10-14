@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS settings (
     oidc_user_group TEXT,
     oidc_enforce_https BOOLEAN NOT NULL DEFAULT true,
     oidc_trust_unverified_email BOOLEAN NOT NULL DEFAULT false,
+    oidc_local_auth_fallback BOOLEAN NOT NULL DEFAULT false,
     max_login_attempts INTEGER,
     lockout_duration_minutes INTEGER,
     session_inactivity_timeout_minutes INTEGER,

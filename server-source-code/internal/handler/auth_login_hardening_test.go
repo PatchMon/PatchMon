@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/PatchMon/PatchMon/server-source-code/internal/auth/oidc"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
@@ -181,30 +183,47 @@ func TestLoginDisabledAccountLocksOutLikeUnknownUser(t *testing.T) {
 	}
 }
 
-type fixedLocalAuthPolicy bool
+type fixedLocalAuthPolicy struct {
+	disabled bool
+	fallback string
+}
 
-func (p fixedLocalAuthPolicy) LocalAuthDisabled(context.Context) bool { return bool(p) }
+func (p fixedLocalAuthPolicy) LocalAuthDecision(context.Context) (bool, string) {
+	return p.disabled, p.fallback
+}
+
+func callAuthEndpoint(h *AuthHandler, endpoint string) *httptest.ResponseRecorder {
+	// No password, so a request let through stops at input validation.
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/"+endpoint, strings.NewReader(`{"username":"admin","token":"123456"}`))
+	rec := httptest.NewRecorder()
+	switch endpoint {
+	case "login":
+		h.Login(rec, req)
+	case "verify-tfa":
+		h.VerifyTfa(rec, req)
+	case "signup":
+		h.Signup(rec, req)
+	}
+	return rec
+}
+
+func isLocalAuthRefusal(t *testing.T, rec *httptest.ResponseRecorder) bool {
+	t.Helper()
+	return rec.Code == http.StatusForbidden && strings.Contains(errorMessage(t, rec), "Local authentication is disabled")
+}
 
 func TestLocalAuthDisabledBlocksPasswordEndpoints(t *testing.T) {
 	t.Parallel()
 
-	endpoints := map[string]func(h *AuthHandler, w http.ResponseWriter, r *http.Request){
-		"login":      func(h *AuthHandler, w http.ResponseWriter, r *http.Request) { h.Login(w, r) },
-		"verify-tfa": func(h *AuthHandler, w http.ResponseWriter, r *http.Request) { h.VerifyTfa(w, r) },
-		"signup":     func(h *AuthHandler, w http.ResponseWriter, r *http.Request) { h.Signup(w, r) },
-	}
 	handlers := map[string]*AuthHandler{
-		"database setting": (&AuthHandler{cfg: &config.Config{}}).WithLocalAuthPolicy(fixedLocalAuthPolicy(true)),
+		"database setting": (&AuthHandler{cfg: &config.Config{}}).WithLocalAuthPolicy(fixedLocalAuthPolicy{disabled: true}),
 		"environment":      {cfg: &config.Config{OidcEnabled: true, OidcDisableLocalAuth: true}},
 	}
 	for hname, h := range handlers {
-		for ename, call := range endpoints {
-			t.Run(hname+"/"+ename, func(t *testing.T) {
+		for _, endpoint := range []string{"login", "verify-tfa", "signup"} {
+			t.Run(hname+"/"+endpoint, func(t *testing.T) {
 				t.Parallel()
-				req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/"+ename, strings.NewReader(`{"username":"admin","password":"pw","token":"123456"}`))
-				rec := httptest.NewRecorder()
-				call(h, rec, req)
-				if rec.Code != http.StatusForbidden || !strings.Contains(errorMessage(t, rec), "Local authentication is disabled") {
+				if rec := callAuthEndpoint(h, endpoint); !isLocalAuthRefusal(t, rec) {
 					t.Fatalf("got %d %s, want 403 local authentication disabled", rec.Code, rec.Body.String())
 				}
 			})
@@ -214,12 +233,111 @@ func TestLocalAuthDisabledBlocksPasswordEndpoints(t *testing.T) {
 
 func TestLocalAuthAllowedWhenPolicyOff(t *testing.T) {
 	t.Parallel()
-	h := (&AuthHandler{cfg: &config.Config{}}).WithLocalAuthPolicy(fixedLocalAuthPolicy(false))
+	h := (&AuthHandler{cfg: &config.Config{}}).WithLocalAuthPolicy(fixedLocalAuthPolicy{})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{}`))
 	rec := httptest.NewRecorder()
 	h.Login(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("got %d %s, want the request to reach input validation (400)", rec.Code, rec.Body.String())
+	}
+}
+
+// The fallback reopens sign-in for existing users only; it must not reopen signup.
+func TestLocalAuthFallbackAllowsSignInButNotSignup(t *testing.T) {
+	t.Parallel()
+	fallback := fixedLocalAuthPolicy{fallback: "discovery returned HTTP 503"}
+	handlers := map[string]*AuthHandler{
+		"database setting": (&AuthHandler{cfg: &config.Config{}}).WithLocalAuthPolicy(fallback),
+		"environment":      (&AuthHandler{cfg: &config.Config{OidcEnabled: true, OidcDisableLocalAuth: true}}).WithLocalAuthPolicy(fallback),
+	}
+	for name, h := range handlers {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			for _, endpoint := range []string{"login", "verify-tfa"} {
+				if rec := callAuthEndpoint(h, endpoint); isLocalAuthRefusal(t, rec) {
+					t.Errorf("%s refused despite the fallback: %s", endpoint, rec.Body.String())
+				}
+			}
+			if rec := callAuthEndpoint(h, "signup"); !isLocalAuthRefusal(t, rec) {
+				t.Errorf("signup: got %d %s, want 403", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func newProbeHandler(t *testing.T, issuer string, fallback bool, hosts ...string) *OidcHandler {
+	t.Helper()
+	client, err := oidc.NewClient(context.Background(), oidc.Config{IssuerURL: issuer, ClientID: "c", ClientSecret: "s", RedirectURI: "http://127.0.0.1/cb"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &OidcHandler{cfg: &config.Config{}, entries: map[string]*oidcContextEntry{}}
+	for _, host := range append([]string{""}, hosts...) {
+		h.entries[host] = &oidcContextEntry{
+			client:          client,
+			resolved:        &config.ResolvedOidcConfig{IssuerURL: issuer, DisableLocalAuth: true, LocalAuthFallback: fallback},
+			configuredValid: true,
+			expiresAt:       time.Now().Add(time.Hour),
+		}
+	}
+	return h
+}
+
+type countingIdP struct {
+	srv    *httptest.Server
+	hits   atomic.Int32
+	status atomic.Int32
+}
+
+func newCountingIdP(t *testing.T) *countingIdP {
+	t.Helper()
+	idp := &countingIdP{}
+	idp.status.Store(http.StatusOK)
+	idp.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		idp.hits.Add(1)
+		w.WriteHeader(int(idp.status.Load()))
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(idp.srv.Close)
+	return idp
+}
+
+func TestOidcLocalAuthDecision(t *testing.T) {
+	t.Parallel()
+
+	stopped := httptest.NewServer(http.NotFoundHandler())
+	stoppedURL := stopped.URL
+	stopped.Close()
+
+	cases := []struct {
+		name         string
+		status       int
+		down         bool
+		fallback     bool
+		wantDisabled bool
+		wantReason   string
+	}{
+		{"fallback off, provider down", 0, true, false, true, ""},
+		{"fallback on, provider down", 0, true, true, false, "discovery request failed"},
+		{"fallback on, provider 503", http.StatusServiceUnavailable, false, true, false, "HTTP 503"},
+		{"fallback on, provider up", http.StatusOK, false, true, true, ""},
+		{"fallback on, provider answers 404 (misconfigured issuer)", http.StatusNotFound, false, true, true, ""},
+		{"fallback on, provider answers 401", http.StatusUnauthorized, false, true, true, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			issuer := stoppedURL
+			if !tc.down {
+				idp := newCountingIdP(t)
+				idp.status.Store(int32(tc.status))
+				issuer = idp.srv.URL
+			}
+			disabled, reason := newProbeHandler(t, issuer, tc.fallback).LocalAuthDecision(context.Background())
+			if disabled != tc.wantDisabled || (tc.wantReason == "") != (reason == "") || !strings.Contains(reason, tc.wantReason) {
+				t.Fatalf("LocalAuthDecision = (%v, %q), want (%v, containing %q)", disabled, reason, tc.wantDisabled, tc.wantReason)
+			}
+		})
 	}
 }
 
@@ -250,9 +368,64 @@ func TestOidcLocalAuthDisabledRequiresWorkingSSOConfig(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := tc.h.LocalAuthDisabled(context.Background()); got != tc.want {
-				t.Fatalf("LocalAuthDisabled = %v, want %v", got, tc.want)
+			if got, _ := tc.h.LocalAuthDecision(context.Background()); got != tc.want {
+				t.Fatalf("LocalAuthDecision disabled = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestOidcProviderProbeIsCachedPerContext(t *testing.T) {
+	t.Parallel()
+	idp := newCountingIdP(t)
+	idp.status.Store(http.StatusBadGateway)
+	h := newProbeHandler(t, idp.srv.URL, true, "a.example.com", "b.example.com")
+	ctxA := hostctx.WithEntry(context.Background(), &hostctx.Entry{Host: "a.example.com"})
+	ctxB := hostctx.WithEntry(context.Background(), &hostctx.Entry{Host: "b.example.com"})
+
+	for i := 0; i < 20; i++ {
+		if disabled, _ := h.LocalAuthDecision(ctxA); disabled {
+			t.Fatal("context A should fall back while its provider returns 502")
+		}
+	}
+	if got := idp.hits.Load(); got != 1 {
+		t.Fatalf("20 decisions in one context probed the provider %d times, want 1", got)
+	}
+
+	idp.status.Store(http.StatusOK)
+	if disabled, _ := h.LocalAuthDecision(ctxA); disabled {
+		t.Fatal("context A should keep its cached outage until the TTL passes")
+	}
+	if disabled, _ := h.LocalAuthDecision(ctxB); !disabled {
+		t.Fatal("context B must probe for itself, not reuse context A's outage")
+	}
+	if got := idp.hits.Load(); got != 2 {
+		t.Fatalf("provider probed %d times, want 2 (one per context)", got)
+	}
+
+	h.probeMu.Lock()
+	h.probes["a.example.com"].expiresAt = time.Now().Add(-time.Second)
+	h.probeMu.Unlock()
+	if disabled, _ := h.LocalAuthDecision(ctxA); !disabled {
+		t.Fatal("context A should re-probe after the TTL and see the provider is back")
+	}
+
+	idp.status.Store(http.StatusBadGateway)
+	h.EvictHost("a.example.com")
+	h.entries["a.example.com"] = h.entries["b.example.com"]
+	if disabled, _ := h.LocalAuthDecision(ctxA); disabled {
+		t.Fatal("saving settings must drop the cached probe")
+	}
+}
+
+// A caller that hangs up mid-probe must not record an outage for everyone else.
+func TestOidcProviderProbeIgnoresCallerCancellation(t *testing.T) {
+	t.Parallel()
+	idp := newCountingIdP(t)
+	h := newProbeHandler(t, idp.srv.URL, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if disabled, reason := h.LocalAuthDecision(ctx); !disabled {
+		t.Fatalf("a cancelled request recorded an outage: %q", reason)
 	}
 }

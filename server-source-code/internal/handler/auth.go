@@ -53,9 +53,10 @@ type AuthHandler struct {
 	localAuth   LocalAuthPolicy
 }
 
-// LocalAuthPolicy reports whether the calling context has turned off password sign-in.
+// LocalAuthPolicy reports whether the calling context has turned off password
+// sign-in; a non-empty fallback is the reason it is allowed through regardless.
 type LocalAuthPolicy interface {
-	LocalAuthDisabled(ctx context.Context) bool
+	LocalAuthDecision(ctx context.Context) (disabled bool, fallback string)
 }
 
 // WithLocalAuthPolicy wires the per-context "disable local authentication" setting.
@@ -64,11 +65,13 @@ func (h *AuthHandler) WithLocalAuthPolicy(p LocalAuthPolicy) *AuthHandler {
 	return h
 }
 
-func (h *AuthHandler) localAuthDisabled(ctx context.Context) bool {
-	if h.cfg != nil && h.cfg.OidcEnabled && h.cfg.OidcDisableLocalAuth {
-		return true
+func (h *AuthHandler) localAuthDecision(ctx context.Context) (disabled bool, fallback string) {
+	if h.localAuth != nil {
+		if disabled, fallback = h.localAuth.LocalAuthDecision(ctx); disabled || fallback != "" {
+			return disabled, fallback
+		}
 	}
-	return h.localAuth != nil && h.localAuth.LocalAuthDisabled(ctx)
+	return h.cfg != nil && h.cfg.OidcEnabled && h.cfg.OidcDisableLocalAuth, ""
 }
 
 // dummyPasswordHash must stay a valid hash at the cost used for real passwords,
@@ -195,7 +198,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if h.log != nil {
 		h.log.Debug("auth request", "method", r.Method, "path", r.URL.Path)
 	}
-	if h.localAuthDisabled(r.Context()) {
+	localAuthOff, localAuthFallback := h.localAuthDecision(r.Context())
+	if localAuthOff {
 		h.logLoginFailure(r, "local_auth_disabled", "", "")
 		Error(w, http.StatusForbidden, "Local authentication is disabled. Please use SSO.")
 		return
@@ -363,6 +367,9 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			attrs = append(attrs, "host", host)
 		}
 		h.log.Info("login succeeded", attrs...)
+		if localAuthFallback != "" {
+			h.log.Warn("password login allowed because the SSO provider is unreachable", append(attrs, "reason", localAuthFallback)...)
+		}
 	}
 
 	// TFA check: if enabled, require TFA verification unless a valid device-trust
@@ -415,7 +422,7 @@ type VerifyTfaRequest struct {
 
 // VerifyTfa handles POST /auth/verify-tfa.
 func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
-	if h.localAuthDisabled(r.Context()) {
+	if off, _ := h.localAuthDecision(r.Context()); off {
 		h.logLoginFailure(r, "local_auth_disabled", "", "")
 		Error(w, http.StatusForbidden, "Local authentication is disabled. Please use SSO.")
 		return
@@ -1730,7 +1737,7 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	if h.log != nil {
 		h.log.Debug("auth request", "method", r.Method, "path", r.URL.Path)
 	}
-	if h.localAuthDisabled(r.Context()) {
+	if off, fallback := h.localAuthDecision(r.Context()); off || fallback != "" {
 		Error(w, http.StatusForbidden, "Local authentication is disabled. Please use SSO.")
 		return
 	}

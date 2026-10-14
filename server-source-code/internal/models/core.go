@@ -161,6 +161,7 @@ type Settings struct {
 	OidcUserGroup                   *string    `db:"oidc_user_group"`
 	OidcEnforceHTTPS                bool       `db:"oidc_enforce_https"`
 	OidcTrustUnverifiedEmail        bool       `db:"oidc_trust_unverified_email"`
+	OidcLocalAuthFallback           bool       `db:"oidc_local_auth_fallback"`
 	MaxLoginAttempts                *int       `db:"max_login_attempts"`
 	LockoutDurationMinutes          *int       `db:"lockout_duration_minutes"`
 	SessionInactivityTimeoutMinutes *int       `db:"session_inactivity_timeout_minutes"`

@@ -250,6 +250,11 @@ Discord Auth is intentionally less feature-rich than OIDC SSO. There is no group
 
 Full OpenID Connect configuration: issuer URL, client ID and secret, redirect URI, scopes, button text, auto-provisioning, group-to-role mapping, and enforced-SSO toggle. A dedicated **Import from environment** button pulls existing `OIDC_*` values from `.env` into the database so you can migrate from file-based config without retyping anything.
 
+The toggles at the top of the page that control password sign-in:
+
+- **Disable local auth**: once SSO is fully configured, the login page shows only the SSO button and the server refuses password sign-in and self-service signup.
+- **Allow password login if SSO is down**: only matters while **Disable local auth** is on. Off by default. When on, users can sign in with their PatchMon password while your identity provider cannot be reached (a network failure, or the provider returning a server error). Anyone who can cut PatchMon off from your provider can therefore bring password login back, so only enable it if that risk is acceptable. See [Password Login When the SSO Provider Is Unreachable](https://patchmon.net/docs/patchmon-operator-guide#sso-provider-unreachable-password-login) in the operator guide.
+
 For a step-by-step walk-through (Authentik, Keycloak, Entra ID, Okta), see Setting up OIDC SSO.
 
 ---
