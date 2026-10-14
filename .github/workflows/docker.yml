@@ -1,7 +1,9 @@
 name: Build and Push Docker Images
 
-# pull_request_target: needed for fork PRs to receive secrets when approved via label.
-# Same-repo PRs run automatically; fork PRs run only when labeled "approved-for-build".
+# pull_request_target lets maintainer-approved fork PRs build a preview image.
+# Same-repo PRs build automatically. A fork PR builds ONLY on the `labeled` event
+# that adds exactly `approved-for-build`, so approval is pinned to the reviewed
+# commit; a later push (`synchronize`) revokes the label and forces re-approval.
 on:
   push:
     branches:
@@ -22,20 +24,50 @@ env:
   REGISTRY: ghcr.io
   HARBOR_REGISTRY: cr.dev.patchmon.cloud
 
+# Default to read-only. Write scopes (packages/pull-requests/id-token/
+# attestations) are granted per job, and only to jobs that do not run
+# fork-controlled code as a step (GHSA-6p8v).
 permissions:
   contents: read
-  packages: write
-  pull-requests: write
 
 jobs:
+  # A new commit on an approved fork PR arrives as `synchronize`, which no longer
+  # builds (the build gate requires the `labeled` event). Strip the stale approval
+  # so the PR visibly needs re-review before it can build again (GHSA-xww6). No
+  # checkout here, so no fork code runs with this write token.
+  revoke-build-approval:
+    name: Revoke build approval on new commits
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    if: |
+      github.event_name == 'pull_request_target' &&
+      github.event.action == 'synchronize' &&
+      github.event.pull_request.head.repo.full_name != github.repository &&
+      contains(github.event.pull_request.labels.*.name, 'approved-for-build')
+    steps:
+      - name: Remove approved-for-build label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh api -X DELETE \
+            "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels/approved-for-build" \
+            && echo "Removed approved-for-build; the new commit must be re-approved." \
+            || echo "approved-for-build not present; nothing to remove."
+
   build-agents:
     name: Build agent binaries
     runs-on: ubuntu-latest
-    # Same-repo PRs: always run. Fork PRs: run only when maintainer adds "approved-for-build" label.
+    permissions:
+      contents: read
+    # Same-repo PRs always run. A fork PR runs only on the labelling EVENT that
+    # adds exactly `approved-for-build` (an exact `==`, not a substring match),
+    # never on mere label presence, so a push after approval cannot reuse it.
     if: |
       github.event_name != 'pull_request_target' ||
       github.event.pull_request.head.repo.full_name == github.repository ||
-      contains(join(github.event.pull_request.labels.*.name, ', '), 'approved-for-build')
+      (github.event.action == 'labeled' && github.event.label.name == 'approved-for-build')
     steps:
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -46,10 +78,23 @@ jobs:
           # enough: it fetches the tag refs, but a shallow clone has no ancestry
           # to walk, so describe fails with "No tags can describe".
           fetch-depth: 0
+          persist-credentials: false
+
+      # The checkout above is fork-controlled on a pull_request_target run, so the
+      # release-context composite action is NOT resolved from it (GHSA-6p8v).
+      # Fetch the action from the trusted base ref into a fixed path and run that
+      # copy instead; its steps still execute against the workspace git history.
+      - name: Check out trusted release-context action
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}
+          path: .ci-trusted
+          sparse-checkout: .github/actions
+          persist-credentials: false
 
       - name: Resolve version
         id: ctx
-        uses: ./.github/actions/release-context
+        uses: ./.ci-trusted/.github/actions/release-context
         with:
           token: ${{ github.token }}
           fetch-notes: 'false'
@@ -89,22 +134,37 @@ jobs:
   build-server-binaries:
     name: Build server binaries
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Same gate as build-agents: a fork PR builds only on the approving label
+    # event. This job runs `npm ci`, i.e. fork-controlled lifecycle scripts, so
+    # it must stay read-only and secret-free.
     if: |
       github.event_name != 'pull_request_target' ||
       github.event.pull_request.head.repo.full_name == github.repository ||
-      contains(join(github.event.pull_request.labels.*.name, ', '), 'approved-for-build')
+      (github.event.action == 'labeled' && github.event.label.name == 'approved-for-build')
     steps:
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.head.sha || github.ref }}
           fetch-depth: 0
+          persist-credentials: false
+
+      # Trusted copy of the release-context action; see build-agents (GHSA-6p8v).
+      - name: Check out trusted release-context action
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}
+          path: .ci-trusted
+          sparse-checkout: .github/actions
+          persist-credentials: false
 
       # On a release tag this also writes the release notes into
       # release_notes_data/ so //go:embed compiles them in. Nothing is committed.
       - name: Resolve version and inject release notes
         id: ctx
-        uses: ./.github/actions/release-context
+        uses: ./.ci-trusted/.github/actions/release-context
         with:
           token: ${{ github.token }}
 
@@ -208,9 +268,13 @@ jobs:
     name: Build server image
     needs: [build-agents, build-server-binaries]
     runs-on: ubuntu-latest
-    # id-token/attestations are scoped to this job rather than the workflow so
-    # `build-agents` cannot mint a Sigstore token. They are needed by the
-    # attest-* steps at the end of this job.
+    # These write scopes live here, not at workflow level, so the leaf build
+    # jobs that run fork code (go/npm) never receive them. After the trusted
+    # release-context fix the only fork-controlled code in this job is the
+    # isolated `docker build`, which has no access to this token or the Harbor
+    # secrets. GHCR push (packages) and the attest-* steps (id-token/
+    # attestations) are additionally gated to non-PR events, so they never run
+    # on a fork checkout.
     permissions:
       contents: read
       packages: write
@@ -241,13 +305,23 @@ jobs:
           # enough: it fetches the tag refs, but a shallow clone has no ancestry
           # to walk, so describe fails with "No tags can describe".
           fetch-depth: 0
+          persist-credentials: false
+
+      # Trusted copy of the release-context action; see build-agents (GHSA-6p8v).
+      - name: Check out trusted release-context action
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || github.sha }}
+          path: .ci-trusted
+          sparse-checkout: .github/actions
+          persist-credentials: false
 
       # Resolves the version and, on a release tag, writes the release notes
       # from the GitHub release into release_notes_data/ so //go:embed compiles
       # them into the image. Nothing is committed.
       - name: Resolve version and inject release notes
         id: ctx
-        uses: ./.github/actions/release-context
+        uses: ./.ci-trusted/.github/actions/release-context
         with:
           token: ${{ github.token }}
 
@@ -558,6 +632,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          persist-credentials: false
 
       # Generated before the binaries land in dist/ so the scan covers the
       # source tree only and does not re-catalogue the built artefacts.
