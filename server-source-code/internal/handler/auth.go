@@ -441,7 +441,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if cost, err := bcrypt.Cost([]byte(hash)); err == nil && cost < passwordBcryptCost {
+	// Rehash exactly what was just verified; bcrypt cannot hash more than 72 bytes.
+	if cost, err := bcrypt.Cost([]byte(hash)); err == nil && cost < passwordBcryptCost && len(password) <= 72 {
 		h.upgradePasswordHash(r.Context(), user, password)
 	}
 

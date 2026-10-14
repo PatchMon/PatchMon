@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -613,5 +615,67 @@ func TestLoginBcryptGateUsesHalfTheCores(t *testing.T) {
 	}
 	if got, want := cap(loginBcrypt), loginBcryptSlots(runtime.GOMAXPROCS(0)); got != want {
 		t.Errorf("gate holds %d slots, want %d", got, want)
+	}
+}
+
+func createLowCostUser(t *testing.T, f *loginFixture, password string) *models.User {
+	t.Helper()
+	pw := []byte(password)
+	if len(pw) > 72 {
+		pw = pw[:72]
+	}
+	old, err := bcrypt.GenerateFromPassword(pw, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStr := string(old)
+	u := &models.User{
+		ID:           uuid.New().String(),
+		Username:     "rh" + uuid.New().String()[:10],
+		Email:        "rh" + uuid.New().String()[:8] + "@example.com",
+		Role:         "user",
+		IsActive:     true,
+		PasswordHash: &oldStr,
+	}
+	if err := f.h.users.Create(context.Background(), u); err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
+
+// The upgrade must hash the exact input the stored hash just verified. Login
+// trims, so hashing the raw input would lock out a user who typed a space.
+func TestLoginRehashKeepsTheVerifiedCredential(t *testing.T) {
+	f := newLoginFixture(t, 1000)
+	u := createLowCostUser(t, f, hardeningPassword)
+
+	if rec := postLogin(f.h, u.Username, hardeningPassword+" "); rec.Code != http.StatusOK {
+		t.Fatalf("sign-in with a trailing space: got %d", rec.Code)
+	}
+	got, _ := f.h.users.GetByID(context.Background(), u.ID)
+	if c, _ := bcrypt.Cost([]byte(*got.PasswordHash)); c != passwordBcryptCost {
+		t.Fatalf("hash was not upgraded (cost %d)", c)
+	}
+	if rec := postLogin(f.h, u.Username, hardeningPassword); rec.Code != http.StatusOK {
+		t.Fatalf("the upgraded hash no longer accepts the password: got %d", rec.Code)
+	}
+}
+
+func TestLoginSkipsRehashOverBcryptLimit(t *testing.T) {
+	f := newLoginFixture(t, 1000)
+	long := strings.Repeat("Lo0ng-", 14)
+	u := createLowCostUser(t, f, long)
+	logs := &bytes.Buffer{}
+	f.h.log = slog.New(slog.NewTextHandler(logs, nil))
+
+	if rec := postLogin(f.h, u.Username, long); rec.Code != http.StatusOK {
+		t.Fatalf("sign-in with an %d-byte password: got %d", len(long), rec.Code)
+	}
+	got, _ := f.h.users.GetByID(context.Background(), u.ID)
+	if *got.PasswordHash != *u.PasswordHash {
+		t.Fatal("a password over 72 bytes was rehashed")
+	}
+	if strings.Contains(logs.String(), "password hash upgrade failed") {
+		t.Fatalf("an over-long password should be skipped, not attempted:\n%s", logs.String())
 	}
 }
