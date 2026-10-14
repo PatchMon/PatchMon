@@ -1,10 +1,12 @@
 package repositories
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/sirupsen/logrus"
@@ -36,6 +38,39 @@ ndx https://repo.example.com/x86_64/APKINDEX.tar.gz
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("parseAPKRepositories =\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+func TestParseAPKRepositoriesCapsExpansion(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("set a=" + strings.Repeat("x", 1000) + "\n")
+	for i := 0; i < 10; i++ {
+		b.WriteString("set a=${a}${a}\n")
+	}
+	b.WriteString("https://ok.example.com/${a}\n")
+	b.WriteString("https://dl-cdn.alpinelinux.org/alpine/v3.23/main\n")
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&b, "set v%d=x\n", i)
+	}
+	vars := map[string]string{}
+	got := parseAPKRepositories(b.String(), vars)
+	if len(vars["a"]) > apkRepoMaxExpanded {
+		t.Errorf("variable grew to %d bytes", len(vars["a"]))
+	}
+	if len(vars) > apkRepoMaxVars {
+		t.Errorf("%d variables kept, cap is %d", len(vars), apkRepoMaxVars)
+	}
+	for _, l := range got {
+		if len(l.URL) > apkRepoMaxExpanded {
+			t.Errorf("URL of %d bytes kept", len(l.URL))
+		}
+	}
+	if len(got) == 0 || got[len(got)-1].URL != "https://dl-cdn.alpinelinux.org/alpine/v3.23/main" {
+		t.Errorf("lines after the oversized ones must still parse: %d lines", len(got))
+	}
+	over := parseAPKRepositories("https://x.example.com/"+strings.Repeat("y", apkRepoMaxExpanded)+"\n", map[string]string{})
+	if len(over) != 0 {
+		t.Error("an oversized URL must be skipped")
 	}
 }
 

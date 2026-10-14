@@ -106,12 +106,31 @@ func TestSplitAPKNameVersion(t *testing.T) {
 		{".tmp-test-20261014.131424-20261014.134913", ".tmp-test-20261014.131424", "20261014.134913"},
 		{"busybox", "", ""},
 		{"-1.0-r0", "", ""},
+		{"foo-", "", ""},
+		{"-", "", ""},
+		{"foo-r1", "", ""},
+		{"-r1", "", ""},
 	}
 	for _, tc := range cases {
 		name, version := splitAPKNameVersion(tc.in)
 		if name != tc.name || version != tc.version {
 			t.Errorf("splitAPKNameVersion(%q) = %q, %q; want %q, %q", tc.in, name, version, tc.name, tc.version)
 		}
+	}
+}
+
+func TestAPKParsersSurviveTrailingDash(t *testing.T) {
+	for _, out := range []string{
+		"foo- aarch64 {foo} (MIT) [installed]\n",
+		"foo-1.0-r1 aarch64 {foo} (MIT) [upgradable from: foo-]\n",
+		"- aarch64 {x} () [upgradable from: -]\n",
+	} {
+		if got := parseAPKListLines(out); len(got) != 0 {
+			t.Errorf("%q parsed as %+v", out, got)
+		}
+	}
+	if _, ok := APKConflictFromError("ERROR: unable to select packages:\n  foo-:\n    breaks: world[foo<1.0]\n"); ok {
+		t.Error("a nameless conflict line must not parse")
 	}
 }
 
@@ -256,6 +275,9 @@ func TestParseAPKPlan(t *testing.T) {
 		{"nothing to do", "OK: 7 MiB in 15 packages\n", nil, false, 0},
 		{"downgrade", "(1/2) Upgrading zlib (1.3.2-r0 -> 1.3.2-r1)\n(2/2) Downgrading scanelf (1.3.11-r0 -> 1.3.8-r2)\n", []string{"zlib", "scanelf"}, false, 1},
 		{"purge and tagged", "(1/3) Purging busybox-binsh (1.37.0-r14)\n(2/3) Installing dash (0.5.12-r3)\n(3/3) Upgrading busybox@edge (1.37.0-r14 -> 1.38.0-r7)\n", []string{"busybox-binsh", "dash", "busybox"}, false, 1},
+		{"pinning change", "(1/2) Upgrading apk-tools (2.14.6-r2 -> 2.14.6-r3)\n(2/2) Updating pinning scanelf (1.3.11-r0)\n", []string{"apk-tools", "scanelf"}, false, 0},
+		{"unknown verb", "(1/1) Frobnicating busybox (1.0-r0)\n", []string{"busybox"}, false, 1},
+		{"same-version replace", "(1/1) Replacing busybox (1.37.0-r30 -> 1.37.0-r30)\nOK: 8 MiB in 16 packages\n", []string{"busybox"}, false, 1},
 		{"real run with preupgrade and scripts", "Preupgrading:\n(1/2) Upgrading libapk (3.0.1-r1 -> 3.0.8-r0)\n(2/2) Upgrading apk-tools (3.0.1-r1 -> 3.0.8-r0)\nExecuting busybox-1.37.0-r29.trigger\n  Installing file to etc/hosts.apk-new\n", []string{"libapk", "apk-tools"}, false, 0},
 	}
 	for _, tc := range cases {
@@ -275,6 +297,9 @@ func TestParseAPKPlan(t *testing.T) {
 				t.Errorf("refused = %d, want %d", got, tc.refused)
 			}
 		})
+	}
+	if !ParseAPKPlan("OK: 7 MiB in 15 packages\n").Complete || ParseAPKPlan("WARNING: something\n").Complete {
+		t.Error("Complete must follow apk's OK line")
 	}
 	if got := ParseAPKPlan("(1/1) Downgrading scanelf (1.3.11-r0 -> 1.3.8-r2)\n").Refused()[0].String(); got != "Downgrading scanelf (1.3.11-r0 -> 1.3.8-r2)" {
 		t.Errorf("refused step renders as %q", got)
@@ -448,7 +473,7 @@ func TestAPKSecDBFixesAndCache(t *testing.T) {
 	defer srv.Close()
 
 	now := time.Now()
-	db := &apkSecDB{logger: quietLogger(), client: srv.Client(), baseURL: srv.URL, cacheDir: t.TempDir(), now: func() time.Time { return now }}
+	db := &apkSecDB{logger: quietLogger(), client: srv.Client(), baseURL: srv.URL, cacheDir: t.TempDir(), cacheOwner: os.Getuid(), now: func() time.Time { return now }}
 
 	fixes := db.fixes(context.Background(), "v3.23", []string{"main", "community"})
 	slices.Sort(fixes["openssl"])
@@ -472,9 +497,76 @@ func TestAPKSecDBFixesAndCache(t *testing.T) {
 		t.Errorf("an expired cache must still be used when secdb is unreachable, got %v", stale)
 	}
 
-	empty := &apkSecDB{logger: quietLogger(), client: srv.Client(), baseURL: srv.URL, cacheDir: t.TempDir(), now: time.Now}
+	empty := &apkSecDB{logger: quietLogger(), client: srv.Client(), baseURL: srv.URL, cacheDir: t.TempDir(), cacheOwner: os.Getuid(), now: time.Now}
 	if got := empty.fixes(context.Background(), "v3.23", []string{"main"}); len(got) != 0 {
 		t.Errorf("unreachable secdb with no cache must yield nothing, got %v", got)
+	}
+}
+
+func TestAPKSecDBUntrustedCacheDir(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, secdbMain)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	db := &apkSecDB{logger: quietLogger(), client: srv.Client(), baseURL: srv.URL, cacheDir: dir, cacheOwner: os.Getuid(), now: time.Now}
+	if len(db.fixes(context.Background(), "v3.23", []string{"main"})) == 0 {
+		t.Fatal("an untrusted cache must not stop the fetch")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "v3.23-main.json")); !os.IsNotExist(err) {
+		t.Error("a world-writable cache directory must not be written")
+	}
+
+	otherOwner := &apkSecDB{logger: quietLogger(), client: srv.Client(), baseURL: srv.URL, cacheDir: t.TempDir(), cacheOwner: os.Getuid() + 1, now: time.Now}
+	if otherOwner.cacheDirTrusted() {
+		t.Error("a cache directory owned by another user must not be trusted")
+	}
+
+	target := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	viaLink := &apkSecDB{logger: quietLogger(), cacheDir: link, cacheOwner: os.Getuid(), now: time.Now}
+	if viaLink.cacheDirTrusted() {
+		t.Error("a symlinked cache directory must not be trusted")
+	}
+}
+
+func TestAPKSecDBCheckRedirect(t *testing.T) {
+	first, _ := http.NewRequest(http.MethodGet, "https://secdb.alpinelinux.org/v3.23/main.json", nil)
+	cases := []struct {
+		to   string
+		want bool
+	}{
+		{"https://secdb.alpinelinux.org/v3.23/main.json?x", true},
+		{"http://secdb.alpinelinux.org/v3.23/main.json", false},
+		{"https://evil.example.com/main.json", false},
+	}
+	for _, tc := range cases {
+		req, _ := http.NewRequest(http.MethodGet, tc.to, nil)
+		if got := apkSecDBCheckRedirect(req, []*http.Request{first}) == nil; got != tc.want {
+			t.Errorf("redirect to %s allowed = %v, want %v", tc.to, got, tc.want)
+		}
+	}
+}
+
+func TestAPKSecDBWarnsOncePerTTL(t *testing.T) {
+	apkSecDBWarnMu.Lock()
+	apkSecDBLastWarn = time.Time{}
+	apkSecDBWarnMu.Unlock()
+	now := time.Now()
+	db := &apkSecDB{now: func() time.Time { return now }}
+	if !db.shouldWarn() || db.shouldWarn() {
+		t.Fatal("expected one warning, then silence")
+	}
+	now = now.Add(apkSecDBTTL + time.Second)
+	if !db.shouldWarn() {
+		t.Error("expected a fresh warning after the TTL")
 	}
 }
 
@@ -484,7 +576,7 @@ func TestAPKSecDBRejectsNonJSON(t *testing.T) {
 	}))
 	defer srv.Close()
 	dir := t.TempDir()
-	db := &apkSecDB{logger: quietLogger(), client: srv.Client(), baseURL: srv.URL, cacheDir: dir, now: time.Now}
+	db := &apkSecDB{logger: quietLogger(), client: srv.Client(), baseURL: srv.URL, cacheDir: dir, cacheOwner: os.Getuid(), now: time.Now}
 	if got := db.fixes(context.Background(), "v3.23", []string{"main"}); len(got) != 0 {
 		t.Errorf("got %v", got)
 	}

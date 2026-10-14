@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"patchmon-agent/internal/logutil"
 	"patchmon-agent/internal/packages"
 )
 
@@ -44,7 +45,7 @@ func runPatchAPK(ctx context.Context, sink *streamSink, env []string, patchType 
 		},
 	}, patchType, packageNames, dryRun)
 	if err != nil {
-		logger.WithError(err).Warn("apk patch run failed")
+		logger.WithField("error", logutil.Sanitize(err.Error())).Warn("apk patch run failed")
 		sink.WriteString(fmt.Sprintf("\n[apk error] %s\n", err.Error()))
 		sink.Flush()
 	}
@@ -71,7 +72,9 @@ func runAPKPatch(io apkPatchIO, patchType string, packageNames []string, dryRun 
 	}
 	upgradeTargets := targets
 	if targets != nil {
-		upgradeTargets = inv.ExpandTargets(targets, holds)
+		upgradeTargets = slices.DeleteFunc(inv.ExpandTargets(targets, holds), func(n string) bool {
+			return !validAptPackagePattern.MatchString(n)
+		})
 	}
 
 	plan, err := apkSimulate(io, upgradeTargets)
@@ -83,7 +86,9 @@ func runAPKPatch(io apkPatchIO, patchType string, packageNames []string, dryRun 
 		switch {
 		case dryRun:
 			io.note("apk-tools has an update of its own. A real run installs it first and plans again, so the result can differ slightly from this plan.")
-		case preArgs != nil:
+		case preArgs == nil:
+			return errors.New("apk-tools has an update of its own but its version could not be read, so the plan cannot be trusted. Run apk upgrade on the host, or retry once apk --version works")
+		default:
 			if out, err := io.run(preArgs...); err != nil {
 				return apkStepError("apk-tools upgrade", out, err)
 			}
@@ -102,7 +107,7 @@ func runAPKPatch(io apkPatchIO, patchType string, packageNames []string, dryRun 
 		for i, s := range refused {
 			steps[i] = s.String()
 		}
-		return fmt.Errorf("apk plans to downgrade or remove packages (%s). PatchMon only applies upgrades, so nothing was changed. "+
+		return fmt.Errorf("apk plans to downgrade, remove or replace packages (%s). PatchMon only applies upgrades, so nothing was changed. "+
 			"This usually follows a repository being removed from /etc/apk/repositories; review the plan with apk upgrade --simulate on the host",
 			strings.Join(steps, "; "))
 	}
@@ -136,7 +141,11 @@ func apkSimulate(io apkPatchIO, targets []string) (packages.APKPlan, error) {
 		}
 		return packages.APKPlan{}, apkStepError("apk upgrade --simulate", out, err)
 	}
-	return packages.ParseAPKPlan(out), nil
+	plan := packages.ParseAPKPlan(out)
+	if len(plan.Steps) == 0 && !plan.Complete {
+		return plan, errors.New("apk upgrade --simulate printed no plan and no OK line, so the result cannot be trusted")
+	}
+	return plan, nil
 }
 
 func apkStepError(step, output string, err error) error {

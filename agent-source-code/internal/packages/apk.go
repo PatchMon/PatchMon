@@ -321,7 +321,7 @@ var apkRevisionRe = regexp.MustCompile(`^r\d+$`)
 // packages from apk add -t have no -rN.
 func splitAPKNameVersion(s string) (name, version string) {
 	i := strings.LastIndexByte(s, '-')
-	if i <= 0 {
+	if i <= 0 || i+1 >= len(s) {
 		return "", ""
 	}
 	if apkRevisionRe.MatchString(s[i+1:]) {

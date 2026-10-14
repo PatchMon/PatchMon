@@ -29,9 +29,11 @@ type APKPlan struct {
 	Steps []APKPlanStep
 	// Unreliable: apk-tools has an update, which a real run applies first and then replans.
 	Unreliable bool
+	// Complete is set by apk's closing "OK:" line, which it prints even when there is nothing to do.
+	Complete bool
 }
 
-var apkPlanLineRe = regexp.MustCompile(`^\(\s*\d+/\d+\)\s+(\S+)\s+(\S+)\s*(.*)$`)
+var apkPlanLineRe = regexp.MustCompile(`^\(\s*\d+/\d+\)\s+(Updating pinning|\S+)\s+(\S+)\s*(.*)$`)
 
 // ParseAPKPlan reads apk upgrade output. v3 pads the step counter, as in "( 1/14)".
 func ParseAPKPlan(output string) APKPlan {
@@ -39,6 +41,10 @@ func ParseAPKPlan(output string) APKPlan {
 	for line := range strings.Lines(output) {
 		line = strings.TrimSpace(line)
 		lower := strings.ToLower(line)
+		if strings.HasPrefix(line, "OK:") {
+			plan.Complete = true
+			continue
+		}
 		if strings.HasPrefix(lower, "warning:") && strings.Contains(lower, "simulation") && strings.Contains(lower, "reliable") {
 			plan.Unreliable = true
 			continue
@@ -52,11 +58,14 @@ func ParseAPKPlan(output string) APKPlan {
 	return plan
 }
 
-// Refused returns the downgrade and purge steps, which PatchMon never applies.
+// Refused returns every step that is not an install, upgrade, reinstall or pinning change:
+// downgrades, purges, same-version replaces and any verb this agent does not know.
 func (p APKPlan) Refused() []APKPlanStep {
 	var out []APKPlanStep
 	for _, s := range p.Steps {
-		if s.Action == "Downgrading" || s.Action == "Purging" {
+		switch s.Action {
+		case "Installing", "Upgrading", "Reinstalling", "Updating pinning":
+		default:
 			out = append(out, s)
 		}
 	}

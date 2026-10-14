@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"patchmon-agent/internal/constants"
+	"patchmon-agent/internal/logutil"
 	"patchmon-agent/pkg/models"
 
 	"github.com/sirupsen/logrus"
@@ -46,7 +47,7 @@ func (m *APKManager) GetRepositories() ([]models.Repository, error) {
 		if repo := apkRepository(line); repo != nil {
 			repositories = append(repositories, *repo)
 		} else {
-			m.logger.WithField("url", line.URL).Debug("Skipping unsupported repository URL")
+			m.logger.WithField("url", logutil.Sanitize(line.URL)).Debug("Skipping unsupported repository URL")
 		}
 	}
 	m.logger.WithField("count", len(repositories)).Debug("Extracted APK repositories")
@@ -85,6 +86,11 @@ func ReadAPKRepositoryLines() []APKRepoLine {
 
 var apkRepoVarRe = regexp.MustCompile(`\$\{([A-Za-z][A-Za-z0-9_]*)\}`)
 
+const (
+	apkRepoMaxExpanded = 4 << 10
+	apkRepoMaxVars     = 64
+)
+
 // parseAPKRepositories accepts the v2 form "[@tag] url" and the v3 form
 // "[v2|v3|ndx] [@tag] url [component...]", where components expand to url/component.
 func parseAPKRepositories(content string, vars map[string]string) []APKRepoLine {
@@ -110,8 +116,10 @@ func parseAPKRepositories(content string, vars map[string]string) []APKRepoLine 
 			}
 			if len(args) == 1 {
 				if key, value, ok := strings.Cut(args[0], "="); ok {
-					if _, exists := vars[key]; !keepExisting || !exists {
-						vars[key] = expand(value)
+					_, exists := vars[key]
+					value = expand(value)
+					if (!keepExisting || !exists) && len(value) <= apkRepoMaxExpanded && (exists || len(vars) < apkRepoMaxVars) {
+						vars[key] = value
 					}
 				}
 			}
@@ -129,12 +137,17 @@ func parseAPKRepositories(content string, vars map[string]string) []APKRepoLine 
 			continue
 		}
 		base := strings.TrimRight(expand(fields[0]), "/")
+		if len(base) > apkRepoMaxExpanded {
+			continue
+		}
 		if len(fields) == 1 {
 			out = append(out, APKRepoLine{Tag: tag, URL: base})
 			continue
 		}
 		for _, comp := range fields[1:] {
-			out = append(out, APKRepoLine{Tag: tag, URL: base + "/" + expand(comp)})
+			if url := base + "/" + expand(comp); len(url) <= apkRepoMaxExpanded {
+				out = append(out, APKRepoLine{Tag: tag, URL: url})
+			}
 		}
 	}
 	return out

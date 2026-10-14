@@ -4,12 +4,14 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"time"
 
 	"patchmon-agent/internal/repositories"
@@ -21,10 +23,15 @@ const (
 	apkSecDBBaseURL  = "https://secdb.alpinelinux.org"
 	apkSecDBTTL      = 6 * time.Hour
 	apkSecDBTimeout  = 20 * time.Second
-	apkSecDBMaxBytes = 32 << 20
+	apkSecDBMaxBytes = 8 << 20
 )
 
-var apkSecDBCacheDir = "/var/cache/patchmon/apk-secdb"
+var (
+	apkSecDBCacheDir = "/var/cache/patchmon/apk-secdb"
+
+	apkSecDBWarnMu   sync.Mutex
+	apkSecDBLastWarn time.Time
+)
 
 // secdb is keyed by origin (source package) and lists the version each fix landed in.
 type apkSecDB struct {
@@ -32,24 +39,38 @@ type apkSecDB struct {
 	client   *http.Client
 	baseURL  string
 	cacheDir string
-	now      func() time.Time
+	// cacheOwner is the uid the cache directory must belong to.
+	cacheOwner int
+	now        func() time.Time
 }
 
 func newAPKSecDB(logger *logrus.Logger) *apkSecDB {
 	return &apkSecDB{
 		logger: logger,
 		client: &http.Client{
-			Timeout: apkSecDBTimeout,
+			Timeout:       apkSecDBTimeout,
+			CheckRedirect: apkSecDBCheckRedirect,
 			Transport: &http.Transport{
 				Proxy:               http.ProxyFromEnvironment,
 				TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
 				TLSHandshakeTimeout: 10 * time.Second,
 			},
 		},
-		baseURL:  apkSecDBBaseURL,
-		cacheDir: apkSecDBCacheDir,
-		now:      time.Now,
+		baseURL:    apkSecDBBaseURL,
+		cacheDir:   apkSecDBCacheDir,
+		cacheOwner: 0,
+		now:        time.Now,
 	}
+}
+
+func apkSecDBCheckRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return errors.New("too many redirects")
+	}
+	if req.URL.Scheme != "https" || req.URL.Host != via[0].URL.Host {
+		return fmt.Errorf("refusing redirect to %s://%s", req.URL.Scheme, req.URL.Host)
+	}
+	return nil
 }
 
 type apkSecDBFile struct {
@@ -88,7 +109,12 @@ func (s *apkSecDB) fixes(ctx context.Context, branch string, repos []string) map
 	for _, repo := range repos {
 		data, err := s.load(ctx, branch, repo)
 		if err != nil {
-			s.logger.WithError(err).WithField("repo", branch+"/"+repo).Warn("Alpine secdb unavailable, security updates in it are not flagged")
+			entry := s.logger.WithError(err).WithField("repo", branch+"/"+repo)
+			if s.shouldWarn() {
+				entry.Warn("Alpine secdb unavailable, security updates in it are not flagged")
+			} else {
+				entry.Debug("Alpine secdb unavailable")
+			}
 			continue
 		}
 		var f apkSecDBFile
@@ -107,25 +133,81 @@ func (s *apkSecDB) fixes(ctx context.Context, branch string, repos []string) map
 	return out
 }
 
+// shouldWarn limits the unreachable warning to once per TTL; reports run far more often.
+func (s *apkSecDB) shouldWarn() bool {
+	apkSecDBWarnMu.Lock()
+	defer apkSecDBWarnMu.Unlock()
+	if !apkSecDBLastWarn.IsZero() && s.now().Sub(apkSecDBLastWarn) < apkSecDBTTL {
+		return false
+	}
+	apkSecDBLastWarn = s.now()
+	return true
+}
+
 func (s *apkSecDB) load(ctx context.Context, branch, repo string) ([]byte, error) {
+	cacheOK := s.cacheDirTrusted()
 	cache := filepath.Join(s.cacheDir, branch+"-"+repo+".json")
-	if info, err := os.Stat(cache); err == nil && s.now().Sub(info.ModTime()) < apkSecDBTTL {
-		if data, err := os.ReadFile(cache); err == nil {
+	if cacheOK {
+		if data, modTime, err := readCacheFile(cache); err == nil && s.now().Sub(modTime) < apkSecDBTTL {
 			return data, nil
 		}
 	}
 	data, fetchErr := s.fetch(ctx, fmt.Sprintf("%s/%s/%s.json", s.baseURL, branch, repo))
 	if fetchErr == nil {
-		if err := writeFileAtomic(cache, data); err != nil {
-			s.logger.WithError(err).Debug("Could not cache Alpine secdb")
+		if cacheOK {
+			if err := writeFileAtomic(cache, data); err != nil {
+				s.logger.WithError(err).Debug("Could not cache Alpine secdb")
+			}
 		}
 		return data, nil
 	}
-	if data, err := os.ReadFile(cache); err == nil {
-		s.logger.WithError(fetchErr).Debug("Using stale Alpine secdb cache")
-		return data, nil
+	if cacheOK {
+		if data, _, err := readCacheFile(cache); err == nil {
+			s.logger.WithError(fetchErr).Debug("Using stale Alpine secdb cache")
+			return data, nil
+		}
 	}
 	return nil, fetchErr
+}
+
+// cacheDirTrusted refuses a cache another user could have planted or swapped.
+func (s *apkSecDB) cacheDirTrusted() bool {
+	if err := os.MkdirAll(s.cacheDir, 0o755); err != nil {
+		return false
+	}
+	info, err := os.Lstat(s.cacheDir)
+	if err != nil || !info.IsDir() || info.Mode().Perm()&0o022 != 0 {
+		return false
+	}
+	owner, ok := fileOwner(info)
+	if !ok || owner != s.cacheOwner {
+		s.logger.WithField("dir", s.cacheDir).Debug("Alpine secdb cache directory not trusted, not caching")
+		return false
+	}
+	return true
+}
+
+func readCacheFile(path string) ([]byte, time.Time, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, time.Time{}, fmt.Errorf("%s is not a regular file", path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, apkSecDBMaxBytes+1))
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	if len(data) > apkSecDBMaxBytes {
+		return nil, time.Time{}, fmt.Errorf("%s is larger than %d bytes", path, apkSecDBMaxBytes)
+	}
+	return data, info.ModTime(), nil
 }
 
 func (s *apkSecDB) fetch(ctx context.Context, url string) ([]byte, error) {

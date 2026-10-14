@@ -176,6 +176,56 @@ func TestRunAPKPatchPreupgradesOnRealRunsOnly(t *testing.T) {
 	}
 }
 
+func TestRunAPKPatchRefusesUnreliablePlanWithUnknownApk(t *testing.T) {
+	inv := apkTestInventory("")
+	inv.Major = 0
+	f := &fakeAPK{inv: inv, responses: map[string][]fakeAPKResponse{apkSimulateAll: {{out: apkUnreliableV3Plan}}}}
+	err := runAPKPatch(f.io(), "patch_all", nil, false)
+	if err == nil || !strings.Contains(err.Error(), "could not be read") {
+		t.Fatalf("err = %v", err)
+	}
+	if f.ran("upgrade --no-progress --wait") != 0 {
+		t.Errorf("nothing may be applied: %q", f.calls)
+	}
+}
+
+func TestRunAPKPatchRejectsUnparseableSimulation(t *testing.T) {
+	for _, out := range []string{"", "WARNING: something new\n", "( 1/2) Frobnicating busybox\n"} {
+		f := &fakeAPK{inv: apkTestInventory(""), responses: map[string][]fakeAPKResponse{apkSimulateAll: {{out: out}}}}
+		err := runAPKPatch(f.io(), "patch_all", nil, false)
+		want := "printed no plan"
+		if strings.Contains(out, "Frobnicating") {
+			want = "Frobnicating busybox"
+		}
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: err = %v", out, err)
+		}
+		if f.ran(apkUpgradeAll) != 0 {
+			t.Errorf("%q: nothing may be applied: %q", out, f.calls)
+		}
+	}
+}
+
+func TestRunAPKPatchRefusesSameVersionReplace(t *testing.T) {
+	f := &fakeAPK{inv: apkTestInventory(""), responses: map[string][]fakeAPKResponse{apkSimulateAll: {{out: "(1/1) Replacing busybox (1.37.0-r30 -> 1.37.0-r30)\nOK: 8 MiB in 16 packages\n"}}}}
+	if err := runAPKPatch(f.io(), "patch_all", nil, false); err == nil || !strings.Contains(err.Error(), "Replacing busybox") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRunAPKPatchDropsInvalidExpandedNames(t *testing.T) {
+	inv := apkTestInventory("")
+	inv.Available["libssl3;rm"] = "3.5.9-r0"
+	inv.Origin["libssl3;rm"] = "openssl"
+	f := &fakeAPK{inv: inv}
+	if err := runAPKPatch(f.io(), "patch_package", []string{"libssl3"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if f.calls[1] != "upgrade --no-progress --simulate libssl3 libcrypto3" {
+		t.Errorf("calls = %q", f.calls)
+	}
+}
+
 func TestRunAPKPatchV2UsesSelfUpgradeOnly(t *testing.T) {
 	inv := apkTestInventory("")
 	inv.Major = 2
