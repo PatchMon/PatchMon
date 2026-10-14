@@ -928,7 +928,7 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 								<span className="px-2 py-0.5 text-xs font-medium bg-green-900 text-green-200 rounded">
 									Connected
 								</span>
-								{host?.api_id && host?.api_key && (
+								{!isWindows && host?.api_id && host?.api_key && (
 									<div className="relative" data-install-commands>
 										<button
 											type="button"

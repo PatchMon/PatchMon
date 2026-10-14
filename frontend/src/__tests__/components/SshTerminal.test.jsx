@@ -591,6 +591,26 @@ describe("SshTerminal Component", () => {
 			);
 		});
 
+		it("does not offer the Linux agent install command", async () => {
+			renderComponent({ host: windowsHost(), embedded: true });
+			fireEvent.change(screen.getByPlaceholderText(/password/i), {
+				target: { value: "testpass" },
+			});
+			fireEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+			await waitFor(() => {
+				expect(WebSocket).toHaveBeenCalled();
+			});
+			const wsInstance = WebSocket.mock.results[0].value;
+			await act(async () => {
+				wsInstance._simulateOpen();
+				wsInstance._simulateMessage(JSON.stringify({ type: "connected" }));
+			});
+			await waitFor(() => {
+				expect(screen.getByText("Connected")).toBeInTheDocument();
+			});
+			expect(screen.queryByText(/install agent/i)).toBeNull();
+		});
+
 		it("keeps root and no note on Linux hosts", () => {
 			renderComponent({
 				host: { ...mockHost, os_type: "Ubuntu" },
