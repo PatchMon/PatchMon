@@ -877,6 +877,10 @@ func truncateForLog(s string, max int) string {
 	return strings.ToValidUTF8(s[:max], "") + "..."
 }
 
+// pendingAuthEvents bounds the background goroutines sign-in events can hold,
+// so a spray of failures cannot pile them up behind a slow database.
+var pendingAuthEvents = make(chan struct{}, 64)
+
 // emitEventAsync sends a notification event without making the caller wait on
 // it, so a wrong password for a real account answers as fast as any other.
 func (h *AuthHandler) emitEventAsync(r *http.Request, ev notifications.Event) {
@@ -891,9 +895,18 @@ func (h *AuthHandler) emitEventAsync(r *http.Request, ev notifications.Event) {
 	if d == nil {
 		return
 	}
+	select {
+	case pendingAuthEvents <- struct{}{}:
+	default:
+		if h.log != nil {
+			h.log.Warn("notification event dropped: too many pending", "event_type", ev.Type)
+		}
+		return
+	}
 	ctx := context.WithoutCancel(r.Context())
 	host := hostctx.TenantHostKey(r.Context())
 	go func() {
+		defer func() { <-pendingAuthEvents }()
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		emit(ctx, d, host, ev)

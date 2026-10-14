@@ -306,3 +306,44 @@ func TestSSOFallbackLoginRaisesEvent(t *testing.T) {
 		t.Fatalf("got event %+v, want sso_fallback_login for %s", ev, f.superTFA)
 	}
 }
+
+func TestEmitEventAsyncDropsWhenFull(t *testing.T) {
+	f := newSSOFallbackFixture(t, 1000)
+	for i := 0; i < cap(pendingAuthEvents); i++ {
+		pendingAuthEvents <- struct{}{}
+	}
+	drained := false
+	drain := func() {
+		if !drained {
+			for i := 0; i < cap(pendingAuthEvents); i++ {
+				<-pendingAuthEvents
+			}
+			drained = true
+		}
+	}
+	t.Cleanup(drain)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+	f.h.emitEventAsync(req, notifications.Event{Type: "user_login_failed"})
+	select {
+	case ev := <-f.events:
+		t.Fatalf("event %q was sent although every slot was taken", ev.Type)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if !strings.Contains(f.logs.String(), "notification event dropped") || !strings.Contains(f.logs.String(), "event_type=user_login_failed") {
+		t.Fatalf("the drop was not logged:\n%s", f.logs.String())
+	}
+
+	drain()
+	f.h.emitEventAsync(req, notifications.Event{Type: "user_login_failed"})
+	if ev := f.nextEvent(t); ev.Type != "user_login_failed" {
+		t.Fatalf("got %q once slots were free", ev.Type)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for len(pendingAuthEvents) != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := len(pendingAuthEvents); n != 0 {
+		t.Fatalf("%d event slots were never released", n)
+	}
+}
