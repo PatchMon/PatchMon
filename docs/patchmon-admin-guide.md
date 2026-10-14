@@ -5228,6 +5228,8 @@ On their next sign-in the user enters their password and is taken straight to a 
 
 If you set a temporary password, the user's old password stops working straight away. When they sign in with the temporary password they first see a **Choose a new password** screen, and must replace it before the 2FA setup screen appears. Neither the temporary password nor the password they had before the reset is accepted as the new one. Until then the server refuses every API call from that session except changing the password, reading their own profile and signing out. Only this checkbox forces a password change; the separate **Reset Password** action works as before.
 
+Forced re-enrolment only guarantees 2FA at that point: PatchMon has no setting that makes 2FA mandatory, so the user can still turn it off from their profile afterwards. Without the temporary password option, anyone who knows the user's current password can sign in and enrol their own authenticator, so tick it if that password may be known to someone else.
+
 Accounts linked to an OIDC / SSO provider, and accounts without a local password, are not forced to re-enrol, because their MFA is managed by the identity provider. The reset still clears any local 2FA they had. If an account is linked to an identity provider after a reset, the requirement lapses for the same reason.
 
 Rules the server enforces:
