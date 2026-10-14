@@ -1533,9 +1533,11 @@ const ResetTfaModal = ({
 						<div className="p-3 bg-danger-50 dark:bg-danger-900 border border-danger-200 dark:border-danger-700 rounded-md">
 							<p className="text-sm text-danger-700 dark:text-danger-300">
 								This removes {user.username}'s authenticator and backup codes,
-								forgets their trusted devices and signs them out everywhere.
-								They can then sign in with their password alone and should set
-								up two-factor authentication again from their profile.
+								forgets their trusted devices and signs them out everywhere. The
+								next time they sign in with their password they must set up
+								two-factor authentication again before they can use PatchMon.
+								Accounts that sign in through single sign-on are not asked to
+								set it up again.
 							</p>
 						</div>
 
