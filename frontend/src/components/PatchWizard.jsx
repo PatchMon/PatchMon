@@ -1322,7 +1322,7 @@ export default function PatchWizard({
 				<p className="text-xs font-medium text-secondary-500 dark:text-secondary-400 mb-1.5">
 					Not patchable ({unpatchablePairs.length})
 				</p>
-				<ul className="space-y-1.5 max-h-32 overflow-y-auto">
+				<ul className="space-y-1.5 max-h-32 overflow-y-auto scrollbar-thin">
 					{unpatchablePairs.map((u) => (
 						<li
 							key={u.key}
@@ -1571,7 +1571,7 @@ export default function PatchWizard({
 										<p className="text-xs font-medium text-secondary-500 dark:text-secondary-400 mb-1.5">
 											Packages to patch:
 										</p>
-										<ul className="text-sm text-secondary-600 dark:text-secondary-400 list-disc list-inside space-y-0.5 max-h-16 overflow-y-auto">
+										<ul className="text-sm text-secondary-600 dark:text-secondary-400 list-disc list-inside space-y-0.5 max-h-48 overflow-y-auto scrollbar-thin">
 											{packageNames.map((name) => (
 												<li key={name}>
 													{name}
@@ -1849,7 +1849,7 @@ export default function PatchWizard({
 																	{v.packages_affected.length !== 1 ? "s" : ""}{" "}
 																	will be updated:
 																</p>
-																<ul className="text-xs text-secondary-600 dark:text-secondary-400 list-disc list-inside space-y-0.5 max-h-20 overflow-y-auto">
+																<ul className="text-xs text-secondary-600 dark:text-secondary-400 list-disc list-inside space-y-0.5 max-h-48 overflow-y-auto scrollbar-thin">
 																	{v.packages_affected.map((p) => (
 																		<li
 																			key={p}
