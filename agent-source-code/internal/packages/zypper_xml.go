@@ -15,6 +15,11 @@ type zypperStream struct {
 	InstallSummary *ZypperInstallSummary `xml:"install-summary"`
 	Repos          []ZypperRepo          `xml:"repo-list>repo"`
 	Locks          []ZypperLock          `xml:"locks>lock"`
+	Prompts        []zypperPrompt        `xml:"prompt"`
+}
+
+type zypperPrompt struct {
+	Description string `xml:"description"`
 }
 
 type zypperMessage struct {

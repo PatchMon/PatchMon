@@ -116,6 +116,9 @@ func runZypperPatch(io zypperPatchIO, patchType string, packageNames []string, d
 		switch code {
 		case 0, packages.ZypperExitRebootNeeded, packages.ZypperExitRestartNeeded, packages.ZypperExitReposSkipped:
 		default:
+			if pass > 1 {
+				io.note("zypper's own update was installed. The remaining updates were not.")
+			}
 			return zypperPlanError(plan, planErr)
 		}
 		if parseErr != nil {
@@ -182,6 +185,13 @@ func zypperNotePlan(io zypperPatchIO, plan packages.ZypperPlan, dryRun bool) {
 }
 
 func zypperPlanError(plan packages.ZypperPlan, err error) error {
+	if len(plan.Problems) > 0 {
+		problem := strings.Join(plan.Problems, "\n")
+		if len(problem) > 2000 {
+			problem = problem[:2000] + "..."
+		}
+		return fmt.Errorf("zypper cannot resolve the dependencies of this update without a choice PatchMon does not make for you, so it was not applied. Resolve it on the host with zypper, then retry. zypper says:\n%s", problem)
+	}
 	if len(plan.Errors) > 0 {
 		return zypperStepError("zypper --dry-run", strings.Join(plan.Errors, "; "), err)
 	}

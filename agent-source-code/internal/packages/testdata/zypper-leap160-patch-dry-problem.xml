@@ -1,0 +1,27 @@
+<?xml version='1.0'?>
+<stream>
+<message type="info">Loading repository data...</message>
+<message type="info">Reading installed packages...</message>
+<message type="info">Resolving package dependencies...</message>
+<prompt id="1">
+<description>Problem: 1: Detailed information: 
+- the installed systemd-sysvcompat-257.7-160000.2.2.x86_64 requires &apos;libsystemd-shared-257.so()(64bit)&apos;, but this requirement cannot be provided
+- the to be installed patch:openSUSE-Leap-16.0-1151-1.noarch conflicts with &apos;systemd.x86_64 &lt; 257.13-160000.2.1&apos; provided by the to be installed systemd-257.7-160000.2.2.x86_64
+- the to be installed patch:openSUSE-Leap-16.0-1151-1.noarch conflicts with &apos;systemd.x86_64 &lt; 257.13-160000.2.1&apos; provided by the installed systemd-257.7-160000.2.2.x86_64
+ Solution 1: Following actions will be done:
+  do not install patch:openSUSE-Leap-16.0-1151-1.noarch
+  do not install patch:openSUSE-Leap-16.0-1191-1.noarch
+  do not install patch:openSUSE-Leap-16.0-1602-1.noarch
+  do not install patch:openSUSE-Leap-16.0-252-1.noarch
+  do not install patch:openSUSE-Leap-16.0-485-1.noarch
+ Solution 2: deinstallation of systemd-sysvcompat-257.7-160000.2.2.x86_64
+ Solution 3: break systemd-sysvcompat-257.7-160000.2.2.x86_64 by ignoring some of its dependencies
+</description>
+<text>Choose from above solutions by number or cancel</text>
+<option value="1" desc="Choose solution 1"/>
+<option value="2" desc="Choose solution 2"/>
+<option value="3" desc="Choose solution 3"/>
+<option default="1" value="c" desc="Choose no solution and cancel."/>
+<option value="d" desc="Toggle show detailed conflict information."/>
+</prompt>
+</stream>

@@ -226,6 +226,11 @@ func TestZypperPlanNothingAndErrors(t *testing.T) {
 		t.Errorf("nothing to do not detected: %+v %v", plan, err)
 	}
 
+	problem := readZypperPlan(t, "zypper-leap160-patch-dry-problem.xml")
+	if len(problem.Problems) != 1 || !strings.Contains(problem.Problems[0], "systemd-sysvcompat") || !strings.Contains(problem.Problems[0], "Solution 2") {
+		t.Errorf("problems %q", problem.Problems)
+	}
+
 	for _, f := range []string{"zypper-leap155-update-notfound.xml", "zypper-leap155-locked.xml"} {
 		if p := readZypperPlan(t, f); len(p.Errors) == 0 {
 			t.Errorf("%s: no error messages read", f)

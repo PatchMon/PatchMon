@@ -93,6 +93,8 @@ type ZypperPlan struct {
 	Patches  []string
 	Warnings []string
 	Errors   []string
+	// Problems are dependency problems zypper could not solve without a choice.
+	Problems []string
 	// Nothing is set when zypper said there was nothing to do.
 	Nothing bool
 }
@@ -106,6 +108,11 @@ func ParseZypperPlan(out []byte) (ZypperPlan, error) {
 	plan := ZypperPlan{
 		Warnings: s.messages("warning"),
 		Errors:   s.messages("error"),
+	}
+	for _, pr := range s.Prompts {
+		if d := strings.TrimSpace(pr.Description); strings.HasPrefix(d, "Problem") {
+			plan.Problems = append(plan.Problems, d)
+		}
 	}
 	if s.InstallSummary == nil {
 		plan.Nothing = slices.ContainsFunc(s.messages("info"), func(m string) bool { return strings.Contains(m, "Nothing to do") })

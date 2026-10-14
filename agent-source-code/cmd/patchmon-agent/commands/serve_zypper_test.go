@@ -239,6 +239,24 @@ func TestZypperExitCodes(t *testing.T) {
 	}
 }
 
+func TestZypperUnresolvedProblemAfterStackUpdate(t *testing.T) {
+	f := &fakeZypper{
+		t: t,
+		plans: []zypperResponse{
+			{zypperFixture(t, "zypper-leap155-patch-dry-stack.xml"), 103},
+			{zypperFixture(t, "zypper-leap160-patch-dry-problem.xml"), 4},
+		},
+		runs: map[string][]zypperResponse{" patch ": {{"", 103}}},
+	}
+	err := runZypperPatch(f.io(), "patch_all", nil, false)
+	if err == nil || !strings.Contains(err.Error(), "cannot resolve the dependencies") || !strings.Contains(err.Error(), "systemd-sysvcompat") {
+		t.Fatalf("err %v", err)
+	}
+	if !f.noted("own update was installed") || f.count(" patch --with-update --auto-agree-with-licenses") != 3 {
+		t.Errorf("calls %q notes %q", f.calls, f.notes)
+	}
+}
+
 func TestZypperNothingToDo(t *testing.T) {
 	f := &fakeZypper{t: t, plans: []zypperResponse{{zypperNothingXML, 0}}}
 	if err := runZypperPatch(f.io(), "patch_all", nil, false); err != nil {
