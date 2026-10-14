@@ -44,6 +44,8 @@ BEGIN
             UPDATE role_permissions SET role = decoded, updated_at = CURRENT_TIMESTAMP WHERE id = r.id;
         END IF;
 
+        -- Their access tokens carry the old role name; dropping the sessions makes the next request 401.
+        DELETE FROM user_sessions WHERE user_id IN (SELECT id FROM users WHERE role = r.role);
         UPDATE users SET role = decoded, updated_at = CURRENT_TIMESTAMP WHERE role = r.role;
         UPDATE settings SET default_user_role = decoded WHERE default_user_role = r.role;
         UPDATE settings SET oidc_default_role = decoded WHERE oidc_default_role = r.role;

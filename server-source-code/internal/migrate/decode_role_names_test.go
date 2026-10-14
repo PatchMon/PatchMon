@@ -46,6 +46,13 @@ func TestDecodeEncodedRoleNames(t *testing.T) {
 	for _, n := range untouched {
 		role(n, false)
 	}
+	session := func(userID string) {
+		exec(`INSERT INTO user_sessions (id, user_id, refresh_token, expires_at) VALUES ($1, $2, $1, NOW() + INTERVAL '1 day')`, uuid.NewString(), userID)
+	}
+	bystander := user("plain_role" + sfx)
+	for _, id := range []string{renamed, merged, kept, twoA, twoB, bystander} {
+		session(id)
+	}
 	settingsID := uuid.NewString()
 	exec(`INSERT INTO settings (id, default_user_role, oidc_default_role, updated_at) VALUES ($1, $2, $2, NOW())`, settingsID, "Ops%20Team%20(EU)"+sfx)
 
@@ -104,6 +111,25 @@ func TestDecodeEncodedRoleNames(t *testing.T) {
 	} {
 		if name, manage := userRole(id); name != w.name || manage != w.manage {
 			t.Errorf("user role = %q (manage users %v), want %q (%v)", name, manage, w.name, w.manage)
+		}
+	}
+
+	sessions := func(id string) int {
+		t.Helper()
+		var n int
+		if err := d.RawQueryRow(ctx, `SELECT COUNT(*) FROM user_sessions WHERE user_id = $1`, id).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	for _, id := range []string{renamed, merged, twoA, twoB} {
+		if n := sessions(id); n != 0 {
+			t.Errorf("user %s moved to a new role name still has %d session(s)", id, n)
+		}
+	}
+	for _, id := range []string{kept, bystander} {
+		if n := sessions(id); n != 1 {
+			t.Errorf("user %s was not moved but has %d session(s), want 1", id, n)
 		}
 	}
 
