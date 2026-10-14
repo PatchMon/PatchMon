@@ -322,6 +322,10 @@ func (h *UsersHandler) Update(w http.ResponseWriter, r *http.Request) {
 			Error(w, http.StatusBadRequest, "Cannot change your own role")
 			return
 		}
+		if *req.Role != existing.Role && !roleOutranks(r.Context(), h.permissions, callerRole, existing.Role) {
+			Error(w, http.StatusForbidden, "Cannot change the role of a user whose role is equal to or above yours")
+			return
+		}
 		u.Role = *req.Role
 	}
 	if req.IsActive != nil {

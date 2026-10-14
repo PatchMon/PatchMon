@@ -369,3 +369,72 @@ func TestOidcImportFromEnvRequiresManageSuperusers(t *testing.T) {
 		t.Errorf("superadmin import: got %d, want 200", got)
 	}
 }
+
+func TestRoleChangeRequiresOutranking(t *testing.T) {
+	t.Parallel()
+	d := testDatabase(t)
+	perms := store.NewPermissionsStore(d)
+	users := store.NewUsersStore(d)
+	ph := NewPermissionsHandler(perms)
+	uh := &UsersHandler{users: users, sessions: store.NewSessionsStore(d), permissions: perms}
+	rec := httptest.NewRecorder()
+	ph.UpdateRole(rec, roleRequest(http.MethodPut, "rc_helpdesk", "superadmin", `{"can_view_dashboard":true,"can_view_users":true,"can_manage_users":true}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create role: %d", rec.Code)
+	}
+	mk := func(name, role string) string {
+		u := &models.User{Username: name, Email: name + "@ex.test", Role: role, IsActive: true}
+		if err := users.Create(context.Background(), u); err != nil {
+			t.Fatalf("create user %s: %v", name, err)
+		}
+		return u.ID
+	}
+	admin1, admin2, admin3 := mk("rc_admin1", "admin"), mk("rc_admin2", "admin"), mk("rc_admin3", "admin")
+	plain, ro := mk("rc_user", "user"), mk("rc_ro", "readonly")
+	help2 := mk("rc_help2", "rc_helpdesk")
+
+	update := func(userID, callerID, callerRole, body string) int {
+		req := httptest.NewRequest(http.MethodPut, "/auth/admin/users/"+userID, strings.NewReader(body))
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("userId", userID)
+		ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+		ctx = context.WithValue(ctx, middleware.UserRoleKey, callerRole)
+		ctx = context.WithValue(ctx, middleware.UserIDKey, callerID)
+		rec := httptest.NewRecorder()
+		uh.Update(rec, req.WithContext(ctx))
+		return rec.Code
+	}
+	roleOf := func(id string) string {
+		u, err := users.GetByID(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return u.Role
+	}
+
+	cases := []struct {
+		name string
+		got  int
+		want int
+	}{
+		{"admin cannot demote a peer admin", update(admin2, admin1, "admin", `{"role":"user"}`), http.StatusForbidden},
+		{"admin may still edit a peer admin's name", update(admin2, admin1, "admin", `{"first_name":"x"}`), http.StatusOK},
+		{"admin still cannot send the admin role, even unchanged", update(admin2, admin1, "admin", `{"role":"admin","first_name":"y"}`), http.StatusForbidden},
+		{"admin changes a user's role", update(plain, admin1, "admin", `{"role":"readonly"}`), http.StatusOK},
+		{"admin promotes readonly to host_manager", update(ro, admin1, "admin", `{"role":"host_manager"}`), http.StatusOK},
+		{"admin still cannot assign admin", update(ro, admin1, "admin", `{"role":"admin"}`), http.StatusForbidden},
+		{"custom role cannot change a peer with the same permissions", update(help2, "someone", "rc_helpdesk", `{"role":"readonly"}`), http.StatusForbidden},
+		{"nobody changes their own role", update(admin1, admin1, "admin", `{"role":"user"}`), http.StatusBadRequest},
+		{"superadmin changes an admin's role", update(admin3, "super", "superadmin", `{"role":"user"}`), http.StatusOK},
+	}
+	for _, c := range cases {
+		if c.got != c.want {
+			t.Errorf("%s: got %d, want %d", c.name, c.got, c.want)
+		}
+	}
+	for id, want := range map[string]string{admin2: "admin", plain: "readonly", ro: "host_manager", help2: "rc_helpdesk", admin1: "admin", admin3: "user"} {
+		if got := roleOf(id); got != want {
+			t.Errorf("user %s role = %q, want %q", id, got, want)
+		}
+	}
+}
