@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ func TestUnlinkOidcAgainstPostgres(t *testing.T) {
 	d := pgtest.Open(t)
 	users := store.NewUsersStore(d)
 	trust := false
-	h := &UsersHandler{users: users, permissions: store.NewPermissionsStore(d), trustUnverifiedEmail: func(context.Context) bool { return trust }}
+	h := &UsersHandler{users: users, permissions: store.NewPermissionsStore(d), audit: store.NewAuditLogsStore(d), trustUnverifiedEmail: func(context.Context) bool { return trust }}
 	oidcHandler := &OidcHandler{
 		cfg:   &config.Config{},
 		users: users,
@@ -57,6 +58,14 @@ func TestUnlinkOidcAgainstPostgres(t *testing.T) {
 	unlink := func(userID, callerRole string) int {
 		t.Helper()
 		return unlinkAs(userID, callerRole, "caller")
+	}
+	auditRows := func(targetID string) string {
+		t.Helper()
+		var rows string
+		if err := d.RawQueryRow(ctx, `SELECT coalesce(string_agg(success::text || ' ' || coalesce(details, ''), '; ' ORDER BY created_at), '') FROM audit_logs WHERE event = 'user_oidc_unlink' AND target_user_id = $1`, targetID).Scan(&rows); err != nil {
+			t.Fatal(err)
+		}
+		return rows
 	}
 	storedSub := func(id string) *string {
 		t.Helper()
@@ -117,10 +126,15 @@ func TestUnlinkOidcAgainstPostgres(t *testing.T) {
 			if code := unlink(u.ID, tc.caller); code != tc.want {
 				t.Fatalf("status %d, want %d", code, tc.want)
 			}
+			want := `true {"previous_provider":"idp.example.com","previous_sub":"` + sub + `"}`
 			if tc.want != http.StatusOK {
 				if s := storedSub(u.ID); s == nil || *s != sub {
 					t.Fatal("refused unlink changed the stored subject")
 				}
+				want = `false {"reason":"insufficient_role"}`
+			}
+			if got := auditRows(u.ID); got != want {
+				t.Fatalf("audit: got %q, want %q", got, want)
 			}
 		})
 	}
@@ -129,6 +143,9 @@ func TestUnlinkOidcAgainstPostgres(t *testing.T) {
 		u, sub := createLinked("superadmin")
 		if code := unlinkAs(u.ID, "superadmin", u.ID); code != http.StatusBadRequest {
 			t.Fatalf("status %d, want 400", code)
+		}
+		if got := auditRows(u.ID); got != `false {"reason":"self"}` {
+			t.Fatalf("audit: got %q", got)
 		}
 		if s := storedSub(u.ID); s == nil || *s != sub {
 			t.Fatal("refused unlink changed the stored subject")
@@ -141,6 +158,9 @@ func TestUnlinkOidcAgainstPostgres(t *testing.T) {
 		super, sub := createLinked("superadmin")
 		if code := unlink(super.ID, "superadmin"); code != http.StatusBadRequest {
 			t.Fatalf("superadmin: status %d, want 400", code)
+		}
+		if got := auditRows(super.ID); got != `false {"reason":"trust_unverified_email"}` {
+			t.Fatalf("audit: got %q", got)
 		}
 		if s := storedSub(super.ID); s == nil || *s != sub {
 			t.Fatal("refused unlink changed the stored subject")
@@ -185,11 +205,18 @@ func TestUnlinkOidcAgainstPostgres(t *testing.T) {
 		if code := unlink(u.ID, "admin"); code != http.StatusBadRequest {
 			t.Fatalf("second unlink: status %d, want 400", code)
 		}
+		if got := auditRows(u.ID); !strings.HasPrefix(got, "true ") || !strings.HasSuffix(got, `; false {"reason":"not_linked"}`) {
+			t.Fatalf("audit: got %q", got)
+		}
 	})
 
 	t.Run("unknown user is not found", func(t *testing.T) {
-		if code := unlink(uuid.New().String(), "admin"); code != http.StatusNotFound {
+		missing := uuid.New().String()
+		if code := unlink(missing, "admin"); code != http.StatusNotFound {
 			t.Fatalf("status %d, want 404", code)
+		}
+		if got := auditRows(missing); got != `false {"reason":"target_not_found"}` {
+			t.Fatalf("audit: got %q", got)
 		}
 	})
 }

@@ -48,6 +48,7 @@ func newSSOFallbackFixture(t *testing.T, maxAttempts int) *ssoFallbackFixture {
 	logs := &bytes.Buffer{}
 	f.h.log = slog.New(slog.NewTextHandler(logs, nil))
 	f.h.WithLocalAuthPolicy(fixedLocalAuthPolicy{fallback: "discovery returned HTTP 503"})
+	f.h.WithAudit(store.NewAuditLogsStore(f.db))
 	events := make(chan notifications.Event, 64)
 	f.h.db = f.db
 	f.h.emitEvent = func(_ context.Context, _ *database.DB, _ string, ev notifications.Event) { events <- ev }
@@ -368,5 +369,66 @@ func TestSSOFallbackEventsSurviveAFullEventPool(t *testing.T) {
 	}
 	if strings.Contains(f.logs.String(), "notification event dropped") {
 		t.Fatalf("a fallback event was dropped:\n%s", f.logs.String())
+	}
+}
+
+func (f *ssoFallbackFixture) auditRows(t *testing.T, username string) []string {
+	t.Helper()
+	ctx := context.Background()
+	u, err := f.h.users.GetByUsernameOrEmail(ctx, username)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var joined string
+	if err := f.db.RawQueryRow(ctx, `SELECT coalesce(string_agg(event || ' ' || success::text || ' ' || coalesce(details, ''), E'\n' ORDER BY created_at), '') FROM audit_logs WHERE user_id = $1 AND target_user_id = $1`, u.ID).Scan(&joined); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(joined, hardeningPassword) {
+		t.Fatalf("audit row contains the password: %s", joined)
+	}
+	if joined == "" {
+		return nil
+	}
+	return strings.Split(joined, "\n")
+}
+
+func TestSSOFallbackWritesAuditRows(t *testing.T) {
+	f := newSSOFallbackFixture(t, 1000)
+
+	if rec := postLogin(f.h, f.superTFA, "wrong-password"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong password: got %d", rec.Code)
+	}
+	if rows := f.auditRows(t, f.superTFA); len(rows) != 0 {
+		t.Fatalf("a wrong password was audited as a fallback event: %v", rows)
+	}
+
+	postLogin(f.h, f.userTFA, hardeningPassword)
+	want := `sso_fallback_refused false {"reason":"not_superadmin","sso_reason":"discovery returned HTTP 503"}`
+	if rows := f.auditRows(t, f.userTFA); len(rows) != 1 || rows[0] != want {
+		t.Fatalf("non-superadmin refusal: got %v, want [%s]", rows, want)
+	}
+
+	postLogin(f.h, f.superNoTFA, hardeningPassword)
+	want = `sso_fallback_refused false {"reason":"tfa_required","sso_reason":"discovery returned HTTP 503"}`
+	if rows := f.auditRows(t, f.superNoTFA); len(rows) != 1 || rows[0] != want {
+		t.Fatalf("superadmin without 2FA: got %v, want [%s]", rows, want)
+	}
+
+	rec := postLogin(f.h, f.superTFA, hardeningPassword)
+	var step1 struct {
+		Ticket string `json:"tfaTicket"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &step1); err != nil || step1.Ticket == "" {
+		t.Fatalf("password step: got %d %s", rec.Code, rec.Body.String())
+	}
+	if rows := f.auditRows(t, f.superTFA); len(rows) != 0 {
+		t.Fatalf("fallback audited as used before the second factor: %v", rows)
+	}
+	if rec := f.verifyTfa(t, step1.Ticket, false); rec.Code != http.StatusOK {
+		t.Fatalf("two-factor step: got %d %s", rec.Code, rec.Body.String())
+	}
+	want = `sso_fallback_login true {"sso_reason":"discovery returned HTTP 503"}`
+	if rows := f.auditRows(t, f.superTFA); len(rows) != 1 || rows[0] != want {
+		t.Fatalf("fallback login: got %v, want [%s]", rows, want)
 	}
 }

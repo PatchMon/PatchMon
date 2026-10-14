@@ -110,7 +110,8 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	releaseNotesAcceptanceStore := store.NewReleaseNotesAcceptanceStore(dbProvider)
 	trustedDevicesStore := store.NewTrustedDevicesStore(dbProvider)
 	tfaReplay := store.NewTfaReplayStore(redisResolver)
-	authHandler := handler.NewAuthHandler(cfg, resolved, usersStore, store.NewSessionsStore(dbProvider), trustedDevicesStore, settingsStore, tfaLockout, loginLockout, store.NewPendingLoginStore(redisResolver), releaseNotesAcceptanceStore, dbProvider, notifyEmit, log).WithPermissions(permissionsStore).WithConfigResolver(cfgResolver).WithTfaReplay(tfaReplay)
+	auditLogsStore := store.NewAuditLogsStore(dbProvider)
+	authHandler := handler.NewAuthHandler(cfg, resolved, usersStore, store.NewSessionsStore(dbProvider), trustedDevicesStore, settingsStore, tfaLockout, loginLockout, store.NewPendingLoginStore(redisResolver), releaseNotesAcceptanceStore, dbProvider, notifyEmit, log).WithPermissions(permissionsStore).WithConfigResolver(cfgResolver).WithTfaReplay(tfaReplay).WithAudit(auditLogsStore)
 	var oidcHandler *handler.OidcHandler
 	if rdb != nil {
 		oidcResolved, _ := config.ResolveOidcConfig(ctx, cfg, settingsStore.GetFirst)
@@ -166,7 +167,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	}
 
 	permissionsHandler := handler.NewPermissionsHandler(permissionsStore)
-	usersHandler := handler.NewUsersHandler(usersStore, store.NewSessionsStore(dbProvider), trustedDevicesStore, permissionsStore, settingsStore, resolved, cfg, dbProvider, notifyEmit, log).WithConfigResolver(cfgResolver).WithTfaReset(tfaLockout, store.NewAuditLogsStore(dbProvider), tfaReplay)
+	usersHandler := handler.NewUsersHandler(usersStore, store.NewSessionsStore(dbProvider), trustedDevicesStore, permissionsStore, settingsStore, resolved, cfg, dbProvider, notifyEmit, log).WithConfigResolver(cfgResolver).WithTfaReset(tfaLockout, auditLogsStore, tfaReplay)
 	hostsStore := store.NewHostsStore(dbProvider)
 	billingHandler := handler.NewBillingHandler(cfg, log, hostsStore)
 	metricsHandler := handler.NewMetricsHandler(settingsStore, hostsStore, cfg)

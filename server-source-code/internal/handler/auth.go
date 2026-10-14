@@ -55,6 +55,7 @@ type AuthHandler struct {
 	cfgResolver *hostctx.ConfigResolver
 	localAuth   LocalAuthPolicy
 	tfaReplay   *store.TfaReplayStore
+	audit       *store.AuditLogsStore
 }
 
 // LocalAuthPolicy reports whether the calling context has turned off password
@@ -429,6 +430,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if localAuthFallback != "" {
 		// Answered like a wrong password, so an outage is not a password oracle for ordinary accounts.
 		if user.Role != "superadmin" {
+			h.recordAudit(r, auditEventSSOFallbackRefused, user, false, map[string]any{"reason": "not_superadmin", "sso_reason": localAuthFallback})
 			if locked := h.recordLoginFailure(w, r, req.Username); locked {
 				h.logLoginFailure(r, "sso_fallback_not_superadmin", req.Username, user.ID, "locked", true)
 				return
@@ -438,6 +440,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !user.TfaEnabled {
+			h.recordAudit(r, auditEventSSOFallbackRefused, user, false, map[string]any{"reason": "tfa_required", "sso_reason": localAuthFallback})
 			h.emitEventAsync(r, notifications.Event{
 				Type:          "sso_fallback_refused",
 				Severity:      "warning",
@@ -638,10 +641,31 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 	h.completeLogin(w, r, user, req.RememberMe)
 }
 
+const (
+	auditEventSSOFallbackLogin   = "sso_fallback_login"
+	auditEventSSOFallbackRefused = "sso_fallback_refused"
+)
+
+// WithAudit wires the audit_logs writer.
+func (h *AuthHandler) WithAudit(a *store.AuditLogsStore) *AuthHandler {
+	h.audit = a
+	return h
+}
+
+func (h *AuthHandler) recordAudit(r *http.Request, event string, user *models.User, success bool, metadata map[string]any) {
+	if h.audit == nil {
+		return
+	}
+	if err := h.audit.Record(r.Context(), newAuditEntry(r, event, user.ID, user.ID, success, metadata)); err != nil && h.log != nil {
+		h.log.Error("auth: audit write failed", "event", event, "user_id", user.ID, "error", err)
+	}
+}
+
 // recordSSOFallbackLogin marks a session issued only because the SSO provider
-// was unreachable. TODO(audit): also write to audit_logs once the shared writer lands.
+// was unreachable.
 func (h *AuthHandler) recordSSOFallbackLogin(r *http.Request, user *models.User, reason string) {
 	ip := h.clientIP(r)
+	h.recordAudit(r, auditEventSSOFallbackLogin, user, true, map[string]any{"sso_reason": reason})
 	if h.log != nil {
 		attrs := []any{"audit_action", "sso_fallback_login", "user_id", user.ID, "username", user.Username, "ip", ip, "reason", reason}
 		if host := hostctx.TenantHostKey(r.Context()); host != "" {

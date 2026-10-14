@@ -3082,6 +3082,7 @@ Every sign-in completed this way is recorded:
   ```
 
 - a `sso_fallback_login` notification event, which you can route to an alert channel like any other event (see the admin guide).
+- a row in the `audit_logs` table with event `sso_fallback_login`. An account that gives the correct password but is refused by the fallback (not a superadmin, or a superadmin without two-factor authentication) is recorded there too, as a failed `sso_fallback_refused` row.
 
 > **Trade-off:** anyone who can make your identity provider unreachable from the PatchMon server, for example by disrupting DNS or the network path between them, can bring password login back for superadmin accounts. They would still need a superadmin's password and second factor. Only turn this on if that risk is acceptable for your deployment, and route the `sso_fallback_login` event to a channel someone watches.
 

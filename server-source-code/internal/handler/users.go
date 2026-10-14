@@ -452,17 +452,21 @@ func (h *UsersHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]string{"message": "User deleted successfully"})
 }
 
+const auditEventUserOidcUnlink = "user_oidc_unlink"
+
 // UnlinkOidc handles POST /auth/admin/users/{userId}/unlink-oidc. The user's
 // next SSO login links again through the verified-email path.
 func (h *UsersHandler) UnlinkOidc(w http.ResponseWriter, r *http.Request) {
 	userID := chi.URLParam(r, "userId")
 	callerID, _ := r.Context().Value(middleware.UserIDKey).(string)
 	if callerID != "" && userID == callerID {
+		h.recordUnlinkAudit(r, callerID, userID, false, map[string]any{"reason": "self"})
 		Error(w, http.StatusBadRequest, "Cannot unlink your own SSO identity")
 		return
 	}
 	existing, err := h.users.GetByID(r.Context(), userID)
 	if err != nil || existing == nil {
+		h.recordUnlinkAudit(r, callerID, userID, false, map[string]any{"reason": "target_not_found"})
 		Error(w, http.StatusNotFound, "User not found")
 		return
 	}
@@ -471,15 +475,18 @@ func (h *UsersHandler) UnlinkOidc(w http.ResponseWriter, r *http.Request) {
 	// change hands the account to whoever owns the new address.
 	callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
 	if !roleOutranks(r.Context(), h.permissions, callerRole, existing.Role) {
+		h.recordUnlinkAudit(r, callerID, existing.ID, false, map[string]any{"reason": "insufficient_role"})
 		Error(w, http.StatusForbidden, "Cannot unlink the SSO identity of a user with an equal or higher-privilege role")
 		return
 	}
 
 	if existing.OidcSub == nil && existing.OidcProvider == nil {
+		h.recordUnlinkAudit(r, callerID, existing.ID, false, map[string]any{"reason": "not_linked"})
 		Error(w, http.StatusBadRequest, "User is not linked to an SSO identity")
 		return
 	}
 	if existing.Role == "superadmin" && h.oidcTrustUnverifiedEmail(r.Context()) {
+		h.recordUnlinkAudit(r, callerID, existing.ID, false, map[string]any{"reason": "trust_unverified_email"})
 		Error(w, http.StatusBadRequest, "Cannot unlink a superadmin while SSO trusts unverified email addresses. Turn off Trust unverified email (OIDC_TRUST_UNVERIFIED_EMAIL) first")
 		return
 	}
@@ -493,7 +500,20 @@ func (h *UsersHandler) UnlinkOidc(w http.ResponseWriter, r *http.Request) {
 			"actor_id", callerID, "user_id", existing.ID, "email", existing.Email,
 			"previous_sub", strVal(existing.OidcSub, ""), "previous_provider", strVal(existing.OidcProvider, ""))
 	}
+	h.recordUnlinkAudit(r, callerID, existing.ID, true, map[string]any{
+		"previous_sub":      strVal(existing.OidcSub, ""),
+		"previous_provider": strVal(existing.OidcProvider, ""),
+	})
 	JSON(w, http.StatusOK, map[string]interface{}{"message": "SSO identity unlinked"})
+}
+
+func (h *UsersHandler) recordUnlinkAudit(r *http.Request, actorID, targetID string, success bool, metadata map[string]any) {
+	if h.audit == nil {
+		return
+	}
+	if err := h.audit.Record(r.Context(), newAuditEntry(r, auditEventUserOidcUnlink, actorID, targetID, success, metadata)); err != nil && h.log != nil {
+		h.log.Error("oidc unlink: audit write failed", "actor_id", actorID, "error", err)
+	}
 }
 
 func (h *UsersHandler) oidcTrustUnverifiedEmail(ctx context.Context) bool {
