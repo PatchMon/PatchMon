@@ -158,6 +158,16 @@ Get-NetTCPConnection -LocalPort 3389 -State Listen`,
 			"The server is at its concurrent RDP session limit. Close unused sessions and try again.",
 		],
 	},
+	max_sessions_context: {
+		title: "Too many concurrent RDP sessions for this PatchMon instance",
+		body: [
+			"This PatchMon instance is at its concurrent RDP session limit. Close unused sessions and try again.",
+		],
+	},
+	rate_limited: {
+		title: "Too many RDP connection attempts",
+		body: ["Wait a minute, then click Connect again."],
+	},
 	server_error: {
 		title: "An unexpected server error occurred",
 		body: [
@@ -198,9 +208,10 @@ Get-NetTCPConnection -LocalPort 3389 -State Listen`,
  * Pick a guidance code from either an HTTP error response (ticket creation)
  * or a Guacamole Status object (tunnel/client onerror).
  */
-const deriveCodeFromHttpError = (err) => {
+export const deriveCodeFromHttpError = (err) => {
 	const data = err?.response?.data;
 	if (data?.code && GUIDANCE[data.code]) return data.code;
+	if (err?.response?.status === 429) return "rate_limited";
 	const msg = (data?.error || err?.message || "").toLowerCase();
 	if (msg.includes("guacd")) return "guacd_unavailable";
 	if (
@@ -486,7 +497,11 @@ const RdpViewer = ({ host, isOpen }) => {
 			ticketData = res.data;
 		} catch (err) {
 			setIsConnecting(false);
-			const serverMsg = err.response?.data?.error || err.message || "";
+			const serverMsg =
+				err.response?.data?.error ||
+				err.response?.data?.message ||
+				err.message ||
+				"";
 			clearCredentials();
 			setError({
 				code: deriveCodeFromHttpError(err),

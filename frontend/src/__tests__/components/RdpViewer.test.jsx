@@ -7,6 +7,7 @@ vi.mock("guacamole-common-js", () => ({
 import {
 	classifyGuacUpstreamFailure,
 	deriveCodeFromGuacStatus,
+	deriveCodeFromHttpError,
 } from "../../components/RdpViewer";
 
 describe("RdpViewer error classification", () => {
@@ -65,5 +66,18 @@ describe("RdpViewer error classification", () => {
 				message: "upstream host not found",
 			}),
 		).toBe("rdp_port_unreachable");
+	});
+
+	it("maps the ticket rate limit and per-instance session cap to their own guidance", () => {
+		expect(
+			deriveCodeFromHttpError({
+				response: { status: 429, data: { message: "Too many requests." } },
+			}),
+		).toBe("rate_limited");
+		expect(
+			deriveCodeFromHttpError({
+				response: { status: 503, data: { code: "max_sessions_context" } },
+			}),
+		).toBe("max_sessions_context");
 	});
 });
