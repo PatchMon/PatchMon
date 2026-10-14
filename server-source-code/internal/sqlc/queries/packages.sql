@@ -171,3 +171,6 @@ SELECT
 FROM host_packages hp
 JOIN hosts h ON h.id = hp.host_id AND h.status = 'active'
 GROUP BY hp.host_id;
+
+-- name: ListPackageIDsByNames :many
+SELECT id, name FROM packages WHERE name = ANY(@names::text[]);

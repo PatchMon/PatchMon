@@ -28,6 +28,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import { usePageRefresh } from "../hooks/usePageRefresh";
 import { formatRelativeTime, packagesAPI } from "../utils/api";
+import { packageIdFromRouteParam } from "../utils/packageLinks";
 import {
 	hostOsType,
 	isBlockedUpdateReason,
@@ -108,9 +109,29 @@ const NotPatchableTag = ({ host }) => {
 	);
 };
 
+const PackageNotFound = () => (
+	<div className="card p-6">
+		<div className="text-center py-8">
+			<Package className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
+			<p className="text-secondary-500 dark:text-white">Package not found</p>
+			<p className="text-sm text-secondary-400 dark:text-white mt-2">
+				This package is not in the package inventory. Windows updates leave the
+				inventory once they are installed.
+			</p>
+			<Link
+				to="/packages"
+				className="btn-outline inline-flex items-center gap-2 mt-6 min-h-[44px]"
+			>
+				<ArrowLeft className="h-4 w-4" />
+				Back to Packages
+			</Link>
+		</div>
+	</div>
+);
+
 const PackageDetail = () => {
 	const { packageId } = useParams();
-	const decodedPackageId = decodeURIComponent(packageId || "");
+	const decodedPackageId = packageIdFromRouteParam(packageId);
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const toast = useToast();
@@ -186,6 +207,7 @@ const PackageDetail = () => {
 		queryFn: () =>
 			packagesAPI.getById(decodedPackageId).then((res) => res.data),
 		enabled: !!decodedPackageId,
+		retry: (count, err) => err?.response?.status !== 404 && count < 1,
 	});
 
 	// Fetch hosts that have this package (backend filters by search, paginates)
@@ -293,6 +315,10 @@ const PackageDetail = () => {
 		);
 	}
 
+	if (packageError?.response?.status === 404) {
+		return <PackageNotFound />;
+	}
+
 	if (packageError) {
 		return (
 			<div className="space-y-6">
@@ -321,16 +347,7 @@ const PackageDetail = () => {
 	}
 
 	if (!packageData) {
-		return (
-			<div className="space-y-6">
-				<div className="text-center py-8">
-					<Package className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
-					<p className="text-secondary-500 dark:text-white">
-						Package not found
-					</p>
-				</div>
-			</div>
-		);
+		return <PackageNotFound />;
 	}
 
 	const pkg = packageData;

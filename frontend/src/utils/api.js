@@ -422,13 +422,16 @@ export const hostsAPI = {
 // Packages API
 export const packagesAPI = {
 	getAll: (params = {}) => api.get("/packages", { params }),
-	getById: (packageId) => api.get(`/packages/${packageId}`),
+	getById: (packageId) => api.get(`/packages/${encodeURIComponent(packageId)}`),
 	getCategories: () => api.get("/packages/categories/list"),
 	getHosts: (packageId, params = {}) =>
-		api.get(`/packages/${packageId}/hosts`, { params }),
+		api.get(`/packages/${encodeURIComponent(packageId)}/hosts`, { params }),
 	getActivity: (packageId, params = {}) =>
-		api.get(`/packages/${packageId}/activity`, { params }).then((r) => r.data),
-	update: (packageId, data) => api.put(`/packages/${packageId}`, data),
+		api
+			.get(`/packages/${encodeURIComponent(packageId)}/activity`, { params })
+			.then((r) => r.data),
+	update: (packageId, data) =>
+		api.put(`/packages/${encodeURIComponent(packageId)}`, data),
 };
 
 // Utility functions

@@ -642,3 +642,32 @@ func (q *Queries) ListOrphanedPackages(ctx context.Context) ([]ListOrphanedPacka
 	}
 	return items, nil
 }
+
+const listPackageIDsByNames = `-- name: ListPackageIDsByNames :many
+SELECT id, name FROM packages WHERE name = ANY($1::text[])
+`
+
+type ListPackageIDsByNamesRow struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func (q *Queries) ListPackageIDsByNames(ctx context.Context, names []string) ([]ListPackageIDsByNamesRow, error) {
+	rows, err := q.db.Query(ctx, listPackageIDsByNames, names)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPackageIDsByNamesRow
+	for rows.Next() {
+		var i ListPackageIDsByNamesRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
