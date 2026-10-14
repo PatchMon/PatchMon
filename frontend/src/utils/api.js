@@ -430,8 +430,6 @@ export const packagesAPI = {
 		api
 			.get(`/packages/${encodeURIComponent(packageId)}/activity`, { params })
 			.then((r) => r.data),
-	update: (packageId, data) =>
-		api.put(`/packages/${encodeURIComponent(packageId)}`, data),
 };
 
 // Utility functions

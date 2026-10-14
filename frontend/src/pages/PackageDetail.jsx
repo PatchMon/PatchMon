@@ -28,7 +28,6 @@ import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import { usePageRefresh } from "../hooks/usePageRefresh";
 import { formatRelativeTime, packagesAPI } from "../utils/api";
-import { packageIdFromRouteParam } from "../utils/packageLinks";
 import {
 	hostOsType,
 	isBlockedUpdateReason,
@@ -115,8 +114,8 @@ const PackageNotFound = () => (
 			<Package className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
 			<p className="text-secondary-500 dark:text-white">Package not found</p>
 			<p className="text-sm text-secondary-400 dark:text-white mt-2">
-				This package is not in the package inventory. Windows updates leave the
-				inventory once they are installed.
+				This package is not in the package inventory. For example, Windows
+				updates leave the inventory once they are installed.
 			</p>
 			<Link
 				to="/packages"
@@ -131,7 +130,7 @@ const PackageNotFound = () => (
 
 const PackageDetail = () => {
 	const { packageId } = useParams();
-	const decodedPackageId = packageIdFromRouteParam(packageId);
+	const decodedPackageId = packageId ?? "";
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const toast = useToast();

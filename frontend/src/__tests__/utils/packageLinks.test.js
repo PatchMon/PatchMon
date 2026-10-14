@@ -1,8 +1,6 @@
+import { matchRoutes } from "react-router-dom";
 import { describe, expect, it } from "vitest";
-import {
-	packageDetailPath,
-	packageIdFromRouteParam,
-} from "../../utils/packageLinks";
+import { packageDetailPath } from "../../utils/packageLinks";
 
 const NAMES = [
 	"libstdc++6",
@@ -17,9 +15,8 @@ const NAMES = [
 	"2026-10 Security Update (KB5127648) (26300.9711)",
 ];
 
-// Mirrors react-router 6's decodePath for a single segment.
-const routerDecode = (segment) =>
-	decodeURIComponent(segment).replace(/\//g, "%2F");
+const routeParam = (path) =>
+	matchRoutes([{ path: "/packages/:packageId" }], path)?.[0]?.params.packageId;
 
 describe("packageDetailPath", () => {
 	it("links by ID when the name is in the inventory", () => {
@@ -43,15 +40,7 @@ describe("packageDetailPath", () => {
 
 	it.each(NAMES)("round-trips %s through the router param", (name) => {
 		const path = packageDetailPath(name);
-		const segment = path.slice("/packages/".length);
-		expect(segment).not.toMatch(/[/?#]/);
-		expect(packageIdFromRouteParam(routerDecode(segment))).toBe(name);
-	});
-});
-
-describe("packageIdFromRouteParam", () => {
-	it("does not throw on a literal percent sign", () => {
-		expect(packageIdFromRouteParam("50%")).toBe("50%");
-		expect(packageIdFromRouteParam(undefined)).toBe("");
+		expect(path.slice("/packages/".length)).not.toMatch(/[/?#]/);
+		expect(routeParam(path)).toBe(name);
 	});
 });

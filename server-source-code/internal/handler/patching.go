@@ -1709,16 +1709,26 @@ func patchRunToResponse(r *db.GetPatchRunByIDRow) map[string]interface{} {
 }
 
 func (h *PatchingHandler) attachPackageIDs(ctx context.Context, runs []map[string]interface{}) {
-	var names []string
-	for _, m := range runs {
-		names = append(names, runPackageNames(m)...)
-	}
-	ids, err := h.patchRuns.PackageIDsByName(ctx, names)
+	ids, err := h.patchRuns.PackageIDsByName(ctx, uniqueRunPackageNames(runs))
 	if err != nil {
 		h.log.Warn("patching: package ID lookup failed", "error", err)
 		return
 	}
 	setRunPackageIDs(runs, ids)
+}
+
+func uniqueRunPackageNames(runs []map[string]interface{}) []string {
+	seen := make(map[string]struct{})
+	var names []string
+	for _, m := range runs {
+		for _, n := range runPackageNames(m) {
+			if _, ok := seen[n]; !ok {
+				seen[n] = struct{}{}
+				names = append(names, n)
+			}
+		}
+	}
+	return names
 }
 
 func setRunPackageIDs(runs []map[string]interface{}, ids map[string]string) {

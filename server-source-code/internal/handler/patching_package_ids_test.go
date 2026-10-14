@@ -31,3 +31,17 @@ func TestSetRunPackageIDsOnlyMapsInventoryNames(t *testing.T) {
 		t.Errorf("empty package_ids = %v, want %v", got, want)
 	}
 }
+
+func TestUniqueRunPackageNames(t *testing.T) {
+	name := "libstdc++6"
+	runs := []map[string]interface{}{
+		{"package_name": &name, "package_names": []string{"libstdc++6", "openssl"}, "packages_affected": []string{"libstdc++6", "openssl", "libssl3t64"}},
+		{"packages_affected": []string{"openssl", "Mozilla Firefox (x64 en-GB)"}},
+		{},
+	}
+	got := uniqueRunPackageNames(runs)
+	want := []string{"libstdc++6", "openssl", "libssl3t64", "Mozilla Firefox (x64 en-GB)"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
