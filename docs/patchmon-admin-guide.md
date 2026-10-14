@@ -4414,7 +4414,7 @@ PatchMon 2.0 lets you open a full RDP session to a **Windows host** from your br
 - From the PatchMon server into a `guacd` sidecar, which speaks the RDP protocol.
 - From `guacd` through a short-lived TCP proxy to the host's own PatchMon agent, which forwards to `localhost:3389` on the Windows host.
 
-This is a one-time ticketed connection with keyboard, mouse, and clipboard support. Screen size is configurable, and NLA/TLS/legacy RDP is auto-negotiated.
+This is a one-time ticketed connection with keyboard, mouse, and clipboard support. The remote desktop follows the size of the RDP panel, and NLA/TLS/legacy RDP is auto-negotiated.
 
 RDP is provided under the **remote_access** capability module.
 
@@ -4482,8 +4482,9 @@ Before you can open an RDP session to a host, all of these must be true:
 1. Go to **Hosts** and click the Windows host.
 2. On **Host Detail**, open the **Remote Access** area and click **Open RDP** (or the RDP icon in the toolbar).
 3. Enter the Windows **username** and **password** for the account to sign in as.
-4. Optionally adjust the **Screen size**. Defaults to `1024 × 768`. Allowed range is `320–8192` on each axis; values outside this range are clamped.
-5. Click **Connect**.
+4. Click **Connect**.
+
+There is no screen-size setting. The session opens at the size of the RDP panel and follows it when you resize the browser window or go full-screen.
 
 The server then:
 
@@ -4518,9 +4519,11 @@ You never see or handle the ticket directly; the UI requests it under the hood w
 ### Keyboard layouts and clipboard
 
 - **Keyboard**: the Guacamole client maps the browser's keydown events to scancodes. For most Latin keyboards (en-GB, en-US) this "just works". For non-Latin layouts, match the Windows layout to the browser's. Guacamole has no per-session keyboard-layout selector in PatchMon 2.0.
-- **Clipboard**: bidirectional text clipboard is supported via Guacamole's native clipboard channel. Copy in Windows, paste in the browser, or vice versa. Rich clipboard (images, file lists) is not supported.
+- **Clipboard**: text only, in both directions. Rich clipboard (images, file lists) is not supported.
+  - **Browser to Windows**: press `Ctrl+V` (`Cmd+V` on macOS) in the RDP panel. PatchMon copies your browser clipboard to Windows and then sends `Ctrl+V`, so Windows pastes the text you copied locally.
+  - **Windows to browser**: text you copy in Windows is placed on your browser clipboard automatically when PatchMon is served over HTTPS. Browsers block automatic clipboard writes on plain HTTP, so on an HTTP deployment the copied text appears in a **Remote clipboard** box above the desktop instead; select it and copy it from there.
 - **Mouse**: primary, secondary, and wheel. Mouse-wheel-click middle button is supported.
-- **Full-screen**: toggle via your browser's F11/fullscreen mode. Guacamole resizes the RDP session to the browser viewport where the host allows dynamic resolution.
+- **Full-screen and resizing**: use the full-screen button in the RDP panel. When the panel changes size, PatchMon asks Windows to change the session resolution to match, about half a second after you stop resizing. Hosts that do not support dynamic resolution keep their original size, and the desktop is scaled to fit.
 
 Printer redirection, audio, drive mapping, and USB forwarding are **not** enabled in 2.0.
 

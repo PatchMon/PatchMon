@@ -22,6 +22,7 @@ import {
 	Monitor,
 	Power,
 	RefreshCw,
+	X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { rdpAPI } from "../utils/api";
@@ -33,6 +34,23 @@ const GUAC_STATUS_CLIENT_FORBIDDEN = 0x0303; // 771
 const GUAC_STATUS_RESOURCE_NOT_FOUND = 0x0204; // 516 — missing ticket/resource
 const GUAC_STATUS_UPSTREAM_NOT_FOUND = 0x0207; // 519 — guacd could not open the upstream RDP session
 const GUAC_STATUS_UPSTREAM_UNAVAILABLE = 0x0208; // 520 — upstream reached, session setup failed
+
+const KEYSYM_V = 0x76;
+const KEYSYM_V_UPPER = 0x56;
+const KEYSYM_CTRL_L = 0xffe3;
+const CTRL_KEYSYMS = [0xffe3, 0xffe4];
+const COMMAND_KEYSYMS = [0xffe7, 0xffe8, 0xffeb, 0xffec];
+const PASTE_MODIFIER_KEYSYMS = [...CTRL_KEYSYMS, ...COMMAND_KEYSYMS];
+const PASTE_FALLBACK_MS = 300;
+const RESIZE_DEBOUNCE_MS = 400;
+const MIN_REMOTE_DIMENSION = 200;
+
+const evenFloor = (n) => Math.floor(n / 2) * 2;
+
+const measureDisplaySize = (element) => ({
+	width: evenFloor(element?.offsetWidth || 1024),
+	height: evenFloor(element?.offsetHeight || 768),
+});
 
 const SECURITY_NEGOTIATION_PATTERNS = [
 	"wrong security type",
@@ -391,12 +409,18 @@ const RdpViewer = ({ host, isOpen }) => {
 	const keyboardRef = useRef(null);
 	const resizeObserverRef = useRef(null);
 	const pasteHandlerRef = useRef(null);
+	const pendingPasteKeyRef = useRef(null);
+	const flushPendingPasteKeyRef = useRef(null);
+	const pasteFallbackTimerRef = useRef(null);
+	const resizeTimerRef = useRef(null);
+	const sentSizeRef = useRef(null);
 
 	const [isConnecting, setIsConnecting] = useState(false);
 	const [isConnected, setIsConnected] = useState(false);
 	const [error, setError] = useState(null); // { code, message } | null
 	const [isFullscreen, setIsFullscreen] = useState(false);
 	const [requirementsOpen, setRequirementsOpen] = useState(false);
+	const [remoteClipboard, setRemoteClipboard] = useState(null);
 	const [credentials, setCredentials] = useState({
 		username: "",
 		password: "",
@@ -432,6 +456,11 @@ const RdpViewer = ({ host, isOpen }) => {
 
 	const disconnect = useCallback(
 		(options = {}) => {
+			window.clearTimeout(pasteFallbackTimerRef.current);
+			window.clearTimeout(resizeTimerRef.current);
+			pendingPasteKeyRef.current = null;
+			sentSizeRef.current = null;
+			setRemoteClipboard(null);
 			if (pasteHandlerRef.current && displayRef.current) {
 				displayRef.current.removeEventListener(
 					"paste",
@@ -502,9 +531,8 @@ const RdpViewer = ({ host, isOpen }) => {
 		setError(null);
 		setIsConnecting(true);
 
-		// Measure the display container to request matching dimensions
-		const containerWidth = displayRef.current?.offsetWidth || 1024;
-		const containerHeight = displayRef.current?.offsetHeight || 768;
+		const { width: containerWidth, height: containerHeight } =
+			measureDisplaySize(displayRef.current);
 
 		let ticketData;
 		try {
@@ -546,6 +574,7 @@ const RdpViewer = ({ host, isOpen }) => {
 		const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
 		const baseUrl = `${protocol}//${window.location.host}${websocketTunnelUrl}`;
 		const connectData = `ticket=${encodeURIComponent(ticket)}&width=${width}&height=${height}`;
+		sentSizeRef.current = { width, height };
 
 		try {
 			const tunnel = new Guacamole.WebSocketTunnel(baseUrl);
@@ -631,11 +660,15 @@ const RdpViewer = ({ host, isOpen }) => {
 					clipboardData += text;
 				};
 				reader.onend = () => {
-					if (clipboardData && navigator.clipboard?.writeText) {
-						navigator.clipboard.writeText(clipboardData).catch(() => {
-							// Clipboard write may fail without user gesture
-						});
+					if (!clipboardData) return;
+					if (!navigator.clipboard?.writeText) {
+						setRemoteClipboard(clipboardData);
+						return;
 					}
+					navigator.clipboard
+						.writeText(clipboardData)
+						.then(() => setRemoteClipboard(null))
+						.catch(() => setRemoteClipboard(clipboardData));
 				};
 			};
 
@@ -648,6 +681,7 @@ const RdpViewer = ({ host, isOpen }) => {
 
 				const display = client.getDisplay();
 				const element = display.getElement();
+				display.onresize = () => scaleDisplay();
 
 				const mouse = new Guacamole.Mouse(element);
 				mouse.onmousedown =
@@ -665,18 +699,76 @@ const RdpViewer = ({ host, isOpen }) => {
 						};
 				mouseRef.current = mouse;
 
+				// Ctrl/Cmd+V is let through to the browser so its paste event can
+				// sync the local clipboard before the key reaches the remote.
+				const heldKeys = new Set();
+				let translatedPasteKey = null;
+				const flushPendingPasteKey = () => {
+					window.clearTimeout(pasteFallbackTimerRef.current);
+					const pending = pendingPasteKeyRef.current;
+					if (pending === null) return;
+					pendingPasteKeyRef.current = null;
+					const commandHeld = COMMAND_KEYSYMS.filter((k) => heldKeys.has(k));
+					if (
+						commandHeld.length > 0 &&
+						!CTRL_KEYSYMS.some((k) => heldKeys.has(k))
+					) {
+						// Windows reads Win+V as clipboard history, so macOS Cmd+V is sent as Ctrl+V.
+						client.sendKeyEvent(1, KEYSYM_CTRL_L);
+						for (const k of commandHeld) client.sendKeyEvent(0, k);
+						translatedPasteKey = pending;
+					}
+					client.sendKeyEvent(1, pending);
+				};
+				flushPendingPasteKeyRef.current = flushPendingPasteKey;
+
 				const keyboard = new Guacamole.Keyboard(displayRef.current);
 				keyboard.onkeydown = (keysym) => {
+					heldKeys.add(keysym);
+					const isPaste =
+						(keysym === KEYSYM_V || keysym === KEYSYM_V_UPPER) &&
+						PASTE_MODIFIER_KEYSYMS.some((k) => heldKeys.has(k));
+					if (isPaste && pendingPasteKeyRef.current === null) {
+						pendingPasteKeyRef.current = keysym;
+						pasteFallbackTimerRef.current = window.setTimeout(
+							flushPendingPasteKey,
+							PASTE_FALLBACK_MS,
+						);
+						return true;
+					}
 					client.sendKeyEvent(1, keysym);
+					return false;
 				};
 				keyboard.onkeyup = (keysym) => {
+					heldKeys.delete(keysym);
+					if (keysym === pendingPasteKeyRef.current) flushPendingPasteKey();
 					client.sendKeyEvent(0, keysym);
+					if (keysym === translatedPasteKey) {
+						translatedPasteKey = null;
+						client.sendKeyEvent(0, KEYSYM_CTRL_L);
+					}
 				};
 				keyboardRef.current = keyboard;
 
-				// Observe container resize and scale display accordingly
 				const observer = new ResizeObserver(() => {
 					scaleDisplay();
+					window.clearTimeout(resizeTimerRef.current);
+					resizeTimerRef.current = window.setTimeout(() => {
+						const size = {
+							width: evenFloor(displayRef.current?.offsetWidth ?? 0),
+							height: evenFloor(displayRef.current?.offsetHeight ?? 0),
+						};
+						const last = sentSizeRef.current;
+						if (
+							size.width < MIN_REMOTE_DIMENSION ||
+							size.height < MIN_REMOTE_DIMENSION ||
+							(last && last.width === size.width && last.height === size.height)
+						) {
+							return;
+						}
+						sentSizeRef.current = size;
+						clientRef.current?.sendSize(size.width, size.height);
+					}, RESIZE_DEBOUNCE_MS);
 				});
 				observer.observe(displayRef.current);
 				resizeObserverRef.current = observer;
@@ -691,6 +783,7 @@ const RdpViewer = ({ host, isOpen }) => {
 					writer.sendText(text);
 					writer.sendEnd();
 				}
+				flushPendingPasteKeyRef.current?.();
 			};
 			pasteHandlerRef.current = handlePaste;
 			displayRef.current?.addEventListener("paste", handlePaste);
@@ -752,7 +845,7 @@ const RdpViewer = ({ host, isOpen }) => {
 	if (!host || !isOpen) return null;
 
 	return (
-		<div className="rdp-viewer-container flex flex-col h-full min-h-[300px] bg-secondary-800 rounded-lg overflow-hidden">
+		<div className="rdp-viewer-container flex flex-col h-[75vh] min-h-[540px] bg-secondary-800 rounded-lg overflow-hidden">
 			<div className="flex items-center justify-between px-4 py-3 border-b border-secondary-600 shrink-0">
 				<div className="flex items-center gap-2">
 					<Monitor className="h-5 w-5 text-primary-500" />
@@ -846,6 +939,35 @@ const RdpViewer = ({ host, isOpen }) => {
 				</div>
 			</div>
 
+			{isConnected && remoteClipboard !== null && (
+				<div className="flex items-start gap-2 px-4 py-2 border-b border-secondary-600 bg-secondary-900/60 shrink-0">
+					<div className="flex-1 min-w-0">
+						<label
+							htmlFor="rdp-remote-clipboard"
+							className="block text-xs text-secondary-300 mb-1"
+						>
+							Remote clipboard (select and copy; automatic copy needs HTTPS)
+						</label>
+						<textarea
+							id="rdp-remote-clipboard"
+							readOnly
+							rows={2}
+							value={remoteClipboard}
+							onFocus={(e) => e.target.select()}
+							className="w-full px-2 py-1 text-xs font-mono rounded bg-secondary-800 text-white border border-secondary-600 resize-y"
+						/>
+					</div>
+					<button
+						type="button"
+						onClick={() => setRemoteClipboard(null)}
+						aria-label="Dismiss remote clipboard"
+						className="p-1.5 rounded hover:bg-secondary-600 text-secondary-300 hover:text-white min-h-[44px] md:min-h-0"
+					>
+						<X className="h-4 w-4" />
+					</button>
+				</div>
+			)}
+
 			<div className="flex-1 min-h-0 flex flex-col relative">
 				{error && (
 					<div className="absolute inset-0 flex items-start justify-center bg-secondary-900/95 z-10 p-4 overflow-y-auto">
@@ -885,7 +1007,7 @@ const RdpViewer = ({ host, isOpen }) => {
 					ref={displayRef}
 					// biome-ignore lint/a11y/noNoninteractiveTabindex: RDP display container needs focus for keyboard input capture
 					tabIndex={0}
-					className="flex-1 min-h-[200px] bg-black overflow-hidden outline-none"
+					className="flex-1 min-h-0 bg-black overflow-hidden outline-none"
 					style={{ cursor: isConnected ? "default" : "not-allowed" }}
 				/>
 			</div>
