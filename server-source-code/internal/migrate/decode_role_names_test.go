@@ -42,6 +42,16 @@ func TestDecodeEncodedRoleNames(t *testing.T) {
 	role("Two%20C(x)"+sfx, false)
 	twoA := user("Two%20C%28x%29" + sfx)
 	twoB := user("Two%20C(x)" + sfx)
+	builtInLookalikes := []string{"%61dmin", "superadmi%6E", "%20User", "Host%5Fmanager"}
+	lookalikeUsers := map[string]string{}
+	for _, n := range builtInLookalikes {
+		role(n, true)
+		lookalikeUsers[n] = user(n)
+	}
+	var adminBefore string
+	if err := d.RawQueryRow(ctx, `SELECT (to_jsonb(rp) - 'updated_at')::text FROM role_permissions rp WHERE role = 'admin'`).Scan(&adminBefore); err != nil {
+		t.Fatal(err)
+	}
 	untouched := []string{"bad%ZZ" + sfx, "50%" + sfx, "x%FF" + sfx, "plain_role" + sfx}
 	for _, n := range untouched {
 		role(n, false)
@@ -51,6 +61,9 @@ func TestDecodeEncodedRoleNames(t *testing.T) {
 	}
 	bystander := user("plain_role" + sfx)
 	for _, id := range []string{renamed, merged, kept, twoA, twoB, bystander} {
+		session(id)
+	}
+	for _, id := range lookalikeUsers {
 		session(id)
 	}
 	settingsID := uuid.NewString()
@@ -131,6 +144,26 @@ func TestDecodeEncodedRoleNames(t *testing.T) {
 		if n := sessions(id); n != 1 {
 			t.Errorf("user %s was not moved but has %d session(s), want 1", id, n)
 		}
+	}
+
+	for n, id := range lookalikeUsers {
+		var exists bool
+		if err := d.RawQueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM role_permissions WHERE role = $1)`, n).Scan(&exists); err != nil || !exists {
+			t.Errorf("role %q decoding to a built-in role was renamed or merged (err %v)", n, err)
+		}
+		if name, _ := userRole(id); name != n {
+			t.Errorf("user on %q moved to %q", n, name)
+		}
+		if c := sessions(id); c != 1 {
+			t.Errorf("user on %q lost their session: %d", n, c)
+		}
+	}
+	var adminAfter string
+	if err := d.RawQueryRow(ctx, `SELECT (to_jsonb(rp) - 'updated_at')::text FROM role_permissions rp WHERE role = 'admin'`).Scan(&adminAfter); err != nil {
+		t.Fatal(err)
+	}
+	if adminAfter != adminBefore {
+		t.Errorf("built-in admin role changed:\n%s\n%s", adminBefore, adminAfter)
 	}
 
 	var defRole, oidcRole string

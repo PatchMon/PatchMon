@@ -31,6 +31,10 @@ BEGIN
     FOR r IN SELECT * FROM role_permissions WHERE role ~ '%[0-9A-Fa-f]{2}' ORDER BY role LOOP
         decoded := pm_tmp_pct_decode(r.role);
         CONTINUE WHEN decoded = r.role OR btrim(decoded) = '';
+        IF lower(btrim(decoded)) IN ('superadmin', 'admin', 'host_manager', 'readonly', 'user') THEN
+            RAISE WARNING 'role % not renamed: it decodes to the built-in role %', r.role, decoded;
+            CONTINUE;
+        END IF;
 
         SELECT * INTO existing FROM role_permissions WHERE role = decoded;
         IF FOUND THEN
