@@ -1008,14 +1008,6 @@ export default function PatchWizard({
 				!excludedFromSubmit.includes(t.id),
 		);
 		if (pending.length === 0) {
-			if (submittedRuns.length === 0 && excludedFromSubmit.length > 0) {
-				setError(
-					staleValidationIds.length === 0
-						? "Every selected host is still validating. Patch them from Runs & History once validation finishes."
-						: "None of the selected hosts can be submitted. See the notes above.",
-				);
-				return;
-			}
 			finishAndClose(submitResultByTarget);
 			return;
 		}
@@ -2791,7 +2783,11 @@ export default function PatchWizard({
 								type="button"
 								onClick={handleConfirm}
 								disabled={
-									isPatching || selectedTargetIds.size === 0 || !scopeValid
+									isPatching ||
+									selectedTargetIds.size === 0 ||
+									!scopeValid ||
+									(submittedRuns.length === 0 &&
+										excludedFromSubmit.length >= selectedTargetIds.size)
 								}
 								className="btn-primary inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
 							>

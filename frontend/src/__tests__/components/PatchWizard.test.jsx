@@ -1013,7 +1013,7 @@ describe("PatchWizard validation lifecycle", () => {
 		expect(patchingAPI.trigger).toHaveBeenCalledTimes(2);
 	});
 
-	it("refuses to submit when every host is still validating", async () => {
+	it("disables submit when every host is still validating", async () => {
 		pollDryRunUntilDone.mockImplementation(hangUntilAborted());
 		renderOpen(props());
 		await startValidation();
@@ -1021,9 +1021,11 @@ describe("PatchWizard validation lifecycle", () => {
 			screen.getByRole("button", { name: "Continue without waiting" }),
 		);
 		await nextUntilConfirm();
-		await clickAndSettle(screen.getByRole("button", { name: /Queue & patch/ }));
 		expect(
-			screen.getByText(/Every selected host is still validating/),
+			screen.getByRole("button", { name: /Queue & patch/ }),
+		).toBeDisabled();
+		expect(
+			screen.getByText(/still validating and will be left out/),
 		).toBeInTheDocument();
 		expect(patchingAPI.approveRun).not.toHaveBeenCalled();
 		expect(patchingAPI.trigger).toHaveBeenCalledTimes(2);
@@ -1144,8 +1146,8 @@ describe("PatchWizard validation lifecycle", () => {
 				screen.getByText(/Runs & History, then patch again/),
 			).toBeInTheDocument();
 			expect(
-				screen.getByText(/None of the selected hosts can be submitted/),
-			).toBeInTheDocument();
+				screen.getByRole("button", { name: /Queue & patch/ }),
+			).toBeDisabled();
 			expect(screen.queryByText(/will patch without validation/)).toBeNull();
 			expect(patchingAPI.approveRun).not.toHaveBeenCalled();
 			expect(patchingAPI.trigger).toHaveBeenCalledTimes(1);
