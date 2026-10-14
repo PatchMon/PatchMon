@@ -13,7 +13,6 @@ import (
 
 	"log/slog"
 
-	"github.com/PatchMon/PatchMon/server-source-code/internal/clientip"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
@@ -883,10 +882,7 @@ func buildDeviceLabel(ua string) string {
 // Either way RemoteAddr is the correct source, and reading the header here
 // would reintroduce lockout evasion via a client-supplied leftmost entry.
 func (h *AuthHandler) clientIP(r *http.Request) string {
-	if ip := clientip.FromRequest(r); ip != "" {
-		return ip
-	}
-	return r.RemoteAddr
+	return requestClientIP(r)
 }
 
 // maxLoginIdentifierBytes caps the username accepted at sign-in. 254 is the
