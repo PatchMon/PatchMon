@@ -63,6 +63,12 @@ const REUSABLE_VALIDATION_STATUSES = [
 	"timeout",
 ];
 
+const approveRefusedMessage = (err) =>
+	err?.response?.status === 400 &&
+	/^Only validated, pending-validation/.test(err.response.data?.error || "")
+		? "The host came back and is validating now. Patch it from Runs & History once validation finishes."
+		: null;
+
 const stillRunningRow = (patchRunId) => ({
 	status: "still_running",
 	packages_affected: [],
@@ -792,8 +798,8 @@ export default function PatchWizard({
 		[selectedTargets, validationByTarget],
 	);
 
-	// A pending validation for a different selection keeps the host's one
-	// active run, so a fresh trigger would be refused.
+	// An offline host's pending validation for a different selection still
+	// holds the host's one active run, so a fresh trigger would be refused.
 	const staleValidationIds = useMemo(
 		() =>
 			selectedTargets
@@ -801,7 +807,7 @@ export default function PatchWizard({
 					const v = validationByTarget[t.id];
 					return (
 						v?.patch_run_id &&
-						REUSABLE_VALIDATION_STATUSES.includes(v.status) &&
+						(v.status === "timeout" || v.status === "pending_validation") &&
 						v.selection !== selectionKey(t)
 					);
 				})
@@ -908,7 +914,7 @@ export default function PatchWizard({
 							);
 					runId = res?.patch_run_id;
 					if (signal.aborted) {
-						if (runId) {
+						if (runId && validationAbort.current?.signal === signal) {
 							setValidationByTarget((prev) => ({
 								...prev,
 								[target.id]: stillRunningRow(runId),
@@ -1126,7 +1132,7 @@ export default function PatchWizard({
 				attempt[target.id] = {
 					status: "failed",
 					hostId: target.hostId,
-					error: patchErrorMessage(err),
+					error: approveRefusedMessage(err) ?? patchErrorMessage(err),
 				};
 			}
 		}
@@ -2283,7 +2289,9 @@ export default function PatchWizard({
 							{!isApprove &&
 								(() => {
 									const offline = selectedTargets.filter(
-										(t) => validationByTarget[t.id]?.status === "timeout",
+										(t) =>
+											validationByTarget[t.id]?.status === "timeout" &&
+											!staleValidationIds.includes(t.id),
 									);
 									if (offline.length === 0) return null;
 									return (
@@ -2294,9 +2302,9 @@ export default function PatchWizard({
 													{offline.length} host
 													{offline.length !== 1 ? "s" : ""}
 												</strong>{" "}
-												did not respond to validation and may be offline. The
-												patch will queue but may not run until the host comes
-												back online.
+												did not respond to validation and may be offline. They
+												will patch without validation, once the host is back
+												online.
 											</p>
 										</div>
 									);
@@ -2322,12 +2330,12 @@ export default function PatchWizard({
 									<AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
 									<p className="text-sm text-amber-700 dark:text-amber-300">
 										<strong>
-											{staleValidationIds.length} host
-											{staleValidationIds.length !== 1 ? "s were" : " was"}
+											{staleValidationIds.length} offline host
+											{staleValidationIds.length !== 1 ? "s have" : " has"}
 										</strong>{" "}
-										validated for a different selection and will be left out.
-										Re-run validation to include{" "}
-										{staleValidationIds.length !== 1 ? "them" : "it"}.
+										a pending validation for a different selection and will be
+										left out. Cancel or delete that validation in Runs &amp;
+										History, then patch again.
 									</p>
 								</div>
 							)}
@@ -2457,11 +2465,12 @@ export default function PatchWizard({
 													Validation skipped
 												</span>
 											)}
-											{v?.status === "timeout" && (
-												<span className="text-xs px-2 py-0.5 rounded bg-secondary-100 text-secondary-600 dark:bg-secondary-600 dark:text-secondary-300">
-													Host offline
-												</span>
-											)}
+											{v?.status === "timeout" &&
+												!staleValidationIds.includes(target.id) && (
+													<span className="text-xs px-2 py-0.5 rounded bg-secondary-100 text-secondary-600 dark:bg-secondary-600 dark:text-secondary-300">
+														Host offline, will patch without validation
+													</span>
+												)}
 											{v?.status === "still_running" && (
 												<span className="text-xs px-2 py-0.5 rounded bg-primary-100 text-primary-700 dark:bg-primary-800 dark:text-primary-200">
 													Still validating

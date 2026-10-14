@@ -1059,17 +1059,23 @@ describe("PatchWizard validation lifecycle", () => {
 				initialStep: 1,
 			});
 
-		const validateThenMaybeDeselect = async (deselect) => {
-			pollDryRunUntilDone.mockResolvedValue({
-				...validated,
-				packages_affected: ["pkg-a", "pkg-b"],
-			});
+		const offlineResult = {
+			status: "timeout",
+			packages_affected: [],
+			shell_output: "",
+			error: "Validation skipped (host offline)",
+		};
+
+		const validateAndSubmit = async (result, { deselect = false } = {}) => {
+			pollDryRunUntilDone.mockResolvedValue(result);
 			renderOpen(pkgProps());
 			await clickAndSettle(
 				screen.getByRole("button", { name: "Run validation" }),
 			);
 			await waitFor(() =>
-				expect(screen.getByText("Clean")).toBeInTheDocument(),
+				expect(
+					screen.getByText(result.status === "timeout" ? "Offline" : "Clean"),
+				).toBeInTheDocument(),
 			);
 			if (deselect) {
 				await clickAndSettle(screen.getByRole("button", { name: /Back/ }));
@@ -1083,8 +1089,13 @@ describe("PatchWizard validation lifecycle", () => {
 			);
 		};
 
+		const cleanResult = {
+			...validated,
+			packages_affected: ["pkg-a", "pkg-b"],
+		};
+
 		it("approves the validation run when the selection is unchanged", async () => {
-			await validateThenMaybeDeselect(false);
+			await validateAndSubmit(cleanResult);
 			await waitFor(() =>
 				expect(patchingAPI.approveRun).toHaveBeenCalledTimes(1),
 			);
@@ -1092,16 +1103,70 @@ describe("PatchWizard validation lifecycle", () => {
 			expect(patchingAPI.trigger).toHaveBeenCalledTimes(1);
 		});
 
-		it("leaves a host out when its selection changed after validation", async () => {
-			await validateThenMaybeDeselect(true);
+		it("triggers afresh when a validated selection changed", async () => {
+			await validateAndSubmit(cleanResult, { deselect: true });
+			await waitFor(() => expect(patchingAPI.trigger).toHaveBeenCalledTimes(2));
+			expect(patchingAPI.approveRun).not.toHaveBeenCalled();
+			const [hostId, patchType, , packages, opts] =
+				patchingAPI.trigger.mock.calls[1];
+			expect([hostId, patchType, packages]).toEqual([
+				"h1",
+				"patch_package",
+				["pkg-a"],
+			]);
+			expect(opts.dry_run).toBeUndefined();
+		});
+
+		it("says an offline host will patch without validation", async () => {
+			pollDryRunUntilDone.mockResolvedValue(offlineResult);
+			renderOpen(pkgProps());
+			await clickAndSettle(
+				screen.getByRole("button", { name: "Run validation" }),
+			);
+			await waitFor(() =>
+				expect(screen.getByText("Offline")).toBeInTheDocument(),
+			);
+			await nextUntilConfirm();
 			expect(
-				screen.getByText(/validated for a different selection/),
+				screen.getByText("Host offline, will patch without validation"),
+			).toBeInTheDocument();
+			expect(
+				screen.getByText(/will patch without validation, once/),
+			).toBeInTheDocument();
+		});
+
+		it("leaves out an offline host whose selection changed", async () => {
+			await validateAndSubmit(offlineResult, { deselect: true });
+			expect(
+				screen.getByText(/pending validation for a different selection/),
+			).toBeInTheDocument();
+			expect(
+				screen.getByText(/Runs & History, then patch again/),
 			).toBeInTheDocument();
 			expect(
 				screen.getByText(/None of the selected hosts can be submitted/),
 			).toBeInTheDocument();
+			expect(screen.queryByText(/will patch without validation/)).toBeNull();
 			expect(patchingAPI.approveRun).not.toHaveBeenCalled();
 			expect(patchingAPI.trigger).toHaveBeenCalledTimes(1);
+		});
+
+		it("explains when the host came back before the approval", async () => {
+			patchingAPI.approveRun.mockRejectedValue({
+				response: {
+					status: 400,
+					data: {
+						error:
+							"Only validated, pending-validation, or pending-approval runs can be approved",
+					},
+				},
+			});
+			await validateAndSubmit(offlineResult);
+			await waitFor(() =>
+				expect(
+					screen.getByText(/The host came back and is validating now/),
+				).toBeInTheDocument(),
+			);
 		});
 	});
 });
