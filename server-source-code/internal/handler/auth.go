@@ -50,6 +50,7 @@ type AuthHandler struct {
 	permissions *store.PermissionsStore
 	// Resolves the calling context's own settings; `resolved` is startup-only.
 	cfgResolver *hostctx.ConfigResolver
+	tfaReplay   *store.TfaReplayStore
 }
 
 // WithConfigResolver wires the per-context config resolver.
@@ -435,20 +436,13 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	secret := strings.TrimSpace(*user.TfaSecret)
-	verified := util.VerifyTOTP(secret, req.Token, util.TOTPWindow)
-
-	if !verified {
-		hashed := util.ParseBackupCodesJSON(user.TfaBackupCodes)
-		if len(hashed) > 0 {
-			valid, idx := util.VerifyBackupCode(req.Token, hashed)
-			if valid {
-				verified = true
-				hashed = append(hashed[:idx], hashed[idx+1:]...)
-				updated := util.EncodeBackupCodesJSON(hashed)
-				_ = h.users.UpdateTfaBackupCodes(r.Context(), user.ID, &updated)
-			}
+	verified, err := verifyTfaCode(r.Context(), h.users, h.tfaReplay, user, req.Token)
+	if err != nil {
+		if h.log != nil {
+			h.log.Error("auth: tfa verification failed", "user_id", user.ID, "error", err)
 		}
+		Error(w, http.StatusInternalServerError, "Two-factor verification unavailable")
+		return
 	}
 
 	if !verified {

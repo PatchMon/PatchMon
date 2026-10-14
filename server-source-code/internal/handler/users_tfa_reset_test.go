@@ -40,6 +40,7 @@ type tfaResetHarness struct {
 	trusted  *store.TrustedDevicesStore
 	perms    *store.PermissionsStore
 	lockout  *store.TfaLockoutStore
+	replay   *store.TfaReplayStore
 	h        *UsersHandler
 }
 
@@ -61,8 +62,8 @@ func newTfaResetHarness(t *testing.T, provider database.DBProvider, d *database.
 	trusted := store.NewTrustedDevicesStore(provider)
 	perms := store.NewPermissionsStore(provider)
 	h := NewUsersHandler(users, sessions, trusted, perms, nil, nil, nil, provider, nil, slog.New(slog.NewTextHandler(io.Discard, nil))).
-		WithTfaReset(lockout, store.NewAuditLogsStore(provider))
-	return &tfaResetHarness{t: t, d: d, users: users, sessions: sessions, trusted: trusted, perms: perms, lockout: lockout, h: h}
+		WithTfaReset(lockout, store.NewAuditLogsStore(provider), store.NewTfaReplayStore(&hostctx.RedisResolver{Default: rc}))
+	return &tfaResetHarness{t: t, d: d, users: users, sessions: sessions, trusted: trusted, perms: perms, lockout: lockout, replay: h.tfaReplay, h: h}
 }
 
 func (x *tfaResetHarness) mkUser(ctx context.Context, role string, withTfa bool) *tfaTestUser {
@@ -287,6 +288,20 @@ func TestAdminResetTfa(t *testing.T) {
 		}
 		if rec := x.post(ctx, admin, t2.ID, body); rec.Code != http.StatusForbidden {
 			t.Fatalf("reused backup code: got %d %s", rec.Code, rec.Body.String())
+		}
+		x.assertTfaIntact(ctx, t2)
+	})
+
+	t.Run("an actor's TOTP code works once", func(t *testing.T) {
+		admin := x.mkUser(ctx, "admin", true)
+		t1 := x.mkUser(ctx, "user", true)
+		t2 := x.mkUser(ctx, "user", true)
+		body := map[string]string{"password": tfaResetTestPassword, "tfaToken": currentCode(t, admin.secret)}
+		if rec := x.post(ctx, admin, t1.ID, body); rec.Code != http.StatusOK {
+			t.Fatalf("first use: got %d %s", rec.Code, rec.Body.String())
+		}
+		if rec := x.post(ctx, admin, t2.ID, body); rec.Code != http.StatusForbidden {
+			t.Fatalf("replayed code: got %d %s", rec.Code, rec.Body.String())
 		}
 		x.assertTfaIntact(ctx, t2)
 	})

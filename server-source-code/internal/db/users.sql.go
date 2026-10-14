@@ -11,6 +11,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const consumeTfaBackupCode = `-- name: ConsumeTfaBackupCode :execrows
+UPDATE users SET tfa_backup_codes = $1, updated_at = NOW()
+WHERE id = $2 AND tfa_backup_codes = $3::TEXT
+`
+
+type ConsumeTfaBackupCodeParams struct {
+	NewCodes *string `json:"new_codes"`
+	ID       string  `json:"id"`
+	OldCodes string  `json:"old_codes"`
+}
+
+func (q *Queries) ConsumeTfaBackupCode(ctx context.Context, arg ConsumeTfaBackupCodeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, consumeTfaBackupCode, arg.NewCodes, arg.ID, arg.OldCodes)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countActiveAdmins = `-- name: CountActiveAdmins :one
 SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = true
 `

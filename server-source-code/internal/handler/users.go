@@ -37,6 +37,7 @@ type UsersHandler struct {
 	cfgResolver *hostctx.ConfigResolver
 	tfaLockout  *store.TfaLockoutStore
 	audit       *store.AuditLogsStore
+	tfaReplay   *store.TfaReplayStore
 }
 
 // WithConfigResolver wires the per-context config resolver.

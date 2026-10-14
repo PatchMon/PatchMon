@@ -454,3 +454,11 @@ func (s *UsersStore) AdminResetTfa(ctx context.Context, userID string, audit Aud
 	}
 	return true, enrolmentRequired, nil
 }
+
+// ConsumeTfaBackupCode swaps the stored backup codes only if they still equal oldCodes, so
+// two requests racing on one code cannot both succeed.
+func (s *UsersStore) ConsumeTfaBackupCode(ctx context.Context, userID, oldCodes, newCodes string) (bool, error) {
+	d := s.db.DB(ctx)
+	n, err := d.Queries.ConsumeTfaBackupCode(ctx, db.ConsumeTfaBackupCodeParams{ID: userID, OldCodes: oldCodes, NewCodes: &newCodes})
+	return n == 1, err
+}

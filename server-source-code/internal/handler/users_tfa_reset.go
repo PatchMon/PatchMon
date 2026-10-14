@@ -10,7 +10,6 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
-	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -19,9 +18,10 @@ import (
 const auditEventUserTfaReset = "user_tfa_reset"
 
 // WithTfaReset wires the stores used by ResetTfa.
-func (h *UsersHandler) WithTfaReset(tfaLockout *store.TfaLockoutStore, audit *store.AuditLogsStore) *UsersHandler {
+func (h *UsersHandler) WithTfaReset(tfaLockout *store.TfaLockoutStore, audit *store.AuditLogsStore, replay *store.TfaReplayStore) *UsersHandler {
 	h.tfaLockout = tfaLockout
 	h.audit = audit
+	h.tfaReplay = replay
 	return h
 }
 
@@ -171,27 +171,15 @@ func (h *UsersHandler) verifyActorTfa(r *http.Request, actor *models.User, raw s
 			return http.StatusTooManyRequests, "Too many failed two-factor attempts. Please try again later."
 		}
 	}
-	token := strings.ToUpper(strings.TrimSpace(raw))
-	if token == "" {
+	if strings.TrimSpace(raw) == "" {
 		return http.StatusForbidden, "Your two-factor code is required to confirm this action"
 	}
-	verified := false
-	if len(token) == 6 && util.TokenRegex.MatchString(token) && actor.TfaSecret != nil {
-		verified = util.VerifyTOTP(strings.TrimSpace(*actor.TfaSecret), token, util.TOTPWindow)
-		if !verified {
-			hashed := util.ParseBackupCodesJSON(actor.TfaBackupCodes)
-			if ok, idx := util.VerifyBackupCode(token, hashed); ok {
-				hashed = append(hashed[:idx], hashed[idx+1:]...)
-				updated := util.EncodeBackupCodesJSON(hashed)
-				if err := h.users.UpdateTfaBackupCodes(ctx, actor.ID, &updated); err != nil {
-					if h.log != nil {
-						h.log.Error("admin tfa reset: consume backup code failed", "actor_id", actor.ID, "error", err)
-					}
-					return http.StatusInternalServerError, "Failed to verify two-factor code"
-				}
-				verified = true
-			}
+	verified, err := verifyTfaCode(ctx, h.users, h.tfaReplay, actor, raw)
+	if err != nil {
+		if h.log != nil {
+			h.log.Error("admin tfa reset: verify actor code failed", "actor_id", actor.ID, "error", err)
 		}
+		return http.StatusInternalServerError, "Failed to verify two-factor code"
 	}
 	if !verified {
 		if h.tfaLockout != nil {

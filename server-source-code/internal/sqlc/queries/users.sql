@@ -162,3 +162,7 @@ UPDATE users SET tfa_enabled = false, tfa_secret = NULL, tfa_backup_codes = NULL
     tfa_enrolment_required = (password_hash IS NOT NULL AND oidc_sub IS NULL), updated_at = NOW()
 WHERE id = $1 AND tfa_enabled = true
 RETURNING tfa_enrolment_required;
+
+-- name: ConsumeTfaBackupCode :execrows
+UPDATE users SET tfa_backup_codes = sqlc.arg(new_codes), updated_at = NOW()
+WHERE id = sqlc.arg(id) AND tfa_backup_codes = sqlc.arg(old_codes)::TEXT;
