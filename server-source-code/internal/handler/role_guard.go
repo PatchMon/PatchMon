@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
@@ -44,12 +45,20 @@ func roleCovers(ctx context.Context, perms *store.PermissionsStore, callerRole, 
 	return len(missingPermissions(caller, target)) == 0
 }
 
-// canGrantRole reports whether callerRole may give targetRole to someone. Only superadmin may grant admin.
+// canGrantRole reports whether callerRole may give targetRole, which must exist, to someone.
+// Only superadmin may grant admin.
 func canGrantRole(ctx context.Context, perms *store.PermissionsStore, callerRole, targetRole string) bool {
+	targetRole = strings.TrimSpace(targetRole)
+	if perms == nil || targetRole == "" {
+		return false
+	}
+	if _, err := perms.GetByRole(ctx, targetRole); err != nil {
+		return false
+	}
 	if callerRole == "superadmin" {
 		return true
 	}
-	if targetRole == "admin" || perms == nil {
+	if targetRole == "admin" {
 		return false
 	}
 	return roleCovers(ctx, perms, callerRole, targetRole)

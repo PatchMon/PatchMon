@@ -760,7 +760,7 @@ func applyOidcSettingsUpdate(s *models.Settings, req map[string]interface{}, enc
 		s.OidcAutoCreateUsers = v
 	}
 	if v, ok := getReqString(req, "oidc_default_role", "oidcDefaultRole"); ok {
-		t := v
+		t := strings.TrimSpace(v)
 		if t == "" {
 			t = "user"
 		}

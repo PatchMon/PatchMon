@@ -684,7 +684,9 @@ func (h *SettingsHandler) UpdateEnvironmentConfig(w http.ResponseWriter, r *http
 		Error(w, http.StatusInternalServerError, "Failed to load settings")
 		return
 	}
-	if v, ok := req.Value.(string); ok && key == "DEFAULT_USER_ROLE" && v != s.DefaultUserRole {
+	if v, ok := req.Value.(string); ok && key == "DEFAULT_USER_ROLE" && strings.TrimSpace(v) != s.DefaultUserRole {
+		v = strings.TrimSpace(v)
+		req.Value = v
 		callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
 		if !canGrantRole(r.Context(), h.permissions, callerRole, v) {
 			Error(w, http.StatusForbidden, "You cannot set the default role to a role you are not allowed to grant: "+v)
@@ -1055,7 +1057,7 @@ func applySettingsUpdate(s *models.Settings, req map[string]interface{}, enc *ut
 		s.SignupEnabled = v
 	}
 	if v, ok := getReqString(req, "default_user_role", "defaultUserRole"); ok {
-		s.DefaultUserRole = v
+		s.DefaultUserRole = strings.TrimSpace(v)
 	}
 	if v, ok := getReqBool(req, "ignore_ssl_self_signed", "ignoreSslSelfSigned"); ok {
 		s.IgnoreSSLSelfSigned = v

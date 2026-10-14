@@ -153,7 +153,7 @@ func (h *UsersHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role := req.Role
+	role := strings.TrimSpace(req.Role)
 	if role == "" {
 		s, _ := h.settings.GetFirst(r.Context())
 		if s != nil && s.DefaultUserRole != "" {
@@ -297,6 +297,8 @@ func (h *UsersHandler) Update(w http.ResponseWriter, r *http.Request) {
 		u.LastName = req.LastName
 	}
 	if req.Role != nil {
+		trimmed := strings.TrimSpace(*req.Role)
+		req.Role = &trimmed
 		// Enforce role escalation protection.
 		if !h.canAssignRole(r, callerRole, *req.Role) {
 			Error(w, http.StatusForbidden, "You do not have permission to assign the role: "+*req.Role)

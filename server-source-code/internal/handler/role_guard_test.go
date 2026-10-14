@@ -69,7 +69,7 @@ func TestRoleEscalationGuards(t *testing.T) {
 		return rec.Code
 	}
 	assign := func(callerRole, target string) bool {
-		req := roleRequest(http.MethodPost, target, callerRole, "")
+		req := roleRequest(http.MethodPost, "assign", callerRole, "")
 		return uh.canAssignRole(req, callerRole, target)
 	}
 
@@ -115,7 +115,11 @@ func TestRoleEscalationGuards(t *testing.T) {
 		{"admin", "superadmin", false},
 		{"rg_ops", "superadmin", true},
 		{"superadmin", "admin", true},
-		{"rg_helpdesk", "rg_does_not_exist", true},
+		{"rg_helpdesk", "rg_does_not_exist", false},
+		{"superadmin", "rg_does_not_exist", false},
+		{"admin", " superadmin ", false},
+		{"admin", " admin", false},
+		{"admin", " host_manager ", true},
 	}
 	for _, a := range assigns {
 		if got := assign(a.caller, a.target); got != a.want {
@@ -175,6 +179,9 @@ func TestDefaultRoleAndOidcMappingGuards(t *testing.T) {
 		{"settings-only role cannot default to host_manager", putSettings("drg_settings", `{"default_user_role":"host_manager"}`), http.StatusForbidden},
 		{"settings-only role may default to its own role", putSettings("drg_settings", `{"default_user_role":"drg_settings"}`), http.StatusOK},
 		{"admin may default to host_manager", patchDefault("admin", "host_manager"), http.StatusOK},
+		{"admin cannot sneak admin past the check with padding", patchDefault("admin", " admin "), http.StatusForbidden},
+		{"superadmin cannot default to a role that does not exist", patchDefault("superadmin", "no_such_role"), http.StatusForbidden},
+		{"superadmin cannot default to a missing role via settings", putSettings("superadmin", `{"default_user_role":"no_such_role"}`), http.StatusForbidden},
 		{"unchanged default role does not block other edits", putSettings("drg_settings", `{"default_user_role":"host_manager","signup_enabled":false}`), http.StatusOK},
 		{"admin may save settings without touching the default role", putSettings("admin", `{"signup_enabled":false}`), http.StatusOK},
 		{"admin cannot map a group to superadmin", putOidc("admin", `{"oidc_superadmin_group":"g"}`), http.StatusForbidden},
