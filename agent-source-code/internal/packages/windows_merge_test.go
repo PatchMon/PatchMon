@@ -44,7 +44,8 @@ func collectWindowsApps(t *testing.T, reg []models.Package, table string, upgrad
 	if len(entries) == 0 {
 		t.Fatal("fixture produced no winget entries")
 	}
-	return m.mergeRegistryAndWinget(reg, wingetEntriesToRows(entries, upgradeMap))
+	merged, _ := m.mergeRegistryAndWinget(reg, wingetEntriesToRows(entries, upgradeMap))
+	return merged
 }
 
 func findPackage(t *testing.T, pkgs []models.Package, name string) models.Package {
@@ -160,7 +161,7 @@ func TestMergeKeepsWingetPinAndStoreFlags(t *testing.T) {
 		{pkg: models.Package{Name: "Windows Terminal", CurrentVersion: "1.20", AvailableVersion: "1.21", NeedsUpdate: true, SourceRepository: "winget", WingetID: "Microsoft.WindowsTerminal", WingetStoreApp: true}},
 		{pkg: models.Package{Name: "Only In Winget", CurrentVersion: "1.0", AvailableVersion: "2.0", NeedsUpdate: true, SourceRepository: "winget", WingetID: "Only.InWinget", WingetPinned: true}},
 	}
-	merged := m.mergeRegistryAndWinget(reg, rows)
+	merged, _ := m.mergeRegistryAndWinget(reg, rows)
 	if p := findPackage(t, merged, "7-Zip 26.02 (x64)"); !p.WingetPinned || !p.NeedsUpdate || p.WingetID != "7zip.7zip" {
 		t.Errorf("pinned registry row = %+v", p)
 	}

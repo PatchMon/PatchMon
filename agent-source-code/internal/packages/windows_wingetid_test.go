@@ -49,7 +49,7 @@ func TestMergeRegistryAndWingetCopiesWingetID(t *testing.T) {
 		{pkg: models.Package{Name: "Notepad++", CurrentVersion: "8.6", AvailableVersion: "8.7", NeedsUpdate: true, SourceRepository: "winget", WingetID: "Notepad++.Notepad++"}},
 	}
 
-	merged := m.mergeRegistryAndWinget(reg, rows)
+	merged, _ := m.mergeRegistryAndWinget(reg, rows)
 	byName := map[string]models.Package{}
 	for _, p := range merged {
 		byName[p.Name] = p
