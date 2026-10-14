@@ -3716,10 +3716,18 @@ func handleSSHProxyDisconnect(m wsMsg, conn *websocket.Conn) {
 
 // RDP proxy session management (raw TCP stream to localhost:3389)
 type rdpProxySession struct {
-	tcpConn   net.Conn
+	// tcp is read without mu so a close never waits behind a blocked Write.
+	tcp       atomic.Pointer[net.Conn]
 	conn      *websocket.Conn
 	sessionID string
 	mu        sync.Mutex
+}
+
+func (ps *rdpProxySession) tcpConnection() net.Conn {
+	if c := ps.tcp.Load(); c != nil {
+		return *c
+	}
+	return nil
 }
 
 var rdpProxySessions = make(map[string]*rdpProxySession)
@@ -3821,9 +3829,7 @@ func dialRDPProxy(proxySession *rdpProxySession, host string, port int) {
 		logger.WithField("session_id", logutil.Sanitize(sessionID)).Info("RDP proxy session cancelled before it connected")
 		return
 	}
-	proxySession.mu.Lock()
-	proxySession.tcpConn = tcpConn
-	proxySession.mu.Unlock()
+	proxySession.tcp.Store(&tcpConn)
 	rdpProxySessionsMu.Unlock()
 
 	sendRDPProxyConnected(conn, sessionID)
@@ -3880,8 +3886,8 @@ func handleRDPProxyInput(m wsMsg, _ *websocket.Conn) {
 	proxySession.mu.Lock()
 	defer proxySession.mu.Unlock()
 
-	if proxySession.tcpConn != nil {
-		if _, err := proxySession.tcpConn.Write(decoded); err != nil {
+	if tcpConn := proxySession.tcpConnection(); tcpConn != nil {
+		if _, err := tcpConn.Write(decoded); err != nil {
 			logger.WithError(err).Error("Failed to write to RDP TCP connection")
 		}
 	}
@@ -3904,10 +3910,7 @@ func handleRDPProxyDisconnect(m wsMsg, conn *websocket.Conn) {
 
 	logger.WithField("session_id", logutil.Sanitize(sessionID)).Info("Closing RDP proxy session")
 
-	proxySession.mu.Lock()
-	tcpConn := proxySession.tcpConn
-	proxySession.mu.Unlock()
-	if tcpConn != nil {
+	if tcpConn := proxySession.tcpConnection(); tcpConn != nil {
 		if err := tcpConn.Close(); err != nil {
 			logger.WithError(err).Warn("Failed to close RDP proxy TCP connection")
 		}
@@ -3929,10 +3932,7 @@ func closeRDPProxySessionsForConn(conn *websocket.Conn) {
 	}
 	rdpProxySessionsMu.Unlock()
 	for _, ps := range stale {
-		ps.mu.Lock()
-		tcpConn := ps.tcpConn
-		ps.mu.Unlock()
-		if tcpConn != nil {
+		if tcpConn := ps.tcpConnection(); tcpConn != nil {
 			_ = tcpConn.Close()
 		}
 	}

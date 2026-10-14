@@ -48,10 +48,7 @@ func waitRDPConnected(t *testing.T, id string) {
 		ps := rdpProxySessions[id]
 		rdpProxySessionsMu.RUnlock()
 		if ps != nil {
-			ps.mu.Lock()
-			ok := ps.tcpConn != nil
-			ps.mu.Unlock()
-			if ok {
+			if ps.tcpConnection() != nil {
 				return
 			}
 		}
@@ -109,4 +106,30 @@ func TestRDPSessionsCloseWhenWebSocketDrops(t *testing.T) {
 		t.Fatal("a session on a different WebSocket was closed")
 	}
 	_ = second.Close()
+}
+
+func TestRDPCloseDoesNotWaitForAWriter(t *testing.T) {
+	port, accepted := rdpTestTarget(t)
+	dropped := newWSTestClient(t, func(*websocket.Conn, <-chan struct{}) {})
+
+	handleRDPProxy(wsMsg{rdpProxySessionID: "writer-held", rdpProxyHost: "127.0.0.1", rdpProxyPort: port}, dropped)
+	target := <-accepted
+	waitRDPConnected(t, "writer-held")
+	rdpProxySessionsMu.RLock()
+	ps := rdpProxySessions["writer-held"]
+	rdpProxySessionsMu.RUnlock()
+
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		closeRDPProxySessionsForConn(dropped)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("closing a dropped connection's sessions waited for the session write lock")
+	}
+	requireClosedByAgent(t, target)
 }
