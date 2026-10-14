@@ -47,10 +47,10 @@ func TestPlanWindowsRunAgentVersionGate(t *testing.T) {
 	}{
 		{"missing", nil, true},
 		{"empty", strp(""), true},
-		{"older", strp("2.1.4"), true},
-		{"pre-release of older", strp("2.1.4-rc.9"), true},
-		{"pre-release of minimum", strp("2.1.5-rc.1"), false},
-		{"numeric pre-release of minimum", strp("2.1.5-1"), false},
+		{"older", strp("2.1.3"), true},
+		{"pre-release of older", strp("2.1.3-rc.9"), true},
+		{"pre-release of minimum", strp("2.1.4-rc.1"), false},
+		{"numeric pre-release of minimum", strp("2.1.4-1"), false},
 		{"minimum", strp(MinWindowsPatchAgentVersion), false},
 		{"newer", strp("2.2.0"), false},
 	}
@@ -71,7 +71,7 @@ func TestPlanWindowsRunAgentVersionGate(t *testing.T) {
 }
 
 func TestPlanWindowsRunPatchAllScope(t *testing.T) {
-	v := strp("2.1.5")
+	v := strp("2.1.4")
 	cases := []struct {
 		name        string
 		scope       *windowsScope
@@ -111,7 +111,7 @@ func TestPlanWindowsRunPatchAllScope(t *testing.T) {
 }
 
 func TestPlanWindowsRunPatchPackage(t *testing.T) {
-	v := strp("2.1.5")
+	v := strp("2.1.4")
 	upgrade := wuRow("Windows 11, version 24H2 (KB5044285)")
 	upgrade.WuaGuid = strp("aaaaaaaa-1111-2222-3333-444455556666")
 	upgrade.WuaCategories = []byte(`["Upgrades"]`)

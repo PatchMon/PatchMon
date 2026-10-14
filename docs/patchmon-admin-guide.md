@@ -664,7 +664,7 @@ If there's a pending patch run awaiting a fresh post-patch report, you'll see an
 |--------|--------------|:---:|
 | **Apply** | Appears only when pending config changes (e.g. integration toggles) need to be pushed to the agent. | Yes |
 | **Fetch Report** | Sends a WebSocket command asking the agent to collect and submit a fresh report now. | Yes |
-| **Patch all** | Opens the Patching wizard pre-scoped to this host. On Windows hosts it needs agent 2.1.5 or later (see [Windows patching](#windows-patching)). | Yes |
+| **Patch all** | Opens the Patching wizard pre-scoped to this host. On Windows hosts it needs agent 2.1.4 or later (see [Windows patching](#windows-patching)). | Yes |
 | **Deploy Agent** (key icon) | Opens the Credentials modal with the install command and API credentials. | No |
 | **Refresh** (circular arrow) | Re-fetches host data from the PatchMon server (UI only). | No |
 | **Delete host** (trash icon) | Opens a confirmation dialog and then removes the host record. | No |
@@ -1239,7 +1239,7 @@ From there, you can drill into individual packages, set up a patch run, or narro
 
 - **Live list, periodic backing data.** Rows are fetched from the PatchMon server and reflect the most recent reports submitted by each host. To refresh a host's data immediately, open the host's detail page and click **Fetch Report**. The Packages list picks up the new state on its next refetch (or click **Refresh** on the Packages page).
 - **Drilling down into patch state.** The **Hosts** page is the better starting point when you care about which *hosts* are behind on updates. Use the Packages page when you care about which *packages* expose the fleet.
-- **Windows hosts.** Package reporting covers installed applications (enriched with winget update data) and Windows Updates; Chocolatey is not used. **Patch all** and **Patch selected** work on Windows hosts running agent 2.1.5 or later. Windows Update rows show a **Windows Update** source and apps a **winget** source; apps winget does not recognise are listed as **Not patchable**. See [Windows patching](#windows-patching).
+- **Windows hosts.** Package reporting covers installed applications (enriched with winget update data) and Windows Updates; Chocolatey is not used. **Patch all** and **Patch selected** work on Windows hosts running agent 2.1.4 or later. Windows Update rows show a **Windows Update** source and apps a **winget** source; apps winget does not recognise are listed as **Not patchable**. See [Windows patching](#windows-patching).
 
 ### Related Pages
 
@@ -1526,13 +1526,13 @@ The agent chooses the patching back-end by detecting the host's package manager.
 | `pkg` | FreeBSD 13+ (plus `freebsd-update` for the base system on `patch_all`) | Yes |
 | `apk` | Alpine Linux | **No.** The agent reports `apk` inventory but rejects patch runs with `package manager "apk" not supported for patching (apt, dnf, yum, pkg, pacman required)`. Alpine hosts are visible in PatchMon and get compliance scans, but patch runs on them fail on the agent side. |
 | `zypper` | openSUSE Leap, openSUSE Tumbleweed, SLES | **No, and no inventory either. Coming soon.** The installer detects zypper and completes, and the agent detects the OS correctly, but the agent has no zypper backend. Package collection therefore fails with `unsupported package manager: unknown` and the host never completes its first report, so it sits at "Waiting for initial system report". Follow and vote for zypper support at [feedback.patchmon.net](https://feedback.patchmon.net/b/feature-requests/posts/post_01kyza53c0fzst214afbr1qn9a). |
-| Windows Update Agent (WUA) + winget | Windows 10/11, Server 2019/2022/2025 | Yes, with agent 2.1.5 or later (separate path) |
+| Windows Update Agent (WUA) + winget | Windows 10/11, Server 2019/2022/2025 | Yes, with agent 2.1.4 or later (separate path) |
 
 > **Note:** The 2.0 release notes describe Linux patching generally. If you need to patch Alpine hosts, track the package manager roadmap or use your existing Alpine tooling until `apk` support lands.
 
 #### Windows patching {#windows-patching}
 
-Windows hosts are patched from the same places as Linux hosts: Host Detail, the Packages page and the Patch wizard. The agent on the host must be **2.1.5 or later**. For an older agent the server refuses the run with "Update the PatchMon agent on this host to v2.1.5 or later to patch Windows"; update the agent first (**Host Info → Update Now**).
+Windows hosts are patched from the same places as Linux hosts: Host Detail, the Packages page and the Patch wizard. The agent on the host must be **2.1.4 or later**. For an older agent the server refuses the run with "Update the PatchMon agent on this host to v2.1.4 or later to patch Windows"; update the agent first (**Host Info → Update Now**).
 
 ##### What can be patched
 

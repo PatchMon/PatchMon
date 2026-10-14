@@ -15,9 +15,9 @@ import (
 )
 
 // MinWindowsPatchAgentVersion is the oldest agent that may be sent a Windows patch run.
-const MinWindowsPatchAgentVersion = "2.1.5"
+const MinWindowsPatchAgentVersion = "2.1.4"
 
-// Lowest semver pre-release of the minimum, so 2.1.5-rc.N builds pass the gate.
+// Lowest semver pre-release of the minimum, so 2.1.4-rc.N builds pass the gate.
 const minWindowsPatchAgentFloor = MinWindowsPatchAgentVersion + "-0"
 
 const (
