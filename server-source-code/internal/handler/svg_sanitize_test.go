@@ -218,3 +218,67 @@ func TestSanitizeSVGDropsDoubleEscapedCSS(t *testing.T) {
 		t.Errorf("plain style was dropped: %s", s)
 	}
 }
+
+func TestSanitizeSVGGhsaGgw5Corpus(t *testing.T) {
+	t.Parallel()
+	const ns = `xmlns="http://www.w3.org/2000/svg"`
+	const xl = `xmlns:xlink="http://www.w3.org/1999/xlink"`
+	cases := []struct {
+		name, in string
+		banned   []string
+	}{
+		{"advisory script bypass", `<script>alert(1) <<script />/script>`, []string{"<script", "alert"}},
+		{"advisory script in svg", `<svg ` + ns + `><script>alert(1) <<script />/script></svg>`, []string{"<script", "alert"}},
+		{"svg onload", `<svg ` + ns + ` onload="alert(1)"></svg>`, []string{"onload", "alert"}},
+		{"svg slash onload", `<svg/onload=alert(1)>`, []string{"onload", "alert"}},
+		{"anchor javascript href", `<svg ` + ns + `><a href="javascript:alert(1)"><rect width="1" height="1"/></a></svg>`, []string{"javascript", "alert"}},
+		{"xlink javascript href", `<svg ` + ns + ` ` + xl + `><a xlink:href="javascript:alert(1)"><rect width="1" height="1"/></a></svg>`, []string{"javascript", "alert"}},
+		{"tab inside scheme", `<svg ` + ns + `><a href="java&#9;script:alert(1)"><rect width="1" height="1"/></a></svg>`, []string{"script", "alert"}},
+		{"foreign object", `<svg ` + ns + `><foreignObject><p>x</p></foreignObject></svg>`, []string{"foreignobject", "<p"}},
+		{"use external ref", `<svg ` + ns + ` ` + xl + `><use xlink:href="https://evil.example/x.svg#a"/></svg>`, []string{"evil.example"}},
+		{"non image data href", `<svg ` + ns + `><a href="data:text/html;base64,PHN2Zz48L3N2Zz4="><rect width="1" height="1"/></a></svg>`, []string{"data:"}},
+		{"svg data uri on navigable href", `<svg ` + ns + `><a href="data:image/svg+xml;base64,PHN2Zz48L3N2Zz4="><rect width="1" height="1"/></a></svg>`, []string{"data:"}},
+		{"svg data uri on xlink href", `<svg ` + ns + ` ` + xl + `><image xlink:href="data:image/svg+xml;base64,PHN2Zz48L3N2Zz4="/></svg>`, []string{"data:"}},
+		{"xml stylesheet pi", `<?xml-stylesheet href="https://evil.example/x.css"?><svg ` + ns + `></svg>`, []string{"<?", "evil.example"}},
+		{"doctype entity", `<!DOCTYPE svg [<!ENTITY x "y">]><svg ` + ns + `></svg>`, []string{"<!", "entity"}},
+		{"not an svg", `<html><body>hi</body></html>`, []string{"<html", "hi"}},
+		{"smil animate href", `<svg ` + ns + `><a><animate attributeName="href" to="javascript:alert(1)"/><text>x</text></a></svg>`, []string{"animate", "javascript"}},
+		{"smil set onload", `<svg ` + ns + `><set attributeName="onload" to="alert(1)"/></svg>`, []string{"<set", "alert"}},
+		{"smil animateTransform", `<svg ` + ns + `><rect width="1" height="1"><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="1s"/></rect></svg>`, []string{"animate"}},
+		{"smil animateMotion", `<svg ` + ns + `><rect width="1" height="1"><animateMotion path="M0 0 L1 1" dur="1s"/></rect></svg>`, []string{"animate"}},
+		{"prefixed svg script", `<svg ` + ns + `><x:script xmlns:x="http://www.w3.org/2000/svg">alert(1)</x:script></svg>`, []string{"script", "alert"}},
+		{"default ns remapped on child", `<svg ` + ns + `><g xmlns="http://www.w3.org/1999/xhtml"><script>alert(1)</script></g></svg>`, []string{"script", "alert", "xhtml"}},
+		{"mixed case scheme", `<svg ` + ns + `><a href="JaVaScRiPt:alert(1)"><rect width="1" height="1"/></a></svg>`, []string{"javascript", "alert"}},
+		{"leading control chars in scheme", `<svg ` + ns + `><a href="&#x1;&#xC; javascript:alert(1)"><rect width="1" height="1"/></a></svg>`, []string{"javascript", "alert"}},
+		{"newline inside scheme", `<svg ` + ns + `><a href="java&#10;script:alert(1)"><rect width="1" height="1"/></a></svg>`, []string{"script", "alert"}},
+		{"hex entity scheme", `<svg ` + ns + `><a href="&#x6a;avascript:alert(1)"><rect width="1" height="1"/></a></svg>`, []string{"javascript", "alert"}},
+		{"recursive entity", `<!DOCTYPE svg [<!ENTITY a "&b;"><!ENTITY b "&a;">]><svg ` + ns + `><text>&a;</text></svg>`, []string{"&a;", "&b;"}},
+		{"css url javascript", `<svg ` + ns + `><style>.a{background:url(javascript:alert(1))}</style><rect class="a" style="fill:url('javascript:alert(1)')" width="1" height="1"/></svg>`, []string{"javascript", "alert"}},
+		{"css expression", `<svg ` + ns + `><style>.a{width:expression(alert(1))}</style><rect style="width:expression(alert(1))" width="1" height="1"/></svg>`, []string{"expression", "alert"}},
+		{"css import", `<svg ` + ns + `><style>@import url(https://evil.example/x.css);</style></svg>`, []string{"@import", "evil.example"}},
+		{"html polyglot", `<svg ` + ns + `><p xmlns="http://www.w3.org/1999/xhtml"><img src="x" onerror="alert(1)"/></p><rect width="1" height="1"/></svg>`, []string{"<p", "<img", "onerror", "alert"}},
+	}
+	for _, c := range cases {
+		out, err := sanitizeSVG([]byte(c.in))
+		if err != nil {
+			continue
+		}
+		lower := strings.ToLower(string(out))
+		for _, b := range c.banned {
+			if strings.Contains(lower, strings.ToLower(b)) {
+				t.Errorf("%s: output still contains %q: %s", c.name, b, out)
+			}
+		}
+	}
+
+	legit := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"><title>Logo</title><defs><linearGradient id="g"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#000"/></linearGradient></defs><rect x="0" y="0" width="24" height="24" rx="4" fill="url(#g)"/><path d="M4 4 L20 20" stroke="#333" stroke-width="2" fill="none"/><circle cx="12" cy="12" r="6" fill="#09f"/><g transform="translate(1,1)"><text x="2" y="2" style="font-size:4px">P</text></g></svg>`
+	out, err := sanitizeSVG([]byte(legit))
+	if err != nil {
+		t.Fatalf("legit logo rejected: %v", err)
+	}
+	for _, want := range []string{"<svg", "<title>Logo</title>", "<linearGradient", "<stop", "<rect", "<path", "<circle", `<g transform="translate(1,1)">`, "<text", `fill="url(#g)"`, `style="font-size:4px"`} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("legit logo lost %q: %s", want, out)
+		}
+	}
+}

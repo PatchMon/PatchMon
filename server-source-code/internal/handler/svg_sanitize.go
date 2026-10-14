@@ -41,6 +41,7 @@ var (
 	svgEntityDecl = regexp.MustCompile(`<!ENTITY\s+([A-Za-z_][\w.-]*)\s+"([^"%&<]{0,256})"\s*>`)
 	cssEscape     = regexp.MustCompile(`(?s)\\(?:([0-9A-Fa-f]{1,6})[ \t\n\f]?|(.))`)
 	cssImport     = regexp.MustCompile(`(?i)@import\b[^;]*;?`)
+	cssExpression = regexp.MustCompile(`(?i)expression\s*\(`)
 	cssImageSet   = regexp.MustCompile(`(?i)(-webkit-)?image-set\([^)]*\)`)
 	cssURL        = regexp.MustCompile(`(?i)url\(\s*['"]?\s*([^'")\s]*)[^)]*\)`)
 	errInvalidSVG = errors.New("invalid SVG")
@@ -88,10 +89,10 @@ func unescapeCSS(v string) string {
 }
 
 // cleanCSS drops @import, image-set() and url() references to anything but a fragment or embedded image.
-// A value still holding a backslash after one unescape (a double escape) is dropped whole.
+// A value still holding a backslash after one unescape (a double escape), or an IE expression(), is dropped whole.
 func cleanCSS(v string) string {
 	v = unescapeCSS(v)
-	if strings.Contains(v, `\`) {
+	if strings.Contains(v, `\`) || cssExpression.MatchString(v) {
 		return ""
 	}
 	v = cssImport.ReplaceAllString(v, "")
