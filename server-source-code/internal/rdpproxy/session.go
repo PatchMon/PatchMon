@@ -15,14 +15,37 @@ import (
 )
 
 const (
+	// DefaultMaxSessions bounds the listeners and sockets the whole process holds.
+	DefaultMaxSessions = 200
+	// DefaultMaxSessionsPerScope caps the sessions one context can hold.
+	DefaultMaxSessionsPerScope = 10
 	// sessionIdleTimeout is how long a session can remain idle (no data flowing) before being killed.
 	sessionIdleTimeout = 30 * time.Minute
-	// DefaultMaxSessions is the default maximum number of concurrent RDP proxy sessions.
-	DefaultMaxSessions = 50
+	// unattachedTimeout matches the RDP ticket TTL: past it the ticket is gone and guacd can never attach.
+	unattachedTimeout = 5 * time.Minute
+	reapInterval      = 30 * time.Second
+)
+
+type timeouts struct {
+	idle, unattached, reap time.Duration
+}
+
+// Close reasons recorded on the session-closed log line.
+const (
+	ReasonGuacdClosed  = "guacd_closed"
+	ReasonIdle         = "idle_timeout"
+	ReasonUnattached   = "ticket_unused"
+	ReasonAgentClosed  = "agent_closed"
+	ReasonAgentError   = "agent_error"
+	ReasonAgentGone    = "agent_disconnected"
+	ReasonServerClosed = "server_closed"
 )
 
 // ErrMaxSessionsReached is returned when the concurrent session limit is exceeded.
 var ErrMaxSessionsReached = errors.New("maximum concurrent RDP sessions reached")
+
+// ErrMaxScopeSessionsReached is returned when one context already holds its share of sessions.
+var ErrMaxScopeSessionsReached = errors.New("maximum concurrent RDP sessions for this context reached")
 
 // ErrAgentTimeout is returned when the agent does not respond to the RDP proxy
 // request in time (neither rdp_proxy_connected nor rdp_proxy_error arrives).
@@ -47,6 +70,15 @@ type AgentResult struct {
 	ErrorMsg  string
 }
 
+// Owner identifies who a session belongs to.
+type Owner struct {
+	ApiID  string
+	HostID string
+	UserID string
+	// Scope is the context the session was created in; empty in a single-context install.
+	Scope string
+}
+
 // Session holds an RDP proxy session: TCP listener bridged to agent WebSocket stream.
 type Session struct {
 	SessionID     string
@@ -54,6 +86,11 @@ type Session struct {
 	Listener      net.Listener
 	ApiID         string
 	HostID        string
+	UserID        string
+	Scope         string
+	createdAt     time.Time
+	timeouts      timeouts
+	attached      atomic.Bool
 	guacdConn     net.Conn
 	mu            sync.Mutex
 	lastActivity  atomic.Int64 // unix nano timestamp of last data activity
@@ -62,6 +99,8 @@ type Session struct {
 	sender        AgentSender
 	removeFromMap func()
 	cleanupOnce   sync.Once
+	closed        bool
+	onClose       func(reason string)
 	// agentReady delivers the initial agent handshake result exactly once.
 	// Buffer of 1 so a signal never blocks even if nobody is waiting yet.
 	agentReady chan AgentResult
@@ -70,20 +109,25 @@ type Session struct {
 
 // Sessions manages RDP proxy sessions.
 type Sessions struct {
-	mu          sync.RWMutex
-	sessions    map[string]*Session
-	log         *slog.Logger
-	sender      AgentSender
-	maxSessions int
+	mu                  sync.RWMutex
+	sessions            map[string]*Session
+	log                 *slog.Logger
+	sender              AgentSender
+	maxSessions         int
+	maxSessionsPerScope int
+	capEmptyScope       bool
+	timeouts            timeouts
 }
 
 // NewSessions creates a new session store. sender must not be nil.
 func NewSessions(log *slog.Logger, sender AgentSender) *Sessions {
 	return &Sessions{
-		sessions:    make(map[string]*Session),
-		log:         log,
-		sender:      sender,
-		maxSessions: DefaultMaxSessions,
+		sessions:            make(map[string]*Session),
+		log:                 log,
+		sender:              sender,
+		maxSessions:         DefaultMaxSessions,
+		maxSessionsPerScope: DefaultMaxSessionsPerScope,
+		timeouts:            timeouts{idle: sessionIdleTimeout, unattached: unattachedTimeout, reap: reapInterval},
 	}
 }
 
@@ -94,15 +138,42 @@ func (s *Sessions) SetMaxSessions(max int) {
 	s.mu.Unlock()
 }
 
+// SetMaxSessionsPerScope sets the per-context cap. Zero or negative means unlimited.
+// The empty scope is only capped once SetCapEmptyScope(true) has been called.
+func (s *Sessions) SetMaxSessionsPerScope(max int) {
+	s.mu.Lock()
+	s.maxSessionsPerScope = max
+	s.mu.Unlock()
+}
+
+// SetCapEmptyScope applies the per-context cap to requests with no context too.
+// A single-context install leaves it off and is bounded by the process-wide cap.
+func (s *Sessions) SetCapEmptyScope(on bool) {
+	s.mu.Lock()
+	s.capEmptyScope = on
+	s.mu.Unlock()
+}
+
 // Create creates a new RDP proxy session. It starts a TCP listener and returns
 // the session ID and port. Callers send rdp_proxy to the agent via SendToAgent.
 // Session is ready once the agent confirms (WaitAgentReady).
-func (s *Sessions) Create(ctx context.Context, apiID, hostID string) (sessionID string, port int, err error) {
+func (s *Sessions) Create(ctx context.Context, owner Owner) (sessionID string, port int, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.maxSessions > 0 && len(s.sessions) >= s.maxSessions {
 		return "", 0, ErrMaxSessionsReached
+	}
+	if s.maxSessionsPerScope > 0 && (owner.Scope != "" || s.capEmptyScope) {
+		n := 0
+		for _, sess := range s.sessions {
+			if sess.Scope == owner.Scope {
+				n++
+			}
+		}
+		if n >= s.maxSessionsPerScope {
+			return "", 0, ErrMaxScopeSessionsReached
+		}
 	}
 
 	b := make([]byte, 16)
@@ -111,6 +182,7 @@ func (s *Sessions) Create(ctx context.Context, apiID, hostID string) (sessionID 
 	}
 	sessionID = hex.EncodeToString(b)
 
+	// Must stay on loopback: the listener is unauthenticated and the first connection wins.
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", 0, err
@@ -124,8 +196,12 @@ func (s *Sessions) Create(ctx context.Context, apiID, hostID string) (sessionID 
 		SessionID:  sessionID,
 		Port:       port,
 		Listener:   listener,
-		ApiID:      apiID,
-		HostID:     hostID,
+		ApiID:      owner.ApiID,
+		HostID:     owner.HostID,
+		UserID:     owner.UserID,
+		Scope:      owner.Scope,
+		createdAt:  time.Now(),
+		timeouts:   s.timeouts,
 		cancel:     cancel,
 		log:        s.log,
 		sender:     s.sender,
@@ -141,7 +217,7 @@ func (s *Sessions) Create(ctx context.Context, apiID, hostID string) (sessionID 
 	s.sessions[sessionID] = sess
 
 	if s.log != nil {
-		s.log.Info("rdp proxy session created", "session_id", sessionID, "port", port, "host_id", hostID)
+		s.log.Info("rdp proxy session created", "session_id", sessionID, "proxy_port", port, "host_id", owner.HostID, "user_id", owner.UserID, "scope", owner.Scope)
 	}
 
 	go sess.acceptLoop(sessCtx)
@@ -183,6 +259,8 @@ func (s *Session) acceptLoop(ctx context.Context) {
 		}
 		s.guacdConn = conn
 		s.mu.Unlock()
+		s.attached.Store(true)
+		_ = s.Listener.Close()
 
 		go s.bridgeGuacdToAgent(conn)
 		return
@@ -192,7 +270,7 @@ func (s *Session) acceptLoop(ctx context.Context) {
 func (s *Session) bridgeGuacdToAgent(conn net.Conn) {
 	defer func() {
 		s.closeGuacdConn()
-		s.cleanup()
+		s.cleanup(ReasonGuacdClosed, true)
 	}()
 	buf := make([]byte, 32*1024)
 	for {
@@ -263,27 +341,42 @@ func (s *Session) closeGuacdConn() {
 }
 
 func (s *Session) timeoutLoop(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(s.timeouts.reap)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if !s.attached.Load() && time.Since(s.createdAt) > s.timeouts.unattached {
+				s.cleanup(ReasonUnattached, true)
+				return
+			}
 			last := time.Unix(0, s.lastActivity.Load())
-			if time.Since(last) > sessionIdleTimeout {
-				if s.log != nil {
-					s.log.Info("rdp proxy session idle timeout", "session_id", s.SessionID)
-				}
-				s.cleanup()
+			if time.Since(last) > s.timeouts.idle {
+				s.cleanup(ReasonIdle, true)
 				return
 			}
 		}
 	}
 }
 
-func (s *Session) cleanup() {
+// cleanup tears the session down once. notifyAgent is false only when the
+// agent itself reported the close, so it is not told about its own teardown.
+func (s *Session) cleanup(reason string, notifyAgent bool) {
 	s.cleanupOnce.Do(func() {
+		s.mu.Lock()
+		s.closed = true
+		onClose := s.onClose
+		s.mu.Unlock()
+		if onClose != nil {
+			onClose(reason)
+		}
+		if notifyAgent && s.sender != nil {
+			if err := s.sendToAgent("rdp_proxy_disconnect", ""); err != nil && s.log != nil {
+				s.log.Debug("rdp proxy disconnect send failed", "session_id", s.SessionID, "error", err)
+			}
+		}
 		if s.removeFromMap != nil {
 			s.removeFromMap()
 		}
@@ -294,6 +387,17 @@ func (s *Session) cleanup() {
 			_ = s.Listener.Close()
 		}
 		s.closeGuacdConn()
+		if s.log != nil {
+			s.log.Info("rdp proxy session closed",
+				"session_id", s.SessionID,
+				"user_id", s.UserID,
+				"host_id", s.HostID,
+				"scope", s.Scope,
+				"reason", reason,
+				"attached", s.attached.Load(),
+				"duration_s", int64(time.Since(s.createdAt).Seconds()),
+			)
+		}
 	})
 }
 
@@ -364,7 +468,7 @@ func (s *Sessions) OnAgentError(apiID string, sessionID string, message string) 
 	if s.log != nil {
 		s.log.Info("rdp proxy agent error", "session_id", sessionID, "api_id", apiID, "message", message)
 	}
-	sess.cleanup()
+	sess.cleanup(ReasonAgentError, false)
 }
 
 // OnAgentClosed is called when the agent sends rdp_proxy_closed. Two cases:
@@ -381,7 +485,26 @@ func (s *Sessions) OnAgentClosed(apiID string, sessionID string) {
 		return
 	}
 	sess.signalAgentReady(AgentResult{Connected: false, ErrorMsg: "Agent closed the RDP proxy connection"})
-	sess.cleanup()
+	sess.cleanup(ReasonAgentClosed, false)
+}
+
+// CloseAgentSessions tears down every session of apiID created before cutoff,
+// used when that agent's WebSocket drops. Sessions created after cutoff belong
+// to a newer connection and are left alone. Returns the number closed.
+func (s *Sessions) CloseAgentSessions(apiID string, cutoff time.Time) int {
+	s.mu.RLock()
+	var victims []*Session
+	for _, sess := range s.sessions {
+		if sess.ApiID == apiID && sess.createdAt.Round(0).Before(cutoff.Round(0)) {
+			victims = append(victims, sess)
+		}
+	}
+	s.mu.RUnlock()
+	for _, sess := range victims {
+		sess.signalAgentReady(AgentResult{Connected: false, ErrorMsg: "The PatchMon agent disconnected"})
+		sess.cleanup(ReasonAgentGone, true)
+	}
+	return len(victims)
 }
 
 // WaitAgentReady waits for the initial handshake on the named session.
@@ -406,28 +529,37 @@ func (s *Sessions) Get(sessionID string) (port int, ok bool) {
 	return sess.Port, true
 }
 
-// Delete removes a session (e.g. when ticket is consumed and tunnel is done).
+// OnClose registers fn to run once with the close reason when the session ends.
+// It returns false, without registering, if the session is already gone.
+func (s *Sessions) OnClose(sessionID string, fn func(reason string)) bool {
+	s.mu.RLock()
+	sess, ok := s.sessions[sessionID]
+	s.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.closed {
+		return false
+	}
+	sess.onClose = fn
+	return true
+}
+
+// Count returns the number of live sessions.
+func (s *Sessions) Count() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.sessions)
+}
+
+// Delete tears a session down and tells its agent to close the RDP socket.
 func (s *Sessions) Delete(sessionID string) {
 	s.mu.RLock()
 	sess, ok := s.sessions[sessionID]
 	s.mu.RUnlock()
 	if ok {
-		sess.cleanup()
+		sess.cleanup(ReasonServerClosed, true)
 	}
-}
-
-// SendDisconnect tells the agent to disconnect the RDP proxy. Writes go
-// through the registry's per-agent mutex. If the session is already gone
-// the call becomes a no-op.
-func (s *Sessions) SendDisconnect(sessionID string) {
-	s.mu.RLock()
-	sess, ok := s.sessions[sessionID]
-	s.mu.RUnlock()
-	if !ok {
-		return
-	}
-	_ = sess.sender.SendJSON(sess.ApiID, map[string]interface{}{
-		"type":       "rdp_proxy_disconnect",
-		"session_id": sessionID,
-	})
 }

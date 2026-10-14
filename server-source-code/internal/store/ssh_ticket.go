@@ -67,21 +67,18 @@ func (s *SshTicketStore) CreateTicket(ctx context.Context, userID, hostID string
 }
 
 // ConsumeTicket validates and consumes a one-time ticket. Returns userID if valid.
-// Ticket is deleted on consumption (one-time use).
+// GETDEL makes read and delete one command, so concurrent consumers cannot both win.
 func (s *SshTicketStore) ConsumeTicket(ctx context.Context, ticket, expectedHostID string) (userID string, err error) {
 	rdb := s.rdb.RDB(ctx)
 	if rdb == nil {
 		return "", ErrInvalidTicket
 	}
 	key := hostctx.TenantKey(ctx, sshTicketPrefix+ticket)
-	raw, err := rdb.Get(ctx, key).Result()
+	raw, err := rdb.GetDel(ctx, key).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return "", ErrInvalidTicket
 		}
-		return "", err
-	}
-	if err := rdb.Del(ctx, key).Err(); err != nil {
 		return "", err
 	}
 	var data TicketData
