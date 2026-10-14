@@ -4484,7 +4484,7 @@ Before you can open an RDP session to a host, all of these must be true:
 3. Enter the Windows **username** and **password** for the account to sign in as.
 4. Click **Connect**.
 
-There is no screen-size setting. The session opens at the size of the RDP panel and follows it when you resize the browser window or go full-screen.
+There is no screen-size setting. The RDP panel fills about three quarters of the browser window's height (at least 540 pixels), and the session opens at the panel's size and follows it when you resize the browser window or go full-screen.
 
 The server then:
 
