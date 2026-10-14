@@ -124,18 +124,40 @@ func TestDirectModeForwardsResize(t *testing.T) {
 		}
 	}
 
-	if got := <-sizes; got != (ptySize{80, 24}) {
+	next := func(what string) ptySize {
+		t.Helper()
+		select {
+		case got := <-sizes:
+			return got
+		case <-time.After(3 * time.Second):
+			t.Fatalf("timed out waiting for %s", what)
+			return ptySize{}
+		}
+	}
+
+	if got := next("pty-req"); got != (ptySize{80, 24}) {
 		t.Fatalf("initial pty size = %v, want 80x24", got)
 	}
-	if err := ws.WriteJSON(map[string]any{"type": "resize", "cols": 150, "rows": 40}); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case got := <-sizes:
-		if got != (ptySize{150, 40}) {
-			t.Fatalf("window-change = %v, want 150x40", got)
+	for _, tc := range []struct {
+		cols, rows int
+		want       ptySize
+	}{
+		{150, 40, ptySize{150, 40}},
+		{5000, 0, ptySize{1000, 24}},
+	} {
+		if err := ws.WriteJSON(map[string]any{"type": "resize", "cols": tc.cols, "rows": tc.rows}); err != nil {
+			t.Fatal(err)
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("direct mode did not send window-change after resize")
+		if got := next("window-change"); got != tc.want {
+			t.Fatalf("resize %dx%d: window-change = %v, want %v", tc.cols, tc.rows, got, tc.want)
+		}
+	}
+}
+
+func TestTermDim(t *testing.T) {
+	for _, tc := range []struct{ in, want int }{{0, 80}, {-3, 80}, {1, 1}, {1000, 1000}, {1001, 1000}, {1 << 30, 1000}} {
+		if got := termDim(tc.in, 80); got != tc.want {
+			t.Fatalf("termDim(%d) = %d, want %d", tc.in, got, tc.want)
+		}
 	}
 }

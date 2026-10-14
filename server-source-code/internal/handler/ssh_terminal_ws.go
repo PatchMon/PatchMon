@@ -467,11 +467,11 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 				_ = h.registry.SendJSON(host.ApiID, map[string]interface{}{
 					"type":       "ssh_proxy_resize",
 					"session_id": pid,
-					"cols":       orInt(msg.Cols, 80),
-					"rows":       orInt(msg.Rows, 24),
+					"cols":       termDim(msg.Cols, 80),
+					"rows":       termDim(msg.Rows, 24),
 				})
 			} else if sess != nil {
-				_ = sess.WindowChange(orInt(msg.Rows, 24), orInt(msg.Cols, 80))
+				_ = sess.WindowChange(termDim(msg.Rows, 24), termDim(msg.Cols, 80))
 			}
 
 		case "disconnect":
@@ -543,6 +543,10 @@ func orInt(v, d int) int {
 		return v
 	}
 	return d
+}
+
+func termDim(v, d int) int {
+	return min(orInt(v, d), 1000)
 }
 
 func hostIPOrHostname(host *models.Host) string {
