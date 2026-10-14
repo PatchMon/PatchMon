@@ -18,7 +18,12 @@ import (
 	"golang.org/x/oauth2"
 )
 
-const maxMicrosoftGraphPhotoBytes = 1 << 20
+const (
+	maxMicrosoftGraphPhotoBytes = 1 << 20
+	maxProviderResponseBytes    = 2 << 20
+)
+
+var errProviderResponseTooLarge = errors.New("oidc: provider response exceeds size limit")
 
 var microsoftGraphPhotoURL = "https://graph.microsoft.com/v1.0/me/photo/$value"
 
@@ -94,6 +99,7 @@ func normaliseIssuerURL(issuer string) (string, bool) {
 // connect performs provider discovery and populates the oauth2 config and token
 // verifier. It is idempotent and safe for concurrent callers.
 func (c *Client) connect(ctx context.Context) error {
+	ctx = withCappedHTTPClient(ctx)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.provider != nil {
@@ -120,6 +126,62 @@ func (c *Client) connect(ctx context.Context) error {
 	}
 	return nil
 }
+
+// withCappedHTTPClient bounds every body read from the provider, including the
+// JWKS fetches go-oidc makes later with the client captured at discovery.
+func withCappedHTTPClient(ctx context.Context) context.Context {
+	base := http.DefaultClient
+	if hc, ok := ctx.Value(oauth2.HTTPClient).(*http.Client); ok && hc != nil {
+		if _, capped := hc.Transport.(*cappedTransport); capped {
+			return ctx
+		}
+		base = hc
+	}
+	capped := *base
+	capped.Transport = &cappedTransport{base: base.Transport}
+	return oidc.ClientContext(ctx, &capped)
+}
+
+type cappedTransport struct {
+	base http.RoundTripper
+}
+
+func (t *cappedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	resp, err := base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = &cappedBody{body: resp.Body, remaining: maxProviderResponseBytes}
+	return resp, nil
+}
+
+type cappedBody struct {
+	body      io.ReadCloser
+	remaining int64
+}
+
+func (b *cappedBody) Read(p []byte) (int, error) {
+	if b.remaining <= 0 {
+		var probe [1]byte
+		n, err := b.body.Read(probe[:])
+		if n > 0 {
+			return 0, errProviderResponseTooLarge
+		}
+		return 0, err
+	}
+	if int64(len(p)) > b.remaining {
+		p = p[:b.remaining]
+	}
+	n, err := b.body.Read(p)
+	b.remaining -= int64(n)
+	return n, err
+}
+
+func (b *cappedBody) Close() error { return b.body.Close() }
 
 func parseScopes(s string) []string {
 	if s == "" {
@@ -178,6 +240,7 @@ func generateNonce() (string, error) {
 
 // Exchange exchanges the authorization code for tokens and fetches UserInfo.
 func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState, expectedNonce string, callbackParams url.Values) (*UserInfo, error) {
+	ctx = withCappedHTTPClient(ctx)
 	if err := c.connect(ctx); err != nil {
 		return nil, err
 	}
