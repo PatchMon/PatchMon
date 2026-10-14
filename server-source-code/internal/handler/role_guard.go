@@ -83,3 +83,12 @@ func ungrantableRoleChange(ctx context.Context, perms *store.PermissionsStore, c
 	}
 	return ""
 }
+
+// roleOutranks reports whether callerRole is strictly above targetRole: superadmin, or covering
+// every permission of targetRole without targetRole covering every permission of callerRole.
+func roleOutranks(ctx context.Context, perms *store.PermissionsStore, callerRole, targetRole string) bool {
+	if callerRole == "superadmin" {
+		return true
+	}
+	return roleCovers(ctx, perms, callerRole, targetRole) && !roleCovers(ctx, perms, targetRole, callerRole)
+}

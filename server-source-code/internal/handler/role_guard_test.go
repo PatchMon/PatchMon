@@ -90,12 +90,15 @@ func TestRoleEscalationGuards(t *testing.T) {
 		{"custom role cannot grant its own role more", put("rg_helpdesk", "rg_helpdesk", allPermsJSON), http.StatusForbidden},
 		{"custom role cannot edit a role above it", put("rg_helpdesk", "rg_ops", `{"can_view_dashboard":true}`), http.StatusForbidden},
 		{"custom role cannot delete a role above it", del("rg_helpdesk", "rg_ops"), http.StatusForbidden},
-		{"custom role may shrink its own role", put("rg_helpdesk", "rg_helpdesk", `{"can_view_dashboard":true,"can_view_users":true,"can_manage_users":true,"can_manage_settings":true}`), http.StatusOK},
+		{"custom role may shrink its own role", put("rg_helpdesk", "rg_helpdesk", `{"can_view_dashboard":true,"can_view_users":true,"can_manage_users":true}`), http.StatusOK},
 	}
 	for _, c := range cases {
 		if c.got != c.want {
 			t.Errorf("%s: got %d, want %d", c.name, c.got, c.want)
 		}
+	}
+	if p, err := perms.GetByRole(context.Background(), "rg_helpdesk"); err != nil || p.CanManageSettings || !p.CanManageUsers {
+		t.Errorf("rg_helpdesk was not shrunk to drop can_manage_settings: %+v, %v", p, err)
 	}
 
 	assigns := []struct {
@@ -190,6 +193,116 @@ func TestDefaultRoleAndOidcMappingGuards(t *testing.T) {
 		{"admin may change presentation settings", putOidc("admin", `{"oidc_button_text":"Company SSO","oidc_issuer_url":"https://idp.example","oidc_client_id":"pm"}`), http.StatusOK},
 		{"full custom role with can_manage_superusers may repoint the issuer", putOidc("drg_full", `{"oidc_issuer_url":"https://idp2.example","oidc_host_manager_group":"ops"}`), http.StatusOK},
 		{"admin may resend the existing superadmin mapping", putOidc("admin", `{"oidc_superadmin_group":"supers","oidc_button_text":"SSO"}`), http.StatusOK},
+	}
+	for _, c := range cases {
+		if c.got != c.want {
+			t.Errorf("%s: got %d, want %d", c.name, c.got, c.want)
+		}
+	}
+}
+
+func TestRoleOutranks(t *testing.T) {
+	t.Parallel()
+	d := testDatabase(t)
+	perms := store.NewPermissionsStore(d)
+	ph := NewPermissionsHandler(perms)
+	for role, body := range map[string]string{
+		"ro_full":   allPermsJSON,
+		"ro_users":  `{"can_view_dashboard":true,"can_view_users":true,"can_manage_users":true}`,
+		"ro_users2": `{"can_view_dashboard":true,"can_view_users":true,"can_manage_users":true}`,
+		"ro_hosts":  `{"can_view_dashboard":true,"can_view_hosts":true,"can_manage_hosts":true}`,
+		"ro_view":   `{"can_view_dashboard":true}`,
+	} {
+		rec := httptest.NewRecorder()
+		ph.UpdateRole(rec, roleRequest(http.MethodPut, role, "superadmin", body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("create %s: %d", role, rec.Code)
+		}
+	}
+	ctx := context.Background()
+	cases := []struct {
+		caller, target string
+		want           bool
+	}{
+		{"superadmin", "superadmin", true},
+		{"superadmin", "admin", true},
+		{"admin", "superadmin", false},
+		{"admin", "admin", false},
+		{"admin", "host_manager", true},
+		{"admin", "ro_users", true},
+		{"ro_full", "superadmin", false},
+		{"ro_full", "admin", true},
+		{"ro_users", "ro_view", true},
+		{"ro_users", "ro_users2", false},
+		{"ro_users", "ro_hosts", false},
+		{"ro_hosts", "ro_users", false},
+		{"ro_view", "ro_users", false},
+		{"ro_users", "admin", false},
+	}
+	for _, c := range cases {
+		if got := roleOutranks(ctx, perms, c.caller, c.target); got != c.want {
+			t.Errorf("roleOutranks(%s, %s) = %v, want %v", c.caller, c.target, got, c.want)
+		}
+	}
+}
+
+func TestUserManagementRespectsRoleCoverage(t *testing.T) {
+	t.Parallel()
+	d := testDatabase(t)
+	perms := store.NewPermissionsStore(d)
+	users := store.NewUsersStore(d)
+	ph := NewPermissionsHandler(perms)
+	uh := &UsersHandler{users: users, sessions: store.NewSessionsStore(d), permissions: perms}
+
+	for role, body := range map[string]string{
+		"um_helpdesk": `{"can_view_dashboard":true,"can_view_users":true,"can_manage_users":true}`,
+		"um_ops":      allPermsJSON,
+		"um_viewer":   `{"can_view_dashboard":true}`,
+	} {
+		rec := httptest.NewRecorder()
+		ph.UpdateRole(rec, roleRequest(http.MethodPut, role, "superadmin", body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("create %s: %d", role, rec.Code)
+		}
+	}
+	mk := func(name, role string) string {
+		u := &models.User{Username: name, Email: name + "@ex.test", Role: role, IsActive: true}
+		if err := users.Create(context.Background(), u); err != nil {
+			t.Fatalf("create user %s: %v", name, err)
+		}
+		return u.ID
+	}
+	ops := mk("um_ops_user", "um_ops")
+	opsForDelete := mk("um_ops_user2", "um_ops")
+	viewer := mk("um_viewer_user", "um_viewer")
+	viewerForDelete := mk("um_viewer_user2", "um_viewer")
+
+	call := func(h http.HandlerFunc, method, userID, callerRole, body string) int {
+		req := httptest.NewRequest(method, "/auth/admin/users/"+userID, strings.NewReader(body))
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("userId", userID)
+		ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+		ctx = context.WithValue(ctx, middleware.UserRoleKey, callerRole)
+		ctx = context.WithValue(ctx, middleware.UserIDKey, "someone-else")
+		rec := httptest.NewRecorder()
+		h(rec, req.WithContext(ctx))
+		return rec.Code
+	}
+	const pw = `{"newPassword":"Takeov3r!Passw0rd"}`
+	cases := []struct {
+		name string
+		got  int
+		want int
+	}{
+		{"helpdesk cannot edit a user in a role above it", call(uh.Update, http.MethodPut, ops, "um_helpdesk", `{"first_name":"x"}`), http.StatusForbidden},
+		{"helpdesk cannot reset the password of a user above it", call(uh.ResetPassword, http.MethodPost, ops, "um_helpdesk", pw), http.StatusForbidden},
+		{"helpdesk cannot delete a user above it", call(uh.Delete, http.MethodDelete, opsForDelete, "um_helpdesk", ""), http.StatusForbidden},
+		{"helpdesk cannot promote a user into a role above it", call(uh.Update, http.MethodPut, viewer, "um_helpdesk", `{"role":"um_ops"}`), http.StatusForbidden},
+		{"helpdesk edits a user below it", call(uh.Update, http.MethodPut, viewer, "um_helpdesk", `{"first_name":"x"}`), http.StatusOK},
+		{"helpdesk resets the password of a user below it", call(uh.ResetPassword, http.MethodPost, viewer, "um_helpdesk", pw), http.StatusOK},
+		{"helpdesk deletes a user below it", call(uh.Delete, http.MethodDelete, viewerForDelete, "um_helpdesk", ""), http.StatusOK},
+		{"admin cannot reset the password of a full custom role", call(uh.ResetPassword, http.MethodPost, ops, "admin", pw), http.StatusForbidden},
+		{"superadmin resets anyone", call(uh.ResetPassword, http.MethodPost, ops, "superadmin", pw), http.StatusOK},
 	}
 	for _, c := range cases {
 		if c.got != c.want {
