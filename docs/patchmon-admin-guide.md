@@ -5214,7 +5214,9 @@ Ask them to sign in with a backup code (see [Using a backup code](#using-a-backu
 1. Sign in as a user with `can_manage_users` (admin, superadmin, or any custom role with that permission).
 2. Go to **Settings → Users**.
 3. Find the affected user and click the **Reset 2FA** icon (a crossed-out shield). It only appears for users who have 2FA turned on.
-4. Enter **your own** password, and your own 2FA code if your account uses 2FA, then click **Reset 2FA**.
+4. Enter **your own** password, and your own 2FA code if your account uses 2FA.
+5. Optionally tick **Also set a new temporary password** and enter one twice. **If you suspect the account is compromised, tick this.** Give the temporary password to the user over a separate, secure channel.
+6. Click **Reset 2FA**.
 
 The reset:
 
@@ -5222,7 +5224,9 @@ The reset:
 - revokes every trusted ("Remember me") device for that user;
 - signs the user out of every session, so they have to sign in again.
 
-On their next sign-in the user enters their password and is taken straight to a **Set up two-factor authentication** screen. They cannot reach any other page, and the server refuses every other API call from that session, until they scan the new QR code, enter a code and save their new backup codes. They can also sign out from that screen. If they have also forgotten their password, use **Reset Password** as well.
+On their next sign-in the user enters their password and is taken straight to a **Set up two-factor authentication** screen. They cannot reach any other page, and the server refuses every other API call from that session, until they scan the new QR code, enter a code and save their new backup codes. They can also sign out from that screen.
+
+If you set a temporary password, the user's old password stops working straight away. When they sign in with the temporary password they first see a **Choose a new password** screen, and must replace it with a different password before the 2FA setup screen appears. Until then the server refuses every API call from that session except changing the password, reading their own profile and signing out. Only this checkbox forces a password change; the separate **Reset Password** action works as before.
 
 Accounts linked to an OIDC / SSO provider, and accounts without a local password, are not forced to re-enrol, because their MFA is managed by the identity provider. The reset still clears any local 2FA they had. If an account is linked to an identity provider after a reset, the requirement lapses for the same reason.
 

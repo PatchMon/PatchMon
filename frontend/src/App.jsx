@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { Outlet, Route, Routes } from "react-router-dom";
+import AccountSetupRequired from "./components/AccountSetupRequired";
 import ErrorBoundary from "./components/ErrorBoundary";
 import FirstTimeWizard from "./components/FirstTimeWizard";
 import Layout from "./components/Layout";
@@ -9,7 +10,6 @@ import PageTransition from "./components/PageTransition";
 import ProtectedRoute from "./components/ProtectedRoute";
 import SettingsLayout from "./components/SettingsLayout";
 import SetupCheckError from "./components/SetupCheckError";
-import TfaEnrolmentRequired from "./components/TfaEnrolmentRequired";
 import { isAuthPhase } from "./constants/authPhases";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { ColorThemeProvider } from "./contexts/ColorThemeContext";
@@ -121,8 +121,8 @@ function AppRoutes() {
 		);
 	}
 
-	if (isAuthPhase.tfaEnrolmentRequired(authPhase)) {
-		return <TfaEnrolmentRequired />;
+	if (isAuthPhase.accountSetupRequired(authPhase)) {
+		return <AccountSetupRequired />;
 	}
 
 	// Backend/DB unreachable or rate limited - show error, not first-time setup

@@ -783,6 +783,7 @@ type User struct {
 	NewsletterSubscribed   bool             `json:"newsletter_subscribed"`
 	NewsletterSubscribedAt pgtype.Timestamp `json:"newsletter_subscribed_at"`
 	TfaEnrolmentRequired   bool             `json:"tfa_enrolment_required"`
+	PasswordChangeRequired bool             `json:"password_change_required"`
 }
 
 type UserSession struct {

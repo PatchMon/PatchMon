@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -103,8 +104,14 @@ func AuthWithSessionCheck(cfg *config.Config, sessionsStore *store.SessionsStore
 					http.Error(w, `{"error":"Session expired"}`, http.StatusUnauthorized)
 					return
 				}
-				if sess.TfaEnrolmentPending && !tfaEnrolmentAllowed(r) {
-					writeTfaEnrolmentRequired(w)
+				route := r.Method + " " + r.URL.Path
+				if sess.PasswordChangePending {
+					if !passwordChangeRoutes[route] {
+						writeAccountSetupRequired(w, PasswordChangeRequiredCode, "A new password is required")
+						return
+					}
+				} else if sess.TfaEnrolmentPending && !tfaEnrolmentRoutes[route] {
+					writeAccountSetupRequired(w, TfaEnrolmentRequiredCode, "Two-factor authentication setup is required")
 					return
 				}
 
@@ -194,14 +201,19 @@ var tfaEnrolmentRoutes = map[string]bool{
 	http.MethodPost + " /api/v1/auth/logout":      true,
 }
 
-func tfaEnrolmentAllowed(r *http.Request) bool {
-	return tfaEnrolmentRoutes[r.Method+" "+r.URL.Path]
+// PasswordChangeRequiredCode marks a 403 from a session that must replace a temporary password first.
+const PasswordChangeRequiredCode = "PASSWORD_CHANGE_REQUIRED"
+
+var passwordChangeRoutes = map[string]bool{
+	http.MethodPut + " /api/v1/auth/change-password": true,
+	http.MethodGet + " /api/v1/auth/profile":         true,
+	http.MethodPost + " /api/v1/auth/logout":         true,
 }
 
-func writeTfaEnrolmentRequired(w http.ResponseWriter) {
+func writeAccountSetupRequired(w http.ResponseWriter, code, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
-	_, _ = w.Write([]byte(`{"error":"Two-factor authentication setup is required","code":"` + TfaEnrolmentRequiredCode + `"}`))
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg, "code": code})
 }
 
 func extractToken(r *http.Request) (token, source string) {

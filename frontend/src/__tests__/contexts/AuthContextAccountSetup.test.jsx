@@ -31,7 +31,7 @@ const mountWith = (routes) => {
 
 const user = { id: "u1", username: "alice", role: "user" };
 
-describe("AuthContext forced 2FA enrolment", () => {
+describe("AuthContext forced account setup", () => {
 	afterEach(() => {
 		localStorage.clear();
 		vi.restoreAllMocks();
@@ -44,7 +44,7 @@ describe("AuthContext forced 2FA enrolment", () => {
 		});
 		await waitFor(() =>
 			expect(screen.getByTestId("phase")).toHaveTextContent(
-				AUTH_PHASES.TFA_ENROLMENT_REQUIRED,
+				AUTH_PHASES.ACCOUNT_SETUP_REQUIRED,
 			),
 		);
 		expect(screen.getByTestId("auth")).toHaveTextContent("false");
@@ -79,15 +79,15 @@ describe("AuthContext forced 2FA enrolment", () => {
 		await act(async () => {
 			result = await api.login("alice", "pw");
 		});
-		expect(result).toEqual({ success: true, tfaEnrolmentRequired: true });
+		expect(result).toEqual({ success: true, accountSetupRequired: true });
 		expect(screen.getByTestId("phase")).toHaveTextContent(
-			AUTH_PHASES.TFA_ENROLMENT_REQUIRED,
+			AUTH_PHASES.ACCOUNT_SETUP_REQUIRED,
 		);
 		expect(screen.getByTestId("auth")).toHaveTextContent("false");
 
 		let done;
 		await act(async () => {
-			done = await api.completeTfaEnrolment();
+			done = await api.refreshAccountSetup();
 		});
 		expect(done).toBe(true);
 		expect(screen.getByTestId("phase")).toHaveTextContent(AUTH_PHASES.READY);
@@ -101,16 +101,82 @@ describe("AuthContext forced 2FA enrolment", () => {
 		});
 		await waitFor(() =>
 			expect(screen.getByTestId("phase")).toHaveTextContent(
-				AUTH_PHASES.TFA_ENROLMENT_REQUIRED,
+				AUTH_PHASES.ACCOUNT_SETUP_REQUIRED,
 			),
 		);
 		let done;
 		await act(async () => {
-			done = await api.completeTfaEnrolment();
+			done = await api.refreshAccountSetup();
 		});
 		expect(done).toBe(false);
 		expect(screen.getByTestId("phase")).toHaveTextContent(
-			AUTH_PHASES.TFA_ENROLMENT_REQUIRED,
+			AUTH_PHASES.ACCOUNT_SETUP_REQUIRED,
+		);
+	});
+
+	it("a temporary password keeps the phase until both steps are done", async () => {
+		let profile = {
+			...user,
+			password_change_required: true,
+			tfa_enrolment_required: true,
+		};
+		mountWith({
+			"/api/v1/auth/profile": () => json(200, { user: profile }),
+			"/api/v1/permissions/user-permissions": () => json(200, {}),
+			"/api/v1/me/context": () => json(200, {}),
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId("phase")).toHaveTextContent(
+				AUTH_PHASES.ACCOUNT_SETUP_REQUIRED,
+			),
+		);
+		profile = {
+			...user,
+			password_change_required: false,
+			tfa_enrolment_required: true,
+		};
+		let done;
+		await act(async () => {
+			done = await api.refreshAccountSetup();
+		});
+		expect(done).toBe(false);
+		expect(api.user.password_change_required).toBe(false);
+		expect(screen.getByTestId("phase")).toHaveTextContent(
+			AUTH_PHASES.ACCOUNT_SETUP_REQUIRED,
+		);
+		profile = {
+			...user,
+			password_change_required: false,
+			tfa_enrolment_required: false,
+		};
+		await act(async () => {
+			done = await api.refreshAccountSetup();
+		});
+		expect(done).toBe(true);
+		expect(screen.getByTestId("phase")).toHaveTextContent(AUTH_PHASES.READY);
+	});
+
+	it("a password-change-only login enters the phase", async () => {
+		mountWith({
+			"/api/v1/auth/profile": () => json(401, {}),
+			"/api/v1/settings/login-settings": () =>
+				json(200, { hasAdminUsers: true }),
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId("phase")).toHaveTextContent(AUTH_PHASES.READY),
+		);
+		global.fetch.mockImplementation((url) =>
+			url === "/api/v1/auth/login"
+				? json(200, { passwordChangeRequired: true, token: "t", user })
+				: json(404, {}),
+		);
+		let result;
+		await act(async () => {
+			result = await api.login("alice", "temp");
+		});
+		expect(result).toEqual({ success: true, accountSetupRequired: true });
+		expect(screen.getByTestId("phase")).toHaveTextContent(
+			AUTH_PHASES.ACCOUNT_SETUP_REQUIRED,
 		);
 	});
 
@@ -122,7 +188,7 @@ describe("AuthContext forced 2FA enrolment", () => {
 		});
 		await waitFor(() =>
 			expect(screen.getByTestId("phase")).toHaveTextContent(
-				AUTH_PHASES.TFA_ENROLMENT_REQUIRED,
+				AUTH_PHASES.ACCOUNT_SETUP_REQUIRED,
 			),
 		);
 		await act(async () => {

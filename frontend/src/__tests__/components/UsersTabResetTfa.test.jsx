@@ -175,6 +175,46 @@ describe("UsersTab reset 2FA", () => {
 		expect(toast.success).toHaveBeenCalled();
 	});
 
+	it("optionally sends a confirmed temporary password", async () => {
+		setUsers(false);
+		adminUsersAPI.resetTfa.mockResolvedValue({ data: {} });
+		renderTab();
+		await openFor("alice");
+		fireEvent.change(screen.getByLabelText("Your password"), {
+			target: { value: "pw" },
+		});
+		fireEvent.click(
+			screen.getByRole("button", { name: /Also set a new temporary password/ }),
+		);
+		fireEvent.change(screen.getByLabelText("Temporary password"), {
+			target: { value: "Temp-1" },
+		});
+		fireEvent.change(screen.getByLabelText("Confirm temporary password"), {
+			target: { value: "Temp-2" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Reset 2FA" }));
+		expect(screen.getByRole("alert")).toHaveTextContent(
+			"The temporary passwords do not match",
+		);
+		expect(adminUsersAPI.resetTfa).not.toHaveBeenCalled();
+		fireEvent.change(screen.getByLabelText("Confirm temporary password"), {
+			target: { value: "Temp-1" },
+		});
+		fireEvent.click(screen.getByRole("button", { name: "Reset 2FA" }));
+		await waitFor(() =>
+			expect(adminUsersAPI.resetTfa).toHaveBeenCalledWith("alice", {
+				password: "pw",
+				tfaToken: "",
+				newPassword: "Temp-1",
+			}),
+		);
+		await waitFor(() =>
+			expect(toast.success).toHaveBeenCalledWith(
+				expect.stringContaining("temporary password"),
+			),
+		);
+	});
+
 	it("explains why an SSO-only admin cannot confirm", async () => {
 		currentUser = { id: "me", has_password: false };
 		setUsers(false);

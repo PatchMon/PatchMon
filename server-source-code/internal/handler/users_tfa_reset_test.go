@@ -292,6 +292,64 @@ func TestAdminResetTfa(t *testing.T) {
 		x.assertTfaIntact(ctx, t2)
 	})
 
+	t.Run("a temporary password is set in the same reset and must be changed", func(t *testing.T) {
+		admin := x.mkUser(ctx, "admin", false)
+		target := x.mkUser(ctx, "user", true)
+		rec := x.post(ctx, admin, target.ID, map[string]string{"password": tfaResetTestPassword, "newPassword": "Temp-Passw0rd!x"})
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"passwordChangeRequired":true`) {
+			t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+		}
+		u := x.reload(ctx, target.ID)
+		if bcrypt.CompareHashAndPassword([]byte(*u.PasswordHash), []byte(tfaResetTestPassword)) == nil {
+			t.Fatal("old password still valid")
+		}
+		if bcrypt.CompareHashAndPassword([]byte(*u.PasswordHash), []byte("Temp-Passw0rd!x")) != nil {
+			t.Fatal("temporary password not set")
+		}
+		if !u.PasswordChangePending() || !u.TfaEnrolmentPending() || u.TfaEnabled {
+			t.Fatalf("flags: password=%v enrol=%v tfa=%v", u.PasswordChangePending(), u.TfaEnrolmentPending(), u.TfaEnabled)
+		}
+		if n := x.count(ctx, `SELECT count(*) FROM audit_logs WHERE target_user_id=$1 AND success AND details LIKE '%"temporary_password":true%'`, target.ID); n != 1 {
+			t.Fatalf("want an audit row recording the temporary password, got %d", n)
+		}
+		if err := x.users.UpdatePassword(ctx, target.ID, *u.PasswordHash); err != nil {
+			t.Fatal(err)
+		}
+		if x.reload(ctx, target.ID).PasswordChangeRequired {
+			t.Fatal("changing the password did not clear the flag")
+		}
+	})
+
+	t.Run("without a temporary password the password is untouched", func(t *testing.T) {
+		admin := x.mkUser(ctx, "admin", false)
+		target := x.mkUser(ctx, "user", true)
+		before := *x.reload(ctx, target.ID).PasswordHash
+		if rec := x.post(ctx, admin, target.ID, pw); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"passwordChangeRequired":false`) {
+			t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+		}
+		u := x.reload(ctx, target.ID)
+		if *u.PasswordHash != before || u.PasswordChangeRequired {
+			t.Fatal("password changed or flagged without the option")
+		}
+	})
+
+	t.Run("a temporary password must meet the policy and needs a local account", func(t *testing.T) {
+		admin := x.mkUser(ctx, "admin", false)
+		target := x.mkUser(ctx, "user", true)
+		if rec := x.post(ctx, admin, target.ID, map[string]string{"password": tfaResetTestPassword, "newPassword": "x"}); rec.Code != http.StatusBadRequest {
+			t.Fatalf("weak password: got %d %s", rec.Code, rec.Body.String())
+		}
+		x.assertTfaIntact(ctx, target)
+		sso := x.mkUser(ctx, "user", true)
+		if _, err := d.Exec(ctx, `UPDATE users SET password_hash=NULL, oidc_sub=$1 WHERE id=$2`, "sub-"+sso.ID, sso.ID); err != nil {
+			t.Fatal(err)
+		}
+		if rec := x.post(ctx, admin, sso.ID, map[string]string{"password": tfaResetTestPassword, "newPassword": "Temp-Passw0rd!x"}); rec.Code != http.StatusBadRequest {
+			t.Fatalf("SSO-only target: got %d %s", rec.Code, rec.Body.String())
+		}
+		x.assertTfaIntact(ctx, sso)
+	})
+
 	t.Run("an actor's TOTP code works once", func(t *testing.T) {
 		admin := x.mkUser(ctx, "admin", true)
 		t1 := x.mkUser(ctx, "user", true)

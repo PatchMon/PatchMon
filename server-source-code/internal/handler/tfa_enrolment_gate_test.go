@@ -2,8 +2,10 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
@@ -30,6 +32,7 @@ func TestTfaEnrolmentGate(t *testing.T) {
 		r.Post("/auth/logout", ok)
 		r.Put("/auth/profile", ok)
 		r.Post("/tfa/disable", ok)
+		r.Put("/auth/change-password", ok)
 		r.Get("/hosts", ok)
 		r.Get("/auth/admin/users", ok)
 		r.Post("/auth/admin/users", ok)
@@ -108,6 +111,39 @@ func TestTfaEnrolmentGate(t *testing.T) {
 		}
 	})
 
+	t.Run("a temporary password confines the session to changing it, then to enrolment", func(t *testing.T) {
+		u := x.mkUser(ctx, "user", true)
+		if rec := x.post(ctx, admin, u.ID, map[string]string{"password": tfaResetTestPassword, "newPassword": "Temp-Passw0rd!x"}); rec.Code != http.StatusOK {
+			t.Fatalf("reset: %d %s", rec.Code, rec.Body.String())
+		}
+		tok := tokenFor(u)
+		for _, c := range [][3]string{
+			{http.MethodPut, "/api/v1/auth/change-password", "200"},
+			{http.MethodGet, "/api/v1/auth/profile", "200"},
+			{http.MethodPost, "/api/v1/auth/logout", "200"},
+			{http.MethodGet, "/api/v1/tfa/setup", "403"},
+			{http.MethodPost, "/api/v1/tfa/verify-setup", "403"},
+			{http.MethodGet, "/api/v1/hosts", "403"},
+		} {
+			if got := do(tok, c[0], c[1]); fmt.Sprint(got) != c[2] {
+				t.Errorf("password pending %s %s = %d, want %s", c[0], c[1], got, c[2])
+			}
+		}
+		hash := *x.reload(ctx, u.ID).PasswordHash
+		if err := x.users.UpdatePassword(ctx, u.ID, hash); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range [][3]string{
+			{http.MethodGet, "/api/v1/tfa/setup", "200"},
+			{http.MethodPut, "/api/v1/auth/change-password", "403"},
+			{http.MethodGet, "/api/v1/hosts", "403"},
+		} {
+			if got := do(tok, c[0], c[1]); fmt.Sprint(got) != c[2] {
+				t.Errorf("enrolment pending %s %s = %d, want %s", c[0], c[1], got, c[2])
+			}
+		}
+	})
+
 	js := `[]`
 	if err := x.users.UpdateTfaEnabled(ctx, target.ID, &js); err != nil {
 		t.Fatal(err)
@@ -116,5 +152,36 @@ func TestTfaEnrolmentGate(t *testing.T) {
 		if got := do(tok, c[0], c[1]); got != http.StatusOK {
 			t.Errorf("after enrolment %s %s = %d, want 200 on the same session", c[0], c[1], got)
 		}
+	}
+}
+
+func TestChangePasswordClearsForcedChange(t *testing.T) {
+	ctx := context.Background()
+	d := pgtest.Open(t)
+	x := newTfaResetHarness(t, d, d)
+	admin := x.mkUser(ctx, "admin", false)
+	u := x.mkUser(ctx, "user", true)
+	if rec := x.post(ctx, admin, u.ID, map[string]string{"password": tfaResetTestPassword, "newPassword": "Temp-Passw0rd!x"}); rec.Code != http.StatusOK {
+		t.Fatalf("reset: %d %s", rec.Code, rec.Body.String())
+	}
+	h := &AuthHandler{cfg: &config.Config{}, users: x.users}
+	change := func(cur, next string) int {
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/auth/change-password", strings.NewReader(`{"currentPassword":"`+cur+`","newPassword":"`+next+`"}`))
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, u.ID))
+		rec := httptest.NewRecorder()
+		h.ChangePassword(rec, req)
+		return rec.Code
+	}
+	if got := change("Temp-Passw0rd!x", "Temp-Passw0rd!x"); got != http.StatusBadRequest {
+		t.Fatalf("reusing the temporary password: got %d", got)
+	}
+	if !x.reload(ctx, u.ID).PasswordChangeRequired {
+		t.Fatal("flag cleared by a refused change")
+	}
+	if got := change("Temp-Passw0rd!x", "Brand-New-Passw0rd!"); got != http.StatusOK {
+		t.Fatalf("change: got %d", got)
+	}
+	if x.reload(ctx, u.ID).PasswordChangeRequired {
+		t.Fatal("flag still set after the change")
 	}
 }

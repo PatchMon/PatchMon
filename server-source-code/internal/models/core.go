@@ -31,6 +31,12 @@ type User struct {
 	NewsletterSubscribed   bool       `db:"newsletter_subscribed"`
 	NewsletterSubscribedAt *time.Time `db:"newsletter_subscribed_at"`
 	TfaEnrolmentRequired   bool       `db:"tfa_enrolment_required"`
+	PasswordChangeRequired bool       `db:"password_change_required"`
+}
+
+// PasswordChangePending mirrors GetSessionAuthState.
+func (u *User) PasswordChangePending() bool {
+	return u.PasswordChangeRequired && u.PasswordHash != nil
 }
 
 // TfaEnrolmentPending mirrors GetSessionAuthState: IdP-linked and password-less accounts are exempt.

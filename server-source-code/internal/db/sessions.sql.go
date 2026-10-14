@@ -230,7 +230,8 @@ func (q *Queries) FindSessionWithTfaBypass(ctx context.Context, arg FindSessionW
 
 const getSessionAuthState = `-- name: GetSessionAuthState :one
 SELECT s.last_activity,
-    (u.tfa_enrolment_required AND u.password_hash IS NOT NULL AND u.oidc_sub IS NULL)::BOOLEAN AS tfa_enrolment_pending
+    (u.tfa_enrolment_required AND u.password_hash IS NOT NULL AND u.oidc_sub IS NULL)::BOOLEAN AS tfa_enrolment_pending,
+    (u.password_change_required AND u.password_hash IS NOT NULL)::BOOLEAN AS password_change_pending
 FROM user_sessions s JOIN users u ON u.id = s.user_id
 WHERE s.id = $1 AND s.user_id = $2 AND s.is_revoked = false AND s.expires_at > NOW()
 `
@@ -241,14 +242,15 @@ type GetSessionAuthStateParams struct {
 }
 
 type GetSessionAuthStateRow struct {
-	LastActivity        pgtype.Timestamp `json:"last_activity"`
-	TfaEnrolmentPending bool             `json:"tfa_enrolment_pending"`
+	LastActivity          pgtype.Timestamp `json:"last_activity"`
+	TfaEnrolmentPending   bool             `json:"tfa_enrolment_pending"`
+	PasswordChangePending bool             `json:"password_change_pending"`
 }
 
 func (q *Queries) GetSessionAuthState(ctx context.Context, arg GetSessionAuthStateParams) (GetSessionAuthStateRow, error) {
 	row := q.db.QueryRow(ctx, getSessionAuthState, arg.ID, arg.UserID)
 	var i GetSessionAuthStateRow
-	err := row.Scan(&i.LastActivity, &i.TfaEnrolmentPending)
+	err := row.Scan(&i.LastActivity, &i.TfaEnrolmentPending, &i.PasswordChangePending)
 	return i, err
 }
 

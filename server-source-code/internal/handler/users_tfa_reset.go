@@ -26,8 +26,9 @@ func (h *UsersHandler) WithTfaReset(tfaLockout *store.TfaLockoutStore, audit *st
 }
 
 type resetTfaRequest struct {
-	Password string `json:"password"`
-	TfaToken string `json:"tfaToken"`
+	Password    string `json:"password"`
+	TfaToken    string `json:"tfaToken"`
+	NewPassword string `json:"newPassword"`
 }
 
 // ResetTfa handles POST /auth/admin/users/{userId}/reset-tfa.
@@ -111,7 +112,26 @@ func (h *UsersHandler) ResetTfa(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reset, enrolmentRequired, err := h.users.AdminResetTfa(ctx, target.ID, newAuditEntry(r, auditEventUserTfaReset, actorID, target.ID, true, nil))
+	var tempHash *string
+	if req.NewPassword != "" {
+		if target.PasswordHash == nil {
+			Error(w, http.StatusBadRequest, "This account has no local password because it signs in through single sign-on")
+			return
+		}
+		if err := ValidatePasswordPolicy(h.resolvedFor(ctx), req.NewPassword); err != nil {
+			Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), 12)
+		if err != nil {
+			Error(w, http.StatusInternalServerError, "Failed to reset two-factor authentication")
+			return
+		}
+		hs := string(hash)
+		tempHash = &hs
+	}
+
+	reset, enrolmentRequired, err := h.users.AdminResetTfa(ctx, target.ID, tempHash, newAuditEntry(r, auditEventUserTfaReset, actorID, target.ID, true, nil))
 	if err != nil {
 		if h.log != nil {
 			h.log.Error("admin tfa reset failed", "actor_id", actorID, "target_user_id", target.ID, "error", err)
@@ -129,7 +149,7 @@ func (h *UsersHandler) ResetTfa(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.log != nil {
-		attrs := []any{"actor_id", actorID, "actor_username", actor.Username, "target_user_id", target.ID, "target_username", target.Username, "enrolment_required", enrolmentRequired, "ip", requestClientIP(r)}
+		attrs := []any{"actor_id", actorID, "actor_username", actor.Username, "target_user_id", target.ID, "target_username", target.Username, "enrolment_required", enrolmentRequired, "temporary_password", tempHash != nil, "ip", requestClientIP(r)}
 		if host := hostctx.TenantHostKey(ctx); host != "" {
 			attrs = append(attrs, "host", host)
 		}
@@ -158,9 +178,10 @@ func (h *UsersHandler) ResetTfa(w http.ResponseWriter, r *http.Request) {
 	}
 
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"message":           "Two-factor authentication has been reset for " + target.Username,
-		"user":              map[string]string{"id": target.ID, "username": target.Username},
-		"enrolmentRequired": enrolmentRequired,
+		"message":                "Two-factor authentication has been reset for " + target.Username,
+		"user":                   map[string]string{"id": target.ID, "username": target.Username},
+		"enrolmentRequired":      enrolmentRequired,
+		"passwordChangeRequired": tempHash != nil,
 	})
 }
 

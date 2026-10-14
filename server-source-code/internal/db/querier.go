@@ -594,6 +594,7 @@ type Querier interface {
 	SetNewsletterSubscribed(ctx context.Context, id string) error
 	SetPatchRunPolicySnapshot(ctx context.Context, arg SetPatchRunPolicySnapshotParams) error
 	SetPatchRunRebootRequired(ctx context.Context, arg SetPatchRunRebootRequiredParams) error
+	SetTemporaryPassword(ctx context.Context, arg SetTemporaryPasswordParams) error
 	SkipScheduledPatchRun(ctx context.Context, arg SkipScheduledPatchRunParams) (int64, error)
 	ToggleHostRepository(ctx context.Context, arg ToggleHostRepositoryParams) error
 	TouchTrustedDeviceLastUsed(ctx context.Context, arg TouchTrustedDeviceLastUsedParams) error

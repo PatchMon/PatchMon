@@ -419,8 +419,9 @@ func (s *UsersStore) SetNewsletterSubscribed(ctx context.Context, userID string)
 }
 
 // AdminResetTfa clears TFA, flags local accounts for re-enrolment, revokes sessions and trusted
-// devices and writes the audit row in one transaction. reset is false, changing nothing, when TFA was off.
-func (s *UsersStore) AdminResetTfa(ctx context.Context, userID string, audit AuditEntry) (reset, enrolmentRequired bool, err error) {
+// devices, optionally sets a temporary password, and writes the audit row in one transaction.
+// reset is false, changing nothing, when TFA was off.
+func (s *UsersStore) AdminResetTfa(ctx context.Context, userID string, tempPasswordHash *string, audit AuditEntry) (reset, enrolmentRequired bool, err error) {
 	d := s.db.DB(ctx)
 	tx, err := d.Begin(ctx)
 	if err != nil {
@@ -436,6 +437,11 @@ func (s *UsersStore) AdminResetTfa(ctx context.Context, userID string, audit Aud
 	if err != nil {
 		return false, false, err
 	}
+	if tempPasswordHash != nil {
+		if err := q.SetTemporaryPassword(ctx, db.SetTemporaryPasswordParams{ID: userID, PasswordHash: tempPasswordHash}); err != nil {
+			return false, false, err
+		}
+	}
 	if err := q.RevokeAllTrustedDevicesForUser(ctx, userID); err != nil {
 		return false, false, err
 	}
@@ -446,6 +452,7 @@ func (s *UsersStore) AdminResetTfa(ctx context.Context, userID string, audit Aud
 		audit.Metadata = map[string]any{}
 	}
 	audit.Metadata["enrolment_required"] = enrolmentRequired
+	audit.Metadata["temporary_password"] = tempPasswordHash != nil
 	if err := insertAuditLog(ctx, q, audit); err != nil {
 		return false, false, err
 	}

@@ -17,6 +17,9 @@ const _devError = (...args) => isDev && console.error(...args);
 
 export const AuthContext = createContext();
 
+const needsAccountSetup = (u) =>
+	!!(u?.tfa_enrolment_required || u?.password_change_required);
+
 export const useAuth = () => {
 	const context = useContext(AuthContext);
 	if (!context) {
@@ -137,7 +140,7 @@ export const AuthProvider = ({ children }) => {
 			localStorage.removeItem("token");
 			localStorage.removeItem("user");
 			setAuthPhase((phase) =>
-				isAuthPhase.tfaEnrolmentRequired(phase) ? AUTH_PHASES.READY : phase,
+				isAuthPhase.accountSetupRequired(phase) ? AUTH_PHASES.READY : phase,
 			);
 		};
 		window.addEventListener("auth:session-expired", handleSessionExpired);
@@ -205,12 +208,9 @@ export const AuthProvider = ({ children }) => {
 
 				if (response.ok) {
 					const data = await response.json();
-					if (
-						!abortController.signal.aborted &&
-						data.user?.tfa_enrolment_required
-					) {
+					if (!abortController.signal.aborted && needsAccountSetup(data.user)) {
 						setUser(data.user);
-						setAuthPhase(AUTH_PHASES.TFA_ENROLMENT_REQUIRED);
+						setAuthPhase(AUTH_PHASES.ACCOUNT_SETUP_REQUIRED);
 						return;
 					}
 					if (!abortController.signal.aborted) {
@@ -344,11 +344,11 @@ export const AuthProvider = ({ children }) => {
 					};
 				}
 
-				if (data.tfaEnrolmentRequired) {
+				if (data.tfaEnrolmentRequired || data.passwordChangeRequired) {
 					setToken(data.token);
 					setUser(data.user);
-					setAuthPhase(AUTH_PHASES.TFA_ENROLMENT_REQUIRED);
-					return { success: true, tfaEnrolmentRequired: true };
+					setAuthPhase(AUTH_PHASES.ACCOUNT_SETUP_REQUIRED);
+					return { success: true, accountSetupRequired: true };
 				}
 
 				// Regular successful login
@@ -456,19 +456,22 @@ export const AuthProvider = ({ children }) => {
 			localStorage.removeItem("token");
 			localStorage.removeItem("user");
 			setAuthPhase((phase) =>
-				isAuthPhase.tfaEnrolmentRequired(phase) ? AUTH_PHASES.READY : phase,
+				isAuthPhase.accountSetupRequired(phase) ? AUTH_PHASES.READY : phase,
 			);
 		}
 	};
 
-	const completeTfaEnrolment = useCallback(async () => {
+	const refreshAccountSetup = useCallback(async () => {
 		try {
 			const response = await fetchWithSessionRefresh("/api/v1/auth/profile", {
 				credentials: "include",
 			});
 			if (!response.ok) return false;
 			const data = await response.json();
-			if (data.user?.tfa_enrolment_required) return false;
+			if (needsAccountSetup(data.user)) {
+				setUser(data.user);
+				return false;
+			}
 			setUser({
 				...data.user,
 				accepted_release_notes_versions:
@@ -490,7 +493,7 @@ export const AuthProvider = ({ children }) => {
 			setAuthPhase(AUTH_PHASES.READY);
 			return true;
 		} catch (error) {
-			devLog("completeTfaEnrolment failed:", error);
+			devLog("refreshAccountSetup failed:", error);
 			return false;
 		}
 	}, [fetchPermissions, fetchTenantContext]);
@@ -931,7 +934,7 @@ export const AuthProvider = ({ children }) => {
 		refetchUser,
 		setAuthState,
 		completeFirstTimeWizard,
-		completeTfaEnrolment,
+		refreshAccountSetup,
 		isAuthenticated,
 		isAdmin,
 		hasPermission,

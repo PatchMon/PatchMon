@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	Calendar,
 	CheckCircle,
+	CheckSquare,
 	Edit,
 	Info,
 	Key,
@@ -10,6 +11,7 @@ import {
 	Save,
 	Shield,
 	ShieldOff,
+	Square,
 	Trash2,
 	User,
 	X,
@@ -142,8 +144,8 @@ const UsersTab = () => {
 	});
 
 	const resetTfaMutation = useMutation({
-		mutationFn: ({ userId, password, tfaToken }) =>
-			adminUsersAPI.resetTfa(userId, { password, tfaToken }),
+		mutationFn: ({ userId, password, tfaToken, newPassword }) =>
+			adminUsersAPI.resetTfa(userId, { password, tfaToken, newPassword }),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["users"] });
 		},
@@ -210,9 +212,13 @@ const UsersTab = () => {
 		setResetPasswordUser(user);
 	};
 
-	const handleTfaReset = (username) => {
+	const handleTfaReset = (username, withTempPassword) => {
 		setResetTfaUser(null);
-		toast.success(`Two-factor authentication reset for "${username}"`);
+		toast.success(
+			withTempPassword
+				? `Two-factor authentication reset and temporary password set for "${username}"`
+				: `Two-factor authentication reset for "${username}"`,
+		);
 	};
 
 	const currentUserTfaEnabled = Array.isArray(users)
@@ -1463,8 +1469,13 @@ const ResetTfaModal = ({
 	const titleId = useId();
 	const passwordId = useId();
 	const tokenId = useId();
+	const tempId = useId();
+	const tempConfirmId = useId();
 	const [password, setPassword] = useState("");
 	const [tfaToken, setTfaToken] = useState("");
+	const [setTemp, setSetTemp] = useState(false);
+	const [tempPassword, setTempPassword] = useState("");
+	const [tempConfirm, setTempConfirm] = useState("");
 	const [error, setError] = useState("");
 	const askForCode = actorTfaEnabled !== false;
 
@@ -1479,13 +1490,22 @@ const ResetTfaModal = ({
 			setError("Enter your two-factor code to confirm");
 			return;
 		}
+		if (setTemp && !tempPassword) {
+			setError("Enter a temporary password for the user");
+			return;
+		}
+		if (setTemp && tempPassword !== tempConfirm) {
+			setError("The temporary passwords do not match");
+			return;
+		}
 		try {
 			await onReset({
 				userId: user.id,
 				password,
 				tfaToken: tfaToken.trim(),
+				newPassword: setTemp ? tempPassword : undefined,
 			});
-			onSuccess(user.username);
+			onSuccess(user.username, setTemp);
 		} catch (err) {
 			setError(
 				err.response?.data?.error ||
@@ -1506,9 +1526,9 @@ const ResetTfaModal = ({
 				role="dialog"
 				aria-modal="true"
 				aria-labelledby={titleId}
-				className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full relative z-10"
+				className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full relative z-10 max-h-[85vh] flex flex-col"
 			>
-				<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
+				<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600 flex-shrink-0">
 					<div className="flex items-center justify-between">
 						<h3
 							id={titleId}
@@ -1528,8 +1548,8 @@ const ResetTfaModal = ({
 					</div>
 				</div>
 
-				<form onSubmit={handleSubmit}>
-					<div className="px-6 py-4 space-y-4">
+				<form onSubmit={handleSubmit} className="flex flex-col min-h-0">
+					<div className="px-6 py-4 space-y-4 overflow-y-auto">
 						<div className="p-3 bg-danger-50 dark:bg-danger-900 border border-danger-200 dark:border-danger-700 rounded-md">
 							<p className="text-sm text-danger-700 dark:text-danger-300">
 								This removes {user.username}'s authenticator and backup codes,
@@ -1538,6 +1558,10 @@ const ResetTfaModal = ({
 								two-factor authentication again before they can use PatchMon.
 								Accounts that sign in through single sign-on are not asked to
 								set it up again.
+							</p>
+							<p className="mt-2 text-sm font-medium text-danger-700 dark:text-danger-300">
+								If you suspect the account is compromised, also set a temporary
+								password below.
 							</p>
 						</div>
 
@@ -1587,6 +1611,69 @@ const ResetTfaModal = ({
 										/>
 									</div>
 								)}
+								<div className="pt-2 border-t border-secondary-200 dark:border-secondary-600">
+									<button
+										type="button"
+										aria-pressed={setTemp}
+										onClick={() => setSetTemp((v) => !v)}
+										className="flex items-start gap-2 text-left min-h-[44px] md:min-h-0"
+									>
+										{setTemp ? (
+											<CheckSquare className="h-5 w-5 text-primary-600 flex-shrink-0" />
+										) : (
+											<Square className="h-5 w-5 text-secondary-400 flex-shrink-0" />
+										)}
+										<span>
+											<span className="block text-sm font-medium text-secondary-900 dark:text-white">
+												Also set a new temporary password
+											</span>
+											<span className="block text-xs text-secondary-500 dark:text-secondary-300">
+												Their current password stops working. They must replace
+												the temporary one when they next sign in, before setting
+												up two-factor authentication.
+											</span>
+										</span>
+									</button>
+								</div>
+								{setTemp && (
+									<>
+										<div>
+											<label
+												htmlFor={tempId}
+												className="block text-sm font-medium text-secondary-700 dark:text-white mb-1"
+											>
+												Temporary password
+											</label>
+											<input
+												id={tempId}
+												type="password"
+												autoComplete="new-password"
+												value={tempPassword}
+												onChange={(e) => setTempPassword(e.target.value)}
+												className="w-full px-3 py-2 bg-white dark:bg-secondary-900 border border-secondary-300 dark:border-secondary-600 rounded-md text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500 placeholder-secondary-400"
+											/>
+										</div>
+										<div>
+											<label
+												htmlFor={tempConfirmId}
+												className="block text-sm font-medium text-secondary-700 dark:text-white mb-1"
+											>
+												Confirm temporary password
+											</label>
+											<input
+												id={tempConfirmId}
+												type="password"
+												autoComplete="new-password"
+												value={tempConfirm}
+												onChange={(e) => setTempConfirm(e.target.value)}
+												className="w-full px-3 py-2 bg-white dark:bg-secondary-900 border border-secondary-300 dark:border-secondary-600 rounded-md text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500 placeholder-secondary-400"
+											/>
+										</div>
+										<p className="text-xs text-secondary-500 dark:text-secondary-300">
+											Give it to the user over a separate, secure channel.
+										</p>
+									</>
+								)}
 							</>
 						)}
 
@@ -1600,7 +1687,7 @@ const ResetTfaModal = ({
 						)}
 					</div>
 
-					<div className="px-6 py-4 border-t border-secondary-200 dark:border-secondary-600 flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
+					<div className="px-6 py-4 border-t border-secondary-200 dark:border-secondary-600 flex flex-col-reverse sm:flex-row sm:justify-end gap-3 flex-shrink-0">
 						<button
 							type="button"
 							onClick={onClose}

@@ -438,6 +438,7 @@ func dbUserToModel(u db.User) models.User {
 		NewsletterSubscribed:   u.NewsletterSubscribed,
 		NewsletterSubscribedAt: pgTimePtr(u.NewsletterSubscribedAt),
 		TfaEnrolmentRequired:   u.TfaEnrolmentRequired,
+		PasswordChangeRequired: u.PasswordChangeRequired,
 	}
 }
 
