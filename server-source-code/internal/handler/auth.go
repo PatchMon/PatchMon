@@ -881,6 +881,17 @@ func truncateForLog(s string, max int) string {
 // so a spray of failures cannot pile them up behind a slow database.
 var pendingAuthEvents = make(chan struct{}, 64)
 
+// pendingSSOFallbackEvents is reserved so a spray of failed logins cannot crowd
+// out the outage-fallback alerts.
+var pendingSSOFallbackEvents = make(chan struct{}, 8)
+
+func eventSlots(eventType string) chan struct{} {
+	if strings.HasPrefix(eventType, "sso_fallback_") {
+		return pendingSSOFallbackEvents
+	}
+	return pendingAuthEvents
+}
+
 // emitEventAsync sends a notification event without making the caller wait on
 // it, so a wrong password for a real account answers as fast as any other.
 func (h *AuthHandler) emitEventAsync(r *http.Request, ev notifications.Event) {
@@ -895,8 +906,9 @@ func (h *AuthHandler) emitEventAsync(r *http.Request, ev notifications.Event) {
 	if d == nil {
 		return
 	}
+	slots := eventSlots(ev.Type)
 	select {
-	case pendingAuthEvents <- struct{}{}:
+	case slots <- struct{}{}:
 	default:
 		if h.log != nil {
 			h.log.Warn("notification event dropped: too many pending", "event_type", ev.Type)
@@ -906,7 +918,7 @@ func (h *AuthHandler) emitEventAsync(r *http.Request, ev notifications.Event) {
 	ctx := context.WithoutCancel(r.Context())
 	host := hostctx.TenantHostKey(r.Context())
 	go func() {
-		defer func() { <-pendingAuthEvents }()
+		defer func() { <-slots }()
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		emit(ctx, d, host, ev)

@@ -347,3 +347,26 @@ func TestEmitEventAsyncDropsWhenFull(t *testing.T) {
 		t.Fatalf("%d event slots were never released", n)
 	}
 }
+
+func TestSSOFallbackEventsSurviveAFullEventPool(t *testing.T) {
+	f := newSSOFallbackFixture(t, 1000)
+	for i := 0; i < cap(pendingAuthEvents); i++ {
+		pendingAuthEvents <- struct{}{}
+	}
+	t.Cleanup(func() {
+		for i := 0; i < cap(pendingAuthEvents); i++ {
+			<-pendingAuthEvents
+		}
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+	for _, typ := range []string{"sso_fallback_login", "sso_fallback_refused"} {
+		f.h.emitEventAsync(req, notifications.Event{Type: typ})
+		if ev := f.nextEvent(t); ev.Type != typ {
+			t.Fatalf("got %q with the main pool full, want %q", ev.Type, typ)
+		}
+	}
+	if strings.Contains(f.logs.String(), "notification event dropped") {
+		t.Fatalf("a fallback event was dropped:\n%s", f.logs.String())
+	}
+}
