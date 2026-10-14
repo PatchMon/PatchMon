@@ -5066,7 +5066,7 @@ Restrictions:
 - Changes made in **Settings → Roles** take effect on the user's next API call; no restart required.
 - **Role hierarchy for user management** is based on permissions, not on role names. One role is at or below yours when every permission it grants is also granted to your role. A `superadmin` is above every other role.
 
-You can only assign, modify, delete, or reset the password of users whose role is at or below yours, and you can only create, edit or delete roles that are at or below yours. Unlinking an SSO identity needs a role strictly above the target's (see Unlinking a User's SSO Identity). This is enforced separately from the permission checks. A custom role granted `can_manage_users` therefore cannot touch an account whose role has, for example, `can_manage_settings` unless it holds `can_manage_settings` too.
+You can only assign, modify, delete, or reset the password of users whose role is at or below yours, and you can only create, edit or delete roles that are at or below yours. Unlinking an SSO identity needs a role strictly above the target's (see Unlinking a User's SSO Identity). Custom roles are compared by their permissions, not their names, so a custom role that holds all of an admin's permissions plus at least one more outranks `admin` and can reset an admin's 2FA or unlink their SSO identity. This is enforced separately from the permission checks. A custom role granted `can_manage_users` therefore cannot touch an account whose role has, for example, `can_manage_settings` unless it holds `can_manage_settings` too.
 
 ---
 
