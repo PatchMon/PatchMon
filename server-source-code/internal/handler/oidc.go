@@ -577,7 +577,10 @@ func oidcTrustChanged(before, after *models.Settings) bool {
 		}
 		return *p
 	}
-	return d(before.OidcIssuerURL) != d(after.OidcIssuerURL) ||
+	return before.OidcEnabled != after.OidcEnabled ||
+		before.OidcDisableLocalAuth != after.OidcDisableLocalAuth ||
+		before.OidcAutoCreateUsers != after.OidcAutoCreateUsers ||
+		d(before.OidcIssuerURL) != d(after.OidcIssuerURL) ||
 		d(before.OidcClientID) != d(after.OidcClientID) ||
 		d(before.OidcClientSecret) != d(after.OidcClientSecret) ||
 		d(before.OidcRedirectURI) != d(after.OidcRedirectURI) ||
@@ -614,7 +617,7 @@ func (h *OidcHandler) canManageSuperusers(ctx context.Context, role string) bool
 func (h *OidcHandler) rejectRestrictedOidcChange(w http.ResponseWriter, r *http.Request, before, after *models.Settings) bool {
 	callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
 	if oidcTrustChanged(before, after) && !h.canManageSuperusers(r.Context(), callerRole) {
-		Error(w, http.StatusForbidden, "Changing the SSO provider, client credentials, redirect URI, email trust or role mapping requires the Manage Superusers permission")
+		Error(w, http.StatusForbidden, "Enabling SSO, or changing the SSO provider, client credentials, redirect URI, local login, user auto-creation, email trust or role mapping, requires the Manage Superusers permission")
 		return true
 	}
 	role := ungrantableRoleChange(r.Context(), h.permissions, callerRole, before, after)

@@ -197,6 +197,11 @@ func TestDefaultRoleAndOidcMappingGuards(t *testing.T) {
 		{"admin cannot change the redirect uri", putOidc("admin", `{"oidc_redirect_uri":"https://attacker.example/cb"}`), http.StatusForbidden},
 		{"admin cannot trust unverified email", putOidc("admin", `{"oidc_trust_unverified_email":true}`), http.StatusForbidden},
 		{"admin cannot toggle role sync", putOidc("admin", `{"oidc_sync_roles":true}`), http.StatusForbidden},
+		{"admin cannot enable or disable SSO", putOidc("admin", `{"oidc_enabled":true}`), http.StatusForbidden},
+		{"admin cannot disable local login", putOidc("admin", `{"oidc_disable_local_auth":true}`), http.StatusForbidden},
+		{"admin cannot toggle user auto-creation", putOidc("admin", `{"oidc_auto_create_users":true}`), http.StatusForbidden},
+		{"admin may toggle enforce https", putOidc("admin", `{"oidc_enforce_https":true}`), http.StatusOK},
+		{"admin may change scopes", putOidc("admin", `{"oidc_scopes":"openid email profile groups offline_access"}`), http.StatusOK},
 		{"admin may change presentation settings", putOidc("admin", `{"oidc_button_text":"Company SSO","oidc_issuer_url":"https://idp.example","oidc_client_id":"pm"}`), http.StatusOK},
 		{"full custom role with can_manage_superusers may repoint the issuer", putOidc("drg_full", `{"oidc_issuer_url":"https://idp2.example","oidc_host_manager_group":"ops"}`), http.StatusOK},
 		{"admin may resend the existing superadmin mapping", putOidc("admin", `{"oidc_superadmin_group":"supers","oidc_button_text":"SSO"}`), http.StatusOK},
@@ -327,5 +332,36 @@ func TestOidcTrustChangedTreatsMissingDefaultRoleAsUser(t *testing.T) {
 	}
 	if !oidcTrustChanged(&models.Settings{}, &models.Settings{OidcDefaultRole: &admin}) {
 		t.Error("unset -> admin not counted as a change")
+	}
+}
+
+func TestOidcImportFromEnvRequiresManageSuperusers(t *testing.T) {
+	t.Setenv("OIDC_CLIENT_ID", "pm-env")
+	d := testDatabase(t)
+	perms := store.NewPermissionsStore(d)
+	oh := (&OidcHandler{
+		cfg:      &config.Config{OidcClientID: "pm-env", OidcIssuerURL: "https://env-idp.example", OidcSuperadminGroup: "env-supers"},
+		settings: store.NewSettingsStore(d),
+	}).WithPermissions(perms)
+	rec := httptest.NewRecorder()
+	NewPermissionsHandler(perms).UpdateRole(rec, roleRequest(http.MethodPut, "imp_full", "superadmin", allPermsJSON))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create imp_full: %d", rec.Code)
+	}
+	importAs := func(callerRole string) int {
+		req := httptest.NewRequest(http.MethodPost, "/auth/oidc/settings/import-from-env", nil)
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserRoleKey, callerRole))
+		rec := httptest.NewRecorder()
+		oh.ImportFromEnv(rec, req)
+		return rec.Code
+	}
+	if got := importAs("admin"); got != http.StatusForbidden {
+		t.Errorf("admin import: got %d, want 403", got)
+	}
+	if got := importAs("imp_full"); got != http.StatusOK {
+		t.Errorf("full custom role with can_manage_superusers import: got %d, want 200", got)
+	}
+	if got := importAs("superadmin"); got != http.StatusOK {
+		t.Errorf("superadmin import: got %d, want 200", got)
 	}
 }

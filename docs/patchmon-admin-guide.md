@@ -4809,7 +4809,7 @@ Organisation-wide control.
 |----------------|-------|--------------------------|
 | `can_view_users` | View Users | See the user list and account details |
 | `can_manage_users` | Manage Users | Create, edit and delete user accounts |
-| `can_manage_superusers` | Manage Superusers | Manage `superadmin` accounts and elevated privileges, and change the OIDC / SSO provider, client credentials, redirect URI, email trust, role sync and role mapping |
+| `can_manage_superusers` | Manage Superusers | Manage `superadmin` accounts and elevated privileges, and turn OIDC / SSO on or off or change its provider, client credentials, redirect URI, local login, user auto-creation, email trust, role sync and role mapping |
 | `can_manage_settings` | Manage Settings | System configuration, OIDC / SSO (the provider and role mapping also need `can_manage_superusers`), AI, alert config, enrollment tokens |
 | `can_manage_notifications` | Manage Notifications | Configure notification destinations and routing rules |
 | `can_export_data` | Export Data | Download and export data and reports |
