@@ -1,0 +1,154 @@
+package commands
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os/exec"
+	"slices"
+	"strings"
+
+	"patchmon-agent/internal/packages"
+)
+
+// apkPatchIO is what an apk patch run needs from runPatch, kept narrow so tests can fake apk.
+type apkPatchIO struct {
+	run       func(args ...string) (string, error)
+	note      func(msg string)
+	inventory func() (packages.APKInventory, error)
+}
+
+// runPatchAPK holds the in-process apk slot for the whole run, so a report collected
+// meanwhile does not start its own apk update against the database lock.
+func runPatchAPK(ctx context.Context, sink *streamSink, env []string, patchType string, packageNames []string, dryRun bool) error {
+	if patchType != "patch_all" && len(packageNames) == 0 {
+		return errors.New("package_names required for patch_package")
+	}
+	release, err := packages.AcquireAPK(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	err = runAPKPatch(apkPatchIO{
+		run: func(args ...string) (string, error) {
+			sink.WriteString(formatCmd("apk", args...))
+			sink.Flush()
+			return runStreamingPatchStep(ctx, sink, env, "apk", args...)
+		},
+		note: func(msg string) {
+			sink.WriteString("[patchmon] " + msg + "\n")
+		},
+		inventory: func() (packages.APKInventory, error) {
+			return packages.LoadAPKInventory(ctx)
+		},
+	}, patchType, packageNames, dryRun)
+	if err != nil {
+		logger.WithError(err).Warn("apk patch run failed")
+		sink.WriteString(fmt.Sprintf("\n[apk error] %s\n", err.Error()))
+		sink.Flush()
+	}
+	return err
+}
+
+func runAPKPatch(io apkPatchIO, patchType string, packageNames []string, dryRun bool) error {
+	var targets []string
+	if patchType != "patch_all" {
+		targets = packageNames
+	}
+
+	if out, err := io.run(packages.APKUpdateArgs()...); err != nil {
+		return apkStepError("apk update", out, err)
+	}
+
+	inv, err := io.inventory()
+	if err != nil {
+		return fmt.Errorf("reading the apk package database failed: %w", err)
+	}
+	holds, conflicts := inv.Holds()
+	if len(conflicts) > 0 {
+		return errors.New(packages.APKConflictMessage(conflicts[0]))
+	}
+	upgradeTargets := targets
+	if targets != nil {
+		upgradeTargets = inv.ExpandTargets(targets, holds)
+	}
+
+	plan, err := apkSimulate(io, upgradeTargets)
+	if err != nil {
+		return err
+	}
+	if plan.Unreliable {
+		preArgs := packages.APKPreupgradeArgs(inv.Major)
+		switch {
+		case dryRun:
+			io.note("apk-tools has an update of its own. A real run installs it first and plans again, so the result can differ slightly from this plan.")
+		case preArgs != nil:
+			if out, err := io.run(preArgs...); err != nil {
+				return apkStepError("apk-tools upgrade", out, err)
+			}
+			if inv, err = io.inventory(); err != nil {
+				return fmt.Errorf("reading the apk package database failed: %w", err)
+			}
+			holds, _ = inv.Holds()
+			if plan, err = apkSimulate(io, upgradeTargets); err != nil {
+				return err
+			}
+		}
+	}
+
+	if refused := plan.Refused(); len(refused) > 0 {
+		steps := make([]string, len(refused))
+		for i, s := range refused {
+			steps[i] = s.String()
+		}
+		return fmt.Errorf("apk plans to downgrade or remove packages (%s). PatchMon only applies upgrades, so nothing was changed. "+
+			"This usually follows a repository being removed from /etc/apk/repositories; review the plan with apk upgrade --simulate on the host",
+			strings.Join(steps, "; "))
+	}
+
+	for _, h := range holds {
+		if targets == nil || slices.Contains(targets, h.Name) {
+			io.note("Held by /etc/apk/world: " + h.String())
+		}
+	}
+	for _, msg := range inv.NotUpgraded(plan, holds, targets) {
+		io.note(msg)
+	}
+
+	if dryRun {
+		return nil
+	}
+	if out, err := io.run(packages.APKUpgradeArgs(false, upgradeTargets)...); err != nil {
+		return apkStepError("apk upgrade", out, err)
+	}
+	return nil
+}
+
+func apkSimulate(io apkPatchIO, targets []string) (packages.APKPlan, error) {
+	out, err := io.run(packages.APKUpgradeArgs(true, targets)...)
+	if err == nil && dryRunOutputIndicatesError(out) {
+		err = errors.New("apk reported an error")
+	}
+	if err != nil {
+		if c, ok := packages.APKConflictFromError(out); ok {
+			return packages.APKPlan{}, errors.New(packages.APKConflictMessage(c))
+		}
+		return packages.APKPlan{}, apkStepError("apk upgrade --simulate", out, err)
+	}
+	return packages.ParseAPKPlan(out), nil
+}
+
+func apkStepError(step, output string, err error) error {
+	lower := strings.ToLower(output)
+	var exitErr *exec.ExitError
+	switch {
+	case strings.Contains(lower, "unable to lock database"):
+		return fmt.Errorf("%s failed: another apk process held the package database for more than %s seconds, retry when it has finished: %w", step, packages.APKLockWaitSeconds, err)
+	case strings.Contains(lower, "stale/unavailable repositories"), strings.Contains(lower, "unavailable, "):
+		return fmt.Errorf("%s failed: a repository in /etc/apk/repositories could not be reached: %w", step, err)
+	case errors.As(err, &exitErr) && exitErr.ExitCode() == 99:
+		return fmt.Errorf("%s failed: apk could not open its database: %w", step, err)
+	}
+	return fmt.Errorf("%s failed: %w", step, err)
+}
