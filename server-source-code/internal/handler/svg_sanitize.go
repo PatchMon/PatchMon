@@ -88,8 +88,13 @@ func unescapeCSS(v string) string {
 }
 
 // cleanCSS drops @import, image-set() and url() references to anything but a fragment or embedded image.
+// A value still holding a backslash after one unescape (a double escape) is dropped whole.
 func cleanCSS(v string) string {
-	v = cssImport.ReplaceAllString(unescapeCSS(v), "")
+	v = unescapeCSS(v)
+	if strings.Contains(v, `\`) {
+		return ""
+	}
+	v = cssImport.ReplaceAllString(v, "")
 	v = cssImageSet.ReplaceAllString(v, "none")
 	return cssURL.ReplaceAllStringFunc(v, func(m string) string {
 		target := strings.ToLower(cssURL.FindStringSubmatch(m)[1])

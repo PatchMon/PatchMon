@@ -199,3 +199,22 @@ func TestSanitizeSVGCleansCSSAndBase(t *testing.T) {
 		}
 	}
 }
+
+func TestSanitizeSVGDropsDoubleEscapedCSS(t *testing.T) {
+	t.Parallel()
+	in := svgOpen + `<style>@\5c 69mport "https://evil.example/a.css"; .a{fill:red}</style>` +
+		`<rect width="1" height="1" style="fill:u\5c 72l(https://evil.example/b)"/><rect width="1" height="1" style="fill:#0a0"/></svg>`
+	out, err := sanitizeSVG([]byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, bad := range []string{"evil.example", "mport", `\`} {
+		if strings.Contains(s, bad) {
+			t.Errorf("output still contains %q: %s", bad, s)
+		}
+	}
+	if !strings.Contains(s, `style="fill:#0a0"`) {
+		t.Errorf("plain style was dropped: %s", s)
+	}
+}
