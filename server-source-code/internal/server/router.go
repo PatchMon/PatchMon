@@ -36,6 +36,9 @@ import (
 // NewRouter creates the HTTP router with all routes and middleware.
 // Returns (handler, guacdProcess) - guacdProcess should be stopped on shutdown.
 // frontendFS is the embedded frontend static files (static/frontend/dist); pass nil to disable SPA serving.
+// rdpTicketRateLimit is RDP ticket requests per user per minute.
+const rdpTicketRateLimit = 10
+
 func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *redisclient.Client, registry *agentregistry.Registry, queueClient *asynq.Client, queueInspector *asynq.Inspector, ctxRegistry *hostctx.Registry, poolCache *hostctx.PoolCache, redisCache *hostctx.RedisCache, notifyEmit *notifications.Emitter, log *slog.Logger, frontendFS fs.FS) (http.Handler, *guacd.Process) {
 	r := chi.NewRouter()
 
@@ -231,7 +234,10 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		handler.WithOnAgentConnect(handler.NewAgentConnectHandler(dbProvider, queueClient, queueInspector, integrationStatusStore, notifyEmit, log)),
 	}
 	if rdpHandler != nil {
-		agentOpts = append(agentOpts, handler.WithOnRDPProxyMessage(rdpHandler.HandleRDPProxyMessage))
+		agentOpts = append(agentOpts,
+			handler.WithOnRDPProxyMessage(rdpHandler.HandleRDPProxyMessage),
+			handler.WithOnAgentConnClosed(rdpHandler.OnAgentConnClosed),
+		)
 	}
 	if sshTicketStore != nil {
 		sshTerminalWSHandler = handler.NewSshTerminalWSHandler(
@@ -475,7 +481,11 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			}
 			if rdpEnabled {
 				// Gated by rdp module (Max tier).
-				r.With(middleware.RequirePermission("can_use_remote_access", permissionsStore), hostctx.RequireModule("rdp")).Post("/auth/rdp-ticket", rdpHandler.ServeCreateTicket)
+				r.With(
+					middleware.RequirePermission("can_use_remote_access", permissionsStore),
+					hostctx.RequireModule("rdp"),
+					middleware.RateLimitPerUser(redisResolver, "rdp-ticket", rdpTicketRateLimit, time.Minute),
+				).Post("/auth/rdp-ticket", rdpHandler.ServeCreateTicket)
 			}
 			r.Get("/user/preferences", userPrefsHandler.Get)
 			r.Patch("/user/preferences", userPrefsHandler.Update)
