@@ -1850,7 +1850,7 @@ Same as Flow B, but starting from the **Packages** page. The wizard discovers wh
 Once a run is fired and not delayed, the UI redirects you into `/patching/runs/{id}`. The page has:
 
 - A header with the host name, status badge, **Awaiting inventory report** pill (post-patch), and the primary action buttons for the current state (Approve & Patch, Retry Validation, Skip & Patch, Stop Run).
-- A left-side **Run summary** card: host, type, initiated by, approved by, started / completed timestamps, link to the validation run if any, patch policy in effect, and packages affected.
+- A left-side **Run summary** card: host, type, initiated by, approved by, started / completed timestamps, link to the validation run if any, patch policy in effect, and packages affected. A package name links to its Package Detail page while the package is in the inventory. Names that are no longer in it, such as a Windows update once it is installed, show as plain text.
 - A right-side **Shell output** terminal for the live log stream.
 
 #### Live log streaming

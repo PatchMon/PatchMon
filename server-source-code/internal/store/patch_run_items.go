@@ -372,3 +372,20 @@ func (s *PatchRunsStore) ItemsNeedReboot(ctx context.Context, runID string) (boo
 	}
 	return itemsNeedReboot(items), nil
 }
+
+// PackageIDsByName maps each name that exists in the package inventory to its package ID.
+func (s *PatchRunsStore) PackageIDsByName(ctx context.Context, names []string) (map[string]string, error) {
+	out := make(map[string]string)
+	if len(names) == 0 {
+		return out, nil
+	}
+	d := s.db.DB(ctx)
+	rows, err := d.Queries.ListPackageIDsByNames(ctx, names)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		out[r.Name] = r.ID
+	}
+	return out, nil
+}

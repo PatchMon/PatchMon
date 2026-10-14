@@ -524,6 +524,7 @@ type Querier interface {
 	ListOrphanedImages(ctx context.Context) ([]ListOrphanedImagesRow, error)
 	ListOrphanedPackages(ctx context.Context) ([]ListOrphanedPackagesRow, error)
 	ListOrphanedRepositories(ctx context.Context) ([]ListOrphanedRepositoriesRow, error)
+	ListPackageIDsByNames(ctx context.Context, names []string) ([]ListPackageIDsByNamesRow, error)
 	// patch_policies
 	ListPatchPolicies(ctx context.Context) ([]PatchPolicy, error)
 	ListPatchPolicyAssignments(ctx context.Context, arg ListPatchPolicyAssignmentsParams) ([]PatchPolicyAssignment, error)

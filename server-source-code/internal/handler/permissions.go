@@ -7,7 +7,6 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
-	"github.com/go-chi/chi/v5"
 )
 
 // PermissionsHandler handles permissions routes.
@@ -61,7 +60,7 @@ func (h *PermissionsHandler) GetRoles(w http.ResponseWriter, r *http.Request) {
 
 // GetRole handles GET /permissions/roles/:role.
 func (h *PermissionsHandler) GetRole(w http.ResponseWriter, r *http.Request) {
-	role := chi.URLParam(r, "role")
+	role := decodedURLParam(r, "role")
 	if role == "" {
 		Error(w, http.StatusBadRequest, "Role is required")
 		return
@@ -76,7 +75,7 @@ func (h *PermissionsHandler) GetRole(w http.ResponseWriter, r *http.Request) {
 
 // UpdateRole handles PUT /permissions/roles/:role (create or update role).
 func (h *PermissionsHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
-	role := chi.URLParam(r, "role")
+	role := decodedURLParam(r, "role")
 	if role == "" {
 		Error(w, http.StatusBadRequest, "Role is required")
 		return
@@ -176,7 +175,7 @@ func (h *PermissionsHandler) UpdateRole(w http.ResponseWriter, r *http.Request) 
 
 // DeleteRole handles DELETE /permissions/roles/:role.
 func (h *PermissionsHandler) DeleteRole(w http.ResponseWriter, r *http.Request) {
-	role := chi.URLParam(r, "role")
+	role := decodedURLParam(r, "role")
 	if role == "" {
 		Error(w, http.StatusBadRequest, "Role is required")
 		return
