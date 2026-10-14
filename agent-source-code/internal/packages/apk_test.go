@@ -497,7 +497,9 @@ func TestAPKSecDBFixesAndCache(t *testing.T) {
 		t.Errorf("an expired cache must still be used when secdb is unreachable, got %v", stale)
 	}
 
-	empty := &apkSecDB{logger: quietLogger(), client: srv.Client(), baseURL: srv.URL, cacheDir: t.TempDir(), cacheOwner: os.Getuid(), now: time.Now}
+	gone := httptest.NewServer(http.NotFoundHandler())
+	gone.Close()
+	empty := &apkSecDB{logger: quietLogger(), client: gone.Client(), baseURL: gone.URL, cacheDir: t.TempDir(), cacheOwner: os.Getuid(), now: time.Now}
 	if got := empty.fixes(context.Background(), "v3.23", []string{"main"}); len(got) != 0 {
 		t.Errorf("unreachable secdb with no cache must yield nothing, got %v", got)
 	}
@@ -602,6 +604,24 @@ func TestAPKSecDBBacksOffAfterFailure(t *testing.T) {
 	db.fixes(context.Background(), "v3.23", []string{"main"})
 	if hits.Load() != 3 {
 		t.Errorf("a success must clear the backoff, got %d requests", hits.Load())
+	}
+}
+
+func TestAPKSecDBCancelledFetchIsNotABackoff(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = io.WriteString(w, secdbMain)
+	}))
+	defer srv.Close()
+	db := &apkSecDB{logger: quietLogger(), client: srv.Client(), baseURL: srv.URL, cacheDir: t.TempDir(), cacheOwner: os.Getuid(), now: time.Now}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := db.fixes(ctx, "v3.23", []string{"main"}); len(got) != 0 {
+		t.Fatalf("a cancelled fetch must yield nothing, got %v", got)
+	}
+	if got := db.fixes(context.Background(), "v3.23", []string{"main"}); len(got["zlib"]) != 1 || hits.Load() != 1 {
+		t.Errorf("a cancelled fetch must not start a backoff: %v after %d requests", got, hits.Load())
 	}
 }
 

@@ -237,6 +237,9 @@ func TestRunAPKPatchConflictAfterPreupgrade(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "/etc/apk/world requires busybox<1.0") {
 		t.Fatalf("err = %v", err)
 	}
+	if !strings.Contains(err.Error(), "Only apk-tools was upgraded") || strings.Contains(err.Error(), "Nothing was changed") {
+		t.Errorf("message must say apk-tools was upgraded: %v", err)
+	}
 	if f.ran(apkSimulateAll) != 1 || f.ran(apkUpgradeAll) != 1 {
 		t.Errorf("expected the preupgrade and nothing after it: %q", f.calls)
 	}

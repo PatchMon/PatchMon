@@ -255,9 +255,19 @@ func (inv APKInventory) NotUpgraded(plan APKPlan, holds []APKHold, targets []str
 // APKConflictMessage explains a world entry the installed package already breaks.
 // apk refuses every transaction until it is fixed, and apk fix fails the same way.
 func APKConflictMessage(c APKHold) string {
+	return apkConflictText(c) + " Nothing was changed."
+}
+
+// APKConflictMessageAfterPreupgrade is APKConflictMessage for a run that had already
+// brought apk-tools up to date.
+func APKConflictMessageAfterPreupgrade(c APKHold) string {
+	return apkConflictText(c) + " Only apk-tools was upgraded; nothing else was changed."
+}
+
+func apkConflictText(c APKHold) string {
 	suggestion := c.Name + "=" + c.Installed
 	return fmt.Sprintf("/etc/apk/world requires %s but %s %s is installed, so apk refuses every upgrade. "+
-		"Correct that line in /etc/apk/world (for example change it to %s, or remove the version constraint), then retry. Nothing was changed.",
+		"Correct that line in /etc/apk/world (for example change it to %s, or remove the version constraint), then retry.",
 		c.Constraint, c.Name, c.Installed, suggestion)
 }
 

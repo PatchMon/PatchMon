@@ -83,7 +83,7 @@ func runAPKPatch(io apkPatchIO, patchType string, packageNames []string, dryRun 
 		})
 	}
 
-	plan, err := apkSimulate(io, upgradeTargets)
+	plan, err := apkSimulate(io, upgradeTargets, false)
 	if err != nil {
 		return err
 	}
@@ -104,9 +104,9 @@ func runAPKPatch(io apkPatchIO, patchType string, packageNames []string, dryRun 
 			}
 			holds, conflicts = inv.Holds()
 			if len(conflicts) > 0 {
-				return errors.New(packages.APKConflictMessage(conflicts[0]))
+				return errors.New(packages.APKConflictMessageAfterPreupgrade(conflicts[0]))
 			}
-			if plan, err = apkSimulate(io, upgradeTargets); err != nil {
+			if plan, err = apkSimulate(io, upgradeTargets, true); err != nil {
 				return err
 			}
 		}
@@ -140,13 +140,16 @@ func runAPKPatch(io apkPatchIO, patchType string, packageNames []string, dryRun 
 	return nil
 }
 
-func apkSimulate(io apkPatchIO, targets []string) (packages.APKPlan, error) {
+func apkSimulate(io apkPatchIO, targets []string, preupgraded bool) (packages.APKPlan, error) {
 	out, err := io.run(packages.APKUpgradeArgs(true, targets)...)
 	if err == nil && dryRunOutputIndicatesError(out) {
 		err = errors.New("apk reported an error")
 	}
 	if err != nil {
 		if c, ok := packages.APKConflictFromError(out); ok {
+			if preupgraded {
+				return packages.APKPlan{}, errors.New(packages.APKConflictMessageAfterPreupgrade(c))
+			}
 			return packages.APKPlan{}, errors.New(packages.APKConflictMessage(c))
 		}
 		return packages.APKPlan{}, apkStepError("apk upgrade --simulate", out, err)

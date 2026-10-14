@@ -223,6 +223,9 @@ func (s *apkSecDB) fetchWithBackoff(ctx context.Context, url string) ([]byte, er
 		return nil, fmt.Errorf("GET %s failed at %s, next attempt after %s", url, failed.UTC().Format(time.RFC3339), failed.Add(apkSecDBBackoff).UTC().Format(time.RFC3339))
 	}
 	data, err := s.fetch(ctx, url)
+	if err != nil && ctx.Err() != nil {
+		return nil, err
+	}
 	apkSecDBMu.Lock()
 	if err != nil {
 		apkSecDBFailedAt[url] = s.now()
