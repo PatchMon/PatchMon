@@ -52,6 +52,14 @@ type AuthHandler struct {
 	cfgResolver *hostctx.ConfigResolver
 }
 
+// dummyPasswordHash must stay a valid hash at the cost used for real passwords,
+// or the comparison against it returns early and the timing leak reopens.
+const dummyPasswordHash = "$2a$12$Jf3V8YDiVO/jiJmbThjnYeiiuNro41Hsodwjpw3O977bmeZiXvPLC"
+
+func spendPasswordCheck(password string) {
+	_ = bcrypt.CompareHashAndPassword([]byte(dummyPasswordHash), []byte(strings.TrimSpace(password)))
+}
+
 // WithConfigResolver wires the per-context config resolver.
 func (h *AuthHandler) WithConfigResolver(r *hostctx.ConfigResolver) *AuthHandler {
 	h.cfgResolver = r
@@ -212,6 +220,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// A DB failure is not a wrong username. Counting it would let an outage
 		// lock out the very people retrying a correct password.
+		spendPasswordCheck(req.Password)
 		if !errors.Is(err, pgx.ErrNoRows) {
 			if h.log != nil {
 				h.log.Error("auth login lookup failed", "ip", h.clientIP(r), "error", err)
@@ -238,19 +247,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if h.log != nil {
 		h.log.Debug("auth login user found", "user_id", user.ID, "username", user.Username, "is_active", user.IsActive, "has_password", user.PasswordHash != nil)
 	}
-	// These two branches consume an attempt as well. If they did not, the absence
-	// of a lockout would identify exactly the accounts that are disabled or
-	// SSO-only, now that unknown usernames do lock out.
-	if !user.IsActive {
-		if locked := h.recordLoginFailure(w, r, req.Username); locked {
-			h.logLoginFailure(r, "account_disabled", req.Username, user.ID, "locked", true)
-			return
-		}
-		h.logLoginFailure(r, "account_disabled", req.Username, user.ID)
-		Error(w, http.StatusUnauthorized, "Account is disabled")
-		return
-	}
+	// Consumes an attempt as well. If it did not, the absence of a lockout would
+	// identify exactly the SSO-only accounts, now that unknown usernames do lock out.
 	if user.PasswordHash == nil {
+		spendPasswordCheck(req.Password)
 		if locked := h.recordLoginFailure(w, r, req.Username); locked {
 			h.logLoginFailure(r, "no_password_set", req.Username, user.ID, "locked", true)
 			return
@@ -318,6 +318,17 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			h.log.Debug("auth login bcrypt failed", "user_id", user.ID, "hash_len", len(hash), "bcrypt_err", err.Error())
 		}
 		Error(w, http.StatusUnauthorized, "Invalid credentials")
+		return
+	}
+
+	// Only after the password is proven, so the message cannot confirm a disabled account to a guesser.
+	if !user.IsActive {
+		if locked := h.recordLoginFailure(w, r, req.Username); locked {
+			h.logLoginFailure(r, "account_disabled", req.Username, user.ID, "locked", true)
+			return
+		}
+		h.logLoginFailure(r, "account_disabled", req.Username, user.ID)
+		Error(w, http.StatusUnauthorized, "Account is disabled")
 		return
 	}
 

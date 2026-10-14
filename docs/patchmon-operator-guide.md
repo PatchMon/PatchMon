@@ -2371,7 +2371,7 @@ The `reason` field distinguishes the failure:
 |---|---|
 | `user_not_found` | No account matches the username or email that was typed |
 | `invalid_password` | The account exists and the password was wrong |
-| `account_disabled` | The account exists but is deactivated |
+| `account_disabled` | The correct password was given for a deactivated account. A wrong password for a deactivated account is logged as `invalid_password` |
 | `no_password_set` | The account has no local password, typically SSO-only |
 | `locked_out` | Refused on arrival because a lockout from earlier attempts is still in force |
 | `missing_credentials` | The request omitted the username or the password |
@@ -2383,6 +2383,8 @@ The `reason` field distinguishes the failure:
 | `tfa_token_malformed` | The submitted two-factor code was not six alphanumeric characters |
 | `tfa_ticket_invalid` | The two-factor step was reached without a valid, unexpired ticket from the password step |
 | `tfa_user_ineligible` | The ticket resolved to an account that is inactive or has no two-factor enrolled |
+
+The client never sees these reasons. An unknown username, an SSO-only account, a wrong password and a deactivated account all return the same `Invalid credentials` message and take the same time to answer, so the response does not reveal which accounts exist. Only a caller who supplies the correct password for a deactivated account is told `Account is disabled`.
 
 A failed lookup caused by the database being unreachable is **not** reported as `user_not_found`. It is logged separately at `error` level as `auth login lookup failed`, and it does not consume a lockout attempt, so a database problem cannot lock out the people retrying a correct password.
 

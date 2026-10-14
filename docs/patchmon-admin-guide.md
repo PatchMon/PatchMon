@@ -4939,6 +4939,7 @@ Effects:
 - All their sessions are revoked immediately.
 - All their trusted devices are revoked (so re-activating them later cannot reuse a "remember this device" cookie that predates the deactivation window).
 - The user's row is shown with a red **Inactive** badge in the users table.
+- A sign-in attempt with a wrong password gets the usual `Invalid credentials` message. Only someone who enters the account's correct password is told `Account is disabled`, so the message cannot be used to find out which accounts exist.
 
 To re-enable: edit and tick **Active** again.
 
