@@ -278,8 +278,8 @@ func TestZypperTransactionArgs(t *testing.T) {
 		{"leap patch all", false, nil, false, "--non-interactive --non-interactive-include-reboot-patches --no-refresh patch --with-update --auto-agree-with-licenses"},
 		{"leap patch all plan", false, nil, true, "--non-interactive --non-interactive-include-reboot-patches --no-refresh --xmlout patch --with-update --auto-agree-with-licenses --dry-run"},
 		{"tumbleweed patch all", true, nil, false, "--non-interactive --non-interactive-include-reboot-patches --no-refresh dist-upgrade --auto-agree-with-licenses"},
-		{"selected", false, []string{"curl", "libcurl4"}, false, "--non-interactive --non-interactive-include-reboot-patches --no-refresh update --auto-agree-with-licenses curl libcurl4"},
-		{"selected on tumbleweed plan", true, []string{"curl"}, true, "--non-interactive --non-interactive-include-reboot-patches --no-refresh --xmlout update --auto-agree-with-licenses --dry-run curl"},
+		{"selected", false, []string{"curl", "libcurl4"}, false, "--non-interactive --non-interactive-include-reboot-patches --no-refresh update --auto-agree-with-licenses -- curl libcurl4"},
+		{"selected on tumbleweed plan", true, []string{"curl"}, true, "--non-interactive --non-interactive-include-reboot-patches --no-refresh --xmlout update --auto-agree-with-licenses --dry-run -- curl"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

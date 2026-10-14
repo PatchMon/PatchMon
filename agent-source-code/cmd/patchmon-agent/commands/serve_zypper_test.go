@@ -166,7 +166,7 @@ func TestZypperSelectedPackages(t *testing.T) {
 	if err := runZypperPatch(f.io(), "patch_package", []string{"curl", "libcurl4"}, false); err != nil {
 		t.Fatal(err)
 	}
-	if f.count("update --auto-agree-with-licenses curl") != 1 || f.count("libcurl4") != 0 {
+	if f.count("update --auto-agree-with-licenses -- curl") != 1 || f.count("libcurl4") != 0 {
 		t.Errorf("calls %q", f.calls)
 	}
 	if !f.noted("left alone: libcurl4") || !f.noted("partial update") {

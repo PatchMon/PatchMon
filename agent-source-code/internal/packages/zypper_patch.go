@@ -84,7 +84,10 @@ func ZypperTransactionArgs(rolling bool, targets []string, plan bool) []string {
 	if plan {
 		args = append(args, "--dry-run")
 	}
-	return append(args, targets...)
+	if targets == nil {
+		return args
+	}
+	return append(append(args, "--"), targets...)
 }
 
 // ZypperPlan is the transaction a zypper --dry-run printed.
