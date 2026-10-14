@@ -1013,11 +1013,11 @@ func (h *PatchingHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Remove run_patch task(s) from queue if present.
-	// Original task: patch-run-{id}, retry task: patch-run-{id}-retry
 	if h.queueInspector != nil {
-		taskID := patchRunJobIDPrefix + id
-		_ = h.queueInspector.DeleteTask(queue.QueuePatching, taskID)
-		_ = h.queueInspector.DeleteTask(queue.QueuePatching, taskID+"-retry")
+		_ = h.queueInspector.DeleteTask(queue.QueuePatching, patchRunJobIDPrefix+id)
+		for _, retryID := range queue.RunPatchRetryTaskIDs(id) {
+			_ = h.queueInspector.DeleteTask(queue.QueuePatching, retryID)
+		}
 	}
 	if err := h.patchRuns.Delete(r.Context(), id); err != nil {
 		h.log.Error("patching: delete run error", "patch_run_id", id, "error", err)

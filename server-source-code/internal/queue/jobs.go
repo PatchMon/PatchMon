@@ -159,6 +159,22 @@ func NewRunPatchTask(p RunPatchPayload) (*asynq.Task, error) {
 	return asynq.NewTask(TypeRunPatch, payload, opts...), nil
 }
 
+// RunPatchRetryTaskIDs are the retry task IDs a run can have, so the delete handler can cancel them.
+// Two alternate because a running task cannot enqueue a task with its own ID.
+func RunPatchRetryTaskIDs(patchRunID string) [2]string {
+	base := "patch-run-" + patchRunID + "-retry"
+	return [2]string{base, base + "-2"}
+}
+
+// NextRunPatchRetryTaskID picks the retry ID that is not the task currently running.
+func NextRunPatchRetryTaskID(patchRunID, currentTaskID string) string {
+	ids := RunPatchRetryTaskIDs(patchRunID)
+	if currentTaskID == ids[0] {
+		return ids[1]
+	}
+	return ids[0]
+}
+
 // NewRunPatchRetryTask creates a run_patch task with a custom task ID so that
 // re-queuing an offline run does not collide with the still-active original task.
 func NewRunPatchRetryTask(p RunPatchPayload, taskID string) (*asynq.Task, error) {
@@ -778,18 +794,18 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 			return nil
 		}
 
-		// Use a deterministic retry task ID so only one retry can exist at a time
-		// and the delete handler can cancel it.
-		retryTaskID := "patch-run-" + p.PatchRunID + "-retry"
-		task, err := NewRunPatchRetryTask(p, retryTaskID)
+		currentTaskID, _ := asynq.GetTaskID(ctx)
+		task, err := NewRunPatchRetryTask(p, NextRunPatchRetryTaskID(p.PatchRunID, currentTaskID))
 		if err != nil {
 			return err
 		}
 		_, err = h.queueClient.Enqueue(task, asynq.ProcessIn(5*time.Minute))
-		if err != nil {
-			// If a task with this ID already exists (pending), that's fine - skip.
-			h.log.Debug("run_patch: re-enqueue skipped or failed", "api_id", p.ApiID, "error", err)
-		} else {
+		switch {
+		case errors.Is(err, asynq.ErrTaskIDConflict):
+			h.log.Debug("run_patch: retry already pending", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
+		case err != nil:
+			h.log.Warn("run_patch: failed to re-queue run for offline agent", "api_id", p.ApiID, "patch_run_id", p.PatchRunID, "error", err)
+		default:
 			h.log.Info("run_patch: agent offline, re-queued in 5m", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
 		}
 		return nil
