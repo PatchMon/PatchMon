@@ -37,6 +37,9 @@ type UsersHandler struct {
 	cfgResolver          *hostctx.ConfigResolver
 	cfg                  *config.Config
 	trustUnverifiedEmail func(context.Context) bool
+	tfaLockout           *store.TfaLockoutStore
+	audit                *store.AuditLogsStore
+	tfaReplay            *store.TfaReplayStore
 }
 
 // WithConfigResolver wires the per-context config resolver.
@@ -93,10 +96,17 @@ func (h *UsersHandler) List(w http.ResponseWriter, r *http.Request) {
 		pageSize = total
 	}
 
+	callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
+	perm, _ := h.permissions.GetByRole(r.Context(), callerRole)
+	canManage := perm != nil && perm.CanManageUsers
+
 	// Build response without password_hash
 	data := make([]map[string]interface{}, len(users))
 	for i, u := range users {
 		data[i] = userToAdminResponse(&u)
+		if !canManage {
+			delete(data[i], "tfa_enabled")
+		}
 	}
 
 	JSON(w, http.StatusOK, map[string]interface{}{
@@ -535,6 +545,14 @@ func (h *UsersHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if existing.TfaEnrolmentRequired || existing.PasswordChangeRequired {
+		callerID, _ := r.Context().Value(middleware.UserIDKey).(string)
+		caller, err := h.users.GetByID(r.Context(), callerID)
+		if err != nil || caller == nil || !canResetTfaOf(caller, existing) {
+			Error(w, http.StatusForbidden, "This user is part-way through a two-factor reset. Only a superadmin or a user with a higher role can reset their password now.")
+			return
+		}
+	}
 
 	if err := ValidatePasswordPolicy(h.resolvedFor(r.Context()), req.NewPassword); err != nil {
 		Error(w, http.StatusBadRequest, err.Error())
@@ -574,6 +592,7 @@ func userToAdminResponse(u *models.User) map[string]interface{} {
 	res := map[string]interface{}{
 		"id": u.ID, "username": u.Username, "email": u.Email, "role": u.Role,
 		"is_active": u.IsActive, "created_at": u.CreatedAt, "updated_at": u.UpdatedAt,
+		"tfa_enabled": u.TfaEnabled,
 	}
 	if u.FirstName != nil {
 		res["first_name"] = *u.FirstName

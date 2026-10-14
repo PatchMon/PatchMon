@@ -3640,7 +3640,7 @@ The following alert types fire from the server code in 2.0. Each can be individu
 | `account_locked` | system | An account is locked after repeated failures |
 | `user_created` | system | A new user is created |
 | `user_role_changed` | system | A user's role is changed |
-| `user_tfa_disabled` | system | A user's two-factor authentication is removed |
+| `user_tfa_disabled` | system | A user's two-factor authentication is removed, by the user or by an administrator's reset |
 | `sso_fallback_login` | system | A superadmin signs in with a password because the SSO provider is unreachable (see **Superadmin password login if SSO is down**) |
 | `sso_fallback_refused` | system | A superadmin without two-factor authentication gives the correct password while the SSO provider is unreachable, and is refused |
 
@@ -5251,7 +5251,7 @@ There is no "enforce for everyone" option in the wizard. This decision is always
 
 ### Admin Recovery: User Has Lost Their Authenticator
 
-PatchMon does not have a dedicated "admin reset MFA" button. Recovery is handled through the standard account-recovery flow, which implicitly disables 2FA in a safe way:
+If the user still has a backup code, they can recover on their own. Otherwise an administrator resets their 2FA from the Users page.
 
 #### Option A: User has a backup code
 
@@ -5260,27 +5260,47 @@ Ask them to sign in with a backup code (see [Using a backup code](#using-a-backu
 1. **Profile → Multi-Factor Authentication → Disable TFA** to remove the old authenticator secret entirely, and then re-enable with the new phone.
 2. Or **Regenerate Codes** to get a fresh set of backup codes without touching the authenticator.
 
-#### Option B: User has no backup codes and no authenticator
-
-An administrator must reset the account:
+#### Option B: An administrator resets the user's 2FA
 
 1. Sign in as a user with `can_manage_users` (admin, superadmin, or any custom role with that permission).
 2. Go to **Settings → Users**.
-3. Find the affected user and click **Reset Password**.
-4. Set a new password and communicate it over an out-of-band secure channel.
+3. Find the affected user and click the **Reset 2FA** icon (a crossed-out shield). It only appears for users who have 2FA turned on.
+4. Enter **your own** password, and your own 2FA code if your account uses 2FA.
+5. Optionally tick **Also set a new temporary password** and enter one twice. **If you suspect the account is compromised, tick this.** Give the temporary password to the user over a separate, secure channel.
+6. Click **Reset 2FA**.
 
-> **Password reset alone does not disable 2FA.** The user will still be prompted for a TOTP or backup code after their first login with the new password.
+The reset:
 
-If the user still cannot produce a code, you have two further options:
+- removes the user's authenticator secret and backup codes;
+- revokes every trusted ("Remember me") device for that user;
+- signs the user out of every session, so they have to sign in again.
 
-- **Deactivate, then reactivate the account.** Edit the user, untick **Active**, save (this also wipes their trusted devices), then tick **Active** again. 2FA is still enabled on the account, so this alone does not solve the missing-authenticator problem.
-- **Delete and re-create the user** as a last resort. You lose the user's ID, notification preferences, and any artefacts keyed to their account, so prefer the backup-code route wherever possible.
+On their next sign-in the user enters their password and is taken straight to a **Set up two-factor authentication** screen. They cannot reach any other page, and the server refuses every other API call from that session, until they scan the new QR code, enter a code and save their new backup codes. They can also sign out from that screen.
 
-> **Feature gap:** A "wipe 2FA on another user" admin action is on the roadmap. If you hit this frequently, consider moving your deployment to OIDC / SSO so that MFA is managed by the IdP (see Setting Up OIDC / Single Sign-On).
+If you set a temporary password, the user's old password stops working straight away. When they sign in with the temporary password they first see a **Choose a new password** screen, and must replace it before the 2FA setup screen appears. Neither the temporary password nor the password they had before the reset is accepted as the new one. Until then the server refuses every API call from that session except changing the password, reading their own profile and signing out. Only this checkbox forces a password change; the separate **Reset Password** action works as before.
+
+Forced re-enrolment only guarantees 2FA at that point: PatchMon has no setting that makes 2FA mandatory, so the user can still turn it off from their profile afterwards. Without the temporary password option, anyone who knows the user's current password can sign in and enrol their own authenticator, so tick it if that password may be known to someone else.
+
+Accounts linked to an OIDC / SSO provider, and accounts without a local password, are not forced to re-enrol, because their MFA is managed by the identity provider. The reset still clears any local 2FA they had. If an account is linked to an identity provider after a reset, the requirement lapses for the same reason.
+
+Rules the server enforces:
+
+| Rule | Detail |
+|------|--------|
+| Permission | `can_manage_users` is required. |
+| Role | You can only reset users whose role is lower than yours. An admin cannot reset another admin or a superadmin. A superadmin can reset anyone except themselves. Custom roles rank between `host_manager` and `user`, so they cannot reset each other. |
+| Your own account | Not allowed here. Use your profile instead. |
+| Confirmation | Your password is always required, and your 2FA code (or a backup code) if you have 2FA. Wrong 2FA codes count towards your own `MAX_TFA_ATTEMPTS` lockout. |
+| SSO-only administrators | An administrator who signs in only through OIDC has no local password to confirm with, so cannot use this action. Ask an administrator with a local password. |
+| Deactivated users | Can be reset, so you can clear 2FA before reactivating an account. |
+| Reset Password afterwards | Until the user has finished setting up their account again, only a superadmin or someone with a higher role than theirs can use **Reset Password** on them. This stops a peer setting a password and enrolling their own authenticator on the account. |
+| Rate limit | 10 attempts per administrator per 15 minutes, counted per signed-in administrator rather than per IP. |
+
+Every reset is written to the server log and to the `audit_logs` table (event `user_tfa_reset`), and so is every refused attempt from the password check onwards: a wrong password or 2FA code, a role you cannot reset, an unknown user, or a user without 2FA. A successful reset also raises the `user_tfa_disabled` notification event, so any alert route you have for "2FA disabled" fires for it.
 
 #### Direct database workaround (self-hosted only)
 
-If you are self-hosting and absolutely need to clear 2FA on a user without backup codes, a DBA can clear the user's `tfa_enabled`, `tfa_secret` and `tfa_backup_codes` columns directly in the `users` table, then force a password reset from the UI. This is a last resort. Make a backup first, and never do this on PatchMon Cloud (where direct database access is not available).
+You should only need this when no administrator with a local password can perform the reset above. On a self-hosted install a DBA can clear the user's `tfa_enabled`, `tfa_secret` and `tfa_backup_codes` columns directly in the `users` table, then force a password reset from the UI. This is a last resort. Make a backup first, and never do this on PatchMon Cloud (where direct database access is not available).
 
 ```sql
 -- Replace 'alice' with the affected username. Make a backup first.

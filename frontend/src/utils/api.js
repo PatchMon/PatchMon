@@ -265,6 +265,12 @@ export const adminUsersAPI = {
 	resetPassword: (userId, newPassword) =>
 		api.post(`/auth/admin/users/${userId}/reset-password`, { newPassword }),
 	unlinkOidc: (userId) => api.post(`/auth/admin/users/${userId}/unlink-oidc`),
+	resetTfa: (userId, { password, tfaToken, newPassword }) =>
+		api.post(`/auth/admin/users/${userId}/reset-tfa`, {
+			password,
+			tfaToken,
+			newPassword,
+		}),
 };
 
 // Permissions API (for role management)

@@ -783,6 +783,9 @@ type User struct {
 	DiscordLinkedAt        pgtype.Timestamp `json:"discord_linked_at"`
 	NewsletterSubscribed   bool             `json:"newsletter_subscribed"`
 	NewsletterSubscribedAt pgtype.Timestamp `json:"newsletter_subscribed_at"`
+	TfaEnrolmentRequired   bool             `json:"tfa_enrolment_required"`
+	PasswordChangeRequired bool             `json:"password_change_required"`
+	PreviousPasswordHash   *string          `json:"previous_password_hash"`
 }
 
 type UserSession struct {

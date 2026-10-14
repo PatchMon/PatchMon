@@ -54,6 +54,7 @@ type AuthHandler struct {
 	// Resolves the calling context's own settings; `resolved` is startup-only.
 	cfgResolver *hostctx.ConfigResolver
 	localAuth   LocalAuthPolicy
+	tfaReplay   *store.TfaReplayStore
 }
 
 // LocalAuthPolicy reports whether the calling context has turned off password
@@ -593,20 +594,13 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	secret := strings.TrimSpace(*user.TfaSecret)
-	verified := util.VerifyTOTP(secret, req.Token, util.TOTPWindow)
-
-	if !verified {
-		hashed := util.ParseBackupCodesJSON(user.TfaBackupCodes)
-		if len(hashed) > 0 {
-			valid, idx := util.VerifyBackupCode(req.Token, hashed)
-			if valid {
-				verified = true
-				hashed = append(hashed[:idx], hashed[idx+1:]...)
-				updated := util.EncodeBackupCodesJSON(hashed)
-				_ = h.users.UpdateTfaBackupCodes(r.Context(), user.ID, &updated)
-			}
+	verified, err := verifyTfaCode(r.Context(), h.users, h.tfaReplay, user, req.Token)
+	if err != nil {
+		if h.log != nil {
+			h.log.Error("auth: tfa verification failed", "user_id", user.ID, "error", err)
 		}
+		Error(w, http.StatusInternalServerError, "Two-factor verification unavailable")
+		return
 	}
 
 	if !verified {
@@ -833,6 +827,12 @@ func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, user
 	}
 	if rememberMe && !trustExpiresAt.IsZero() {
 		resp["tfa_bypass_until"] = trustExpiresAt.Format(time.RFC3339)
+	}
+	if user.TfaEnrolmentPending() {
+		resp["tfaEnrolmentRequired"] = true
+	}
+	if user.PasswordChangePending() {
+		resp["passwordChangeRequired"] = true
 	}
 	JSON(w, http.StatusOK, resp)
 }
@@ -1543,6 +1543,15 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusUnauthorized, "Current password is incorrect")
 		return
 	}
+	if req.NewPassword == req.CurrentPassword {
+		Error(w, http.StatusBadRequest, "New password must be different from the current password")
+		return
+	}
+	if user.PasswordChangeRequired && user.PreviousPasswordHash != nil &&
+		bcrypt.CompareHashAndPassword([]byte(strings.TrimSpace(*user.PreviousPasswordHash)), []byte(req.NewPassword)) == nil {
+		Error(w, http.StatusBadRequest, "Choose a password you haven't used before")
+		return
+	}
 	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), 12)
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to hash password")
@@ -2023,9 +2032,11 @@ func userToResponse(u *models.User, acceptedVersions []string) map[string]interf
 	res := map[string]interface{}{
 		"id": u.ID, "username": u.Username, "email": u.Email, "role": u.Role,
 		"is_active": u.IsActive, "theme_preference": strVal(u.ThemePreference, "dark"),
-		"color_theme":  strVal(u.ColorTheme, "cyber_blue"),
-		"updated_at":   u.UpdatedAt,
-		"has_password": u.PasswordHash != nil && *u.PasswordHash != "",
+		"color_theme":              strVal(u.ColorTheme, "cyber_blue"),
+		"updated_at":               u.UpdatedAt,
+		"has_password":             u.PasswordHash != nil && *u.PasswordHash != "",
+		"tfa_enrolment_required":   u.TfaEnrolmentPending(),
+		"password_change_required": u.PasswordChangePending(),
 	}
 	if u.FirstName != nil {
 		res["first_name"] = *u.FirstName

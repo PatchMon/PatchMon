@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
@@ -10,6 +11,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // UsersStore provides user access.
@@ -434,4 +436,56 @@ func (s *UsersStore) UpdateDiscordProfile(ctx context.Context, userID string, la
 // SetNewsletterSubscribed marks the user as subscribed to the newsletter and stamps the timestamp.
 func (s *UsersStore) SetNewsletterSubscribed(ctx context.Context, userID string) error {
 	return s.db.DB(ctx).Queries.SetNewsletterSubscribed(ctx, userID)
+}
+
+// AdminResetTfa clears TFA, flags local accounts for re-enrolment, revokes sessions and trusted
+// devices, optionally sets a temporary password, and writes the audit row in one transaction.
+// reset is false, changing nothing, when TFA was off.
+func (s *UsersStore) AdminResetTfa(ctx context.Context, userID string, tempPasswordHash *string, audit AuditEntry) (reset, enrolmentRequired bool, err error) {
+	d := s.db.DB(ctx)
+	tx, err := d.Begin(ctx)
+	if err != nil {
+		return false, false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	q := d.Queries.WithTx(tx)
+	enrolmentRequired, err = q.ResetUserTfa(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, err
+	}
+	if tempPasswordHash != nil {
+		if err := q.SetTemporaryPassword(ctx, db.SetTemporaryPasswordParams{ID: userID, PasswordHash: tempPasswordHash}); err != nil {
+			return false, false, err
+		}
+	}
+	if err := q.RevokeAllTrustedDevicesForUser(ctx, userID); err != nil {
+		return false, false, err
+	}
+	if err := q.RevokeAllSessionsForUser(ctx, userID); err != nil {
+		return false, false, err
+	}
+	if audit.Metadata == nil {
+		audit.Metadata = map[string]any{}
+	}
+	audit.Metadata["enrolment_required"] = enrolmentRequired
+	audit.Metadata["temporary_password"] = tempPasswordHash != nil
+	if err := insertAuditLog(ctx, q, audit); err != nil {
+		return false, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, false, err
+	}
+	return true, enrolmentRequired, nil
+}
+
+// ConsumeTfaBackupCode swaps the stored backup codes only if they still equal oldCodes, so
+// two requests racing on one code cannot both succeed.
+func (s *UsersStore) ConsumeTfaBackupCode(ctx context.Context, userID, oldCodes, newCodes string) (bool, error) {
+	d := s.db.DB(ctx)
+	n, err := d.Queries.ConsumeTfaBackupCode(ctx, db.ConsumeTfaBackupCodeParams{ID: userID, OldCodes: oldCodes, NewCodes: &newCodes})
+	return n == 1, err
 }
