@@ -273,3 +273,13 @@ func TestFromRequest(t *testing.T) {
 		})
 	}
 }
+
+func TestResolve_MultipleHeaderLines(t *testing.T) {
+	t.Parallel()
+	r := request("10.0.0.1:9000", "")
+	r.Header.Add("X-Forwarded-For", "1.2.3.4")
+	r.Header.Add("X-Forwarded-For", "203.0.113.7")
+	if got := Resolve(r, nil); got != "203.0.113.7" {
+		t.Fatalf("want the address the proxy appended on its own header line, got %q", got)
+	}
+}

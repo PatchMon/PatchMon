@@ -51,32 +51,12 @@ func ParseTrustedProxies(entries []string) ([]netip.Prefix, []string) {
 	return prefixes, invalid
 }
 
-// Resolve returns the client IP for a request, or "" when nothing usable is
-// found.
-//
-// X-Forwarded-For is walked from the RIGHT. A reverse proxy appends the address
-// it actually saw (nginx's proxy_add_x_forwarded_for expands to
-// "$http_x_forwarded_for, $remote_addr"), so the rightmost entry is the only one
-// the infrastructure vouches for. Anything the client forged sits to its left
-// and is ignored.
-//
-// Entries belonging to trustedProxies are skipped while walking, so a chain such
-// as Cloudflare in front of Nginx Proxy Manager resolves to the original client
-// rather than to Cloudflare's egress address. When every entry is trusted, the
-// leftmost is returned: the chain is fully accounted for, so that entry is the
-// real client.
-//
-// With trustedProxies empty the rightmost entry is used, which is correct for
-// the single reverse proxy PatchMon's Docker deployment assumes.
-//
-// The header is only honoured when the TCP peer is itself a proxy we trust:
-// one in trustedProxies, or, when that is empty, a loopback, private,
-// link-local or CGNAT address. Anything else connected directly, so its header
-// is ignored.
+// Resolve returns the client IP, walking X-Forwarded-For from the right past trustedProxies,
+// and only when the TCP peer itself may forward (see PeerMayForward); "" when nothing is usable.
 func Resolve(r *http.Request, trustedProxies []netip.Prefix) string {
 	peer := hostOnly(r.RemoteAddr)
 
-	xff := r.Header.Get("X-Forwarded-For")
+	xff := strings.Join(r.Header.Values("X-Forwarded-For"), ",")
 	if xff == "" || !PeerMayForward(peer, trustedProxies) {
 		return peer
 	}

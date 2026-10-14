@@ -1,8 +1,12 @@
 package middleware
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/clientip"
@@ -99,4 +103,30 @@ func TestRealIP_ConsumersAgree(t *testing.T) {
 	req.Header.Set("X-Forwarded-For", "1.2.3.4, 203.0.113.7")
 
 	handler.ServeHTTP(httptest.NewRecorder(), req)
+}
+
+func TestRealIP_WarnsOncePerUntrustedPeer(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	handler := RealIP(nil, slog.New(slog.NewTextHandler(&buf, nil)))(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	send := func(peer string) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = peer + ":5555"
+		req.Header.Set("X-Forwarded-For", "203.0.113.9")
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	}
+	for range 3 {
+		send("198.51.100.1")
+		send("198.51.100.2")
+	}
+	for i := 10; i < 30; i++ {
+		send("198.51.100." + strconv.Itoa(i))
+	}
+	send("10.0.0.1")
+	if got := strings.Count(buf.String(), "ignoring X-Forwarded-For"); got != maxUntrustedPeerWarnings {
+		t.Fatalf("want %d warnings (one per distinct peer, capped), got %d:\n%s", maxUntrustedPeerWarnings, got, buf.String())
+	}
+	if !strings.Contains(buf.String(), "peer=198.51.100.2") {
+		t.Error("second distinct peer was not reported")
+	}
 }
