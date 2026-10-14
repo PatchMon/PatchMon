@@ -114,6 +114,7 @@ const RolesTab = () => {
 			await updateRoleMutation.mutateAsync({ role, permissions });
 		} catch (error) {
 			console.error("Failed to update permissions:", error);
+			toast.error(error.response?.data?.error || "Failed to update role");
 		}
 	};
 

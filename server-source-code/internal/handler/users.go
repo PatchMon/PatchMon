@@ -56,50 +56,12 @@ func NewUsersHandler(users *store.UsersStore, sessions *store.SessionsStore, tru
 	return &UsersHandler{users: users, sessions: sessions, trustedDevices: trustedDevices, permissions: permissions, settings: settings, resolved: resolved, db: db, notify: notify, log: log, adminMode: adminMode}
 }
 
-// roleRank returns a numeric rank for role hierarchy (higher = more privileged).
-func roleRank(role string) int {
-	switch role {
-	case "superadmin":
-		return 100
-	case "admin":
-		return 90
-	case "host_manager":
-		return 50
-	case "user":
-		return 20
-	case "readonly":
-		return 10
-	default:
-		return 30 // custom roles sit mid-tier
-	}
-}
-
 // canAssignRole checks whether the calling user is allowed to assign the target role.
 func (h *UsersHandler) canAssignRole(r *http.Request, callerRole, targetRole string) bool {
-	// admin and superadmin bypass permission checks in middleware,
-	// but we still enforce hierarchy here.
-	if targetRole == "superadmin" {
-		// Only superadmin can assign superadmin.
-		if callerRole == "superadmin" {
-			return true
-		}
-		// Non-superadmin must have can_manage_superusers.
-		if callerRole == "admin" {
-			// admins don't have can_manage_superusers by default
-			return false
-		}
-		perm, err := h.permissions.GetByRole(r.Context(), callerRole)
-		if err != nil || perm == nil {
-			return false
-		}
-		return perm.CanManageSuperusers
+	if targetRole == "admin" && callerRole != "superadmin" {
+		return false
 	}
-	if targetRole == "admin" {
-		// Only superadmin can assign admin.
-		return callerRole == "superadmin"
-	}
-	// For other roles, caller must be at least as privileged.
-	return roleRank(callerRole) >= roleRank(targetRole)
+	return roleCovers(r.Context(), h.permissions, callerRole, targetRole)
 }
 
 // List returns paginated users.
@@ -311,7 +273,7 @@ func (h *UsersHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Prevent modifying users with a higher-privilege role than the caller.
 	callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
-	if roleRank(existing.Role) > roleRank(callerRole) {
+	if !roleCovers(r.Context(), h.permissions, callerRole, existing.Role) {
 		Error(w, http.StatusForbidden, "Cannot modify a user with a higher-privilege role")
 		return
 	}
@@ -439,7 +401,7 @@ func (h *UsersHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	// Prevent deleting users with a higher-privilege role.
 	callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
-	if roleRank(existing.Role) > roleRank(callerRole) {
+	if !roleCovers(r.Context(), h.permissions, callerRole, existing.Role) {
 		Error(w, http.StatusForbidden, "Cannot delete a user with a higher-privilege role")
 		return
 	}
@@ -506,7 +468,7 @@ func (h *UsersHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 
 	// Prevent resetting the password of users with a higher-privilege role.
 	callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
-	if roleRank(existing.Role) > roleRank(callerRole) {
+	if !roleCovers(r.Context(), h.permissions, callerRole, existing.Role) {
 		Error(w, http.StatusForbidden, "Cannot reset password for a user with a higher-privilege role")
 		return
 	}

@@ -4847,6 +4847,8 @@ To create one:
 4. Watch the counter at the bottom (`n/20 permissions selected`) as a sanity check.
 5. Click **Create Role**.
 
+> **You can only grant permissions you hold.** Unless you are a `superadmin`, a role you create or edit may only contain permissions your own role has. Saving a role with any other permission is refused with a message naming the permissions you lack. For example, an `admin` cannot create a role with `can_manage_superusers`, so the **Admin** preset only works for a `superadmin`.
+
 The new role appears as a new column in the matrix and is selectable when creating or editing users.
 
 #### Editing a Custom Role
@@ -4856,6 +4858,8 @@ The new role appears as a new column in the matrix and is selectable when creati
 3. Tick / untick as needed, then click **Save**.
 
 Changes take effect immediately. Any session held by a user with that role has its in-memory permissions refreshed on their next request.
+
+You cannot edit or delete a role that holds a permission your own role lacks.
 
 #### Deleting a Custom Role
 
@@ -4883,7 +4887,7 @@ Go to **Settings → Users** and click **Add User** in the top-right.
 
 Click **Add User**. The account is created immediately and can sign in straight away.
 
-> **Role escalation protection:** You cannot create a user with a role that's more privileged than your own. Only `superadmin` users can create new `admin` or `superadmin` accounts. Non-superadmin accounts that hold the `can_manage_superusers` permission can also create and manage `superadmin` accounts.
+> **Role escalation protection:** You can only give a user a role whose permissions are all held by your own role. Only `superadmin` users can create `admin` accounts. A non-superadmin can create and manage `superadmin` accounts only if their role holds every permission, including `can_manage_superusers`.
 
 #### Self-Service Sign-Up
 
@@ -4911,7 +4915,7 @@ Important side effects:
 
 - **Sessions are revoked.** When a user's role changes, all of their existing JWT sessions are invalidated on the server. They must sign in again. This ensures the old role's privileges cannot be replayed from an existing browser tab.
 - **You cannot change your own role.** The API rejects a self-role change with "Cannot change your own role". This is a deliberate safety net: two admins must cooperate to demote each other.
-- **You cannot promote a user above yourself.** An `admin` cannot promote a user to `superadmin`. Only a `superadmin` can create or promote to `superadmin`, and likewise only `superadmin` can assign the `admin` role.
+- **You cannot promote a user above yourself.** You can only assign a role whose permissions are all held by your own role, so an `admin` cannot promote a user to `superadmin`. Only a `superadmin` can assign the `admin` role.
 
 #### Resetting a User's Password
 
@@ -4954,7 +4958,7 @@ Restrictions:
 - You cannot delete your own account.
 - You cannot delete the last `superadmin` (the API refuses).
 - You cannot delete the last `admin` if there are no `superadmin` users (ensures at least one admin always exists).
-- You cannot delete a user who holds a role that's more privileged than yours.
+- You cannot delete a user whose role holds a permission yours lacks.
 
 ---
 
@@ -4962,15 +4966,9 @@ Restrictions:
 
 - **Admin and Super Admin** always have every permission, even if the `role_permissions` table says otherwise. The middleware short-circuits their permission checks. This is a safety net: if someone mis-edits the `admin` row (which shouldn't be possible via the UI, but could happen via direct database access), admins don't get locked out.
 - **Every other role** (built-in or custom) has its permissions read from the database at each request. Changes made in **Settings → Roles** take effect on the user's next API call; no restart required.
-- **Role hierarchy for user management** is enforced separately from the permissions above:
-  - `superadmin` → rank 100
-  - `admin` → rank 90
-  - `host_manager` → rank 50
-  - custom roles → rank 30 (mid-tier)
-  - `user` → rank 20
-  - `readonly` → rank 10
+- **Role hierarchy for user management** is based on permissions, not on role names. One role is at or below yours when every permission it grants is also granted to your role. A `superadmin` is above every other role.
 
-You can only modify, delete, or reset the password of users whose role rank is less than or equal to your own. This is distinct from the permission checks. Even if a custom role were granted `can_manage_users`, its holder still could not touch `admin` or `superadmin` accounts unless they additionally had `can_manage_superusers`.
+You can only assign, modify, delete, or reset the password of users whose role is at or below yours, and you can only create, edit or delete roles that are at or below yours. This is enforced separately from the permission checks. A custom role granted `can_manage_users` therefore cannot touch an account whose role has, for example, `can_manage_settings` unless it holds `can_manage_settings` too.
 
 ---
 
