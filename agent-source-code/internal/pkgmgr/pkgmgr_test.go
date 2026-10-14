@@ -191,7 +191,7 @@ func TestDetectSUSE(t *testing.T) {
 	}{
 		{"openSUSE Leap 15.6", host{osRelease: "ID=\"opensuse-leap\"\nID_LIKE=\"suse opensuse\"\n", bins: []string{"zypper", "rpm"}, paths: map[string]fs.FileMode{"/usr/lib/sysimage/rpm": fs.ModeDir}}, "zypper"},
 		{"openSUSE Tumbleweed", host{osRelease: "ID=\"opensuse-tumbleweed\"\nID_LIKE=\"opensuse suse\"\n", bins: []string{"zypper", "rpm"}, paths: map[string]fs.FileMode{"/usr/lib/sysimage/rpm": fs.ModeDir}}, "zypper"},
-		{"SLES 12", host{osRelease: "ID=\"sles\"\nID_LIKE=\"suse\"\n", bins: []string{"zypper", "rpm"}, paths: rpmDB}, "zypper"},
+		{"SLES 15, ID_LIKE suse only", host{osRelease: "ID=\"sles\"\nID_LIKE=\"suse\"\n", bins: []string{"zypper", "rpm"}, paths: rpmDB}, "zypper"},
 		{"SLES 15 with dnf installed from a module", host{osRelease: "ID=\"sles\"\nID_LIKE=\"suse\"\n", bins: []string{"zypper", "rpm", "dnf"}, paths: rpmDB}, "zypper"},
 		{"rpm host without os-release and only zypper", host{bins: []string{"zypper", "rpm"}, paths: rpmDB}, "zypper"},
 	}

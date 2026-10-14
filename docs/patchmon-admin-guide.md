@@ -1596,6 +1596,8 @@ openSUSE and SLES hosts report inventory and are patched with `zypper`, with age
 | **Patch all** | `zypper patch --with-update`: every needed patch, then any update that no patch covers, such as packages from third-party repositories | `zypper dist-upgrade`, the only supported way to update a rolling release |
 | **Patch selected** | `zypper update <packages>` | `zypper update <packages>`, with a warning that a partial update of a rolling release is not supported upstream |
 
+**Tumbleweed with Packman or other OBS repositories.** `zypper dist-upgrade` keeps each package with the vendor it came from, and PatchMon refuses any plan that changes a package's vendor. If you switch packages to Packman or another vendor, run `zypper dup --allow-vendor-change` once by hand to make that move deliberately; later runs keep the new vendor and patch normally.
+
 Patch runs include patches that suggest a reboot, such as kernel updates, and accept licence prompts, so an unattended run does not silently skip them.
 
 **zypper updating itself.** When a patch updates zypper or libzypp, zypper installs that first and asks to be run again. The agent does so, up to three times in one run, and says so in the run output. A dry run cannot see past that step: it shows only zypper's own update and says that a real run will apply more.
