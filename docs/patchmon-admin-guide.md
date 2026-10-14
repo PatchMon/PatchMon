@@ -4463,10 +4463,9 @@ See Installing PatchMon Server on Docker for the sidecar configuration as deploy
 | Access | Requirement |
 |--------|-------------|
 | Open an RDP session | **admin**, **superadmin**, or `can_use_remote_access` + `can_view_hosts` on your role |
-| Create RDP ticket for a host | `can_manage_hosts` (needed to see the control on the host detail page in the first place) |
 | Deployment | `remote_access` capability module enabled |
 
-Users without the required permission are rejected at `POST /auth/rdp-ticket` with `403 Access denied`.
+The **RDP** tab on a Windows host is only shown to users whose role has `can_use_remote_access`. Requests from users without the required permission are rejected at `POST /auth/rdp-ticket` with `403`.
 
 ### Prerequisites
 

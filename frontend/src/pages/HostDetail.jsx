@@ -125,7 +125,7 @@ const HostDetail = () => {
 	const location = useLocation();
 	const queryClient = useQueryClient();
 	const toast = useToast();
-	const { canManageHosts, hasModule } = useAuth();
+	const { canManageHosts, canUseRemoteAccess, hasModule } = useAuth();
 	const [showCredentialsModal, setShowCredentialsModal] = useState(false);
 
 	// Get plaintext API key from navigation state (only available immediately after host creation)
@@ -340,6 +340,7 @@ const HostDetail = () => {
 	const isWindowsHost = (host?.os_type || host?.expected_platform || "")
 		.toLowerCase()
 		.includes("windows");
+	const showRdpTab = isWindowsHost && canUseRemoteAccess();
 	const isFreeBSDHost =
 		(host?.package_manager || "").toLowerCase() === "pkg" ||
 		(host?.os_type || host?.expected_platform || "")
@@ -2599,7 +2600,7 @@ const HostDetail = () => {
 								<TierBadge tier={getRequiredTier("ssh_terminal")} />
 							)}
 						</button>
-						{isWindowsHost && (
+						{showRdpTab && (
 							<button
 								type="button"
 								onClick={() => handleTabChange("rdp")}
@@ -3388,12 +3389,12 @@ const HostDetail = () => {
 						)}
 
 						{/* RDP - Windows hosts only. Gated by the rdp module (Max tier). */}
-						{host && isWindowsHost && hasModule("rdp") && (
+						{host && showRdpTab && hasModule("rdp") && (
 							<div className={activeTab === "rdp" ? "" : "hidden"}>
 								<RdpViewer host={host} isOpen={activeTab === "rdp"} />
 							</div>
 						)}
-						{activeTab === "rdp" && isWindowsHost && !hasModule("rdp") && (
+						{activeTab === "rdp" && showRdpTab && !hasModule("rdp") && (
 							<UpgradeRequiredContent module="rdp" variant="inline" />
 						)}
 
