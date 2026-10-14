@@ -659,6 +659,19 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, e
 	return items, nil
 }
 
+const resetUserTfa = `-- name: ResetUserTfa :execrows
+UPDATE users SET tfa_enabled = false, tfa_secret = NULL, tfa_backup_codes = NULL, updated_at = NOW()
+WHERE id = $1 AND tfa_enabled = true
+`
+
+func (q *Queries) ResetUserTfa(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, resetUserTfa, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setNewsletterSubscribed = `-- name: SetNewsletterSubscribed :exec
 UPDATE users SET newsletter_subscribed = true, newsletter_subscribed_at = NOW(), updated_at = NOW() WHERE id = $1
 `

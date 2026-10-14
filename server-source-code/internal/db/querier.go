@@ -462,6 +462,7 @@ type Querier interface {
 	HostInHostGroup(ctx context.Context, arg HostInHostGroupParams) (bool, error)
 	IncrementAutoEnrollmentHostsCreated(ctx context.Context, id string) error
 	InsertAlertHistory(ctx context.Context, arg InsertAlertHistoryParams) (AlertHistory, error)
+	InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) error
 	InsertDashboardPreference(ctx context.Context, arg InsertDashboardPreferenceParams) error
 	InsertDockerImageFromContainer(ctx context.Context, arg InsertDockerImageFromContainerParams) (string, error)
 	// ON CONFLICT: callers may pass the same group id twice, and the delete has
@@ -578,6 +579,7 @@ type Querier interface {
 	MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) (int64, error)
 	ReissueHostApiKey(ctx context.Context, arg ReissueHostApiKeyParams) (int64, error)
 	RequeuePatchRun(ctx context.Context, arg RequeuePatchRunParams) (int64, error)
+	ResetUserTfa(ctx context.Context, id string) (int64, error)
 	ResolveDockerImageIDs(ctx context.Context, arg ResolveDockerImageIDsParams) ([]ResolveDockerImageIDsRow, error)
 	ResolveWindowsPatchTargets(ctx context.Context, arg ResolveWindowsPatchTargetsParams) ([]ResolveWindowsPatchTargetsRow, error)
 	RevokeAllSessionsForUser(ctx context.Context, userID string) error

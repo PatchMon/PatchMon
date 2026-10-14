@@ -415,3 +415,33 @@ func (s *UsersStore) UpdateDiscordProfile(ctx context.Context, userID string, la
 func (s *UsersStore) SetNewsletterSubscribed(ctx context.Context, userID string) error {
 	return s.db.DB(ctx).Queries.SetNewsletterSubscribed(ctx, userID)
 }
+
+// AdminResetTfa clears TFA, revokes sessions and trusted devices and writes the audit row in one
+// transaction. It returns false, changing nothing, when TFA was not enabled.
+func (s *UsersStore) AdminResetTfa(ctx context.Context, userID string, audit *models.AuditLog) (bool, error) {
+	d := s.db.DB(ctx)
+	tx, err := d.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	q := d.Queries.WithTx(tx)
+	n, err := q.ResetUserTfa(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	if n == 0 {
+		return false, nil
+	}
+	if err := q.RevokeAllTrustedDevicesForUser(ctx, userID); err != nil {
+		return false, err
+	}
+	if err := q.RevokeAllSessionsForUser(ctx, userID); err != nil {
+		return false, err
+	}
+	if err := insertAuditLog(ctx, q, audit); err != nil {
+		return false, err
+	}
+	return true, tx.Commit(ctx)
+}

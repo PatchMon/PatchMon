@@ -264,6 +264,8 @@ export const adminUsersAPI = {
 	delete: (userId) => api.delete(`/auth/admin/users/${userId}`),
 	resetPassword: (userId, newPassword) =>
 		api.post(`/auth/admin/users/${userId}/reset-password`, { newPassword }),
+	resetTfa: (userId, { password, tfaToken }) =>
+		api.post(`/auth/admin/users/${userId}/reset-tfa`, { password, tfaToken }),
 };
 
 // Permissions API (for role management)

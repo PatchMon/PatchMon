@@ -6,10 +6,13 @@ import {
 	Info,
 	Key,
 	Mail,
+	RefreshCw,
 	Save,
 	Shield,
+	ShieldOff,
 	Trash2,
 	User,
+	X,
 	XCircle,
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
@@ -32,6 +35,7 @@ const UsersTab = () => {
 	const [showAddModal, setShowAddModal] = useState(false);
 	const [editingUser, setEditingUser] = useState(null);
 	const [resetPasswordUser, setResetPasswordUser] = useState(null);
+	const [resetTfaUser, setResetTfaUser] = useState(null);
 	const queryClient = useQueryClient();
 	const { user: currentUser } = useAuth();
 	const { settings: publicSettings } = useSettings();
@@ -137,6 +141,14 @@ const UsersTab = () => {
 		},
 	});
 
+	const resetTfaMutation = useMutation({
+		mutationFn: ({ userId, password, tfaToken }) =>
+			adminUsersAPI.resetTfa(userId, { password, tfaToken }),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["users"] });
+		},
+	});
+
 	// Update settings mutation for user registration
 	const updateSignupSettingsMutation = useMutation({
 		mutationFn: (data) => {
@@ -197,6 +209,15 @@ const UsersTab = () => {
 	const handleResetPassword = (user) => {
 		setResetPasswordUser(user);
 	};
+
+	const handleTfaReset = (username) => {
+		setResetTfaUser(null);
+		toast.success(`Two-factor authentication reset for "${username}"`);
+	};
+
+	const currentUserTfaEnabled = Array.isArray(users)
+		? users.find((u) => u.id === currentUser?.id)?.tfa_enabled
+		: undefined;
 
 	if (isLoading) {
 		return (
@@ -351,6 +372,18 @@ const UsersTab = () => {
 											<Key className="h-4 w-4" />
 											Reset
 										</button>
+										{user.tfa_enabled && user.id !== currentUser?.id && (
+											<button
+												type="button"
+												onClick={() => setResetTfaUser(user)}
+												className="text-warning-500 hover:text-warning-700 dark:text-warning-400 dark:hover:text-warning-300 inline-flex items-center gap-1 text-sm min-h-[44px]"
+												title="Reset two-factor authentication"
+												aria-label={`Reset two-factor authentication for ${user.username}`}
+											>
+												<ShieldOff className="h-4 w-4" />
+												Reset 2FA
+											</button>
+										)}
 										<button
 											type="button"
 											onClick={() => handleDeleteUser(user.id, user.username)}
@@ -517,6 +550,17 @@ const UsersTab = () => {
 													>
 														<Key className="h-4 w-4" />
 													</button>
+													{user.tfa_enabled && user.id !== currentUser?.id && (
+														<button
+															type="button"
+															onClick={() => setResetTfaUser(user)}
+															className="text-warning-500 hover:text-warning-700 dark:text-warning-400 dark:hover:text-warning-300"
+															title="Reset two-factor authentication"
+															aria-label={`Reset two-factor authentication for ${user.username}`}
+														>
+															<ShieldOff className="h-4 w-4" />
+														</button>
+													)}
 													<button
 														type="button"
 														onClick={() =>
@@ -590,6 +634,18 @@ const UsersTab = () => {
 					onClose={() => setResetPasswordUser(null)}
 					onPasswordReset={resetPasswordMutation.mutateAsync}
 					isLoading={resetPasswordMutation.isPending}
+				/>
+			)}
+
+			{resetTfaUser && (
+				<ResetTfaModal
+					user={resetTfaUser}
+					onClose={() => setResetTfaUser(null)}
+					onReset={resetTfaMutation.mutateAsync}
+					onSuccess={handleTfaReset}
+					isLoading={resetTfaMutation.isPending}
+					actorHasPassword={currentUser?.has_password !== false}
+					actorTfaEnabled={currentUserTfaEnabled}
 				/>
 			)}
 
@@ -1385,6 +1441,178 @@ const ResetPasswordModal = ({
 								<div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
 							)}
 							{isLoading ? "Resetting..." : "Reset Password"}
+						</button>
+					</div>
+				</form>
+			</div>
+		</div>
+	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
+};
+
+const ResetTfaModal = ({
+	user,
+	onClose,
+	onReset,
+	onSuccess,
+	isLoading,
+	actorHasPassword,
+	actorTfaEnabled,
+}) => {
+	const titleId = useId();
+	const passwordId = useId();
+	const tokenId = useId();
+	const [password, setPassword] = useState("");
+	const [tfaToken, setTfaToken] = useState("");
+	const [error, setError] = useState("");
+	const askForCode = actorTfaEnabled !== false;
+
+	const handleSubmit = async (e) => {
+		e.preventDefault();
+		setError("");
+		if (!password) {
+			setError("Enter your password to confirm");
+			return;
+		}
+		if (actorTfaEnabled && !tfaToken.trim()) {
+			setError("Enter your two-factor code to confirm");
+			return;
+		}
+		try {
+			await onReset({
+				userId: user.id,
+				password,
+				tfaToken: tfaToken.trim(),
+			});
+			onSuccess(user.username);
+		} catch (err) {
+			setError(
+				err.response?.data?.error ||
+					"Failed to reset two-factor authentication",
+			);
+		}
+	};
+
+	const modal = (
+		<div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[120]">
+			<button
+				type="button"
+				onClick={onClose}
+				className="fixed inset-0 cursor-default"
+				aria-label="Close"
+			/>
+			<div
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby={titleId}
+				className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full relative z-10"
+			>
+				<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600">
+					<div className="flex items-center justify-between">
+						<h3
+							id={titleId}
+							className="text-lg font-medium text-secondary-900 dark:text-white flex items-center gap-2"
+						>
+							<ShieldOff className="h-5 w-5 text-warning-600" />
+							Reset 2FA for {user.username}
+						</h3>
+						<button
+							type="button"
+							onClick={onClose}
+							className="p-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-700 text-secondary-400 hover:text-secondary-600 min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 flex items-center justify-center"
+							aria-label="Close"
+						>
+							<X className="h-5 w-5" />
+						</button>
+					</div>
+				</div>
+
+				<form onSubmit={handleSubmit}>
+					<div className="px-6 py-4 space-y-4">
+						<div className="p-3 bg-danger-50 dark:bg-danger-900 border border-danger-200 dark:border-danger-700 rounded-md">
+							<p className="text-sm text-danger-700 dark:text-danger-300">
+								This removes {user.username}'s authenticator and backup codes,
+								forgets their trusted devices and signs them out everywhere.
+								They can then sign in with their password alone and should set
+								up two-factor authentication again from their profile.
+							</p>
+						</div>
+
+						{!actorHasPassword ? (
+							<p className="text-sm text-secondary-700 dark:text-secondary-200">
+								Your account signs in through single sign-on and has no local
+								password, so it cannot confirm this action. Ask an administrator
+								with a local password to reset it.
+							</p>
+						) : (
+							<>
+								<div>
+									<label
+										htmlFor={passwordId}
+										className="block text-sm font-medium text-secondary-700 dark:text-white mb-1"
+									>
+										Your password
+									</label>
+									<input
+										id={passwordId}
+										type="password"
+										autoComplete="current-password"
+										value={password}
+										onChange={(e) => setPassword(e.target.value)}
+										className="w-full px-3 py-2 bg-white dark:bg-secondary-900 border border-secondary-300 dark:border-secondary-600 rounded-md text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500 placeholder-secondary-400"
+									/>
+								</div>
+								{askForCode && (
+									<div>
+										<label
+											htmlFor={tokenId}
+											className="block text-sm font-medium text-secondary-700 dark:text-white mb-1"
+										>
+											Your two-factor code
+											{actorTfaEnabled === undefined && " (if enabled)"}
+										</label>
+										<input
+											id={tokenId}
+											type="text"
+											inputMode="text"
+											autoComplete="one-time-code"
+											maxLength={6}
+											value={tfaToken}
+											onChange={(e) => setTfaToken(e.target.value)}
+											placeholder="6-digit or backup code"
+											className="w-full px-3 py-2 bg-white dark:bg-secondary-900 border border-secondary-300 dark:border-secondary-600 rounded-md text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500 placeholder-secondary-400 font-mono"
+										/>
+									</div>
+								)}
+							</>
+						)}
+
+						{error && (
+							<p
+								role="alert"
+								className="text-sm text-danger-600 dark:text-danger-400"
+							>
+								{error}
+							</p>
+						)}
+					</div>
+
+					<div className="px-6 py-4 border-t border-secondary-200 dark:border-secondary-600 flex flex-col-reverse sm:flex-row sm:justify-end gap-3">
+						<button
+							type="button"
+							onClick={onClose}
+							className="btn-outline min-h-[44px] md:min-h-0"
+						>
+							Cancel
+						</button>
+						<button
+							type="submit"
+							disabled={isLoading || !actorHasPassword}
+							className="btn-danger min-h-[44px] md:min-h-0 disabled:opacity-50 disabled:cursor-not-allowed"
+						>
+							{isLoading && <RefreshCw className="h-4 w-4 mr-2 animate-spin" />}
+							{isLoading ? "Resetting..." : "Reset 2FA"}
 						</button>
 					</div>
 				</form>

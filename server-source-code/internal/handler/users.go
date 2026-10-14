@@ -35,6 +35,8 @@ type UsersHandler struct {
 	adminMode bool
 	// Resolves the calling context's own settings; `resolved` is startup-only.
 	cfgResolver *hostctx.ConfigResolver
+	tfaLockout  *store.TfaLockoutStore
+	audit       *store.AuditLogsStore
 }
 
 // WithConfigResolver wires the per-context config resolver.
@@ -556,6 +558,7 @@ func userToAdminResponse(u *models.User) map[string]interface{} {
 	res := map[string]interface{}{
 		"id": u.ID, "username": u.Username, "email": u.Email, "role": u.Role,
 		"is_active": u.IsActive, "created_at": u.CreatedAt, "updated_at": u.UpdatedAt,
+		"tfa_enabled": u.TfaEnabled,
 	}
 	if u.FirstName != nil {
 		res["first_name"] = *u.FirstName

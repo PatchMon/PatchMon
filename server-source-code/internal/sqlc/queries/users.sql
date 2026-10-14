@@ -156,3 +156,7 @@ WHERE id = $4;
 
 -- name: SetNewsletterSubscribed :exec
 UPDATE users SET newsletter_subscribed = true, newsletter_subscribed_at = NOW(), updated_at = NOW() WHERE id = $1;
+
+-- name: ResetUserTfa :execrows
+UPDATE users SET tfa_enabled = false, tfa_secret = NULL, tfa_backup_codes = NULL, updated_at = NOW()
+WHERE id = $1 AND tfa_enabled = true;
