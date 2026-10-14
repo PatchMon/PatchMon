@@ -754,6 +754,7 @@ const RdpViewer = ({ host, isOpen }) => {
 				const heldKeys = new Set();
 				const commandUpRemotely = new Set();
 				let pendingPasteKey = null;
+				let pasteChord = { ctrl: false, command: false };
 				let pasteReleaseOwed = false;
 				let translatedPasteKey = null;
 				let pasteFallbackTimer = null;
@@ -766,16 +767,15 @@ const RdpViewer = ({ host, isOpen }) => {
 					if (pendingPasteKey === null) return;
 					const key = pendingPasteKey;
 					pendingPasteKey = null;
-					const commandHeld = isMac
-						? COMMAND_KEYSYMS.filter((k) => heldKeys.has(k))
-						: [];
-					const translate =
-						commandHeld.length > 0 &&
-						!CTRL_KEYSYMS.some((k) => heldKeys.has(k));
+					// Windows reads Win+V as clipboard history, so Cmd+V is sent as
+					// Ctrl+V. Ctrl is also re-pressed if it was released before V went out.
+					const translate = pasteChord.command && !pasteChord.ctrl;
+					const wrapInCtrl =
+						translate ||
+						(pasteChord.ctrl && !CTRL_KEYSYMS.some((k) => heldKeys.has(k)));
+					if (wrapInCtrl) client.sendKeyEvent(1, KEYSYM_CTRL_L);
 					if (translate) {
-						// Windows reads Win+V as clipboard history, so Cmd+V is sent as Ctrl+V.
-						client.sendKeyEvent(1, KEYSYM_CTRL_L);
-						for (const k of commandHeld) {
+						for (const k of COMMAND_KEYSYMS.filter((c) => heldKeys.has(c))) {
 							client.sendKeyEvent(0, k);
 							commandUpRemotely.add(k);
 						}
@@ -784,8 +784,8 @@ const RdpViewer = ({ host, isOpen }) => {
 					if (pasteReleaseOwed) {
 						pasteReleaseOwed = false;
 						client.sendKeyEvent(0, key);
-						if (translate) endTranslatedPaste();
-					} else if (translate) {
+						if (wrapInCtrl) endTranslatedPaste();
+					} else if (wrapInCtrl) {
 						translatedPasteKey = key;
 					}
 				};
@@ -798,6 +798,10 @@ const RdpViewer = ({ host, isOpen }) => {
 						pasteModifiers.some((k) => heldKeys.has(k));
 					if (isPaste && pendingPasteKey === null) {
 						pendingPasteKey = keysym;
+						pasteChord = {
+							ctrl: CTRL_KEYSYMS.some((k) => heldKeys.has(k)),
+							command: isMac && COMMAND_KEYSYMS.some((k) => heldKeys.has(k)),
+						};
 						pasteReleaseOwed = false;
 						pasteFallbackTimer = window.setTimeout(
 							sendPendingPasteKey,

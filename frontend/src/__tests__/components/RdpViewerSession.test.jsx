@@ -306,6 +306,24 @@ describe("RdpViewer session behaviour", () => {
 		expect(keyCalls()).toContainEqual([1, KEYSYM_V]);
 	});
 
+	it("keeps Ctrl+V a Ctrl+V on macOS when no paste event fires and Ctrl is already up", async () => {
+		setPlatform("MacIntel");
+		await connectViewer();
+		key("down", "Control", { ctrlKey: true });
+		key("down", "v", { ctrlKey: true });
+		key("up", "v", { ctrlKey: true });
+		key("up", "Control");
+		act(() => vi.advanceTimersByTime(500));
+		expect(keyCalls()).toEqual([
+			[1, KEYSYM_CTRL],
+			[0, KEYSYM_CTRL],
+			[1, KEYSYM_CTRL],
+			[1, KEYSYM_V],
+			[0, KEYSYM_V],
+			[0, KEYSYM_CTRL],
+		]);
+	});
+
 	it("pastes through the new session after a reconnect", async () => {
 		await connectViewer();
 		fireEvent.click(screen.getByRole("button", { name: /disconnect/i }));
