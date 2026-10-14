@@ -581,3 +581,38 @@ func openSecondTestDB(t *testing.T) *database.DB {
 	})
 	return d
 }
+
+func TestAdminUsersListHidesTfaStateWithoutManageUsers(t *testing.T) {
+	ctx := context.Background()
+	d := pgtest.Open(t)
+	x := newTfaResetHarness(t, d, d)
+	if _, err := d.Exec(ctx, `INSERT INTO role_permissions (id, role, can_view_users, can_manage_users, created_at, updated_at)
+		VALUES (gen_random_uuid()::text, 'list_viewer', true, false, now(), now()) ON CONFLICT (role) DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
+	x.mkUser(ctx, "user", true)
+	list := func(role string) []map[string]any {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/admin/users?all=true", nil)
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserRoleKey, role))
+		rec := httptest.NewRecorder()
+		x.h.List(rec, req)
+		var body struct {
+			Data []map[string]any `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || len(body.Data) == 0 {
+			t.Fatalf("list as %s: %d %s", role, rec.Code, rec.Body.String())
+		}
+		return body.Data
+	}
+	for _, u := range list("list_viewer") {
+		if _, ok := u["tfa_enabled"]; ok {
+			t.Fatal("tfa_enabled returned to a caller without can_manage_users")
+		}
+	}
+	for _, u := range list("admin") {
+		if _, ok := u["tfa_enabled"]; !ok {
+			t.Fatal("tfa_enabled missing for a caller with can_manage_users")
+		}
+	}
+}

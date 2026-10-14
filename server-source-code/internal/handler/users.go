@@ -135,10 +135,17 @@ func (h *UsersHandler) List(w http.ResponseWriter, r *http.Request) {
 		pageSize = total
 	}
 
+	callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
+	perm, _ := h.permissions.GetByRole(r.Context(), callerRole)
+	canManage := perm != nil && perm.CanManageUsers
+
 	// Build response without password_hash
 	data := make([]map[string]interface{}, len(users))
 	for i, u := range users {
 		data[i] = userToAdminResponse(&u)
+		if !canManage {
+			delete(data[i], "tfa_enabled")
+		}
 	}
 
 	JSON(w, http.StatusOK, map[string]interface{}{
