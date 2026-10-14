@@ -3052,7 +3052,7 @@ With local authentication disabled, an outage at your identity provider means no
 
 **What counts as unreachable.** PatchMon fetches your provider's discovery document (`<issuer>/.well-known/openid-configuration`) with a 3 second timeout. The provider is treated as unreachable only if that request fails at the network level (DNS failure, connection refused, timeout, TLS error) or the provider answers with an HTTP 5xx error. Any other answer, including a 404 from a mistyped issuer URL, means the provider is up, and password login stays disabled. A provider that rejects a user, wrong credentials and a misconfigured client never count.
 
-The result is cached for 30 seconds, so a burst of sign-in attempts causes at most one request to your provider, and repeated logins cannot be used to probe it. Saving the OIDC settings clears the cached result. While the provider is unreachable, the login page shows the username and password fields again, with a notice that only superadmins with two-factor authentication can sign in.
+One failed check is not treated as an outage: it takes two failed checks in a row, about 5 seconds apart, so a single network blip does not open password login. A healthy result is cached for 30 seconds and an outage for 10, so a burst of sign-in attempts causes at most one request to your provider per window, and repeated logins cannot be used to probe it. After an outage, password login closes again within about 10 seconds of the provider coming back. Saving the OIDC settings clears the cached result. While the provider is unreachable, the login page shows the username and password fields again, with a notice that only superadmins with two-factor authentication can sign in.
 
 Every sign-in completed this way is recorded:
 

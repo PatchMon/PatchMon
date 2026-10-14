@@ -317,6 +317,22 @@ func newCountingIdP(t *testing.T) *countingIdP {
 	return idp
 }
 
+func expireProbes(h *OidcHandler) {
+	h.probeMu.Lock()
+	defer h.probeMu.Unlock()
+	for _, p := range h.probes {
+		p.expiresAt = time.Now().Add(-time.Second)
+	}
+}
+
+// decideTwice runs the decision, lets the cached probe lapse, and runs it again,
+// which is what a real outage needs before the fallback opens.
+func decideTwice(h *OidcHandler, ctx context.Context) (bool, string) {
+	h.LocalAuthDecision(ctx)
+	expireProbes(h)
+	return h.LocalAuthDecision(ctx)
+}
+
 func TestOidcLocalAuthDecision(t *testing.T) {
 	t.Parallel()
 
@@ -348,11 +364,51 @@ func TestOidcLocalAuthDecision(t *testing.T) {
 				idp.status.Store(int32(tc.status))
 				issuer = idp.srv.URL
 			}
-			disabled, reason := newProbeHandler(t, issuer, tc.fallback).LocalAuthDecision(context.Background())
+			disabled, reason := decideTwice(newProbeHandler(t, issuer, tc.fallback), context.Background())
 			if disabled != tc.wantDisabled || (tc.wantReason == "") != (reason == "") || !strings.Contains(reason, tc.wantReason) {
 				t.Fatalf("LocalAuthDecision = (%v, %q), want (%v, containing %q)", disabled, reason, tc.wantDisabled, tc.wantReason)
 			}
 		})
+	}
+}
+
+func TestOidcProviderNeedsTwoFailuresInARow(t *testing.T) {
+	t.Parallel()
+	idp := newCountingIdP(t)
+	idp.status.Store(http.StatusBadGateway)
+	h := newProbeHandler(t, idp.srv.URL, true)
+	ctx := context.Background()
+
+	if disabled, _ := h.LocalAuthDecision(ctx); !disabled {
+		t.Fatal("one failed probe opened the fallback")
+	}
+	h.probeMu.Lock()
+	recheck := h.probes[""].expiresAt.Sub(h.probes[""].probedAt)
+	h.probeMu.Unlock()
+	if recheck != providerRecheckTTL {
+		t.Fatalf("after one failure the next probe is due in %v, want %v", recheck, providerRecheckTTL)
+	}
+
+	idp.status.Store(http.StatusOK)
+	expireProbes(h)
+	if disabled, _ := h.LocalAuthDecision(ctx); !disabled {
+		t.Fatal("a recovered provider opened the fallback")
+	}
+	idp.status.Store(http.StatusBadGateway)
+	expireProbes(h)
+	if disabled, _ := h.LocalAuthDecision(ctx); !disabled {
+		t.Fatal("failures separated by a success were counted as consecutive")
+	}
+
+	expireProbes(h)
+	if disabled, _ := h.LocalAuthDecision(ctx); disabled {
+		t.Fatal("two failures in a row did not open the fallback")
+	}
+	h.probeMu.Lock()
+	down := h.probes[""].expiresAt.Sub(h.probes[""].probedAt)
+	h.probeMu.Unlock()
+	if down != providerDownTTL || down >= providerProbeTTL {
+		t.Fatalf("an outage is cached for %v, want %v (shorter than the %v for a healthy provider)", down, providerDownTTL, providerProbeTTL)
 	}
 }
 
@@ -398,29 +454,25 @@ func TestOidcProviderProbeIsCachedPerContext(t *testing.T) {
 	ctxA := hostctx.WithEntry(context.Background(), &hostctx.Entry{Host: "a.example.com"})
 	ctxB := hostctx.WithEntry(context.Background(), &hostctx.Entry{Host: "b.example.com"})
 
+	if disabled, _ := decideTwice(h, ctxA); disabled {
+		t.Fatal("context A should fall back after two failed probes")
+	}
+	before := idp.hits.Load()
 	for i := 0; i < 20; i++ {
 		if disabled, _ := h.LocalAuthDecision(ctxA); disabled {
-			t.Fatal("context A should fall back while its provider returns 502")
+			t.Fatal("context A lost its cached outage")
 		}
 	}
-	if got := idp.hits.Load(); got != 1 {
-		t.Fatalf("20 decisions in one context probed the provider %d times, want 1", got)
+	if got := idp.hits.Load() - before; got != 0 {
+		t.Fatalf("20 decisions with a fresh cache probed the provider %d more times, want 0", got)
 	}
 
 	idp.status.Store(http.StatusOK)
-	if disabled, _ := h.LocalAuthDecision(ctxA); disabled {
-		t.Fatal("context A should keep its cached outage until the TTL passes")
-	}
 	if disabled, _ := h.LocalAuthDecision(ctxB); !disabled {
 		t.Fatal("context B must probe for itself, not reuse context A's outage")
 	}
-	if got := idp.hits.Load(); got != 2 {
-		t.Fatalf("provider probed %d times, want 2 (one per context)", got)
-	}
 
-	h.probeMu.Lock()
-	h.probes["a.example.com"].expiresAt = time.Now().Add(-time.Second)
-	h.probeMu.Unlock()
+	expireProbes(h)
 	if disabled, _ := h.LocalAuthDecision(ctxA); !disabled {
 		t.Fatal("context A should re-probe after the TTL and see the provider is back")
 	}
@@ -428,8 +480,8 @@ func TestOidcProviderProbeIsCachedPerContext(t *testing.T) {
 	idp.status.Store(http.StatusBadGateway)
 	h.EvictHost("a.example.com")
 	h.entries["a.example.com"] = h.entries["b.example.com"]
-	if disabled, _ := h.LocalAuthDecision(ctxA); disabled {
-		t.Fatal("saving settings must drop the cached probe")
+	if disabled, _ := h.LocalAuthDecision(ctxA); !disabled {
+		t.Fatal("saving settings must drop the probe history, so one new failure is not enough")
 	}
 }
 

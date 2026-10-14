@@ -50,16 +50,24 @@ type OidcHandler struct {
 	probeHTTP  *http.Client
 }
 
-// The TTL also caps how often unauthenticated callers can make us probe the provider.
+// The TTLs also cap how often unauthenticated callers can make us probe the
+// provider. One failed probe is not an outage: it takes providerFailuresNeeded
+// in a row, re-checked after providerRecheckTTL.
 const (
-	providerProbeTimeout = 3 * time.Second
-	providerProbeTTL     = 30 * time.Second
+	providerProbeTimeout   = 3 * time.Second
+	providerProbeTTL       = 30 * time.Second
+	providerRecheckTTL     = 5 * time.Second
+	providerDownTTL        = 10 * time.Second
+	providerFailuresNeeded = 2
+	providerFailureWindow  = time.Minute
 )
 
 type providerProbe struct {
 	issuer      string
 	unreachable bool
 	reason      string
+	failures    int
+	probedAt    time.Time
 	expiresAt   time.Time
 }
 
@@ -259,15 +267,29 @@ func (h *OidcHandler) providerUnreachable(ctx context.Context, e *oidcContextEnt
 	if hc == nil {
 		hc = http.DefaultClient
 	}
-	unreachable, reason := e.client.ProbeDiscovery(probeCtx, hc)
+	failed, reason := e.client.ProbeDiscovery(probeCtx, hc)
+	now := time.Now()
 
 	h.probeMu.Lock()
+	defer h.probeMu.Unlock()
 	if h.probes == nil {
 		h.probes = map[string]*providerProbe{}
 	}
-	h.probes[key] = &providerProbe{issuer: issuer, unreachable: unreachable, reason: reason, expiresAt: time.Now().Add(providerProbeTTL)}
-	h.probeMu.Unlock()
-	return unreachable, reason
+	next := &providerProbe{issuer: issuer, probedAt: now, expiresAt: now.Add(providerProbeTTL)}
+	if failed {
+		next.failures = 1
+		if prev := h.probes[key]; prev != nil && prev.issuer == issuer && prev.failures > 0 && now.Sub(prev.probedAt) < providerFailureWindow {
+			next.failures = prev.failures + 1
+		}
+		next.unreachable = next.failures >= providerFailuresNeeded
+		next.expiresAt = now.Add(providerRecheckTTL)
+		if next.unreachable {
+			next.reason = reason
+			next.expiresAt = now.Add(providerDownTTL)
+		}
+	}
+	h.probes[key] = next
+	return next.unreachable, next.reason
 }
 
 // entryDisablesLocalAuth holds only while SSO is fully configured, so a context
