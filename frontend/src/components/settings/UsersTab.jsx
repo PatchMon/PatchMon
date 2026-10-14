@@ -437,25 +437,25 @@ const UsersTab = () => {
 							<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
 								<thead className="bg-secondary-50 dark:bg-secondary-700">
 									<tr>
-										<th className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											User
 										</th>
-										<th className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Email
 										</th>
-										<th className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Role
 										</th>
-										<th className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Status
 										</th>
-										<th className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Created
 										</th>
-										<th className="px-4 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Last Login
 										</th>
-										<th className="px-4 py-3 text-right text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+										<th className="px-6 py-3 text-right text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Actions
 										</th>
 									</tr>
@@ -466,7 +466,7 @@ const UsersTab = () => {
 											key={user.id}
 											className="hover:bg-secondary-50 dark:hover:bg-secondary-700"
 										>
-											<td className="px-4 py-3 whitespace-nowrap">
+											<td className="px-6 py-4 whitespace-nowrap">
 												<div className="flex items-center">
 													<div className="flex-shrink-0 h-10 w-10">
 														{isRenderableAvatarSrc(user.avatar_url) ? (
@@ -495,13 +495,13 @@ const UsersTab = () => {
 													</div>
 												</div>
 											</td>
-											<td className="px-4 py-3 whitespace-nowrap">
+											<td className="px-6 py-4 whitespace-nowrap">
 												<div className="flex items-center text-sm text-secondary-500 dark:text-white">
 													<Mail className="h-4 w-4 mr-2" />
 													{user.email}
 												</div>
 											</td>
-											<td className="px-4 py-3 whitespace-nowrap">
+											<td className="px-6 py-4 whitespace-nowrap">
 												<span
 													className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-xs font-medium ${
 														user.role === "superadmin"
@@ -522,7 +522,7 @@ const UsersTab = () => {
 															user.role.slice(1).replace("_", " ")}
 												</span>
 											</td>
-											<td className="px-4 py-3 whitespace-nowrap">
+											<td className="px-6 py-4 whitespace-nowrap">
 												{user.is_active ? (
 													<div className="flex items-center text-green-600">
 														<CheckCircle className="h-4 w-4 mr-1" />
@@ -535,20 +535,20 @@ const UsersTab = () => {
 													</div>
 												)}
 											</td>
-											<td className="px-4 py-3 whitespace-nowrap">
+											<td className="px-6 py-4 whitespace-nowrap">
 												<div className="flex items-center text-sm text-secondary-500 dark:text-white">
 													<Calendar className="h-4 w-4 mr-2" />
 													{formatDateOnly(user.created_at)}
 												</div>
 											</td>
-											<td className="px-4 py-3 whitespace-nowrap text-sm text-secondary-500 dark:text-white">
+											<td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500 dark:text-white">
 												{user.last_login ? (
 													formatDateOnly(user.last_login)
 												) : (
 													<span className="text-secondary-400">Never</span>
 												)}
 											</td>
-											<td className="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
+											<td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
 												<div className="flex items-center justify-end space-x-2">
 													<button
 														type="button"
