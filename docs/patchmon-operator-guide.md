@@ -215,7 +215,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        /opt/guacamole/entrypoint.sh & pid=$$!
+        /opt/guacamole/entrypoint.sh -b 127.0.0.1 & pid=$$!
         trap 'kill $$pid; wait $$pid; exit 0' TERM INT
         while kill -0 $$pid 2>/dev/null && ls /sys/class/net | grep -q '^eth'; do sleep 5 & wait $$!; done
         kill $$pid 2>/dev/null; exit 1
@@ -224,7 +224,7 @@ services:
       - /tmp:size=64m
       - /home/guacd:size=16m,uid=1000,gid=1000
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 4822 && ls /sys/class/net | grep -q '^eth' || exit 1"]
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 4822 && ls /sys/class/net | grep -q '^eth' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -324,7 +324,7 @@ Up to 2.1.3, the `guacd` service in the shipped `docker-compose.yml` could not o
        entrypoint: ["/bin/sh", "-c"]
        command:
          - |
-           /opt/guacamole/entrypoint.sh & pid=$$!
+           /opt/guacamole/entrypoint.sh -b 127.0.0.1 & pid=$$!
            trap 'kill $$pid; wait $$pid; exit 0' TERM INT
            while kill -0 $$pid 2>/dev/null && ls /sys/class/net | grep -q '^eth'; do sleep 5 & wait $$!; done
            kill $$pid 2>/dev/null; exit 1
@@ -333,10 +333,10 @@ Up to 2.1.3, the `guacd` service in the shipped `docker-compose.yml` could not o
          - /tmp:size=64m
          - /home/guacd:size=16m,uid=1000,gid=1000
        healthcheck:
-         test: ["CMD-SHELL", "nc -z localhost 4822 && ls /sys/class/net | grep -q '^eth' || exit 1"]
+         test: ["CMD-SHELL", "nc -z 127.0.0.1 4822 && ls /sys/class/net | grep -q '^eth' || exit 1"]
    ```
 
-   Keep the rest of the service (`security_opt`, `cap_drop`, limits, the healthcheck timings, `logging`) as it is. The `command` keeps `guacd` attached to the server container: if the server container is restarted on its own, or crashes and is restarted, `guacd` exits within a few seconds and Docker restarts it in the server's new network namespace. Docker cannot do that for a server container that was *recreated* on its own (for example `docker compose up -d --force-recreate server`): run `docker compose up -d` afterwards and Compose recreates `guacd` too. A normal `docker compose pull && docker compose up -d` handles both containers itself.
+   Keep the rest of the service (`security_opt`, `cap_drop`, limits, the healthcheck timings, `logging`) as it is. The `-b 127.0.0.1` matters: without it `guacd` also listens on the server container's network address, where any other container on that network could use it to open connections to the server's loopback ports. The `command` keeps `guacd` attached to the server container: if the server container is restarted on its own, or crashes and is restarted, `guacd` exits within a few seconds and Docker restarts it in the server's new network namespace. Docker cannot do that for a server container that was *recreated* on its own (for example `docker compose up -d --force-recreate server`): run `docker compose up -d` afterwards and Compose recreates `guacd` too. A normal `docker compose pull && docker compose up -d` handles both containers itself.
 
 3. In `.env`, delete the `GUACD_ADDRESS=guacd:4822` line, or change it to `GUACD_ADDRESS=127.0.0.1:4822`. The compose `environment:` entry overrides it either way, but leaving the old value in place is confusing.
 
@@ -846,7 +846,7 @@ Full OIDC configuration and group-to-role mapping variables are documented in th
 
 #### guacd sidecar (optional, for RDP)
 
-PatchMon 2.0 can proxy Windows RDP through the [Apache Guacamole daemon](https://guacamole.apache.org/). `guacd` must run as a second container **in the same pod as the server**, because the server hands it a per-session port on `127.0.0.1`, and `GUACD_ADDRESS` must be `127.0.0.1:4822` (the default). A `guacd` in its own Deployment and Service, reached by a Service name such as `guacd:4822`, cannot open any RDP session. `guacd` also needs a writable `/home/guacd`, for example an in-memory `emptyDir`.
+PatchMon 2.0 can proxy Windows RDP through the [Apache Guacamole daemon](https://guacamole.apache.org/). `guacd` must run as a second container **in the same pod as the server**, because the server hands it a per-session port on `127.0.0.1`, and `GUACD_ADDRESS` must be `127.0.0.1:4822` (the default). A `guacd` in its own Deployment and Service, reached by a Service name such as `guacd:4822`, cannot open any RDP session. `guacd` also needs a writable `/home/guacd`, for example an in-memory `emptyDir`, and should be started with `-b 127.0.0.1` so it listens on the pod's loopback only.
 
 > **Verify against the latest chart.** Check whether your chart version can add a sidecar container to the server pod. If it cannot, deploy with the [plain manifests](#deploying-with-plain-manifests), whose **Optional: in-browser RDP** section shows the sidecar.
 
@@ -1386,13 +1386,14 @@ One line means the volume is mounted correctly. Two lines means a scratch direct
 
 #### Optional: in-browser RDP
 
-The server reaches Windows hosts over RDP through `guacd`. It is only needed for that feature. `guacd` must run as a second container in the `patchmon-server` pod, because the server hands it a per-session port on `127.0.0.1`; a separate `guacd` Deployment and Service cannot work. Leave `GUACD_ADDRESS` unset (it defaults to `127.0.0.1:4822`).
+The server reaches Windows hosts over RDP through `guacd`. It is only needed for that feature. `guacd` must run as a second container in the `patchmon-server` pod, because the server hands it a per-session port on `127.0.0.1`; a separate `guacd` Deployment and Service cannot work. The `args` bind `guacd` to the pod's loopback, so other pods cannot reach it on the pod IP. Leave `GUACD_ADDRESS` unset (it defaults to `127.0.0.1:4822`).
 
 Add this container to the `containers:` list of the `patchmon-server` Deployment, after the `server` container:
 
 ```yaml
         - name: guacd
           image: guacamole/guacd:1.6.0
+          args: ["-b", "127.0.0.1"]
           volumeMounts:
             - name: guacd-tmp
               mountPath: /tmp

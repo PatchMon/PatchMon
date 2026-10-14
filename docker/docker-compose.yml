@@ -101,7 +101,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        /opt/guacamole/entrypoint.sh & pid=$$!
+        /opt/guacamole/entrypoint.sh -b 127.0.0.1 & pid=$$!
         trap 'kill $$pid; wait $$pid; exit 0' TERM INT
         while kill -0 $$pid 2>/dev/null && ls /sys/class/net | grep -q '^eth'; do sleep 5 & wait $$!; done
         kill $$pid 2>/dev/null; exit 1
@@ -116,7 +116,7 @@ services:
     mem_limit: 512m
     cpus: '1.0'
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 4822 && ls /sys/class/net | grep -q '^eth' || exit 1"]
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 4822 && ls /sys/class/net | grep -q '^eth' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
