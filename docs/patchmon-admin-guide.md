@@ -698,7 +698,7 @@ The tab strip is context-aware. Some tabs only appear under certain conditions:
 | **Docker** | Conditional | Only when the host has reported a working Docker integration. Gated by the `docker` module; shows a PLUS badge if your plan doesn't have it. |
 | **Patching** | Yes | Gated by the `patching` module; shows a tier badge if your plan doesn't have it. |
 | **Compliance** | Conditional | Only when the host has reported the compliance integration. Gated by the `compliance` module. |
-| **Terminal** | Yes on Linux/FreeBSD | Browser-based SSH. Gated by the `ssh_terminal` module. |
+| **Terminal** | Yes | Browser-based SSH. Windows hosts need OpenSSH Server enabled. Gated by the `ssh_terminal` module. |
 | **RDP** | Windows hosts only | Browser-based RDP via Guacamole. Gated by the `rdp` module. |
 
 Each tab below is described as what you see and what you can do.
@@ -862,6 +862,8 @@ Browser-based SSH session to the host, proxied through the agent. No inbound por
 4. AI-assisted analysis is available within the terminal UI.
 
 Gated by the `ssh_terminal` module. The agent-side `ssh-proxy-enabled` switch in `config.yml` must also be on. This is **not** a UI toggle, due to its security implications. See the SSH section of Agent Configuration Reference.
+
+On Windows hosts the tab connects to the Windows OpenSSH Server, which is not enabled by default. See [Windows hosts](#web-ssh-terminal-windows).
 
 ### RDP (Windows only)
 
@@ -4256,7 +4258,7 @@ Because the schedule is stored as a cron string plus a timezone, daylight-saving
 
 ### Overview
 
-PatchMon ships an in-browser SSH terminal that lets operators connect to any monitored Linux/FreeBSD host without leaving the web UI. The terminal is a full xterm with line editing, colours, scrollback, resize, and keyboard shortcuts, powered by a WebSocket between the browser and the PatchMon server.
+PatchMon ships an in-browser SSH terminal that lets operators connect to any monitored Linux, FreeBSD or Windows host without leaving the web UI. Windows hosts need the OpenSSH Server feature enabled first; see [Windows hosts](#web-ssh-terminal-windows). The terminal is a full xterm with line editing, colours, scrollback, resize, and keyboard shortcuts, powered by a WebSocket between the browser and the PatchMon server.
 
 Two connection modes are supported:
 
@@ -4283,7 +4285,7 @@ The **Hosts** related permission (`can_manage_hosts`) is required to see the "Op
 1. Go to **Hosts** and click the host you want to connect to.
 2. On the **Host Detail** page, open the **Terminal** tab (or click the **SSH Terminal** button in the header).
 3. Pick the **Connection mode** (Direct or Proxy).
-4. Enter the SSH **username** (defaults to `root`; the last-used username per host is cached in your browser's local storage).
+4. Enter the SSH **username** (defaults to `root`, or `Administrator` on Windows hosts; the last-used username per host is cached in your browser's local storage and takes precedence).
 5. Choose an **Authentication method**:
    - **Password**: type the host password.
    - **Key**: paste the private key (OpenSSH or PEM format) and the passphrase if encrypted.
@@ -4329,6 +4331,46 @@ Flow:
 - The host has no inbound SSH exposure (behind NAT, in a restricted VPC, behind a corporate firewall).
 - You already trust the agent's outbound connection to PatchMon and want to reuse it.
 - You want to SSH to `localhost` through the agent without punching holes through the edge firewall.
+
+### Windows hosts {#web-ssh-terminal-windows}
+
+The Terminal tab works on Windows hosts through the OpenSSH Server that ships with Windows. PatchMon does not install or enable it for you. On Windows hosts the tab shows a short reminder of this above the connection form.
+
+**Enable OpenSSH Server.** Run in an elevated PowerShell on the host:
+
+```powershell
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+Start-Service sshd
+Set-Service -Name sshd -StartupType Automatic
+```
+
+If the feature is already installed, the first command changes nothing; you still need to start the service and set it to start automatically.
+
+**Allow port 22.** Installing the feature normally creates the `OpenSSH-Server-In-TCP` firewall rule. Check, and create it if it is missing:
+
+```powershell
+if (-not (Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue)) {
+    New-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -DisplayName "OpenSSH Server (sshd)" `
+        -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
+}
+```
+
+The firewall rule matters for **Direct** mode, where the PatchMon server dials the host. **Proxy** mode connects to `localhost:22` from the agent on the host itself, so it needs only the service running and `ssh-proxy-enabled: true` in `C:\ProgramData\PatchMon\config.yml`.
+
+**Username.** On Windows hosts the username defaults to `Administrator`. Any local administrator or domain account allowed to log on works; for a domain account use `DOMAIN\user` or `user@domain`. A username you have used before on that host is remembered and takes precedence.
+
+**Key authentication.** For an account in the local Administrators group, Windows OpenSSH ignores the user's own `~\.ssh\authorized_keys` and reads `C:\ProgramData\ssh\administrators_authorized_keys` instead. The file must be writable only by Administrators and SYSTEM, or sshd silently refuses the key:
+
+```powershell
+Add-Content -Path C:\ProgramData\ssh\administrators_authorized_keys -Value "ssh-ed25519 AAAA... you@example"
+icacls.exe C:\ProgramData\ssh\administrators_authorized_keys /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F"
+```
+
+Accounts that are not administrators use `C:\Users\<user>\.ssh\authorized_keys` as usual. Paste the matching private key into the **SSH Key** field in the Terminal tab.
+
+**Shell.** The session opens in `cmd.exe`, the Windows OpenSSH default. Type `powershell` to switch for the rest of the session. To change the default for every SSH login on the host, set the `DefaultShell` value under `HKLM:\SOFTWARE\OpenSSH` on the host; PatchMon uses whatever shell sshd starts.
+
+**Terminal or RDP?** The Terminal tab gives you a command line over SSH and works with password or key authentication. The [RDP tab](#rdp-via-guacamole) gives you the full Windows desktop through Guacamole and needs `rdp-proxy-enabled` on the agent instead. Use the terminal for quick commands and scripts, and RDP when you need the GUI.
 
 ### One-time tickets for WebSocket auth
 
@@ -4391,6 +4433,8 @@ Server logs also record each upgrade and ticket consumption under `ssh-terminal 
 | *"Agent not connected."* in Proxy mode | Host's agent WebSocket is down. Verify from **Host Detail → Status**; restart the agent service on the host. |
 | Agent rejects with *"ssh-proxy-enabled must be true"* | Set `integrations.ssh-proxy-enabled: true` in the agent's `config.yml` and restart the agent service. |
 | *"Failed to parse private key"* | Key is encrypted: add the passphrase. Or the key format is unsupported; use OpenSSH or PEM PKCS#8. |
+| Windows host: *"connection refused"* or a timeout | OpenSSH Server is not installed or `sshd` is stopped, or (Direct mode) port 22 is blocked by the Windows firewall. See [Windows hosts](#web-ssh-terminal-windows). |
+| Windows host: key is rejected but the password works | The account is a local administrator, so sshd reads `C:\ProgramData\ssh\administrators_authorized_keys`, not the user's own file. Check that file and its permissions. |
 | Connection established but first-time host key warning on server log | The PatchMon container has no `known_hosts` for this host. Add one via a volume mount, or accept that first-use keys are auto-trusted. |
 
 ### Related pages

@@ -272,7 +272,7 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 					"session_id": proxySessionID,
 					"host":       proxyHost,
 					"port":       proxyPort,
-					"username":   orDefault(msg.Username, "root"),
+					"username":   sshUsername(msg.Username, host),
 					"terminal":   orDefault(msg.Terminal, "xterm-256color"),
 					"cols":       orInt(msg.Cols, 80),
 					"rows":       orInt(msg.Rows, 24),
@@ -298,7 +298,7 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 			sshAddr := net.JoinHostPort(hostIPOrHostname(host), strconv.Itoa(orInt(msg.Port, 22)))
 			hostKeyCB := hostKeyCallback(h.log)
 			config := &ssh.ClientConfig{
-				User:            orDefault(msg.Username, "root"),
+				User:            sshUsername(msg.Username, host),
 				HostKeyCallback: hostKeyCB,
 				Timeout:         0,
 			}
@@ -524,6 +524,16 @@ func orDefault(s, d string) string {
 		return s
 	}
 	return d
+}
+
+func sshUsername(requested string, host *models.Host) string {
+	if requested != "" {
+		return requested
+	}
+	if isWindowsHost(host) {
+		return "Administrator"
+	}
+	return "root"
 }
 
 func orInt(v, d int) int {
