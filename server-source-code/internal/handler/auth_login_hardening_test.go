@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,6 +27,14 @@ import (
 
 const hardeningPassword = "Correct-Horse-9!"
 
+var hardeningHash = sync.OnceValue(func() string {
+	h, err := bcrypt.GenerateFromPassword([]byte(hardeningPassword), passwordBcryptCost)
+	if err != nil {
+		panic(err)
+	}
+	return string(h)
+})
+
 type loginFixture struct {
 	h        *AuthHandler
 	active   string
@@ -36,18 +45,15 @@ type loginFixture struct {
 func newLoginFixture(t *testing.T, maxAttempts int) *loginFixture {
 	t.Helper()
 	ctx := context.Background()
-	users := store.NewUsersStore(pgtest.Open(t))
+	d := pgtest.Open(t)
+	users := store.NewUsersStore(d)
 
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
 	lockout := store.NewLoginLockoutStore(&hostctx.RedisResolver{Default: rdb}, nil, maxAttempts, 15)
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(hardeningPassword), 12)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hashStr := string(hash)
+	hashStr := hardeningHash()
 
 	create := func(prefix string, active bool, pw *string) string {
 		t.Helper()
@@ -66,7 +72,7 @@ func newLoginFixture(t *testing.T, maxAttempts int) *loginFixture {
 	}
 
 	return &loginFixture{
-		h:        &AuthHandler{cfg: &config.Config{}, users: users, loginLockout: lockout},
+		h:        &AuthHandler{cfg: &config.Config{JWTSecret: "hardening-test-secret-0123456789"}, users: users, sessions: store.NewSessionsStore(d), loginLockout: lockout},
 		active:   create("act", true, &hashStr),
 		disabled: create("dis", false, &hashStr),
 		ssoOnly:  create("sso", true, nil),
@@ -107,6 +113,9 @@ func TestDummyPasswordHashMatchesRealCost(t *testing.T) {
 // Every rejection before a session is issued must pay for one bcrypt
 // comparison, or response time tells an attacker which usernames exist.
 func TestLoginRejectionsCostTheSame(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing comparison; skipped under -short")
+	}
 	f := newLoginFixture(t, 1000)
 
 	median := func(username string) time.Duration {
@@ -479,5 +488,72 @@ func TestLoginComparesGoThroughTheBcryptGate(t *testing.T) {
 			loginBcrypt <- struct{}{}
 		}
 		released = false
+	}
+}
+
+func TestLoginUpgradesLowCostHash(t *testing.T) {
+	f := newLoginFixture(t, 1000)
+	ctx := context.Background()
+	old, err := bcrypt.GenerateFromPassword([]byte(hardeningPassword), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStr := string(old)
+	u := &models.User{
+		ID:           uuid.New().String(),
+		Username:     "legacy" + uuid.New().String()[:10],
+		Email:        "legacy" + uuid.New().String()[:8] + "@example.com",
+		Role:         "user",
+		IsActive:     true,
+		PasswordHash: &oldStr,
+	}
+	if err := f.h.users.Create(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	storedCost := func() int {
+		t.Helper()
+		got, err := f.h.users.GetByID(ctx, u.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, err := bcrypt.Cost([]byte(*got.PasswordHash))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+
+	if rec := postLogin(f.h, u.Username, "wrong-password"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong password: got %d", rec.Code)
+	}
+	if c := storedCost(); c != 10 {
+		t.Fatalf("a wrong password changed the stored hash (cost %d)", c)
+	}
+
+	if rec := postLogin(f.h, u.Username, hardeningPassword); rec.Code != http.StatusOK {
+		t.Fatalf("correct password: got %d %s", rec.Code, rec.Body.String())
+	}
+	if c := storedCost(); c != passwordBcryptCost {
+		t.Fatalf("stored hash cost = %d after sign-in, want %d", c, passwordBcryptCost)
+	}
+	if rec := postLogin(f.h, u.Username, hardeningPassword); rec.Code != http.StatusOK {
+		t.Fatalf("sign-in with the upgraded hash: got %d", rec.Code)
+	}
+}
+
+func TestUpgradePasswordHashSkipsAChangedPassword(t *testing.T) {
+	f := newLoginFixture(t, 1000)
+	ctx := context.Background()
+	got, err := f.h.users.GetByUsernameOrEmail(ctx, f.active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok, err := f.h.users.UpgradePasswordHash(ctx, got.ID, "not-the-stored-hash", "replacement")
+	if err != nil || ok {
+		t.Fatalf("UpgradePasswordHash = (%v, %v), want no update when the stored hash differs", ok, err)
+	}
+	again, _ := f.h.users.GetByID(ctx, got.ID)
+	if *again.PasswordHash != *got.PasswordHash {
+		t.Fatal("stored hash changed despite the mismatch")
 	}
 }

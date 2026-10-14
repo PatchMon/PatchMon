@@ -89,14 +89,39 @@ type bcryptGate chan struct{}
 
 var loginBcrypt = make(bcryptGate, max(1, runtime.GOMAXPROCS(0)))
 
-func (g bcryptGate) compare(ctx context.Context, hash, password string) error {
+func (g bcryptGate) do(ctx context.Context, fn func() error) error {
 	select {
 	case g <- struct{}{}:
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 	defer func() { <-g }()
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	return fn()
+}
+
+func (g bcryptGate) compare(ctx context.Context, hash, password string) error {
+	return g.do(ctx, func() error {
+		return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	})
+}
+
+const passwordBcryptCost = 12
+
+// upgradePasswordHash rehashes a password stored at a lower cost, which would
+// otherwise answer faster than dummyPasswordHash and stand out by timing.
+func (h *AuthHandler) upgradePasswordHash(ctx context.Context, user *models.User, password string) {
+	var newHash []byte
+	err := loginBcrypt.do(ctx, func() error {
+		var genErr error
+		newHash, genErr = bcrypt.GenerateFromPassword([]byte(password), passwordBcryptCost)
+		return genErr
+	})
+	if err == nil {
+		_, err = h.users.UpgradePasswordHash(ctx, user.ID, *user.PasswordHash, string(newHash))
+	}
+	if err != nil && h.log != nil {
+		h.log.Warn("password hash upgrade failed", "user_id", user.ID, "error", err)
+	}
 }
 
 // WithConfigResolver wires the per-context config resolver.
@@ -363,6 +388,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		h.logLoginFailure(r, "account_disabled", req.Username, user.ID)
 		Error(w, http.StatusUnauthorized, "Account is disabled")
 		return
+	}
+
+	if cost, err := bcrypt.Cost([]byte(hash)); err == nil && cost < passwordBcryptCost {
+		h.upgradePasswordHash(r.Context(), user, password)
 	}
 
 	// Clear lockout on success

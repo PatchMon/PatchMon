@@ -2384,7 +2384,7 @@ The `reason` field distinguishes the failure:
 | `tfa_ticket_invalid` | The two-factor step was reached without a valid, unexpired ticket from the password step |
 | `tfa_user_ineligible` | The ticket resolved to an account that is inactive or has no two-factor enrolled |
 
-The client never sees these reasons. An unknown username, an SSO-only account, a wrong password and a deactivated account all return the same `Invalid credentials` message and take the same time to answer, so the response does not reveal which accounts exist. Only a caller who supplies the correct password for a deactivated account is told `Account is disabled`.
+The client never sees these reasons. An unknown username, an SSO-only account, a wrong password and a deactivated account all return the same `Invalid credentials` message and are designed to take about the same time to answer, so the response does not reveal which accounts exist. The exception is an account whose password was stored by an older PatchMon release with a cheaper hash: it answers faster until that user next signs in successfully, when PatchMon upgrades the stored hash automatically. Only a caller who supplies the correct password for a deactivated account is told `Account is disabled`.
 
 A failed lookup caused by the database being unreachable is **not** reported as `user_not_found`. It is logged separately at `error` level as `auth login lookup failed`, and it does not consume a lockout attempt, so a database problem cannot lock out the people retrying a correct password.
 

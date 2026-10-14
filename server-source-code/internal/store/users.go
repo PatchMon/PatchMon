@@ -257,6 +257,14 @@ func (s *UsersStore) UpdatePassword(ctx context.Context, userID, hash string) er
 	return d.Queries.UpdatePassword(ctx, db.UpdatePasswordParams{PasswordHash: &hash, ID: userID})
 }
 
+// UpgradePasswordHash replaces oldHash only if it is still the stored hash, so a
+// rehash cannot overwrite a password changed in the meantime.
+func (s *UsersStore) UpgradePasswordHash(ctx context.Context, userID, oldHash, newHash string) (bool, error) {
+	d := s.db.DB(ctx)
+	n, err := d.Queries.UpgradePasswordHash(ctx, db.UpgradePasswordHashParams{NewHash: &newHash, ID: userID, OldHash: &oldHash})
+	return n == 1, err
+}
+
 // UpdateLastLogin records the time of a successful sign-in.
 //
 // The OIDC and Discord paths set this as part of their profile sync, so this
