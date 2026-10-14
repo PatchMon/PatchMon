@@ -94,9 +94,13 @@ func (x *tfaResetHarness) mkUser(ctx context.Context, role string, withTfa bool)
 			x.t.Fatal(err)
 		}
 		codes := util.GenerateBackupCodes(util.BackupCodeCount)
-		hashed, err := util.HashBackupCodes(codes)
-		if err != nil {
-			x.t.Fatal(err)
+		hashed := make([]string, len(codes))
+		for i, c := range codes {
+			h, err := bcrypt.GenerateFromPassword([]byte(c), bcrypt.MinCost)
+			if err != nil {
+				x.t.Fatal(err)
+			}
+			hashed[i] = string(h)
 		}
 		js := util.EncodeBackupCodesJSON(hashed)
 		if err := x.users.UpdateTfaEnabled(ctx, u.ID, &js); err != nil {
