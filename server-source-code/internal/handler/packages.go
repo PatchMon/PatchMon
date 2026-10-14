@@ -2,11 +2,9 @@ package handler
 
 import (
 	"net/http"
-	"net/url"
 	"strconv"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
-	"github.com/go-chi/chi/v5"
 )
 
 // PackagesHandler handles packages routes.
@@ -17,19 +15,6 @@ type PackagesHandler struct {
 // NewPackagesHandler creates a new packages handler.
 func NewPackagesHandler(packages *store.PackagesStore) *PackagesHandler {
 	return &PackagesHandler{packages: packages}
-}
-
-// packageIDParam returns the decoded packageId. chi matches on RawPath when the
-// request carries one, so the param is still percent-encoded in that case.
-func packageIDParam(r *http.Request) string {
-	v := chi.URLParam(r, "packageId")
-	if r.URL.RawPath == "" {
-		return v
-	}
-	if decoded, err := url.PathUnescape(v); err == nil {
-		return decoded
-	}
-	return v
 }
 
 // List handles GET /packages.
@@ -87,7 +72,7 @@ func (h *PackagesHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // GetByID handles GET /packages/:packageId.
 func (h *PackagesHandler) GetByID(w http.ResponseWriter, r *http.Request) {
-	packageID := packageIDParam(r)
+	packageID := decodedURLParam(r, "packageId")
 	if packageID == "" {
 		Error(w, http.StatusBadRequest, "packageId is required")
 		return
@@ -106,7 +91,7 @@ func (h *PackagesHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 
 // GetHosts handles GET /packages/:packageId/hosts.
 func (h *PackagesHandler) GetHosts(w http.ResponseWriter, r *http.Request) {
-	packageID := packageIDParam(r)
+	packageID := decodedURLParam(r, "packageId")
 	if packageID == "" {
 		Error(w, http.StatusBadRequest, "packageId is required")
 		return
@@ -160,7 +145,7 @@ func (h *PackagesHandler) GetHosts(w http.ResponseWriter, r *http.Request) {
 
 // GetActivity handles GET /packages/:packageId/activity.
 func (h *PackagesHandler) GetActivity(w http.ResponseWriter, r *http.Request) {
-	packageID := packageIDParam(r)
+	packageID := decodedURLParam(r, "packageId")
 	if packageID == "" {
 		Error(w, http.StatusBadRequest, "packageId is required")
 		return

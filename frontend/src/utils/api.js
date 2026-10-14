@@ -269,10 +269,11 @@ export const adminUsersAPI = {
 // Permissions API (for role management)
 export const permissionsAPI = {
 	getRoles: () => api.get("/permissions/roles"),
-	getRole: (role) => api.get(`/permissions/roles/${role}`),
+	getRole: (role) => api.get(`/permissions/roles/${encodeURIComponent(role)}`),
 	updateRole: (role, permissions) =>
-		api.put(`/permissions/roles/${role}`, permissions),
-	deleteRole: (role) => api.delete(`/permissions/roles/${role}`),
+		api.put(`/permissions/roles/${encodeURIComponent(role)}`, permissions),
+	deleteRole: (role) =>
+		api.delete(`/permissions/roles/${encodeURIComponent(role)}`),
 	getUserPermissions: () => api.get("/permissions/user-permissions"),
 };
 

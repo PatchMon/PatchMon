@@ -8,10 +8,10 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func TestPackageIDParamDecodesOnce(t *testing.T) {
+func TestDecodedURLParamPackageID(t *testing.T) {
 	r := chi.NewRouter()
 	var got string
-	r.Get("/packages/{packageId}", func(w http.ResponseWriter, r *http.Request) { got = packageIDParam(r) })
+	r.Get("/packages/{packageId}", func(w http.ResponseWriter, r *http.Request) { got = decodedURLParam(r, "packageId") })
 
 	cases := map[string]string{
 		"/packages/2026-10%20Security%20Update%20(KB5127648)%20(26300.9711)": "2026-10 Security Update (KB5127648) (26300.9711)",
@@ -30,6 +30,27 @@ func TestPackageIDParamDecodesOnce(t *testing.T) {
 	for target, want := range cases {
 		got = ""
 		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, target, nil))
+		if got != want {
+			t.Errorf("%s: got %q, want %q", target, got, want)
+		}
+	}
+}
+
+func TestDecodedURLParamRole(t *testing.T) {
+	r := chi.NewRouter()
+	var got string
+	r.Put("/permissions/roles/{role}", func(w http.ResponseWriter, r *http.Request) { got = decodedURLParam(r, "role") })
+
+	cases := map[string]string{
+		"/permissions/roles/Ops%20Team%20(EU)":     "Ops Team (EU)",
+		"/permissions/roles/Ops%20Team%20%28EU%29": "Ops Team (EU)",
+		"/permissions/roles/Ops%20Team":            "Ops Team",
+		"/permissions/roles/qa%2Fteam":             "qa/team",
+		"/permissions/roles/host_manager":          "host_manager",
+	}
+	for target, want := range cases {
+		got = ""
+		r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPut, target, nil))
 		if got != want {
 			t.Errorf("%s: got %q, want %q", target, got, want)
 		}
