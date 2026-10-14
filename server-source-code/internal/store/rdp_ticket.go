@@ -87,21 +87,18 @@ func (s *RDPTicketStore) CreateTicket(ctx context.Context, userID, hostID, sessi
 }
 
 // ConsumeTicket validates and consumes a one-time ticket. Returns ticket data if valid.
-// Ticket is deleted on consumption (one-time use).
+// GETDEL makes read and delete one command, so concurrent consumers cannot both win.
 func (s *RDPTicketStore) ConsumeTicket(ctx context.Context, ticket string) (*RDPTicketData, error) {
 	rdb := s.rdb.RDB(ctx)
 	if rdb == nil {
 		return nil, ErrInvalidRDPTicket
 	}
 	key := hostctx.TenantKey(ctx, rdpTicketPrefix+ticket)
-	encrypted, err := rdb.Get(ctx, key).Result()
+	encrypted, err := rdb.GetDel(ctx, key).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return nil, ErrInvalidRDPTicket
 		}
-		return nil, err
-	}
-	if err := rdb.Del(ctx, key).Err(); err != nil {
 		return nil, err
 	}
 	if s.enc == nil {
