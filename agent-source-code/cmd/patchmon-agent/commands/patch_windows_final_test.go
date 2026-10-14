@@ -37,10 +37,13 @@ func fakeOutputServer(t *testing.T) (*sync.Mutex, *[]outputPost) {
 	}))
 	t.Cleanup(srv.Close)
 
+	dir := t.TempDir()
 	m := config.New()
+	m.SetConfigFile(filepath.Join(dir, "config.yml"))
 	cfg := m.GetConfig()
 	cfg.PatchmonServer = srv.URL
-	cfg.CredentialsFile = filepath.Join(t.TempDir(), "credentials.yml")
+	cfg.CredentialsFile = filepath.Join(dir, "credentials.yml")
+	cfg.LogFile = filepath.Join(dir, "logs", "agent.log")
 	if err := m.SaveCredentials("id", "key"); err != nil {
 		t.Fatal(err)
 	}
