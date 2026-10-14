@@ -143,7 +143,7 @@ func (h *RDPHandler) ServeCreateTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validRDPKeyboardLayout(req.Layout) {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "Unsupported keyboard layout"})
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Unsupported keyboard layout", "code": "invalid_keyboard_layout"})
 		return
 	}
 

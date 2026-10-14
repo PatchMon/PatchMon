@@ -1,6 +1,11 @@
 package handler
 
-import "testing"
+import (
+	"encoding/json"
+	"os"
+	"sort"
+	"testing"
+)
 
 func TestRDPConnectionParametersFollowBrowserResize(t *testing.T) {
 	p := rdpConnectionParameters(40123, "Administrator", "secret", "")
@@ -33,6 +38,31 @@ func TestValidRDPKeyboardLayout(t *testing.T) {
 	for _, layout := range []string{"failsafe", "EN-GB-QWERTY", "en-gb", "en-gb-qwerty\nsecurity", "../en-us-qwerty"} {
 		if validRDPKeyboardLayout(layout) {
 			t.Errorf("%q accepted", layout)
+		}
+	}
+}
+
+func TestRDPKeyboardLayoutsMatchFrontend(t *testing.T) {
+	raw, err := os.ReadFile("../../../frontend/src/utils/rdpKeyboardLayouts.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var frontend []string
+	if err := json.Unmarshal(raw, &frontend); err != nil {
+		t.Fatal(err)
+	}
+	server := make([]string, 0, len(rdpKeyboardLayouts))
+	for layout := range rdpKeyboardLayouts {
+		server = append(server, layout)
+	}
+	sort.Strings(server)
+	sort.Strings(frontend)
+	if len(server) != len(frontend) {
+		t.Fatalf("server allows %v, frontend offers %v", server, frontend)
+	}
+	for i := range server {
+		if server[i] != frontend[i] {
+			t.Fatalf("server allows %v, frontend offers %v", server, frontend)
 		}
 	}
 }

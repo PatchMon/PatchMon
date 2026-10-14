@@ -80,6 +80,17 @@ describe("RdpViewer error classification", () => {
 				response: { status: 503, data: { code: "max_sessions_context" } },
 			}),
 		).toBe("max_sessions_context");
+		expect(
+			deriveCodeFromHttpError({
+				response: {
+					status: 400,
+					data: {
+						error: "Unsupported keyboard layout",
+						code: "invalid_keyboard_layout",
+					},
+				},
+			}),
+		).toBe("invalid_keyboard_layout");
 	});
 
 	it.each([

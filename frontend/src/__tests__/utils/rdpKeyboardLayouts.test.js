@@ -5,6 +5,7 @@ import {
 	RDP_KEYBOARD_LAYOUTS,
 	saveRdpKeyboardLayout,
 } from "../../utils/rdpKeyboardLayouts";
+import serverLayouts from "../../utils/rdpKeyboardLayouts.json";
 
 describe("defaultRdpKeyboardLayout", () => {
 	it.each([
@@ -27,11 +28,10 @@ describe("defaultRdpKeyboardLayout", () => {
 		expect(defaultRdpKeyboardLayout(languages)).toBe(expected);
 	});
 
-	it("only offers layouts the server accepts", () => {
-		expect(RDP_KEYBOARD_LAYOUTS.map((l) => l.value)).toEqual(
-			expect.arrayContaining(["en-gb-qwerty", "en-us-qwerty"]),
+	it("offers exactly the layouts the server allows", () => {
+		expect(RDP_KEYBOARD_LAYOUTS.map((l) => l.value).sort()).toEqual(
+			[...serverLayouts].sort(),
 		);
-		expect(RDP_KEYBOARD_LAYOUTS).toHaveLength(22);
 	});
 });
 

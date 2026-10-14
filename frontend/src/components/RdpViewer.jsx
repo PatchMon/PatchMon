@@ -213,6 +213,12 @@ Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Serv
 			"Tickets expire after a few minutes and can only be used once. Click Connect again to get a new one. If it keeps failing, check that your role still allows remote access.",
 		],
 	},
+	invalid_keyboard_layout: {
+		title: "The server does not support this keyboard layout",
+		body: [
+			"Pick another layout from the list and connect again. If the list offers a layout the server rejects, the frontend and server versions do not match.",
+		],
+	},
 	rate_limited: {
 		title: "Too many RDP connection attempts",
 		body: ["Wait a minute, then click Connect again."],
@@ -946,7 +952,7 @@ const RdpViewer = ({ host, isOpen }) => {
 										if (host?.id)
 											saveRdpKeyboardLayout(host.id, e.target.value);
 									}}
-									className="appearance-none pl-2 pr-7 py-1 text-sm rounded bg-secondary-700 text-white border border-secondary-600 w-44"
+									className="appearance-none pl-2 pr-7 py-1 min-h-[44px] md:min-h-0 text-sm rounded bg-secondary-700 text-white border border-secondary-600 focus:outline-none focus:ring-2 focus:ring-primary-500 w-44"
 								>
 									{RDP_KEYBOARD_LAYOUTS.map((l) => (
 										<option key={l.value} value={l.value}>
@@ -968,7 +974,7 @@ const RdpViewer = ({ host, isOpen }) => {
 									}))
 								}
 								onKeyDown={handleCredentialKeyDown}
-								className="px-2 py-1 text-sm rounded bg-secondary-700 text-white border border-secondary-600 w-32"
+								className="px-2 py-1 min-h-[44px] md:min-h-0 text-sm rounded bg-secondary-700 text-white border border-secondary-600 focus:outline-none focus:ring-2 focus:ring-primary-500 w-32"
 							/>
 							<input
 								type="password"
@@ -982,7 +988,7 @@ const RdpViewer = ({ host, isOpen }) => {
 									}))
 								}
 								onKeyDown={handleCredentialKeyDown}
-								className="px-2 py-1 text-sm rounded bg-secondary-700 text-white border border-secondary-600 w-32"
+								className="px-2 py-1 min-h-[44px] md:min-h-0 text-sm rounded bg-secondary-700 text-white border border-secondary-600 focus:outline-none focus:ring-2 focus:ring-primary-500 w-32"
 							/>
 						</div>
 					)}
