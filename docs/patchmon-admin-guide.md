@@ -4898,7 +4898,7 @@ PatchMon can also let users register themselves rather than having an admin invi
 1. Go to **Settings → Users**.
 2. Scroll to **User Registration Settings**.
 3. Tick **Enable User Self-Registration**.
-4. Pick a **Default Role for New Users**: the role that self-registered accounts are assigned.
+4. Pick a **Default Role for New Users**: the role that self-registered accounts are assigned. The same rule as assigning a role applies: only a `superadmin` can choose `admin` or `superadmin`, and anyone else can only choose a role whose permissions are all held by their own role. A save that breaks this rule is refused.
 5. Click **Save Settings**.
 
 A sign-up link now appears on the login page. Anyone who can reach the login page can create an account.

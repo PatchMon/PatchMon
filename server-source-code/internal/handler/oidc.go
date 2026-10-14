@@ -36,6 +36,7 @@ type OidcHandler struct {
 	settings    *store.SettingsStore
 	enc         *util.Encryption
 	log         *slog.Logger
+	permissions *store.PermissionsStore
 
 	// clientMu protects entries, keyed by context.
 	clientMu sync.RWMutex
@@ -507,6 +508,7 @@ func (h *OidcHandler) ImportFromEnv(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to load settings")
 		return
 	}
+	before := *s
 	// Copy env values to settings
 	s.OidcEnabled = h.cfg.OidcEnabled
 	s.OidcIssuerURL = strOrNil(strings.TrimSpace(h.cfg.OidcIssuerURL))
@@ -543,6 +545,9 @@ func (h *OidcHandler) ImportFromEnv(w http.ResponseWriter, r *http.Request) {
 			s.OidcClientSecret = &encrypted
 		}
 	}
+	if h.rejectUngrantableRoleChange(w, r, &before, s) {
+		return
+	}
 	if err := h.settings.Update(r.Context(), s); err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to import OIDC settings")
 		return
@@ -555,6 +560,24 @@ func (h *OidcHandler) ImportFromEnv(w http.ResponseWriter, r *http.Request) {
 	}
 	callbackURL := buildOidcCallbackURL(h.cfg, s)
 	JSON(w, http.StatusOK, oidcSettingsResponse(s, &secretSet, config.ConfiguredViaEnv(h.cfg), config.EnvPreview(h.cfg), callbackURL))
+}
+
+// WithPermissions wires the role store used to stop role mapping changes granting more than the caller holds.
+func (h *OidcHandler) WithPermissions(p *store.PermissionsStore) *OidcHandler {
+	h.permissions = p
+	return h
+}
+
+// rejectUngrantableRoleChange writes a 403 and returns true when before -> after changes a role
+// mapping the caller may not grant.
+func (h *OidcHandler) rejectUngrantableRoleChange(w http.ResponseWriter, r *http.Request, before, after *models.Settings) bool {
+	callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
+	role := ungrantableRoleChange(r.Context(), h.permissions, callerRole, before, after)
+	if role == "" {
+		return false
+	}
+	Error(w, http.StatusForbidden, "You cannot change the OIDC role mapping for a role you are not allowed to grant: "+role)
+	return true
 }
 
 // UpdateSettings handles PUT /api/v1/auth/oidc/settings.
@@ -573,7 +596,11 @@ func (h *OidcHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+	before := *s
 	applyOidcSettingsUpdate(s, req, h.enc)
+	if h.rejectUngrantableRoleChange(w, r, &before, s) {
+		return
+	}
 	if err := h.settings.Update(r.Context(), s); err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to update OIDC settings")
 		return

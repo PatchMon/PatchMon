@@ -58,10 +58,7 @@ func NewUsersHandler(users *store.UsersStore, sessions *store.SessionsStore, tru
 
 // canAssignRole checks whether the calling user is allowed to assign the target role.
 func (h *UsersHandler) canAssignRole(r *http.Request, callerRole, targetRole string) bool {
-	if targetRole == "admin" && callerRole != "superadmin" {
-		return false
-	}
-	return roleCovers(r.Context(), h.permissions, callerRole, targetRole)
+	return canGrantRole(r.Context(), h.permissions, callerRole, targetRole)
 }
 
 // List returns paginated users.

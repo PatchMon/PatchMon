@@ -148,7 +148,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 					"source", source)
 			}
 		}
-		oidcHandler = handler.NewOidcHandler(cfg, resolvedPtr, resolved, oidcClient, valid, store.NewOidcSessionStore(redisResolver), usersStore, authHandler, settingsStore, enc, log)
+		oidcHandler = handler.NewOidcHandler(cfg, resolvedPtr, resolved, oidcClient, valid, store.NewOidcSessionStore(redisResolver), usersStore, authHandler, settingsStore, enc, log).WithPermissions(permissionsStore)
 	}
 	var discordHandler *handler.DiscordHandler
 	if rdb != nil {
@@ -157,7 +157,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	tfaHandler := handler.NewTfaHandler(usersStore, store.NewSessionsStore(dbProvider), trustedDevicesStore, dbProvider, notifyEmit, log)
 	trustedDevicesHandler := handler.NewTrustedDevicesHandler(trustedDevicesStore, log)
 	userPrefsHandler := handler.NewUserPreferencesHandler(usersStore)
-	settingsHandler := handler.NewSettingsHandlerWithConfig(settingsStore, usersStore, enc, registry, cfg.AssetsDir, cfg, resolved).WithEvictors(cfgResolver, oidcHandler)
+	settingsHandler := handler.NewSettingsHandlerWithConfig(settingsStore, usersStore, enc, registry, cfg.AssetsDir, cfg, resolved).WithEvictors(cfgResolver, oidcHandler).WithPermissions(permissionsStore)
 	// Registered here so every per-context cache exists and can be evicted.
 	if poolCache != nil && cfg.RegistryReloadSecret != "" {
 		r.Post("/internal/reload-tenant", hostctx.ReloadHandler(poolCache, redisCache, cfg.RegistryReloadSecret, cfgResolver, oidcHandler))

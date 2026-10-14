@@ -43,3 +43,43 @@ func roleCovers(ctx context.Context, perms *store.PermissionsStore, callerRole, 
 	}
 	return len(missingPermissions(caller, target)) == 0
 }
+
+// canGrantRole reports whether callerRole may give targetRole to someone. Only superadmin may grant admin.
+func canGrantRole(ctx context.Context, perms *store.PermissionsStore, callerRole, targetRole string) bool {
+	if callerRole == "superadmin" {
+		return true
+	}
+	if targetRole == "admin" || perms == nil {
+		return false
+	}
+	return roleCovers(ctx, perms, callerRole, targetRole)
+}
+
+// ungrantableRoleChange returns the first role whose default-role or OIDC group mapping differs
+// between before and after and that callerRole may not grant, or "" if there is none.
+func ungrantableRoleChange(ctx context.Context, perms *store.PermissionsStore, callerRole string, before, after *models.Settings) string {
+	deref := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return *p
+	}
+	changes := []struct {
+		role    string
+		changed bool
+	}{
+		{after.DefaultUserRole, after.DefaultUserRole != before.DefaultUserRole},
+		{deref(after.OidcDefaultRole), deref(after.OidcDefaultRole) != deref(before.OidcDefaultRole)},
+		{"superadmin", deref(after.OidcSuperadminGroup) != deref(before.OidcSuperadminGroup)},
+		{"admin", deref(after.OidcAdminGroup) != deref(before.OidcAdminGroup)},
+		{"host_manager", deref(after.OidcHostManagerGroup) != deref(before.OidcHostManagerGroup)},
+		{"readonly", deref(after.OidcReadonlyGroup) != deref(before.OidcReadonlyGroup)},
+		{"user", deref(after.OidcUserGroup) != deref(before.OidcUserGroup)},
+	}
+	for _, c := range changes {
+		if c.changed && !canGrantRole(ctx, perms, callerRole, c.role) {
+			return c.role
+		}
+	}
+	return ""
+}

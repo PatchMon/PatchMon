@@ -33,7 +33,14 @@ type SettingsHandler struct {
 	cfg       *config.Config
 	resolved  *config.ResolvedConfig
 	// Per-context caches derived from the settings row, dropped on write.
-	evictors []hostctx.HostEvictor
+	evictors    []hostctx.HostEvictor
+	permissions *store.PermissionsStore
+}
+
+// WithPermissions wires the role store used to stop default-role changes granting more than the caller holds.
+func (h *SettingsHandler) WithPermissions(p *store.PermissionsStore) *SettingsHandler {
+	h.permissions = p
+	return h
 }
 
 // WithEvictors wires the caches invalidated on a settings write.
@@ -677,6 +684,13 @@ func (h *SettingsHandler) UpdateEnvironmentConfig(w http.ResponseWriter, r *http
 		Error(w, http.StatusInternalServerError, "Failed to load settings")
 		return
 	}
+	if v, ok := req.Value.(string); ok && key == "DEFAULT_USER_ROLE" && v != s.DefaultUserRole {
+		callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
+		if !canGrantRole(r.Context(), h.permissions, callerRole, v) {
+			Error(w, http.StatusForbidden, "You cannot set the default role to a role you are not allowed to grant: "+v)
+			return
+		}
+	}
 	if err := h.settings.UpdateConfigKey(r.Context(), s.ID, key, req.Value, s); err != nil {
 		slog.Error("env config update failed", "key", key, "error", err)
 		Error(w, http.StatusBadRequest, err.Error())
@@ -772,8 +786,14 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	oldComplianceScanInterval := s.ComplianceScanInterval
 	oldPackageCacheRefreshMode := s.PackageCacheRefreshMode
 	oldPackageCacheRefreshMaxAge := s.PackageCacheRefreshMaxAge
+	before := *s
 	if err := applySettingsUpdate(s, req, h.enc); err != nil {
 		Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
+	if role := ungrantableRoleChange(r.Context(), h.permissions, callerRole, &before, s); role != "" {
+		Error(w, http.StatusForbidden, "You cannot set the default role to a role you are not allowed to grant: "+role)
 		return
 	}
 

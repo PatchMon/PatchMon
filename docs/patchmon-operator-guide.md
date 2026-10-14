@@ -2464,6 +2464,8 @@ Map groups from your identity provider directly to PatchMon roles. Set `OIDC_SYN
 | `OIDC_READONLY_GROUP` | _(none)_ | No | Name of the IdP group whose members are granted the `readonly` role. |
 | `OIDC_USER_GROUP` | _(none)_ | No | Name of the IdP group whose members are granted the standard `user` role. |
 
+> **Who can change the mapping in the UI:** when the role mapping and the default role are edited in **Settings → OIDC / SSO** (or copied in with **Import from .env**), a non-superadmin can only change a row whose role they are allowed to grant: a role whose permissions are all held by their own role, and never `admin` or `superadmin`. Only a `superadmin` can set the `superadmin` or `admin` group, or a default role of `admin` or `superadmin`. The environment variables themselves are not affected. The same rule applies to **Default Role for New Users** under **Settings → Users**.
+
 **Example: Authentik**
 
 ```bash

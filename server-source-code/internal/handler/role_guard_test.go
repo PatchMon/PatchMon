@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
@@ -116,6 +117,69 @@ func TestRoleEscalationGuards(t *testing.T) {
 	for _, a := range assigns {
 		if got := assign(a.caller, a.target); got != a.want {
 			t.Errorf("canAssignRole(%s -> %s) = %v, want %v", a.caller, a.target, got, a.want)
+		}
+	}
+}
+
+func TestDefaultRoleAndOidcMappingGuards(t *testing.T) {
+	d := testDatabase(t)
+	perms := store.NewPermissionsStore(d)
+	settings := store.NewSettingsStore(d)
+	sh := (&SettingsHandler{settings: settings}).WithPermissions(perms)
+	oh := (&OidcHandler{cfg: &config.Config{}, settings: settings}).WithPermissions(perms)
+	ph := NewPermissionsHandler(perms)
+
+	rec := httptest.NewRecorder()
+	ph.UpdateRole(rec, roleRequest(http.MethodPut, "drg_settings", "superadmin", `{"can_view_dashboard":true,"can_manage_settings":true}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create drg_settings: %d", rec.Code)
+	}
+
+	send := func(h http.HandlerFunc, method, path, callerRole, body string, params ...string) int {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		rctx := chi.NewRouteContext()
+		for i := 0; i+1 < len(params); i += 2 {
+			rctx.URLParams.Add(params[i], params[i+1])
+		}
+		ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+		ctx = context.WithValue(ctx, middleware.UserRoleKey, callerRole)
+		rec := httptest.NewRecorder()
+		h(rec, req.WithContext(ctx))
+		return rec.Code
+	}
+	putSettings := func(caller, body string) int { return send(sh.Update, http.MethodPut, "/settings", caller, body) }
+	patchDefault := func(caller, role string) int {
+		return send(sh.UpdateEnvironmentConfig, http.MethodPatch, "/settings/environment/DEFAULT_USER_ROLE", caller, `{"value":"`+role+`"}`, "key", "DEFAULT_USER_ROLE")
+	}
+	putOidc := func(caller, body string) int {
+		return send(oh.UpdateSettings, http.MethodPut, "/auth/oidc/settings", caller, body)
+	}
+
+	cases := []struct {
+		name string
+		got  int
+		want int
+	}{
+		{"superadmin resets default role", putSettings("superadmin", `{"default_user_role":"user"}`), http.StatusOK},
+		{"admin cannot default new users to superadmin", putSettings("admin", `{"default_user_role":"superadmin"}`), http.StatusForbidden},
+		{"admin cannot default new users to admin", putSettings("admin", `{"default_user_role":"admin"}`), http.StatusForbidden},
+		{"admin cannot default new users to admin via environment", patchDefault("admin", "admin"), http.StatusForbidden},
+		{"settings-only role cannot default to host_manager", putSettings("drg_settings", `{"default_user_role":"host_manager"}`), http.StatusForbidden},
+		{"settings-only role may default to its own role", putSettings("drg_settings", `{"default_user_role":"drg_settings"}`), http.StatusOK},
+		{"admin may default to host_manager", patchDefault("admin", "host_manager"), http.StatusOK},
+		{"unchanged default role does not block other edits", putSettings("drg_settings", `{"default_user_role":"host_manager","signup_enabled":false}`), http.StatusOK},
+		{"admin may save settings without touching the default role", putSettings("admin", `{"signup_enabled":false}`), http.StatusOK},
+		{"admin cannot map a group to superadmin", putOidc("admin", `{"oidc_superadmin_group":"g"}`), http.StatusForbidden},
+		{"admin cannot map a group to admin", putOidc("admin", `{"oidc_admin_group":"g"}`), http.StatusForbidden},
+		{"admin cannot set the OIDC default role to superadmin", putOidc("admin", `{"oidc_default_role":"superadmin"}`), http.StatusForbidden},
+		{"admin may map host_manager and readonly", putOidc("admin", `{"oidc_host_manager_group":"ops","oidc_default_role":"readonly"}`), http.StatusOK},
+		{"settings-only role cannot map host_manager", putOidc("drg_settings", `{"oidc_host_manager_group":"x"}`), http.StatusForbidden},
+		{"superadmin maps superadmin", putOidc("superadmin", `{"oidc_superadmin_group":"supers"}`), http.StatusOK},
+		{"admin may resend the existing superadmin mapping", putOidc("admin", `{"oidc_superadmin_group":"supers","oidc_button_text":"SSO"}`), http.StatusOK},
+	}
+	for _, c := range cases {
+		if c.got != c.want {
+			t.Errorf("%s: got %d, want %d", c.name, c.got, c.want)
 		}
 	}
 }
