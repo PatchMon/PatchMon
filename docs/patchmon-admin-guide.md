@@ -220,7 +220,7 @@ The Roles editor is where custom roles are authored. A role is a named bundle of
 - `can_manage_hosts`, `can_manage_users`, `can_manage_settings`, `can_manage_alerts`, `can_manage_notifications`, `can_manage_compliance`, `can_manage_patching`, `can_manage_automation`, `can_manage_docker`
 - `can_use_remote_access` (SSH terminal and RDP)
 
-The built-in roles (`superadmin`, `admin`, `user`, `readonly`) are immutable; the editor lets you create and edit additional roles alongside them and assign any user to any custom role.
+The `superadmin`, `admin` and `user` roles cannot be edited. The other two built-in roles, `host_manager` and `readonly`, can be edited like custom roles but cannot be deleted. The editor lets you create and edit additional roles alongside them and assign users to them, within the limits described under role escalation protection below.
 
 #### My Profile
 
@@ -234,7 +234,7 @@ Your own account settings. Every authenticated user has access. Covers:
 - **Trusted Devices**: list and revoke "remember this device" exemptions from MFA challenges
 - **Dashboard preferences**: light/dark mode, card layout, default landing tab
 
-Password policy rules are live: you cannot save a password that fails the server's policy. See PatchMon Environment Variables Reference: Password Policy.
+Password policy rules are live: you cannot save a password that fails the server's policy. Spaces at the start or end of a password are ignored, both when it is set and when you sign in, and the policy is checked on the password without them. See PatchMon Environment Variables Reference: Password Policy.
 
 #### Discord Auth
 
@@ -244,11 +244,18 @@ Configure a Discord application as a sign-in provider. Each user can link their 
 
 Discord Auth is intentionally less feature-rich than OIDC SSO. There is no group-to-role mapping, no enforced-SSO mode, and no user auto-provisioning. Use it for communities and small teams; use OIDC SSO for everything else.
 
+When **Disable local auth** is on in **OIDC / SSO**, Discord sign-in is turned off as well, so SSO is the only way in. The Discord button is hidden, and Discord logins are refused before any account is created. Users can still link a Discord identity to their profile, but cannot sign in with it until local authentication is enabled again.
+
 #### OIDC / SSO
 
 **Path:** `/settings/oidc-auth`
 
 Full OpenID Connect configuration: issuer URL, client ID and secret, redirect URI, scopes, button text, auto-provisioning, group-to-role mapping, and enforced-SSO toggle. A dedicated **Import from environment** button pulls existing `OIDC_*` values from `.env` into the database so you can migrate from file-based config without retyping anything.
+
+The toggles at the top of the page that control password sign-in:
+
+- **Disable local auth**: once SSO is fully configured, the login page shows only the SSO button and the server refuses password sign-in and self-service signup.
+- **Superadmin password login if SSO is down**: only matters while **Disable local auth** is on. Off by default. When on, superadmins who have two-factor authentication set up can sign in with their PatchMon password while your identity provider cannot be reached (a network failure, or the provider returning a server error). Nobody else can. Each such sign-in raises a `sso_fallback_login` event. Changing this setting needs the Manage Superusers permission. Anyone who can cut PatchMon off from your provider and holds a superadmin's password and second factor can get in this way, so only enable it if that risk is acceptable. See [Password Login When the SSO Provider Is Unreachable](https://patchmon.net/docs/patchmon-operator-guide#sso-provider-unreachable-password-login) in the operator guide.
 
 For a step-by-step walk-through (Authentik, Keycloak, Entra ID, Okta), see Setting up OIDC SSO.
 
@@ -338,6 +345,8 @@ Full reference: PatchMon Environment Variables Reference.
 **Requires:** `custom_branding` module (Plus tier)
 
 Upload a custom logo and favicon. The assets are stored in the database and served via `GET /api/v1/settings/logos/{type}`, so they live through container restarts without a persistent volume. Both dark-mode and light-mode variants can be uploaded separately. The read path is public (so the login page can show your branding before the user authenticates) but upload/reset are gated behind the `custom_branding` module.
+
+Logos can be PNG, JPEG or SVG, up to 5 MB. SVG files are cleaned on upload: scripts, event handlers, embedded HTML, animation elements, external links and editor metadata (for example Inkscape or Illustrator data) are removed, and an SVG that is not well-formed XML is rejected with "Invalid SVG file". If your logo looks different after uploading, export it again as a plain SVG.
 
 #### Server Version
 
@@ -698,7 +707,7 @@ The tab strip is context-aware. Some tabs only appear under certain conditions:
 | **Docker** | Conditional | Only when the host has reported a working Docker integration. Gated by the `docker` module; shows a PLUS badge if your plan doesn't have it. |
 | **Patching** | Yes | Gated by the `patching` module; shows a tier badge if your plan doesn't have it. |
 | **Compliance** | Conditional | Only when the host has reported the compliance integration. Gated by the `compliance` module. |
-| **Terminal** | Yes on Linux/FreeBSD | Browser-based SSH. Gated by the `ssh_terminal` module. |
+| **Terminal** | Yes | Browser-based SSH. Windows hosts need OpenSSH Server enabled. Gated by the `ssh_terminal` module. |
 | **RDP** | Windows hosts only | Browser-based RDP via Guacamole. Gated by the `rdp` module. |
 
 Each tab below is described as what you see and what you can do.
@@ -862,6 +871,8 @@ Browser-based SSH session to the host, proxied through the agent. No inbound por
 4. AI-assisted analysis is available within the terminal UI.
 
 Gated by the `ssh_terminal` module. The agent-side `ssh-proxy-enabled` switch in `config.yml` must also be on. This is **not** a UI toggle, due to its security implications. See the SSH section of Agent Configuration Reference.
+
+On Windows hosts the tab connects to the Windows OpenSSH Server, which is not enabled by default. See [Windows hosts](#web-ssh-terminal-windows).
 
 ### RDP (Windows only)
 
@@ -1215,6 +1226,8 @@ Two flows produce a patch run from the Packages page:
 3. The **Patch wizard** opens in multi-host mode, discovers which hosts have the selected packages installed and need updates, and lets you pick which to include.
 4. If the **Host** filter is already set to a single host, the wizard locks to that host to avoid offering unrelated hosts.
 
+Arch Linux hosts are listed as **Not patchable** in the wizard, and **Patch selected** is disabled when the Host filter is an Arch host. Use **Patch all** on those hosts. See [Arch Linux patching](#arch-patching).
+
 #### Patch all on a single host
 
 1. Set the **Host** filter to one host.
@@ -1240,6 +1253,7 @@ From there, you can drill into individual packages, set up a patch run, or narro
 - **Live list, periodic backing data.** Rows are fetched from the PatchMon server and reflect the most recent reports submitted by each host. To refresh a host's data immediately, open the host's detail page and click **Fetch Report**. The Packages list picks up the new state on its next refetch (or click **Refresh** on the Packages page).
 - **Drilling down into patch state.** The **Hosts** page is the better starting point when you care about which *hosts* are behind on updates. Use the Packages page when you care about which *packages* expose the fleet.
 - **Windows hosts.** Package reporting covers installed applications (enriched with winget update data) and Windows Updates; Chocolatey is not used. **Patch all** and **Patch selected** work on Windows hosts running agent 2.1.4 or later. Windows Update rows show a **Windows Update** source and apps a **winget** source; apps winget does not recognise are listed as **Not patchable**. See [Windows patching](#windows-patching).
+- **Arch Linux hosts.** Only **Patch all** is available. On a package's detail page an Arch host shows **Patch all only** instead of a **Patch** button. See [Arch Linux patching](#arch-patching).
 
 ### Related Pages
 
@@ -1500,7 +1514,7 @@ A **dry-run** (also called a validation run) asks the agent to simulate the pack
 - For `apt-get`, the agent runs `apt-get -s install <packages>` and parses the simulation output.
 - For `dnf`/`yum`, the agent runs the planning step that reports "what would be installed" without committing.
 - For `pkg` on FreeBSD, the agent runs `pkg upgrade -n` or the equivalent install-no-run.
-- For `pacman`, the agent uses `pacman -S -p` / `pacman -Syu -p` (print-only) as the validation step.
+- `pacman` (Arch Linux) has no validation step, because selected patching is not available on Arch and `patch_all` cannot be dry-run. See [Arch Linux patching](#arch-patching).
 - For `apk` on Alpine, the agent runs `apk upgrade --simulate <packages>`, which opens the package database read-only. A validation fails if apk reports an error (for example an unknown package or a conflict with `/etc/apk/world`), or if the plan would downgrade or replace a package, or remove one listed in `/etc/apk/world`.
 
 When the dry-run completes the run transitions to `validated` and shows you the list of packages that *would* be installed, including dependencies that were pulled in. If more packages would be installed than you originally asked for, the UI badges the run with **Extra deps** (Linux and FreeBSD `patch_package` runs only) and surfaces the full list in the run detail "Packages affected" panel so you can review before approving.
@@ -1523,11 +1537,26 @@ The agent chooses the patching back-end by detecting the host's package manager.
 | `apt-get` | Debian, Ubuntu, Raspbian | Yes |
 | `dnf` | RHEL 8+, Rocky, AlmaLinux, Fedora | Yes |
 | `yum` | RHEL 7, CentOS 7 | Yes |
-| `pacman` | Arch Linux, Manjaro | Yes |
+| `pacman` | Arch Linux, Manjaro | **Patch all** only. See [Arch Linux patching](#arch-patching). |
 | `pkg` | FreeBSD 13+ (plus `freebsd-update` for the base system on `patch_all`) | Yes |
 | `apk` | Alpine Linux 3.21 and later (apk-tools 2 on 3.21 and 3.22, apk-tools 3 from 3.23) | Yes, with agent 2.1.4 or later. See [Alpine patching](#alpine-patching). |
 | `zypper` | openSUSE Leap, openSUSE Tumbleweed, SLES | **No, and no inventory either. Coming soon.** The installer detects zypper and completes, and the agent detects the OS correctly, but the agent has no zypper backend. Package collection therefore fails with `unsupported package manager: unknown` and the host never completes its first report, so it sits at "Waiting for initial system report". Follow and vote for zypper support at [feedback.patchmon.net](https://feedback.patchmon.net/b/feature-requests/posts/post_01kyza53c0fzst214afbr1qn9a). |
 | Windows Update Agent (WUA) + winget | Windows 10/11, Server 2019/2022/2025 | Yes, with agent 2.1.4 or later (separate path) |
+
+#### Arch Linux patching {#arch-patching}
+
+Arch Linux does not support partial upgrades: syncing the package databases and then upgrading only some packages can leave a package linked against libraries that are not installed yet. The Arch Wiki explains this under [System maintenance: Partial upgrades are unsupported](https://wiki.archlinux.org/title/System_maintenance#Partial_upgrades_are_unsupported). Upgrading `curl` this way on an out-of-date host can stop `pacman` itself from starting, and then the host cannot be patched at all.
+
+PatchMon therefore offers only **Patch all** on hosts that use `pacman`. It runs `pacman -Syu --noconfirm`, which syncs the databases and upgrades every package in one transaction.
+
+**Patch selected** is refused at every step, all with the same message: "Arch Linux does not support partial upgrades, so PatchMon cannot patch selected packages on this host. Use Patch all."
+
+- The UI disables it for Arch hosts and explains why.
+- The server rejects a new `patch_package` run for an Arch host.
+- A `patch_package` run for an Arch host that was queued or scheduled before you upgraded PatchMon is marked **failed** with the same message when it comes due. It is never sent to the agent.
+- The agent refuses one if it still receives it, before running any `pacman` command. It also refuses a dry run on Arch, because `pacman -Syu -p` syncs the package databases without upgrading.
+
+**Older pending runs.** An Arch `patch_package` run left waiting for validation or approval from before the upgrade can no longer be approved or retried. Delete it from **Patching → Runs & History** and use **Patch all** instead.
 
 #### Alpine patching {#alpine-patching}
 
@@ -1779,6 +1808,10 @@ This is the richer flow and the one to use for anything security-sensitive. The 
 4. The wizard polls each run until it terminates. While you wait you see:
     - The per-host status badge (pending validation → running → validated).
     - A live terminal excerpt for the currently running host.
+
+    If the server has not dispatched the dry-run to the agent within 30 seconds, the host is shown as **Offline**; it will patch without validation, by approving that pending validation, once the host is back. Once the server has dispatched it to the agent, the wizard waits for the result, which matters on Windows where a Windows Update search can take several minutes. If the agent drops its connection meanwhile, the host shows **Agent reconnecting** until it returns. After 25 minutes the host is shown as **Still running**.
+
+    You can close the wizard or choose **Continue without waiting** at any point. Dry-runs already sent carry on and their results appear in Runs & History. Hosts still validating are left out when you submit; patch them from Runs & History once validation finishes. If you change the package selection after validating, a validated host is patched with the new selection without validation, and an offline host is left out until you cancel or delete its old validation in Runs & History.
 5. When the dry-run completes, the run transitions to `validated` and the wizard shows:
     - The final **Packages affected** list (what would be installed, always a superset of the original request because of dependency resolution).
     - An **Extra deps** badge if dependency resolution pulled in packages you didn't originally ask for.
@@ -1823,7 +1856,7 @@ Same as Flow B, but starting from the **Packages** page. The wizard discovers wh
 Once a run is fired and not delayed, the UI redirects you into `/patching/runs/{id}`. The page has:
 
 - A header with the host name, status badge, **Awaiting inventory report** pill (post-patch), and the primary action buttons for the current state (Approve & Patch, Retry Validation, Skip & Patch, Stop Run).
-- A left-side **Run summary** card: host, type, initiated by, approved by, started / completed timestamps, link to the validation run if any, patch policy in effect, and packages affected.
+- A left-side **Run summary** card: host, type, initiated by, approved by, started / completed timestamps, link to the validation run if any, patch policy in effect, and packages affected. A package name links to its Package Detail page while the package is in the inventory. Names that are no longer in it, such as a Windows update once it is installed, show as plain text.
 - A right-side **Shell output** terminal for the live log stream.
 
 #### Live log streaming
@@ -3613,7 +3646,9 @@ The following alert types fire from the server code in 2.0. Each can be individu
 | `account_locked` | system | An account is locked after repeated failures |
 | `user_created` | system | A new user is created |
 | `user_role_changed` | system | A user's role is changed |
-| `user_tfa_disabled` | system | A user's two-factor authentication is removed |
+| `user_tfa_disabled` | system | A user's two-factor authentication is removed, by the user or by an administrator's reset |
+| `sso_fallback_login` | system | A superadmin signs in with a password because the SSO provider is unreachable (see **Superadmin password login if SSO is down**) |
+| `sso_fallback_refused` | system | A superadmin without two-factor authentication gives the correct password while the SSO provider is unreachable, and is refused |
 
 If a type listed in the release notes is not in this table, it is not implemented in the server. Anything absent from the `alert_config` table is treated as enabled by default for backwards compatibility, but only types with emitters in the server code actually fire.
 
@@ -3833,6 +3868,17 @@ The generic JSON body also carries a top-level `text` key, alongside the structu
 | **To** | Yes | Comma-separated list of recipients. |
 | **TLS mode** | Yes | Choose how the SMTP transport secures the connection. See **TLS modes** below. Defaults to **STARTTLS** for new destinations. |
 
+##### Authentication mechanisms
+
+When a username or password is set, PatchMon reads the `AUTH` mechanisms the relay advertises and picks one:
+
+- **PLAIN** whenever the relay offers it.
+- **LOGIN** when the relay offers LOGIN but not PLAIN. Microsoft 365 SMTP AUTH, for example, advertises LOGIN and XOAUTH2 but not PLAIN.
+
+Both mechanisms follow the same TLS rules: credentials are only sent once the connection is encrypted, or in **None (insecure)** mode with the cleartext opt-in described below. If the relay offers neither PLAIN nor LOGIN (for example only `CRAM-MD5` or `XOAUTH2`), PatchMon does not attempt to authenticate and the send fails at the `auth` stage with a message listing what the relay offered.
+
+If the relay does not advertise `AUTH` at all, PatchMon skips authentication and sends the message unauthenticated, even when a username and password are set. The relay then decides whether to accept it.
+
 ##### TLS modes
 
 PatchMon offers four TLS modes on every email destination. Pick the one your relay actually supports rather than leaving it on **Auto**, so a misconfigured server fails closed instead of silently downgrading to plaintext.
@@ -3844,7 +3890,7 @@ PatchMon offers four TLS modes on every email destination. Pick the one your rel
 
 ##### Authenticated relays without TLS
 
-Some internal relays require SMTP AUTH but do not offer TLS at all. By default PatchMon refuses that combination, because PLAIN authentication over cleartext puts the username and password on the wire in a form anyone on the network path can read.
+Some internal relays require SMTP AUTH but do not offer TLS at all. By default PatchMon refuses that combination, because PLAIN or LOGIN authentication over cleartext puts the username and password on the wire in a form anyone on the network path can read.
 
 If the relay is on a network you trust and you accept that trade-off, set **TLS mode** to **None (insecure)** and tick **Send credentials over an unencrypted connection** on the destination. PatchMon then authenticates in cleartext for that destination only.
 
@@ -3863,7 +3909,7 @@ Points worth knowing before you enable it:
 Saved email destinations have a **Send test email** button next to the standard **Test** action. Unlike **Test**, which enqueues a synthetic notification through the worker, **Send test email** performs a synchronous live SMTP probe directly from the API request and reports the result inline:
 
 - On success the toast confirms delivery and the recipients should receive a short test message.
-- On failure PatchMon reports which stage of the SMTP exchange failed: `validate` (the configuration is rejected before any network activity, for example a missing host, or a username set with TLS mode **None** without the cleartext credentials opt-in), `dial` (the TCP connection or implicit TLS handshake could not be established), `starttls` (the server did not advertise `STARTTLS` in the chosen mode), `auth` (the relay rejected the credentials), or `send` (the relay accepted the session but rejected the recipients or message). The toast includes the underlying error message returned by the relay.
+- On failure PatchMon reports which stage of the SMTP exchange failed: `validate` (the configuration is rejected before any network activity, for example a missing host, or a username set with TLS mode **None** without the cleartext credentials opt-in), `dial` (the TCP connection or implicit TLS handshake could not be established), `starttls` (the server did not advertise `STARTTLS` in the chosen mode), `auth` (the relay rejected the credentials, or offers neither PLAIN nor LOGIN), or `send` (the relay accepted the session but rejected the recipients or message). The toast includes the underlying error message returned by the relay.
 
 This is the fastest way to diagnose a TLS or auth misconfiguration without trawling through server logs. The probe respects the same `can_manage_notifications` permission as editing the destination.
 
@@ -4258,7 +4304,7 @@ Because the schedule is stored as a cron string plus a timezone, daylight-saving
 
 ### Overview
 
-PatchMon ships an in-browser SSH terminal that lets operators connect to any monitored Linux/FreeBSD host without leaving the web UI. The terminal is a full xterm with line editing, colours, scrollback, resize, and keyboard shortcuts, powered by a WebSocket between the browser and the PatchMon server.
+PatchMon ships an in-browser SSH terminal that lets operators connect to any monitored Linux, FreeBSD or Windows host without leaving the web UI. Windows hosts need the OpenSSH Server feature enabled first; see [Windows hosts](#web-ssh-terminal-windows). The terminal is a full xterm with line editing, colours, scrollback, resize, and keyboard shortcuts, powered by a WebSocket between the browser and the PatchMon server.
 
 Two connection modes are supported:
 
@@ -4285,7 +4331,7 @@ The **Hosts** related permission (`can_manage_hosts`) is required to see the "Op
 1. Go to **Hosts** and click the host you want to connect to.
 2. On the **Host Detail** page, open the **Terminal** tab (or click the **SSH Terminal** button in the header).
 3. Pick the **Connection mode** (Direct or Proxy).
-4. Enter the SSH **username** (defaults to `root`; the last-used username per host is cached in your browser's local storage).
+4. Enter the SSH **username** (defaults to `root`, or `Administrator` on Windows hosts; the last-used username per host is cached in your browser's local storage and takes precedence).
 5. Choose an **Authentication method**:
    - **Password**: type the host password.
    - **Key**: paste the private key (OpenSSH or PEM format) and the passphrase if encrypted.
@@ -4331,6 +4377,46 @@ Flow:
 - The host has no inbound SSH exposure (behind NAT, in a restricted VPC, behind a corporate firewall).
 - You already trust the agent's outbound connection to PatchMon and want to reuse it.
 - You want to SSH to `localhost` through the agent without punching holes through the edge firewall.
+
+### Windows hosts {#web-ssh-terminal-windows}
+
+The Terminal tab works on Windows hosts through the OpenSSH Server that ships with Windows. PatchMon does not install or enable it for you. On Windows hosts the tab shows a short reminder of this above the connection form.
+
+**Enable OpenSSH Server.** Run in an elevated PowerShell on the host:
+
+```powershell
+Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+Start-Service sshd
+Set-Service -Name sshd -StartupType Automatic
+```
+
+If the feature is already installed, the first command changes nothing; you still need to start the service and set it to start automatically.
+
+**Allow port 22.** Installing the feature normally creates the `OpenSSH-Server-In-TCP` firewall rule. Check, and create it if it is missing:
+
+```powershell
+if (-not (Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue)) {
+    New-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -DisplayName "OpenSSH Server (sshd)" `
+        -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
+}
+```
+
+The firewall rule matters for **Direct** mode, where the PatchMon server dials the host. **Proxy** mode connects to `localhost:22` from the agent on the host itself, so it needs only the service running and `ssh-proxy-enabled: true` in `C:\ProgramData\PatchMon\config.yml`.
+
+**Username.** On Windows hosts the username defaults to `Administrator`. Any local administrator or domain account allowed to log on works; for a domain account use `DOMAIN\user` or `user@domain`. On Windows client editions (Windows 10 and 11) the built-in Administrator account is disabled by default, and on non-English installs it has a localised name (for example `Administrateur`), so sign in with your own administrator account instead. A username you have used before on that host is remembered and takes precedence.
+
+**Key authentication.** For an account in the local Administrators group, Windows OpenSSH ignores the user's own `~\.ssh\authorized_keys` and reads `C:\ProgramData\ssh\administrators_authorized_keys` instead. The file must be writable only by Administrators and SYSTEM, or sshd silently refuses the key:
+
+```powershell
+Add-Content -Path C:\ProgramData\ssh\administrators_authorized_keys -Value "ssh-ed25519 AAAA... you@example"
+icacls.exe C:\ProgramData\ssh\administrators_authorized_keys /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F"
+```
+
+Accounts that are not administrators use `C:\Users\<user>\.ssh\authorized_keys` as usual. Paste the matching private key into the **SSH Key** field in the Terminal tab.
+
+**Shell.** The session opens in `cmd.exe`, the Windows OpenSSH default. Type `powershell` to switch for the rest of the session. To change the default for every SSH login on the host, set the `DefaultShell` value under `HKLM:\SOFTWARE\OpenSSH` on the host; PatchMon uses whatever shell sshd starts.
+
+**Terminal or RDP?** The Terminal tab gives you a command line over SSH and works with password or key authentication. The [RDP tab](#rdp-via-guacamole) gives you the full Windows desktop through Guacamole and needs `rdp-proxy-enabled` on the agent instead. Use the terminal for quick commands and scripts, and RDP when you need the GUI.
 
 ### One-time tickets for WebSocket auth
 
@@ -4393,6 +4479,8 @@ Server logs also record each upgrade and ticket consumption under `ssh-terminal 
 | *"Agent not connected."* in Proxy mode | Host's agent WebSocket is down. Verify from **Host Detail → Status**; restart the agent service on the host. |
 | Agent rejects with *"ssh-proxy-enabled must be true"* | Set `integrations.ssh-proxy-enabled: true` in the agent's `config.yml` and restart the agent service. |
 | *"Failed to parse private key"* | Key is encrypted: add the passphrase. Or the key format is unsupported; use OpenSSH or PEM PKCS#8. |
+| Windows host: *"connection refused"* or a timeout | OpenSSH Server is not installed or `sshd` is stopped, or (Direct mode) port 22 is blocked by the Windows firewall. See [Windows hosts](#web-ssh-terminal-windows). |
+| Windows host: key is rejected but the password works | The account is a local administrator, so sshd reads `C:\ProgramData\ssh\administrators_authorized_keys`, not the user's own file. Check that file and its permissions. |
 | *"host key verification failed … (possible man-in-the-middle)"* | The host presented a different SSH key than the one recorded on first use. If the host was legitimately rebuilt or its key rotated, remove its line from the PatchMon-managed `known_hosts` file and reconnect to record the new key. |
 | *"Proxy host must be the host's own address or localhost"* | In Proxy mode the agent will only connect to the host's own registered address or `localhost`. Connecting to an unrelated address through the agent is blocked by design. |
 
@@ -4810,8 +4898,8 @@ Organisation-wide control.
 |----------------|-------|--------------------------|
 | `can_view_users` | View Users | See the user list and account details |
 | `can_manage_users` | Manage Users | Create, edit and delete user accounts |
-| `can_manage_superusers` | Manage Superusers | Manage `superadmin` accounts and elevated privileges |
-| `can_manage_settings` | Manage Settings | System configuration, OIDC / SSO, AI, alert config, enrollment tokens |
+| `can_manage_superusers` | Manage Superusers | Manage `superadmin` accounts and elevated privileges, and turn OIDC / SSO on or off or change its provider, client credentials, redirect URI, local login, the password fallback during an SSO outage, user auto-creation, email trust, role sync and role mapping |
+| `can_manage_settings` | Manage Settings | System configuration, OIDC / SSO (the provider and role mapping also need `can_manage_superusers`), AI, alert config, enrollment tokens |
 | `can_manage_notifications` | Manage Notifications | Configure notification destinations and routing rules |
 | `can_export_data` | Export Data | Download and export data and reports |
 
@@ -4844,11 +4932,13 @@ To create one:
    - **Preset** (optional): four quick-start presets are available:
      - **Read Only:** just the Monitoring & Visibility group
      - **Operator:** everything except the Administration group
-     - **Admin:** every permission
+     - **Admin:** every permission. Only a `superadmin` can use this preset; for anyone else the role is refused because it includes `can_manage_superusers`.
      - **Clear All:** start from zero
    - **Permissions:** tick / untick individual permissions, or use the **Select all / Deselect all** shortcut on each group header.
 4. Watch the counter at the bottom (`n/20 permissions selected`) as a sanity check.
 5. Click **Create Role**.
+
+> **You can only grant permissions you hold.** Unless you are a `superadmin`, a role you create or edit may only contain permissions your own role has. Saving a role with any other permission is refused with a message naming the permissions you lack. For example, an `admin` cannot create a role with `can_manage_superusers`, so the **Admin** preset only works for a `superadmin`.
 
 The new role appears as a new column in the matrix and is selectable when creating or editing users.
 
@@ -4859,6 +4949,8 @@ The new role appears as a new column in the matrix and is selectable when creati
 3. Tick / untick as needed, then click **Save**.
 
 Changes take effect immediately. Any session held by a user with that role has its in-memory permissions refreshed on their next request.
+
+You cannot edit or delete a role that holds a permission your own role lacks.
 
 #### Deleting a Custom Role
 
@@ -4886,7 +4978,7 @@ Go to **Settings → Users** and click **Add User** in the top-right.
 
 Click **Add User**. The account is created immediately and can sign in straight away.
 
-> **Role escalation protection:** You cannot create a user with a role that's more privileged than your own. Only `superadmin` users can create new `admin` or `superadmin` accounts. Non-superadmin accounts that hold the `can_manage_superusers` permission can also create and manage `superadmin` accounts.
+> **Role escalation protection:** Only a `superadmin` can make someone an `admin`. Other than that, you can only give a user a role whose permissions are all held by your own role. A non-superadmin can create and manage `superadmin` accounts only if their role holds every permission, including `can_manage_superusers`.
 
 #### Self-Service Sign-Up
 
@@ -4895,7 +4987,7 @@ PatchMon can also let users register themselves rather than having an admin invi
 1. Go to **Settings → Users**.
 2. Scroll to **User Registration Settings**.
 3. Tick **Enable User Self-Registration**.
-4. Pick a **Default Role for New Users**: the role that self-registered accounts are assigned.
+4. Pick a **Default Role for New Users**: the role that self-registered accounts are assigned. The same rule as assigning a role applies: only a `superadmin` can choose `admin` or `superadmin`, and anyone else can only choose a role whose permissions are all held by their own role. A save that breaks this rule is refused.
 5. Click **Save Settings**.
 
 A sign-up link now appears on the login page. Anyone who can reach the login page can create an account.
@@ -4913,8 +5005,9 @@ A sign-up link now appears on the login page. Anyone who can reach the login pag
 Important side effects:
 
 - **Sessions are revoked.** When a user's role changes, all of their existing JWT sessions are invalidated on the server. They must sign in again. This ensures the old role's privileges cannot be replayed from an existing browser tab.
-- **You cannot change your own role.** The API rejects a self-role change with "Cannot change your own role". This is a deliberate safety net: two admins must cooperate to demote each other.
-- **You cannot promote a user above yourself.** An `admin` cannot promote a user to `superadmin`. Only a `superadmin` can create or promote to `superadmin`, and likewise only `superadmin` can assign the `admin` role.
+- **You cannot change your own role.** The API rejects a self-role change with "Cannot change your own role".
+- **You can only change the role of a user whose current role is strictly below yours.** An admin cannot change another admin's role, so one admin cannot demote another and then take over the account. Only a superadmin can change an admin's role. A superadmin can change anyone's role except their own.
+- **You cannot promote a user above yourself.** You can only assign a role whose permissions are all held by your own role, so an `admin` cannot promote a user to `superadmin`. Only a `superadmin` can assign the `admin` role.
 
 #### Resetting a User's Password
 
@@ -4925,6 +5018,19 @@ Important side effects:
 After a reset, all of that user's sessions and trusted-device records are revoked. This is the standard post-compromise response. The user must sign in with the new password on every device.
 
 > You cannot reset the password of an inactive user. Reactivate them first.
+
+#### Unlinking a User's SSO Identity
+
+When a user signs in with OIDC / SSO, PatchMon binds their account to that identity at that provider. If the identity changes, for example because the user was deleted and re-created at the provider, or you moved to a different provider (including a different realm or application on the same server), their SSO login is refused with "Unable to sign in with this account". After a provider migration, unlink each existing SSO user so they can sign in through the new provider.
+
+1. Click the **Edit** (pencil) icon on the user's row.
+2. Under **SSO identity**, click **Unlink SSO identity** and confirm.
+
+Their next SSO login links the account to the new identity, keeping their role and settings, provided the identity provider sends a verified email address that matches the account. The section only appears for accounts that are linked.
+
+- You can only unlink users whose role is strictly below yours (your role holds every permission theirs grants, and at least one more), and never your own account. A superadmin can unlink anyone except themselves. This is stricter than editing, because unlinking and then changing the email address would hand an SSO-only account to someone else.
+- Every unlink, and every refused attempt, is written to the `audit_logs` table (event `user_oidc_unlink`).
+- If **Trust unverified email** is on in **Settings > OIDC / SSO**, the verified-email check is skipped, so whoever next signs in with that address claims the account. Ask the user to sign in straight after you unlink. While the setting is on, superadmins cannot be unlinked.
 
 ---
 
@@ -4942,6 +5048,7 @@ Effects:
 - All their sessions are revoked immediately.
 - All their trusted devices are revoked (so re-activating them later cannot reuse a "remember this device" cookie that predates the deactivation window).
 - The user's row is shown with a red **Inactive** badge in the users table.
+- A sign-in attempt with a wrong password gets the usual `Invalid credentials` message. Only someone who enters the account's correct password is told `Account is disabled`, so the message cannot be used to find out which accounts exist.
 
 To re-enable: edit and tick **Active** again.
 
@@ -4957,23 +5064,17 @@ Restrictions:
 - You cannot delete your own account.
 - You cannot delete the last `superadmin` (the API refuses).
 - You cannot delete the last `admin` if there are no `superadmin` users (ensures at least one admin always exists).
-- You cannot delete a user who holds a role that's more privileged than yours.
+- You cannot delete a user whose role holds a permission yours lacks.
 
 ---
 
 ### How Permissions Are Evaluated
 
-- **Admin and Super Admin** always have every permission, even if the `role_permissions` table says otherwise. The middleware short-circuits their permission checks. This is a safety net: if someone mis-edits the `admin` row (which shouldn't be possible via the UI, but could happen via direct database access), admins don't get locked out.
-- **Every other role** (built-in or custom) has its permissions read from the database at each request. Changes made in **Settings → Roles** take effect on the user's next API call; no restart required.
-- **Role hierarchy for user management** is enforced separately from the permissions above:
-  - `superadmin` → rank 100
-  - `admin` → rank 90
-  - `host_manager` → rank 50
-  - custom roles → rank 30 (mid-tier)
-  - `user` → rank 20
-  - `readonly` → rank 10
+- **Every role, including Admin and Super Admin,** has its permissions read from the `role_permissions` table on each request; there is no built-in bypass. By default `superadmin` holds every permission and `admin` holds every permission except `can_manage_superusers`. Their rows cannot be edited from the UI, so a change to them can only come from direct database access.
+- Changes made in **Settings → Roles** take effect on the user's next API call; no restart required.
+- **Role hierarchy for user management** is based on permissions, not on role names. One role is at or below yours when every permission it grants is also granted to your role. A `superadmin` is above every other role.
 
-You can only modify, delete, or reset the password of users whose role rank is less than or equal to your own. This is distinct from the permission checks. Even if a custom role were granted `can_manage_users`, its holder still could not touch `admin` or `superadmin` accounts unless they additionally had `can_manage_superusers`.
+You can only assign, modify, delete, or reset the password of users whose role is at or below yours, and you can only create, edit or delete roles that are at or below yours. Changing a user's role and unlinking an SSO identity need a role strictly above the target's current role (see Unlinking a User's SSO Identity). Custom roles are compared by their permissions, not their names, so a custom role that holds all of an admin's permissions plus at least one more outranks `admin` and can change an admin's role, reset their 2FA or unlink their SSO identity. This is enforced separately from the permission checks. A custom role granted `can_manage_users` therefore cannot touch an account whose role has, for example, `can_manage_settings` unless it holds `can_manage_settings` too.
 
 ---
 
@@ -5203,7 +5304,7 @@ There is no "enforce for everyone" option in the wizard. This decision is always
 
 ### Admin Recovery: User Has Lost Their Authenticator
 
-PatchMon does not have a dedicated "admin reset MFA" button. Recovery is handled through the standard account-recovery flow, which implicitly disables 2FA in a safe way:
+If the user still has a backup code, they can recover on their own. Otherwise an administrator resets their 2FA from the Users page.
 
 #### Option A: User has a backup code
 
@@ -5212,27 +5313,47 @@ Ask them to sign in with a backup code (see [Using a backup code](#using-a-backu
 1. **Profile → Multi-Factor Authentication → Disable TFA** to remove the old authenticator secret entirely, and then re-enable with the new phone.
 2. Or **Regenerate Codes** to get a fresh set of backup codes without touching the authenticator.
 
-#### Option B: User has no backup codes and no authenticator
-
-An administrator must reset the account:
+#### Option B: An administrator resets the user's 2FA
 
 1. Sign in as a user with `can_manage_users` (admin, superadmin, or any custom role with that permission).
 2. Go to **Settings → Users**.
-3. Find the affected user and click **Reset Password**.
-4. Set a new password and communicate it over an out-of-band secure channel.
+3. Find the affected user and click the **Reset 2FA** icon (a crossed-out shield). It only appears for users who have 2FA turned on.
+4. Enter **your own** password, and your own 2FA code if your account uses 2FA.
+5. Optionally tick **Also set a new temporary password** and enter one twice. **If you suspect the account is compromised, tick this.** Give the temporary password to the user over a separate, secure channel.
+6. Click **Reset 2FA**.
 
-> **Password reset alone does not disable 2FA.** The user will still be prompted for a TOTP or backup code after their first login with the new password.
+The reset:
 
-If the user still cannot produce a code, you have two further options:
+- removes the user's authenticator secret and backup codes;
+- revokes every trusted ("Remember me") device for that user;
+- signs the user out of every session, so they have to sign in again.
 
-- **Deactivate, then reactivate the account.** Edit the user, untick **Active**, save (this also wipes their trusted devices), then tick **Active** again. 2FA is still enabled on the account, so this alone does not solve the missing-authenticator problem.
-- **Delete and re-create the user** as a last resort. You lose the user's ID, notification preferences, and any artefacts keyed to their account, so prefer the backup-code route wherever possible.
+On their next sign-in the user enters their password and is taken straight to a **Set up two-factor authentication** screen. They cannot reach any other page, and the server refuses every other API call from that session, until they scan the new QR code, enter a code and save their new backup codes. They can also sign out from that screen.
 
-> **Feature gap:** A "wipe 2FA on another user" admin action is on the roadmap. If you hit this frequently, consider moving your deployment to OIDC / SSO so that MFA is managed by the IdP (see Setting Up OIDC / Single Sign-On).
+If you set a temporary password, the user's old password stops working straight away. When they sign in with the temporary password they first see a **Choose a new password** screen, and must replace it before the 2FA setup screen appears. Neither the temporary password nor the password they had before the reset is accepted as the new one. Until then the server refuses every API call from that session except changing the password, reading their own profile and signing out. Only this checkbox forces a password change; the separate **Reset Password** action works as before.
+
+Forced re-enrolment only guarantees 2FA at that point: PatchMon has no setting that makes 2FA mandatory, so the user can still turn it off from their profile afterwards. Without the temporary password option, anyone who knows the user's current password can sign in and enrol their own authenticator, so tick it if that password may be known to someone else.
+
+Accounts linked to an OIDC / SSO provider, and accounts without a local password, are not forced to re-enrol, because their MFA is managed by the identity provider. The reset still clears any local 2FA they had. If an account is linked to an identity provider after a reset, the requirement lapses for the same reason.
+
+Rules the server enforces:
+
+| Rule | Detail |
+|------|--------|
+| Permission | `can_manage_users` is required. |
+| Role | You can only reset users whose role is strictly below yours: your role must hold every permission theirs grants, and at least one more. An admin cannot reset another admin or a superadmin. A superadmin can reset anyone except themselves. Two roles with the same permissions, or with different ones, cannot reset each other. |
+| Your own account | Not allowed here. Use your profile instead. |
+| Confirmation | Your password is always required, and your 2FA code (or a backup code) if you have 2FA. Wrong 2FA codes count towards your own `MAX_TFA_ATTEMPTS` lockout. |
+| SSO-only administrators | An administrator who signs in only through OIDC has no local password to confirm with, so cannot use this action. Ask an administrator with a local password. |
+| Deactivated users | Can be reset, so you can clear 2FA before reactivating an account. |
+| Reset Password afterwards | Until the user has finished setting up their account again, only a superadmin or someone with a higher role than theirs can use **Reset Password** on them. This stops a peer setting a password and enrolling their own authenticator on the account. |
+| Rate limit | 10 attempts per administrator per 15 minutes, counted per signed-in administrator rather than per IP. |
+
+Every reset is written to the server log and to the `audit_logs` table (event `user_tfa_reset`), and so is every refused attempt from the password check onwards: a wrong password or 2FA code, a role you cannot reset, an unknown user, or a user without 2FA. A successful reset also raises the `user_tfa_disabled` notification event, so any alert route you have for "2FA disabled" fires for it.
 
 #### Direct database workaround (self-hosted only)
 
-If you are self-hosting and absolutely need to clear 2FA on a user without backup codes, a DBA can clear the user's `tfa_enabled`, `tfa_secret` and `tfa_backup_codes` columns directly in the `users` table, then force a password reset from the UI. This is a last resort. Make a backup first, and never do this on PatchMon Cloud (where direct database access is not available).
+You should only need this when no administrator with a local password can perform the reset above. On a self-hosted install a DBA can clear the user's `tfa_enabled`, `tfa_secret` and `tfa_backup_codes` columns directly in the `users` table, then force a password reset from the UI. This is a last resort. Make a backup first, and never do this on PatchMon Cloud (where direct database access is not available).
 
 ```sql
 -- Replace 'alice' with the affected username. Make a backup first.

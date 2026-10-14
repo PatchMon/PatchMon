@@ -1,8 +1,9 @@
 // Package mailer is a transport-only SMTP sender. It speaks RFC 5321 via the
 // stdlib net/smtp package, supports four explicit TLS modes (none, starttls,
-// implicit tls, auto/legacy-opportunistic), and refuses PLAIN auth over
-// cleartext. Higher-level concerns (templating, queueing, retry policy,
-// logging of delivery outcomes) belong to the caller.
+// implicit tls, auto/legacy-opportunistic), authenticates with PLAIN or LOGIN,
+// and refuses to send credentials over cleartext unless explicitly allowed.
+// Higher-level concerns (templating, queueing, retry policy, logging of delivery
+// outcomes) belong to the caller.
 package mailer
 
 import (
@@ -47,7 +48,7 @@ type Config struct {
 	TLSMode     TLSMode
 	DialTimeout time.Duration
 	SendTimeout time.Duration
-	// AllowInsecureAuth permits PLAIN authentication over an unencrypted
+	// AllowInsecureAuth permits PLAIN or LOGIN authentication over an unencrypted
 	// connection. It applies only to TLSModeNone and is an explicit per
 	// destination opt-in for trusted internal relays that require AUTH but do
 	// not offer TLS. It sends the credentials in the clear, so it stays false
@@ -156,8 +157,12 @@ func Send(ctx context.Context, cfg Config, msg Message) error {
 	defer func() { _ = conn.netConn.Close() }()
 
 	if cfg.Username != "" || cfg.Password != "" {
-		if ok, _ := conn.client.Extension("AUTH"); ok {
-			if authErr := conn.client.Auth(plainAuth(cfg)); authErr != nil {
+		if ok, mechs := conn.client.Extension("AUTH"); ok {
+			auth, selErr := selectAuth(cfg, mechs)
+			if selErr != nil {
+				return newSendError(StageAuth, selErr)
+			}
+			if authErr := conn.client.Auth(auth); authErr != nil {
 				return newSendError(StageAuth, authErr)
 			}
 		}
@@ -252,7 +257,7 @@ func validate(cfg Config, msg Message) *SendError {
 	if cfg.TLSMode == TLSModeNone && !cfg.AllowInsecureAuth &&
 		(strings.TrimSpace(cfg.Username) != "" || strings.TrimSpace(cfg.Password) != "") {
 		return newSendError(StageValidate,
-			errors.New("refusing PLAIN auth over cleartext: tls_mode=none with credentials would leak them on the wire. Enable allow_insecure_auth on the destination if the relay is on a trusted network"))
+			errors.New("refusing SMTP auth over cleartext: tls_mode=none with credentials would leak them on the wire. Enable allow_insecure_auth on the destination if the relay is on a trusted network"))
 	}
 	return nil
 }

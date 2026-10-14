@@ -17,6 +17,9 @@ const _devError = (...args) => isDev && console.error(...args);
 
 export const AuthContext = createContext();
 
+const needsAccountSetup = (u) =>
+	!!(u?.tfa_enrolment_required || u?.password_change_required);
+
 export const useAuth = () => {
 	const context = useContext(AuthContext);
 	if (!context) {
@@ -136,6 +139,9 @@ export const AuthProvider = ({ children }) => {
 			setTenant({ modules: "*", host: "", slug: "", multi_context: false });
 			localStorage.removeItem("token");
 			localStorage.removeItem("user");
+			setAuthPhase((phase) =>
+				isAuthPhase.accountSetupRequired(phase) ? AUTH_PHASES.READY : phase,
+			);
 		};
 		window.addEventListener("auth:session-expired", handleSessionExpired);
 		return () =>
@@ -202,6 +208,11 @@ export const AuthProvider = ({ children }) => {
 
 				if (response.ok) {
 					const data = await response.json();
+					if (!abortController.signal.aborted && needsAccountSetup(data.user)) {
+						setUser(data.user);
+						setAuthPhase(AUTH_PHASES.ACCOUNT_SETUP_REQUIRED);
+						return;
+					}
 					if (!abortController.signal.aborted) {
 						setUser(data.user);
 						// UI-cache only — NEVER trust localStorage.user as an authority for
@@ -333,6 +344,13 @@ export const AuthProvider = ({ children }) => {
 					};
 				}
 
+				if (data.tfaEnrolmentRequired || data.passwordChangeRequired) {
+					setToken(data.token);
+					setUser(data.user);
+					setAuthPhase(AUTH_PHASES.ACCOUNT_SETUP_REQUIRED);
+					return { success: true, accountSetupRequired: true };
+				}
+
 				// Regular successful login
 				// Note: httpOnly cookies are set by the server for secure auth
 				// localStorage is used for backward compatibility and UI state only
@@ -437,8 +455,48 @@ export const AuthProvider = ({ children }) => {
 			setTenant({ modules: "*", host: "", slug: "", multi_context: false });
 			localStorage.removeItem("token");
 			localStorage.removeItem("user");
+			setAuthPhase((phase) =>
+				isAuthPhase.accountSetupRequired(phase) ? AUTH_PHASES.READY : phase,
+			);
 		}
 	};
+
+	const refreshAccountSetup = useCallback(async () => {
+		try {
+			const response = await fetchWithSessionRefresh("/api/v1/auth/profile", {
+				credentials: "include",
+			});
+			if (!response.ok) return false;
+			const data = await response.json();
+			if (needsAccountSetup(data.user)) {
+				setUser(data.user);
+				return false;
+			}
+			setUser({
+				...data.user,
+				accepted_release_notes_versions:
+					data.user.accepted_release_notes_versions || [],
+			});
+			try {
+				localStorage.setItem(
+					"user",
+					JSON.stringify({
+						...data.user,
+						accepted_release_notes_versions:
+							data.user.accepted_release_notes_versions || [],
+					}),
+				);
+			} catch (_e) {
+				// Not fatal: auth runs on cookies.
+			}
+			await Promise.all([fetchPermissions(), fetchTenantContext()]);
+			setAuthPhase(AUTH_PHASES.READY);
+			return true;
+		} catch (error) {
+			devLog("refreshAccountSetup failed:", error);
+			return false;
+		}
+	}, [fetchPermissions, fetchTenantContext]);
 
 	const updateProfile = async (profileData) => {
 		try {
@@ -814,7 +872,11 @@ export const AuthProvider = ({ children }) => {
 			} else {
 				setFirstTimeWizardActive(true);
 			}
-			setAuthPhase(AUTH_PHASES.READY);
+			setAuthPhase(
+				needsAccountSetup(authUser)
+					? AUTH_PHASES.ACCOUNT_SETUP_REQUIRED
+					: AUTH_PHASES.READY,
+			);
 		});
 
 		if (!keepWizardVisible) {
@@ -837,6 +899,7 @@ export const AuthProvider = ({ children }) => {
 		// Remove any stale token from localStorage
 		localStorage.removeItem("token");
 
+		if (needsAccountSetup(authUser)) return;
 		// Fetch permissions and multi-context - works with cookies if token is null
 		fetchPermissions(authToken);
 		fetchTenantContext(authToken);
@@ -876,6 +939,7 @@ export const AuthProvider = ({ children }) => {
 		refetchUser,
 		setAuthState,
 		completeFirstTimeWizard,
+		refreshAccountSetup,
 		isAuthenticated,
 		isAdmin,
 		hasPermission,

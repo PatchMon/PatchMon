@@ -674,6 +674,7 @@ const RunDetail = () => {
 									<div className="max-h-48 overflow-auto pr-1 text-sm text-secondary-700 dark:text-secondary-300">
 										<PackageNameList
 											packages={run.packages_affected}
+											packageIds={run.package_ids}
 											showIcon={false}
 										/>
 									</div>

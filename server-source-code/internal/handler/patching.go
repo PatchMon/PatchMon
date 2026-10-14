@@ -515,6 +515,7 @@ func (h *PatchingHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	recentResp := patchRunsToResponse(recent)
 	activeResp := patchRunsActiveToResponse(active)
+	h.attachPackageIDs(r.Context(), append(append([]map[string]interface{}{}, recentResp...), activeResp...))
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"summary":     summary,
 		"recent_runs": recentResp,
@@ -576,7 +577,9 @@ func (h *PatchingHandler) ActiveRuns(w http.ResponseWriter, r *http.Request) {
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to load active runs"})
 		return
 	}
-	JSON(w, http.StatusOK, map[string]interface{}{"runs": patchRunsActiveToResponse(runs)})
+	resp := patchRunsActiveToResponse(runs)
+	h.attachPackageIDs(r.Context(), resp)
+	JSON(w, http.StatusOK, map[string]interface{}{"runs": resp})
 }
 
 // ListRuns returns GET /patching/runs.
@@ -622,8 +625,10 @@ func (h *PatchingHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	if int(total)%limit > 0 {
 		pages++
 	}
+	runsResp := patchRunsListToResponse(runs)
+	h.attachPackageIDs(r.Context(), runsResp)
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"runs": patchRunsListToResponse(runs),
+		"runs": runsResp,
 		"pagination": map[string]interface{}{
 			"total":  total,
 			"limit":  limit,
@@ -653,6 +658,7 @@ func (h *PatchingHandler) GetRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp["items"] = patchRunItemsToResponse(items)
+	h.attachPackageIDs(r.Context(), []map[string]interface{}{resp})
 	if host, err := h.hosts.GetByID(r.Context(), run.HostID); err == nil && host != nil {
 		if hosts, ok := resp["hosts"].(map[string]interface{}); ok {
 			hosts["awaiting_post_patch_report_run_id"] = host.AwaitingPostPatchReportRunID
@@ -697,6 +703,10 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 
 	host, ok := loadHost(w, r, h.hosts, valRun.HostID)
 	if !ok {
+		return
+	}
+	if e := selectedPatchRefusal(host, valRun.PatchType); e != nil {
+		writeRunRequestError(w, e)
 		return
 	}
 
@@ -911,6 +921,10 @@ func (h *PatchingHandler) RetryValidation(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	if e := selectedPatchRefusal(host, run.PatchType); e != nil {
+		writeRunRequestError(w, e)
+		return
+	}
 	windows := store.IsWindowsOSType(host.OSType)
 	// patch_all runs cannot be dry-run on Linux/FreeBSD agents (no --dry-run support for
 	// the bulk upgrade path). Re-validation only makes sense for patch_package
@@ -1005,11 +1019,11 @@ func (h *PatchingHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Remove run_patch task(s) from queue if present.
-	// Original task: patch-run-{id}, retry task: patch-run-{id}-retry
 	if h.queueInspector != nil {
-		taskID := patchRunJobIDPrefix + id
-		_ = h.queueInspector.DeleteTask(queue.QueuePatching, taskID)
-		_ = h.queueInspector.DeleteTask(queue.QueuePatching, taskID+"-retry")
+		_ = h.queueInspector.DeleteTask(queue.QueuePatching, patchRunJobIDPrefix+id)
+		for _, retryID := range queue.RunPatchRetryTaskIDs(id) {
+			_ = h.queueInspector.DeleteTask(queue.QueuePatching, retryID)
+		}
 	}
 	if err := h.patchRuns.Delete(r.Context(), id); err != nil {
 		h.log.Error("patching: delete run error", "patch_run_id", id, "error", err)
@@ -1080,6 +1094,10 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 
 	host, ok := loadHost(w, r, h.hosts, body.HostID)
 	if !ok {
+		return
+	}
+	if e := selectedPatchRefusal(host, body.PatchType); e != nil {
+		writeRunRequestError(w, e)
 		return
 	}
 	windows := store.IsWindowsOSType(host.OSType)
@@ -1702,6 +1720,54 @@ func patchRunToResponse(r *db.GetPatchRunByIDRow) map[string]interface{} {
 	return m
 }
 
+func (h *PatchingHandler) attachPackageIDs(ctx context.Context, runs []map[string]interface{}) {
+	ids, err := h.patchRuns.PackageIDsByName(ctx, uniqueRunPackageNames(runs))
+	if err != nil {
+		h.log.Warn("patching: package ID lookup failed", "error", err)
+		return
+	}
+	setRunPackageIDs(runs, ids)
+}
+
+func uniqueRunPackageNames(runs []map[string]interface{}) []string {
+	seen := make(map[string]struct{})
+	var names []string
+	for _, m := range runs {
+		for _, n := range runPackageNames(m) {
+			if _, ok := seen[n]; !ok {
+				seen[n] = struct{}{}
+				names = append(names, n)
+			}
+		}
+	}
+	return names
+}
+
+func setRunPackageIDs(runs []map[string]interface{}, ids map[string]string) {
+	for _, m := range runs {
+		own := make(map[string]string)
+		for _, n := range runPackageNames(m) {
+			if id, ok := ids[n]; ok {
+				own[n] = id
+			}
+		}
+		m["package_ids"] = own
+	}
+}
+
+func runPackageNames(m map[string]interface{}) []string {
+	var out []string
+	if p, ok := m["package_name"].(*string); ok && p != nil && *p != "" {
+		out = append(out, *p)
+	}
+	for _, key := range []string{"package_names", "packages_affected"} {
+		if names, ok := m[key].([]string); ok {
+			out = append(out, names...)
+		}
+	}
+	return out
+}
+
 func windowsScopeResponse(updates, apps *bool) map[string]bool {
 	if updates == nil && apps == nil {
 		return nil
@@ -1821,4 +1887,11 @@ func patchRunRowToMap(id, hostID, jobID, patchType string, pkgName *string, pkgN
 		m["package_names"] = names
 	}
 	return m
+}
+
+func selectedPatchRefusal(host *models.Host, patchType string) *runRequestError {
+	if store.RefusesSelectedPatch(host.PackageManager, patchType) {
+		return badRunRequest(store.PacmanSelectedPatchUnsupported)
+	}
+	return nil
 }

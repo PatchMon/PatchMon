@@ -29,10 +29,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import PatchWizard from "../components/PatchWizard";
 import ModalPortal from "../components/ui/ModalPortal";
+import Tooltip from "../components/ui/Tooltip";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import { usePageRefresh } from "../hooks/usePageRefresh";
 import { dashboardAPI, packagesAPI } from "../utils/api";
+import {
+	isPacmanHost,
+	PACMAN_SELECTED_PATCH_UNSUPPORTED,
+} from "../utils/patchSupport";
 import {
 	isPendingRestart,
 	RESTART_REQUIRED_BADGE,
@@ -449,6 +454,10 @@ const Packages = () => {
 		(hosts?.find((h) => h.id === hostFilter)?.os_type || "")
 			.toLowerCase()
 			.includes("windows");
+	const isPacmanHostFilter =
+		hostFilter &&
+		hostFilter !== "all" &&
+		isPacmanHost(hosts?.find((h) => h.id === hostFilter));
 
 	const windowsInfoFor = (pkg) =>
 		windowsPatchInfo(
@@ -793,23 +802,45 @@ const Packages = () => {
 					</p>
 				</div>
 				<div className="flex items-center gap-3">
-					{selectedPackages.length > 0 && canManageHosts() && (
-						<button
-							type="button"
-							onClick={() => setShowPatchPackageMultiHostModal(true)}
-							className="btn-primary flex items-center gap-2"
-							title={
-								hostFilter && hostFilter !== "all"
-									? `Patch ${selectedPackages.length} selected package(s) on ${
-											patchModalHostName || "this host"
-										}`
-									: `Patch ${selectedPackages.length} selected package(s) on chosen hosts`
-							}
-						>
-							<Wrench className="h-4 w-4" />
-							Patch selected ({selectedPackages.length})
-						</button>
-					)}
+					{selectedPackages.length > 0 &&
+						canManageHosts() &&
+						isPacmanHostFilter && (
+							<Tooltip content={PACMAN_SELECTED_PATCH_UNSUPPORTED}>
+								<span
+									// biome-ignore lint/a11y/noNoninteractiveTabindex: a disabled button cannot take focus, so the wrapper carries the explanation
+									tabIndex={0}
+									className="inline-flex"
+								>
+									<button
+										type="button"
+										disabled
+										className="btn-primary flex items-center gap-2 pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed"
+									>
+										<Wrench className="h-4 w-4" />
+										Patch selected ({selectedPackages.length})
+									</button>
+								</span>
+							</Tooltip>
+						)}
+					{selectedPackages.length > 0 &&
+						canManageHosts() &&
+						!isPacmanHostFilter && (
+							<button
+								type="button"
+								onClick={() => setShowPatchPackageMultiHostModal(true)}
+								className="btn-primary flex items-center gap-2"
+								title={
+									hostFilter && hostFilter !== "all"
+										? `Patch ${selectedPackages.length} selected package(s) on ${
+												patchModalHostName || "this host"
+											}`
+										: `Patch ${selectedPackages.length} selected package(s) on chosen hosts`
+								}
+							>
+								<Wrench className="h-4 w-4" />
+								Patch selected ({selectedPackages.length})
+							</button>
+						)}
 					{hostFilter && hostFilter !== "all" && canManageHosts() && (
 						<button
 							type="button"

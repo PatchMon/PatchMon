@@ -691,6 +691,7 @@ type Setting struct {
 	OidcUserGroup                   *string          `json:"oidc_user_group"`
 	OidcEnforceHttps                bool             `json:"oidc_enforce_https"`
 	OidcTrustUnverifiedEmail        bool             `json:"oidc_trust_unverified_email"`
+	OidcLocalAuthFallback           bool             `json:"oidc_local_auth_fallback"`
 	MaxLoginAttempts                *int32           `json:"max_login_attempts"`
 	LockoutDurationMinutes          *int32           `json:"lockout_duration_minutes"`
 	SessionInactivityTimeoutMinutes *int32           `json:"session_inactivity_timeout_minutes"`
@@ -782,6 +783,9 @@ type User struct {
 	DiscordLinkedAt        pgtype.Timestamp `json:"discord_linked_at"`
 	NewsletterSubscribed   bool             `json:"newsletter_subscribed"`
 	NewsletterSubscribedAt pgtype.Timestamp `json:"newsletter_subscribed_at"`
+	TfaEnrolmentRequired   bool             `json:"tfa_enrolment_required"`
+	PasswordChangeRequired bool             `json:"password_change_required"`
+	PreviousPasswordHash   *string          `json:"previous_password_hash"`
 }
 
 type UserSession struct {

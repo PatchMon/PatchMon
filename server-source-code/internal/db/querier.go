@@ -109,6 +109,8 @@ type Querier interface {
 	// data (docker_enabled stays true) the hash is left alone.
 	ClearHostDockerHashOnEnable(ctx context.Context, arg ClearHostDockerHashOnEnableParams) error
 	ClearScheduledAt(ctx context.Context, id string) error
+	ClearUserOidcLink(ctx context.Context, id string) error
+	ConsumeTfaBackupCode(ctx context.Context, arg ConsumeTfaBackupCodeParams) (int64, error)
 	CountActiveAdmins(ctx context.Context) (int64, error)
 	CountActiveRepositories(ctx context.Context) (int32, error)
 	CountAdmins(ctx context.Context) (int64, error)
@@ -431,6 +433,7 @@ type Querier interface {
 	GetRolePermissions(ctx context.Context, role string) (RolePermission, error)
 	GetRuleAggregationsFromScans(ctx context.Context, arg GetRuleAggregationsFromScansParams) ([]GetRuleAggregationsFromScansRow, error)
 	GetScheduledReportByID(ctx context.Context, id string) (ScheduledReport, error)
+	GetSessionAuthState(ctx context.Context, arg GetSessionAuthStateParams) (GetSessionAuthStateRow, error)
 	GetSessionByID(ctx context.Context, arg GetSessionByIDParams) (UserSession, error)
 	GetSessionByRefreshToken(ctx context.Context, refreshToken string) (UserSession, error)
 	GetSourceReposByPackageIDs(ctx context.Context, arg GetSourceReposByPackageIDsParams) ([]GetSourceReposByPackageIDsRow, error)
@@ -462,6 +465,7 @@ type Querier interface {
 	HostInHostGroup(ctx context.Context, arg HostInHostGroupParams) (bool, error)
 	IncrementAutoEnrollmentHostsCreated(ctx context.Context, id string) error
 	InsertAlertHistory(ctx context.Context, arg InsertAlertHistoryParams) (AlertHistory, error)
+	InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) error
 	InsertDashboardPreference(ctx context.Context, arg InsertDashboardPreferenceParams) error
 	InsertDockerImageFromContainer(ctx context.Context, arg InsertDockerImageFromContainerParams) (string, error)
 	// ON CONFLICT: callers may pass the same group id twice, and the delete has
@@ -520,6 +524,7 @@ type Querier interface {
 	ListOrphanedImages(ctx context.Context) ([]ListOrphanedImagesRow, error)
 	ListOrphanedPackages(ctx context.Context) ([]ListOrphanedPackagesRow, error)
 	ListOrphanedRepositories(ctx context.Context) ([]ListOrphanedRepositoriesRow, error)
+	ListPackageIDsByNames(ctx context.Context, names []string) ([]ListPackageIDsByNamesRow, error)
 	// patch_policies
 	ListPatchPolicies(ctx context.Context) ([]PatchPolicy, error)
 	ListPatchPolicyAssignments(ctx context.Context, arg ListPatchPolicyAssignmentsParams) ([]PatchPolicyAssignment, error)
@@ -578,6 +583,7 @@ type Querier interface {
 	MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) (int64, error)
 	ReissueHostApiKey(ctx context.Context, arg ReissueHostApiKeyParams) (int64, error)
 	RequeuePatchRun(ctx context.Context, arg RequeuePatchRunParams) (int64, error)
+	ResetUserTfa(ctx context.Context, id string) (bool, error)
 	ResolveDockerImageIDs(ctx context.Context, arg ResolveDockerImageIDsParams) ([]ResolveDockerImageIDsRow, error)
 	ResolveWindowsPatchTargets(ctx context.Context, arg ResolveWindowsPatchTargetsParams) ([]ResolveWindowsPatchTargetsRow, error)
 	RevokeAllSessionsForUser(ctx context.Context, userID string) error
@@ -590,6 +596,7 @@ type Querier interface {
 	SetNewsletterSubscribed(ctx context.Context, id string) error
 	SetPatchRunPolicySnapshot(ctx context.Context, arg SetPatchRunPolicySnapshotParams) error
 	SetPatchRunRebootRequired(ctx context.Context, arg SetPatchRunRebootRequiredParams) error
+	SetTemporaryPassword(ctx context.Context, arg SetTemporaryPasswordParams) error
 	SkipScheduledPatchRun(ctx context.Context, arg SkipScheduledPatchRunParams) (int64, error)
 	ToggleHostRepository(ctx context.Context, arg ToggleHostRepositoryParams) error
 	TouchTrustedDeviceLastUsed(ctx context.Context, arg TouchTrustedDeviceLastUsedParams) error
@@ -688,7 +695,9 @@ type Querier interface {
 	UpdateUserDiscordUnlink(ctx context.Context, id string) error
 	UpdateUserOidcLink(ctx context.Context, arg UpdateUserOidcLinkParams) error
 	UpdateUserOidcProfile(ctx context.Context, arg UpdateUserOidcProfileParams) error
+	UpdateUserOidcProvider(ctx context.Context, arg UpdateUserOidcProviderParams) error
 	UpdateUserPreferences(ctx context.Context, arg UpdateUserPreferencesParams) error
+	UpgradePasswordHash(ctx context.Context, arg UpgradePasswordHashParams) (int64, error)
 	UpsertAlertConfig(ctx context.Context, arg UpsertAlertConfigParams) (AlertConfig, error)
 	// DO UPDATE rather than DO NOTHING so the row is always returned on conflict.
 	// Deliberately does not touch type: an existing profile keeps the type it was

@@ -359,7 +359,7 @@ func (q *Queries) GetPatchPolicyByID(ctx context.Context, id string) (PatchPolic
 }
 
 const getPatchRunByID = `-- name: GetPatchRunByID :one
-SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username, au.username AS approved_by_username
+SELECT pr.id, pr.host_id, pr.job_id, pr.patch_type, pr.package_name, pr.package_names, pr.status, pr.shell_output, pr.error_message, pr.started_at, pr.completed_at, pr.scheduled_at, pr.triggered_by_user_id, pr.approved_by_user_id, pr.dry_run, pr.packages_affected, pr.policy_id, pr.policy_name, pr.policy_snapshot, pr.validation_run_id, pr.created_at, pr.updated_at, pr.reboot_required, pr.windows_include_updates, pr.windows_include_apps, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, h.package_manager AS host_package_manager, u.username AS triggered_by_username, au.username AS approved_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -396,6 +396,7 @@ type GetPatchRunByIDRow struct {
 	HostFriendlyName      *string          `json:"host_friendly_name"`
 	HostHostname          *string          `json:"host_hostname"`
 	HostOsType            *string          `json:"host_os_type"`
+	HostPackageManager    *string          `json:"host_package_manager"`
 	TriggeredByUsername   *string          `json:"triggered_by_username"`
 	ApprovedByUsername    *string          `json:"approved_by_username"`
 }
@@ -432,6 +433,7 @@ func (q *Queries) GetPatchRunByID(ctx context.Context, id string) (GetPatchRunBy
 		&i.HostFriendlyName,
 		&i.HostHostname,
 		&i.HostOsType,
+		&i.HostPackageManager,
 		&i.TriggeredByUsername,
 		&i.ApprovedByUsername,
 	)

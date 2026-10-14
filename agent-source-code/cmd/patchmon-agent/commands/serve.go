@@ -2568,6 +2568,26 @@ func aptOnlyUpgradeArgs(dryRun bool, packageNames []string) []string {
 	return append(args, packageNames...)
 }
 
+// pacmanSelectedPatchUnsupported must match the server's message for the same refusal.
+const pacmanSelectedPatchUnsupported = "Arch Linux does not support partial upgrades, so PatchMon cannot patch selected packages on this host. Use Patch all."
+
+// pacmanDryRunUnsupported: pacman -Syu -p still syncs the databases, leaving a partial upgrade behind.
+const pacmanDryRunUnsupported = "Arch Linux patch runs cannot be dry-run, because pacman would sync the package databases without upgrading. Use Patch all."
+
+// patchTypeRefusal returns why a patch run cannot go ahead on this package manager, or "".
+func patchTypeRefusal(pkgManager, patchType string, dryRun bool) string {
+	if pkgManager != "pacman" {
+		return ""
+	}
+	if patchType != "patch_all" {
+		return pacmanSelectedPatchUnsupported
+	}
+	if dryRun {
+		return pacmanDryRunUnsupported
+	}
+	return ""
+}
+
 // runPatch runs package manager update and upgrade (patch_all) or install (patch_package).
 // Supports apt-get (Debian/Ubuntu), dnf, yum (RHEL-based), pkg (FreeBSD), pacman (Arch)
 // and apk (Alpine). When dryRun is true, simulates and sends dry_run_completed instead of completed.
@@ -2590,6 +2610,10 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		errMsg := fmt.Sprintf("package manager %q not supported for patching (apt, dnf, yum, pkg, pacman, apk required)", pkgManager)
 		_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", errMsg)
 		return fmt.Errorf("%s", errMsg)
+	}
+	if msg := patchTypeRefusal(pkgManager, patchType, dryRun); msg != "" {
+		_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", msg)
+		return errors.New(msg)
 	}
 
 	var env []string
@@ -2710,9 +2734,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 				stepErr = err
 			}
 		case "pacman":
-			if err, abort := runStep(false, "pacman refresh", "pacman -Sy failed: %w", "pacman", "-Sy", "--noconfirm"); abort {
-				stepErr = err
-			}
+			// No standalone -Sy: a sync without the upgrade is a partial upgrade, and -Syu syncs itself.
 		default:
 			// -y/--assumeyes accepts new GPG key imports non-interactively.
 			// Without it, dnf prompts "Is this ok [y/N]:" for keys like the
@@ -2755,14 +2777,8 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 					}
 				}
 			case "pacman":
-				if dryRun {
-					if err, abort := runStep(true, "pacman -Syu -p", "pacman -Syu -p failed: %w", "pacman", "-Syu", "-p"); abort {
-						stepErr = err
-					}
-				} else {
-					if err, abort := runStep(false, "pacman -Syu", "pacman -Syu failed: %w", "pacman", "-Syu", "--noconfirm"); abort {
-						stepErr = err
-					}
+				if err, abort := runStep(false, "pacman -Syu", "pacman -Syu failed: %w", "pacman", "-Syu", "--noconfirm"); abort {
+					stepErr = err
 				}
 			default: // dnf, yum
 				if dryRun {
@@ -2808,19 +2824,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 						}
 					}
 				}
-			case "pacman":
-				if dryRun {
-					args := append([]string{"-S", "-p"}, packageNames...)
-					if err, abort := runStep(true, "pacman -S -p", "pacman -S -p failed: %w", "pacman", args...); abort {
-						stepErr = err
-					}
-				} else {
-					args := append([]string{"-S", "--noconfirm"}, packageNames...)
-					if err, abort := runStep(false, "pacman -S", "pacman -S failed: %w", "pacman", args...); abort {
-						stepErr = err
-					}
-				}
-			default: // dnf, yum
+			default: // dnf, yum; pacman is refused above
 				// "install" on an already-installed package is a no-op on
 				// dnf/yum, unlike apt-get install which upgrades it.
 				if dryRun {

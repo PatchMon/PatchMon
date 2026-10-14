@@ -580,7 +580,7 @@ func (q *Queries) ListExistingHostApiIDs(ctx context.Context, dollar_1 []string)
 }
 
 const listHostOptions = `-- name: ListHostOptions :many
-SELECT id, friendly_name, hostname, os_type, status
+SELECT id, friendly_name, hostname, os_type, status, package_manager
 FROM hosts
 WHERE ($1::text IS NULL OR friendly_name ILIKE '%' || $1 || '%' OR hostname ILIKE '%' || $1 || '%')
 ORDER BY friendly_name ASC, hostname ASC NULLS LAST, id ASC
@@ -595,11 +595,12 @@ type ListHostOptionsParams struct {
 }
 
 type ListHostOptionsRow struct {
-	ID           string  `json:"id"`
-	FriendlyName string  `json:"friendly_name"`
-	Hostname     *string `json:"hostname"`
-	OsType       string  `json:"os_type"`
-	Status       string  `json:"status"`
+	ID             string  `json:"id"`
+	FriendlyName   string  `json:"friendly_name"`
+	Hostname       *string `json:"hostname"`
+	OsType         string  `json:"os_type"`
+	Status         string  `json:"status"`
+	PackageManager *string `json:"package_manager"`
 }
 
 func (q *Queries) ListHostOptions(ctx context.Context, arg ListHostOptionsParams) ([]ListHostOptionsRow, error) {
@@ -617,6 +618,7 @@ func (q *Queries) ListHostOptions(ctx context.Context, arg ListHostOptionsParams
 			&i.Hostname,
 			&i.OsType,
 			&i.Status,
+			&i.PackageManager,
 		); err != nil {
 			return nil, err
 		}

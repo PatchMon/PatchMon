@@ -3,7 +3,10 @@ package mailer
 import (
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net/smtp"
+	"slices"
+	"strings"
 )
 
 // testTLSOverride is set only by tests to inject InsecureSkipVerify against
@@ -68,4 +71,77 @@ func (a insecurePlainAuth) Next(_ []byte, more bool) ([]byte, error) {
 		return nil, errors.New("unexpected server challenge during PLAIN auth")
 	}
 	return nil, nil
+}
+
+// selectAuth prefers PLAIN, then LOGIN. An empty AUTH list keeps the historical
+// PLAIN attempt.
+func selectAuth(cfg Config, advertised string) (smtp.Auth, error) {
+	mechs := strings.Fields(strings.ToUpper(advertised))
+	switch {
+	case len(mechs) == 0, slices.Contains(mechs, "PLAIN"):
+		return plainAuth(cfg), nil
+	case slices.Contains(mechs, "LOGIN"):
+		return &loginAuth{
+			username:          cfg.Username,
+			password:          cfg.Password,
+			host:              cfg.Host,
+			allowInsecureAuth: cfg.TLSMode == TLSModeNone && cfg.AllowInsecureAuth,
+		}, nil
+	default:
+		return nil, fmt.Errorf("server offers no supported AUTH mechanism (offered: %s; supported: PLAIN, LOGIN)", strings.Join(mechs, " "))
+	}
+}
+
+// loginAuth is SASL LOGIN (draft-murchison-sasl-login). Start mirrors the TLS and
+// host checks of smtp.PlainAuth unless the cleartext opt-in is in force.
+type loginAuth struct {
+	username          string
+	password          string
+	host              string
+	allowInsecureAuth bool
+	step              int
+}
+
+func (a *loginAuth) Start(server *smtp.ServerInfo) (string, []byte, error) {
+	if !a.allowInsecureAuth {
+		if !server.TLS && !isLocalhost(server.Name) {
+			return "", nil, errors.New("unencrypted connection")
+		}
+		if server.Name != a.host {
+			return "", nil, errors.New("wrong host name")
+		}
+	}
+	a.step = 0
+	return "LOGIN", nil, nil
+}
+
+func (a *loginAuth) Next(fromServer []byte, more bool) ([]byte, error) {
+	if !more {
+		return nil, nil
+	}
+	a.step++
+	if a.step > 2 {
+		return nil, errors.New("unexpected extra server challenge during LOGIN auth")
+	}
+	prompt := strings.ToLower(strings.TrimSpace(string(fromServer)))
+	switch {
+	case strings.HasPrefix(prompt, "pass"):
+		return loginResponse(a.password), nil
+	case strings.HasPrefix(prompt, "user"):
+		return loginResponse(a.username), nil
+	case a.step == 1:
+		return loginResponse(a.username), nil
+	default:
+		return loginResponse(a.password), nil
+	}
+}
+
+// loginResponse never returns nil: smtp.Client.Auth treats a nil response as the
+// end of the exchange, so an empty credential must still be answered.
+func loginResponse(v string) []byte {
+	return append([]byte{}, v...)
+}
+
+func isLocalhost(name string) bool {
+	return name == "localhost" || name == "127.0.0.1" || name == "::1"
 }

@@ -81,7 +81,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			log.Warn("ignoring invalid TRUSTED_PROXY_RANGES entries",
 				"entries", strings.Join(invalid, ", "))
 		}
-		r.Use(middleware.RealIP(trustedProxies))
+		r.Use(middleware.RealIP(trustedProxies, log))
 	}
 	// Note: chi's Timeout middleware is NOT applied globally because it conflicts with
 	// WebSocket/SSE routes (hijacked connections). It writes a 503 to a
@@ -109,7 +109,9 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	}
 	releaseNotesAcceptanceStore := store.NewReleaseNotesAcceptanceStore(dbProvider)
 	trustedDevicesStore := store.NewTrustedDevicesStore(dbProvider)
-	authHandler := handler.NewAuthHandler(cfg, resolved, usersStore, store.NewSessionsStore(dbProvider), trustedDevicesStore, settingsStore, tfaLockout, loginLockout, store.NewPendingLoginStore(redisResolver), releaseNotesAcceptanceStore, dbProvider, notifyEmit, log).WithPermissions(permissionsStore).WithConfigResolver(cfgResolver)
+	tfaReplay := store.NewTfaReplayStore(redisResolver)
+	auditLogsStore := store.NewAuditLogsStore(dbProvider)
+	authHandler := handler.NewAuthHandler(cfg, resolved, usersStore, store.NewSessionsStore(dbProvider), trustedDevicesStore, settingsStore, tfaLockout, loginLockout, store.NewPendingLoginStore(redisResolver), releaseNotesAcceptanceStore, dbProvider, notifyEmit, log).WithPermissions(permissionsStore).WithConfigResolver(cfgResolver).WithTfaReplay(tfaReplay).WithAudit(auditLogsStore)
 	var oidcHandler *handler.OidcHandler
 	if rdb != nil {
 		oidcResolved, _ := config.ResolveOidcConfig(ctx, cfg, settingsStore.GetFirst)
@@ -148,7 +150,8 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 					"source", source)
 			}
 		}
-		oidcHandler = handler.NewOidcHandler(cfg, resolvedPtr, resolved, oidcClient, valid, store.NewOidcSessionStore(redisResolver), usersStore, authHandler, settingsStore, enc, log)
+		oidcHandler = handler.NewOidcHandler(cfg, resolvedPtr, resolved, oidcClient, valid, store.NewOidcSessionStore(redisResolver), usersStore, authHandler, settingsStore, enc, log).WithPermissions(permissionsStore)
+		authHandler.WithLocalAuthPolicy(oidcHandler)
 	}
 	var discordHandler *handler.DiscordHandler
 	if rdb != nil {
@@ -157,14 +160,14 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	tfaHandler := handler.NewTfaHandler(usersStore, store.NewSessionsStore(dbProvider), trustedDevicesStore, dbProvider, notifyEmit, log)
 	trustedDevicesHandler := handler.NewTrustedDevicesHandler(trustedDevicesStore, log)
 	userPrefsHandler := handler.NewUserPreferencesHandler(usersStore)
-	settingsHandler := handler.NewSettingsHandlerWithConfig(settingsStore, usersStore, enc, registry, cfg.AssetsDir, cfg, resolved).WithEvictors(cfgResolver, oidcHandler)
+	settingsHandler := handler.NewSettingsHandlerWithConfig(settingsStore, usersStore, enc, registry, cfg.AssetsDir, cfg, resolved).WithEvictors(cfgResolver, oidcHandler).WithPermissions(permissionsStore)
 	// Registered here so every per-context cache exists and can be evicted.
 	if poolCache != nil && cfg.RegistryReloadSecret != "" {
 		r.Post("/internal/reload-tenant", hostctx.ReloadHandler(poolCache, redisCache, cfg.RegistryReloadSecret, cfgResolver, oidcHandler))
 	}
 
 	permissionsHandler := handler.NewPermissionsHandler(permissionsStore)
-	usersHandler := handler.NewUsersHandler(usersStore, store.NewSessionsStore(dbProvider), trustedDevicesStore, permissionsStore, settingsStore, resolved, cfg, dbProvider, notifyEmit, log).WithConfigResolver(cfgResolver)
+	usersHandler := handler.NewUsersHandler(usersStore, store.NewSessionsStore(dbProvider), trustedDevicesStore, permissionsStore, settingsStore, resolved, cfg, dbProvider, notifyEmit, log).WithConfigResolver(cfgResolver).WithTfaReset(tfaLockout, auditLogsStore, tfaReplay)
 	hostsStore := store.NewHostsStore(dbProvider)
 	billingHandler := handler.NewBillingHandler(cfg, log, hostsStore)
 	metricsHandler := handler.NewMetricsHandler(settingsStore, hostsStore, cfg)
@@ -700,6 +703,8 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_manage_users", permissionsStore)).Put("/auth/admin/users/{userId}", usersHandler.Update)
 			r.With(middleware.RequirePermission("can_manage_users", permissionsStore)).Delete("/auth/admin/users/{userId}", usersHandler.Delete)
 			r.With(middleware.RequirePermission("can_manage_users", permissionsStore)).Post("/auth/admin/users/{userId}/reset-password", usersHandler.ResetPassword)
+			r.With(middleware.RequirePermission("can_manage_users", permissionsStore)).Post("/auth/admin/users/{userId}/unlink-oidc", usersHandler.UnlinkOidc)
+			r.With(middleware.RateLimitPerUser(redisResolver, "reset-tfa", 10, 15*time.Minute), middleware.RequirePermission("can_manage_users", permissionsStore)).Post("/auth/admin/users/{userId}/reset-tfa", usersHandler.ResetTfa)
 
 			// Docker inventory (can_view_hosts for read, can_manage_docker for delete).
 			// Gated by the docker module (Plus tier).

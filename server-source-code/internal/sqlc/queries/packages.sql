@@ -119,7 +119,7 @@ AND (sqlc.narg('host_id')::text IS NULL OR hp.host_id = sqlc.narg('host_id'))
 ORDER BY hp.package_id, r.name;
 
 -- name: ListHostsForPackage :many
-SELECT h.id, h.friendly_name, h.hostname, h.os_type, h.os_version, h.last_update, h.needs_reboot, h.reboot_reason,
+SELECT h.id, h.friendly_name, h.hostname, h.os_type, h.os_version, h.package_manager, h.last_update, h.needs_reboot, h.reboot_reason,
     hp.current_version, hp.available_version, hp.needs_update, hp.is_security_update, hp.last_checked,
     hp.source_repository_id, r.name as source_repo_name,
     (CASE WHEN h.os_type ILIKE '%windows%'
@@ -171,3 +171,6 @@ SELECT
 FROM host_packages hp
 JOIN hosts h ON h.id = hp.host_id AND h.status = 'active'
 GROUP BY hp.host_id;
+
+-- name: ListPackageIDsByNames :many
+SELECT id, name FROM packages WHERE name = ANY(@names::text[]);

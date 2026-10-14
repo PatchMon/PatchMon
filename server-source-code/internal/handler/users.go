@@ -34,7 +34,12 @@ type UsersHandler struct {
 	// auto-newsletter-subscription for SaaS-hosted users on creation.
 	adminMode bool
 	// Resolves the calling context's own settings; `resolved` is startup-only.
-	cfgResolver *hostctx.ConfigResolver
+	cfgResolver          *hostctx.ConfigResolver
+	cfg                  *config.Config
+	trustUnverifiedEmail func(context.Context) bool
+	tfaLockout           *store.TfaLockoutStore
+	audit                *store.AuditLogsStore
+	tfaReplay            *store.TfaReplayStore
 }
 
 // WithConfigResolver wires the per-context config resolver.
@@ -53,53 +58,12 @@ func (h *UsersHandler) resolvedFor(ctx context.Context) *config.ResolvedConfig {
 // NewUsersHandler creates a new users handler.
 func NewUsersHandler(users *store.UsersStore, sessions *store.SessionsStore, trustedDevices *store.TrustedDevicesStore, permissions *store.PermissionsStore, settings *store.SettingsStore, resolved *config.ResolvedConfig, cfg *config.Config, db database.DBProvider, notify *notifications.Emitter, log *slog.Logger) *UsersHandler {
 	adminMode := cfg != nil && cfg.AdminMode
-	return &UsersHandler{users: users, sessions: sessions, trustedDevices: trustedDevices, permissions: permissions, settings: settings, resolved: resolved, db: db, notify: notify, log: log, adminMode: adminMode}
-}
-
-// roleRank returns a numeric rank for role hierarchy (higher = more privileged).
-func roleRank(role string) int {
-	switch role {
-	case "superadmin":
-		return 100
-	case "admin":
-		return 90
-	case "host_manager":
-		return 50
-	case "user":
-		return 20
-	case "readonly":
-		return 10
-	default:
-		return 30 // custom roles sit mid-tier
-	}
+	return &UsersHandler{users: users, sessions: sessions, trustedDevices: trustedDevices, permissions: permissions, settings: settings, resolved: resolved, db: db, notify: notify, log: log, adminMode: adminMode, cfg: cfg}
 }
 
 // canAssignRole checks whether the calling user is allowed to assign the target role.
 func (h *UsersHandler) canAssignRole(r *http.Request, callerRole, targetRole string) bool {
-	// admin and superadmin bypass permission checks in middleware,
-	// but we still enforce hierarchy here.
-	if targetRole == "superadmin" {
-		// Only superadmin can assign superadmin.
-		if callerRole == "superadmin" {
-			return true
-		}
-		// Non-superadmin must have can_manage_superusers.
-		if callerRole == "admin" {
-			// admins don't have can_manage_superusers by default
-			return false
-		}
-		perm, err := h.permissions.GetByRole(r.Context(), callerRole)
-		if err != nil || perm == nil {
-			return false
-		}
-		return perm.CanManageSuperusers
-	}
-	if targetRole == "admin" {
-		// Only superadmin can assign admin.
-		return callerRole == "superadmin"
-	}
-	// For other roles, caller must be at least as privileged.
-	return roleRank(callerRole) >= roleRank(targetRole)
+	return canGrantRole(r.Context(), h.permissions, callerRole, targetRole)
 }
 
 // List returns paginated users.
@@ -132,10 +96,17 @@ func (h *UsersHandler) List(w http.ResponseWriter, r *http.Request) {
 		pageSize = total
 	}
 
+	callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
+	perm, _ := h.permissions.GetByRole(r.Context(), callerRole)
+	canManage := perm != nil && perm.CanManageUsers
+
 	// Build response without password_hash
 	data := make([]map[string]interface{}, len(users))
 	for i, u := range users {
 		data[i] = userToAdminResponse(&u)
+		if !canManage {
+			delete(data[i], "tfa_enabled")
+		}
 	}
 
 	JSON(w, http.StatusOK, map[string]interface{}{
@@ -177,6 +148,7 @@ func (h *UsersHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+	req.Password = strings.TrimSpace(req.Password)
 	if len(req.Username) < 3 {
 		Error(w, http.StatusBadRequest, "Username must be at least 3 characters")
 		return
@@ -194,7 +166,7 @@ func (h *UsersHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role := req.Role
+	role := strings.TrimSpace(req.Role)
 	if role == "" {
 		s, _ := h.settings.GetFirst(r.Context())
 		if s != nil && s.DefaultUserRole != "" {
@@ -311,7 +283,7 @@ func (h *UsersHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Prevent modifying users with a higher-privilege role than the caller.
 	callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
-	if roleRank(existing.Role) > roleRank(callerRole) {
+	if !roleCovers(r.Context(), h.permissions, callerRole, existing.Role) {
 		Error(w, http.StatusForbidden, "Cannot modify a user with a higher-privilege role")
 		return
 	}
@@ -338,15 +310,26 @@ func (h *UsersHandler) Update(w http.ResponseWriter, r *http.Request) {
 		u.LastName = req.LastName
 	}
 	if req.Role != nil {
-		// Enforce role escalation protection.
-		if !h.canAssignRole(r, callerRole, *req.Role) {
+		trimmed := strings.TrimSpace(*req.Role)
+		req.Role = &trimmed
+		currentUserID, _ := r.Context().Value(middleware.UserIDKey).(string)
+		// The token's role can be stale right after a demotion.
+		assignerRole := ""
+		if caller, err := h.users.GetByID(r.Context(), currentUserID); err == nil && caller != nil && caller.IsActive {
+			assignerRole = caller.Role
+		}
+		// Enforce role escalation protection. Resending the stored role is not an assignment.
+		if *req.Role != existing.Role && !h.canAssignRole(r, assignerRole, *req.Role) {
 			Error(w, http.StatusForbidden, "You do not have permission to assign the role: "+*req.Role)
 			return
 		}
 		// Prevent demoting yourself.
-		currentUserID, _ := r.Context().Value(middleware.UserIDKey).(string)
 		if currentUserID != "" && userID == currentUserID && *req.Role != existing.Role {
 			Error(w, http.StatusBadRequest, "Cannot change your own role")
+			return
+		}
+		if *req.Role != existing.Role && !roleOutranks(r.Context(), h.permissions, assignerRole, existing.Role) {
+			Error(w, http.StatusForbidden, "Cannot change the role of a user whose role is equal to or above yours")
 			return
 		}
 		u.Role = *req.Role
@@ -439,7 +422,7 @@ func (h *UsersHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	// Prevent deleting users with a higher-privilege role.
 	callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
-	if roleRank(existing.Role) > roleRank(callerRole) {
+	if !roleCovers(r.Context(), h.permissions, callerRole, existing.Role) {
 		Error(w, http.StatusForbidden, "Cannot delete a user with a higher-privilege role")
 		return
 	}
@@ -479,6 +462,81 @@ func (h *UsersHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]string{"message": "User deleted successfully"})
 }
 
+const auditEventUserOidcUnlink = "user_oidc_unlink"
+
+// UnlinkOidc handles POST /auth/admin/users/{userId}/unlink-oidc. The user's
+// next SSO login links again through the verified-email path.
+func (h *UsersHandler) UnlinkOidc(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "userId")
+	callerID, _ := r.Context().Value(middleware.UserIDKey).(string)
+	if callerID != "" && userID == callerID {
+		h.recordUnlinkAudit(r, callerID, userID, false, map[string]any{"reason": "self"})
+		Error(w, http.StatusBadRequest, "Cannot unlink your own SSO identity")
+		return
+	}
+	existing, err := h.users.GetByID(r.Context(), userID)
+	if err != nil || existing == nil {
+		h.recordUnlinkAudit(r, callerID, userID, false, map[string]any{"reason": "target_not_found"})
+		Error(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	// Strictly outrank: with SSO as the only login, unlink plus an email
+	// change hands the account to whoever owns the new address.
+	callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
+	if !roleOutranks(r.Context(), h.permissions, callerRole, existing.Role) {
+		h.recordUnlinkAudit(r, callerID, existing.ID, false, map[string]any{"reason": "insufficient_role"})
+		Error(w, http.StatusForbidden, "Cannot unlink the SSO identity of a user with an equal or higher-privilege role")
+		return
+	}
+
+	if existing.OidcSub == nil && existing.OidcProvider == nil {
+		h.recordUnlinkAudit(r, callerID, existing.ID, false, map[string]any{"reason": "not_linked"})
+		Error(w, http.StatusBadRequest, "User is not linked to an SSO identity")
+		return
+	}
+	if existing.Role == "superadmin" && h.oidcTrustUnverifiedEmail(r.Context()) {
+		h.recordUnlinkAudit(r, callerID, existing.ID, false, map[string]any{"reason": "trust_unverified_email"})
+		Error(w, http.StatusBadRequest, "Cannot unlink a superadmin while SSO trusts unverified email addresses. Turn off Trust unverified email (OIDC_TRUST_UNVERIFIED_EMAIL) first")
+		return
+	}
+	if err := h.users.ClearOidcLink(r.Context(), userID); err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to unlink SSO identity")
+		return
+	}
+
+	if h.log != nil {
+		h.log.Warn("oidc identity unlinked by admin",
+			"actor_id", callerID, "user_id", existing.ID, "email", existing.Email,
+			"previous_sub", strVal(existing.OidcSub, ""), "previous_provider", strVal(existing.OidcProvider, ""))
+	}
+	h.recordUnlinkAudit(r, callerID, existing.ID, true, map[string]any{
+		"previous_sub":      strVal(existing.OidcSub, ""),
+		"previous_provider": strVal(existing.OidcProvider, ""),
+	})
+	JSON(w, http.StatusOK, map[string]interface{}{"message": "SSO identity unlinked"})
+}
+
+func (h *UsersHandler) recordUnlinkAudit(r *http.Request, actorID, targetID string, success bool, metadata map[string]any) {
+	if h.audit == nil {
+		return
+	}
+	if err := h.audit.Record(r.Context(), newAuditEntry(r, auditEventUserOidcUnlink, actorID, targetID, success, metadata)); err != nil && h.log != nil {
+		h.log.Error("oidc unlink: audit write failed", "actor_id", actorID, "error", err)
+	}
+}
+
+func (h *UsersHandler) oidcTrustUnverifiedEmail(ctx context.Context) bool {
+	if h.trustUnverifiedEmail != nil {
+		return h.trustUnverifiedEmail(ctx)
+	}
+	if h.cfg == nil || h.settings == nil {
+		return false
+	}
+	resolved, _ := config.ResolveOidcConfig(ctx, h.cfg, h.settings.GetFirst)
+	return resolved.TrustUnverifiedEmail
+}
+
 // ResetPassword resets a user's password.
 func (h *UsersHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	userID := chi.URLParam(r, "userId")
@@ -489,6 +547,7 @@ func (h *UsersHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+	req.NewPassword = strings.TrimSpace(req.NewPassword)
 	if req.NewPassword == "" {
 		Error(w, http.StatusBadRequest, "New password is required")
 		return
@@ -506,7 +565,7 @@ func (h *UsersHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 
 	// Prevent resetting the password of users with a higher-privilege role.
 	callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
-	if roleRank(existing.Role) > roleRank(callerRole) {
+	if !roleCovers(r.Context(), h.permissions, callerRole, existing.Role) {
 		Error(w, http.StatusForbidden, "Cannot reset password for a user with a higher-privilege role")
 		return
 	}
@@ -514,6 +573,14 @@ func (h *UsersHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		perm, permErr := h.permissions.GetByRole(r.Context(), callerRole)
 		if permErr != nil || perm == nil || !perm.CanManageSuperusers {
 			Error(w, http.StatusForbidden, "You do not have permission to reset superadmin passwords")
+			return
+		}
+	}
+	if existing.TfaEnrolmentRequired || existing.PasswordChangeRequired {
+		callerID, _ := r.Context().Value(middleware.UserIDKey).(string)
+		caller, err := h.users.GetByID(r.Context(), callerID)
+		if err != nil || caller == nil || !h.canResetTfaOf(r.Context(), caller, existing) {
+			Error(w, http.StatusForbidden, "This user is part-way through a two-factor reset. Only a superadmin or a user with a higher role can reset their password now.")
 			return
 		}
 	}
@@ -556,6 +623,7 @@ func userToAdminResponse(u *models.User) map[string]interface{} {
 	res := map[string]interface{}{
 		"id": u.ID, "username": u.Username, "email": u.Email, "role": u.Role,
 		"is_active": u.IsActive, "created_at": u.CreatedAt, "updated_at": u.UpdatedAt,
+		"tfa_enabled": u.TfaEnabled,
 	}
 	if u.FirstName != nil {
 		res["first_name"] = *u.FirstName
@@ -567,5 +635,9 @@ func userToAdminResponse(u *models.User) map[string]interface{} {
 		res["last_login"] = u.LastLogin.Format(time.RFC3339)
 	}
 	res["avatar_url"] = u.AvatarURL
+	res["oidc_linked"] = u.OidcSub != nil || u.OidcProvider != nil
+	if u.OidcProvider != nil {
+		res["oidc_provider"] = *u.OidcProvider
+	}
 	return res
 }

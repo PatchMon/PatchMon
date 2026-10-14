@@ -657,3 +657,23 @@ func TestComputeRunAtWithMeta(t *testing.T) {
 		}
 	})
 }
+
+func TestRefusesSelectedPatch(t *testing.T) {
+	pm := func(s string) *string { return &s }
+	cases := []struct {
+		pkgMgr    *string
+		patchType string
+		want      bool
+	}{
+		{pm("pacman"), "patch_package", true},
+		{pm("pacman"), "patch_all", false},
+		{pm("apt"), "patch_package", false},
+		{pm("zypper"), "patch_package", false},
+		{nil, "patch_package", false},
+	}
+	for _, c := range cases {
+		if got := RefusesSelectedPatch(c.pkgMgr, c.patchType); got != c.want {
+			t.Errorf("RefusesSelectedPatch(%v, %q) = %v, want %v", c.pkgMgr, c.patchType, got, c.want)
+		}
+	}
+}

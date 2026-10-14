@@ -242,7 +242,7 @@ func (s *SettingsStore) UpdateConfigKey(ctx context.Context, settingsID, key str
 		if !ok {
 			return errors.New("DEFAULT_USER_ROLE requires a string value")
 		}
-		arg.DefaultUserRole = v
+		arg.DefaultUserRole = strings.TrimSpace(v)
 	case "TRUST_PROXY":
 		v, ok := toBool(value)
 		if !ok {

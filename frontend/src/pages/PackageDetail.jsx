@@ -24,10 +24,15 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import PatchWizard from "../components/PatchWizard";
+import Tooltip from "../components/ui/Tooltip";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import { usePageRefresh } from "../hooks/usePageRefresh";
 import { formatRelativeTime, packagesAPI } from "../utils/api";
+import {
+	isPacmanHost,
+	PACMAN_SELECTED_PATCH_UNSUPPORTED,
+} from "../utils/patchSupport";
 import {
 	hostOsType,
 	isBlockedUpdateReason,
@@ -48,8 +53,12 @@ function formatRepoName(name) {
 
 const isWindowsHost = (host) => isWindowsOs(hostOsType(host));
 
-const isHostPatchable = (host) =>
-	isWindowsHost(host) ? windowsPatchInfo(host).patchable : !!host.needsUpdate;
+const isHostPatchable = (host) => {
+	if (isPacmanHost(host)) return false;
+	return isWindowsHost(host)
+		? windowsPatchInfo(host).patchable
+		: !!host.needsUpdate;
+};
 
 const WindowsBadges = ({ host }) => {
 	if (!isWindowsHost(host)) return null;
@@ -98,6 +107,19 @@ const UpToDateBadge = ({ host, className = "" }) =>
 	);
 
 const NotPatchableTag = ({ host }) => {
+	if (isPacmanHost(host) && host.needsUpdate) {
+		return (
+			<Tooltip content={PACMAN_SELECTED_PATCH_UNSUPPORTED}>
+				<span
+					// biome-ignore lint/a11y/noNoninteractiveTabindex: focus opens the explanation for keyboard users
+					tabIndex={0}
+					className="badge-secondary w-fit"
+				>
+					Patch all only
+				</span>
+			</Tooltip>
+		);
+	}
 	if (!isWindowsHost(host) || !host.needsUpdate) return null;
 	const info = windowsPatchInfo(host);
 	if (info.patchable || isBlockedUpdateReason(info.reason)) return null;
@@ -108,9 +130,29 @@ const NotPatchableTag = ({ host }) => {
 	);
 };
 
+const PackageNotFound = () => (
+	<div className="card p-6">
+		<div className="text-center py-8">
+			<Package className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
+			<p className="text-secondary-500 dark:text-white">Package not found</p>
+			<p className="text-sm text-secondary-400 dark:text-white mt-2">
+				This package is not in the package inventory. For example, Windows
+				updates leave the inventory once they are installed.
+			</p>
+			<Link
+				to="/packages"
+				className="btn-outline inline-flex items-center gap-2 mt-6 min-h-[44px]"
+			>
+				<ArrowLeft className="h-4 w-4" />
+				Back to Packages
+			</Link>
+		</div>
+	</div>
+);
+
 const PackageDetail = () => {
 	const { packageId } = useParams();
-	const decodedPackageId = decodeURIComponent(packageId || "");
+	const decodedPackageId = packageId ?? "";
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const toast = useToast();
@@ -186,6 +228,7 @@ const PackageDetail = () => {
 		queryFn: () =>
 			packagesAPI.getById(decodedPackageId).then((res) => res.data),
 		enabled: !!decodedPackageId,
+		retry: (count, err) => err?.response?.status !== 404 && count < 1,
 	});
 
 	// Fetch hosts that have this package (backend filters by search, paginates)
@@ -293,6 +336,10 @@ const PackageDetail = () => {
 		);
 	}
 
+	if (packageError?.response?.status === 404) {
+		return <PackageNotFound />;
+	}
+
 	if (packageError) {
 		return (
 			<div className="space-y-6">
@@ -321,16 +368,7 @@ const PackageDetail = () => {
 	}
 
 	if (!packageData) {
-		return (
-			<div className="space-y-6">
-				<div className="text-center py-8">
-					<Package className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
-					<p className="text-secondary-500 dark:text-white">
-						Package not found
-					</p>
-				</div>
-			</div>
-		);
+		return <PackageNotFound />;
 	}
 
 	const pkg = packageData;
@@ -909,7 +947,9 @@ const PackageDetail = () => {
 																			? "Queuing…"
 																			: "Patch"}
 																	</button>
-																) : isWindowsHost(host) && host.needsUpdate ? (
+																) : (isWindowsHost(host) ||
+																		isPacmanHost(host)) &&
+																	host.needsUpdate ? (
 																	<NotPatchableTag host={host} />
 																) : (
 																	<span className="text-sm text-secondary-500 dark:text-white">

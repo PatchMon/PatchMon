@@ -2,14 +2,19 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	Calendar,
 	CheckCircle,
+	CheckSquare,
 	Edit,
 	Info,
 	Key,
 	Mail,
+	RefreshCw,
 	Save,
 	Shield,
+	ShieldOff,
+	Square,
 	Trash2,
 	User,
+	X,
 	XCircle,
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
@@ -26,12 +31,36 @@ import {
 import { isRenderableAvatarSrc } from "../../utils/avatar";
 import ModalPortal from "../ui/ModalPortal";
 
+// Mirrors roleCovers and roleOutranks in role_guard.go on the server.
+const roleCovers = (roles, callerRole, targetRole) => {
+	if (callerRole === "superadmin") return true;
+	const caller = roles?.find((r) => r.role === callerRole);
+	if (!caller) return false;
+	const target = roles.find((r) => r.role === targetRole);
+	if (!target) return targetRole !== "admin" && targetRole !== "superadmin";
+	return Object.entries(target).every(
+		([key, value]) =>
+			!key.startsWith("can_") || value !== true || caller[key] === true,
+	);
+};
+
+const roleOutranks = (roles, callerRole, targetRole) =>
+	callerRole === "superadmin" ||
+	(roleCovers(roles, callerRole, targetRole) &&
+		!roleCovers(roles, targetRole, callerRole));
+
+const canResetTfaOf = (roles, actor, target) =>
+	!!actor &&
+	actor.id !== target.id &&
+	roleOutranks(roles, actor.role, target.role);
+
 const UsersTab = () => {
 	const confirm = useConfirm();
 	const toast = useToast();
 	const [showAddModal, setShowAddModal] = useState(false);
 	const [editingUser, setEditingUser] = useState(null);
 	const [resetPasswordUser, setResetPasswordUser] = useState(null);
+	const [resetTfaUser, setResetTfaUser] = useState(null);
 	const queryClient = useQueryClient();
 	const { user: currentUser } = useAuth();
 	const { settings: publicSettings } = useSettings();
@@ -124,6 +153,18 @@ const UsersTab = () => {
 		},
 	});
 
+	const unlinkOidcMutation = useMutation({
+		mutationFn: (userId) => adminUsersAPI.unlinkOidc(userId),
+		onSuccess: (_, userId) => {
+			queryClient.invalidateQueries({ queryKey: ["users"] });
+			setEditingUser((current) =>
+				current?.id === userId
+					? { ...current, oidc_linked: false, oidc_provider: undefined }
+					: current,
+			);
+		},
+	});
+
 	// Reset password mutation
 	const resetPasswordMutation = useMutation({
 		mutationFn: ({ userId, newPassword }) =>
@@ -137,6 +178,14 @@ const UsersTab = () => {
 		},
 	});
 
+	const resetTfaMutation = useMutation({
+		mutationFn: ({ userId, password, tfaToken, newPassword }) =>
+			adminUsersAPI.resetTfa(userId, { password, tfaToken, newPassword }),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ["users"] });
+		},
+	});
+
 	// Update settings mutation for user registration
 	const updateSignupSettingsMutation = useMutation({
 		mutationFn: (data) => {
@@ -145,6 +194,11 @@ const UsersTab = () => {
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["settings"] });
 			setIsSignupDirty(false);
+		},
+		onError: (error) => {
+			toast.error(
+				error.response?.data?.error || "Failed to save registration settings",
+			);
 		},
 	});
 
@@ -197,6 +251,19 @@ const UsersTab = () => {
 	const handleResetPassword = (user) => {
 		setResetPasswordUser(user);
 	};
+
+	const handleTfaReset = (username, withTempPassword) => {
+		setResetTfaUser(null);
+		toast.success(
+			withTempPassword
+				? `Two-factor authentication reset and temporary password set for "${username}"`
+				: `Two-factor authentication reset for "${username}"`,
+		);
+	};
+
+	const currentUserTfaEnabled = Array.isArray(users)
+		? users.find((u) => u.id === currentUser?.id)?.tfa_enabled
+		: undefined;
 
 	if (isLoading) {
 		return (
@@ -351,6 +418,19 @@ const UsersTab = () => {
 											<Key className="h-4 w-4" />
 											Reset
 										</button>
+										{user.tfa_enabled &&
+											canResetTfaOf(roles, currentUser, user) && (
+												<button
+													type="button"
+													onClick={() => setResetTfaUser(user)}
+													className="text-warning-500 hover:text-warning-700 dark:text-warning-400 dark:hover:text-warning-300 inline-flex items-center gap-1 text-sm min-h-[44px]"
+													title="Reset two-factor authentication"
+													aria-label={`Reset two-factor authentication for ${user.username}`}
+												>
+													<ShieldOff className="h-4 w-4" />
+													Reset 2FA
+												</button>
+											)}
 										<button
 											type="button"
 											onClick={() => handleDeleteUser(user.id, user.username)}
@@ -401,7 +481,7 @@ const UsersTab = () => {
 										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Last Login
 										</th>
-										<th className="px-6 py-3 text-right text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+										<th className="px-2 py-3 text-right text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Actions
 										</th>
 									</tr>
@@ -494,8 +574,8 @@ const UsersTab = () => {
 													<span className="text-secondary-400">Never</span>
 												)}
 											</td>
-											<td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-												<div className="flex items-center justify-end space-x-2">
+											<td className="px-2 py-4 whitespace-nowrap text-right text-sm font-medium">
+												<div className="grid grid-cols-2 gap-x-3 gap-y-2 justify-items-center w-fit ml-auto">
 													<button
 														type="button"
 														onClick={() => handleEditUser(user)}
@@ -517,12 +597,24 @@ const UsersTab = () => {
 													>
 														<Key className="h-4 w-4" />
 													</button>
+													{user.tfa_enabled &&
+														canResetTfaOf(roles, currentUser, user) && (
+															<button
+																type="button"
+																onClick={() => setResetTfaUser(user)}
+																className="text-warning-500 hover:text-warning-700 dark:text-warning-400 dark:hover:text-warning-300"
+																title="Reset two-factor authentication"
+																aria-label={`Reset two-factor authentication for ${user.username}`}
+															>
+																<ShieldOff className="h-4 w-4" />
+															</button>
+														)}
 													<button
 														type="button"
 														onClick={() =>
 															handleDeleteUser(user.id, user.username)
 														}
-														className="text-danger-400 hover:text-danger-600 dark:text-danger-500 dark:hover:text-danger-400 disabled:text-gray-300 disabled:cursor-not-allowed"
+														className="col-start-2 text-danger-400 hover:text-danger-600 dark:text-danger-500 dark:hover:text-danger-400 disabled:text-gray-300 disabled:cursor-not-allowed"
 														title={
 															user.id === currentUser?.id
 																? "Cannot delete your own account"
@@ -578,6 +670,8 @@ const UsersTab = () => {
 					onClose={() => setEditingUser(null)}
 					onUpdateUser={updateUserMutation.mutateAsync}
 					isLoading={updateUserMutation.isPending}
+					onUnlinkOidc={unlinkOidcMutation.mutateAsync}
+					isUnlinkingOidc={unlinkOidcMutation.isPending}
 					roles={roles}
 				/>
 			)}
@@ -590,6 +684,18 @@ const UsersTab = () => {
 					onClose={() => setResetPasswordUser(null)}
 					onPasswordReset={resetPasswordMutation.mutateAsync}
 					isLoading={resetPasswordMutation.isPending}
+				/>
+			)}
+
+			{resetTfaUser && (
+				<ResetTfaModal
+					user={resetTfaUser}
+					onClose={() => setResetTfaUser(null)}
+					onReset={resetTfaMutation.mutateAsync}
+					onSuccess={handleTfaReset}
+					isLoading={resetTfaMutation.isPending}
+					actorHasPassword={currentUser?.has_password !== false}
+					actorTfaEnabled={currentUserTfaEnabled}
 				/>
 			)}
 
@@ -1010,8 +1116,12 @@ const EditUserModal = ({
 	onClose,
 	onUpdateUser,
 	isLoading,
+	onUnlinkOidc,
+	isUnlinkingOidc,
 	roles,
 }) => {
+	const confirm = useConfirm();
+	const toast = useToast();
 	const editUsernameId = useId();
 	const editEmailId = useId();
 	const editFirstNameId = useId();
@@ -1066,6 +1176,24 @@ const EditUserModal = ({
 			}, 1500);
 		} catch (err) {
 			setError(err.response?.data?.error || "Failed to update user");
+		}
+	};
+
+	const handleUnlinkOidc = async () => {
+		const confirmed = await confirm({
+			title: "Unlink SSO identity",
+			subtitle: null,
+			message: `Unlink "${user.username}" from their SSO identity? Their next SSO login links the account again, matched by the verified email address your identity provider sends.`,
+			warning:
+				"If Trust unverified email is on in Settings > OIDC, whoever next signs in with this email address claims the account, whether or not the provider has verified it. Ask the user to sign in straight after you unlink.",
+			confirmLabel: "Unlink SSO identity",
+		});
+		if (!confirmed) return;
+		try {
+			await onUnlinkOidc(user.id);
+			toast.success(`SSO identity unlinked from "${user.username}"`);
+		} catch (err) {
+			toast.error(err.response?.data?.error || "Failed to unlink SSO identity");
 		}
 	};
 
@@ -1204,6 +1332,31 @@ const EditUserModal = ({
 							Active user
 						</label>
 					</div>
+
+					{user.oidc_linked && (
+						<div className="border-t border-secondary-200 dark:border-secondary-600 pt-4">
+							<p className="text-sm font-medium text-secondary-700 dark:text-secondary-200">
+								SSO identity
+							</p>
+							<p className="mt-1 text-sm text-secondary-500 dark:text-secondary-400">
+								Linked
+								{user.oidc_provider ? ` via ${user.oidc_provider}` : ""}. Unlink
+								it if the user was re-created at the identity provider, or you
+								changed provider, and their SSO login is refused.
+							</p>
+							<button
+								type="button"
+								onClick={handleUnlinkOidc}
+								disabled={isUnlinkingOidc}
+								className="btn-danger mt-3 inline-flex items-center gap-2 min-h-[44px] md:min-h-0"
+							>
+								{isUnlinkingOidc && (
+									<RefreshCw className="h-4 w-4 animate-spin" />
+								)}
+								{isUnlinkingOidc ? "Unlinking..." : "Unlink SSO identity"}
+							</button>
+						</div>
+					)}
 
 					{success && (
 						<div className="bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700 rounded-md p-3">
@@ -1385,6 +1538,262 @@ const ResetPasswordModal = ({
 								<div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
 							)}
 							{isLoading ? "Resetting..." : "Reset Password"}
+						</button>
+					</div>
+				</form>
+			</div>
+		</div>
+	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
+};
+
+const ResetTfaModal = ({
+	user,
+	onClose,
+	onReset,
+	onSuccess,
+	isLoading,
+	actorHasPassword,
+	actorTfaEnabled,
+}) => {
+	const titleId = useId();
+	const passwordId = useId();
+	const tokenId = useId();
+	const tempId = useId();
+	const tempConfirmId = useId();
+	const [password, setPassword] = useState("");
+	const [tfaToken, setTfaToken] = useState("");
+	const [setTemp, setSetTemp] = useState(false);
+	const [tempPassword, setTempPassword] = useState("");
+	const [tempConfirm, setTempConfirm] = useState("");
+	const [error, setError] = useState("");
+	const askForCode = actorTfaEnabled !== false;
+
+	const handleSubmit = async (e) => {
+		e.preventDefault();
+		setError("");
+		if (!password) {
+			setError("Enter your password to confirm");
+			return;
+		}
+		if (actorTfaEnabled && !tfaToken.trim()) {
+			setError("Enter your two-factor code to confirm");
+			return;
+		}
+		if (setTemp && !tempPassword) {
+			setError("Enter a temporary password for the user");
+			return;
+		}
+		if (setTemp && tempPassword !== tempConfirm) {
+			setError("The temporary passwords do not match");
+			return;
+		}
+		try {
+			await onReset({
+				userId: user.id,
+				password,
+				tfaToken: tfaToken.trim(),
+				newPassword: setTemp ? tempPassword : undefined,
+			});
+			onSuccess(user.username, setTemp);
+		} catch (err) {
+			setError(
+				err.response?.data?.error ||
+					err.response?.data?.message ||
+					"Failed to reset two-factor authentication",
+			);
+		}
+	};
+
+	const modal = (
+		<div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-[120]">
+			<button
+				type="button"
+				onClick={onClose}
+				className="fixed inset-0 cursor-default"
+				aria-label="Close"
+			/>
+			<div
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby={titleId}
+				className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full relative z-10 max-h-[85vh] flex flex-col"
+			>
+				<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600 flex-shrink-0">
+					<div className="flex items-center justify-between">
+						<h3
+							id={titleId}
+							className="text-lg font-medium text-secondary-900 dark:text-white flex items-center gap-2"
+						>
+							<ShieldOff className="h-5 w-5 text-warning-600" />
+							Reset 2FA for {user.username}
+						</h3>
+						<button
+							type="button"
+							onClick={onClose}
+							className="p-1 rounded hover:bg-secondary-100 dark:hover:bg-secondary-700 text-secondary-400 hover:text-secondary-600 min-h-[44px] min-w-[44px] md:min-h-0 md:min-w-0 flex items-center justify-center"
+							aria-label="Close"
+						>
+							<X className="h-5 w-5" />
+						</button>
+					</div>
+				</div>
+
+				<form onSubmit={handleSubmit} className="flex flex-col min-h-0">
+					<div className="px-6 py-4 space-y-4 overflow-y-auto">
+						<div className="p-3 bg-danger-50 dark:bg-danger-900 border border-danger-200 dark:border-danger-700 rounded-md">
+							<p className="text-sm text-danger-700 dark:text-danger-300">
+								This removes {user.username}'s authenticator and backup codes,
+								forgets their trusted devices and signs them out everywhere. The
+								next time they sign in with their password they must set up
+								two-factor authentication again before they can use PatchMon.
+								Accounts that sign in through single sign-on are not asked to
+								set it up again.
+							</p>
+							<p className="mt-2 text-sm font-medium text-danger-700 dark:text-danger-300">
+								If you suspect the account is compromised, also set a temporary
+								password below.
+							</p>
+						</div>
+
+						{!actorHasPassword ? (
+							<p className="text-sm text-secondary-700 dark:text-secondary-200">
+								Your account signs in through single sign-on and has no local
+								password, so it cannot confirm this action. Ask an administrator
+								with a local password to reset it.
+							</p>
+						) : (
+							<>
+								<div>
+									<label
+										htmlFor={passwordId}
+										className="block text-sm font-medium text-secondary-700 dark:text-white mb-1"
+									>
+										Your password
+									</label>
+									<input
+										id={passwordId}
+										type="password"
+										autoComplete="current-password"
+										value={password}
+										onChange={(e) => setPassword(e.target.value)}
+										className="w-full px-3 py-2 bg-white dark:bg-secondary-900 border border-secondary-300 dark:border-secondary-600 rounded-md text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500 placeholder-secondary-400"
+									/>
+								</div>
+								{askForCode && (
+									<div>
+										<label
+											htmlFor={tokenId}
+											className="block text-sm font-medium text-secondary-700 dark:text-white mb-1"
+										>
+											Your two-factor code
+											{actorTfaEnabled === undefined && " (if enabled)"}
+										</label>
+										<input
+											id={tokenId}
+											type="text"
+											inputMode="text"
+											autoComplete="one-time-code"
+											maxLength={6}
+											value={tfaToken}
+											onChange={(e) => setTfaToken(e.target.value)}
+											placeholder="6-digit or backup code"
+											className="w-full px-3 py-2 bg-white dark:bg-secondary-900 border border-secondary-300 dark:border-secondary-600 rounded-md text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500 placeholder-secondary-400 font-mono"
+										/>
+									</div>
+								)}
+								<div className="pt-2 border-t border-secondary-200 dark:border-secondary-600">
+									<button
+										type="button"
+										aria-pressed={setTemp}
+										onClick={() => setSetTemp((v) => !v)}
+										className="flex items-start gap-2 text-left min-h-[44px] md:min-h-0"
+									>
+										{setTemp ? (
+											<CheckSquare className="h-5 w-5 text-primary-600 flex-shrink-0" />
+										) : (
+											<Square className="h-5 w-5 text-secondary-400 flex-shrink-0" />
+										)}
+										<span>
+											<span className="block text-sm font-medium text-secondary-900 dark:text-white">
+												Also set a new temporary password
+											</span>
+											<span className="block text-xs text-secondary-500 dark:text-secondary-300">
+												Their current password stops working. They must replace
+												the temporary one when they next sign in, before setting
+												up two-factor authentication.
+											</span>
+										</span>
+									</button>
+								</div>
+								{setTemp && (
+									<>
+										<div>
+											<label
+												htmlFor={tempId}
+												className="block text-sm font-medium text-secondary-700 dark:text-white mb-1"
+											>
+												Temporary password
+											</label>
+											<input
+												id={tempId}
+												type="password"
+												autoComplete="new-password"
+												value={tempPassword}
+												onChange={(e) => setTempPassword(e.target.value)}
+												className="w-full px-3 py-2 bg-white dark:bg-secondary-900 border border-secondary-300 dark:border-secondary-600 rounded-md text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500 placeholder-secondary-400"
+											/>
+										</div>
+										<div>
+											<label
+												htmlFor={tempConfirmId}
+												className="block text-sm font-medium text-secondary-700 dark:text-white mb-1"
+											>
+												Confirm temporary password
+											</label>
+											<input
+												id={tempConfirmId}
+												type="password"
+												autoComplete="new-password"
+												value={tempConfirm}
+												onChange={(e) => setTempConfirm(e.target.value)}
+												className="w-full px-3 py-2 bg-white dark:bg-secondary-900 border border-secondary-300 dark:border-secondary-600 rounded-md text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500 placeholder-secondary-400"
+											/>
+										</div>
+										<p className="text-xs text-secondary-500 dark:text-secondary-300">
+											Give it to the user over a separate, secure channel.
+										</p>
+									</>
+								)}
+							</>
+						)}
+
+						{error && (
+							<p
+								role="alert"
+								className="text-sm text-danger-600 dark:text-danger-400"
+							>
+								{error}
+							</p>
+						)}
+					</div>
+
+					<div className="px-6 py-4 border-t border-secondary-200 dark:border-secondary-600 flex flex-col-reverse sm:flex-row sm:justify-end gap-3 flex-shrink-0">
+						<button
+							type="button"
+							onClick={onClose}
+							className="btn-outline min-h-[44px] md:min-h-0"
+						>
+							Cancel
+						</button>
+						<button
+							type="submit"
+							disabled={isLoading || !actorHasPassword}
+							className="btn-danger min-h-[44px] md:min-h-0 disabled:opacity-50 disabled:cursor-not-allowed"
+						>
+							{isLoading && <RefreshCw className="h-4 w-4 mr-2 animate-spin" />}
+							{isLoading ? "Resetting..." : "Reset 2FA"}
 						</button>
 					</div>
 				</form>

@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { Outlet, Route, Routes } from "react-router-dom";
+import AccountSetupRequired from "./components/AccountSetupRequired";
 import ErrorBoundary from "./components/ErrorBoundary";
 import FirstTimeWizard from "./components/FirstTimeWizard";
 import Layout from "./components/Layout";
@@ -118,6 +119,10 @@ function AppRoutes() {
 				</div>
 			</div>
 		);
+	}
+
+	if (isAuthPhase.accountSetupRequired(authPhase)) {
+		return <AccountSetupRequired />;
 	}
 
 	// Backend/DB unreachable or rate limited - show error, not first-time setup

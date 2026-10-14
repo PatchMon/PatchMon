@@ -93,3 +93,10 @@ WHERE us.id = (
 
 -- name: DeleteExpiredSessions :exec
 DELETE FROM user_sessions WHERE expires_at < NOW() OR is_revoked = true;
+
+-- name: GetSessionAuthState :one
+SELECT s.last_activity,
+    (u.tfa_enrolment_required AND u.password_hash IS NOT NULL AND u.oidc_sub IS NULL AND u.oidc_provider IS NULL)::BOOLEAN AS tfa_enrolment_pending,
+    (u.password_change_required AND u.password_hash IS NOT NULL)::BOOLEAN AS password_change_pending
+FROM user_sessions s JOIN users u ON u.id = s.user_id
+WHERE s.id = $1 AND s.user_id = $2 AND s.is_revoked = false AND s.expires_at > NOW();

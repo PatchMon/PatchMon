@@ -1512,7 +1512,22 @@ Every PatchMon reverse proxy, regardless of flavour, must handle four things cor
 3. **Forward the original protocol** via `X-Forwarded-Proto: https`. The server reads this header to know the connection is secure and to construct correct `wss://` URLs for agents.
 4. **Use a long read timeout (86400 seconds / 24 hours).** The agent control channel is an idle-tolerant connection that sends pings every 30 seconds; most proxies default to a 60-second idle timeout and will drop the connection before the agent can detect the disconnect.
 
-If you also want the server to pick up the real client IP for logging and rate-limiting (instead of the proxy's IP), set `TRUST_PROXY=true` in the PatchMon `.env`. See the [Environment Variables Reference](#patchmon-environment-variables-reference) for details.
+#### Real client IP: which proxies PatchMon trusts
+
+PatchMon uses the client IP for rate limiting, login lockout and audit logs. With `TRUST_PROXY=true` (the default) it reads `X-Forwarded-For`, but only when the connection comes from a proxy it trusts:
+
+- **`TRUSTED_PROXY_RANGES` empty (default):** the header is trusted from loopback (`127.0.0.0/8`, `::1`), private (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`), link-local and CGNAT (`100.64.0.0/10`, which includes Tailscale addresses) peers. This covers Nginx Proxy Manager, Traefik or Caddy in Docker, and a proxy on the same host or LAN, with no configuration.
+- **`TRUSTED_PROXY_RANGES` set:** the header is trusted only from peers in that list. The built-in private ranges no longer apply, so list your own reverse proxy's address as well as any proxies in front of it.
+
+A client that connects to PatchMon directly from any other address cannot change its IP by sending its own `X-Forwarded-For`; PatchMon uses the connecting address and logs a warning, once for each such address (up to 10): `ignoring X-Forwarded-For from an untrusted peer`.
+
+> **When the default is not enough:** with `TRUSTED_PROXY_RANGES` empty, anything that reaches PatchMon from a private address is trusted to send `X-Forwarded-For`. Some setups make every client look private, so a client could still set its own IP: rootless Podman (slirp4netns or pasta), Docker's userland proxy for IPv6 published ports, Kubernetes Services that SNAT traffic, and users on the same LAN reaching PatchMon's port directly without going through the proxy. In those setups, set `TRUSTED_PROXY_RANGES` to your reverse proxy's exact address (for example `172.18.0.5/32`), or only publish PatchMon's port to the proxy.
+
+**Proxy on a public IP, or a CDN connecting directly to PatchMon.** If the proxy that connects to PatchMon has a public address (for example Cloudflare or another CDN pointing straight at your server's port, or a proxy on a different public host), its header is ignored until you list it. Set `TRUSTED_PROXY_RANGES` to that proxy's addresses, for example your CDN's published IP ranges. If you see the warning above naming your proxy's address, this is the fix.
+
+**Chained proxies (CDN in front of Nginx Proxy Manager).** List every hop, including Nginx Proxy Manager's own address on the Docker network, for example `TRUSTED_PROXY_RANGES=172.16.0.0/12,<your CDN's ranges>`. PatchMon then walks past the trusted hops to the original client.
+
+`X-Forwarded-Proto` handling is not affected by these settings. See the [Environment Variables Reference](#patchmon-environment-variables-reference) for `TRUST_PROXY` and `TRUSTED_PROXY_RANGES`.
 
 ---
 
@@ -1936,6 +1951,8 @@ The form is validated client-side first, then the server checks that no admin us
 
 The admin user is created with role **`superadmin`**, which has every permission in the system. You can demote later or create narrower roles from **Settings → Users → Roles** once you're logged in.
 
+Keep at least one `superadmin`: only a `superadmin` can make someone an `admin`, and only a `superadmin` can use the **Admin** preset when creating a role. An `admin` can create roles and assign them only with permissions the `admin` role itself holds. See the admin guide's roles chapter for the full rules.
+
 ---
 
 ### Step 2: Multi-Factor Authentication
@@ -2143,7 +2160,7 @@ General HTTP server and network settings.
 | `CORS_ORIGIN` | `http://localhost:3000` | No | Browser origin(s) allowed to use PatchMon. Each entry is the URL users type in their browser (protocol, hostname and port; no path). Separate multiple origins with commas, e.g. `https://patchmon.example.com,https://patchmon.internal.lan`. Spaces around commas, a trailing slash and upper-case letters are tolerated. Agents and the install script are checked too, so the hostname in your Server URL must also appear here. |
 | `ENABLE_HSTS` | `false` | No | When `true`, the server adds an `HTTP Strict Transport Security` header to responses. Enable this only when PatchMon is served over HTTPS. |
 | `TRUST_PROXY` | `true` | No | When `true`, the server trusts `X-Forwarded-For` / `X-Forwarded-Proto` and related headers from a reverse proxy (Traefik, Caddy, nginx, NPM, etc.). Required for accurate client IP detection, correct rate limiting, and OIDC's HTTPS check when TLS is terminated at the proxy. Default is `true` because the officially supported deployment is Docker behind a reverse proxy; set to `false` explicitly only if PatchMon is exposed directly to the internet without a proxy. |
-| `TRUSTED_PROXY_RANGES` | (empty) | No | Comma-separated CIDRs or bare IPs of the reverse proxies in front of PatchMon, for example `10.0.0.0/8,172.16.0.0/12`. Used together with `TRUST_PROXY` to work out the real client IP from `X-Forwarded-For`, which drives rate limiting, login lockout, and audit logging. Leave it empty when there is a single reverse proxy, which is the usual setup: PatchMon then uses the address your proxy appended to the header, which a client cannot forge. Set it only when proxies are chained (for example Cloudflare in front of Nginx Proxy Manager), listing the intermediate hops so the original client IP is resolved rather than your CDN's egress address. Configured via environment only, and shown read-only in the settings UI, because widening it would allow clients to spoof their own IP. |
+| `TRUSTED_PROXY_RANGES` | (empty) | No | Comma-separated CIDRs or bare IPs of the reverse proxies in front of PatchMon, for example `10.0.0.0/8,172.16.0.0/12`. Used together with `TRUST_PROXY` to work out the real client IP from `X-Forwarded-For`, which drives rate limiting, login lockout, and audit logging. `X-Forwarded-For` is only read from a trusted peer: with this list empty, any loopback, private (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`), link-local or CGNAT (`100.64.0.0/10`) address; with it set, only the addresses listed, so include your own reverse proxy. A client connecting to PatchMon directly therefore cannot forge its own IP. Leave it empty when there is a single reverse proxy on the same host or private network, which is the usual setup: PatchMon then uses the address your proxy appended to the header, which a client cannot forge. Set it when your reverse proxy reaches PatchMon from a public IP address (PatchMon logs a warning naming that address when it ignores the header), or when proxies are chained (for example Cloudflare in front of Nginx Proxy Manager), listing the intermediate hops so the original client IP is resolved rather than your CDN's egress address. Configured via environment only, and shown read-only in the settings UI, because widening it would allow clients to spoof their own IP. |
 
 **Production example:**
 
@@ -2371,18 +2388,21 @@ The `reason` field distinguishes the failure:
 |---|---|
 | `user_not_found` | No account matches the username or email that was typed |
 | `invalid_password` | The account exists and the password was wrong |
-| `account_disabled` | The account exists but is deactivated |
+| `account_disabled` | The correct password was given for a deactivated account. A wrong password for a deactivated account is logged as `invalid_password` |
 | `no_password_set` | The account has no local password, typically SSO-only |
 | `locked_out` | Refused on arrival because a lockout from earlier attempts is still in force |
+| `busy` | Too many sign-ins were already being checked; the attempt waited about 5 seconds for a slot and was answered `503 Too many sign-in attempts, try again shortly`. It does not count towards the lockout |
 | `missing_credentials` | The request omitted the username or the password |
 | `username_too_long` | The submitted username exceeded 254 characters and was rejected before any lookup |
 | `malformed_request` | The request body was not valid JSON |
-| `local_auth_disabled` | A password sign-in was attempted while the instance is SSO-only |
+| `local_auth_disabled` | A password sign-in or two-factor step was attempted while password sign-in is disabled |
 | `invalid_tfa_code` | The password was accepted but the two-factor code was wrong |
 | `tfa_locked_out` | Refused on arrival because a two-factor lockout from earlier wrong codes is still in force |
 | `tfa_token_malformed` | The submitted two-factor code was not six alphanumeric characters |
 | `tfa_ticket_invalid` | The two-factor step was reached without a valid, unexpired ticket from the password step |
 | `tfa_user_ineligible` | The ticket resolved to an account that is inactive or has no two-factor enrolled |
+
+The client never sees these reasons. An unknown username, an SSO-only account, a wrong password and a deactivated account all return the same `Invalid credentials` message and are designed to take about the same time to answer, so the response does not reveal which accounts exist. The exception is an account whose password was stored by an older PatchMon release with a cheaper hash: it answers faster until that user next signs in successfully, when PatchMon upgrades the stored hash automatically. Only a caller who supplies the correct password for a deactivated account is told `Account is disabled`.
 
 A failed lookup caused by the database being unreachable is **not** reported as `user_not_found`. It is logged separately at `error` level as `auth login lookup failed`, and it does not consume a lockout attempt, so a database problem cannot lock out the people retrying a correct password.
 
@@ -2421,7 +2441,7 @@ OpenID Connect configuration for Single Sign-On. When `OIDC_ENABLED=true`, the f
 |----------|---------|----------|-------------|
 | `OIDC_AUTO_CREATE_USERS` | `false` | No | When `true`, a PatchMon account is automatically created the first time an OIDC user logs in. When `false`, an administrator must create the account first. |
 | `OIDC_DEFAULT_ROLE` | `user` | No | Role assigned to automatically created OIDC users when no group mapping matches. Accepted values: `superadmin`, `admin`, `host_manager`, `user`, `readonly`. |
-| `OIDC_DISABLE_LOCAL_AUTH` | `false` | No | When `true`, local username/password authentication is disabled. Only OIDC login is accepted. Useful when enforcing SSO organisation-wide. |
+| `OIDC_DISABLE_LOCAL_AUTH` | `false` | No | When `true`, local username/password authentication is disabled. Only OIDC login is accepted. Useful when enforcing SSO organisation-wide. The server refuses password sign-in, the two-factor step and self-service signup with `403`. The **Disable local auth** toggle in **Settings → OIDC / SSO** is enforced the same way when OIDC is configured in the UI. |
 
 #### Login Page
 
@@ -2448,6 +2468,8 @@ Map groups from your identity provider directly to PatchMon roles. Set `OIDC_SYN
 | `OIDC_HOST_MANAGER_GROUP` | _(none)_ | No | Name of the IdP group whose members are granted the `host_manager` role. |
 | `OIDC_READONLY_GROUP` | _(none)_ | No | Name of the IdP group whose members are granted the `readonly` role. |
 | `OIDC_USER_GROUP` | _(none)_ | No | Name of the IdP group whose members are granted the standard `user` role. |
+
+> **Who can change SSO trust settings in the UI:** in **Settings → OIDC / SSO** (and with **Import from .env**), turning SSO on or off, or changing the issuer URL, client ID, client secret, redirect URI, **Disable local authentication**, **Superadmin password login if SSO is down**, **Auto-create users**, **Trust unverified email**, **Sync roles**, the default role or any role mapping row, needs the `can_manage_superusers` permission, which by default only `superadmin` holds. Whoever controls these settings controls who can sign in as whom, so `can_manage_settings` alone is not enough. On top of that, a role mapping or default role can only be set to a role the editor is allowed to grant: only a `superadmin` can choose `admin` or `superadmin`. The button text, scopes and **Enforce HTTPS** stay editable with `can_manage_settings`, and the environment variables themselves are not affected. The role rule also applies to **Default Role for New Users** under **Settings → Users**.
 
 **Example: Authentik**
 
@@ -2790,7 +2812,7 @@ OIDC_SYNC_ROLES=false
 | `OIDC_SCOPES` | `openid email profile groups` | Space-separated scopes to request. Include `groups` for role mapping |
 | `OIDC_AUTO_CREATE_USERS` | `false` | When `true`, automatically creates a PatchMon account on first OIDC login. When `false`, the user must already exist in PatchMon (matched by email) |
 | `OIDC_DEFAULT_ROLE` | `user` | Role assigned when a user doesn't match any group mapping |
-| `OIDC_DISABLE_LOCAL_AUTH` | `false` | When `true`, hides the username/password fields and only shows the SSO button |
+| `OIDC_DISABLE_LOCAL_AUTH` | `false` | When `true`, hides the username/password fields, only shows the SSO button, and the server refuses password sign-in |
 | `OIDC_BUTTON_TEXT` | `Login with SSO` | Label shown on the SSO login button |
 | `OIDC_SESSION_TTL` | `600` | Seconds the OIDC login state is valid. If the user takes longer than this at the IdP, the session expires and they must try again |
 | `OIDC_POST_LOGOUT_URI` | `<CORS_ORIGIN>/login` | Where to redirect after a logout. Defaults to the PatchMon login page |
@@ -3032,9 +3054,40 @@ To enforce SSO for all users, set:
 OIDC_DISABLE_LOCAL_AUTH=true
 ```
 
-This hides the username/password fields on the login page and only shows the SSO button. Local authentication is only actually disabled if OIDC is also enabled and successfully initialised. This safety check prevents you from being locked out if OIDC is misconfigured.
+This hides the username/password fields on the login page and only shows the SSO button. The server also refuses password sign-in, the two-factor step and self-service signup, and Discord sign-in is turned off: the Discord button disappears, and a Discord login that was already in progress is refused before any account is created. Local authentication is only actually disabled while OIDC is enabled and fully configured (issuer URL, client ID, client secret and redirect URI all set). This safety check prevents you from being locked out if OIDC is misconfigured. The same setting is the **Disable local auth** toggle in **Settings → OIDC / SSO**.
 
 > **Important:** Ensure at least one OIDC user has admin access before enabling this, or you may lose the ability to manage PatchMon.
+
+> **Existing sessions are not ended.** Turning this on blocks new password sign-ins only. Anyone already signed in with a password stays signed in until their session ends: after `SESSION_INACTIVITY_TIMEOUT_MINUTES` of inactivity, or when the refresh token expires (7 days, or 30 days if they ticked "Remember me"). To force everyone through SSO straight away, deactivate and reactivate the affected users, or change their role and back, which revokes their sessions.
+
+#### Password Login When the SSO Provider Is Unreachable {#sso-provider-unreachable-password-login}
+
+With local authentication disabled, an outage at your identity provider means nobody can sign in, because the SSO configuration is still complete. If you want your superadmins to keep a way in during an outage, turn on **Superadmin password login if SSO is down** in **Settings → OIDC / SSO**.
+
+- It is **off by default** and has no effect unless **Disable local auth** is on.
+- It is a database setting only, changed on that page. There is no environment variable for it.
+- Only **superadmin** accounts can use it, and only with **two-factor authentication**. A superadmin who has not set up two-factor authentication is refused with a message saying so; the attempt counts towards the account lockout and raises a `sso_fallback_refused` notification event. Every other account is refused with the usual `Invalid credentials` message, and the attempt counts towards the account lockout.
+- The second factor is always asked for on this path, even on a device that was remembered earlier, and "Remember me" is ignored.
+- Self-service signup and Discord sign-in stay closed.
+
+**What counts as unreachable.** PatchMon fetches your provider's discovery document (`<issuer>/.well-known/openid-configuration`) with a 3 second timeout. The provider is treated as unreachable only if that request fails at the network level (DNS failure, connection refused, timeout, TLS error) or the provider answers with an HTTP 5xx error. Any other answer, including a 404 from a mistyped issuer URL, means the provider is up, and password login stays disabled. A provider that rejects a user, wrong credentials and a misconfigured client never count.
+
+One failed check is not treated as an outage: it takes two failed checks in a row, about 5 seconds apart, so a single network blip does not open password login. A healthy result is cached for 30 seconds and an outage for 10, so a burst of sign-in attempts causes at most one request to your provider per window, and repeated logins cannot be used to probe it. After an outage, password login closes again within about 10 seconds of the provider coming back. Saving the OIDC settings clears the cached result. While the provider is unreachable, the login page shows the username and password fields again, with a notice that only superadmins with two-factor authentication can sign in.
+
+Every sign-in completed this way is recorded:
+
+- a `warn` line in the server log, with the reason the provider was considered unreachable:
+
+  ```
+  password login allowed because the SSO provider is unreachable  audit_action=sso_fallback_login username=... reason="discovery request failed: ..."
+  ```
+
+- a `sso_fallback_login` notification event, which you can route to an alert channel like any other event (see the admin guide).
+- a row in the `audit_logs` table with event `sso_fallback_login`. An account that gives the correct password but is refused by the fallback (not a superadmin, or a superadmin without two-factor authentication) is recorded there too, as a failed `sso_fallback_refused` row.
+
+> **Trade-off:** anyone who can make your identity provider unreachable from the PatchMon server, for example by disrupting DNS or the network path between them, can bring password login back for superadmin accounts. They would still need a superadmin's password and second factor. Only turn this on if that risk is acceptable for your deployment, and route the `sso_fallback_login` event to a channel someone watches.
+
+With the setting off, an outage still locks everyone out until the provider recovers. In that case use the database recovery step in [Re-enable Local Login When OIDC is Broken](#workaround-re-enable-local-login-when-oidc-is-broken).
 
 ---
 
@@ -3131,6 +3184,8 @@ This is the generic error for any failure during the token exchange, after your 
 - The **Redirect URI** in your IdP does not match `OIDC_REDIRECT_URI` exactly (including trailing slashes)
 - Cookies are being blocked (OIDC uses httpOnly cookies for session state)
 - Your IdP does not support PKCE (PatchMon uses the S256 code challenge)
+- **The log says `oidc: UserInfo response has no sub claim` or `UserInfo sub does not match id_token sub`.** OpenID Connect requires the IdP's UserInfo endpoint to return the same `sub` as the ID token. PatchMon has always refused a login where the two differ, and from 2.1.4 it also refuses one where the UserInfo `sub` is missing. Check the IdP's UserInfo mapping
+- **The log says `oidc: provider response exceeds size limit`.** A response from the IdP (discovery document, signing keys, token or UserInfo) was larger than 2 MiB. Usually an oversized groups claim or a proxy returning an error page in place of the IdP. Trim the claims the IdP sends
 
 #### "Unable to sign in with this account" After a Successful IdP Login
 
@@ -3141,10 +3196,54 @@ You signed in at your IdP, it sent you back, and PatchMon refused you. The token
 | `oidc login rejected: unverified email claim` | Your IdP sent neither `email_verified` nor `xms_edov`. From 2.1.0 PatchMon requires one of these when it has to identify you by email. Affects Authentik and Microsoft Entra ID out of the box | [The verified email requirement](#the-verified-email-requirement) |
 | `oidc accepting unverified email: trust_unverified_email is enabled` | Not an error. Records that a login was allowed through with an unverified address because the opt-in is on | Expected if you enabled it deliberately. If not, turn it off in **Settings > OIDC** |
 | `oidc user not found and auto-create disabled` | No PatchMon account matches, and `OIDC_AUTO_CREATE_USERS` is off | Create the user in PatchMon first, or set `OIDC_AUTO_CREATE_USERS=true` |
+| `oidc login rejected: account is linked to a different issuer` | The account is linked to the same subject at a different identity provider (issuer). Expected after you point PatchMon at a new IdP | [Account linked to a different subject](#account-linked-to-a-different-subject) |
+| `oidc login rejected: account is linked to a different subject` | The PatchMon account with this email is already bound to another identity at the IdP. The line shows the incoming `sub` and the stored `linked_sub` | [Account linked to a different subject](#account-linked-to-a-different-subject) |
 
 A deactivated account is a different case and shows **"Account disabled"** rather than this message, logged as `oidc login inactive user`.
 
 If your logs show nothing at all, raise `LOG_LEVEL` to `debug` and try again.
+
+#### Account Linked to a Different Subject
+
+The first time someone signs in with SSO, PatchMon stores the IdP's subject identifier (`sub`) and the issuer it came from against their account, and from then on recognises them by that pair. A subject identifier is only unique within one issuer, so the same `sub` from a different issuer is treated as a different person. If a later login arrives with the same verified email but a different `sub`, PatchMon refuses it rather than hand the account to a new identity. That is deliberate: an email address that has been reassigned at the IdP must not inherit someone else's PatchMon account.
+
+The `sub` changes, and this refusal appears, when:
+
+- The user was deleted and re-created at the IdP. PocketID, for example, uses its internal user ID as the `sub`, so a re-created user gets a new one
+- The IdP was reinstalled or restored without its user database
+- The account was first linked through a different IdP, and you have since switched provider. Releases before 2.1.0 let these logins through without checking, so the mismatch may predate your upgrade
+- You pointed PatchMon at a different IdP, or a different realm or application on the same IdP. From 2.1.4 every user already linked through the old issuer is refused until you unlink them, even if the new IdP sends the same `sub`. This is deliberate: otherwise whoever controls the new IdP could sign in as any linked user, including a superadmin
+
+Accounts linked before 2.1.4 recorded only the IdP's hostname. On each user's next successful login PatchMon checks the hostname against the current issuer and, if it matches, records the full issuer from then on.
+
+**Changing your IdP's own URL counts as a new issuer.** The issuer is the exact URL your IdP reports, so moving from `http` to `https`, changing the port or hostname, or upgrading Keycloak to a version without the `/auth` prefix refuses every linked user, even though it is the same IdP with the same users. In that case, rebind the links to the new URL rather than unlinking anyone. Find the stored value, then replace it (stock Docker Compose shown):
+
+```bash
+docker compose exec database psql -U patchmon_user -d patchmon_db -c "SELECT DISTINCT oidc_provider FROM users;"
+docker compose exec database psql -U patchmon_user -d patchmon_db \
+  -c "UPDATE users SET oidc_provider='<new>' WHERE oidc_provider='<old>';"
+```
+
+Use the issuer your IdP now reports for `<new>`: the `issuer` value in its `/.well-known/openid-configuration`, without a trailing slash. A rebind is safer than an unlink, because each user must still present the same `sub` as before; an unlinked account is instead claimed by whoever next signs in with its email address. Only rebind when the IdP really is the same one at a new address.
+
+If the new identity is a different IdP, or the user was re-created, and you are sure it is the same person, unlink the old one:
+
+1. Sign in as an admin, go to **Settings > Users** and click **Edit** on the user
+2. Under **SSO identity**, click **Unlink SSO identity** and confirm
+3. Ask the user to sign in with SSO again. PatchMon links the account to the new identity, keeping its role and settings
+
+You can only unlink users whose role is strictly below yours (your role holds every permission theirs grants, and at least one more), and never your own account. A superadmin can unlink anyone except themselves. The rule is stricter than for other user changes because, where SSO is the only way to sign in, unlinking an account and changing its email address hands it to whoever owns the new address.
+
+The re-link normally requires the IdP to assert a verified email, as described in [The verified email requirement](#the-verified-email-requirement). **If you have turned on `OIDC_TRUST_UNVERIFIED_EMAIL`, that check is skipped:** an unlinked account goes to the first identity at your IdP that claims its email address, verified or not. Ask the user to sign in straight after you unlink, and check the server log shows them re-linked. While that setting is on, PatchMon refuses to unlink a superadmin; turn it off first.
+
+**If the locked-out account is the only superadmin**, and nobody can sign in to reach **Settings > Users**, clear the link from the database instead. With the stock Docker Compose stack:
+
+```bash
+docker compose exec database psql -U patchmon_user -d patchmon_db \
+  -c "UPDATE users SET oidc_sub = NULL, oidc_provider = NULL WHERE LOWER(email) = LOWER('admin@example.com');"
+```
+
+Replace the address with the account's email, check that it reports `UPDATE 1`, then sign in with SSO again straight away. If `OIDC_TRUST_UNVERIFIED_EMAIL` is on, turn it off before running this, for the reason above.
 
 #### "Failed to reach the OIDC provider" When Clicking the SSO Button
 
@@ -3485,7 +3584,9 @@ Once you've confirmed at least one OIDC user has Admin or Super Admin:
 
 The login page will now only show the **Sign in with Microsoft** button. Local username/password fields are hidden.
 
-> **Safety:** PatchMon only enforces this flag if OIDC is **also** enabled *and* successfully initialised. If OIDC breaks for any reason, local login is automatically re-enabled so you're not locked out.
+The server enforces this too: password sign-in, the two-factor step and self-service signup are refused with `403 Local authentication is disabled. Please use SSO.`
+
+> **Safety:** PatchMon only enforces this flag while OIDC is **also** enabled and fully configured (issuer URL, client ID, client secret and redirect URI all set). If any of those is missing, or the stored client secret cannot be decrypted, password login comes back automatically. An outage at your identity provider does **not** re-enable password login, because the configuration is still complete, unless you also turn on **Superadmin password login if SSO is down** (see [Password Login When the SSO Provider Is Unreachable](#sso-provider-unreachable-password-login)). If an outage locks you out, see [Re-enable Local Login When OIDC is Broken](#workaround-re-enable-local-login-when-oidc-is-broken).
 
 ---
 
@@ -6919,6 +7020,14 @@ WHERE username = 'admin';
 The user can re-enrol TFA after logging in.
 
 #### Workaround: Re-enable Local Login When OIDC is Broken
+
+If you turned on **Disable local auth** in **Settings → OIDC / SSO**, clear it in the database:
+
+```sql
+UPDATE settings SET oidc_disable_local_auth = false;
+```
+
+then restart the server (`docker compose restart server`) so the cached SSO settings are dropped straight away. Without a restart the change takes effect within ten minutes.
 
 If `OIDC_DISABLE_LOCAL_AUTH=true` is blocking you, edit `.env`:
 

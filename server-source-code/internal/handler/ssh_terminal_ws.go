@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
@@ -21,6 +22,12 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/gorilla/websocket"
 	"golang.org/x/crypto/ssh"
+)
+
+const (
+	sshTerminalPongWait   = 90 * time.Second
+	sshTerminalPingPeriod = 30 * time.Second
+	sshTerminalWriteWait  = 10 * time.Second
 )
 
 // SshTerminalWSHandler handles SSH terminal WebSocket connections.
@@ -33,6 +40,8 @@ type SshTerminalWSHandler struct {
 	proxySess   *sshproxy.Sessions
 	upgrader    websocket.Upgrader
 	log         *slog.Logger
+	pongWait    time.Duration
+	pingPeriod  time.Duration
 }
 
 // NewSshTerminalWSHandler creates a new SSH terminal WebSocket handler.
@@ -53,6 +62,8 @@ func NewSshTerminalWSHandler(
 		registry:    registry,
 		proxySess:   proxySess,
 		log:         log,
+		pongWait:    sshTerminalPongWait,
+		pingPeriod:  sshTerminalPingPeriod,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -169,7 +180,17 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 
 	conn.SetReadLimit(512 * 1024)
 
+	// Browsers answer pings automatically, so an idle but open terminal stays up;
+	// a vanished client stops answering and the read deadline tears the session down.
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(h.pongWait))
+	})
+	pingStop := make(chan struct{})
+	defer close(pingStop)
+	go runTerminalPings(conn, h.pingPeriod, pingStop)
+
 	for {
+		_ = conn.SetReadDeadline(time.Now().Add(h.pongWait))
 		_, message, err := conn.ReadMessage()
 		if err != nil {
 			break
@@ -258,7 +279,7 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 					"session_id": proxySessionID,
 					"host":       proxyHost,
 					"port":       proxyPort,
-					"username":   orDefault(msg.Username, "root"),
+					"username":   sshUsername(msg.Username, host),
 					"terminal":   orDefault(msg.Terminal, "xterm-256color"),
 					"cols":       orInt(msg.Cols, 80),
 					"rows":       orInt(msg.Rows, 24),
@@ -289,7 +310,7 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 				continue
 			}
 			config := &ssh.ClientConfig{
-				User:            orDefault(msg.Username, "root"),
+				User:            sshUsername(msg.Username, host),
 				HostKeyCallback: hostKeyCB,
 				Timeout:         0,
 			}
@@ -452,19 +473,44 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 		case "resize":
 			mu.Lock()
 			pid := proxySessionID
+			sess := sshSession
 			mu.Unlock()
 			if pid != "" {
 				_ = h.registry.SendJSON(host.ApiID, map[string]interface{}{
 					"type":       "ssh_proxy_resize",
 					"session_id": pid,
-					"cols":       orInt(msg.Cols, 80),
-					"rows":       orInt(msg.Rows, 24),
+					"cols":       termDim(msg.Cols, 80),
+					"rows":       termDim(msg.Rows, 24),
 				})
+			} else if sess != nil {
+				_ = sess.WindowChange(termDim(msg.Rows, 24), termDim(msg.Cols, 80))
 			}
-			// Direct mode: ssh session doesn't support resize after start easily; skip
 
 		case "disconnect":
 			cleanup()
+			return
+		}
+	}
+}
+
+type controlWriter interface {
+	WriteControl(messageType int, data []byte, deadline time.Time) error
+}
+
+// A timeout only means another writer held the socket past the deadline, so keep pinging.
+func runTerminalPings(conn controlWriter, period time.Duration, stop <-chan struct{}) {
+	t := time.NewTicker(period)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(sshTerminalWriteWait))
+			var ne net.Error
+			if err == nil || (errors.As(err, &ne) && ne.Timeout()) {
+				continue
+			}
 			return
 		}
 	}
@@ -517,11 +563,25 @@ func orDefault(s, d string) string {
 	return d
 }
 
+func sshUsername(requested string, host *models.Host) string {
+	if requested != "" {
+		return requested
+	}
+	if isWindowsHost(host) {
+		return "Administrator"
+	}
+	return "root"
+}
+
 func orInt(v, d int) int {
 	if v > 0 {
 		return v
 	}
 	return d
+}
+
+func termDim(v, d int) int {
+	return min(orInt(v, d), 1000)
 }
 
 func hostIPOrHostname(host *models.Host) string {

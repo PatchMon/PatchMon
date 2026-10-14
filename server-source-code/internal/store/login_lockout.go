@@ -9,12 +9,23 @@ import (
 	"time"
 
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
 	LoginLockoutPrefix = "login:lockout:"
 	LoginFailedPrefix  = "login:failed:"
 )
+
+// failedAttemptScript arms the TTL whenever it is missing, not only on the first
+// increment, so a lost EXPIRE cannot leave a counter that never expires.
+var failedAttemptScript = redis.NewScript(`
+local n = redis.call('INCR', KEYS[1])
+if redis.call('PTTL', KEYS[1]) < 0 then
+	redis.call('PEXPIRE', KEYS[1], ARGV[1])
+end
+return n
+`)
 
 // LoginLockoutStore manages login attempt tracking and lockout in Redis.
 // Uses identifier = IP + username to avoid cross-user lockout while still
@@ -87,15 +98,12 @@ func (s *LoginLockoutStore) RecordFailedAttempt(ctx context.Context, identifier 
 		return 0, false
 	}
 	key := hostctx.TenantKey(ctx, LoginFailedPrefix+identifier)
-	attempts64, err := rdb.Incr(ctx, key).Result()
+	maxAttempts, lockoutDuration := s.limits(ctx)
+	attempts64, err := failedAttemptScript.Run(ctx, rdb, []string{key}, lockoutDuration.Milliseconds()).Int64()
 	if err != nil {
 		return 0, false
 	}
-	maxAttempts, lockoutDuration := s.limits(ctx)
 	attempts = int(attempts64)
-	if attempts == 1 {
-		_ = rdb.Expire(ctx, key, lockoutDuration)
-	}
 	if attempts >= maxAttempts {
 		lockKey := hostctx.TenantKey(ctx, LoginLockoutPrefix+identifier)
 		_ = rdb.Set(ctx, lockKey, strconv.FormatInt(time.Now().UnixMilli(), 10), lockoutDuration).Err()

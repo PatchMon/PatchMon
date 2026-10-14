@@ -78,11 +78,12 @@ func (s *HostsStore) ListPaginated(ctx context.Context, limit, offset int) ([]mo
 
 // HostOption is a lightweight host reference for filters and selectors.
 type HostOption struct {
-	ID           string  `json:"id"`
-	FriendlyName string  `json:"friendly_name"`
-	Hostname     *string `json:"hostname"`
-	OSType       string  `json:"os_type"`
-	Status       string  `json:"status"`
+	ID             string  `json:"id"`
+	FriendlyName   string  `json:"friendly_name"`
+	Hostname       *string `json:"hostname"`
+	OSType         string  `json:"os_type"`
+	Status         string  `json:"status"`
+	PackageManager *string `json:"package_manager"`
 }
 
 // ListOptions returns lightweight host records without package counts or groups.
@@ -111,11 +112,12 @@ func (s *HostsStore) ListOptions(ctx context.Context, search string, limit, offs
 	out := make([]HostOption, len(rows))
 	for i, r := range rows {
 		out[i] = HostOption{
-			ID:           r.ID,
-			FriendlyName: r.FriendlyName,
-			Hostname:     r.Hostname,
-			OSType:       r.OsType,
-			Status:       r.Status,
+			ID:             r.ID,
+			FriendlyName:   r.FriendlyName,
+			Hostname:       r.Hostname,
+			OSType:         r.OsType,
+			Status:         r.Status,
+			PackageManager: r.PackageManager,
 		}
 	}
 	return out, nil
