@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 )
 
 func TestSelectedPatchRefusal(t *testing.T) {
@@ -26,7 +27,7 @@ func TestSelectedPatchRefusal(t *testing.T) {
 			if (e != nil) != c.refused {
 				t.Fatalf("refused = %v, want %v", e != nil, c.refused)
 			}
-			if e != nil && (e.Status != http.StatusBadRequest || e.Body["error"] != pacmanSelectedPatchUnsupported) {
+			if e != nil && (e.Status != http.StatusBadRequest || e.Body["error"] != store.PacmanSelectedPatchUnsupported) {
 				t.Fatalf("unexpected refusal %+v", e)
 			}
 		})

@@ -1541,8 +1541,11 @@ PatchMon therefore offers only **Patch all** on hosts that use `pacman`. It runs
 **Patch selected** is refused at every step, all with the same message: "Arch Linux does not support partial upgrades, so PatchMon cannot patch selected packages on this host. Use Patch all."
 
 - The UI disables it for Arch hosts and explains why.
-- The server rejects a `patch_package` run for an Arch host, including approving or re-validating one created before this change.
-- The agent refuses one if it still receives it, before running any `pacman` command.
+- The server rejects a new `patch_package` run for an Arch host.
+- A `patch_package` run for an Arch host that was queued or scheduled before you upgraded PatchMon is marked **failed** with the same message when it comes due. It is never sent to the agent.
+- The agent refuses one if it still receives it, before running any `pacman` command. It also refuses a dry run on Arch, because `pacman -Syu -p` syncs the package databases without upgrading.
+
+**Older pending runs.** An Arch `patch_package` run left waiting for validation or approval from before the upgrade can no longer be approved or retried. Delete it from **Patching → Runs** and use **Patch all** instead.
 
 #### Alpine patching {#alpine-patching}
 

@@ -2519,10 +2519,19 @@ func aptOnlyUpgradeArgs(dryRun bool, packageNames []string) []string {
 // pacmanSelectedPatchUnsupported must match the server's message for the same refusal.
 const pacmanSelectedPatchUnsupported = "Arch Linux does not support partial upgrades, so PatchMon cannot patch selected packages on this host. Use Patch all."
 
-// patchTypeRefusal returns why a patch type cannot run on this package manager, or "".
-func patchTypeRefusal(pkgManager, patchType string) string {
-	if pkgManager == "pacman" && patchType != "patch_all" {
+// pacmanDryRunUnsupported: pacman -Syu -p still syncs the databases, leaving a partial upgrade behind.
+const pacmanDryRunUnsupported = "Arch Linux patch runs cannot be dry-run, because pacman would sync the package databases without upgrading. Use Patch all."
+
+// patchTypeRefusal returns why a patch run cannot go ahead on this package manager, or "".
+func patchTypeRefusal(pkgManager, patchType string, dryRun bool) string {
+	if pkgManager != "pacman" {
+		return ""
+	}
+	if patchType != "patch_all" {
 		return pacmanSelectedPatchUnsupported
+	}
+	if dryRun {
+		return pacmanDryRunUnsupported
 	}
 	return ""
 }
@@ -2550,7 +2559,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
-	if msg := patchTypeRefusal(pkgManager, patchType); msg != "" {
+	if msg := patchTypeRefusal(pkgManager, patchType, dryRun); msg != "" {
 		_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", msg)
 		return errors.New(msg)
 	}
@@ -2716,14 +2725,8 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 					}
 				}
 			case "pacman":
-				if dryRun {
-					if err, abort := runStep(true, "pacman -Syu -p", "pacman -Syu -p failed: %w", "pacman", "-Syu", "-p"); abort {
-						stepErr = err
-					}
-				} else {
-					if err, abort := runStep(false, "pacman -Syu", "pacman -Syu failed: %w", "pacman", "-Syu", "--noconfirm"); abort {
-						stepErr = err
-					}
+				if err, abort := runStep(false, "pacman -Syu", "pacman -Syu failed: %w", "pacman", "-Syu", "--noconfirm"); abort {
+					stepErr = err
 				}
 			default: // dnf, yum
 				if dryRun {

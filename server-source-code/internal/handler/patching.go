@@ -1835,12 +1835,9 @@ func patchRunRowToMap(id, hostID, jobID, patchType string, pkgName *string, pkgN
 	return m
 }
 
-// Must match the agent's message for the same refusal.
-const pacmanSelectedPatchUnsupported = "Arch Linux does not support partial upgrades, so PatchMon cannot patch selected packages on this host. Use Patch all."
-
 func selectedPatchRefusal(host *models.Host, patchType string) *runRequestError {
-	if patchType == "patch_package" && host.PackageManager != nil && *host.PackageManager == "pacman" {
-		return badRunRequest(pacmanSelectedPatchUnsupported)
+	if store.RefusesSelectedPatch(host.PackageManager, patchType) {
+		return badRunRequest(store.PacmanSelectedPatchUnsupported)
 	}
 	return nil
 }

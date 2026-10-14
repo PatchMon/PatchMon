@@ -102,21 +102,24 @@ func TestFreeBSDUpdateOutputHasPendingUpdates(t *testing.T) {
 func TestPatchTypeRefusal(t *testing.T) {
 	cases := []struct {
 		pkgManager, patchType string
+		dryRun                bool
 		refused               bool
 	}{
-		{"pacman", "patch_package", true},
-		{"pacman", "patch_all", false},
-		{"apt", "patch_package", false},
-		{"dnf", "patch_package", false},
-		{"apk", "patch_package", false},
+		{"pacman", "patch_package", false, true},
+		{"pacman", "patch_package", true, true},
+		{"pacman", "patch_all", true, true},
+		{"pacman", "patch_all", false, false},
+		{"apt", "patch_package", true, false},
+		{"dnf", "patch_package", false, false},
+		{"apk", "patch_package", false, false},
 	}
 	for _, c := range cases {
-		got := patchTypeRefusal(c.pkgManager, c.patchType)
+		got := patchTypeRefusal(c.pkgManager, c.patchType, c.dryRun)
 		if (got != "") != c.refused {
-			t.Errorf("patchTypeRefusal(%q, %q) = %q, refused want %v", c.pkgManager, c.patchType, got, c.refused)
+			t.Errorf("patchTypeRefusal(%q, %q, %v) = %q, refused want %v", c.pkgManager, c.patchType, c.dryRun, got, c.refused)
 		}
 	}
-	if got := patchTypeRefusal("pacman", "patch_package"); !strings.Contains(got, "partial upgrades") {
+	if got := patchTypeRefusal("pacman", "patch_package", false); !strings.Contains(got, "partial upgrades") {
 		t.Errorf("refusal must explain partial upgrades, got %q", got)
 	}
 }

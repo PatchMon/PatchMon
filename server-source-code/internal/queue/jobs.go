@@ -807,6 +807,14 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 		h.log.Info("run_patch: run no longer awaiting dispatch, dropping task", "api_id", p.ApiID, "patch_run_id", p.PatchRunID, "status", status)
 		return nil
 	}
+	// Covers runs queued before the API refused them.
+	if store.RefusesSelectedPatch(run.HostPackageManager, run.PatchType) {
+		if err := h.patchRuns.FailRun(ctx, p.PatchRunID, store.PacmanSelectedPatchUnsupported); err != nil {
+			return err
+		}
+		h.log.Warn("run_patch: selected patching refused on a pacman host, marked failed", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
+		return nil
+	}
 
 	var pending []db.PatchRunItem
 	windows := run.HostOsType != nil && store.IsWindowsOSType(*run.HostOsType)
