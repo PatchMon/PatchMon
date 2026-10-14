@@ -1487,12 +1487,28 @@ export default function PatchWizard({
 										<div className="flex items-center gap-2 flex-wrap">
 											{isValidating ? (
 												<RefreshCw className="h-4 w-4 animate-spin text-primary-600 shrink-0" />
+											) : validationProgress.failed > 0 ? (
+												<AlertTriangle
+													data-testid="validation-summary-failed"
+													className="h-4 w-4 text-danger-600 dark:text-danger-400 shrink-0"
+												/>
+											) : validationProgress.clean <
+												validationProgress.total ? (
+												<AlertTriangle
+													data-testid="validation-summary-warning"
+													className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0"
+												/>
 											) : (
-												<Check className="h-4 w-4 text-green-600 shrink-0" />
+												<Check
+													data-testid="validation-summary-clean"
+													className="h-4 w-4 text-green-600 shrink-0"
+												/>
 											)}
 											<span className="font-medium text-secondary-800 dark:text-secondary-200">
-												Validated {validationProgress.done} /{" "}
-												{validationProgress.total}
+												Validated{" "}
+												{validationProgress.clean +
+													validationProgress.extraDeps}{" "}
+												/ {validationProgress.total}
 											</span>
 											<span className="text-secondary-500 dark:text-secondary-400">
 												·
@@ -1515,7 +1531,7 @@ export default function PatchWizard({
 													<span className="text-secondary-500 dark:text-secondary-400">
 														·
 													</span>
-													<span className="text-red-700 dark:text-red-400">
+													<span className="text-danger-700 dark:text-danger-400">
 														{validationProgress.failed} failed
 													</span>
 												</>
