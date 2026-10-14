@@ -22,6 +22,9 @@ func (d *Detector) CheckRebootRequired() (bool, string) {
 	if runtime.GOOS == "windows" {
 		return d.checkWindowsRebootRequired()
 	}
+	if isAlpine() {
+		return d.checkAlpineRebootRequired()
+	}
 
 	runningKernel := d.getRunningKernel()
 	latestKernel := d.latestInstalledKernel(runningKernel)
@@ -152,6 +155,9 @@ func (d *Detector) getRunningKernel() string {
 
 // GetLatestInstalledKernel gets the latest installed kernel version (public method)
 func (d *Detector) GetLatestInstalledKernel() string {
+	if runtime.GOOS != "windows" && isAlpine() {
+		return d.alpineLatestInstalledKernel()
+	}
 	return d.latestInstalledKernel(d.getRunningKernel())
 }
 
@@ -258,7 +264,7 @@ func (d *Detector) collectKernelsFromBoot() []string {
 // an unversioned image such as Arch's /boot/vmlinuz-linux, where no version can be
 // recovered from the boot directory at all.
 func (d *Detector) collectKernelsFromModules() []string {
-	entries, err := os.ReadDir("/lib/modules")
+	entries, err := os.ReadDir(kernelModulesDir)
 	if err != nil {
 		d.logger.WithError(err).Debug("Failed to read /lib/modules directory")
 		return nil
