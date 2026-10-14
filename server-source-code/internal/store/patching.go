@@ -22,7 +22,9 @@ const freeBSDBasePackageName = "freebsd-base"
 
 var freeBSDPkgSummaryLinePattern = regexp.MustCompile(`^\s+(\S+):\s+`)
 var freeBSDPkgActionLinePattern = regexp.MustCompile(`^\[\d+/\d+\]\s+(?:Installing|Upgrading|Reinstalling)\s+(\S+)`)
-var apkActionLinePattern = regexp.MustCompile(`^\(\d+/\d+\)\s+(?:Installing|Upgrading|Reinstalling)\s+(\S+)`)
+
+// apk v3 pads the counter ("( 1/14)") and tags packages from tagged repositories ("busybox@edge").
+var apkActionLinePattern = regexp.MustCompile(`^\(\s*\d+/\d+\)\s+(?:Installing|Upgrading|Reinstalling|Downgrading|Replacing)\s+([^\s@]+)`)
 
 // isFreeBSD reports whether the host OS type represents FreeBSD. The synthetic
 // "freebsd-base" package must only be emitted for FreeBSD hosts; otherwise
@@ -145,9 +147,12 @@ func parsePackagesAffectedFromRealOutput(osType, output string) []string {
 			}
 			continue
 		}
-		// apk (--simulate and real): "(1/3) Upgrading pkgname (oldver -> newver)"
+		// Added as-is: apk names such as lua5.4 contain dots that addPkg would cut.
 		if matches := apkActionLinePattern.FindStringSubmatch(trimmed); len(matches) == 2 {
-			addPkg(matches[1])
+			if !seen[matches[1]] {
+				seen[matches[1]] = true
+				pkgs = append(pkgs, matches[1])
+			}
 			continue
 		}
 		// dnf/yum real: "  Upgrading   : pkgname-version.arch" / "  Installing  : pkgname-version.arch"

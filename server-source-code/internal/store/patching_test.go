@@ -122,6 +122,26 @@ OK: 80 MiB in 76 packages
 		}
 	})
 
+	t.Run("parses apk v3 simulate output with padded counters and tags", func(t *testing.T) {
+		output := `$ apk update --wait 30
+v3.23.6-59-g3461381db6a [https://dl-cdn.alpinelinux.org/alpine/v3.23/main]
+OK: 27456 distinct packages available
+$ apk upgrade --no-progress --simulate lua5.4 libssl3 libcrypto3
+WARNING: This simulation might not reliable as a preupgrade is available.
+( 1/11) Upgrading lua5.4-libs (5.4.7-r0 -> 5.4.8-r0)
+( 2/11) Installing py3.12-foo (1.0-r0)
+(10/11) Upgrading busybox@edge (1.37.0-r14 -> 1.38.0-r7)
+(11/11) Upgrading libssl3 (3.5.4-r0 -> 3.5.9-r0)
+OK: 8 MiB in 16 packages
+[patchmon] Not upgraded by apk: lua5.4 5.4.7-r0 (5.4.8-r0 available). Its new version needs other packages upgraded too; select those as well or use Patch all`
+
+		got := parsePackagesAffectedFromDryRunOutput("Alpine Linux", output)
+		want := []string{"lua5.4-libs", "py3.12-foo", "busybox", "libssl3"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("parsePackagesAffectedFromDryRunOutput() = %v, want %v", got, want)
+		}
+	})
+
 	t.Run("apt bulk dry run does not emit freebsd-base on linux", func(t *testing.T) {
 		output := `$ apt-get update -qq
 $ apt-get -s install libcap2 libcap2-bin libntfs-3g89t64 libpam-cap libpython3.12-minimal libpython3.12-stdlib libpython3.12t64 ntfs-3g python3.12 python3.12-minimal
@@ -208,6 +228,37 @@ OK: 80 MiB in 76 packages
 		got := parsePackagesAffectedFromRealOutput("alpine", output)
 		want := []string{"libcrypto3", "libssl3"}
 
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("parsePackagesAffectedFromRealOutput() = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("parses apk v3 real run with preupgrade and dotted names", func(t *testing.T) {
+		output := `$ apk update --wait 30
+OK: 27456 distinct packages available
+$ apk upgrade --no-progress --simulate
+WARNING: This simulation might not reliable as a preupgrade is available.
+( 1/3) Upgrading lua5.4-libs (5.4.7-r0 -> 5.4.8-r0)
+( 2/3) Upgrading libapk (3.0.1-r1 -> 3.0.8-r0)
+( 3/3) Upgrading apk-tools (3.0.1-r1 -> 3.0.8-r0)
+$ apk upgrade --no-progress --wait 30 --preupgrade-only
+Preupgrading:
+(1/2) Upgrading libapk (3.0.1-r1 -> 3.0.8-r0)
+(2/2) Upgrading apk-tools (3.0.1-r1 -> 3.0.8-r0)
+Executing busybox-1.37.0-r29.trigger
+$ apk upgrade --no-progress --simulate
+(1/1) Upgrading lua5.4-libs (5.4.7-r0 -> 5.4.8-r0)
+[patchmon] Held by /etc/apk/world: busybox=1.37.0-r29 (1.37.0-r30 available)
+$ apk upgrade --no-progress --wait 30
+(1/1) Upgrading lua5.4-libs (5.4.7-r0 -> 5.4.8-r0)
+  Installing file to etc/hosts.apk-new
+  Executing lua5.4-libs-5.4.8-r0.post-upgrade
+OK: 8435 KiB in 16 packages
+
+--- Patch run completed at 2026-10-14T13:53:14Z ---`
+
+		got := parsePackagesAffectedFromRealOutput("Alpine Linux", output)
+		want := []string{"lua5.4-libs", "libapk", "apk-tools"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("parsePackagesAffectedFromRealOutput() = %v, want %v", got, want)
 		}
