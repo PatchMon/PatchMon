@@ -336,7 +336,7 @@ Up to 2.1.3, the `guacd` service in the shipped `docker-compose.yml` could not o
          test: ["CMD-SHELL", "nc -z localhost 4822 && ls /sys/class/net | grep -q '^eth' || exit 1"]
    ```
 
-   Keep the rest of the service (`security_opt`, `cap_drop`, limits, the healthcheck timings, `logging`) as it is. The `command` keeps `guacd` attached to the server container: if the server container is restarted or recreated on its own, `guacd` exits within a few seconds and Docker restarts it in the server's new network namespace.
+   Keep the rest of the service (`security_opt`, `cap_drop`, limits, the healthcheck timings, `logging`) as it is. The `command` keeps `guacd` attached to the server container: if the server container is restarted on its own, or crashes and is restarted, `guacd` exits within a few seconds and Docker restarts it in the server's new network namespace. Docker cannot do that for a server container that was *recreated* on its own (for example `docker compose up -d --force-recreate server`): run `docker compose up -d` afterwards and Compose recreates `guacd` too. A normal `docker compose pull && docker compose up -d` handles both containers itself.
 
 3. In `.env`, delete the `GUACD_ADDRESS=guacd:4822` line, or change it to `GUACD_ADDRESS=127.0.0.1:4822`. The compose `environment:` entry overrides it either way, but leaving the old value in place is confusing.
 
