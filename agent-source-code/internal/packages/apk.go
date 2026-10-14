@@ -6,6 +6,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 
 	"patchmon-agent/internal/logutil"
 	"patchmon-agent/internal/repositories"
@@ -34,12 +35,22 @@ func NewAPKManager(logger *logrus.Logger) *APKManager {
 // same process skips its apk update instead of racing the run for the database lock.
 var apkBusy = make(chan struct{}, 1)
 
-// AcquireAPK waits for any in-process apk index refresh to finish and keeps reports
-// from starting another until release is called.
-func AcquireAPK(ctx context.Context) (release func(), err error) {
+// AcquireAPK waits for any in-process apk work to finish and keeps reports from starting
+// another until release is called. onWait, if set, runs once when it has to wait.
+func AcquireAPK(ctx context.Context, onWait func()) (release func(), err error) {
+	var once sync.Once
+	release = func() { once.Do(func() { <-apkBusy }) }
 	select {
 	case apkBusy <- struct{}{}:
-		return func() { <-apkBusy }, nil
+		return release, nil
+	default:
+	}
+	if onWait != nil {
+		onWait()
+	}
+	select {
+	case apkBusy <- struct{}{}:
+		return release, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}

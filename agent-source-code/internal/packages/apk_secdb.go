@@ -24,13 +24,15 @@ const (
 	apkSecDBTTL      = 6 * time.Hour
 	apkSecDBTimeout  = 20 * time.Second
 	apkSecDBMaxBytes = 8 << 20
+	apkSecDBBackoff  = time.Hour
 )
 
 var (
 	apkSecDBCacheDir = "/var/cache/patchmon/apk-secdb"
 
-	apkSecDBWarnMu   sync.Mutex
+	apkSecDBMu       sync.Mutex
 	apkSecDBLastWarn time.Time
+	apkSecDBFailedAt = map[string]time.Time{}
 )
 
 // secdb is keyed by origin (source package) and lists the version each fix landed in.
@@ -135,8 +137,8 @@ func (s *apkSecDB) fixes(ctx context.Context, branch string, repos []string) map
 
 // shouldWarn limits the unreachable warning to once per TTL; reports run far more often.
 func (s *apkSecDB) shouldWarn() bool {
-	apkSecDBWarnMu.Lock()
-	defer apkSecDBWarnMu.Unlock()
+	apkSecDBMu.Lock()
+	defer apkSecDBMu.Unlock()
 	if !apkSecDBLastWarn.IsZero() && s.now().Sub(apkSecDBLastWarn) < apkSecDBTTL {
 		return false
 	}
@@ -152,7 +154,8 @@ func (s *apkSecDB) load(ctx context.Context, branch, repo string) ([]byte, error
 			return data, nil
 		}
 	}
-	data, fetchErr := s.fetch(ctx, fmt.Sprintf("%s/%s/%s.json", s.baseURL, branch, repo))
+	url := fmt.Sprintf("%s/%s/%s.json", s.baseURL, branch, repo)
+	data, fetchErr := s.fetchWithBackoff(ctx, url)
 	if fetchErr == nil {
 		if cacheOK {
 			if err := writeFileAtomic(cache, data); err != nil {
@@ -208,6 +211,26 @@ func readCacheFile(path string) ([]byte, time.Time, error) {
 		return nil, time.Time{}, fmt.Errorf("%s is larger than %d bytes", path, apkSecDBMaxBytes)
 	}
 	return data, info.ModTime(), nil
+}
+
+// fetchWithBackoff skips the request for an hour after a failure, so an unreachable
+// secdb does not add two timeouts to every report.
+func (s *apkSecDB) fetchWithBackoff(ctx context.Context, url string) ([]byte, error) {
+	apkSecDBMu.Lock()
+	failed, ok := apkSecDBFailedAt[url]
+	apkSecDBMu.Unlock()
+	if ok && s.now().Sub(failed) < apkSecDBBackoff {
+		return nil, fmt.Errorf("GET %s failed at %s, next attempt after %s", url, failed.UTC().Format(time.RFC3339), failed.Add(apkSecDBBackoff).UTC().Format(time.RFC3339))
+	}
+	data, err := s.fetch(ctx, url)
+	apkSecDBMu.Lock()
+	if err != nil {
+		apkSecDBFailedAt[url] = s.now()
+	} else {
+		delete(apkSecDBFailedAt, url)
+	}
+	apkSecDBMu.Unlock()
+	return data, err
 }
 
 func (s *apkSecDB) fetch(ctx context.Context, url string) ([]byte, error) {

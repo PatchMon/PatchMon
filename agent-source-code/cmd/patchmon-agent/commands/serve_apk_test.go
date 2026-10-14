@@ -181,7 +181,7 @@ func TestRunAPKPatchRefusesUnreliablePlanWithUnknownApk(t *testing.T) {
 	inv.Major = 0
 	f := &fakeAPK{inv: inv, responses: map[string][]fakeAPKResponse{apkSimulateAll: {{out: apkUnreliableV3Plan}}}}
 	err := runAPKPatch(f.io(), "patch_all", nil, false)
-	if err == nil || !strings.Contains(err.Error(), "could not be read") {
+	if err == nil || !strings.Contains(err.Error(), "could not determine apk-tools version") {
 		t.Fatalf("err = %v", err)
 	}
 	if f.ran("upgrade --no-progress --wait") != 0 {
@@ -223,6 +223,42 @@ func TestRunAPKPatchDropsInvalidExpandedNames(t *testing.T) {
 	}
 	if f.calls[1] != "upgrade --no-progress --simulate libssl3 libcrypto3" {
 		t.Errorf("calls = %q", f.calls)
+	}
+}
+
+func TestRunAPKPatchConflictAfterPreupgrade(t *testing.T) {
+	after := apkTestInventory("busybox<1.0")
+	f := &fakeAPK{
+		inv:         apkTestInventory(""),
+		invAfterPre: &after,
+		responses:   map[string][]fakeAPKResponse{apkSimulateAll: {{out: apkUnreliableV3Plan}}},
+	}
+	err := runAPKPatch(f.io(), "patch_all", nil, false)
+	if err == nil || !strings.Contains(err.Error(), "/etc/apk/world requires busybox<1.0") {
+		t.Fatalf("err = %v", err)
+	}
+	if f.ran(apkSimulateAll) != 1 || f.ran(apkUpgradeAll) != 1 {
+		t.Errorf("expected the preupgrade and nothing after it: %q", f.calls)
+	}
+}
+
+func TestRunAPKPatchNotesPreupgradeOnSelected(t *testing.T) {
+	sim := "upgrade --no-progress --simulate libssl3 libcrypto3"
+	f := &fakeAPK{
+		inv: apkTestInventory(""),
+		responses: map[string][]fakeAPKResponse{sim: {
+			{out: "WARNING: This simulation might not reliable as a preupgrade is available.\n( 1/2) Upgrading libcrypto3 (3.5.4-r0 -> 3.5.9-r0)\n( 2/2) Upgrading libssl3 (3.5.4-r0 -> 3.5.9-r0)\n"},
+		}},
+	}
+	if err := runAPKPatch(f.io(), "patch_package", []string{"libssl3"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.notes) == 0 || f.notes[0] != "apk-tools has an update of its own. Installing it first, then planning again." {
+		t.Errorf("notes = %q", f.notes)
+	}
+	want := []string{"update --wait 30", sim, "upgrade --no-progress --wait 30 --preupgrade-only", sim, "upgrade --no-progress --wait 30 libssl3 libcrypto3"}
+	if !slices.Equal(f.calls, want) {
+		t.Errorf("calls = %q, want %q", f.calls, want)
 	}
 }
 
@@ -283,6 +319,8 @@ func TestAPKStepError(t *testing.T) {
 		{"stale indexes", "ERROR: Not continuing due to stale/unavailable repositories.Use --force-missing-repositories to continue.", exit99, "a repository in /etc/apk/repositories could not be reached"},
 		{"update partially failed", "2 unavailable, 0 stale; 16 distinct packages available", errors.New("exit status 2"), "could not be reached"},
 		{"bare 99", "", exit99, "apk could not open its database"},
+		{"nothing unavailable", "0 unavailable, 1 stale; 16 distinct packages available", exit99, "apk could not open its database"},
+		{"ten unavailable", "10 unavailable, 0 stale; 16 distinct packages available", errors.New("exit status 10"), "could not be reached"},
 		{"unknown package", "ERROR: Package 'nosuchpkg' not found", errors.New("exit status 1"), "apk upgrade failed: exit status 1"},
 	}
 	for _, tc := range cases {

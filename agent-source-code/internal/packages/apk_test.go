@@ -556,9 +556,9 @@ func TestAPKSecDBCheckRedirect(t *testing.T) {
 }
 
 func TestAPKSecDBWarnsOncePerTTL(t *testing.T) {
-	apkSecDBWarnMu.Lock()
+	apkSecDBMu.Lock()
 	apkSecDBLastWarn = time.Time{}
-	apkSecDBWarnMu.Unlock()
+	apkSecDBMu.Unlock()
 	now := time.Now()
 	db := &apkSecDB{now: func() time.Time { return now }}
 	if !db.shouldWarn() || db.shouldWarn() {
@@ -567,6 +567,41 @@ func TestAPKSecDBWarnsOncePerTTL(t *testing.T) {
 	now = now.Add(apkSecDBTTL + time.Second)
 	if !db.shouldWarn() {
 		t.Error("expected a fresh warning after the TTL")
+	}
+}
+
+func TestAPKSecDBBacksOffAfterFailure(t *testing.T) {
+	var hits atomic.Int32
+	var fail atomic.Bool
+	fail.Store(true)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		if fail.Load() {
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = io.WriteString(w, secdbMain)
+	}))
+	defer srv.Close()
+	now := time.Now()
+	db := &apkSecDB{logger: quietLogger(), client: srv.Client(), baseURL: srv.URL, cacheDir: t.TempDir(), cacheOwner: os.Getuid(), now: func() time.Time { return now }}
+
+	db.fixes(context.Background(), "v3.23", []string{"main"})
+	db.fixes(context.Background(), "v3.23", []string{"main"})
+	if hits.Load() != 1 {
+		t.Fatalf("a failed source must not be retried within the backoff, got %d requests", hits.Load())
+	}
+	fail.Store(false)
+	now = now.Add(apkSecDBBackoff + time.Second)
+	if got := db.fixes(context.Background(), "v3.23", []string{"main"}); len(got["zlib"]) != 1 || hits.Load() != 2 {
+		t.Fatalf("expected a retry after the backoff, got %v after %d requests", got, hits.Load())
+	}
+	now = now.Add(time.Minute)
+	fail.Store(true)
+	db.cacheDir = t.TempDir()
+	db.fixes(context.Background(), "v3.23", []string{"main"})
+	if hits.Load() != 3 {
+		t.Errorf("a success must clear the backoff, got %d requests", hits.Load())
 	}
 }
 
@@ -586,27 +621,32 @@ func TestAPKSecDBRejectsNonJSON(t *testing.T) {
 }
 
 func TestAcquireAPK(t *testing.T) {
-	release, err := AcquireAPK(context.Background())
-	if err != nil {
-		t.Fatal(err)
+	waited := 0
+	release, err := AcquireAPK(context.Background(), func() { waited++ })
+	if err != nil || waited != 0 {
+		t.Fatalf("a free slot must not wait: err=%v waited=%d", err, waited)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	if _, err := AcquireAPK(ctx); err == nil {
+	if _, err := AcquireAPK(ctx, func() { waited++ }); err == nil {
 		t.Fatal("a second patch run must wait for the first")
 	}
-	m := &APKManager{logger: quietLogger()}
-	select {
-	case apkBusy <- struct{}{}:
-		t.Fatal("slot should be taken")
-	default:
+	if waited != 1 {
+		t.Errorf("onWait ran %d times, want 1", waited)
 	}
+	m := &APKManager{logger: quietLogger()}
 	m.refreshIndexes()
 	release()
-	select {
-	case apkBusy <- struct{}{}:
-		<-apkBusy
-	default:
+	release()
+
+	second, err := AcquireAPK(context.Background(), nil)
+	if err != nil {
 		t.Fatal("release must free the slot")
 	}
+	select {
+	case apkBusy <- struct{}{}:
+		t.Fatal("a repeated release must not free a slot someone else holds")
+	default:
+	}
+	second()
 }

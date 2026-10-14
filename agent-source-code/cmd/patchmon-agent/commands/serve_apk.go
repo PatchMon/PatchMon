@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -25,7 +26,10 @@ func runPatchAPK(ctx context.Context, sink *streamSink, env []string, patchType 
 	if patchType != "patch_all" && len(packageNames) == 0 {
 		return errors.New("package_names required for patch_package")
 	}
-	release, err := packages.AcquireAPK(ctx)
+	release, err := packages.AcquireAPK(ctx, func() {
+		sink.WriteString("[patchmon] Waiting for another apk operation by this agent to finish.\n")
+		sink.Flush()
+	})
 	if err != nil {
 		return err
 	}
@@ -51,6 +55,8 @@ func runPatchAPK(ctx context.Context, sink *streamSink, env []string, patchType 
 	}
 	return err
 }
+
+var apkUnavailableRe = regexp.MustCompile(`(^|\D)[1-9]\d* unavailable,`)
 
 func runAPKPatch(io apkPatchIO, patchType string, packageNames []string, dryRun bool) error {
 	var targets []string
@@ -87,15 +93,19 @@ func runAPKPatch(io apkPatchIO, patchType string, packageNames []string, dryRun 
 		case dryRun:
 			io.note("apk-tools has an update of its own. A real run installs it first and plans again, so the result can differ slightly from this plan.")
 		case preArgs == nil:
-			return errors.New("apk-tools has an update of its own but its version could not be read, so the plan cannot be trusted. Run apk upgrade on the host, or retry once apk --version works")
+			return errors.New("could not determine apk-tools version, and apk-tools has an update of its own, so the plan cannot be trusted. Nothing was changed. Check that apk --version works on the host, then retry")
 		default:
+			io.note("apk-tools has an update of its own. Installing it first, then planning again.")
 			if out, err := io.run(preArgs...); err != nil {
 				return apkStepError("apk-tools upgrade", out, err)
 			}
 			if inv, err = io.inventory(); err != nil {
 				return fmt.Errorf("reading the apk package database failed: %w", err)
 			}
-			holds, _ = inv.Holds()
+			holds, conflicts = inv.Holds()
+			if len(conflicts) > 0 {
+				return errors.New(packages.APKConflictMessage(conflicts[0]))
+			}
 			if plan, err = apkSimulate(io, upgradeTargets); err != nil {
 				return err
 			}
@@ -107,7 +117,7 @@ func runAPKPatch(io apkPatchIO, patchType string, packageNames []string, dryRun 
 		for i, s := range refused {
 			steps[i] = s.String()
 		}
-		return fmt.Errorf("apk plans to downgrade, remove or replace packages (%s). PatchMon only applies upgrades, so nothing was changed. "+
+		return fmt.Errorf("apk plans to downgrade, remove or replace packages (%s). PatchMon only applies upgrades, so the plan was not applied. "+
 			"This usually follows a repository being removed from /etc/apk/repositories; review the plan with apk upgrade --simulate on the host",
 			strings.Join(steps, "; "))
 	}
@@ -154,7 +164,7 @@ func apkStepError(step, output string, err error) error {
 	switch {
 	case strings.Contains(lower, "unable to lock database"):
 		return fmt.Errorf("%s failed: another apk process held the package database for more than %s seconds, retry when it has finished: %w", step, packages.APKLockWaitSeconds, err)
-	case strings.Contains(lower, "stale/unavailable repositories"), strings.Contains(lower, "unavailable, "):
+	case strings.Contains(lower, "stale/unavailable repositories"), apkUnavailableRe.MatchString(lower):
 		return fmt.Errorf("%s failed: a repository in /etc/apk/repositories could not be reached: %w", step, err)
 	case errors.As(err, &exitErr) && exitErr.ExitCode() == 99:
 		return fmt.Errorf("%s failed: apk could not open its database: %w", step, err)
