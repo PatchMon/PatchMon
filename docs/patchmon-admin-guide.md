@@ -339,6 +339,8 @@ Full reference: PatchMon Environment Variables Reference.
 
 Upload a custom logo and favicon. The assets are stored in the database and served via `GET /api/v1/settings/logos/{type}`, so they live through container restarts without a persistent volume. Both dark-mode and light-mode variants can be uploaded separately. The read path is public (so the login page can show your branding before the user authenticates) but upload/reset are gated behind the `custom_branding` module.
 
+Logos can be PNG, JPEG or SVG, up to 5 MB. SVG files are cleaned on upload: scripts, event handlers, embedded HTML, animation elements, external links and editor metadata (for example Inkscape or Illustrator data) are removed, and an SVG that is not well-formed XML is rejected with "Invalid SVG file". If your logo looks different after uploading, export it again as a plain SVG.
+
 #### Server Version
 
 **Path:** `/settings/server-version`

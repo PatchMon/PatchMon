@@ -1178,8 +1178,12 @@ func (h *SettingsHandler) UploadLogo(w http.ResponseWriter, r *http.Request) {
 	} else if isJpeg {
 		contentType = "image/jpeg"
 	} else if isSvg {
-		sanitizedSvg := sanitizeSVG(string(fileBuf))
-		fileBuf = []byte(sanitizedSvg)
+		clean, err := sanitizeSVG(fileBuf)
+		if err != nil {
+			Error(w, http.StatusBadRequest, "Invalid SVG file")
+			return
+		}
+		fileBuf = clean
 		contentType = "image/svg+xml"
 	} else {
 		Error(w, http.StatusBadRequest, "Invalid file type. Allowed: PNG, JPEG, SVG")
@@ -1311,76 +1315,8 @@ func (h *SettingsHandler) GetLogo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", logoCSP)
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	_, _ = w.Write(data)
-}
-
-// sanitizeSVG removes script tags, event handlers, and javascript: URLs from SVG to prevent XSS.
-// Uses strings instead of Perl-style regex (lookahead) since Go's regexp is RE2-based.
-func sanitizeSVG(s string) string {
-	// Remove script tags and contents (loop: RE2 has no lookahead)
-	s = removeTagAndContent(s, "script")
-	// Remove self-closing script tags: <script ... />
-	selfCloseScript := regexp.MustCompile(`(?i)<script[^>]*/\s*>`)
-	s = selfCloseScript.ReplaceAllString(s, "")
-	// Remove foreignObject (can embed arbitrary HTML)
-	s = removeTagAndContent(s, "foreignObject")
-	// Remove dangerous SVG animation/mutation elements
-	for _, tag := range []string{"set", "animate", "animateTransform", "animateMotion"} {
-		s = removeTagAndContent(s, tag)
-		selfClose := regexp.MustCompile(`(?i)<` + tag + `[^>]*/\s*>`)
-		s = selfClose.ReplaceAllString(s, "")
-	}
-	// Remove <use> elements with external references (can load external SVG)
-	useExtRe := regexp.MustCompile(`(?i)<use[^>]+href\s*=\s*["']https?://[^"']*["'][^>]*/?\s*>`)
-	s = useExtRe.ReplaceAllString(s, "")
-	s = removeTagAndContent(s, "use")
-	// Remove on* event handlers
-	onRe := regexp.MustCompile(`(?i)\s+on\w+\s*=\s*["'][^"']*["']`)
-	s = onRe.ReplaceAllString(s, "")
-	onRe2 := regexp.MustCompile(`(?i)\s+on\w+\s*=\s*[^\s>]+`)
-	s = onRe2.ReplaceAllString(s, "")
-	// Remove javascript: URLs (href, xlink:href, and any src-like attributes)
-	jsRe := regexp.MustCompile(`(?i)(href|src|xlink:href)\s*=\s*["']\s*javascript:[^"']*["']`)
-	s = jsRe.ReplaceAllString(s, `$1=""`)
-	// Remove data: URLs (RE2 has no lookahead, so match all data: and restore safe image types)
-	dataRe := regexp.MustCompile(`(?i)(href|src|xlink:href)\s*=\s*["']\s*data:[^"']*["']`)
-	s = dataRe.ReplaceAllStringFunc(s, func(m string) string {
-		lower := strings.ToLower(m)
-		for _, safe := range []string{"data:image/png", "data:image/jpeg", "data:image/jpg", "data:image/gif", "data:image/svg+xml", "data:image/webp"} {
-			if strings.Contains(lower, safe) {
-				return m
-			}
-		}
-		eqIdx := strings.Index(m, "=")
-		if eqIdx >= 0 {
-			return m[:eqIdx] + `=""`
-		}
-		return m
-	})
-	// Remove CSS @import (can exfiltrate data or load external styles)
-	importRe := regexp.MustCompile(`(?i)@import\s+[^;]+;?`)
-	s = importRe.ReplaceAllString(s, "")
-	return s
-}
-
-// removeTagAndContent removes <tag...>...</tag> and its contents. Case-insensitive.
-func removeTagAndContent(s, tag string) string {
-	openTag := "<" + tag
-	closeTag := "</" + tag + ">"
-	lower := strings.ToLower(s)
-	for {
-		i := strings.Index(lower, strings.ToLower(openTag))
-		if i < 0 {
-			break
-		}
-		j := strings.Index(lower[i:], strings.ToLower(closeTag))
-		if j < 0 {
-			break
-		}
-		end := i + j + len(closeTag)
-		s = s[:i] + s[end:]
-		lower = strings.ToLower(s)
-	}
-	return s
 }
