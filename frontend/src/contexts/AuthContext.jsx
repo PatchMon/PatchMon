@@ -136,6 +136,9 @@ export const AuthProvider = ({ children }) => {
 			setTenant({ modules: "*", host: "", slug: "", multi_context: false });
 			localStorage.removeItem("token");
 			localStorage.removeItem("user");
+			setAuthPhase((phase) =>
+				isAuthPhase.tfaEnrolmentRequired(phase) ? AUTH_PHASES.READY : phase,
+			);
 		};
 		window.addEventListener("auth:session-expired", handleSessionExpired);
 		return () =>
@@ -202,6 +205,14 @@ export const AuthProvider = ({ children }) => {
 
 				if (response.ok) {
 					const data = await response.json();
+					if (
+						!abortController.signal.aborted &&
+						data.user?.tfa_enrolment_required
+					) {
+						setUser(data.user);
+						setAuthPhase(AUTH_PHASES.TFA_ENROLMENT_REQUIRED);
+						return;
+					}
 					if (!abortController.signal.aborted) {
 						setUser(data.user);
 						// UI-cache only — NEVER trust localStorage.user as an authority for
@@ -333,6 +344,13 @@ export const AuthProvider = ({ children }) => {
 					};
 				}
 
+				if (data.tfaEnrolmentRequired) {
+					setToken(data.token);
+					setUser(data.user);
+					setAuthPhase(AUTH_PHASES.TFA_ENROLMENT_REQUIRED);
+					return { success: true, tfaEnrolmentRequired: true };
+				}
+
 				// Regular successful login
 				// Note: httpOnly cookies are set by the server for secure auth
 				// localStorage is used for backward compatibility and UI state only
@@ -437,8 +455,45 @@ export const AuthProvider = ({ children }) => {
 			setTenant({ modules: "*", host: "", slug: "", multi_context: false });
 			localStorage.removeItem("token");
 			localStorage.removeItem("user");
+			setAuthPhase((phase) =>
+				isAuthPhase.tfaEnrolmentRequired(phase) ? AUTH_PHASES.READY : phase,
+			);
 		}
 	};
+
+	const completeTfaEnrolment = useCallback(async () => {
+		try {
+			const response = await fetchWithSessionRefresh("/api/v1/auth/profile", {
+				credentials: "include",
+			});
+			if (!response.ok) return false;
+			const data = await response.json();
+			if (data.user?.tfa_enrolment_required) return false;
+			setUser({
+				...data.user,
+				accepted_release_notes_versions:
+					data.user.accepted_release_notes_versions || [],
+			});
+			try {
+				localStorage.setItem(
+					"user",
+					JSON.stringify({
+						...data.user,
+						accepted_release_notes_versions:
+							data.user.accepted_release_notes_versions || [],
+					}),
+				);
+			} catch (_e) {
+				// Not fatal: auth runs on cookies.
+			}
+			await Promise.all([fetchPermissions(), fetchTenantContext()]);
+			setAuthPhase(AUTH_PHASES.READY);
+			return true;
+		} catch (error) {
+			devLog("completeTfaEnrolment failed:", error);
+			return false;
+		}
+	}, [fetchPermissions, fetchTenantContext]);
 
 	const updateProfile = async (profileData) => {
 		try {
@@ -876,6 +931,7 @@ export const AuthProvider = ({ children }) => {
 		refetchUser,
 		setAuthState,
 		completeFirstTimeWizard,
+		completeTfaEnrolment,
 		isAuthenticated,
 		isAdmin,
 		hasPermission,

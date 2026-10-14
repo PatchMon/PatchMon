@@ -1,0 +1,1 @@
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tfa_enrolment_required BOOLEAN NOT NULL DEFAULT false;

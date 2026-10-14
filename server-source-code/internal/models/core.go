@@ -30,6 +30,12 @@ type User struct {
 	DiscordLinkedAt        *time.Time `db:"discord_linked_at"`
 	NewsletterSubscribed   bool       `db:"newsletter_subscribed"`
 	NewsletterSubscribedAt *time.Time `db:"newsletter_subscribed_at"`
+	TfaEnrolmentRequired   bool       `db:"tfa_enrolment_required"`
+}
+
+// TfaEnrolmentPending mirrors GetSessionAuthState: IdP-linked and password-less accounts are exempt.
+func (u *User) TfaEnrolmentPending() bool {
+	return u.TfaEnrolmentRequired && u.PasswordHash != nil && u.OidcSub == nil
 }
 
 // UserSession matches user_sessions table.

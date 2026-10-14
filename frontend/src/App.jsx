@@ -9,6 +9,7 @@ import PageTransition from "./components/PageTransition";
 import ProtectedRoute from "./components/ProtectedRoute";
 import SettingsLayout from "./components/SettingsLayout";
 import SetupCheckError from "./components/SetupCheckError";
+import TfaEnrolmentRequired from "./components/TfaEnrolmentRequired";
 import { isAuthPhase } from "./constants/authPhases";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { ColorThemeProvider } from "./contexts/ColorThemeContext";
@@ -118,6 +119,10 @@ function AppRoutes() {
 				</div>
 			</div>
 		);
+	}
+
+	if (isAuthPhase.tfaEnrolmentRequired(authPhase)) {
+		return <TfaEnrolmentRequired />;
 	}
 
 	// Backend/DB unreachable or rate limited - show error, not first-time setup

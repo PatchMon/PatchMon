@@ -98,9 +98,13 @@ func AuthWithSessionCheck(cfg *config.Config, sessionsStore *store.SessionsStore
 			// what makes revocation work, and must not be switchable off by
 			// setting SESSION_INACTIVITY_TIMEOUT_MINUTES=0.
 			if sessionID != "" && sessionsStore != nil {
-				sess, err := sessionsStore.GetByID(r.Context(), sessionID, userID)
+				sess, err := sessionsStore.GetAuthState(r.Context(), sessionID, userID)
 				if err != nil || sess == nil {
 					http.Error(w, `{"error":"Session expired"}`, http.StatusUnauthorized)
+					return
+				}
+				if sess.TfaEnrolmentPending && !tfaEnrolmentAllowed(r) {
+					writeTfaEnrolmentRequired(w)
 					return
 				}
 
@@ -177,6 +181,27 @@ func OptionalAuth(cfg *config.Config) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// TfaEnrolmentRequiredCode marks a 403 from a session that must set up 2FA first.
+const TfaEnrolmentRequiredCode = "TFA_ENROLMENT_REQUIRED"
+
+var tfaEnrolmentRoutes = map[string]bool{
+	http.MethodGet + " /api/v1/tfa/setup":         true,
+	http.MethodPost + " /api/v1/tfa/verify-setup": true,
+	http.MethodGet + " /api/v1/tfa/status":        true,
+	http.MethodGet + " /api/v1/auth/profile":      true,
+	http.MethodPost + " /api/v1/auth/logout":      true,
+}
+
+func tfaEnrolmentAllowed(r *http.Request) bool {
+	return tfaEnrolmentRoutes[r.Method+" "+r.URL.Path]
+}
+
+func writeTfaEnrolmentRequired(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = w.Write([]byte(`{"error":"Two-factor authentication setup is required","code":"` + TfaEnrolmentRequiredCode + `"}`))
 }
 
 func extractToken(r *http.Request) (token, source string) {

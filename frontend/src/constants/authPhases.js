@@ -2,10 +2,12 @@
  * Authentication phases for the centralized auth state machine
  *
  * Flow: INITIALISING -> CHECKING_SETUP -> READY
+ * A signed-in user whose 2FA an admin reset sits in TFA_ENROLMENT_REQUIRED until they enrol.
  */
 export const AUTH_PHASES = {
 	INITIALISING: "INITIALISING",
 	CHECKING_SETUP: "CHECKING_SETUP",
+	TFA_ENROLMENT_REQUIRED: "TFA_ENROLMENT_REQUIRED",
 	READY: "READY",
 };
 
@@ -15,6 +17,7 @@ export const AUTH_PHASES = {
 export const isAuthPhase = {
 	initialising: (phase) => phase === AUTH_PHASES.INITIALISING,
 	checkingSetup: (phase) => phase === AUTH_PHASES.CHECKING_SETUP,
+	tfaEnrolmentRequired: (phase) => phase === AUTH_PHASES.TFA_ENROLMENT_REQUIRED,
 	ready: (phase) => phase === AUTH_PHASES.READY,
 };
 

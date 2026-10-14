@@ -1,0 +1,120 @@
+package handler
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtest"
+	"github.com/go-chi/chi/v5"
+)
+
+func TestTfaEnrolmentGate(t *testing.T) {
+	ctx := context.Background()
+	d := pgtest.Open(t)
+	x := newTfaResetHarness(t, d, d)
+	cfg := &config.Config{JWTSecret: "gate-test-secret-0123456789abcdef"}
+	mint := &AuthHandler{cfg: cfg}
+
+	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	r := chi.NewRouter()
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Use(middleware.AuthWithSessionCheck(cfg, x.sessions, nil, nil))
+		r.Get("/tfa/setup", ok)
+		r.Post("/tfa/verify-setup", ok)
+		r.Get("/tfa/status", ok)
+		r.Get("/auth/profile", ok)
+		r.Post("/auth/logout", ok)
+		r.Put("/auth/profile", ok)
+		r.Post("/tfa/disable", ok)
+		r.Get("/hosts", ok)
+		r.Get("/auth/admin/users", ok)
+		r.Post("/auth/admin/users", ok)
+		r.Get("/tfa/setup/", ok)
+	})
+
+	do := func(token, method, path string) int {
+		req := httptest.NewRequest(method, path, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	tokenFor := func(u *tfaTestUser) string {
+		sid := x.mkSession(ctx, u.ID)
+		tok, err := mint.createAccessToken(u.ID, u.Role, sid, 600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tok
+	}
+
+	admin := x.mkUser(ctx, "admin", false)
+	target := x.mkUser(ctx, "user", true)
+	if rec := x.post(ctx, admin, target.ID, map[string]string{"password": tfaResetTestPassword}); rec.Code != http.StatusOK {
+		t.Fatalf("reset: %d %s", rec.Code, rec.Body.String())
+	}
+	tok := tokenFor(target)
+
+	allowed := [][2]string{
+		{http.MethodGet, "/api/v1/tfa/setup"},
+		{http.MethodPost, "/api/v1/tfa/verify-setup"},
+		{http.MethodGet, "/api/v1/tfa/status"},
+		{http.MethodGet, "/api/v1/auth/profile"},
+		{http.MethodPost, "/api/v1/auth/logout"},
+	}
+	refused := [][2]string{
+		{http.MethodPut, "/api/v1/auth/profile"},
+		{http.MethodPost, "/api/v1/tfa/disable"},
+		{http.MethodGet, "/api/v1/hosts"},
+		{http.MethodGet, "/api/v1/auth/admin/users"},
+		{http.MethodPost, "/api/v1/auth/admin/users"},
+		{http.MethodGet, "/api/v1/tfa/setup/"},
+	}
+	for _, c := range allowed {
+		if got := do(tok, c[0], c[1]); got != http.StatusOK {
+			t.Errorf("pending %s %s = %d, want 200", c[0], c[1], got)
+		}
+	}
+	for _, c := range refused {
+		if got := do(tok, c[0], c[1]); got != http.StatusForbidden {
+			t.Errorf("pending %s %s = %d, want 403", c[0], c[1], got)
+		}
+	}
+
+	t.Run("an unflagged user is not restricted", func(t *testing.T) {
+		if got := do(tokenFor(admin), http.MethodGet, "/api/v1/hosts"); got != http.StatusOK {
+			t.Fatalf("got %d", got)
+		}
+	})
+
+	t.Run("an IdP link lifts the restriction", func(t *testing.T) {
+		other := x.mkUser(ctx, "user", false)
+		if _, err := d.Exec(ctx, `UPDATE users SET tfa_enrolment_required=true WHERE id=$1`, other.ID); err != nil {
+			t.Fatal(err)
+		}
+		otok := tokenFor(other)
+		if got := do(otok, http.MethodGet, "/api/v1/hosts"); got != http.StatusForbidden {
+			t.Fatalf("flagged local user: got %d", got)
+		}
+		if _, err := d.Exec(ctx, `UPDATE users SET oidc_sub=$1 WHERE id=$2`, "sub-"+other.ID, other.ID); err != nil {
+			t.Fatal(err)
+		}
+		if got := do(otok, http.MethodGet, "/api/v1/hosts"); got != http.StatusOK {
+			t.Fatalf("IdP-linked user: got %d", got)
+		}
+	})
+
+	js := `[]`
+	if err := x.users.UpdateTfaEnabled(ctx, target.ID, &js); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range refused[:4] {
+		if got := do(tok, c[0], c[1]); got != http.StatusOK {
+			t.Errorf("after enrolment %s %s = %d, want 200 on the same session", c[0], c[1], got)
+		}
+	}
+}

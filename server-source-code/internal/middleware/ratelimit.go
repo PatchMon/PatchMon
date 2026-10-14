@@ -222,6 +222,42 @@ func rateLimitClientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
+// RateLimitPerUser caps a route per authenticated user and fails closed without Redis.
+// It must run after the auth middleware.
+func RateLimitPerUser(rdb *hostctx.RedisResolver, name string, max int, window time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			userID, _ := r.Context().Value(UserIDKey).(string)
+			if userID == "" {
+				writeJSONError(w, http.StatusUnauthorized, "Unauthorized")
+				return
+			}
+			if rdb == nil || rdb.RDB(r.Context()) == nil {
+				rateLimitUnavailable(w, r, RateLimitPassword)
+				return
+			}
+			key := hostctx.TenantKey(r.Context(), "ratelimit:user:"+name+":"+userID)
+			count, ttl, err := rateLimitHit(r.Context(), rdb.RDB(r.Context()), key, int(window.Milliseconds()))
+			if err != nil {
+				rateLimitUnavailable(w, r, RateLimitPassword)
+				return
+			}
+			if count > int64(max) {
+				remainingSec := int(ttl.Seconds())
+				if remainingSec <= 0 {
+					remainingSec = int(window.Seconds())
+				}
+				w.Header().Set("Retry-After", strconv.Itoa(remainingSec))
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"message":"Too many requests. Try again later."}`))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // RateLimitPerContext caps a route's request rate across the whole calling context.
 func RateLimitPerContext(rdb *hostctx.RedisResolver, name string, max int, window time.Duration) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

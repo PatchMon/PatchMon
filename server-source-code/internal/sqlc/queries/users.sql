@@ -118,7 +118,7 @@ WHERE id = sqlc.arg('id');
 UPDATE users SET tfa_secret = $1, updated_at = NOW() WHERE id = $2;
 
 -- name: UpdateTfaEnabled :exec
-UPDATE users SET tfa_enabled = $1, tfa_backup_codes = $2, updated_at = NOW() WHERE id = $3;
+UPDATE users SET tfa_enabled = $1, tfa_backup_codes = $2, tfa_enrolment_required = false, updated_at = NOW() WHERE id = $3;
 
 -- name: UpdateTfaBackupCodes :exec
 UPDATE users SET tfa_backup_codes = $1, updated_at = NOW() WHERE id = $2;
@@ -157,6 +157,8 @@ WHERE id = $4;
 -- name: SetNewsletterSubscribed :exec
 UPDATE users SET newsletter_subscribed = true, newsletter_subscribed_at = NOW(), updated_at = NOW() WHERE id = $1;
 
--- name: ResetUserTfa :execrows
-UPDATE users SET tfa_enabled = false, tfa_secret = NULL, tfa_backup_codes = NULL, updated_at = NOW()
-WHERE id = $1 AND tfa_enabled = true;
+-- name: ResetUserTfa :one
+UPDATE users SET tfa_enabled = false, tfa_secret = NULL, tfa_backup_codes = NULL,
+    tfa_enrolment_required = (password_hash IS NOT NULL AND oidc_sub IS NULL), updated_at = NOW()
+WHERE id = $1 AND tfa_enabled = true
+RETURNING tfa_enrolment_required;

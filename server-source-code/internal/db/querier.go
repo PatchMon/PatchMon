@@ -431,6 +431,7 @@ type Querier interface {
 	GetRolePermissions(ctx context.Context, role string) (RolePermission, error)
 	GetRuleAggregationsFromScans(ctx context.Context, arg GetRuleAggregationsFromScansParams) ([]GetRuleAggregationsFromScansRow, error)
 	GetScheduledReportByID(ctx context.Context, id string) (ScheduledReport, error)
+	GetSessionAuthState(ctx context.Context, arg GetSessionAuthStateParams) (GetSessionAuthStateRow, error)
 	GetSessionByID(ctx context.Context, arg GetSessionByIDParams) (UserSession, error)
 	GetSessionByRefreshToken(ctx context.Context, refreshToken string) (UserSession, error)
 	GetSourceReposByPackageIDs(ctx context.Context, arg GetSourceReposByPackageIDsParams) ([]GetSourceReposByPackageIDsRow, error)
@@ -579,7 +580,7 @@ type Querier interface {
 	MarkValidationApproved(ctx context.Context, arg MarkValidationApprovedParams) (int64, error)
 	ReissueHostApiKey(ctx context.Context, arg ReissueHostApiKeyParams) (int64, error)
 	RequeuePatchRun(ctx context.Context, arg RequeuePatchRunParams) (int64, error)
-	ResetUserTfa(ctx context.Context, id string) (int64, error)
+	ResetUserTfa(ctx context.Context, id string) (bool, error)
 	ResolveDockerImageIDs(ctx context.Context, arg ResolveDockerImageIDsParams) ([]ResolveDockerImageIDsRow, error)
 	ResolveWindowsPatchTargets(ctx context.Context, arg ResolveWindowsPatchTargetsParams) ([]ResolveWindowsPatchTargetsRow, error)
 	RevokeAllSessionsForUser(ctx context.Context, userID string) error

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
@@ -10,6 +11,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // UsersStore provides user access.
@@ -416,32 +418,39 @@ func (s *UsersStore) SetNewsletterSubscribed(ctx context.Context, userID string)
 	return s.db.DB(ctx).Queries.SetNewsletterSubscribed(ctx, userID)
 }
 
-// AdminResetTfa clears TFA, revokes sessions and trusted devices and writes the audit row in one
-// transaction. It returns false, changing nothing, when TFA was not enabled.
-func (s *UsersStore) AdminResetTfa(ctx context.Context, userID string, audit *models.AuditLog) (bool, error) {
+// AdminResetTfa clears TFA, flags local accounts for re-enrolment, revokes sessions and trusted
+// devices and writes the audit row in one transaction. reset is false, changing nothing, when TFA was off.
+func (s *UsersStore) AdminResetTfa(ctx context.Context, userID string, audit AuditEntry) (reset, enrolmentRequired bool, err error) {
 	d := s.db.DB(ctx)
 	tx, err := d.Begin(ctx)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	q := d.Queries.WithTx(tx)
-	n, err := q.ResetUserTfa(ctx, userID)
-	if err != nil {
-		return false, err
+	enrolmentRequired, err = q.ResetUserTfa(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, false, nil
 	}
-	if n == 0 {
-		return false, nil
+	if err != nil {
+		return false, false, err
 	}
 	if err := q.RevokeAllTrustedDevicesForUser(ctx, userID); err != nil {
-		return false, err
+		return false, false, err
 	}
 	if err := q.RevokeAllSessionsForUser(ctx, userID); err != nil {
-		return false, err
+		return false, false, err
 	}
+	if audit.Metadata == nil {
+		audit.Metadata = map[string]any{}
+	}
+	audit.Metadata["enrolment_required"] = enrolmentRequired
 	if err := insertAuditLog(ctx, q, audit); err != nil {
-		return false, err
+		return false, false, err
 	}
-	return true, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return false, false, err
+	}
+	return true, enrolmentRequired, nil
 }

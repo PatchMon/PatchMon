@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/PatchMon/PatchMon/server-source-code/internal/clientip"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
@@ -111,7 +110,7 @@ func (h *UsersHandler) ResetTfa(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reset, err := h.users.AdminResetTfa(ctx, target.ID, h.tfaResetAudit(r, actorID, target.ID, true, ""))
+	reset, enrolmentRequired, err := h.users.AdminResetTfa(ctx, target.ID, newAuditEntry(r, auditEventUserTfaReset, actorID, target.ID, true, nil))
 	if err != nil {
 		if h.log != nil {
 			h.log.Error("admin tfa reset failed", "actor_id", actorID, "target_user_id", target.ID, "error", err)
@@ -128,7 +127,7 @@ func (h *UsersHandler) ResetTfa(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.log != nil {
-		attrs := []any{"actor_id", actorID, "actor_username", actor.Username, "target_user_id", target.ID, "target_username", target.Username, "ip", tfaResetClientIP(r)}
+		attrs := []any{"actor_id", actorID, "actor_username", actor.Username, "target_user_id", target.ID, "target_username", target.Username, "enrolment_required", enrolmentRequired, "ip", requestClientIP(r)}
 		if host := hostctx.TenantHostKey(ctx); host != "" {
 			attrs = append(attrs, "host", host)
 		}
@@ -149,7 +148,7 @@ func (h *UsersHandler) ResetTfa(w http.ResponseWriter, r *http.Request) {
 					"username":          target.Username,
 					"reset_by":          actor.ID,
 					"reset_by_username": actor.Username,
-					"ip_address":        tfaResetClientIP(r),
+					"ip_address":        requestClientIP(r),
 					"user_agent":        r.UserAgent(),
 				},
 			})
@@ -157,8 +156,9 @@ func (h *UsersHandler) ResetTfa(w http.ResponseWriter, r *http.Request) {
 	}
 
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"message": "Two-factor authentication has been reset for " + target.Username,
-		"user":    map[string]string{"id": target.ID, "username": target.Username},
+		"message":           "Two-factor authentication has been reset for " + target.Username,
+		"user":              map[string]string{"id": target.ID, "username": target.Username},
+		"enrolmentRequired": enrolmentRequired,
 	})
 }
 
@@ -211,7 +211,7 @@ func (h *UsersHandler) logTfaReset(r *http.Request, reason, actorID, targetID st
 	if h.log == nil {
 		return
 	}
-	attrs := []any{"reason", reason, "actor_id", actorID, "target_user_id", truncateForLog(targetID, 64), "ip", tfaResetClientIP(r)}
+	attrs := []any{"reason", reason, "actor_id", actorID, "target_user_id", truncateForLog(targetID, 64), "ip", requestClientIP(r)}
 	if host := hostctx.TenantHostKey(r.Context()); host != "" {
 		attrs = append(attrs, "host", host)
 	}
@@ -223,39 +223,7 @@ func (h *UsersHandler) denyTfaReset(r *http.Request, reason, actorID, targetID s
 	if h.audit == nil {
 		return
 	}
-	if err := h.audit.Insert(r.Context(), h.tfaResetAudit(r, actorID, targetID, false, reason)); err != nil && h.log != nil {
+	if err := h.audit.Record(r.Context(), newAuditEntry(r, auditEventUserTfaReset, actorID, targetID, false, map[string]any{"reason": reason})); err != nil && h.log != nil {
 		h.log.Error("admin tfa reset: audit write failed", "actor_id", actorID, "error", err)
 	}
-}
-
-func (h *UsersHandler) tfaResetAudit(r *http.Request, actorID, targetID string, success bool, reason string) *models.AuditLog {
-	e := &models.AuditLog{
-		Event:        auditEventUserTfaReset,
-		UserID:       &actorID,
-		TargetUserID: optionalString(truncateForLog(targetID, 64)),
-		IPAddress:    optionalString(tfaResetClientIP(r)),
-		UserAgent:    optionalString(truncateForLog(r.UserAgent(), 512)),
-		Success:      success,
-	}
-	if id, _ := r.Context().Value(middleware.RequestIDKey).(string); id != "" {
-		e.RequestID = optionalString(truncateForLog(id, 64))
-	}
-	if reason != "" {
-		e.Details = optionalString(`{"reason":"` + reason + `"}`)
-	}
-	return e
-}
-
-func tfaResetClientIP(r *http.Request) string {
-	if ip := clientip.FromRequest(r); ip != "" {
-		return ip
-	}
-	return r.RemoteAddr
-}
-
-func optionalString(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
 }

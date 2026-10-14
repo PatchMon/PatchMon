@@ -644,6 +644,9 @@ func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, user
 	if rememberMe && !trustExpiresAt.IsZero() {
 		resp["tfa_bypass_until"] = trustExpiresAt.Format(time.RFC3339)
 	}
+	if user.TfaEnrolmentPending() {
+		resp["tfaEnrolmentRequired"] = true
+	}
 	JSON(w, http.StatusOK, resp)
 }
 
@@ -1781,9 +1784,10 @@ func userToResponse(u *models.User, acceptedVersions []string) map[string]interf
 	res := map[string]interface{}{
 		"id": u.ID, "username": u.Username, "email": u.Email, "role": u.Role,
 		"is_active": u.IsActive, "theme_preference": strVal(u.ThemePreference, "dark"),
-		"color_theme":  strVal(u.ColorTheme, "cyber_blue"),
-		"updated_at":   u.UpdatedAt,
-		"has_password": u.PasswordHash != nil && *u.PasswordHash != "",
+		"color_theme":            strVal(u.ColorTheme, "cyber_blue"),
+		"updated_at":             u.UpdatedAt,
+		"has_password":           u.PasswordHash != nil && *u.PasswordHash != "",
+		"tfa_enrolment_required": u.TfaEnrolmentPending(),
 	}
 	if u.FirstName != nil {
 		res["first_name"] = *u.FirstName

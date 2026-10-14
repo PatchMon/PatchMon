@@ -203,6 +203,19 @@ func TestAdminResetTfa(t *testing.T) {
 		if u.TfaEnabled || u.TfaSecret != nil || u.TfaBackupCodes != nil {
 			t.Fatalf("TFA not cleared: enabled=%v secret=%v codes=%v", u.TfaEnabled, u.TfaSecret, u.TfaBackupCodes)
 		}
+		if !u.TfaEnrolmentRequired || !u.TfaEnrolmentPending() {
+			t.Fatal("local account was not flagged for re-enrolment")
+		}
+		if !strings.Contains(rec.Body.String(), `"enrolmentRequired":true`) {
+			t.Fatalf("response does not report enrolment: %s", rec.Body.String())
+		}
+		js := `[]`
+		if err := x.users.UpdateTfaEnabled(ctx, target.ID, &js); err != nil {
+			t.Fatal(err)
+		}
+		if x.reload(ctx, target.ID).TfaEnrolmentRequired {
+			t.Fatal("completing enrolment did not clear the flag")
+		}
 		if n := x.count(ctx, `SELECT count(*) FROM user_sessions WHERE user_id=$1 AND is_revoked=false`, target.ID); n != 0 {
 			t.Fatalf("%d target sessions still live", n)
 		}
@@ -402,11 +415,14 @@ func TestAdminResetTfa(t *testing.T) {
 	t.Run("OIDC-linked target with local TFA can be reset", func(t *testing.T) {
 		admin := x.mkUser(ctx, "admin", false)
 		target := x.mkUser(ctx, "user", true)
-		if _, err := d.Exec(ctx, `UPDATE users SET oidc_sub=$1, oidc_provider='idp.example.com', password_hash=NULL WHERE id=$2`, "sub-"+target.ID, target.ID); err != nil {
+		if _, err := d.Exec(ctx, `UPDATE users SET oidc_sub=$1, oidc_provider='idp.example.com' WHERE id=$2`, "sub-"+target.ID, target.ID); err != nil {
 			t.Fatal(err)
 		}
 		if rec := x.post(ctx, admin, target.ID, pw); rec.Code != http.StatusOK {
 			t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+		}
+		if x.reload(ctx, target.ID).TfaEnrolmentRequired {
+			t.Fatal("IdP-linked account must not be forced to enrol local 2FA")
 		}
 	})
 

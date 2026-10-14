@@ -5222,7 +5222,9 @@ The reset:
 - revokes every trusted ("Remember me") device for that user;
 - signs the user out of every session, so they have to sign in again.
 
-The user can then sign in with their password alone and should set up 2FA again straight away from **Profile → Multi-Factor Authentication**. If they have also forgotten their password, use **Reset Password** as well.
+On their next sign-in the user enters their password and is taken straight to a **Set up two-factor authentication** screen. They cannot reach any other page, and the server refuses every other API call from that session, until they scan the new QR code, enter a code and save their new backup codes. They can also sign out from that screen. If they have also forgotten their password, use **Reset Password** as well.
+
+Accounts linked to an OIDC / SSO provider, and accounts without a local password, are not forced to re-enrol, because their MFA is managed by the identity provider. The reset still clears any local 2FA they had. If an account is linked to an identity provider after a reset, the requirement lapses for the same reason.
 
 Rules the server enforces:
 
@@ -5234,7 +5236,7 @@ Rules the server enforces:
 | Confirmation | Your password is always required, and your 2FA code (or a backup code) if you have 2FA. Wrong 2FA codes count towards your own `MAX_TFA_ATTEMPTS` lockout. |
 | SSO-only administrators | An administrator who signs in only through OIDC has no local password to confirm with, so cannot use this action. Ask an administrator with a local password. |
 | Deactivated users | Can be reset, so you can clear 2FA before reactivating an account. |
-| Rate limit | Shares the password-change limit: `PASSWORD_RATE_LIMIT_MAX` attempts (default 5) per `PASSWORD_RATE_LIMIT_WINDOW_MS` (default 15 minutes) per client IP. |
+| Rate limit | 10 attempts per administrator per 15 minutes, counted per signed-in administrator rather than per IP. |
 
 Every reset, and every refused attempt that got as far as checking your password, is written to the server log and to the `audit_logs` table (event `user_tfa_reset`). A successful reset also raises the `user_tfa_disabled` notification event, so any alert route you have for "2FA disabled" fires for it.
 
