@@ -385,15 +385,27 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 
 var microsoftTenantPlaceholders = map[string]bool{"{tenantid}": true, "common": true, "organizations": true, "consumers": true}
 
+var microsoftTenantIssuerHosts = map[string]bool{
+	"login.microsoftonline.com":        true,
+	"login.microsoftonline.us":         true,
+	"login.partner.microsoftonline.cn": true,
+	"login.chinacloudapi.cn":           true,
+	"sts.windows.net":                  true,
+}
+
+func isMicrosoftTenantIssuer(u *url.URL) bool {
+	return microsoftTenantIssuerHosts[strings.ToLower(u.Hostname())]
+}
+
 // canonicalIssuer substitutes Entra's tid for a templated or shared tenant
 // segment, so the stored issuer always names the tenant that issued the sub.
 func canonicalIssuer(iss, tid string) string {
 	iss = strings.TrimSuffix(strings.TrimSpace(iss), "/")
-	if tid == "" || !isMicrosoftIdentityIssuer(iss) {
+	if tid == "" {
 		return iss
 	}
 	u, err := url.Parse(iss)
-	if err != nil {
+	if err != nil || !isMicrosoftTenantIssuer(u) {
 		return iss
 	}
 	segs := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
@@ -419,7 +431,7 @@ func issuerKey(iss string) (string, bool) {
 		return "", false
 	}
 	path := strings.TrimSuffix(u.EscapedPath(), "/")
-	if isMicrosoftIdentityIssuer(iss) {
+	if isMicrosoftTenantIssuer(u) {
 		tenant := strings.ToLower(strings.SplitN(strings.TrimPrefix(u.Path, "/"), "/", 2)[0])
 		if tenant == "" || microsoftTenantPlaceholders[tenant] {
 			return "", false

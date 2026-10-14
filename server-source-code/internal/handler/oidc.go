@@ -415,12 +415,14 @@ func (h *OidcHandler) resolveOidcUser(ctx context.Context, userInfo *oidc.UserIn
 		return nil, "/login?error=Authentication+failed"
 	}
 	// The lookup matches on oidc_sub OR email; establish which before trusting it.
-	matchedBySub, legacyLink := oidcIdentityMatches(user, userInfo)
+	matchedBySub, legacyLink := oidcIdentityMatches(user, userInfo, h.oidcIssuerURL(ctx))
 	if matchedBySub && legacyLink {
+		previous := strVal(user.OidcProvider, "")
 		if err := h.users.UpdateOidcProvider(ctx, user.ID, userInfo.Issuer); err == nil {
 			user.OidcProvider = &userInfo.Issuer
 			if h.log != nil {
-				h.log.Info("oidc link bound to issuer", "user_id", user.ID, "issuer", userInfo.Issuer)
+				h.log.Warn("oidc legacy link bound to issuer", "user_id", user.ID, "email", user.Email,
+					"previous_provider", previous, "issuer", userInfo.Issuer)
 			}
 		}
 	}
@@ -827,14 +829,15 @@ func strPtr(s string) *string {
 
 // oidcIdentityMatches reports whether user is bound to this sub at this issuer.
 // legacy marks a hostname-only or empty binding, which the caller upgrades.
-func oidcIdentityMatches(user *models.User, info *oidc.UserInfo) (matched, legacy bool) {
+func oidcIdentityMatches(user *models.User, info *oidc.UserInfo, configuredIssuer string) (matched, legacy bool) {
 	if user == nil || user.OidcSub == nil || *user.OidcSub != info.Sub {
 		return false, false
 	}
 	stored := strings.TrimSpace(strVal(user.OidcProvider, ""))
 	switch {
 	case stored == "":
-		return true, true
+		configuredHost := extractHost(strings.TrimSpace(configuredIssuer))
+		return configuredHost != "" && strings.EqualFold(configuredHost, extractHost(info.Issuer)), true
 	case !strings.Contains(stored, "://"):
 		return strings.EqualFold(stored, extractHost(info.Issuer)), true
 	default:

@@ -19,6 +19,11 @@ func TestSameIssuer(t *testing.T) {
 		{"https://login.microsoftonline.com/" + tid + "/v2.0", "https://login.microsoftonline.com/99999999-2222-3333-4444-555555555555/v2.0", false},
 		{"https://login.microsoftonline.com/common/v2.0", "https://login.microsoftonline.com/common/v2.0", false},
 		{"https://login.microsoftonline.com/{tenantid}/v2.0", "https://login.microsoftonline.com/{tenantid}/v2.0", false},
+		{"https://login.microsoftonline.us/" + tid + "/v2.0", "https://sts.windows.net/" + tid + "/", true},
+		{"https://login.chinacloudapi.cn/" + tid + "/v2.0", "https://login.partner.microsoftonline.cn/" + tid + "/v2.0", true},
+		{"https://evil.chinacloudapi.cn/" + tid + "/v2.0", "https://login.chinacloudapi.cn/" + tid + "/v2.0", false},
+		{"https://evil.chinacloudapi.cn/" + tid + "/v2.0", "https://evil.chinacloudapi.cn/" + tid + "/v2.0", true},
+		{"https://tenant.b2clogin.microsoftonline.com/" + tid + "/v2.0", "https://login.microsoftonline.com/" + tid + "/v2.0", false},
 		{"idp.example.com", "idp.example.com", false},
 		{"", "", false},
 	} {
@@ -37,6 +42,7 @@ func TestCanonicalIssuer(t *testing.T) {
 		{"https://login.microsoftonline.com/{tenantid}/v2.0", tid, "https://login.microsoftonline.com/" + tid + "/v2.0"},
 		{"https://login.microsoftonline.com/common/v2.0", tid, "https://login.microsoftonline.com/" + tid + "/v2.0"},
 		{"https://login.microsoftonline.com/common/v2.0", "", "https://login.microsoftonline.com/common/v2.0"},
+		{"https://evil.chinacloudapi.cn/common/v2.0", tid, "https://evil.chinacloudapi.cn/common/v2.0"},
 	} {
 		if got := canonicalIssuer(tc.iss, tc.tid); got != tc.want {
 			t.Errorf("canonicalIssuer(%q, %q) = %q, want %q", tc.iss, tc.tid, got, tc.want)

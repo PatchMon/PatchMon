@@ -3162,7 +3162,17 @@ The `sub` changes, and this refusal appears, when:
 
 Accounts linked before 2.1.4 recorded only the IdP's hostname. On each user's next successful login PatchMon checks the hostname against the current issuer and, if it matches, records the full issuer from then on.
 
-If you are sure the new identity is the same person, unlink the old one:
+**Changing your IdP's own URL counts as a new issuer.** The issuer is the exact URL your IdP reports, so moving from `http` to `https`, changing the port or hostname, or upgrading Keycloak to a version without the `/auth` prefix refuses every linked user, even though it is the same IdP with the same users. In that case, rebind the links to the new URL rather than unlinking anyone. Find the stored value, then replace it (stock Docker Compose shown):
+
+```bash
+docker compose exec database psql -U patchmon_user -d patchmon_db -c "SELECT DISTINCT oidc_provider FROM users;"
+docker compose exec database psql -U patchmon_user -d patchmon_db \
+  -c "UPDATE users SET oidc_provider='<new>' WHERE oidc_provider='<old>';"
+```
+
+Use the issuer your IdP now reports for `<new>`: the `issuer` value in its `/.well-known/openid-configuration`, without a trailing slash. A rebind is safer than an unlink, because each user must still present the same `sub` as before; an unlinked account is instead claimed by whoever next signs in with its email address. Only rebind when the IdP really is the same one at a new address.
+
+If the new identity is a different IdP, or the user was re-created, and you are sure it is the same person, unlink the old one:
 
 1. Sign in as an admin, go to **Settings > Users** and click **Edit** on the user
 2. Under **SSO identity**, click **Unlink SSO identity** and confirm

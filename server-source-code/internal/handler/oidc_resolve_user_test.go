@@ -225,6 +225,24 @@ func TestResolveOidcUserAgainstPostgres(t *testing.T) {
 		}
 	})
 
+	t.Run("empty provider matches only the configured issuer's host and is upgraded", func(t *testing.T) {
+		sub, email := unique("emptyprov")
+		u := createBound(email, sub, "")
+		if got, _ := newHandler(false).resolveOidcUser(ctx, &oidc.UserInfo{Issuer: "https://evil.example.net", Sub: sub, Email: email, EmailVerified: true}); got != nil {
+			t.Fatal("empty provider accepted another host")
+		}
+		if p := providerOf(u.ID); p != "" {
+			t.Fatalf("refused login changed the provider to %q", p)
+		}
+		got, failURL := newHandler(false).resolveOidcUser(ctx, &oidc.UserInfo{Issuer: testIssuer, Sub: sub, Email: email})
+		if got == nil || got.ID != u.ID {
+			t.Fatalf("got %v, %q", got, failURL)
+		}
+		if p := providerOf(u.ID); p != testIssuer {
+			t.Fatalf("empty provider not upgraded: %q", p)
+		}
+	})
+
 	t.Run("Entra v1 and v2 issuers of one tenant match, other tenants do not", func(t *testing.T) {
 		const tid = "11111111-2222-3333-4444-555555555555"
 		sub, email := unique("entra")
