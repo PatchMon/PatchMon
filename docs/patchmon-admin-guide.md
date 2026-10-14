@@ -4276,7 +4276,7 @@ Web SSH is shipped in PatchMon from 1.4.0 onwards; in 2.0 it is provided under t
 
 Users without `can_use_remote_access` attempting to open the terminal are rejected with HTTP `403 Access denied` during the WebSocket handshake.
 
-The **Hosts** related permission (`can_manage_hosts`) is required to see the "Open Terminal" control on the host detail page in the first place.
+The **Terminal** tab on the host detail page is only shown to users whose role has `can_use_remote_access`.
 
 ### Opening a terminal
 
