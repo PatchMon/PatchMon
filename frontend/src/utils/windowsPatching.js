@@ -1,3 +1,8 @@
+import {
+	isPacmanHost,
+	PACMAN_SELECTED_PATCH_UNSUPPORTED,
+} from "./patchSupport";
+
 export const LINUX_DRY_RUN_PACKAGE_LIMIT = 5;
 export const WINDOWS_DRY_RUN_PACKAGE_LIMIT = 100;
 
@@ -8,6 +13,7 @@ export const UNPATCHABLE_REASON_TEXT = {
 	winget_pinned:
 		"Pinned with winget pin; remove the pin on the host to update it",
 	store_app: "Microsoft Store app: updates through the Microsoft Store",
+	pacman_partial_upgrade: PACMAN_SELECTED_PATCH_UNSUPPORTED,
 };
 
 // Reasons that keep a pending update visible but block patching, each with
@@ -209,11 +215,15 @@ export const windowsPatchAllSummary = (scope) => {
 };
 
 // Splits package-host pairs into ones the wizard may patch and ones it must
-// list as not patchable. Linux pairs are always patchable.
+// list as not patchable.
 export const partitionPatchableHosts = (hosts) => {
 	const patchable = [];
 	const unpatchable = [];
 	for (const h of hosts || []) {
+		if (isPacmanHost(h)) {
+			unpatchable.push({ host: h, reason: "pacman_partial_upgrade" });
+			continue;
+		}
 		if (!isWindowsOs(hostOsType(h))) {
 			patchable.push(h);
 			continue;

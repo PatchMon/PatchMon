@@ -8,7 +8,7 @@ ORDER BY created_at DESC
 LIMIT $1 OFFSET $2;
 
 -- name: ListHostOptions :many
-SELECT id, friendly_name, hostname, os_type, status
+SELECT id, friendly_name, hostname, os_type, status, package_manager
 FROM hosts
 WHERE (sqlc.narg('search')::text IS NULL OR friendly_name ILIKE '%' || sqlc.narg('search') || '%' OR hostname ILIKE '%' || sqlc.narg('search') || '%')
 ORDER BY friendly_name ASC, hostname ASC NULLS LAST, id ASC

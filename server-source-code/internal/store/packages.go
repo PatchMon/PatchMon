@@ -465,6 +465,7 @@ type PackageHostEntry struct {
 	Hostname         *string   `json:"hostname"`
 	OSType           string    `json:"osType"`
 	OSVersion        string    `json:"osVersion"`
+	PackageManager   *string   `json:"packageManager"`
 	LastUpdate       time.Time `json:"lastUpdate"`
 	CurrentVersion   string    `json:"currentVersion"`
 	AvailableVersion *string   `json:"availableVersion"`
@@ -534,6 +535,7 @@ func (s *PackagesStore) GetHosts(ctx context.Context, packageIDOrName string, p 
 			Hostname:         r.Hostname,
 			OSType:           r.OsType,
 			OSVersion:        r.OsVersion,
+			PackageManager:   r.PackageManager,
 			LastUpdate:       pgTime(r.LastUpdate),
 			CurrentVersion:   r.CurrentVersion,
 			AvailableVersion: r.AvailableVersion,

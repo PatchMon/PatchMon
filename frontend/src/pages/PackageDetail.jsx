@@ -24,10 +24,15 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import PatchWizard from "../components/PatchWizard";
+import Tooltip from "../components/ui/Tooltip";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import { usePageRefresh } from "../hooks/usePageRefresh";
 import { formatRelativeTime, packagesAPI } from "../utils/api";
+import {
+	isPacmanHost,
+	PACMAN_SELECTED_PATCH_UNSUPPORTED,
+} from "../utils/patchSupport";
 import {
 	hostOsType,
 	isBlockedUpdateReason,
@@ -48,8 +53,12 @@ function formatRepoName(name) {
 
 const isWindowsHost = (host) => isWindowsOs(hostOsType(host));
 
-const isHostPatchable = (host) =>
-	isWindowsHost(host) ? windowsPatchInfo(host).patchable : !!host.needsUpdate;
+const isHostPatchable = (host) => {
+	if (isPacmanHost(host)) return false;
+	return isWindowsHost(host)
+		? windowsPatchInfo(host).patchable
+		: !!host.needsUpdate;
+};
 
 const WindowsBadges = ({ host }) => {
 	if (!isWindowsHost(host)) return null;
@@ -98,6 +107,19 @@ const UpToDateBadge = ({ host, className = "" }) =>
 	);
 
 const NotPatchableTag = ({ host }) => {
+	if (isPacmanHost(host) && host.needsUpdate) {
+		return (
+			<Tooltip content={PACMAN_SELECTED_PATCH_UNSUPPORTED}>
+				<span
+					// biome-ignore lint/a11y/noNoninteractiveTabindex: focus opens the explanation for keyboard users
+					tabIndex={0}
+					className="badge-secondary w-fit"
+				>
+					Patch all only
+				</span>
+			</Tooltip>
+		);
+	}
 	if (!isWindowsHost(host) || !host.needsUpdate) return null;
 	const info = windowsPatchInfo(host);
 	if (info.patchable || isBlockedUpdateReason(info.reason)) return null;
@@ -909,7 +931,9 @@ const PackageDetail = () => {
 																			? "Queuing…"
 																			: "Patch"}
 																	</button>
-																) : isWindowsHost(host) && host.needsUpdate ? (
+																) : (isWindowsHost(host) ||
+																		isPacmanHost(host)) &&
+																	host.needsUpdate ? (
 																	<NotPatchableTag host={host} />
 																) : (
 																	<span className="text-sm text-secondary-500 dark:text-white">

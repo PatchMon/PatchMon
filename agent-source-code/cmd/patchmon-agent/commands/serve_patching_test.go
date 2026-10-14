@@ -2,6 +2,7 @@ package commands
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -96,4 +97,26 @@ func TestFreeBSDUpdateOutputHasPendingUpdates(t *testing.T) {
 			t.Fatal("expected no pending base-system updates")
 		}
 	})
+}
+
+func TestPatchTypeRefusal(t *testing.T) {
+	cases := []struct {
+		pkgManager, patchType string
+		refused               bool
+	}{
+		{"pacman", "patch_package", true},
+		{"pacman", "patch_all", false},
+		{"apt", "patch_package", false},
+		{"dnf", "patch_package", false},
+		{"apk", "patch_package", false},
+	}
+	for _, c := range cases {
+		got := patchTypeRefusal(c.pkgManager, c.patchType)
+		if (got != "") != c.refused {
+			t.Errorf("patchTypeRefusal(%q, %q) = %q, refused want %v", c.pkgManager, c.patchType, got, c.refused)
+		}
+	}
+	if got := patchTypeRefusal("pacman", "patch_package"); !strings.Contains(got, "partial upgrades") {
+		t.Errorf("refusal must explain partial upgrades, got %q", got)
+	}
 }

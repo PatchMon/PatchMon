@@ -699,6 +699,10 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if e := selectedPatchRefusal(host, valRun.PatchType); e != nil {
+		writeRunRequestError(w, e)
+		return
+	}
 
 	var pkgName *string
 	if valRun.PackageName != nil {
@@ -911,6 +915,10 @@ func (h *PatchingHandler) RetryValidation(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	if e := selectedPatchRefusal(host, run.PatchType); e != nil {
+		writeRunRequestError(w, e)
+		return
+	}
 	windows := store.IsWindowsOSType(host.OSType)
 	// patch_all runs cannot be dry-run on Linux/FreeBSD agents (no --dry-run support for
 	// the bulk upgrade path). Re-validation only makes sense for patch_package
@@ -1080,6 +1088,10 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 
 	host, ok := loadHost(w, r, h.hosts, body.HostID)
 	if !ok {
+		return
+	}
+	if e := selectedPatchRefusal(host, body.PatchType); e != nil {
+		writeRunRequestError(w, e)
 		return
 	}
 	windows := store.IsWindowsOSType(host.OSType)
@@ -1821,4 +1833,14 @@ func patchRunRowToMap(id, hostID, jobID, patchType string, pkgName *string, pkgN
 		m["package_names"] = names
 	}
 	return m
+}
+
+// Must match the agent's message for the same refusal.
+const pacmanSelectedPatchUnsupported = "Arch Linux does not support partial upgrades, so PatchMon cannot patch selected packages on this host. Use Patch all."
+
+func selectedPatchRefusal(host *models.Host, patchType string) *runRequestError {
+	if patchType == "patch_package" && host.PackageManager != nil && *host.PackageManager == "pacman" {
+		return badRunRequest(pacmanSelectedPatchUnsupported)
+	}
+	return nil
 }
