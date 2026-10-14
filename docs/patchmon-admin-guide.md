@@ -4324,7 +4324,7 @@ Web SSH is shipped in PatchMon from 1.4.0 onwards; in 2.0 it is provided under t
 
 Users without `can_use_remote_access` attempting to open the terminal are rejected with HTTP `403 Access denied` during the WebSocket handshake.
 
-The **Hosts** related permission (`can_manage_hosts`) is required to see the "Open Terminal" control on the host detail page in the first place.
+The **Terminal** tab on the host detail page is only shown to users whose role has `can_use_remote_access`.
 
 ### Opening a terminal
 
@@ -4495,8 +4495,6 @@ Server logs also record each upgrade and ticket consumption under `ssh-terminal 
 
 ## Chapter 22: RDP via Guacamole {#rdp-via-guacamole}
 
-> **Known issue (2.0.0).** The RDP connection flow has a known bug in PatchMon 2.0.0. Sessions may fail to establish, disconnect early, or return opaque errors in certain environments. A fix is planned for the next release. See Release Notes 2.0.0 for details. If RDP is mission-critical for your rollout, validate the workflow in a staging instance before relying on it in production.
-
 ### Overview
 
 PatchMon 2.0 lets you open a full RDP session to a **Windows host** from your browser, with no RDP client installed locally and no inbound RDP port exposed to the outside world. The session travels:
@@ -4505,26 +4503,9 @@ PatchMon 2.0 lets you open a full RDP session to a **Windows host** from your br
 - From the PatchMon server into a `guacd` sidecar, which speaks the RDP protocol.
 - From `guacd` through a short-lived TCP proxy to the host's own PatchMon agent, which forwards to `localhost:3389` on the Windows host.
 
-This is a one-time ticketed connection with keyboard, mouse, and clipboard support. Screen size is configurable, and NLA/TLS/legacy RDP is auto-negotiated.
+This is a one-time ticketed connection with keyboard, mouse, and clipboard support. The remote desktop follows the size of the RDP panel, and NLA/TLS/legacy RDP is auto-negotiated.
 
 RDP is provided under the **remote_access** capability module.
-
-### Known issue: 2.0.0 RDP bug
-
-> **Before using RDP in production, read this.**
->
-> Version 2.0.0 has a known bug in the RDP connection flow that can cause:
-> - Sessions to fail handshake with generic errors.
-> - Ticket resolution issues that surface as *"invalid or expired ticket"* on otherwise valid sessions.
-> - Early disconnects after a successful handshake under some network conditions.
->
-> A fix is planned for the next release. In the meantime:
->
-> - If RDP is critical, stay on the last 1.4.x release that works for you, or retry the session.
-> - Always verify the **Web SSH Terminal** works end-to-end first. It has no such known issue and is a good baseline check for connectivity and agent health.
-> - When reporting RDP issues, include the **server log** lines tagged `rdp-ticket` and `rdp tunnel`, and the agent's `rdp_proxy_*` log lines.
->
-> Full context: Release Notes 2.0.0, section **Known issues**.
 
 ### Architecture
 
@@ -4542,22 +4523,21 @@ RDP is provided under the **remote_access** capability module.
 
 Key components:
 
-- **`guacd`**: Apache Guacamole's daemon, shipped as a sidecar container in PatchMon's Docker Compose (`guacamole/guacd:1.6.0`). Runs on `4822/tcp` inside the `patchmon-internal` network. No public ports.
+- **`guacd`**: Apache Guacamole's daemon, shipped as a sidecar container in PatchMon's Docker Compose (`guacamole/guacd:1.6.0`). It shares the server container's network namespace (`network_mode: "service:server"`) and listens on `4822/tcp` there. No public ports.
 - **PatchMon server**: acts as the Guacamole WebSocket tunnel endpoint and owns the RDP ticket store. It asks the host's agent to set up a local TCP proxy, then hands that proxy to `guacd`.
 - **Agent proxy**: on receiving `rdp_proxy` over its WebSocket, the agent opens a local TCP bridge and forwards bytes between PatchMon and `localhost:3389` on the Windows host. Requires `integrations.rdp-proxy-enabled: true` in the agent config.
 - **Windows host**: runs the standard Windows RDP service on `127.0.0.1:3389` (bound to localhost via the agent; no inbound exposure needed).
 
-See Installing PatchMon Server on Docker for the sidecar configuration as deployed by the standard compose file. If you run PatchMon without the sidecar, install `guacd` separately (`apt install guacd` / `yum install guacd`) and set `GUACD_ADDRESS` to point at it.
+`guacd` must run on the same machine (or in the same network namespace) as the PatchMon server, because the server hands it a per-session port on `127.0.0.1`. See Installing PatchMon Server on Docker for the sidecar configuration as deployed by the standard compose file. Without Docker, install `guacd` on the server itself (`apt install guacd` / `yum install guacd`) and leave `GUACD_ADDRESS` at its default of `127.0.0.1:4822`; the server starts `guacd` for you.
 
 ### Permissions and module
 
 | Access | Requirement |
 |--------|-------------|
 | Open an RDP session | **admin**, **superadmin**, or `can_use_remote_access` + `can_view_hosts` on your role |
-| Create RDP ticket for a host | `can_manage_hosts` (needed to see the control on the host detail page in the first place) |
 | Deployment | `remote_access` capability module enabled |
 
-Users without the required permission are rejected at `POST /auth/rdp-ticket` with `403 Access denied`.
+The **RDP** tab on a Windows host is only shown to users whose role has `can_use_remote_access`. Requests from users without the required permission are rejected at `POST /auth/rdp-ticket` with `403`.
 
 ### Prerequisites
 
@@ -4567,15 +4547,17 @@ Before you can open an RDP session to a host, all of these must be true:
 2. The host's **PatchMon agent is online** and connected via its WebSocket.
 3. The agent's `config.yml` has `integrations.rdp-proxy-enabled: true`. This setting is **not** pushable from the server. You edit it on the host and restart the `PatchMonAgent` service.
 4. RDP is enabled on the Windows host, and the agent's user context can reach `localhost:3389`. (The default NLA mode is fine; PatchMon negotiates security automatically.)
-5. The PatchMon server is able to reach `guacd` at its configured address (defaults to `127.0.0.1:4822` or `guacd:4822` depending on deployment). If not, RDP ticket creation fails early with `503 guacd is not reachable on the PatchMon server`.
+5. The PatchMon server is able to reach `guacd` at its configured address, `127.0.0.1:4822` by default and in the standard Docker Compose stack. If not, RDP ticket creation fails early with `503 guacd is not reachable on the PatchMon server`.
 
 ### Opening an RDP session
 
 1. Go to **Hosts** and click the Windows host.
 2. On **Host Detail**, open the **Remote Access** area and click **Open RDP** (or the RDP icon in the toolbar).
 3. Enter the Windows **username** and **password** for the account to sign in as.
-4. Optionally adjust the **Screen size**. Defaults to `1024 × 768`. Allowed range is `320–8192` on each axis; values outside this range are clamped.
+4. Check the **Keyboard layout**. It must match the keyboard layout of the Windows session (for example **English (UK)** for a UK-layout host). It defaults to the closest layout for your browser language, and PatchMon remembers your choice for each host in this browser.
 5. Click **Connect**.
+
+There is no screen-size setting. The RDP panel fills about three quarters of the browser window's height (at least 540 pixels), and the session opens at the panel's size and follows it when you resize the browser window or go full-screen.
 
 The server then:
 
@@ -4590,18 +4572,18 @@ Once connected you see the Windows sign-in screen (or desktop, if NLA authentica
 ### Credentials handling
 
 - Username and password are sent once over HTTPS to `POST /auth/rdp-ticket` and stored **encrypted** in the RDP ticket record alongside the session ID, host ID, and screen dimensions.
-- The ticket is **single-use** and expires quickly (tens of seconds). When `guacd` consumes it to set up the tunnel, the stored credentials are forwarded to `guacd` and then to RDP. PatchMon itself does not keep them after the session starts.
+- The ticket is **single-use** and expires after **5 minutes** if it is not used. When the browser opens the tunnel, the server consumes the ticket and forwards the stored credentials to `guacd` and then to RDP. PatchMon itself does not keep them after the session starts.
 - For environments where Windows asks for a certificate, the default guacd config uses `ignore-cert=true` to accept the self-signed certificate Windows generates out of the box, matching `mstsc.exe` behaviour. Hardened per-host overrides are a candidate for a future release.
 - Security mode is negotiated as `any`, which lets FreeRDP pick the strongest common mode (NLA → TLS → legacy RDP). Hardcoding NLA would break hosts with Negotiate/TLS-only security layers and refuses blank-credential sessions.
-- Empty username and password are allowed (some hosts accept blank-credential sessions) but `guacd` usually fails handshake in that case; the server logs `missing_username_or_password: true` so you can spot it in the audit trail.
+- Empty username and password are allowed (some hosts accept blank-credential sessions) but `guacd` usually fails handshake in that case; the server logs `missing_username: true` when the username is empty so you can spot it in the audit trail.
 
 ### One-time tickets
 
 RDP tickets work like SSH tickets:
 
 - 64-character hex string, `crypto/rand` entropy.
-- Stored in Redis with a short TTL.
-- Consumed atomically on first use by `doGuacConnect`.
+- Stored in Redis with a 5-minute TTL.
+- Consumed atomically on first use (a single Redis `GETDEL`), so two tunnels racing for one ticket cannot both get it.
 - Bound to a user ID, a host ID, a proxy session ID, a port, the encrypted credentials, and the requested screen width/height.
 - Validated against the user's current active state. A deactivated user cannot re-use a still-live ticket.
 
@@ -4609,10 +4591,12 @@ You never see or handle the ticket directly; the UI requests it under the hood w
 
 ### Keyboard layouts and clipboard
 
-- **Keyboard**: the Guacamole client maps the browser's keydown events to scancodes. For most Latin keyboards (en-GB, en-US) this "just works". For non-Latin layouts, match the Windows layout to the browser's. Guacamole has no per-session keyboard-layout selector in PatchMon 2.0.
-- **Clipboard**: bidirectional text clipboard is supported via Guacamole's native clipboard channel. Copy in Windows, paste in the browser, or vice versa. Rich clipboard (images, file lists) is not supported.
+- **Keyboard**: keys are translated using the **Keyboard layout** chosen on the connect form, which must match the layout of the Windows session. If it does not, symbols arrive wrong; for example, with English (US) selected on a UK-layout host, `\` arrives as `#` and `@` and `"` swap. Supported layouts: English (UK and US), Czech, Danish, French (France, Belgium, Canada, Switzerland), German (Germany, Switzerland), Hungarian, Italian, Japanese, Norwegian, Polish, Portuguese (Portugal, Brazil), Romanian, Spanish (Spain, Latin America), Swedish and Turkish.
+- **Clipboard**: text only, in both directions. Rich clipboard (images, file lists) is not supported.
+  - **Browser to Windows**: press `Ctrl+V` (`Cmd+V` on macOS) in the RDP panel. PatchMon copies your browser clipboard to Windows and then sends `Ctrl+V`, so Windows pastes the text you copied locally.
+  - **Windows to browser**: text you copy in Windows is placed on your browser clipboard automatically when PatchMon is served over HTTPS. Browsers block automatic clipboard writes on plain HTTP, so on an HTTP deployment the copied text appears in a **Remote clipboard** box above the desktop instead; select it and copy it from there.
 - **Mouse**: primary, secondary, and wheel. Mouse-wheel-click middle button is supported.
-- **Full-screen**: toggle via your browser's F11/fullscreen mode. Guacamole resizes the RDP session to the browser viewport where the host allows dynamic resolution.
+- **Full-screen and resizing**: use the full-screen button in the RDP panel. When the panel changes size, PatchMon asks Windows to change the session resolution to match, about half a second after you stop resizing. Hosts that do not support dynamic resolution keep their original size, and the desktop is scaled to fit.
 
 Printer redirection, audio, drive mapping, and USB forwarding are **not** enabled in 2.0.
 
@@ -4620,18 +4604,21 @@ Printer redirection, audio, drive mapping, and USB forwarding are **not** enable
 
 | Limit | Default | Source |
 |-------|---------|--------|
-| Concurrent RDP sessions per server | **50** | `rdpproxy.DefaultMaxSessions` |
+| Concurrent RDP sessions per server | **200** | `rdpproxy.DefaultMaxSessions` |
+| RDP connection attempts per user | **10 per minute** | `rdpTicketRateLimit` |
+| Session whose ticket is never used | Released after **5 minutes** | `rdpproxy.unattachedTimeout` |
 | Per-session idle timeout | **30 minutes** | `rdpproxy.sessionIdleTimeout` |
 | `guacd` preflight timeout | 2 seconds | `guacdPreflightTimeout` |
 | Agent handshake timeout | 12 seconds | `agentHandshakeTimeout` |
 
-Exceeding the concurrency cap returns `503 Too many concurrent RDP sessions on this server, please try again later.`
+Exceeding the concurrency cap returns `503 Too many concurrent RDP sessions on this server, please try again later.` (`code: max_sessions`). A user who requests more than 10 RDP connections in a minute gets `429 Too many requests` until the minute is up. Each click on **Connect** reserves a session slot while the agent opens its side of the connection; a slot whose ticket is never used is released after 5 minutes.
 
 ### Disconnecting
 
-- **Manual disconnect**: close the browser tab or click the disconnect control in the RDP panel. The server tears the session down, tells the agent to close the TCP bridge, and releases the Redis ticket record.
+- **Manual disconnect**: close the browser tab or click the disconnect control in the RDP panel. The server tears the session down and tells the agent to close its connection to `localhost:3389`, so Windows sees the client disconnect and moves the session to *Disconnected*. The ticket was already removed from Redis when the tunnel opened.
 - **Windows sign-out**: the RDP session closes normally; the tunnel stays open for a brief grace period before cleanup.
-- **Idle close**: after 30 minutes of no data flow the session is killed server-side.
+- **Agent goes offline**: if the host's agent loses its connection to the server (agent restart, network drop, host reboot), every RDP session to that host ends with an error in the browser straight away, rather than leaving a frozen desktop. Connect again once the agent is back.
+- **Idle close**: after 30 minutes of no data flow the session is killed server-side. A browser tab left open keeps data flowing, so in practice an idle session ends when your PatchMon login session expires and the page signs you out.
 
 ### Auditing
 
@@ -4643,28 +4630,31 @@ Every successful RDP ticket creation fires an `rdp_session_started` event:
 
 Route this event type in [Notification Routes and Delivery Log](#notification-routes-and-delivery-log) if you want a live audit trail of who is signing into Windows hosts from PatchMon.
 
-Server logs include `rdp-ticket` and `rdp session opened` lines with the session ID, user ID, host ID, negotiated security posture, and a `missing_username_or_password` field. Use these to triage incidents; the session ID ties everything together.
+Server logs include `rdp-ticket` and `rdp session opened` lines with the session ID, user ID, host ID, the requested security posture, and a `missing_username` field. When a session ends, an `rdp proxy session closed` line records the session ID, user ID, host ID, the reason (`guacd_closed`, `server_closed`, `agent_closed`, `agent_disconnected`, `idle_timeout`, `ticket_unused` or `agent_error`) and the duration in seconds. Use these to triage incidents; the session ID ties everything together.
 
 ### Troubleshooting
 
 | Symptom | Response from the server | Likely cause and fix |
 |---------|-------------------------|----------------------|
-| `guacd is not reachable on the PatchMon server.` | `503`, `code: guacd_unavailable` | The sidecar is not running. Check `docker compose ps guacd`, or install `guacd` on the host and set `GUACD_ADDRESS`. |
+| `guacd is not reachable on the PatchMon server.` | `503`, `code: guacd_unavailable` | The sidecar is not running, or `GUACD_ADDRESS` is not `127.0.0.1:4822`. Check `docker compose ps guacd`, or install `guacd` on the server itself. |
 | `The PatchMon agent on this host is not connected.` | `503`, `code: agent_disconnected` | Agent is offline. Start / restart the `PatchMonAgent` service on the host. |
 | `The PatchMon agent did not respond to the RDP proxy request in time.` | `504`, `code: agent_timeout` | The agent is connected but its handler is stuck, or blocked by firewall. Check agent logs for `rdp_proxy` entries. |
 | *rdp proxy is not enabled* (via `rdp-proxy-enabled`) | `502`, `code: agent_rdp_disabled` | Set `integrations.rdp-proxy-enabled: true` in the agent `config.yml` and restart the agent. |
 | *invalid host* | `502`, `code: agent_invalid_host` | Proxy host format rejected (reserved for future per-target proxies). |
 | *connection refused* / *no route to host* on port 3389 | `502`, `code: rdp_port_unreachable` | RDP is not running on the Windows host, or a local firewall blocks `localhost:3389`. Enable RDP on the host. |
+| *guacd could not reach the RDP session* after **Connect** | Guacamole status `519` on the tunnel | The ticket was issued, but the session was refused or dropped before the desktop started. Usual causes: Remote Desktop is disabled on the host; `guacd` cannot connect back to the PatchMon server's session listener (deploy it as in the shipped Docker Compose file, or on the same host as the server); or `guacd` or the server restarted mid-session. |
 | `RDP is only available for Windows hosts` | `400` | Non-Windows host. Use the [Web SSH Terminal](#web-ssh-terminal) instead. |
+| `Too many requests. Try again later.` | `429` | More than 10 RDP connection attempts by one user in a minute. Wait for the time in the `Retry-After` header. |
+| *This RDP ticket is invalid, expired or already used.* | Tunnel closes with Guacamole status `516` | The ticket was over 5 minutes old, had already been used, or the user lost permission. Click **Connect** again. |
 | `Forbidden: origin not allowed` in WebSocket upgrade | `403` | Your browser's `Origin` header isn't in PatchMon's `CORS_ORIGIN` allow-list. Update `CORS_ORIGIN` (or the dynamic origin resolver) to include your PatchMon URL and restart. |
-| Guacamole handshake fails repeatedly with a valid user and password | Check `rdp tunnel guacd handshake failed` in the server log. This is the 2.0.0 known-issue scenario; consult the release notes and retry. |
+| Every Docker session fails straight after **Connect** with *Server refused connection* or *Security negotiation failed*, whatever the credentials | | `guacd` is not sharing the server's network namespace, or cannot write its home directory. Compare your `docker-compose.yml` with the current one: the `guacd` service needs `network_mode: "service:server"` and a `/home/guacd` tmpfs, and the server needs `GUACD_ADDRESS=127.0.0.1:4822`. See the upgrade note in the operator guide. |
+| Guacamole handshake fails repeatedly with a valid user and password | | Check `rdp tunnel guacd handshake failed` in the server log and the `guacd` container log. |
 
 ### Related pages
 
 - [Web SSH Terminal](#web-ssh-terminal)
 - [AI Terminal Assistant](#ai-terminal-assistant)
 - Installing PatchMon Server on Docker
-- Release Notes 2.0.0
 
 ---
 

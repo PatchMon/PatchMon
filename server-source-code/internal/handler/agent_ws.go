@@ -27,6 +27,10 @@ type OnAgentDisconnect func(ctx context.Context, apiID string)
 // OnAgentConnect is called when an agent's WebSocket connects. Used to resolve host_down alerts.
 type OnAgentConnect func(ctx context.Context, apiID string)
 
+// OnAgentConnClosed is called whenever an agent WebSocket ends, superseded or not.
+// Work started on that connection before cutoff can no longer reach the agent.
+type OnAgentConnClosed func(apiID string, cutoff time.Time)
+
 // AgentWSHandler handles WebSocket connections from agents.
 type AgentWSHandler struct {
 	hosts             *store.HostsStore
@@ -35,6 +39,7 @@ type AgentWSHandler struct {
 	onRDPProxyMessage OnRDPProxyMessage
 	onDisconnect      OnAgentDisconnect
 	onConnect         OnAgentConnect
+	onConnClosed      OnAgentConnClosed
 	upgrader          websocket.Upgrader
 }
 
@@ -52,6 +57,13 @@ func WithOnAgentDisconnect(f OnAgentDisconnect) AgentWSHandlerOption {
 func WithOnAgentConnect(f OnAgentConnect) AgentWSHandlerOption {
 	return func(h *AgentWSHandler) {
 		h.onConnect = f
+	}
+}
+
+// WithOnAgentConnClosed sets the callback invoked when any agent connection ends.
+func WithOnAgentConnClosed(f OnAgentConnClosed) AgentWSHandlerOption {
+	return func(h *AgentWSHandler) {
+		h.onConnClosed = f
 	}
 }
 
@@ -136,8 +148,18 @@ func (h *AgentWSHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		// returns false when a newer connection owns the slot — in that case
 		// the agent is demonstrably live and the disconnect side effects
 		// (host_down alert, marking patch runs agent_disconnected) must not run.
+		closedAt := time.Now().UTC().Round(0)
 		ownsTeardown := h.registry.UnregisterConn(apiID, conn)
 		_ = conn.Close()
+		if h.onConnClosed != nil {
+			cutoff := closedAt
+			if !ownsTeardown {
+				if at := h.registry.Get(apiID).LastConnectedAt; at != nil {
+					cutoff = *at
+				}
+			}
+			h.onConnClosed(apiID, cutoff)
+		}
 		if !ownsTeardown {
 			slog.Debug("agent ws teardown superseded by reconnect", "api_id", apiID)
 			return
