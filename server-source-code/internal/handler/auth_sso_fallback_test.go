@@ -18,13 +18,16 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 )
 
 type ssoFallbackFixture struct {
 	*loginFixture
+	events     chan notifications.Event
 	logs       *bytes.Buffer
 	superTFA   string
 	superNoTFA string
@@ -45,6 +48,9 @@ func newSSOFallbackFixture(t *testing.T, maxAttempts int) *ssoFallbackFixture {
 	logs := &bytes.Buffer{}
 	f.h.log = slog.New(slog.NewTextHandler(logs, nil))
 	f.h.WithLocalAuthPolicy(fixedLocalAuthPolicy{fallback: "discovery returned HTTP 503"})
+	events := make(chan notifications.Event, 64)
+	f.h.db = f.db
+	f.h.emitEvent = func(_ context.Context, _ *database.DB, _ string, ev notifications.Event) { events <- ev }
 
 	secret, _, err := util.GenerateTOTPSecret("PatchMon", "test")
 	if err != nil {
@@ -77,6 +83,7 @@ func newSSOFallbackFixture(t *testing.T, maxAttempts int) *ssoFallbackFixture {
 	}
 	return &ssoFallbackFixture{
 		loginFixture: f,
+		events:       events,
 		logs:         logs,
 		superTFA:     create("sat", "superadmin", true),
 		superNoTFA:   create("san", "superadmin", false),
@@ -254,5 +261,48 @@ func TestSSOFallbackRefusalDoesNotRehash(t *testing.T) {
 		if *got.PasswordHash != oldStr {
 			t.Fatalf("%s: a refused sign-in rewrote the stored hash", role)
 		}
+	}
+}
+
+func (f *ssoFallbackFixture) nextEvent(t *testing.T) notifications.Event {
+	t.Helper()
+	select {
+	case ev := <-f.events:
+		return ev
+	case <-time.After(5 * time.Second):
+		t.Fatal("no notification event was emitted")
+		return notifications.Event{}
+	}
+}
+
+func TestSSOFallbackRefusedSuperadminRaisesEventAndCountsTowardLockout(t *testing.T) {
+	f := newSSOFallbackFixture(t, 3)
+	for i := 1; i < 3; i++ {
+		rec := postLogin(f.h, f.superNoTFA, hardeningPassword)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("attempt %d: got %d, want 403", i, rec.Code)
+		}
+		ev := f.nextEvent(t)
+		if ev.Type != "sso_fallback_refused" || ev.Metadata["username"] != f.superNoTFA || ev.Metadata["reason"] != "discovery returned HTTP 503" {
+			t.Fatalf("attempt %d: got event %+v, want sso_fallback_refused for %s with the reason", i, ev, f.superNoTFA)
+		}
+	}
+	if rec := postLogin(f.h, f.superNoTFA, hardeningPassword); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("attempt 3: got %d, want 429", rec.Code)
+	}
+}
+
+func TestSSOFallbackLoginRaisesEvent(t *testing.T) {
+	f := newSSOFallbackFixture(t, 1000)
+	rec := postLogin(f.h, f.superTFA, hardeningPassword)
+	var step1 struct {
+		Ticket string `json:"tfaTicket"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &step1)
+	if rec := f.verifyTfa(t, step1.Ticket, false); rec.Code != http.StatusOK {
+		t.Fatalf("two-factor step: got %d", rec.Code)
+	}
+	if ev := f.nextEvent(t); ev.Type != "sso_fallback_login" || ev.Metadata["username"] != f.superTFA {
+		t.Fatalf("got event %+v, want sso_fallback_login for %s", ev, f.superTFA)
 	}
 }

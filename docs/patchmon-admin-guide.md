@@ -3622,6 +3622,7 @@ The following alert types fire from the server code in 2.0. Each can be individu
 | `user_role_changed` | system | A user's role is changed |
 | `user_tfa_disabled` | system | A user's two-factor authentication is removed |
 | `sso_fallback_login` | system | A superadmin signs in with a password because the SSO provider is unreachable (see **Superadmin password login if SSO is down**) |
+| `sso_fallback_refused` | system | A superadmin without two-factor authentication gives the correct password while the SSO provider is unreachable, and is refused |
 
 If a type listed in the release notes is not in this table, it is not implemented in the server. Anything absent from the `alert_config` table is treated as enabled by default for backwards compatibility, but only types with emitters in the server code actually fire.
 

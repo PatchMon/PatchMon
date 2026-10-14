@@ -81,6 +81,10 @@ const EVENT_TYPES = [
 		value: "sso_fallback_login",
 		label: "Password login during SSO outage",
 	},
+	{
+		value: "sso_fallback_refused",
+		label: "Password login refused during SSO outage",
+	},
 	{ value: "user_created", label: "User created" },
 	{ value: "user_role_changed", label: "User role changed" },
 	{ value: "user_tfa_disabled", label: "2FA disabled" },

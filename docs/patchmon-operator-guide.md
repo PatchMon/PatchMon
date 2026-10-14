@@ -3046,7 +3046,7 @@ With local authentication disabled, an outage at your identity provider means no
 
 - It is **off by default** and has no effect unless **Disable local auth** is on.
 - It is a database setting only, changed on that page. There is no environment variable for it.
-- Only **superadmin** accounts can use it, and only with **two-factor authentication**. A superadmin who has not set up two-factor authentication is refused with a message saying so. Every other account is refused with the usual `Invalid credentials` message, and the attempt counts towards the account lockout.
+- Only **superadmin** accounts can use it, and only with **two-factor authentication**. A superadmin who has not set up two-factor authentication is refused with a message saying so; the attempt counts towards the account lockout and raises a `sso_fallback_refused` notification event. Every other account is refused with the usual `Invalid credentials` message, and the attempt counts towards the account lockout.
 - The second factor is always asked for on this path, even on a device that was remembered earlier, and "Remember me" is ignored.
 - Self-service signup and Discord sign-in stay closed.
 

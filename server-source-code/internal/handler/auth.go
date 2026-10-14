@@ -44,7 +44,9 @@ type AuthHandler struct {
 	releaseNotesAcceptance *store.ReleaseNotesAcceptanceStore
 	db                     database.DBProvider
 	notify                 *notifications.Emitter
-	log                    *slog.Logger
+	// emitEvent overrides notify.EmitEvent; set only by tests.
+	emitEvent func(ctx context.Context, d *database.DB, host string, ev notifications.Event)
+	log       *slog.Logger
 	// permissions is optional - used by MeContext to surface role permission flags
 	// (such as can_manage_billing) alongside the user response. Wired via
 	// WithPermissions to avoid threading it through the constructor signature.
@@ -435,6 +437,25 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !user.TfaEnabled {
+			h.emitEventAsync(r, notifications.Event{
+				Type:          "sso_fallback_refused",
+				Severity:      "warning",
+				Title:         "Password Login Refused During SSO Outage",
+				Message:       "Superadmin " + user.Username + " tried to sign in with a password while the SSO provider is unreachable, and was refused because two-factor authentication is not set up.",
+				ReferenceType: "user",
+				ReferenceID:   user.ID,
+				Metadata: map[string]interface{}{
+					"user_id":    user.ID,
+					"username":   user.Username,
+					"ip_address": h.clientIP(r),
+					"user_agent": r.UserAgent(),
+					"reason":     localAuthFallback,
+				},
+			})
+			if locked := h.recordLoginFailure(w, r, req.Username); locked {
+				h.logLoginFailure(r, "sso_fallback_tfa_required", req.Username, user.ID, "sso_reason", localAuthFallback, "locked", true)
+				return
+			}
 			h.logLoginFailure(r, "sso_fallback_tfa_required", req.Username, user.ID, "sso_reason", localAuthFallback)
 			Error(w, http.StatusForbidden, "Your identity provider is unreachable. Password sign-in is only allowed in that case for superadmins with two-factor authentication, which is not set up on this account.")
 			return
@@ -859,7 +880,11 @@ func truncateForLog(s string, max int) string {
 // emitEventAsync sends a notification event without making the caller wait on
 // it, so a wrong password for a real account answers as fast as any other.
 func (h *AuthHandler) emitEventAsync(r *http.Request, ev notifications.Event) {
-	if h.notify == nil || h.db == nil {
+	emit := h.emitEvent
+	if emit == nil && h.notify != nil {
+		emit = h.notify.EmitEvent
+	}
+	if emit == nil || h.db == nil {
 		return
 	}
 	d := h.db.DB(r.Context())
@@ -871,7 +896,7 @@ func (h *AuthHandler) emitEventAsync(r *http.Request, ev notifications.Event) {
 	go func() {
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		h.notify.EmitEvent(ctx, d, host, ev)
+		emit(ctx, d, host, ev)
 	}()
 }
 
