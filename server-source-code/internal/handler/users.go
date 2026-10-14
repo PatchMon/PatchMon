@@ -318,8 +318,8 @@ func (h *UsersHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if caller, err := h.users.GetByID(r.Context(), currentUserID); err == nil && caller != nil && caller.IsActive {
 			assignerRole = caller.Role
 		}
-		// Enforce role escalation protection.
-		if !h.canAssignRole(r, assignerRole, *req.Role) {
+		// Enforce role escalation protection. Resending the stored role is not an assignment.
+		if *req.Role != existing.Role && !h.canAssignRole(r, assignerRole, *req.Role) {
 			Error(w, http.StatusForbidden, "You do not have permission to assign the role: "+*req.Role)
 			return
 		}

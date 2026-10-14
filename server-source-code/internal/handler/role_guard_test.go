@@ -420,7 +420,7 @@ func TestRoleChangeRequiresOutranking(t *testing.T) {
 	}{
 		{"admin cannot demote a peer admin", update(admin2, admin1, "admin", `{"role":"user"}`), http.StatusForbidden},
 		{"admin may still edit a peer admin's name", update(admin2, admin1, "admin", `{"first_name":"x"}`), http.StatusOK},
-		{"admin still cannot send the admin role, even unchanged", update(admin2, admin1, "admin", `{"role":"admin","first_name":"y"}`), http.StatusForbidden},
+		{"admin saves a peer admin's name with the role unchanged", update(admin2, admin1, "admin", `{"role":"admin","first_name":"y"}`), http.StatusOK},
 		{"a demoted admin's stale token cannot change roles", update(plain2, demoted, "admin", `{"role":"readonly"}`), http.StatusForbidden},
 		{"admin changes a user's role", update(plain, admin1, "admin", `{"role":"readonly"}`), http.StatusOK},
 		{"admin promotes readonly to host_manager", update(ro, admin1, "admin", `{"role":"host_manager"}`), http.StatusOK},
