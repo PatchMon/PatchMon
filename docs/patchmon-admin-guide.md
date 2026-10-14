@@ -4324,7 +4324,7 @@ Web SSH is shipped in PatchMon from 1.4.0 onwards; in 2.0 it is provided under t
 
 Users without `can_use_remote_access` attempting to open the terminal are rejected with HTTP `403 Access denied` during the WebSocket handshake.
 
-The **Hosts** related permission (`can_manage_hosts`) is required to see the "Open Terminal" control on the host detail page in the first place.
+The **Terminal** tab on the host detail page is only shown to users whose role has `can_use_remote_access`.
 
 ### Opening a terminal
 
@@ -4503,7 +4503,7 @@ PatchMon 2.0 lets you open a full RDP session to a **Windows host** from your br
 - From the PatchMon server into a `guacd` sidecar, which speaks the RDP protocol.
 - From `guacd` through a short-lived TCP proxy to the host's own PatchMon agent, which forwards to `localhost:3389` on the Windows host.
 
-This is a one-time ticketed connection with keyboard, mouse, and clipboard support. Screen size is configurable, and NLA/TLS/legacy RDP is auto-negotiated.
+This is a one-time ticketed connection with keyboard, mouse, and clipboard support. The remote desktop follows the size of the RDP panel, and NLA/TLS/legacy RDP is auto-negotiated.
 
 RDP is provided under the **remote_access** capability module.
 
@@ -4535,10 +4535,9 @@ Key components:
 | Access | Requirement |
 |--------|-------------|
 | Open an RDP session | **admin**, **superadmin**, or `can_use_remote_access` + `can_view_hosts` on your role |
-| Create RDP ticket for a host | `can_manage_hosts` (needed to see the control on the host detail page in the first place) |
 | Deployment | `remote_access` capability module enabled |
 
-Users without the required permission are rejected at `POST /auth/rdp-ticket` with `403 Access denied`.
+The **RDP** tab on a Windows host is only shown to users whose role has `can_use_remote_access`. Requests from users without the required permission are rejected at `POST /auth/rdp-ticket` with `403`.
 
 ### Prerequisites
 
@@ -4555,8 +4554,10 @@ Before you can open an RDP session to a host, all of these must be true:
 1. Go to **Hosts** and click the Windows host.
 2. On **Host Detail**, open the **Remote Access** area and click **Open RDP** (or the RDP icon in the toolbar).
 3. Enter the Windows **username** and **password** for the account to sign in as.
-4. Optionally adjust the **Screen size**. Defaults to `1024 × 768`. Allowed range is `320–8192` on each axis; values outside this range are clamped.
+4. Check the **Keyboard layout**. It must match the keyboard layout of the Windows session (for example **English (UK)** for a UK-layout host). It defaults to the closest layout for your browser language, and PatchMon remembers your choice for each host in this browser.
 5. Click **Connect**.
+
+There is no screen-size setting. The RDP panel fills about three quarters of the browser window's height (at least 540 pixels), and the session opens at the panel's size and follows it when you resize the browser window or go full-screen.
 
 The server then:
 
@@ -4590,10 +4591,12 @@ You never see or handle the ticket directly; the UI requests it under the hood w
 
 ### Keyboard layouts and clipboard
 
-- **Keyboard**: the Guacamole client maps the browser's keydown events to scancodes. For most Latin keyboards (en-GB, en-US) this "just works". For non-Latin layouts, match the Windows layout to the browser's. Guacamole has no per-session keyboard-layout selector in PatchMon 2.0.
-- **Clipboard**: bidirectional text clipboard is supported via Guacamole's native clipboard channel. Copy in Windows, paste in the browser, or vice versa. Rich clipboard (images, file lists) is not supported.
+- **Keyboard**: keys are translated using the **Keyboard layout** chosen on the connect form, which must match the layout of the Windows session. If it does not, symbols arrive wrong; for example, with English (US) selected on a UK-layout host, `\` arrives as `#` and `@` and `"` swap. Supported layouts: English (UK and US), Czech, Danish, French (France, Belgium, Canada, Switzerland), German (Germany, Switzerland), Hungarian, Italian, Japanese, Norwegian, Polish, Portuguese (Portugal, Brazil), Romanian, Spanish (Spain, Latin America), Swedish and Turkish.
+- **Clipboard**: text only, in both directions. Rich clipboard (images, file lists) is not supported.
+  - **Browser to Windows**: press `Ctrl+V` (`Cmd+V` on macOS) in the RDP panel. PatchMon copies your browser clipboard to Windows and then sends `Ctrl+V`, so Windows pastes the text you copied locally.
+  - **Windows to browser**: text you copy in Windows is placed on your browser clipboard automatically when PatchMon is served over HTTPS. Browsers block automatic clipboard writes on plain HTTP, so on an HTTP deployment the copied text appears in a **Remote clipboard** box above the desktop instead; select it and copy it from there.
 - **Mouse**: primary, secondary, and wheel. Mouse-wheel-click middle button is supported.
-- **Full-screen**: toggle via your browser's F11/fullscreen mode. Guacamole resizes the RDP session to the browser viewport where the host allows dynamic resolution.
+- **Full-screen and resizing**: use the full-screen button in the RDP panel. When the panel changes size, PatchMon asks Windows to change the session resolution to match, about half a second after you stop resizing. Hosts that do not support dynamic resolution keep their original size, and the desktop is scaled to fit.
 
 Printer redirection, audio, drive mapping, and USB forwarding are **not** enabled in 2.0.
 
@@ -4639,6 +4642,7 @@ Server logs include `rdp-ticket` and `rdp session opened` lines with the session
 | *rdp proxy is not enabled* (via `rdp-proxy-enabled`) | `502`, `code: agent_rdp_disabled` | Set `integrations.rdp-proxy-enabled: true` in the agent `config.yml` and restart the agent. |
 | *invalid host* | `502`, `code: agent_invalid_host` | Proxy host format rejected (reserved for future per-target proxies). |
 | *connection refused* / *no route to host* on port 3389 | `502`, `code: rdp_port_unreachable` | RDP is not running on the Windows host, or a local firewall blocks `localhost:3389`. Enable RDP on the host. |
+| *guacd could not reach the RDP session* after **Connect** | Guacamole status `519` on the tunnel | The ticket was issued, but the session was refused or dropped before the desktop started. Usual causes: Remote Desktop is disabled on the host; `guacd` cannot connect back to the PatchMon server's session listener (deploy it as in the shipped Docker Compose file, or on the same host as the server); or `guacd` or the server restarted mid-session. |
 | `RDP is only available for Windows hosts` | `400` | Non-Windows host. Use the [Web SSH Terminal](#web-ssh-terminal) instead. |
 | `Too many requests. Try again later.` | `429` | More than 10 RDP connection attempts by one user in a minute. Wait for the time in the `Retry-After` header. |
 | *This RDP ticket is invalid, expired or already used.* | Tunnel closes with Guacamole status `516` | The ticket was over 5 minutes old, had already been used, or the user lost permission. Click **Connect** again. |

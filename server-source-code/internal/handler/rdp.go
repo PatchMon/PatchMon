@@ -211,6 +211,7 @@ func (h *RDPHandler) ServeCreateTicket(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 		Width    int    `json:"width,omitempty"`
 		Height   int    `json:"height,omitempty"`
+		Layout   string `json:"keyboardLayout,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
@@ -218,6 +219,10 @@ func (h *RDPHandler) ServeCreateTicket(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.HostID == "" {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "hostId is required"})
+		return
+	}
+	if !validRDPKeyboardLayout(req.Layout) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Unsupported keyboard layout", "code": "invalid_keyboard_layout"})
 		return
 	}
 
@@ -371,7 +376,7 @@ func (h *RDPHandler) ServeCreateTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ticket, err := h.rdpTicketStore.CreateTicket(r.Context(), userID, host.ID, sessionID, port, req.Username, req.Password, reqWidth, reqHeight)
+	ticket, err := h.rdpTicketStore.CreateTicket(r.Context(), userID, host.ID, sessionID, port, req.Username, req.Password, reqWidth, reqHeight, req.Layout)
 	if err != nil {
 		h.rdpSessions.Delete(sessionID)
 		JSON(w, http.StatusInternalServerError, map[string]string{
@@ -553,6 +558,37 @@ func writeGuacError(ws *websocket.Conn, err error) {
 	_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(status.GetWebSocketCode(), code), deadline)
 }
 
+// rdpKeyboardLayouts are the keymaps compiled into guacd 1.6.0.
+var rdpKeyboardLayouts = map[string]bool{
+	"cs-cz-qwertz": true, "da-dk-qwerty": true, "de-ch-qwertz": true, "de-de-qwertz": true,
+	"en-gb-qwerty": true, "en-us-qwerty": true, "es-es-qwerty": true, "es-latam-qwerty": true,
+	"fr-be-azerty": true, "fr-ca-qwerty": true, "fr-ch-qwertz": true, "fr-fr-azerty": true,
+	"hu-hu-qwertz": true, "it-it-qwerty": true, "ja-jp-qwerty": true, "no-no-qwerty": true,
+	"pl-pl-qwerty": true, "pt-br-qwerty": true, "pt-pt-qwerty": true, "ro-ro-qwerty": true,
+	"sv-se-qwerty": true, "tr-tr-qwerty": true,
+}
+
+func validRDPKeyboardLayout(layout string) bool {
+	return layout == "" || rdpKeyboardLayouts[layout]
+}
+
+func rdpConnectionParameters(port int, username, password, keyboardLayout string) map[string]string {
+	params := map[string]string{
+		"hostname":    "127.0.0.1",
+		"port":        strconv.Itoa(port),
+		"username":    username,
+		"password":    password,
+		"security":    "any",
+		"ignore-cert": "true",
+		// Without a resize method guacd ignores the browser's size updates.
+		"resize-method": "display-update",
+	}
+	if keyboardLayout != "" {
+		params["server-layout"] = keyboardLayout
+	}
+	return params
+}
+
 // doGuacConnect resolves the ticket and opens the guacd connection. Once the
 // ticket is consumed, every failure deletes the proxy session it names.
 func (h *RDPHandler) doGuacConnect(r *http.Request) (*rdpTunnel, error) {
@@ -616,14 +652,7 @@ func (h *RDPHandler) openGuacTunnel(r *http.Request, data *store.RDPTicketData) 
 	// Negotiate/TLS-only security layers and refuses blank-credential sessions.
 	// ignore-cert=true accepts the self-signed RDP cert Windows generates by
 	// default. If a customer needs hardened RDP later, expose per-host overrides.
-	config.Parameters = map[string]string{
-		"hostname":    "127.0.0.1",
-		"port":        strconv.Itoa(port),
-		"username":    data.Username,
-		"password":    data.Password,
-		"security":    "any",
-		"ignore-cert": "true",
-	}
+	config.Parameters = rdpConnectionParameters(port, data.Username, data.Password, data.KeyboardLayout)
 	// Resolve screen dimensions: ticket data > query params > defaults.
 	screenW, screenH := 1024, 768
 	if data.Width > 0 {

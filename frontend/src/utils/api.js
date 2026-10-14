@@ -608,8 +608,10 @@ export const agentVersionAPI = {
 };
 
 // RDP API (in-browser RDP for Windows hosts via guacd)
+// Must exceed the server's 12s agent handshake so its agent_timeout reply reaches the UI.
 export const rdpAPI = {
-	createTicket: (data) => api.post("/auth/rdp-ticket", data),
+	createTicket: (data) =>
+		api.post("/auth/rdp-ticket", data, { timeout: 20000 }),
 };
 
 // Auth API

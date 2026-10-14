@@ -83,6 +83,7 @@ import { shortImageId } from "../utils/docker";
 import { OSIcon } from "../utils/osIcons.jsx";
 import { patchingAPI } from "../utils/patchingApi";
 import { invalidateHostScope } from "../utils/queryScopes";
+import { getRemoteAccessTabs } from "../utils/remoteAccessTabs";
 import AgentActivityTab from "./hostdetail/AgentActivityTab";
 import CredentialsModal from "./hostdetail/CredentialsModal";
 import DeleteConfirmationModal from "./hostdetail/DeleteConfirmationModal";
@@ -125,7 +126,7 @@ const HostDetail = () => {
 	const location = useLocation();
 	const queryClient = useQueryClient();
 	const toast = useToast();
-	const { canManageHosts, hasModule } = useAuth();
+	const { canManageHosts, canUseRemoteAccess, hasModule } = useAuth();
 	const [showCredentialsModal, setShowCredentialsModal] = useState(false);
 
 	// Get plaintext API key from navigation state (only available immediately after host creation)
@@ -340,6 +341,10 @@ const HostDetail = () => {
 	const isWindowsHost = (host?.os_type || host?.expected_platform || "")
 		.toLowerCase()
 		.includes("windows");
+	const remoteAccessTabs = getRemoteAccessTabs({
+		isWindowsHost,
+		canUseRemoteAccess: canUseRemoteAccess(),
+	});
 	const isFreeBSDHost =
 		(host?.package_manager || "").toLowerCase() === "pkg" ||
 		(host?.os_type || host?.expected_platform || "")
@@ -2585,21 +2590,23 @@ const HostDetail = () => {
 								)}
 							</button>
 						)}
-						<button
-							type="button"
-							onClick={() => handleTabChange("terminal")}
-							className={`px-4 py-2 text-sm font-medium inline-flex items-center gap-2 ${
-								activeTab === "terminal"
-									? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
-									: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
-							}`}
-						>
-							Terminal
-							{!hasModule("ssh_terminal") && (
-								<TierBadge tier={getRequiredTier("ssh_terminal")} />
-							)}
-						</button>
-						{isWindowsHost && (
+						{remoteAccessTabs.terminal && (
+							<button
+								type="button"
+								onClick={() => handleTabChange("terminal")}
+								className={`px-4 py-2 text-sm font-medium inline-flex items-center gap-2 ${
+									activeTab === "terminal"
+										? "text-primary-600 dark:text-primary-400 border-b-2 border-primary-500"
+										: "text-secondary-500 dark:text-white hover:text-secondary-700 dark:hover:text-primary-400"
+								}`}
+							>
+								Terminal
+								{!hasModule("ssh_terminal") && (
+									<TierBadge tier={getRequiredTier("ssh_terminal")} />
+								)}
+							</button>
+						)}
+						{remoteAccessTabs.rdp && (
 							<button
 								type="button"
 								onClick={() => handleTabChange("rdp")}
@@ -3373,7 +3380,7 @@ const HostDetail = () => {
 						    isn't in the tenant's plan, render the upgrade content
 						    instead so the tab is discoverable rather than silently
 						    broken. Backend ticket endpoints still return 403. */}
-						{host && hasModule("ssh_terminal") && (
+						{host && remoteAccessTabs.terminal && hasModule("ssh_terminal") && (
 							<div className={activeTab === "terminal" ? "" : "hidden"}>
 								<SshTerminal
 									host={host}
@@ -3383,19 +3390,26 @@ const HostDetail = () => {
 								/>
 							</div>
 						)}
-						{activeTab === "terminal" && !hasModule("ssh_terminal") && (
-							<UpgradeRequiredContent module="ssh_terminal" variant="inline" />
-						)}
+						{activeTab === "terminal" &&
+							remoteAccessTabs.terminal &&
+							!hasModule("ssh_terminal") && (
+								<UpgradeRequiredContent
+									module="ssh_terminal"
+									variant="inline"
+								/>
+							)}
 
 						{/* RDP - Windows hosts only. Gated by the rdp module (Max tier). */}
-						{host && isWindowsHost && hasModule("rdp") && (
+						{host && remoteAccessTabs.rdp && hasModule("rdp") && (
 							<div className={activeTab === "rdp" ? "" : "hidden"}>
 								<RdpViewer host={host} isOpen={activeTab === "rdp"} />
 							</div>
 						)}
-						{activeTab === "rdp" && isWindowsHost && !hasModule("rdp") && (
-							<UpgradeRequiredContent module="rdp" variant="inline" />
-						)}
+						{activeTab === "rdp" &&
+							remoteAccessTabs.rdp &&
+							!hasModule("rdp") && (
+								<UpgradeRequiredContent module="rdp" variant="inline" />
+							)}
 
 						{/* Notes */}
 						{activeTab === "notes" && (

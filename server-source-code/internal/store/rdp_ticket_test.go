@@ -30,7 +30,7 @@ func TestRDPTicketConsumeIsSingleUseUnderConcurrency(t *testing.T) {
 	s := newRDPTicketStore(t)
 	ctx := context.Background()
 	for i := 0; i < 200; i++ {
-		ticket, err := s.CreateTicket(ctx, "u", "h", "sess", 1234, "user", "pw", 1024, 768)
+		ticket, err := s.CreateTicket(ctx, "u", "h", "sess", 1234, "user", "pw", 1024, 768, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -58,7 +58,7 @@ func TestRDPTicketConsumeIsSingleUseUnderConcurrency(t *testing.T) {
 func TestRDPTicketConsumeRoundTrip(t *testing.T) {
 	s := newRDPTicketStore(t)
 	ctx := context.Background()
-	ticket, err := s.CreateTicket(ctx, "u1", "h1", "s1", 4321, "admin", "secret", 1280, 800)
+	ticket, err := s.CreateTicket(ctx, "u1", "h1", "s1", 4321, "admin", "secret", 1280, 800, "")
 	if err != nil {
 		t.Fatal(err)
 	}

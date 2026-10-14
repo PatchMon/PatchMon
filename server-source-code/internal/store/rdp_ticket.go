@@ -34,19 +34,20 @@ func NewRDPTicketStore(rdb *hostctx.RedisResolver, enc *util.Encryption) *RDPTic
 
 // RDPTicketData is stored in Redis for RDP WebSocket auth.
 type RDPTicketData struct {
-	UserID    string `json:"userId"`
-	HostID    string `json:"hostId"`
-	SessionID string `json:"sessionId"`
-	ProxyPort int    `json:"proxyPort"`
-	Username  string `json:"username"`
-	Password  string `json:"password"`
-	Width     int    `json:"width,omitempty"`
-	Height    int    `json:"height,omitempty"`
-	CreatedAt int64  `json:"createdAt"`
+	UserID         string `json:"userId"`
+	HostID         string `json:"hostId"`
+	SessionID      string `json:"sessionId"`
+	ProxyPort      int    `json:"proxyPort"`
+	Username       string `json:"username"`
+	Password       string `json:"password"`
+	Width          int    `json:"width,omitempty"`
+	Height         int    `json:"height,omitempty"`
+	KeyboardLayout string `json:"keyboardLayout,omitempty"`
+	CreatedAt      int64  `json:"createdAt"`
 }
 
 // CreateTicket generates a one-time ticket for RDP WebSocket auth.
-func (s *RDPTicketStore) CreateTicket(ctx context.Context, userID, hostID, sessionID string, proxyPort int, username, password string, width, height int) (ticket string, err error) {
+func (s *RDPTicketStore) CreateTicket(ctx context.Context, userID, hostID, sessionID string, proxyPort int, username, password string, width, height int, keyboardLayout string) (ticket string, err error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
@@ -55,15 +56,16 @@ func (s *RDPTicketStore) CreateTicket(ctx context.Context, userID, hostID, sessi
 	key := hostctx.TenantKey(ctx, rdpTicketPrefix+ticket)
 
 	data := RDPTicketData{
-		UserID:    userID,
-		HostID:    hostID,
-		SessionID: sessionID,
-		ProxyPort: proxyPort,
-		Username:  username,
-		Password:  password,
-		Width:     width,
-		Height:    height,
-		CreatedAt: time.Now().UnixMilli(),
+		UserID:         userID,
+		HostID:         hostID,
+		SessionID:      sessionID,
+		ProxyPort:      proxyPort,
+		Username:       username,
+		Password:       password,
+		Width:          width,
+		Height:         height,
+		KeyboardLayout: keyboardLayout,
+		CreatedAt:      time.Now().UnixMilli(),
 	}
 	raw, err := json.Marshal(data)
 	if err != nil {
