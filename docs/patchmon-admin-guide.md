@@ -1540,7 +1540,7 @@ The agent chooses the patching back-end by detecting the host's package manager.
 | `pacman` | Arch Linux, Manjaro | **Patch all** only. See [Arch Linux patching](#arch-patching). |
 | `pkg` | FreeBSD 13+ (plus `freebsd-update` for the base system on `patch_all`) | Yes |
 | `apk` | Alpine Linux 3.21 and later (apk-tools 2 on 3.21 and 3.22, apk-tools 3 from 3.23) | Yes, with agent 2.1.4 or later. See [Alpine patching](#alpine-patching). |
-| `zypper` | openSUSE Leap 15.6 and 16.0, openSUSE Tumbleweed and Slowroll, SLES 15 and 16 | Yes, with agent 2.1.5 or later. See [openSUSE and SLES patching](#zypper-patching). |
+| `zypper` | openSUSE Leap 15.6 and 16.0, openSUSE Tumbleweed and Slowroll, SLES 15 and 16 | Yes, with agent 2.1.4 or later. See [openSUSE and SLES patching](#zypper-patching). |
 | Windows Update Agent (WUA) + winget | Windows 10/11, Server 2019/2022/2025 | Yes, with agent 2.1.4 or later (separate path) |
 
 #### Arch Linux patching {#arch-patching}
@@ -1581,7 +1581,7 @@ If the installed version of a package breaks its own constraint in `/etc/apk/wor
 
 #### openSUSE and SLES patching {#zypper-patching}
 
-openSUSE and SLES hosts report inventory and are patched with `zypper`, with agent 2.1.5 or later. Older agents fail every report on these hosts with `unsupported package manager: unknown`; update the agent to fix it.
+openSUSE and SLES hosts report inventory and are patched with `zypper`, with agent 2.1.4 or later. Older agents fail every report on these hosts with `unsupported package manager: unknown`; update the agent to fix it.
 
 **Inventory.** Installed packages come from `rpm`, and available updates from `zypper list-updates`, which leaves out packages locked with `zypper addlock`. An update is marked as a security update when a needed patch in the `security` category updates that package. Tumbleweed and Slowroll publish no patches, and an unregistered SLES host has no update repositories, so neither shows security updates. The repositories list shows each enabled zypper repository, without credentials or the registration token that SUSE Customer Center repositories carry in their URL.
 
@@ -2989,7 +2989,7 @@ The per-host **default profile** setting (Host Detail → Integrations → Compl
 
 Any host OS not listed has no SSG datastream available and OpenSCAP scans will be skipped on it. The scanner is still "available" in the integrations metadata if `oscap` is installed; it just has nothing to evaluate.
 
-> **SLES and OpenSUSE:** SUSE hosts need agent 2.1.5 or later to complete enrolment and run scans. Older agents fail every report with `unsupported package manager: unknown`.
+> **SLES and OpenSUSE:** SUSE hosts need agent 2.1.4 or later to complete enrolment and run scans. Older agents fail every report with `unsupported package manager: unknown`.
 
 **Default per-host state:** OpenSCAP is **enabled by default** on every host that has compliance turned on. This is controlled by the `compliance_openscap_enabled` host flag, defaulted to `true` in 1.4.2 and preserved on upgrade.
 
