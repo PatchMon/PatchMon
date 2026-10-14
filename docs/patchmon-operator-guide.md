@@ -40,7 +40,7 @@ PatchMon runs as a single container backed by three supporting services. The Pat
 | `redis` | `redis:7-alpine` | Background job queues (asynq) |
 | `guacd` | `guacamole/guacd:1.6.0` | RDP gateway (required for in-browser RDP) |
 
-All four services communicate over an isolated internal Docker network (`patchmon-internal`). Only the `server` port is exposed to the host.
+The services communicate over an isolated internal Docker network (`patchmon-internal`). `guacd` does not join that network: it shares the `server` container's network namespace, because the server hands it a per-session RDP port on `127.0.0.1`. Only the `server` port is exposed to the host.
 
 ---
 
@@ -164,6 +164,8 @@ services:
     image: ghcr.io/patchmon/patchmon-server:latest
     restart: unless-stopped
     env_file: .env
+    environment:
+      GUACD_ADDRESS: "127.0.0.1:4822"
     ports:
       - "${PORT:-3000}:${PORT:-3000}"
     networks:
@@ -172,8 +174,6 @@ services:
       database:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      guacd:
         condition: service_healthy
 
   database:
@@ -208,8 +208,14 @@ services:
   guacd:
     image: guacamole/guacd:1.6.0
     restart: unless-stopped
-    networks:
-      - patchmon-internal
+    network_mode: "service:server"
+    depends_on:
+      server:
+        condition: service_started
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+      - /home/guacd:size=16m,uid=1000,gid=1000
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 4822 || exit 1"]
       interval: 10s
@@ -282,6 +288,52 @@ docker compose up -d
 ```
 
 Check the [GitHub releases page](https://github.com/PatchMon/PatchMon/releases) for version-specific changes and migration notes before upgrading.
+
+#### Upgrading to 2.1.4: guacd compose change for in-browser RDP {#upgrading-to-2-1-4-guacd}
+
+Up to 2.1.3, the `guacd` service in the shipped `docker-compose.yml` could not open any RDP session. It ran on its own network address, so it could not reach the per-session port the server opens on `127.0.0.1`, and its read-only filesystem left FreeRDP no writable home directory. Every connection failed straight after **Connect**, typically with *Server refused connection* or *Security negotiation failed*.
+
+`docker compose pull` does not change your compose file, so if you use in-browser RDP, make these changes to your existing `docker-compose.yml`:
+
+1. In the `server` service, delete the `guacd:` entry (and its `condition: service_healthy` line) under `depends_on`, and add:
+
+   ```yaml
+       environment:
+         GUACD_ADDRESS: "127.0.0.1:4822"
+   ```
+
+   If the service already has an `environment:` block, add the `GUACD_ADDRESS` line to it.
+
+2. In the `guacd` service, delete the `networks:` block (the `- patchmon-internal` line under it), then add `network_mode`, `depends_on` and the second `tmpfs` entry so it reads:
+
+   ```yaml
+     guacd:
+       image: guacamole/guacd:1.6.0
+       restart: unless-stopped
+       network_mode: "service:server"
+       depends_on:
+         server:
+           condition: service_started
+       read_only: true
+       tmpfs:
+         - /tmp:size=64m
+         - /home/guacd:size=16m,uid=1000,gid=1000
+   ```
+
+   Keep the rest of the service (`security_opt`, `cap_drop`, limits, `healthcheck`, `logging`) as it is.
+
+3. In `.env`, delete the `GUACD_ADDRESS=guacd:4822` line, or change it to `GUACD_ADDRESS=127.0.0.1:4822`. The compose `environment:` entry overrides it either way, but leaving the old value in place is confusing.
+
+4. Recreate the stack so both containers pick up the change:
+
+   ```bash
+   docker compose pull
+   docker compose up -d --force-recreate server guacd
+   ```
+
+Alternatively, download the current `docker/docker-compose.yml` from the repository and re-apply any local edits you had made.
+
+To check it worked, run `docker compose exec server sh -c 'nc -z 127.0.0.1 4822 && echo guacd reachable'`, then open an RDP session from a Windows host's **RDP** tab. If you later restart only the `server` container (`docker compose restart server`), restart `guacd` as well, because it lives in the server container's network namespace.
 
 #### Migrating from 1.4.2 to 2.0.0 {#migrating-from-1-4-2-to-2-0-0}
 
@@ -778,21 +830,9 @@ Full OIDC configuration and group-to-role mapping variables are documented in th
 
 #### guacd sidecar (optional, for RDP)
 
-PatchMon 2.0 can proxy Windows RDP through the [Apache Guacamole daemon](https://guacamole.apache.org/). If you need in-browser RDP, add a `guacd` sidecar and point `GUACD_ADDRESS` at it:
+PatchMon 2.0 can proxy Windows RDP through the [Apache Guacamole daemon](https://guacamole.apache.org/). `guacd` must run as a second container **in the same pod as the server**, because the server hands it a per-session port on `127.0.0.1`, and `GUACD_ADDRESS` must be `127.0.0.1:4822` (the default). A `guacd` in its own Deployment and Service, reached by a Service name such as `guacd:4822`, cannot open any RDP session. `guacd` also needs a writable `/home/guacd`, for example an in-memory `emptyDir`.
 
-```yaml
-server:
-  env:
-    GUACD_ADDRESS: "guacd:4822"
-
-guacd:
-  enabled: true
-  image:
-    repository: guacamole/guacd
-    tag: "1.6.0"
-```
-
-> **Verify against the latest chart.** `guacd` support was added after the original 1.4.x chart; if your chart version does not include a `guacd.enabled` option, you can deploy it as a separate Deployment and Service in the same namespace and set `GUACD_ADDRESS` to its ClusterIP hostname.
+> **Verify against the latest chart.** Check whether your chart version can add a sidecar container to the server pod. If it cannot, deploy with the [plain manifests](#deploying-with-plain-manifests), whose **Optional: in-browser RDP** section shows the sidecar.
 
 #### Ingress
 
@@ -1330,48 +1370,18 @@ One line means the volume is mounted correctly. Two lines means a scratch direct
 
 #### Optional: in-browser RDP
 
-The server reaches Windows hosts over RDP through a `guacd` sidecar. It is only needed for that feature. To enable it, add the Deployment and Service below, then set `GUACD_ADDRESS: "patchmon-guacd:4822"` in the ConfigMap.
+The server reaches Windows hosts over RDP through `guacd`. It is only needed for that feature. `guacd` must run as a second container in the `patchmon-server` pod, because the server hands it a per-session port on `127.0.0.1`; a separate `guacd` Deployment and Service cannot work. Leave `GUACD_ADDRESS` unset (it defaults to `127.0.0.1:4822`).
+
+Add this container to the `containers:` list of the `patchmon-server` Deployment, after the `server` container:
 
 ```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: patchmon-guacd
-  namespace: patchmon
-spec:
-  selector:
-    app.kubernetes.io/name: patchmon-guacd
-  ports:
-    - name: guacd
-      port: 4822
-      targetPort: 4822
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: patchmon-guacd
-  namespace: patchmon
-  annotations:
-    argocd.argoproj.io/sync-wave: "0"
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: patchmon-guacd
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: patchmon-guacd
-    spec:
-      containers:
         - name: guacd
           image: guacamole/guacd:1.6.0
-          ports:
-            - name: guacd
-              containerPort: 4822
           volumeMounts:
-            - name: tmp
+            - name: guacd-tmp
               mountPath: /tmp
+            - name: guacd-home
+              mountPath: /home/guacd
           readinessProbe:
             tcpSocket:
               port: 4822
@@ -1388,12 +1398,23 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: [ALL]
+```
+
+and this `volumes:` block to the same pod spec, at the same level as `containers:`:
+
+```yaml
       volumes:
-        - name: tmp
+        - name: guacd-tmp
           emptyDir:
             medium: Memory
             sizeLimit: 64Mi
+        - name: guacd-home
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
 ```
+
+If you followed an earlier version of this guide and created a `patchmon-guacd` Deployment and Service, delete them and remove `GUACD_ADDRESS: "patchmon-guacd:4822"` from the ConfigMap.
 
 #### Ingress controllers other than Traefik
 
@@ -2499,7 +2520,7 @@ Configuration for the Guacamole daemon (`guacd`) that powers in-browser RDP sess
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
 | `GUACD_PATH` | _(none)_ | No | Absolute path to the `guacd` binary. When empty, the server locates `guacd` using the system `PATH`. Set this if `guacd` is installed in a non-standard location. |
-| `GUACD_ADDRESS` | `127.0.0.1:4822` | No | Host and port the server uses to connect to the running `guacd` process. Change this if `guacd` is running on a different host or non-default port. |
+| `GUACD_ADDRESS` | `127.0.0.1:4822` | No | Address the server uses to connect to `guacd`. It must be a loopback address: `guacd` has to run on the same host as the server, or in the same network namespace (the Docker Compose `guacd` service uses `network_mode: "service:server"`; on Kubernetes it is a container in the server pod), because the server hands `guacd` a per-session port on `127.0.0.1`. Change only the port if `guacd` listens on a non-default one. With any other host, the server logs a warning at startup and RDP sessions fail. When the address is a loopback address and a `guacd` binary is found, the server starts `guacd` itself. |
 
 ---
 
@@ -5973,7 +5994,7 @@ For these reasons, `rdp-proxy-enabled` **cannot be toggled from the PatchMon UI 
 
 ##### Prerequisites
 
-- The PatchMon **server** must have `guacd` available (the default Docker Compose stack includes `guacamole/guacd:1.6.0` as a sidecar).
+- The PatchMon **server** must have `guacd` available (the default Docker Compose stack includes `guacamole/guacd:1.6.0` as a sidecar). If your Docker install predates 2.1.4, apply the [guacd compose change](#upgrading-to-2-1-4-guacd) first.
 - The **Windows host** must have Remote Desktop enabled.
 - The PatchMon agent must be installed on the Windows host.
 - PatchMon only needs RDP listening on `localhost:3389` on the Windows host. You do not need to expose RDP publicly.
@@ -6016,7 +6037,7 @@ Restart-Service -Name PatchMonAgent
 
 ##### How to Disable RDP Proxy
 
-Set `rdp-proxy-enabled` back to `false` in `config.yml` and restart the agent service. Existing RDP sessions will be terminated.
+Set `rdp-proxy-enabled` back to `false` in `config.yml` and restart the agent service. Existing RDP sessions are terminated: restarting the agent drops its connection to the server, which ends every open RDP session to that host with an error in the browser.
 
 ### Docker Image Update Check (`docker_update_check`) {#docker-image-update-check-docker_update_check}
 

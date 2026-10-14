@@ -201,7 +201,7 @@ func (h *RDPHandler) ServeCreateTicket(w http.ResponseWriter, r *http.Request) {
 	if probe, err := net.DialTimeout("tcp", h.guacdAddress, guacdPreflightTimeout); err != nil {
 		h.log.Warn("rdp-ticket guacd preflight failed", "addr", h.guacdAddress, "error", err)
 		JSON(w, http.StatusServiceUnavailable, map[string]string{
-			"error": "guacd is not reachable on the PatchMon server. Install it (apt install guacd / yum install guacd) or set GUACD_ADDRESS to a running sidecar.",
+			"error": "guacd is not reachable on the PatchMon server. Install it (apt install guacd / yum install guacd), or in Docker run the guacd sidecar in the server's network namespace and set GUACD_ADDRESS=127.0.0.1:4822.",
 			"code":  "guacd_unavailable",
 		})
 		return

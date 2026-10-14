@@ -283,14 +283,14 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 
 	r.Get("/health", healthHandler(db, rdb))
 
-	// Start guacd subprocess if RDP enabled and address is localhost.
-	// When GUACD_ADDRESS points to a remote host (e.g. guacd:4822 in Docker), guacd runs as a sidecar.
+	// Start guacd subprocess if RDP enabled and address is localhost. In Docker the
+	// image has no guacd binary and the sidecar shares this network namespace instead.
 	var guacdProc *guacd.Process
 	rdpEnabled := rdpHandler != nil
 	if rdpEnabled && !guacd.IsRemoteAddress(cfg.GuacdAddress) {
 		guacdProc = guacd.Start(ctx, cfg.GuacdPath, cfg.GuacdAddress, log)
 	} else if rdpEnabled && guacd.IsRemoteAddress(cfg.GuacdAddress) && log != nil {
-		log.Info("RDP using remote guacd", "addr", cfg.GuacdAddress)
+		log.Warn("GUACD_ADDRESS is not a loopback address; RDP sessions will fail unless guacd shares this server's network namespace. Use 127.0.0.1:4822.", "addr", cfg.GuacdAddress)
 	}
 
 	r.Route("/api/v1", func(r chi.Router) {
