@@ -3035,7 +3035,7 @@ To enforce SSO for all users, set:
 OIDC_DISABLE_LOCAL_AUTH=true
 ```
 
-This hides the username/password fields on the login page and only shows the SSO button. The server also refuses password sign-in, the two-factor step and self-service signup. Local authentication is only actually disabled while OIDC is enabled and fully configured (issuer URL, client ID, client secret and redirect URI all set). This safety check prevents you from being locked out if OIDC is misconfigured. The same setting is the **Disable local auth** toggle in **Settings → OIDC / SSO**.
+This hides the username/password fields on the login page and only shows the SSO button. The server also refuses password sign-in, the two-factor step and self-service signup, and Discord sign-in is turned off: the Discord button disappears, and a Discord login that was already in progress is refused before any account is created. Local authentication is only actually disabled while OIDC is enabled and fully configured (issuer URL, client ID, client secret and redirect URI all set). This safety check prevents you from being locked out if OIDC is misconfigured. The same setting is the **Disable local auth** toggle in **Settings → OIDC / SSO**.
 
 > **Important:** Ensure at least one OIDC user has admin access before enabling this, or you may lose the ability to manage PatchMon.
 

@@ -244,6 +244,8 @@ Configure a Discord application as a sign-in provider. Each user can link their 
 
 Discord Auth is intentionally less feature-rich than OIDC SSO. There is no group-to-role mapping, no enforced-SSO mode, and no user auto-provisioning. Use it for communities and small teams; use OIDC SSO for everything else.
 
+When **Disable local auth** is on in **OIDC / SSO**, Discord sign-in is turned off as well, so SSO is the only way in. The Discord button is hidden, and Discord logins are refused before any account is created. Users can still link a Discord identity to their profile, but cannot sign in with it until local authentication is enabled again.
+
 #### OIDC / SSO
 
 **Path:** `/settings/oidc-auth`
