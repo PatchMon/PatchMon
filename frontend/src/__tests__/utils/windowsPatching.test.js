@@ -11,6 +11,7 @@ import {
 	runItemResultCode,
 	runItemResultParts,
 	runItemStatus,
+	UNPATCHABLE_REASON_TEXT,
 	windowsBadges,
 	windowsPatchAllSummary,
 	windowsPatchInfo,
@@ -215,6 +216,31 @@ describe("partitionPatchableHosts", () => {
 		expect(unpatchable).toHaveLength(1);
 		expect(unpatchable[0].host.hostId).toBe("w2");
 		expect(unpatchable[0].reason).toBe("no_winget_id");
+	});
+
+	it("lists Arch hosts as not patchable, since selected patching is a partial upgrade", () => {
+		const hosts = [
+			{
+				hostId: "a1",
+				osType: "Arch Linux",
+				packageManager: "pacman",
+				needsUpdate: true,
+			},
+			{
+				hostId: "d1",
+				osType: "Debian",
+				packageManager: "apt",
+				needsUpdate: true,
+			},
+		];
+		const { patchable, unpatchable } = partitionPatchableHosts(hosts);
+		expect(patchable.map((h) => h.hostId)).toEqual(["d1"]);
+		expect(unpatchable).toHaveLength(1);
+		expect(unpatchable[0].host.hostId).toBe("a1");
+		expect(unpatchable[0].reason).toBe("pacman_partial_upgrade");
+		expect(UNPATCHABLE_REASON_TEXT.pacman_partial_upgrade).toMatch(
+			/partial upgrades/,
+		);
 	});
 
 	it("tolerates a missing list", () => {

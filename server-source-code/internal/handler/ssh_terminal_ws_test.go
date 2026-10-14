@@ -1,0 +1,141 @@
+package handler
+
+import (
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/sshproxy"
+	"github.com/gorilla/websocket"
+)
+
+func startTerminalWS(t *testing.T, pongWait, pingPeriod time.Duration) (*websocket.Conn, <-chan struct{}) {
+	t.Helper()
+	h := &SshTerminalWSHandler{
+		proxySess:  sshproxy.NewSessions(),
+		log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		pongWait:   pongWait,
+		pingPeriod: pingPeriod,
+	}
+	done := make(chan struct{})
+	upgrader := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		h.handleConnection(conn, &models.Host{}, &models.User{})
+		close(done)
+	}))
+	t.Cleanup(srv.Close)
+
+	client, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	return client, done
+}
+
+func TestSshTerminalWS_UnresponsiveClientIsReaped(t *testing.T) {
+	t.Parallel()
+
+	// The client never reads, so it never answers a ping: a vanished browser.
+	_, done := startTerminalWS(t, 300*time.Millisecond, 100*time.Millisecond)
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler still running after the client stopped answering pings")
+	}
+}
+
+func TestSshTerminalWS_IdleResponsiveClientStaysOpen(t *testing.T) {
+	t.Parallel()
+
+	client, done := startTerminalWS(t, 500*time.Millisecond, 100*time.Millisecond)
+
+	// Reading lets gorilla's default ping handler reply with pongs, as a browser does.
+	go func() {
+		for {
+			if _, _, err := client.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("idle terminal that answers pings was torn down")
+	case <-time.After(1500 * time.Millisecond):
+	}
+
+	if err := client.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler did not exit after a close frame")
+	}
+}
+
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "i/o timeout" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return true }
+
+type fakeControlWriter struct {
+	calls atomic.Int32
+	err   func(call int32) error
+}
+
+func (f *fakeControlWriter) WriteControl(int, []byte, time.Time) error {
+	return f.err(f.calls.Add(1))
+}
+
+func TestRunTerminalPings_TimeoutKeepsPinging(t *testing.T) {
+	t.Parallel()
+
+	w := &fakeControlWriter{err: func(int32) error { return timeoutErr{} }}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		runTerminalPings(w, 10*time.Millisecond, stop)
+		close(done)
+	}()
+	time.Sleep(200 * time.Millisecond)
+	close(stop)
+	<-done
+	if n := w.calls.Load(); n < 3 {
+		t.Fatalf("pinger gave up after a write timeout: %d pings", n)
+	}
+}
+
+func TestRunTerminalPings_OtherErrorStops(t *testing.T) {
+	t.Parallel()
+
+	w := &fakeControlWriter{err: func(int32) error { return errors.New("broken pipe") }}
+	done := make(chan struct{})
+	go func() {
+		runTerminalPings(w, 10*time.Millisecond, make(chan struct{}))
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pinger kept running after a non-timeout error")
+	}
+	if n := w.calls.Load(); n != 1 {
+		t.Fatalf("expected exactly one ping before stopping, got %d", n)
+	}
+}

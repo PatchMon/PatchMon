@@ -35,6 +35,14 @@ func isFreeBSD(osType string) bool {
 	return strings.EqualFold(strings.TrimSpace(osType), "freebsd")
 }
 
+// PacmanSelectedPatchUnsupported must match the agent's message for the same refusal.
+const PacmanSelectedPatchUnsupported = "Arch Linux does not support partial upgrades, so PatchMon cannot patch selected packages on this host. Use Patch all."
+
+// RefusesSelectedPatch reports a selected-package run on a pacman host, which would be a partial upgrade.
+func RefusesSelectedPatch(packageManager *string, patchType string) bool {
+	return patchType == "patch_package" && packageManager != nil && *packageManager == "pacman"
+}
+
 func parsePackagesAffectedFromDryRunOutput(osType, output string) []string {
 	var pkgs []string
 	seen := make(map[string]bool)

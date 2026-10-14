@@ -32,7 +32,7 @@ UPDATE patch_runs SET packages_affected = $2, updated_at = NOW() WHERE id = $1;
 DELETE FROM patch_runs WHERE id = $1;
 
 -- name: GetPatchRunByID :one
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username, au.username AS approved_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, h.package_manager AS host_package_manager, u.username AS triggered_by_username, au.username AS approved_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id

@@ -1,10 +1,13 @@
 package sshproxy
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -110,5 +113,53 @@ func TestSessionCarriesWriter(t *testing.T) {
 	}
 	if got.Frontend != w {
 		t.Error("session must carry the shared writer")
+	}
+}
+
+// A peer that stops reading must not block a writer forever; in proxy mode that
+// writer is the agent read loop.
+func TestConnWriter_WriteDeadline(t *testing.T) {
+	t.Parallel()
+
+	upgrader := websocket.Upgrader{}
+	connCh := make(chan *websocket.Conn, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		connCh <- c
+	}))
+	defer srv.Close()
+
+	client, _, err := websocket.DefaultDialer.Dial("ws"+srv.URL[len("http"):], nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+	serverConn := <-connCh
+	defer func() { _ = serverConn.Close() }()
+
+	writer := &ConnWriter{conn: serverConn, writeWait: 200 * time.Millisecond}
+	payload := map[string]string{"type": "data", "data": strings.Repeat("x", 64*1024)}
+
+	errCh := make(chan error, 1)
+	go func() {
+		for {
+			if err := writer.WriteJSON(payload); err != nil {
+				errCh <- err
+				return
+			}
+		}
+	}()
+	select {
+	case err := <-errCh:
+		var ne interface{ Timeout() bool }
+		if !errors.As(err, &ne) || !ne.Timeout() {
+			t.Fatalf("expected a write timeout, got %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("write to a peer that stopped reading never returned")
 	}
 }

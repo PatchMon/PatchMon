@@ -437,7 +437,7 @@ func (q *Queries) GetSourceReposByPackageIDs(ctx context.Context, arg GetSourceR
 }
 
 const listHostsForPackage = `-- name: ListHostsForPackage :many
-SELECT h.id, h.friendly_name, h.hostname, h.os_type, h.os_version, h.last_update, h.needs_reboot, h.reboot_reason,
+SELECT h.id, h.friendly_name, h.hostname, h.os_type, h.os_version, h.package_manager, h.last_update, h.needs_reboot, h.reboot_reason,
     hp.current_version, hp.available_version, hp.needs_update, hp.is_security_update, hp.last_checked,
     hp.source_repository_id, r.name as source_repo_name,
     (CASE WHEN h.os_type ILIKE '%windows%'
@@ -480,6 +480,7 @@ type ListHostsForPackageRow struct {
 	Hostname           *string          `json:"hostname"`
 	OsType             string           `json:"os_type"`
 	OsVersion          string           `json:"os_version"`
+	PackageManager     *string          `json:"package_manager"`
 	LastUpdate         pgtype.Timestamp `json:"last_update"`
 	NeedsReboot        *bool            `json:"needs_reboot"`
 	RebootReason       *string          `json:"reboot_reason"`
@@ -520,6 +521,7 @@ func (q *Queries) ListHostsForPackage(ctx context.Context, arg ListHostsForPacka
 			&i.Hostname,
 			&i.OsType,
 			&i.OsVersion,
+			&i.PackageManager,
 			&i.LastUpdate,
 			&i.NeedsReboot,
 			&i.RebootReason,

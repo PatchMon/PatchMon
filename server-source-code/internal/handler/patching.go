@@ -699,6 +699,10 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if e := selectedPatchRefusal(host, valRun.PatchType); e != nil {
+		writeRunRequestError(w, e)
+		return
+	}
 
 	var pkgName *string
 	if valRun.PackageName != nil {
@@ -911,6 +915,10 @@ func (h *PatchingHandler) RetryValidation(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	if e := selectedPatchRefusal(host, run.PatchType); e != nil {
+		writeRunRequestError(w, e)
+		return
+	}
 	windows := store.IsWindowsOSType(host.OSType)
 	// patch_all runs cannot be dry-run on Linux/FreeBSD agents (no --dry-run support for
 	// the bulk upgrade path). Re-validation only makes sense for patch_package
@@ -1005,11 +1013,11 @@ func (h *PatchingHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Remove run_patch task(s) from queue if present.
-	// Original task: patch-run-{id}, retry task: patch-run-{id}-retry
 	if h.queueInspector != nil {
-		taskID := patchRunJobIDPrefix + id
-		_ = h.queueInspector.DeleteTask(queue.QueuePatching, taskID)
-		_ = h.queueInspector.DeleteTask(queue.QueuePatching, taskID+"-retry")
+		_ = h.queueInspector.DeleteTask(queue.QueuePatching, patchRunJobIDPrefix+id)
+		for _, retryID := range queue.RunPatchRetryTaskIDs(id) {
+			_ = h.queueInspector.DeleteTask(queue.QueuePatching, retryID)
+		}
 	}
 	if err := h.patchRuns.Delete(r.Context(), id); err != nil {
 		h.log.Error("patching: delete run error", "patch_run_id", id, "error", err)
@@ -1080,6 +1088,10 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 
 	host, ok := loadHost(w, r, h.hosts, body.HostID)
 	if !ok {
+		return
+	}
+	if e := selectedPatchRefusal(host, body.PatchType); e != nil {
+		writeRunRequestError(w, e)
 		return
 	}
 	windows := store.IsWindowsOSType(host.OSType)
@@ -1821,4 +1833,11 @@ func patchRunRowToMap(id, hostID, jobID, patchType string, pkgName *string, pkgN
 		m["package_names"] = names
 	}
 	return m
+}
+
+func selectedPatchRefusal(host *models.Host, patchType string) *runRequestError {
+	if store.RefusesSelectedPatch(host.PackageManager, patchType) {
+		return badRunRequest(store.PacmanSelectedPatchUnsupported)
+	}
+	return nil
 }

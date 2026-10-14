@@ -2,9 +2,12 @@ package sshproxy
 
 import (
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+const connWriteWait = 10 * time.Second
 
 // ConnWriter serialises writes to a frontend WebSocket connection.
 //
@@ -12,12 +15,13 @@ import (
 // the handler goroutine and by the agent read loop, so the lock lives on the
 // object both share rather than in a handler closure.
 type ConnWriter struct {
-	mu   sync.Mutex
-	conn *websocket.Conn
+	mu        sync.Mutex
+	conn      *websocket.Conn
+	writeWait time.Duration
 }
 
 func NewConnWriter(conn *websocket.Conn) *ConnWriter {
-	return &ConnWriter{conn: conn}
+	return &ConnWriter{conn: conn, writeWait: connWriteWait}
 }
 
 // Safe from any goroutine; no-op on a nil writer.
@@ -30,6 +34,8 @@ func (w *ConnWriter) WriteJSON(v interface{}) error {
 	if w.conn == nil {
 		return nil
 	}
+	// Bounded so a dead browser cannot stall the agent read loop that also writes here.
+	_ = w.conn.SetWriteDeadline(time.Now().Add(w.writeWait))
 	return w.conn.WriteJSON(v)
 }
 

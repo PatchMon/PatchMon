@@ -1217,6 +1217,8 @@ Two flows produce a patch run from the Packages page:
 3. The **Patch wizard** opens in multi-host mode, discovers which hosts have the selected packages installed and need updates, and lets you pick which to include.
 4. If the **Host** filter is already set to a single host, the wizard locks to that host to avoid offering unrelated hosts.
 
+Arch Linux hosts are listed as **Not patchable** in the wizard, and **Patch selected** is disabled when the Host filter is an Arch host. Use **Patch all** on those hosts. See [Arch Linux patching](#arch-patching).
+
 #### Patch all on a single host
 
 1. Set the **Host** filter to one host.
@@ -1242,6 +1244,7 @@ From there, you can drill into individual packages, set up a patch run, or narro
 - **Live list, periodic backing data.** Rows are fetched from the PatchMon server and reflect the most recent reports submitted by each host. To refresh a host's data immediately, open the host's detail page and click **Fetch Report**. The Packages list picks up the new state on its next refetch (or click **Refresh** on the Packages page).
 - **Drilling down into patch state.** The **Hosts** page is the better starting point when you care about which *hosts* are behind on updates. Use the Packages page when you care about which *packages* expose the fleet.
 - **Windows hosts.** Package reporting covers installed applications (enriched with winget update data) and Windows Updates; Chocolatey is not used. **Patch all** and **Patch selected** work on Windows hosts running agent 2.1.4 or later. Windows Update rows show a **Windows Update** source and apps a **winget** source; apps winget does not recognise are listed as **Not patchable**. See [Windows patching](#windows-patching).
+- **Arch Linux hosts.** Only **Patch all** is available. On a package's detail page an Arch host shows **Patch all only** instead of a **Patch** button. See [Arch Linux patching](#arch-patching).
 
 ### Related Pages
 
@@ -1502,7 +1505,7 @@ A **dry-run** (also called a validation run) asks the agent to simulate the pack
 - For `apt-get`, the agent runs `apt-get -s install <packages>` and parses the simulation output.
 - For `dnf`/`yum`, the agent runs the planning step that reports "what would be installed" without committing.
 - For `pkg` on FreeBSD, the agent runs `pkg upgrade -n` or the equivalent install-no-run.
-- For `pacman`, the agent uses `pacman -S -p` / `pacman -Syu -p` (print-only) as the validation step.
+- `pacman` (Arch Linux) has no validation step, because selected patching is not available on Arch and `patch_all` cannot be dry-run. See [Arch Linux patching](#arch-patching).
 - For `apk` on Alpine, the agent runs `apk upgrade --simulate <packages>`, which opens the package database read-only. A validation fails if apk reports an error (for example an unknown package or a conflict with `/etc/apk/world`), or if the plan would downgrade or replace a package, or remove one listed in `/etc/apk/world`.
 
 When the dry-run completes the run transitions to `validated` and shows you the list of packages that *would* be installed, including dependencies that were pulled in. If more packages would be installed than you originally asked for, the UI badges the run with **Extra deps** (Linux and FreeBSD `patch_package` runs only) and surfaces the full list in the run detail "Packages affected" panel so you can review before approving.
@@ -1525,11 +1528,26 @@ The agent chooses the patching back-end by detecting the host's package manager.
 | `apt-get` | Debian, Ubuntu, Raspbian | Yes |
 | `dnf` | RHEL 8+, Rocky, AlmaLinux, Fedora | Yes |
 | `yum` | RHEL 7, CentOS 7 | Yes |
-| `pacman` | Arch Linux, Manjaro | Yes |
+| `pacman` | Arch Linux, Manjaro | **Patch all** only. See [Arch Linux patching](#arch-patching). |
 | `pkg` | FreeBSD 13+ (plus `freebsd-update` for the base system on `patch_all`) | Yes |
 | `apk` | Alpine Linux 3.21 and later (apk-tools 2 on 3.21 and 3.22, apk-tools 3 from 3.23) | Yes, with agent 2.1.4 or later. See [Alpine patching](#alpine-patching). |
 | `zypper` | openSUSE Leap, openSUSE Tumbleweed, SLES | **No, and no inventory either. Coming soon.** The installer detects zypper and completes, and the agent detects the OS correctly, but the agent has no zypper backend. Package collection therefore fails with `unsupported package manager: unknown` and the host never completes its first report, so it sits at "Waiting for initial system report". Follow and vote for zypper support at [feedback.patchmon.net](https://feedback.patchmon.net/b/feature-requests/posts/post_01kyza53c0fzst214afbr1qn9a). |
 | Windows Update Agent (WUA) + winget | Windows 10/11, Server 2019/2022/2025 | Yes, with agent 2.1.4 or later (separate path) |
+
+#### Arch Linux patching {#arch-patching}
+
+Arch Linux does not support partial upgrades: syncing the package databases and then upgrading only some packages can leave a package linked against libraries that are not installed yet. The Arch Wiki explains this under [System maintenance: Partial upgrades are unsupported](https://wiki.archlinux.org/title/System_maintenance#Partial_upgrades_are_unsupported). Upgrading `curl` this way on an out-of-date host can stop `pacman` itself from starting, and then the host cannot be patched at all.
+
+PatchMon therefore offers only **Patch all** on hosts that use `pacman`. It runs `pacman -Syu --noconfirm`, which syncs the databases and upgrades every package in one transaction.
+
+**Patch selected** is refused at every step, all with the same message: "Arch Linux does not support partial upgrades, so PatchMon cannot patch selected packages on this host. Use Patch all."
+
+- The UI disables it for Arch hosts and explains why.
+- The server rejects a new `patch_package` run for an Arch host.
+- A `patch_package` run for an Arch host that was queued or scheduled before you upgraded PatchMon is marked **failed** with the same message when it comes due. It is never sent to the agent.
+- The agent refuses one if it still receives it, before running any `pacman` command. It also refuses a dry run on Arch, because `pacman -Syu -p` syncs the package databases without upgrading.
+
+**Older pending runs.** An Arch `patch_package` run left waiting for validation or approval from before the upgrade can no longer be approved or retried. Delete it from **Patching → Runs & History** and use **Patch all** instead.
 
 #### Alpine patching {#alpine-patching}
 
