@@ -24,7 +24,8 @@ var freeBSDPkgSummaryLinePattern = regexp.MustCompile(`^\s+(\S+):\s+`)
 var freeBSDPkgActionLinePattern = regexp.MustCompile(`^\[\d+/\d+\]\s+(?:Installing|Upgrading|Reinstalling)\s+(\S+)`)
 
 // apk v3 pads the counter ("( 1/14)") and tags packages from tagged repositories ("busybox@edge").
-var apkActionLinePattern = regexp.MustCompile(`^\(\s*\d+/\d+\)\s+(?:Installing|Upgrading|Reinstalling|Downgrading|Replacing)\s+([^\s@]+)`)
+// Purging counts: the agent lets apk remove orphans, and a reviewer should see them.
+var apkActionLinePattern = regexp.MustCompile(`^\(\s*\d+/\d+\)\s+(?:Installing|Upgrading|Reinstalling|Downgrading|Replacing|Purging)\s+([^\s@]+)`)
 
 // isFreeBSD reports whether the host OS type represents FreeBSD. The synthetic
 // "freebsd-base" package must only be emitted for FreeBSD hosts; otherwise

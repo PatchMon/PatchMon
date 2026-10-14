@@ -280,6 +280,7 @@ func TestParseAPKPlan(t *testing.T) {
 		{"same-version replace", "(1/1) Replacing busybox (1.37.0-r30 -> 1.37.0-r30)\nOK: 8 MiB in 16 packages\n", []string{"busybox"}, false, 1},
 		{"real run with preupgrade and scripts", "Preupgrading:\n(1/2) Upgrading libapk (3.0.1-r1 -> 3.0.8-r0)\n(2/2) Upgrading apk-tools (3.0.1-r1 -> 3.0.8-r0)\nExecuting busybox-1.37.0-r29.trigger\n  Installing file to etc/hosts.apk-new\n", []string{"libapk", "apk-tools"}, false, 0},
 	}
+	world := ParseAPKWorldNames("alpine-base\nbusybox-binsh\n")
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			plan := ParseAPKPlan(tc.output)
@@ -293,7 +294,7 @@ func TestParseAPKPlan(t *testing.T) {
 			if plan.Unreliable != tc.unreliable {
 				t.Errorf("unreliable = %v, want %v", plan.Unreliable, tc.unreliable)
 			}
-			if got := len(plan.Refused()); got != tc.refused {
+			if got := len(plan.Refused(world)); got != tc.refused {
 				t.Errorf("refused = %d, want %d", got, tc.refused)
 			}
 		})
@@ -301,8 +302,49 @@ func TestParseAPKPlan(t *testing.T) {
 	if !ParseAPKPlan("OK: 7 MiB in 15 packages\n").Complete || ParseAPKPlan("WARNING: something\n").Complete {
 		t.Error("Complete must follow apk's OK line")
 	}
-	if got := ParseAPKPlan("(1/1) Downgrading scanelf (1.3.11-r0 -> 1.3.8-r2)\n").Refused()[0].String(); got != "Downgrading scanelf (1.3.11-r0 -> 1.3.8-r2)" {
+	if got := ParseAPKPlan("(1/1) Downgrading scanelf (1.3.11-r0 -> 1.3.8-r2)\n").Refused(nil)[0].String(); got != "Downgrading scanelf (1.3.11-r0 -> 1.3.8-r2)" {
 		t.Errorf("refused step renders as %q", got)
+	}
+}
+
+func TestParseAPKWorldNames(t *testing.T) {
+	got := ParseAPKWorldNames("alpine-base\nbusybox=1.37.0-r29\n!nano\ncurl@edge>8.0\nzlib~1.3\n.tmp-test=20261014.134913\n")
+	want := map[string]bool{"alpine-base": true, "busybox": true, "nano": true, "curl": true, "zlib": true, ".tmp-test": true}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ParseAPKWorldNames = %v, want %v", got, want)
+	}
+}
+
+// Captured with apk upgrade --simulate on an Alpine edge VM (apk-tools 3.0.8): the new
+// python3 dropped its gdbm dependency, so apk purges gdbm as an orphan.
+func TestAPKPlanEdgeOrphanPurge(t *testing.T) {
+	sim, err := os.ReadFile("testdata/apk-edge-simulate.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	worldFile, err := os.ReadFile("testdata/apk-edge-world.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := ParseAPKPlan(string(sim))
+	world := ParseAPKWorldNames(string(worldFile))
+	if len(plan.Steps) != 141 || !plan.Complete {
+		t.Fatalf("parsed %d steps, complete=%v", len(plan.Steps), plan.Complete)
+	}
+	if refused := plan.Refused(world); len(refused) != 0 {
+		t.Errorf("orphan purge refused: %v", refused)
+	}
+	orphans := plan.Orphans(world)
+	if len(orphans) != 1 || orphans[0].Name != "gdbm" || orphans[0].Detail != "(1.26-r0)" {
+		t.Errorf("orphans = %+v", orphans)
+	}
+
+	world["gdbm"] = true
+	if refused := plan.Refused(world); len(refused) != 1 || refused[0].Name != "gdbm" {
+		t.Errorf("purging a world package must be refused, got %+v", refused)
+	}
+	if len(plan.Orphans(world)) != 0 {
+		t.Error("a world package is never an orphan")
 	}
 }
 

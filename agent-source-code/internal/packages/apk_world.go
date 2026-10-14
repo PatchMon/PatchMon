@@ -27,14 +27,32 @@ type APKHold struct {
 
 // ReadAPKWorld returns the versioned constraints in /etc/apk/world. A missing file has none.
 func ReadAPKWorld() ([]APKWorldConstraint, error) {
+	data, err := readAPKWorldFile()
+	return ParseAPKWorld(data), err
+}
+
+func readAPKWorldFile() (string, error) {
 	data, err := os.ReadFile(APKWorldFile)
 	if os.IsNotExist(err) {
-		return nil, nil
+		return "", nil
 	}
-	if err != nil {
-		return nil, err
+	return string(data), err
+}
+
+// ParseAPKWorldNames returns every package world names in any form: plain, tagged,
+// versioned or as a conflict (!name).
+func ParseAPKWorldNames(content string) map[string]bool {
+	names := map[string]bool{}
+	for _, entry := range strings.Fields(content) {
+		entry = strings.TrimPrefix(entry, "!")
+		if i := strings.IndexAny(entry, "@<>=~"); i >= 0 {
+			entry = entry[:i]
+		}
+		if entry != "" {
+			names[entry] = true
+		}
 	}
-	return ParseAPKWorld(string(data)), nil
+	return names
 }
 
 // ParseAPKWorld returns the entries that pin a version. Plain names, conflicts (!name)

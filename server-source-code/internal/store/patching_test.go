@@ -233,6 +233,26 @@ OK: 80 MiB in 76 packages
 		}
 	})
 
+	t.Run("apk orphan purge counts as affected in dry and real runs", func(t *testing.T) {
+		dry := `$ apk upgrade --no-progress --simulate
+(  1/141) Upgrading musl (1.2.6-r2 -> 1.2.6-r5)
+(141/141) Purging gdbm (1.26-r0)
+OK: 143.8 MiB in 215 packages
+[patchmon] Removing gdbm 1.26-r0: no longer required by any package and not in /etc/apk/world.`
+		realOut := dry + `
+$ apk upgrade --no-progress --wait 30
+(  1/141) Upgrading musl (1.2.6-r2 -> 1.2.6-r5)
+(141/141) Purging gdbm (1.26-r0)
+OK: 143.8 MiB in 215 packages`
+		want := []string{"musl", "gdbm"}
+		if got := parsePackagesAffectedFromDryRunOutput("Alpine Linux", dry); !reflect.DeepEqual(got, want) {
+			t.Errorf("dry run = %v, want %v", got, want)
+		}
+		if got := parsePackagesAffectedFromRealOutput("Alpine Linux", realOut); !reflect.DeepEqual(got, want) {
+			t.Errorf("real run = %v, want %v", got, want)
+		}
+	})
+
 	t.Run("apk run cancelled during preupgrade counts only what was applied", func(t *testing.T) {
 		output := `$ apk update --wait 30
 OK: 27456 distinct packages available

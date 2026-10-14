@@ -58,14 +58,30 @@ func ParseAPKPlan(output string) APKPlan {
 	return plan
 }
 
-// Refused returns every step that is not an install, upgrade, reinstall or pinning change:
-// downgrades, purges, same-version replaces and any verb this agent does not know.
-func (p APKPlan) Refused() []APKPlanStep {
+// Refused returns the steps PatchMon does not apply: downgrades, same-version replaces,
+// unknown verbs, and purges of packages /etc/apk/world names.
+func (p APKPlan) Refused(worldNames map[string]bool) []APKPlanStep {
 	var out []APKPlanStep
 	for _, s := range p.Steps {
 		switch s.Action {
 		case "Installing", "Upgrading", "Reinstalling", "Updating pinning":
+		case "Purging":
+			if worldNames[s.Name] {
+				out = append(out, s)
+			}
 		default:
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// Orphans returns the purges apk plans for packages world does not name. apk's solver
+// keeps everything reachable from world, so it only purges what nothing still requires.
+func (p APKPlan) Orphans(worldNames map[string]bool) []APKPlanStep {
+	var out []APKPlanStep
+	for _, s := range p.Steps {
+		if s.Action == "Purging" && !worldNames[s.Name] {
 			out = append(out, s)
 		}
 	}
@@ -147,6 +163,8 @@ type APKInventory struct {
 	Available map[string]string
 	Origin    map[string]string
 	World     []APKWorldConstraint
+	// WorldNames holds every package /etc/apk/world names, in any constraint form.
+	WorldNames map[string]bool
 }
 
 // LoadAPKInventory reads the apk version, installed and upgradable packages, and world.
@@ -176,7 +194,9 @@ func LoadAPKInventory(ctx context.Context) (APKInventory, error) {
 			inv.Origin[p.Name] = p.Origin
 		}
 	}
-	inv.World, err = ReadAPKWorld()
+	world, err := readAPKWorldFile()
+	inv.World = ParseAPKWorld(world)
+	inv.WorldNames = ParseAPKWorldNames(world)
 	return inv, err
 }
 

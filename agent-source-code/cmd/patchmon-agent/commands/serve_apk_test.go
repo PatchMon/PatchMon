@@ -68,11 +68,12 @@ const (
 
 func apkTestInventory(world string) packages.APKInventory {
 	return packages.APKInventory{
-		Major:     3,
-		Installed: map[string]string{"busybox": "1.37.0-r29", "busybox-binsh": "1.37.0-r29", "libssl3": "3.5.4-r0", "libcrypto3": "3.5.4-r0"},
-		Available: map[string]string{"busybox": "1.37.0-r30", "busybox-binsh": "1.37.0-r30", "libssl3": "3.5.9-r0", "libcrypto3": "3.5.9-r0"},
-		Origin:    map[string]string{"busybox": "busybox", "busybox-binsh": "busybox", "libssl3": "openssl", "libcrypto3": "openssl"},
-		World:     packages.ParseAPKWorld(world),
+		Major:      3,
+		Installed:  map[string]string{"busybox": "1.37.0-r29", "busybox-binsh": "1.37.0-r29", "libssl3": "3.5.4-r0", "libcrypto3": "3.5.4-r0"},
+		Available:  map[string]string{"busybox": "1.37.0-r30", "busybox-binsh": "1.37.0-r30", "libssl3": "3.5.9-r0", "libcrypto3": "3.5.9-r0"},
+		Origin:     map[string]string{"busybox": "busybox", "busybox-binsh": "busybox", "libssl3": "openssl", "libcrypto3": "openssl"},
+		World:      packages.ParseAPKWorld(world),
+		WorldNames: packages.ParseAPKWorldNames("alpine-base\nbusybox\n" + world),
 	}
 }
 
@@ -203,6 +204,54 @@ func TestRunAPKPatchRejectsUnparseableSimulation(t *testing.T) {
 		if f.ran(apkUpgradeAll) != 0 {
 			t.Errorf("%q: nothing may be applied: %q", out, f.calls)
 		}
+	}
+}
+
+func TestRunAPKPatchAllowsOrphanPurge(t *testing.T) {
+	f := &fakeAPK{
+		inv: apkTestInventory(""),
+		responses: map[string][]fakeAPKResponse{apkSimulateAll: {{
+			out: "(  1/2) Upgrading python3 (3.14.0-r0 -> 3.14.1-r0)\n(  2/2) Purging gdbm (1.26-r0)\nOK: 143.8 MiB in 215 packages\n",
+		}}},
+	}
+	if err := runAPKPatch(f.io(), "patch_all", nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(f.notes, "Removing gdbm 1.26-r0: no longer required by any package and not in /etc/apk/world.") {
+		t.Errorf("notes = %q", f.notes)
+	}
+	if f.ran(apkUpgradeAll) != 1 {
+		t.Errorf("an orphan purge must not stop the run: %q", f.calls)
+	}
+}
+
+func TestRunAPKPatchRefusesWorldPurge(t *testing.T) {
+	f := &fakeAPK{
+		inv: apkTestInventory("!curl"),
+		responses: map[string][]fakeAPKResponse{apkSimulateAll: {{
+			out: "(1/2) Purging curl (8.22.0-r0)\n(2/2) Purging libcurl (8.22.0-r0)\nOK: 21.0 MiB in 28 packages\n",
+		}}},
+	}
+	err := runAPKPatch(f.io(), "patch_all", nil, false)
+	if err == nil || !strings.Contains(err.Error(), "Purging curl (8.22.0-r0)") || strings.Contains(err.Error(), "Purging libcurl") {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(err.Error(), "listed in /etc/apk/world") || strings.Contains(err.Error(), "repositor") {
+		t.Errorf("a world purge must not blame repositories: %v", err)
+	}
+	if f.ran(apkUpgradeAll) != 0 {
+		t.Errorf("nothing may be applied: %q", f.calls)
+	}
+}
+
+func TestAPKRefusalErrorNamesEachCause(t *testing.T) {
+	err := apkRefusalError([]packages.APKPlanStep{
+		{Action: "Downgrading", Name: "scanelf", Detail: "(1.3.11-r0 -> 1.3.8-r2)"},
+		{Action: "Downgrading", Name: "pax-utils", Detail: "(1.3.11-r0 -> 1.3.8-r2)"},
+		{Action: "Replacing", Name: "busybox", Detail: "(1.37.0-r30 -> 1.37.0-r30)"},
+	}).Error()
+	if strings.Count(err, "repository was removed or changed") != 1 || !strings.Contains(err, "different build") {
+		t.Errorf("err = %s", err)
 	}
 }
 

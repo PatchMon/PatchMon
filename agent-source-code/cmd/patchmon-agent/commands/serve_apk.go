@@ -112,14 +112,11 @@ func runAPKPatch(io apkPatchIO, patchType string, packageNames []string, dryRun 
 		}
 	}
 
-	if refused := plan.Refused(); len(refused) > 0 {
-		steps := make([]string, len(refused))
-		for i, s := range refused {
-			steps[i] = s.String()
-		}
-		return fmt.Errorf("apk plans to downgrade, remove or replace packages (%s). PatchMon only applies upgrades, so the plan was not applied. "+
-			"This usually follows a repository being removed from /etc/apk/repositories; review the plan with apk upgrade --simulate on the host",
-			strings.Join(steps, "; "))
+	if refused := plan.Refused(inv.WorldNames); len(refused) > 0 {
+		return apkRefusalError(refused)
+	}
+	for _, s := range plan.Orphans(inv.WorldNames) {
+		io.note(fmt.Sprintf("Removing %s %s: no longer required by any package and not in /etc/apk/world.", s.Name, strings.Trim(s.Detail, "()")))
 	}
 
 	for _, h := range holds {
@@ -138,6 +135,32 @@ func runAPKPatch(io apkPatchIO, patchType string, packageNames []string, dryRun 
 		return apkStepError("apk upgrade", out, err)
 	}
 	return nil
+}
+
+func apkRefusalError(refused []packages.APKPlanStep) error {
+	steps := make([]string, len(refused))
+	seen := map[string]bool{}
+	var causes []string
+	for i, s := range refused {
+		steps[i] = s.String()
+		cause := ""
+		switch s.Action {
+		case "Downgrading":
+			cause = "a downgrade usually means a repository was removed or changed in /etc/apk/repositories, or a package came from a tagged repository that is no longer configured"
+		case "Purging":
+			cause = "apk would remove a package listed in /etc/apk/world, usually because of a conflict (!name) or a changed constraint there"
+		case "Replacing":
+			cause = "a same-version replace means a repository now serves a different build of a version that is already installed"
+		default:
+			cause = "apk printed a step this agent does not recognise"
+		}
+		if !seen[cause] {
+			seen[cause] = true
+			causes = append(causes, cause)
+		}
+	}
+	return fmt.Errorf("apk plans changes PatchMon does not apply automatically (%s), so the plan was not applied. %s. Review the plan with apk upgrade --simulate on the host",
+		strings.Join(steps, "; "), strings.Join(causes, "; "))
 }
 
 func apkSimulate(io apkPatchIO, targets []string, preupgraded bool) (packages.APKPlan, error) {
