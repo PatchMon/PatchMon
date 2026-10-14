@@ -38,6 +38,20 @@ const (
 
 var ErrRDPTicketRequired = errors.New("valid RDP ticket required")
 
+// Machine codes prefixed as "<code>: " to Guacamole error messages the server
+// sends itself; the frontend picks its guidance panel from them.
+const (
+	rdpAbortAgentGone     = "agent_disconnected"
+	rdpAbortSessionEnded  = "rdp_session_ended"
+	rdpAbortTicketInvalid = "rdp_ticket_invalid"
+	rdpAbortServerError   = "server_error"
+
+	rdpMsgAgentGone     = rdpAbortAgentGone + ": The PatchMon agent on this host disconnected. Connect again once it is back online."
+	rdpMsgSessionEnded  = rdpAbortSessionEnded + ": The RDP session ended before it could start. Connect again."
+	rdpMsgTicketInvalid = rdpAbortTicketInvalid + ": This RDP ticket is invalid, expired or already used. Connect again to get a new one."
+	rdpMsgServerError   = rdpAbortServerError + ": The RDP session could not be started on the PatchMon server. Check the server logs."
+)
+
 // rdpTunnel ties a guac tunnel to its proxy session so the session is torn
 // down, and the agent told, whenever the browser side ends.
 type rdpTunnel struct {
@@ -478,11 +492,11 @@ func (h *RDPHandler) connectTunnel(ws *websocket.Conn, r *http.Request) (guac.Tu
 	}
 	abortOnAgentLoss := func(reason string) {
 		if reason == rdpproxy.ReasonAgentGone {
-			t.abort(guac.UpstreamError, "The PatchMon agent on this host disconnected. Connect again once it is back online.")
+			t.abort(guac.UpstreamError, rdpMsgAgentGone)
 		}
 	}
 	if !h.rdpSessions.OnClose(t.sessionID, abortOnAgentLoss) {
-		t.abort(guac.UpstreamError, "The RDP session ended before it could start. Connect again.")
+		t.abort(guac.UpstreamError, rdpMsgSessionEnded)
 	}
 	return t, nil
 }
@@ -491,10 +505,10 @@ func (h *RDPHandler) connectTunnel(ws *websocket.Conn, r *http.Request) (guac.Tu
 // reason is the Guacamole status code, which guacamole-common-js reads.
 func writeGuacError(ws *websocket.Conn, err error) {
 	status := guac.ServerError
-	msg := "The RDP session could not be started on the PatchMon server. Check the server logs."
+	msg := rdpMsgServerError
 	if errors.Is(err, ErrRDPTicketRequired) {
 		status = guac.ResourceNotFound
-		msg = "This RDP ticket is invalid, expired or already used. Connect again to get a new one."
+		msg = rdpMsgTicketInvalid
 	}
 	code := strconv.Itoa(status.GetGuacamoleStatusCode())
 	deadline := time.Now().Add(2 * time.Second)

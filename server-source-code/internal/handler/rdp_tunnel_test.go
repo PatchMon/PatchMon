@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"log/slog"
+	"net"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
+	"github.com/wwt/guac"
 
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/rdpproxy"
@@ -50,7 +52,8 @@ func TestRDPTunnelInvalidTicketSendsGuacError(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%q: no Guacamole error instruction before close: %v", q, err)
 		}
-		if !strings.HasPrefix(string(msg), "5.error,") || !strings.HasSuffix(string(msg), ",3.516;") {
+		if !strings.HasPrefix(string(msg), "5.error,") || !strings.HasSuffix(string(msg), ",3.516;") ||
+			!strings.Contains(string(msg), ".rdp_ticket_invalid: ") {
 			t.Fatalf("%q: instruction = %q, want an error with status 516", q, msg)
 		}
 		_, _, err = ws.ReadMessage()
@@ -94,5 +97,32 @@ func TestAbortableReaderEmitsErrorOnce(t *testing.T) {
 	}
 	if _, err := r.ReadSome(); err == nil {
 		t.Fatal("third read succeeded; want the underlying error")
+	}
+}
+
+func TestRDPAbortMessagesCarryCodePrefix(t *testing.T) {
+	cases := map[string]string{
+		"agent_disconnected": rdpMsgAgentGone,
+		"rdp_session_ended":  rdpMsgSessionEnded,
+		"rdp_ticket_invalid": rdpMsgTicketInvalid,
+		"server_error":       rdpMsgServerError,
+	}
+	for code, msg := range cases {
+		if !strings.HasPrefix(msg, code+": ") || len(msg) <= len(code)+2 {
+			t.Errorf("%q does not start with %q", msg, code+": ")
+		}
+	}
+
+	a, b := net.Pipe()
+	defer func() { _ = b.Close() }()
+	tun := &rdpTunnel{guacdConn: a}
+	tun.abort(guac.UpstreamError, rdpMsgAgentGone)
+	got := string(*tun.abortIns.Load())
+	want := guac.NewInstruction("error", rdpMsgAgentGone, "515").String()
+	if got != want {
+		t.Fatalf("abort instruction = %q, want %q", got, want)
+	}
+	if _, err := a.Write([]byte("x")); err == nil {
+		t.Fatal("abort left the guacd connection open")
 	}
 }
