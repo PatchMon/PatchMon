@@ -44,7 +44,8 @@ func collectWindowsApps(t *testing.T, reg []models.Package, table string, upgrad
 	if len(entries) == 0 {
 		t.Fatal("fixture produced no winget entries")
 	}
-	return m.mergeRegistryAndWinget(reg, wingetEntriesToRows(entries, upgradeMap))
+	merged, _ := m.mergeRegistryAndWinget(reg, wingetEntriesToRows(entries, upgradeMap))
+	return merged
 }
 
 func findPackage(t *testing.T, pkgs []models.Package, name string) models.Package {
@@ -145,5 +146,38 @@ func TestParseSQLServerSetups(t *testing.T) {
 		if got := len(parseSQLServerSetups([]byte(tc.in))); got != tc.want {
 			t.Errorf("parseSQLServerSetups(%q) returned %d setups, want %d", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestMergeKeepsWingetPinAndStoreFlags(t *testing.T) {
+	m := &WindowsManager{logger: logrus.New()}
+	m.logger.SetOutput(io.Discard)
+	reg := []models.Package{
+		{Name: "7-Zip 26.02 (x64)", CurrentVersion: "26.02"},
+		{Name: "Windows Terminal", CurrentVersion: "1.20"},
+	}
+	rows := []wingetRow{
+		{pkg: models.Package{Name: "7-Zip 26.02 (x64)", CurrentVersion: "26.02", AvailableVersion: "26.04", NeedsUpdate: true, SourceRepository: "winget", WingetID: "7zip.7zip", WingetPinned: true}},
+		{pkg: models.Package{Name: "Windows Terminal", CurrentVersion: "1.20", AvailableVersion: "1.21", NeedsUpdate: true, SourceRepository: "winget", WingetID: "Microsoft.WindowsTerminal", WingetStoreApp: true}},
+		{pkg: models.Package{Name: "Only In Winget", CurrentVersion: "1.0", AvailableVersion: "2.0", NeedsUpdate: true, SourceRepository: "winget", WingetID: "Only.InWinget", WingetPinned: true}},
+	}
+	merged, _ := m.mergeRegistryAndWinget(reg, rows)
+	if p := findPackage(t, merged, "7-Zip 26.02 (x64)"); !p.WingetPinned || !p.NeedsUpdate || p.WingetID != "7zip.7zip" {
+		t.Errorf("pinned registry row = %+v", p)
+	}
+	if p := findPackage(t, merged, "Windows Terminal"); !p.WingetStoreApp {
+		t.Errorf("store registry row = %+v", p)
+	}
+	if p := findPackage(t, merged, "Only In Winget"); !p.WingetPinned {
+		t.Errorf("winget-only row = %+v", p)
+	}
+}
+
+func TestPinnedRegistryAppIsNotUpdatable(t *testing.T) {
+	table := wingetTable(24, []wingetTestRow{{"7-Zip 26.02 (x64)", "7zip.7zip", "26.02", "26.04", "winget"}})
+	merged := collectWindowsApps(t, []models.Package{{Name: "7-Zip 26.02 (x64)", CurrentVersion: "26.02"}}, table, map[string]string{})
+	p := findPackage(t, merged, "7-Zip 26.02 (x64)")
+	if !p.WingetPinned || !p.NeedsUpdate || p.AvailableVersion != "26.04" {
+		t.Errorf("merged pinned app = %+v", p)
 	}
 }

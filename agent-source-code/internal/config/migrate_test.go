@@ -20,7 +20,7 @@ func TestMigrateConfig(t *testing.T) {
 		rec := func(v string) func(*models.Config) bool {
 			return func(*models.Config) bool { *ran = append(*ran, v); return false }
 		}
-		return []configMigration{{"2.1.5", rec("2.1.5")}, {"2.2.0", rec("2.2.0")}}
+		return []configMigration{{"2.1.4", rec("2.1.4")}, {"2.2.0", rec("2.2.0")}}
 	}
 
 	cases := []struct {
@@ -29,18 +29,20 @@ func TestMigrateConfig(t *testing.T) {
 		binary        string
 		want          []string
 	}{
-		{"unstamped pre-2.1.5 config runs every step", "", "2.2.0", []string{"2.1.5", "2.2.0"}},
-		{"garbage version ranks lowest", "unknown", "2.2.0", []string{"2.1.5", "2.2.0"}},
-		{"2.1.4 config upgraded to 2.1.5", "2.1.4", "2.1.5", []string{"2.1.5", "2.2.0"}},
-		{"rc config reruns its release step", "2.1.5-rc.1", "2.1.5", []string{"2.1.5", "2.2.0"}},
-		{"rc patch build reruns too", "2.1.5-rc.1.4", "2.1.5-rc.2", []string{"2.1.5", "2.2.0"}},
-		{"current config runs nothing", "2.1.5", "2.1.5", nil},
-		{"already-applied step does not rerun", "2.1.5", "2.2.0", []string{"2.2.0"}},
-		{"downgrade runs nothing and restamps", "2.2.0", "2.1.5", nil},
-		{"dev build still applies the steps it carries", "", "0.0.0", []string{"2.1.5", "2.2.0"}},
-		{"dev build with a git suffix", "2.1.4", "2.1.3-main-93c589a4", []string{"2.1.5", "2.2.0"}},
+		{"unstamped pre-2.1.4 config runs every step", "", "2.2.0", []string{"2.1.4", "2.2.0"}},
+		{"garbage version ranks lowest", "unknown", "2.2.0", []string{"2.1.4", "2.2.0"}},
+		{"2.1.3 config upgraded to 2.1.4", "2.1.3", "2.1.4", []string{"2.1.4", "2.2.0"}},
+		{"rc config reruns its release step", "2.1.4-rc.1", "2.1.4", []string{"2.1.4", "2.2.0"}},
+		{"rc patch build reruns too", "2.1.4-rc.1.4", "2.1.4-rc.2", []string{"2.1.4", "2.2.0"}},
+		{"current config runs nothing", "2.1.4", "2.1.4", nil},
+		{"already-applied step does not rerun", "2.1.4", "2.2.0", []string{"2.2.0"}},
+		{"downgrade runs nothing and restamps", "2.2.0", "2.1.4", nil},
+		{"later rc config skips the 2.1.4 step", "2.1.5-rc.1", "2.1.4", []string{"2.2.0"}},
+		{"later rc config upgraded runs only newer steps", "2.1.5-rc.1", "2.2.0", []string{"2.2.0"}},
+		{"dev build still applies the steps it carries", "", "0.0.0", []string{"2.1.4", "2.2.0"}},
+		{"dev build with a git suffix", "2.1.3", "2.1.3-main-93c589a4", []string{"2.1.4", "2.2.0"}},
 		{"dev hop after a final release runs nothing", "2.2.0", "2.1.3-main-93c589a4", nil},
-		{"0.0.0 config is lowest", "0.0.0", "2.1.5", []string{"2.1.5", "2.2.0"}},
+		{"0.0.0 config is lowest", "0.0.0", "2.1.4", []string{"2.1.4", "2.2.0"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -63,7 +65,7 @@ func TestMigrateConfig(t *testing.T) {
 	}
 }
 
-func TestMigrate215(t *testing.T) {
+func TestMigrate214(t *testing.T) {
 	for in, want := range map[string]string{
 		testHostID:              testHostID,
 		"  " + testHostID + " ": testHostID,
@@ -73,13 +75,13 @@ func TestMigrate215(t *testing.T) {
 		strings.Repeat("a", 65): "",
 	} {
 		c := &models.Config{HostID: in}
-		migrate215(c)
+		migrate214(c)
 		if c.HostID != want {
-			t.Errorf("migrate215(%q) host_id = %q, want %q", in, c.HostID, want)
+			t.Errorf("migrate214(%q) host_id = %q, want %q", in, c.HostID, want)
 		}
 		again := *c
-		if migrate215(&again) || again.HostID != c.HostID {
-			t.Errorf("migrate215 is not idempotent for %q", in)
+		if migrate214(&again) || again.HostID != c.HostID {
+			t.Errorf("migrate214 is not idempotent for %q", in)
 		}
 	}
 }
@@ -144,7 +146,7 @@ func TestLoadConfig_StampsAndKeepsSettings(t *testing.T) {
 }
 
 func TestLoadConfig_KeepsAndCleansHostID(t *testing.T) {
-	_, cfgPath := newTempManager(t, testConfigYAML+"host_id: \" "+testHostID+" \"\nconfig_version: 2.1.5-rc.1\n")
+	_, cfgPath := newTempManager(t, testConfigYAML+"host_id: \" "+testHostID+" \"\nconfig_version: 2.1.4-rc.1\n")
 	v := readKeys(t, cfgPath)
 	if got := v.GetString("host_id"); got != testHostID {
 		t.Fatalf("host_id = %q, want %q", got, testHostID)
@@ -152,7 +154,7 @@ func TestLoadConfig_KeepsAndCleansHostID(t *testing.T) {
 
 	_, cfgPath = newTempManager(t, testConfigYAML+"host_id: \"bad id!\"\n")
 	if readKeys(t, cfgPath).IsSet("host_id") {
-		t.Fatal("an invalid host_id survived the 2.1.5 migration")
+		t.Fatal("an invalid host_id survived the 2.1.4 migration")
 	}
 }
 

@@ -23,10 +23,10 @@ type configMigration struct {
 // Steps are keyed by the release that introduced them and must be idempotent:
 // an rc config reruns its release's step when the final release loads it.
 var configMigrations = []configMigration{
-	{"2.1.5", migrate215},
+	{"2.1.4", migrate214},
 }
 
-func migrate215(c *models.Config) bool {
+func migrate214(c *models.Config) bool {
 	id := strings.TrimSpace(c.HostID)
 	if id != "" && !ValidHostID(id) {
 		id = ""

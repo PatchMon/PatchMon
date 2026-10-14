@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/hibiken/asynq"
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -642,6 +644,21 @@ func (h *UpdateAgentHandler) ProcessTask(ctx context.Context, t *asynq.Task) err
 		}
 	}
 
+	if d != nil {
+		patching, err := hostIsPatching(ctx, d.Queries, p.ApiID)
+		if err != nil {
+			return err
+		}
+		if patching {
+			msg := store.PatchRunInProgressMessage
+			if taskID != "" {
+				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
+			}
+			h.log.Info("update_agent: skipped, patch run in progress", "api_id", p.ApiID)
+			return nil
+		}
+	}
+
 	if !h.registry.IsConnected(p.ApiID) {
 		h.log.Warn("update_agent: agent not connected", "api_id", p.ApiID)
 		if taskID != "" && d != nil {
@@ -791,20 +808,30 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 		return nil
 	}
 
-	// Build run_patch payload
-	payload := map[string]interface{}{
-		"type":         "run_patch",
-		"patch_run_id": p.PatchRunID,
-		"patch_type":   p.PatchType,
-		"dry_run":      p.DryRun,
+	var pending []db.PatchRunItem
+	windows := run.HostOsType != nil && store.IsWindowsOSType(*run.HostOsType)
+	if windows && p.PatchType == "patch_package" {
+		pending, err = h.patchRuns.ListPendingItems(ctx, p.PatchRunID)
+		if err != nil {
+			return err
+		}
+		var invalid []string
+		pending, invalid = splitDispatchableItems(pending)
+		if len(invalid) > 0 {
+			if err := h.patchRuns.AbortPendingItems(ctx, invalid, invalidTargetMessage); err != nil {
+				return err
+			}
+			h.log.Warn("run_patch: dropped items with an invalid identifier", "api_id", p.ApiID, "patch_run_id", p.PatchRunID, "count", len(invalid))
+		}
+		if len(pending) == 0 {
+			if err := h.patchRuns.FailRun(ctx, p.PatchRunID, noTargetsMessage(len(invalid))); err != nil {
+				return err
+			}
+			h.log.Warn("run_patch: windows run has no patch targets, marked failed", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
+			return nil
+		}
 	}
-	if p.PackageName != nil {
-		payload["package_name"] = *p.PackageName
-	}
-	if len(p.PackageNames) > 0 {
-		payload["package_names"] = p.PackageNames
-	}
-	msg, err := json.Marshal(payload)
+	msg, err := json.Marshal(buildRunPatchMessage(p, run, windows, pending))
 	if err != nil {
 		return err
 	}
@@ -818,4 +845,84 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 	}
 	h.log.Info("run_patch sent", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
 	return nil
+}
+
+const (
+	noPatchTargetsMessage = "No patch targets: none of the selected updates or apps are pending on this host"
+	invalidTargetMessage  = "Invalid target identifier"
+)
+
+func noTargetsMessage(invalid int) string {
+	switch invalid {
+	case 0:
+		return noPatchTargetsMessage
+	case 1:
+		return "No valid patch targets: 1 item had an invalid identifier"
+	}
+	return fmt.Sprintf("No valid patch targets: %d items had an invalid identifier", invalid)
+}
+
+func splitDispatchableItems(items []db.PatchRunItem) (valid []db.PatchRunItem, invalidIDs []string) {
+	for _, it := range items {
+		switch {
+		case it.Kind == store.PatchItemKindWUA && store.IsValidWUAGuid(it.Identifier),
+			it.Kind == store.PatchItemKindWinget && store.IsValidWingetID(it.Identifier):
+			valid = append(valid, it)
+		default:
+			invalidIDs = append(invalidIDs, it.ID)
+		}
+	}
+	return valid, invalidIDs
+}
+
+type runPatchTarget struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
+}
+
+func buildRunPatchMessage(p RunPatchPayload, run *db.GetPatchRunByIDRow, windows bool, pending []db.PatchRunItem) map[string]interface{} {
+	payload := map[string]interface{}{
+		"type":         "run_patch",
+		"patch_run_id": p.PatchRunID,
+		"patch_type":   p.PatchType,
+		"dry_run":      p.DryRun,
+	}
+	if !windows {
+		if p.PackageName != nil {
+			payload["package_name"] = *p.PackageName
+		}
+		if len(p.PackageNames) > 0 {
+			payload["package_names"] = p.PackageNames
+		}
+		return payload
+	}
+	switch p.PatchType {
+	case "patch_package":
+		targets := make([]runPatchTarget, len(pending))
+		for i, it := range pending {
+			targets[i] = runPatchTarget{Kind: it.Kind, ID: it.Identifier}
+		}
+		payload["targets"] = targets
+	case "patch_all":
+		payload["include_updates"] = run.WindowsIncludeUpdates == nil || *run.WindowsIncludeUpdates
+		payload["include_apps"] = run.WindowsIncludeApps == nil || *run.WindowsIncludeApps
+	}
+	return payload
+}
+
+type activeRunChecker interface {
+	GetHostByApiID(ctx context.Context, apiID string) (db.Host, error)
+	HostHasActivePatchRun(ctx context.Context, hostID string) (bool, error)
+}
+
+// hostIsPatching fails closed: any lookup error other than an unknown host is returned so the update retries.
+func hostIsPatching(ctx context.Context, q activeRunChecker, apiID string) (bool, error) {
+	host, err := q.GetHostByApiID(ctx, apiID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return q.HostHasActivePatchRun(ctx, host.ID)
 }

@@ -86,7 +86,7 @@ func syncHostID() error {
 		return err
 	}
 	if !config.ValidHostID(resp.HostID) {
-		return fmt.Errorf("the server did not return a host ID; it needs PatchMon 2.1.5 or later")
+		return fmt.Errorf("the server did not return a host ID; it needs PatchMon 2.1.4 or later")
 	}
 	old := cfgManager.GetHostID()
 	if old == resp.HostID {
@@ -225,8 +225,8 @@ func configureCreds(apiID, apiKey, serverURL, hostID string) error {
 	}
 	reconcileHostID(resp.HostID)
 
-	logger.Info("✅ Connectivity test successful")
-	logger.Info("✅ API credentials are valid")
+	logger.Info("Connectivity test successful")
+	logger.Info("API credentials are valid")
 
 	return nil
 }

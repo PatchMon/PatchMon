@@ -32,6 +32,8 @@ func NewWindowsManager(logger *logrus.Logger) *WindowsManager {
 	}
 }
 
+var wingetIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+\-]{0,127}$`)
+
 // wingetEntry holds parsed fields from winget list table output
 type wingetEntry struct {
 	Name      string
@@ -48,37 +50,15 @@ type wingetEntry struct {
 //  2. Try WinGet as supplementary source for update availability enrichment
 //  3. Merge: registry provides the baseline, WinGet adds NeedsUpdate/AvailableVersion
 //  4. Collect Windows OS updates (installed KBs + pending via WUA COM API)
-func (m *WindowsManager) GetPackages() []models.Package {
+func (m *WindowsManager) GetPackages() (pkgs []models.Package, windowsUpdatesOmitted bool) {
 	if runtime.GOOS != "windows" {
-		return nil
+		return nil, false
 	}
 
-	// 1. Registry is the primary source — works reliably as SYSTEM in Session 0
-	//    (same approach as rmmagent's go-win64api which reads Uninstall registry keys)
-	regPackages := m.getPackagesFromRegistry()
-	if hasUnversionedSQLServer(regPackages) {
-		applySQLServerPatchLevels(regPackages, m.getSQLServerSetups())
-	}
-	m.logger.WithField("count", len(regPackages)).Info("Collected packages via registry")
-
-	// 2. Try WinGet for update availability enrichment
-	//    WinGet may not be available in Session 0 (per-user UWP app); that's OK
-	wingetPackages := m.getPackagesFromWinget()
-	if len(wingetPackages) > 0 {
-		m.logger.WithField("count", len(wingetPackages)).Info("Collected packages via WinGet (supplementary)")
-	}
-
-	// 3. Merge: start with registry baseline, enrich with WinGet update info
-	appPackages := m.mergeRegistryAndWinget(regPackages, wingetPackages)
-	if hasAppxStyleName(appPackages) {
-		if suppressed := applyAppxInstallState(appPackages, m.getAppxPackages()); len(suppressed) > 0 {
-			m.logger.WithField("packages", suppressed).Debug("Update flag cleared: a newer Appx copy is installed than winget reports")
-		}
-	}
-	m.logger.WithField("count", len(appPackages)).Info("Application packages after merge")
+	appPackages := m.appPackages()
 
 	// 4. Collect Windows OS updates (installed KBs + pending updates)
-	winUpdates := m.getWindowsUpdates()
+	winUpdates, omitted := m.windowsUpdatesGuarded()
 	m.logger.WithField("count", len(winUpdates)).Info("Collected Windows OS updates")
 
 	// 5. Set SourceRepository for Windows Update entries based on WSUS config
@@ -96,21 +76,61 @@ func (m *WindowsManager) GetPackages() []models.Package {
 	all = append(all, winUpdates...)
 
 	if len(all) == 0 {
-		return []models.Package{}
+		return []models.Package{}, omitted
 	}
-	return all
+	return all, omitted
+}
+
+// appPackages collects installed applications from the registry, enriched with WinGet.
+func (m *WindowsManager) appPackages() []models.Package {
+	// 1. Registry is the primary source — works reliably as SYSTEM in Session 0
+	//    (same approach as rmmagent's go-win64api which reads Uninstall registry keys)
+	regPackages := m.getPackagesFromRegistry()
+	if hasUnversionedSQLServer(regPackages) {
+		applySQLServerPatchLevels(regPackages, m.getSQLServerSetups())
+	}
+	m.logger.WithField("count", len(regPackages)).Info("Collected packages via registry")
+
+	// 2. Try WinGet for update availability enrichment
+	//    WinGet may not be available in Session 0 (per-user UWP app); that's OK
+	wingetPackages := m.getPackagesFromWinget()
+	if len(wingetPackages) > 0 {
+		m.logger.WithField("count", len(wingetPackages)).Info("Collected packages via WinGet (supplementary)")
+	}
+
+	// 3. Merge: start with registry baseline, enrich with WinGet update info
+	appPackages, origins := m.mergeRegistryAndWinget(regPackages, wingetPackages)
+	if needsAppxState(appPackages, origins) {
+		var suppressed, dropped []string
+		appPackages, suppressed, dropped = applyAppxInstallState(appPackages, origins, m.getAppxPackages())
+		if len(suppressed) > 0 {
+			m.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{"packages": suppressed})).Debug("Update flag cleared: a newer Appx copy is installed than winget reports")
+		}
+		if len(dropped) > 0 {
+			m.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{"packages": dropped})).Debug("Dropped Appx packages that are staged but not installed for any user")
+		}
+	}
+	if hasWingetUpdate(appPackages) {
+		markStoreApps(appPackages, m.getStoreAppx(), windowsAppsDir())
+	}
+	m.logger.WithField("count", len(appPackages)).Info("Application packages after merge")
+	return appPackages
 }
 
 // mergeRegistryAndWinget merges registry-discovered packages with WinGet data.
 // Registry provides the reliable baseline; WinGet enriches with update availability.
 // Any WinGet-only entries (not in registry) are also included.
 // SourceRepository is set to the WinGet source for matched packages, or "local" for registry-only.
-func (m *WindowsManager) mergeRegistryAndWinget(regPkgs []models.Package, rows []wingetRow) []models.Package {
+func (m *WindowsManager) mergeRegistryAndWinget(regPkgs []models.Package, rows []wingetRow) ([]models.Package, []appOrigin) {
+	origins := make([]appOrigin, len(regPkgs), len(regPkgs)+len(rows))
+	for i := range origins {
+		origins[i].registry = true
+	}
 	if len(rows) == 0 {
 		for i := range regPkgs {
 			regPkgs[i].SourceRepository = "local"
 		}
-		return regPkgs
+		return regPkgs, origins
 	}
 
 	used := make([]bool, len(rows))
@@ -140,8 +160,12 @@ func (m *WindowsManager) mergeRegistryAndWinget(regPkgs []models.Package, rows [
 			continue
 		}
 		row := rows[j].pkg
+		origins[i].wingetID = rows[j].id
 		matchedNames[normalizePackageName(row.Name)] = true
 		regPkgs[i].SourceRepository = row.SourceRepository
+		regPkgs[i].WingetID = row.WingetID
+		regPkgs[i].WingetPinned = row.WingetPinned
+		regPkgs[i].WingetStoreApp = row.WingetStoreApp
 		if row.NeedsUpdate && installedIsOlder(regPkgs[i].CurrentVersion, row.AvailableVersion) {
 			regPkgs[i].NeedsUpdate = true
 			if regPkgs[i].AvailableVersion == "" {
@@ -164,14 +188,16 @@ func (m *WindowsManager) mergeRegistryAndWinget(regPkgs []models.Package, rows [
 		if k, seen := appended[key]; seen {
 			if rows[j].pkg.NeedsUpdate && !regPkgs[k].NeedsUpdate {
 				regPkgs[k] = rows[j].pkg
+				origins[k].wingetID = rows[j].id
 			}
 			continue
 		}
 		regPkgs = append(regPkgs, rows[j].pkg)
+		origins = append(origins, appOrigin{wingetID: rows[j].id})
 		appended[key] = len(regPkgs) - 1
 	}
 
-	return regPkgs
+	return regPkgs, origins
 }
 
 // A truncated-name prefix also requires an equal version; a prefix alone is too loose.
@@ -331,7 +357,7 @@ Get-ChildItem -LiteralPath "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server" | Whe
 }
 $result | ConvertTo-Json -Compress -Depth 2
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
+	cmd, cancel := boundedCommand(networkCollectorTimeout, winexec.PowerShellPath(), "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
@@ -356,6 +382,23 @@ func parseSQLServerSetups(output []byte) []sqlServerSetup {
 	return setups
 }
 
+type appOrigin struct {
+	registry bool
+	wingetID string
+}
+
+func needsAppxState(pkgs []models.Package, origins []appOrigin) bool {
+	if hasAppxStyleName(pkgs) {
+		return true
+	}
+	for _, o := range origins {
+		if _, ok := appxNameFromFamily(o.wingetID); ok && !o.registry {
+			return true
+		}
+	}
+	return false
+}
+
 func hasAppxStyleName(pkgs []models.Package) bool {
 	for _, p := range pkgs {
 		if looksLikeAppxName(p.Name) {
@@ -369,6 +412,16 @@ func looksLikeAppxName(name string) bool {
 	return strings.Contains(name, ".") && !strings.ContainsAny(name, " \t")
 }
 
+var packageFamilyRe = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9.-]*)_[a-z0-9]{13}$`)
+
+func appxNameFromFamily(id string) (string, bool) {
+	m := packageFamilyRe.FindStringSubmatch(id)
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
+
 type appxPackage struct {
 	Name    string `json:"Name"`
 	Version string `json:"Version"`
@@ -377,6 +430,7 @@ type appxPackage struct {
 
 type appxVersions struct {
 	installed string
+	present   bool
 	staged    []string
 }
 
@@ -409,8 +463,7 @@ func sameVersionScheme(a, b string) bool {
 	return okA && okB && pa[0] == pb[0]
 }
 
-// winget as SYSTEM reports machine-staged MSIX copies, not the per-user installs.
-func applyAppxInstallState(pkgs []models.Package, appx []appxPackage) (suppressed []string) {
+func indexAppxPackages(appx []appxPackage) map[string]*appxVersions {
 	byName := map[string]*appxVersions{}
 	for _, a := range appx {
 		if _, ok := parseDottedVersion(a.Version); !ok {
@@ -422,45 +475,108 @@ func applyAppxInstallState(pkgs []models.Package, appx []appxPackage) (suppresse
 			v = &appxVersions{}
 			byName[key] = v
 		}
-		states := strings.Split(strings.ToLower(a.States), ",")
+		var installed, present, staged bool
+		for _, st := range strings.Split(strings.ToLower(a.States), ",") {
+			switch st = strings.TrimSpace(st); st {
+			case "", "notinstalled":
+			case "staged":
+				staged = true
+			case "installed":
+				installed, present = true, true
+			default:
+				present = true
+			}
+		}
+		if present {
+			v.present = true
+		}
 		switch {
-		case containsString(states, "installed"):
+		case installed:
 			if c, _ := compareDottedVersions(a.Version, v.installed); v.installed == "" || c > 0 {
 				v.installed = a.Version
 			}
-		case containsString(states, "staged"):
+		case staged && !present:
 			v.staged = append(v.staged, a.Version)
 		}
 	}
-	for i := range pkgs {
-		if !looksLikeAppxName(pkgs[i].Name) {
-			continue
-		}
-		v, exact := appxVersionsFor(byName, normalizePackageName(pkgs[i].Name))
-		if v == nil || v.installed == "" || len(v.staged) == 0 {
-			continue
-		}
-		current := pkgs[i].CurrentVersion
-		if v.hasStaged(current) {
-			if c, _ := compareDottedVersions(v.installed, current); c <= 0 {
-				continue
+	return byName
+}
+
+func appxVersionsForRow(byName map[string]*appxVersions, p models.Package, o appOrigin) (*appxVersions, bool) {
+	if !o.registry {
+		if name, ok := appxNameFromFamily(o.wingetID); ok {
+			if v, found := byName[normalizePackageName(name)]; found {
+				return v, true
 			}
-			pkgs[i].CurrentVersion = v.installed
-			if pkgs[i].NeedsUpdate && !installedIsOlder(v.installed, pkgs[i].AvailableVersion) {
-				pkgs[i].NeedsUpdate = false
-				pkgs[i].AvailableVersion = ""
-				suppressed = append(suppressed, pkgs[i].Name)
-			}
-			continue
-		}
-		if pkgs[i].NeedsUpdate && exact && isDottedNumeric(current) && !sameVersionScheme(current, v.installed) && v.newerThanAllStaged() {
-			pkgs[i].CurrentVersion = v.installed
-			pkgs[i].NeedsUpdate = false
-			pkgs[i].AvailableVersion = ""
-			suppressed = append(suppressed, pkgs[i].Name)
 		}
 	}
-	return suppressed
+	if looksLikeAppxName(p.Name) {
+		return appxVersionsFor(byName, normalizePackageName(p.Name))
+	}
+	return nil, false
+}
+
+// winget as SYSTEM reports machine-staged MSIX copies, not the per-user installs.
+func applyAppxInstallState(pkgs []models.Package, origins []appOrigin, appx []appxPackage) (kept []models.Package, suppressed, dropped []string) {
+	byName := indexAppxPackages(appx)
+	kept = pkgs[:0]
+	for i := range pkgs {
+		p := pkgs[i]
+		var o appOrigin
+		if i < len(origins) {
+			o = origins[i]
+		}
+		numeric := isDottedNumeric(p.CurrentVersion)
+		v, exact := appxVersionsForRow(byName, p, o)
+		if v == nil || len(v.staged) == 0 {
+			kept = append(kept, p)
+			continue
+		}
+		if !v.present {
+			if !o.registry && (exact || (numeric && v.hasStaged(p.CurrentVersion))) {
+				dropped = append(dropped, p.Name)
+				continue
+			}
+			kept = append(kept, p)
+			continue
+		}
+		if !numeric {
+			kept = append(kept, p)
+			continue
+		}
+		switch {
+		case v.installed == "":
+		case v.hasStaged(p.CurrentVersion):
+			p = applyInstalledOverStaged(p, v.installed, &suppressed)
+		case p.NeedsUpdate && exact && !sameVersionScheme(p.CurrentVersion, v.installed) && v.newerThanAllStaged():
+			p.CurrentVersion = v.installed
+			p.NeedsUpdate = false
+			p.AvailableVersion = ""
+			suppressed = append(suppressed, p.Name)
+		}
+		kept = append(kept, p)
+	}
+	return kept, suppressed, dropped
+}
+
+func applyInstalledOverStaged(p models.Package, installed string, suppressed *[]string) models.Package {
+	staged := p.CurrentVersion
+	if versionsEqual(installed, staged) {
+		return p
+	}
+	p.CurrentVersion = installed
+	switch {
+	case p.AvailableVersion == "":
+		if c, _ := compareDottedVersions(installed, staged); c < 0 {
+			p.NeedsUpdate = true
+			p.AvailableVersion = staged
+		}
+	case p.NeedsUpdate && !installedIsOlder(installed, p.AvailableVersion):
+		p.NeedsUpdate = false
+		p.AvailableVersion = ""
+		*suppressed = append(*suppressed, p.Name)
+	}
+	return p
 }
 
 func appxVersionsFor(byName map[string]*appxVersions, name string) (*appxVersions, bool) {
@@ -479,15 +595,6 @@ func appxVersionsFor(byName map[string]*appxVersions, name string) (*appxVersion
 	return found, false
 }
 
-func containsString(list []string, want string) bool {
-	for _, s := range list {
-		if strings.TrimSpace(s) == want {
-			return true
-		}
-	}
-	return false
-}
-
 func (m *WindowsManager) getAppxPackages() []appxPackage {
 	psScript := `
 $ErrorActionPreference = "SilentlyContinue"
@@ -499,7 +606,7 @@ $ErrorActionPreference = "SilentlyContinue"
   }
 }) | ConvertTo-Json -Compress -Depth 2
 `
-	cmd, cancel := boundedCommand(collectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
+	cmd, cancel := boundedCommand(collectorTimeout, winexec.PowerShellPath(), "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
 	start := time.Now()
 	output, err := cmd.Output()
@@ -600,7 +707,7 @@ foreach ($path in $paths) {
 if ($result.Count -gt 5000) { $result = $result[0..4999] }
 $result | ConvertTo-Json -Compress -Depth 3
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
+	cmd, cancel := boundedCommand(networkCollectorTimeout, winexec.PowerShellPath(), "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
@@ -739,6 +846,7 @@ func (m *WindowsManager) runWingetList(w wingetCommand, args ...string) (string,
 
 type wingetRow struct {
 	pkg       models.Package
+	id        string
 	truncated bool
 }
 
@@ -760,8 +868,13 @@ func wingetEntriesToRows(entries []wingetEntry, upgradeMap map[string]string) []
 			version = "unknown"
 		}
 		avail := strings.TrimSpace(stripEllipsis(e.Available))
-		id := strings.TrimSpace(stripEllipsis(e.ID))
-		var needsUpdate bool
+		rawID := strings.TrimSpace(e.ID)
+		id := strings.TrimSpace(stripEllipsis(rawID))
+		wingetID := ""
+		if id == rawID && wingetIDPattern.MatchString(id) {
+			wingetID = id
+		}
+		var needsUpdate, pinned bool
 		if up, listed := upgradeMap[id]; listed {
 			if avail == "" {
 				avail = up
@@ -769,6 +882,7 @@ func wingetEntriesToRows(entries []wingetEntry, upgradeMap map[string]string) []
 			needsUpdate = installedIsOlder(version, avail)
 		} else {
 			needsUpdate = availableIsNewer(avail, version)
+			pinned = needsUpdate && wingetID != "" && upgradeMap != nil && !listedUnderTruncatedID(upgradeMap, id)
 		}
 		if !needsUpdate {
 			avail = ""
@@ -786,7 +900,10 @@ func wingetEntriesToRows(entries []wingetEntry, upgradeMap map[string]string) []
 				AvailableVersion: avail,
 				NeedsUpdate:      needsUpdate,
 				SourceRepository: source,
+				WingetID:         wingetID,
+				WingetPinned:     pinned,
 			},
+			id:        id,
 			truncated: truncated,
 		})
 	}
@@ -996,7 +1113,7 @@ $server = (Get-ItemProperty -Path $wuKey -Name WUServer -ErrorAction SilentlyCon
 $useWU = (Get-ItemProperty -Path "$wuKey\AU" -Name UseWUServer -ErrorAction SilentlyContinue).UseWUServer
 if ($server -and $useWU -eq 1) { "WSUS_ACTIVE" } else { "WSUS_INACTIVE" }
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
+	cmd, cancel := boundedCommand(networkCollectorTimeout, winexec.PowerShellPath(), "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
@@ -1025,10 +1142,7 @@ func wuaErrorHint(msg string) string {
 	}
 }
 
-// getWindowsUpdates queries installed KB patches and pending Windows updates.
-// Uses Get-HotFix for installed; Microsoft.Update.Session for pending (may fail in Session 0).
-func (m *WindowsManager) getWindowsUpdates() []models.Package {
-	psScript := `
+const windowsUpdatesScript = `
 $ErrorActionPreference = "SilentlyContinue"
 $result = @()
 
@@ -1068,20 +1182,27 @@ try {
   $session   = New-Object -ComObject Microsoft.Update.Session
   $searcher  = $session.CreateUpdateSearcher()
   $results   = $searcher.Search("IsInstalled=0 AND IsHidden=0")
+  $pendingRebootIds = @{}
+  if (Get-SystemRebootRequired) { $pendingRebootIds = Get-InProgressIds $session }
   foreach ($u in $results.Updates) {
     $secFlag = ($u.MsrcSeverity -eq "Critical" -or $u.MsrcSeverity -eq "Important")
     $kbs = @($u.KBArticleIDs | ForEach-Object { "KB$_" })
-    $kbStr = ($kbs -join ", ")
-    $displayName = if ($kbStr) { "$($u.Title) ($kbStr)" } else { $u.Title }
     $guid = ""
     try { $guid = $u.Identity.UpdateID } catch {}
     $cats = @($u.Categories | ForEach-Object { $_.Name })
+    $catIds = @($u.Categories | ForEach-Object { [string]$_.CategoryID })
     $supportUrl = ""
     try { $supportUrl = $u.SupportURL } catch {}
     $revNum = 0
     try { $revNum = [int]$u.Identity.RevisionNumber } catch {}
     $result += @{
-      Name             = $displayName
+      Name             = $u.Title
+      Title            = $u.Title
+      KBIDs            = @($u.KBArticleIDs | ForEach-Object { [string]$_ })
+      CategoryIDs      = $catIds
+      BrowseOnly       = [bool]$u.BrowseOnly
+      TypeCode         = [int]$u.Type
+      PendingReboot    = [bool]$pendingRebootIds[([string]$guid).ToLower()]
       CurrentVersion   = "pending"
       AvailableVersion = ""
       NeedsUpdate      = $true
@@ -1128,16 +1249,20 @@ if ($comFailed) {
 
 $result | ConvertTo-Json -Compress -Depth 4
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, "powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
+
+// getWindowsUpdates queries installed KB patches and pending Windows updates.
+// Uses Get-HotFix for installed; Microsoft.Update.Session for pending (may fail in Session 0).
+func (m *WindowsManager) getWindowsUpdates() ([]models.Package, wuSearch) {
+	cmd, cancel := boundedCommand(networkCollectorTimeout, winexec.PowerShellPath(), "-NoProfile", "-NonInteractive", "-Command", winexec.Script(wuaPendingScript+windowsUpdatesScript))
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
-		m.logger.WithError(err).Warn("Failed to query Windows updates")
-		return nil
+		return nil, wuSearch{status: wuSearchFailed, detail: err.Error()}
 	}
 
 	outputStr := strings.TrimSpace(string(winexec.TrimBOM(output)))
 	// Check for COM error message (e.g. E_ACCESSDENIED in Session 0)
+	result := wuSearch{status: wuSearchOK}
 	if strings.Contains(outputStr, "WUA_COM_ERROR:") {
 		idx := strings.Index(outputStr, "WUA_COM_ERROR:")
 		end := idx + 120
@@ -1145,12 +1270,10 @@ $result | ConvertTo-Json -Compress -Depth 4
 			end = len(outputStr)
 		}
 		msg := outputStr[idx:end]
-		hint := wuaErrorHint(msg)
-		m.logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
-			"detail": msg,
-			"hint":   hint,
-		})).Warn("Windows Update COM API failed")
-		// Extract JSON array (Get-HotFix results) - it starts with [
+		if hint := wuaErrorHint(msg); hint != "" {
+			msg += " (" + hint + ")"
+		}
+		result = wuSearch{status: wuSearchCOMFailed, detail: msg}
 		if jsonStart := strings.Index(outputStr, "["); jsonStart >= 0 {
 			outputStr = outputStr[jsonStart:]
 		} else {
@@ -1159,7 +1282,7 @@ $result | ConvertTo-Json -Compress -Depth 4
 	}
 
 	if outputStr == "" || outputStr == "null" || outputStr == "[]" {
-		return nil
+		return []models.Package{}, result
 	}
 
 	// PowerShell may output a single object (not array) when there is exactly one result
@@ -1167,47 +1290,19 @@ $result | ConvertTo-Json -Compress -Depth 4
 		outputStr = "[" + outputStr + "]"
 	}
 
-	var raw []struct {
-		Name              string   `json:"Name"`
-		CurrentVersion    string   `json:"CurrentVersion"`
-		AvailableVersion  string   `json:"AvailableVersion"`
-		NeedsUpdate       bool     `json:"NeedsUpdate"`
-		IsSecurityUpdate  bool     `json:"IsSecurityUpdate"`
-		WUAGuid           string   `json:"WUAGuid"`
-		WUAKb             string   `json:"WUAKb"`
-		WUASeverity       string   `json:"WUASeverity"`
-		WUACategories     []string `json:"WUACategories"`
-		WUASupportURL     string   `json:"WUASupportURL"`
-		WUARevisionNumber int32    `json:"WUARevisionNumber"`
-	}
+	var raw []wuaRawUpdate
 	if err := json.Unmarshal([]byte(outputStr), &raw); err != nil {
-		m.logger.WithError(err).Warn("Failed to parse Windows updates JSON")
-		return nil
+		return nil, wuSearch{status: wuSearchFailed, detail: "unreadable output: " + err.Error()}
 	}
 
 	var packages []models.Package
 	for _, u := range raw {
-		if u.Name == "" {
-			continue
+		if pkg, ok := wuaRawToPackage(u); ok {
+			packages = append(packages, pkg)
 		}
-		cv := u.CurrentVersion
-		if cv == "" {
-			cv = "pending"
-		}
-		packages = append(packages, models.Package{
-			Name:              u.Name,
-			Category:          "Windows Update",
-			CurrentVersion:    cv,
-			AvailableVersion:  u.AvailableVersion,
-			NeedsUpdate:       u.NeedsUpdate,
-			IsSecurityUpdate:  u.IsSecurityUpdate,
-			WUAGuid:           u.WUAGuid,
-			WUAKb:             u.WUAKb,
-			WUASeverity:       u.WUASeverity,
-			WUACategories:     u.WUACategories,
-			WUASupportURL:     u.WUASupportURL,
-			WUARevisionNumber: u.WUARevisionNumber,
-		})
 	}
-	return packages
+	if packages == nil {
+		packages = []models.Package{}
+	}
+	return packages, result
 }

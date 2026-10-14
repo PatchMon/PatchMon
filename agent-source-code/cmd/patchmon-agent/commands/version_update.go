@@ -24,6 +24,7 @@ import (
 	"patchmon-agent/internal/config"
 	"patchmon-agent/internal/logutil"
 	"patchmon-agent/internal/pkgversion"
+	"patchmon-agent/internal/winexec"
 
 	"github.com/spf13/cobra"
 )
@@ -412,7 +413,7 @@ try {
 		"script":      psScriptPath,
 	})).Info("Launching Windows update script (stop service → replace binary → start service)...")
 
-	cmd := exec.Command("powershell",
+	cmd := exec.Command(winexec.PowerShellPath(),
 		"-NonInteractive", "-WindowStyle", "Hidden",
 		"-ExecutionPolicy", "Bypass",
 		"-File", psScriptPath)
@@ -423,7 +424,7 @@ try {
 		return fmt.Errorf("failed to launch Windows update script: %w", err)
 	}
 
-	logger.Info("Windows update script launched — exiting to allow service replacement")
+	logger.Info("Windows update script launched; exiting to allow service replacement")
 	time.Sleep(500 * time.Millisecond)
 	os.Exit(0)
 	return nil // unreachable
@@ -812,7 +813,7 @@ Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyConti
 			os.Exit(0)
 			return nil
 		}
-		cmd := exec.Command("powershell",
+		cmd := exec.Command(winexec.PowerShellPath(),
 			"-NonInteractive", "-WindowStyle", "Hidden",
 			"-ExecutionPolicy", "Bypass",
 			"-File", psScriptPath)

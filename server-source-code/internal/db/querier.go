@@ -11,6 +11,7 @@ import (
 )
 
 type Querier interface {
+	AbortPendingPatchRunItems(ctx context.Context, arg AbortPendingPatchRunItemsParams) error
 	ActivateScheduledPatchRun(ctx context.Context, id string) (int64, error)
 	// Bulk insert N host_packages rows in a single statement. Replaces the legacy
 	// InsertHostPackage and InsertHostPackageWithWUA per-row inserts — one path
@@ -133,6 +134,7 @@ type Querier interface {
 	// Dashboard stats
 	CountDockerHosts(ctx context.Context) (int32, error)
 	CountEnabledHostRepositories(ctx context.Context) (int32, error)
+	CountHostWindowsUpdateRows(ctx context.Context, hostID string) (CountHostWindowsUpdateRowsRow, error)
 	CountHosts(ctx context.Context) (int64, error)
 	// Total count matching the same filter set as GetHostsWithCounts. Used by
 	// the paginated UI so it can render "Showing X-Y of Z" and a correct page
@@ -190,11 +192,8 @@ type Querier interface {
 	DeleteHost(ctx context.Context, id string) error
 	DeleteHostGroup(ctx context.Context, id string) error
 	DeleteHostGroupMemberships(ctx context.Context, hostID string) error
-	// Removes a host_package row that was reported as superseded by the agent.
-	DeleteHostPackageByWUAGUID(ctx context.Context, arg DeleteHostPackageByWUAGUIDParams) error
 	DeleteHostPackagesByHostID(ctx context.Context, hostID string) error
-	// Bulk-removes superseded Windows Update entries for a host.
-	DeleteHostPackagesByWUAGUIDs(ctx context.Context, arg DeleteHostPackagesByWUAGUIDsParams) error
+	DeleteHostPackagesExceptWindowsUpdates(ctx context.Context, hostID string) error
 	DeleteHostRepositoriesByHostID(ctx context.Context, hostID string) error
 	DeleteHostsByIDs(ctx context.Context, dollar_1 []string) error
 	DeleteImageByID(ctx context.Context, id string) error
@@ -219,6 +218,7 @@ type Querier interface {
 	DeletePatchPolicyAssignment(ctx context.Context, id string) error
 	DeletePatchPolicyExclusion(ctx context.Context, arg DeletePatchPolicyExclusionParams) error
 	DeletePatchRun(ctx context.Context, id string) error
+	DeletePatchRunItems(ctx context.Context, patchRunID string) error
 	DeletePendingConfig(ctx context.Context, hostID string) error
 	DeletePreviousCompletedScansByHostAndProfile(ctx context.Context, arg DeletePreviousCompletedScansByHostAndProfileParams) error
 	DeleteRepositoriesByIDs(ctx context.Context, dollar_1 []string) error
@@ -407,9 +407,6 @@ type Querier interface {
 	GetPatchRunByIDSimple(ctx context.Context, id string) (PatchRun, error)
 	GetPendingConfig(ctx context.Context, hostID string) (HostPendingConfig, error)
 	GetPendingUpdateCountsPerHost(ctx context.Context) ([]GetPendingUpdateCountsPerHostRow, error)
-	// Returns WUA GUIDs that are still pending (needs_update=true, not yet installed) for a host.
-	// Used by the server to tell the agent which updates to install.
-	GetPendingWindowsUpdateGUIDs(ctx context.Context, hostID string) ([]*string, error)
 	GetRecentComplianceScans(ctx context.Context) ([]GetRecentComplianceScansRow, error)
 	GetRecentHosts(ctx context.Context, limit int32) ([]GetRecentHostsRow, error)
 	GetRecentUsers(ctx context.Context, limit int32) ([]GetRecentUsersRow, error)
@@ -461,6 +458,7 @@ type Querier interface {
 	GetVolumeByID(ctx context.Context, id string) (DockerVolume, error)
 	GetVolumesByHostID(ctx context.Context, hostID string) ([]DockerVolume, error)
 	GlobalSearch(ctx context.Context, search string) ([]GlobalSearchRow, error)
+	HostHasActivePatchRun(ctx context.Context, hostID string) (bool, error)
 	HostInHostGroup(ctx context.Context, arg HostInHostGroupParams) (bool, error)
 	IncrementAutoEnrollmentHostsCreated(ctx context.Context, id string) error
 	InsertAlertHistory(ctx context.Context, arg InsertAlertHistoryParams) (AlertHistory, error)
@@ -472,6 +470,7 @@ type Querier interface {
 	InsertHostRepository(ctx context.Context, arg InsertHostRepositoryParams) error
 	InsertJobHistory(ctx context.Context, arg InsertJobHistoryParams) error
 	InsertNotificationDeliveryLog(ctx context.Context, arg InsertNotificationDeliveryLogParams) (NotificationDeliveryLog, error)
+	InsertPatchRunItems(ctx context.Context, arg InsertPatchRunItemsParams) error
 	InsertReleaseNotesAcceptance(ctx context.Context, arg InsertReleaseNotesAcceptanceParams) (string, error)
 	InsertScheduledReportRun(ctx context.Context, arg InsertScheduledReportRunParams) (ScheduledReportRun, error)
 	InsertSystemStatistics(ctx context.Context, arg InsertSystemStatisticsParams) error
@@ -527,6 +526,8 @@ type Querier interface {
 	ListPatchPolicyAssignmentsByPolicy(ctx context.Context, patchPolicyID string) ([]PatchPolicyAssignment, error)
 	// patch_policy_exclusions
 	ListPatchPolicyExclusions(ctx context.Context, patchPolicyID string) ([]ListPatchPolicyExclusionsRow, error)
+	ListPatchRunItemKeys(ctx context.Context, patchRunID string) ([]ListPatchRunItemKeysRow, error)
+	ListPatchRunItems(ctx context.Context, patchRunID string) ([]PatchRunItem, error)
 	// The 'status' filter accepts an exact status value. The pseudo-value
 	// 'active' matches the in-flight runs that block a host: queued, pending_validation, running.
 	ListPatchRuns(ctx context.Context, arg ListPatchRunsParams) ([]ListPatchRunsRow, error)
@@ -539,6 +540,7 @@ type Querier interface {
 	ListPatchRunsOrderByStartedAtAsc(ctx context.Context, arg ListPatchRunsOrderByStartedAtAscParams) ([]ListPatchRunsOrderByStartedAtAscRow, error)
 	ListPatchRunsOrderByStatus(ctx context.Context, arg ListPatchRunsOrderByStatusParams) ([]ListPatchRunsOrderByStatusRow, error)
 	ListPatchRunsOrderByStatusDesc(ctx context.Context, arg ListPatchRunsOrderByStatusDescParams) ([]ListPatchRunsOrderByStatusDescRow, error)
+	ListPendingPatchRunItems(ctx context.Context, patchRunID string) ([]PatchRunItem, error)
 	ListRecentPatchRuns(ctx context.Context, arg ListRecentPatchRunsParams) ([]ListRecentPatchRunsRow, error)
 	ListRepositories(ctx context.Context, arg ListRepositoriesParams) ([]ListRepositoriesRow, error)
 	ListRoles(ctx context.Context) ([]RolePermission, error)
@@ -552,6 +554,7 @@ type Querier interface {
 	ListUpdateHistoryByDateRange(ctx context.Context, arg ListUpdateHistoryByDateRangeParams) ([]ListUpdateHistoryByDateRangeRow, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]User, error)
 	ListVolumes(ctx context.Context, arg ListVolumesParams) ([]DockerVolume, error)
+	LockPatchRunStatus(ctx context.Context, arg LockPatchRunStatusParams) (LockPatchRunStatusRow, error)
 	// User-initiated cancel from StopRun. Deliberately does NOT touch shell_output
 	// so progress chunks the agent appended between our read and write are preserved.
 	// Same status guard as UpdatePatchRunCancelled.
@@ -565,9 +568,9 @@ type Querier interface {
 	// genuinely wedged run does not. Using elapsed-since-start here would mark
 	// every long run timed_out while it was still working and discard the real
 	// outcome the agent later reports.
-	MarkPatchRunsTimedOut(ctx context.Context, arg MarkPatchRunsTimedOutParams) (int64, error)
+	MarkPatchRunsTimedOut(ctx context.Context, arg MarkPatchRunsTimedOutParams) ([]MarkPatchRunsTimedOutRow, error)
 	// Keyed on when the run became due, not updated_at: the offline-agent retry bumps updated_at every 5 minutes.
-	MarkUndispatchedPatchRunsTimedOut(ctx context.Context, arg MarkUndispatchedPatchRunsTimedOutParams) (int64, error)
+	MarkUndispatchedPatchRunsTimedOut(ctx context.Context, arg MarkUndispatchedPatchRunsTimedOutParams) ([]MarkUndispatchedPatchRunsTimedOutRow, error)
 	// Declared :execrows, not :exec, because the status guard IS the concurrency
 	// control. Two approvals racing both pass the handler's Go-side status check;
 	// only one of them updates a row here, and the loser must be told so rather
@@ -576,14 +579,17 @@ type Querier interface {
 	ReissueHostApiKey(ctx context.Context, arg ReissueHostApiKeyParams) (int64, error)
 	RequeuePatchRun(ctx context.Context, arg RequeuePatchRunParams) (int64, error)
 	ResolveDockerImageIDs(ctx context.Context, arg ResolveDockerImageIDsParams) ([]ResolveDockerImageIDsRow, error)
+	ResolveWindowsPatchTargets(ctx context.Context, arg ResolveWindowsPatchTargetsParams) ([]ResolveWindowsPatchTargetsRow, error)
 	RevokeAllSessionsForUser(ctx context.Context, userID string) error
 	RevokeAllSessionsForUserExcept(ctx context.Context, arg RevokeAllSessionsForUserExceptParams) error
 	RevokeAllTrustedDevicesForUser(ctx context.Context, userID string) error
 	RevokeSessionByID(ctx context.Context, arg RevokeSessionByIDParams) error
 	RevokeTrustedDeviceByID(ctx context.Context, arg RevokeTrustedDeviceByIDParams) error
 	SetHostAwaitingPostPatchReport(ctx context.Context, arg SetHostAwaitingPostPatchReportParams) error
+	SetHostPatchRebootPending(ctx context.Context, arg SetHostPatchRebootPendingParams) error
 	SetNewsletterSubscribed(ctx context.Context, id string) error
 	SetPatchRunPolicySnapshot(ctx context.Context, arg SetPatchRunPolicySnapshotParams) error
+	SetPatchRunRebootRequired(ctx context.Context, arg SetPatchRunRebootRequiredParams) error
 	SkipScheduledPatchRun(ctx context.Context, arg SkipScheduledPatchRunParams) (int64, error)
 	ToggleHostRepository(ctx context.Context, arg ToggleHostRepositoryParams) error
 	TouchTrustedDeviceLastUsed(ctx context.Context, arg TouchTrustedDeviceLastUsedParams) error
@@ -616,11 +622,8 @@ type Querier interface {
 	// omits a metric leaves the stored value intact.
 	UpdateHostMetrics(ctx context.Context, arg UpdateHostMetricsParams) error
 	UpdateHostNotes(ctx context.Context, arg UpdateHostNotesParams) error
-	// Records the outcome of a Windows Update installation for a specific host+GUID combination.
-	UpdateHostPackageWUAInstallResult(ctx context.Context, arg UpdateHostPackageWUAInstallResultParams) error
 	UpdateHostPing(ctx context.Context, id string) error
 	UpdateHostPrimaryInterface(ctx context.Context, arg UpdateHostPrimaryInterfaceParams) error
-	UpdateHostRebootStatus(ctx context.Context, arg UpdateHostRebootStatusParams) error
 	UpdateJobHistoryCompleted(ctx context.Context, jobID string) error
 	UpdateJobHistoryDelayed(ctx context.Context, jobID string) error
 	UpdateJobHistoryFailed(ctx context.Context, arg UpdateJobHistoryFailedParams) error
@@ -651,11 +654,12 @@ type Querier interface {
 	// agent_disconnected and timed_out are intentionally NOT in the guard: both are
 	// server-side "we gave up waiting" markers, so a recovering agent posting a late
 	// genuine "completed" must be able to unwedge the row and deliver the real output.
-	UpdatePatchRunCompleted(ctx context.Context, arg UpdatePatchRunCompletedParams) error
+	UpdatePatchRunCompleted(ctx context.Context, arg UpdatePatchRunCompletedParams) (int64, error)
 	// REPLACE (not append) - agent streams progress chunks then sends final full output.
 	// agent_disconnected and timed_out are intentionally NOT in the guard so a
 	// recovering agent that posts a late "failed" can still unwedge the row.
-	UpdatePatchRunFailed(ctx context.Context, arg UpdatePatchRunFailedParams) error
+	UpdatePatchRunFailed(ctx context.Context, arg UpdatePatchRunFailedParams) (int64, error)
+	UpdatePatchRunItemsFromAgent(ctx context.Context, arg UpdatePatchRunItemsFromAgentParams) (int64, error)
 	UpdatePatchRunPackagesAffected(ctx context.Context, arg UpdatePatchRunPackagesAffectedParams) error
 	UpdatePatchRunProgress(ctx context.Context, arg UpdatePatchRunProgressParams) error
 	UpdatePatchRunScheduledAt(ctx context.Context, arg UpdatePatchRunScheduledAtParams) error
@@ -703,6 +707,7 @@ type Querier interface {
 	UpsertDockerImageCheck(ctx context.Context, arg UpsertDockerImageCheckParams) error
 	UpsertDockerNetwork(ctx context.Context, arg UpsertDockerNetworkParams) error
 	UpsertDockerVolume(ctx context.Context, arg UpsertDockerVolumeParams) error
+	UpsertPatchRunItemsFromAgent(ctx context.Context, arg UpsertPatchRunItemsFromAgentParams) error
 	UpsertPendingConfig(ctx context.Context, arg UpsertPendingConfigParams) error
 	// Replaces the previous GetRepositoryByURLDistComponents + InsertRepository
 	// SELECT-then-INSERT pattern. Migration 000040 added a UNIQUE constraint on

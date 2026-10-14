@@ -267,7 +267,11 @@ func resolveWinget() (string, []string, error) {
 			libDirs = append(libDirs, v.path)
 		}
 	}
-	return exe, wingetChildEnv(os.Environ(), libDirs...), nil
+	tmp, err := wingetTempDir()
+	if err != nil {
+		return "", nil, fmt.Errorf("prepare a private temp directory for winget: %w", err)
+	}
+	return exe, withTempDir(wingetChildEnv(os.Environ(), libDirs...), tmp), nil
 }
 
 func verifyWingetSignature(exe string) error {

@@ -234,6 +234,7 @@ CREATE TABLE IF NOT EXISTS hosts (
     notes TEXT,
     needs_reboot BOOLEAN DEFAULT false,
     reboot_reason TEXT,
+    patch_reboot_pending_boot_time TIMESTAMPTZ,
     docker_enabled BOOLEAN NOT NULL DEFAULT false,
     compliance_enabled BOOLEAN NOT NULL DEFAULT false,
     compliance_on_demand_only BOOLEAN NOT NULL DEFAULT true,
@@ -338,8 +339,12 @@ CREATE TABLE IF NOT EXISTS host_packages (
     wua_support_url     TEXT,
     wua_revision_number INTEGER,
     wua_date_installed  TIMESTAMP(3),
-    wua_install_result  TEXT,
     source_repository_id TEXT REFERENCES repositories(id) ON DELETE SET NULL,
+    winget_id TEXT,
+    winget_pinned BOOLEAN,
+    winget_store_app BOOLEAN,
+    wua_browse_only BOOLEAN,
+    wua_update_type TEXT,
     UNIQUE(host_id, package_id)
 );
 
@@ -773,12 +778,41 @@ CREATE TABLE IF NOT EXISTS patch_runs (
     policy_snapshot JSONB,
     validation_run_id TEXT REFERENCES patch_runs(id) ON DELETE SET NULL,
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP(3) NOT NULL
+    updated_at TIMESTAMP(3) NOT NULL,
+    reboot_required BOOLEAN,
+    windows_include_updates BOOLEAN,
+    windows_include_apps BOOLEAN
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS patch_runs_one_active_per_host
     ON patch_runs (host_id)
     WHERE status IN ('queued', 'pending_validation', 'running');
+
+-- patch_run_items
+CREATE TABLE IF NOT EXISTS patch_run_items (
+    id TEXT PRIMARY KEY,
+    patch_run_id TEXT NOT NULL REFERENCES patch_runs(id) ON DELETE CASCADE,
+    host_id TEXT NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('wua', 'winget')),
+    identifier TEXT NOT NULL,
+    revision_number INTEGER,
+    title TEXT NOT NULL,
+    kb TEXT,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'would_install', 'not_applicable', 'installed',
+        'installed_with_errors', 'installed_pending_reboot', 'already_installed', 'failed', 'aborted', 'skipped')),
+    result_code INTEGER,
+    hresult TEXT,
+    exit_code BIGINT,
+    reboot_required BOOLEAN NOT NULL DEFAULT false,
+    download_bytes BIGINT,
+    message TEXT,
+    started_at TIMESTAMP(3),
+    completed_at TIMESTAMP(3),
+    created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (patch_run_id, kind, identifier)
+);
+CREATE INDEX IF NOT EXISTS idx_patch_run_items_host_identifier ON patch_run_items (host_id, identifier);
 
 -- alert_config
 CREATE TABLE IF NOT EXISTS alert_config (

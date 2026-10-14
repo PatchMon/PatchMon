@@ -278,7 +278,7 @@ Controls how and when PatchMon agents talk to the server and update themselves:
 
 Inspect the bundled agent binary versions (one per OS/architecture), check for newer releases upstream, and force a fresh download of the bundled binaries. Useful after you upgrade the server. Agents pick up the new binaries via the auto-update flow. No manual distribution required.
 
-From agent 2.1.5, each host's page also shows a **Config Version** next to the agent version. An upgraded agent updates its `config.yml` to the new release when it restarts, so the two match once the host has reported after the upgrade. See [Host Info](#host-info).
+From agent 2.1.4, each host's page also shows a **Config Version** next to the agent version. An upgraded agent updates its `config.yml` to the new release when it restarts, so the two match once the host has reported after the upgrade. See [Host Info](#host-info).
 
 See Managing the PatchMon Agent for how agents consume this information.
 
@@ -664,7 +664,7 @@ If there's a pending patch run awaiting a fresh post-patch report, you'll see an
 |--------|--------------|:---:|
 | **Apply** | Appears only when pending config changes (e.g. integration toggles) need to be pushed to the agent. | Yes |
 | **Fetch Report** | Sends a WebSocket command asking the agent to collect and submit a fresh report now. | Yes |
-| **Patch all** | Opens the Patching wizard pre-scoped to this host. Hidden on Windows hosts. | Yes |
+| **Patch all** | Opens the Patching wizard pre-scoped to this host. On Windows hosts it needs agent 2.1.4 or later (see [Windows patching](#windows-patching)). | Yes |
 | **Deploy Agent** (key icon) | Opens the Credentials modal with the install command and API credentials. | No |
 | **Refresh** (circular arrow) | Re-fetches host data from the PatchMon server (UI only). | No |
 | **Delete host** (trash icon) | Opens a confirmation dialog and then removes the host record. | No |
@@ -714,19 +714,19 @@ Quick reference panel for the host's identity and agent settings. Fields include
 - **Host Groups**: coloured multi-select chips. Add or remove groups; changes save on blur.
 - **Operating System**: icon plus OS type and version (detected by the agent).
 - **Agent Version**: version of `patchmon-agent` currently reporting.
-- **Config Version**: the version of the agent's `config.yml` layout, as last reported (agent 2.1.5 and later). The agent sets it to its own version whenever it loads its configuration, so it normally matches **Agent Version**. The field shows:
+- **Config Version**: the version of the agent's `config.yml` layout, as last reported (agent 2.1.4 and later). The agent sets it to its own version whenever it loads its configuration, so it normally matches **Agent Version**. The field shows:
   - the version alone when the two match;
   - an **out of date** warning when they differ, usually because the agent could not save its `config.yml` after an upgrade;
-  - a **not reported** warning when the agent is 2.1.5 or later but no config version has been recorded;
-  - a note that agent 2.1.5 is required when the agent is older.
+  - a **not reported** warning when the agent is 2.1.4 or later but no config version has been recorded;
+  - a note that agent 2.1.4 is required when the agent is older.
 - **Agent Auto-update**: per-host toggle, on by default for new hosts so the global setting alone decides whether agents update. Turn it off to keep a single host on its current agent version. If global auto-update is disabled, a yellow warning badge is shown with a tooltip pointing to **Settings → Agent Updates**.
-- **Force Agent Version Upgrade**: the **Update Now** button sends an immediate upgrade command via WebSocket. Disabled when the agent is offline.
+- **Force Agent Version Upgrade**: the **Update Now** button sends an immediate upgrade command via WebSocket. Disabled when the agent is offline. While a patch run is queued, validating or running on the host, it is refused with "A patch run is in progress on this host. Try again when it finishes.", and automatic agent updates wait until the run is over, so an agent restart never cuts a patch run short.
 
 See Managing the PatchMon Agent for what the agent does when it receives an upgrade command.
 
 #### Host identity warnings
 
-From PatchMon 2.1.5 every agent knows the ID of its host record (`host_id` in its `config.yml`) and reports it. The host page uses this to warn about agents that are not what they seem. Neither warning blocks the agent: reports keep arriving and are filed under the host the agent's credentials belong to.
+From PatchMon 2.1.4 every agent knows the ID of its host record (`host_id` in its `config.yml`) and reports it. The host page uses this to warn about agents that are not what they seem. Neither warning blocks the agent: reports keep arriving and are filed under the host the agent's credentials belong to.
 
 - **Host ID mismatch**: the agent's `config.yml` names a different host than its credentials belong to. Usually the file was copied from another machine or edited by hand. Fix it on the machine with `sudo patchmon-agent config sync-host-id` (which adopts this host's ID), or reinstall the agent with the install command from this host's page. The warning clears on the agent's next check-in. See the operator guide's Agent Troubleshooting chapter for details.
 - **Possible clone**: two different machines appear to be reporting with this host's credentials, typically because a VM or container was cloned after the agent was installed. Their data alternates on this one host. Give each clone its own host (the operator guide's Agent Troubleshooting chapter has the steps), then either:
@@ -1197,7 +1197,7 @@ Lists every host where the package is installed. Key elements:
 - **Description** panel: the package description as reported by the host's package manager.
 - **Only pending** filter: ticked by default; untick to see every host, including ones already up to date.
 - **Search**: filters the host list.
-- Per-row actions: for Linux/FreeBSD hosts, you can trigger a targeted patch of this one package. Windows hosts are marked as managed via Windows Update / WinGet.
+- Per-row actions: you can trigger a targeted patch of this one package on any host. On Windows hosts, Windows Updates and apps that winget can upgrade are patchable; apps winget does not recognise are marked **Not patchable** (see [Windows patching](#windows-patching)).
 - Select multiple rows and use **Patch selected** to run the same upgrade across many hosts in one patch run.
 
 #### Activity tab
@@ -1218,7 +1218,7 @@ Two flows produce a patch run from the Packages page:
 #### Patch all on a single host
 
 1. Set the **Host** filter to one host.
-2. Click **Patch all** (top right, only appears when a single non-Windows host is filtered).
+2. Click **Patch all** (top right, only appears when a single host is filtered).
 3. Confirm in the wizard to upgrade every outdated package on that host.
 
 Both flows route you into the Patching chapter. See the patch-run pages there for what happens next.
@@ -1239,7 +1239,7 @@ From there, you can drill into individual packages, set up a patch run, or narro
 
 - **Live list, periodic backing data.** Rows are fetched from the PatchMon server and reflect the most recent reports submitted by each host. To refresh a host's data immediately, open the host's detail page and click **Fetch Report**. The Packages list picks up the new state on its next refetch (or click **Refresh** on the Packages page).
 - **Drilling down into patch state.** The **Hosts** page is the better starting point when you care about which *hosts* are behind on updates. Use the Packages page when you care about which *packages* expose the fleet.
-- **Windows hosts.** Package reporting works for Windows (installed applications enriched with WinGet update data, plus Windows Updates; Chocolatey is not used), but the **Patch all** / **Patch selected** actions do not target Windows. Patching on Windows is managed via Windows Update or WinGet directly on the host.
+- **Windows hosts.** Package reporting covers installed applications (enriched with winget update data) and Windows Updates; Chocolatey is not used. **Patch all** and **Patch selected** work on Windows hosts running agent 2.1.4 or later. Windows Update rows show a **Windows Update** source and apps a **winget** source; apps winget does not recognise are listed as **Not patchable**. See [Windows patching](#windows-patching).
 
 ### Related Pages
 
@@ -1456,7 +1456,7 @@ A **patch run** is one unit of patching work against a single host. Every time y
 Each run has:
 
 - A **type**: `patch_all` (install all available package updates) or `patch_package` (install a specific package or set of packages).
-- A **dry-run flag**: if `dry_run=true`, the agent reports what *would* change without actually installing anything. This only applies to `patch_package`; `patch_all` cannot be dry-run because the agent's bulk upgrade path does not support `--dry-run` faithfully.
+- A **dry-run flag**: if `dry_run=true`, the agent reports what *would* change without actually installing anything. On Linux and FreeBSD this only applies to `patch_package`; `patch_all` cannot be dry-run there because the agent's bulk upgrade path does not support `--dry-run` faithfully. Windows hosts support a dry run for both types.
 - A **status** that moves through the run lifecycle (see below).
 - A persisted **shell output** that captures every line of stdout/stderr produced by the package manager. Live subscribers get it streamed over WebSocket; everyone else gets the full blob on completion.
 - Optional **policy metadata**: the effective patch policy is snapshotted onto the run at trigger time, so you can see in run detail "which policy was in effect when this was queued".
@@ -1502,7 +1502,7 @@ A **dry-run** (also called a validation run) asks the agent to simulate the pack
 - For `pkg` on FreeBSD, the agent runs `pkg upgrade -n` or the equivalent install-no-run.
 - For `pacman`, the agent uses `pacman -S -p` / `pacman -Syu -p` (print-only) as the validation step.
 
-When the dry-run completes the run transitions to `validated` and shows you the list of packages that *would* be installed, including dependencies that were pulled in. If more packages would be installed than you originally asked for, the UI badges the run with **Extra deps** and surfaces the full list in the run detail "Packages affected" panel so you can review before approving.
+When the dry-run completes the run transitions to `validated` and shows you the list of packages that *would* be installed, including dependencies that were pulled in. If more packages would be installed than you originally asked for, the UI badges the run with **Extra deps** (Linux and FreeBSD `patch_package` runs only) and surfaces the full list in the run detail "Packages affected" panel so you can review before approving.
 
 **Approval** is the step that turns a validated dry-run into a real patching run. On approval:
 
@@ -1515,7 +1515,7 @@ When the dry-run completes the run transitions to `validated` and shows you the 
 
 ### Multi-OS Coverage
 
-The agent chooses the patching back-end by detecting the host's package manager. Linux and FreeBSD patching are fully supported; Windows patching has its own path.
+The agent chooses the patching back-end by detecting the host's package manager. Linux, FreeBSD and Windows patching are supported; Windows patching has its own path.
 
 | Package manager | OSes | Supported for patching |
 |---|---|:---:|
@@ -1526,19 +1526,121 @@ The agent chooses the patching back-end by detecting the host's package manager.
 | `pkg` | FreeBSD 13+ (plus `freebsd-update` for the base system on `patch_all`) | Yes |
 | `apk` | Alpine Linux | **No.** The agent reports `apk` inventory but rejects patch runs with `package manager "apk" not supported for patching (apt, dnf, yum, pkg, pacman required)`. Alpine hosts are visible in PatchMon and get compliance scans, but patch runs on them fail on the agent side. |
 | `zypper` | openSUSE Leap, openSUSE Tumbleweed, SLES | **No, and no inventory either. Coming soon.** The installer detects zypper and completes, and the agent detects the OS correctly, but the agent has no zypper backend. Package collection therefore fails with `unsupported package manager: unknown` and the host never completes its first report, so it sits at "Waiting for initial system report". Follow and vote for zypper support at [feedback.patchmon.net](https://feedback.patchmon.net/b/feature-requests/posts/post_01kyza53c0fzst214afbr1qn9a). |
-| Windows Update Agent (WUA) + WinGet | Windows 10/11, Server 2019/2022/2025 | Yes (separate path) |
+| Windows Update Agent (WUA) + winget | Windows 10/11, Server 2019/2022/2025 | Yes, with agent 2.1.4 or later (separate path) |
 
 > **Note:** The 2.0 release notes describe Linux patching generally. If you need to patch Alpine hosts, track the package manager roadmap or use your existing Alpine tooling until `apk` support lands.
 
-#### Windows patching
+#### Windows patching {#windows-patching}
 
-When the agent detects it is running on Windows, patch runs are handled by the WUA + WinGet path rather than the Linux package-manager path:
+Windows hosts are patched from the same places as Linux hosts: Host Detail, the Packages page and the Patch wizard. The agent on the host must be **2.1.4 or later**. For an older agent the server refuses the run with "Update the PatchMon agent on this host to v2.1.4 or later to patch Windows"; update the agent first (**Host Info → Update Now**).
 
-- **Patch all** installs every Windows Update currently marked `approved` for that host by the server, plus runs `winget upgrade --all` for WinGet-managed applications.
-- **Patch package** routes by name: strings that look like a `KB...` / GUID update are sent via WUA, anything else is treated as a WinGet package ID.
-- Reboot state, superseded-update cleanup, and approved-GUID sync all go through dedicated `/patching/windows-updates/*` endpoints used by the beta Windows agent.
+##### What can be patched
 
-Windows patching is flagged **beta** in 2.0 and the Run Detail page renders the same way regardless of OS. The terminal pane simply shows PowerShell / `winget` output instead of `apt-get` output.
+| Item | Installed by | Shown as |
+|---|---|---|
+| Windows Updates: cumulative, security, .NET, definition, driver and optional updates, and feature upgrades | The Windows Update Agent on the host, from the host's configured update source (Microsoft Update or WSUS) | Source **Windows Update** |
+| Applications that winget can upgrade | winget, by the app's exact winget Id | Source **winget** |
+| Applications found only in the registry | Nothing | **Not patchable** |
+| Microsoft Store apps | Nothing: they update through the Microsoft Store | The available update, with a **Microsoft Store app** badge; not selectable |
+| Apps pinned with `winget pin` | Nothing until the pin is removed | The available update, with a **Pinned in winget** badge; not selectable |
+
+The agent reads installed applications from the Windows registry and matches them against winget. PatchMon only ever asks winget to upgrade a package by its exact winget Id. An app that winget has no match for has no Id, so there is no safe way to tell winget which package to upgrade. These apps still report their available version, but they cannot be selected; the tooltip reads "Not patchable: this app was not found in winget. Update it with its own updater." Use the vendor's updater or your software deployment tool for them.
+
+Hosts without winget (it ships with the App Installer package, which Windows Server 2019 and 2022, Server Core and LTSC editions often do not have) list every app as Not patchable. Windows Updates still patch. Windows Server 2025 includes winget as standard.
+
+**Microsoft Store apps** (apps installed from the Store or as MSIX packages) keep showing their available update, but cannot be patched: "Microsoft Store app: updates through the Microsoft Store". The agent runs as the Local System account, and winget run as Local System only updates the machine's staged copy of a Store app, never the copy each user runs, so an upgrade would report success and change nothing. Let the Microsoft Store update them, or manage them with your Store or Intune policy.
+
+**Pinned apps.** An app you have pinned on the host with `winget pin add` also keeps showing its update, with a **Pinned in winget** badge, and cannot be selected: "Pinned with winget pin; remove the pin on the host to update it". Pinned apps are left out of Patch all. Remove the pin (`winget pin remove`) and wait for the next report to patch it.
+
+If you select a Store app or a pinned app anyway, for example from an out-of-date page, the wizard refuses the run and lists the app with the same reason.
+
+Windows Update rows also carry badges: **Security**, **Optional**, **Driver** and **Feature upgrade**.
+
+##### Patch all
+
+On a Windows host the wizard shows two scope boxes, both ticked by default. At least one must stay ticked:
+
+- **Windows Updates**: installs every pending Windows update except drivers, optional updates and feature upgrades.
+- **Applications (winget)**: upgrades each app that winget reports an upgrade for, one at a time.
+
+Patch all checks the host again when the run starts, so it installs whatever is pending at that moment, not what was pending when the run was queued or validated. Approving a validated Patch all works the same way.
+
+**Drivers, optional updates and feature upgrades are never part of Patch all.** Select them individually with **Patch selected**. Selecting a feature upgrade (for example a move to a new Windows 11 version) shows a warning in the wizard: "Feature upgrades download several GB, can take over an hour and need one or more restarts to finish."
+
+To keep something out of Patch all on one host, hide the update in Windows (hidden updates disappear from PatchMon too), or pin the app with `winget pin add`. Once the next report has seen the pin, the app is shown as pinned and Patch all leaves it out. If the pin was added after the last report, the agent still checks it before upgrading: the app is not upgraded and the item ends **Skipped** with "Pinned in winget: remove the pin to update it".
+
+##### Validate first
+
+Windows supports a dry run for both **Patch selected** and **Patch all**, so the wizard offers the **Validate** step for both. A dry run searches Windows Update and asks winget whether an upgrade is available. Nothing is downloaded or installed. Each item ends **Would install**, with its expected restart behaviour, **Not applicable**, or **Skipped** when it could not be installed as things stand: a Microsoft Store app, an app pinned in winget, an update that needs user input, or an update that cannot install until the host has restarted. You can validate up to 100 packages per Windows host in one run.
+
+Approve the result as you would on Linux. When you approve a validated **Patch selected** run, only the items that would install are carried into the real run.
+
+##### Per-item results
+
+Run Detail shows an **Updates** card above the terminal, with one row per update or app: **Name**, **Source**, **KB**, **Status**, **Result** (a hint plus the Windows or winget error code) and **Restart**. It refreshes while the run is active.
+
+| Status | Meaning |
+|---|---|
+| **Installed** | Installed by this run. |
+| **Installed with errors** | Windows reported the install as successful with errors. Counted as installed. |
+| **Installed, restart required** | Installed earlier and waiting for the host to restart. PatchMon does not install it again. |
+| **Already installed** | Installed before the run reached it, for example by Windows' own automatic updates. |
+| **Would install** | Dry run only: this would be installed. |
+| **Not applicable** | No longer offered by Windows Update (installed, superseded or withdrawn), no upgrade available, or an app installed for a single user (see below). |
+| **Skipped** | The run was stopped, the run time limit was reached, a restart is needed before more updates can install, the update needs interactive input, an earlier update in the run timed out while installing, the app was pinned with `winget pin` since the last report, or the app is a Microsoft Store app ("Microsoft Store app: it updates through the Store for each user, not as SYSTEM"). |
+| **Failed** / **Aborted** | The install did not succeed. The Result column has the code and a hint, for example "Application is in use: close the app and retry". |
+
+One failed item does not stop the others. The run ends **Failed** if any item failed or was aborted, and its summary lists the first few ("2 of 7 failed: ..."). Skipped items never fail a run. They are listed in the run's summary instead, for example "1 skipped: 7zip.7zip (pinned in winget)", and a run whose only non-successful items were skipped ends **Completed** with that summary shown as a note.
+
+##### Restarts
+
+**PatchMon never restarts a Windows host.** When an update needs a restart:
+
+- Run Detail shows a banner: "A restart is required to finish installing updates." and the item's **Restart** column is marked.
+- The host is flagged as needing a reboot as soon as the run ends, without waiting for the next report, and a `patch_reboot_required` notification is sent.
+- The host keeps showing **Reboot pending** until it has actually restarted, even if Windows' own restart signals clear earlier, with the reason "Restart required to finish a patch run". PatchMon notices the restart from the host's boot time on its next report or ping.
+- An app upgrade that finished while the app was open may leave some files to be replaced at the next restart. That item is marked as needing a restart with "Installed; some files will be replaced at the next restart."
+- An update that has installed and is waiting for the restart shows as **pending restart** in the host's package list and is not offered again.
+
+Restart the host when it suits you. If a restart is still pending from an earlier install, Windows may refuse further installs; those items end **Skipped** with "Restart pending from an earlier install; restart the host and run again."
+
+##### Stopping a run, and long runs
+
+**Stop Run** takes effect between items. The update or app being installed at that moment always finishes, because interrupting Windows servicing part-way is worse than waiting; the remaining items end **Skipped**. Cumulative updates and feature upgrades can run for a long time without output, so the agent writes a progress line every minute and the run is not timed out while it is still working. Each step has its own limit:
+
+| Step | Limit |
+|---|---|
+| Whole run that installs Windows Updates (a Patch all with **Windows Updates** ticked, or a Patch selected that includes an update) | 8 hours |
+| Whole run that only upgrades apps | 4 hours |
+| Searching for Windows Updates | 15 minutes |
+| Downloading the run's Windows Updates | 60 minutes, or 180 minutes when a feature upgrade is included |
+| Installing one Windows Update | 180 minutes, or 240 minutes for a feature upgrade |
+| Upgrading one app with winget | 30 minutes |
+
+A step that runs out of time says so. Windows usually carries on installing an update in the background after its install step times out, so the agent then asks Windows about that update once a minute for up to 10 minutes:
+
+- If Windows finishes it in that time, the item shows **Installed** with "Installed; Windows finished after the 180-minute limit", or **Installed, restart required** with "Installed; Windows finished after the 180-minute limit; restart the host to complete it". The run carries on with the next update.
+- If Windows still has not finished, the item ends **Failed** with "Install did not finish within 180 minutes. Windows may still be completing it; check after a restart." PatchMon does not start any more Windows Updates in that run: they end **Skipped** with "Not started: Windows Update was still installing a previous update". App upgrades still run, and the run ends **Failed**. Check the host after a restart and run the remaining updates again.
+
+Stopping the run during those 10 minutes ends the check straight away. The limits quoted above are for an ordinary update; for a feature upgrade the install limit is 240 minutes.
+
+##### Apps installed for a single user
+
+The agent runs as the Local System account, so winget acts on apps installed for all users. An app installed for one user only cannot be upgraded by the agent: it ends **Not applicable** with "Not found for the system account: the app is probably installed for a single user, which the agent cannot upgrade". Upgrade it from that user's session, or reinstall it for all users.
+
+##### WSUS-managed hosts
+
+If the host gets updates from WSUS, Windows Update only offers updates that WSUS has approved for it, so PatchMon only ever installs WSUS-approved updates. WSUS stays your approval gate and PatchMon decides when they install. If the host cannot reach its update server, items fail with "Cannot reach the update server or WSUS: check proxy, firewall, WSUS URL". WSUS does not affect winget, which uses its own sources.
+
+##### Licence terms and app sources
+
+Installing an item accepts its licence terms on your behalf: the Windows Update EULA where one applies, and winget's package and source agreements. winget installers come from the winget community repository and run as Local System on the host. You choose which apps to upgrade.
+
+##### Agent updates during a patch run
+
+Agent updates are held while a patch run is queued, validating or running on the host, on every operating system. **Update Now** is refused with "A patch run is in progress on this host. Try again when it finishes.", automatic updates wait, and an agent that is told to update mid-run applies the update after the run and its post-patch report have finished. The reverse also holds: a patch run that reaches the agent while it is downloading or installing its own update fails straight away with "Agent update in progress, retry shortly". Run it again once the agent is back.
+
+The terminal pane on Run Detail shows Windows Update and winget progress instead of `apt-get` output.
 
 ---
 
@@ -1562,7 +1664,7 @@ The end-to-end flow for a single `patch_all` run is:
 
 1. You click **Patch all** on a Host Detail page. The **Patch Wizard** opens, pre-loaded with the host.
 2. You optionally override the policy (e.g. "Run immediately" on a host that has a delayed policy) and click the fire button.
-3. The browser calls `POST /patching/trigger` with `patch_type=patch_all`. Because `patch_all` cannot be dry-run, the run starts in `pending_approval` if you ticked "Submit for approval", or goes straight to `queued` otherwise.
+3. The browser calls `POST /patching/trigger` with `patch_type=patch_all`. Because `patch_all` cannot be dry-run on Linux and FreeBSD, the run starts in `pending_approval` if you ticked "Submit for approval", or goes straight to `queued` otherwise.
 4. The server inserts a `patch_runs` row, snapshots the effective policy onto it, and enqueues a `run_patch` task on the `patching` asynq queue. If the policy introduces a delay, asynq schedules the task for the future and the run status shows `scheduled`.
 5. When the task dequeues, the server sends a `run_patch` WebSocket message to the agent connected for that host.
 6. The agent flips the run to `running`, calls `apt-get --with-new-pkgs upgrade -y` (or the equivalent for the OS), and streams stdout/stderr back over `POST /patching/runs/{id}/output` in short chunks. On Debian and Ubuntu, `--with-new-pkgs` lets the upgrade install packages it does not already have, which is what a kernel ABI bump needs. Without it apt holds those upgrades back and they would keep reappearing as outdated after every run.
@@ -1613,7 +1715,7 @@ The wizard has a fixed six-step sequence, but it auto-skips steps that have no d
 |---|---|---|
 | 1 | **Hosts** | You entered from Packages (fleet rollout) and need to pick which hosts to patch. Hidden when the host is pre-locked. |
 | 2 | **Packages** | You entered with a multi-package list and want to trim it. Hidden for `patch_all` or single-package runs. |
-| 3 | **Validate** | `patch_package` only. Hidden for `patch_all` (cannot dry-run) and for Approve flows (validation already exists). |
+| 3 | **Validate** | `patch_package`, plus `patch_all` on Windows hosts. Hidden for `patch_all` on Linux and FreeBSD (cannot dry-run) and for Approve flows (validation already exists). |
 | 4 | **Timing** | Always shown. Review effective policy and optionally override to "run immediately". |
 | 5 | **Approval** | `patch_package` only. Choose "Approve & Patch now" or "Submit for approval". Hidden in Approve mode. |
 | 6 | **Submit** | Always shown. Final per-host summary and the fire button. |
@@ -1640,7 +1742,7 @@ What happens next on the server:
 - If the policy introduces a delay, the task is scheduled for the future and the run is shown as `scheduled` in Runs & History. Otherwise it goes straight to `queued`.
 - The browser deep-links into the **Run Detail** page so you can watch the live terminal.
 
-> **Note:** `patch_all` cannot be dry-run. The agent's bulk-upgrade path (`apt-get --with-new-pkgs upgrade`, `dnf upgrade`, `pkg upgrade`, `pacman -Syu`) does not support a reliable simulation mode. If you want a dry-run, patch specific packages instead.
+> **Note:** On Linux and FreeBSD, `patch_all` cannot be dry-run. The agent's bulk-upgrade path (`apt-get --with-new-pkgs upgrade`, `dnf upgrade`, `pkg upgrade`, `pacman -Syu`) does not support a reliable simulation mode. If you want a dry-run, patch specific packages instead. Windows hosts can validate a Patch all; see [Windows patching](#windows-patching).
 
 ---
 
@@ -2099,7 +2201,7 @@ The rightmost **Actions** column shows action buttons specific to the row's curr
 
 **Approve** and **Skip & Patch** both route through the **Patch Wizard** in approve mode, even for a single row. This is a deliberate consistency choice: every path that turns a validation into a real run uses the same UI, so you get the per-host policy override UI for free (e.g. you can pick "Run immediately" at approval time even if the host normally has a delayed policy).
 
-**Retry** re-queues the dry-run task without opening the wizard. Use this after bringing an offline host back online. Only available for `patch_package` runs; `patch_all` cannot be re-validated because it cannot be dry-run.
+**Retry** re-queues the dry-run task without opening the wizard. Use this after bringing an offline host back online. Only available for `patch_package` runs, and for `patch_all` runs on Windows hosts; on Linux and FreeBSD `patch_all` cannot be re-validated because it cannot be dry-run.
 
 #### Bulk selection and bulk actions
 

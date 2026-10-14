@@ -57,7 +57,7 @@ func TestReissueApiKeyGuards(t *testing.T) {
 
 	for name, sql := range map[string]string{
 		"active status":       `UPDATE hosts SET status = 'active' WHERE id = $1`,
-		"agent version":       `UPDATE hosts SET agent_version = '2.1.5' WHERE id = $1`,
+		"agent version":       `UPDATE hosts SET agent_version = '2.1.4' WHERE id = $1`,
 		"full report arrived": `UPDATE hosts SET last_full_report_at = NOW() WHERE id = $1`,
 	} {
 		t.Run(name, func(t *testing.T) {

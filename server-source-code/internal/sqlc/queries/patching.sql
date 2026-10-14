@@ -1,13 +1,13 @@
 -- patch_runs
 -- name: CreatePatchRun :exec
-INSERT INTO patch_runs (id, host_id, job_id, patch_type, package_name, package_names, status, shell_output, triggered_by_user_id, dry_run, scheduled_at, policy_id, policy_name, policy_snapshot, validation_run_id, approved_by_user_id, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW());
+INSERT INTO patch_runs (id, host_id, job_id, patch_type, package_name, package_names, status, shell_output, triggered_by_user_id, dry_run, scheduled_at, policy_id, policy_name, policy_snapshot, validation_run_id, approved_by_user_id, windows_include_updates, windows_include_apps, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW(), NOW());
 
 -- name: UpdatePatchRunValidated :exec
 -- Agent streams progress chunks during the run, then sends the final authoritative
 -- output on the terminal stage; REPLACE (not append) so the final record is never
 -- a duplicate of the streamed progress.
-UPDATE patch_runs SET status = 'validated', shell_output = $2, packages_affected = $3, completed_at = NOW(), updated_at = NOW() WHERE id = $1;
+UPDATE patch_runs SET status = 'validated', shell_output = sqlc.arg('shell_output'), packages_affected = sqlc.arg('packages_affected'), error_message = COALESCE(sqlc.narg('error_message')::text, error_message), completed_at = NOW(), updated_at = NOW() WHERE id = sqlc.arg('id');
 
 -- name: MarkValidationApproved :execrows
 -- Declared :execrows, not :exec, because the status guard IS the concurrency
@@ -22,6 +22,9 @@ UPDATE patch_runs SET policy_id = $2, policy_name = $3, policy_snapshot = $4, up
 -- name: UpdatePatchRunScheduledAt :exec
 UPDATE patch_runs SET scheduled_at = $2, updated_at = NOW() WHERE id = $1;
 
+-- name: SetPatchRunRebootRequired :exec
+UPDATE patch_runs SET reboot_required = $2, updated_at = NOW() WHERE id = $1;
+
 -- name: UpdatePatchRunPackagesAffected :exec
 UPDATE patch_runs SET packages_affected = $2, updated_at = NOW() WHERE id = $1;
 
@@ -29,7 +32,7 @@ UPDATE patch_runs SET packages_affected = $2, updated_at = NOW() WHERE id = $1;
 DELETE FROM patch_runs WHERE id = $1;
 
 -- name: GetPatchRunByID :one
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username, au.username AS approved_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username, au.username AS approved_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -70,16 +73,16 @@ UPDATE patch_runs SET scheduled_at = NULL, updated_at = NOW() WHERE id = $1;
 -- name: UpdatePatchRunProgress :exec
 UPDATE patch_runs SET shell_output = shell_output || $2, updated_at = NOW() WHERE id = $1;
 
--- name: UpdatePatchRunCompleted :exec
+-- name: UpdatePatchRunCompleted :execrows
 -- REPLACE (not append) - agent streams progress chunks then sends final full output.
 -- agent_disconnected and timed_out are intentionally NOT in the guard: both are
 -- server-side "we gave up waiting" markers, so a recovering agent posting a late
 -- genuine "completed" must be able to unwedge the row and deliver the real output.
-UPDATE patch_runs SET status = 'completed', shell_output = $2, completed_at = NOW(), updated_at = NOW()
-WHERE id = $1
+UPDATE patch_runs SET status = 'completed', shell_output = sqlc.arg('shell_output'), error_message = COALESCE(sqlc.narg('error_message')::text, error_message), completed_at = NOW(), updated_at = NOW()
+WHERE id = sqlc.arg('id')
   AND status NOT IN ('cancelled','completed','failed','validated','dry_run_completed');
 
--- name: UpdatePatchRunFailed :exec
+-- name: UpdatePatchRunFailed :execrows
 -- REPLACE (not append) - agent streams progress chunks then sends final full output.
 -- agent_disconnected and timed_out are intentionally NOT in the guard so a
 -- recovering agent that posts a late "failed" can still unwedge the row.
@@ -127,7 +130,7 @@ WHERE id = $1
 -- name: ListPatchRuns :many
 -- The 'status' filter accepts an exact status value. The pseudo-value
 -- 'active' matches the in-flight runs that block a host: queued, pending_validation, running.
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -142,7 +145,7 @@ ORDER BY pr.created_at DESC
 LIMIT sqlc.arg('limit_arg') OFFSET sqlc.arg('offset_arg');
 
 -- name: ListPatchRunsOrderByCreatedAtAsc :many
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -157,7 +160,7 @@ ORDER BY pr.created_at ASC
 LIMIT sqlc.arg('limit_arg') OFFSET sqlc.arg('offset_arg');
 
 -- name: ListPatchRunsOrderByStartedAt :many
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -172,7 +175,7 @@ ORDER BY COALESCE(pr.started_at, pr.created_at) DESC NULLS LAST, pr.created_at D
 LIMIT sqlc.arg('limit_arg') OFFSET sqlc.arg('offset_arg');
 
 -- name: ListPatchRunsOrderByStartedAtAsc :many
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -187,7 +190,7 @@ ORDER BY COALESCE(pr.started_at, pr.created_at) ASC NULLS LAST, pr.created_at DE
 LIMIT sqlc.arg('limit_arg') OFFSET sqlc.arg('offset_arg');
 
 -- name: ListPatchRunsOrderByCompletedAt :many
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -202,7 +205,7 @@ ORDER BY COALESCE(pr.completed_at, pr.created_at) DESC NULLS LAST, pr.created_at
 LIMIT sqlc.arg('limit_arg') OFFSET sqlc.arg('offset_arg');
 
 -- name: ListPatchRunsOrderByCompletedAtAsc :many
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -217,7 +220,7 @@ ORDER BY COALESCE(pr.completed_at, pr.created_at) ASC NULLS LAST, pr.created_at 
 LIMIT sqlc.arg('limit_arg') OFFSET sqlc.arg('offset_arg');
 
 -- name: ListPatchRunsOrderByStatus :many
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -232,7 +235,7 @@ ORDER BY pr.status ASC, pr.created_at DESC
 LIMIT sqlc.arg('limit_arg') OFFSET sqlc.arg('offset_arg');
 
 -- name: ListPatchRunsOrderByStatusDesc :many
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -256,8 +259,11 @@ WHERE (sqlc.arg('host_id')::text = '' OR host_id = sqlc.arg('host_id'))
   )
   AND (sqlc.arg('patch_type')::text = '' OR patch_type = sqlc.arg('patch_type'));
 
+-- name: HostHasActivePatchRun :one
+SELECT EXISTS(SELECT 1 FROM patch_runs WHERE host_id = $1 AND status IN ('queued', 'pending_validation', 'running'));
+
 -- name: ListActivePatchRuns :many
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -276,7 +282,7 @@ WHERE ((dry_run = false OR dry_run IS NULL) OR status IN ('pending_validation', 
 GROUP BY status;
 
 -- name: ListRecentPatchRuns :many
-SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, u.username AS triggered_by_username
+SELECT pr.*, h.friendly_name AS host_friendly_name, h.hostname AS host_hostname, h.os_type AS host_os_type, u.username AS triggered_by_username
 FROM patch_runs pr
 LEFT JOIN hosts h ON pr.host_id = h.id
 LEFT JOIN users u ON pr.triggered_by_user_id = u.id
@@ -372,14 +378,15 @@ VALUES ($1, $2, $3, NOW(), NOW());
 -- name: DeletePatchPolicyExclusion :exec
 DELETE FROM patch_policy_exclusions WHERE patch_policy_id = $1 AND host_id = $2;
 
--- name: MarkUndispatchedPatchRunsTimedOut :execrows
+-- name: MarkUndispatchedPatchRunsTimedOut :many
 -- Keyed on when the run became due, not updated_at: the offline-agent retry bumps updated_at every 5 minutes.
 UPDATE patch_runs
 SET status = 'timed_out', error_message = sqlc.narg('error_message'), completed_at = NOW(), updated_at = NOW()
 WHERE status IN ('scheduled', 'queued', 'pending_validation')
-  AND COALESCE(scheduled_at, created_at) < sqlc.arg('due_before');
+  AND COALESCE(scheduled_at, created_at) < sqlc.arg('due_before')
+RETURNING id, host_id, (SELECT COALESCE(NULLIF(h.friendly_name, ''), h.hostname, '') FROM hosts h WHERE h.id = patch_runs.host_id)::text AS host_name;
 
--- name: MarkPatchRunsTimedOut :execrows
+-- name: MarkPatchRunsTimedOut :many
 -- Stall sweep. The predicate is deliberately "no activity since", NOT "started
 -- before": every progress chunk the agent streams bumps updated_at (see
 -- UpdatePatchRunProgress), so a long-but-healthy run (dist-upgrade on slow
@@ -389,8 +396,9 @@ WHERE status IN ('scheduled', 'queued', 'pending_validation')
 -- outcome the agent later reports.
 UPDATE patch_runs
 SET status = 'timed_out', error_message = sqlc.narg('error_message'), completed_at = NOW(), updated_at = NOW()
-WHERE status = 'running'
-  AND updated_at < sqlc.arg('stale_before');
+WHERE patch_runs.status = 'running'
+  AND patch_runs.updated_at < sqlc.arg('stale_before')
+RETURNING id, host_id, (SELECT COALESCE(NULLIF(h.friendly_name, ''), h.hostname, '') FROM hosts h WHERE h.id = patch_runs.host_id)::text AS host_name;
 
 -- name: MarkPatchRunsAgentDisconnected :execrows
 UPDATE patch_runs

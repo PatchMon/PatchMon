@@ -126,8 +126,8 @@ UPDATE hosts SET
     updated_at = NOW()
 WHERE id = $1;
 
--- name: UpdateHostRebootStatus :exec
-UPDATE hosts SET needs_reboot = $2, reboot_reason = $3, updated_at = NOW() WHERE id = $1;
+-- name: SetHostPatchRebootPending :exec
+UPDATE hosts SET needs_reboot = true, reboot_reason = $2, patch_reboot_pending_boot_time = boot_time, updated_at = NOW() WHERE id = $1;
 
 -- name: UpdateHostPing :exec
 UPDATE hosts SET last_update = NOW(), updated_at = NOW(), status = 'active' WHERE id = $1;
@@ -159,17 +159,24 @@ UPDATE hosts SET
     system_uptime  = COALESCE(sqlc.narg('system_uptime')::text, system_uptime),
     boot_time      = COALESCE(sqlc.narg('boot_time')::timestamptz, boot_time),
     load_average   = COALESCE(sqlc.narg('load_average')::jsonb, load_average),
-    needs_reboot   = COALESCE(sqlc.narg('needs_reboot')::boolean, needs_reboot),
+    -- A run that needed a restart pins needs_reboot until boot_time moves; 60s absorbs uptime jitter.
+    needs_reboot   = COALESCE(sqlc.narg('needs_reboot')::boolean, needs_reboot) OR (patch_reboot_pending_boot_time IS NOT NULL
+            AND ABS(EXTRACT(EPOCH FROM (COALESCE(sqlc.narg('boot_time')::timestamptz, boot_time) - patch_reboot_pending_boot_time))) < 60),
     -- Not a plain COALESCE: that would make the reason unclearable. Tied to
     -- needs_reboot so clearing the flag clears both, while a ping asserting the
     -- flag without a reason leaves the stored one alone.
     reboot_reason  = CASE
+        WHEN (patch_reboot_pending_boot_time IS NOT NULL
+                AND ABS(EXTRACT(EPOCH FROM (COALESCE(sqlc.narg('boot_time')::timestamptz, boot_time) - patch_reboot_pending_boot_time))) < 60)
+             AND NOT COALESCE(sqlc.narg('needs_reboot')::boolean, false) THEN 'Restart required to finish a patch run'
         WHEN sqlc.narg('needs_reboot')::boolean IS NULL THEN reboot_reason
         WHEN sqlc.narg('needs_reboot')::boolean IS TRUE
              AND sqlc.narg('reboot_reason')::text IS NULL THEN reboot_reason
         ELSE sqlc.narg('reboot_reason')::text
     END,
     agent_version  = COALESCE(sqlc.narg('agent_version')::text, agent_version),
+    patch_reboot_pending_boot_time = CASE WHEN (patch_reboot_pending_boot_time IS NOT NULL
+            AND ABS(EXTRACT(EPOCH FROM (COALESCE(sqlc.narg('boot_time')::timestamptz, boot_time) - patch_reboot_pending_boot_time))) < 60) THEN patch_reboot_pending_boot_time END,
     config_version = CASE
         WHEN sqlc.narg('config_version')::text IS NOT NULL THEN sqlc.narg('config_version')::text
         WHEN sqlc.narg('agent_version')::text IS NOT NULL THEN NULL

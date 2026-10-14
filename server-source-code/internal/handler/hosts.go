@@ -733,10 +733,17 @@ func (h *HostsHandler) ForceAgentUpdate(w http.ResponseWriter, r *http.Request) 
 		Error(w, http.StatusServiceUnavailable, "Queue service unavailable")
 		return
 	}
-	hostID := chi.URLParam(r, "hostId")
-	host, err := h.hosts.GetByID(r.Context(), hostID)
-	if err != nil || host == nil {
-		Error(w, http.StatusNotFound, "Host not found")
+	host, ok := loadHost(w, r, h.hosts, chi.URLParam(r, "hostId"))
+	if !ok {
+		return
+	}
+	active, err := h.hosts.HasActivePatchRun(r.Context(), host.ID)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to check for an active patch run")
+		return
+	}
+	if active {
+		Error(w, http.StatusConflict, store.PatchRunInProgressMessage)
 		return
 	}
 	task, err := queue.NewUpdateAgentTask(host.ApiID, hostFromRequest(r), true) // bypass_settings=true for force update

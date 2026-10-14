@@ -1,6 +1,6 @@
 import { compareVersions } from "./version";
 
-export const CONFIG_VERSION_MIN_AGENT = "2.1.5";
+export const CONFIG_VERSION_MIN_AGENT = "2.1.4";
 
 export const CONFIG_VERSION_STATE = {
 	MATCH: "match",

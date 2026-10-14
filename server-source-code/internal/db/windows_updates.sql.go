@@ -34,43 +34,13 @@ func (q *Queries) CountWindowsUpdatesByHostID(ctx context.Context, hostID string
 	return i, err
 }
 
-const deleteHostPackageByWUAGUID = `-- name: DeleteHostPackageByWUAGUID :exec
-DELETE FROM host_packages WHERE host_id = $1 AND wua_guid = $2
-`
-
-type DeleteHostPackageByWUAGUIDParams struct {
-	HostID  string  `json:"host_id"`
-	WuaGuid *string `json:"wua_guid"`
-}
-
-// Removes a host_package row that was reported as superseded by the agent.
-func (q *Queries) DeleteHostPackageByWUAGUID(ctx context.Context, arg DeleteHostPackageByWUAGUIDParams) error {
-	_, err := q.db.Exec(ctx, deleteHostPackageByWUAGUID, arg.HostID, arg.WuaGuid)
-	return err
-}
-
-const deleteHostPackagesByWUAGUIDs = `-- name: DeleteHostPackagesByWUAGUIDs :exec
-DELETE FROM host_packages WHERE host_id = $1 AND wua_guid = ANY($2::text[])
-`
-
-type DeleteHostPackagesByWUAGUIDsParams struct {
-	HostID  string   `json:"host_id"`
-	Column2 []string `json:"column_2"`
-}
-
-// Bulk-removes superseded Windows Update entries for a host.
-func (q *Queries) DeleteHostPackagesByWUAGUIDs(ctx context.Context, arg DeleteHostPackagesByWUAGUIDsParams) error {
-	_, err := q.db.Exec(ctx, deleteHostPackagesByWUAGUIDs, arg.HostID, arg.Column2)
-	return err
-}
-
 const getHostWindowsUpdates = `-- name: GetHostWindowsUpdates :many
 
 SELECT hp.id, hp.host_id, hp.package_id, hp.current_version, hp.available_version,
     hp.needs_update, hp.is_security_update,
     hp.wua_guid, hp.wua_kb, hp.wua_severity, hp.wua_categories,
     hp.wua_description, hp.wua_support_url, hp.wua_revision_number,
-    hp.wua_date_installed, hp.wua_install_result, hp.last_checked,
+    hp.wua_date_installed, hp.last_checked,
     p.name AS pkg_name, p.description AS pkg_description
 FROM host_packages hp
 JOIN packages p ON p.id = hp.package_id
@@ -95,7 +65,6 @@ type GetHostWindowsUpdatesRow struct {
 	WuaSupportUrl     *string          `json:"wua_support_url"`
 	WuaRevisionNumber *int32           `json:"wua_revision_number"`
 	WuaDateInstalled  pgtype.Timestamp `json:"wua_date_installed"`
-	WuaInstallResult  *string          `json:"wua_install_result"`
 	LastChecked       pgtype.Timestamp `json:"last_checked"`
 	PkgName           string           `json:"pkg_name"`
 	PkgDescription    *string          `json:"pkg_description"`
@@ -129,7 +98,6 @@ func (q *Queries) GetHostWindowsUpdates(ctx context.Context, hostID string) ([]G
 			&i.WuaSupportUrl,
 			&i.WuaRevisionNumber,
 			&i.WuaDateInstalled,
-			&i.WuaInstallResult,
 			&i.LastChecked,
 			&i.PkgName,
 			&i.PkgDescription,
@@ -142,57 +110,4 @@ func (q *Queries) GetHostWindowsUpdates(ctx context.Context, hostID string) ([]G
 		return nil, err
 	}
 	return items, nil
-}
-
-const getPendingWindowsUpdateGUIDs = `-- name: GetPendingWindowsUpdateGUIDs :many
-SELECT wua_guid FROM host_packages
-WHERE host_id = $1
-  AND wua_guid IS NOT NULL
-  AND needs_update = true
-  AND (wua_install_result IS NULL OR wua_install_result = 'failed')
-ORDER BY is_security_update DESC, last_checked ASC
-`
-
-// Returns WUA GUIDs that are still pending (needs_update=true, not yet installed) for a host.
-// Used by the server to tell the agent which updates to install.
-func (q *Queries) GetPendingWindowsUpdateGUIDs(ctx context.Context, hostID string) ([]*string, error) {
-	rows, err := q.db.Query(ctx, getPendingWindowsUpdateGUIDs, hostID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []*string
-	for rows.Next() {
-		var wua_guid *string
-		if err := rows.Scan(&wua_guid); err != nil {
-			return nil, err
-		}
-		items = append(items, wua_guid)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const updateHostPackageWUAInstallResult = `-- name: UpdateHostPackageWUAInstallResult :exec
-UPDATE host_packages SET
-    wua_install_result = $3,
-    wua_date_installed = CASE WHEN $3 = 'success' THEN NOW() ELSE wua_date_installed END,
-    needs_update       = CASE WHEN $3 = 'success' THEN false ELSE needs_update END,
-    current_version    = CASE WHEN $3 = 'success' THEN COALESCE(available_version, current_version) ELSE current_version END,
-    last_checked       = NOW()
-WHERE host_id = $1 AND wua_guid = $2
-`
-
-type UpdateHostPackageWUAInstallResultParams struct {
-	HostID           string  `json:"host_id"`
-	WuaGuid          *string `json:"wua_guid"`
-	WuaInstallResult *string `json:"wua_install_result"`
-}
-
-// Records the outcome of a Windows Update installation for a specific host+GUID combination.
-func (q *Queries) UpdateHostPackageWUAInstallResult(ctx context.Context, arg UpdateHostPackageWUAInstallResultParams) error {
-	_, err := q.db.Exec(ctx, updateHostPackageWUAInstallResult, arg.HostID, arg.WuaGuid, arg.WuaInstallResult)
-	return err
 }

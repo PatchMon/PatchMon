@@ -31,28 +31,28 @@ const { HOSTS } = vi.hoisted(() => {
 		host({
 			id: "h-ok",
 			friendly_name: "healthy",
-			agent_version: "2.1.5",
-			config_version: "2.1.5",
+			agent_version: "2.1.4",
+			config_version: "2.1.4",
 		}),
 		host({
 			id: "h-stale",
 			friendly_name: "stale-config",
-			agent_version: "2.1.5",
-			config_version: "2.1.5-rc.1",
+			agent_version: "2.1.4",
+			config_version: "2.1.4-rc.1",
 		}),
-		host({ id: "h-old", friendly_name: "old-agent", agent_version: "2.1.4" }),
+		host({ id: "h-old", friendly_name: "old-agent", agent_version: "2.1.3" }),
 		host({
 			id: "h-clone",
 			friendly_name: "cloned",
-			agent_version: "2.1.5",
-			config_version: "2.1.5",
+			agent_version: "2.1.4",
+			config_version: "2.1.4",
 			identity_conflict_at: "2026-10-13T10:00:00Z",
 		}),
 		host({
 			id: "h-wrongid",
 			friendly_name: "wrong-id",
-			agent_version: "2.1.5",
-			config_version: "2.1.5",
+			agent_version: "2.1.4",
+			config_version: "2.1.4",
 			reported_host_id: "h-ok",
 		}),
 	];
@@ -143,7 +143,7 @@ describe("Hosts table config version", () => {
 				.length,
 		).toBeGreaterThan(0);
 		const row = desktopRow("old-agent");
-		expect(within(row).getByText("Requires agent 2.1.5")).toBeInTheDocument();
+		expect(within(row).getByText("Requires agent 2.1.4")).toBeInTheDocument();
 	});
 
 	it("sorts by config version from its header, like Agent Version", async () => {

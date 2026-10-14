@@ -47,7 +47,12 @@ vi.mock("../../utils/patchingApi", () => ({
 
 import PatchWizard from "../../components/PatchWizard";
 import { patchingAPI } from "../../utils/patchingApi";
-import { extraDependencies, hasExtraDependencies } from "../../utils/patchRun";
+import {
+	extraDependencies,
+	hasExtraDependencies,
+	runMessageNotice,
+	skippedItemsSummary,
+} from "../../utils/patchRun";
 
 const HOSTS = [
 	{ id: "h1", friendly_name: "alpha", hostname: "alpha.local" },
@@ -471,6 +476,39 @@ describe("hasExtraDependencies", () => {
 		expect(hasExtraDependencies(run)).toBe(false);
 	});
 
+	it("is false for patch_all and Windows runs, which have no dependency resolution", () => {
+		const validated = {
+			status: "validated",
+			package_names: [],
+			packages_affected: ["2026-10 Cumulative Update (KB5044284)"],
+		};
+		expect(
+			hasExtraDependencies({ ...validated, patch_type: "patch_all" }),
+		).toBe(false);
+		expect(
+			hasExtraDependencies({
+				...validated,
+				windows_scope: { updates: true, apps: true },
+			}),
+		).toBe(false);
+		expect(
+			hasExtraDependencies({
+				...validated,
+				patch_type: "patch_package",
+				package_names: ["7-Zip 24.08 (x64)"],
+				hosts: { os_type: "Windows 11 Pro" },
+			}),
+		).toBe(false);
+		expect(
+			hasExtraDependencies({
+				...run,
+				status: "validated",
+				patch_type: "patch_package",
+				hosts: { os_type: "Ubuntu" },
+			}),
+		).toBe(true);
+	});
+
 	it("is false for a validated run with no extras", () => {
 		expect(
 			hasExtraDependencies({
@@ -479,5 +517,262 @@ describe("hasExtraDependencies", () => {
 				packages_affected: ["foo"],
 			}),
 		).toBe(false);
+	});
+});
+
+describe("PatchWizard on Windows hosts", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		patchingAPI.getPreviewRun.mockResolvedValue({});
+	});
+
+	const WIN = [
+		{
+			id: "w1",
+			friendly_name: "win11",
+			hostname: "win11",
+			os_type: "Windows 11",
+		},
+	];
+
+	const scopeButton = (name) => screen.getByRole("button", { name });
+
+	it("offers both Patch all scopes, ticked, and blocks continuing with neither", async () => {
+		renderWizard(WIN, { initialStep: 0 });
+		const updates = scopeButton("Windows Updates");
+		const apps = scopeButton("Applications (winget)");
+		expect(updates).toHaveAttribute("aria-pressed", "true");
+		expect(apps).toHaveAttribute("aria-pressed", "true");
+		expect(
+			screen.getByRole("button", { name: "Run validation" }),
+		).toBeEnabled();
+
+		await clickAndSettle(updates);
+		await clickAndSettle(apps);
+		expect(updates).toHaveAttribute("aria-pressed", "false");
+		expect(
+			screen.getByRole("button", { name: "Skip validation" }),
+		).toBeDisabled();
+		expect(
+			screen.getByRole("button", { name: "Run validation" }),
+		).toBeDisabled();
+	});
+
+	it("sends the chosen scope with the Patch all trigger", async () => {
+		patchingAPI.trigger.mockResolvedValue({ patch_run_id: "r1" });
+		renderWizard(WIN, { initialStep: 0 });
+		await clickAndSettle(scopeButton("Applications (winget)"));
+		await clickAndSettle(
+			screen.getByRole("button", { name: "Skip validation" }),
+		);
+		await clickAndSettle(screen.getByRole("button", { name: /Next/ }));
+		await clickAndSettle(screen.getByRole("button", { name: /Next/ }));
+		expect(
+			screen.getByText(/except optional, driver and feature upgrades\./),
+		).toBeInTheDocument();
+		await clickAndSettle(confirmButton());
+		await waitFor(() => expect(patchingAPI.trigger).toHaveBeenCalledTimes(1));
+		const [hostId, patchType, , , opts] = patchingAPI.trigger.mock.calls[0];
+		expect(hostId).toBe("w1");
+		expect(patchType).toBe("patch_all");
+		expect(opts.windows_scope).toEqual({ updates: true, apps: false });
+	});
+
+	it("dry-runs Patch all on Windows with the scope", async () => {
+		const { pollDryRunUntilDone } = await import("../../utils/patchingApi");
+		patchingAPI.trigger.mockResolvedValue({ patch_run_id: "v1" });
+		pollDryRunUntilDone.mockResolvedValue({
+			status: "validated",
+			packages_affected: ["7-Zip 24.08 (x64)"],
+			shell_output: "",
+			error: null,
+		});
+		renderWizard(WIN, { initialStep: 0 });
+		await clickAndSettle(
+			screen.getByRole("button", { name: "Run validation" }),
+		);
+		await waitFor(() => expect(pollDryRunUntilDone).toHaveBeenCalledWith("v1"));
+		const [, patchType, , , opts] = patchingAPI.trigger.mock.calls[0];
+		expect(patchType).toBe("patch_all");
+		expect(opts).toMatchObject({
+			dry_run: true,
+			windows_scope: { updates: true, apps: true },
+		});
+		expect(screen.queryByText(/extra dep/)).toBeNull();
+		expect(screen.queryByText("Validated with skipped items")).toBeNull();
+	});
+
+	it("shows what validation will leave alone above the install list", async () => {
+		const { pollDryRunUntilDone } = await import("../../utils/patchingApi");
+		patchingAPI.trigger.mockResolvedValue({ patch_run_id: "v2" });
+		pollDryRunUntilDone.mockResolvedValue({
+			status: "validated",
+			packages_affected: ["2026-10 Cumulative Update (KB5044284)"],
+			shell_output: "",
+			skip_note: "1 skipped: 7zip.7zip (pinned in winget)",
+			error: null,
+		});
+		renderWizard(WIN, { initialStep: 0 });
+		await clickAndSettle(
+			screen.getByRole("button", { name: "Run validation" }),
+		);
+		const note = await screen.findByText("Validated with skipped items");
+		const box = note.closest('[role="status"]');
+		expect(box).toHaveTextContent("7zip.7zip (pinned in winget)");
+		const list = screen.getByText(/will be updated/);
+		expect(
+			box.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+	});
+
+	it("keeps Linux Patch all without a Validate step or scope", () => {
+		renderWizard(HOSTS.slice(0, 1), { initialStep: 0 });
+		expect(
+			screen.queryByRole("button", { name: "Windows Updates" }),
+		).toBeNull();
+		expect(screen.queryByRole("button", { name: "Run validation" })).toBeNull();
+	});
+
+	it("warns before patching a feature upgrade", () => {
+		renderWizard(WIN, {
+			patchType: "patch_package",
+			packageNames: ["Windows 11, version 25H2"],
+			lockPackages: true,
+			packageMeta: {
+				"Windows 11, version 25H2": { source: "wua", featureUpgrade: true },
+			},
+		});
+		expect(screen.getByRole("alert")).toHaveTextContent(/several GB/);
+		expect(screen.getAllByText("Feature upgrade").length).toBeGreaterThan(0);
+		expect(screen.getByText("Windows Updates (1)")).toBeInTheDocument();
+	});
+
+	it("lists unpatchable pairs and does not offer those hosts", async () => {
+		const { packagesAPI } = await import("../../utils/api");
+		packagesAPI.getHosts.mockResolvedValue({
+			data: {
+				hosts: [
+					{
+						hostId: "w2",
+						friendlyName: "winsrv",
+						osType: "Windows Server 2025",
+						needsUpdate: true,
+						patchable: false,
+						notPatchableReason: "no_winget_id",
+					},
+				],
+			},
+		});
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		render(
+			<QueryClientProvider client={queryClient}>
+				<PatchWizard
+					isOpen
+					onClose={vi.fn()}
+					mode="trigger"
+					patchType="patch_package"
+					packageNames={["Legacy App"]}
+				/>
+			</QueryClientProvider>,
+		);
+		await waitFor(() =>
+			expect(screen.getByText("Not patchable (1)")).toBeInTheDocument(),
+		);
+		expect(
+			screen.getByText(/cannot be patched on any of the hosts/),
+		).toBeInTheDocument();
+		expect(screen.getByText(/not found in winget/)).toBeInTheDocument();
+	});
+});
+
+describe("runMessageNotice", () => {
+	it("treats a user stop as neutral, not an error", () => {
+		for (const error_message of [
+			"Cancelled by user",
+			"Run stopped by user",
+			"cancelled by the user",
+			null,
+		]) {
+			expect(runMessageNotice({ status: "cancelled", error_message })).toEqual({
+				tone: "info",
+				title: "Stopped by user",
+				detail: null,
+			});
+		}
+	});
+
+	it("keeps another cancel reason as neutral detail", () => {
+		expect(
+			runMessageNotice({ status: "cancelled", error_message: "Host deleted" }),
+		).toEqual({ tone: "info", title: "Run cancelled", detail: "Host deleted" });
+	});
+
+	it("shows a skip summary on a successful run as a neutral note", () => {
+		const detail = "1 skipped: 7zip.7zip (pinned in winget)";
+		expect(
+			runMessageNotice({ status: "completed", error_message: detail }),
+		).toEqual({ tone: "info", title: "Completed with skipped items", detail });
+		for (const status of ["validated", "dry_run_completed"]) {
+			expect(runMessageNotice({ status, error_message: detail })).toEqual({
+				tone: "info",
+				title: "Validated with skipped items",
+				detail,
+			});
+		}
+	});
+
+	it("keeps the error panel for a failed run with skips mixed in", () => {
+		const detail =
+			"1 of 2 failed: KB5044284 (0x800f0922); 1 skipped: 7zip.7zip (pinned in winget)";
+		expect(
+			runMessageNotice({ status: "failed", error_message: detail }),
+		).toEqual({ tone: "error", title: "Run reported an error", detail });
+	});
+
+	it("reports real failures as errors, and nothing when there is no message", () => {
+		expect(
+			runMessageNotice({ status: "failed", error_message: "1 of 1 failed" }),
+		).toEqual({
+			tone: "error",
+			title: "Run reported an error",
+			detail: "1 of 1 failed",
+		});
+		expect(runMessageNotice({ status: "completed" })).toBeNull();
+	});
+});
+
+describe("skippedItemsSummary", () => {
+	it("prefers the server summary", () => {
+		expect(
+			skippedItemsSummary({
+				status: "validated",
+				error_message: "1 skipped: 7zip.7zip (pinned in winget)",
+				items: [],
+			}),
+		).toBe("1 skipped: 7zip.7zip (pinned in winget)");
+	});
+
+	it("builds one from skipped items", () => {
+		expect(
+			skippedItemsSummary({
+				status: "validated",
+				items: [
+					{ status: "would_install", title: "KB5044284" },
+					{
+						status: "skipped",
+						identifier: "7zip.7zip",
+						message: "pinned in winget",
+					},
+					{ status: "skipped", title: "Driver X" },
+				],
+			}),
+		).toBe("2 skipped: 7zip.7zip (pinned in winget), Driver X");
+	});
+
+	it("is null when nothing is skipped", () => {
+		expect(skippedItemsSummary({ status: "validated", items: [] })).toBeNull();
+		expect(skippedItemsSummary({})).toBeNull();
 	});
 });

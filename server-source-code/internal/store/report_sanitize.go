@@ -134,6 +134,8 @@ func sanitizeReportPayload(p *ReportPayload) {
 		pkg.WUASeverity = sanitizeText(pkg.WUASeverity)
 		pkg.WUASupportURL = sanitizeText(pkg.WUASupportURL)
 		sanitizeTextSlice(pkg.WUACategories)
+		pkg.WUAType = sanitizeText(pkg.WUAType)
+		pkg.WingetID = sanitizeText(pkg.WingetID)
 	}
 
 	for i := range p.Repositories {

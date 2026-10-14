@@ -164,6 +164,7 @@ func collectReportData() (*collectedReport, error) {
 	if packageList == nil {
 		packageList = []models.Package{}
 	}
+	packageList = withServerSupportedFields(packageList)
 	if repoList == nil {
 		repoList = []models.Repository{}
 	}
@@ -175,6 +176,7 @@ func collectReportData() (*collectedReport, error) {
 	executionMs := int(time.Since(startTime).Milliseconds())
 	cfg := cfgManager.GetConfig()
 	payload := &models.ReportPayload{
+		WindowsUpdatesOmitted:  packageMgr.WindowsUpdatesOmitted(),
 		Packages:               packageList,
 		Repositories:           repoList,
 		OSType:                 osType,
@@ -319,9 +321,9 @@ func deliverReport(ctx context.Context, payload *models.ReportPayload) error {
 		}).Info("PatchMon agent update detected")
 
 		logger.Info("Automatically updating PatchMon agent to latest version...")
-		if err := updateAgent(); err != nil {
+		if deferred, err := updateAgentUnlessPatching(); err != nil {
 			logger.WithError(err).Warn("PatchMon agent update failed, but data was sent successfully")
-		} else {
+		} else if !deferred {
 			logger.Info("PatchMon agent update completed successfully")
 			// updateAgent() will exit the process after restart, so we won't reach here
 			// But if it does return, skip the update check to prevent loops
@@ -361,9 +363,9 @@ func deliverReport(ctx context.Context, payload *models.ReportPayload) error {
 					"latest":  versionInfo.LatestVersion,
 				}).Info("Update available, automatically updating...")
 
-				if err := updateAgent(); err != nil {
+				if deferred, err := updateAgentUnlessPatching(); err != nil {
 					logger.WithError(err).Warn("PatchMon agent update failed, but data was sent successfully")
-				} else {
+				} else if !deferred {
 					logger.Info("PatchMon agent update completed successfully")
 					// updateAgent() will exit after restart, so this won't be reached
 				}
@@ -707,6 +709,7 @@ func runCheckIn(ctx context.Context, forceFull bool) error {
 		// Server unreachable / wrong creds — caller logs and retries.
 		return fmt.Errorf("check-in ping failed: %w", err)
 	}
+	recordServerCapabilities(resp)
 	reconcileHostID(resp.HostID)
 
 	if !serverSupportsHashGate(resp) {
@@ -827,6 +830,7 @@ func sendPartialReport(ctx context.Context, httpClient *client.Client, full *mod
 	if wantPackages {
 		partial.Packages = full.Packages
 		partial.PackageManager = full.PackageManager
+		partial.WindowsUpdatesOmitted = full.WindowsUpdatesOmitted
 	} else {
 		partial.Packages = nil
 	}
