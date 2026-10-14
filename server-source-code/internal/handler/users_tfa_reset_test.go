@@ -680,3 +680,52 @@ func TestAdminUsersListHidesTfaStateWithoutManageUsers(t *testing.T) {
 		}
 	}
 }
+
+func TestResetPasswordDuringTfaResetWindow(t *testing.T) {
+	ctx := context.Background()
+	d := pgtest.Open(t)
+	x := newTfaResetHarness(t, d, d)
+	resetPassword := func(actor *tfaTestUser, targetID string) int {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/admin/users/"+targetID+"/reset-password", strings.NewReader(`{"newPassword":"Attacker-Passw0rd!"}`))
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("userId", targetID)
+		c := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+		c = context.WithValue(c, middleware.UserIDKey, actor.ID)
+		c = context.WithValue(c, middleware.UserRoleKey, actor.Role)
+		rec := httptest.NewRecorder()
+		x.h.ResetPassword(rec, req.WithContext(c))
+		return rec.Code
+	}
+	super := x.mkUser(ctx, "superadmin", false)
+	adminy := x.mkUser(ctx, "admin", false)
+
+	for _, temp := range []bool{false, true} {
+		adminx := x.mkUser(ctx, "admin", true)
+		body := map[string]string{"password": tfaResetTestPassword}
+		if temp {
+			body["newPassword"] = "Temp-Passw0rd!x"
+		}
+		if rec := x.post(ctx, super, adminx.ID, body); rec.Code != http.StatusOK {
+			t.Fatalf("2FA reset: %d %s", rec.Code, rec.Body.String())
+		}
+		if got := resetPassword(adminy, adminx.ID); got != http.StatusForbidden {
+			t.Fatalf("temp=%v: equal-rank admin reset the password mid-window: got %d", temp, got)
+		}
+		forged := *adminy
+		forged.Role = "superadmin"
+		if got := resetPassword(&forged, adminx.ID); got != http.StatusForbidden {
+			t.Fatalf("temp=%v: token role trusted over the database: got %d", temp, got)
+		}
+		if got := resetPassword(super, adminx.ID); got != http.StatusOK {
+			t.Fatalf("temp=%v: superadmin refused: got %d", temp, got)
+		}
+	}
+
+	t.Run("ordinary targets are unchanged", func(t *testing.T) {
+		peer := x.mkUser(ctx, "admin", true)
+		if got := resetPassword(adminy, peer.ID); got != http.StatusOK {
+			t.Fatalf("equal-rank reset of an ordinary account: got %d", got)
+		}
+	})
+}

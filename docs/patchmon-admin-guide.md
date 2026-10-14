@@ -5240,6 +5240,7 @@ Rules the server enforces:
 | Confirmation | Your password is always required, and your 2FA code (or a backup code) if you have 2FA. Wrong 2FA codes count towards your own `MAX_TFA_ATTEMPTS` lockout. |
 | SSO-only administrators | An administrator who signs in only through OIDC has no local password to confirm with, so cannot use this action. Ask an administrator with a local password. |
 | Deactivated users | Can be reset, so you can clear 2FA before reactivating an account. |
+| Reset Password afterwards | Until the user has finished setting up their account again, only someone with a higher role than theirs can use **Reset Password** on them. This stops a peer setting a password and enrolling their own authenticator on the account. |
 | Rate limit | 10 attempts per administrator per 15 minutes, counted per signed-in administrator rather than per IP. |
 
 Every reset is written to the server log and to the `audit_logs` table (event `user_tfa_reset`), and so is every refused attempt from the password check onwards: a wrong password or 2FA code, a role you cannot reset, an unknown user, or a user without 2FA. A successful reset also raises the `user_tfa_disabled` notification event, so any alert route you have for "2FA disabled" fires for it.
