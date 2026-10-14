@@ -4925,7 +4925,7 @@ After a reset, all of that user's sessions and trusted-device records are revoke
 
 #### Unlinking a User's SSO Identity
 
-When a user signs in with OIDC / SSO, PatchMon binds their account to that identity. If the identity changes at the provider, for example because the user was deleted and re-created there or you moved to a different provider, their SSO login is refused with "Unable to sign in with this account".
+When a user signs in with OIDC / SSO, PatchMon binds their account to that identity at that provider. If the identity changes, for example because the user was deleted and re-created at the provider, or you moved to a different provider (including a different realm or application on the same server), their SSO login is refused with "Unable to sign in with this account". After a provider migration, unlink each existing SSO user so they can sign in through the new provider.
 
 1. Click the **Edit** (pencil) icon on the user's row.
 2. Under **SSO identity**, click **Unlink SSO identity** and confirm.

@@ -38,7 +38,9 @@ type SessionData struct {
 
 // UserInfo holds normalized user claims from OIDC.
 type UserInfo struct {
-	Sub               string
+	Sub string
+	// Issuer is the verified id_token iss, the namespace Sub is unique within.
+	Issuer            string
 	Email             string
 	Name              string
 	PreferredUsername string
@@ -341,6 +343,11 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 
 	idClaims := make(map[string]interface{})
 	_ = idToken.Claims(&idClaims)
+	tid, _ := idClaims["tid"].(string)
+	userInfo.Issuer = canonicalIssuer(idToken.Issuer, tid)
+	if userInfo.Issuer == "" {
+		return nil, errors.New("oidc: id_token missing iss claim")
+	}
 
 	email, emailFromIDToken := lookupStringClaim(userInfoClaims, idClaims, "email")
 	userInfo.Email = email
@@ -374,6 +381,52 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 	userInfo.Groups = extractGroups(userInfoClaims, idClaims)
 
 	return userInfo, nil
+}
+
+var microsoftTenantPlaceholders = map[string]bool{"{tenantid}": true, "common": true, "organizations": true, "consumers": true}
+
+// canonicalIssuer substitutes Entra's tid for a templated or shared tenant
+// segment, so the stored issuer always names the tenant that issued the sub.
+func canonicalIssuer(iss, tid string) string {
+	iss = strings.TrimSuffix(strings.TrimSpace(iss), "/")
+	if tid == "" || !isMicrosoftIdentityIssuer(iss) {
+		return iss
+	}
+	u, err := url.Parse(iss)
+	if err != nil {
+		return iss
+	}
+	segs := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+	if len(segs) > 0 && microsoftTenantPlaceholders[strings.ToLower(segs[0])] {
+		segs[0] = tid
+		u.Path = "/" + strings.Join(segs, "/")
+		return u.String()
+	}
+	return iss
+}
+
+// SameIssuer reports whether two issuers name the same subject namespace.
+// Microsoft issuers compare by tenant, so its v1 and v2.0 forms are equal.
+func SameIssuer(a, b string) bool {
+	ka, okA := issuerKey(a)
+	kb, okB := issuerKey(b)
+	return okA && okB && ka == kb
+}
+
+func issuerKey(iss string) (string, bool) {
+	u, err := url.Parse(strings.TrimSpace(iss))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", false
+	}
+	path := strings.TrimSuffix(u.EscapedPath(), "/")
+	if isMicrosoftIdentityIssuer(iss) {
+		tenant := strings.ToLower(strings.SplitN(strings.TrimPrefix(u.Path, "/"), "/", 2)[0])
+		if tenant == "" || microsoftTenantPlaceholders[tenant] {
+			return "", false
+		}
+		return "microsoft:" + tenant, true
+	}
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host) + path, true
 }
 
 func resolveProviderPicture(ctx context.Context, issuerURL string, token *oauth2.Token, rawPicture string) (string, error) {

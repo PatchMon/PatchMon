@@ -158,6 +158,12 @@ func (s *UsersStore) UpdateOidcLink(ctx context.Context, userID, oidcSub, oidcPr
 	})
 }
 
+// UpdateOidcProvider records the issuer a user's OIDC subject belongs to.
+func (s *UsersStore) UpdateOidcProvider(ctx context.Context, userID, oidcProvider string) error {
+	d := s.db.DB(ctx)
+	return d.Queries.UpdateUserOidcProvider(ctx, db.UpdateUserOidcProviderParams{ID: userID, OidcProvider: &oidcProvider})
+}
+
 // ClearOidcLink removes a user's OIDC subject binding.
 func (s *UsersStore) ClearOidcLink(ctx context.Context, userID string) error {
 	d := s.db.DB(ctx)

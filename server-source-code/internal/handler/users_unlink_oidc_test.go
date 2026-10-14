@@ -70,7 +70,7 @@ func TestUnlinkOidcAgainstPostgres(t *testing.T) {
 	t.Run("unlink lets the next verified login re-link a new subject", func(t *testing.T) {
 		u, _ := createLinked("user")
 		newSub := "recreated-" + uuid.New().String()[:8]
-		info := &oidc.UserInfo{Sub: newSub, Email: u.Email, EmailVerified: true}
+		info := &oidc.UserInfo{Issuer: testIssuer, Sub: newSub, Email: u.Email, EmailVerified: true}
 
 		if got, _ := oidcHandler.resolveOidcUser(ctx, info); got != nil {
 			t.Fatal("login with a new subject was accepted before unlink")
@@ -95,7 +95,7 @@ func TestUnlinkOidcAgainstPostgres(t *testing.T) {
 		if code := unlink(u.ID, "admin"); code != http.StatusOK {
 			t.Fatalf("unlink: status %d", code)
 		}
-		if got, _ := oidcHandler.resolveOidcUser(ctx, &oidc.UserInfo{Sub: "x-" + u.ID[:8], Email: u.Email}); got != nil {
+		if got, _ := oidcHandler.resolveOidcUser(ctx, &oidc.UserInfo{Issuer: testIssuer, Sub: "x-" + u.ID[:8], Email: u.Email}); got != nil {
 			t.Fatal("unverified email re-linked an unlinked account")
 		}
 	})

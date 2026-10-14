@@ -107,7 +107,7 @@ func TestExchangeAcceptsMatchingUserInfoSub(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
-	if info.Sub != "user-1" || info.Email != "alice@example.com" || !info.EmailVerified {
+	if info.Sub != "user-1" || info.Issuer != op.srv.URL || info.Email != "alice@example.com" || !info.EmailVerified {
 		t.Fatalf("unexpected user info: %+v", info)
 	}
 }

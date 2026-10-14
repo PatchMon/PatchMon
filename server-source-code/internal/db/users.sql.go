@@ -899,6 +899,21 @@ func (q *Queries) UpdateUserOidcProfile(ctx context.Context, arg UpdateUserOidcP
 	return err
 }
 
+const updateUserOidcProvider = `-- name: UpdateUserOidcProvider :exec
+UPDATE users SET oidc_provider = $1, updated_at = NOW()
+WHERE id = $2
+`
+
+type UpdateUserOidcProviderParams struct {
+	OidcProvider *string `json:"oidc_provider"`
+	ID           string  `json:"id"`
+}
+
+func (q *Queries) UpdateUserOidcProvider(ctx context.Context, arg UpdateUserOidcProviderParams) error {
+	_, err := q.db.Exec(ctx, updateUserOidcProvider, arg.OidcProvider, arg.ID)
+	return err
+}
+
 const updateUserPreferences = `-- name: UpdateUserPreferences :exec
 UPDATE users SET
     theme_preference = COALESCE($1::text, theme_preference),
