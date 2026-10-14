@@ -171,6 +171,18 @@ New-Item -ItemType Directory -Force -Path $InstallPath | Out-Null
 Write-Host "Creating configuration directory..." -ForegroundColor Yellow
 New-Item -ItemType Directory -Force -Path $ConfigPath | Out-Null
 
+# Lock the config dir to SYSTEM and Administrators before any secret is written.
+# (OI)(CI) makes config.yml/credentials.yml inherit the lock; /T /C heals an older install.
+Write-Host "Securing configuration directory..." -ForegroundColor Yellow
+try {
+    & icacls $ConfigPath /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" /T /C | Out-Null
+    $grantExit = $LASTEXITCODE
+    & icacls $ConfigPath /setowner "*S-1-5-32-544" /T /C | Out-Null
+    if ($grantExit -ne 0 -or $LASTEXITCODE -ne 0) { throw "icacls reported a non-zero exit" }
+} catch {
+    Write-Warning "Could not fully secure $ConfigPath. Credentials may be readable by other local users until permissions are corrected."
+}
+
 # Download the binary from the server
 Write-Host "Downloading PatchMon agent..." -ForegroundColor Yellow
 try {

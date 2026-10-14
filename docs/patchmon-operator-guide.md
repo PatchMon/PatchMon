@@ -3940,6 +3940,10 @@ This guide covers everything you need to manage the agent after installation: CL
 | **Primary mode** | `patchmon-agent serve` (long-lived service) |
 | **Architectures** | amd64, arm64 (Surface Pro X / Copilot+ PCs). 32-bit Windows is not supported. |
 
+> **Data directory permissions (Windows).** The installer locks `C:\ProgramData\PatchMon\` and everything in it to `SYSTEM` and the local `Administrators` group, with inheritance disabled, so `config.yml` and `credentials.yml` cannot be read by other local users. The service re-applies this lock on every start, so an older install that was left world-readable is repaired automatically the next time the service runs.
+>
+> **Upgrading from a version before this hardening.** Auto-update replaces the binary but cannot undo the fact that a credential on disk may already have been read while the directory was world-readable. After upgrading a Windows host, re-run the install command (it re-applies the directory and file permissions) rather than relying on auto-update, and regenerate that host's API credentials from Settings so any key that could have been read is rotated.
+
 ### Table of Contents
 
 - [CLI Command Reference](#cli-command-reference)
