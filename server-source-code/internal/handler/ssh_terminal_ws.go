@@ -206,20 +206,7 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 	})
 	pingStop := make(chan struct{})
 	defer close(pingStop)
-	go func() {
-		t := time.NewTicker(h.pingPeriod)
-		defer t.Stop()
-		for {
-			select {
-			case <-pingStop:
-				return
-			case <-t.C:
-				if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(sshTerminalWriteWait)); err != nil {
-					return
-				}
-			}
-		}
-	}()
+	go runTerminalPings(conn, h.pingPeriod, pingStop)
 
 	for {
 		_ = conn.SetReadDeadline(time.Now().Add(h.pongWait))
@@ -508,6 +495,29 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 
 		case "disconnect":
 			cleanup()
+			return
+		}
+	}
+}
+
+type controlWriter interface {
+	WriteControl(messageType int, data []byte, deadline time.Time) error
+}
+
+// A timeout only means another writer held the socket past the deadline, so keep pinging.
+func runTerminalPings(conn controlWriter, period time.Duration, stop <-chan struct{}) {
+	t := time.NewTicker(period)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(sshTerminalWriteWait))
+			var ne net.Error
+			if err == nil || (errors.As(err, &ne) && ne.Timeout()) {
+				continue
+			}
 			return
 		}
 	}

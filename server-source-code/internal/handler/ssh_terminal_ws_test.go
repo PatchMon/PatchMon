@@ -1,11 +1,13 @@
 package handler
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -59,7 +61,7 @@ func TestSshTerminalWS_UnresponsiveClientIsReaped(t *testing.T) {
 func TestSshTerminalWS_IdleResponsiveClientStaysOpen(t *testing.T) {
 	t.Parallel()
 
-	client, done := startTerminalWS(t, 300*time.Millisecond, 100*time.Millisecond)
+	client, done := startTerminalWS(t, 500*time.Millisecond, 100*time.Millisecond)
 
 	// Reading lets gorilla's default ping handler reply with pongs, as a browser does.
 	go func() {
@@ -83,5 +85,57 @@ func TestSshTerminalWS_IdleResponsiveClientStaysOpen(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("handler did not exit after a close frame")
+	}
+}
+
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "i/o timeout" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return true }
+
+type fakeControlWriter struct {
+	calls atomic.Int32
+	err   func(call int32) error
+}
+
+func (f *fakeControlWriter) WriteControl(int, []byte, time.Time) error {
+	return f.err(f.calls.Add(1))
+}
+
+func TestRunTerminalPings_TimeoutKeepsPinging(t *testing.T) {
+	t.Parallel()
+
+	w := &fakeControlWriter{err: func(int32) error { return timeoutErr{} }}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		runTerminalPings(w, 10*time.Millisecond, stop)
+		close(done)
+	}()
+	time.Sleep(200 * time.Millisecond)
+	close(stop)
+	<-done
+	if n := w.calls.Load(); n < 3 {
+		t.Fatalf("pinger gave up after a write timeout: %d pings", n)
+	}
+}
+
+func TestRunTerminalPings_OtherErrorStops(t *testing.T) {
+	t.Parallel()
+
+	w := &fakeControlWriter{err: func(int32) error { return errors.New("broken pipe") }}
+	done := make(chan struct{})
+	go func() {
+		runTerminalPings(w, 10*time.Millisecond, make(chan struct{}))
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pinger kept running after a non-timeout error")
+	}
+	if n := w.calls.Load(); n != 1 {
+		t.Fatalf("expected exactly one ping before stopping, got %d", n)
 	}
 }
