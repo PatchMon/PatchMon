@@ -1049,4 +1049,59 @@ describe("PatchWizard validation lifecycle", () => {
 		expect(approvedRunIds().sort()).toEqual(["v-w1", "v-w2"]);
 		expect(patchingAPI.trigger).toHaveBeenCalledTimes(2);
 	});
+
+	describe("reusing a validation run", () => {
+		const pkgProps = () =>
+			props({
+				patchType: "patch_package",
+				presetHosts: [{ id: "h1", friendly_name: "alpha", hostname: "alpha" }],
+				packageNames: ["pkg-a", "pkg-b"],
+				initialStep: 1,
+			});
+
+		const validateThenMaybeDeselect = async (deselect) => {
+			pollDryRunUntilDone.mockResolvedValue({
+				...validated,
+				packages_affected: ["pkg-a", "pkg-b"],
+			});
+			renderOpen(pkgProps());
+			await clickAndSettle(
+				screen.getByRole("button", { name: "Run validation" }),
+			);
+			await waitFor(() =>
+				expect(screen.getByText("Clean")).toBeInTheDocument(),
+			);
+			if (deselect) {
+				await clickAndSettle(screen.getByRole("button", { name: /Back/ }));
+				await clickAndSettle(
+					screen.getByText("pkg-b").closest("tr").querySelector("button"),
+				);
+			}
+			await nextUntilConfirm();
+			await clickAndSettle(
+				screen.getByRole("button", { name: /Queue & patch/ }),
+			);
+		};
+
+		it("approves the validation run when the selection is unchanged", async () => {
+			await validateThenMaybeDeselect(false);
+			await waitFor(() =>
+				expect(patchingAPI.approveRun).toHaveBeenCalledTimes(1),
+			);
+			expect(patchingAPI.approveRun.mock.calls[0][0]).toBe("v-h1");
+			expect(patchingAPI.trigger).toHaveBeenCalledTimes(1);
+		});
+
+		it("leaves a host out when its selection changed after validation", async () => {
+			await validateThenMaybeDeselect(true);
+			expect(
+				screen.getByText(/validated for a different selection/),
+			).toBeInTheDocument();
+			expect(
+				screen.getByText(/None of the selected hosts can be submitted/),
+			).toBeInTheDocument();
+			expect(patchingAPI.approveRun).not.toHaveBeenCalled();
+			expect(patchingAPI.trigger).toHaveBeenCalledTimes(1);
+		});
+	});
 });

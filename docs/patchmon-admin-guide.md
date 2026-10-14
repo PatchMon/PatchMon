@@ -1782,7 +1782,7 @@ This is the richer flow and the one to use for anything security-sensitive. The 
 
     If the server has not dispatched the dry-run to the agent within 30 seconds, the host is shown as **Offline**; patching it later approves that pending validation, so the patch queues until the host is back. Once the server has dispatched it to the agent, the wizard waits for the result, which matters on Windows where a Windows Update search can take several minutes. If the agent drops its connection meanwhile, the host shows **Agent reconnecting** until it returns. After 25 minutes the host is shown as **Still running**.
 
-    You can close the wizard or choose **Continue without waiting** at any point. Dry-runs already sent carry on and their results appear in Runs & History. Hosts still validating are left out when you submit; patch them from Runs & History once validation finishes.
+    You can close the wizard or choose **Continue without waiting** at any point. Dry-runs already sent carry on and their results appear in Runs & History. Hosts still validating are left out when you submit; patch them from Runs & History once validation finishes. If you change the package selection after validating, hosts whose validation no longer matches are also left out until you re-run validation.
 5. When the dry-run completes, the run transitions to `validated` and the wizard shows:
     - The final **Packages affected** list (what would be installed, always a superset of the original request because of dependency resolution).
     - An **Extra deps** badge if dependency resolution pulled in packages you didn't originally ask for.

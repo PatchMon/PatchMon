@@ -609,23 +609,6 @@ export default function PatchWizard({
 	// is viable for every host (patch_all and patch_package without a
 	// validation run simply create a new pending run on the backend), so we
 	// don't gate the feature on this count anymore.
-	const approvableRunCount = useMemo(() => {
-		let n = 0;
-		for (const id of selectedTargetIds) {
-			const v = validationByTarget[id];
-			if (v?.patch_run_id && REUSABLE_VALIDATION_STATUSES.includes(v.status)) {
-				n += 1;
-			}
-		}
-		return n;
-	}, [selectedTargetIds, validationByTarget]);
-	const stillValidatingIds = useMemo(
-		() =>
-			[...selectedTargetIds].filter(
-				(id) => validationByTarget[id]?.status === "still_running",
-			),
-		[selectedTargetIds, validationByTarget],
-	);
 	// Submit for approval is always a real choice for any fresh trigger.
 	// patch_all and patch_package without a prior dry-run create a new
 	// "pending_approval" run; patch_package after validation reuses the
@@ -773,6 +756,60 @@ export default function PatchWizard({
 		[packagesByRun, discoveredPackagesByHost, selectedPkgs],
 	);
 
+	const selectionKey = useCallback(
+		(target) =>
+			JSON.stringify({
+				patchType,
+				packages: isPatchAll ? null : [...packagesForTarget(target)].sort(),
+				scope: isPatchAll && isWindowsTarget(target) ? windowsScope : null,
+			}),
+		[patchType, isPatchAll, packagesForTarget, windowsScope],
+	);
+
+	// Only a validation run for exactly the current selection may be approved.
+	const reusableRunId = useCallback(
+		(target) => {
+			const v = validationByTarget[target.id];
+			return v?.patch_run_id &&
+				REUSABLE_VALIDATION_STATUSES.includes(v.status) &&
+				v.selection === selectionKey(target)
+				? v.patch_run_id
+				: null;
+		},
+		[validationByTarget, selectionKey],
+	);
+
+	const approvableRunCount = useMemo(
+		() => selectedTargets.filter((t) => reusableRunId(t)).length,
+		[selectedTargets, reusableRunId],
+	);
+
+	const stillValidatingIds = useMemo(
+		() =>
+			selectedTargets
+				.filter((t) => validationByTarget[t.id]?.status === "still_running")
+				.map((t) => t.id),
+		[selectedTargets, validationByTarget],
+	);
+
+	// A pending validation for a different selection keeps the host's one
+	// active run, so a fresh trigger would be refused.
+	const staleValidationIds = useMemo(
+		() =>
+			selectedTargets
+				.filter((t) => {
+					const v = validationByTarget[t.id];
+					return (
+						v?.patch_run_id &&
+						REUSABLE_VALIDATION_STATUSES.includes(v.status) &&
+						v.selection !== selectionKey(t)
+					);
+				})
+				.map((t) => t.id),
+		[selectedTargets, validationByTarget, selectionKey],
+	);
+	const excludedFromSubmit = [...stillValidatingIds, ...staleValidationIds];
+
 	// Windows hosts have no dependency resolution; an affected title that was
 	// not requested is never an extra package.
 	const extraDepsFor = useCallback(
@@ -838,6 +875,7 @@ export default function PatchWizard({
 			VALIDATION_CONCURRENCY,
 			async (target) => {
 				if (signal.aborted) return;
+				const selection = selectionKey(target);
 				setValidationByTarget((prev) => ({
 					...prev,
 					[target.id]: {
@@ -892,7 +930,11 @@ export default function PatchWizard({
 					}
 					setValidationByTarget((prev) => ({
 						...prev,
-						[target.id]: { ...prev[target.id], patch_run_id: runId },
+						[target.id]: {
+							...prev[target.id],
+							patch_run_id: runId,
+							selection,
+						},
 					}));
 					const result = await pollDryRunUntilDone(runId, {
 						signal,
@@ -912,7 +954,7 @@ export default function PatchWizard({
 					if (!result) return;
 					setValidationByTarget((prev) => ({
 						...prev,
-						[target.id]: { ...result, patch_run_id: runId },
+						[target.id]: { ...result, patch_run_id: runId, selection },
 					}));
 				} catch (err) {
 					if (signal.aborted) return;
@@ -950,12 +992,6 @@ export default function PatchWizard({
 		// action.
 		const userChoseSubmit = !isApprove && approvalDecision === "submit";
 		const nextSubmitMode = userChoseSubmit ? "approval" : "patch";
-		const targetHasPendingRun = (id) => {
-			const v = validationByTarget[id];
-			return (
-				!!v?.patch_run_id && REUSABLE_VALIDATION_STATUSES.includes(v.status)
-			);
-		};
 
 		// Only targets without a run of their own are submitted, so retrying a
 		// partial failure never fires a second request at a target we already
@@ -963,12 +999,14 @@ export default function PatchWizard({
 		const pending = selectedTargets.filter(
 			(t) =>
 				submitResultByTarget[t.id]?.status !== "success" &&
-				!stillValidatingIds.includes(t.id),
+				!excludedFromSubmit.includes(t.id),
 		);
 		if (pending.length === 0) {
-			if (submittedRuns.length === 0 && stillValidatingIds.length > 0) {
+			if (submittedRuns.length === 0 && excludedFromSubmit.length > 0) {
 				setError(
-					"Every selected host is still validating. Patch them from Runs & History once validation finishes.",
+					staleValidationIds.length === 0
+						? "Every selected host is still validating. Patch them from Runs & History once validation finishes."
+						: "None of the selected hosts can be submitted. See the notes above.",
 				);
 				return;
 			}
@@ -983,9 +1021,9 @@ export default function PatchWizard({
 				// Reuse an existing pending validation run when we have one —
 				// otherwise we'd leave two pending rows on the same host (one
 				// from validation, one from pending_approval).
-				if (targetHasPendingRun(target.id)) {
+				if (reusableRunId(target)) {
 					return {
-						runId: validationByTarget[target.id].patch_run_id,
+						runId: reusableRunId(target),
 						immediate: false,
 					};
 				}
@@ -1023,7 +1061,7 @@ export default function PatchWizard({
 					throw new Error("No validation run on file for this host");
 				}
 				response = await patchingAPI.approveRun(target.runId, overrideBody);
-			} else if (isPatchAll && !targetHasPendingRun(target.id)) {
+			} else if (isPatchAll && !reusableRunId(target)) {
 				response = await patchingAPI.trigger(
 					target.hostId,
 					"patch_all",
@@ -1036,12 +1074,8 @@ export default function PatchWizard({
 				// Step 2 we approve it (this marks the validation as
 				// "approved" and links a new execution run). Otherwise we fire
 				// a fresh trigger.
-				const validation = validationByTarget[target.id];
-				const validationRunId = validation?.patch_run_id;
-				if (
-					validationRunId &&
-					REUSABLE_VALIDATION_STATUSES.includes(validation.status)
-				) {
+				const validationRunId = reusableRunId(target);
+				if (validationRunId) {
 					response = await patchingAPI.approveRun(
 						validationRunId,
 						overrideBody,
@@ -1233,7 +1267,7 @@ export default function PatchWizard({
 				isApprove,
 			)}`;
 		}
-		const n = selectedTargetIds.size - stillValidatingIds.length;
+		const n = selectedTargetIds.size - excludedFromSubmit.length;
 		if (isApprove) {
 			return n === 1 ? "Approve & patch" : `Approve & patch ${n} runs`;
 		}
@@ -2279,6 +2313,21 @@ export default function PatchWizard({
 										still validating and will be left out. Patch{" "}
 										{stillValidatingIds.length !== 1 ? "them" : "it"} from Runs
 										&amp; History once validation finishes.
+									</p>
+								</div>
+							)}
+
+							{!isApprove && staleValidationIds.length > 0 && (
+								<div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700">
+									<AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+									<p className="text-sm text-amber-700 dark:text-amber-300">
+										<strong>
+											{staleValidationIds.length} host
+											{staleValidationIds.length !== 1 ? "s were" : " was"}
+										</strong>{" "}
+										validated for a different selection and will be left out.
+										Re-run validation to include{" "}
+										{staleValidationIds.length !== 1 ? "them" : "it"}.
 									</p>
 								</div>
 							)}
