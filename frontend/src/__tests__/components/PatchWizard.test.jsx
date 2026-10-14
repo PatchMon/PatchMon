@@ -46,6 +46,7 @@ vi.mock("../../utils/patchingApi", () => ({
 }));
 
 import PatchWizard from "../../components/PatchWizard";
+import { packagesAPI } from "../../utils/api";
 import { patchingAPI } from "../../utils/patchingApi";
 import {
 	extraDependencies,
@@ -652,6 +653,35 @@ describe("PatchWizard on Windows hosts", () => {
 			[...list.querySelectorAll("li")].map((li) => li.textContent),
 		).toEqual(affected);
 		expect(list).not.toHaveClass("max-h-20");
+		expect(list).toHaveClass("max-h-48", "scrollbar-thin");
+	});
+
+	it("lists every package to patch on the Hosts step", async () => {
+		const names = [
+			"2026-09 Cumulative Update for Microsoft server operating system version 21H2 for x64-based Systems (KB5122882)",
+			"Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (Version 1.461.27.0) - Current Channel (Broad)",
+			"Windows Malicious Software Removal Tool x64 - v5.146 (KB890830)",
+			"7-Zip 26.02 (x64 edition)",
+			"Notepad++ (x64)",
+			"VLC media player",
+		];
+		packagesAPI.getHosts.mockResolvedValue({
+			data: {
+				hosts: [{ id: "h1", friendly_name: "alpha", os_type: "Ubuntu" }],
+			},
+		});
+		renderWizard([], {
+			lockHosts: false,
+			patchType: "patch_package",
+			packageNames: names,
+			initialStep: 0,
+		});
+		const heading = await screen.findByText("Packages to patch:");
+		const list = heading.nextElementSibling;
+		expect(
+			[...list.querySelectorAll("li")].map((li) => li.textContent),
+		).toEqual(names);
+		expect(list).not.toHaveClass("max-h-16");
 		expect(list).toHaveClass("max-h-48", "scrollbar-thin");
 	});
 

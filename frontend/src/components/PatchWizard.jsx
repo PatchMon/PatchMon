@@ -1426,7 +1426,7 @@ export default function PatchWizard({
 										<p className="text-xs font-medium text-secondary-500 dark:text-secondary-400 mb-1.5">
 											Packages to patch:
 										</p>
-										<ul className="text-sm text-secondary-600 dark:text-secondary-400 list-disc list-inside space-y-0.5 max-h-16 overflow-y-auto">
+										<ul className="text-sm text-secondary-600 dark:text-secondary-400 list-disc list-inside space-y-0.5 max-h-48 overflow-y-auto scrollbar-thin">
 											{packageNames.map((name) => (
 												<li key={name}>
 													{name}
