@@ -64,6 +64,9 @@ DELETE FROM users WHERE id = $1;
 -- name: UpdatePassword :exec
 UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2;
 
+-- name: UpgradePasswordHash :execrows
+UPDATE users SET password_hash = @new_hash, updated_at = NOW() WHERE id = @id AND password_hash = @old_hash;
+
 -- name: UpdateLastLogin :exec
 UPDATE users SET last_login = $1 WHERE id = $2;
 

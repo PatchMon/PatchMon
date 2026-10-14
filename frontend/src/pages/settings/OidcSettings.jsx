@@ -14,6 +14,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useToast } from "../../contexts/ToastContext";
 import { oidcAPI, permissionsAPI } from "../../utils/api";
 
+const SSO_FALLBACK_DOCS_URL =
+	"https://patchmon.net/docs/patchmon-operator-guide#sso-provider-unreachable-password-login";
+
 // Map PatchMon role to OIDC form field (backend supports these 5 + default)
 const ROLE_TO_OIDC_FIELD = {
 	superadmin: "oidc_superadmin_group",
@@ -89,6 +92,7 @@ const OidcSettings = () => {
 		oidc_auto_create_users: true,
 		oidc_enforce_https: true,
 		oidc_trust_unverified_email: false,
+		oidc_local_auth_fallback: false,
 	});
 
 	// Fetch OIDC settings
@@ -144,6 +148,7 @@ const OidcSettings = () => {
 			oidc_enforce_https: settings.oidc_enforce_https ?? true,
 			oidc_trust_unverified_email:
 				settings.oidc_trust_unverified_email ?? false,
+			oidc_local_auth_fallback: settings.oidc_local_auth_fallback ?? false,
 		};
 		setForm(loaded);
 		setBaseline(loaded);
@@ -205,6 +210,7 @@ const OidcSettings = () => {
 		oidc_auto_create_users: f.oidc_auto_create_users,
 		oidc_enforce_https: f.oidc_enforce_https ?? true,
 		oidc_trust_unverified_email: f.oidc_trust_unverified_email ?? false,
+		oidc_local_auth_fallback: f.oidc_local_auth_fallback ?? false,
 	});
 
 	const handleApply = () => {
@@ -355,6 +361,31 @@ const OidcSettings = () => {
 						}
 						disabled={updateMutation.isPending}
 					/>
+					{/* Password login while the IdP is unreachable */}
+					<ToggleCard
+						label="Superadmin password login if SSO is down"
+						description={
+							<>
+								Superadmins with 2FA, while local auth is disabled.{" "}
+								<a
+									href={SSO_FALLBACK_DOCS_URL}
+									target="_blank"
+									rel="noopener noreferrer"
+									className="text-primary-600 dark:text-primary-400 hover:underline"
+								>
+									Learn more
+								</a>
+							</>
+						}
+						checked={form.oidc_local_auth_fallback}
+						onChange={() =>
+							handleFieldChange(
+								"oidc_local_auth_fallback",
+								!form.oidc_local_auth_fallback,
+							)
+						}
+						disabled={updateMutation.isPending || !form.oidc_disable_local_auth}
+					/>
 					{/* Auto-create users */}
 					<ToggleCard
 						label="Auto-create users"
@@ -389,6 +420,16 @@ const OidcSettings = () => {
 							address at your identity provider can sign in as an existing
 							PatchMon user. Only leave this on if you control who can change
 							addresses in your directory.
+						</p>
+					</div>
+				)}
+				{form.oidc_disable_local_auth && form.oidc_local_auth_fallback && (
+					<div className="mt-4 p-3 rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+						<p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+							Superadmins with two-factor authentication can sign in with a
+							password whenever PatchMon cannot reach your identity provider.
+							Anyone who can cut PatchMon off from your provider, and holds a
+							superadmin password and second factor, can use that to get in.
 						</p>
 					</div>
 				)}

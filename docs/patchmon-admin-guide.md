@@ -244,11 +244,18 @@ Configure a Discord application as a sign-in provider. Each user can link their 
 
 Discord Auth is intentionally less feature-rich than OIDC SSO. There is no group-to-role mapping, no enforced-SSO mode, and no user auto-provisioning. Use it for communities and small teams; use OIDC SSO for everything else.
 
+When **Disable local auth** is on in **OIDC / SSO**, Discord sign-in is turned off as well, so SSO is the only way in. The Discord button is hidden, and Discord logins are refused before any account is created. Users can still link a Discord identity to their profile, but cannot sign in with it until local authentication is enabled again.
+
 #### OIDC / SSO
 
 **Path:** `/settings/oidc-auth`
 
 Full OpenID Connect configuration: issuer URL, client ID and secret, redirect URI, scopes, button text, auto-provisioning, group-to-role mapping, and enforced-SSO toggle. A dedicated **Import from environment** button pulls existing `OIDC_*` values from `.env` into the database so you can migrate from file-based config without retyping anything.
+
+The toggles at the top of the page that control password sign-in:
+
+- **Disable local auth**: once SSO is fully configured, the login page shows only the SSO button and the server refuses password sign-in and self-service signup.
+- **Superadmin password login if SSO is down**: only matters while **Disable local auth** is on. Off by default. When on, superadmins who have two-factor authentication set up can sign in with their PatchMon password while your identity provider cannot be reached (a network failure, or the provider returning a server error). Nobody else can. Each such sign-in raises a `sso_fallback_login` event. Anyone who can cut PatchMon off from your provider and holds a superadmin's password and second factor can get in this way, so only enable it if that risk is acceptable. See [Password Login When the SSO Provider Is Unreachable](https://patchmon.net/docs/patchmon-operator-guide#sso-provider-unreachable-password-login) in the operator guide.
 
 For a step-by-step walk-through (Authentik, Keycloak, Entra ID, Okta), see Setting up OIDC SSO.
 
@@ -3634,6 +3641,8 @@ The following alert types fire from the server code in 2.0. Each can be individu
 | `user_created` | system | A new user is created |
 | `user_role_changed` | system | A user's role is changed |
 | `user_tfa_disabled` | system | A user's two-factor authentication is removed |
+| `sso_fallback_login` | system | A superadmin signs in with a password because the SSO provider is unreachable (see **Superadmin password login if SSO is down**) |
+| `sso_fallback_refused` | system | A superadmin without two-factor authentication gives the correct password while the SSO provider is unreachable, and is refused |
 
 If a type listed in the release notes is not in this table, it is not implemented in the server. Anything absent from the `alert_config` table is treated as enabled by default for backwards compatibility, but only types with emitters in the server code actually fire.
 
@@ -4986,6 +4995,7 @@ Effects:
 - All their sessions are revoked immediately.
 - All their trusted devices are revoked (so re-activating them later cannot reuse a "remember this device" cookie that predates the deactivation window).
 - The user's row is shown with a red **Inactive** badge in the users table.
+- A sign-in attempt with a wrong password gets the usual `Invalid credentials` message. Only someone who enters the account's correct password is told `Account is disabled`, so the message cannot be used to find out which accounts exist.
 
 To re-enable: edit and tick **Active** again.
 

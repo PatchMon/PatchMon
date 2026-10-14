@@ -939,3 +939,21 @@ func (q *Queries) UpdateUserPreferences(ctx context.Context, arg UpdateUserPrefe
 	)
 	return err
 }
+
+const upgradePasswordHash = `-- name: UpgradePasswordHash :execrows
+UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2 AND password_hash = $3
+`
+
+type UpgradePasswordHashParams struct {
+	NewHash *string `json:"new_hash"`
+	ID      string  `json:"id"`
+	OldHash *string `json:"old_hash"`
+}
+
+func (q *Queries) UpgradePasswordHash(ctx context.Context, arg UpgradePasswordHashParams) (int64, error) {
+	result, err := q.db.Exec(ctx, upgradePasswordHash, arg.NewHash, arg.ID, arg.OldHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}

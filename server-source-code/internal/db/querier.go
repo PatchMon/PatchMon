@@ -691,6 +691,7 @@ type Querier interface {
 	UpdateUserOidcProfile(ctx context.Context, arg UpdateUserOidcProfileParams) error
 	UpdateUserOidcProvider(ctx context.Context, arg UpdateUserOidcProviderParams) error
 	UpdateUserPreferences(ctx context.Context, arg UpdateUserPreferencesParams) error
+	UpgradePasswordHash(ctx context.Context, arg UpgradePasswordHashParams) (int64, error)
 	UpsertAlertConfig(ctx context.Context, arg UpsertAlertConfigParams) (AlertConfig, error)
 	// DO UPDATE rather than DO NOTHING so the row is always returned on conflict.
 	// Deliberately does not touch type: an existing profile keeps the type it was

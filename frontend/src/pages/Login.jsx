@@ -55,6 +55,7 @@ const Login = () => {
 		enabled: false,
 		buttonText: "Login with SSO",
 		disableLocalAuth: false,
+		passwordFallback: false,
 	});
 	const [discordConfig, setDiscordConfig] = useState({
 		enabled: false,
@@ -668,6 +669,15 @@ const Login = () => {
 							className="mt-8 space-y-6"
 							onSubmit={isSignupMode ? handleSignupSubmit : handleSubmit}
 						>
+							{oidcConfig.passwordFallback && (
+								<div className="p-3 rounded-md bg-warning-50 dark:bg-warning-900/20 border border-warning-200 dark:border-warning-800">
+									<p className="text-sm text-warning-800 dark:text-warning-200">
+										Single sign-on is unreachable. Only superadmins with
+										two-factor authentication can sign in with a password until
+										it is back.
+									</p>
+								</div>
+							)}
 							{/* Only show form fields if local auth is not disabled */}
 							{!oidcConfig.disableLocalAuth && (
 								<div className="space-y-4">
@@ -895,22 +905,24 @@ const Login = () => {
 								</div>
 							)}
 
-							{signupEnabled && !oidcConfig.disableLocalAuth && (
-								<div className="text-center">
-									<p className="text-sm text-secondary-700 dark:text-white">
-										{isSignupMode
-											? "Already have an account?"
-											: "Don't have an account?"}{" "}
-										<button
-											type="button"
-											onClick={toggleMode}
-											className="font-medium text-primary-600 hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300 focus:outline-none focus:underline"
-										>
-											{isSignupMode ? "Sign in" : "Sign up"}
-										</button>
-									</p>
-								</div>
-							)}
+							{signupEnabled &&
+								!oidcConfig.disableLocalAuth &&
+								!oidcConfig.passwordFallback && (
+									<div className="text-center">
+										<p className="text-sm text-secondary-700 dark:text-white">
+											{isSignupMode
+												? "Already have an account?"
+												: "Don't have an account?"}{" "}
+											<button
+												type="button"
+												onClick={toggleMode}
+												className="font-medium text-primary-600 hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300 focus:outline-none focus:underline"
+											>
+												{isSignupMode ? "Sign in" : "Sign up"}
+											</button>
+										</p>
+									</div>
+								)}
 						</form>
 					) : (
 						<form className="mt-8 space-y-6" onSubmit={handleTfaSubmit}>

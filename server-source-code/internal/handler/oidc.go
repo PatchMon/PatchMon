@@ -44,6 +44,32 @@ type OidcHandler struct {
 	// entryMu holds a per-context mutex, so a slow provider discovery in one
 	// context does not block another. Mirrors PoolCache.hostLock.
 	entryMu sync.Map
+
+	probeMu    sync.Mutex
+	probes     map[string]*providerProbe
+	probeLocks sync.Map
+	probeHTTP  *http.Client
+}
+
+// The TTLs also cap how often unauthenticated callers can make us probe the
+// provider. One failed probe is not an outage: it takes providerFailuresNeeded
+// in a row, re-checked after providerRecheckTTL.
+const (
+	providerProbeTimeout   = 3 * time.Second
+	providerProbeTTL       = 30 * time.Second
+	providerRecheckTTL     = 5 * time.Second
+	providerDownTTL        = 10 * time.Second
+	providerFailuresNeeded = 2
+	providerFailureWindow  = time.Minute
+)
+
+type providerProbe struct {
+	issuer      string
+	unreachable bool
+	reason      string
+	failures    int
+	probedAt    time.Time
+	expiresAt   time.Time
 }
 
 // Eviction on settings save is the primary invalidation; the TTL is a backstop.
@@ -204,6 +230,99 @@ func (h *OidcHandler) EvictHost(host string) {
 	h.clientMu.Lock()
 	delete(h.entries, host)
 	h.clientMu.Unlock()
+
+	h.probeMu.Lock()
+	delete(h.probes, host)
+	h.probeMu.Unlock()
+}
+
+func (h *OidcHandler) cachedProbe(key, issuer string) *providerProbe {
+	h.probeMu.Lock()
+	defer h.probeMu.Unlock()
+	if p := h.probes[key]; p != nil && p.issuer == issuer && time.Now().Before(p.expiresAt) {
+		return p
+	}
+	return nil
+}
+
+// providerUnreachable probes the context's provider at most once per
+// providerProbeTTL, however many sign-in attempts arrive meanwhile.
+func (h *OidcHandler) providerUnreachable(ctx context.Context, e *oidcContextEntry) (bool, string) {
+	key := hostctx.TenantHostKey(ctx)
+	issuer := e.resolved.IssuerURL
+	if p := h.cachedProbe(key, issuer); p != nil {
+		return p.unreachable, p.reason
+	}
+	v, _ := h.probeLocks.LoadOrStore(key, &sync.Mutex{})
+	lock := v.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
+	if p := h.cachedProbe(key, issuer); p != nil {
+		return p.unreachable, p.reason
+	}
+
+	// Detached from the request, so a caller hanging up cannot record a false outage.
+	probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), providerProbeTimeout)
+	defer cancel()
+	hc := h.probeHTTP
+	if hc == nil {
+		hc = http.DefaultClient
+	}
+	failed, reason := e.client.ProbeDiscovery(probeCtx, hc)
+	now := time.Now()
+
+	h.probeMu.Lock()
+	defer h.probeMu.Unlock()
+	if h.probes == nil {
+		h.probes = map[string]*providerProbe{}
+	}
+	next := &providerProbe{issuer: issuer, probedAt: now, expiresAt: now.Add(providerProbeTTL)}
+	if failed {
+		next.failures = 1
+		if prev := h.probes[key]; prev != nil && prev.issuer == issuer && prev.failures > 0 && now.Sub(prev.probedAt) < providerFailureWindow {
+			next.failures = prev.failures + 1
+		}
+		next.unreachable = next.failures >= providerFailuresNeeded
+		next.expiresAt = now.Add(providerRecheckTTL)
+		if next.unreachable {
+			next.reason = reason
+			next.expiresAt = now.Add(providerDownTTL)
+		}
+	}
+	h.probes[key] = next
+	return next.unreachable, next.reason
+}
+
+// entryDisablesLocalAuth holds only while SSO is fully configured, so a context
+// whose SSO settings are incomplete is never left with no way to sign in.
+func (h *OidcHandler) entryDisablesLocalAuth(e *oidcContextEntry) bool {
+	if !e.configuredValid {
+		return false
+	}
+	if e.resolved != nil {
+		return e.resolved.DisableLocalAuth
+	}
+	return h.cfg.OidcDisableLocalAuth
+}
+
+// LocalAuthDecision reports whether ctx's context refuses password sign-in. A
+// non-empty fallback means it would, but the provider is unreachable and the
+// context allows passwords in that case; it carries the reason.
+func (h *OidcHandler) LocalAuthDecision(ctx context.Context) (disabled bool, fallback string) {
+	if h == nil {
+		return false, ""
+	}
+	e := h.entryFor(ctx)
+	if !h.entryDisablesLocalAuth(e) {
+		return false, ""
+	}
+	if e.client == nil || e.resolved == nil || !e.resolved.LocalAuthFallback {
+		return true, ""
+	}
+	if unreachable, reason := h.providerUnreachable(ctx, e); unreachable {
+		return false, reason
+	}
+	return true, ""
 }
 
 // Config handles GET /api/v1/auth/oidc/config.
@@ -213,15 +332,13 @@ func (h *OidcHandler) Config(w http.ResponseWriter, r *http.Request) {
 	configuredValid := e.configuredValid
 
 	enabled := configuredValid
-	var disableLocalAuth bool
+	disableLocalAuth, fallback := h.LocalAuthDecision(r.Context())
 	var buttonText string
 	var syncRoles bool
 	if resolved != nil {
-		disableLocalAuth = enabled && resolved.DisableLocalAuth
 		buttonText = resolved.ButtonText
 		syncRoles = resolved.SyncRoles
 	} else {
-		disableLocalAuth = enabled && h.cfg.OidcDisableLocalAuth
 		buttonText = h.cfg.OidcButtonText
 		syncRoles = h.cfg.OidcSyncRoles
 	}
@@ -233,6 +350,8 @@ func (h *OidcHandler) Config(w http.ResponseWriter, r *http.Request) {
 		"buttonText":       buttonText,
 		"disableLocalAuth": disableLocalAuth,
 		"syncRoles":        syncRoles,
+		// The login form is back, for superadmins only, because SSO is unreachable.
+		"passwordFallback": fallback != "",
 	})
 }
 
@@ -708,6 +827,7 @@ func oidcSettingsResponse(s *models.Settings, secretSet *bool, configuredViaEnv 
 		"oidc_user_group":             nil,
 		"oidc_enforce_https":          true,
 		"oidc_trust_unverified_email": false,
+		"oidc_local_auth_fallback":    false,
 		"callback_url":                "",
 	}
 	if s != nil {
@@ -728,6 +848,7 @@ func oidcSettingsResponse(s *models.Settings, secretSet *bool, configuredViaEnv 
 		res["oidc_user_group"] = s.OidcUserGroup
 		res["oidc_enforce_https"] = s.OidcEnforceHTTPS
 		res["oidc_trust_unverified_email"] = s.OidcTrustUnverifiedEmail
+		res["oidc_local_auth_fallback"] = s.OidcLocalAuthFallback
 	}
 	if secretSet != nil {
 		res["oidc_client_secret_set"] = *secretSet
@@ -832,6 +953,9 @@ func applyOidcSettingsUpdate(s *models.Settings, req map[string]interface{}, enc
 	}
 	if v, ok := getReqBool(req, "oidc_trust_unverified_email", "oidcTrustUnverifiedEmail"); ok {
 		s.OidcTrustUnverifiedEmail = v
+	}
+	if v, ok := getReqBool(req, "oidc_local_auth_fallback", "oidcLocalAuthFallback"); ok {
+		s.OidcLocalAuthFallback = v
 	}
 }
 

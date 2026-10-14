@@ -100,6 +100,26 @@ func normaliseIssuerURL(issuer string) (string, bool) {
 	return trimmed, true
 }
 
+// ProbeDiscovery fetches the discovery document. Only a transport failure or a
+// 5xx counts as unreachable: any other answer means the provider is up, even if
+// PatchMon is misconfigured against it.
+func (c *Client) ProbeDiscovery(ctx context.Context, hc *http.Client) (unreachable bool, reason string) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(c.cfg.IssuerURL, "/")+discoveryPath, nil)
+	if err != nil {
+		return false, ""
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return true, "discovery request failed: " + err.Error()
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+	if resp.StatusCode >= http.StatusInternalServerError {
+		return true, fmt.Sprintf("discovery returned HTTP %d", resp.StatusCode)
+	}
+	return false, ""
+}
+
 // connect performs provider discovery and populates the oauth2 config and token
 // verifier. It is idempotent and safe for concurrent callers.
 func (c *Client) connect(ctx context.Context) error {

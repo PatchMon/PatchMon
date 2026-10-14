@@ -103,6 +103,7 @@ func dbSettingToModel(s db.Setting) models.Settings {
 		OidcUserGroup:                   s.OidcUserGroup,
 		OidcEnforceHTTPS:                s.OidcEnforceHttps,
 		OidcTrustUnverifiedEmail:        s.OidcTrustUnverifiedEmail,
+		OidcLocalAuthFallback:           s.OidcLocalAuthFallback,
 		MaxLoginAttempts:                pgInt32ToIntPtr(s.MaxLoginAttempts),
 		LockoutDurationMinutes:          pgInt32ToIntPtr(s.LockoutDurationMinutes),
 		SessionInactivityTimeoutMinutes: pgInt32ToIntPtr(s.SessionInactivityTimeoutMinutes),
@@ -211,6 +212,7 @@ func settingsToUpdateParams(s *models.Settings) db.UpdateSettingsParams {
 		OidcUserGroup:             s.OidcUserGroup,
 		OidcEnforceHttps:          s.OidcEnforceHTTPS,
 		OidcTrustUnverifiedEmail:  s.OidcTrustUnverifiedEmail,
+		OidcLocalAuthFallback:     s.OidcLocalAuthFallback,
 		ID:                        s.ID,
 	}
 }

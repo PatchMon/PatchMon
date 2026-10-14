@@ -2388,18 +2388,21 @@ The `reason` field distinguishes the failure:
 |---|---|
 | `user_not_found` | No account matches the username or email that was typed |
 | `invalid_password` | The account exists and the password was wrong |
-| `account_disabled` | The account exists but is deactivated |
+| `account_disabled` | The correct password was given for a deactivated account. A wrong password for a deactivated account is logged as `invalid_password` |
 | `no_password_set` | The account has no local password, typically SSO-only |
 | `locked_out` | Refused on arrival because a lockout from earlier attempts is still in force |
+| `busy` | Too many sign-ins were already being checked; the attempt waited about 5 seconds for a slot and was answered `503 Too many sign-in attempts, try again shortly`. It does not count towards the lockout |
 | `missing_credentials` | The request omitted the username or the password |
 | `username_too_long` | The submitted username exceeded 254 characters and was rejected before any lookup |
 | `malformed_request` | The request body was not valid JSON |
-| `local_auth_disabled` | A password sign-in was attempted while the instance is SSO-only |
+| `local_auth_disabled` | A password sign-in or two-factor step was attempted while password sign-in is disabled |
 | `invalid_tfa_code` | The password was accepted but the two-factor code was wrong |
 | `tfa_locked_out` | Refused on arrival because a two-factor lockout from earlier wrong codes is still in force |
 | `tfa_token_malformed` | The submitted two-factor code was not six alphanumeric characters |
 | `tfa_ticket_invalid` | The two-factor step was reached without a valid, unexpired ticket from the password step |
 | `tfa_user_ineligible` | The ticket resolved to an account that is inactive or has no two-factor enrolled |
+
+The client never sees these reasons. An unknown username, an SSO-only account, a wrong password and a deactivated account all return the same `Invalid credentials` message and are designed to take about the same time to answer, so the response does not reveal which accounts exist. The exception is an account whose password was stored by an older PatchMon release with a cheaper hash: it answers faster until that user next signs in successfully, when PatchMon upgrades the stored hash automatically. Only a caller who supplies the correct password for a deactivated account is told `Account is disabled`.
 
 A failed lookup caused by the database being unreachable is **not** reported as `user_not_found`. It is logged separately at `error` level as `auth login lookup failed`, and it does not consume a lockout attempt, so a database problem cannot lock out the people retrying a correct password.
 
@@ -2438,7 +2441,7 @@ OpenID Connect configuration for Single Sign-On. When `OIDC_ENABLED=true`, the f
 |----------|---------|----------|-------------|
 | `OIDC_AUTO_CREATE_USERS` | `false` | No | When `true`, a PatchMon account is automatically created the first time an OIDC user logs in. When `false`, an administrator must create the account first. |
 | `OIDC_DEFAULT_ROLE` | `user` | No | Role assigned to automatically created OIDC users when no group mapping matches. Accepted values: `superadmin`, `admin`, `host_manager`, `user`, `readonly`. |
-| `OIDC_DISABLE_LOCAL_AUTH` | `false` | No | When `true`, local username/password authentication is disabled. Only OIDC login is accepted. Useful when enforcing SSO organisation-wide. |
+| `OIDC_DISABLE_LOCAL_AUTH` | `false` | No | When `true`, local username/password authentication is disabled. Only OIDC login is accepted. Useful when enforcing SSO organisation-wide. The server refuses password sign-in, the two-factor step and self-service signup with `403`. The **Disable local auth** toggle in **Settings → OIDC / SSO** is enforced the same way when OIDC is configured in the UI. |
 
 #### Login Page
 
@@ -2808,7 +2811,7 @@ OIDC_SYNC_ROLES=false
 | `OIDC_SCOPES` | `openid email profile groups` | Space-separated scopes to request. Include `groups` for role mapping |
 | `OIDC_AUTO_CREATE_USERS` | `false` | When `true`, automatically creates a PatchMon account on first OIDC login. When `false`, the user must already exist in PatchMon (matched by email) |
 | `OIDC_DEFAULT_ROLE` | `user` | Role assigned when a user doesn't match any group mapping |
-| `OIDC_DISABLE_LOCAL_AUTH` | `false` | When `true`, hides the username/password fields and only shows the SSO button |
+| `OIDC_DISABLE_LOCAL_AUTH` | `false` | When `true`, hides the username/password fields, only shows the SSO button, and the server refuses password sign-in |
 | `OIDC_BUTTON_TEXT` | `Login with SSO` | Label shown on the SSO login button |
 | `OIDC_SESSION_TTL` | `600` | Seconds the OIDC login state is valid. If the user takes longer than this at the IdP, the session expires and they must try again |
 | `OIDC_POST_LOGOUT_URI` | `<CORS_ORIGIN>/login` | Where to redirect after a logout. Defaults to the PatchMon login page |
@@ -3050,9 +3053,39 @@ To enforce SSO for all users, set:
 OIDC_DISABLE_LOCAL_AUTH=true
 ```
 
-This hides the username/password fields on the login page and only shows the SSO button. Local authentication is only actually disabled if OIDC is also enabled and successfully initialised. This safety check prevents you from being locked out if OIDC is misconfigured.
+This hides the username/password fields on the login page and only shows the SSO button. The server also refuses password sign-in, the two-factor step and self-service signup, and Discord sign-in is turned off: the Discord button disappears, and a Discord login that was already in progress is refused before any account is created. Local authentication is only actually disabled while OIDC is enabled and fully configured (issuer URL, client ID, client secret and redirect URI all set). This safety check prevents you from being locked out if OIDC is misconfigured. The same setting is the **Disable local auth** toggle in **Settings → OIDC / SSO**.
 
 > **Important:** Ensure at least one OIDC user has admin access before enabling this, or you may lose the ability to manage PatchMon.
+
+> **Existing sessions are not ended.** Turning this on blocks new password sign-ins only. Anyone already signed in with a password stays signed in until their session ends: after `SESSION_INACTIVITY_TIMEOUT_MINUTES` of inactivity, or when the refresh token expires (7 days, or 30 days if they ticked "Remember me"). To force everyone through SSO straight away, deactivate and reactivate the affected users, or change their role and back, which revokes their sessions.
+
+#### Password Login When the SSO Provider Is Unreachable {#sso-provider-unreachable-password-login}
+
+With local authentication disabled, an outage at your identity provider means nobody can sign in, because the SSO configuration is still complete. If you want your superadmins to keep a way in during an outage, turn on **Superadmin password login if SSO is down** in **Settings → OIDC / SSO**.
+
+- It is **off by default** and has no effect unless **Disable local auth** is on.
+- It is a database setting only, changed on that page. There is no environment variable for it.
+- Only **superadmin** accounts can use it, and only with **two-factor authentication**. A superadmin who has not set up two-factor authentication is refused with a message saying so; the attempt counts towards the account lockout and raises a `sso_fallback_refused` notification event. Every other account is refused with the usual `Invalid credentials` message, and the attempt counts towards the account lockout.
+- The second factor is always asked for on this path, even on a device that was remembered earlier, and "Remember me" is ignored.
+- Self-service signup and Discord sign-in stay closed.
+
+**What counts as unreachable.** PatchMon fetches your provider's discovery document (`<issuer>/.well-known/openid-configuration`) with a 3 second timeout. The provider is treated as unreachable only if that request fails at the network level (DNS failure, connection refused, timeout, TLS error) or the provider answers with an HTTP 5xx error. Any other answer, including a 404 from a mistyped issuer URL, means the provider is up, and password login stays disabled. A provider that rejects a user, wrong credentials and a misconfigured client never count.
+
+One failed check is not treated as an outage: it takes two failed checks in a row, about 5 seconds apart, so a single network blip does not open password login. A healthy result is cached for 30 seconds and an outage for 10, so a burst of sign-in attempts causes at most one request to your provider per window, and repeated logins cannot be used to probe it. After an outage, password login closes again within about 10 seconds of the provider coming back. Saving the OIDC settings clears the cached result. While the provider is unreachable, the login page shows the username and password fields again, with a notice that only superadmins with two-factor authentication can sign in.
+
+Every sign-in completed this way is recorded:
+
+- a `warn` line in the server log, with the reason the provider was considered unreachable:
+
+  ```
+  password login allowed because the SSO provider is unreachable  audit_action=sso_fallback_login username=... reason="discovery request failed: ..."
+  ```
+
+- a `sso_fallback_login` notification event, which you can route to an alert channel like any other event (see the admin guide).
+
+> **Trade-off:** anyone who can make your identity provider unreachable from the PatchMon server, for example by disrupting DNS or the network path between them, can bring password login back for superadmin accounts. They would still need a superadmin's password and second factor. Only turn this on if that risk is acceptable for your deployment, and route the `sso_fallback_login` event to a channel someone watches.
+
+With the setting off, an outage still locks everyone out until the provider recovers. In that case use the database recovery step in [Re-enable Local Login When OIDC is Broken](#workaround-re-enable-local-login-when-oidc-is-broken).
 
 ---
 
@@ -3549,7 +3582,9 @@ Once you've confirmed at least one OIDC user has Admin or Super Admin:
 
 The login page will now only show the **Sign in with Microsoft** button. Local username/password fields are hidden.
 
-> **Safety:** PatchMon only enforces this flag if OIDC is **also** enabled *and* successfully initialised. If OIDC breaks for any reason, local login is automatically re-enabled so you're not locked out.
+The server enforces this too: password sign-in, the two-factor step and self-service signup are refused with `403 Local authentication is disabled. Please use SSO.`
+
+> **Safety:** PatchMon only enforces this flag while OIDC is **also** enabled and fully configured (issuer URL, client ID, client secret and redirect URI all set). If any of those is missing, or the stored client secret cannot be decrypted, password login comes back automatically. An outage at your identity provider does **not** re-enable password login, because the configuration is still complete, unless you also turn on **Superadmin password login if SSO is down** (see [Password Login When the SSO Provider Is Unreachable](#sso-provider-unreachable-password-login)). If an outage locks you out, see [Re-enable Local Login When OIDC is Broken](#workaround-re-enable-local-login-when-oidc-is-broken).
 
 ---
 
@@ -6979,6 +7014,14 @@ WHERE username = 'admin';
 The user can re-enrol TFA after logging in.
 
 #### Workaround: Re-enable Local Login When OIDC is Broken
+
+If you turned on **Disable local auth** in **Settings → OIDC / SSO**, clear it in the database:
+
+```sql
+UPDATE settings SET oidc_disable_local_auth = false;
+```
+
+then restart the server (`docker compose restart server`) so the cached SSO settings are dropped straight away. Without a restart the change takes effect within ten minutes.
 
 If `OIDC_DISABLE_LOCAL_AUTH=true` is blocking you, edit `.env`:
 
