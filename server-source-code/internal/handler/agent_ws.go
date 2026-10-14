@@ -148,10 +148,11 @@ func (h *AgentWSHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		// returns false when a newer connection owns the slot — in that case
 		// the agent is demonstrably live and the disconnect side effects
 		// (host_down alert, marking patch runs agent_disconnected) must not run.
+		closedAt := time.Now().UTC().Round(0)
 		ownsTeardown := h.registry.UnregisterConn(apiID, conn)
 		_ = conn.Close()
 		if h.onConnClosed != nil {
-			cutoff := time.Now()
+			cutoff := closedAt
 			if !ownsTeardown {
 				if at := h.registry.Get(apiID).LastConnectedAt; at != nil {
 					cutoff = *at

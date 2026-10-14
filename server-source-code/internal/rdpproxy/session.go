@@ -495,7 +495,7 @@ func (s *Sessions) CloseAgentSessions(apiID string, cutoff time.Time) int {
 	s.mu.RLock()
 	var victims []*Session
 	for _, sess := range s.sessions {
-		if sess.ApiID == apiID && sess.createdAt.Before(cutoff) {
+		if sess.ApiID == apiID && sess.createdAt.Round(0).Before(cutoff.Round(0)) {
 			victims = append(victims, sess)
 		}
 	}

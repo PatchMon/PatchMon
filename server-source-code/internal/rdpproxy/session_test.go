@@ -261,3 +261,15 @@ func TestListenerClosesAfterFirstAccept(t *testing.T) {
 		return false
 	})
 }
+
+func TestCloseAgentSessionsCutoffIgnoresMonotonicClock(t *testing.T) {
+	s := NewSessions(nil, &recSender{})
+	id, _ := create(t, s, "api1", "")
+	cutoff := time.Now().UTC().Round(0).Add(time.Millisecond)
+	if n := s.CloseAgentSessions("api1", cutoff); n != 1 {
+		t.Fatalf("closed %d, want 1 for a session created before a wall-clock cutoff", n)
+	}
+	if _, ok := s.Get(id); ok {
+		t.Fatal("session survived")
+	}
+}
