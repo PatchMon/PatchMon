@@ -80,4 +80,19 @@ describe("RdpViewer error classification", () => {
 			}),
 		).toBe("max_sessions_context");
 	});
+
+	it("maps status 515 (agent dropped mid-session) to agent guidance", () => {
+		expect(
+			deriveCodeFromGuacStatus({
+				code: 0x0203,
+				message: "The PatchMon agent on this host disconnected.",
+			}),
+		).toBe("agent_disconnected");
+	});
+
+	it("keeps other 515 upstream errors generic", () => {
+		expect(
+			deriveCodeFromGuacStatus({ code: 0x0203, message: "Upstream error" }),
+		).toBe("rdp_unknown");
+	});
 });

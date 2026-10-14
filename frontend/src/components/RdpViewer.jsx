@@ -31,6 +31,7 @@ import { rdpAPI } from "../utils/api";
 // https://guacamole.apache.org/doc/gug/protocol-reference.html#status-codes
 const GUAC_STATUS_CLIENT_UNAUTHORIZED = 0x0301; // 769
 const GUAC_STATUS_CLIENT_FORBIDDEN = 0x0303; // 771
+const GUAC_STATUS_UPSTREAM_ERROR = 0x0203; // 515 — also sent by the server when the agent drops
 const GUAC_STATUS_RESOURCE_NOT_FOUND = 0x0204; // 516 — missing ticket/resource
 const GUAC_STATUS_UPSTREAM_NOT_FOUND = 0x0207; // 519 — guacd could not open the upstream RDP session
 const GUAC_STATUS_UPSTREAM_UNAVAILABLE = 0x0208; // 520 — upstream reached, session setup failed
@@ -273,6 +274,10 @@ export const deriveCodeFromGuacStatus = (status) => {
 		case GUAC_STATUS_CLIENT_UNAUTHORIZED:
 		case GUAC_STATUS_CLIENT_FORBIDDEN:
 			return "rdp_auth_failed";
+		case GUAC_STATUS_UPSTREAM_ERROR:
+			return /agent/i.test(status?.message || "")
+				? "agent_disconnected"
+				: "rdp_unknown";
 		case GUAC_STATUS_RESOURCE_NOT_FOUND:
 			return "rdp_unknown";
 		case GUAC_STATUS_UPSTREAM_NOT_FOUND:
