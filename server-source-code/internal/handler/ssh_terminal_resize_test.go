@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -83,7 +84,7 @@ func startTestSSHServer(t *testing.T, sizes chan<- ptySize) int {
 }
 
 func TestDirectModeForwardsResize(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATCHMON_SSH_KNOWN_HOSTS", filepath.Join(t.TempDir(), "known_hosts"))
 	sizes := make(chan ptySize, 8)
 	port := startTestSSHServer(t, sizes)
 
@@ -94,7 +95,7 @@ func TestDirectModeForwardsResize(t *testing.T) {
 		if err != nil {
 			return
 		}
-		h.handleConnection(conn, &models.Host{IP: &ip}, &models.User{})
+		h.handleConnection(conn, &models.Host{IP: &ip}, &models.User{}, "")
 	}))
 	defer srv.Close()
 

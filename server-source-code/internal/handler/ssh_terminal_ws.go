@@ -9,41 +9,20 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/sshproxy"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/gorilla/websocket"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/knownhosts"
 )
-
-// hostKeyCallback returns a HostKeyCallback that validates against ~/.ssh/known_hosts when
-// available, otherwise falls back to InsecureIgnoreHostKey with a logged warning.
-// Interactive SSH terminal sessions let users choose arbitrary hosts; strict host key
-// verification would block first-time connections. Using known_hosts when present
-// improves security for repeat connections.
-func hostKeyCallback(log *slog.Logger) ssh.HostKeyCallback {
-	home, _ := os.UserHomeDir()
-	knownHostsPath := filepath.Join(home, ".ssh", "known_hosts")
-	if _, err := os.Stat(knownHostsPath); err == nil {
-		cb, err := knownhosts.New(knownHostsPath)
-		if err == nil {
-			return cb
-		}
-	}
-	if log != nil {
-		log.Warn("SSH: using InsecureIgnoreHostKey (no known_hosts or load failed)", "path", knownHostsPath)
-	}
-	return ssh.InsecureIgnoreHostKey()
-}
 
 const (
 	sshTerminalPongWait   = 90 * time.Second
@@ -146,15 +125,17 @@ func (h *SshTerminalWSHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tenantKey := hostctx.TenantHostKey(r.Context())
+
 	h.log.Info("ssh-terminal connected", "user", user.Username, "host", host.FriendlyName, "host_id", hostID)
-	h.handleConnection(conn, host, user)
+	h.handleConnection(conn, host, user, tenantKey)
 }
 
 func (h *SshTerminalWSHandler) rejectUpgrade(w http.ResponseWriter, r *http.Request, code int, msg string) {
 	http.Error(w, msg, code)
 }
 
-func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *models.Host, user *models.User) {
+func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *models.Host, user *models.User, tenantKey string) {
 	defer func() { _ = conn.Close() }()
 
 	var sshClient *ssh.Client
@@ -272,6 +253,11 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 					send(map[string]string{"type": "error", "message": "Invalid proxy host format"})
 					continue
 				}
+				if !proxyHostBoundToHost(host, proxyHost) {
+					h.log.Info("ssh-terminal proxy host rejected", "host_id", host.ID, "proxy_host", proxyHost)
+					send(map[string]string{"type": "error", "message": "Proxy host must be the host's own address or localhost"})
+					continue
+				}
 				if proxyPort < 1 || proxyPort > 65535 {
 					send(map[string]string{"type": "error", "message": "Invalid proxy port (must be 1-65535)"})
 					continue
@@ -317,7 +303,12 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 
 			// Direct mode
 			sshAddr := net.JoinHostPort(hostIPOrHostname(host), strconv.Itoa(orInt(msg.Port, 22)))
-			hostKeyCB := hostKeyCallback(h.log)
+			hostKeyCB, err := sshproxy.TOFUHostKeyCallback(sshproxy.KnownHostsPath(tenantKey), h.log)
+			if err != nil {
+				h.log.Error("ssh-terminal host key init failed", "host_id", host.ID, "error", err)
+				send(map[string]string{"type": "error", "message": "Failed to initialise host key verification"})
+				continue
+			}
 			config := &ssh.ClientConfig{
 				User:            sshUsername(msg.Username, host),
 				HostKeyCallback: hostKeyCB,
@@ -601,6 +592,60 @@ func hostIPOrHostname(host *models.Host) string {
 		return *host.Hostname
 	}
 	return "localhost"
+}
+
+// proxyHostBoundToHost reports whether proxyHost is one of the ticket host's
+// own addresses (its IP, hostname or an interface address) or a loopback
+// address. Binding the agent's proxy target to the registered host stops a
+// caller pivoting the agent into arbitrary internal infrastructure (SSRF).
+func proxyHostBoundToHost(host *models.Host, proxyHost string) bool {
+	candidate := strings.ToLower(strings.TrimSpace(proxyHost))
+	if candidate == "" {
+		return false
+	}
+	allowed := []string{"localhost", "127.0.0.1", "::1"}
+	if host.IP != nil {
+		allowed = append(allowed, *host.IP)
+	}
+	if host.Hostname != nil {
+		allowed = append(allowed, *host.Hostname)
+	}
+	allowed = append(allowed, hostIPOrHostname(host))
+	var ifaces []models.NetworkInterface
+	if len(host.NetworkInterfaces) > 0 {
+		_ = json.Unmarshal(host.NetworkInterfaces, &ifaces)
+	}
+	for _, iface := range ifaces {
+		for _, addr := range iface.Addresses {
+			allowed = append(allowed, addr.Address)
+		}
+	}
+	candidateIP := net.ParseIP(candidate)
+	for _, a := range allowed {
+		a = stripZoneAndMask(strings.ToLower(strings.TrimSpace(a)))
+		if a == "" {
+			continue
+		}
+		if a == candidate {
+			return true
+		}
+		if candidateIP != nil {
+			if ip := net.ParseIP(a); ip != nil && ip.Equal(candidateIP) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func stripZoneAndMask(addr string) string {
+	if i := strings.IndexByte(addr, '/'); i >= 0 {
+		addr = addr[:i]
+	}
+	if i := strings.IndexByte(addr, '%'); i >= 0 {
+		addr = addr[:i]
+	}
+	return addr
 }
 
 var proxyHostRe = regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$|^localhost$|^(\d{1,3}\.){3}\d{1,3}$`)

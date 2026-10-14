@@ -2522,6 +2522,7 @@ Configuration for the Guacamole daemon (`guacd`) that powers in-browser RDP sess
 |----------|---------|----------|-------------|
 | `GUACD_PATH` | _(none)_ | No | Absolute path to the `guacd` binary. When empty, the server locates `guacd` using the system `PATH`. Set this if `guacd` is installed in a non-standard location. |
 | `GUACD_ADDRESS` | `127.0.0.1:4822` | No | Host and port the server uses to connect to the running `guacd` process. Change this if `guacd` is running on a different host or non-default port. |
+| `PATCHMON_SSH_KNOWN_HOSTS` | _(working directory)_ | No | Path to the PatchMon-managed SSH `known_hosts` file used to verify host keys for the Web SSH Terminal in Direct mode. Host keys are pinned on first use and a changed key is then rejected. When empty, the file lives under the server's working directory (or the OS temp directory), which is not on a persistent volume in the stock image, so pinned keys reset on container recreation. Point this at a path on a mounted volume to keep pinned keys across upgrades. |
 
 ---
 
@@ -4039,6 +4040,10 @@ This guide covers everything you need to manage the agent after installation: CL
 | **Runs as** | `LocalSystem` |
 | **Primary mode** | `patchmon-agent serve` (long-lived service) |
 | **Architectures** | amd64, arm64 (Surface Pro X / Copilot+ PCs). 32-bit Windows is not supported. |
+
+> **Data directory permissions (Windows).** The installer locks `C:\ProgramData\PatchMon\` and everything in it to `SYSTEM` and the local `Administrators` group, with inheritance disabled, so `config.yml` and `credentials.yml` cannot be read by other local users. The service re-applies this lock on every start, so an older install that was left world-readable is repaired automatically the next time the service runs.
+>
+> **Upgrading from a version before this hardening.** Auto-update replaces the binary but cannot undo the fact that a credential on disk may already have been read while the directory was world-readable. After upgrading a Windows host, re-run the install command (it re-applies the directory and file permissions) rather than relying on auto-update, and regenerate that host's API credentials from Settings so any key that could have been read is rotated.
 
 ### Table of Contents
 

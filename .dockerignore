@@ -14,6 +14,9 @@
 **/.gitignore
 .git-moved
 
+# Trusted CI action checkout (see .github/workflows/docker.yml)
+.ci-trusted
+
 # IDE files
 **/.vscode
 **/.idea
