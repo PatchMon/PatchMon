@@ -205,6 +205,26 @@ func (h *OidcHandler) EvictHost(host string) {
 	h.clientMu.Unlock()
 }
 
+// entryDisablesLocalAuth holds only while SSO is fully configured, so a context
+// whose SSO settings are incomplete is never left with no way to sign in.
+func (h *OidcHandler) entryDisablesLocalAuth(e *oidcContextEntry) bool {
+	if !e.configuredValid {
+		return false
+	}
+	if e.resolved != nil {
+		return e.resolved.DisableLocalAuth
+	}
+	return h.cfg.OidcDisableLocalAuth
+}
+
+// LocalAuthDisabled reports whether ctx's context has turned off password sign-in.
+func (h *OidcHandler) LocalAuthDisabled(ctx context.Context) bool {
+	if h == nil {
+		return false
+	}
+	return h.entryDisablesLocalAuth(h.entryFor(ctx))
+}
+
 // Config handles GET /api/v1/auth/oidc/config.
 func (h *OidcHandler) Config(w http.ResponseWriter, r *http.Request) {
 	e := h.entryFor(r.Context())
@@ -212,15 +232,13 @@ func (h *OidcHandler) Config(w http.ResponseWriter, r *http.Request) {
 	configuredValid := e.configuredValid
 
 	enabled := configuredValid
-	var disableLocalAuth bool
+	disableLocalAuth := h.entryDisablesLocalAuth(e)
 	var buttonText string
 	var syncRoles bool
 	if resolved != nil {
-		disableLocalAuth = enabled && resolved.DisableLocalAuth
 		buttonText = resolved.ButtonText
 		syncRoles = resolved.SyncRoles
 	} else {
-		disableLocalAuth = enabled && h.cfg.OidcDisableLocalAuth
 		buttonText = h.cfg.OidcButtonText
 		syncRoles = h.cfg.OidcSyncRoles
 	}

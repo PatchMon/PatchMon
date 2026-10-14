@@ -180,3 +180,79 @@ func TestLoginDisabledAccountLocksOutLikeUnknownUser(t *testing.T) {
 		})
 	}
 }
+
+type fixedLocalAuthPolicy bool
+
+func (p fixedLocalAuthPolicy) LocalAuthDisabled(context.Context) bool { return bool(p) }
+
+func TestLocalAuthDisabledBlocksPasswordEndpoints(t *testing.T) {
+	t.Parallel()
+
+	endpoints := map[string]func(h *AuthHandler, w http.ResponseWriter, r *http.Request){
+		"login":      func(h *AuthHandler, w http.ResponseWriter, r *http.Request) { h.Login(w, r) },
+		"verify-tfa": func(h *AuthHandler, w http.ResponseWriter, r *http.Request) { h.VerifyTfa(w, r) },
+		"signup":     func(h *AuthHandler, w http.ResponseWriter, r *http.Request) { h.Signup(w, r) },
+	}
+	handlers := map[string]*AuthHandler{
+		"database setting": (&AuthHandler{cfg: &config.Config{}}).WithLocalAuthPolicy(fixedLocalAuthPolicy(true)),
+		"environment":      {cfg: &config.Config{OidcEnabled: true, OidcDisableLocalAuth: true}},
+	}
+	for hname, h := range handlers {
+		for ename, call := range endpoints {
+			t.Run(hname+"/"+ename, func(t *testing.T) {
+				t.Parallel()
+				req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/"+ename, strings.NewReader(`{"username":"admin","password":"pw","token":"123456"}`))
+				rec := httptest.NewRecorder()
+				call(h, rec, req)
+				if rec.Code != http.StatusForbidden || !strings.Contains(errorMessage(t, rec), "Local authentication is disabled") {
+					t.Fatalf("got %d %s, want 403 local authentication disabled", rec.Code, rec.Body.String())
+				}
+			})
+		}
+	}
+}
+
+func TestLocalAuthAllowedWhenPolicyOff(t *testing.T) {
+	t.Parallel()
+	h := (&AuthHandler{cfg: &config.Config{}}).WithLocalAuthPolicy(fixedLocalAuthPolicy(false))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{}`))
+	rec := httptest.NewRecorder()
+	h.Login(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got %d %s, want the request to reach input validation (400)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestOidcLocalAuthDisabledRequiresWorkingSSOConfig(t *testing.T) {
+	t.Parallel()
+
+	entry := func(valid, disable bool) *OidcHandler {
+		return &OidcHandler{
+			cfg: &config.Config{},
+			entries: map[string]*oidcContextEntry{"": {
+				resolved:        &config.ResolvedOidcConfig{DisableLocalAuth: disable},
+				configuredValid: valid,
+				expiresAt:       time.Now().Add(time.Hour),
+			}},
+		}
+	}
+
+	cases := []struct {
+		name string
+		h    *OidcHandler
+		want bool
+	}{
+		{"SSO configured, local auth disabled", entry(true, true), true},
+		{"SSO configured, local auth allowed", entry(true, false), false},
+		{"SSO incomplete, setting left on", entry(false, true), false},
+		{"no OIDC handler", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.h.LocalAuthDisabled(context.Background()); got != tc.want {
+				t.Fatalf("LocalAuthDisabled = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

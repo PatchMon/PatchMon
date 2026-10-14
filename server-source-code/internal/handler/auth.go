@@ -50,6 +50,25 @@ type AuthHandler struct {
 	permissions *store.PermissionsStore
 	// Resolves the calling context's own settings; `resolved` is startup-only.
 	cfgResolver *hostctx.ConfigResolver
+	localAuth   LocalAuthPolicy
+}
+
+// LocalAuthPolicy reports whether the calling context has turned off password sign-in.
+type LocalAuthPolicy interface {
+	LocalAuthDisabled(ctx context.Context) bool
+}
+
+// WithLocalAuthPolicy wires the per-context "disable local authentication" setting.
+func (h *AuthHandler) WithLocalAuthPolicy(p LocalAuthPolicy) *AuthHandler {
+	h.localAuth = p
+	return h
+}
+
+func (h *AuthHandler) localAuthDisabled(ctx context.Context) bool {
+	if h.cfg != nil && h.cfg.OidcEnabled && h.cfg.OidcDisableLocalAuth {
+		return true
+	}
+	return h.localAuth != nil && h.localAuth.LocalAuthDisabled(ctx)
 }
 
 // dummyPasswordHash must stay a valid hash at the cost used for real passwords,
@@ -176,7 +195,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if h.log != nil {
 		h.log.Debug("auth request", "method", r.Method, "path", r.URL.Path)
 	}
-	if h.cfg.OidcEnabled && h.cfg.OidcDisableLocalAuth {
+	if h.localAuthDisabled(r.Context()) {
 		h.logLoginFailure(r, "local_auth_disabled", "", "")
 		Error(w, http.StatusForbidden, "Local authentication is disabled. Please use SSO.")
 		return
@@ -396,6 +415,11 @@ type VerifyTfaRequest struct {
 
 // VerifyTfa handles POST /auth/verify-tfa.
 func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
+	if h.localAuthDisabled(r.Context()) {
+		h.logLoginFailure(r, "local_auth_disabled", "", "")
+		Error(w, http.StatusForbidden, "Local authentication is disabled. Please use SSO.")
+		return
+	}
 	var req VerifyTfaRequest
 	if err := decodeJSON(r, &req); err != nil {
 		Error(w, http.StatusBadRequest, "Invalid request body")
@@ -1705,6 +1729,10 @@ func (h *AuthHandler) SetupAdmin(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	if h.log != nil {
 		h.log.Debug("auth request", "method", r.Method, "path", r.URL.Path)
+	}
+	if h.localAuthDisabled(r.Context()) {
+		Error(w, http.StatusForbidden, "Local authentication is disabled. Please use SSO.")
+		return
 	}
 	s, err := h.settings.GetFirst(r.Context())
 	if err != nil || s == nil || !s.SignupEnabled {

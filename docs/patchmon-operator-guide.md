@@ -2377,7 +2377,7 @@ The `reason` field distinguishes the failure:
 | `missing_credentials` | The request omitted the username or the password |
 | `username_too_long` | The submitted username exceeded 254 characters and was rejected before any lookup |
 | `malformed_request` | The request body was not valid JSON |
-| `local_auth_disabled` | A password sign-in was attempted while the instance is SSO-only |
+| `local_auth_disabled` | A password sign-in or two-factor step was attempted while password sign-in is disabled |
 | `invalid_tfa_code` | The password was accepted but the two-factor code was wrong |
 | `tfa_locked_out` | Refused on arrival because a two-factor lockout from earlier wrong codes is still in force |
 | `tfa_token_malformed` | The submitted two-factor code was not six alphanumeric characters |
@@ -2423,7 +2423,7 @@ OpenID Connect configuration for Single Sign-On. When `OIDC_ENABLED=true`, the f
 |----------|---------|----------|-------------|
 | `OIDC_AUTO_CREATE_USERS` | `false` | No | When `true`, a PatchMon account is automatically created the first time an OIDC user logs in. When `false`, an administrator must create the account first. |
 | `OIDC_DEFAULT_ROLE` | `user` | No | Role assigned to automatically created OIDC users when no group mapping matches. Accepted values: `superadmin`, `admin`, `host_manager`, `user`, `readonly`. |
-| `OIDC_DISABLE_LOCAL_AUTH` | `false` | No | When `true`, local username/password authentication is disabled. Only OIDC login is accepted. Useful when enforcing SSO organisation-wide. |
+| `OIDC_DISABLE_LOCAL_AUTH` | `false` | No | When `true`, local username/password authentication is disabled. Only OIDC login is accepted. Useful when enforcing SSO organisation-wide. The server refuses password sign-in, the two-factor step and self-service signup with `403`. The **Disable local auth** toggle in **Settings → OIDC / SSO** is enforced the same way when OIDC is configured in the UI. |
 
 #### Login Page
 
@@ -2791,7 +2791,7 @@ OIDC_SYNC_ROLES=false
 | `OIDC_SCOPES` | `openid email profile groups` | Space-separated scopes to request. Include `groups` for role mapping |
 | `OIDC_AUTO_CREATE_USERS` | `false` | When `true`, automatically creates a PatchMon account on first OIDC login. When `false`, the user must already exist in PatchMon (matched by email) |
 | `OIDC_DEFAULT_ROLE` | `user` | Role assigned when a user doesn't match any group mapping |
-| `OIDC_DISABLE_LOCAL_AUTH` | `false` | When `true`, hides the username/password fields and only shows the SSO button |
+| `OIDC_DISABLE_LOCAL_AUTH` | `false` | When `true`, hides the username/password fields, only shows the SSO button, and the server refuses password sign-in |
 | `OIDC_BUTTON_TEXT` | `Login with SSO` | Label shown on the SSO login button |
 | `OIDC_SESSION_TTL` | `600` | Seconds the OIDC login state is valid. If the user takes longer than this at the IdP, the session expires and they must try again |
 | `OIDC_POST_LOGOUT_URI` | `<CORS_ORIGIN>/login` | Where to redirect after a logout. Defaults to the PatchMon login page |
@@ -3486,7 +3486,9 @@ Once you've confirmed at least one OIDC user has Admin or Super Admin:
 
 The login page will now only show the **Sign in with Microsoft** button. Local username/password fields are hidden.
 
-> **Safety:** PatchMon only enforces this flag if OIDC is **also** enabled *and* successfully initialised. If OIDC breaks for any reason, local login is automatically re-enabled so you're not locked out.
+The server enforces this too: password sign-in, the two-factor step and self-service signup are refused with `403 Local authentication is disabled. Please use SSO.`
+
+> **Safety:** PatchMon only enforces this flag while OIDC is **also** enabled and fully configured (issuer URL, client ID, client secret and redirect URI all set). If any of those is missing, or the stored client secret cannot be decrypted, password login comes back automatically. An outage at your identity provider does **not** re-enable password login, because the configuration is still complete. If that locks you out, see [Re-enable Local Login When OIDC is Broken](#workaround-re-enable-local-login-when-oidc-is-broken).
 
 ---
 
@@ -6916,6 +6918,14 @@ WHERE username = 'admin';
 The user can re-enrol TFA after logging in.
 
 #### Workaround: Re-enable Local Login When OIDC is Broken
+
+If you turned on **Disable local auth** in **Settings → OIDC / SSO**, clear it in the database:
+
+```sql
+UPDATE settings SET oidc_disable_local_auth = false;
+```
+
+then restart the server (`docker compose restart server`) so the cached SSO settings are dropped straight away. Without a restart the change takes effect within ten minutes.
 
 If `OIDC_DISABLE_LOCAL_AUTH=true` is blocking you, edit `.env`:
 

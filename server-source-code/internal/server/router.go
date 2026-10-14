@@ -149,6 +149,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			}
 		}
 		oidcHandler = handler.NewOidcHandler(cfg, resolvedPtr, resolved, oidcClient, valid, store.NewOidcSessionStore(redisResolver), usersStore, authHandler, settingsStore, enc, log)
+		authHandler.WithLocalAuthPolicy(oidcHandler)
 	}
 	var discordHandler *handler.DiscordHandler
 	if rdb != nil {
