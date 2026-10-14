@@ -79,7 +79,10 @@ func runZypperPatch(io zypperPatchIO, patchType string, packageNames []string, d
 	}
 
 	if out, err := io.run(packages.ZypperRefreshArgs()...); err != nil {
-		return zypperStepError("zypper refresh", out, err)
+		if packages.ZypperExitCode(err) == packages.ZypperExitLocked {
+			return zypperStepError("zypper refresh", out, err)
+		}
+		io.note("zypper could not refresh every repository; continuing with cached metadata.")
 	}
 
 	locks, err := io.locks()

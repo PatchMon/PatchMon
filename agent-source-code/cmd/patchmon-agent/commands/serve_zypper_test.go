@@ -257,6 +257,29 @@ func TestZypperUnresolvedProblemAfterStackUpdate(t *testing.T) {
 	}
 }
 
+func TestZypperRefreshFailure(t *testing.T) {
+	plan := zypperFixture(t, "zypper-leap155-patch-security-dry.xml")
+	f := &fakeZypper{
+		t:     t,
+		plans: []zypperResponse{{plan, 0}},
+		runs:  map[string][]zypperResponse{"--non-interactive refresh": {{"", 4}}},
+	}
+	if err := runZypperPatch(f.io(), "patch_all", nil, false); err != nil {
+		t.Fatalf("an unreachable repository must not stop the run: %v", err)
+	}
+	if !f.noted("continuing with cached metadata") || f.count(" patch --with-update") != 2 {
+		t.Errorf("calls %q notes %q", f.calls, f.notes)
+	}
+
+	f = &fakeZypper{t: t, runs: map[string][]zypperResponse{"--non-interactive refresh": {{"", 7}}}}
+	if err := runZypperPatch(f.io(), "patch_all", nil, false); err == nil || !strings.Contains(err.Error(), "zypp lock") {
+		t.Errorf("a held zypp lock must fail the run: %v", err)
+	}
+	if len(f.calls) != 1 {
+		t.Errorf("calls %q", f.calls)
+	}
+}
+
 func TestZypperNothingToDo(t *testing.T) {
 	f := &fakeZypper{t: t, plans: []zypperResponse{{zypperNothingXML, 0}}}
 	if err := runZypperPatch(f.io(), "patch_all", nil, false); err != nil {

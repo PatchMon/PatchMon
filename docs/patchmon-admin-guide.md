@@ -1587,7 +1587,7 @@ openSUSE and SLES hosts report inventory and are patched with `zypper`, with age
 
 **Every run, real or dry, plans before it changes anything:**
 
-1. `zypper refresh` refreshes the repositories.
+1. `zypper refresh` refreshes the repositories. If a repository cannot be reached, the run says so and carries on with the metadata zypper already has, so one unreachable repository does not block patching.
 2. The agent asks zypper for the plan with `--dry-run` and prints it in the run output. It refuses the run, before changing anything, if the plan would **downgrade** a package or change its **architecture** or **vendor**. Removals are allowed, because an update can obsolete or replace a package, and each one is named in the run output: `Removing libcurl-mini4: zypper's plan removes it, usually because an update obsoletes or replaces it.` A dry run says `Would remove` instead.
 3. A real run applies the plan.
 
