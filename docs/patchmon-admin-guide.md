@@ -5226,7 +5226,7 @@ The reset:
 
 On their next sign-in the user enters their password and is taken straight to a **Set up two-factor authentication** screen. They cannot reach any other page, and the server refuses every other API call from that session, until they scan the new QR code, enter a code and save their new backup codes. They can also sign out from that screen.
 
-If you set a temporary password, the user's old password stops working straight away. When they sign in with the temporary password they first see a **Choose a new password** screen, and must replace it with a different password before the 2FA setup screen appears. Until then the server refuses every API call from that session except changing the password, reading their own profile and signing out. Only this checkbox forces a password change; the separate **Reset Password** action works as before.
+If you set a temporary password, the user's old password stops working straight away. When they sign in with the temporary password they first see a **Choose a new password** screen, and must replace it before the 2FA setup screen appears. Neither the temporary password nor the password they had before the reset is accepted as the new one. Until then the server refuses every API call from that session except changing the password, reading their own profile and signing out. Only this checkbox forces a password change; the separate **Reset Password** action works as before.
 
 Accounts linked to an OIDC / SSO provider, and accounts without a local password, are not forced to re-enrol, because their MFA is managed by the identity provider. The reset still clears any local 2FA they had. If an account is linked to an identity provider after a reset, the requirement lapses for the same reason.
 

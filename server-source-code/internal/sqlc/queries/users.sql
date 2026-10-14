@@ -62,10 +62,10 @@ SELECT * FROM users WHERE is_active = true ORDER BY username;
 DELETE FROM users WHERE id = $1;
 
 -- name: UpdatePassword :exec
-UPDATE users SET password_hash = $1, password_change_required = false, updated_at = NOW() WHERE id = $2;
+UPDATE users SET password_hash = $1, password_change_required = false, previous_password_hash = NULL, updated_at = NOW() WHERE id = $2;
 
 -- name: SetTemporaryPassword :exec
-UPDATE users SET password_hash = $2, password_change_required = true, updated_at = NOW() WHERE id = $1;
+UPDATE users SET previous_password_hash = password_hash, password_hash = $2, password_change_required = true, updated_at = NOW() WHERE id = $1;
 
 -- name: UpdateLastLogin :exec
 UPDATE users SET last_login = $1 WHERE id = $2;

@@ -198,7 +198,8 @@ CREATE TABLE IF NOT EXISTS users (
     newsletter_subscribed BOOLEAN NOT NULL DEFAULT false,
     newsletter_subscribed_at TIMESTAMP(3),
     tfa_enrolment_required BOOLEAN NOT NULL DEFAULT false,
-    password_change_required BOOLEAN NOT NULL DEFAULT false
+    password_change_required BOOLEAN NOT NULL DEFAULT false,
+    previous_password_hash TEXT
 );
 
 -- hosts

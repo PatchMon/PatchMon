@@ -175,13 +175,19 @@ func TestChangePasswordClearsForcedChange(t *testing.T) {
 	if got := change("Temp-Passw0rd!x", "Temp-Passw0rd!x"); got != http.StatusBadRequest {
 		t.Fatalf("reusing the temporary password: got %d", got)
 	}
+	if x.reload(ctx, u.ID).PreviousPasswordHash == nil {
+		t.Fatal("pre-reset password hash not kept")
+	}
+	if got := change("Temp-Passw0rd!x", tfaResetTestPassword); got != http.StatusBadRequest {
+		t.Fatalf("returning to the pre-reset password: got %d", got)
+	}
 	if !x.reload(ctx, u.ID).PasswordChangeRequired {
 		t.Fatal("flag cleared by a refused change")
 	}
 	if got := change("Temp-Passw0rd!x", "Brand-New-Passw0rd!"); got != http.StatusOK {
 		t.Fatalf("change: got %d", got)
 	}
-	if x.reload(ctx, u.ID).PasswordChangeRequired {
-		t.Fatal("flag still set after the change")
+	if after := x.reload(ctx, u.ID); after.PasswordChangeRequired || after.PreviousPasswordHash != nil {
+		t.Fatal("flag or previous hash still set after the change")
 	}
 }

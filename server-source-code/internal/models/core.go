@@ -32,6 +32,7 @@ type User struct {
 	NewsletterSubscribedAt *time.Time `db:"newsletter_subscribed_at"`
 	TfaEnrolmentRequired   bool       `db:"tfa_enrolment_required"`
 	PasswordChangeRequired bool       `db:"password_change_required"`
+	PreviousPasswordHash   *string    `db:"previous_password_hash"`
 }
 
 // PasswordChangePending mirrors GetSessionAuthState.

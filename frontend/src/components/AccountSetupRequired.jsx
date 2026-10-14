@@ -67,6 +67,10 @@ const PasswordStep = ({ onChanged }) => {
 				"current-password",
 			)}
 			{field(newId, "New password", next, setNext, "new-password")}
+			<p className="-mt-2 text-xs text-secondary-500 dark:text-secondary-300">
+				Choose a password you haven't used before. Your previous password and
+				the temporary one are not accepted.
+			</p>
 			{field(
 				confirmId,
 				"Confirm new password",

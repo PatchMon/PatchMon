@@ -1309,6 +1309,11 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "New password must be different from the current password")
 		return
 	}
+	if user.PasswordChangeRequired && user.PreviousPasswordHash != nil &&
+		bcrypt.CompareHashAndPassword([]byte(strings.TrimSpace(*user.PreviousPasswordHash)), []byte(req.NewPassword)) == nil {
+		Error(w, http.StatusBadRequest, "Choose a password you haven't used before")
+		return
+	}
 	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), 12)
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to hash password")
