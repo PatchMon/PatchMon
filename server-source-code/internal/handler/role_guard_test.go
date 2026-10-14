@@ -391,7 +391,8 @@ func TestRoleChangeRequiresOutranking(t *testing.T) {
 	}
 	admin1, admin2, admin3 := mk("rc_admin1", "admin"), mk("rc_admin2", "admin"), mk("rc_admin3", "admin")
 	plain, ro := mk("rc_user", "user"), mk("rc_ro", "readonly")
-	help2 := mk("rc_help2", "rc_helpdesk")
+	help1, help2 := mk("rc_help1", "rc_helpdesk"), mk("rc_help2", "rc_helpdesk")
+	super1, demoted, plain2 := mk("rc_super", "superadmin"), mk("rc_demoted", "user"), mk("rc_user2", "user")
 
 	update := func(userID, callerID, callerRole, body string) int {
 		req := httptest.NewRequest(http.MethodPut, "/auth/admin/users/"+userID, strings.NewReader(body))
@@ -420,19 +421,20 @@ func TestRoleChangeRequiresOutranking(t *testing.T) {
 		{"admin cannot demote a peer admin", update(admin2, admin1, "admin", `{"role":"user"}`), http.StatusForbidden},
 		{"admin may still edit a peer admin's name", update(admin2, admin1, "admin", `{"first_name":"x"}`), http.StatusOK},
 		{"admin still cannot send the admin role, even unchanged", update(admin2, admin1, "admin", `{"role":"admin","first_name":"y"}`), http.StatusForbidden},
+		{"a demoted admin's stale token cannot change roles", update(plain2, demoted, "admin", `{"role":"readonly"}`), http.StatusForbidden},
 		{"admin changes a user's role", update(plain, admin1, "admin", `{"role":"readonly"}`), http.StatusOK},
 		{"admin promotes readonly to host_manager", update(ro, admin1, "admin", `{"role":"host_manager"}`), http.StatusOK},
 		{"admin still cannot assign admin", update(ro, admin1, "admin", `{"role":"admin"}`), http.StatusForbidden},
-		{"custom role cannot change a peer with the same permissions", update(help2, "someone", "rc_helpdesk", `{"role":"readonly"}`), http.StatusForbidden},
+		{"custom role cannot change a peer with the same permissions", update(help2, help1, "rc_helpdesk", `{"role":"readonly"}`), http.StatusForbidden},
 		{"nobody changes their own role", update(admin1, admin1, "admin", `{"role":"user"}`), http.StatusBadRequest},
-		{"superadmin changes an admin's role", update(admin3, "super", "superadmin", `{"role":"user"}`), http.StatusOK},
+		{"superadmin changes an admin's role", update(admin3, super1, "superadmin", `{"role":"user"}`), http.StatusOK},
 	}
 	for _, c := range cases {
 		if c.got != c.want {
 			t.Errorf("%s: got %d, want %d", c.name, c.got, c.want)
 		}
 	}
-	for id, want := range map[string]string{admin2: "admin", plain: "readonly", ro: "host_manager", help2: "rc_helpdesk", admin1: "admin", admin3: "user"} {
+	for id, want := range map[string]string{admin2: "admin", plain: "readonly", ro: "host_manager", help2: "rc_helpdesk", admin1: "admin", admin3: "user", plain2: "user"} {
 		if got := roleOf(id); got != want {
 			t.Errorf("user %s role = %q, want %q", id, got, want)
 		}

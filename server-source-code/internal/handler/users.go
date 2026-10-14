@@ -312,18 +312,23 @@ func (h *UsersHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.Role != nil {
 		trimmed := strings.TrimSpace(*req.Role)
 		req.Role = &trimmed
+		currentUserID, _ := r.Context().Value(middleware.UserIDKey).(string)
+		// The token's role can be stale right after a demotion.
+		assignerRole := ""
+		if caller, err := h.users.GetByID(r.Context(), currentUserID); err == nil && caller != nil && caller.IsActive {
+			assignerRole = caller.Role
+		}
 		// Enforce role escalation protection.
-		if !h.canAssignRole(r, callerRole, *req.Role) {
+		if !h.canAssignRole(r, assignerRole, *req.Role) {
 			Error(w, http.StatusForbidden, "You do not have permission to assign the role: "+*req.Role)
 			return
 		}
 		// Prevent demoting yourself.
-		currentUserID, _ := r.Context().Value(middleware.UserIDKey).(string)
 		if currentUserID != "" && userID == currentUserID && *req.Role != existing.Role {
 			Error(w, http.StatusBadRequest, "Cannot change your own role")
 			return
 		}
-		if *req.Role != existing.Role && !roleOutranks(r.Context(), h.permissions, callerRole, existing.Role) {
+		if *req.Role != existing.Role && !roleOutranks(r.Context(), h.permissions, assignerRole, existing.Role) {
 			Error(w, http.StatusForbidden, "Cannot change the role of a user whose role is equal to or above yours")
 			return
 		}
