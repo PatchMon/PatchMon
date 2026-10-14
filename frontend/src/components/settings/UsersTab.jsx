@@ -6,6 +6,7 @@ import {
 	Info,
 	Key,
 	Mail,
+	RefreshCw,
 	Save,
 	Shield,
 	Trash2,
@@ -1092,6 +1093,8 @@ const EditUserModal = ({
 			title: "Unlink SSO identity",
 			subtitle: null,
 			message: `Unlink "${user.username}" from their SSO identity? Their next SSO login links the account again, matched by the verified email address your identity provider sends.`,
+			warning:
+				"If Trust unverified email is on in Settings > OIDC, whoever next signs in with this email address claims the account, whether or not the provider has verified it. Ask the user to sign in straight after you unlink.",
 			confirmLabel: "Unlink SSO identity",
 		});
 		if (!confirmed) return;
@@ -1254,8 +1257,11 @@ const EditUserModal = ({
 								type="button"
 								onClick={handleUnlinkOidc}
 								disabled={isUnlinkingOidc}
-								className="btn-danger mt-3 min-h-[44px] md:min-h-0"
+								className="btn-danger mt-3 inline-flex items-center gap-2 min-h-[44px] md:min-h-0"
 							>
+								{isUnlinkingOidc && (
+									<RefreshCw className="h-4 w-4 animate-spin" />
+								)}
 								{isUnlinkingOidc ? "Unlinking..." : "Unlink SSO identity"}
 							</button>
 						</div>

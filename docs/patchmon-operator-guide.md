@@ -3130,7 +3130,7 @@ This is the generic error for any failure during the token exchange, after your 
 - The **Redirect URI** in your IdP does not match `OIDC_REDIRECT_URI` exactly (including trailing slashes)
 - Cookies are being blocked (OIDC uses httpOnly cookies for session state)
 - Your IdP does not support PKCE (PatchMon uses the S256 code challenge)
-- **The log says `oidc: UserInfo response has no sub claim` or `UserInfo sub does not match id_token sub`.** OpenID Connect requires the IdP's UserInfo endpoint to return the same `sub` as the ID token, and from 2.1.3 PatchMon refuses the login when it is missing or different. Check the IdP's UserInfo mapping
+- **The log says `oidc: UserInfo response has no sub claim` or `UserInfo sub does not match id_token sub`.** OpenID Connect requires the IdP's UserInfo endpoint to return the same `sub` as the ID token. PatchMon has always refused a login where the two differ, and from 2.1.4 it also refuses one where the UserInfo `sub` is missing. Check the IdP's UserInfo mapping
 - **The log says `oidc: provider response exceeds size limit`.** A response from the IdP (discovery document, signing keys, token or UserInfo) was larger than 2 MiB. Usually an oversized groups claim or a proxy returning an error page in place of the IdP. Trim the claims the IdP sends
 
 #### "Unable to sign in with this account" After a Successful IdP Login
@@ -3164,7 +3164,9 @@ If you are sure the new identity is the same person, unlink the old one:
 2. Under **SSO identity**, click **Unlink SSO identity** and confirm
 3. Ask the user to sign in with SSO again. PatchMon links the account to the new identity, keeping its role and settings
 
-Unlinking follows the same rules as other user changes: you cannot unlink someone whose role ranks above yours. The re-link still requires the IdP to assert a verified email, as described in [The verified email requirement](#the-verified-email-requirement).
+You can only unlink users whose role ranks strictly below yours, and never your own account. A superadmin can unlink anyone except themselves. The rule is stricter than for other user changes because, where SSO is the only way to sign in, unlinking an account and changing its email address hands it to whoever owns the new address.
+
+The re-link normally requires the IdP to assert a verified email, as described in [The verified email requirement](#the-verified-email-requirement). **If you have turned on `OIDC_TRUST_UNVERIFIED_EMAIL`, that check is skipped:** an unlinked account goes to the first identity at your IdP that claims its email address, verified or not. Ask the user to sign in straight after you unlink, and check the server log shows them re-linked. While that setting is on, PatchMon refuses to unlink a superadmin; turn it off first.
 
 **If the locked-out account is the only superadmin**, and nobody can sign in to reach **Settings > Users**, clear the link from the database instead. With the stock Docker Compose stack:
 
@@ -3173,7 +3175,7 @@ docker compose exec database psql -U patchmon_user -d patchmon_db \
   -c "UPDATE users SET oidc_sub = NULL, oidc_provider = NULL WHERE LOWER(email) = LOWER('admin@example.com');"
 ```
 
-Replace the address with the account's email, check that it reports `UPDATE 1`, then sign in with SSO again.
+Replace the address with the account's email, check that it reports `UPDATE 1`, then sign in with SSO again straight away. If `OIDC_TRUST_UNVERIFIED_EMAIL` is on, turn it off before running this, for the reason above.
 
 #### "Failed to reach the OIDC provider" When Clicking the SSO Button
 

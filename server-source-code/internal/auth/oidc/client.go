@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
@@ -21,6 +22,7 @@ import (
 const (
 	maxMicrosoftGraphPhotoBytes = 1 << 20
 	maxProviderResponseBytes    = 2 << 20
+	providerRequestTimeout      = 30 * time.Second
 )
 
 var errProviderResponseTooLarge = errors.New("oidc: provider response exceeds size limit")
@@ -139,6 +141,9 @@ func withCappedHTTPClient(ctx context.Context) context.Context {
 	}
 	capped := *base
 	capped.Transport = &cappedTransport{base: base.Transport}
+	if capped.Timeout == 0 {
+		capped.Timeout = providerRequestTimeout
+	}
 	return oidc.ClientContext(ctx, &capped)
 }
 

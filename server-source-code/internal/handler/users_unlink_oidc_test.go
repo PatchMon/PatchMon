@@ -21,7 +21,8 @@ func TestUnlinkOidcAgainstPostgres(t *testing.T) {
 	ctx := context.Background()
 	d := pgtest.Open(t)
 	users := store.NewUsersStore(d)
-	h := &UsersHandler{users: users, permissions: store.NewPermissionsStore(d)}
+	trust := false
+	h := &UsersHandler{users: users, trustUnverifiedEmail: func(context.Context) bool { return trust }}
 	oidcHandler := &OidcHandler{
 		cfg:   &config.Config{},
 		users: users,
@@ -42,16 +43,20 @@ func TestUnlinkOidcAgainstPostgres(t *testing.T) {
 		}
 		return u, sub
 	}
-	unlink := func(userID, callerRole string) int {
+	unlinkAs := func(userID, callerRole, callerID string) int {
 		t.Helper()
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("userId", userID)
 		reqCtx := context.WithValue(ctx, chi.RouteCtxKey, rctx)
 		reqCtx = context.WithValue(reqCtx, middleware.UserRoleKey, callerRole)
-		reqCtx = context.WithValue(reqCtx, middleware.UserIDKey, "caller")
+		reqCtx = context.WithValue(reqCtx, middleware.UserIDKey, callerID)
 		rec := httptest.NewRecorder()
 		h.UnlinkOidc(rec, httptest.NewRequest(http.MethodPost, "/", nil).WithContext(reqCtx))
 		return rec.Code
+	}
+	unlink := func(userID, callerRole string) int {
+		t.Helper()
+		return unlinkAs(userID, callerRole, "caller")
 	}
 	storedSub := func(id string) *string {
 		t.Helper()
@@ -96,26 +101,79 @@ func TestUnlinkOidcAgainstPostgres(t *testing.T) {
 	})
 
 	for _, tc := range []struct {
-		name, target, caller string
+		target, caller string
+		want           int
 	}{
-		{"lower rank cannot unlink a higher rank", "admin", "host_manager"},
-		{"admin without can_manage_superusers cannot unlink a superadmin", "superadmin", "admin"},
+		{"admin", "host_manager", http.StatusForbidden},
+		{"admin", "admin", http.StatusForbidden},
+		{"host_manager", "host_manager", http.StatusForbidden},
+		{"superadmin", "admin", http.StatusForbidden},
+		{"user", "admin", http.StatusOK},
+		{"admin", "superadmin", http.StatusOK},
+		{"superadmin", "superadmin", http.StatusOK},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
+		t.Run(tc.caller+" unlinking "+tc.target, func(t *testing.T) {
 			u, sub := createLinked(tc.target)
-			if code := unlink(u.ID, tc.caller); code != http.StatusForbidden {
-				t.Fatalf("status %d, want 403", code)
+			if code := unlink(u.ID, tc.caller); code != tc.want {
+				t.Fatalf("status %d, want %d", code, tc.want)
 			}
-			if s := storedSub(u.ID); s == nil || *s != sub {
-				t.Fatal("refused unlink changed the stored subject")
+			if tc.want != http.StatusOK {
+				if s := storedSub(u.ID); s == nil || *s != sub {
+					t.Fatal("refused unlink changed the stored subject")
+				}
 			}
 		})
 	}
 
-	t.Run("superadmin can unlink a superadmin", func(t *testing.T) {
-		u, _ := createLinked("superadmin")
+	t.Run("own identity cannot be unlinked", func(t *testing.T) {
+		u, sub := createLinked("superadmin")
+		if code := unlinkAs(u.ID, "superadmin", u.ID); code != http.StatusBadRequest {
+			t.Fatalf("status %d, want 400", code)
+		}
+		if s := storedSub(u.ID); s == nil || *s != sub {
+			t.Fatal("refused unlink changed the stored subject")
+		}
+	})
+
+	t.Run("trusting unverified email blocks unlinking a superadmin only", func(t *testing.T) {
+		trust = true
+		t.Cleanup(func() { trust = false })
+		super, sub := createLinked("superadmin")
+		if code := unlink(super.ID, "superadmin"); code != http.StatusBadRequest {
+			t.Fatalf("superadmin: status %d, want 400", code)
+		}
+		if s := storedSub(super.ID); s == nil || *s != sub {
+			t.Fatal("refused unlink changed the stored subject")
+		}
+		u, _ := createLinked("user")
 		if code := unlink(u.ID, "superadmin"); code != http.StatusOK {
-			t.Fatalf("status %d", code)
+			t.Fatalf("user: status %d, want 200", code)
+		}
+	})
+
+	t.Run("trust setting is read from the context's settings", func(t *testing.T) {
+		for _, k := range []string{"OIDC_ISSUER_URL", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "OIDC_REDIRECT_URI", "OIDC_SCOPES", "OIDC_ENABLED"} {
+			t.Setenv(k, "")
+		}
+		settings := store.NewSettingsStore(d)
+		row, err := settings.GetFirst(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		previous := row.OidcTrustUnverifiedEmail
+		t.Cleanup(func() {
+			row.OidcTrustUnverifiedEmail = previous
+			_ = settings.Update(ctx, row)
+		})
+		resolving := &UsersHandler{users: users, cfg: &config.Config{}, settings: settings}
+		for _, on := range []bool{false, true} {
+			row.OidcTrustUnverifiedEmail = on
+			if err := settings.Update(ctx, row); err != nil {
+				t.Fatal(err)
+			}
+			if got := resolving.oidcTrustUnverifiedEmail(ctx); got != on {
+				t.Fatalf("setting %v resolved as %v", on, got)
+			}
 		}
 	})
 

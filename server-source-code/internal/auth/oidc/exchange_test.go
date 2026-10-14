@@ -24,6 +24,7 @@ type fakeOP struct {
 	userInfo     func(w http.ResponseWriter)
 	jwksPadding  int
 	discoveryPad int
+	tokenPad     int
 }
 
 func newFakeOP(t *testing.T, sub string) *fakeOP {
@@ -61,6 +62,7 @@ func (op *fakeOP) serve(w http.ResponseWriter, r *http.Request) {
 			"e": b64(big.NewInt(int64(op.key.E)).Bytes()),
 		}}})
 	case "/token":
+		_, _ = w.Write([]byte(strings.Repeat(" ", op.tokenPad)))
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"access_token": "at", "token_type": "Bearer", "expires_in": 300,
 			"id_token": op.idToken(),
