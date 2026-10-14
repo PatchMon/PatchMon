@@ -220,7 +220,7 @@ The Roles editor is where custom roles are authored. A role is a named bundle of
 - `can_manage_hosts`, `can_manage_users`, `can_manage_settings`, `can_manage_alerts`, `can_manage_notifications`, `can_manage_compliance`, `can_manage_patching`, `can_manage_automation`, `can_manage_docker`
 - `can_use_remote_access` (SSH terminal and RDP)
 
-The built-in roles (`superadmin`, `admin`, `user`, `readonly`) are immutable; the editor lets you create and edit additional roles alongside them and assign any user to any custom role.
+The `superadmin`, `admin` and `user` roles cannot be edited. The other two built-in roles, `host_manager` and `readonly`, can be edited like custom roles but cannot be deleted. The editor lets you create and edit additional roles alongside them and assign users to them, within the limits described under role escalation protection below.
 
 #### My Profile
 
@@ -4966,8 +4966,8 @@ Restrictions:
 
 ### How Permissions Are Evaluated
 
-- **Admin and Super Admin** always have every permission, even if the `role_permissions` table says otherwise. The middleware short-circuits their permission checks. This is a safety net: if someone mis-edits the `admin` row (which shouldn't be possible via the UI, but could happen via direct database access), admins don't get locked out.
-- **Every other role** (built-in or custom) has its permissions read from the database at each request. Changes made in **Settings → Roles** take effect on the user's next API call; no restart required.
+- **Every role, including Admin and Super Admin,** has its permissions read from the `role_permissions` table on each request; there is no built-in bypass. By default `superadmin` holds every permission and `admin` holds every permission except `can_manage_superusers`. Their rows cannot be edited from the UI, so a change to them can only come from direct database access.
+- Changes made in **Settings → Roles** take effect on the user's next API call; no restart required.
 - **Role hierarchy for user management** is based on permissions, not on role names. One role is at or below yours when every permission it grants is also granted to your role. A `superadmin` is above every other role.
 
 You can only assign, modify, delete, or reset the password of users whose role is at or below yours, and you can only create, edit or delete roles that are at or below yours. This is enforced separately from the permission checks. A custom role granted `can_manage_users` therefore cannot touch an account whose role has, for example, `can_manage_settings` unless it holds `can_manage_settings` too.
