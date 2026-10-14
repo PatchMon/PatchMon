@@ -1386,7 +1386,7 @@ One line means the volume is mounted correctly. Two lines means a scratch direct
 
 #### Optional: in-browser RDP
 
-The server reaches Windows hosts over RDP through `guacd`. It is only needed for that feature. `guacd` must run as a second container in the `patchmon-server` pod, because the server hands it a per-session port on `127.0.0.1`; a separate `guacd` Deployment and Service cannot work. The `args` bind `guacd` to the pod's loopback, so other pods cannot reach it on the pod IP. Leave `GUACD_ADDRESS` unset (it defaults to `127.0.0.1:4822`).
+The server reaches Windows hosts over RDP through `guacd`. It is only needed for that feature. `guacd` must run as a second container in the `patchmon-server` pod, because the server hands it a per-session port on `127.0.0.1`; a separate `guacd` Deployment and Service cannot work. The `args` bind `guacd` to the pod's loopback, so other pods cannot reach it on the pod IP. There is deliberately no readiness probe on `guacd`: a pod is only Ready when all its containers are, so a guacd readiness failure would take the whole PatchMon server out of its Service. The liveness probe restarts only the `guacd` container. Leave `GUACD_ADDRESS` unset (it defaults to `127.0.0.1:4822`).
 
 Add this container to the `containers:` list of the `patchmon-server` Deployment, after the `server` container:
 
@@ -1399,11 +1399,11 @@ Add this container to the `containers:` list of the `patchmon-server` Deployment
               mountPath: /tmp
             - name: guacd-home
               mountPath: /home/guacd
-          readinessProbe:
-            tcpSocket:
-              port: 4822
+          livenessProbe:
+            exec:
+              command: ["nc", "-z", "127.0.0.1", "4822"]
             initialDelaySeconds: 10
-            periodSeconds: 10
+            periodSeconds: 30
           resources:
             requests:
               cpu: 50m
