@@ -1047,10 +1047,7 @@ func wuaErrorHint(msg string) string {
 	}
 }
 
-// getWindowsUpdates queries installed KB patches and pending Windows updates.
-// Uses Get-HotFix for installed; Microsoft.Update.Session for pending (may fail in Session 0).
-func (m *WindowsManager) getWindowsUpdates() ([]models.Package, wuSearch) {
-	psScript := `
+const windowsUpdatesScript = `
 $ErrorActionPreference = "SilentlyContinue"
 $result = @()
 
@@ -1157,7 +1154,11 @@ if ($comFailed) {
 
 $result | ConvertTo-Json -Compress -Depth 4
 `
-	cmd, cancel := boundedCommand(networkCollectorTimeout, winexec.PowerShellPath(), "-NoProfile", "-NonInteractive", "-Command", winexec.Script(wuaPendingScript+psScript))
+
+// getWindowsUpdates queries installed KB patches and pending Windows updates.
+// Uses Get-HotFix for installed; Microsoft.Update.Session for pending (may fail in Session 0).
+func (m *WindowsManager) getWindowsUpdates() ([]models.Package, wuSearch) {
+	cmd, cancel := boundedCommand(networkCollectorTimeout, winexec.PowerShellPath(), "-NoProfile", "-NonInteractive", "-Command", winexec.Script(wuaPendingScript+windowsUpdatesScript))
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {

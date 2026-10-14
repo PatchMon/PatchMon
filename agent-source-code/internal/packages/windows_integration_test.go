@@ -154,6 +154,7 @@ func TestWindowsUpdatesCollectorLive(t *testing.T) {
 		search wuSearch
 	}
 	done := make(chan collected, 1)
+	start := time.Now()
 	go func() {
 		pkgs, search := newTestWindowsManager().getWindowsUpdates()
 		done <- collected{pkgs, search}
@@ -169,8 +170,11 @@ func TestWindowsUpdatesCollectorLive(t *testing.T) {
 			if c.search.detail == "" {
 				t.Fatal("a failed search must say why")
 			}
-			t.Logf("Windows Update search did not succeed on this runner (%s); reports keep the server's rows", c.search.detail)
-			return
+			requireSearchTimedOut(t, time.Since(start), c.search.detail)
+			t.Skipf("Windows Update search timed out on this runner (%s); reports keep the server's rows", c.search.detail)
+		}
+		if c.search.status == wuSearchCOMFailed {
+			t.Logf("Windows Update COM search failed (%s); checking the installed updates it still listed", c.search.detail)
 		}
 		assertPackagesWellFormed(t, pkgs)
 		missingGUID := 0
@@ -197,6 +201,15 @@ func TestWindowsUpdatesCollectorLive(t *testing.T) {
 	}
 }
 
+// requireSearchTimedOut fails unless a failed search ran into its time limit: failing well
+// before it means the script or its output is broken, not that Windows Update is slow.
+func requireSearchTimedOut(t *testing.T, elapsed time.Duration, detail string) {
+	t.Helper()
+	if elapsed < networkCollectorTimeout-30*time.Second {
+		t.Fatalf("the Windows Update search failed after %s, long before its %s limit, so the script is broken: %s", elapsed.Round(time.Second), networkCollectorTimeout, detail)
+	}
+}
+
 func TestWSUSCheckLive(t *testing.T) {
 	requireWindowsIntegration(t)
 
@@ -207,6 +220,7 @@ func TestWSUSCheckLive(t *testing.T) {
 func TestGetPackagesLive(t *testing.T) {
 	requireWindowsIntegration(t)
 
+	start := time.Now()
 	pkgs, omitted := newTestWindowsManager().GetPackages()
 	if omitted {
 		for _, p := range pkgs {
@@ -214,7 +228,8 @@ func TestGetPackagesLive(t *testing.T) {
 				t.Fatalf("Windows Update rows were omitted but %q was still sent", p.Name)
 			}
 		}
-		t.Log("Windows Update search did not succeed on this runner, so its rows were omitted")
+		requireSearchTimedOut(t, time.Since(start), "rows omitted")
+		t.Log("Windows Update search timed out on this runner, so its rows were omitted")
 	}
 	if len(pkgs) == 0 {
 		t.Fatal("GetPackages returned nothing; the registry collector alone should have populated it")
