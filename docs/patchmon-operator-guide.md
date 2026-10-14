@@ -5712,6 +5712,13 @@ docker_update_check:
   # Hours between automatic checks. Values below 1 use the default.
   # Default: 6
   interval_hours: 6
+
+# ─── Alpine Security Database ────────────────────────────────────────
+# Alpine hosts only. Flags security updates using secdb.alpinelinux.org.
+# Not pushed from the server.
+apk_secdb:
+  # Default: true
+  enabled: true
 ```
 
 ### Parameters In Detail
@@ -6036,6 +6043,18 @@ On macOS and Windows the agent runs as a system service, so it does not see a de
 
 Credentials are only sent to the registry they belong to, or to the login service that registry names. They are never written to the agent log and never sent to PatchMon. A registry with no login on the host is checked anonymously.
 
+### Alpine Security Database (`apk_secdb`) {#alpine-security-database-apk_secdb}
+
+Alpine's `apk` has no security metadata of its own, so on Alpine hosts the agent marks security updates using the Alpine security database. It reads the release branch (for example `v3.23` or `edge`) from the untagged lines in `/etc/apk/repositories`, downloads that branch's `main.json` and `community.json` from `https://secdb.alpinelinux.org/`, and marks an update as a security update when it moves the package past a version that fixed a published issue. Other operating systems ignore this block.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | Boolean | `true` | Set to `false` to stop the lookup. Updates on the host are then never marked as security updates. |
+
+The files are cached in `/var/cache/patchmon/apk-secdb/` and fetched again at most every 6 hours. Each request times out after 20 seconds. If the database cannot be reached, the agent uses its last cached copy, or, with none, sends the report without security flags; the report itself never fails because of it. The host needs outbound HTTPS (TCP/443) to `secdb.alpinelinux.org`, and the agent honours the standard `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` environment variables.
+
+Like `docker_update_check`, this block is **not server-pushable**: edit `config.yml` and restart the agent service to change it. The agent writes the block into `config.yml` with its current value whenever it saves its configuration.
+
 ### How `config.yml` Is Generated
 
 #### Initial Generation (Installation)
@@ -6124,6 +6143,7 @@ The agent updates `config.yml` automatically in several scenarios. These are in-
 | `skip_ssl_verify` | Only changed by manual edit |
 | `host_id` (when set) | A different value from the server is reported, not adopted. Only `config set-api`, `config sync-host-id`, or a reinstall replaces it |
 | `docker_update_check` | Only changed by manual edit (the agent writes the defaults into the file if the block is missing) |
+| `apk_secdb` | Only changed by manual edit (the agent writes the default into the file if the block is missing) |
 
 #### Important: How SaveConfig Works
 
