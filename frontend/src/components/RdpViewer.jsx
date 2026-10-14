@@ -2,7 +2,7 @@
  * RdpViewer - In-browser RDP for Windows hosts via Apache Guacamole (guacd)
  *
  * Uses guacamole-common-js with WebSocket tunnel to the PatchMon server.
- * Backend runs guacd as subprocess and bridges agent RDP proxy to guacd.
+ * The backend bridges the agent RDP proxy to guacd (a local subprocess or a sidecar).
  *
  * Error UX: every failure maps to a stable code (server-supplied in the
  * ticket response, or client-derived from Guacamole status codes) and renders
@@ -31,7 +31,7 @@ import { rdpAPI } from "../utils/api";
 const GUAC_STATUS_CLIENT_UNAUTHORIZED = 0x0301; // 769
 const GUAC_STATUS_CLIENT_FORBIDDEN = 0x0303; // 771
 const GUAC_STATUS_RESOURCE_NOT_FOUND = 0x0204; // 516 — missing ticket/resource
-const GUAC_STATUS_UPSTREAM_NOT_FOUND = 0x0207; // 519 — upstream host/port not reachable
+const GUAC_STATUS_UPSTREAM_NOT_FOUND = 0x0207; // 519 — guacd could not open the upstream RDP session
 const GUAC_STATUS_UPSTREAM_UNAVAILABLE = 0x0208; // 520 — upstream reached, session setup failed
 
 const SECURITY_NEGOTIATION_PATTERNS = [
@@ -81,7 +81,8 @@ apt install guacd
 # RHEL / CentOS / Rocky (EPEL)
 dnf install guacd
 
-# Docker: add the guacamole/guacd sidecar and set GUACD_ADDRESS=guacd:4822`,
+# Docker: run the guacamole/guacd sidecar with network_mode: "service:server"
+# and set GUACD_ADDRESS=127.0.0.1:4822 (see the operator guide)`,
 		doc: "See Internal documentation: technical/WINDOWS.md",
 	},
 	agent_disconnected: {
@@ -132,6 +133,19 @@ Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Serv
 Get-Service TermService
 Test-NetConnection -ComputerName localhost -Port 3389
 Get-NetTCPConnection -LocalPort 3389 -State Listen`,
+	},
+	rdp_upstream_unreachable: {
+		title: "guacd could not reach the RDP session",
+		body: [
+			"The RDP gateway (guacd) on the PatchMon server accepted the session, but the connection to the Windows desktop was refused or dropped before it started.",
+		],
+		causes: [
+			"Remote Desktop is disabled on the Windows host.",
+			"guacd cannot connect back to the PatchMon server's RDP session listener. Deploy guacd as in the shipped Docker Compose file, or on the same host as the PatchMon server.",
+			"guacd or the PatchMon server restarted while the session was open. Retry the connection.",
+		],
+		code: `# PowerShell (as Administrator): enable Remote Desktop
+Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' -Name fDenyTSConnections -Value 0`,
 	},
 	agent_invalid_host: {
 		title: "The agent rejected the proxy host",
@@ -245,7 +259,7 @@ export const deriveCodeFromGuacStatus = (status) => {
 		case GUAC_STATUS_RESOURCE_NOT_FOUND:
 			return "rdp_unknown";
 		case GUAC_STATUS_UPSTREAM_NOT_FOUND:
-			return "rdp_port_unreachable";
+			return "rdp_upstream_unreachable";
 		case GUAC_STATUS_UPSTREAM_UNAVAILABLE:
 			return classifyGuacUpstreamFailure(status?.message);
 		default:
@@ -282,6 +296,13 @@ const ErrorPanel = ({ code, message, onRetry }) => {
 							</p>
 						))}
 					</div>
+					{guidance.causes && (
+						<ul className="mt-2 list-disc pl-5 space-y-1 text-sm text-secondary-300">
+							{guidance.causes.map((c) => (
+								<li key={c}>{c}</li>
+							))}
+						</ul>
+					)}
 					{guidance.code && (
 						<pre className="mt-3 text-xs text-secondary-200 bg-black/40 border border-secondary-700 rounded p-3 font-mono overflow-x-auto">
 							{guidance.code}

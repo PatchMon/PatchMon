@@ -59,13 +59,13 @@ describe("RdpViewer error classification", () => {
 		).toBe("rdp_auth_failed");
 	});
 
-	it("maps status 519 to port unreachable guidance", () => {
+	it("maps status 519 to upstream-unreachable guidance, not port 3389", () => {
 		expect(
 			deriveCodeFromGuacStatus({
 				code: 0x0207,
-				message: "upstream host not found",
+				message: "Server refused connection (wrong security type?)",
 			}),
-		).toBe("rdp_port_unreachable");
+		).toBe("rdp_upstream_unreachable");
 	});
 
 	it("maps the ticket rate limit and per-instance session cap to their own guidance", () => {
