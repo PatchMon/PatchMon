@@ -235,7 +235,10 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 				return nil, fmt.Errorf("oidc: fetch userinfo: %w", err)
 			}
 		} else {
-			if oidcUserInfo.Subject != "" && oidcUserInfo.Subject != idToken.Subject {
+			if oidcUserInfo.Subject == "" {
+				return nil, errors.New("oidc: UserInfo response has no sub claim")
+			}
+			if oidcUserInfo.Subject != idToken.Subject {
 				return nil, errors.New("oidc: UserInfo sub does not match id_token sub")
 			}
 			userInfoClaims["sub"] = oidcUserInfo.Subject
