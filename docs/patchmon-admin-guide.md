@@ -4843,7 +4843,7 @@ To create one:
    - **Preset** (optional): four quick-start presets are available:
      - **Read Only:** just the Monitoring & Visibility group
      - **Operator:** everything except the Administration group
-     - **Admin:** every permission
+     - **Admin:** every permission. Only a `superadmin` can use this preset; for anyone else the role is refused because it includes `can_manage_superusers`.
      - **Clear All:** start from zero
    - **Permissions:** tick / untick individual permissions, or use the **Select all / Deselect all** shortcut on each group header.
 4. Watch the counter at the bottom (`n/20 permissions selected`) as a sanity check.
@@ -4889,7 +4889,7 @@ Go to **Settings → Users** and click **Add User** in the top-right.
 
 Click **Add User**. The account is created immediately and can sign in straight away.
 
-> **Role escalation protection:** You can only give a user a role whose permissions are all held by your own role. Only `superadmin` users can create `admin` accounts. A non-superadmin can create and manage `superadmin` accounts only if their role holds every permission, including `can_manage_superusers`.
+> **Role escalation protection:** Only a `superadmin` can make someone an `admin`. Other than that, you can only give a user a role whose permissions are all held by your own role. A non-superadmin can create and manage `superadmin` accounts only if their role holds every permission, including `can_manage_superusers`.
 
 #### Self-Service Sign-Up
 
