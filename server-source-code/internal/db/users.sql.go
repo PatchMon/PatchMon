@@ -11,6 +11,16 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const clearUserOidcLink = `-- name: ClearUserOidcLink :exec
+UPDATE users SET oidc_sub = NULL, oidc_provider = NULL, updated_at = NOW()
+WHERE id = $1
+`
+
+func (q *Queries) ClearUserOidcLink(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, clearUserOidcLink, id)
+	return err
+}
+
 const countActiveAdmins = `-- name: CountActiveAdmins :one
 SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = true
 `
@@ -886,6 +896,21 @@ func (q *Queries) UpdateUserOidcProfile(ctx context.Context, arg UpdateUserOidcP
 		arg.Role,
 		arg.ID,
 	)
+	return err
+}
+
+const updateUserOidcProvider = `-- name: UpdateUserOidcProvider :exec
+UPDATE users SET oidc_provider = $1, updated_at = NOW()
+WHERE id = $2
+`
+
+type UpdateUserOidcProviderParams struct {
+	OidcProvider *string `json:"oidc_provider"`
+	ID           string  `json:"id"`
+}
+
+func (q *Queries) UpdateUserOidcProvider(ctx context.Context, arg UpdateUserOidcProviderParams) error {
+	_, err := q.db.Exec(ctx, updateUserOidcProvider, arg.OidcProvider, arg.ID)
 	return err
 }
 

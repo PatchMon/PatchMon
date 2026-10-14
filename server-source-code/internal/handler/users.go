@@ -34,7 +34,9 @@ type UsersHandler struct {
 	// auto-newsletter-subscription for SaaS-hosted users on creation.
 	adminMode bool
 	// Resolves the calling context's own settings; `resolved` is startup-only.
-	cfgResolver *hostctx.ConfigResolver
+	cfgResolver          *hostctx.ConfigResolver
+	cfg                  *config.Config
+	trustUnverifiedEmail func(context.Context) bool
 }
 
 // WithConfigResolver wires the per-context config resolver.
@@ -53,7 +55,7 @@ func (h *UsersHandler) resolvedFor(ctx context.Context) *config.ResolvedConfig {
 // NewUsersHandler creates a new users handler.
 func NewUsersHandler(users *store.UsersStore, sessions *store.SessionsStore, trustedDevices *store.TrustedDevicesStore, permissions *store.PermissionsStore, settings *store.SettingsStore, resolved *config.ResolvedConfig, cfg *config.Config, db database.DBProvider, notify *notifications.Emitter, log *slog.Logger) *UsersHandler {
 	adminMode := cfg != nil && cfg.AdminMode
-	return &UsersHandler{users: users, sessions: sessions, trustedDevices: trustedDevices, permissions: permissions, settings: settings, resolved: resolved, db: db, notify: notify, log: log, adminMode: adminMode}
+	return &UsersHandler{users: users, sessions: sessions, trustedDevices: trustedDevices, permissions: permissions, settings: settings, resolved: resolved, db: db, notify: notify, log: log, adminMode: adminMode, cfg: cfg}
 }
 
 // roleRank returns a numeric rank for role hierarchy (higher = more privileged).
@@ -479,6 +481,61 @@ func (h *UsersHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]string{"message": "User deleted successfully"})
 }
 
+// UnlinkOidc handles POST /auth/admin/users/{userId}/unlink-oidc. The user's
+// next SSO login links again through the verified-email path.
+func (h *UsersHandler) UnlinkOidc(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "userId")
+	callerID, _ := r.Context().Value(middleware.UserIDKey).(string)
+	if callerID != "" && userID == callerID {
+		Error(w, http.StatusBadRequest, "Cannot unlink your own SSO identity")
+		return
+	}
+	existing, err := h.users.GetByID(r.Context(), userID)
+	if err != nil || existing == nil {
+		Error(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	// Strictly higher rank: with SSO as the only login, unlink plus an email
+	// change hands the account to whoever owns the new address.
+	callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
+	if callerRole != "superadmin" && roleRank(existing.Role) >= roleRank(callerRole) {
+		Error(w, http.StatusForbidden, "Cannot unlink the SSO identity of a user with an equal or higher-privilege role")
+		return
+	}
+
+	if existing.OidcSub == nil && existing.OidcProvider == nil {
+		Error(w, http.StatusBadRequest, "User is not linked to an SSO identity")
+		return
+	}
+	if existing.Role == "superadmin" && h.oidcTrustUnverifiedEmail(r.Context()) {
+		Error(w, http.StatusBadRequest, "Cannot unlink a superadmin while SSO trusts unverified email addresses. Turn off Trust unverified email (OIDC_TRUST_UNVERIFIED_EMAIL) first")
+		return
+	}
+	if err := h.users.ClearOidcLink(r.Context(), userID); err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to unlink SSO identity")
+		return
+	}
+
+	if h.log != nil {
+		h.log.Warn("oidc identity unlinked by admin",
+			"actor_id", callerID, "user_id", existing.ID, "email", existing.Email,
+			"previous_sub", strVal(existing.OidcSub, ""), "previous_provider", strVal(existing.OidcProvider, ""))
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{"message": "SSO identity unlinked"})
+}
+
+func (h *UsersHandler) oidcTrustUnverifiedEmail(ctx context.Context) bool {
+	if h.trustUnverifiedEmail != nil {
+		return h.trustUnverifiedEmail(ctx)
+	}
+	if h.cfg == nil || h.settings == nil {
+		return false
+	}
+	resolved, _ := config.ResolveOidcConfig(ctx, h.cfg, h.settings.GetFirst)
+	return resolved.TrustUnverifiedEmail
+}
+
 // ResetPassword resets a user's password.
 func (h *UsersHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	userID := chi.URLParam(r, "userId")
@@ -567,5 +624,9 @@ func userToAdminResponse(u *models.User) map[string]interface{} {
 		res["last_login"] = u.LastLogin.Format(time.RFC3339)
 	}
 	res["avatar_url"] = u.AvatarURL
+	res["oidc_linked"] = u.OidcSub != nil || u.OidcProvider != nil
+	if u.OidcProvider != nil {
+		res["oidc_provider"] = *u.OidcProvider
+	}
 	return res
 }

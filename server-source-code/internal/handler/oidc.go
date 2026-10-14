@@ -401,6 +401,12 @@ func (h *OidcHandler) Callback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *OidcHandler) resolveOidcUser(ctx context.Context, userInfo *oidc.UserInfo) (*models.User, string) {
+	if userInfo.Issuer == "" {
+		if h.log != nil {
+			h.log.Error("oidc login rejected: no issuer for the subject", "sub", userInfo.Sub)
+		}
+		return nil, "/login?error=Authentication+failed"
+	}
 	user, err := h.users.GetByOidcSubOrEmail(ctx, userInfo.Sub, userInfo.Email)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		if h.log != nil {
@@ -409,7 +415,17 @@ func (h *OidcHandler) resolveOidcUser(ctx context.Context, userInfo *oidc.UserIn
 		return nil, "/login?error=Authentication+failed"
 	}
 	// The lookup matches on oidc_sub OR email; establish which before trusting it.
-	matchedBySub := user != nil && user.OidcSub != nil && *user.OidcSub == userInfo.Sub
+	matchedBySub, legacyLink := oidcIdentityMatches(user, userInfo, h.oidcIssuerURL(ctx))
+	if matchedBySub && legacyLink {
+		previous := strVal(user.OidcProvider, "")
+		if err := h.users.UpdateOidcProvider(ctx, user.ID, userInfo.Issuer); err == nil {
+			user.OidcProvider = &userInfo.Issuer
+			if h.log != nil {
+				h.log.Warn("oidc legacy link bound to issuer", "user_id", user.ID, "email", user.Email,
+					"previous_provider", previous, "issuer", userInfo.Issuer)
+			}
+		}
+	}
 
 	// An email match, or auto-create, means the email claim decides who this is,
 	// so it has to be verified.
@@ -449,9 +465,16 @@ func (h *OidcHandler) resolveOidcUser(ctx context.Context, userInfo *oidc.UserIn
 	if !matchedBySub {
 		// An email match must not override an established identity binding.
 		if user.OidcSub != nil {
-			if h.log != nil {
+			if h.log != nil && *user.OidcSub == userInfo.Sub {
+				h.log.Error("oidc login rejected: account is linked to a different issuer",
+					"email", userInfo.Email, "sub", userInfo.Sub, "issuer", userInfo.Issuer,
+					"linked_provider", strVal(user.OidcProvider, ""),
+					"hint", "if you moved to a new IdP, an admin can unlink the SSO identity under Settings > Users; see the operator guide")
+			} else if h.log != nil {
 				h.log.Error("oidc login rejected: account is linked to a different subject",
-					"email", userInfo.Email, "sub", userInfo.Sub)
+					"email", userInfo.Email, "sub", userInfo.Sub,
+					"linked_sub", *user.OidcSub, "linked_provider", strVal(user.OidcProvider, ""),
+					"hint", "if the IdP user was re-created or the IdP changed, an admin can unlink the SSO identity under Settings > Users; see the operator guide")
 			}
 			return nil, "/login?error=Unable+to+sign+in+with+this+account"
 		}
@@ -462,10 +485,10 @@ func (h *OidcHandler) resolveOidcUser(ctx context.Context, userInfo *oidc.UserIn
 			}
 			return nil, "/login?error=Unable+to+sign+in+with+this+account"
 		}
-		issuerHost := extractHost(h.oidcIssuerURL(ctx))
-		_ = h.users.UpdateOidcLink(ctx, user.ID, userInfo.Sub, issuerHost, strPtr(userInfo.Picture))
+		issuer := userInfo.Issuer
+		_ = h.users.UpdateOidcLink(ctx, user.ID, userInfo.Sub, issuer, strPtr(userInfo.Picture))
 		user.OidcSub = &userInfo.Sub
-		user.OidcProvider = &issuerHost
+		user.OidcProvider = &issuer
 		user.AvatarURL = strPtr(userInfo.Picture)
 	}
 	return user, ""
@@ -804,6 +827,24 @@ func strPtr(s string) *string {
 	return &s
 }
 
+// oidcIdentityMatches reports whether user is bound to this sub at this issuer.
+// legacy marks a hostname-only or empty binding, which the caller upgrades.
+func oidcIdentityMatches(user *models.User, info *oidc.UserInfo, configuredIssuer string) (matched, legacy bool) {
+	if user == nil || user.OidcSub == nil || *user.OidcSub != info.Sub {
+		return false, false
+	}
+	stored := strings.TrimSpace(strVal(user.OidcProvider, ""))
+	switch {
+	case stored == "":
+		configuredHost := extractHost(strings.TrimSpace(configuredIssuer))
+		return configuredHost != "" && strings.EqualFold(configuredHost, extractHost(info.Issuer)), true
+	case !strings.Contains(stored, "://"):
+		return strings.EqualFold(stored, extractHost(info.Issuer)), true
+	default:
+		return oidc.SameIssuer(stored, info.Issuer), false
+	}
+}
+
 func extractHost(u string) string {
 	parsed, err := url.Parse(u)
 	if err != nil {
@@ -1024,7 +1065,7 @@ func (h *OidcHandler) createOidcUser(ctx context.Context, info *oidc.UserInfo) *
 			h.log.Info("oidc first user promoted to superadmin", "email", info.Email)
 		}
 	}
-	issuerHost := extractHost(h.oidcIssuerURL(ctx))
+	issuer := info.Issuer
 	u := &models.User{
 		ID:           uuid.New().String(),
 		Username:     username,
@@ -1034,10 +1075,10 @@ func (h *OidcHandler) createOidcUser(ctx context.Context, info *oidc.UserInfo) *
 		FirstName:    strPtr(info.GivenName),
 		LastName:     strPtr(info.FamilyName),
 		OidcSub:      &info.Sub,
-		OidcProvider: &issuerHost,
+		OidcProvider: &issuer,
 		AvatarURL:    strPtr(info.Picture),
 	}
-	if err := h.users.CreateOidcUser(ctx, u, info.Sub, issuerHost, strPtr(info.Picture)); err != nil {
+	if err := h.users.CreateOidcUser(ctx, u, info.Sub, issuer, strPtr(info.Picture)); err != nil {
 		if h.log != nil {
 			h.log.Error("oidc create user failed", "error", err, "email", info.Email)
 		}

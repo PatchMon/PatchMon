@@ -6,6 +6,7 @@ import {
 	Info,
 	Key,
 	Mail,
+	RefreshCw,
 	Save,
 	Shield,
 	Trash2,
@@ -121,6 +122,18 @@ const UsersTab = () => {
 		},
 		onError: (error) => {
 			console.error("Failed to update user:", error);
+		},
+	});
+
+	const unlinkOidcMutation = useMutation({
+		mutationFn: (userId) => adminUsersAPI.unlinkOidc(userId),
+		onSuccess: (_, userId) => {
+			queryClient.invalidateQueries({ queryKey: ["users"] });
+			setEditingUser((current) =>
+				current?.id === userId
+					? { ...current, oidc_linked: false, oidc_provider: undefined }
+					: current,
+			);
 		},
 	});
 
@@ -578,6 +591,8 @@ const UsersTab = () => {
 					onClose={() => setEditingUser(null)}
 					onUpdateUser={updateUserMutation.mutateAsync}
 					isLoading={updateUserMutation.isPending}
+					onUnlinkOidc={unlinkOidcMutation.mutateAsync}
+					isUnlinkingOidc={unlinkOidcMutation.isPending}
 					roles={roles}
 				/>
 			)}
@@ -1010,8 +1025,12 @@ const EditUserModal = ({
 	onClose,
 	onUpdateUser,
 	isLoading,
+	onUnlinkOidc,
+	isUnlinkingOidc,
 	roles,
 }) => {
+	const confirm = useConfirm();
+	const toast = useToast();
 	const editUsernameId = useId();
 	const editEmailId = useId();
 	const editFirstNameId = useId();
@@ -1066,6 +1085,24 @@ const EditUserModal = ({
 			}, 1500);
 		} catch (err) {
 			setError(err.response?.data?.error || "Failed to update user");
+		}
+	};
+
+	const handleUnlinkOidc = async () => {
+		const confirmed = await confirm({
+			title: "Unlink SSO identity",
+			subtitle: null,
+			message: `Unlink "${user.username}" from their SSO identity? Their next SSO login links the account again, matched by the verified email address your identity provider sends.`,
+			warning:
+				"If Trust unverified email is on in Settings > OIDC, whoever next signs in with this email address claims the account, whether or not the provider has verified it. Ask the user to sign in straight after you unlink.",
+			confirmLabel: "Unlink SSO identity",
+		});
+		if (!confirmed) return;
+		try {
+			await onUnlinkOidc(user.id);
+			toast.success(`SSO identity unlinked from "${user.username}"`);
+		} catch (err) {
+			toast.error(err.response?.data?.error || "Failed to unlink SSO identity");
 		}
 	};
 
@@ -1204,6 +1241,31 @@ const EditUserModal = ({
 							Active user
 						</label>
 					</div>
+
+					{user.oidc_linked && (
+						<div className="border-t border-secondary-200 dark:border-secondary-600 pt-4">
+							<p className="text-sm font-medium text-secondary-700 dark:text-secondary-200">
+								SSO identity
+							</p>
+							<p className="mt-1 text-sm text-secondary-500 dark:text-secondary-400">
+								Linked
+								{user.oidc_provider ? ` via ${user.oidc_provider}` : ""}. Unlink
+								it if the user was re-created at the identity provider, or you
+								changed provider, and their SSO login is refused.
+							</p>
+							<button
+								type="button"
+								onClick={handleUnlinkOidc}
+								disabled={isUnlinkingOidc}
+								className="btn-danger mt-3 inline-flex items-center gap-2 min-h-[44px] md:min-h-0"
+							>
+								{isUnlinkingOidc && (
+									<RefreshCw className="h-4 w-4 animate-spin" />
+								)}
+								{isUnlinkingOidc ? "Unlinking..." : "Unlink SSO identity"}
+							</button>
+						</div>
+					)}
 
 					{success && (
 						<div className="bg-green-50 dark:bg-green-900 border border-green-200 dark:border-green-700 rounded-md p-3">

@@ -13,12 +13,19 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 )
 
-const maxMicrosoftGraphPhotoBytes = 1 << 20
+const (
+	maxMicrosoftGraphPhotoBytes = 1 << 20
+	maxProviderResponseBytes    = 2 << 20
+	providerRequestTimeout      = 30 * time.Second
+)
+
+var errProviderResponseTooLarge = errors.New("oidc: provider response exceeds size limit")
 
 var microsoftGraphPhotoURL = "https://graph.microsoft.com/v1.0/me/photo/$value"
 
@@ -31,7 +38,9 @@ type SessionData struct {
 
 // UserInfo holds normalized user claims from OIDC.
 type UserInfo struct {
-	Sub               string
+	Sub string
+	// Issuer is the verified id_token iss, the namespace Sub is unique within.
+	Issuer            string
 	Email             string
 	Name              string
 	PreferredUsername string
@@ -94,6 +103,7 @@ func normaliseIssuerURL(issuer string) (string, bool) {
 // connect performs provider discovery and populates the oauth2 config and token
 // verifier. It is idempotent and safe for concurrent callers.
 func (c *Client) connect(ctx context.Context) error {
+	ctx = withCappedHTTPClient(ctx)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.provider != nil {
@@ -120,6 +130,65 @@ func (c *Client) connect(ctx context.Context) error {
 	}
 	return nil
 }
+
+// withCappedHTTPClient bounds every body read from the provider, including the
+// JWKS fetches go-oidc makes later with the client captured at discovery.
+func withCappedHTTPClient(ctx context.Context) context.Context {
+	base := http.DefaultClient
+	if hc, ok := ctx.Value(oauth2.HTTPClient).(*http.Client); ok && hc != nil {
+		if _, capped := hc.Transport.(*cappedTransport); capped {
+			return ctx
+		}
+		base = hc
+	}
+	capped := *base
+	capped.Transport = &cappedTransport{base: base.Transport}
+	if capped.Timeout == 0 {
+		capped.Timeout = providerRequestTimeout
+	}
+	return oidc.ClientContext(ctx, &capped)
+}
+
+type cappedTransport struct {
+	base http.RoundTripper
+}
+
+func (t *cappedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	resp, err := base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = &cappedBody{body: resp.Body, remaining: maxProviderResponseBytes}
+	return resp, nil
+}
+
+type cappedBody struct {
+	body      io.ReadCloser
+	remaining int64
+}
+
+func (b *cappedBody) Read(p []byte) (int, error) {
+	if b.remaining <= 0 {
+		var probe [1]byte
+		n, err := b.body.Read(probe[:])
+		if n > 0 {
+			return 0, errProviderResponseTooLarge
+		}
+		return 0, err
+	}
+	if int64(len(p)) > b.remaining {
+		p = p[:b.remaining]
+	}
+	n, err := b.body.Read(p)
+	b.remaining -= int64(n)
+	return n, err
+}
+
+func (b *cappedBody) Close() error { return b.body.Close() }
 
 func parseScopes(s string) []string {
 	if s == "" {
@@ -178,6 +247,7 @@ func generateNonce() (string, error) {
 
 // Exchange exchanges the authorization code for tokens and fetches UserInfo.
 func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState, expectedNonce string, callbackParams url.Values) (*UserInfo, error) {
+	ctx = withCappedHTTPClient(ctx)
 	if err := c.connect(ctx); err != nil {
 		return nil, err
 	}
@@ -235,7 +305,10 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 				return nil, fmt.Errorf("oidc: fetch userinfo: %w", err)
 			}
 		} else {
-			if oidcUserInfo.Subject != "" && oidcUserInfo.Subject != idToken.Subject {
+			if oidcUserInfo.Subject == "" {
+				return nil, errors.New("oidc: UserInfo response has no sub claim")
+			}
+			if oidcUserInfo.Subject != idToken.Subject {
 				return nil, errors.New("oidc: UserInfo sub does not match id_token sub")
 			}
 			userInfoClaims["sub"] = oidcUserInfo.Subject
@@ -270,6 +343,11 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 
 	idClaims := make(map[string]interface{})
 	_ = idToken.Claims(&idClaims)
+	tid, _ := idClaims["tid"].(string)
+	userInfo.Issuer = canonicalIssuer(idToken.Issuer, tid)
+	if userInfo.Issuer == "" {
+		return nil, errors.New("oidc: id_token missing iss claim")
+	}
 
 	email, emailFromIDToken := lookupStringClaim(userInfoClaims, idClaims, "email")
 	userInfo.Email = email
@@ -303,6 +381,64 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 	userInfo.Groups = extractGroups(userInfoClaims, idClaims)
 
 	return userInfo, nil
+}
+
+var microsoftTenantPlaceholders = map[string]bool{"{tenantid}": true, "common": true, "organizations": true, "consumers": true}
+
+var microsoftTenantIssuerHosts = map[string]bool{
+	"login.microsoftonline.com":        true,
+	"login.microsoftonline.us":         true,
+	"login.partner.microsoftonline.cn": true,
+	"login.chinacloudapi.cn":           true,
+	"sts.windows.net":                  true,
+}
+
+func isMicrosoftTenantIssuer(u *url.URL) bool {
+	return microsoftTenantIssuerHosts[strings.ToLower(u.Hostname())]
+}
+
+// canonicalIssuer substitutes Entra's tid for a templated or shared tenant
+// segment, so the stored issuer always names the tenant that issued the sub.
+func canonicalIssuer(iss, tid string) string {
+	iss = strings.TrimSuffix(strings.TrimSpace(iss), "/")
+	if tid == "" {
+		return iss
+	}
+	u, err := url.Parse(iss)
+	if err != nil || !isMicrosoftTenantIssuer(u) {
+		return iss
+	}
+	segs := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+	if len(segs) > 0 && microsoftTenantPlaceholders[strings.ToLower(segs[0])] {
+		segs[0] = tid
+		u.Path = "/" + strings.Join(segs, "/")
+		return u.String()
+	}
+	return iss
+}
+
+// SameIssuer reports whether two issuers name the same subject namespace.
+// Microsoft issuers compare by tenant, so its v1 and v2.0 forms are equal.
+func SameIssuer(a, b string) bool {
+	ka, okA := issuerKey(a)
+	kb, okB := issuerKey(b)
+	return okA && okB && ka == kb
+}
+
+func issuerKey(iss string) (string, bool) {
+	u, err := url.Parse(strings.TrimSpace(iss))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", false
+	}
+	path := strings.TrimSuffix(u.EscapedPath(), "/")
+	if isMicrosoftTenantIssuer(u) {
+		tenant := strings.ToLower(strings.SplitN(strings.TrimPrefix(u.Path, "/"), "/", 2)[0])
+		if tenant == "" || microsoftTenantPlaceholders[tenant] {
+			return "", false
+		}
+		return "microsoft:" + tenant, true
+	}
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host) + path, true
 }
 
 func resolveProviderPicture(ctx context.Context, issuerURL string, token *oauth2.Token, rawPicture string) (string, error) {
