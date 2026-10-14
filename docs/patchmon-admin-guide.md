@@ -1545,7 +1545,7 @@ PatchMon therefore offers only **Patch all** on hosts that use `pacman`. It runs
 - A `patch_package` run for an Arch host that was queued or scheduled before you upgraded PatchMon is marked **failed** with the same message when it comes due. It is never sent to the agent.
 - The agent refuses one if it still receives it, before running any `pacman` command. It also refuses a dry run on Arch, because `pacman -Syu -p` syncs the package databases without upgrading.
 
-**Older pending runs.** An Arch `patch_package` run left waiting for validation or approval from before the upgrade can no longer be approved or retried. Delete it from **Patching → Runs** and use **Patch all** instead.
+**Older pending runs.** An Arch `patch_package` run left waiting for validation or approval from before the upgrade can no longer be approved or retried. Delete it from **Patching → Runs & History** and use **Patch all** instead.
 
 #### Alpine patching {#alpine-patching}
 
