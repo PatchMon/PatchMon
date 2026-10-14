@@ -423,10 +423,6 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if cost, err := bcrypt.Cost([]byte(hash)); err == nil && cost < passwordBcryptCost {
-		h.upgradePasswordHash(r.Context(), user, password)
-	}
-
 	if localAuthFallback != "" {
 		// Answered like a wrong password, so an outage is not a password oracle for ordinary accounts.
 		if user.Role != "superadmin" {
@@ -443,6 +439,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			Error(w, http.StatusForbidden, "Your identity provider is unreachable. Password sign-in is only allowed in that case for superadmins with two-factor authentication, which is not set up on this account.")
 			return
 		}
+	}
+
+	if cost, err := bcrypt.Cost([]byte(hash)); err == nil && cost < passwordBcryptCost {
+		h.upgradePasswordHash(r.Context(), user, password)
 	}
 
 	// Clear lockout on success

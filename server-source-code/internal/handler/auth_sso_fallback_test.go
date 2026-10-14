@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pquerna/otp/totp"
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/crypto/bcrypt"
 
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
@@ -219,5 +220,39 @@ func TestSSOFallbackIgnoresDeviceTrust(t *testing.T) {
 	}
 	if body := login(f.h); !strings.Contains(body, `"requiresTfa":true`) {
 		t.Fatalf("fallback sign-in skipped the second factor on a trusted device: %s", body)
+	}
+}
+
+// A refused sign-in must not write to the account, even to upgrade its hash.
+func TestSSOFallbackRefusalDoesNotRehash(t *testing.T) {
+	f := newSSOFallbackFixture(t, 1000)
+	ctx := context.Background()
+	old, err := bcrypt.GenerateFromPassword([]byte(hardeningPassword), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range []string{"admin", "superadmin"} {
+		oldStr := string(old)
+		u := &models.User{
+			ID:           uuid.New().String(),
+			Username:     "lc" + uuid.New().String()[:10],
+			Email:        "lc" + uuid.New().String()[:8] + "@example.com",
+			Role:         role,
+			IsActive:     true,
+			PasswordHash: &oldStr,
+		}
+		if err := f.h.users.Create(ctx, u); err != nil {
+			t.Fatal(err)
+		}
+		if rec := postLogin(f.h, u.Username, hardeningPassword); rec.Code == http.StatusOK {
+			t.Fatalf("%s: the fallback let a refused account in: %s", role, rec.Body.String())
+		}
+		got, err := f.h.users.GetByID(ctx, u.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if *got.PasswordHash != oldStr {
+			t.Fatalf("%s: a refused sign-in rewrote the stored hash", role)
+		}
 	}
 }
