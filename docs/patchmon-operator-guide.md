@@ -2500,6 +2500,7 @@ Configuration for the Guacamole daemon (`guacd`) that powers in-browser RDP sess
 |----------|---------|----------|-------------|
 | `GUACD_PATH` | _(none)_ | No | Absolute path to the `guacd` binary. When empty, the server locates `guacd` using the system `PATH`. Set this if `guacd` is installed in a non-standard location. |
 | `GUACD_ADDRESS` | `127.0.0.1:4822` | No | Host and port the server uses to connect to the running `guacd` process. Change this if `guacd` is running on a different host or non-default port. |
+| `PATCHMON_SSH_KNOWN_HOSTS` | _(working directory)_ | No | Path to the PatchMon-managed SSH `known_hosts` file used to verify host keys for the Web SSH Terminal in Direct mode. Host keys are pinned on first use and a changed key is then rejected. When empty, the file lives under the server's working directory (or the OS temp directory), which is not on a persistent volume in the stock image, so pinned keys reset on container recreation. Point this at a path on a mounted volume to keep pinned keys across upgrades. |
 
 ---
 

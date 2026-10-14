@@ -56,18 +56,63 @@ func init() {
 	rootCmd.AddCommand(serveCmd)
 }
 
-// agentHostKeyCallback returns a HostKeyCallback that validates against ~/.ssh/known_hosts
-// when available, otherwise falls back to InsecureIgnoreHostKey. Used for SSH proxy connections.
-func agentHostKeyCallback() ssh.HostKeyCallback {
-	home, _ := os.UserHomeDir()
-	knownHostsPath := filepath.Join(home, ".ssh", "known_hosts")
-	if _, err := os.Stat(knownHostsPath); err == nil {
-		cb, err := knownhosts.New(knownHostsPath)
-		if err == nil {
-			return cb
-		}
+var agentKnownHostsAppendMu sync.Mutex
+
+// agentKnownHostsPath returns the PatchMon-managed known_hosts path, kept beside
+// the agent config file so pinned keys persist with the rest of the agent state.
+func agentKnownHostsPath() string {
+	return filepath.Join(filepath.Dir(cfgManager.GetConfigFile()), "known_hosts")
+}
+
+// agentHostKeyCallback returns a trust-on-first-use SSH host key callback backed
+// by path. An unknown host is pinned and accepted; a host whose key no longer
+// matches the pinned key is rejected as a possible man-in-the-middle. It never
+// accepts an arbitrary key.
+func agentHostKeyCallback(path string) (ssh.HostKeyCallback, error) {
+	if err := ensureAgentKnownHostsFile(path); err != nil {
+		return nil, err
 	}
-	return ssh.InsecureIgnoreHostKey()
+	inner, err := knownhosts.New(path)
+	if err != nil {
+		return nil, fmt.Errorf("load known_hosts %s: %w", path, err)
+	}
+	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+		cbErr := inner(hostname, remote, key)
+		if cbErr == nil {
+			return nil
+		}
+		var keyErr *knownhosts.KeyError
+		if errors.As(cbErr, &keyErr) && len(keyErr.Want) == 0 {
+			if pinErr := appendAgentKnownHost(path, hostname, key); pinErr != nil {
+				return fmt.Errorf("pin host key for %s: %w", hostname, pinErr)
+			}
+			return nil
+		}
+		return fmt.Errorf("host key verification failed for %s (possible man-in-the-middle): %w", hostname, cbErr)
+	}, nil
+}
+
+func ensureAgentKnownHostsFile(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create known_hosts dir: %w", err)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("create known_hosts file: %w", err)
+	}
+	return f.Close()
+}
+
+func appendAgentKnownHost(path, hostname string, key ssh.PublicKey) error {
+	agentKnownHostsAppendMu.Lock()
+	defer agentKnownHostsAppendMu.Unlock()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	_, err = f.WriteString(knownhosts.Line([]string{knownhosts.Normalize(hostname)}, key) + "\n")
+	return err
 }
 
 // syncIntegrationStatus reconciles config.yml with the integration state the
@@ -3337,6 +3382,11 @@ func validateSSHProxyHost(host string) error {
 	if !validHostPattern.MatchString(host) {
 		return fmt.Errorf("invalid host format")
 	}
+	// Deny link-local literals (169.254.0.0/16, fe80::/10): these reach cloud
+	// instance metadata services and are never a legitimate proxy target.
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()) {
+		return fmt.Errorf("link-local addresses are not allowed")
+	}
 	return nil
 }
 
@@ -3418,10 +3468,17 @@ func handleSSHProxy(m wsMsg, conn *websocket.Conn) {
 		"username":   username,
 	})).Info("Establishing SSH proxy connection")
 
+	hostKeyCB, err := agentHostKeyCallback(agentKnownHostsPath())
+	if err != nil {
+		logger.WithError(err).Error("Failed to initialise SSH host key verification")
+		sendSSHProxyError(conn, sessionID, "Failed to initialise host key verification")
+		return
+	}
+
 	// Create SSH client config
 	config := &ssh.ClientConfig{
 		User:            username,
-		HostKeyCallback: agentHostKeyCallback(),
+		HostKeyCallback: hostKeyCB,
 		Timeout:         20 * time.Second,
 	}
 
