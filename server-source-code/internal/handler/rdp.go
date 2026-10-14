@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -59,16 +60,36 @@ type rdpTunnel struct {
 	sessionID string
 	guacdConn net.Conn
 	abortIns  atomic.Pointer[[]byte]
+	abortWS   atomic.Int32
 }
 
 func (t *rdpTunnel) AcquireReader() guac.InstructionReader {
 	return &abortableReader{InstructionReader: t.Tunnel.AcquireReader(), t: t}
 }
 
+// AcquireWriter discards browser input after an abort instead of failing, so
+// the ws reader keeps draining the socket until the browser closes it.
+func (t *rdpTunnel) AcquireWriter() io.Writer {
+	return &abortableWriter{w: t.Tunnel.AcquireWriter(), t: t}
+}
+
+type abortableWriter struct {
+	w io.Writer
+	t *rdpTunnel
+}
+
+func (w *abortableWriter) Write(p []byte) (int, error) {
+	if w.t.abortIns.Load() != nil {
+		return len(p), nil
+	}
+	return w.w.Write(p)
+}
+
 // abort ends the browser side with a Guacamole error. guacd does not notice
 // the proxy socket closing, so the tunnel is ended from this side.
 func (t *rdpTunnel) abort(status guac.Status, msg string) {
 	ins := []byte(guac.NewInstruction("error", msg, strconv.Itoa(status.GetGuacamoleStatusCode())).String())
+	t.abortWS.Store(int32(status.GetGuacamoleStatusCode()))
 	t.abortIns.Store(&ins)
 	_ = t.guacdConn.Close()
 }
@@ -461,15 +482,30 @@ func classifyAgentError(msg string) string {
 	}
 }
 
+// tunnelServer wraps connect in the guac WebSocket server with RDP session teardown.
+func (h *RDPHandler) tunnelServer(connect func(*websocket.Conn, *http.Request) (guac.Tunnel, error)) *guac.WebsocketServer {
+	guacWSHandler := guac.NewWebsocketServerWs(connect)
+	guacWSHandler.OnDisconnectWs = func(_ string, ws *websocket.Conn, _ *http.Request, t guac.Tunnel) {
+		rt, ok := t.(*rdpTunnel)
+		if !ok {
+			return
+		}
+		h.rdpSessions.Delete(rt.sessionID)
+		if code := rt.abortWS.Load(); code != 0 {
+			// Close cleanly and let the ws reader, still draining, read the reply: a
+			// socket closed with unread input is reset, which can drop the error frame.
+			reason := strconv.Itoa(int(code))
+			_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseInternalServerErr, reason), time.Now().Add(time.Second))
+			time.Sleep(time.Second)
+		}
+	}
+	return guacWSHandler
+}
+
 // WebsocketTunnelHandler returns an http.Handler for the Guacamole WebSocket tunnel.
 // It wraps the guac WebSocket server with origin validation to prevent cross-origin hijacking.
 func (h *RDPHandler) WebsocketTunnelHandler() http.Handler {
-	guacWSHandler := guac.NewWebsocketServerWs(h.connectTunnel)
-	guacWSHandler.OnDisconnectWs = func(_ string, _ *websocket.Conn, _ *http.Request, t guac.Tunnel) {
-		if rt, ok := t.(*rdpTunnel); ok {
-			h.rdpSessions.Delete(rt.sessionID)
-		}
-	}
+	guacWSHandler := h.tunnelServer(h.connectTunnel)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Validate Origin header before handing off to guac's WebSocket upgrader.

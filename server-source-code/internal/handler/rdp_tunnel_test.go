@@ -126,3 +126,14 @@ func TestRDPAbortMessagesCarryCodePrefix(t *testing.T) {
 		t.Fatal("abort left the guacd connection open")
 	}
 }
+
+func TestAbortableWriterDiscardsAfterAbort(t *testing.T) {
+	a, b := net.Pipe()
+	defer func() { _ = b.Close() }()
+	tun := &rdpTunnel{guacdConn: a}
+	w := &abortableWriter{w: a, t: tun}
+	tun.abort(guac.UpstreamError, rdpMsgAgentGone)
+	if n, err := w.Write([]byte("4.sync,1.1;")); err != nil || n != 11 {
+		t.Fatalf("write after abort = %d, %v; want 11, nil", n, err)
+	}
+}
