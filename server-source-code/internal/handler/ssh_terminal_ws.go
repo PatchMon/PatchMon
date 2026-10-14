@@ -293,7 +293,7 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 					"session_id": proxySessionID,
 					"host":       proxyHost,
 					"port":       proxyPort,
-					"username":   orDefault(msg.Username, "root"),
+					"username":   sshUsername(msg.Username, host),
 					"terminal":   orDefault(msg.Terminal, "xterm-256color"),
 					"cols":       orInt(msg.Cols, 80),
 					"rows":       orInt(msg.Rows, 24),
@@ -319,7 +319,7 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 			sshAddr := net.JoinHostPort(hostIPOrHostname(host), strconv.Itoa(orInt(msg.Port, 22)))
 			hostKeyCB := hostKeyCallback(h.log)
 			config := &ssh.ClientConfig{
-				User:            orDefault(msg.Username, "root"),
+				User:            sshUsername(msg.Username, host),
 				HostKeyCallback: hostKeyCB,
 				Timeout:         0,
 			}
@@ -482,16 +482,18 @@ func (h *SshTerminalWSHandler) handleConnection(conn *websocket.Conn, host *mode
 		case "resize":
 			mu.Lock()
 			pid := proxySessionID
+			sess := sshSession
 			mu.Unlock()
 			if pid != "" {
 				_ = h.registry.SendJSON(host.ApiID, map[string]interface{}{
 					"type":       "ssh_proxy_resize",
 					"session_id": pid,
-					"cols":       orInt(msg.Cols, 80),
-					"rows":       orInt(msg.Rows, 24),
+					"cols":       termDim(msg.Cols, 80),
+					"rows":       termDim(msg.Rows, 24),
 				})
+			} else if sess != nil {
+				_ = sess.WindowChange(termDim(msg.Rows, 24), termDim(msg.Cols, 80))
 			}
-			// Direct mode: ssh session doesn't support resize after start easily; skip
 
 		case "disconnect":
 			cleanup()
@@ -570,11 +572,25 @@ func orDefault(s, d string) string {
 	return d
 }
 
+func sshUsername(requested string, host *models.Host) string {
+	if requested != "" {
+		return requested
+	}
+	if isWindowsHost(host) {
+		return "Administrator"
+	}
+	return "root"
+}
+
 func orInt(v, d int) int {
 	if v > 0 {
 		return v
 	}
 	return d
+}
+
+func termDim(v, d int) int {
+	return min(orInt(v, d), 1000)
 }
 
 func hostIPOrHostname(host *models.Host) string {
