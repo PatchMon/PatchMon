@@ -744,6 +744,9 @@ describe("PatchWizard on Windows hosts", () => {
 			screen.getByText(/cannot be patched on any of the hosts/),
 		).toBeInTheDocument();
 		expect(screen.getByText(/not found in winget/)).toBeInTheDocument();
+		expect(
+			screen.getByText("Not patchable (1)").nextElementSibling,
+		).toHaveClass("max-h-32", "scrollbar-thin");
 	});
 });
 
