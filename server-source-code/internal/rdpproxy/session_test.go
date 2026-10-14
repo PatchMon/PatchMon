@@ -152,9 +152,6 @@ func TestPerScopeCap(t *testing.T) {
 		t.Fatalf("third session in one scope: err = %v, want ErrMaxScopeSessionsReached", err)
 	}
 	create(t, s, "b1", "ctx-b.example")
-	for i := 0; i < 3; i++ {
-		create(t, s, "solo", "")
-	}
 	s.Delete(a)
 	create(t, s, "a3", "ctx-a.example")
 }
@@ -226,4 +223,26 @@ func TestOnCloseReportsReason(t *testing.T) {
 	if s.OnClose(id, func(string) {}) {
 		t.Fatal("OnClose accepted a closed session")
 	}
+}
+
+func TestEmptyScopeCapOnlyInMultiContextMode(t *testing.T) {
+	single := NewSessions(nil, &recSender{})
+	single.SetMaxSessionsPerScope(2)
+	single.SetMaxSessions(5)
+	for i := 0; i < 5; i++ {
+		create(t, single, "solo", "")
+	}
+	if _, _, err := single.Create(context.Background(), Owner{ApiID: "solo"}); !errors.Is(err, ErrMaxSessionsReached) {
+		t.Fatalf("single-context: err = %v, want only the process-wide cap", err)
+	}
+
+	multi := NewSessions(nil, &recSender{})
+	multi.SetMaxSessionsPerScope(2)
+	multi.SetCapEmptyScope(true)
+	create(t, multi, "solo", "")
+	create(t, multi, "solo", "")
+	if _, _, err := multi.Create(context.Background(), Owner{ApiID: "solo"}); !errors.Is(err, ErrMaxScopeSessionsReached) {
+		t.Fatalf("multi-context empty scope: err = %v, want ErrMaxScopeSessionsReached", err)
+	}
+	create(t, multi, "a1", "ctx-a.example")
 }

@@ -219,6 +219,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	if rdb != nil && cfg.GuacdAddress != "" {
 		rdpTicketStore := store.NewRDPTicketStore(redisResolver, enc)
 		rdpSessions := rdpproxy.NewSessions(log, registry)
+		rdpSessions.SetCapEmptyScope(poolCache != nil)
 		rdpHandler = handler.NewRDPHandler(
 			rdpTicketStore, rdpSessions, hostsStore, usersStore, permissionsStore,
 			registry, cfg.GuacdAddress, resolved.CORSOrigin, corsOriginResolver(ctxRegistry), log, dbProvider, notifyEmit,

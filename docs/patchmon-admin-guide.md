@@ -4510,14 +4510,14 @@ Printer redirection, audio, drive mapping, and USB forwarding are **not** enable
 
 | Limit | Default | Source |
 |-------|---------|--------|
-| Concurrent RDP sessions per server | **50** | `rdpproxy.DefaultMaxSessions` |
+| Concurrent RDP sessions per server | **200** | `rdpproxy.DefaultMaxSessions` |
 | RDP connection attempts per user | **10 per minute** | `rdpTicketRateLimit` |
 | Session whose ticket is never used | Released after **5 minutes** | `rdpproxy.unattachedTimeout` |
 | Per-session idle timeout | **30 minutes** | `rdpproxy.sessionIdleTimeout` |
 | `guacd` preflight timeout | 2 seconds | `guacdPreflightTimeout` |
 | Agent handshake timeout | 12 seconds | `agentHandshakeTimeout` |
 
-Exceeding the concurrency cap returns `503 Too many concurrent RDP sessions on this server, please try again later.` A user who requests more than 10 RDP connections in a minute gets `429 Too many requests` until the minute is up. Each click on **Connect** reserves a session slot while the agent opens its side of the connection; a slot whose ticket is never used is released after 5 minutes.
+Exceeding the concurrency cap returns `503 Too many concurrent RDP sessions on this server, please try again later.` (`code: max_sessions`). A user who requests more than 10 RDP connections in a minute gets `429 Too many requests` until the minute is up. Each click on **Connect** reserves a session slot while the agent opens its side of the connection; a slot whose ticket is never used is released after 5 minutes.
 
 ### Disconnecting
 

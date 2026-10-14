@@ -276,7 +276,7 @@ func (h *RDPHandler) ServeCreateTicket(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, rdpproxy.ErrMaxScopeSessionsReached) {
 			JSON(w, http.StatusServiceUnavailable, map[string]string{
-				"error": "Too many concurrent RDP sessions for this organisation, please close an existing session or try again later.",
+				"error": "Too many RDP sessions are open, please close an existing session or try again later.",
 				"code":  "max_sessions_context",
 			})
 			return

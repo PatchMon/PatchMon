@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	// DefaultMaxSessions is the default maximum number of concurrent RDP proxy sessions.
-	DefaultMaxSessions = 50
-	// DefaultMaxSessionsPerScope caps the sessions one context can hold, so it cannot fill the process-wide cap.
+	// DefaultMaxSessions bounds the listeners and sockets the whole process holds.
+	DefaultMaxSessions = 200
+	// DefaultMaxSessionsPerScope caps the sessions one context can hold.
 	DefaultMaxSessionsPerScope = 10
 	// sessionIdleTimeout is how long a session can remain idle (no data flowing) before being killed.
 	sessionIdleTimeout = 30 * time.Minute
@@ -115,6 +115,7 @@ type Sessions struct {
 	sender              AgentSender
 	maxSessions         int
 	maxSessionsPerScope int
+	capEmptyScope       bool
 	timeouts            timeouts
 }
 
@@ -138,10 +139,18 @@ func (s *Sessions) SetMaxSessions(max int) {
 }
 
 // SetMaxSessionsPerScope sets the per-context cap. Zero or negative means unlimited.
-// It never applies to the empty scope, which the process-wide cap already bounds.
+// The empty scope is only capped once SetCapEmptyScope(true) has been called.
 func (s *Sessions) SetMaxSessionsPerScope(max int) {
 	s.mu.Lock()
 	s.maxSessionsPerScope = max
+	s.mu.Unlock()
+}
+
+// SetCapEmptyScope applies the per-context cap to requests with no context too.
+// A single-context install leaves it off and is bounded by the process-wide cap.
+func (s *Sessions) SetCapEmptyScope(on bool) {
+	s.mu.Lock()
+	s.capEmptyScope = on
 	s.mu.Unlock()
 }
 
@@ -155,7 +164,7 @@ func (s *Sessions) Create(ctx context.Context, owner Owner) (sessionID string, p
 	if s.maxSessions > 0 && len(s.sessions) >= s.maxSessions {
 		return "", 0, ErrMaxSessionsReached
 	}
-	if owner.Scope != "" && s.maxSessionsPerScope > 0 {
+	if s.maxSessionsPerScope > 0 && (owner.Scope != "" || s.capEmptyScope) {
 		n := 0
 		for _, sess := range s.sessions {
 			if sess.Scope == owner.Scope {
