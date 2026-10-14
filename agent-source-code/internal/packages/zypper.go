@@ -128,9 +128,9 @@ func (m *ZypperManager) GetPackages() ([]models.Package, error) {
 	upgradable := zypperUpgradablePackages(lu.Updates, installed)
 
 	if len(upgradable) > 0 {
-		security := m.securityPackageNames()
-		for i := range upgradable {
-			upgradable[i].IsSecurityUpdate = security[upgradable[i].Name]
+		fixes := m.securityFixes()
+		for i, p := range upgradable {
+			upgradable[i].IsSecurityUpdate = zypperFixesSecurity(fixes[p.Name], p.CurrentVersion, p.AvailableVersion)
 		}
 	}
 
@@ -220,15 +220,10 @@ func zypperUpgradablePackages(updates []zypperUpdate, installed map[string]model
 	return out
 }
 
-// ZypperSecurityPatchArgs plans the needed security patches, which is the only way
-// zypper names the packages a patch updates.
-func ZypperSecurityPatchArgs() []string {
-	return []string{"--non-interactive-include-reboot-patches", "--no-refresh", "patch", "--dry-run", "--category", "security", "--auto-agree-with-licenses"}
-}
-
-// securityPackageNames returns the packages that needed security patches would upgrade.
-// Tumbleweed and unregistered SLES have no patches, so this is empty there.
-func (m *ZypperManager) securityPackageNames() map[string]bool {
+// securityFixes returns, per package name, the versions that needed security patches
+// require. zypper names them only in the text of info -t patch, as "name.arch < edition"
+// under Conflicts; a dry run of the patches cannot see past a pending update-stack patch.
+func (m *ZypperManager) securityFixes() map[string][]string {
 	lp, err := zypperXML(collectorTimeout, []int{ZypperExitReposSkipped}, "--no-refresh", "list-patches", "--category", "security")
 	if err != nil {
 		m.logger.WithError(err).Warn("zypper list-patches failed, security updates are not flagged")
@@ -238,18 +233,66 @@ func (m *ZypperManager) securityPackageNames() map[string]bool {
 		m.logger.Info("zypper has no update repositories with patch data, security updates are not flagged")
 		return nil
 	}
-	needed := neededSecurityPatches(lp)
-	if needed == 0 {
+	names := neededSecurityPatches(lp)
+	if len(names) == 0 {
 		return nil
 	}
-	plan, err := zypperXML(collectorTimeout, []int{ZypperExitRebootNeeded, ZypperExitRestartNeeded, ZypperExitReposSkipped}, ZypperSecurityPatchArgs()...)
-	if err != nil {
-		m.logger.WithError(err).Warn("zypper patch --dry-run failed, security updates are not flagged")
-		return nil
+	fixes := make(map[string][]string)
+	for batch := range slices.Chunk(names, 100) {
+		cmd, cancel := boundedCommand(collectorTimeout, "zypper", append([]string{"--non-interactive", "--no-refresh", "info", "-t", "patch"}, batch...)...)
+		cmd.Env = ZypperEnv(os.Environ())
+		out, err := cmd.Output()
+		cancel()
+		if err != nil {
+			m.logger.WithError(commandError("zypper info -t patch", err)).Warn("zypper info failed, security updates are not flagged")
+			return nil
+		}
+		for name, eds := range parseZypperPatchConflicts(string(out)) {
+			fixes[name] = append(fixes[name], eds...)
+		}
 	}
-	names := plan.InstallSummary.packageNames()
-	m.logger.WithFields(logrus.Fields{"patches": needed, "packages": len(names)}).Debug("zypper security patches")
-	return names
+	m.logger.WithFields(logrus.Fields{"patches": len(names), "packages": len(fixes)}).Debug("zypper security patches")
+	return fixes
+}
+
+// parseZypperPatchConflicts reads the Conflicts lists of zypper info -t patch.
+func parseZypperPatchConflicts(out string) map[string][]string {
+	fixes := make(map[string][]string)
+	inConflicts := false
+	for line := range strings.Lines(out) {
+		line = strings.TrimRight(line, "\r\n")
+		if strings.HasPrefix(line, "Conflicts") {
+			inConflicts = true
+			continue
+		}
+		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			inConflicts = false
+			continue
+		}
+		if !inConflicts {
+			continue
+		}
+		f := strings.Fields(line)
+		if len(f) != 3 || f[1] != "<" {
+			continue
+		}
+		name := stripRPMArchSuffix(f[0])
+		if !slices.Contains(fixes[name], f[2]) {
+			fixes[name] = append(fixes[name], f[2])
+		}
+	}
+	return fixes
+}
+
+// zypperFixesSecurity reports whether moving from current to available crosses a
+// version a needed security patch requires.
+func zypperFixesSecurity(fixes []string, current, available string) bool {
+	for _, fix := range fixes {
+		if compareRPMEVR(current, fix) < 0 && compareRPMEVR(fix, available) <= 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // ZypperLocks returns the zypper package locks, sorted by name.
@@ -265,12 +308,16 @@ func ZypperLocks() ([]ZypperLock, error) {
 
 // Old zypper ignores --category on list-patches, and while the update stack is pending
 // it lists every other patch under blocked-update-list.
-func neededSecurityPatches(lp zypperStream) int {
-	needed := 0
+func neededSecurityPatches(lp zypperStream) []string {
+	var names []string
 	for _, u := range slices.Concat(lp.Updates, lp.BlockedUpdates) {
-		if u.Kind == "patch" && u.Status == "needed" && u.Category == "security" {
-			needed++
+		if u.Kind == "patch" && u.Status == "needed" && u.Category == "security" && validZypperName(u.Name) {
+			names = append(names, u.Name)
 		}
 	}
-	return needed
+	return names
+}
+
+func validZypperName(name string) bool {
+	return name != "" && !strings.HasPrefix(name, "-") && !strings.ContainsAny(name, " \t\n")
 }

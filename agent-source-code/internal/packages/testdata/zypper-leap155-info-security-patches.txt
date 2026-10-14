@@ -1,0 +1,233 @@
+Loading repository data...
+Warning: Repository 'Update repository of openSUSE Backports' metadata expired since 2025-03-02 19:18:12 UTC.
+Warning: Repository 'Main Update Repository' metadata expired since 2025-08-30 08:17:31 UTC.
+Warning: Repository 'Update Repository (Non-Oss)' metadata expired since 2025-04-10 11:03:28 UTC.
+
+    Warning: Repository metadata expired: Check if 'autorefresh' is turned on (zypper lr), otherwise
+    manually refresh the repository (zypper ref). If this does not solve the issue, it could be that
+    you are using a broken mirror or the server has actually discontinued to support the repository.
+
+Reading installed packages...
+
+
+Information for patch openSUSE-SLE-15.5-2024-3765:
+--------------------------------------------------
+Repository  : Update repository with updates from SUSE Linux Enterprise 15
+Name        : openSUSE-SLE-15.5-2024-3765
+Version     : 1
+Arch        : noarch
+Vendor      : maint-coord@suse.de
+Status      : needed
+Category    : security
+Severity    : moderate
+Created On  : Tue Oct 29 01:34:06 2024
+Interactive : ---
+Summary     : Security update for openssl-1_1
+Description : 
+    This update for openssl-1_1 fixes the following issues:
+
+    - CVE-2023-50782: Implicit rejection in PKCS#1 v1.5 (bsc#1220262)
+Provides    : patch:openSUSE-SLE-15.5-2024-3765 = 1
+Conflicts   : [28]
+    libopenssl-1_1-devel.x86_64 < 1.1.1l-150500.17.37.1
+    libopenssl-1_1-devel.noarch < 1.1.1l-150500.17.37.1
+    libopenssl-1_1-devel-32bit.x86_64 < 1.1.1l-150500.17.37.1
+    libopenssl-1_1-devel-32bit.noarch < 1.1.1l-150500.17.37.1
+    libopenssl1_1.x86_64 < 1.1.1l-150500.17.37.1
+    libopenssl1_1.noarch < 1.1.1l-150500.17.37.1
+    libopenssl1_1-32bit.x86_64 < 1.1.1l-150500.17.37.1
+    libopenssl1_1-32bit.noarch < 1.1.1l-150500.17.37.1
+    libopenssl1_1-hmac.x86_64 < 1.1.1l-150500.17.37.1
+    libopenssl1_1-hmac.noarch < 1.1.1l-150500.17.37.1
+    libopenssl1_1-hmac-32bit.x86_64 < 1.1.1l-150500.17.37.1
+    libopenssl1_1-hmac-32bit.noarch < 1.1.1l-150500.17.37.1
+    srcpackage:openssl-1_1 < 1.1.1l-150500.17.37.1
+    openssl-1_1.noarch < 1.1.1l-150500.17.37.1
+    openssl-1_1.x86_64 < 1.1.1l-150500.17.37.1
+    openssl-1_1-doc < 1.1.1l-150500.17.37.1
+    libopenssl-1_1-devel.s390x < 1.1.1l-150500.17.37.1
+    libopenssl1_1.s390x < 1.1.1l-150500.17.37.1
+    libopenssl1_1-hmac.s390x < 1.1.1l-150500.17.37.1
+    openssl-1_1.s390x < 1.1.1l-150500.17.37.1
+    libopenssl-1_1-devel.ppc64le < 1.1.1l-150500.17.37.1
+    libopenssl1_1.ppc64le < 1.1.1l-150500.17.37.1
+    libopenssl1_1-hmac.ppc64le < 1.1.1l-150500.17.37.1
+    openssl-1_1.ppc64le < 1.1.1l-150500.17.37.1
+    libopenssl-1_1-devel.aarch64 < 1.1.1l-150500.17.37.1
+    libopenssl1_1.aarch64 < 1.1.1l-150500.17.37.1
+    libopenssl1_1-hmac.aarch64 < 1.1.1l-150500.17.37.1
+    openssl-1_1.aarch64 < 1.1.1l-150500.17.37.1
+
+
+Information for patch openSUSE-SLE-15.5-2024-3926:
+--------------------------------------------------
+Repository  : Update repository with updates from SUSE Linux Enterprise 15
+Name        : openSUSE-SLE-15.5-2024-3926
+Version     : 1
+Arch        : noarch
+Vendor      : maint-coord@suse.de
+Status      : needed
+Category    : security
+Severity    : moderate
+Created On  : Wed Nov  6 10:15:27 2024
+Interactive : ---
+Summary     : Security update for curl
+Description : 
+    This update for curl fixes the following issues:
+
+    - CVE-2024-9681: Fixed HSTS subdomain overwrites parent cache entry (bsc#1232528)
+Provides    : patch:openSUSE-SLE-15.5-2024-3926 = 1
+Conflicts   : [20]
+    srcpackage:curl < 8.0.1-150400.5.56.1
+    curl.noarch < 8.0.1-150400.5.56.1
+    curl.x86_64 < 8.0.1-150400.5.56.1
+    libcurl-devel-32bit.x86_64 < 8.0.1-150400.5.56.1
+    libcurl-devel-32bit.noarch < 8.0.1-150400.5.56.1
+    libcurl-devel.x86_64 < 8.0.1-150400.5.56.1
+    libcurl-devel.noarch < 8.0.1-150400.5.56.1
+    libcurl4-32bit.x86_64 < 8.0.1-150400.5.56.1
+    libcurl4-32bit.noarch < 8.0.1-150400.5.56.1
+    libcurl4.x86_64 < 8.0.1-150400.5.56.1
+    libcurl4.noarch < 8.0.1-150400.5.56.1
+    curl.s390x < 8.0.1-150400.5.56.1
+    libcurl-devel.s390x < 8.0.1-150400.5.56.1
+    libcurl4.s390x < 8.0.1-150400.5.56.1
+    curl.ppc64le < 8.0.1-150400.5.56.1
+    libcurl-devel.ppc64le < 8.0.1-150400.5.56.1
+    libcurl4.ppc64le < 8.0.1-150400.5.56.1
+    curl.aarch64 < 8.0.1-150400.5.56.1
+    libcurl-devel.aarch64 < 8.0.1-150400.5.56.1
+    libcurl4.aarch64 < 8.0.1-150400.5.56.1
+
+
+Information for patch openSUSE-SLE-15.5-2024-4078:
+--------------------------------------------------
+Repository  : Update repository with updates from SUSE Linux Enterprise 15
+Name        : openSUSE-SLE-15.5-2024-4078
+Version     : 1
+Arch        : noarch
+Vendor      : maint-coord@suse.de
+Status      : needed
+Category    : security
+Severity    : important
+Created On  : Wed Nov 27 12:53:16 2024
+Interactive : ---
+Summary     : Security update for glib2
+Description : 
+    This update for glib2 fixes the following issues:
+
+    - CVE-2024-52533: Fixed a single byte buffer overflow (bsc#1233282).
+Provides    : patch:openSUSE-SLE-15.5-2024-4078 = 1
+Conflicts   : [69]
+    gio-branding-upstream < 2.70.5-150400.3.17.1
+    srcpackage:glib2 < 2.70.5-150400.3.17.1
+    glib2.noarch < 2.70.5-150400.3.17.1
+    glib2-devel.x86_64 < 2.70.5-150400.3.17.1
+    glib2-devel.noarch < 2.70.5-150400.3.17.1
+    glib2-devel-32bit.x86_64 < 2.70.5-150400.3.17.1
+    glib2-devel-32bit.noarch < 2.70.5-150400.3.17.1
+    glib2-devel-static.x86_64 < 2.70.5-150400.3.17.1
+    glib2-devel-static.noarch < 2.70.5-150400.3.17.1
+    srcpackage:glib2-doc < 2.70.5-150400.3.17.1
+    glib2-doc.noarch < 2.70.5-150400.3.17.1
+    glib2-doc.x86_64 < 2.70.5-150400.3.17.1
+    glib2-lang < 2.70.5-150400.3.17.1
+    glib2-tests-devel.x86_64 < 2.70.5-150400.3.17.1
+    glib2-tests-devel.noarch < 2.70.5-150400.3.17.1
+    glib2-tools.x86_64 < 2.70.5-150400.3.17.1
+    glib2-tools.noarch < 2.70.5-150400.3.17.1
+    glib2-tools-32bit.x86_64 < 2.70.5-150400.3.17.1
+    glib2-tools-32bit.noarch < 2.70.5-150400.3.17.1
+    libgio-2_0-0.x86_64 < 2.70.5-150400.3.17.1
+    libgio-2_0-0.noarch < 2.70.5-150400.3.17.1
+    libgio-2_0-0-32bit.x86_64 < 2.70.5-150400.3.17.1
+    libgio-2_0-0-32bit.noarch < 2.70.5-150400.3.17.1
+    libglib-2_0-0.x86_64 < 2.70.5-150400.3.17.1
+    libglib-2_0-0.noarch < 2.70.5-150400.3.17.1
+    libglib-2_0-0-32bit.x86_64 < 2.70.5-150400.3.17.1
+    libglib-2_0-0-32bit.noarch < 2.70.5-150400.3.17.1
+    libgmodule-2_0-0.x86_64 < 2.70.5-150400.3.17.1
+    libgmodule-2_0-0.noarch < 2.70.5-150400.3.17.1
+    libgmodule-2_0-0-32bit.x86_64 < 2.70.5-150400.3.17.1
+    libgmodule-2_0-0-32bit.noarch < 2.70.5-150400.3.17.1
+    libgobject-2_0-0.x86_64 < 2.70.5-150400.3.17.1
+    libgobject-2_0-0.noarch < 2.70.5-150400.3.17.1
+    libgobject-2_0-0-32bit.x86_64 < 2.70.5-150400.3.17.1
+    libgobject-2_0-0-32bit.noarch < 2.70.5-150400.3.17.1
+    libgthread-2_0-0.x86_64 < 2.70.5-150400.3.17.1
+    libgthread-2_0-0.noarch < 2.70.5-150400.3.17.1
+    libgthread-2_0-0-32bit.x86_64 < 2.70.5-150400.3.17.1
+    libgthread-2_0-0-32bit.noarch < 2.70.5-150400.3.17.1
+    glib2-devel.s390x < 2.70.5-150400.3.17.1
+    glib2-devel-static.s390x < 2.70.5-150400.3.17.1
+    glib2-doc.s390x < 2.70.5-150400.3.17.1
+    glib2-tests-devel.s390x < 2.70.5-150400.3.17.1
+    glib2-tools.s390x < 2.70.5-150400.3.17.1
+    libgio-2_0-0.s390x < 2.70.5-150400.3.17.1
+    libglib-2_0-0.s390x < 2.70.5-150400.3.17.1
+    libgmodule-2_0-0.s390x < 2.70.5-150400.3.17.1
+    libgobject-2_0-0.s390x < 2.70.5-150400.3.17.1
+    libgthread-2_0-0.s390x < 2.70.5-150400.3.17.1
+    glib2-devel.ppc64le < 2.70.5-150400.3.17.1
+    glib2-devel-static.ppc64le < 2.70.5-150400.3.17.1
+    glib2-doc.ppc64le < 2.70.5-150400.3.17.1
+    glib2-tests-devel.ppc64le < 2.70.5-150400.3.17.1
+    glib2-tools.ppc64le < 2.70.5-150400.3.17.1
+    libgio-2_0-0.ppc64le < 2.70.5-150400.3.17.1
+    libglib-2_0-0.ppc64le < 2.70.5-150400.3.17.1
+    libgmodule-2_0-0.ppc64le < 2.70.5-150400.3.17.1
+    libgobject-2_0-0.ppc64le < 2.70.5-150400.3.17.1
+    libgthread-2_0-0.ppc64le < 2.70.5-150400.3.17.1
+    glib2-devel.aarch64 < 2.70.5-150400.3.17.1
+    glib2-devel-static.aarch64 < 2.70.5-150400.3.17.1
+    glib2-doc.aarch64 < 2.70.5-150400.3.17.1
+    glib2-tests-devel.aarch64 < 2.70.5-150400.3.17.1
+    glib2-tools.aarch64 < 2.70.5-150400.3.17.1
+    libgio-2_0-0.aarch64 < 2.70.5-150400.3.17.1
+    libglib-2_0-0.aarch64 < 2.70.5-150400.3.17.1
+    libgmodule-2_0-0.aarch64 < 2.70.5-150400.3.17.1
+    libgobject-2_0-0.aarch64 < 2.70.5-150400.3.17.1
+    libgthread-2_0-0.aarch64 < 2.70.5-150400.3.17.1
+
+
+Information for patch openSUSE-SLE-15.5-2024-4359:
+--------------------------------------------------
+Repository  : Update repository with updates from SUSE Linux Enterprise 15
+Name        : openSUSE-SLE-15.5-2024-4359
+Version     : 1
+Arch        : noarch
+Vendor      : maint-coord@suse.de
+Status      : needed
+Category    : security
+Severity    : moderate
+Created On  : Tue Dec 17 13:19:34 2024
+Interactive : ---
+Summary     : Security update for curl
+Description : 
+    This update for curl fixes the following issues:
+
+     - CVE-2024-11053: Fixed password leak in curl used for the first host to the followed-to host under certain circumstances (bsc#1234068)
+
+Provides    : patch:openSUSE-SLE-15.5-2024-4359 = 1
+Conflicts   : [20]
+    srcpackage:curl < 8.0.1-150400.5.59.1
+    curl.noarch < 8.0.1-150400.5.59.1
+    curl.x86_64 < 8.0.1-150400.5.59.1
+    libcurl-devel-32bit.x86_64 < 8.0.1-150400.5.59.1
+    libcurl-devel-32bit.noarch < 8.0.1-150400.5.59.1
+    libcurl-devel.x86_64 < 8.0.1-150400.5.59.1
+    libcurl-devel.noarch < 8.0.1-150400.5.59.1
+    libcurl4-32bit.x86_64 < 8.0.1-150400.5.59.1
+    libcurl4-32bit.noarch < 8.0.1-150400.5.59.1
+    libcurl4.x86_64 < 8.0.1-150400.5.59.1
+    libcurl4.noarch < 8.0.1-150400.5.59.1
+    curl.s390x < 8.0.1-150400.5.59.1
+    libcurl-devel.s390x < 8.0.1-150400.5.59.1
+    libcurl4.s390x < 8.0.1-150400.5.59.1
+    curl.ppc64le < 8.0.1-150400.5.59.1
+    libcurl-devel.ppc64le < 8.0.1-150400.5.59.1
+    libcurl4.ppc64le < 8.0.1-150400.5.59.1
+    curl.aarch64 < 8.0.1-150400.5.59.1
+    libcurl-devel.aarch64 < 8.0.1-150400.5.59.1
+    libcurl4.aarch64 < 8.0.1-150400.5.59.1
+

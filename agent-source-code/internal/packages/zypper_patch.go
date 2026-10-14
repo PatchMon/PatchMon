@@ -179,15 +179,6 @@ func (p ZypperPlan) Removals() []string {
 	return out
 }
 
-// Names returns the packages the plan touches.
-func (p ZypperPlan) Names() map[string]bool {
-	names := p.Summary.packageNames()
-	for _, n := range p.Removals() {
-		names[n] = true
-	}
-	return names
-}
-
 // ZypperLockedTargets splits targets into those a zypper lock matches and the rest.
 func ZypperLockedTargets(locks []ZypperLock, targets []string) (locked, free []string) {
 	for _, t := range targets {

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
-	"slices"
 	"strings"
 )
 
@@ -116,18 +115,4 @@ func (s zypperStream) noUpdateRepositories() bool {
 		}
 	}
 	return false
-}
-
-// packageNames returns the packages a transaction upgrades, installs or reinstalls.
-func (sum *ZypperInstallSummary) packageNames() map[string]bool {
-	names := make(map[string]bool)
-	if sum == nil {
-		return names
-	}
-	for _, s := range slices.Concat(sum.Upgrade, sum.Install, sum.Reinstall) {
-		if s.Type == "" || s.Type == "package" {
-			names[s.Name] = true
-		}
-	}
-	return names
 }

@@ -55,26 +55,83 @@ func TestZypperListUpdates(t *testing.T) {
 
 func TestZypperSecurityPatches(t *testing.T) {
 	lp := readZypperFixture(t, "zypper-leap155-lp-security.xml")
-	if got := neededSecurityPatches(lp); got != 4 {
-		t.Errorf("needed security patches = %d, want 4 (stack pending, so they sit in blocked-update-list)", got)
+	if got := neededSecurityPatches(lp); len(got) != 4 {
+		t.Errorf("needed security patches = %v, want 4 (stack pending, so they sit in blocked-update-list)", got)
 	}
 	if lp.noUpdateRepositories() {
 		t.Error("leap reports update repositories")
 	}
 
 	bci := readZypperFixture(t, "zypper-bci156-lp.xml")
-	if !bci.noUpdateRepositories() || neededSecurityPatches(bci) != 0 {
+	if !bci.noUpdateRepositories() || len(neededSecurityPatches(bci)) != 0 {
 		t.Error("BCI has no update repositories")
 	}
 
-	names := readZypperFixture(t, "zypper-leap155-patch-security-dry.xml").InstallSummary.packageNames()
-	want := []string{"curl", "libcurl4", "libglib-2_0-0", "libopenssl1_1", "libopenssl1_1-hmac", "openssl-1_1"}
-	if len(names) != len(want) {
-		t.Errorf("got %v, want %v", names, want)
+	info, err := os.ReadFile("testdata/zypper-leap155-info-security-patches.txt")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, n := range want {
-		if !names[n] {
-			t.Errorf("%s not flagged", n)
+	fixes := parseZypperPatchConflicts(string(info))
+	if got := fixes["libopenssl1_1-hmac"]; len(got) != 1 || got[0] != "1.1.1l-150500.17.37.1" {
+		t.Errorf("libopenssl1_1-hmac fixes = %v", got)
+	}
+	var flagged []string
+	for _, p := range zypperUpgradablePackages(readZypperFixture(t, "zypper-leap155-lu.xml").Updates, nil) {
+		if zypperFixesSecurity(fixes[p.Name], p.CurrentVersion, p.AvailableVersion) {
+			flagged = append(flagged, p.Name)
+		}
+	}
+	want := "curl,libcurl4,libglib-2_0-0,libopenssl1_1,libopenssl1_1-hmac,openssl-1_1"
+	if got := strings.Join(flagged, ","); got != want {
+		t.Errorf("flagged %s, want %s (what zypper patch --dry-run --category security upgrades)", got, want)
+	}
+}
+
+func TestZypperFixesSecurity(t *testing.T) {
+	cases := []struct {
+		fixes              []string
+		current, available string
+		want               bool
+	}{
+		{[]string{"8.0.1-150400.5.59.1"}, "8.0.1-150400.5.50.1", "8.0.1-150400.5.59.1", true},
+		{[]string{"8.0.1-150400.5.59.1"}, "8.0.1-150400.5.59.1", "8.0.1-150400.5.62.1", false},
+		{[]string{"8.0.1-150400.5.59.1"}, "8.0.1-150400.5.50.1", "8.0.1-150400.5.55.1", false},
+		{[]string{"1.0-1", "2.0-1"}, "1.5-1", "2.1-1", true},
+		{nil, "1.0-1", "2.0-1", false},
+	}
+	for _, tc := range cases {
+		if got := zypperFixesSecurity(tc.fixes, tc.current, tc.available); got != tc.want {
+			t.Errorf("zypperFixesSecurity(%v, %s, %s) = %v, want %v", tc.fixes, tc.current, tc.available, got, tc.want)
+		}
+	}
+}
+
+func TestCompareRPMEVR(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"1.0-1", "1.0-1", 0},
+		{"1.0-1", "1.0-2", -1},
+		{"1.10-1", "1.9-1", 1},
+		{"1.0a-1", "1.0-1", 1},
+		{"1.0~rc1-1", "1.0-1", -1},
+		{"1.0^git1-1", "1.0-1", 1},
+		{"1:1.0-1", "2.0-1", 1},
+		{"0:2.0-1", "2.0-1", 0},
+		{"84.87+git20180409.04c9dae-150300.10.20.1", "84.87+git20180409.04c9dae-150300.10.23.1", -1},
+		{"13.3.0+git8781-150000.1.12.1", "14.2.0+git10526-150000.1.6.1", -1},
+		{"20241218-lp160.5.1", "20241218+leap-lp160.1.1", -1},
+		{"1.0.010-1", "1.0.9-1", 1},
+		{"2.0", "2.0-5", 0},
+		{"1.0a", "1.0.1", -1},
+	}
+	for _, tc := range cases {
+		if got := compareRPMEVR(tc.a, tc.b); got != tc.want {
+			t.Errorf("compareRPMEVR(%q, %q) = %d, want %d", tc.a, tc.b, got, tc.want)
+		}
+		if got := compareRPMEVR(tc.b, tc.a); got != -tc.want {
+			t.Errorf("compareRPMEVR(%q, %q) = %d, want %d", tc.b, tc.a, got, -tc.want)
 		}
 	}
 }
