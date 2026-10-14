@@ -455,7 +455,7 @@ const UsersTab = () => {
 										<th className="px-6 py-3 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Last Login
 										</th>
-										<th className="px-6 py-3 text-right text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+										<th className="px-2 py-3 text-right text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
 											Actions
 										</th>
 									</tr>
@@ -548,8 +548,8 @@ const UsersTab = () => {
 													<span className="text-secondary-400">Never</span>
 												)}
 											</td>
-											<td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-												<div className="flex items-center justify-end space-x-2">
+											<td className="px-2 py-4 whitespace-nowrap text-right text-sm font-medium">
+												<div className="grid grid-cols-2 gap-x-3 gap-y-2 justify-items-center w-fit ml-auto">
 													<button
 														type="button"
 														onClick={() => handleEditUser(user)}
@@ -588,7 +588,7 @@ const UsersTab = () => {
 														onClick={() =>
 															handleDeleteUser(user.id, user.username)
 														}
-														className="text-danger-400 hover:text-danger-600 dark:text-danger-500 dark:hover:text-danger-400 disabled:text-gray-300 disabled:cursor-not-allowed"
+														className="col-start-2 text-danger-400 hover:text-danger-600 dark:text-danger-500 dark:hover:text-danger-400 disabled:text-gray-300 disabled:cursor-not-allowed"
 														title={
 															user.id === currentUser?.id
 																? "Cannot delete your own account"
