@@ -1606,6 +1606,10 @@ Patch runs include patches that suggest a reboot, such as kernel updates, and ac
 
 **Exit codes** are reported in plain words. A run that needs a reboot (zypper exit code 102) or skipped a repository it could not refresh (106) succeeds with a note in the output. A run where packages were installed but an RPM script failed (107) is marked failed, so that someone checks the output and runs `zypper verify` on the host.
 
+**Dependency problems.** If zypper cannot plan an update without a choice, for example removing a package or skipping patches, PatchMon does not choose for you. The run fails and quotes zypper's problem and the solutions it offers. Resolve it once on the host with zypper, then run the patch again.
+
+Leap 16.0 containers made from the stock Proxmox template hit this on their first Patch all. The template ships `systemd-sysvcompat`, which the Leap 16.0 repository no longer carries, and the systemd update conflicts with it. Run `zypper rm systemd-sysvcompat` once on the container, then patch.
+
 **Transactional hosts.** openSUSE MicroOS, Leap Micro and SUSE Linux Micro have a read-only root filesystem and are updated with `transactional-update`. They report inventory, but patch runs are refused with an explanation, and nothing is changed.
 
 **Reboot required** is set when libzypp flags it after installing a kernel or another package that needs a reboot (`zypper needs-rebooting`), or when the running kernel is older than the newest installed one.
