@@ -113,8 +113,8 @@ func TestDecideReenrol(t *testing.T) {
 		{"re-issued over a minute ago", pending(func(h *models.Host) { h.CredentialsReissuedAt = &aWhileAgo }), "", false, reenrolReissue},
 		{"re-issued seconds ago", pending(func(h *models.Host) { h.CredentialsReissuedAt = &justNow }), "", false, reenrolCooldown},
 		{"other token", pending(func(h *models.Host) { h.EnrolmentTokenID = strp("other") }), "", false, reenrolNotReenrollable},
-		{"UI-created or pre-2.1.5 row", pending(func(h *models.Host) { h.EnrolmentTokenID = nil }), "", false, reenrolNotReenrollable},
-		{"has an agent version", pending(func(h *models.Host) { h.AgentVersion = strp("2.1.5") }), "", false, reenrolHostReporting},
+		{"UI-created or pre-2.1.4 row", pending(func(h *models.Host) { h.EnrolmentTokenID = nil }), "", false, reenrolNotReenrollable},
+		{"has an agent version", pending(func(h *models.Host) { h.AgentVersion = strp("2.1.4") }), "", false, reenrolHostReporting},
 		{"has a full report", pending(func(h *models.Host) { h.LastFullReportAt = &reportedAt }), "", false, reenrolHostReporting},
 		{"active", pending(func(h *models.Host) { h.Status = "active" }), "", false, reenrolHostReporting},
 		{"reporting beats cooldown", pending(func(h *models.Host) { h.Status = "active"; h.CredentialsReissuedAt = &justNow }), "", false, reenrolHostReporting},
@@ -233,7 +233,7 @@ func TestServePing_HostIdentity(t *testing.T) {
 
 	t.Run("old agent body leaves the new columns NULL", func(t *testing.T) {
 		host := newTestHost(t, hosts, "active")
-		out := ping(t, h, host, `{"agentVersion":"2.1.4","hashes":{"packagesHash":"x"}}`)
+		out := ping(t, h, host, `{"agentVersion":"2.1.3","hashes":{"packagesHash":"x"}}`)
 		if out["hostId"] != host.ID {
 			t.Fatalf("hostId = %v", out["hostId"])
 		}
@@ -245,12 +245,12 @@ func TestServePing_HostIdentity(t *testing.T) {
 
 	t.Run("matching hostId and configVersion are stored", func(t *testing.T) {
 		host := newTestHost(t, hosts, "active")
-		out := ping(t, h, host, `{"agentVersion":"2.1.5-rc.1","configVersion":"2.1.5-rc.1","hostId":"`+host.ID+`"}`)
+		out := ping(t, h, host, `{"agentVersion":"2.1.4-rc.1","configVersion":"2.1.4-rc.1","hostId":"`+host.ID+`"}`)
 		if _, ok := out["hostIdMismatch"]; ok {
 			t.Fatal("unexpected mismatch flag")
 		}
 		cv, rep, _, _ := identityRow(t, d, host.ID)
-		if cv == nil || *cv != "2.1.5-rc.1" || rep == nil || *rep != host.ID {
+		if cv == nil || *cv != "2.1.4-rc.1" || rep == nil || *rep != host.ID {
 			t.Fatalf("config_version=%v reported_host_id=%v", cv, rep)
 		}
 		got, _ := hosts.GetByID(context.Background(), host.ID)
@@ -269,18 +269,18 @@ func TestServePing_HostIdentity(t *testing.T) {
 
 	t.Run("downgrade to an agent without config versioning clears config_version", func(t *testing.T) {
 		host := newTestHost(t, hosts, "active")
-		ping(t, h, host, `{"agentVersion":"2.1.5","configVersion":"2.1.5"}`)
+		ping(t, h, host, `{"agentVersion":"2.1.4","configVersion":"2.1.4"}`)
 		ping(t, h, host, "")
-		if cv, _, _, _ := identityRow(t, d, host.ID); cv == nil || *cv != "2.1.5" {
+		if cv, _, _, _ := identityRow(t, d, host.ID); cv == nil || *cv != "2.1.4" {
 			t.Fatalf("an empty heartbeat changed config_version to %v", cv)
 		}
 		ping(t, h, host, `{"hashes":{"packagesHash":"x"}}`)
 		if cv, _, _, _ := identityRow(t, d, host.ID); cv == nil {
 			t.Fatal("a body without an agent version cleared config_version")
 		}
-		ping(t, h, host, `{"agentVersion":"2.1.4"}`)
+		ping(t, h, host, `{"agentVersion":"2.1.3"}`)
 		if cv, _, _, _ := identityRow(t, d, host.ID); cv != nil {
-			t.Fatalf("config_version = %q after a pre-2.1.5 agent pinged, want NULL", *cv)
+			t.Fatalf("config_version = %q after a pre-2.1.4 agent pinged, want NULL", *cv)
 		}
 	})
 
@@ -407,7 +407,7 @@ func TestServeUpdate_ReturnsHostIDAndStoresConfigVersion(t *testing.T) {
 	host := newTestHost(t, hosts, "pending")
 
 	body := `{"packages":[{"name":"bash","currentVersion":"5.2"}],"repositories":[],"osType":"debian","osVersion":"12",` +
-		`"hostname":"web-01","agentVersion":"2.1.5","machineId":"abcd","hostId":"` + host.ID + `","configVersion":"2.1.5"}`
+		`"hostname":"web-01","agentVersion":"2.1.4","machineId":"abcd","hostId":"` + host.ID + `","configVersion":"2.1.4"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/hosts/update", strings.NewReader(body))
 	req.Header.Set("X-API-ID", host.ApiID)
 	req.Header.Set("X-API-KEY", host.ApiKey)
@@ -422,11 +422,11 @@ func TestServeUpdate_ReturnsHostIDAndStoresConfigVersion(t *testing.T) {
 		t.Fatalf("hostId = %v, want %s", out["hostId"], host.ID)
 	}
 	cv, rep, _, fp := identityRow(t, d, host.ID)
-	if cv == nil || *cv != "2.1.5" || rep == nil || *rep != host.ID || fp == nil {
+	if cv == nil || *cv != "2.1.4" || rep == nil || *rep != host.ID || fp == nil {
 		t.Fatalf("config_version=%v reported_host_id=%v fingerprint=%v", cv, rep, fp)
 	}
 
-	old := `{"packages":[{"name":"bash","currentVersion":"5.2"}],"repositories":[],"osType":"debian","osVersion":"12","hostname":"web-01","agentVersion":"2.1.4","machineId":"abcd"}`
+	old := `{"packages":[{"name":"bash","currentVersion":"5.2"}],"repositories":[],"osType":"debian","osVersion":"12","hostname":"web-01","agentVersion":"2.1.3","machineId":"abcd"}`
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/hosts/update", strings.NewReader(old))
 	req.Header.Set("X-API-ID", host.ApiID)
 	req.Header.Set("X-API-KEY", host.ApiKey)
@@ -436,7 +436,7 @@ func TestServeUpdate_ReturnsHostIDAndStoresConfigVersion(t *testing.T) {
 		t.Fatalf("old-agent update: %d %s", rec.Code, rec.Body.String())
 	}
 	if cv, _, _, _ := identityRow(t, d, host.ID); cv != nil {
-		t.Fatalf("config_version = %q after a pre-2.1.5 report, want NULL", *cv)
+		t.Fatalf("config_version = %q after a pre-2.1.4 report, want NULL", *cv)
 	}
 }
 

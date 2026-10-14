@@ -230,7 +230,7 @@ type PingResponse struct {
 	// what the agent shipped. Empty array == nothing changed, agent stays
 	// quiet. Only meaningful when HashGate is true.
 	RequestFull []string `json:"requestFull,omitempty"`
-	// Servers older than 2.1.5 omit HostID.
+	// Servers older than 2.1.4 omit HostID.
 	HostID         string `json:"hostId,omitempty"`
 	HostIDMismatch bool   `json:"hostIdMismatch,omitempty"`
 }

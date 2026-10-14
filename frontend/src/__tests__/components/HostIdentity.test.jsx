@@ -29,8 +29,8 @@ vi.mock("../../utils/api", async (importOriginal) => {
 const baseHost = {
 	id: "3b0c2f7e-6a1d-4c55-9a0e-2f1f7d9e8c41",
 	friendly_name: "web-01",
-	agent_version: "2.1.5",
-	config_version: "2.1.5",
+	agent_version: "2.1.4",
+	config_version: "2.1.4",
 	host_id_mismatch: false,
 	identity_conflict_at: null,
 	credentials_reissued_at: null,
@@ -54,17 +54,17 @@ beforeEach(() => {
 describe("ConfigVersionValue", () => {
 	it("shows the plain value when it matches the agent", () => {
 		render(<ConfigVersionValue host={baseHost} />);
-		expect(screen.getByText("2.1.5")).toBeInTheDocument();
+		expect(screen.getByText("2.1.4")).toBeInTheDocument();
 		expect(screen.queryByText("Out of date")).toBeNull();
 	});
 
 	it("flags an rc config left behind by a final release", () => {
 		render(
 			<ConfigVersionValue
-				host={{ ...baseHost, config_version: "2.1.5-rc.1" }}
+				host={{ ...baseHost, config_version: "2.1.4-rc.1" }}
 			/>,
 		);
-		expect(screen.getByText("2.1.5-rc.1")).toBeInTheDocument();
+		expect(screen.getByText("2.1.4-rc.1")).toBeInTheDocument();
 		expect(screen.getByText("Out of date")).toBeInTheDocument();
 		expect(
 			screen.getByRole("button", { name: "About config version out of date" }),
@@ -79,10 +79,10 @@ describe("ConfigVersionValue", () => {
 	it("never shows a mismatch for an old agent that sends nothing", () => {
 		render(
 			<ConfigVersionValue
-				host={{ ...baseHost, agent_version: "2.1.4", config_version: null }}
+				host={{ ...baseHost, agent_version: "2.1.3", config_version: null }}
 			/>,
 		);
-		expect(screen.getByText("Requires agent 2.1.5")).toBeInTheDocument();
+		expect(screen.getByText("Requires agent 2.1.4")).toBeInTheDocument();
 		expect(screen.queryByText("Out of date")).toBeNull();
 		expect(screen.queryByText("Not reported")).toBeNull();
 	});
@@ -106,7 +106,7 @@ describe("AgentVersionIndicators", () => {
 		expect(container).toBeEmptyDOMElement();
 		rerender(
 			<AgentVersionIndicators
-				host={{ ...baseHost, agent_version: "2.1.4", config_version: null }}
+				host={{ ...baseHost, agent_version: "2.1.3", config_version: null }}
 			/>,
 		);
 		expect(container).toBeEmptyDOMElement();
@@ -115,7 +115,7 @@ describe("AgentVersionIndicators", () => {
 	it("shows a warning icon when the config version differs", () => {
 		render(
 			<AgentVersionIndicators
-				host={{ ...baseHost, config_version: "2.1.4" }}
+				host={{ ...baseHost, config_version: "2.1.3" }}
 			/>,
 		);
 		const icon = screen.getByRole("button", {

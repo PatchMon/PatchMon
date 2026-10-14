@@ -266,7 +266,7 @@ if ($ServerURL -and $APIID -and $APIKey) {
         if ($HostId) {
             Invoke-AgentBinary -Path $targetPath -AgentArgs ($setApiArgs + @("--host-id", $HostId))
         }
-        # An agent older than 2.1.5 rejects --host-id; it learns the host ID later instead.
+        # An agent older than 2.1.4 rejects --host-id; it learns the host ID later instead.
         if (-not $HostId -or $LASTEXITCODE -ne 0) {
             Invoke-AgentBinary -Path $targetPath -AgentArgs $setApiArgs
         }

@@ -82,7 +82,7 @@ func TestPatchmonIdentity(t *testing.T) {
 		}, "api_id=patchmon_ab12\napi_key=deadbeef\nhost_id=" + hid + "\nserver=https://pm.example/\n"},
 		{"agent-written unquoted values with CRLF", func(t *testing.T, dir string) {
 			write(t, filepath.Join(dir, "credentials.yml"), "api_id: patchmon_ab12\r\napi_key: deadbeef\r\n", 0)
-			write(t, filepath.Join(dir, "config.yml"), "config_version: 2.1.5\r\nhost_id: "+hid+"\r\npatchmon_server: http://10.0.0.5:3000\r\n", 0)
+			write(t, filepath.Join(dir, "config.yml"), "config_version: 2.1.4\r\nhost_id: "+hid+"\r\npatchmon_server: http://10.0.0.5:3000\r\n", 0)
 		}, "api_id=patchmon_ab12\napi_key=deadbeef\nhost_id=" + hid + "\nserver=http://10.0.0.5:3000\n"},
 		{"falls back to the newest backups", func(t *testing.T, dir string) {
 			write(t, filepath.Join(dir, "credentials.yml.backup.20260101_000000"), "api_id: patchmon_old\napi_key: aaaa\n", 2*time.Hour)

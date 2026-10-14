@@ -368,7 +368,7 @@ UPDATE hosts SET
     ip = COALESCE($5::text, ip),
     architecture = COALESCE($6::text, architecture),
     agent_version = COALESCE($7::text, agent_version),
-    -- An agent version without a config version is a pre-2.1.5 agent, which has none.
+    -- An agent version without a config version is a pre-2.1.4 agent, which has none.
     config_version = CASE
         WHEN $8::text IS NOT NULL THEN $8::text
         WHEN $7::text IS NOT NULL THEN NULL
