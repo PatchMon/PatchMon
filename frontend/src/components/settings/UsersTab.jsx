@@ -159,6 +159,11 @@ const UsersTab = () => {
 			queryClient.invalidateQueries({ queryKey: ["settings"] });
 			setIsSignupDirty(false);
 		},
+		onError: (error) => {
+			toast.error(
+				error.response?.data?.error || "Failed to save registration settings",
+			);
+		},
 	});
 
 	const handleSignupInputChange = (field, value) => {

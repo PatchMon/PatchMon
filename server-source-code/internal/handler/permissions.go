@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
@@ -142,6 +143,22 @@ func (h *PermissionsHandler) UpdateRole(w http.ResponseWriter, r *http.Request) 
 		CanUseRemoteAccess:      boolVal(req.CanUseRemoteAccess),
 		CanManageBilling:        boolVal(req.CanManageBilling),
 	}
+	callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
+	if !roleCovers(r.Context(), h.permissions, callerRole, role) {
+		Error(w, http.StatusForbidden, "Cannot modify a role that holds permissions you do not have")
+		return
+	}
+	if callerRole != "superadmin" {
+		caller, err := h.permissions.GetByRole(r.Context(), callerRole)
+		if err != nil || caller == nil {
+			Error(w, http.StatusForbidden, "Insufficient permissions")
+			return
+		}
+		if missing := missingPermissions(caller, p); len(missing) > 0 {
+			Error(w, http.StatusForbidden, "You cannot grant permissions you do not hold: "+strings.Join(missing, ", "))
+			return
+		}
+	}
 	if err := h.permissions.UpsertRole(r.Context(), p); err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to update role permissions")
 		return
@@ -169,6 +186,11 @@ func (h *PermissionsHandler) DeleteRole(w http.ResponseWriter, r *http.Request) 
 	}
 	if builtInRoles[role] {
 		Error(w, http.StatusBadRequest, "Cannot delete built-in role")
+		return
+	}
+	callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
+	if !roleCovers(r.Context(), h.permissions, callerRole, role) {
+		Error(w, http.StatusForbidden, "Cannot delete a role that holds permissions you do not have")
 		return
 	}
 	count, _ := h.permissions.CountUsersByRole(r.Context(), role)

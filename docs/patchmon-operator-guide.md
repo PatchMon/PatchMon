@@ -1512,7 +1512,22 @@ Every PatchMon reverse proxy, regardless of flavour, must handle four things cor
 3. **Forward the original protocol** via `X-Forwarded-Proto: https`. The server reads this header to know the connection is secure and to construct correct `wss://` URLs for agents.
 4. **Use a long read timeout (86400 seconds / 24 hours).** The agent control channel is an idle-tolerant connection that sends pings every 30 seconds; most proxies default to a 60-second idle timeout and will drop the connection before the agent can detect the disconnect.
 
-If you also want the server to pick up the real client IP for logging and rate-limiting (instead of the proxy's IP), set `TRUST_PROXY=true` in the PatchMon `.env`. See the [Environment Variables Reference](#patchmon-environment-variables-reference) for details.
+#### Real client IP: which proxies PatchMon trusts
+
+PatchMon uses the client IP for rate limiting, login lockout and audit logs. With `TRUST_PROXY=true` (the default) it reads `X-Forwarded-For`, but only when the connection comes from a proxy it trusts:
+
+- **`TRUSTED_PROXY_RANGES` empty (default):** the header is trusted from loopback (`127.0.0.0/8`, `::1`), private (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`), link-local and CGNAT (`100.64.0.0/10`, which includes Tailscale addresses) peers. This covers Nginx Proxy Manager, Traefik or Caddy in Docker, and a proxy on the same host or LAN, with no configuration.
+- **`TRUSTED_PROXY_RANGES` set:** the header is trusted only from peers in that list. The built-in private ranges no longer apply, so list your own reverse proxy's address as well as any proxies in front of it.
+
+A client that connects to PatchMon directly from any other address cannot change its IP by sending its own `X-Forwarded-For`; PatchMon uses the connecting address and logs a warning, once for each such address (up to 10): `ignoring X-Forwarded-For from an untrusted peer`.
+
+> **When the default is not enough:** with `TRUSTED_PROXY_RANGES` empty, anything that reaches PatchMon from a private address is trusted to send `X-Forwarded-For`. Some setups make every client look private, so a client could still set its own IP: rootless Podman (slirp4netns or pasta), Docker's userland proxy for IPv6 published ports, Kubernetes Services that SNAT traffic, and users on the same LAN reaching PatchMon's port directly without going through the proxy. In those setups, set `TRUSTED_PROXY_RANGES` to your reverse proxy's exact address (for example `172.18.0.5/32`), or only publish PatchMon's port to the proxy.
+
+**Proxy on a public IP, or a CDN connecting directly to PatchMon.** If the proxy that connects to PatchMon has a public address (for example Cloudflare or another CDN pointing straight at your server's port, or a proxy on a different public host), its header is ignored until you list it. Set `TRUSTED_PROXY_RANGES` to that proxy's addresses, for example your CDN's published IP ranges. If you see the warning above naming your proxy's address, this is the fix.
+
+**Chained proxies (CDN in front of Nginx Proxy Manager).** List every hop, including Nginx Proxy Manager's own address on the Docker network, for example `TRUSTED_PROXY_RANGES=172.16.0.0/12,<your CDN's ranges>`. PatchMon then walks past the trusted hops to the original client.
+
+`X-Forwarded-Proto` handling is not affected by these settings. See the [Environment Variables Reference](#patchmon-environment-variables-reference) for `TRUST_PROXY` and `TRUSTED_PROXY_RANGES`.
 
 ---
 
@@ -1936,6 +1951,8 @@ The form is validated client-side first, then the server checks that no admin us
 
 The admin user is created with role **`superadmin`**, which has every permission in the system. You can demote later or create narrower roles from **Settings → Users → Roles** once you're logged in.
 
+Keep at least one `superadmin`: only a `superadmin` can make someone an `admin`, and only a `superadmin` can use the **Admin** preset when creating a role. An `admin` can create roles and assign them only with permissions the `admin` role itself holds. See the admin guide's roles chapter for the full rules.
+
 ---
 
 ### Step 2: Multi-Factor Authentication
@@ -2143,7 +2160,7 @@ General HTTP server and network settings.
 | `CORS_ORIGIN` | `http://localhost:3000` | No | Browser origin(s) allowed to use PatchMon. Each entry is the URL users type in their browser (protocol, hostname and port; no path). Separate multiple origins with commas, e.g. `https://patchmon.example.com,https://patchmon.internal.lan`. Spaces around commas, a trailing slash and upper-case letters are tolerated. Agents and the install script are checked too, so the hostname in your Server URL must also appear here. |
 | `ENABLE_HSTS` | `false` | No | When `true`, the server adds an `HTTP Strict Transport Security` header to responses. Enable this only when PatchMon is served over HTTPS. |
 | `TRUST_PROXY` | `true` | No | When `true`, the server trusts `X-Forwarded-For` / `X-Forwarded-Proto` and related headers from a reverse proxy (Traefik, Caddy, nginx, NPM, etc.). Required for accurate client IP detection, correct rate limiting, and OIDC's HTTPS check when TLS is terminated at the proxy. Default is `true` because the officially supported deployment is Docker behind a reverse proxy; set to `false` explicitly only if PatchMon is exposed directly to the internet without a proxy. |
-| `TRUSTED_PROXY_RANGES` | (empty) | No | Comma-separated CIDRs or bare IPs of the reverse proxies in front of PatchMon, for example `10.0.0.0/8,172.16.0.0/12`. Used together with `TRUST_PROXY` to work out the real client IP from `X-Forwarded-For`, which drives rate limiting, login lockout, and audit logging. Leave it empty when there is a single reverse proxy, which is the usual setup: PatchMon then uses the address your proxy appended to the header, which a client cannot forge. Set it only when proxies are chained (for example Cloudflare in front of Nginx Proxy Manager), listing the intermediate hops so the original client IP is resolved rather than your CDN's egress address. Configured via environment only, and shown read-only in the settings UI, because widening it would allow clients to spoof their own IP. |
+| `TRUSTED_PROXY_RANGES` | (empty) | No | Comma-separated CIDRs or bare IPs of the reverse proxies in front of PatchMon, for example `10.0.0.0/8,172.16.0.0/12`. Used together with `TRUST_PROXY` to work out the real client IP from `X-Forwarded-For`, which drives rate limiting, login lockout, and audit logging. `X-Forwarded-For` is only read from a trusted peer: with this list empty, any loopback, private (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`), link-local or CGNAT (`100.64.0.0/10`) address; with it set, only the addresses listed, so include your own reverse proxy. A client connecting to PatchMon directly therefore cannot forge its own IP. Leave it empty when there is a single reverse proxy on the same host or private network, which is the usual setup: PatchMon then uses the address your proxy appended to the header, which a client cannot forge. Set it when your reverse proxy reaches PatchMon from a public IP address (PatchMon logs a warning naming that address when it ignores the header), or when proxies are chained (for example Cloudflare in front of Nginx Proxy Manager), listing the intermediate hops so the original client IP is resolved rather than your CDN's egress address. Configured via environment only, and shown read-only in the settings UI, because widening it would allow clients to spoof their own IP. |
 
 **Production example:**
 
@@ -2448,6 +2465,8 @@ Map groups from your identity provider directly to PatchMon roles. Set `OIDC_SYN
 | `OIDC_HOST_MANAGER_GROUP` | _(none)_ | No | Name of the IdP group whose members are granted the `host_manager` role. |
 | `OIDC_READONLY_GROUP` | _(none)_ | No | Name of the IdP group whose members are granted the `readonly` role. |
 | `OIDC_USER_GROUP` | _(none)_ | No | Name of the IdP group whose members are granted the standard `user` role. |
+
+> **Who can change SSO trust settings in the UI:** in **Settings → OIDC / SSO** (and with **Import from .env**), turning SSO on or off, or changing the issuer URL, client ID, client secret, redirect URI, **Disable local authentication**, **Auto-create users**, **Trust unverified email**, **Sync roles**, the default role or any role mapping row, needs the `can_manage_superusers` permission, which by default only `superadmin` holds. Whoever controls these settings controls who can sign in as whom, so `can_manage_settings` alone is not enough. On top of that, a role mapping or default role can only be set to a role the editor is allowed to grant: only a `superadmin` can choose `admin` or `superadmin`. The button text, scopes and **Enforce HTTPS** stay editable with `can_manage_settings`, and the environment variables themselves are not affected. The role rule also applies to **Default Role for New Users** under **Settings → Users**.
 
 **Example: Authentik**
 

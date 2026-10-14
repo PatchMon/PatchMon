@@ -36,6 +36,7 @@ type OidcHandler struct {
 	settings    *store.SettingsStore
 	enc         *util.Encryption
 	log         *slog.Logger
+	permissions *store.PermissionsStore
 
 	// clientMu protects entries, keyed by context.
 	clientMu sync.RWMutex
@@ -530,6 +531,7 @@ func (h *OidcHandler) ImportFromEnv(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to load settings")
 		return
 	}
+	before := *s
 	// Copy env values to settings
 	s.OidcEnabled = h.cfg.OidcEnabled
 	s.OidcIssuerURL = strOrNil(strings.TrimSpace(h.cfg.OidcIssuerURL))
@@ -566,6 +568,9 @@ func (h *OidcHandler) ImportFromEnv(w http.ResponseWriter, r *http.Request) {
 			s.OidcClientSecret = &encrypted
 		}
 	}
+	if h.rejectRestrictedOidcChange(w, r, &before, s) {
+		return
+	}
 	if err := h.settings.Update(r.Context(), s); err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to import OIDC settings")
 		return
@@ -578,6 +583,72 @@ func (h *OidcHandler) ImportFromEnv(w http.ResponseWriter, r *http.Request) {
 	}
 	callbackURL := buildOidcCallbackURL(h.cfg, s)
 	JSON(w, http.StatusOK, oidcSettingsResponse(s, &secretSet, config.ConfiguredViaEnv(h.cfg), config.EnvPreview(h.cfg), callbackURL))
+}
+
+// WithPermissions wires the role store used to stop role mapping changes granting more than the caller holds.
+func (h *OidcHandler) WithPermissions(p *store.PermissionsStore) *OidcHandler {
+	h.permissions = p
+	return h
+}
+
+// oidcTrustChanged reports whether before -> after changes which identity provider PatchMon trusts
+// or how its claims become roles; repointing these lets the editor sign in as any user.
+func oidcTrustChanged(before, after *models.Settings) bool {
+	d := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return *p
+	}
+	return before.OidcEnabled != after.OidcEnabled ||
+		before.OidcDisableLocalAuth != after.OidcDisableLocalAuth ||
+		before.OidcAutoCreateUsers != after.OidcAutoCreateUsers ||
+		d(before.OidcIssuerURL) != d(after.OidcIssuerURL) ||
+		d(before.OidcClientID) != d(after.OidcClientID) ||
+		d(before.OidcClientSecret) != d(after.OidcClientSecret) ||
+		d(before.OidcRedirectURI) != d(after.OidcRedirectURI) ||
+		before.OidcTrustUnverifiedEmail != after.OidcTrustUnverifiedEmail ||
+		before.OidcSyncRoles != after.OidcSyncRoles ||
+		orUser(d(before.OidcDefaultRole)) != orUser(d(after.OidcDefaultRole)) ||
+		d(before.OidcSuperadminGroup) != d(after.OidcSuperadminGroup) ||
+		d(before.OidcAdminGroup) != d(after.OidcAdminGroup) ||
+		d(before.OidcHostManagerGroup) != d(after.OidcHostManagerGroup) ||
+		d(before.OidcReadonlyGroup) != d(after.OidcReadonlyGroup) ||
+		d(before.OidcUserGroup) != d(after.OidcUserGroup)
+}
+
+func orUser(role string) string {
+	if role == "" {
+		return "user"
+	}
+	return role
+}
+
+func (h *OidcHandler) canManageSuperusers(ctx context.Context, role string) bool {
+	if role == "superadmin" {
+		return true
+	}
+	if h.permissions == nil {
+		return false
+	}
+	p, err := h.permissions.GetByRole(ctx, role)
+	return err == nil && p != nil && p.CanManageSuperusers
+}
+
+// rejectRestrictedOidcChange writes a 403 and returns true when before -> after changes the
+// provider trust settings without can_manage_superusers, or a role mapping the caller may not grant.
+func (h *OidcHandler) rejectRestrictedOidcChange(w http.ResponseWriter, r *http.Request, before, after *models.Settings) bool {
+	callerRole, _ := r.Context().Value(middleware.UserRoleKey).(string)
+	if oidcTrustChanged(before, after) && !h.canManageSuperusers(r.Context(), callerRole) {
+		Error(w, http.StatusForbidden, "Enabling SSO, or changing the SSO provider, client credentials, redirect URI, local login, user auto-creation, email trust or role mapping, requires the Manage Superusers permission")
+		return true
+	}
+	role := ungrantableRoleChange(r.Context(), h.permissions, callerRole, before, after)
+	if role == "" {
+		return false
+	}
+	Error(w, http.StatusForbidden, "You cannot change the OIDC role mapping for a role you are not allowed to grant: "+role)
+	return true
 }
 
 // UpdateSettings handles PUT /api/v1/auth/oidc/settings.
@@ -596,7 +667,11 @@ func (h *OidcHandler) UpdateSettings(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+	before := *s
 	applyOidcSettingsUpdate(s, req, h.enc)
+	if h.rejectRestrictedOidcChange(w, r, &before, s) {
+		return
+	}
 	if err := h.settings.Update(r.Context(), s); err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to update OIDC settings")
 		return
@@ -718,7 +793,7 @@ func applyOidcSettingsUpdate(s *models.Settings, req map[string]interface{}, enc
 		s.OidcAutoCreateUsers = v
 	}
 	if v, ok := getReqString(req, "oidc_default_role", "oidcDefaultRole"); ok {
-		t := v
+		t := strings.TrimSpace(v)
 		if t == "" {
 			t = "user"
 		}
