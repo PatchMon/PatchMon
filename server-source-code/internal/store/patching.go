@@ -121,8 +121,13 @@ func parsePackagesAffectedFromRealOutput(osType, output string) []string {
 	}
 
 	inFreeBSDPkgSection := false
+	// A real apk run also echoes its --simulate plans, which use the same step lines.
+	apkApplying := true
 	for _, line := range strings.Split(output, "\n") {
 		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "$ ") {
+			apkApplying = strings.HasPrefix(trimmed, "$ apk upgrade") && !strings.Contains(trimmed, "--simulate")
+		}
 		// apt-get simulate: "Inst pkgname ..."
 		if strings.HasPrefix(trimmed, "Inst ") {
 			fields := strings.Fields(trimmed)
@@ -149,7 +154,7 @@ func parsePackagesAffectedFromRealOutput(osType, output string) []string {
 		}
 		// Added as-is: apk names such as lua5.4 contain dots that addPkg would cut.
 		if matches := apkActionLinePattern.FindStringSubmatch(trimmed); len(matches) == 2 {
-			if !seen[matches[1]] {
+			if apkApplying && !seen[matches[1]] {
 				seen[matches[1]] = true
 				pkgs = append(pkgs, matches[1])
 			}

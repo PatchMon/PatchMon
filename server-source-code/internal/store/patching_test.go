@@ -233,6 +233,55 @@ OK: 80 MiB in 76 packages
 		}
 	})
 
+	t.Run("apk run cancelled during preupgrade counts only what was applied", func(t *testing.T) {
+		output := `$ apk update --wait 30
+OK: 27456 distinct packages available
+$ apk upgrade --no-progress --simulate
+WARNING: This simulation might not reliable as a preupgrade is available.
+( 1/3) Upgrading musl (1.2.5-r21 -> 1.2.5-r23)
+( 2/3) Upgrading libapk (3.0.1-r1 -> 3.0.8-r0)
+( 3/3) Upgrading apk-tools (3.0.1-r1 -> 3.0.8-r0)
+OK: 8 MiB in 16 packages
+[patchmon] apk-tools has an update of its own. Installing it first, then planning again.
+$ apk upgrade --no-progress --wait 30 --preupgrade-only
+Preupgrading:
+(1/2) Upgrading libapk (3.0.1-r1 -> 3.0.8-r0)
+
+--- Patch run stopped by user at 2026-10-14T13:53:14Z ---`
+
+		got := parsePackagesAffectedFromRealOutput("Alpine Linux", output)
+		want := []string{"libapk"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("parsePackagesAffectedFromRealOutput() = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("completed apk run counts the applied plan, not an earlier simulation", func(t *testing.T) {
+		output := `$ apk update --wait 30
+$ apk upgrade --no-progress --simulate
+WARNING: This simulation is not reliable as apk-tools upgrade is available.
+(1/3) Upgrading busybox (1.37.0-r8 -> 1.37.0-r14)
+(2/3) Upgrading apk-tools (2.14.6-r2 -> 2.14.6-r3)
+(3/3) Upgrading zlib (1.3.1-r2 -> 1.3.2-r1)
+$ apk upgrade --no-progress --wait 30 --self-upgrade-only
+Upgrading critical system libraries and apk-tools:
+(1/1) Upgrading apk-tools (2.14.6-r2 -> 2.14.6-r3)
+$ apk upgrade --no-progress --simulate
+(1/1) Upgrading zlib (1.3.1-r2 -> 1.3.2-r1)
+[patchmon] Held by /etc/apk/world: busybox=1.37.0-r8 (1.37.0-r14 available)
+$ apk upgrade --no-progress --wait 30
+(1/1) Upgrading zlib (1.3.1-r2 -> 1.3.2-r1)
+OK: 7 MiB in 15 packages
+
+--- Patch run completed at 2026-10-14T13:53:14Z ---`
+
+		got := parsePackagesAffectedFromRealOutput("Alpine Linux", output)
+		want := []string{"apk-tools", "zlib"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("parsePackagesAffectedFromRealOutput() = %v, want %v", got, want)
+		}
+	})
+
 	t.Run("parses apk v3 real run with preupgrade and dotted names", func(t *testing.T) {
 		output := `$ apk update --wait 30
 OK: 27456 distinct packages available
@@ -258,7 +307,7 @@ OK: 8435 KiB in 16 packages
 --- Patch run completed at 2026-10-14T13:53:14Z ---`
 
 		got := parsePackagesAffectedFromRealOutput("Alpine Linux", output)
-		want := []string{"lua5.4-libs", "libapk", "apk-tools"}
+		want := []string{"libapk", "apk-tools", "lua5.4-libs"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("parsePackagesAffectedFromRealOutput() = %v, want %v", got, want)
 		}
