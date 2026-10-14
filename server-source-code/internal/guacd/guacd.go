@@ -43,7 +43,7 @@ func Start(ctx context.Context, guacdPath string, listenAddr string, log *slog.L
 	}
 	if _, err := exec.LookPath(binary); err != nil {
 		if log != nil {
-			log.Debug("guacd not found, RDP disabled", "path", binary, "error", err)
+			log.Debug("guacd binary not found, not starting one; RDP uses whatever guacd listens on GUACD_ADDRESS (the Docker sidecar)", "path", binary, "addr", listenAddr)
 		}
 		return nil
 	}
