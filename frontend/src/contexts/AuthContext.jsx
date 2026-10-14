@@ -872,7 +872,11 @@ export const AuthProvider = ({ children }) => {
 			} else {
 				setFirstTimeWizardActive(true);
 			}
-			setAuthPhase(AUTH_PHASES.READY);
+			setAuthPhase(
+				needsAccountSetup(authUser)
+					? AUTH_PHASES.ACCOUNT_SETUP_REQUIRED
+					: AUTH_PHASES.READY,
+			);
 		});
 
 		if (!keepWizardVisible) {
@@ -895,6 +899,7 @@ export const AuthProvider = ({ children }) => {
 		// Remove any stale token from localStorage
 		localStorage.removeItem("token");
 
+		if (needsAccountSetup(authUser)) return;
 		// Fetch permissions and multi-context - works with cookies if token is null
 		fetchPermissions(authToken);
 		fetchTenantContext(authToken);

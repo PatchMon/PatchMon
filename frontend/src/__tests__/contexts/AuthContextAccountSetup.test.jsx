@@ -180,6 +180,25 @@ describe("AuthContext forced account setup", () => {
 		);
 	});
 
+	it("setAuthState keeps a flagged user out of READY", async () => {
+		mountWith({
+			"/api/v1/auth/profile": () => json(401, {}),
+			"/api/v1/settings/login-settings": () =>
+				json(200, { hasAdminUsers: true }),
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId("phase")).toHaveTextContent(AUTH_PHASES.READY),
+		);
+		global.fetch.mockClear();
+		act(() => {
+			api.setAuthState("t", { ...user, tfa_enrolment_required: true });
+		});
+		expect(screen.getByTestId("phase")).toHaveTextContent(
+			AUTH_PHASES.ACCOUNT_SETUP_REQUIRED,
+		);
+		expect(global.fetch).not.toHaveBeenCalled();
+	});
+
 	it("logout leaves the enrolment phase", async () => {
 		mountWith({
 			"/api/v1/auth/profile": () =>
