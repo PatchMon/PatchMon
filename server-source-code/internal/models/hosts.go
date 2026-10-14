@@ -15,8 +15,8 @@ type Host struct {
 	Status                       string     `db:"status"`
 	CreatedAt                    time.Time  `db:"created_at"`
 	UpdatedAt                    time.Time  `db:"updated_at"`
-	ApiID                        string     `db:"api_id"`
-	ApiKey                       string     `db:"api_key"`
+	ApiID                        string     `db:"api_id" json:"-"`
+	ApiKey                       string     `db:"api_key" json:"-"`
 	AgentVersion                 *string    `db:"agent_version"`
 	AutoUpdate                   bool       `db:"auto_update"`
 	CPUCores                     *int       `db:"cpu_cores"`
