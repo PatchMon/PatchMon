@@ -81,7 +81,7 @@ func unescapeCSS(v string) string {
 			return sub[2]
 		}
 		n, _ := strconv.ParseUint(sub[1], 16, 32)
-		if n == 0 || !utf8.ValidRune(rune(n)) {
+		if n == 0 || n > utf8.MaxRune || !utf8.ValidRune(rune(n)) {
 			return "\uFFFD"
 		}
 		return string(rune(n))
