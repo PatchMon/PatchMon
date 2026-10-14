@@ -1668,7 +1668,7 @@ export default function PatchWizard({
 																	{v.packages_affected.length !== 1 ? "s" : ""}{" "}
 																	will be updated:
 																</p>
-																<ul className="text-xs text-secondary-600 dark:text-secondary-400 list-disc list-inside space-y-0.5 max-h-20 overflow-y-auto">
+																<ul className="text-xs text-secondary-600 dark:text-secondary-400 list-disc list-inside space-y-0.5 max-h-48 overflow-y-auto scrollbar-thin">
 																	{v.packages_affected.map((p) => (
 																		<li
 																			key={p}

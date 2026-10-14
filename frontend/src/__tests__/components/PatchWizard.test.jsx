@@ -625,6 +625,36 @@ describe("PatchWizard on Windows hosts", () => {
 		).toBeTruthy();
 	});
 
+	it("lists every update and app the validation found", async () => {
+		const { pollDryRunUntilDone } = await import("../../utils/patchingApi");
+		const affected = [
+			"2026-09 Cumulative Update for Microsoft server operating system version 21H2 for x64-based Systems (KB5122882)",
+			"Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (Version 1.461.27.0) - Current Channel (Broad)",
+			"Windows Malicious Software Removal Tool x64 - v5.146 (KB890830)",
+			"7-Zip 26.02 (x64 edition)",
+			"Notepad++ (x64)",
+			"VLC media player",
+		];
+		patchingAPI.trigger.mockResolvedValue({ patch_run_id: "v6" });
+		pollDryRunUntilDone.mockResolvedValue({
+			status: "validated",
+			packages_affected: affected,
+			shell_output: "",
+			error: null,
+		});
+		renderWizard(WIN, { initialStep: 0 });
+		await clickAndSettle(
+			screen.getByRole("button", { name: "Run validation" }),
+		);
+		await screen.findByText(/6 packages/);
+		const list = screen.getByText("VLC media player").closest("ul");
+		expect(
+			[...list.querySelectorAll("li")].map((li) => li.textContent),
+		).toEqual(affected);
+		expect(list).not.toHaveClass("max-h-20");
+		expect(list).toHaveClass("max-h-48", "scrollbar-thin");
+	});
+
 	it("keeps Linux Patch all without a Validate step or scope", () => {
 		renderWizard(HOSTS.slice(0, 1), { initialStep: 0 });
 		expect(
