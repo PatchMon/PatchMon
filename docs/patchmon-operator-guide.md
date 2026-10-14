@@ -3039,6 +3039,8 @@ This hides the username/password fields on the login page and only shows the SSO
 
 > **Important:** Ensure at least one OIDC user has admin access before enabling this, or you may lose the ability to manage PatchMon.
 
+> **Existing sessions are not ended.** Turning this on blocks new password sign-ins only. Anyone already signed in with a password stays signed in until their session ends: after `SESSION_INACTIVITY_TIMEOUT_MINUTES` of inactivity, or when the refresh token expires (7 days, or 30 days if they ticked "Remember me"). To force everyone through SSO straight away, deactivate and reactivate the affected users, or change their role and back, which revokes their sessions.
+
 #### Password Login When the SSO Provider Is Unreachable {#sso-provider-unreachable-password-login}
 
 With local authentication disabled, an outage at your identity provider means nobody can sign in, because the SSO configuration is still complete. If you would rather let people use their PatchMon password while the provider is down, turn on **Allow password login if SSO is down** in **Settings → OIDC / SSO**, or set:
