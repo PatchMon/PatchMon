@@ -1779,6 +1779,8 @@ This is the richer flow and the one to use for anything security-sensitive. The 
 4. The wizard polls each run until it terminates. While you wait you see:
     - The per-host status badge (pending validation → running → validated).
     - A live terminal excerpt for the currently running host.
+
+    If the agent has not picked the dry-run up within 30 seconds, the host is shown as **Offline**. Once the agent has started it, the wizard waits for the result, which matters on Windows where a Windows Update search can take several minutes. After 25 minutes the host is shown as **Still running**; the run carries on, and its result appears in Runs & History.
 5. When the dry-run completes, the run transitions to `validated` and the wizard shows:
     - The final **Packages affected** list (what would be installed, always a superset of the original request because of dependency resolution).
     - An **Extra deps** badge if dependency resolution pulled in packages you didn't originally ask for.

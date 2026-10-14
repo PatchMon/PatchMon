@@ -591,7 +591,12 @@ describe("PatchWizard on Windows hosts", () => {
 		await clickAndSettle(
 			screen.getByRole("button", { name: "Run validation" }),
 		);
-		await waitFor(() => expect(pollDryRunUntilDone).toHaveBeenCalledWith("v1"));
+		await waitFor(() =>
+			expect(pollDryRunUntilDone).toHaveBeenCalledWith(
+				"v1",
+				expect.any(AbortSignal),
+			),
+		);
 		const [, patchType, , , opts] = patchingAPI.trigger.mock.calls[0];
 		expect(patchType).toBe("patch_all");
 		expect(opts).toMatchObject({
@@ -600,6 +605,28 @@ describe("PatchWizard on Windows hosts", () => {
 		});
 		expect(screen.queryByText(/extra dep/)).toBeNull();
 		expect(screen.queryByText("Validated with skipped items")).toBeNull();
+	});
+
+	it("shows a long validation as still running, not offline", async () => {
+		const { pollDryRunUntilDone } = await import("../../utils/patchingApi");
+		patchingAPI.trigger.mockResolvedValue({ patch_run_id: "v3" });
+		pollDryRunUntilDone.mockResolvedValue({
+			status: "still_running",
+			packages_affected: [],
+			shell_output: "",
+			error:
+				"Validation is still running on the host. Check Runs & History for the result.",
+		});
+		renderWizard(WIN, { initialStep: 0 });
+		await clickAndSettle(
+			screen.getByRole("button", { name: "Run validation" }),
+		);
+		await waitFor(() =>
+			expect(screen.getByText("Still running")).toBeInTheDocument(),
+		);
+		expect(screen.getByText(/Check Runs & History/)).toBeInTheDocument();
+		expect(screen.queryByText("Offline")).toBeNull();
+		expect(screen.queryByText(/may be offline/)).toBeNull();
 	});
 
 	it("shows what validation will leave alone above the install list", async () => {

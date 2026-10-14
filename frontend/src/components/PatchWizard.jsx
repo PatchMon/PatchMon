@@ -453,6 +453,11 @@ export default function PatchWizard({
 	const [error, setError] = useState(null);
 	const [validationByTarget, setValidationByTarget] = useState({});
 	const [isValidating, setIsValidating] = useState(false);
+	const validationAbort = useRef(null);
+	useEffect(() => {
+		if (!isOpen) validationAbort.current?.abort();
+	}, [isOpen]);
+	useEffect(() => () => validationAbort.current?.abort(), []);
 	const [expandedOutput, setExpandedOutput] = useState(null);
 	// Per-target policy override: targetId -> "default" | policyId | "immediate"
 	const [policyOverrides, setPolicyOverrides] = useState({});
@@ -762,6 +767,8 @@ export default function PatchWizard({
 
 	const handleValidate = async () => {
 		if (selectedTargets.length === 0) return;
+		validationAbort.current?.abort();
+		const { signal } = (validationAbort.current = new AbortController());
 		setIsValidating(true);
 		// Seed every selected target as "pending" so the UI can render a live
 		// per-row list immediately, instead of a single batch-wide spinner.
@@ -779,6 +786,7 @@ export default function PatchWizard({
 			selectedTargets,
 			VALIDATION_CONCURRENCY,
 			async (target) => {
+				if (signal.aborted) return;
 				setValidationByTarget((prev) => ({
 					...prev,
 					[target.id]: {
@@ -821,7 +829,8 @@ export default function PatchWizard({
 						}));
 						return;
 					}
-					const result = await pollDryRunUntilDone(runId);
+					const result = await pollDryRunUntilDone(runId, signal);
+					if (!result) return;
 					setValidationByTarget((prev) => ({
 						...prev,
 						[target.id]: { ...result, patch_run_id: runId },
@@ -1041,7 +1050,12 @@ export default function PatchWizard({
 		});
 	}, [validationByTarget, targets, packagesForTarget, extraDepsFor]);
 
-	const TERMINAL_VALIDATION_STATUSES = ["validated", "failed", "timeout"];
+	const TERMINAL_VALIDATION_STATUSES = [
+		"validated",
+		"failed",
+		"timeout",
+		"still_running",
+	];
 	// Derived from selectedTargets, the same source handleValidate seeds from.
 	// A selection id with no matching target would otherwise never be seeded.
 	const validationDone =
@@ -1058,6 +1072,7 @@ export default function PatchWizard({
 			extraDeps: 0,
 			failed: 0,
 			offline: 0,
+			stillRunning: 0,
 			pending: 0,
 			validating: 0,
 			done: 0,
@@ -1077,6 +1092,9 @@ export default function PatchWizard({
 			} else if (status === "timeout") {
 				counts.done += 1;
 				counts.offline += 1;
+			} else if (status === "still_running") {
+				counts.done += 1;
+				counts.stillRunning += 1;
 			} else if (status === "validating") {
 				counts.validating += 1;
 			} else {
@@ -1512,6 +1530,16 @@ export default function PatchWizard({
 													</span>
 												</>
 											)}
+											{validationProgress.stillRunning > 0 && (
+												<>
+													<span className="text-secondary-500 dark:text-secondary-400">
+														·
+													</span>
+													<span className="text-primary-700 dark:text-primary-400">
+														{validationProgress.stillRunning} still running
+													</span>
+												</>
+											)}
 											{validationProgress.validating > 0 && (
 												<>
 													<span className="text-secondary-500 dark:text-secondary-400">
@@ -1571,7 +1599,8 @@ export default function PatchWizard({
 										const borderClass =
 											v.status === "pending"
 												? "border-secondary-200 dark:border-secondary-700"
-												: v.status === "validating"
+												: v.status === "validating" ||
+														v.status === "still_running"
 													? "border-primary-200 dark:border-primary-700"
 													: extraDeps.length > 0
 														? "border-amber-300 dark:border-amber-600"
@@ -1583,7 +1612,8 @@ export default function PatchWizard({
 										const headerBgClass =
 											v.status === "pending"
 												? "bg-secondary-50 dark:bg-secondary-900/40"
-												: v.status === "validating"
+												: v.status === "validating" ||
+														v.status === "still_running"
 													? "bg-primary-50 dark:bg-primary-900/20"
 													: extraDeps.length > 0
 														? "bg-amber-50 dark:bg-amber-900/30"
@@ -1639,6 +1669,12 @@ export default function PatchWizard({
 													{v.status === "timeout" && (
 														<span className="text-xs px-2 py-0.5 rounded bg-secondary-100 text-secondary-600 dark:bg-secondary-700 dark:text-secondary-300">
 															Offline
+														</span>
+													)}
+													{v.status === "still_running" && (
+														<span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-primary-100 text-primary-700 dark:bg-primary-800 dark:text-primary-200">
+															<Clock className="h-3 w-3" />
+															Still running
 														</span>
 													)}
 												</div>
@@ -2251,6 +2287,11 @@ export default function PatchWizard({
 											{v?.status === "timeout" && (
 												<span className="text-xs px-2 py-0.5 rounded bg-secondary-100 text-secondary-600 dark:bg-secondary-600 dark:text-secondary-300">
 													Host offline
+												</span>
+											)}
+											{v?.status === "still_running" && (
+												<span className="text-xs px-2 py-0.5 rounded bg-primary-100 text-primary-700 dark:bg-primary-800 dark:text-primary-200">
+													Still validating
 												</span>
 											)}
 											{submitResult?.status === "success" && (

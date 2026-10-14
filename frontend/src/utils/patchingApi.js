@@ -3,6 +3,8 @@ import { skippedItemsSummary } from "./patchRun";
 
 const DRY_RUN_POLL_INTERVAL_MS = 2000;
 const DRY_RUN_TIMEOUT_MS = 30000;
+// Covers the agent's Windows Update search (15 min) and winget list (5 min) limits.
+const DRY_RUN_RUNNING_CAP_MS = 25 * 60 * 1000;
 
 /**
  * Build the absolute WebSocket URL for the live patch-run output stream.
@@ -17,16 +19,30 @@ export function buildRunStreamURL(runId) {
 	)}/stream`;
 }
 
+const DRY_RUN_FAILED_STATUSES = [
+	"failed",
+	"cancelled",
+	"timed_out",
+	"agent_disconnected",
+];
+
 /**
- * Poll a patch run until it reaches a terminal state (validated, completed, failed) or timeout.
- * Returns { status, packages_affected, error }.
+ * Poll a patch run until it reaches a terminal state or timeout.
+ * The 30s offline timeout only applies until the agent picks the run up: a
+ * Windows Update search can take minutes.
+ * Returns { status, packages_affected, error }, or null once signal aborts.
  */
-export async function pollDryRunUntilDone(runId) {
+export async function pollDryRunUntilDone(runId, signal) {
 	const start = Date.now();
-	while (Date.now() - start < DRY_RUN_TIMEOUT_MS) {
+	for (;;) {
+		if (signal?.aborted) return null;
 		const run = await api.get(`/patching/runs/${runId}`).then((r) => r.data);
 		const status = run?.status;
-		if (status === "validated" || status === "completed") {
+		if (
+			status === "validated" ||
+			status === "completed" ||
+			status === "dry_run_completed"
+		) {
 			return {
 				status: "validated",
 				packages_affected: run.packages_affected || [],
@@ -35,7 +51,7 @@ export async function pollDryRunUntilDone(runId) {
 				error: null,
 			};
 		}
-		if (status === "failed") {
+		if (DRY_RUN_FAILED_STATUSES.includes(status)) {
 			return {
 				status: "failed",
 				packages_affected: [],
@@ -43,14 +59,26 @@ export async function pollDryRunUntilDone(runId) {
 				error: run.error_message || "Dry run failed",
 			};
 		}
+		const elapsed = Date.now() - start;
+		if (status === "running" && elapsed >= DRY_RUN_RUNNING_CAP_MS) {
+			return {
+				status: "still_running",
+				packages_affected: [],
+				shell_output: run.shell_output || "",
+				error:
+					"Validation is still running on the host. Check Runs & History for the result.",
+			};
+		}
+		if (status !== "running" && elapsed >= DRY_RUN_TIMEOUT_MS) {
+			return {
+				status: "timeout",
+				packages_affected: [],
+				shell_output: "",
+				error: "Validation skipped (host offline)",
+			};
+		}
 		await new Promise((r) => setTimeout(r, DRY_RUN_POLL_INTERVAL_MS));
 	}
-	return {
-		status: "timeout",
-		packages_affected: [],
-		shell_output: "",
-		error: "Validation skipped (host offline)",
-	};
 }
 
 export const patchingAPI = {
