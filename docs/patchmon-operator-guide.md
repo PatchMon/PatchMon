@@ -2374,6 +2374,7 @@ The `reason` field distinguishes the failure:
 | `account_disabled` | The correct password was given for a deactivated account. A wrong password for a deactivated account is logged as `invalid_password` |
 | `no_password_set` | The account has no local password, typically SSO-only |
 | `locked_out` | Refused on arrival because a lockout from earlier attempts is still in force |
+| `busy` | Too many sign-ins were already being checked; the attempt waited about 5 seconds for a slot and was answered `503 Too many sign-in attempts, try again shortly`. It does not count towards the lockout |
 | `missing_credentials` | The request omitted the username or the password |
 | `username_too_long` | The submitted username exceeded 254 characters and was rejected before any lookup |
 | `malformed_request` | The request body was not valid JSON |

@@ -560,3 +560,45 @@ func TestUpgradePasswordHashSkipsAChangedPassword(t *testing.T) {
 		t.Fatal("stored hash changed despite the mismatch")
 	}
 }
+
+// Under saturation every path must answer identically, or a full gate becomes
+// an account-existence oracle.
+func TestLoginSaturationAnswersIdenticallyForEveryAccountState(t *testing.T) {
+	f := newLoginFixture(t, 1000)
+	prevWait := bcryptGateWait
+	bcryptGateWait = 50 * time.Millisecond
+	for i := 0; i < cap(loginBcrypt); i++ {
+		loginBcrypt <- struct{}{}
+	}
+	t.Cleanup(func() {
+		for i := 0; i < cap(loginBcrypt); i++ {
+			<-loginBcrypt
+		}
+		bcryptGateWait = prevWait
+	})
+
+	type answer struct {
+		code       int
+		body       string
+		retryAfter string
+	}
+	var want *answer
+	for name, c := range map[string][2]string{
+		"real account, wrong password":   {f.active, "wrong-password"},
+		"real account, correct password": {f.active, hardeningPassword},
+		"unknown user":                   {"nobody-" + uuid.New().String()[:8], "x"},
+		"SSO-only account":               {f.ssoOnly, "x"},
+		"disabled account":               {f.disabled, hardeningPassword},
+	} {
+		rec := postLogin(f.h, c[0], c[1])
+		got := answer{rec.Code, rec.Body.String(), rec.Header().Get("Retry-After")}
+		if got.code != http.StatusServiceUnavailable || !strings.Contains(got.body, "Too many sign-in attempts") {
+			t.Fatalf("%s: got %d %s, want the 503 busy answer", name, got.code, got.body)
+		}
+		if want == nil {
+			want = &got
+		} else if got != *want {
+			t.Fatalf("%s answered %+v, another state answered %+v", name, got, *want)
+		}
+	}
+}

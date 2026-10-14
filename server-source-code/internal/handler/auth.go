@@ -79,8 +79,25 @@ func (h *AuthHandler) localAuthDecision(ctx context.Context) (disabled bool, fal
 // or the comparison against it returns early and the timing leak reopens.
 const dummyPasswordHash = "$2a$12$Jf3V8YDiVO/jiJmbThjnYeiiuNro41Hsodwjpw3O977bmeZiXvPLC"
 
-func spendPasswordCheck(ctx context.Context, password string) {
-	_ = loginBcrypt.compare(ctx, dummyPasswordHash, strings.TrimSpace(password))
+// spendPasswordCheck returns only errLoginBusy; the comparison itself always fails.
+func spendPasswordCheck(ctx context.Context, password string) error {
+	if err := loginBcrypt.compare(ctx, dummyPasswordHash, strings.TrimSpace(password)); errors.Is(err, errLoginBusy) {
+		return err
+	}
+	return nil
+}
+
+var errLoginBusy = errors.New("sign-in capacity exhausted")
+
+// bcryptGateWait bounds the queue. A var so tests can shorten it.
+var bcryptGateWait = 5 * time.Second
+
+// writeLoginBusy must stay identical for every path, or saturation becomes an
+// account-existence oracle.
+func (h *AuthHandler) writeLoginBusy(w http.ResponseWriter, r *http.Request, username string) {
+	h.logLoginFailure(r, "busy", username, "")
+	w.Header().Set("Retry-After", "5")
+	Error(w, http.StatusServiceUnavailable, "Too many sign-in attempts, try again shortly")
 }
 
 // bcryptGate caps concurrent sign-in bcrypt work for the whole process, so a
@@ -90,10 +107,14 @@ type bcryptGate chan struct{}
 var loginBcrypt = make(bcryptGate, max(1, runtime.GOMAXPROCS(0)))
 
 func (g bcryptGate) do(ctx context.Context, fn func() error) error {
+	wait := time.NewTimer(bcryptGateWait)
+	defer wait.Stop()
 	select {
 	case g <- struct{}{}:
 	case <-ctx.Done():
-		return ctx.Err()
+		return errLoginBusy
+	case <-wait.C:
+		return errLoginBusy
 	}
 	defer func() { <-g }()
 	return fn()
@@ -285,7 +306,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// A DB failure is not a wrong username. Counting it would let an outage
 		// lock out the very people retrying a correct password.
-		spendPasswordCheck(r.Context(), req.Password)
+		if spendPasswordCheck(r.Context(), req.Password) != nil {
+			h.writeLoginBusy(w, r, req.Username)
+			return
+		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			if h.log != nil {
 				h.log.Error("auth login lookup failed", "ip", h.clientIP(r), "error", err)
@@ -315,7 +339,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// Consumes an attempt as well. If it did not, the absence of a lockout would
 	// identify exactly the SSO-only accounts, now that unknown usernames do lock out.
 	if user.PasswordHash == nil {
-		spendPasswordCheck(r.Context(), req.Password)
+		if spendPasswordCheck(r.Context(), req.Password) != nil {
+			h.writeLoginBusy(w, r, req.Username)
+			return
+		}
 		if locked := h.recordLoginFailure(w, r, req.Username); locked {
 			h.logLoginFailure(r, "no_password_set", req.Username, user.ID, "locked", true)
 			return
@@ -330,7 +357,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// Trim password - forms often introduce accidental leading/trailing whitespace
 	password := strings.TrimSpace(req.Password)
 	if err := loginBcrypt.compare(r.Context(), hash, password); err != nil {
-		if r.Context().Err() != nil {
+		if errors.Is(err, errLoginBusy) {
+			h.writeLoginBusy(w, r, req.Username)
 			return
 		}
 		if h.loginLockout != nil {
