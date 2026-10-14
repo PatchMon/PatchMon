@@ -69,12 +69,17 @@ func (h *UsersHandler) ResetTfa(w http.ResponseWriter, r *http.Request) {
 	}
 
 	actor, err := h.users.GetByID(ctx, actorID)
-	if err != nil || actor == nil || !actor.IsActive {
+	if err != nil || actor == nil {
+		Error(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	if !actor.IsActive {
+		h.denyTfaReset(r, "actor_inactive", actorID, targetID)
 		Error(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 	if actor.PasswordHash == nil {
-		h.logTfaReset(r, "actor_no_password", actorID, targetID)
+		h.denyTfaReset(r, "actor_no_password", actorID, targetID)
 		Error(w, http.StatusForbidden, "Resetting two-factor authentication requires an account with a local password")
 		return
 	}
@@ -123,10 +128,12 @@ func (h *UsersHandler) ResetTfa(w http.ResponseWriter, r *http.Request) {
 	var tempHash *string
 	if req.NewPassword != "" {
 		if target.PasswordHash == nil {
+			h.denyTfaReset(r, "temp_password_sso_target", actorID, target.ID)
 			Error(w, http.StatusBadRequest, "This account has no local password because it signs in through single sign-on")
 			return
 		}
 		if err := ValidatePasswordPolicy(h.resolvedFor(ctx), req.NewPassword); err != nil {
+			h.denyTfaReset(r, "temp_password_policy", actorID, target.ID)
 			Error(w, http.StatusBadRequest, err.Error())
 			return
 		}

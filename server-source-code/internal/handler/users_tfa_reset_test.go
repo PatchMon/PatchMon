@@ -339,6 +339,9 @@ func TestAdminResetTfa(t *testing.T) {
 		if rec := x.post(ctx, admin, target.ID, map[string]string{"password": tfaResetTestPassword, "newPassword": "x"}); rec.Code != http.StatusBadRequest {
 			t.Fatalf("weak password: got %d %s", rec.Code, rec.Body.String())
 		}
+		if n := x.count(ctx, `SELECT count(*) FROM audit_logs WHERE target_user_id=$1 AND NOT success AND details = '{"reason":"temp_password_policy"}'`, target.ID); n != 1 {
+			t.Fatalf("want one temp_password_policy audit row with no password in it, got %d", n)
+		}
 		x.assertTfaIntact(ctx, target)
 		sso := x.mkUser(ctx, "user", true)
 		if _, err := d.Exec(ctx, `UPDATE users SET password_hash=NULL, oidc_sub=$1 WHERE id=$2`, "sub-"+sso.ID, sso.ID); err != nil {
@@ -346,6 +349,9 @@ func TestAdminResetTfa(t *testing.T) {
 		}
 		if rec := x.post(ctx, admin, sso.ID, map[string]string{"password": tfaResetTestPassword, "newPassword": "Temp-Passw0rd!x"}); rec.Code != http.StatusBadRequest {
 			t.Fatalf("SSO-only target: got %d %s", rec.Code, rec.Body.String())
+		}
+		if n := x.count(ctx, `SELECT count(*) FROM audit_logs WHERE target_user_id=$1 AND NOT success AND details LIKE '%temp_password_sso_target%' AND details NOT LIKE '%Temp-Passw0rd%'`, sso.ID); n != 1 {
+			t.Fatalf("want one temp_password_sso_target audit row, got %d", n)
 		}
 		x.assertTfaIntact(ctx, sso)
 	})
@@ -532,6 +538,9 @@ func TestAdminResetTfa(t *testing.T) {
 			t.Fatalf("got %d %s", rec.Code, rec.Body.String())
 		}
 		x.assertTfaIntact(ctx, target)
+		if n := x.count(ctx, `SELECT count(*) FROM audit_logs WHERE user_id=$1 AND NOT success AND details LIKE '%actor_no_password%'`, admin.ID); n != 1 {
+			t.Fatalf("want one actor_no_password audit row, got %d", n)
+		}
 	})
 
 	t.Run("deactivated actor is refused", func(t *testing.T) {
@@ -545,6 +554,9 @@ func TestAdminResetTfa(t *testing.T) {
 			t.Fatalf("got %d %s", rec.Code, rec.Body.String())
 		}
 		x.assertTfaIntact(ctx, target)
+		if n := x.count(ctx, `SELECT count(*) FROM audit_logs WHERE user_id=$1 AND NOT success AND details LIKE '%actor_inactive%'`, admin.ID); n != 1 {
+			t.Fatalf("want one actor_inactive audit row, got %d", n)
+		}
 	})
 }
 
