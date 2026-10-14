@@ -4482,7 +4482,8 @@ Before you can open an RDP session to a host, all of these must be true:
 1. Go to **Hosts** and click the Windows host.
 2. On **Host Detail**, open the **Remote Access** area and click **Open RDP** (or the RDP icon in the toolbar).
 3. Enter the Windows **username** and **password** for the account to sign in as.
-4. Click **Connect**.
+4. Check the **Keyboard layout**. It must match the keyboard layout of the Windows session (for example **English (UK)** for a UK-layout host). It defaults to the closest layout for your browser language, and PatchMon remembers your choice for each host in this browser.
+5. Click **Connect**.
 
 There is no screen-size setting. The RDP panel fills about three quarters of the browser window's height (at least 540 pixels), and the session opens at the panel's size and follows it when you resize the browser window or go full-screen.
 
@@ -4518,7 +4519,7 @@ You never see or handle the ticket directly; the UI requests it under the hood w
 
 ### Keyboard layouts and clipboard
 
-- **Keyboard**: the Guacamole client maps the browser's keydown events to scancodes. For most Latin keyboards (en-GB, en-US) this "just works". For non-Latin layouts, match the Windows layout to the browser's. Guacamole has no per-session keyboard-layout selector in PatchMon 2.0.
+- **Keyboard**: keys are translated using the **Keyboard layout** chosen on the connect form, which must match the layout of the Windows session. If it does not, symbols arrive wrong; for example, with English (US) selected on a UK-layout host, `\` arrives as `#` and `@` and `"` swap. Supported layouts: English (UK and US), Czech, Danish, French (France, Belgium, Canada, Switzerland), German (Germany, Switzerland), Hungarian, Italian, Japanese, Norwegian, Polish, Portuguese (Portugal, Brazil), Romanian, Spanish (Spain, Latin America), Swedish and Turkish.
 - **Clipboard**: text only, in both directions. Rich clipboard (images, file lists) is not supported.
   - **Browser to Windows**: press `Ctrl+V` (`Cmd+V` on macOS) in the RDP panel. PatchMon copies your browser clipboard to Windows and then sends `Ctrl+V`, so Windows pastes the text you copied locally.
   - **Windows to browser**: text you copy in Windows is placed on your browser clipboard automatically when PatchMon is served over HTTPS. Browsers block automatic clipboard writes on plain HTTP, so on an HTTP deployment the copied text appears in a **Remote clipboard** box above the desktop instead; select it and copy it from there.
