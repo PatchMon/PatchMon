@@ -31,7 +31,6 @@ import { rdpAPI } from "../utils/api";
 // https://guacamole.apache.org/doc/gug/protocol-reference.html#status-codes
 const GUAC_STATUS_CLIENT_UNAUTHORIZED = 0x0301; // 769
 const GUAC_STATUS_CLIENT_FORBIDDEN = 0x0303; // 771
-const GUAC_STATUS_UPSTREAM_ERROR = 0x0203; // 515 — also sent by the server when the agent drops
 const GUAC_STATUS_RESOURCE_NOT_FOUND = 0x0204; // 516 — missing ticket/resource
 const GUAC_STATUS_UPSTREAM_NOT_FOUND = 0x0207; // 519 — guacd could not open the upstream RDP session
 const GUAC_STATUS_UPSTREAM_UNAVAILABLE = 0x0208; // 520 — upstream reached, session setup failed
@@ -196,6 +195,16 @@ Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Serv
 			"This PatchMon instance is at its concurrent RDP session limit. Close unused sessions and try again.",
 		],
 	},
+	rdp_session_ended: {
+		title: "The RDP session ended before it started",
+		body: ["Click Connect again."],
+	},
+	rdp_ticket_invalid: {
+		title: "The RDP connection ticket is no longer valid",
+		body: [
+			"Tickets expire after a few minutes and can only be used once. Click Connect again to get a new one. If it keeps failing, check that your role still allows remote access.",
+		],
+	},
 	rate_limited: {
 		title: "Too many RDP connection attempts",
 		body: ["Wait a minute, then click Connect again."],
@@ -268,16 +277,26 @@ export const classifyGuacUpstreamFailure = (message) => {
 	return "rdp_gateway_failed";
 };
 
+export const parseCodedMessage = (message) => {
+	const match = /^([a-z_]+): (.*)$/s.exec(message || "");
+	if (match && GUIDANCE[match[1]]) return { code: match[1], text: match[2] };
+	return { code: null, text: message };
+};
+
+export const guacErrorFromStatus = (status, fallback) => {
+	const { code, text } = parseCodedMessage(status?.message);
+	return {
+		code: code || deriveCodeFromGuacStatus(status),
+		message: text || fallback,
+	};
+};
+
 export const deriveCodeFromGuacStatus = (status) => {
 	const code = status?.code;
 	switch (code) {
 		case GUAC_STATUS_CLIENT_UNAUTHORIZED:
 		case GUAC_STATUS_CLIENT_FORBIDDEN:
 			return "rdp_auth_failed";
-		case GUAC_STATUS_UPSTREAM_ERROR:
-			return /agent/i.test(status?.message || "")
-				? "agent_disconnected"
-				: "rdp_unknown";
 		case GUAC_STATUS_RESOURCE_NOT_FOUND:
 			return "rdp_unknown";
 		case GUAC_STATUS_UPSTREAM_NOT_FOUND:
@@ -579,12 +598,10 @@ const RdpViewer = ({ host, isOpen }) => {
 				setError((prev) =>
 					prev
 						? prev
-						: {
-								code: deriveCodeFromGuacStatus(status),
-								message:
-									status?.message ||
-									`Tunnel error (code ${status?.code ?? "?"})`,
-							},
+						: guacErrorFromStatus(
+								status,
+								`Tunnel error (code ${status?.code ?? "?"})`,
+							),
 				);
 				setIsConnecting(false);
 				setIsConnected(false);
@@ -653,11 +670,10 @@ const RdpViewer = ({ host, isOpen }) => {
 				setError((prev) =>
 					prev
 						? prev
-						: {
-								code: deriveCodeFromGuacStatus(status),
-								message:
-									status?.message || `RDP error (code ${status?.code ?? "?"})`,
-							},
+						: guacErrorFromStatus(
+								status,
+								`RDP error (code ${status?.code ?? "?"})`,
+							),
 				);
 				setIsConnecting(false);
 				setIsConnected(false);

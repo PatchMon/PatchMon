@@ -8,6 +8,7 @@ import {
 	classifyGuacUpstreamFailure,
 	deriveCodeFromGuacStatus,
 	deriveCodeFromHttpError,
+	guacErrorFromStatus,
 } from "../../components/RdpViewer";
 
 describe("RdpViewer error classification", () => {
@@ -81,18 +82,59 @@ describe("RdpViewer error classification", () => {
 		).toBe("max_sessions_context");
 	});
 
-	it("maps status 515 (agent dropped mid-session) to agent guidance", () => {
-		expect(
-			deriveCodeFromGuacStatus({
-				code: 0x0203,
-				message: "The PatchMon agent on this host disconnected.",
-			}),
-		).toBe("agent_disconnected");
+	it.each([
+		[
+			0x0203,
+			"agent_disconnected: The PatchMon agent on this host disconnected. Connect again once it is back online.",
+			"agent_disconnected",
+			"The PatchMon agent on this host disconnected. Connect again once it is back online.",
+		],
+		[
+			0x0203,
+			"rdp_session_ended: The RDP session ended before it could start. Connect again.",
+			"rdp_session_ended",
+			"The RDP session ended before it could start. Connect again.",
+		],
+		[
+			0x0204,
+			"rdp_ticket_invalid: This RDP ticket is invalid, expired or already used. Connect again to get a new one.",
+			"rdp_ticket_invalid",
+			"This RDP ticket is invalid, expired or already used. Connect again to get a new one.",
+		],
+		[
+			0x0200,
+			"server_error: The RDP session could not be started on the PatchMon server. Check the server logs.",
+			"server_error",
+			"The RDP session could not be started on the PatchMon server. Check the server logs.",
+		],
+	])("uses the server's code prefix for status %i", (code, message, expectedCode, expectedText) => {
+		expect(guacErrorFromStatus({ code, message }, "fallback")).toEqual({
+			code: expectedCode,
+			message: expectedText,
+		});
 	});
 
-	it("keeps other 515 upstream errors generic", () => {
+	it("falls back to the status code for unprefixed or unknown-prefix messages", () => {
 		expect(
-			deriveCodeFromGuacStatus({ code: 0x0203, message: "Upstream error" }),
-		).toBe("rdp_unknown");
+			guacErrorFromStatus(
+				{ code: 0x0207, message: "Server refused connection" },
+				"fallback",
+			),
+		).toEqual({
+			code: "rdp_upstream_unreachable",
+			message: "Server refused connection",
+		});
+		expect(
+			guacErrorFromStatus(
+				{ code: 0x0203, message: "not_a_key: something" },
+				"fallback",
+			),
+		).toEqual({ code: "rdp_unknown", message: "not_a_key: something" });
+		expect(
+			guacErrorFromStatus({ code: 0x0207 }, "Tunnel error (code 519)"),
+		).toEqual({
+			code: "rdp_upstream_unreachable",
+			message: "Tunnel error (code 519)",
+		});
 	});
 });
