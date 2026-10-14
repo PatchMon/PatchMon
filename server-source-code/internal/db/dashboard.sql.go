@@ -534,6 +534,7 @@ WITH base_hosts AS (
         h.status, h.agent_version, h.auto_update, h.notes, h.api_id,
         h.needs_reboot, h.reboot_reason, h.system_uptime, h.boot_time, h.docker_enabled, h.compliance_enabled, h.compliance_on_demand_only,
         h.last_update,
+        h.config_version, h.reported_host_id, (h.reported_host_id IS NOT NULL AND h.reported_host_id <> h.id)::boolean AS host_id_mismatch, h.identity_conflict_at,
         h.compliance_scanner_status->'scanner_info'->>'ssg_version' as ssg_version,
         COALESCE((
             SELECT MIN(hg.name)
@@ -566,7 +567,7 @@ hp_counts AS (
     GROUP BY hp.host_id
 ),
 enriched_hosts AS (
-    SELECT bh.id, bh.machine_id, bh.friendly_name, bh.hostname, bh.ip, bh.os_type, bh.os_version, bh.status, bh.agent_version, bh.auto_update, bh.notes, bh.api_id, bh.needs_reboot, bh.reboot_reason, bh.system_uptime, bh.boot_time, bh.docker_enabled, bh.compliance_enabled, bh.compliance_on_demand_only, bh.last_update, bh.ssg_version, bh.first_group_name,
+    SELECT bh.id, bh.machine_id, bh.friendly_name, bh.hostname, bh.ip, bh.os_type, bh.os_version, bh.status, bh.agent_version, bh.auto_update, bh.notes, bh.api_id, bh.needs_reboot, bh.reboot_reason, bh.system_uptime, bh.boot_time, bh.docker_enabled, bh.compliance_enabled, bh.compliance_on_demand_only, bh.last_update, bh.config_version, bh.reported_host_id, bh.host_id_mismatch, bh.identity_conflict_at, bh.ssg_version, bh.first_group_name,
            COALESCE(hp.updates_count, 0)::int AS updates_count,
            COALESCE(hp.security_count, 0)::int AS security_updates_count,
            COALESCE(hp.total_count, 0)::int AS total_packages_count,
@@ -591,7 +592,7 @@ enriched_hosts AS (
     LEFT JOIN hp_counts hp ON hp.host_id = bh.id
 ),
 filtered_hosts AS (
-    SELECT id, machine_id, friendly_name, hostname, ip, os_type, os_version, status, agent_version, auto_update, notes, api_id, needs_reboot, reboot_reason, system_uptime, boot_time, docker_enabled, compliance_enabled, compliance_on_demand_only, last_update, ssg_version, first_group_name, updates_count, security_updates_count, total_packages_count, is_stale, effective_status, integrations_count, reporting_state, update_state
+    SELECT id, machine_id, friendly_name, hostname, ip, os_type, os_version, status, agent_version, auto_update, notes, api_id, needs_reboot, reboot_reason, system_uptime, boot_time, docker_enabled, compliance_enabled, compliance_on_demand_only, last_update, config_version, reported_host_id, host_id_mismatch, identity_conflict_at, ssg_version, first_group_name, updates_count, security_updates_count, total_packages_count, is_stale, effective_status, integrations_count, reporting_state, update_state
     FROM enriched_hosts
     WHERE (
         $10::text IS NULL
@@ -611,7 +612,8 @@ SELECT id, machine_id, friendly_name, hostname, ip, os_type, os_version,
     status, agent_version, auto_update, notes, api_id,
     needs_reboot, reboot_reason, system_uptime, boot_time, docker_enabled, compliance_enabled, compliance_on_demand_only,
     last_update, ssg_version, updates_count, security_updates_count, total_packages_count,
-    reporting_state, update_state
+    reporting_state, update_state,
+    config_version, reported_host_id, host_id_mismatch, identity_conflict_at
 FROM filtered_hosts
 ORDER BY
     CASE WHEN $1::text = 'friendly_name'      AND $2::text = 'asc'  THEN friendly_name END ASC,
@@ -628,6 +630,8 @@ ORDER BY
     CASE WHEN $1::text = 'os_version'         AND $2::text = 'desc' THEN os_version END DESC,
     CASE WHEN $1::text = 'agent_version'      AND $2::text = 'asc'  THEN agent_version END ASC NULLS LAST,
     CASE WHEN $1::text = 'agent_version'      AND $2::text = 'desc' THEN agent_version END DESC NULLS LAST,
+    CASE WHEN $1::text = 'config_version'     AND $2::text = 'asc'  THEN config_version END ASC NULLS LAST,
+    CASE WHEN $1::text = 'config_version'     AND $2::text = 'desc' THEN config_version END DESC NULLS LAST,
     CASE WHEN $1::text = 'status'             AND $2::text = 'asc'  THEN effective_status END ASC,
     CASE WHEN $1::text = 'status'             AND $2::text = 'desc' THEN effective_status END DESC,
     CASE WHEN $1::text = 'updates'            AND $2::text = 'asc'  THEN updates_count END ASC,
@@ -702,6 +706,10 @@ type GetHostsWithCountsRow struct {
 	TotalPackagesCount     int32              `json:"total_packages_count"`
 	ReportingState         string             `json:"reporting_state"`
 	UpdateState            string             `json:"update_state"`
+	ConfigVersion          *string            `json:"config_version"`
+	ReportedHostID         *string            `json:"reported_host_id"`
+	HostIDMismatch         bool               `json:"host_id_mismatch"`
+	IdentityConflictAt     pgtype.Timestamp   `json:"identity_conflict_at"`
 }
 
 // Paginated host list for the Hosts UI. Filtering and ordering happen
@@ -760,6 +768,10 @@ func (q *Queries) GetHostsWithCounts(ctx context.Context, arg GetHostsWithCounts
 			&i.TotalPackagesCount,
 			&i.ReportingState,
 			&i.UpdateState,
+			&i.ConfigVersion,
+			&i.ReportedHostID,
+			&i.HostIDMismatch,
+			&i.IdentityConflictAt,
 		); err != nil {
 			return nil, err
 		}
@@ -777,6 +789,7 @@ WITH base_hosts AS (
         h.status, h.agent_version, h.auto_update, h.notes, h.api_id,
         h.needs_reboot, h.reboot_reason, h.system_uptime, h.boot_time, h.docker_enabled, h.compliance_enabled, h.compliance_on_demand_only,
         h.last_update,
+        h.config_version, h.reported_host_id, (h.reported_host_id IS NOT NULL AND h.reported_host_id <> h.id)::boolean AS host_id_mismatch, h.identity_conflict_at,
         h.compliance_scanner_status->'scanner_info'->>'ssg_version' as ssg_version,
         COALESCE((
             SELECT MIN(hg.name)
@@ -812,7 +825,7 @@ WITH base_hosts AS (
     )
 ),
 filtered_hosts AS (
-    SELECT id, machine_id, friendly_name, hostname, ip, os_type, os_version, status, agent_version, auto_update, notes, api_id, needs_reboot, reboot_reason, system_uptime, boot_time, docker_enabled, compliance_enabled, compliance_on_demand_only, last_update, ssg_version, first_group_name, is_stale, effective_status, integrations_count, reporting_state
+    SELECT id, machine_id, friendly_name, hostname, ip, os_type, os_version, status, agent_version, auto_update, notes, api_id, needs_reboot, reboot_reason, system_uptime, boot_time, docker_enabled, compliance_enabled, compliance_on_demand_only, last_update, config_version, reported_host_id, host_id_mismatch, identity_conflict_at, ssg_version, first_group_name, is_stale, effective_status, integrations_count, reporting_state
     FROM base_hosts bh
     WHERE (
         $10::text IS NULL
@@ -835,7 +848,7 @@ filtered_hosts AS (
     AND ($13::boolean = false OR bh.is_stale = false)
 ),
 ordered_page AS (
-    SELECT id, machine_id, friendly_name, hostname, ip, os_type, os_version, status, agent_version, auto_update, notes, api_id, needs_reboot, reboot_reason, system_uptime, boot_time, docker_enabled, compliance_enabled, compliance_on_demand_only, last_update, ssg_version, first_group_name, is_stale, effective_status, integrations_count, reporting_state
+    SELECT id, machine_id, friendly_name, hostname, ip, os_type, os_version, status, agent_version, auto_update, notes, api_id, needs_reboot, reboot_reason, system_uptime, boot_time, docker_enabled, compliance_enabled, compliance_on_demand_only, last_update, config_version, reported_host_id, host_id_mismatch, identity_conflict_at, ssg_version, first_group_name, is_stale, effective_status, integrations_count, reporting_state
     FROM filtered_hosts
     ORDER BY
         CASE WHEN $1::text = 'friendly_name'    AND $2::text = 'asc'  THEN friendly_name END ASC,
@@ -852,6 +865,8 @@ ordered_page AS (
         CASE WHEN $1::text = 'os_version'       AND $2::text = 'desc' THEN os_version END DESC,
         CASE WHEN $1::text = 'agent_version'    AND $2::text = 'asc'  THEN agent_version END ASC NULLS LAST,
         CASE WHEN $1::text = 'agent_version'    AND $2::text = 'desc' THEN agent_version END DESC NULLS LAST,
+        CASE WHEN $1::text = 'config_version'   AND $2::text = 'asc'  THEN config_version END ASC NULLS LAST,
+        CASE WHEN $1::text = 'config_version'   AND $2::text = 'desc' THEN config_version END DESC NULLS LAST,
         CASE WHEN $1::text = 'status'           AND $2::text = 'asc'  THEN effective_status END ASC,
         CASE WHEN $1::text = 'status'           AND $2::text = 'desc' THEN effective_status END DESC,
         CASE WHEN $1::text = 'needs_reboot'     AND $2::text = 'asc'  THEN needs_reboot END ASC,
@@ -886,6 +901,7 @@ SELECT op.id, op.machine_id, op.friendly_name, op.hostname, op.ip, op.os_type, o
     op.status, op.agent_version, op.auto_update, op.notes, op.api_id,
     op.needs_reboot, op.reboot_reason, op.system_uptime, op.boot_time, op.docker_enabled, op.compliance_enabled, op.compliance_on_demand_only,
     op.last_update, op.ssg_version,
+    op.config_version, op.reported_host_id, op.host_id_mismatch, op.identity_conflict_at,
     COALESCE(pc.updates_count, 0)::int AS updates_count,
     COALESCE(pc.security_count, 0)::int AS security_updates_count,
     COALESCE(pc.total_count, 0)::int AS total_packages_count,
@@ -912,6 +928,8 @@ ORDER BY
     CASE WHEN $1::text = 'os_version'       AND $2::text = 'desc' THEN op.os_version END DESC,
     CASE WHEN $1::text = 'agent_version'    AND $2::text = 'asc'  THEN op.agent_version END ASC NULLS LAST,
     CASE WHEN $1::text = 'agent_version'    AND $2::text = 'desc' THEN op.agent_version END DESC NULLS LAST,
+    CASE WHEN $1::text = 'config_version'   AND $2::text = 'asc'  THEN op.config_version END ASC NULLS LAST,
+    CASE WHEN $1::text = 'config_version'   AND $2::text = 'desc' THEN op.config_version END DESC NULLS LAST,
     CASE WHEN $1::text = 'status'           AND $2::text = 'asc'  THEN op.effective_status END ASC,
     CASE WHEN $1::text = 'status'           AND $2::text = 'desc' THEN op.effective_status END DESC,
     CASE WHEN $1::text = 'needs_reboot'     AND $2::text = 'asc'  THEN op.needs_reboot END ASC,
@@ -971,6 +989,10 @@ type GetHostsWithPageCountsRow struct {
 	ComplianceOnDemandOnly bool               `json:"compliance_on_demand_only"`
 	LastUpdate             pgtype.Timestamp   `json:"last_update"`
 	SsgVersion             interface{}        `json:"ssg_version"`
+	ConfigVersion          *string            `json:"config_version"`
+	ReportedHostID         *string            `json:"reported_host_id"`
+	HostIDMismatch         bool               `json:"host_id_mismatch"`
+	IdentityConflictAt     pgtype.Timestamp   `json:"identity_conflict_at"`
 	UpdatesCount           int32              `json:"updates_count"`
 	SecurityUpdatesCount   int32              `json:"security_updates_count"`
 	TotalPackagesCount     int32              `json:"total_packages_count"`
@@ -1028,6 +1050,10 @@ func (q *Queries) GetHostsWithPageCounts(ctx context.Context, arg GetHostsWithPa
 			&i.ComplianceOnDemandOnly,
 			&i.LastUpdate,
 			&i.SsgVersion,
+			&i.ConfigVersion,
+			&i.ReportedHostID,
+			&i.HostIDMismatch,
+			&i.IdentityConflictAt,
 			&i.UpdatesCount,
 			&i.SecurityUpdatesCount,
 			&i.TotalPackagesCount,

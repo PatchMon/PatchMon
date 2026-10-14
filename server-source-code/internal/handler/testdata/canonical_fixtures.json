@@ -144,6 +144,17 @@
 					"image_id": "sha256:img1",
 					"status": "running",
 					"state": "Up 5 minutes"
+				},
+				{
+					"container_id": "c3",
+					"name": "app",
+					"image_repository": "localhost:5000/team/app",
+					"image_tag": "stable",
+					"image_id": "img3",
+					"image_stale": true,
+					"started_at": "2026-10-13T11:59:30.123456789+01:00",
+					"status": "running",
+					"state": "running"
 				}
 			],
 			"images": [
@@ -173,7 +184,7 @@
 			],
 			"updates": []
 		},
-		"expected_hash": "8fd8bc9bc047aaeab2e561f0181fb2d3e36b36a1a7bb1040d80d5ae8b3634234"
+		"expected_hash": "a09348f2abc6aab4cc93d8fdf7d2db831b470d6f549f2d4aceb53c436493972b"
 	},
 	"compliance": {
 		"_comment": "Snake-case multi-word fields match the agent's compliance payload (pkg/models/compliance.go). rule_ref is intentionally snake-case (the legacy backend contract).",

@@ -42,18 +42,12 @@ func NewNotificationDeliverHandler(defaultDB *database.DB, poolCache *hostctx.Po
 	return &NotificationDeliverHandler{defaultDB: defaultDB, poolCache: poolCache, enc: enc, rdb: rdb, log: log}
 }
 
-func (h *NotificationDeliverHandler) resolveDB(ctx context.Context, payload []byte) *database.DB {
-	db := h.defaultDB
-	if len(payload) == 0 || h.poolCache == nil {
-		return db
-	}
+func (h *NotificationDeliverHandler) resolveDB(ctx context.Context, payload []byte) (context.Context, *database.DB, error) {
 	var p notifications.NotificationDeliverPayload
-	if err := json.Unmarshal(payload, &p); err == nil && strings.TrimSpace(p.Host) != "" {
-		if resolved, err := h.poolCache.GetOrCreate(ctx, p.Host); err == nil && resolved != nil {
-			db = resolved
-		}
+	if len(payload) == 0 || json.Unmarshal(payload, &p) != nil {
+		return ctx, h.defaultDB, nil
 	}
-	return db
+	return resolveDBForHost(ctx, p.Host, h.defaultDB, h.poolCache)
 }
 
 // ProcessTask implements asynq.Handler.
@@ -63,13 +57,16 @@ func (h *NotificationDeliverHandler) ProcessTask(ctx context.Context, t *asynq.T
 		return err
 	}
 	// If this was a delayed notification, check if it's been cancelled by a counterpart event.
-	if p.Delayed && p.CancelKey != "" && notifications.IsDelayedCancelled(h.rdb, p.Host, p.CancelKey) {
+	if p.Delayed && p.CancelKey != "" && notifications.IsDelayedCancelled(h.rdb, p.Host, p.CancelKey, p.EmittedAt) {
 		if h.log != nil {
 			h.log.Debug("notification_deliver: cancelled by counterpart event", "event_type", p.EventType, "cancel_key", p.CancelKey)
 		}
 		return nil
 	}
-	d := h.resolveDB(ctx, t.Payload())
+	ctx, d, err := h.resolveDB(ctx, t.Payload())
+	if err != nil {
+		return err
+	}
 	dest, err := d.Queries.GetNotificationDestinationByID(ctx, p.DestinationID)
 	if err != nil || !dest.Enabled {
 		return nil
@@ -285,6 +282,19 @@ func nocMetaStrSlice(m map[string]interface{}, key string) []string {
 	return nil
 }
 
+func nocImageUpdateList(m map[string]interface{}) string {
+	images := nocMetaStrSlice(m, "images")
+	if len(images) == 0 {
+		return ""
+	}
+	list := strings.Join(images, ", ")
+	var total int
+	if _, err := fmt.Sscanf(nocMetaStr(m, "update_count"), "%d", &total); err == nil && total > len(images) {
+		list += fmt.Sprintf(" and %d more", total-len(images))
+	}
+	return list
+}
+
 // severityEmoji returns a short icon for NOC-visible severity.
 func severityEmoji(sev string) string {
 	switch strings.ToLower(strings.TrimSpace(sev)) {
@@ -397,6 +407,10 @@ func buildNOCFields(p notifications.NotificationDeliverPayload) []map[string]int
 	case p.EventType == "host_recovered":
 		addField("Host", nocMetaStr(m, "host_name"), true)
 		addField("Status", "🟢 AGENT RECOVERED", true)
+
+	case p.EventType == "container_image_update_available":
+		addField("Host", nocMetaStr(m, "host_name"), true)
+		addField("Images", nocImageUpdateList(m), false)
 
 	case p.EventType == "server_update" || p.EventType == "agent_update":
 		addField("Current Version", nocMetaStr(m, "current_version"), true)
@@ -542,6 +556,10 @@ func buildSlackNOCFields(p notifications.NotificationDeliverPayload) string {
 	case p.EventType == "host_recovered":
 		addLine("Host", nocMetaStr(m, "host_name"))
 		addLine("Status", "🟢 AGENT RECOVERED")
+
+	case p.EventType == "container_image_update_available":
+		addLine("Host", nocMetaStr(m, "host_name"))
+		addLine("Images", nocImageUpdateList(m))
 
 	case p.EventType == "server_update" || p.EventType == "agent_update":
 		addLine("Current Version", nocMetaStr(m, "current_version"))
@@ -856,6 +874,10 @@ func buildEmailHTML(p notifications.NotificationDeliverPayload) string {
 	case p.EventType == "host_recovered":
 		addRow("Host", nocMetaStr(m, "host_name"))
 
+	case p.EventType == "container_image_update_available":
+		addRow("Host", nocMetaStr(m, "host_name"))
+		addRow("Images", nocImageUpdateList(m))
+
 	case p.EventType == "server_update" || p.EventType == "agent_update":
 		addRow("Current Version", nocMetaStr(m, "current_version"))
 		addRow("Available Version", nocMetaStr(m, "latest_version"))
@@ -1030,6 +1052,9 @@ func buildNtfyMessage(p notifications.NotificationDeliverPayload) string {
 	case p.EventType == "host_recovered":
 		addLine("Host", nocMetaStr(m, "host_name"))
 		addLine("Status", "AGENT RECOVERED")
+	case p.EventType == "container_image_update_available":
+		addLine("Host", nocMetaStr(m, "host_name"))
+		addLine("Images", nocImageUpdateList(m))
 	case p.EventType == "server_update" || p.EventType == "agent_update":
 		addLine("Current version", nocMetaStr(m, "current_version"))
 		addLine("Available version", nocMetaStr(m, "latest_version"))

@@ -44,14 +44,14 @@ import React, {
 	useRef,
 	useState,
 } from "react";
-import {
-	Link,
-	useLocation,
-	useNavigate,
-	useParams,
-	useSearchParams,
-} from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import UpdateStatusBadge from "../components/docker/UpdateStatusBadge";
 import HostStatusPills from "../components/HostStatusPills";
+import {
+	AgentVersionIndicators,
+	ConfigVersionValue,
+	HostIdentityBanners,
+} from "../components/host/HostIdentity";
 import InlineEdit from "../components/InlineEdit";
 import InlineMultiGroupEdit from "../components/InlineMultiGroupEdit";
 import { PackageListDisplay } from "../components/PackageListDisplay";
@@ -61,9 +61,11 @@ import RdpViewer from "../components/RdpViewer";
 import SshTerminal from "../components/SshTerminal";
 import TierBadge from "../components/TierBadge";
 import UpgradeRequiredContent from "../components/UpgradeRequiredContent";
+import ModalPortal from "../components/ui/ModalPortal";
 import { getRequiredTier } from "../constants/tiers";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
+import { useHostDetailTab } from "../hooks/useHostDetailTab";
 import { usePageRefresh } from "../hooks/usePageRefresh";
 import { useTick } from "../hooks/useTick";
 import {
@@ -77,6 +79,7 @@ import {
 	settingsAPI,
 } from "../utils/api";
 import { complianceAPI } from "../utils/complianceApi";
+import { shortImageId } from "../utils/docker";
 import { OSIcon } from "../utils/osIcons.jsx";
 import { patchingAPI } from "../utils/patchingApi";
 import { invalidateHostScope } from "../utils/queryScopes";
@@ -120,7 +123,6 @@ const HostDetail = () => {
 	const { hostId } = useParams();
 	const navigate = useNavigate();
 	const location = useLocation();
-	const [searchParams, setSearchParams] = useSearchParams();
 	const queryClient = useQueryClient();
 	const toast = useToast();
 	const { canManageHosts, hasModule } = useAuth();
@@ -129,7 +131,7 @@ const HostDetail = () => {
 	// Get plaintext API key from navigation state (only available immediately after host creation)
 	const plaintextApiKey = location.state?.apiKey;
 	const [showDeleteModal, setShowDeleteModal] = useState(false);
-	const [activeTab, setActiveTab] = useState("host");
+	const [activeTab, handleTabChange] = useHostDetailTab();
 	const [dockerSubTab, setDockerSubTab] = useState("containers");
 	const [patchingRunsSortField, setPatchingRunsSortField] =
 		useState("created_at");
@@ -321,95 +323,6 @@ const HostDetail = () => {
 		staleTime: 5 * 60 * 1000, // 5 minutes - data stays fresh longer
 	});
 
-	// Tab change handler. Mirror "activity" into ?tab= so the new merged tab is
-	// shareable. Other tabs continue to use location-state navigation only — we
-	// don't want to churn the URL across the dozen pre-existing tabs.
-	const handleTabChange = (tabName) => {
-		setActiveTab(tabName);
-		if (tabName === "activity") {
-			setSearchParams(
-				(prev) => {
-					const next = new URLSearchParams(prev);
-					next.set("tab", "activity");
-					return next;
-				},
-				{ replace: true },
-			);
-		} else if (searchParams.get("tab")) {
-			// Leaving the activity tab — drop the legacy/active tab param so
-			// downstream filter params aren't carried over to other tabs.
-			setSearchParams(
-				(prev) => {
-					const next = new URLSearchParams(prev);
-					next.delete("tab");
-					for (const key of [
-						"direction",
-						"type",
-						"status",
-						"since",
-						"q",
-						"page",
-					]) {
-						next.delete(key);
-					}
-					return next;
-				},
-				{ replace: true },
-			);
-		}
-	};
-
-	// Open requested tab when navigating with state (e.g. from Compliance page link)
-	useEffect(() => {
-		const requestedTab = location.state?.tab;
-		const allowed = [
-			"host",
-			"network",
-			"system",
-			"activity",
-			"notes",
-			"integrations",
-			"reporting",
-			"docker",
-			"compliance",
-			"terminal",
-			"rdp",
-		];
-		if (!requestedTab) return;
-		// Legacy redirects: the old "Package Reports" and "Agent Queue" tabs were
-		// merged into a single "Agent Activity" tab in v2.0.3. Bookmarks shared
-		// in tickets / Slack should still land on something useful.
-		if (requestedTab === "history" || requestedTab === "queue") {
-			setActiveTab("activity");
-			return;
-		}
-		if (allowed.includes(requestedTab)) {
-			setActiveTab(requestedTab);
-		}
-	}, [location.state?.tab]);
-
-	// URL-driven tab redirects: handle ?tab=history and ?tab=queue arriving via
-	// direct links (not just from in-app navigation state). Rewrite the param so
-	// the URL reflects the canonical tab id.
-	useEffect(() => {
-		const urlTab = searchParams.get("tab");
-		if (urlTab === "history" || urlTab === "queue") {
-			setActiveTab("activity");
-			setSearchParams(
-				(prev) => {
-					const next = new URLSearchParams(prev);
-					next.set("tab", "activity");
-					return next;
-				},
-				{ replace: true },
-			);
-			return;
-		}
-		if (urlTab === "activity") {
-			setActiveTab("activity");
-		}
-	}, [searchParams, setSearchParams]);
-
 	// Auto-show credentials modal for new/pending hosts (skip if just arrived from Add Host wizard)
 	useEffect(() => {
 		if (host && host.status === "pending" && !location.state?.fromWizard) {
@@ -465,6 +378,7 @@ const HostDetail = () => {
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["settings"] });
 			queryClient.invalidateQueries({ queryKey: ["serverUrl"] });
+			queryClient.invalidateQueries({ queryKey: ["serverUrlCorsCheck"] });
 		},
 	});
 
@@ -621,6 +535,21 @@ const HostDetail = () => {
 			safeSetTimeout(
 				() => setIntegrationRefreshMessage({ text: "", isError: false }),
 				5000,
+			);
+		},
+	});
+
+	const dockerImageCheckMutation = useMutation({
+		mutationFn: () =>
+			adminHostsAPI.checkDockerImages(hostId).then((res) => res.data),
+		onSuccess: () => {
+			toast.success(
+				"Update check requested. Results appear once the agent reports back.",
+			);
+		},
+		onError: (error) => {
+			toast.error(
+				error.response?.data?.error || "Failed to request an update check",
 			);
 		},
 	});
@@ -1075,11 +1004,24 @@ const HostDetail = () => {
 	const applyPendingConfigMutation = useMutation({
 		mutationFn: () =>
 			adminHostsAPI.applyPendingConfig(hostId).then((res) => res.data),
-		onSuccess: () => {
+		onSuccess: (data) => {
 			queryClient.invalidateQueries({
 				queryKey: ["host-integrations", hostId],
 			});
 			refetchIntegrations();
+			if (data?.scannerInstallQueued) {
+				setComplianceInstallJob({
+					status: "waiting",
+					progress: 0,
+					message: "Waiting for the agent to restart",
+					install_events: [],
+					error: null,
+				});
+				toast.success(
+					"Configuration applied. OpenSCAP will be installed once the agent has restarted.",
+				);
+				return;
+			}
 			toast.success(
 				"Configuration applied. Agent will update config.yml and restart.",
 			);
@@ -1488,6 +1430,12 @@ const HostDetail = () => {
 				</div>
 			</div>
 
+			<HostIdentityBanners
+				host={host}
+				canManage={canManageHosts()}
+				onRegenerateCredentials={() => setShowCredentialsModal(true)}
+			/>
+
 			{/* Package Statistics Cards */}
 			<div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
 				<button
@@ -1680,9 +1628,19 @@ const HostDetail = () => {
 									<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
 										Agent Version
 									</p>
-									<p className="font-medium text-secondary-900 dark:text-white text-sm">
-										{host.agent_version || "Unknown"}
+									<div className="flex items-center gap-1.5 font-medium text-secondary-900 dark:text-white text-sm">
+										<span>{host.agent_version || "Unknown"}</span>
+										<AgentVersionIndicators host={host} />
+									</div>
+								</div>
+
+								<div>
+									<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+										Config Version
 									</p>
+									<div className="font-medium text-secondary-900 dark:text-white text-sm">
+										<ConfigVersionValue host={host} />
+									</div>
 								</div>
 
 								<div>
@@ -2137,7 +2095,7 @@ const HostDetail = () => {
 													<div className="space-y-3 max-h-80 overflow-y-auto pr-2">
 														{host.disk_details.map((disk, index) => (
 															<div
-																key={disk.name || `disk-${index}`}
+																key={`${disk.name ?? ""}-${disk.mountpoint ?? index}`}
 																className="bg-secondary-50 dark:bg-secondary-700 p-3 rounded-lg"
 															>
 																<div className="flex items-center gap-2 mb-2">
@@ -2708,7 +2666,10 @@ const HostDetail = () => {
 											validate={(value) => {
 												if (
 													value.trim() &&
-													!/^(\d{1,3}\.){3}\d{1,3}$/.test(value.trim())
+													!/^(\d{1,3}\.){3}\d{1,3}$/.test(value.trim()) &&
+													!/^(?=.*:.*:)[0-9a-fA-F:]+(\d{1,3}(\.\d{1,3}){3})?$/.test(
+														value.trim(),
+													)
 												) {
 													return "Invalid IP address format";
 												}
@@ -2807,9 +2768,19 @@ const HostDetail = () => {
 										<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
 											Agent Version
 										</p>
-										<p className="font-medium text-secondary-900 dark:text-white text-sm">
-											{host.agent_version || "Unknown"}
+										<div className="flex items-center gap-1.5 font-medium text-secondary-900 dark:text-white text-sm">
+											<span>{host.agent_version || "Unknown"}</span>
+											<AgentVersionIndicators host={host} />
+										</div>
+									</div>
+
+									<div>
+										<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+											Config Version
 										</p>
+										<div className="font-medium text-secondary-900 dark:text-white text-sm">
+											<ConfigVersionValue host={host} />
+										</div>
 									</div>
 
 									<div>
@@ -3302,7 +3273,7 @@ const HostDetail = () => {
 													<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-80 overflow-y-auto pr-2">
 														{host.disk_details.map((disk, index) => (
 															<div
-																key={disk.name || `disk-${index}`}
+																key={`${disk.name ?? ""}-${disk.mountpoint ?? index}`}
 																className="bg-secondary-50 dark:bg-secondary-700 p-3 rounded-lg"
 															>
 																<div className="flex items-center gap-2 mb-2">
@@ -4246,6 +4217,22 @@ const HostDetail = () => {
 															/>
 															Re-sync
 														</button>
+														{canManageHosts() && (
+															<button
+																type="button"
+																onClick={() =>
+																	dockerImageCheckMutation.mutate()
+																}
+																disabled={dockerImageCheckMutation.isPending}
+																className="flex items-center gap-1.5 px-2 py-1.5 text-xs font-medium text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-900/20 hover:bg-primary-100 dark:hover:bg-primary-900/30 rounded border border-primary-200 dark:border-primary-800 transition-colors disabled:opacity-50"
+																title="Check this host's images against their registries"
+															>
+																<RefreshCw
+																	className={`h-3.5 w-3.5 ${dockerImageCheckMutation.isPending ? "animate-spin" : ""}`}
+																/>
+																Check for updates
+															</button>
+														)}
 													</div>
 												</div>
 											);
@@ -4436,6 +4423,7 @@ const HostDetail = () => {
 																	<th className="pb-2 font-medium">Name</th>
 																	<th className="pb-2 font-medium">Image</th>
 																	<th className="pb-2 font-medium">Ports</th>
+																	<th className="pb-2 font-medium">Updates</th>
 																	<th className="pb-2 font-medium text-right">
 																		Uptime
 																	</th>
@@ -4521,6 +4509,11 @@ const HostDetail = () => {
 																				</span>
 																			)}
 																		</td>
+																		<td className="py-2">
+																			<UpdateStatusBadge
+																				status={container.update_status}
+																			/>
+																		</td>
 																		<td className="py-2 text-xs text-secondary-500 dark:text-white text-right">
 																			{container.status || "-"}
 																		</td>
@@ -4550,6 +4543,7 @@ const HostDetail = () => {
 																	</th>
 																	<th className="pb-2 font-medium">Tag</th>
 																	<th className="pb-2 font-medium">ID</th>
+																	<th className="pb-2 font-medium">Updates</th>
 																	<th className="pb-2 font-medium text-right">
 																		Size
 																	</th>
@@ -4573,12 +4567,27 @@ const HostDetail = () => {
 																			</Link>
 																		</td>
 																		<td className="py-2">
-																			<span className="px-2 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 rounded text-xs font-mono">
-																				{image.tag || "latest"}
+																			<span
+																				className="px-2 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 rounded text-xs font-mono max-w-[12rem] truncate inline-block align-middle"
+																				title={image.tag}
+																			>
+																				{image.tag || "<none>"}
 																			</span>
 																		</td>
-																		<td className="py-2 text-xs font-mono text-secondary-500 dark:text-white">
-																			{image.id?.slice(7, 19) || "-"}
+																		<td
+																			className="py-2 text-xs font-mono text-secondary-500 dark:text-white"
+																			title={image.image_id}
+																		>
+																			{shortImageId(image.image_id) || "-"}
+																		</td>
+																		<td className="py-2">
+																			<UpdateStatusBadge
+																				status={image.update_status}
+																				checkedAt={
+																					image.update_check?.checked_at
+																				}
+																				reason={image.update_check?.reason}
+																			/>
 																		</td>
 																		<td className="py-2 text-xs text-secondary-500 dark:text-white text-right">
 																			{image.size || "-"}
@@ -4726,6 +4735,7 @@ const HostDetail = () => {
 										className="rounded-md border border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm px-3 py-2"
 									>
 										<option value="">All</option>
+										<option value="scheduled">Scheduled</option>
 										<option value="queued">Queued</option>
 										<option value="running">Running</option>
 										<option value="completed">Completed</option>
@@ -4975,7 +4985,12 @@ const HostDetail = () => {
 											to="/compliance"
 											state={{
 												complianceTab: "scan-results",
-												scanResultsFilters: { status: "pass", host_id: hostId },
+												scanResultsFilters: {
+													status: "pass",
+													host_id: hostId,
+													profile_type:
+														complianceLatest.compliance_profiles?.type || "",
+												},
 											}}
 											className="card p-4 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
 											title="View passing rules for this host"
@@ -4996,7 +5011,12 @@ const HostDetail = () => {
 											to="/compliance"
 											state={{
 												complianceTab: "scan-results",
-												scanResultsFilters: { status: "fail", host_id: hostId },
+												scanResultsFilters: {
+													status: "fail",
+													host_id: hostId,
+													profile_type:
+														complianceLatest.compliance_profiles?.type || "",
+												},
 											}}
 											className="card p-4 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
 											title="View failing rules for this host"
@@ -5020,6 +5040,8 @@ const HostDetail = () => {
 												scanResultsFilters: {
 													status: "skipped",
 													host_id: hostId,
+													profile_type:
+														complianceLatest.compliance_profiles?.type || "",
 												},
 											}}
 											className="card p-4 hover:bg-secondary-50 dark:hover:bg-secondary-700/50 transition-colors"
@@ -5739,190 +5761,194 @@ const HostDetail = () => {
 
 			{/* Apply Pending Config Modal */}
 			{showApplyConfigModal && integrationsData?.pending_config_exists && (
-				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-					<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
-						<div className="p-6">
-							<div className="flex items-start gap-4">
-								<div className="flex-shrink-0 w-10 h-10 rounded-full bg-warning-100 dark:bg-warning-900/30 flex items-center justify-center">
-									<Send className="h-5 w-5 text-warning-600 dark:text-warning-400" />
-								</div>
-								<div className="flex-1 min-w-0">
-									<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
-										Apply Pending Configuration
-									</h3>
-									<p className="mt-2 text-sm text-secondary-600 dark:text-white">
-										The following changes will be applied to the agent on{" "}
-										<strong>{host?.friendly_name || host?.hostname}</strong>:
-									</p>
-									<ul className="mt-3 space-y-1.5 text-sm text-secondary-700 dark:text-secondary-300">
-										{(() => {
-											const pending = integrationsData?.pending_config || {};
-											const hasComplianceMode = "compliance_mode" in pending;
-											// Order: Docker, Compliance, Compliance mode, OpenSCAP, Docker Bench
-											const order = [
-												"docker_enabled",
-												"compliance_enabled",
-												"compliance_mode",
-												"compliance_on_demand_only",
-												"compliance_openscap_enabled",
-												"compliance_docker_bench_enabled",
-											];
-											const entries = order
-												.filter((key) => {
-													if (!(key in pending)) return false;
-													// Skip redundant: compliance_enabled/compliance_on_demand_only when compliance_mode present
-													if (
-														hasComplianceMode &&
-														(key === "compliance_enabled" ||
-															key === "compliance_on_demand_only")
-													)
-														return false;
-													return true;
-												})
-												.map((key) => {
-													const val = pending[key];
-													const label =
-														key === "docker_enabled"
-															? "Docker monitoring"
-															: key === "compliance_enabled"
-																? "Compliance scanning"
-																: key === "compliance_mode"
-																	? "Compliance mode"
-																	: key === "compliance_on_demand_only"
-																		? "Compliance schedule"
-																		: key === "compliance_openscap_enabled"
-																			? "OpenSCAP"
-																			: key ===
-																					"compliance_docker_bench_enabled"
-																				? "Docker Bench"
-																				: key;
-													let displayVal;
-													if (key === "compliance_mode") {
-														displayVal =
-															val === "disabled"
-																? "Disabled"
-																: val === "on-demand"
-																	? "On-demand"
-																	: val === "enabled"
-																		? "Scheduled"
-																		: String(val);
-													} else if (key === "compliance_on_demand_only") {
-														displayVal = val ? "On-demand only" : "Scheduled";
-													} else if (typeof val === "boolean") {
-														displayVal = val ? "Enabled" : "Disabled";
-													} else {
-														displayVal = String(val);
-													}
-													return { key, label, displayVal };
-												});
-											return entries.map(({ key, label, displayVal }) => (
-												<li key={key} className="flex items-center gap-2">
-													<CheckCircle className="h-4 w-4 text-warning-500 flex-shrink-0" />
-													<span>
-														{label}: <strong>{displayVal}</strong>
-													</span>
-												</li>
-											));
-										})()}
-									</ul>
-									<p className="mt-4 text-sm text-secondary-600 dark:text-white border-t border-secondary-200 dark:border-secondary-600 pt-4">
-										When applied, the agent&apos;s <strong>config.yml</strong>{" "}
-										will be updated and the{" "}
-										<strong>service will restart</strong> on the host.
-									</p>
+				<ModalPortal>
+					<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120]">
+						<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
+							<div className="p-6">
+								<div className="flex items-start gap-4">
+									<div className="flex-shrink-0 w-10 h-10 rounded-full bg-warning-100 dark:bg-warning-900/30 flex items-center justify-center">
+										<Send className="h-5 w-5 text-warning-600 dark:text-warning-400" />
+									</div>
+									<div className="flex-1 min-w-0">
+										<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
+											Apply Pending Configuration
+										</h3>
+										<p className="mt-2 text-sm text-secondary-600 dark:text-white">
+											The following changes will be applied to the agent on{" "}
+											<strong>{host?.friendly_name || host?.hostname}</strong>:
+										</p>
+										<ul className="mt-3 space-y-1.5 text-sm text-secondary-700 dark:text-secondary-300">
+											{(() => {
+												const pending = integrationsData?.pending_config || {};
+												const hasComplianceMode = "compliance_mode" in pending;
+												// Order: Docker, Compliance, Compliance mode, OpenSCAP, Docker Bench
+												const order = [
+													"docker_enabled",
+													"compliance_enabled",
+													"compliance_mode",
+													"compliance_on_demand_only",
+													"compliance_openscap_enabled",
+													"compliance_docker_bench_enabled",
+												];
+												const entries = order
+													.filter((key) => {
+														if (!(key in pending)) return false;
+														// Skip redundant: compliance_enabled/compliance_on_demand_only when compliance_mode present
+														if (
+															hasComplianceMode &&
+															(key === "compliance_enabled" ||
+																key === "compliance_on_demand_only")
+														)
+															return false;
+														return true;
+													})
+													.map((key) => {
+														const val = pending[key];
+														const label =
+															key === "docker_enabled"
+																? "Docker monitoring"
+																: key === "compliance_enabled"
+																	? "Compliance scanning"
+																	: key === "compliance_mode"
+																		? "Compliance mode"
+																		: key === "compliance_on_demand_only"
+																			? "Compliance schedule"
+																			: key === "compliance_openscap_enabled"
+																				? "OpenSCAP"
+																				: key ===
+																						"compliance_docker_bench_enabled"
+																					? "Docker Bench"
+																					: key;
+														let displayVal;
+														if (key === "compliance_mode") {
+															displayVal =
+																val === "disabled"
+																	? "Disabled"
+																	: val === "on-demand"
+																		? "On-demand"
+																		: val === "enabled"
+																			? "Scheduled"
+																			: String(val);
+														} else if (key === "compliance_on_demand_only") {
+															displayVal = val ? "On-demand only" : "Scheduled";
+														} else if (typeof val === "boolean") {
+															displayVal = val ? "Enabled" : "Disabled";
+														} else {
+															displayVal = String(val);
+														}
+														return { key, label, displayVal };
+													});
+												return entries.map(({ key, label, displayVal }) => (
+													<li key={key} className="flex items-center gap-2">
+														<CheckCircle className="h-4 w-4 text-warning-500 flex-shrink-0" />
+														<span>
+															{label}: <strong>{displayVal}</strong>
+														</span>
+													</li>
+												));
+											})()}
+										</ul>
+										<p className="mt-4 text-sm text-secondary-600 dark:text-white border-t border-secondary-200 dark:border-secondary-600 pt-4">
+											When applied, the agent&apos;s <strong>config.yml</strong>{" "}
+											will be updated and the{" "}
+											<strong>service will restart</strong> on the host.
+										</p>
+									</div>
 								</div>
 							</div>
-						</div>
-						<div className="bg-secondary-50 dark:bg-secondary-700/50 px-6 py-4 flex flex-col sm:flex-row gap-3 sm:justify-end">
-							<button
-								type="button"
-								onClick={() => setShowApplyConfigModal(false)}
-								className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-								onClick={() => {
-									applyPendingConfigMutation.mutate(undefined, {
-										onSuccess: () => setShowApplyConfigModal(false),
-									});
-								}}
-								disabled={
-									applyPendingConfigMutation.isPending || !wsStatus?.connected
-								}
-								className="px-4 py-2 text-sm font-medium text-white bg-warning-600 hover:bg-warning-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-							>
-								{applyPendingConfigMutation.isPending ? (
-									<>
-										<Loader2 className="h-4 w-4 animate-spin" />
-										Applying...
-									</>
-								) : (
-									<>
-										<Send className="h-4 w-4" />
-										Apply
-									</>
-								)}
-							</button>
+							<div className="bg-secondary-50 dark:bg-secondary-700/50 px-6 py-4 flex flex-col sm:flex-row gap-3 sm:justify-end">
+								<button
+									type="button"
+									onClick={() => setShowApplyConfigModal(false)}
+									className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
+								>
+									Cancel
+								</button>
+								<button
+									type="button"
+									onClick={() => {
+										applyPendingConfigMutation.mutate(undefined, {
+											onSuccess: () => setShowApplyConfigModal(false),
+										});
+									}}
+									disabled={
+										applyPendingConfigMutation.isPending || !wsStatus?.connected
+									}
+									className="px-4 py-2 text-sm font-medium text-white bg-warning-600 hover:bg-warning-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+								>
+									{applyPendingConfigMutation.isPending ? (
+										<>
+											<Loader2 className="h-4 w-4 animate-spin" />
+											Applying...
+										</>
+									) : (
+										<>
+											<Send className="h-4 w-4" />
+											Apply
+										</>
+									)}
+								</button>
+							</div>
 						</div>
 					</div>
-				</div>
+				</ModalPortal>
 			)}
 
 			{/* Auto-Update Confirmation Dialog */}
 			{autoUpdateDialog && (
-				<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-					<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
-						<div className="p-6">
-							<div className="flex items-start gap-4">
-								<div className="flex-shrink-0 w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
-									<AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-								</div>
-								<div className="flex-1">
-									<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
-										Global Auto-Updates Disabled
-									</h3>
-									<p className="mt-2 text-sm text-secondary-600 dark:text-white">
-										The master auto-update setting is currently{" "}
-										<strong>disabled</strong> in Settings &gt; Agent Updates.
-									</p>
-									<p className="mt-2 text-sm text-secondary-600 dark:text-white">
-										Enabling auto-update for{" "}
-										<strong>{host?.friendly_name || host?.hostname}</strong>{" "}
-										won't take effect until global auto-updates are enabled.
-									</p>
+				<ModalPortal>
+					<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120]">
+						<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
+							<div className="p-6">
+								<div className="flex items-start gap-4">
+									<div className="flex-shrink-0 w-10 h-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+										<AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+									</div>
+									<div className="flex-1">
+										<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
+											Global Auto-Updates Disabled
+										</h3>
+										<p className="mt-2 text-sm text-secondary-600 dark:text-white">
+											The master auto-update setting is currently{" "}
+											<strong>disabled</strong> in Settings &gt; Agent Updates.
+										</p>
+										<p className="mt-2 text-sm text-secondary-600 dark:text-white">
+											Enabling auto-update for{" "}
+											<strong>{host?.friendly_name || host?.hostname}</strong>{" "}
+											won't take effect until global auto-updates are enabled.
+										</p>
+									</div>
 								</div>
 							</div>
-						</div>
-						<div className="bg-secondary-50 dark:bg-secondary-700/50 px-6 py-4 flex flex-col sm:flex-row gap-3 sm:justify-end">
-							<button
-								type="button"
-								onClick={() => setAutoUpdateDialog(false)}
-								className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-								onClick={handleEnableHostOnly}
-								className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
-							>
-								Enable Host Only
-							</button>
-							<button
-								type="button"
-								onClick={handleEnableBoth}
-								disabled={enableGlobalAutoUpdateMutation.isPending}
-								className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								{enableGlobalAutoUpdateMutation.isPending
-									? "Enabling..."
-									: "Enable Both"}
-							</button>
+							<div className="bg-secondary-50 dark:bg-secondary-700/50 px-6 py-4 flex flex-col sm:flex-row gap-3 sm:justify-end">
+								<button
+									type="button"
+									onClick={() => setAutoUpdateDialog(false)}
+									className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
+								>
+									Cancel
+								</button>
+								<button
+									type="button"
+									onClick={handleEnableHostOnly}
+									className="px-4 py-2 text-sm font-medium text-secondary-700 dark:text-secondary-200 bg-white dark:bg-secondary-600 border border-secondary-300 dark:border-secondary-500 rounded-md hover:bg-secondary-50 dark:hover:bg-secondary-500 transition-colors"
+								>
+									Enable Host Only
+								</button>
+								<button
+									type="button"
+									onClick={handleEnableBoth}
+									disabled={enableGlobalAutoUpdateMutation.isPending}
+									className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									{enableGlobalAutoUpdateMutation.isPending
+										? "Enabling..."
+										: "Enable Both"}
+								</button>
+							</div>
 						</div>
 					</div>
-				</div>
+				</ModalPortal>
 			)}
 		</div>
 	);

@@ -13,6 +13,7 @@ import remarkGfm from "remark-gfm";
 import { useAuth } from "../contexts/AuthContext";
 import { useSettings } from "../contexts/SettingsContext";
 import { authAPI, versionAPI } from "../utils/api";
+import ModalPortal from "./ui/ModalPortal";
 
 // Closing the modal or finishing the last step calls `acceptReleaseNotes` so
 // the version is marked read even if the user skips later steps.
@@ -170,8 +171,8 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 		</svg>
 	);
 
-	return (
-		<div className="fixed inset-0 z-50 overflow-y-auto">
+	const modal = (
+		<div className="fixed inset-0 z-[120] overflow-y-auto">
 			<div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
 				<button
 					type="button"
@@ -572,6 +573,8 @@ const ReleaseNotesModal = ({ isOpen, onAccept }) => {
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 };
 
 export default ReleaseNotesModal;

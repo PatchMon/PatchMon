@@ -35,26 +35,27 @@ type AlertAction struct {
 }
 
 type AlertConfig struct {
-	ID                   string           `json:"id"`
-	AlertType            string           `json:"alert_type"`
-	IsEnabled            bool             `json:"is_enabled"`
-	DefaultSeverity      string           `json:"default_severity"`
-	AutoAssignEnabled    bool             `json:"auto_assign_enabled"`
-	AutoAssignUserID     *string          `json:"auto_assign_user_id"`
-	AutoAssignRule       *string          `json:"auto_assign_rule"`
-	AutoAssignConditions []byte           `json:"auto_assign_conditions"`
-	RetentionDays        *int32           `json:"retention_days"`
-	AutoResolveAfterDays *int32           `json:"auto_resolve_after_days"`
-	CleanupResolvedOnly  bool             `json:"cleanup_resolved_only"`
-	NotificationEnabled  bool             `json:"notification_enabled"`
-	EscalationEnabled    bool             `json:"escalation_enabled"`
-	EscalationAfterHours *int32           `json:"escalation_after_hours"`
-	AlertDelaySeconds    *int32           `json:"alert_delay_seconds"`
-	Metadata             []byte           `json:"metadata"`
-	Category             string           `json:"category"`
-	CheckIntervalMinutes *int32           `json:"check_interval_minutes"`
-	CreatedAt            pgtype.Timestamp `json:"created_at"`
-	UpdatedAt            pgtype.Timestamp `json:"updated_at"`
+	ID                    string           `json:"id"`
+	AlertType             string           `json:"alert_type"`
+	IsEnabled             bool             `json:"is_enabled"`
+	DefaultSeverity       string           `json:"default_severity"`
+	AutoAssignEnabled     bool             `json:"auto_assign_enabled"`
+	AutoAssignUserID      *string          `json:"auto_assign_user_id"`
+	AutoAssignRule        *string          `json:"auto_assign_rule"`
+	AutoAssignConditions  []byte           `json:"auto_assign_conditions"`
+	RetentionDays         *int32           `json:"retention_days"`
+	AutoResolveAfterDays  *int32           `json:"auto_resolve_after_days"`
+	CleanupResolvedOnly   bool             `json:"cleanup_resolved_only"`
+	NotificationEnabled   bool             `json:"notification_enabled"`
+	EscalationEnabled     bool             `json:"escalation_enabled"`
+	EscalationAfterHours  *int32           `json:"escalation_after_hours"`
+	AlertDelaySeconds     *int32           `json:"alert_delay_seconds"`
+	Metadata              []byte           `json:"metadata"`
+	Category              string           `json:"category"`
+	CheckIntervalMinutes  *int32           `json:"check_interval_minutes"`
+	ReminderIntervalHours *int32           `json:"reminder_interval_hours"`
+	CreatedAt             pgtype.Timestamp `json:"created_at"`
+	UpdatedAt             pgtype.Timestamp `json:"updated_at"`
 }
 
 type AlertHistory struct {
@@ -173,21 +174,30 @@ type DashboardPreference struct {
 }
 
 type DockerContainer struct {
-	ID          string           `json:"id"`
-	HostID      string           `json:"host_id"`
-	ContainerID string           `json:"container_id"`
-	Name        string           `json:"name"`
-	ImageID     *string          `json:"image_id"`
-	ImageName   string           `json:"image_name"`
-	ImageTag    string           `json:"image_tag"`
-	Status      string           `json:"status"`
-	State       *string          `json:"state"`
-	Ports       []byte           `json:"ports"`
-	Labels      []byte           `json:"labels"`
-	CreatedAt   pgtype.Timestamp `json:"created_at"`
-	StartedAt   pgtype.Timestamp `json:"started_at"`
-	UpdatedAt   pgtype.Timestamp `json:"updated_at"`
-	LastChecked pgtype.Timestamp `json:"last_checked"`
+	ID           string           `json:"id"`
+	HostID       string           `json:"host_id"`
+	ContainerID  string           `json:"container_id"`
+	Name         string           `json:"name"`
+	ImageID      *string          `json:"image_id"`
+	ImageName    string           `json:"image_name"`
+	ImageTag     string           `json:"image_tag"`
+	Status       string           `json:"status"`
+	State        *string          `json:"state"`
+	Ports        []byte           `json:"ports"`
+	Labels       []byte           `json:"labels"`
+	CreatedAt    pgtype.Timestamp `json:"created_at"`
+	StartedAt    pgtype.Timestamp `json:"started_at"`
+	UpdatedAt    pgtype.Timestamp `json:"updated_at"`
+	LastChecked  pgtype.Timestamp `json:"last_checked"`
+	ImageStale   bool             `json:"image_stale"`
+	RestartCount int32            `json:"restart_count"`
+	ImageDigest  *string          `json:"image_digest"`
+}
+
+type DockerHostImage struct {
+	HostID   string           `json:"host_id"`
+	ImageID  string           `json:"image_id"`
+	LastSeen pgtype.Timestamp `json:"last_seen"`
 }
 
 type DockerImage struct {
@@ -202,6 +212,20 @@ type DockerImage struct {
 	LastPulled  pgtype.Timestamp `json:"last_pulled"`
 	LastChecked pgtype.Timestamp `json:"last_checked"`
 	UpdatedAt   pgtype.Timestamp `json:"updated_at"`
+}
+
+type DockerImageCheck struct {
+	ID                string           `json:"id"`
+	HostID            string           `json:"host_id"`
+	ImageID           string           `json:"image_id"`
+	Status            string           `json:"status"`
+	LocalDigest       *string          `json:"local_digest"`
+	RemoteDigest      *string          `json:"remote_digest"`
+	Registry          *string          `json:"registry"`
+	Reason            *string          `json:"reason"`
+	CheckedAt         pgtype.Timestamp `json:"checked_at"`
+	FirstSeenUpdateAt pgtype.Timestamp `json:"first_seen_update_at"`
+	UpdatedAt         pgtype.Timestamp `json:"updated_at"`
 }
 
 type DockerImageUpdate struct {
@@ -308,6 +332,15 @@ type Host struct {
 	DockerHash                   *string            `json:"docker_hash"`
 	ComplianceHash               *string            `json:"compliance_hash"`
 	LastFullReportAt             pgtype.Timestamp   `json:"last_full_report_at"`
+	ConfigVersion                *string            `json:"config_version"`
+	ReportedHostID               *string            `json:"reported_host_id"`
+	EnrolmentTokenID             *string            `json:"enrolment_token_id"`
+	CredentialsReissuedAt        pgtype.Timestamp   `json:"credentials_reissued_at"`
+	IdentityFingerprint          *string            `json:"identity_fingerprint"`
+	IdentityPrevFingerprint      *string            `json:"identity_prev_fingerprint"`
+	IdentityFingerprintChangedAt pgtype.Timestamp   `json:"identity_fingerprint_changed_at"`
+	IdentityConflictAt           pgtype.Timestamp   `json:"identity_conflict_at"`
+	EnrolmentMachineID           *string            `json:"enrolment_machine_id"`
 }
 
 type HostGroup struct {

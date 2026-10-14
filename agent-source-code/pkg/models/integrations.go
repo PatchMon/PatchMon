@@ -21,6 +21,8 @@ type DockerContainer struct {
 	ImageRepository string            `json:"image_repository"`
 	ImageSource     string            `json:"image_source"` // docker-hub, github, gitlab, private
 	ImageID         string            `json:"image_id"`
+	ImageStale      bool              `json:"image_stale"`
+	ImageDigest     string            `json:"image_digest,omitempty"`
 	Status          string            `json:"status"` // running, exited, created, restarting, paused, dead
 	State           string            `json:"state"`
 	Ports           map[string]string `json:"ports,omitempty"`
@@ -51,6 +53,55 @@ type DockerImageUpdate struct {
 	CurrentDigest   string `json:"current_digest"`
 	AvailableDigest string `json:"available_digest"`
 	ImageID         string `json:"image_id"`
+}
+
+// Docker image update check statuses.
+const (
+	ImageCheckUpToDate        = "up_to_date"
+	ImageCheckUpdateAvailable = "update_available"
+	ImageCheckUnknown         = "unknown"
+	ImageCheckLocalBuild      = "local_build"
+	ImageCheckPinned          = "pinned"
+	ImageCheckSkipped         = "skipped"
+)
+
+// Reasons attached to an unknown image check result.
+const (
+	ImageCheckReasonRateLimited        = "rate_limited"
+	ImageCheckReasonAuthFailed         = "auth_failed"
+	ImageCheckReasonTagNotFound        = "tag_not_found"
+	ImageCheckReasonUnreachable        = "unreachable"
+	ImageCheckReasonUnsupportedAuth    = "unsupported_auth"
+	ImageCheckReasonInsecureDisallowed = "insecure_registry_disallowed"
+	ImageCheckReasonNoDigest           = "no_digest"
+)
+
+// MaxImageCheckResults is the most results the server accepts in one upload.
+const MaxImageCheckResults = 5000
+
+// DockerImageCheckResult is the update check outcome for one local image row.
+type DockerImageCheckResult struct {
+	Repository   string `json:"repository"`
+	Tag          string `json:"tag"`
+	ImageID      string `json:"image_id"`
+	Status       string `json:"status"`
+	LocalDigest  string `json:"local_digest"`
+	RemoteDigest string `json:"remote_digest"`
+	Reason       string `json:"reason"`
+	Registry     string `json:"registry"`
+}
+
+// DockerImageCheckPayload is the body of POST /integrations/docker/image-checks.
+type DockerImageCheckPayload struct {
+	CheckedAt    time.Time                `json:"checked_at"`
+	AgentVersion string                   `json:"agent_version"`
+	Results      []DockerImageCheckResult `json:"results"`
+}
+
+// DockerImageCheckResponse is the server's reply to an image check upload.
+type DockerImageCheckResponse struct {
+	Received   int `json:"received"`
+	NewUpdates int `json:"new_updates"`
 }
 
 // DockerVolume represents a Docker volume
@@ -108,6 +159,7 @@ type DockerData struct {
 	Networks   []DockerNetwork     `json:"networks,omitempty"`
 	Updates    []DockerImageUpdate `json:"updates"`
 	DaemonInfo *DockerDaemonInfo   `json:"daemon_info,omitempty"`
+	Collected  []string            `json:"collected,omitempty"`
 }
 
 // DockerDaemonInfo represents Docker daemon information

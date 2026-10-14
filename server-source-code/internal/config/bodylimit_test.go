@@ -1,6 +1,12 @@
 package config
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
+)
 
 func TestParseBodyLimit_UnsuffixedIsMB(t *testing.T) {
 	cases := []struct {
@@ -49,11 +55,11 @@ func TestParseBodyLimitKB_UnsuffixedIsKB(t *testing.T) {
 
 func TestResolveBodyLimitKB_EnvAndDBAgreeOnBareNumbers(t *testing.T) {
 	t.Setenv("AGENT_PING_BODY_LIMIT", "16")
-	fromEnv := resolveBodyLimitKB("AGENT_PING_BODY_LIMIT", nil, 8*1024)
+	fromEnv := resolveBodyLimitKB("AGENT_PING_BODY_LIMIT", nil, defaultAgentPingBodyLimitKB*1024)
 
 	t.Setenv("AGENT_PING_BODY_LIMIT", "")
 	dbVal := "16"
-	fromDB := resolveBodyLimitKB("AGENT_PING_BODY_LIMIT", &dbVal, 8*1024)
+	fromDB := resolveBodyLimitKB("AGENT_PING_BODY_LIMIT", &dbVal, defaultAgentPingBodyLimitKB*1024)
 
 	if fromEnv != fromDB {
 		t.Errorf("env = %d, db = %d, want equal", fromEnv, fromDB)
@@ -89,7 +95,102 @@ func TestResolveBodyLimit_StoredValueAboveCeilingClamps(t *testing.T) {
 	}
 }
 
-func TestLoad_ComplianceBodyLimitDefault(t *testing.T) {
+var bodyLimitKeys = []string{"JSON_BODY_LIMIT", "AGENT_UPDATE_BODY_LIMIT", "COMPLIANCE_BODY_LIMIT", "AGENT_PING_BODY_LIMIT"}
+
+func TestEnvAndDBPathsAgreeOnEverySuffix(t *testing.T) {
+	const kb, mb = int64(1 << 10), int64(1 << 20)
+	const complianceDefault, pingDefault = 20 * mb, defaultAgentPingBodyLimitKB * kb
+	cases := []struct {
+		in         string
+		general    int64
+		compliance int64
+		ping       int64
+	}{
+		{"", 5 * mb, complianceDefault, pingDefault},
+		{"0", 5 * mb, complianceDefault, pingDefault},
+		{"-5", 5 * mb, complianceDefault, pingDefault},
+		{"abc", 5 * mb, complianceDefault, pingDefault},
+		{"512b", 512, 512, 512},
+		{"8kb", 8 * kb, 8 * kb, 8 * kb},
+		{"16", 16 * mb, 16 * mb, 16 * kb},
+		{"128kb", 128 * kb, 128 * kb, 128 * kb},
+		{"1mb", mb, mb, mb},
+		{" 2MB ", 2 * mb, 2 * mb, 2 * mb},
+		{"20mb", 20 * mb, 20 * mb, 20 * mb},
+		{"32mb", maxBodyLimitBytes, maxBodyLimitBytes, maxBodyLimitBytes},
+		{"33mb", maxBodyLimitBytes, maxBodyLimitBytes, maxBodyLimitBytes},
+		{"1gb", maxBodyLimitBytes, maxBodyLimitBytes, maxBodyLimitBytes},
+	}
+	t.Setenv("ENV_FILE", "/nonexistent")
+	t.Setenv("DATABASE_URL", "postgresql://localhost/test")
+	t.Setenv("JWT_SECRET", "test-secret")
+
+	for _, c := range cases {
+		for _, key := range bodyLimitKeys {
+			t.Setenv(key, c.in)
+		}
+		fromEnv, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		for key, got := range map[string]int64{
+			"JSON_BODY_LIMIT":         fromEnv.JSONBodyLimitBytes,
+			"AGENT_UPDATE_BODY_LIMIT": fromEnv.AgentUpdateBodyLimitBytes,
+		} {
+			if want := c.general; got != want {
+				t.Errorf("env %s=%q = %d, want %d", key, c.in, got, want)
+			}
+		}
+		if fromEnv.ComplianceBodyLimitBytes != c.compliance {
+			t.Errorf("env COMPLIANCE_BODY_LIMIT=%q = %d, want %d", c.in, fromEnv.ComplianceBodyLimitBytes, c.compliance)
+		}
+		if fromEnv.AgentPingBodyLimitBytes != c.ping {
+			t.Errorf("env AGENT_PING_BODY_LIMIT=%q = %d, want %d", c.in, fromEnv.AgentPingBodyLimitBytes, c.ping)
+		}
+
+		for _, key := range bodyLimitKeys {
+			t.Setenv(key, "")
+		}
+		defaults, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		dbVal := c.in
+		fromDB := ResolveConfig(context.Background(), defaults, &models.Settings{
+			JSONBodyLimit:        &dbVal,
+			AgentUpdateBodyLimit: &dbVal,
+			ComplianceBodyLimit:  &dbVal,
+			AgentPingBodyLimit:   &dbVal,
+		})
+		for key, got := range map[string]int64{
+			"JSON_BODY_LIMIT":         fromDB.JSONBodyLimitBytes,
+			"AGENT_UPDATE_BODY_LIMIT": fromDB.AgentUpdateBodyLimitBytes,
+		} {
+			if want := c.general; got != want {
+				t.Errorf("db %s=%q = %d, want %d", key, c.in, got, want)
+			}
+		}
+		if fromDB.ComplianceBodyLimitBytes != c.compliance {
+			t.Errorf("db COMPLIANCE_BODY_LIMIT=%q = %d, want %d", c.in, fromDB.ComplianceBodyLimitBytes, c.compliance)
+		}
+		if fromDB.AgentPingBodyLimitBytes != c.ping {
+			t.Errorf("db AGENT_PING_BODY_LIMIT=%q = %d, want %d", c.in, fromDB.AgentPingBodyLimitBytes, c.ping)
+		}
+	}
+}
+
+// The operator guide states every gb value is reduced to the ceiling.
+func TestGigabyteClampsOnBothPaths(t *testing.T) {
+	t.Setenv("PROBE_KB", "1gb")
+	if got := getEnvBytesKBDefault("PROBE_KB", 64); got != maxBodyLimitBytes {
+		t.Errorf("env KB path 1gb = %d, want a clamp to %d", got, maxBodyLimitBytes)
+	}
+	if got := parseBodyLimitKB("1gb", 64*1024); got != maxBodyLimitBytes {
+		t.Errorf("db KB path 1gb = %d, want a clamp to %d", got, maxBodyLimitBytes)
+	}
+}
+
+func TestLoad_BodyLimitDefaults(t *testing.T) {
 	t.Setenv("ENV_FILE", "/nonexistent")
 	t.Setenv("DATABASE_URL", "postgresql://localhost/test")
 	t.Setenv("JWT_SECRET", "test-secret")
@@ -103,6 +204,9 @@ func TestLoad_ComplianceBodyLimitDefault(t *testing.T) {
 	}
 	if cfg.AgentUpdateBodyLimitBytes != 5*1024*1024 {
 		t.Errorf("AgentUpdateBodyLimitBytes = %d, want %d", cfg.AgentUpdateBodyLimitBytes, 5*1024*1024)
+	}
+	if cfg.AgentPingBodyLimitBytes != 64*1024 {
+		t.Errorf("AgentPingBodyLimitBytes = %d, want %d", cfg.AgentPingBodyLimitBytes, 64*1024)
 	}
 }
 
@@ -125,7 +229,7 @@ func TestParseBodyLimit_OverRangeClamps(t *testing.T) {
 }
 
 func TestParseBodyLimitKB_OverRangeClamps(t *testing.T) {
-	const fallback = 8 * 1024
+	const fallback = defaultAgentPingBodyLimitKB * 1024
 	for _, in := range []string{"9223372036854775807", "9999999999999gb", "2gb", "512mb"} {
 		got := parseBodyLimitKB(in, fallback)
 		if got != maxBodyLimitBytes {
@@ -192,5 +296,43 @@ func TestScaleBodyLimit_CeilingIsExactlyInclusive(t *testing.T) {
 	}
 	if got := parseBodyLimit("0", 5<<20); got != 5<<20 {
 		t.Errorf("parseBodyLimit(\"0\") = %d, want the fallback", got)
+	}
+}
+
+func TestValidateBodyLimit(t *testing.T) {
+	cases := []struct {
+		key, value string
+		ok         bool
+	}{
+		{"JSON_BODY_LIMIT", "5mb", true},
+		{"JSON_BODY_LIMIT", "5", true},
+		{"JSON_BODY_LIMIT", "512kb", true},
+		{"JSON_BODY_LIMIT", "1gb", true},
+		{"COMPLIANCE_BODY_LIMIT", "50mb", true},
+		{"AGENT_UPDATE_BODY_LIMIT", " 2MB ", true},
+		{"AGENT_PING_BODY_LIMIT", "64", true},
+		{"AGENT_PING_BODY_LIMIT", "128kb", true},
+		{"JSON_BODY_LIMIT", "", false},
+		{"JSON_BODY_LIMIT", "abc", false},
+		{"JSON_BODY_LIMIT", "0", false},
+		{"JSON_BODY_LIMIT", "-1mb", false},
+		{"JSON_BODY_LIMIT", "5 megabytes", false},
+		{"AGENT_PING_BODY_LIMIT", "0kb", false},
+		{"AGENT_PING_BODY_LIMIT", "64kib", false},
+	}
+	for _, c := range cases {
+		err := ValidateBodyLimit(c.key, c.value)
+		if (err == nil) != c.ok {
+			t.Errorf("ValidateBodyLimit(%s, %q) err = %v, want ok=%v", c.key, c.value, err, c.ok)
+		}
+		if err != nil && !strings.Contains(err.Error(), c.key) {
+			t.Errorf("error %q does not name %s", err, c.key)
+		}
+	}
+	if err := ValidateBodyLimit("AGENT_PING_BODY_LIMIT", "x"); err == nil || !strings.Contains(err.Error(), "bare number means KB") {
+		t.Errorf("ping error = %v, want it to say a bare number means KB", err)
+	}
+	if err := ValidateBodyLimit("JSON_BODY_LIMIT", "x"); err == nil || !strings.Contains(err.Error(), "bare number means MB") {
+		t.Errorf("json error = %v, want it to say a bare number means MB", err)
 	}
 }

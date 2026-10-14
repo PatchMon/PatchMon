@@ -16,6 +16,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
@@ -87,6 +88,41 @@ func (h *SettingsHandler) GetServerURL(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]string{"server_url": url})
 }
 
+type serverURLCORSCheckResponse struct {
+	ServerURL string `json:"server_url"`
+	Allowed   bool   `json:"allowed"`
+	Reason    string `json:"reason"`
+}
+
+// ServerURLCORSCheck handles GET /settings/server-url/cors-check.
+func (h *SettingsHandler) ServerURLCORSCheck(w http.ResponseWriter, r *http.Request) {
+	s, err := h.settings.GetFirst(r.Context())
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to load settings")
+		return
+	}
+	serverURL := s.ServerURL
+	if serverURL == "" {
+		serverURL = "http://localhost:3001"
+	}
+	JSON(w, http.StatusOK, checkServerURLCORS(r, serverURL))
+}
+
+func checkServerURLCORS(r *http.Request, serverURL string) serverURLCORSCheckResponse {
+	resp := serverURLCORSCheckResponse{ServerURL: serverURL}
+	if validateServerURL(serverURL) != nil {
+		resp.Reason = "server_url_invalid"
+		return resp
+	}
+	u, _ := url.Parse(serverURL)
+	if !middleware.CORSAllowsHost(r, u.Host) {
+		resp.Reason = "host_not_in_cors_origin"
+		return resp
+	}
+	resp.Allowed = true
+	return resp
+}
+
 // GetCurrentURL handles GET /settings/current-url (public). Returns the effective URL from X-Forwarded-* or Host.
 func (h *SettingsHandler) GetCurrentURL(w http.ResponseWriter, r *http.Request) {
 	scheme := "https"
@@ -135,8 +171,6 @@ func (h *SettingsHandler) VersionCurrent(version string) http.HandlerFunc {
 
 const serverVersionDNS = "server.vcheck.patchmon.net"
 
-var semverRe = regexp.MustCompile(`^\d+\.\d+\.\d+`)
-
 // VersionCheckUpdates handles GET /version/check-updates (matches Node backend).
 // Fetches latest server version from DNS (server.vcheck.patchmon.net) and returns update info.
 func (h *SettingsHandler) VersionCheckUpdates(currentVersion string) http.HandlerFunc {
@@ -159,7 +193,7 @@ func (h *SettingsHandler) VersionCheckUpdates(currentVersion string) http.Handle
 			}
 		} else {
 			latestVersion = strings.TrimSpace(strings.Trim(latestVersion, "\"'"))
-			if !semverRe.MatchString(latestVersion) {
+			if !util.HasVersionPrefix(latestVersion) {
 				latestVersion = ""
 				if s.LatestVersion != nil {
 					latestVersion = *s.LatestVersion
@@ -486,7 +520,7 @@ func buildEnvironmentVariables(cfg *config.Config, resolved *config.ResolvedConf
 		{Category: "Database", Key: "DB_CONNECT_TIMEOUT", EffectiveValue: strconv.Itoa(cfg.DBConnectTimeout), EffectiveSource: source(env("DB_CONNECT_TIMEOUT"), "", "10"), EnvValue: env("DB_CONNECT_TIMEOUT"), DBValue: "", DefaultValue: "10", Editable: false, Conflict: false, Description: "Connect timeout (seconds); startup only - configure via .env"},
 		{Category: "Database", Key: "PM_DB_CONN_MAX_ATTEMPTS", EffectiveValue: strconv.Itoa(cfg.DBConnMaxAttempts), EffectiveSource: source(env("PM_DB_CONN_MAX_ATTEMPTS"), "", "30"), EnvValue: env("PM_DB_CONN_MAX_ATTEMPTS"), DBValue: "", DefaultValue: "30", Editable: false, Conflict: false, Description: "Retry attempts at startup; configure via .env"},
 		{Category: "Database", Key: "PM_DB_CONN_WAIT_INTERVAL", EffectiveValue: strconv.Itoa(cfg.DBConnWaitInterval), EffectiveSource: source(env("PM_DB_CONN_WAIT_INTERVAL"), "", "2"), EnvValue: env("PM_DB_CONN_WAIT_INTERVAL"), DBValue: "", DefaultValue: "2", Editable: false, Conflict: false, Description: "Seconds between connection retries; configure via .env"},
-		{Category: "Server", Key: "CORS_ORIGIN", EffectiveValue: corsEffective, EffectiveSource: corsSource, EnvValue: env("CORS_ORIGIN"), DBValue: dbStr(s.CorsOrigin), DefaultValue: "http://localhost:3000", Editable: true, Conflict: env("CORS_ORIGIN") != "" && s.CorsOrigin != nil && *s.CorsOrigin != "", Description: "Allowed origin for CORS (frontend URL). Comma-separated for multiple origins. Requires a server restart to take effect."},
+		{Category: "Server", Key: "CORS_ORIGIN", EffectiveValue: corsEffective, EffectiveSource: corsSource, EnvValue: env("CORS_ORIGIN"), DBValue: dbStr(s.CorsOrigin), DefaultValue: "http://localhost:3000", Editable: true, Conflict: env("CORS_ORIGIN") != "" && s.CorsOrigin != nil && *s.CorsOrigin != "", Description: "Browser origin(s) allowed to use PatchMon, e.g. https://patchmon.example.com. Comma-separated for multiple origins. Requires a server restart to take effect."},
 		{Category: "Server", Key: "ENABLE_HSTS", EffectiveValue: boolStr(resolved.EnableHSTS), EffectiveSource: source(env("ENABLE_HSTS"), dbBool(s.EnableHSTS), "false"), EnvValue: env("ENABLE_HSTS"), DBValue: dbBool(s.EnableHSTS), DefaultValue: "false", Editable: true, Conflict: env("ENABLE_HSTS") != "" && s.EnableHSTS != nil, Description: "Enable HSTS header for HTTPS"},
 		{Category: "Server", Key: "TRUST_PROXY", EffectiveValue: trustProxyStr, EffectiveSource: source(env("TRUST_PROXY"), dbBool(s.TrustProxy), "true"), EnvValue: env("TRUST_PROXY"), DBValue: dbBool(s.TrustProxy), DefaultValue: "true", Editable: false, Conflict: env("TRUST_PROXY") != "" && s.TrustProxy != nil, Description: "Trust proxy headers (X-Forwarded-Proto / X-Forwarded-For) from a reverse proxy. Read once at startup and applied process-wide, so it describes the deployment rather than a single context; configure via .env. Default true; set to false only if PatchMon is exposed directly to the internet without a proxy."},
 		{Category: "Server", Key: "TRUSTED_PROXY_RANGES", EffectiveValue: strings.Join(cfg.TrustedProxyRanges, ", "), EffectiveSource: source(env("TRUSTED_PROXY_RANGES"), "", ""), EnvValue: env("TRUSTED_PROXY_RANGES"), DBValue: "", DefaultValue: "(empty)", Editable: false, Conflict: false, Description: "Comma-separated CIDRs or IPs of reverse proxies in front of PatchMon, used to resolve the real client IP from X-Forwarded-For. Leave empty for a single proxy; set it when proxies are chained (e.g. Cloudflare in front of NPM). Env only, and deliberately not editable here: widening it would allow X-Forwarded-For spoofing."},
@@ -507,7 +541,7 @@ func buildEnvironmentVariables(cfg *config.Config, resolved *config.ResolvedConf
 		{Category: "Server performance", Key: "JSON_BODY_LIMIT", EffectiveValue: formatBytesEnv(resolved.JSONBodyLimitBytes), EffectiveSource: source(env("JSON_BODY_LIMIT"), dbStr(s.JSONBodyLimit), "5mb"), EnvValue: env("JSON_BODY_LIMIT"), DBValue: dbStr(s.JSONBodyLimit), DefaultValue: "5mb", Editable: true, Conflict: env("JSON_BODY_LIMIT") != "" && s.JSONBodyLimit != nil, Description: "Max JSON body size (e.g. 5mb)"},
 		{Category: "Server performance", Key: "AGENT_UPDATE_BODY_LIMIT", EffectiveValue: formatBytesEnv(resolved.AgentUpdateBodyLimitBytes), EffectiveSource: source(env("AGENT_UPDATE_BODY_LIMIT"), dbStr(s.AgentUpdateBodyLimit), "5mb"), EnvValue: env("AGENT_UPDATE_BODY_LIMIT"), DBValue: dbStr(s.AgentUpdateBodyLimit), DefaultValue: "5mb", Editable: true, Conflict: env("AGENT_UPDATE_BODY_LIMIT") != "" && s.AgentUpdateBodyLimit != nil, Description: "Max agent report body size"},
 		{Category: "Server performance", Key: "COMPLIANCE_BODY_LIMIT", EffectiveValue: formatBytesEnv(resolved.ComplianceBodyLimitBytes), EffectiveSource: source(env("COMPLIANCE_BODY_LIMIT"), dbStr(s.ComplianceBodyLimit), "20mb"), EnvValue: env("COMPLIANCE_BODY_LIMIT"), DBValue: dbStr(s.ComplianceBodyLimit), DefaultValue: "20mb", Editable: true, Conflict: env("COMPLIANCE_BODY_LIMIT") != "" && s.ComplianceBodyLimit != nil, Description: "Max compliance scan result body size"},
-		{Category: "Server performance", Key: "AGENT_PING_BODY_LIMIT", EffectiveValue: formatBytesEnv(resolved.AgentPingBodyLimitBytes), EffectiveSource: source(env("AGENT_PING_BODY_LIMIT"), dbStr(s.AgentPingBodyLimit), "8kb"), EnvValue: env("AGENT_PING_BODY_LIMIT"), DBValue: dbStr(s.AgentPingBodyLimit), DefaultValue: "8kb", Editable: true, Conflict: env("AGENT_PING_BODY_LIMIT") != "" && s.AgentPingBodyLimit != nil, Description: "Max agent ping body size"},
+		{Category: "Server performance", Key: "AGENT_PING_BODY_LIMIT", EffectiveValue: formatBytesEnv(resolved.AgentPingBodyLimitBytes), EffectiveSource: source(env("AGENT_PING_BODY_LIMIT"), dbStr(s.AgentPingBodyLimit), "64kb"), EnvValue: env("AGENT_PING_BODY_LIMIT"), DBValue: dbStr(s.AgentPingBodyLimit), DefaultValue: "64kb", Editable: true, Conflict: env("AGENT_PING_BODY_LIMIT") != "" && s.AgentPingBodyLimit != nil, Description: "Max agent ping body size"},
 		{Category: "Server performance", Key: "DB_TRANSACTION_LONG_TIMEOUT", EffectiveValue: strconv.Itoa(resolved.DBTransactionLongTimeout), EffectiveSource: source(env("DB_TRANSACTION_LONG_TIMEOUT"), dbInt(s.DBTransactionLongTimeout), "60000"), EnvValue: env("DB_TRANSACTION_LONG_TIMEOUT"), DBValue: dbInt(s.DBTransactionLongTimeout), DefaultValue: "60000", Editable: true, Conflict: env("DB_TRANSACTION_LONG_TIMEOUT") != "" && s.DBTransactionLongTimeout != nil, Description: "Long transaction timeout (ms)"},
 		{Category: "Patching", Key: "PATCH_RUN_STALL_TIMEOUT_MIN", EffectiveValue: strconv.Itoa(resolved.PatchRunStallTimeoutMin), EffectiveSource: source(env("PATCH_RUN_STALL_TIMEOUT_MIN"), dbInt(s.PatchRunStallTimeoutMinutes), "30"), EnvValue: env("PATCH_RUN_STALL_TIMEOUT_MIN"), DBValue: dbInt(s.PatchRunStallTimeoutMinutes), DefaultValue: "30", Editable: true, Conflict: env("PATCH_RUN_STALL_TIMEOUT_MIN") != "" && s.PatchRunStallTimeoutMinutes != nil, Description: "Minutes before stuck running patches are auto-marked as timed_out. Min 5. Picked up on the next cleanup sweep (every 10 min)."},
 		{Category: "Reporting", Key: "AGENT_REPORTS_RETENTION_DAYS", EffectiveValue: strconv.Itoa(resolved.AgentReportsRetentionDays), EffectiveSource: source(env("AGENT_REPORTS_RETENTION_DAYS"), dbInt(s.AgentReportsRetentionDays), "30"), EnvValue: env("AGENT_REPORTS_RETENTION_DAYS"), DBValue: dbInt(s.AgentReportsRetentionDays), DefaultValue: "30", Editable: true, Conflict: env("AGENT_REPORTS_RETENTION_DAYS") != "" && s.AgentReportsRetentionDays != nil, Description: "Days to retain Agent Activity rows (ping, full, partial, docker, compliance) before the daily cleanup deletes them. Min 7, max 365. Picked up on the next cleanup sweep (02:00 daily)."},
@@ -586,14 +620,13 @@ func boolStr(b bool) string {
 }
 
 func formatBytesEnv(n int64) string {
-	if n >= 1024*1024*1024 {
-		return strconv.FormatInt(n/(1024*1024*1024), 10) + "gb"
-	}
-	if n >= 1024*1024 {
-		return strconv.FormatInt(n/(1024*1024), 10) + "mb"
-	}
-	if n >= 1024 {
-		return strconv.FormatInt(n/1024, 10) + "kb"
+	for _, u := range []struct {
+		size   int64
+		suffix string
+	}{{1 << 30, "gb"}, {1 << 20, "mb"}, {1 << 10, "kb"}} {
+		if n != 0 && n%u.size == 0 {
+			return strconv.FormatInt(n/u.size, 10) + u.suffix
+		}
 	}
 	return strconv.FormatInt(n, 10) + "b"
 }
@@ -619,6 +652,24 @@ func (h *SettingsHandler) UpdateEnvironmentConfig(w http.ResponseWriter, r *http
 	if req.Value == nil {
 		Error(w, http.StatusBadRequest, "Value is required")
 		return
+	}
+	if key == "CORS_ORIGIN" {
+		v, ok := req.Value.(string)
+		if !ok {
+			Error(w, http.StatusBadRequest, "CORS_ORIGIN requires a string value")
+			return
+		}
+		if err := middleware.ValidateOrigins(v); err != nil {
+			Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if config.IsBodyLimitKey(key) {
+		v, _ := req.Value.(string)
+		if err := config.ValidateBodyLimit(key, v); err != nil {
+			Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	slog.Debug("env config update", "key", key, "value", req.Value)
 	s, err := h.settings.GetFirst(r.Context())

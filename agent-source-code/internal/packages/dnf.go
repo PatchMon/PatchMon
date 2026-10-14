@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 
 	"patchmon-agent/pkg/models"
@@ -15,9 +14,11 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// Vendor advisory identifiers all share the shape PREFIX-YEAR:SEQUENCE, for
-// example RHSA-2025:1234, ALSA-2025:11140, RLSA-2025:5678, ELSA-2025-1234.
-var advisoryIDRe = regexp.MustCompile(`^[A-Z]{2,10}-\d{4}[:-]\d+`)
+// Matches RHSA-2025:1234, FEDORA-2026-044e56d9ff, FEDORA-EPEL-2024-0d2c3ad7a1,
+// ALAS2-2023-1957 and ALAS2KERNEL-5.10-2024-055.
+var advisoryIDRe = regexp.MustCompile(`^[A-Z][A-Z0-9]+(?:-[A-Z0-9][A-Z0-9.]*)*-\d{4}[:-][0-9a-fA-F]+`)
+
+var updateinfoPackageRe = regexp.MustCompile(`^\S+-(\d+:)?[^-\s]+-[^-\s]+\.[A-Za-z0-9_]+$`)
 
 // DNFManager handles dnf/yum package information collection
 type DNFManager struct {
@@ -34,19 +35,21 @@ func NewDNFManager(logger *logrus.Logger) *DNFManager {
 // Only these are stripped. Splitting on a dot unconditionally would mangle
 // real names that contain one, e.g. python3.11.
 var rpmArchSuffixes = map[string]bool{
-	"x86_64":  true,
-	"i686":    true,
-	"i586":    true,
-	"i386":    true,
-	"noarch":  true,
-	"aarch64": true,
-	"arm64":   true,
-	"armv7hl": true,
-	"ppc64le": true,
-	"ppc64":   true,
-	"s390x":   true,
-	"riscv64": true,
-	"src":     true,
+	"x86_64":      true,
+	"x86_64_v2":   true,
+	"i686":        true,
+	"i586":        true,
+	"i386":        true,
+	"noarch":      true,
+	"aarch64":     true,
+	"arm64":       true,
+	"armv7hl":     true,
+	"ppc64le":     true,
+	"ppc64":       true,
+	"s390x":       true,
+	"riscv64":     true,
+	"loongarch64": true,
+	"src":         true,
 }
 
 // An RPM EVR is "[epoch:]version-release": it always starts with a digit
@@ -55,15 +58,7 @@ var rpmArchSuffixes = map[string]bool{
 // an English word.
 func looksLikeRPMVersion(s string) bool {
 	s = strings.TrimPrefix(s, "*") // yum marks obsoleting packages with a leading *
-	if i := strings.Index(s, ":"); i > 0 {
-		if _, err := strconv.Atoi(s[:i]); err == nil {
-			s = s[i+1:]
-		}
-	}
-	if s == "" || s[0] < '0' || s[0] > '9' {
-		return false
-	}
-	return strings.Contains(s, "-")
+	return startsWithVersion(s) && strings.Contains(s, "-")
 }
 
 // Both parsers must agree: CombinePackageData keys its upgradable set on
@@ -115,8 +110,7 @@ func (m *DNFManager) GetPackages() ([]models.Package, error) {
 		listCmd, cancelList = boundedCommand(collectorTimeout, packageManager, "list", "--installed")
 	}
 	defer cancelList()
-	// OPTIMIZATION: Set minimal environment to reduce overhead
-	listCmd.Env = append(os.Environ(), "LANG=C")
+	listCmd.Env = messagesCEnv(os.Environ())
 	installedOutput, err := listCmd.Output()
 	if err != nil {
 		// An empty inventory reads as "fully patched" in the UI. Fail instead.
@@ -140,6 +134,7 @@ func (m *DNFManager) GetPackages() ([]models.Package, error) {
 	m.logger.Debug("Getting upgradable packages...")
 	checkCmd, cancelCheck := boundedCommand(networkCollectorTimeout, packageManager, "check-update")
 	defer cancelCheck()
+	checkCmd.Env = messagesCEnv(os.Environ())
 	checkOutput, checkErr := checkCmd.Output()
 	if checkErr != nil {
 		// check-update exit codes: 0 none, 100 updates available, anything
@@ -202,7 +197,7 @@ func (m *DNFManager) enrichWithRepoAttribution(packages []models.Package) {
 		}
 	}
 	defer cancel()
-	cmd.Env = append(os.Environ(), "LANG=C")
+	cmd.Env = messagesCEnv(os.Environ())
 
 	output, err := cmd.Output()
 	if err != nil {
@@ -262,17 +257,20 @@ func (m *DNFManager) getSecurityPackages(packageManager string) map[string]bool 
 
 	// Scoped so each variant releases its own context: a function-level defer
 	// would bind to the first cancel func only.
-	runUpdateInfo := func(subcommand string) ([]byte, error) {
-		cmd, cancel := boundedCommand(networkCollectorTimeout, packageManager, "updateinfo", "list", subcommand)
+	runUpdateInfo := func(filter string) ([]byte, error) {
+		cmd, cancel := boundedCommand(networkCollectorTimeout, packageManager, "updateinfo", "list", filter)
 		defer cancel()
+		cmd.Env = messagesCEnv(os.Environ())
 		return cmd.Output()
 	}
 
-	// Try dnf updateinfo list security (works for dnf)
-	updateInfoOutput, err := runUpdateInfo("security")
-	if err != nil {
-		// Fall back to "sec" if "security" doesn't work
-		updateInfoOutput, err = runUpdateInfo("sec")
+	// dnf5 reads a positional "security" as an advisory name and exits 0 with nothing.
+	var updateInfoOutput []byte
+	var err error
+	for _, filter := range []string{"--security", "security", "sec"} {
+		if updateInfoOutput, err = runUpdateInfo(filter); err == nil {
+			break
+		}
 	}
 
 	if err != nil {
@@ -280,7 +278,13 @@ func (m *DNFManager) getSecurityPackages(packageManager string) map[string]bool 
 		return securityPackages
 	}
 
-	// Parse the output to extract package names
+	securityPackages = m.parseSecurityPackages(updateInfoOutput)
+	m.logger.WithField("count", len(securityPackages)).Info("Security packages identified")
+	return securityPackages
+}
+
+func (m *DNFManager) parseSecurityPackages(updateInfoOutput []byte) map[string]bool {
+	securityPackages := make(map[string]bool)
 	scanner := bufio.NewScanner(strings.NewReader(string(updateInfoOutput)))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -291,8 +295,6 @@ func (m *DNFManager) getSecurityPackages(packageManager string) map[string]bool 
 			continue
 		}
 
-		// Format: ALSA-2025:11140 Moderate/Sec.  glib2-2.68.4-16.el9_6.2.x86_64
-		// We need to extract the package name (3rd field) and get the base name
 		fields := slices.Collect(strings.FieldsSeq(line))
 		if len(fields) < 3 {
 			continue
@@ -306,10 +308,12 @@ func (m *DNFManager) getSecurityPackages(packageManager string) map[string]bool 
 			continue
 		}
 
-		// The package name is in the format: package-name-version-release.arch
-		// We need to extract just the base package name
-		packageNameWithVersion := fields[2]
-		basePackageName := m.extractBasePackageName(packageNameWithVersion)
+		// dnf4/yum: ID Severity/Sec. NEVRA. dnf5: ID Type Severity NEVRA Issued.
+		i := slices.IndexFunc(fields[1:], updateinfoPackageRe.MatchString)
+		if i < 0 {
+			continue
+		}
+		basePackageName := m.extractBasePackageName(fields[i+1])
 
 		if basePackageName != "" {
 			securityPackages[basePackageName] = true
@@ -320,35 +324,55 @@ func (m *DNFManager) getSecurityPackages(packageManager string) map[string]bool 
 		}
 	}
 
-	m.logger.WithField("count", len(securityPackages)).Info("Security packages identified")
 	return securityPackages
 }
 
-// extractBasePackageName extracts the base package name from a package string
-// Handles formats like:
-// - package-name-version-release.arch (from updateinfo)
-// - package-name.arch (from check-update)
-func (m *DNFManager) extractBasePackageName(packageString string) string {
-	// Remove architecture suffix first (e.g., .x86_64, .noarch)
-	baseName := stripRPMArchSuffix(packageString)
-
-	// If the base name contains a version pattern (starts with a digit after a dash),
-	// extract just the package name part
-	// Format: package-name-version-release
-	// We look for the FIRST dash that's followed by a digit (version starts)
-	// This handles packages with dashes in their names like "glibc-common-2.34-168.el9_6.19"
-	for i := 0; i < len(baseName); i++ {
-		if baseName[i] == '-' && i+1 < len(baseName) {
-			nextChar := baseName[i+1]
-			// Check if the next character is a digit (version starts)
-			if nextChar >= '0' && nextChar <= '9' {
-				// This is the start of version, return everything before this dash
-				return baseName[:i]
-			}
+// yum 3 runs on Python 2 and crashes on non-ASCII metadata under a C LC_CTYPE, so only
+// LC_MESSAGES is forced; LC_ALL would override it and is folded into LC_CTYPE instead.
+func messagesCEnv(src []string) []string {
+	env := make([]string, 0, len(src)+2)
+	var lcAll string
+	for _, kv := range src {
+		if v, ok := strings.CutPrefix(kv, "LC_ALL="); ok {
+			lcAll = v
 		}
 	}
+	for _, kv := range src {
+		switch {
+		case strings.HasPrefix(kv, "LC_ALL="),
+			strings.HasPrefix(kv, "LANGUAGE="),
+			strings.HasPrefix(kv, "LC_MESSAGES="),
+			lcAll != "" && strings.HasPrefix(kv, "LC_CTYPE="):
+			continue
+		}
+		env = append(env, kv)
+	}
+	if lcAll != "" {
+		env = append(env, "LC_CTYPE="+lcAll)
+	}
+	return append(env, "LC_MESSAGES=C")
+}
 
-	return baseName
+// extractBasePackageName returns the name from name-[epoch:]version-release[.arch]. RPM forbids
+// dashes in version and release, so split from the right; names may contain "-<digit>".
+func (m *DNFManager) extractBasePackageName(packageString string) string {
+	nvr := stripRPMArchSuffix(packageString)
+	rel := strings.LastIndex(nvr, "-")
+	if rel <= 0 {
+		return nvr
+	}
+	ver := strings.LastIndex(nvr[:rel], "-")
+	if ver <= 0 || !startsWithVersion(nvr[ver+1:rel]) {
+		return nvr
+	}
+	return nvr[:ver]
+}
+
+func startsWithVersion(s string) bool {
+	if i := strings.Index(s, ":"); i > 0 && strings.Trim(s[:i], "0123456789") == "" {
+		s = s[i+1:]
+	}
+	return s != "" && s[0] >= '0' && s[0] <= '9'
 }
 
 // parseUpgradablePackages parses dnf/yum check-update output
@@ -407,6 +431,7 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 			} else {
 				getCurrentCmd, cancelCurrent = boundedCommand(collectorTimeout, packageManager, "list", "--installed", packageName)
 			}
+			getCurrentCmd.Env = messagesCEnv(os.Environ())
 			getCurrentOutput, err := getCurrentCmd.Output()
 			// Released immediately rather than deferred: this runs once per
 			// upgradable package, so a deferred cancel would accumulate.
@@ -427,9 +452,7 @@ func (m *DNFManager) parseUpgradablePackages(output string, packageManager strin
 		// Only add package if we have both current and available versions
 		// This prevents empty currentVersion errors on the server
 		if packageName != "" && currentVersion != "" && availableVersion != "" {
-			// Extract base package name to check against security packages
-			basePackageName := m.extractBasePackageName(packageName)
-			isSecurityUpdate := securityPackages[basePackageName]
+			isSecurityUpdate := securityPackages[packageName]
 
 			packages = append(packages, models.Package{
 				Name:             packageName,

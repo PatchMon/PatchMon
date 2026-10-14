@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import ModalPortal from "../../components/ui/ModalPortal";
-import { adminHostsAPI, settingsAPI } from "../../utils/api";
+import { adminHostsAPI, formatDate, settingsAPI } from "../../utils/api";
 import WaitingForConnection from "./WaitingForConnection";
 
 const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
@@ -113,13 +113,13 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 			: "";
 		if (windowsUseCurl) {
 			const curlInsecure = windowsIgnoreSsl ? " -k" : "";
-			return `${sslBlock}curl.exe${curlInsecure} -s -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" -o "$env:TEMP\\patchmon-install.ps1" "${installUrl}"; if ($LASTEXITCODE -eq 0) { & "$env:TEMP\\patchmon-install.ps1" } else { Write-Error "curl failed with exit code $LASTEXITCODE" }`;
+			return `${sslBlock}curl.exe${curlInsecure} -s -H "X-API-ID: ${effectiveApiId}" -H "X-API-KEY: ${effectiveApiKey}" -o "$env:TEMP\\patchmon-install.ps1" "${installUrl}"; if ($LASTEXITCODE -eq 0) { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; & "$env:TEMP\\patchmon-install.ps1" } else { Write-Error "curl failed with exit code $LASTEXITCODE" }`;
 		}
 		// -OutFile writes the response bytes straight to disk. Reading
 		// $r.Content instead makes Windows PowerShell 5.1 decode the body
 		// through the Windows ANSI code page, which corrupts every non-ASCII
 		// character in the script.
-		return `${sslBlock}Invoke-WebRequest -Uri "${installUrl}" -Headers @{"X-API-ID"="${effectiveApiId}"; "X-API-KEY"="${effectiveApiKey}"} -UseBasicParsing -OutFile "$env:TEMP\\patchmon-install.ps1"; & "$env:TEMP\\patchmon-install.ps1"`;
+		return `${sslBlock}Invoke-WebRequest -Uri "${installUrl}" -Headers @{"X-API-ID"="${effectiveApiId}"; "X-API-KEY"="${effectiveApiKey}"} -UseBasicParsing -OutFile "$env:TEMP\\patchmon-install.ps1"; Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; & "$env:TEMP\\patchmon-install.ps1"`;
 	};
 
 	const getLinuxInstallCommand = () =>
@@ -328,7 +328,9 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 												</p>
 												<p className="text-xs text-warning-700 dark:text-warning-300 mt-1">
 													The plaintext API key is only shown once when the host
-													is created.
+													is created. Regenerating replaces both the API ID and
+													key, so any machine still using the old ones stops
+													reporting until the agent is reinstalled.
 												</p>
 											</div>
 										</div>
@@ -402,6 +404,12 @@ const CredentialsModal = ({ host, isOpen, onClose, plaintextApiKey }) => {
 							<h4 className="text-xs md:text-sm font-medium text-secondary-900 dark:text-white mb-3">
 								API Credentials
 							</h4>
+							{host.credentials_reissued_at && (
+								<p className="-mt-1 mb-3 text-xs text-secondary-500 dark:text-secondary-400">
+									Credentials re-issued by auto-enrolment on{" "}
+									{formatDate(host.credentials_reissued_at)}
+								</p>
+							)}
 							<div className="space-y-4">
 								<div>
 									<label

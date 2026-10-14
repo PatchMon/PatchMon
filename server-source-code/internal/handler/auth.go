@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"strconv"
@@ -976,11 +978,17 @@ func (h *AuthHandler) issueSessionTokens(r *http.Request, u *models.User, expire
 	return accessToken, refreshToken, nil
 }
 
+// jti keeps refresh tokens unique; user_sessions.refresh_token is UNIQUE.
 func (h *AuthHandler) createToken(userID, role string, expSec int64, sessionID, tokenType string) (string, error) {
+	var jti [16]byte
+	if _, err := rand.Read(jti[:]); err != nil {
+		return "", err
+	}
 	claims := jwt.MapClaims{
 		"sub":  userID,
 		"role": role,
 		"typ":  tokenType,
+		"jti":  base64.RawURLEncoding.EncodeToString(jti[:]),
 		"exp":  time.Now().Add(time.Duration(expSec) * time.Second).Unix(),
 		"iat":  time.Now().Unix(),
 	}
@@ -1658,7 +1666,7 @@ func (h *AuthHandler) SetupAdmin(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to create admin")
 		return
 	}
-	AutoSubscribeIfHosted(h.cfg != nil && h.cfg.AdminMode, h.users, h.log, u)
+	AutoSubscribeIfHosted(r.Context(), h.cfg != nil && h.cfg.AdminMode, h.users, h.log, u)
 
 	expiresIn := int64(3600)
 	accessToken, refreshToken, err := h.issueSessionTokens(r, u, expiresIn, 7*24*3600)
@@ -1751,7 +1759,7 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to create account")
 		return
 	}
-	AutoSubscribeIfHosted(h.cfg != nil && h.cfg.AdminMode, h.users, h.log, u)
+	AutoSubscribeIfHosted(r.Context(), h.cfg != nil && h.cfg.AdminMode, h.users, h.log, u)
 
 	accessToken, _, err := h.issueSessionTokens(r, u, 3600, 7*24*3600)
 	if err != nil {

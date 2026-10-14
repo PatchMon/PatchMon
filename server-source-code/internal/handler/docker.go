@@ -3,22 +3,40 @@ package handler
 import (
 	"database/sql"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 
+	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
+	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/go-chi/chi/v5"
+	"github.com/gorilla/websocket"
 )
 
 // DockerHandler handles Docker inventory routes.
 type DockerHandler struct {
-	docker *store.DockerStore
+	docker   *store.DockerStore
+	registry *agentregistry.Registry
 }
 
 // NewDockerHandler creates a new Docker handler.
-func NewDockerHandler(docker *store.DockerStore) *DockerHandler {
-	return &DockerHandler{docker: docker}
+func NewDockerHandler(docker *store.DockerStore, registry *agentregistry.Registry) *DockerHandler {
+	return &DockerHandler{docker: docker, registry: registry}
 }
+
+var imageUpdateStatusFilters = map[string]bool{
+	store.ImageStatusUpdateAvailable: true,
+	store.ImageStatusRecreateNeeded:  true,
+	store.ImageStatusUpToDate:        true,
+	store.ImageStatusUnknown:         true,
+	store.ImageStatusNotChecked:      true,
+	store.ImageStatusLocalBuild:      true,
+	store.ImageStatusPinned:          true,
+	store.ImageStatusSkipped:         true,
+}
+
+var dockerImageCheckCommand = []byte(`{"type":"docker_image_check"}`)
 
 // Dashboard handles GET /docker/dashboard.
 func (h *DockerHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
@@ -85,22 +103,26 @@ func (h *DockerHandler) GetContainer(w http.ResponseWriter, r *http.Request) {
 	}
 	// Match Node response: container with host and docker_images embedded, similarContainers
 	containerResp := map[string]interface{}{
-		"id":           detail.Container.ID,
-		"host_id":      detail.Container.HostID,
-		"container_id": detail.Container.ContainerID,
-		"name":         detail.Container.Name,
-		"image_id":     detail.Container.ImageID,
-		"image_name":   detail.Container.ImageName,
-		"image_tag":    detail.Container.ImageTag,
-		"status":       detail.Container.Status,
-		"state":        detail.Container.State,
-		"ports":        detail.Container.Ports,
-		"labels":       detail.Container.Labels,
-		"created_at":   detail.Container.CreatedAt,
-		"started_at":   detail.Container.StartedAt,
-		"updated_at":   detail.Container.UpdatedAt,
-		"last_checked": detail.Container.LastChecked,
-		"host":         detail.Host,
+		"id":            detail.Container.ID,
+		"host_id":       detail.Container.HostID,
+		"container_id":  detail.Container.ContainerID,
+		"name":          detail.Container.Name,
+		"image_id":      detail.Container.ImageID,
+		"image_name":    detail.Container.ImageName,
+		"image_tag":     detail.Container.ImageTag,
+		"status":        detail.Container.Status,
+		"state":         detail.Container.State,
+		"ports":         detail.Container.Ports,
+		"labels":        detail.Container.Labels,
+		"created_at":    detail.Container.CreatedAt,
+		"started_at":    detail.Container.StartedAt,
+		"updated_at":    detail.Container.UpdatedAt,
+		"last_checked":  detail.Container.LastChecked,
+		"image_stale":   detail.Container.ImageStale,
+		"restart_count": detail.Container.RestartCount,
+		"image_digest":  detail.Container.ImageDigest,
+		"update_status": detail.Container.UpdateStatus,
+		"host":          detail.Host,
 	}
 	if detail.DockerImages != nil {
 		dockerImages := map[string]interface{}{
@@ -115,9 +137,11 @@ func (h *DockerHandler) GetContainer(w http.ResponseWriter, r *http.Request) {
 			"last_pulled":  detail.DockerImages.LastPulled,
 			"last_checked": detail.DockerImages.LastChecked,
 			"updated_at":   detail.DockerImages.UpdatedAt,
-		}
-		if len(detail.DockerImageUpdates) > 0 {
-			dockerImages["docker_image_updates"] = detail.DockerImageUpdates
+
+			"update_status":               detail.DockerImages.UpdateStatus,
+			"update_check":                detail.DockerImages.UpdateCheck,
+			"hasUpdates":                  detail.DockerImages.HasUpdates,
+			"containers_needing_recreate": detail.DockerImages.ContainersNeedingRecreate,
 		}
 		containerResp["docker_images"] = dockerImages
 	}
@@ -153,11 +177,20 @@ func (h *DockerHandler) ListImages(w http.ResponseWriter, r *http.Request) {
 	if len(search) > 200 {
 		search = search[:200]
 	}
+	updateStatus := q.Get("update_status")
+	if updateStatus == "" && q.Get("hasUpdates") == "true" {
+		updateStatus = store.ImageStatusUpdateAvailable
+	}
+	if updateStatus != "" && !imageUpdateStatusFilters[updateStatus] {
+		Error(w, http.StatusBadRequest, "Invalid update_status filter")
+		return
+	}
 	params := store.ImageListParams{
-		Source: q.Get("source"),
-		Search: search,
-		Page:   page,
-		Limit:  limit,
+		Source:       q.Get("source"),
+		Search:       search,
+		UpdateStatus: updateStatus,
+		Page:         page,
+		Limit:        limit,
 	}
 	images, total, err := h.docker.ListImages(r.Context(), params)
 	if err != nil {
@@ -185,6 +218,10 @@ func (h *DockerHandler) ListImages(w http.ResponseWriter, r *http.Request) {
 			"updated_at":   img.UpdatedAt,
 			"hasUpdates":   img.HasUpdates,
 			"_count":       map[string]interface{}{"docker_containers": img.CountContainers},
+
+			"update_status":               img.UpdateStatus,
+			"update_check":                img.UpdateCheck,
+			"containers_needing_recreate": img.ContainersNeedingRecreate,
 		}
 	}
 	JSON(w, http.StatusOK, map[string]interface{}{
@@ -214,11 +251,38 @@ func (h *DockerHandler) GetImage(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to fetch image")
 		return
 	}
+	JSON(w, http.StatusOK, detail)
+}
+
+// RunImageChecks handles POST /docker/image-checks/run.
+func (h *DockerHandler) RunImageChecks(w http.ResponseWriter, r *http.Request) {
+	hosts, err := h.docker.ListDockerHostAPIIDs(r.Context())
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to list Docker hosts")
+		return
+	}
+	connected := map[string]bool{}
+	if h.registry != nil {
+		for _, apiID := range h.registry.GetConnectedApiIDs(hostctx.TenantHostKey(r.Context())) {
+			connected[apiID] = true
+		}
+	}
+	queued, skipped := 0, 0
+	for _, host := range hosts {
+		if !connected[host.ApiID] {
+			skipped++
+			continue
+		}
+		if err := h.registry.SendMessage(host.ApiID, websocket.TextMessage, dockerImageCheckCommand); err != nil {
+			slog.Warn("docker image check: send failed", "host_id", host.HostID, "error", err)
+			skipped++
+			continue
+		}
+		queued++
+	}
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"image":           detail.Image,
-		"hosts":           detail.Hosts,
-		"totalContainers": detail.TotalContainers,
-		"totalHosts":      detail.TotalHosts,
+		"queued":          queued,
+		"skipped_offline": skipped,
 	})
 }
 

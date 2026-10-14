@@ -1,0 +1,575 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Benchmark xmlns="http://checklists.nist.gov/xccdf/1.2" id="xccdf_org.ssgproject.content_benchmark_UBUNTU2404">
+<Value id="xccdf_org.ssgproject.content_value_var_accounts_maximum_age_login_defs" type="number">
+            <title xmlns:xhtml="http://www.w3.org/1999/xhtml" xml:lang="en-US">maximum password age</title>
+            <description xmlns:xhtml="http://www.w3.org/1999/xhtml" xml:lang="en-US">Maximum age of password in days</description>
+            <value selector="365">365</value>
+            <value selector="120">120</value>
+            <value selector="180">180</value>
+            <value selector="90">90</value>
+            <value selector="60">60</value>
+            <value selector="45">45</value>
+            <value>60</value>
+          </Value>
+<Rule id="xccdf_org.ssgproject.content_rule_accounts_maximum_age_login_defs" selected="false" role="full" severity="medium">
+            <title xmlns:xhtml="http://www.w3.org/1999/xhtml" xml:lang="en-US">Set Password Maximum Age</title>
+            <description xmlns:xhtml="http://www.w3.org/1999/xhtml" xml:lang="en-US">To specify password maximum age for new accounts,
+edit the file <html:code xmlns:html="http://www.w3.org/1999/xhtml">/etc/login.defs</html:code>
+and add or correct the following line:
+<html:pre xmlns:html="http://www.w3.org/1999/xhtml" xmlns:xccdf-1.2="http://checklists.nist.gov/xccdf/1.2">PASS_MAX_DAYS <xccdf-1.2:sub idref="xccdf_org.ssgproject.content_value_var_accounts_maximum_age_login_defs" use="legacy"/>
+         </html:pre>
+The profile requirement is <html:code xmlns:html="http://www.w3.org/1999/xhtml" xmlns:xccdf-1.2="http://checklists.nist.gov/xccdf/1.2"><xccdf-1.2:sub idref="xccdf_org.ssgproject.content_value_var_accounts_maximum_age_login_defs" use="legacy"/></html:code>.</description>
+            <reference href="https://www.cisecurity.org/controls/">1</reference>
+            <reference href="https://www.cisecurity.org/controls/">12</reference>
+            <reference href="https://www.cisecurity.org/controls/">15</reference>
+            <reference href="https://www.cisecurity.org/controls/">16</reference>
+            <reference href="https://www.cisecurity.org/controls/">5</reference>
+            <reference href="https://www.fbi.gov/file-repository/cjis-security-policy-v5_5_20160601-2-1.pdf">5.6.2.1</reference>
+            <reference href="https://www.isaca.org/resources/cobit">DSS05.04</reference>
+            <reference href="https://www.isaca.org/resources/cobit">DSS05.05</reference>
+            <reference href="https://www.isaca.org/resources/cobit">DSS05.07</reference>
+            <reference href="https://www.isaca.org/resources/cobit">DSS05.10</reference>
+            <reference href="https://www.isaca.org/resources/cobit">DSS06.03</reference>
+            <reference href="https://www.isaca.org/resources/cobit">DSS06.10</reference>
+            <reference href="http://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-171.pdf">3.5.6</reference>
+            <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.2.2</reference>
+            <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.5.1</reference>
+            <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.5.2</reference>
+            <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.6.1</reference>
+            <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.6.2</reference>
+            <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.6.3</reference>
+            <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.6.4</reference>
+            <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.6.5</reference>
+            <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.6.6</reference>
+            <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.6.7</reference>
+            <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.6.8</reference>
+            <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.6.9</reference>
+            <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.7.2</reference>
+            <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.7.4</reference>
+            <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.1</reference>
+            <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.10</reference>
+            <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.2</reference>
+            <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.3</reference>
+            <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.4</reference>
+            <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.5</reference>
+            <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.7</reference>
+            <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.8</reference>
+            <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.9</reference>
+            <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 2.1</reference>
+            <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.18.1.4</reference>
+            <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.7.1.1</reference>
+            <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.9.2.1</reference>
+            <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.9.2.2</reference>
+            <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.9.2.3</reference>
+            <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.9.2.4</reference>
+            <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.9.2.6</reference>
+            <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.9.3.1</reference>
+            <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.9.4.2</reference>
+            <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.9.4.3</reference>
+            <reference href="http://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-53r4.pdf">IA-5(f)</reference>
+            <reference href="http://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-53r4.pdf">IA-5(1)(d)</reference>
+            <reference href="http://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-53r4.pdf">CM-6(a)</reference>
+            <reference href="https://nvlpubs.nist.gov/nistpubs/CSWP/NIST.CSWP.04162018.pdf">PR.AC-1</reference>
+            <reference href="https://nvlpubs.nist.gov/nistpubs/CSWP/NIST.CSWP.04162018.pdf">PR.AC-6</reference>
+            <reference href="https://nvlpubs.nist.gov/nistpubs/CSWP/NIST.CSWP.04162018.pdf">PR.AC-7</reference>
+            <reference href="https://www.pcisecuritystandards.org/documents/PCI_DSS_v3-2-1.pdf">Req-8.2.4</reference>
+            <reference href="https://www.cyber.mil/stigs/downloads/?_dl_facet_stigs=operating-systems%2Cgeneral-purpose-os">SRG-OS-000076-GPOS-00044</reference>
+            <reference href="https://www.cisecurity.org/benchmark/ubuntu_linux/">5.4.1.1</reference>
+            <reference href="https://www.cyber.gov.au/acsc/view-all-content/ism">0418</reference>
+            <reference href="https://www.cyber.gov.au/acsc/view-all-content/ism">1055</reference>
+            <reference href="https://www.cyber.gov.au/acsc/view-all-content/ism">1402</reference>
+            <reference href="https://docs-prv.pcisecuritystandards.org/PCI%20DSS/Standard/PCI-DSS-v4_0.pdf">8.3.9</reference>
+            <reference href="https://docs-prv.pcisecuritystandards.org/PCI%20DSS/Standard/PCI-DSS-v4_0.pdf">8.3</reference>
+            <reference href="https://www.cyber.mil/stigs/downloads/?_dl_facet_stigs=operating-systems%2Cunix-linux">UBTU-24-400310</reference>
+            <rationale xmlns:xhtml="http://www.w3.org/1999/xhtml" xml:lang="en-US">Any password, no matter how complex, can eventually be cracked. Therefore, passwords
+need to be changed periodically. If the operating system does not limit the lifetime
+of passwords and force users to change their passwords, there is the risk that the
+operating system passwords could be compromised.
+<html:br xmlns:html="http://www.w3.org/1999/xhtml"/>
+         <html:br xmlns:html="http://www.w3.org/1999/xhtml"/>
+Setting the password maximum age ensures users are required to
+periodically change their passwords. Requiring shorter password lifetimes
+increases the risk of users writing down the password in a convenient
+location subject to physical compromise.</rationale>
+            <platform idref="#package_shadow-utils"/>
+            <fix xmlns:xhtml="http://www.w3.org/1999/xhtml" id="accounts_maximum_age_login_defs" system="urn:xccdf:fix:script:sh"># Remediation is applicable only in certain platforms
+if dpkg-query --show --showformat='${db:Status-Status}' 'linux-base' 2&gt;/dev/null | grep -q '^installed$' &amp;&amp; { dpkg-query --show --showformat='${db:Status-Status}' 'login' 2&gt;/dev/null | grep -q '^installed$'; }; then
+
+var_accounts_maximum_age_login_defs='<xccdf-1.2:sub xmlns:xccdf-1.2="http://checklists.nist.gov/xccdf/1.2" idref="xccdf_org.ssgproject.content_value_var_accounts_maximum_age_login_defs" use="legacy"/>'
+
+
+
+# Strip any search characters in the key arg so that the key can be replaced without
+# adding any search characters to the config file.
+stripped_key=$(sed 's/[\^=\$,;+]*//g' &lt;&lt;&lt; "^PASS_MAX_DAYS")
+
+# shellcheck disable=SC2059
+printf -v formatted_output "%s %s" "$stripped_key" "$var_accounts_maximum_age_login_defs"
+
+# If the key exists, change it. Otherwise, add it to the config_file.
+# We search for the key string followed by a word boundary (matched by \&gt;),
+# so if we search for 'setting', 'setting2' won't match.
+if LC_ALL=C grep -q -m 1 -i -e "^PASS_MAX_DAYS\\&gt;" "/etc/login.defs"; then
+    escaped_formatted_output=$(sed -e 's|/|\\/|g' &lt;&lt;&lt; "$formatted_output")
+    LC_ALL=C sed -i --follow-symlinks "s/^PASS_MAX_DAYS\\&gt;.*/$escaped_formatted_output/gi" "/etc/login.defs"
+else
+    if [[ -s "/etc/login.defs" ]] &amp;&amp; [[ -n "$(tail -c 1 -- "/etc/login.defs" || true)" ]]; then
+        LC_ALL=C sed -i --follow-symlinks '$a'\\ "/etc/login.defs"
+    fi
+    printf '%s\n' "$formatted_output" &gt;&gt; "/etc/login.defs"
+fi
+
+else
+    &gt;&amp;2 echo 'Remediation is not applicable, nothing was done'
+fi
+</fix>
+            <check system="http://oval.mitre.org/XMLSchema/oval-definitions-5">
+              <check-export export-name="oval:ssg-var_accounts_maximum_age_login_defs:var:1" value-id="xccdf_org.ssgproject.content_value_var_accounts_maximum_age_login_defs"/>
+              <check-content-ref name="oval:ssg-accounts_maximum_age_login_defs:def:1" href="ssg-ubuntu2404-oval.xml"/>
+            </check>
+            <check system="http://scap.nist.gov/schema/ocil/2">
+              <check-content-ref name="ocil:ssg-accounts_maximum_age_login_defs_ocil:questionnaire:1" href="ssg-ubuntu2404-ocil.xml"/>
+            </check>
+          </Rule>
+<Rule id="xccdf_org.ssgproject.content_rule_sshd_disable_empty_passwords" selected="false" role="full" severity="high">
+          <title xmlns:xhtml="http://www.w3.org/1999/xhtml" xml:lang="en-US">Disable SSH Access via Empty Passwords</title>
+          <description xmlns:xhtml="http://www.w3.org/1999/xhtml" xml:lang="en-US">Disallow SSH login with empty passwords.
+The default SSH configuration disables logins with empty passwords. The appropriate
+configuration is used if no value is set for <html:code xmlns:html="http://www.w3.org/1999/xhtml">PermitEmptyPasswords</html:code>.
+<html:br xmlns:html="http://www.w3.org/1999/xhtml"/>
+To explicitly disallow SSH login from accounts with empty passwords,
+add or correct the following line in
+
+
+
+
+<html:code xmlns:html="http://www.w3.org/1999/xhtml">/etc/ssh/sshd_config.d/00-complianceascode-hardening.conf</html:code>:
+
+<html:br xmlns:html="http://www.w3.org/1999/xhtml"/>
+        <html:pre xmlns:html="http://www.w3.org/1999/xhtml">PermitEmptyPasswords no</html:pre>
+Any accounts with empty passwords should be disabled immediately, and PAM configuration
+should prevent users from being able to assign themselves empty passwords.</description>
+          <reference href="https://www.cisecurity.org/controls/">11</reference>
+          <reference href="https://www.cisecurity.org/controls/">12</reference>
+          <reference href="https://www.cisecurity.org/controls/">13</reference>
+          <reference href="https://www.cisecurity.org/controls/">14</reference>
+          <reference href="https://www.cisecurity.org/controls/">15</reference>
+          <reference href="https://www.cisecurity.org/controls/">16</reference>
+          <reference href="https://www.cisecurity.org/controls/">18</reference>
+          <reference href="https://www.cisecurity.org/controls/">3</reference>
+          <reference href="https://www.cisecurity.org/controls/">5</reference>
+          <reference href="https://www.cisecurity.org/controls/">9</reference>
+          <reference href="https://www.fbi.gov/file-repository/cjis-security-policy-v5_5_20160601-2-1.pdf">5.5.6</reference>
+          <reference href="https://www.isaca.org/resources/cobit">APO01.06</reference>
+          <reference href="https://www.isaca.org/resources/cobit">BAI10.01</reference>
+          <reference href="https://www.isaca.org/resources/cobit">BAI10.02</reference>
+          <reference href="https://www.isaca.org/resources/cobit">BAI10.03</reference>
+          <reference href="https://www.isaca.org/resources/cobit">BAI10.05</reference>
+          <reference href="https://www.isaca.org/resources/cobit">DSS05.02</reference>
+          <reference href="https://www.isaca.org/resources/cobit">DSS05.04</reference>
+          <reference href="https://www.isaca.org/resources/cobit">DSS05.05</reference>
+          <reference href="https://www.isaca.org/resources/cobit">DSS05.07</reference>
+          <reference href="https://www.isaca.org/resources/cobit">DSS06.02</reference>
+          <reference href="https://www.isaca.org/resources/cobit">DSS06.03</reference>
+          <reference href="https://www.isaca.org/resources/cobit">DSS06.06</reference>
+          <reference href="http://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-171.pdf">3.1.1</reference>
+          <reference href="http://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-171.pdf">3.1.5</reference>
+          <reference href="https://www.gpo.gov/fdsys/pkg/CFR-2007-title45-vol1/pdf/CFR-2007-title45-vol1-chapA-subchapC.pdf">164.308(a)(4)(i)</reference>
+          <reference href="https://www.gpo.gov/fdsys/pkg/CFR-2007-title45-vol1/pdf/CFR-2007-title45-vol1-chapA-subchapC.pdf">164.308(b)(1)</reference>
+          <reference href="https://www.gpo.gov/fdsys/pkg/CFR-2007-title45-vol1/pdf/CFR-2007-title45-vol1-chapA-subchapC.pdf">164.308(b)(3)</reference>
+          <reference href="https://www.gpo.gov/fdsys/pkg/CFR-2007-title45-vol1/pdf/CFR-2007-title45-vol1-chapA-subchapC.pdf">164.310(b)</reference>
+          <reference href="https://www.gpo.gov/fdsys/pkg/CFR-2007-title45-vol1/pdf/CFR-2007-title45-vol1-chapA-subchapC.pdf">164.312(e)(1)</reference>
+          <reference href="https://www.gpo.gov/fdsys/pkg/CFR-2007-title45-vol1/pdf/CFR-2007-title45-vol1-chapA-subchapC.pdf">164.312(e)(2)(ii)</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.2.2</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.5.1</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.5.2</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.5.3</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.5.4</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.5.5</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.5.6</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.5.7</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.5.8</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.6.1</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.6.2</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.6.3</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.6.4</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.6.5</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.6.6</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.6.7</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.6.8</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.6.9</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.7.1</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.7.2</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.7.3</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.3.7.4</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.4.3.2</reference>
+          <reference href="https://www.isa.org/products/isa-62443-2-1-2009-security-for-industrial-automat">4.3.4.3.3</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.1</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.10</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.11</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.12</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.13</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.2</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.3</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.4</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.5</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.6</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.7</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.8</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 1.9</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 2.1</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 2.2</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 2.3</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 2.4</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 2.5</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 2.6</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 2.7</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 5.2</reference>
+          <reference href="https://www.isa.org/products/ansi-isa-62443-3-3-99-03-03-2013-security-for-indu">SR 7.6</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.10.1.1</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.11.1.4</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.11.1.5</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.11.2.1</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.12.1.2</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.12.5.1</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.12.6.2</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.13.1.1</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.13.1.3</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.13.2.1</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.13.2.3</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.13.2.4</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.14.1.2</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.14.1.3</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.14.2.2</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.14.2.3</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.14.2.4</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.6.1.2</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.7.1.1</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.7.1.2</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.7.3.1</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.8.2.2</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.8.2.3</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.9.1.1</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.9.1.2</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.9.2.1</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.9.2.3</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.9.4.1</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.9.4.4</reference>
+          <reference href="https://www.iso.org/contents/data/standard/05/45/54534.html">A.9.4.5</reference>
+          <reference href="http://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-53r4.pdf">AC-17(a)</reference>
+          <reference href="http://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-53r4.pdf">CM-7(a)</reference>
+          <reference href="http://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-53r4.pdf">CM-7(b)</reference>
+          <reference href="http://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-53r4.pdf">CM-6(a)</reference>
+          <reference href="https://nvlpubs.nist.gov/nistpubs/CSWP/NIST.CSWP.04162018.pdf">PR.AC-4</reference>
+          <reference href="https://nvlpubs.nist.gov/nistpubs/CSWP/NIST.CSWP.04162018.pdf">PR.AC-6</reference>
+          <reference href="https://nvlpubs.nist.gov/nistpubs/CSWP/NIST.CSWP.04162018.pdf">PR.DS-5</reference>
+          <reference href="https://nvlpubs.nist.gov/nistpubs/CSWP/NIST.CSWP.04162018.pdf">PR.IP-1</reference>
+          <reference href="https://nvlpubs.nist.gov/nistpubs/CSWP/NIST.CSWP.04162018.pdf">PR.PT-3</reference>
+          <reference href="https://www.niap-ccevs.org/Profile/PP.cfm">FIA_UAU.1</reference>
+          <reference href="https://www.pcisecuritystandards.org/documents/PCI_DSS_v3-2-1.pdf">Req-2.2.4</reference>
+          <reference href="https://www.cyber.mil/stigs/downloads/?_dl_facet_stigs=operating-systems%2Cgeneral-purpose-os">SRG-OS-000106-GPOS-00053</reference>
+          <reference href="https://www.cyber.mil/stigs/downloads/?_dl_facet_stigs=operating-systems%2Cgeneral-purpose-os">SRG-OS-000480-GPOS-00229</reference>
+          <reference href="https://www.cyber.mil/stigs/downloads/?_dl_facet_stigs=operating-systems%2Cgeneral-purpose-os">SRG-OS-000480-GPOS-00227</reference>
+          <reference href="https://www.cisecurity.org/benchmark/ubuntu_linux/">5.1.19</reference>
+          <reference href="https://www.cyber.gov.au/acsc/view-all-content/ism">1546</reference>
+          <reference href="https://docs-prv.pcisecuritystandards.org/PCI%20DSS/Standard/PCI-DSS-v4_0.pdf">2.2.6</reference>
+          <reference href="https://docs-prv.pcisecuritystandards.org/PCI%20DSS/Standard/PCI-DSS-v4_0.pdf">2.2</reference>
+          <reference href="https://www.cyber.mil/stigs/downloads/?_dl_facet_stigs=operating-systems%2Cunix-linux">UBTU-24-300031</reference>
+          <rationale xmlns:xhtml="http://www.w3.org/1999/xhtml" xml:lang="en-US">Configuring this setting for the SSH daemon provides additional assurance
+that remote login via SSH will require a password, even in the event of
+misconfiguration elsewhere.</rationale>
+          <fix xmlns:xhtml="http://www.w3.org/1999/xhtml" id="sshd_disable_empty_passwords" system="urn:xccdf:fix:script:sh" complexity="low" disruption="low" strategy="restrict"># Remediation is applicable only in certain platforms
+if dpkg-query --show --showformat='${db:Status-Status}' 'linux-base' 2&gt;/dev/null | grep -q '^installed$'; then
+
+mkdir -p /etc/ssh/sshd_config.d
+chmod 0700 /etc/ssh/sshd_config.d
+touch /etc/ssh/sshd_config.d/01-complianceascode-reinforce-os-defaults.conf
+chmod 0600 /etc/ssh/sshd_config.d/01-complianceascode-reinforce-os-defaults.conf
+LC_ALL=C sed -i "/^\s*PermitEmptyPasswords\s\+/Id" "/etc/ssh/sshd_config"
+LC_ALL=C sed -i "/^\s*PermitEmptyPasswords\s\+/Id" "/etc/ssh/sshd_config.d"/*.conf
+if [ -e "/etc/ssh/sshd_config.d/01-complianceascode-reinforce-os-defaults.conf" ] ; then
+    LC_ALL=C sed -i "/^\s*PermitEmptyPasswords\s\+/Id" "/etc/ssh/sshd_config.d/01-complianceascode-reinforce-os-defaults.conf"
+else
+    touch "/etc/ssh/sshd_config.d/01-complianceascode-reinforce-os-defaults.conf"
+    chmod 0644 "/etc/ssh/sshd_config.d/01-complianceascode-reinforce-os-defaults.conf"
+fi
+# make sure file has newline at the end
+sed -i -e '$a\' "/etc/ssh/sshd_config.d/01-complianceascode-reinforce-os-defaults.conf"
+
+cp "/etc/ssh/sshd_config.d/01-complianceascode-reinforce-os-defaults.conf" "/etc/ssh/sshd_config.d/01-complianceascode-reinforce-os-defaults.conf.bak"
+# Insert at the beginning of the file
+printf '%s\n' "PermitEmptyPasswords no" &gt; "/etc/ssh/sshd_config.d/01-complianceascode-reinforce-os-defaults.conf"
+cat "/etc/ssh/sshd_config.d/01-complianceascode-reinforce-os-defaults.conf.bak" &gt;&gt; "/etc/ssh/sshd_config.d/01-complianceascode-reinforce-os-defaults.conf"
+# Clean up after ourselves.
+rm "/etc/ssh/sshd_config.d/01-complianceascode-reinforce-os-defaults.conf.bak"
+
+else
+    &gt;&amp;2 echo 'Remediation is not applicable, nothing was done'
+fi
+</fix>
+          <fix xmlns:xhtml="http://www.w3.org/1999/xhtml" id="sshd_disable_empty_passwords" system="urn:xccdf:fix:script:ansible" complexity="low" disruption="low" strategy="restrict">- name: Gather the package facts
+  package_facts:
+    manager: auto
+  tags:
+  - CJIS-5.5.6
+  - DISA-STIG-UBTU-24-300031
+  - NIST-800-171-3.1.1
+  - NIST-800-171-3.1.5
+  - NIST-800-53-AC-17(a)
+  - NIST-800-53-CM-6(a)
+  - NIST-800-53-CM-7(a)
+  - NIST-800-53-CM-7(b)
+  - PCI-DSS-Req-2.2.4
+  - PCI-DSSv4-2.2
+  - PCI-DSSv4-2.2.6
+  - high_severity
+  - low_complexity
+  - low_disruption
+  - no_reboot_needed
+  - restrict_strategy
+  - sshd_disable_empty_passwords
+
+- name: Disable SSH Access via Empty Passwords - Check if the parameter PermitEmptyPasswords
+    is configured in /etc/ssh/sshd_config
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: (?i)^\s*{{ "PermitEmptyPasswords"| regex_escape }}\s+
+    state: absent
+  check_mode: true
+  changed_when: false
+  register: _config_file_has_parameter
+  when: '"linux-base" in ansible_facts.packages'
+  tags:
+  - CJIS-5.5.6
+  - DISA-STIG-UBTU-24-300031
+  - NIST-800-171-3.1.1
+  - NIST-800-171-3.1.5
+  - NIST-800-53-AC-17(a)
+  - NIST-800-53-CM-6(a)
+  - NIST-800-53-CM-7(a)
+  - NIST-800-53-CM-7(b)
+  - PCI-DSS-Req-2.2.4
+  - PCI-DSSv4-2.2
+  - PCI-DSSv4-2.2.6
+  - high_severity
+  - low_complexity
+  - low_disruption
+  - no_reboot_needed
+  - restrict_strategy
+  - sshd_disable_empty_passwords
+
+- name: Disable SSH Access via Empty Passwords - Check if the parameter PermitEmptyPasswords
+    is configured in /etc/ssh/sshd_config.d
+  ansible.builtin.find:
+    paths:
+    - /etc/ssh/sshd_config.d
+    contains: (?i)^\s*{{ "PermitEmptyPasswords"| regex_escape }}\s+
+  register: _config_dir_has_parameter
+  when: '"linux-base" in ansible_facts.packages'
+  tags:
+  - CJIS-5.5.6
+  - DISA-STIG-UBTU-24-300031
+  - NIST-800-171-3.1.1
+  - NIST-800-171-3.1.5
+  - NIST-800-53-AC-17(a)
+  - NIST-800-53-CM-6(a)
+  - NIST-800-53-CM-7(a)
+  - NIST-800-53-CM-7(b)
+  - PCI-DSS-Req-2.2.4
+  - PCI-DSSv4-2.2
+  - PCI-DSSv4-2.2.6
+  - high_severity
+  - low_complexity
+  - low_disruption
+  - no_reboot_needed
+  - restrict_strategy
+  - sshd_disable_empty_passwords
+
+- name: Disable SSH Access via Empty Passwords - Check if /etc/ssh/sshd_config exists
+  ansible.builtin.stat:
+    path: /etc/ssh/sshd_config
+  register: _config_file_exists
+  when: '"linux-base" in ansible_facts.packages'
+  tags:
+  - CJIS-5.5.6
+  - DISA-STIG-UBTU-24-300031
+  - NIST-800-171-3.1.1
+  - NIST-800-171-3.1.5
+  - NIST-800-53-AC-17(a)
+  - NIST-800-53-CM-6(a)
+  - NIST-800-53-CM-7(a)
+  - NIST-800-53-CM-7(b)
+  - PCI-DSS-Req-2.2.4
+  - PCI-DSSv4-2.2
+  - PCI-DSSv4-2.2.6
+  - high_severity
+  - low_complexity
+  - low_disruption
+  - no_reboot_needed
+  - restrict_strategy
+  - sshd_disable_empty_passwords
+
+- name: Disable SSH Access via Empty Passwords - Check if the parameter PermitEmptyPasswords
+    is configured correctly in /etc/ssh/sshd_config
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: (?i)^\s*{{ "PermitEmptyPasswords"| regex_escape }}\s+no$
+    state: absent
+  check_mode: true
+  changed_when: false
+  register: _config_file_correctly
+  when:
+  - '"linux-base" in ansible_facts.packages'
+  - _config_file_exists.stat.exists
+  tags:
+  - CJIS-5.5.6
+  - DISA-STIG-UBTU-24-300031
+  - NIST-800-171-3.1.1
+  - NIST-800-171-3.1.5
+  - NIST-800-53-AC-17(a)
+  - NIST-800-53-CM-6(a)
+  - NIST-800-53-CM-7(a)
+  - NIST-800-53-CM-7(b)
+  - PCI-DSS-Req-2.2.4
+  - PCI-DSSv4-2.2
+  - PCI-DSSv4-2.2.6
+  - high_severity
+  - low_complexity
+  - low_disruption
+  - no_reboot_needed
+  - restrict_strategy
+  - sshd_disable_empty_passwords
+
+- name: Disable SSH Access via Empty Passwords - Check if the parameter PermitEmptyPasswords
+    is configured correctly in /etc/ssh/sshd_config.d
+  ansible.builtin.find:
+    paths:
+    - /etc/ssh/sshd_config.d
+    contains: (?i)^\s*{{ "PermitEmptyPasswords"| regex_escape }}\s+no$
+  register: _config_dir_correctly
+  when: '"linux-base" in ansible_facts.packages'
+  tags:
+  - CJIS-5.5.6
+  - DISA-STIG-UBTU-24-300031
+  - NIST-800-171-3.1.1
+  - NIST-800-171-3.1.5
+  - NIST-800-53-AC-17(a)
+  - NIST-800-53-CM-6(a)
+  - NIST-800-53-CM-7(a)
+  - NIST-800-53-CM-7(b)
+  - PCI-DSS-Req-2.2.4
+  - PCI-DSSv4-2.2
+  - PCI-DSSv4-2.2.6
+  - high_severity
+  - low_complexity
+  - low_disruption
+  - no_reboot_needed
+  - restrict_strategy
+  - sshd_disable_empty_passwords
+
+- name: Disable SSH Access via Empty Passwords
+  block:
+
+  - name: Deduplicate values from /etc/ssh/sshd_config
+    ansible.builtin.lineinfile:
+      path: /etc/ssh/sshd_config
+      create: false
+      regexp: (?i)(?i)^\s*{{ "PermitEmptyPasswords"| regex_escape }}\s+
+      state: absent
+
+  - name: Check if /etc/ssh/sshd_config.d exists
+    ansible.builtin.stat:
+      path: /etc/ssh/sshd_config.d
+    register: _etc_ssh_sshd_config_d_exists
+
+  - name: Check if the parameter PermitEmptyPasswords is present in /etc/ssh/sshd_config.d
+    ansible.builtin.find:
+      paths: /etc/ssh/sshd_config.d
+      recurse: 'yes'
+      follow: 'no'
+      contains: (?i)^\s*{{ "PermitEmptyPasswords"| regex_escape }}\s+
+    register: _etc_ssh_sshd_config_d_has_parameter
+    when: _etc_ssh_sshd_config_d_exists.stat.isdir is defined and _etc_ssh_sshd_config_d_exists.stat.isdir
+
+  - name: Remove parameter from files in /etc/ssh/sshd_config.d
+    ansible.builtin.lineinfile:
+      path: '{{ item.path }}'
+      create: false
+      regexp: (?i)(?i)^\s*{{ "PermitEmptyPasswords"| regex_escape }}\s+
+      state: absent
+    with_items: '{{ _etc_ssh_sshd_config_d_has_parameter.files | default([]) }}'
+    when: _etc_ssh_sshd_config_d_has_parameter.matched &gt; 0
+
+  - name: Insert correct line to /etc/ssh/sshd_config.d/01-complianceascode-reinforce-os-defaults.conf
+    ansible.builtin.lineinfile:
+      path: /etc/ssh/sshd_config.d/01-complianceascode-reinforce-os-defaults.conf
+      create: true
+      regexp: (?i)(?i)^\s*{{ "PermitEmptyPasswords"| regex_escape }}\s+
+      line: PermitEmptyPasswords no
+      state: present
+      insertbefore: BOF
+      validate: /usr/sbin/sshd -t -f %s
+  when:
+  - '"linux-base" in ansible_facts.packages'
+  - _config_file_correctly is not skipped
+  - (_config_file_correctly.found == 0 and _config_dir_correctly.matched == 0) or
+    ((_config_file_has_parameter.found | int) + (_config_dir_has_parameter.matched
+    | int)) != 1
+  tags:
+  - CJIS-5.5.6
+  - DISA-STIG-UBTU-24-300031
+  - NIST-800-171-3.1.1
+  - NIST-800-171-3.1.5
+  - NIST-800-53-AC-17(a)
+  - NIST-800-53-CM-6(a)
+  - NIST-800-53-CM-7(a)
+  - NIST-800-53-CM-7(b)
+  - PCI-DSS-Req-2.2.4
+  - PCI-DSSv4-2.2
+  - PCI-DSSv4-2.2.6
+  - high_severity
+  - low_complexity
+  - low_disruption
+  - no_reboot_needed
+  - restrict_strategy
+  - sshd_disable_empty_passwords
+
+- name: Disable SSH Access via Empty Passwords - set file mode for /etc/ssh/sshd_config.d/01-complianceascode-reinforce-os-defaults.conf
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d/01-complianceascode-reinforce-os-defaults.conf
+    mode: '0600'
+    state: touch
+    modification_time: preserve
+    access_time: preserve
+  when: '"linux-base" in ansible_facts.packages'
+  tags:
+  - CJIS-5.5.6
+  - DISA-STIG-UBTU-24-300031
+  - NIST-800-171-3.1.1
+  - NIST-800-171-3.1.5
+  - NIST-800-53-AC-17(a)
+  - NIST-800-53-CM-6(a)
+  - NIST-800-53-CM-7(a)
+  - NIST-800-53-CM-7(b)
+  - PCI-DSS-Req-2.2.4
+  - PCI-DSSv4-2.2
+  - PCI-DSSv4-2.2.6
+  - high_severity
+  - low_complexity
+  - low_disruption
+  - no_reboot_needed
+  - restrict_strategy
+  - sshd_disable_empty_passwords
+</fix>
+          <check system="http://oval.mitre.org/XMLSchema/oval-definitions-5">
+            <check-export export-name="oval:ssg-sshd_required:var:1" value-id="xccdf_org.ssgproject.content_value_sshd_required"/>
+            <check-content-ref name="oval:ssg-sshd_disable_empty_passwords:def:1" href="ssg-ubuntu2404-oval.xml"/>
+          </check>
+          <check system="http://scap.nist.gov/schema/ocil/2">
+            <check-content-ref name="ocil:ssg-sshd_disable_empty_passwords_ocil:questionnaire:1" href="ssg-ubuntu2404-ocil.xml"/>
+          </check>
+        </Rule>
+<TestResult id="xccdf_org.open-scap_testresult_cis_level1_server">
+<set-value idref="xccdf_org.ssgproject.content_value_var_accounts_maximum_age_login_defs">365</set-value>
+</TestResult>
+</Benchmark>

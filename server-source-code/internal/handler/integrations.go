@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 )
@@ -23,14 +25,16 @@ type IntegrationsHandler struct {
 	db                database.DBProvider
 	notify            *notifications.Emitter
 	reports           *store.ReportStore
+	jobHistory        *store.JobHistoryStore
 }
 
 // NewIntegrationsHandler creates a new integrations handler.
 // reports is optional; when non-nil the docker endpoint records an Agent
 // Activity row for every inbound payload so the per-host timeline shows
 // integration cycles alongside report and ping cycles.
-func NewIntegrationsHandler(hosts *store.HostsStore, docker *store.DockerStore, integrationStatus *store.IntegrationStatusStore, db database.DBProvider, notify *notifications.Emitter, reports *store.ReportStore) *IntegrationsHandler {
+func NewIntegrationsHandler(hosts *store.HostsStore, docker *store.DockerStore, integrationStatus *store.IntegrationStatusStore, db database.DBProvider, notify *notifications.Emitter, reports *store.ReportStore, jobHistory *store.JobHistoryStore) *IntegrationsHandler {
 	return &IntegrationsHandler{
+		jobHistory:        jobHistory,
 		hosts:             hosts,
 		docker:            docker,
 		integrationStatus: integrationStatus,
@@ -55,6 +59,9 @@ type dockerContainerReq struct {
 	CreatedAt       *time.Time        `json:"created_at,omitempty"`
 	StartedAt       *time.Time        `json:"started_at,omitempty"`
 	Labels          map[string]string `json:"labels,omitempty"`
+	ImageStale      bool              `json:"image_stale,omitempty"`
+	ImageDigest     string            `json:"image_digest,omitempty"`
+	RestartCount    int               `json:"restart_count,omitempty"`
 }
 
 type dockerImageReq struct {
@@ -112,6 +119,7 @@ type dockerPayloadReq struct {
 	Volumes    []dockerVolumeReq      `json:"volumes"`
 	Networks   []dockerNetworkReq     `json:"networks"`
 	Updates    []dockerImageUpdateReq `json:"updates"`
+	Collected  []string               `json:"collected"`
 	Hostname   string                 `json:"hostname"`
 	MachineID  string                 `json:"machine_id"`
 	// DockerHash is the agent-computed canonical hash for the docker
@@ -140,6 +148,8 @@ func canonicalDockerHashFromReq(p *dockerPayloadReq) (string, error) {
 			ImageID:         c.ImageID,
 			Status:          c.Status,
 			State:           c.State,
+			ImageStale:      c.ImageStale,
+			StartedAt:       c.StartedAt,
 		}
 	}
 	for i, img := range p.Images {
@@ -188,7 +198,7 @@ func convertDockerPayloadToStore(p *dockerPayloadReq) *store.DockerReceivePayloa
 		Images:     make([]store.DockerReceiveImage, len(p.Images)),
 		Volumes:    make([]store.DockerReceiveVolume, len(p.Volumes)),
 		Networks:   make([]store.DockerReceiveNetwork, len(p.Networks)),
-		Updates:    make([]store.DockerReceiveImageUpdate, len(p.Updates)),
+		Collected:  p.Collected,
 	}
 	for i, c := range p.Containers {
 		out.Containers[i] = store.DockerReceiveContainer{
@@ -205,6 +215,9 @@ func convertDockerPayloadToStore(p *dockerPayloadReq) *store.DockerReceivePayloa
 			CreatedAt:       c.CreatedAt,
 			StartedAt:       c.StartedAt,
 			Labels:          c.Labels,
+			ImageStale:      c.ImageStale,
+			RestartCount:    c.RestartCount,
+			ImageDigest:     c.ImageDigest,
 		}
 	}
 	for i, img := range p.Images {
@@ -250,16 +263,6 @@ func convertDockerPayloadToStore(p *dockerPayloadReq) *store.DockerReceivePayloa
 			ContainerCount: n.ContainerCount,
 		}
 	}
-	for i, u := range p.Updates {
-		out.Updates[i] = store.DockerReceiveImageUpdate{
-			Repository:      u.Repository,
-			CurrentTag:      u.CurrentTag,
-			AvailableTag:    u.AvailableTag,
-			CurrentDigest:   u.CurrentDigest,
-			AvailableDigest: u.AvailableDigest,
-			ImageID:         u.ImageID,
-		}
-	}
 	return out
 }
 
@@ -300,7 +303,7 @@ func (h *IntegrationsHandler) ReceiveDockerData(w http.ResponseWriter, r *http.R
 
 	slog.Info("received docker data from agent", "host", host.FriendlyName, "host_id", host.ID,
 		"containers", len(payload.Containers), "images", len(payload.Images),
-		"volumes", len(payload.Volumes), "networks", len(payload.Networks), "updates", len(payload.Updates))
+		"volumes", len(payload.Volumes), "networks", len(payload.Networks), "updates", len(payload.Updates), "collected", payload.Collected)
 
 	// Verify the agent's canonical docker hash if present. Mismatch means
 	// the agent's canonicalisation diverged from ours — surface immediately
@@ -346,7 +349,7 @@ func (h *IntegrationsHandler) ReceiveDockerData(w http.ResponseWriter, r *http.R
 			}
 			containerLabel := sc.Name
 			if containerLabel == "" {
-				containerLabel = sc.ContainerID[:12]
+				containerLabel = shortContainerID(sc.ContainerID)
 			}
 			title := fmt.Sprintf("Container %s %s", containerLabel, eventType[len("container_"):])
 			msg := fmt.Sprintf("Container \"%s\" (%s) on host \"%s\" changed from %s to %s.",
@@ -370,29 +373,6 @@ func (h *IntegrationsHandler) ReceiveDockerData(w http.ResponseWriter, r *http.R
 				},
 			})
 		}
-	}
-
-	// Emit container_image_update_available when new image updates are detected.
-	if h.notify != nil && result.UpdatesFound > 0 {
-		d := h.db.DB(r.Context())
-		tenantHost := hostctx.TenantHostKey(r.Context())
-		hostName := host.FriendlyName
-		if hostName == "" && host.Hostname != nil {
-			hostName = *host.Hostname
-		}
-		h.notify.EmitEvent(r.Context(), d, tenantHost, notifications.Event{
-			Type:          "container_image_update_available",
-			Severity:      "informational",
-			Title:         fmt.Sprintf("Docker Image Updates - %s", hostName),
-			Message:       fmt.Sprintf("%d Docker image update(s) detected on host \"%s\".", result.UpdatesFound, hostName),
-			ReferenceType: "host",
-			ReferenceID:   host.ID,
-			Metadata: map[string]interface{}{
-				"host_id":       host.ID,
-				"host_name":     hostName,
-				"updates_found": result.UpdatesFound,
-			},
-		})
 	}
 
 	// Record one Agent Activity row for the docker integration cycle. The
@@ -425,8 +405,14 @@ func (h *IntegrationsHandler) ReceiveDockerData(w http.ResponseWriter, r *http.R
 		ImagesReceived:     result.ImagesReceived,
 		VolumesReceived:    result.VolumesReceived,
 		NetworksReceived:   result.NetworksReceived,
-		UpdatesFound:       result.UpdatesFound,
 	})
+}
+
+func shortContainerID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
 
 func isContainerRunning(status string) bool {
@@ -442,6 +428,7 @@ type integrationStatusReq struct {
 	Components    map[string]interface{}   `json:"components"`
 	ScannerInfo   interface{}              `json:"scanner_info"`
 	InstallEvents []map[string]interface{} `json:"install_events"`
+	InstallJobID  string                   `json:"install_job_id"`
 }
 
 // ReceiveIntegrationStatus handles POST /hosts/integration-status (agent reports integration setup status).
@@ -472,44 +459,38 @@ func (h *IntegrationsHandler) ReceiveIntegrationStatus(w http.ResponseWriter, r 
 	}
 
 	statusData := map[string]interface{}{
-		"integration":    payload.Integration,
-		"enabled":        payload.Enabled,
-		"status":         payload.Status,
-		"message":        payload.Message,
-		"components":     payload.Components,
-		"scanner_info":   payload.ScannerInfo,
-		"install_events": payload.InstallEvents,
-		"timestamp":      time.Now().UTC().Format(time.RFC3339),
+		"integration":  payload.Integration,
+		"enabled":      payload.Enabled,
+		"status":       payload.Status,
+		"message":      payload.Message,
+		"components":   payload.Components,
+		"scanner_info": payload.ScannerInfo,
+		"timestamp":    time.Now().UTC().Format(time.RFC3339),
 	}
 	if statusData["components"] == nil {
 		statusData["components"] = map[string]interface{}{}
 	}
 
-	// Two agent callers write this blob. runInstallScanner reports per-step
-	// install progress and carries install_events; reportIntegrationStatus
-	// reports overall availability and never sets the field, which omitempty
-	// then drops from the payload. Because this handler replaces the stored
-	// value wholesale, the second caller used to erase the first caller's
-	// progress. The compliance panel polls request-status while an install
-	// runs, which triggers exactly that caller, so watching the progress bar
-	// was what wiped it: every step stayed on "Waiting..." to the end.
-	//
-	// A nil slice means the key was absent from the JSON, so keep what is
-	// already stored. An explicitly empty array still clears, which is how a
-	// caller signals "no events".
-	if payload.InstallEvents == nil {
-		statusData["install_events"] = []interface{}{}
-		if h.integrationStatus != nil {
-			if prev, err := h.integrationStatus.Get(r.Context(), apiID, payload.Integration); err == nil && prev != nil {
-				if prevEvents, ok := prev["install_events"]; ok && prevEvents != nil {
-					statusData["install_events"] = prevEvents
-				}
-			}
+	// Availability reports omit install_events (nil here); keep the stored ones
+	// so they don't wipe a running install's progress.
+	if payload.InstallEvents != nil {
+		statusData["install_events"] = payload.InstallEvents
+		if payload.InstallJobID != "" {
+			statusData["install_job_id"] = payload.InstallJobID
 		}
 	}
 
 	if h.integrationStatus != nil {
-		_ = h.integrationStatus.Set(r.Context(), apiID, payload.Integration, statusData)
+		if stored, err := h.integrationStatus.SetKeepingInstallEvents(r.Context(), apiID, payload.Integration, statusData); err == nil {
+			statusData = stored
+		}
+	}
+	if _, ok := statusData["install_events"]; !ok {
+		statusData["install_events"] = []interface{}{}
+	}
+
+	if payload.Integration == "compliance" && payload.InstallEvents != nil {
+		h.recordInstallOutcome(r.Context(), host.ID, payload.InstallJobID, payload.InstallEvents)
 	}
 
 	if payload.Integration == "compliance" {
@@ -564,4 +545,27 @@ func (h *IntegrationsHandler) AgentGetIntegrationStatus(w http.ResponseWriter, r
 		"compliance_openscap_enabled":     host.ComplianceOpenscapEnabled,
 		"compliance_docker_bench_enabled": host.ComplianceDockerBenchEnabled,
 	})
+}
+
+// recordInstallOutcome settles the install's job_history row when the agent
+// finishes after the install worker has stopped waiting.
+func (h *IntegrationsHandler) recordInstallOutcome(ctx context.Context, hostID, eventsJobID string, events interface{}) {
+	if h.jobHistory == nil || h.integrationStatus == nil {
+		return
+	}
+	jobID, err := h.integrationStatus.GetComplianceInstallJob(ctx, hostID)
+	if err != nil || jobID == "" {
+		return
+	}
+	raw, err := json.Marshal(map[string]interface{}{"install_job_id": eventsJobID, "install_events": events})
+	if err != nil {
+		return
+	}
+	finished, failure := queue.InstallOutcome(string(raw), jobID)
+	if !finished {
+		return
+	}
+	if err := h.jobHistory.RecordOutcome(ctx, jobID, failure); err != nil {
+		slog.Warn("compliance install: failed to record outcome", "error", err, "host_id", hostID)
+	}
 }

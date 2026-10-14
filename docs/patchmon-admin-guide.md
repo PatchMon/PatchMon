@@ -148,7 +148,7 @@ PatchMon is licensed under [AGPLv3](https://github.com/PatchMon/PatchMon/blob/ma
 
 PatchMon 2.0 moves most day-to-day tuning out of the container's `.env` and into the **Settings** area of the web UI. From here you manage users and roles, host groups, agent update cadence, server-level toggles, branding, integrations, and authentication providers. Settings are stored in the database and the server re-reads them on every request (with a brief in-memory cache for hot paths), so most changes take effect without restarting the container.
 
-> **Env vars beat DB values.** When the same setting is present both as an environment variable and as a Settings UI value, the environment variable wins. The UI shows a small yellow "env" badge on values that are being overridden by `.env`, so you can tell at a glance why your change "didn't save". See PatchMon Environment Variables Reference for the full priority model.
+> **Env vars beat DB values.** When the same setting is present both as an environment variable and as a Settings UI value, the environment variable wins. The Environment page shows a yellow ".env" source badge on those variables, marks them **Set in .env**, and does not let you edit them there, because a database value would be ignored. See PatchMon Environment Variables Reference for the full priority model.
 
 This page is the map of the Settings area: what each page does, which permission unlocks it, and which deeper chapter to read if you need more detail.
 
@@ -278,6 +278,8 @@ Controls how and when PatchMon agents talk to the server and update themselves:
 
 Inspect the bundled agent binary versions (one per OS/architecture), check for newer releases upstream, and force a fresh download of the bundled binaries. Useful after you upgrade the server. Agents pick up the new binaries via the auto-update flow. No manual distribution required.
 
+From agent 2.1.5, each host's page also shows a **Config Version** next to the agent version. An upgraded agent updates its `config.yml` to the new release when it restarts, so the two match once the host has reported after the upgrade. See [Host Info](#host-info).
+
 See Managing the PatchMon Agent for how agents consume this information.
 
 ---
@@ -318,11 +320,13 @@ If you change the URL later, existing agents keep using whatever URL they were i
 **Path:** `/settings/environment`
 **Requires:** `can_manage_settings`
 
-New in 2.0: every tunable environment variable that can be safely changed at runtime is listed here with its **effective value**, **source** (env / database / default), **default**, and a one-line description. Editable variables have an edit button; sensitive or bootstrap-only variables (like `DATABASE_URL`, `JWT_SECRET`, `REDIS_PASSWORD`, `AI_ENCRYPTION_KEY`, `SESSION_SECRET`) show as read-only and must still be changed in `.env`.
+New in 2.0: every tunable environment variable that can be safely changed at runtime is listed here with its **effective value**, **source** (env / database / default), **default**, and a one-line description. Editable variables have an **Edit** button; sensitive or bootstrap-only variables (like `DATABASE_URL`, `JWT_SECRET`, `REDIS_PASSWORD`, `AI_ENCRYPTION_KEY`, `SESSION_SECRET`) show **Configure via .env** and must still be changed in `.env`.
+
+A variable that would normally be editable but already has a value in `.env` (or the container environment) shows **Set in .env** instead of an Edit button. The `.env` value takes priority, so anything saved here would be ignored. To change it, edit or remove it in `.env` and restart the server. If the database also holds a value for it, the row says the database value is ignored and a **Misconfiguration detected** banner appears at the top of the page. The stock Docker `env.example` sets `CORS_ORIGIN`, so on a default Docker install that variable is managed in `.env`.
 
 Variables are grouped by category: Database, Server, Logging, Authentication, Password policy, Server performance, Rate limits, Redis, Encryption, Deployment.
 
-When you edit a value, the UI writes it to the database and immediately flashes a "Restart the application for changes to take effect" toast. Some settings take effect on the next request (CORS origin, log level, rate limits); others need a restart. The UI doesn't always know which is which, so the safe rule is: change, then `docker compose restart server`.
+When you save a value, the UI writes it to the database, reloads the table so it shows the value the server resolved, and shows the server's confirmation. Most settings take effect straight away and the confirmation says "Saved. The new value is in effect." Settings that are wired in at startup (`CORS_ORIGIN`, `ENABLE_LOGGING`, `LOG_LEVEL`, `ENABLE_HSTS`, `DB_TRANSACTION_LONG_TIMEOUT`) say "Saved. Restart the application for this change to take effect." instead; for those, run `docker compose restart server`.
 
 > **Tip:** If you've been managing PatchMon from `.env` files for a long time and want to move configuration into the database, clear a variable from `.env` first, then change it here. Otherwise the env value keeps winning.
 
@@ -371,7 +375,7 @@ The Settings sidebar doesn't list them because the pages where you actually use 
 
 #### "I changed a setting but nothing happened"
 
-Check the Environment page for the variable you changed. If the "Source" column says `env`, your change to the database value is being overridden by an environment variable set in `.env` or the container spec. Clear the env value and the DB value will take over.
+Check the Environment page for the variable you changed. If its row says **Set in .env**, the value comes from `.env` or the container spec and overrides the database, which is why the page does not let you edit it. Change it in `.env`, or remove it from `.env` and restart the server so the database value takes over.
 
 #### "I saved a setting and the UI says 'Restart to take effect'"
 
@@ -381,7 +385,7 @@ Some settings (startup-only values like `PORT`, `DATABASE_URL`, pool sizes) are 
 docker compose restart server
 ```
 
-A small number of settings (CORS origin, log level, rate-limit windows) are re-resolved on every request and don't require a restart. The UI doesn't always distinguish between them; when in doubt, restart.
+Most Environment page settings (rate limits, password policy, lockout and session timeouts, body limits) are re-resolved on every request and don't require a restart. The confirmation shown after saving tells you which case you are in.
 
 #### "Branding / AI Terminal / Roles is greyed out"
 
@@ -710,10 +714,24 @@ Quick reference panel for the host's identity and agent settings. Fields include
 - **Host Groups**: coloured multi-select chips. Add or remove groups; changes save on blur.
 - **Operating System**: icon plus OS type and version (detected by the agent).
 - **Agent Version**: version of `patchmon-agent` currently reporting.
-- **Agent Auto-update**: per-host toggle. If global auto-update is disabled, a yellow warning badge is shown with a tooltip pointing to **Settings → Agent Updates**.
+- **Config Version**: the version of the agent's `config.yml` layout, as last reported (agent 2.1.5 and later). The agent sets it to its own version whenever it loads its configuration, so it normally matches **Agent Version**. The field shows:
+  - the version alone when the two match;
+  - an **out of date** warning when they differ, usually because the agent could not save its `config.yml` after an upgrade;
+  - a **not reported** warning when the agent is 2.1.5 or later but no config version has been recorded;
+  - a note that agent 2.1.5 is required when the agent is older.
+- **Agent Auto-update**: per-host toggle, on by default for new hosts so the global setting alone decides whether agents update. Turn it off to keep a single host on its current agent version. If global auto-update is disabled, a yellow warning badge is shown with a tooltip pointing to **Settings → Agent Updates**.
 - **Force Agent Version Upgrade**: the **Update Now** button sends an immediate upgrade command via WebSocket. Disabled when the agent is offline.
 
 See Managing the PatchMon Agent for what the agent does when it receives an upgrade command.
+
+#### Host identity warnings
+
+From PatchMon 2.1.5 every agent knows the ID of its host record (`host_id` in its `config.yml`) and reports it. The host page uses this to warn about agents that are not what they seem. Neither warning blocks the agent: reports keep arriving and are filed under the host the agent's credentials belong to.
+
+- **Host ID mismatch**: the agent's `config.yml` names a different host than its credentials belong to. Usually the file was copied from another machine or edited by hand. Fix it on the machine with `sudo patchmon-agent config sync-host-id` (which adopts this host's ID), or reinstall the agent with the install command from this host's page. The warning clears on the agent's next check-in. See the operator guide's Agent Troubleshooting chapter for details.
+- **Possible clone**: two different machines appear to be reporting with this host's credentials, typically because a VM or container was cloned after the agent was installed. Their data alternates on this one host. Give each clone its own host (the operator guide's Agent Troubleshooting chapter has the steps), then either:
+  - **Dismiss** the warning (requires `can_manage_hosts`). It comes back if the machines keep alternating.
+  - **Regenerate credentials** (see [API Credentials](#api-credentials)) and apply them to the original machine. Any copy still using the old credentials is locked out, and the warning is cleared.
 
 ### Network
 
@@ -813,6 +831,8 @@ Appears only when the host has actually reported a working Docker integration on
 
 Sub-tabs: **Stacks**, **Containers**, **Images**, **Volumes**, **Networks**. Each sub-tab shows counts in a badge next to its name.
 
+The containers and images lists show an update status for each row, and users with `can_manage_hosts` get a **Check for updates** button that runs the image update check on this host straight away. See [Image Update Checks](#image-update-checks).
+
 Requires the `docker` module to be enabled on your plan. Plans without the module show a tier badge on the tab and an upgrade prompt inside.
 
 ### Patching
@@ -867,7 +887,8 @@ Click **Copy**. You're automatically moved to the **Waiting for Connection** scr
 
 - **API ID**: copyable.
 - **API Key**: obscured by default. The plaintext key is **only** available if it was just created or regenerated; otherwise the field shows *hashed – not usable*.
-- **Regenerate**: creates a new API ID and key and invalidates the old ones. Use this if credentials have been lost or compromised. The agent on the host will need to be reconfigured or the install command re-run.
+- **Regenerate**: creates a new API ID and key and invalidates the old ones. Use this if credentials have been lost or compromised. The agent on the host will need to be reconfigured or the install command re-run. Regenerating also clears the host's **Host ID mismatch** and **possible clone** warnings.
+- **Re-issued by auto-enrolment**: shown when an auto-enrolment script issued a new API key for this host, with the date. This happens only for a host that the same enrolment token created and that has never reported, typically when a script is rerun after an install failed part-way.
 
 ### Common Actions: Where to Click
 
@@ -1008,6 +1029,8 @@ Once the group is empty, return to **Settings → Host Groups** and delete it.
 
 You can also deep-link by visiting `/hosts?group=<groupId>`; group-clicks from other parts of the UI (for example the Host Groups page's host count badge) do exactly this.
 
+Every filter on the Hosts page is kept in the address bar: the search box, Host Group, Reporting, Connection, Operating System and OS Version, the grouping, **Hide Stale**, and the column sort. Reloading the page, using the browser's back and forward buttons, or sharing or bookmarking the link brings back the same view. Filters left at their default are not added to the address.
+
 #### Grouping the table
 
 Above the filter panel, the **No Grouping** dropdown lets you group rows by **Group**, **Status**, or **OS**. Picking **By Group** splits the Hosts table into sections, one per group, each with a count header. Hosts in multiple groups appear under each of their groups. This is a visual grouping, not a filter.
@@ -1024,7 +1047,7 @@ Groups are a **selector** across the product. Wherever a workflow asks "which ho
 
 - When you build a patch run, the target picker offers **Host** or **Host group** as the target type.
 - Choosing a host group expands the target to every current member at the time the run is queued.
-- Patch policies (recurring runs) can use a host group as the primary selector, so adding a new host to the group automatically includes it in the next scheduled run.
+- Patch policies can be assigned to a host group, so a host added to the group automatically picks up that policy. The policy decides when a run someone triggers on that host actually executes; it does not start runs on its own.
 
 For the full patching flow, see the Patching chapter.
 
@@ -1143,6 +1166,8 @@ Default columns:
 | **Latest Version** | The newest version PatchMon has seen reported across all hosts for this package. |
 | **Source Repos** | Repo chips. Each chip links to that repository. If more than three sources are reported, the overflow is shown as `+N`. |
 
+With a host filter active, **Installed On**, **Status** and **Latest Version** describe that host alone: Installed On reads `1 host` and opens that host, Status is that host's own update state, and Latest Version is the version available to that host (or its installed version when it is up to date).
+
 The **Columns** button lets you hide any column except the select checkbox, drag to reorder, and reset to default. The column layout is persisted locally in your browser.
 
 #### How "Installed On" is calculated
@@ -1214,7 +1239,7 @@ From there, you can drill into individual packages, set up a patch run, or narro
 
 - **Live list, periodic backing data.** Rows are fetched from the PatchMon server and reflect the most recent reports submitted by each host. To refresh a host's data immediately, open the host's detail page and click **Fetch Report**. The Packages list picks up the new state on its next refetch (or click **Refresh** on the Packages page).
 - **Drilling down into patch state.** The **Hosts** page is the better starting point when you care about which *hosts* are behind on updates. Use the Packages page when you care about which *packages* expose the fleet.
-- **Windows hosts.** Package reporting works for Windows (via `winget`, `chocolatey`, and MSI inventory), but the **Patch all** / **Patch selected** actions do not target Windows. Patching on Windows is managed via Windows Update or WinGet directly on the host.
+- **Windows hosts.** Package reporting works for Windows (installed applications enriched with WinGet update data, plus Windows Updates; Chocolatey is not used), but the **Patch all** / **Patch selected** actions do not target Windows. Patching on Windows is managed via Windows Update or WinGet directly on the host.
 
 ### Related Pages
 
@@ -1447,13 +1472,13 @@ The server moves a run through these statuses, visible as badges in the Runs & H
 | `validated` | The dry-run finished successfully; the run is waiting for an operator to approve it. |
 | `pending_approval` | A patch run was submitted for approval without a dry-run (e.g. a `patch_all` that cannot be dry-run). An approver needs to sign off before the run is queued. |
 | `approved` | The original validation run after someone approved it. A new execution run (linked by `validation_run_id`) is created alongside this row and queued. |
-| `scheduled` | The run has been accepted but is waiting for its `run_at` timestamp (delayed or fixed-time policy). |
+| `scheduled` | The run has been accepted but is waiting for its `run_at` timestamp (delayed or fixed-time policy). Scheduled runs do not block other runs on the host; when the window arrives the run moves to `queued`, or is cancelled if another run is still active on the host. |
 | `running` | The agent is currently executing the package manager command on the host. This is the status that opens the live WebSocket stream. |
 | `completed` | The run finished successfully. The persisted `shell_output` is now authoritative. |
 | `dry_run_completed` | A dry-run finished successfully (terminal state for dry-runs that aren't turned into a real run). |
 | `failed` | The run finished with a non-zero exit status or the host reported an error. |
-| `cancelled` | The run was stopped by an operator clicking **Stop Run** (or deleted before execution). The cancel is applied authoritatively in the database first; if the agent is connected the server also sends a courtesy `patch_run_stop` so the running subprocess is interrupted. With this ordering, an offline or unresponsive agent can't leave the row stuck in `running`. |
-| `timed_out` | The periodic patch-run cleanup found this run still in `running` state past the configured stall timeout (`PATCH_RUN_STALL_TIMEOUT_MIN`, default 30 minutes) and marked it as timed out. The cleanup sweep runs every 10 minutes. |
+| `cancelled` | The run was stopped by an operator clicking **Stop Run** (or deleted before execution), or a scheduled run was skipped because another run was active on the host when its window arrived. The cancel is applied authoritatively in the database first; if the agent is connected the server also sends a courtesy `patch_run_stop` so the running subprocess is interrupted. With this ordering, an offline or unresponsive agent can't leave the row stuck in `running`. |
+| `timed_out` | The periodic patch-run cleanup found this run still in `running` state past the configured stall timeout (`PATCH_RUN_STALL_TIMEOUT_MIN`, default 30 minutes) and marked it as timed out, or found a `scheduled`, `queued` or `pending_validation` run that was not dispatched within 24 hours of becoming due. The cleanup sweep runs every 10 minutes. |
 | `agent_disconnected` | The agent's WebSocket dropped while this run was `running`. The server marks every in-flight run for that host as `agent_disconnected` so the row doesn't sit at `running` indefinitely. If the agent reconnects and posts a late `completed` / `failed` / `cancelled` for the same run, the server will update the row to that final state. |
 
 #### 2. Patch Policy
@@ -1755,6 +1780,10 @@ sudo patchmon-agent report
 
 Another operator already approved or deleted the run while you were looking at it. Reload Runs & History; the row will now be in `approved` or gone.
 
+#### "A patch run is already queued or in progress on this host"
+
+PatchMon allows one queued, validating or running patch run per host at a time, because package managers lock while they work and a second run would fail on the lock. The blocking run is listed under the **Active** status filter in Runs & History. Wait for it to finish, or stop or delete it, then start the new one; in a multi-host wizard, busy hosts are reported as failed and the other hosts go ahead. Runs waiting for a policy window show as **Scheduled** and do not block the host. If the host is still busy when the window arrives, the scheduled run is cancelled with the reason "Skipped: another patch run was in progress on this host when the scheduled window arrived". Runs that are not dispatched to the agent within 24 hours of becoming due (for example because the host stayed offline) are marked **Timed out** by the cleanup sweep, so they never block a host indefinitely.
+
 ---
 
 ### Related Documentation
@@ -1769,6 +1798,8 @@ Another operator already approved or deleted the run while you were looking at i
 ## Chapter 10: Patch Policies and Scheduling {#patch-policies-and-scheduling}
 
 A **patch policy** controls *when* an approved patch run actually fires on a host. Policies let you carve out maintenance windows, build in a delay for "I might change my mind" runs, or force an immediate execution on anything that matters. Assignments and exclusions let you apply a policy broadly (to a host group) while still carving specific hosts out of it.
+
+A policy never starts a run by itself, and PatchMon has no recurring patch schedule. A policy only affects runs that a user triggers (from the Patching wizard, **Patch all** on a host, or the Packages page): it decides whether each run executes immediately, after a delay, or at the next fixed time. Assigning a policy with a fixed time of 01:00 to a host therefore does nothing until someone queues a run for that host.
 
 This page walks through the policy model, how effective policies are resolved, the Settings UI, and how policies interact with run triggers.
 
@@ -2004,7 +2035,7 @@ From the left sidebar, click **Patching** and switch to the **Runs & History** t
 
 Deep-link filters are also supported via URL parameters:
 
-- `/patching?tab=runs&status=active`: queued + running
+- `/patching?tab=runs&status=active`: queued, pending validation and running (the runs that block a new run on the host)
 - `/patching?tab=runs&status=failed`: only failed runs
 - `/patching?tab=runs&status=completed`: only completed runs
 - `/patching?tab=runs&status=pending_approval&type=patch_all`: combined filter
@@ -2041,7 +2072,7 @@ The runs list is sorted by `created_at` descending by default, with newest runs 
 
 Two filters are available above the table:
 
-- **Status**: `All`, `Active (queued + running)`, `Queued`, `Pending validation`, `Pending approval`, `Validated (awaiting approval)`, `Approved`, `Scheduled`, `Running`, `Completed`, `Failed`, `Cancelled`.
+- **Status**: `All`, `Active (queued, validating or running)`, `Queued`, `Pending validation`, `Pending approval`, `Validated (awaiting approval)`, `Approved`, `Scheduled`, `Running`, `Completed`, `Failed`, `Cancelled`.
 - **Type**: `All`, `Patch all`, `Patch package`.
 
 Filters reset the pagination to page 1. Click **Clear filters** to remove both. The selected filters are also encoded in the URL, so you can bookmark or share a filtered view.
@@ -2223,7 +2254,7 @@ Terminal runs (`completed`, `failed`, `cancelled`, `dry_run_completed`) cannot b
 
 ### Overview
 
-The PatchMon agent includes an optional **Docker integration** that discovers containers, images, volumes, and networks on the host and reports them to the PatchMon server. When enabled, the agent also subscribes to the Docker event stream and relays container lifecycle events (start, stop, die, pause, unpause, kill, destroy) as status updates, keeping the fleet-wide Docker inventory broadly in sync with what is running.
+The PatchMon agent includes an optional **Docker integration** that discovers containers, images, volumes, and networks on the host and reports them to the PatchMon server. When enabled, the agent also watches the Docker event stream and sends a fresh inventory within seconds of a container being created, started, stopped or removed, and it checks each image's registry for a newer image behind the same tag.
 
 This page covers what the integration does, how to enable it per host from the PatchMon UI, what the agent needs on the host, how `config.yml` reflects the toggle, and what to check when the integration doesn't report.
 
@@ -2236,9 +2267,9 @@ This page covers what the integration does, how to enable it per host from the P
 When enabled on a host, the agent:
 
 1. **Discovers inventory on each report**: lists all containers (running and stopped), images (including intermediate layers PatchMon elects to ignore), volumes (local / NFS / custom driver), and networks (bridge / host / overlay / macvlan / user-defined).
-2. **Streams container events in real time**: subscribes to the Docker daemon's event bus. Each relevant event (start, stop, die, pause, unpause, kill, destroy) is translated into a `container_start` / `container_stop` / `container_die` / `container_pause` / `container_unpause` / `container_kill` / `container_destroy` status event and pushed to the server over the agent's WebSocket.
+2. **Reacts to container changes**: subscribes to the Docker daemon's event bus. When a container is created, started, stopped, paused, unpaused, killed, or destroyed, the agent waits five seconds (so a burst of events such as `docker compose up` becomes one update), collects the inventory again and sends it. Container state in PatchMon is normally current within seconds.
 3. **Resolves image provenance**: for each image, PatchMon attempts to attribute it to a registry (Docker Hub, GHCR, GitLab, Quay, ECR, ACR, GCR, local, private) and makes the registry entry clickable when possible.
-4. **Tracks available updates**: compares the running image tag against available tags in the registry (where the registry allows it) and flags images with newer versions.
+4. **Checks images for updates**: asks each image's registry which image its tag points at now and compares that with the image on the host. It also notices containers still running an older image after a newer one has been pulled. See [Image Update Checks](#image-update-checks).
 5. **Feeds the Compliance module**: if compliance scanning is also enabled for the host, Docker Bench for Security can run as an additional scanner (see the Compliance chapter).
 
 The resulting data powers two places in the UI:
@@ -2388,6 +2419,7 @@ Typical messages:
 - `Docker socket not found`: Docker isn't installed, or the socket has a non-standard path.
 - `Failed to create Docker client`: the socket exists but the agent can't open a client; check permissions.
 - `Docker container event`: confirms the event stream is active and receiving events.
+- `Docker image update check finished`: an update check completed, with counts of images found up to date, with an update, or unknown. Set `log_level: debug` to see the reason for each unknown result.
 - `Docker daemon ping failed, retrying`: Docker is installed but unresponsive. The agent will keep retrying.
 
 For the full logging reference, see Managing the PatchMon Agent.
@@ -2422,9 +2454,11 @@ Once the **Docker integration** is enabled on one or more hosts, PatchMon aggreg
 
 This page is a guided tour of `/docker` (the fleet view), `/docker/hosts/:id` (per-host view), and the detail pages for containers, images, volumes, and networks.
 
+Each Docker report from a host replaces that host's containers, volumes and networks, so anything removed on the host disappears from PatchMon on the next report. If the agent cannot read one of these lists from Docker, the previous entries are kept rather than cleared. Images are shared between hosts. Each report also records which images are present on that host, and the daily inventory cleanup removes an image once no container uses it and no host still has it.
+
 **Module required:** `docker`. Plans without the module show a tier-badge prompt on the Docker tab and the `/docker` routes. Contact your PatchMon administrator to enable it.
 
-**Permission required:** `can_view_hosts` to view the inventory; `can_manage_hosts` to delete Docker resources from the UI.
+**Permission required:** `can_view_hosts` to view the inventory; `can_manage_docker` to delete Docker resources and to run **Check for updates** across the fleet; `can_manage_hosts` to run **Check for updates** on a single host.
 
 ### Getting to the Docker Page
 
@@ -2441,7 +2475,7 @@ Four summary cards sit above the tabs:
 | **Hosts with Docker** | Hosts actively reporting Docker inventory | – |
 | **Running Containers** | `running / total` counts across the fleet | – |
 | **Total Images** | Distinct images reported across all hosts | – |
-| **Updates Available** | Images PatchMon knows have newer tags in their registry | Opens the **Images** tab filtered to *Updates available* |
+| **Updates Available** | Images whose registry now has a different image for the tag in use. The line underneath shows how many containers need recreating and when the last update check reported | Opens the **Images** tab filtered to *Update available* |
 
 These figures come from the `/docker/dashboard` endpoint and are refreshed every **30 seconds** automatically while the page is open.
 
@@ -2487,7 +2521,7 @@ Filters:
 
 Actions:
 
-- **Delete** (trash icon): deletes the container via the agent. Requires `can_manage_hosts`. Errors are surfaced in an alert.
+- **Delete** (trash icon): deletes the container via the agent. Requires `can_manage_docker`. Errors are surfaced in an alert.
 
 #### Images tab
 
@@ -2497,9 +2531,11 @@ One row per image. Rows show:
 - Size.
 - Source (Docker Hub, GHCR, GitLab, Quay, ECR, ACR, GCR, local, private, unknown) as a coloured badge.
 - Container count: how many containers on which hosts reference this image.
-- Update indicator: a chip when a newer tag is available in the registry.
+- Update status: a badge such as **Update available** or **Up to date**, plus a **Recreate needed** badge when containers on some host are still running an older copy. See [Image Update Checks](#image-update-checks) for what each status means.
 
-Filters include source type and an **Updates available** filter (the same filter the top **Updates Available** card opens).
+Filters include source type and an update status filter: **Update available**, **Recreate needed**, **Up to date**, **Unknown**, and **Not checked**. The top **Updates Available** card opens the same view filtered to **Update available**.
+
+Users with `can_manage_docker` see a **Check for updates** button at the top of the page. It asks every connected Docker host to run its image update check now, and a message tells you how many hosts were asked and how many were skipped because their agent is offline. Results appear as each agent reports back.
 
 Clicking an image opens `/docker/images/:id`: the image detail page with a list of the hosts that have the image and the containers using it.
 
@@ -2537,8 +2573,9 @@ The URL `/docker/hosts/:id` (and the row link on the **Hosts** tab) opens a view
 
 - The host's friendly name, hostname, and a link back to the main Host Detail page.
 - Container and image counts, running / exited / paused breakdowns.
-- The host's container list, grouped by stack where available.
-- The host's image list.
+- The host's container list, grouped by stack where available, with each container's update status.
+- Every image on the host, including images no container uses, with the update status this host reported for each.
+- A **Check for updates** button (requires `can_manage_hosts`) that runs the image update check on this host now. The agent must be connected.
 
 This view is equivalent to the **Docker** tab on the host's main Host Detail page (see [Host Detail Page](#host-detail-page)). Either works. Pick whichever route you land on.
 
@@ -2548,7 +2585,7 @@ Each Docker resource has its own detail page. They follow the same pattern: top 
 
 #### Container detail: `/docker/containers/:id`
 
-Shows the container's name, image, status, ports, host, created and started timestamps, restart policy, command and entrypoint, labels, mounts, and networks.
+Shows the container's name, image, status, ports, host, created and started timestamps, restart count, restart policy, command and entrypoint, labels, mounts, and networks. The **Update Status** field shows **Recreate needed** when a newer image for the container's tag is already on the host, otherwise the update status of the container's image on that host.
 
 A **Similar containers** strip at the bottom lists other containers using the same image across the fleet, useful for "is this `redis:7` running anywhere else?" questions.
 
@@ -2558,10 +2595,10 @@ Shows repository, tag, digest, size, architecture, OS, labels, history (layers),
 
 Below, two lists:
 
-- **Hosts with this image**: every host pulling it, with the tag they currently have.
-- **Containers using this image**: every container across the fleet referencing this image.
+- **Hosts with this image**: every host that has the image, whether or not a container uses it.
+- **Containers using this image**: every container across the fleet referencing this image, with its update status.
 
-An **Updates** panel appears when a newer tag is available in the source registry.
+An update check table lists, for each host, the status, the digest of the image on the host, the digest the registry returned, the reason when the result is **Unknown**, and when the check ran. Digests are shortened; hover to see the full value.
 
 #### Volume detail: `/docker/volumes/:id`
 
@@ -2571,39 +2608,84 @@ Shows driver, mountpoint, size (when Docker reports it), labels, and options. Th
 
 Shows driver, scope, IPAM configuration, and options. The **Containers attached** list shows what's connected to the network.
 
+### Image Update Checks {#image-update-checks}
+
+PatchMon tells you when the tag a container runs, such as `nginx:1.27` or `postgres:16`, now points at a different image in its registry. That is how you find out that an image was rebuilt with security fixes under the same tag. It does not suggest newer version tags: it will not tell you that `nginx:1.28` exists when you run `nginx:1.27`.
+
+#### How a check works
+
+The agent on each host does the checking, not the PatchMon server:
+
+- For every tagged image on the host, the agent asks the image's registry which image the tag points at now (its digest) and compares it with the digest of the copy on the host.
+- It only asks for the digest. It does not pull or download the image, and the requests do not count towards Docker Hub's pull rate limits.
+- It uses the host's own network connection and the registry logins already on the host (from `docker login`), so private registries work wherever Docker itself can pull. Credentials are never sent to PatchMon.
+- Each image is checked once per run even when several containers use it.
+
+Checks run automatically on each agent about **2 minutes after the agent starts**, then **every 6 hours** by default. The interval, or switching the check off, is set per host in the agent's `config.yml` (see the Agent config.yml Reference in the Operator Guide). A check you request with **Check for updates** runs straight away, unless that host has the check switched off or a check is already running.
+
+The **Check for updates** button appears in two places:
+
+| Where | What it checks | Permission |
+|-------|----------------|------------|
+| Top of the `/docker` page | Every connected host with Docker data | `can_manage_docker` |
+| Per-host Docker view and the **Docker** tab on Host Detail | That host only | `can_manage_hosts` |
+
+Hosts whose agent is offline are skipped, so check them again once they reconnect.
+
+#### What the statuses mean
+
+| Status | Meaning |
+|--------|---------|
+| **Update available** | The registry has a different image for this tag than the one on the host. Pull the image and recreate the container to pick it up. |
+| **Recreate needed** | A newer image for the container's tag is already pulled on this host, but the container still runs the old one. Recreate the container (for example `docker compose up -d`). Shown for containers, and as a count on images. |
+| **Up to date** | The registry's image for this tag matches the one on the host. Hover to see when it was checked. |
+| **Unknown** | The check ran but could not reach a conclusion. Hover to see the reason (below). PatchMon never shows an inconclusive check as up to date. |
+| **Local build** | The image was built on the host rather than pulled, so there is no registry image to compare with. |
+| **Pinned digest** | A container refers to this image by its digest (`image@sha256:...`), so the image behind that reference cannot change. |
+| **Untagged** | The image has no tag to check, for example an old copy left behind after a newer pull took over its tag. |
+| **Not checked** | No check has reported for this image yet: the agent has not run one, the check is switched off, or the agent is older than this feature. |
+
+When different hosts report different results for the same image, the fleet-wide views show the most important one: **Update available** first, then **Unknown**, then **Up to date**. The image detail page shows each host's own result.
+
+Reasons for an **Unknown** result:
+
+| Reason shown | What to check |
+|--------------|---------------|
+| The registry rate limited the check | The registry refused more requests for now. The next run tries again. |
+| The registry rejected the credentials | The `docker login` on the host is wrong or has expired for this registry. |
+| The tag no longer exists in the registry | The tag was deleted or renamed upstream, or the image came from a registry you can no longer reach under that name. |
+| The registry could not be reached | The host has no outbound HTTPS access to the registry, DNS fails, or a proxy or firewall is in the way. |
+| An authentication method the agent does not support | The registry asked for a login scheme other than the standard token or basic login. |
+| Served over plain HTTP and not marked insecure | The registry has no HTTPS. Add it to `insecure-registries` in the Docker daemon configuration on the host, as you would to pull from it. |
+| The registry did not return a digest | The registry answered without identifying the image, or the local image has no digest for this repository. |
+
+When an image moves to **Update available** on a host, PatchMon raises a `container_image_update_available` event once for that host and image. It does not repeat on later checks while the update is still outstanding.
+
 ### How the Data Stays Current
 
 Docker data flows into PatchMon on two channels:
 
 #### Periodic inventory reports
 
-Every time the agent runs its regular report cycle (default: 60 minutes, configurable server-side), it enumerates containers, images, volumes, and networks and sends the snapshot to the server. The full inventory in `/docker` reflects the **last snapshot** from each host.
+On every check-in the agent collects containers, images, volumes, and networks and compares a fingerprint of them with what the server last received. When anything has changed, it sends the full snapshot. The inventory in `/docker` reflects the **last snapshot** from each host.
 
 To force an immediate refresh for a single host, open its **Host Detail** page and click **Fetch Report**.
 
-#### Real-time container events
+#### Container changes
 
-When the Docker integration is enabled, the agent also subscribes to the Docker event stream and pushes container lifecycle events over its existing WebSocket connection. The relevant event types are:
-
-- `container_start` (maps to `running`)
-- `container_stop` / `container_die` / `container_kill` (all map to `exited`)
-- `container_pause` (`paused`)
-- `container_unpause` (`running`)
-- `container_destroy` (`removed`)
-
-The server records these events against the container record so that, for example, a container crash is visible in the UI within seconds rather than waiting for the next full report.
+When the Docker integration is enabled, the agent also watches the Docker event stream. When a container is created, started, stopped, dies, is paused, unpaused, killed, or destroyed, the agent waits five seconds for any related events to finish, then collects and sends the whole inventory again. A container crash, or a stack brought up with `docker compose up`, is therefore visible in the UI within seconds, and the snapshot it sends also carries any image, volume, and network changes made at the same time.
 
 #### UI refresh cadence
 
 On top of those agent-driven pushes, the `/docker` page itself refreshes the dashboard summary every 30 seconds via polling, and per-tab queries refetch when you switch tabs. The manual **Refresh** button (top right, circular arrow) forces an immediate refetch of whichever tab is active.
 
-> **Tip:** If you change something on a host (start / stop a container, pull an image) and want to see it in the UI, the event should appear within a few seconds via the WebSocket push. A full refresh of image / volume / network inventory waits for the next report. Use **Fetch Report** on the Host Detail page if you can't wait.
+> **Tip:** Container changes appear within a few seconds. Changes that do not touch a container, such as pulling an image or creating a volume on its own, appear at the next check-in. Use **Fetch Report** on the Host Detail page if you can't wait.
 
 ### Deleting Docker Resources
 
 Containers, images, volumes, and networks can be deleted from their table rows (trash icon) or from their detail pages. Deletion:
 
-- Requires `can_manage_hosts`.
+- Requires `can_manage_docker`.
 - Opens a confirmation modal listing the resource and its host.
 - Sends a delete command to the agent over the WebSocket.
 - The agent executes the equivalent `docker rm` / `docker rmi` / `docker volume rm` / `docker network rm` and reports the outcome back.
@@ -2798,7 +2880,7 @@ The top of every compliance view has five status cards: Total hosts, Compliant, 
 A typical ad-hoc scan flows like this:
 
 1. An operator clicks **Run Scan** on a host (either from the Compliance Hosts tab or from the Host Detail page).
-2. The browser calls `POST /compliance/trigger/{hostId}`. The server clears any stale "cancel" flag for this host in Redis, enqueues a `run_scan` task on the `compliance` asynq queue, and returns the job ID.
+2. The browser calls `POST /compliance/trigger/{hostId}`. The server clears any stale "cancel" flag for this host in Redis, enqueues a `run_scan` task on the `compliance` asynq queue, and returns the job ID. If a scan is already queued or running on the host it returns `409` with "A scan is already queued or running on this host".
 3. The task dequeues and sends a `run_scan` WebSocket command to the agent. The server updates the `compliance_scans` record to `running` status as soon as the agent confirms receipt.
 4. The agent runs one or both scanners in sequence. OpenSCAP calls `oscap xccdf eval` against the SSG datastream; Docker Bench calls `docker-bench-security` (bundled with the agent).
 5. Each sub-scan produces structured rule results. The agent batches them into a `CompliancePayload` and submits via `POST /api/v1/compliance/scans`.
@@ -2922,21 +3004,22 @@ A scan can be cancelled while it is running. Unlike patch runs, there is no "Sto
 
 1. On the **Hosts** tab, find the row with the blue "Scanning…" indicator.
 2. Click the red **StopCircle** button in the **Run** column. The UI calls `POST /api/v1/compliance/cancel/{hostId}`.
-3. A toast confirms "Cancel request sent for *host*".
+3. A toast confirms "Scan cancelled for *host*", and the scan leaves **Scans in Progress** straight away.
 
 #### What cancel actually does
 
-The `CancelScan` handler on the server does three things:
+The `CancelScan` handler on the server does four things:
 
 1. **Removes any queued `run_scan` task from asynq**, so a scan that hasn't yet reached the agent won't start.
 2. **Sets a `compliance_scan_cancel` flag in Redis** for this host, so if the worker picks up the task between DeleteTask and the agent message, the worker sees the cancel flag and skips execution.
-3. **Sends a `compliance_scan_cancel` WebSocket message to the agent**, so an already-running scan is interrupted at the process level.
+3. **Marks the host's running scan records as cancelled**, so the dashboard stops showing them as running without waiting for the agent. They appear in the **History** tab with the status **Cancelled**.
+4. **Sends a `compliance_scan_cancel` WebSocket message to the agent**, so an already-running scan is interrupted at the process level.
 
-If the agent is connected and busy scanning, it receives the cancel, terminates the OpenSCAP / Docker Bench subprocess, and submits whatever partial results it has. The scan record is marked cancelled.
+If the agent is connected and busy scanning, it receives the cancel, terminates the OpenSCAP / Docker Bench subprocess and uploads nothing, so a cancelled scan does not also appear as a failed scan or raise a scan-failed alert. A cancel that arrives while the scan is still waiting to start on the agent stops it before it begins. If the scan had already finished and its results reach the server after the cancel, they are kept as a normal completed scan.
 
-If the agent is offline, only the queue-level cancel applies: the scan won't run when the agent reconnects because the task has already been removed from the queue.
+If the agent is offline, or the server cannot deliver the message, the scan records are still marked cancelled and the toast warns that the agent could not be reached and may still finish the scan. A queued scan won't run when the agent reconnects, because the task has already been removed from the queue.
 
-Cancel is idempotent. Calling it on a host with no active scan returns success with "Scan cancel sent".
+Cancel is idempotent. Calling it on a host with no active scan still returns success.
 
 ---
 
@@ -2993,7 +3076,7 @@ The modal lets you:
 3. Tick the hosts you want to include (or **Select All**).
 4. Click **Scan N Hosts**.
 
-The UI sends one `POST /api/v1/compliance/trigger/bulk` request with the full host list. The server enqueues one `run_scan` task per host. Hosts that are offline are still queued. They scan as soon as they reconnect and the worker dequeues their task (or the task is cleaned up if the queue drops it before reconnection).
+The UI sends one `POST /api/v1/compliance/trigger/bulk` request with the full host list. The server enqueues one `run_scan` task per host. Hosts that are offline are still queued. The server retries each offline host's scan once a minute for up to 30 minutes, and runs it straight away when the agent reconnects, keeping the chosen profile. If the agent stays offline past that, the job is recorded as failed and the host can be scanned again at any time.
 
 The modal shows a results banner:
 
@@ -3008,11 +3091,11 @@ After a successful bulk scan, the modal auto-closes after three seconds and each
 
 Compliance scanning on a host needs OpenSCAP (`oscap` binary) installed and the SSG content available locally. The first time you enable compliance on a host, the scanner usually isn't there yet. PatchMon handles this with an install job.
 
-1. Enable **compliance mode** on the host (set to `On-Demand` or `Enabled`).
-2. On next Apply Pending Config, the agent receives the new integration state and reports that the scanner is not installed.
-3. From the Host Detail Compliance tab, click **Install Scanner**. The UI calls `POST /api/v1/compliance/install-scanner/{hostId}`.
-4. The server enqueues an install task. The worker sends an install message to the agent.
-5. The agent installs the OpenSCAP scanner with the host's own package manager, then downloads SSG content from the server via `GET /api/v1/compliance/ssg-content/{filename}`. Progress events are reported back to Redis and surfaced in the UI via `GET /compliance/install-job/{hostId}`, which returns the current state plus a per-step message and progress percent. The states are `none` (no install has been requested), `waiting`, `active`, `completed`, `failed`, and `unknown` when the job can no longer be found. A `failed` state also carries an `error` field with the reason.
+1. Enable **compliance mode** on the host (set to `On-Demand` or `Enabled`) with OpenSCAP ticked, and click **Apply**.
+2. The agent saves the new settings and restarts. Because compliance with OpenSCAP has just been switched on, the server also queues an install job that starts as soon as the agent has restarted and reconnected (or after 30 seconds at the latest). The Compliance tab shows it as waiting until then. Hosts whose package manager can't install OpenSCAP (Windows, FreeBSD, Alpine and Arch) are skipped.
+3. If the agent is not connected yet, the install job waits and retries every 30 seconds, up to twice, and runs straight away when the agent reconnects. While it waits, the host's queue shows it as delayed. If the agent still hasn't connected, it reports a failure. If it fails, click **Install Scanner** (or **Retry install**) on the Host Detail Compliance tab. The UI calls `POST /api/v1/compliance/install-scanner/{hostId}`, which returns `409` while an install is already running on the host; cancel that install first to start another. Hosts that already had compliance enabled before an upgrade also need this button once.
+4. Either way the server enqueues an install task, and the worker sends an install message to the agent.
+5. The agent installs the OpenSCAP scanner with the host's own package manager, then downloads SSG content from the server via `GET /api/v1/compliance/ssg-content/{filename}`. Progress events are reported back to Redis and surfaced in the UI via `GET /compliance/install-job/{hostId}`, which returns the current state plus a per-step message and progress percent. The states are `none` (no install has been requested), `waiting`, `active`, `completed`, `failed`, and `unknown` when the job can no longer be found. The state stays `active` until the agent reports its final step; if it hasn't reported within 20 minutes, the state becomes `failed`. The job history entry is updated from the same final step, including when it arrives after the install worker has stopped waiting. A `failed` state also carries an `error` field with the reason.
 6. When the install completes, the Run Scan button becomes active.
 
 The scanner package name is not the same on every release, so the agent asks the archive which one it has rather than assuming. Debian 12 and newer, and Ubuntu 24.04 and newer, provide `openscap-scanner` plus `openscap-common`; Debian 10 and Ubuntu 22.04 provide `libopenscap8` instead. RHEL-family hosts use `openscap-scanner` and SUSE hosts use `openscap-utils`.
@@ -3121,10 +3204,12 @@ Across the top of every Compliance page view sit five identical cards:
 | Card | What it counts | Derived from |
 |---|---|---|
 | Total hosts | `total_hosts + unscanned`: every host with compliance visibility, scanned or not | `summary.total_hosts` + `summary.unscanned` |
-| Compliant | Hosts whose latest scan score is **≥ 80%** | `summary.hosts_compliant` |
-| Warning | Hosts whose latest scan score is between **60% and 79%** | `summary.hosts_warning` |
-| Critical | Hosts whose latest scan score is **< 60%** | `summary.hosts_critical` |
+| Compliant | Hosts whose latest scans all score **≥ 80%** | `summary.hosts_compliant` |
+| Warning | Hosts whose worst latest scan scores between **60% and 79%**, or scores lower but has **no failed rules** | `summary.hosts_warning` |
+| Critical | Hosts with a latest scan scoring **< 60%** that has **at least one failed rule** | `summary.hosts_critical` |
 | Never scanned | Hosts that have never successfully submitted a scan | `summary.unscanned` |
+
+A host is placed by its worst scan, so a host with a compliant OpenSCAP scan and a low Docker Bench scan counts as Warning or Critical. Warnings lower the score but never make a host Critical on their own: a Docker Bench scan that reports only warnings is counted as Warning, however low its score. The **Hosts** tab uses the same rule: each row's status icon and its Passed, Failed and Skipped counts come from that worst scan, and hovering the icon names it. Clicking a count opens **Scan Results** for that host; on a host that runs both OpenSCAP and Docker Bench it also sets the tab's **Scan Type** filter to the worst scan's type, which you can change back to **All Scan Types**. The Passed, Failed and Skipped cards on a host's **Compliance** tab do the same for the scan they show. **Last activity** still shows the host's most recent scan of any type.
 
 The Never scanned card is clickable, it toggles a filter on the **Hosts** tab to show only never-scanned hosts, which is the fastest way to find coverage gaps.
 
@@ -3210,7 +3295,7 @@ The benchmark's rationale for why this rule exists, why it matters, what risk it
 The right column contains two panels that help operators act on a failure:
 
 - **What the fix does**: a short plain-English explanation of the remediation, derived heuristically from the remediation text (for example, "This fix will update file permissions or ownership…" when the script uses `chmod` / `chown`; "This fix will update SSH daemon configuration…" when the script touches `/etc/ssh`). This is UI scaffolding, not audit-grade. Always read the actual remediation script below.
-- **Remediation**: the exact script the scanner would run. For OpenSCAP rules this is the shell fix pulled from SSG. For Docker Bench it's the benchmark-prescribed command. A **Copy** button copies the script to your clipboard so you can paste into a change ticket or runbook.
+- **Remediation**: the exact script the scanner would run. For OpenSCAP rules this is the shell fix pulled from SSG, with the benchmark's variables (password age, `umask`, history length and so on) filled in with the values of the profile the host was scanned against. Results stored by an older agent show these scripts on one line with blank values; update the agent and run a new scan to refresh them. For Docker Bench it's the benchmark-prescribed command. A **Copy** button copies the script to your clipboard so you can paste into a change ticket or runbook.
 
 If the benchmark doesn't ship a remediation script (common for high-level "document this" rules), the panel reads "No remediation steps available."
 
@@ -3252,8 +3337,8 @@ Fix a single failed rule without running a full scan.
 1. Open **Compliance Host Detail** for the host.
 2. In the Scan Results table, expand a failed rule.
 3. Click **Remediate this rule**.
-4. The UI calls `POST /api/v1/compliance/remediate/{hostId}` with `{ "rule_id": "<rule-ref>" }`. The server validates that the agent is connected and sends a `remediate_rule` WebSocket message to the agent.
-5. The agent runs `oscap xccdf eval --remediate --rule <rule>` against the SSG datastream, that runs OpenSCAP's targeted remediation script for just that one rule.
+4. The UI calls `POST /api/v1/compliance/remediate/{hostId}` with `{ "rule_id": "<rule-ref>" }`. The server validates that the agent is connected and sends a `remediate_rule` WebSocket message to the agent, including the OpenSCAP profile the rule was last scanned under.
+5. The agent runs `oscap xccdf eval --profile <profile> --remediate --rule <rule>` against the SSG datastream, that runs OpenSCAP's targeted remediation script for just that one rule. The profile matches the scan that reported the failure (for example the Debian `standard` profile or `cis_level2_server`), and falls back to `level1_server` when the host has no completed OpenSCAP scan.
 6. The UI shows a toast "Remediation triggered". The next scan (manual or scheduled) should show that rule flipping from Fail to Pass if the fix was successful.
 
 Per-rule remediation is limited to OpenSCAP rules today. Docker Bench does not ship executable remediation scripts in the benchmark. The UI greys out the Remediate button on Docker Bench rules for this reason.
@@ -3379,7 +3464,7 @@ The following alert types fire from the server code in 2.0. Each can be individu
 | `compliance_scan_failed` | compliance | A compliance scan errors out |
 | `container_stopped` | docker | A tracked Docker container stops unexpectedly |
 | `container_started` | docker | A previously-stopped container starts again |
-| `container_image_update_available` | docker | A newer image digest is available for a tracked container |
+| `container_image_update_available` | docker | An image update check finds that the registry has a different image for a tag on the host. Raised once per host and image |
 | `ssh_session_started` | remote_access | A user opens a web SSH session to a host |
 | `rdp_session_started` | remote_access | A user opens a web RDP session to a host |
 | `user_login` | system | A user signs in |
@@ -3501,13 +3586,16 @@ Each row exposes:
 | **Active** | Master switch for this alert type. When off, no alerts of this type are created and no notifications are emitted. |
 | **Severity** | Default severity applied to new alerts of this type. |
 | **Alert delay** | Seconds to wait before delivering the outbound notification. If a cancelling counterpart event (e.g. `host_recovered` for `host_down`) fires within the delay window, the notification is suppressed. Useful for flappy hosts. |
-| **Frequency** | For periodic checks only (`host_down`, `host_security_updates_exceeded`, `host_pending_updates_exceeded`). Minutes between checks. |
+| **Frequency** | For periodic checks only (`host_down`, `host_security_updates_exceeded`, `host_pending_updates_exceeded`). Minutes between checks. Any whole number of minutes is honoured. For the two update-threshold types a change applies from the next check without a restart; for `host_down` it applies after a server restart. |
+| **Reminder** | For `host_security_updates_exceeded` and `host_pending_updates_exceeded` only. Hours between reminder notifications while a host stays above the threshold. `0` or empty means no reminders. A reminder is sent at the first check after the interval has passed, so it can arrive up to one **Frequency** later. |
 | **Threshold** | For threshold alerts. Numeric threshold above which an alert fires. Units depend on the alert type: `host_security_updates_exceeded` and `host_pending_updates_exceeded` use a *count* (number of pending updates); `host_down` uses *seconds* (how long the agent's WebSocket can be disconnected before the alert fires). The `host_down` row shows a `sec` suffix to make this explicit; default is 30 seconds. |
 | **Auto-assign** | Toggle plus user picker: any new alert of this type is assigned to the chosen user automatically. |
 | **Retention** | Days to keep alerts of this type before cleanup. Empty = never auto-clean. |
 | **Auto-resolve** | Days after which active alerts auto-resolve if no one touches them. |
 
 Changes are staged locally. Use the **Apply** button on the top bar to save them, or **Discard** to revert. The browser warns you if you navigate away with unsaved changes.
+
+The update-threshold alerts (`host_security_updates_exceeded`, `host_pending_updates_exceeded`) notify once per host each time the threshold is crossed, whichever destinations the event is routed to. While the host stays above the threshold, later checks send nothing more unless **Reminder** is set, in which case each destination receives a reminder (title starting "Reminder:") at that interval until the host drops back. Once its count drops to the threshold or below, the next time it goes above the threshold sends a new notification. Switching the alert type off, or switching alerts off globally, clears every host, so switching it back on notifies again for hosts still above the threshold. To stop reminders for an alert, silence it. Reminders are held only while Silenced is the alert's current status, so unsilencing it, or recording another action such as assigning or acknowledging it, lets them resume at their usual interval. Resolving an alert, by hand or through **Auto-resolve**, while the host is still above the threshold does not stop reminders: the next reminder raises it again. Silencing needs the alert to exist in **Reporting**, so if these alert types are not routed to Internal Alerts there is nothing to silence and reminders continue until the host drops back. When you first set **Reminder**, hosts that have already been above the threshold for longer than the interval get a reminder at the next check.
 
 #### Cleanup
 
@@ -3781,6 +3869,8 @@ Per-type **Alert delay** in **Alert Lifecycle** applies *before* the route fan-o
 | `container_stopped` | `container_started` |
 | `host_security_updates_exceeded` | `host_security_updates_resolved` |
 | `host_pending_updates_exceeded` | `host_pending_updates_resolved` |
+
+A delayed `host_down` is sent once per outage: later checks that find the host still down do not queue another notification (an alert resolved by hand while the host is still down is not raised again), and a new outage after the host recovers notifies again.
 
 ### Editing and deleting routes
 
@@ -4362,10 +4452,12 @@ Four providers are supported in 2.0, each with a curated list of models:
 
 | Provider | Default model | Additional models |
 |----------|---------------|-------------------|
-| **OpenRouter** | `anthropic/claude-3.5-sonnet` | Claude 3 Haiku, GPT-4o, GPT-4o Mini, Gemini Pro 1.5, Llama 3.1 70B |
-| **Anthropic** | `claude-sonnet-4-20250514` | Claude 3.5 Sonnet, Claude 3.5 Haiku |
+| **OpenRouter** | `anthropic/claude-sonnet-5.5` | Claude Haiku 5.5, GPT-4o, GPT-4o Mini, Gemini 2.5 Flash, Llama 3.1 70B |
+| **Anthropic** | `claude-sonnet-5-5` | Claude Opus 5.5, Claude Haiku 5.5 |
 | **OpenAI** | `gpt-4o-mini` | GPT-4o, GPT-4 Turbo |
-| **Google Gemini** | `gemini-1.5-flash` | Gemini 1.5 Pro, Gemini 2.0 Flash (experimental) |
+| **Google Gemini** | `gemini-2.5-flash-lite` | Gemini 2.5 Flash, Gemini 2.5 Pro |
+
+If a saved model has since been retired by its provider, PatchMon uses that provider's default model instead, so the assistant keeps working without you re-saving the settings.
 
 Pick one provider per PatchMon deployment. To change providers, edit the AI settings. The API key is cleared automatically when you switch, and you'll be asked to enter a new one for the new provider.
 

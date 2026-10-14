@@ -253,7 +253,7 @@ func (h *UsersHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to create user")
 		return
 	}
-	AutoSubscribeIfHosted(h.adminMode, h.users, h.log, u)
+	AutoSubscribeIfHosted(r.Context(), h.adminMode, h.users, h.log, u)
 
 	// Emit user_created event
 	if h.notify != nil {

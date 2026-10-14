@@ -23,6 +23,77 @@ var (
 	dashboardCache   = map[string]dashboardCacheEntry{}
 )
 
+const (
+	ComplianceStatusCompliant = "compliant"
+	ComplianceStatusWarning   = "warning"
+	ComplianceStatusCritical  = "critical"
+)
+
+var complianceStatusRank = map[string]int{
+	ComplianceStatusCompliant: 0,
+	ComplianceStatusWarning:   1,
+	ComplianceStatusCritical:  2,
+}
+
+// classifyComplianceScan buckets a scan by score, but a scan with no failed
+// rules is never critical: warnings alone (e.g. Docker Bench WARN) cap at warning.
+func classifyComplianceScan(score float64, failed int) string {
+	switch {
+	case score >= 80:
+		return ComplianceStatusCompliant
+	case score >= 60 || failed == 0:
+		return ComplianceStatusWarning
+	default:
+		return ComplianceStatusCritical
+	}
+}
+
+type hostComplianceStatus struct {
+	status   string
+	score    float64
+	scanType string
+	scan     db.GetLatestCompletedScansRow
+}
+
+// worstScanPerHost picks, per host, the latest scan of each type that rates worst;
+// it sets the host's status, and the hosts table shows its numbers.
+func worstScanPerHost(latestScans []db.GetLatestCompletedScansRow, profileTypes map[string]string) map[string]hostComplianceStatus {
+	out := make(map[string]hostComplianceStatus)
+	for _, sc := range latestScans {
+		score := 0.0
+		if sc.Score != nil {
+			score = *sc.Score
+		}
+		scanType := profileTypes[sc.ProfileID]
+		if scanType == "" {
+			scanType = "unknown"
+		}
+		candidate := hostComplianceStatus{
+			status:   classifyComplianceScan(score, int(sc.Failed)),
+			score:    score,
+			scanType: scanType,
+			scan:     sc,
+		}
+		if current, ok := out[sc.HostID]; !ok || candidate.worseThan(current) {
+			out[sc.HostID] = candidate
+		}
+	}
+	return out
+}
+
+func (h hostComplianceStatus) worseThan(other hostComplianceStatus) bool {
+	if complianceStatusRank[h.status] != complianceStatusRank[other.status] {
+		return complianceStatusRank[h.status] > complianceStatusRank[other.status]
+	}
+	return h.score < other.score
+}
+
+func invalidateDashboardCache(ctx context.Context) {
+	dashboardCacheMu.Lock()
+	delete(dashboardCache, hostctx.TenantHostKey(ctx))
+	dashboardCacheMu.Unlock()
+}
+
 // ComplianceDashboard is the dashboard response structure (matches legacy/frontend).
 // JSON tags use snake_case to match Node API and frontend expectations.
 type ComplianceDashboard struct {
@@ -86,6 +157,9 @@ type ComplianceDashboardHost struct {
 	Failed            *int       `json:"failed"`
 	Skipped           *int       `json:"skipped"`
 	Score             *float64   `json:"score"`
+	ScoreProfileName  *string    `json:"score_profile_name"`
+	ScoreScanType     *string    `json:"score_scan_type"`
+	ComplianceStatus  *string    `json:"compliance_status"`
 	ScannerStatus     string     `json:"scanner_status"`
 	ComplianceMode    string     `json:"compliance_mode"`
 	ComplianceEnabled bool       `json:"compliance_enabled"`
@@ -155,17 +229,20 @@ type ComplianceDashboardProfileTypeStat struct {
 }
 
 // GetDashboard returns the compliance dashboard data (matches legacy structure).
-func (s *ComplianceStore) GetDashboard(ctx context.Context) (*ComplianceDashboard, error) {
+// nil hostIDs is unscoped; any non-nil slice (even empty) scopes and bypasses the cache.
+func (s *ComplianceStore) GetDashboard(ctx context.Context, hostIDs []string) (*ComplianceDashboard, error) {
 	d := s.db.DB(ctx)
+	scoped := hostIDs != nil
 	cacheKey := hostctx.TenantHostKey(ctx)
-	dashboardCacheMu.Lock()
-	if e, ok := dashboardCache[cacheKey]; ok && e.data != nil && time.Now().Before(e.exp) {
-		data := e.data
+	if !scoped {
+		dashboardCacheMu.Lock()
+		if e, ok := dashboardCache[cacheKey]; ok && e.data != nil && time.Now().Before(e.exp) {
+			data := e.data
+			dashboardCacheMu.Unlock()
+			return data, nil
+		}
 		dashboardCacheMu.Unlock()
-		return data, nil
 	}
-	dashboardCacheMu.Unlock()
-
 	latestScans, err := d.Queries.GetLatestCompletedScans(ctx)
 	if err != nil {
 		return nil, err
@@ -174,13 +251,43 @@ func (s *ComplianceStore) GetDashboard(ctx context.Context) (*ComplianceDashboar
 	if err != nil {
 		return nil, err
 	}
-	unscanned, err := d.Queries.CountUnscannedHosts(ctx)
+	unscanned, err := d.Queries.CountUnscannedHosts(ctx, hostIDs)
 	if err != nil {
 		return nil, err
 	}
 	recentScans, err := d.Queries.GetRecentComplianceScans(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	if scoped {
+		allowed := make(map[string]struct{}, len(hostIDs))
+		for _, id := range hostIDs {
+			allowed[id] = struct{}{}
+		}
+		filteredScans := latestScans[:0]
+		for _, sc := range latestScans {
+			if _, ok := allowed[sc.HostID]; ok {
+				filteredScans = append(filteredScans, sc)
+			}
+		}
+		latestScans = filteredScans
+
+		filteredHosts := allHosts[:0]
+		for _, h := range allHosts {
+			if _, ok := allowed[h.ID]; ok {
+				filteredHosts = append(filteredHosts, h)
+			}
+		}
+		allHosts = filteredHosts
+
+		filteredRecent := recentScans[:0]
+		for _, sc := range recentScans {
+			if _, ok := allowed[sc.HostID]; ok {
+				filteredRecent = append(filteredRecent, sc)
+			}
+		}
+		recentScans = filteredRecent
 	}
 
 	// Build profile type map
@@ -198,61 +305,28 @@ func (s *ComplianceStore) GetDashboard(ctx context.Context) (*ComplianceDashboar
 		}
 	}
 
-	// Host-level worst scores
-	hostWorstScores := make(map[string]struct {
-		score    float64
-		scanType string
-	})
-	for _, sc := range latestScans {
-		score := 0.0
-		if sc.Score != nil {
-			score = *sc.Score
-		}
-		scanType := profileTypes[sc.ProfileID]
-		if scanType == "" {
-			scanType = "unknown"
-		}
-		current, ok := hostWorstScores[sc.HostID]
-		if !ok || score < current.score {
-			hostWorstScores[sc.HostID] = struct {
-				score    float64
-				scanType string
-			}{score, scanType}
-		}
-	}
+	hostStatuses := worstScanPerHost(latestScans, profileTypes)
 
 	hostsCompliant := 0
 	hostsWarning := 0
 	hostsCritical := 0
-	for _, h := range hostWorstScores {
-		if h.score >= 80 {
+	hostStatusByScanType := map[string]map[string]int{
+		ComplianceStatusCompliant: {"openscap": 0, "docker-bench": 0},
+		ComplianceStatusWarning:   {"openscap": 0, "docker-bench": 0},
+		ComplianceStatusCritical:  {"openscap": 0, "docker-bench": 0},
+	}
+	for _, h := range hostStatuses {
+		switch h.status {
+		case ComplianceStatusCompliant:
 			hostsCompliant++
-		} else if h.score >= 60 {
+		case ComplianceStatusWarning:
 			hostsWarning++
-		} else {
+		default:
 			hostsCritical++
 		}
+		hostStatusByScanType[h.status][h.scanType]++
 	}
 
-	// Host status by scan type
-	hostStatusByScanType := map[string]map[string]int{
-		"compliant": {"openscap": 0, "docker-bench": 0},
-		"warning":   {"openscap": 0, "docker-bench": 0},
-		"critical":  {"openscap": 0, "docker-bench": 0},
-	}
-	for _, h := range hostWorstScores {
-		status := "compliant"
-		if h.score < 60 {
-			status = "critical"
-		} else if h.score < 80 {
-			status = "warning"
-		}
-		if m, ok := hostStatusByScanType[status]; ok {
-			m[h.scanType]++
-		}
-	}
-
-	// Scan-level counts
 	scansCompliant := 0
 	scansWarning := 0
 	scansCritical := 0
@@ -261,11 +335,12 @@ func (s *ComplianceStore) GetDashboard(ctx context.Context) (*ComplianceDashboar
 		if sc.Score != nil {
 			score = *sc.Score
 		}
-		if score >= 80 {
+		switch classifyComplianceScan(score, int(sc.Failed)) {
+		case ComplianceStatusCompliant:
 			scansCompliant++
-		} else if score >= 60 {
+		case ComplianceStatusWarning:
 			scansWarning++
-		} else {
+		default:
 			scansCritical++
 		}
 	}
@@ -303,9 +378,25 @@ func (s *ComplianceStore) GetDashboard(ctx context.Context) (*ComplianceDashboar
 			lastScan = &scan.CompletedAt.Time
 		}
 		profileName := scan.ProfileName
-		passed := int(scan.Passed)
-		failed := int(scan.Failed)
-		skipped := int(scan.Skipped) + int(scan.NotApplicable)
+		shown := scan
+		var complianceStatus *string
+		if hs, ok := hostStatuses[h.ID]; ok {
+			st := hs.status
+			complianceStatus = &st
+			shown = hs.scan
+		}
+		passed := int(shown.Passed)
+		failed := int(shown.Failed)
+		skipped := int(shown.Skipped) + int(shown.NotApplicable)
+		var scoreProfileName, scoreScanType *string
+		if shown.ProfileName != "" {
+			name := shown.ProfileName
+			scoreProfileName = &name
+		}
+		if hs, ok := hostStatuses[h.ID]; ok && hs.scanType != "unknown" {
+			scanType := hs.scanType
+			scoreScanType = &scanType
+		}
 		var scannerStatus string
 		if lastScan != nil {
 			scannerStatus = "Scanned"
@@ -331,7 +422,10 @@ func (s *ComplianceStore) GetDashboard(ctx context.Context) (*ComplianceDashboar
 			Passed:             &passed,
 			Failed:             &failed,
 			Skipped:            &skipped,
-			Score:              scan.Score,
+			Score:              shown.Score,
+			ScoreProfileName:   scoreProfileName,
+			ScoreScanType:      scoreScanType,
+			ComplianceStatus:   complianceStatus,
 			ScannerStatus:      scannerStatus,
 			ComplianceMode:     complianceMode,
 			ComplianceEnabled:  h.ComplianceEnabled,
@@ -602,9 +696,11 @@ func (s *ComplianceStore) GetDashboard(ctx context.Context) (*ComplianceDashboar
 		ProfileTypeStats:      profileTypeStatsList,
 	}
 
-	dashboardCacheMu.Lock()
-	dashboardCache[cacheKey] = dashboardCacheEntry{data: out, exp: time.Now().Add(dashboardCacheTTL)}
-	dashboardCacheMu.Unlock()
+	if !scoped {
+		dashboardCacheMu.Lock()
+		dashboardCache[cacheKey] = dashboardCacheEntry{data: out, exp: time.Now().Add(dashboardCacheTTL)}
+		dashboardCacheMu.Unlock()
+	}
 
 	return out, nil
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"slices"
 	"strings"
 	"time"
@@ -13,12 +14,13 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
-// ExtractIPFromInterface extracts the first inet (IPv4) address from the named interface in networkInterfaces JSON.
-// Returns empty string if not found or on parse error.
+// ExtractIPFromInterface returns the first global IPv4 address on the named interface in
+// networkInterfaces JSON, falling back to the first global IPv6. Empty if none or on parse error.
 func ExtractIPFromInterface(networkInterfaces []byte, interfaceName string) string {
 	if len(networkInterfaces) == 0 || interfaceName == "" {
 		return ""
@@ -36,21 +38,28 @@ func ExtractIPFromInterface(networkInterfaces []byte, interfaceName string) stri
 		if !ok {
 			return ""
 		}
+		var ipv6Fallback string
 		for _, a := range addrs {
 			addrMap, ok := a.(map[string]interface{})
 			if !ok {
 				continue
 			}
 			family, _ := addrMap["family"].(string)
-			if family != "inet" {
+			addr, _ := addrMap["address"].(string)
+			ip := net.ParseIP(addr)
+			if ip == nil || !ip.IsGlobalUnicast() {
 				continue
 			}
-			addr, _ := addrMap["address"].(string)
-			if addr != "" {
+			switch family {
+			case "inet":
 				return addr
+			case "inet6":
+				if ipv6Fallback == "" {
+					ipv6Fallback = addr
+				}
 			}
 		}
-		return ""
+		return ipv6Fallback
 	}
 	return ""
 }
@@ -106,6 +115,8 @@ type ReportPayload struct {
 	Architecture           string             `json:"architecture"`
 	AgentVersion           string             `json:"agentVersion"`
 	MachineID              string             `json:"machineId"`
+	HostID                 string             `json:"hostId,omitempty"`
+	ConfigVersion          string             `json:"configVersion,omitempty"`
 	KernelVersion          string             `json:"kernelVersion"`
 	InstalledKernelVersion string             `json:"installedKernelVersion"`
 	SELinuxStatus          string             `json:"selinuxStatus"`
@@ -409,6 +420,12 @@ func (s *ReportStore) ProcessReport(ctx context.Context, hostID string, payload 
 	}
 	if payload.MachineID != "" {
 		params.MachineID = &payload.MachineID
+	}
+	if util.ValidConfigVersion(payload.ConfigVersion) {
+		params.ConfigVersion = &payload.ConfigVersion
+	}
+	if util.ValidHostID(payload.HostID) {
+		params.ReportedHostID = &payload.HostID
 	}
 	if payload.OSType != "" {
 		params.OsType = &payload.OSType

@@ -120,6 +120,24 @@ describe("PatchWizard partial-failure handling", () => {
 		patchingAPI.getPreviewRun.mockResolvedValue({});
 	});
 
+	it("portals the overlay above the sidebar and removes it on unmount", () => {
+		const { container, unmount, onClose } = renderWizard();
+		const backdrop = screen.getByRole("button", { name: "Close modal" });
+		const overlay = backdrop.parentElement;
+		expect(container).not.toContainElement(overlay);
+		expect(overlay.parentElement).toBe(document.body);
+		expect(overlay).toHaveClass("z-[120]");
+		fireEvent.click(backdrop);
+		expect(onClose).toHaveBeenCalledTimes(1);
+		unmount();
+		expect(overlay).not.toBeInTheDocument();
+	});
+
+	it("does not render an overlay when closed", () => {
+		renderWizard(HOSTS, { isOpen: false });
+		expect(screen.queryByRole("button", { name: "Close modal" })).toBeNull();
+	});
+
 	it("never re-submits a host that already produced a run", async () => {
 		let bravoAttempts = 0;
 		patchingAPI.trigger.mockImplementation(async (hostId) => {

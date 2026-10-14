@@ -3,8 +3,8 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
@@ -75,8 +75,10 @@ type RunScanPayload struct {
 	ProfileID            *string `json:"profile_id,omitempty"`
 	EnableRemediation    bool    `json:"enable_remediation"`
 	FetchRemoteResources bool    `json:"fetch_remote_resources"`
-	RequeueCount         int     `json:"requeue_count,omitempty"`
 }
+
+// RunScanTaskID is the fixed task ID that deduplicates a host's scans.
+func RunScanTaskID(hostID string) string { return "compliance-scan-" + hostID }
 
 // NewRunScanTask creates a run_scan task. Use TaskID for deduplication: compliance-scan-{hostId}.
 func NewRunScanTask(p RunScanPayload) (*asynq.Task, error) {
@@ -86,8 +88,8 @@ func NewRunScanTask(p RunScanPayload) (*asynq.Task, error) {
 	}
 	opts := []asynq.Option{
 		asynq.Queue(QueueCompliance),
-		asynq.MaxRetry(10),
-		asynq.TaskID("compliance-scan-" + p.HostID),
+		asynq.MaxRetry(maxScanRequeueAttempts),
+		asynq.TaskID(RunScanTaskID(p.HostID)),
 	}
 	return asynq.NewTask(TypeRunScan, payload, opts...), nil
 }
@@ -105,7 +107,7 @@ func NewInstallComplianceToolsTask(hostID, apiID, host string) (*asynq.Task, err
 	if err != nil {
 		return nil, err
 	}
-	return asynq.NewTask(TypeInstallComplianceTools, payload, asynq.Queue(QueueCompliance), asynq.MaxRetry(2)), nil
+	return asynq.NewTask(TypeInstallComplianceTools, payload, asynq.Queue(QueueCompliance), asynq.MaxRetry(2), asynq.Retention(time.Hour)), nil
 }
 
 // SSGUpgradePayload is the payload for per-host ssg_upgrade jobs.
@@ -411,7 +413,10 @@ func (h *ReportNowHandler) ProcessTask(ctx context.Context, t *asynq.Task) error
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return err
 	}
-	d := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
+	ctx, d, err := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
+	if err != nil {
+		return err
+	}
 
 	// The host may have reported during the catch-up's jitter delay.
 	knownHostID := ""
@@ -477,7 +482,10 @@ func sendAgentCommand(ctx context.Context, h *ReportNowHandler, p ReportNowPaylo
 		taskID = taskIDVal
 	}
 	attempt := int32(retryCount + 1)
-	d := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
+	ctx, d, err := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
+	if err != nil {
+		return err
+	}
 
 	if d != nil && taskID != "" && retryCount == 0 {
 		host, err := d.Queries.GetHostByApiID(ctx, p.ApiID)
@@ -578,7 +586,10 @@ func (h *UpdateAgentHandler) ProcessTask(ctx context.Context, t *asynq.Task) err
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return err
 	}
-	d := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
+	ctx, d, err := resolveDBForHost(ctx, p.Host, h.db, h.poolCache)
+	if err != nil {
+		return err
+	}
 
 	taskID, _ := asynq.GetTaskID(ctx)
 	retryCount, _ := asynq.GetRetryCount(ctx)
@@ -666,6 +677,41 @@ func NewRunPatchHandler(registry *agentregistry.Registry, patchRuns *store.Patch
 	return &RunPatchHandler{registry: registry, patchRuns: patchRuns, poolCache: poolCache, queueClient: queueClient, log: log}
 }
 
+const scheduledRunSkippedReason = "Skipped: another patch run was in progress on this host when the scheduled window arrived"
+
+type scheduledRunStore interface {
+	GetByID(ctx context.Context, id string) (*db.GetPatchRunByIDRow, error)
+	ActivateScheduledRun(ctx context.Context, id string) (bool, error)
+	SkipScheduledRun(ctx context.Context, id, reason string) error
+}
+
+// activateIfScheduled turns a scheduled run whose window has arrived into an
+// active one. It reports false when the task must not be dispatched.
+func activateIfScheduled(ctx context.Context, runs scheduledRunStore, log *slog.Logger, p RunPatchPayload) (bool, error) {
+	run, err := runs.GetByID(ctx, p.PatchRunID)
+	if err != nil {
+		return false, err
+	}
+	if run == nil || run.Status != "scheduled" {
+		return true, nil
+	}
+	activated, err := runs.ActivateScheduledRun(ctx, p.PatchRunID)
+	if errors.Is(err, store.ErrHostHasActivePatchRun) {
+		if skipErr := runs.SkipScheduledRun(ctx, p.PatchRunID, scheduledRunSkippedReason); skipErr != nil {
+			return false, skipErr
+		}
+		log.Info("run_patch: host busy when scheduled window arrived, skipped run", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !activated {
+		log.Info("run_patch: scheduled run changed before activation, dropping task", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
+	}
+	return activated, nil
+}
+
 // ProcessTask implements asynq.Handler.
 func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	var p RunPatchPayload
@@ -673,11 +719,17 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 		return err
 	}
 
-	// Resolve per-context DB when Host is in payload (multi-host mode).
-	if h.poolCache != nil && strings.TrimSpace(p.Host) != "" {
-		if db, err := h.poolCache.GetOrCreate(ctx, p.Host); err == nil && db != nil {
-			ctx = hostctx.WithDB(ctx, db)
-		}
+	hctx, rd, err := resolveDBForHost(ctx, p.Host, nil, h.poolCache)
+	if err != nil {
+		return err
+	}
+	if rd != nil {
+		ctx = hostctx.WithDB(hctx, rd)
+	}
+
+	proceed, err := activateIfScheduled(ctx, h.patchRuns, h.log, p)
+	if err != nil || !proceed {
+		return err
 	}
 
 	if !h.registry.IsConnected(p.ApiID) {
@@ -700,7 +752,14 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 			return nil
 		}
 
-		_ = h.patchRuns.UpdateStatus(ctx, p.PatchRunID, status)
+		requeued, err := h.patchRuns.Requeue(ctx, p.PatchRunID, status)
+		if err != nil {
+			return err
+		}
+		if !requeued {
+			h.log.Info("run_patch: run status changed, dropping task", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
+			return nil
+		}
 
 		// Use a deterministic retry task ID so only one retry can exist at a time
 		// and the delete handler can cancel it.
@@ -716,6 +775,19 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 		} else {
 			h.log.Info("run_patch: agent offline, re-queued in 5m", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
 		}
+		return nil
+	}
+
+	run, err := h.patchRuns.GetByID(ctx, p.PatchRunID)
+	if err != nil {
+		return err
+	}
+	if run == nil || (run.Status != "queued" && run.Status != "pending_validation") {
+		status := ""
+		if run != nil {
+			status = run.Status
+		}
+		h.log.Info("run_patch: run no longer awaiting dispatch, dropping task", "api_id", p.ApiID, "patch_run_id", p.PatchRunID, "status", status)
 		return nil
 	}
 
@@ -741,7 +813,9 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 		return err
 	}
 
-	_ = h.patchRuns.UpdateStatus(ctx, p.PatchRunID, "running")
+	if err := h.patchRuns.MarkDispatched(ctx, p.PatchRunID); err != nil {
+		h.log.Warn("run_patch: failed to mark run dispatched", "patch_run_id", p.PatchRunID, "error", err)
+	}
 	h.log.Info("run_patch sent", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
 	return nil
 }

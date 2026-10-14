@@ -117,7 +117,7 @@ func TestMergeRegistryAndWingetAppendsEachNameOnce(t *testing.T) {
 		{Name: "Contoso Widget", CurrentVersion: "1.0.0", SourceRepository: "winget"},
 	}
 
-	merged := m.mergeRegistryAndWinget(nil, wingetPkgs)
+	merged := m.mergeRegistryAndWinget(nil, asWingetRows(wingetPkgs))
 
 	counts := map[string]int{}
 	for _, p := range merged {
@@ -141,7 +141,7 @@ func TestMergeRegistryAndWingetDoesNotDuplicateMatchedEntries(t *testing.T) {
 		{Name: "Contoso Widget", AvailableVersion: "2.0.0", NeedsUpdate: true, SourceRepository: "winget"},
 	}
 
-	merged := m.mergeRegistryAndWinget(regPkgs, wingetPkgs)
+	merged := m.mergeRegistryAndWinget(regPkgs, asWingetRows(wingetPkgs))
 
 	if len(merged) != 1 {
 		t.Fatalf("expected 1 merged package, got %d: %+v", len(merged), merged)
@@ -152,4 +152,12 @@ func TestMergeRegistryAndWingetDoesNotDuplicateMatchedEntries(t *testing.T) {
 	if merged[0].SourceRepository != "winget" {
 		t.Errorf("SourceRepository = %q, want %q", merged[0].SourceRepository, "winget")
 	}
+}
+
+func asWingetRows(pkgs []models.Package) []wingetRow {
+	rows := make([]wingetRow, len(pkgs))
+	for i, p := range pkgs {
+		rows[i] = wingetRow{pkg: p}
+	}
+	return rows
 }

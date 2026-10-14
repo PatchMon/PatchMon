@@ -80,6 +80,7 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 
 	hostDownAlerts, _ := d.Queries.ListActiveAlertsByType(ctx, "host_down")
 	alertsByHostID := make(map[string]string)
+	downSince := make(map[string]time.Time)
 	for _, a := range hostDownAlerts {
 		var meta map[string]interface{}
 		if len(a.Metadata) > 0 {
@@ -88,12 +89,14 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 		if meta != nil {
 			if hid, ok := meta["host_id"].(string); ok {
 				alertsByHostID[hid] = a.ID
+				downSince[hid] = hostDownSince(a.Metadata, a.CreatedAt.Time)
 			}
 		}
 	}
 
 	alertsStore := store.NewAlertsStore(d)
 	alertsCreated := 0
+	recovered := map[string]time.Time{}
 
 	now := time.Now()
 	for _, host := range hostRows {
@@ -154,7 +157,7 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 				emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
 					Type: "host_down", Severity: severity, Title: title, Message: msg,
 					ReferenceType: "host", ReferenceID: host.ID,
-					Metadata: meta,
+					Metadata: meta, ObservedAt: now,
 				})
 				alertsCreated++
 			}
@@ -162,12 +165,17 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 			hadAlert := false
 			// Resolve any active host_down alert for this host.
 			if alertID, exists := alertsByHostID[host.ID]; exists {
+				if !resolvesHostDown(decision, downSince[host.ID]) {
+					continue
+				}
 				hadAlert = true
 				if cfg.AutoResolveAfterDays == nil {
 					_ = alertsStore.UpdateResolved(ctx, alertID, nil)
 					_ = alertsStore.RecordHistory(ctx, alertID, nil, "resolved", map[string]interface{}{"resolved_reason": "Host came back online", "system_action": true})
 					delete(alertsByHostID, host.ID)
 				}
+			} else if decision.alive {
+				recovered[host.ID] = decision.aliveAt
 			}
 			// Emit host_recovered only when resolving an active host_down alert.
 			if emit != nil && hadAlert {
@@ -188,12 +196,16 @@ func ProcessHostStatusMonitor(ctx context.Context, d *database.DB, tenantHost st
 		}
 	}
 
+	if emit != nil && len(recovered) > 0 {
+		emit.CancelPending(ctx, tenantHost, "host_down", recovered)
+	}
+
 	return alertsCreated, nil
 }
 
 // OnDisconnect creates a host_down alert when an agent's WebSocket disconnects.
 // Called by the agent WebSocket disconnect handler.
-func OnDisconnect(ctx context.Context, d *database.DB, apiID string, tenantHost string, emit *notifications.Emitter, log *slog.Logger) {
+func OnDisconnect(ctx context.Context, d *database.DB, apiID string, tenantHost string, disconnectedAt time.Time, emit *notifications.Emitter, log *slog.Logger) {
 	enabled, err := IsAlertsEnabled(ctx, d)
 	if err != nil || !enabled {
 		return
@@ -264,7 +276,7 @@ func OnDisconnect(ctx context.Context, d *database.DB, apiID string, tenantHost 
 		emit.EmitEvent(ctx, d, tenantHost, notifications.Event{
 			Type: "host_down", Severity: severity, Title: title, Message: msg,
 			ReferenceType: "host", ReferenceID: host.ID,
-			Metadata: meta,
+			Metadata: meta, ObservedAt: disconnectedAt,
 		})
 		log.Info("host_down: emitted alert event on disconnect", "api_id", apiID, "host_id", host.ID)
 	}
@@ -273,13 +285,22 @@ func OnDisconnect(ctx context.Context, d *database.DB, apiID string, tenantHost 
 // OnConnect resolves any active host_down alert for the host when an agent reconnects.
 // Called by the agent WebSocket connect handler.
 func OnConnect(ctx context.Context, d *database.DB, apiID string, tenantHost string, emit *notifications.Emitter, log *slog.Logger) {
-	enabled, err := IsAlertsEnabled(ctx, d)
-	if err != nil || !enabled {
+	connectedAt := time.Now()
+	host, err := d.Queries.GetHostByApiID(ctx, apiID)
+	if err != nil {
 		return
 	}
 
-	host, err := d.Queries.GetHostByApiID(ctx, apiID)
-	if err != nil {
+	if emit != nil {
+		if downCfg, _ := GetConfigForType(ctx, d, "host_down"); downCfg != nil && downCfg.AlertDelaySeconds != nil && *downCfg.AlertDelaySeconds > 0 {
+			emit.RecordRecovery(ctx, tenantHost, "host_down", host.ID, connectedAt)
+		} else {
+			emit.CancelPending(ctx, tenantHost, "host_down", map[string]time.Time{host.ID: connectedAt})
+		}
+	}
+
+	enabled, err := IsAlertsEnabled(ctx, d)
+	if err != nil || !enabled {
 		return
 	}
 
@@ -353,7 +374,10 @@ const (
 // thresholdSeconds is the window that was actually applied, so alert metadata
 // and the operator-facing message quote a number that matches the rule used.
 type hostDownDecision struct {
-	down             bool
+	down bool
+	// alive is positive evidence the agent was reachable at aliveAt; a short disconnect is neither down nor alive.
+	alive            bool
+	aliveAt          time.Time
 	detection        string
 	thresholdSeconds int
 }
@@ -378,8 +402,11 @@ func hostDownState(
 	reportCadenceThreshold time.Time,
 	updateIntervalMin int,
 ) hostDownDecision {
+	cadenceDown := lastUpdate.Before(reportCadenceThreshold)
 	cadence := hostDownDecision{
-		down:             lastUpdate.Before(reportCadenceThreshold),
+		down:             cadenceDown,
+		alive:            !cadenceDown,
+		aliveAt:          lastUpdate,
 		detection:        detectionReportCadence,
 		thresholdSeconds: updateIntervalMin * reportCadenceStaleMultiplier * 60,
 	}
@@ -391,7 +418,7 @@ func hostDownState(
 	switch {
 	case info.Connected:
 		// Live WebSocket: the agent is demonstrably reachable right now.
-		return hostDownDecision{down: false, detection: detectionWebsocket, thresholdSeconds: int(wsThreshold.Seconds())}
+		return hostDownDecision{down: false, alive: true, aliveAt: now, detection: detectionWebsocket, thresholdSeconds: int(wsThreshold.Seconds())}
 	case info.DisconnectedAt != nil:
 		return hostDownDecision{
 			down:             now.Sub(*info.DisconnectedAt) > wsThreshold,
@@ -402,6 +429,14 @@ func hostDownState(
 		// No WebSocket information at all for this agent.
 		return cadence
 	}
+}
+
+// resolvesHostDown requires positive evidence of recovery: a disconnect still inside the grace window is not one.
+func resolvesHostDown(decision hostDownDecision, downSince time.Time) bool {
+	if !decision.alive {
+		return false
+	}
+	return decision.detection == detectionWebsocket || decision.aliveAt.After(downSince)
 }
 
 // formatHostDownThreshold renders the threshold in operator-friendly units:
@@ -429,4 +464,15 @@ func hostDisplayName(host db.Host) string {
 
 func hostDisplayNameFromRow(host db.Host) string {
 	return hostDisplayName(host)
+}
+
+// hostDownSince is the report the outage was judged on, so a later report counts as recovery even if the delayed alert row was written after it.
+func hostDownSince(metadata []byte, createdAt time.Time) time.Time {
+	var meta struct {
+		LastUpdate time.Time `json:"last_update"`
+	}
+	if len(metadata) > 0 && json.Unmarshal(metadata, &meta) == nil && !meta.LastUpdate.IsZero() && meta.LastUpdate.Before(createdAt) {
+		return meta.LastUpdate
+	}
+	return createdAt
 }

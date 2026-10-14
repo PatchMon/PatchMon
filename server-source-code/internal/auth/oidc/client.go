@@ -31,12 +31,13 @@ type SessionData struct {
 
 // UserInfo holds normalized user claims from OIDC.
 type UserInfo struct {
-	Sub           string
-	Email         string
-	Name          string
-	GivenName     string
-	FamilyName    string
-	EmailVerified bool
+	Sub               string
+	Email             string
+	Name              string
+	PreferredUsername string
+	GivenName         string
+	FamilyName        string
+	EmailVerified     bool
 	// For logs only; empty when EmailVerified is true.
 	EmailVerifiedReason string
 	Groups              []string
@@ -49,12 +50,13 @@ type UserInfo struct {
 // the issuer's discovery endpoint, so startup succeeds even when the provider is
 // temporarily unreachable.
 type Client struct {
-	cfg      Config
-	scopes   []string
-	mu       sync.Mutex
-	provider *oidc.Provider
-	verifier *oidc.IDTokenVerifier
-	oauth2   *oauth2.Config
+	cfg                Config
+	scopes             []string
+	discoverySuffixCut bool
+	mu                 sync.Mutex
+	provider           *oidc.Provider
+	verifier           *oidc.IDTokenVerifier
+	oauth2             *oauth2.Config
 }
 
 // Config holds OIDC client configuration.
@@ -69,10 +71,24 @@ type Config struct {
 // NewClient creates a new OIDC client. Provider discovery is deferred until the
 // first login attempt, so this never fails due to network issues at startup.
 func NewClient(_ context.Context, cfg Config) (*Client, error) {
+	var cut bool
+	cfg.IssuerURL, cut = normaliseIssuerURL(cfg.IssuerURL)
 	return &Client{
-		cfg:    cfg,
-		scopes: parseScopes(cfg.Scopes),
+		cfg:                cfg,
+		scopes:             parseScopes(cfg.Scopes),
+		discoverySuffixCut: cut,
 	}, nil
+}
+
+const discoveryPath = "/.well-known/openid-configuration"
+
+func normaliseIssuerURL(issuer string) (string, bool) {
+	issuer = strings.TrimSpace(issuer)
+	trimmed := strings.TrimSuffix(strings.TrimSuffix(issuer, "/"), discoveryPath)
+	if trimmed == strings.TrimSuffix(issuer, "/") {
+		return issuer, false
+	}
+	return trimmed, true
 }
 
 // connect performs provider discovery and populates the oauth2 config and token
@@ -84,6 +100,12 @@ func (c *Client) connect(ctx context.Context) error {
 		return nil
 	}
 	provider, err := oidc.NewProvider(ctx, c.cfg.IssuerURL)
+	if err != nil && c.discoverySuffixCut {
+		// The issuer may need the slash that preceded the discovery path (Authentik does).
+		if p, slashErr := oidc.NewProvider(ctx, c.cfg.IssuerURL+"/"); slashErr == nil {
+			provider, err = p, nil
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("oidc: discover provider: %w", err)
 	}
@@ -256,9 +278,10 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, expectedState
 	}
 
 	userInfo.EmailVerified, userInfo.EmailVerifiedReason = resolveEmailVerified(userInfoClaims, idClaims, emailFromIDToken, c.cfg.IssuerURL)
+	userInfo.PreferredUsername = getStringClaim(userInfoClaims, idClaims, "preferred_username")
 	userInfo.Name = getStringClaim(userInfoClaims, idClaims, "name")
 	if userInfo.Name == "" {
-		userInfo.Name = getStringClaim(userInfoClaims, idClaims, "preferred_username")
+		userInfo.Name = userInfo.PreferredUsername
 	}
 	if userInfo.Name == "" {
 		userInfo.Name = strings.Split(userInfo.Email, "@")[0]

@@ -28,10 +28,17 @@ import (
 	"github.com/hibiken/asynq"
 )
 
+// fatal writes to stderr as well because slog discards everything when ENABLE_LOGGING is false.
+func fatal(log *slog.Logger, msg string, err error) {
+	_, _ = fmt.Fprintf(os.Stderr, "[fatal] %s: %v\n", msg, err)
+	log.Error(msg, "error", err)
+	os.Exit(1)
+}
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "[fatal] config: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -46,16 +53,12 @@ func main() {
 	ctx := context.Background()
 
 	if err := migrate.Run(cfg.DatabaseURL, bootstrapSlog); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "[fatal] migrations failed: %v\n", err)
-		bootstrapSlog.Error("migrations failed", "error", err)
-		os.Exit(1)
+		fatal(bootstrapSlog, "migrations failed", err)
 	}
 
 	db, err := database.NewDB(ctx, cfg)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "[fatal] database: %v\n", err)
-		bootstrapSlog.Error("database", "error", err)
-		os.Exit(1)
+		fatal(bootstrapSlog, "database", err)
 	}
 	defer db.Close()
 
@@ -77,12 +80,13 @@ func main() {
 	warnDBPoolUndersized(ctx, cfg, store.NewHostsStore(db), slog)
 
 	rdb := redis.NewClient()
+	redisAddr := rdb.Options().Addr
+	slog.Info("connecting to redis", "addr", redisAddr, "db", rdb.Options().DB)
 	if err := redis.Ping(ctx, rdb); err != nil {
-		slog.Error("redis", "error", err)
-		os.Exit(1)
+		fatal(slog, "redis "+redisAddr, err)
 	}
 	defer func() { _ = redis.Close(rdb) }()
-	slog.Info("redis connected")
+	slog.Info("redis connected", "addr", redisAddr)
 
 	var ctxRegistry *hostctx.Registry
 	var poolCache *hostctx.PoolCache
@@ -95,8 +99,7 @@ func main() {
 		// by the provisioner after every context create/update/delete.
 		ctxRegistry, err = hostctx.NewRegistry(ctx, cfg.RegistryDatabaseURL, 60*time.Second, slog)
 		if err != nil {
-			slog.Error("context registry", "error", err)
-			os.Exit(1)
+			fatal(slog, "context registry", err)
 		}
 		defer ctxRegistry.Close()
 		poolCache = hostctx.NewPoolCache(ctxRegistry, cfg, cfg.HostCacheTTLMin, slog)
@@ -250,8 +253,7 @@ func main() {
 	go func() {
 		slog.Info("server listening", "addr", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("server", "error", err)
-			os.Exit(1)
+			fatal(slog, "server", err)
 		}
 	}()
 

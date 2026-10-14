@@ -18,15 +18,27 @@ import {
 	X,
 } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Link, useLocation, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import UpdateStatusBadge, {
+	RecreateNeededBadge,
+} from "../components/docker/UpdateStatusBadge";
+import ModalPortal from "../components/ui/ModalPortal";
+import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import { usePageRefresh } from "../hooks/usePageRefresh";
-import api, { formatError } from "../utils/api";
-import { generateRegistryLink, getSourceDisplayName } from "../utils/docker";
+import { useTabParam } from "../hooks/useTabParam";
+import api, { dockerAPI, formatError, formatRelativeTime } from "../utils/api";
+import {
+	generateRegistryLink,
+	getSourceDisplayName,
+	UPDATE_STATUS_FILTERS,
+} from "../utils/docker";
 
 // Every tab's data plus the stat cards live under this prefix, so one key
 // covers the lot. The per-tab dispatch this replaces never refreshed the cards.
 const DOCKER_REFRESH_KEYS = [["docker"]];
+
+const VALID_UPDATE_FILTERS = UPDATE_STATUS_FILTERS.map((f) => f.value);
 
 const VALID_DOCKER_TABS = [
 	"stacks",
@@ -40,8 +52,8 @@ const VALID_DOCKER_TABS = [
 const Docker = () => {
 	const queryClient = useQueryClient();
 	const toast = useToast();
-	const [searchParams] = useSearchParams();
-	const location = useLocation();
+	const { canManageDocker } = useAuth();
+	const [searchParams, setSearchParams] = useSearchParams();
 	const [searchTerm, setSearchTerm] = useState("");
 	const urlTab = searchParams.get("tab");
 	const [activeTab, setActiveTab] = useState(
@@ -50,24 +62,39 @@ const Docker = () => {
 	const { refresh: refreshDocker, isRefreshing } =
 		usePageRefresh(DOCKER_REFRESH_KEYS);
 
-	// Sync tab only on actual URL navigation (not in-page tab clicks)
+	useTabParam(activeTab);
+
 	useEffect(() => {
-		const params = new URLSearchParams(location.search);
-		const tab = params.get("tab");
-		if (tab && VALID_DOCKER_TABS.includes(tab)) {
-			setActiveTab(tab);
+		if (urlTab && VALID_DOCKER_TABS.includes(urlTab)) {
+			setActiveTab(urlTab);
 		}
-	}, [location.search]);
+	}, [urlTab]);
 	const [sortField, setSortField] = useState("status");
 	const [sortDirection, setSortDirection] = useState("asc");
 	const [statusFilter, setStatusFilter] = useState("all");
 	const [sourceFilter, setSourceFilter] = useState("all");
-	const [updatesFilter, setUpdatesFilter] = useState("all");
+	const urlUpdateStatus = searchParams.get("update_status");
+	const [updatesFilter, setUpdatesFilter] = useState(
+		VALID_UPDATE_FILTERS.includes(urlUpdateStatus) ? urlUpdateStatus : "all",
+	);
 	const [driverFilter, setDriverFilter] = useState("all");
 	const [deleteContainerModal, setDeleteContainerModal] = useState(null);
 	const [deleteImageModal, setDeleteImageModal] = useState(null);
 	const [deleteVolumeModal, setDeleteVolumeModal] = useState(null);
 	const [deleteNetworkModal, setDeleteNetworkModal] = useState(null);
+
+	useEffect(() => {
+		setSearchParams(
+			(prev) => {
+				const next = new URLSearchParams(prev);
+				if (updatesFilter === "all") next.delete("update_status");
+				else next.set("update_status", updatesFilter);
+				if (next.toString() === prev.toString()) return prev;
+				return next;
+			},
+			{ replace: true },
+		);
+	}, [updatesFilter, setSearchParams]);
 
 	// Fetch Docker dashboard data
 	const { data: dashboard, isLoading: dashboardLoading } = useQuery({
@@ -94,10 +121,11 @@ const Docker = () => {
 
 	// Fetch images
 	const { data: imagesData, isLoading: imagesLoading } = useQuery({
-		queryKey: ["docker", "images", sourceFilter],
+		queryKey: ["docker", "images", sourceFilter, updatesFilter],
 		queryFn: async () => {
 			const params = new URLSearchParams();
 			if (sourceFilter !== "all") params.set("source", sourceFilter);
+			if (updatesFilter !== "all") params.set("update_status", updatesFilter);
 			params.set("limit", "1000");
 			const response = await api.get(`/docker/images?${params}`);
 			return response.data;
@@ -310,13 +338,14 @@ const Docker = () => {
 			);
 		}
 
-		// Filter by updates status
-		if (updatesFilter !== "all") {
-			if (updatesFilter === "available") {
-				filtered = filtered.filter((img) => img.hasUpdates === true);
-			} else if (updatesFilter === "none") {
-				filtered = filtered.filter((img) => !img.hasUpdates);
-			}
+		if (updatesFilter === "recreate_needed") {
+			filtered = filtered.filter(
+				(img) => (img.containers_needing_recreate || 0) > 0,
+			);
+		} else if (updatesFilter !== "all") {
+			filtered = filtered.filter(
+				(img) => (img.update_status || "not_checked") === updatesFilter,
+			);
 		}
 
 		filtered.sort((a, b) => {
@@ -474,6 +503,35 @@ const Docker = () => {
 		return filtered;
 	}, [networksData, searchTerm, sortField, sortDirection]);
 
+	const runImageChecksMutation = useMutation({
+		mutationFn: async () => {
+			const response = await dockerAPI.runImageChecks();
+			return response.data;
+		},
+		onSuccess: (data) => {
+			const queued = data?.queued ?? 0;
+			const offline = data?.skipped_offline ?? 0;
+			if (queued === 0) {
+				toast.warning(
+					offline > 0
+						? `No connected Docker hosts to check. ${offline} offline host${offline !== 1 ? "s" : ""} skipped.`
+						: "No connected Docker hosts to check.",
+				);
+				return;
+			}
+			toast.success(
+				`Update check requested on ${queued} host${queued !== 1 ? "s" : ""}${
+					offline > 0
+						? `; ${offline} offline host${offline !== 1 ? "s" : ""} skipped`
+						: ""
+				}. Results appear as agents report back.`,
+			);
+		},
+		onError: (error) => {
+			toast.error(formatError(error) || "Failed to request update checks");
+		},
+	});
+
 	const handleSort = (field) => {
 		if (sortField === field) {
 			setSortDirection(sortDirection === "asc" ? "desc" : "asc");
@@ -587,6 +645,23 @@ const Docker = () => {
 					</p>
 				</div>
 				<div className="flex items-center gap-3">
+					{canManageDocker() && (
+						<button
+							type="button"
+							onClick={() => runImageChecksMutation.mutate()}
+							disabled={runImageChecksMutation.isPending}
+							className="btn-outline flex items-center gap-2 min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed"
+							title="Ask every connected Docker host to check its images against their registries"
+						>
+							{runImageChecksMutation.isPending ? (
+								<RefreshCw className="h-4 w-4 animate-spin" />
+							) : (
+								<Search className="h-4 w-4" />
+							)}
+							<span className="hidden sm:inline">Check for updates</span>
+							<span className="sm:hidden">Check</span>
+						</button>
+					)}
 					<button
 						type="button"
 						onClick={() => refreshDocker()}
@@ -672,14 +747,22 @@ const Docker = () => {
 					type="button"
 					onClick={() => {
 						setActiveTab("images");
-						setUpdatesFilter("available");
+						setUpdatesFilter(
+							dashboard?.stats?.availableUpdates
+								? "update_available"
+								: "recreate_needed",
+						);
 						setSourceFilter("all"); // Reset source filter
 						setSearchTerm(""); // Clear search
 						setSortField("repository");
 						setSortDirection("asc");
 					}}
 					className="card p-4 hover:shadow-lg transition-shadow cursor-pointer text-left w-full disabled:opacity-50 disabled:cursor-not-allowed"
-					disabled={dashboardLoading || !dashboard?.stats?.availableUpdates}
+					disabled={
+						dashboardLoading ||
+						(!dashboard?.stats?.availableUpdates &&
+							!dashboard?.stats?.containersNeedingRecreate)
+					}
 				>
 					<div className="flex items-center">
 						<div className="flex-shrink-0">
@@ -696,6 +779,16 @@ const Docker = () => {
 									dashboard?.stats?.availableUpdates || 0
 								)}
 							</p>
+							{!dashboardLoading && (
+								<p className="text-xs text-secondary-500 dark:text-white">
+									{dashboard?.stats?.containersNeedingRecreate || 0} container
+									{dashboard?.stats?.containersNeedingRecreate === 1 ? "" : "s"}{" "}
+									to recreate
+									{dashboard?.stats?.lastImageCheckAt
+										? `, checked ${formatRelativeTime(dashboard.stats.lastImageCheckAt)}`
+										: ", never checked"}
+								</p>
+							)}
 						</div>
 					</div>
 				</button>
@@ -816,11 +909,13 @@ const Docker = () => {
 								<select
 									value={updatesFilter}
 									onChange={(e) => setUpdatesFilter(e.target.value)}
-									className="block w-full sm:w-48 pl-3 pr-10 py-2 text-base border-secondary-300 dark:border-secondary-600 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+									className="block w-full sm:w-52 sm:flex-shrink-0 pl-3 pr-10 py-2 text-base border-secondary-300 dark:border-secondary-600 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm rounded-md bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
 								>
-									<option value="all">All Updates Status</option>
-									<option value="available">Has Updates</option>
-									<option value="none">Up to Date</option>
+									{UPDATE_STATUS_FILTERS.map((option) => (
+										<option key={option.value} value={option.value}>
+											{option.label}
+										</option>
+									))}
 								</select>
 							</>
 						)}
@@ -1081,7 +1176,7 @@ const Docker = () => {
 									No images found
 								</h3>
 								<p className="mt-1 text-sm text-secondary-500">
-									{searchTerm
+									{searchTerm || updatesFilter !== "all"
 										? "Try adjusting your search filters"
 										: "No Docker images detected"}
 								</p>
@@ -1102,7 +1197,7 @@ const Docker = () => {
 													<div className="text-base font-semibold text-secondary-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 truncate">
 														{image.repository}
 													</div>
-													<div className="text-sm text-secondary-500 dark:text-white">
+													<div className="text-sm text-secondary-500 dark:text-white truncate">
 														Tag: {image.tag}
 													</div>
 												</div>
@@ -1113,16 +1208,16 @@ const Docker = () => {
 												<div>
 													{getSourceBadge(image.source, image.repository)}
 												</div>
-												{image.hasUpdates ? (
-													<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
-														<AlertTriangle className="h-3 w-3 mr-1" />
-														Updates Available
-													</span>
-												) : (
-													<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-														Up to date
-													</span>
-												)}
+												<div className="flex flex-wrap items-center gap-1">
+													<UpdateStatusBadge
+														status={image.update_status}
+														checkedAt={image.update_check?.checked_at}
+														reason={image.update_check?.reason}
+													/>
+													<RecreateNeededBadge
+														count={image.containers_needing_recreate}
+													/>
+												</div>
 											</div>
 
 											{/* Containers Count */}
@@ -1166,43 +1261,43 @@ const Docker = () => {
 									<table className="min-w-full divide-y divide-secondary-200 dark:divide-secondary-600">
 										<thead className="bg-secondary-50 dark:bg-secondary-700">
 											<tr>
-												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap">
 													<button
 														type="button"
 														onClick={() => handleSort("repository")}
-														className="flex items-center gap-2 hover:text-secondary-700"
+														className="flex items-center gap-1 hover:text-secondary-700 dark:hover:text-secondary-200"
 													>
 														Repository
 														{getSortIcon("repository")}
 													</button>
 												</th>
-												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap">
 													<button
 														type="button"
 														onClick={() => handleSort("tag")}
-														className="flex items-center gap-2 hover:text-secondary-700"
+														className="flex items-center gap-1 hover:text-secondary-700 dark:hover:text-secondary-200"
 													>
 														Tag
 														{getSortIcon("tag")}
 													</button>
 												</th>
-												<th className="px-4 py-2 text-center text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap">
 													Source
 												</th>
-												<th className="px-4 py-2 text-center text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap">
 													<button
 														type="button"
 														onClick={() => handleSort("containers")}
-														className="flex items-center gap-2 hover:text-secondary-700"
+														className="flex items-center gap-1 hover:text-secondary-700 dark:hover:text-secondary-200"
 													>
 														Containers
 														{getSortIcon("containers")}
 													</button>
 												</th>
-												<th className="px-4 py-2 text-center text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap">
 													Updates
 												</th>
-												<th className="px-4 py-2 text-center text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider">
+												<th className="px-4 py-2 text-left text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap">
 													Actions
 												</th>
 											</tr>
@@ -1213,42 +1308,46 @@ const Docker = () => {
 													key={image.id}
 													className="hover:bg-secondary-50 dark:hover:bg-secondary-700 transition-colors"
 												>
-													<td className="px-4 py-2 whitespace-nowrap">
-														<div className="flex items-center gap-2">
+													<td className="px-4 py-2 whitespace-nowrap max-w-xs">
+														<div className="flex items-center gap-2 min-w-0">
 															<Package className="h-4 w-4 text-secondary-400 dark:text-white flex-shrink-0" />
 															<Link
 																to={`/docker/images/${image.id}`}
 																className="text-sm font-medium text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300 truncate"
+																title={image.repository}
 															>
 																{image.repository}
 															</Link>
 														</div>
 													</td>
 													<td className="px-4 py-2 whitespace-nowrap">
-														<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-secondary-100 text-secondary-800 dark:bg-secondary-700 dark:text-secondary-200">
+														<span
+															className="badge-secondary font-mono max-w-[12rem] truncate inline-block align-middle"
+															title={image.tag}
+														>
 															{image.tag}
 														</span>
 													</td>
-													<td className="px-4 py-2 whitespace-nowrap text-center">
+													<td className="px-4 py-2 whitespace-nowrap">
 														{getSourceBadge(image.source, image.repository)}
 													</td>
-													<td className="px-4 py-2 whitespace-nowrap text-center text-sm text-secondary-900 dark:text-white">
+													<td className="px-4 py-2 whitespace-nowrap text-sm text-secondary-900 dark:text-white">
 														{image._count?.docker_containers || 0}
 													</td>
-													<td className="px-4 py-2 whitespace-nowrap text-center">
-														{image.hasUpdates ? (
-															<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
-																<AlertTriangle className="h-3 w-3 mr-1" />
-																Available
-															</span>
-														) : (
-															<span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-																Up to date
-															</span>
-														)}
+													<td className="px-4 py-2 whitespace-nowrap">
+														<div className="flex flex-wrap items-center gap-1">
+															<UpdateStatusBadge
+																status={image.update_status}
+																checkedAt={image.update_check?.checked_at}
+																reason={image.update_check?.reason}
+															/>
+															<RecreateNeededBadge
+																count={image.containers_needing_recreate}
+															/>
+														</div>
 													</td>
-													<td className="px-4 py-2 whitespace-nowrap text-center">
-														<div className="flex items-center justify-center gap-3">
+													<td className="px-4 py-2 whitespace-nowrap">
+														<div className="flex items-center gap-3">
 															<Link
 																to={`/docker/images/${image.id}`}
 																className="text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300 inline-flex items-center"
@@ -2042,280 +2141,291 @@ const Docker = () => {
 
 			{/* Delete Container Modal */}
 			{deleteContainerModal && (
-				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-					<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 max-w-md w-full mx-4">
-						<div className="flex items-start mb-4">
-							<div className="flex-shrink-0">
-								<AlertTriangle className="h-6 w-6 text-red-600" />
-							</div>
-							<div className="ml-3 flex-1">
-								<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
-									Delete Container
-								</h3>
-								<div className="mt-2 text-sm text-secondary-600 dark:text-white">
-									<p className="mb-2">
-										Are you sure you want to delete this container from the
-										inventory?
-									</p>
-									<div className="bg-secondary-100 dark:bg-secondary-700 p-3 rounded-md">
-										<p className="font-medium text-secondary-900 dark:text-white">
-											{deleteContainerModal.name}
+				<ModalPortal>
+					<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120]">
+						<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 max-w-md w-full mx-4">
+							<div className="flex items-start mb-4">
+								<div className="flex-shrink-0">
+									<AlertTriangle className="h-6 w-6 text-red-600" />
+								</div>
+								<div className="ml-3 flex-1">
+									<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+										Delete Container
+									</h3>
+									<div className="mt-2 text-sm text-secondary-600 dark:text-white">
+										<p className="mb-2">
+											Are you sure you want to delete this container from the
+											inventory?
 										</p>
-										<p className="text-xs text-secondary-600 dark:text-white mt-1">
-											Image: {deleteContainerModal.image_name}:
-											{deleteContainerModal.image_tag}
-										</p>
-										<p className="text-xs text-secondary-600 dark:text-white">
-											Host:{" "}
-											{deleteContainerModal.host?.friendly_name || "Unknown"}
+										<div className="bg-secondary-100 dark:bg-secondary-700 p-3 rounded-md">
+											<p className="font-medium text-secondary-900 dark:text-white">
+												{deleteContainerModal.name}
+											</p>
+											<p className="text-xs text-secondary-600 dark:text-white mt-1">
+												Image: {deleteContainerModal.image_name}:
+												{deleteContainerModal.image_tag}
+											</p>
+											<p className="text-xs text-secondary-600 dark:text-white">
+												Host:{" "}
+												{deleteContainerModal.host?.friendly_name || "Unknown"}
+											</p>
+										</div>
+										<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
+											⚠️ This only removes the container from PatchMon's
+											inventory. It does NOT stop or delete the actual Docker
+											container on the host.
 										</p>
 									</div>
-									<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
-										⚠️ This only removes the container from PatchMon's inventory.
-										It does NOT stop or delete the actual Docker container on
-										the host.
-									</p>
 								</div>
 							</div>
-						</div>
-						<div className="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse gap-3">
-							<button
-								type="button"
-								onClick={() =>
-									deleteContainerMutation.mutate(deleteContainerModal.id)
-								}
-								disabled={deleteContainerMutation.isPending}
-								className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								{deleteContainerMutation.isPending
-									? "Deleting..."
-									: "Delete from Inventory"}
-							</button>
-							<button
-								type="button"
-								onClick={() => setDeleteContainerModal(null)}
-								disabled={deleteContainerMutation.isPending}
-								className="mt-3 w-full inline-flex justify-center rounded-md border border-secondary-300 dark:border-secondary-600 shadow-sm px-4 py-2 bg-white dark:bg-secondary-700 text-base font-medium text-secondary-700 dark:text-secondary-200 hover:bg-secondary-50 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:mt-0 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								Cancel
-							</button>
+							<div className="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse gap-3">
+								<button
+									type="button"
+									onClick={() =>
+										deleteContainerMutation.mutate(deleteContainerModal.id)
+									}
+									disabled={deleteContainerMutation.isPending}
+									className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									{deleteContainerMutation.isPending
+										? "Deleting..."
+										: "Delete from Inventory"}
+								</button>
+								<button
+									type="button"
+									onClick={() => setDeleteContainerModal(null)}
+									disabled={deleteContainerMutation.isPending}
+									className="mt-3 w-full inline-flex justify-center rounded-md border border-secondary-300 dark:border-secondary-600 shadow-sm px-4 py-2 bg-white dark:bg-secondary-700 text-base font-medium text-secondary-700 dark:text-secondary-200 hover:bg-secondary-50 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:mt-0 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									Cancel
+								</button>
+							</div>
 						</div>
 					</div>
-				</div>
+				</ModalPortal>
 			)}
 
 			{/* Delete Image Modal */}
 			{deleteImageModal && (
-				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-					<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 max-w-md w-full mx-4">
-						<div className="flex items-start mb-4">
-							<div className="flex-shrink-0">
-								<AlertTriangle className="h-6 w-6 text-red-600" />
-							</div>
-							<div className="ml-3 flex-1">
-								<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
-									Delete Image
-								</h3>
-								<div className="mt-2 text-sm text-secondary-600 dark:text-white">
-									<p className="mb-2">
-										Are you sure you want to delete this image from the
-										inventory?
-									</p>
-									<div className="bg-secondary-100 dark:bg-secondary-700 p-3 rounded-md">
-										<p className="font-medium text-secondary-900 dark:text-white">
-											{deleteImageModal.repository}:{deleteImageModal.tag}
+				<ModalPortal>
+					<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120]">
+						<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 max-w-md w-full mx-4">
+							<div className="flex items-start mb-4">
+								<div className="flex-shrink-0">
+									<AlertTriangle className="h-6 w-6 text-red-600" />
+								</div>
+								<div className="ml-3 flex-1">
+									<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+										Delete Image
+									</h3>
+									<div className="mt-2 text-sm text-secondary-600 dark:text-white">
+										<p className="mb-2">
+											Are you sure you want to delete this image from the
+											inventory?
 										</p>
-										<p className="text-xs text-secondary-600 dark:text-white mt-1">
-											Source: {deleteImageModal.source}
-										</p>
-										<p className="text-xs text-secondary-600 dark:text-white">
-											Containers using this:{" "}
-											{deleteImageModal._count?.docker_containers || 0}
-										</p>
+										<div className="bg-secondary-100 dark:bg-secondary-700 p-3 rounded-md">
+											<p className="font-medium text-secondary-900 dark:text-white">
+												{deleteImageModal.repository}:{deleteImageModal.tag}
+											</p>
+											<p className="text-xs text-secondary-600 dark:text-white mt-1">
+												Source: {deleteImageModal.source}
+											</p>
+											<p className="text-xs text-secondary-600 dark:text-white">
+												Containers using this:{" "}
+												{deleteImageModal._count?.docker_containers || 0}
+											</p>
+										</div>
+										{deleteImageModal._count?.docker_containers > 0 ? (
+											<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
+												⚠️ Cannot delete: This image is in use by{" "}
+												{deleteImageModal._count.docker_containers}{" "}
+												container(s). Delete the containers first.
+											</p>
+										) : (
+											<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
+												⚠️ This only removes the image from PatchMon's inventory.
+												It does NOT delete the actual Docker image from hosts.
+											</p>
+										)}
 									</div>
-									{deleteImageModal._count?.docker_containers > 0 ? (
-										<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
-											⚠️ Cannot delete: This image is in use by{" "}
-											{deleteImageModal._count.docker_containers} container(s).
-											Delete the containers first.
-										</p>
-									) : (
-										<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
-											⚠️ This only removes the image from PatchMon's inventory.
-											It does NOT delete the actual Docker image from hosts.
-										</p>
-									)}
 								</div>
 							</div>
-						</div>
-						<div className="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse gap-3">
-							<button
-								type="button"
-								onClick={() => deleteImageMutation.mutate(deleteImageModal.id)}
-								disabled={
-									deleteImageMutation.isPending ||
-									deleteImageModal._count?.docker_containers > 0
-								}
-								className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								{deleteImageMutation.isPending
-									? "Deleting..."
-									: "Delete from Inventory"}
-							</button>
-							<button
-								type="button"
-								onClick={() => setDeleteImageModal(null)}
-								disabled={deleteImageMutation.isPending}
-								className="mt-3 w-full inline-flex justify-center rounded-md border border-secondary-300 dark:border-secondary-600 shadow-sm px-4 py-2 bg-white dark:bg-secondary-700 text-base font-medium text-secondary-700 dark:text-secondary-200 hover:bg-secondary-50 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:mt-0 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								Cancel
-							</button>
+							<div className="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse gap-3">
+								<button
+									type="button"
+									onClick={() =>
+										deleteImageMutation.mutate(deleteImageModal.id)
+									}
+									disabled={
+										deleteImageMutation.isPending ||
+										deleteImageModal._count?.docker_containers > 0
+									}
+									className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									{deleteImageMutation.isPending
+										? "Deleting..."
+										: "Delete from Inventory"}
+								</button>
+								<button
+									type="button"
+									onClick={() => setDeleteImageModal(null)}
+									disabled={deleteImageMutation.isPending}
+									className="mt-3 w-full inline-flex justify-center rounded-md border border-secondary-300 dark:border-secondary-600 shadow-sm px-4 py-2 bg-white dark:bg-secondary-700 text-base font-medium text-secondary-700 dark:text-secondary-200 hover:bg-secondary-50 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:mt-0 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									Cancel
+								</button>
+							</div>
 						</div>
 					</div>
-				</div>
+				</ModalPortal>
 			)}
 
 			{/* Delete Volume Modal */}
 			{deleteVolumeModal && (
-				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-					<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 max-w-md w-full mx-4">
-						<div className="flex items-start mb-4">
-							<div className="flex-shrink-0">
-								<AlertTriangle className="h-6 w-6 text-red-600" />
-							</div>
-							<div className="ml-3 flex-1">
-								<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
-									Delete Volume
-								</h3>
-								<div className="mt-2 text-sm text-secondary-600 dark:text-white">
-									<p className="mb-2">
-										Are you sure you want to delete this volume from the
-										inventory?
-									</p>
-									<div className="bg-secondary-100 dark:bg-secondary-700 p-3 rounded-md">
-										<p className="font-medium text-secondary-900 dark:text-white">
-											{deleteVolumeModal.name}
+				<ModalPortal>
+					<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120]">
+						<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 max-w-md w-full mx-4">
+							<div className="flex items-start mb-4">
+								<div className="flex-shrink-0">
+									<AlertTriangle className="h-6 w-6 text-red-600" />
+								</div>
+								<div className="ml-3 flex-1">
+									<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+										Delete Volume
+									</h3>
+									<div className="mt-2 text-sm text-secondary-600 dark:text-white">
+										<p className="mb-2">
+											Are you sure you want to delete this volume from the
+											inventory?
 										</p>
-										<p className="text-xs text-secondary-600 dark:text-white mt-1">
-											Driver: {deleteVolumeModal.driver}
-										</p>
-										<p className="text-xs text-secondary-600 dark:text-white">
-											Host:{" "}
-											{deleteVolumeModal.hosts?.friendly_name ||
-												deleteVolumeModal.hosts?.hostname ||
-												"Unknown"}
-										</p>
-										{deleteVolumeModal.ref_count > 0 && (
-											<p className="text-xs text-secondary-600 dark:text-white">
-												In use by: {deleteVolumeModal.ref_count} container
-												{deleteVolumeModal.ref_count !== 1 ? "s" : ""}
+										<div className="bg-secondary-100 dark:bg-secondary-700 p-3 rounded-md">
+											<p className="font-medium text-secondary-900 dark:text-white">
+												{deleteVolumeModal.name}
 											</p>
-										)}
+											<p className="text-xs text-secondary-600 dark:text-white mt-1">
+												Driver: {deleteVolumeModal.driver}
+											</p>
+											<p className="text-xs text-secondary-600 dark:text-white">
+												Host:{" "}
+												{deleteVolumeModal.hosts?.friendly_name ||
+													deleteVolumeModal.hosts?.hostname ||
+													"Unknown"}
+											</p>
+											{deleteVolumeModal.ref_count > 0 && (
+												<p className="text-xs text-secondary-600 dark:text-white">
+													In use by: {deleteVolumeModal.ref_count} container
+													{deleteVolumeModal.ref_count !== 1 ? "s" : ""}
+												</p>
+											)}
+										</div>
+										<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
+											⚠️ This only removes the volume from PatchMon's inventory.
+											It does NOT delete the actual Docker volume from the host.
+										</p>
 									</div>
-									<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
-										⚠️ This only removes the volume from PatchMon's inventory. It
-										does NOT delete the actual Docker volume from the host.
-									</p>
 								</div>
 							</div>
-						</div>
-						<div className="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse gap-3">
-							<button
-								type="button"
-								onClick={() =>
-									deleteVolumeMutation.mutate(deleteVolumeModal.id)
-								}
-								disabled={deleteVolumeMutation.isPending}
-								className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								{deleteVolumeMutation.isPending
-									? "Deleting..."
-									: "Delete from Inventory"}
-							</button>
-							<button
-								type="button"
-								onClick={() => setDeleteVolumeModal(null)}
-								disabled={deleteVolumeMutation.isPending}
-								className="mt-3 w-full inline-flex justify-center rounded-md border border-secondary-300 dark:border-secondary-600 shadow-sm px-4 py-2 bg-white dark:bg-secondary-700 text-base font-medium text-secondary-700 dark:text-secondary-200 hover:bg-secondary-50 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:mt-0 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								Cancel
-							</button>
+							<div className="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse gap-3">
+								<button
+									type="button"
+									onClick={() =>
+										deleteVolumeMutation.mutate(deleteVolumeModal.id)
+									}
+									disabled={deleteVolumeMutation.isPending}
+									className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									{deleteVolumeMutation.isPending
+										? "Deleting..."
+										: "Delete from Inventory"}
+								</button>
+								<button
+									type="button"
+									onClick={() => setDeleteVolumeModal(null)}
+									disabled={deleteVolumeMutation.isPending}
+									className="mt-3 w-full inline-flex justify-center rounded-md border border-secondary-300 dark:border-secondary-600 shadow-sm px-4 py-2 bg-white dark:bg-secondary-700 text-base font-medium text-secondary-700 dark:text-secondary-200 hover:bg-secondary-50 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:mt-0 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									Cancel
+								</button>
+							</div>
 						</div>
 					</div>
-				</div>
+				</ModalPortal>
 			)}
 
 			{/* Delete Network Modal */}
 			{deleteNetworkModal && (
-				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-					<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 max-w-md w-full mx-4">
-						<div className="flex items-start mb-4">
-							<div className="flex-shrink-0">
-								<AlertTriangle className="h-6 w-6 text-red-600" />
-							</div>
-							<div className="ml-3 flex-1">
-								<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
-									Delete Network
-								</h3>
-								<div className="mt-2 text-sm text-secondary-600 dark:text-white">
-									<p className="mb-2">
-										Are you sure you want to delete this network from the
-										inventory?
-									</p>
-									<div className="bg-secondary-100 dark:bg-secondary-700 p-3 rounded-md">
-										<p className="font-medium text-secondary-900 dark:text-white">
-											{deleteNetworkModal.name}
+				<ModalPortal>
+					<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120]">
+						<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 max-w-md w-full mx-4">
+							<div className="flex items-start mb-4">
+								<div className="flex-shrink-0">
+									<AlertTriangle className="h-6 w-6 text-red-600" />
+								</div>
+								<div className="ml-3 flex-1">
+									<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+										Delete Network
+									</h3>
+									<div className="mt-2 text-sm text-secondary-600 dark:text-white">
+										<p className="mb-2">
+											Are you sure you want to delete this network from the
+											inventory?
 										</p>
-										<p className="text-xs text-secondary-600 dark:text-white mt-1">
-											Driver: {deleteNetworkModal.driver}
-										</p>
-										<p className="text-xs text-secondary-600 dark:text-white">
-											Scope: {deleteNetworkModal.scope}
-										</p>
-										<p className="text-xs text-secondary-600 dark:text-white">
-											Host:{" "}
-											{deleteNetworkModal.hosts?.friendly_name ||
-												deleteNetworkModal.hosts?.hostname ||
-												"Unknown"}
-										</p>
-										{deleteNetworkModal.container_count > 0 && (
-											<p className="text-xs text-secondary-600 dark:text-white">
-												Connected containers:{" "}
-												{deleteNetworkModal.container_count}
+										<div className="bg-secondary-100 dark:bg-secondary-700 p-3 rounded-md">
+											<p className="font-medium text-secondary-900 dark:text-white">
+												{deleteNetworkModal.name}
 											</p>
-										)}
+											<p className="text-xs text-secondary-600 dark:text-white mt-1">
+												Driver: {deleteNetworkModal.driver}
+											</p>
+											<p className="text-xs text-secondary-600 dark:text-white">
+												Scope: {deleteNetworkModal.scope}
+											</p>
+											<p className="text-xs text-secondary-600 dark:text-white">
+												Host:{" "}
+												{deleteNetworkModal.hosts?.friendly_name ||
+													deleteNetworkModal.hosts?.hostname ||
+													"Unknown"}
+											</p>
+											{deleteNetworkModal.container_count > 0 && (
+												<p className="text-xs text-secondary-600 dark:text-white">
+													Connected containers:{" "}
+													{deleteNetworkModal.container_count}
+												</p>
+											)}
+										</div>
+										<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
+											⚠️ This only removes the network from PatchMon's inventory.
+											It does NOT delete the actual Docker network from the
+											host.
+										</p>
 									</div>
-									<p className="mt-3 text-red-600 dark:text-red-400 font-medium">
-										⚠️ This only removes the network from PatchMon's inventory.
-										It does NOT delete the actual Docker network from the host.
-									</p>
 								</div>
 							</div>
-						</div>
-						<div className="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse gap-3">
-							<button
-								type="button"
-								onClick={() =>
-									deleteNetworkMutation.mutate(deleteNetworkModal.id)
-								}
-								disabled={deleteNetworkMutation.isPending}
-								className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								{deleteNetworkMutation.isPending
-									? "Deleting..."
-									: "Delete from Inventory"}
-							</button>
-							<button
-								type="button"
-								onClick={() => setDeleteNetworkModal(null)}
-								disabled={deleteNetworkMutation.isPending}
-								className="mt-3 w-full inline-flex justify-center rounded-md border border-secondary-300 dark:border-secondary-600 shadow-sm px-4 py-2 bg-white dark:bg-secondary-700 text-base font-medium text-secondary-700 dark:text-secondary-200 hover:bg-secondary-50 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:mt-0 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-							>
-								Cancel
-							</button>
+							<div className="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse gap-3">
+								<button
+									type="button"
+									onClick={() =>
+										deleteNetworkMutation.mutate(deleteNetworkModal.id)
+									}
+									disabled={deleteNetworkMutation.isPending}
+									className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									{deleteNetworkMutation.isPending
+										? "Deleting..."
+										: "Delete from Inventory"}
+								</button>
+								<button
+									type="button"
+									onClick={() => setDeleteNetworkModal(null)}
+									disabled={deleteNetworkMutation.isPending}
+									className="mt-3 w-full inline-flex justify-center rounded-md border border-secondary-300 dark:border-secondary-600 shadow-sm px-4 py-2 bg-white dark:bg-secondary-700 text-base font-medium text-secondary-700 dark:text-secondary-200 hover:bg-secondary-50 dark:hover:bg-secondary-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:mt-0 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+								>
+									Cancel
+								</button>
+							</div>
 						</div>
 					</div>
-				</div>
+				</ModalPortal>
 			)}
 		</div>
 	);

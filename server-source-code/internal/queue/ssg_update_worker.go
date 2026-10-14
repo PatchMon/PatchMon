@@ -55,7 +55,10 @@ func (h *SSGUpdateCheckHandler) ProcessTask(ctx context.Context, t *asynq.Task) 
 	}
 
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d, err := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		if err != nil {
+			return err
+		}
 		th := tenantHostFromPayload(t.Payload())
 		n := h.checkDB(ctx, d, th, serverVersion)
 		h.log.Info("ssg-update-check completed", "server_version", serverVersion, "enqueued", n)
@@ -185,7 +188,10 @@ func (h *SSGUpgradeHandler) ProcessTask(ctx context.Context, t *asynq.Task) erro
 		return err
 	}
 
-	d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+	ctx, d, err := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+	if err != nil {
+		return err
+	}
 	taskID, _ := asynq.GetTaskID(ctx)
 	retryCount, _ := asynq.GetRetryCount(ctx)
 	attempt := int32(retryCount + 1)

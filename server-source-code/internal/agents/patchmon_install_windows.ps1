@@ -1,6 +1,6 @@
 # PatchMon Agent Installation Script for Windows (Server-Provided Version)
 # The server injects PATCHMON_SERVER_URL, PATCHMON_BOOTSTRAP_TOKEN, PATCHMON_IGNORE_SSL
-# as env vars at the top of this script before serving it.
+# and PATCHMON_HOST_ID as env vars at the top of this script before serving it.
 
 $ErrorActionPreference = "Stop"
 
@@ -84,6 +84,14 @@ $APIKey        = $env:PATCHMON_API_KEY
 $InstallPath   = "C:\Program Files\PatchMon"
 $ConfigPath    = "C:\ProgramData\PatchMon"
 $SkipSslVerify = ($env:PATCHMON_IGNORE_SSL -eq "true" -or $env:PATCHMON_IGNORE_SSL -eq "1")
+$HostId        = if ($env:PATCHMON_HOST_ID -match '^[A-Za-z0-9-]{1,64}$') { $env:PATCHMON_HOST_ID } else { "" }
+
+# Check if running as Administrator
+$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Error "This script must be run as Administrator. Right-click PowerShell and select 'Run as Administrator'."
+    exit 1
+}
 
 # Honor server's ignore SSL setting (injected when Settings > Agent Updates > Ignore SSL is enabled)
 if ($SkipSslVerify) {
@@ -106,16 +114,15 @@ if ($BootstrapToken -and $ServerURL) {
         }
         Write-Host "Credentials received successfully." -ForegroundColor Green
     } catch {
+        $serverResponse = $_.ErrorDetails.Message
+        if ($serverResponse -match '"code"\s*:\s*"(cors_mismatch|host_mismatch)"') {
+            Write-Host "Server response: $serverResponse"
+            Write-Error "The PatchMon server rejected the URL this host used ($($Matches[1])). The hostname in Settings > Server URL must be listed in CORS_ORIGIN."
+            exit 1
+        }
         Write-Error "Failed to fetch credentials: $($_.Exception.Message). Bootstrap token may have expired. Please request a new installation script."
         exit 1
     }
-}
-
-# Check if running as Administrator
-$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $isAdmin) {
-    Write-Error "This script must be run as Administrator. Right-click PowerShell and select 'Run as Administrator'."
-    exit 1
 }
 
 Write-Host "PatchMon Agent Installation for Windows" -ForegroundColor Green
@@ -216,6 +223,7 @@ credentials_file: '$($ConfigPath -replace "'", "''")\credentials.yml'
 log_file: '$($ConfigPath -replace "'", "''")\patchmon-agent.log'
 log_level: 'info'
 skip_ssl_verify: $($SkipSslVerify.ToString().ToLower())
+host_id: '$HostId'
 "@
     Set-Content -Path $configFile -Value $configContent -Encoding UTF8
 } else {
@@ -253,8 +261,15 @@ if ($ServerURL -and $APIID -and $APIKey) {
     if ($SkipSslVerify) {
         $env:PATCHMON_SKIP_SSL_VERIFY = "true"
     }
+    $setApiArgs = @("--config", $configFile, "config", "set-api", $APIID, $APIKey, $ServerURL)
     try {
-        Invoke-AgentBinary -Path $targetPath -AgentArgs @("--config", $configFile, "config", "set-api", $APIID, $APIKey, $ServerURL)
+        if ($HostId) {
+            Invoke-AgentBinary -Path $targetPath -AgentArgs ($setApiArgs + @("--host-id", $HostId))
+        }
+        # An agent older than 2.1.5 rejects --host-id; it learns the host ID later instead.
+        if (-not $HostId -or $LASTEXITCODE -ne 0) {
+            Invoke-AgentBinary -Path $targetPath -AgentArgs $setApiArgs
+        }
     } catch {
         Show-AgentLaunchFailure -Path $targetPath -InstallDir $InstallPath -ConfigFile $configFile -Reason $_.Exception.Message
         exit 1

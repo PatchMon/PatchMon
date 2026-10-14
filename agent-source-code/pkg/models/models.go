@@ -99,6 +99,8 @@ type ReportPayload struct {
 	Architecture           string       `json:"architecture"`
 	AgentVersion           string       `json:"agentVersion"`
 	MachineID              string       `json:"machineId"`
+	HostID                 string       `json:"hostId,omitempty"`
+	ConfigVersion          string       `json:"configVersion,omitempty"`
 	KernelVersion          string       `json:"kernelVersion"`
 	InstalledKernelVersion string       `json:"installedKernelVersion,omitempty"`
 	SELinuxStatus          string       `json:"selinuxStatus"`
@@ -180,7 +182,10 @@ type PingRequest struct {
 	// AgentExecutionMs is the wall-clock time in milliseconds the agent
 	// spent collecting the data shipped in this ping. Used by the server's
 	// Agent Activity feed; older servers ignore it.
-	AgentExecutionMs *int `json:"agentExecutionMs,omitempty"`
+	AgentExecutionMs *int   `json:"agentExecutionMs,omitempty"`
+	HostID           string `json:"hostId,omitempty"`
+	ConfigVersion    string `json:"configVersion,omitempty"`
+	MachineID        string `json:"machineId,omitempty"`
 }
 
 // Section identifiers used in PingResponse.RequestFull and
@@ -215,6 +220,9 @@ type PingResponse struct {
 	// what the agent shipped. Empty array == nothing changed, agent stays
 	// quiet. Only meaningful when HashGate is true.
 	RequestFull []string `json:"requestFull,omitempty"`
+	// Servers older than 2.1.5 omit HostID.
+	HostID         string `json:"hostId,omitempty"`
+	HostIDMismatch bool   `json:"hostIdMismatch,omitempty"`
 }
 
 // UpdateResponse represents server update response
@@ -225,6 +233,7 @@ type UpdateResponse struct {
 	SecurityUpdates   int                `json:"securityUpdates,omitempty"`
 	AutoUpdate        *AutoUpdateInfo    `json:"autoUpdate,omitempty"`
 	CrontabUpdate     *CrontabUpdateInfo `json:"crontabUpdate,omitempty"`
+	HostID            string             `json:"hostId,omitempty"`
 }
 
 // AutoUpdateInfo represents agent auto-update information
@@ -269,10 +278,14 @@ type HostSettingsResponse struct {
 
 // IntegrationStatusResponse represents integration status response from server
 type IntegrationStatusResponse struct {
-	Success                      bool            `json:"success"`
-	Integrations                 map[string]bool `json:"integrations"`
-	ComplianceOpenscapEnabled    *bool           `json:"compliance_openscap_enabled,omitempty"`
-	ComplianceDockerBenchEnabled *bool           `json:"compliance_docker_bench_enabled,omitempty"`
+	Success      bool            `json:"success"`
+	Integrations map[string]bool `json:"integrations"`
+	// ComplianceMode carries the three-state mode ("disabled", "on-demand",
+	// "enabled") that the boolean in Integrations cannot express. Empty when
+	// the server predates the field.
+	ComplianceMode               string `json:"compliance_mode,omitempty"`
+	ComplianceOpenscapEnabled    *bool  `json:"compliance_openscap_enabled,omitempty"`
+	ComplianceDockerBenchEnabled *bool  `json:"compliance_docker_bench_enabled,omitempty"`
 }
 
 // InstallEvent represents a single notable event during scanner installation
@@ -292,6 +305,7 @@ type IntegrationSetupStatus struct {
 	Components    map[string]string         `json:"components,omitempty"` // Component name -> status
 	ScannerInfo   *ComplianceScannerDetails `json:"scanner_info,omitempty"`
 	InstallEvents []InstallEvent            `json:"install_events,omitempty"`
+	InstallJobID  string                    `json:"install_job_id,omitempty"`
 }
 
 // ComplianceScannerDetails contains detailed OpenSCAP scanner information
@@ -360,15 +374,24 @@ type Credentials struct {
 
 // Config represents agent configuration
 type Config struct {
-	PatchmonServer            string                 `yaml:"patchmon_server" mapstructure:"patchmon_server"`
-	APIVersion                string                 `yaml:"api_version" mapstructure:"api_version"`
-	CredentialsFile           string                 `yaml:"credentials_file" mapstructure:"credentials_file"`
-	LogFile                   string                 `yaml:"log_file" mapstructure:"log_file"`
-	LogLevel                  string                 `yaml:"log_level" mapstructure:"log_level"`
-	SkipSSLVerify             bool                   `yaml:"skip_ssl_verify" mapstructure:"skip_ssl_verify"`
-	UpdateInterval            int                    `yaml:"update_interval" mapstructure:"update_interval"`                             // Interval in minutes
-	ReportOffset              int                    `yaml:"report_offset" mapstructure:"report_offset"`                                 // Offset in seconds
-	PackageCacheRefreshMode   string                 `yaml:"package_cache_refresh_mode" mapstructure:"package_cache_refresh_mode"`       // always, if_stale, never
-	PackageCacheRefreshMaxAge int                    `yaml:"package_cache_refresh_max_age" mapstructure:"package_cache_refresh_max_age"` // minutes
-	Integrations              map[string]interface{} `yaml:"integrations" mapstructure:"integrations"`                                   // Supports bool for simple integrations, string for compliance mode
+	PatchmonServer            string                  `yaml:"patchmon_server" mapstructure:"patchmon_server"`
+	APIVersion                string                  `yaml:"api_version" mapstructure:"api_version"`
+	CredentialsFile           string                  `yaml:"credentials_file" mapstructure:"credentials_file"`
+	LogFile                   string                  `yaml:"log_file" mapstructure:"log_file"`
+	LogLevel                  string                  `yaml:"log_level" mapstructure:"log_level"`
+	SkipSSLVerify             bool                    `yaml:"skip_ssl_verify" mapstructure:"skip_ssl_verify"`
+	UpdateInterval            int                     `yaml:"update_interval" mapstructure:"update_interval"`                             // Interval in minutes
+	ReportOffset              int                     `yaml:"report_offset" mapstructure:"report_offset"`                                 // Offset in seconds
+	PackageCacheRefreshMode   string                  `yaml:"package_cache_refresh_mode" mapstructure:"package_cache_refresh_mode"`       // always, if_stale, never
+	PackageCacheRefreshMaxAge int                     `yaml:"package_cache_refresh_max_age" mapstructure:"package_cache_refresh_max_age"` // minutes
+	Integrations              map[string]interface{}  `yaml:"integrations" mapstructure:"integrations"`                                   // Supports bool for simple integrations, string for compliance mode
+	DockerUpdateCheck         DockerUpdateCheckConfig `yaml:"docker_update_check" mapstructure:"docker_update_check"`
+	HostID                    string                  `yaml:"host_id" mapstructure:"host_id"`
+	ConfigVersion             string                  `yaml:"config_version" mapstructure:"config_version"`
+}
+
+// DockerUpdateCheckConfig controls the agent-side Docker image update check.
+type DockerUpdateCheckConfig struct {
+	Enabled       *bool `yaml:"enabled" mapstructure:"enabled"`
+	IntervalHours int   `yaml:"interval_hours" mapstructure:"interval_hours"`
 }

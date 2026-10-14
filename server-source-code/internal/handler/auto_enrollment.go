@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agents"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/clientip"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
@@ -20,23 +22,38 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/crypto/bcrypt"
 )
 
+type enrollHostStore interface {
+	Count(ctx context.Context) (int, error)
+	GetByID(ctx context.Context, id string) (*models.Host, error)
+	GetByMachineIDAndName(ctx context.Context, machineID, friendlyName string) (*models.Host, error)
+	Create(ctx context.Context, h *models.Host) error
+	SetHostGroups(ctx context.Context, hostID string, groupIDs []string) error
+	ReissueApiKey(ctx context.Context, id, apiKeyHash string) (bool, error)
+}
+
+type agentPresence interface {
+	Get(apiID string) agentregistry.ConnectionInfo
+}
+
 type AutoEnrollmentHandler struct {
 	tokens     *store.AutoEnrollmentStore
 	hostGroups *store.HostGroupsStore
-	hosts      *store.HostsStore
+	hosts      enrollHostStore
 	settings   *store.SettingsStore
+	presence   agentPresence
 	log        *slog.Logger
 	cfg        *config.Config
 }
 
-func NewAutoEnrollmentHandler(tokens *store.AutoEnrollmentStore, hostGroups *store.HostGroupsStore, hosts *store.HostsStore, settings *store.SettingsStore, log *slog.Logger, cfg *config.Config) *AutoEnrollmentHandler {
-	return &AutoEnrollmentHandler{tokens: tokens, hostGroups: hostGroups, hosts: hosts, settings: settings, log: log, cfg: cfg}
+func NewAutoEnrollmentHandler(tokens *store.AutoEnrollmentStore, hostGroups *store.HostGroupsStore, hosts *store.HostsStore, settings *store.SettingsStore, presence agentPresence, log *slog.Logger, cfg *config.Config) *AutoEnrollmentHandler {
+	return &AutoEnrollmentHandler{tokens: tokens, hostGroups: hostGroups, hosts: hosts, settings: settings, presence: presence, log: log, cfg: cfg}
 }
 
 // List handles GET /auto-enrollment/tokens
@@ -367,7 +384,7 @@ func (h *AutoEnrollmentHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 // Enroll handles POST /auto-enrollment/enroll.
 // Auth via X-Auto-Enrollment-Key and X-Auto-Enrollment-Secret headers.
-// Body: { "friendly_name": "...", "machine_id": "...", "metadata": {...} }
+// Body: { "friendly_name": "...", "machine_id": "...", "host_id": "...", "metadata": {...} }
 func (h *AutoEnrollmentHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		Error(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -411,6 +428,48 @@ func (h *AutoEnrollmentHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var req struct {
+		FriendlyName string          `json:"friendly_name"`
+		MachineID    string          `json:"machine_id"`
+		HostID       string          `json:"host_id"`
+		Metadata     json.RawMessage `json:"metadata"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		Error(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if req.FriendlyName == "" || len(req.FriendlyName) > 255 {
+		Error(w, http.StatusBadRequest, "Friendly name is required (max 255 characters)")
+		return
+	}
+	if req.MachineID != "" && len(req.MachineID) > 255 {
+		Error(w, http.StatusBadRequest, "Machine ID must be between 1 and 255 characters if provided")
+		return
+	}
+	if req.HostID != "" && !util.ValidHostID(req.HostID) {
+		Error(w, http.StatusBadRequest, "Invalid host_id")
+		return
+	}
+
+	if req.HostID != "" {
+		existing, err := h.hosts.GetByID(ctx, req.HostID)
+		if err != nil {
+			if h.log != nil {
+				h.log.Error("auto-enrollment host_id lookup failed", "error", err)
+			}
+			Error(w, http.StatusInternalServerError, "Failed to enroll host")
+			return
+		}
+		if existing == nil {
+			if h.log != nil {
+				h.log.Info("Auto-enrollment host_id not found, enrolling as a new host", "host_id", req.HostID, "token", token.TokenName)
+			}
+		} else {
+			h.reenrolExistingHost(ctx, w, r, existing, token, req.MachineID)
+			return
+		}
+	}
+
 	// Rate limit: effective hosts_created_today (reset if new day)
 	today := time.Now().Format("2006-01-02")
 	tokenResetDate := ""
@@ -429,22 +488,193 @@ func (h *AutoEnrollmentHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		FriendlyName string          `json:"friendly_name"`
-		MachineID    string          `json:"machine_id"`
-		Metadata     json.RawMessage `json:"metadata"`
-	}
-	if err := decodeJSON(r, &req); err != nil {
-		Error(w, http.StatusBadRequest, "Invalid request body")
+	host, apiKey, ok := h.createEnrolledHost(ctx, w, req.FriendlyName, req.MachineID, token.DefaultHostGroupID, token.ID)
+	if !ok {
 		return
 	}
-	if req.FriendlyName == "" || len(req.FriendlyName) > 255 {
-		Error(w, http.StatusBadRequest, "Friendly name is required (max 255 characters)")
+
+	if err := h.tokens.IncrementHostsCreated(ctx, token.ID); err != nil {
+		if h.log != nil {
+			h.log.Error("auto-enrollment increment hosts failed", "error", err)
+		}
+	}
+
+	if h.log != nil {
+		h.log.Info("Auto-enrolled host", "friendly_name", req.FriendlyName, "host_id", host.ID, "token", token.TokenName)
+	}
+
+	JSON(w, http.StatusCreated, enrolResponse("Host enrolled successfully", host, apiKey, h.hostGroupBrief(ctx, token.DefaultHostGroupID), false))
+}
+
+func (h *AutoEnrollmentHandler) hostGroupBrief(ctx context.Context, groupID *string) *store.HostGroupBrief {
+	if groupID == nil || *groupID == "" || h.hostGroups == nil {
+		return nil
+	}
+	hg, _ := h.hostGroups.GetByID(ctx, *groupID)
+	if hg == nil {
+		return nil
+	}
+	color := ""
+	if hg.Color != nil {
+		color = *hg.Color
+	}
+	return &store.HostGroupBrief{ID: hg.ID, Name: hg.Name, Color: color}
+}
+
+func enrolResponse(message string, host *models.Host, apiKey string, hostGroup *store.HostGroupBrief, reenrolled bool) map[string]interface{} {
+	res := map[string]interface{}{
+		"message": message,
+		"host": map[string]interface{}{
+			"id":            host.ID,
+			"friendly_name": host.FriendlyName,
+			"api_id":        host.ApiID,
+			"api_key":       apiKey,
+			"host_group":    hostGroup,
+			"status":        host.Status,
+		},
+	}
+	if reenrolled {
+		res["reenrolled"] = true
+	}
+	return res
+}
+
+type reenrolOutcome int
+
+const (
+	reenrolReissue reenrolOutcome = iota
+	reenrolHostReporting
+	reenrolNotReenrollable
+	reenrolCooldown
+)
+
+const (
+	reenrolCodeHostReporting    = "host_reporting"
+	reenrolCodeNotReenrollable  = "host_not_reenrollable"
+	reenrolCodeCooldown         = "reenrol_cooldown"
+	enrolCodeMachineIDMatch     = "machine_id_match"
+	reenrolCooldownPeriod       = 60 * time.Second
+	reenrolHostReportingMessage = "This host is already reporting to PatchMon. If its agent is broken, reinstall it with the install command on the host's page, or regenerate its credentials."
+)
+
+func decideReenrol(existing *models.Host, tokenID, machineID string, agentSeen bool, now time.Time) reenrolOutcome {
+	switch {
+	case existing.HasReported() || agentSeen:
+		return reenrolHostReporting
+	case existing.EnrolmentTokenID == nil || *existing.EnrolmentTokenID != tokenID:
+		return reenrolNotReenrollable
+	case !sameEnrolMachine(existing.EnrolmentMachineID, machineID):
+		return reenrolNotReenrollable
+	case existing.CredentialsReissuedAt != nil && now.Sub(*existing.CredentialsReissuedAt) < reenrolCooldownPeriod:
+		return reenrolCooldown
+	}
+	return reenrolReissue
+}
+
+// A host_id alone is not secret, so re-issue is also bound to the machine_id
+// the row was enrolled with.
+func sameEnrolMachine(enrolled *string, machineID string) bool {
+	stored := ""
+	if enrolled != nil {
+		stored = util.NormaliseMachineID(*enrolled)
+	}
+	return stored == util.NormaliseMachineID(machineID)
+}
+
+func usableMachineID(machineID string) bool {
+	return !strings.HasPrefix(machineID, "pending-") && util.NormaliseMachineID(machineID) != ""
+}
+
+func (h *AutoEnrollmentHandler) agentSeen(apiID string) bool {
+	if h.presence == nil {
+		return false
+	}
+	info := h.presence.Get(apiID)
+	return info.Connected || info.LastConnectedAt != nil || info.DisconnectedAt != nil
+}
+
+func (h *AutoEnrollmentHandler) reenrolExistingHost(ctx context.Context, w http.ResponseWriter, r *http.Request, existing *models.Host, token db.AutoEnrollmentToken, machineID string) {
+	refuse := func(outcome reenrolOutcome) {
+		status, code, message := http.StatusConflict, reenrolCodeHostReporting, reenrolHostReportingMessage
+		switch outcome {
+		case reenrolNotReenrollable:
+			code = reenrolCodeNotReenrollable
+			message = "This host was added to PatchMon another way and cannot be re-enrolled with this token. Use the install command on the host's page."
+		case reenrolCooldown:
+			status, code = http.StatusTooManyRequests, reenrolCodeCooldown
+			message = "Credentials for this host were re-issued less than a minute ago. Try again shortly."
+		}
+		if h.log != nil {
+			h.log.Info("Auto-enrollment re-enrol refused", "code", code, "host_id", existing.ID, "token", token.TokenName, "ip", clientIPFromRequest(r))
+		}
+		body := map[string]string{"error": message, "code": code, "host_id": existing.ID}
+		if existing.EnrolmentTokenID != nil && *existing.EnrolmentTokenID == token.ID {
+			body["friendly_name"] = existing.FriendlyName
+		}
+		JSON(w, status, body)
+	}
+
+	if outcome := decideReenrol(existing, token.ID, machineID, h.agentSeen(existing.ApiID), time.Now()); outcome != reenrolReissue {
+		refuse(outcome)
 		return
 	}
-	if req.MachineID != "" && len(req.MachineID) > 255 {
-		Error(w, http.StatusBadRequest, "Machine ID must be between 1 and 255 characters if provided")
+
+	apiKey := hex.EncodeToString(mustRand(32))
+	apiKeyHash, err := bcrypt.GenerateFromPassword([]byte(apiKey), 10)
+	if err != nil {
+		if h.log != nil {
+			h.log.Error("auto-enrollment bcrypt failed", "error", err)
+		}
+		Error(w, http.StatusInternalServerError, "Failed to generate credentials")
 		return
+	}
+	reissued, err := h.hosts.ReissueApiKey(ctx, existing.ID, string(apiKeyHash))
+	if err != nil {
+		if h.log != nil {
+			h.log.Error("auto-enrollment re-issue failed", "error", err)
+		}
+		Error(w, http.StatusInternalServerError, "Failed to enroll host")
+		return
+	}
+	if !reissued {
+		current, err := h.hosts.GetByID(ctx, existing.ID)
+		if err != nil || current == nil || current.HasReported() {
+			refuse(reenrolHostReporting)
+			return
+		}
+		refuse(reenrolCooldown)
+		return
+	}
+
+	if h.log != nil {
+		h.log.Info("Auto-enrolment re-issued credentials", "host_id", existing.ID, "token", token.TokenName, "ip", clientIPFromRequest(r))
+	}
+	JSON(w, http.StatusOK, enrolResponse("Host credentials re-issued", existing, apiKey, nil, true))
+}
+
+func (h *AutoEnrollmentHandler) createEnrolledHost(ctx context.Context, w http.ResponseWriter, friendlyName, machineID string, defaultGroupID *string, tokenID string) (*models.Host, string, bool) {
+	machineID = strings.TrimSpace(machineID)
+	usable := usableMachineID(machineID)
+	if usable {
+		existing, err := h.hosts.GetByMachineIDAndName(ctx, machineID, friendlyName)
+		if err != nil {
+			if h.log != nil {
+				h.log.Error("auto-enrollment machine_id lookup failed", "error", err)
+			}
+			Error(w, http.StatusInternalServerError, "Failed to enroll host")
+			return nil, "", false
+		}
+		if existing != nil {
+			if h.log != nil {
+				h.log.Info("Auto-enrollment skipped, host already enrolled", "code", enrolCodeMachineIDMatch, "friendly_name", existing.FriendlyName, "host_id", existing.ID)
+			}
+			JSON(w, http.StatusConflict, map[string]string{
+				"error":         "Host already enrolled",
+				"code":          enrolCodeMachineIDMatch,
+				"friendly_name": existing.FriendlyName,
+			})
+			return nil, "", false
+		}
 	}
 
 	apiID := "patchmon_" + hex.EncodeToString(mustRand(8))
@@ -455,7 +685,7 @@ func (h *AutoEnrollmentHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 			h.log.Error("auto-enrollment bcrypt failed", "error", err)
 		}
 		Error(w, http.StatusInternalServerError, "Failed to generate credentials")
-		return
+		return nil, "", false
 	}
 
 	complianceEnabled := true
@@ -473,76 +703,39 @@ func (h *AutoEnrollmentHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	machineID := req.MachineID
-	if machineID == "" {
+	if !usable && !strings.HasPrefix(machineID, "pending-") {
 		machineID = "pending-" + uuid.New().String()
 	}
 
-	// Enforce host limit if a package is applied.
 	if entry := hostctx.EntryFromContext(ctx); entry != nil && entry.MaxHosts != nil {
 		count, countErr := h.hosts.Count(ctx)
 		if countErr == nil && count >= *entry.MaxHosts {
 			Error(w, http.StatusForbidden, "Host limit reached for this host's package")
-			return
+			return nil, "", false
 		}
 	}
 
-	host := &models.Host{
-		MachineID:              &machineID,
-		FriendlyName:           req.FriendlyName,
-		OSType:                 "unknown",
-		OSVersion:              "unknown",
-		Status:                 "pending",
-		ApiID:                  apiID,
-		ApiKey:                 string(apiKeyHash),
-		DockerEnabled:          false,
-		ComplianceEnabled:      complianceEnabled,
-		ComplianceOnDemandOnly: complianceOnDemandOnly,
+	host := newPendingHost(friendlyName, machineID, apiID, string(apiKeyHash))
+	host.ComplianceEnabled = complianceEnabled
+	host.ComplianceOnDemandOnly = complianceOnDemandOnly
+	if tokenID != "" {
+		host.EnrolmentTokenID = &tokenID
+	}
+	if usable {
+		host.EnrolmentMachineID = &machineID
 	}
 	if err := h.hosts.Create(ctx, host); err != nil {
 		if h.log != nil {
 			h.log.Error("auto-enrollment create host failed", "error", err)
 		}
 		Error(w, http.StatusInternalServerError, "Failed to enroll host")
-		return
+		return nil, "", false
 	}
 
-	if token.DefaultHostGroupID != nil && *token.DefaultHostGroupID != "" {
-		_ = h.hosts.SetHostGroups(ctx, host.ID, []string{*token.DefaultHostGroupID})
+	if defaultGroupID != nil && *defaultGroupID != "" {
+		_ = h.hosts.SetHostGroups(ctx, host.ID, []string{*defaultGroupID})
 	}
-
-	if err := h.tokens.IncrementHostsCreated(ctx, token.ID); err != nil {
-		if h.log != nil {
-			h.log.Error("auto-enrollment increment hosts failed", "error", err)
-		}
-	}
-
-	if h.log != nil {
-		h.log.Info("Auto-enrolled host", "friendly_name", req.FriendlyName, "host_id", host.ID, "token", token.TokenName)
-	}
-
-	var hostGroup *store.HostGroupBrief
-	if token.DefaultHostGroupID != nil && *token.DefaultHostGroupID != "" {
-		if hg, _ := h.hostGroups.GetByID(ctx, *token.DefaultHostGroupID); hg != nil {
-			color := ""
-			if hg.Color != nil {
-				color = *hg.Color
-			}
-			hostGroup = &store.HostGroupBrief{ID: hg.ID, Name: hg.Name, Color: color}
-		}
-	}
-
-	JSON(w, http.StatusCreated, map[string]interface{}{
-		"message": "Host enrolled successfully",
-		"host": map[string]interface{}{
-			"id":            host.ID,
-			"friendly_name": host.FriendlyName,
-			"api_id":        apiID,
-			"api_key":       apiKey,
-			"host_group":    hostGroup,
-			"status":        host.Status,
-		},
-	})
+	return host, apiKey, true
 }
 
 func mustRand(n int) []byte {

@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -39,7 +40,9 @@ func (h *loggingHandlerImpl) ProcessTask(ctx context.Context, t *asynq.Task) err
 	}
 	h.log.Debug("async task started", "type", h.taskType, "payload", payload)
 	err := h.inner.ProcessTask(ctx, t)
-	if err != nil {
+	if errors.Is(err, ErrRetryLater) {
+		h.log.Info("async task will retry", "type", h.taskType, "reason", err)
+	} else if err != nil {
 		h.log.Error("async task failed", "type", h.taskType, "error", err, "payload", payload)
 	} else {
 		h.log.Debug("async task completed", "type", h.taskType)
@@ -47,10 +50,21 @@ func (h *loggingHandlerImpl) ProcessTask(ctx context.Context, t *asynq.Task) err
 	return err
 }
 
+func retryDelay(n int, err error, t *asynq.Task) time.Duration {
+	switch t.Type() {
+	case TypeRunScan:
+		return complianceScanRetryDelay
+	case TypeInstallComplianceTools:
+		return complianceInstallRetryDelay
+	}
+	return asynq.DefaultRetryDelayFunc(n, err, t)
+}
+
 // NewServer creates an Asynq server with registered handlers.
 func NewServer(opts asynq.RedisClientOpt, registry *agentregistry.Registry, db *database.DB, log *slog.Logger) *asynq.Server {
 	srv := asynq.NewServer(opts, asynq.Config{
-		Concurrency: 10,
+		Concurrency:    10,
+		RetryDelayFunc: retryDelay,
 		Queues: map[string]int{
 			QueueAgentCommands:               3,
 			QueueHostStatus:                  3,
@@ -136,7 +150,7 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 	if opts.RDB != nil {
 		integrationStatusStore = store.NewIntegrationStatusStore(&hostctx.RedisResolver{Default: opts.RDB})
 	}
-	mux.Handle(TypeRunScan, wrap(TypeRunScan, NewRunScanHandler(registry, db, opts.PoolCache, complianceStore, opts.QueueClient, integrationStatusStore, log)))
+	mux.Handle(TypeRunScan, wrap(TypeRunScan, NewRunScanHandler(registry, db, opts.PoolCache, complianceStore, integrationStatusStore, log)))
 	mux.Handle(TypeInstallComplianceTools, wrap(TypeInstallComplianceTools, NewInstallComplianceToolsHandler(registry, db, opts.PoolCache, opts.RDB, opts.RedisCache, log)))
 	patchRunsStore := store.NewPatchRunsStore(&hostctx.DBResolver{Default: db})
 	mux.Handle(TypeRunPatch, wrap(TypeRunPatch, NewRunPatchHandler(registry, patchRunsStore, opts.PoolCache, opts.QueueClient, log)))
@@ -156,6 +170,11 @@ func Mux(opts MuxOpts) *asynq.ServeMux {
 // enqueue anyway, which is precisely the pile-up this is meant to prevent.
 // 3 minutes gives a comfortable margin over the 2-minute schedule.
 const packageStatsRefreshUniqueWindow = 3 * time.Minute
+
+const (
+	updateThresholdUniqueWindow = 2 * time.Minute
+	updateThresholdRetention    = 24 * time.Hour
+)
 
 // minutesToCron converts an interval in minutes to a cron expression.
 // For intervals that divide evenly into 60, it uses */N syntax.
@@ -184,25 +203,16 @@ func minutesToCron(minutes int) string {
 }
 
 // NewScheduler creates a scheduler with periodic tasks registered.
-// If db is non-nil, check intervals for periodic alert monitors are read from the
-// alert_config table. Changes to the interval take effect on the next server restart.
+// If db is non-nil, the host_down check interval is read from alert_config at startup.
+// The update threshold monitor ticks every minute and applies each context's own intervals.
 func NewScheduler(opts asynq.RedisClientOpt, db *database.DB, log *slog.Logger) (*asynq.Scheduler, error) {
 	scheduler := asynq.NewScheduler(opts, nil)
 
 	// Resolve configurable intervals from alert_config, falling back to defaults.
 	ctx := context.Background()
-	hostDownInterval := 5   // default: every 5 minutes
-	thresholdInterval := 30 // default: every 30 minutes
+	hostDownInterval := 5 // default: every 5 minutes
 	if db != nil {
 		hostDownInterval = alerts.CheckIntervalMinutes(ctx, db, "host_down", hostDownInterval)
-		// Both threshold types share a single scheduler entry; use the smaller configured value.
-		secInterval := alerts.CheckIntervalMinutes(ctx, db, "host_security_updates_exceeded", thresholdInterval)
-		pendInterval := alerts.CheckIntervalMinutes(ctx, db, "host_pending_updates_exceeded", thresholdInterval)
-		if secInterval < pendInterval {
-			thresholdInterval = secInterval
-		} else {
-			thresholdInterval = pendInterval
-		}
 	}
 
 	hostStatusTask := asynq.NewTask(TypeHostStatusMonitor, nil)
@@ -291,7 +301,11 @@ func NewScheduler(opts asynq.RedisClientOpt, db *database.DB, log *slog.Logger) 
 	}
 
 	updateThresholdTask := asynq.NewTask(TypeUpdateThresholdMonitor, nil)
-	if _, err := scheduler.Register(minutesToCron(thresholdInterval), updateThresholdTask, asynq.Queue(QueueUpdateThresholdMonitor), asynq.Retention(AutomationRetention)); err != nil {
+	if _, err := scheduler.Register("* * * * *", updateThresholdTask,
+		asynq.Queue(QueueUpdateThresholdMonitor),
+		asynq.Unique(updateThresholdUniqueWindow),
+		asynq.MaxRetry(0),
+		asynq.Retention(updateThresholdRetention)); err != nil {
 		return nil, err
 	}
 
@@ -309,7 +323,6 @@ func NewScheduler(opts asynq.RedisClientOpt, db *database.DB, log *slog.Logger) 
 
 	log.Info("scheduler: registered all automation tasks",
 		"host_down_interval_min", hostDownInterval,
-		"update_threshold_interval_min", thresholdInterval,
 	)
 	return scheduler, nil
 }

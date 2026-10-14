@@ -20,6 +20,7 @@ import {
 // Note: Auth is handled via httpOnly cookies - no need for useAuth token
 import { useSidebar } from "../contexts/SidebarContext";
 import { aiAPI, settingsAPI } from "../utils/api";
+import ModalPortal from "./ui/ModalPortal";
 
 /** Remove line breaks from values before logging to avoid log injection (CWE-117). */
 function sanitizeForLog(value) {
@@ -1518,8 +1519,8 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 	}
 
 	// Modal mode - full screen overlay
-	return (
-		<div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+	const modal = (
+		<div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-[120]">
 			<div className="bg-secondary-900 rounded-lg w-full h-full max-w-[95vw] max-h-[95vh] flex flex-col m-2">
 				{/* Header */}
 				<div className="flex items-center justify-between p-4 border-b border-secondary-700">
@@ -1665,6 +1666,8 @@ const SshTerminal = ({ host, isOpen, onClose, embedded = false }) => {
 			</div>
 		</div>
 	);
+
+	return <ModalPortal>{modal}</ModalPortal>;
 };
 
 export default SshTerminal;

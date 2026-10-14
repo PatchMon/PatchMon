@@ -4,7 +4,10 @@ import { Link } from "react-router-dom";
 const PatchRunStatusBoxes = ({ data }) => {
 	const summary = data?.summary || {};
 	const total = summary.total_runs ?? 0;
-	const active = (summary.queued ?? 0) + (summary.running ?? 0);
+	const active =
+		(summary.queued ?? 0) +
+		(summary.pending_validation ?? 0) +
+		(summary.running ?? 0);
 	const completed = summary.completed ?? 0;
 	const failed = summary.failed ?? 0;
 

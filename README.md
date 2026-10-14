@@ -15,7 +15,7 @@
 [![Latest Release](https://img.shields.io/github/v/release/PatchMon/PatchMon?style=for-the-badge&color=blue)](https://github.com/PatchMon/PatchMon/releases)
 [![Stars](https://img.shields.io/github/stars/PatchMon/PatchMon?style=for-the-badge&color=yellow)](https://github.com/PatchMon/PatchMon/stargazers)
 [![License](https://img.shields.io/badge/License-AGPL%20v3-orange?style=for-the-badge)](LICENSE)
-[![AI-DECLARATION: assist](https://img.shields.io/badge/AI--DECLARATION-assist-fef9c3?style=for-the-badge&labelColor=333333)](AI-DECLARATION.md)
+[![AI-DECLARATION: pair](https://img.shields.io/badge/AI--DECLARATION-pair-ffedd5?style=for-the-badge&labelColor=333333)](AI-DECLARATION.md)
 
 </div>
 

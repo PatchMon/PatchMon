@@ -54,7 +54,10 @@ type PingRequest struct {
 	// spent collecting the data shipped in this ping (mostly hashing). Used
 	// by the Agent Activity UI to surface "agent took N ms" alongside the
 	// server-processing duration. Optional — older agents may omit it.
-	AgentExecutionMs *int `json:"agentExecutionMs,omitempty"`
+	AgentExecutionMs *int   `json:"agentExecutionMs,omitempty"`
+	HostID           string `json:"hostId,omitempty"`
+	ConfigVersion    string `json:"configVersion,omitempty"`
+	MachineID        string `json:"machineId,omitempty"`
 }
 
 // SectionPackages and friends are the closed set of section identifiers used

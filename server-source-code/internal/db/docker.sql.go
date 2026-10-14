@@ -65,15 +65,27 @@ const countImages = `-- name: CountImages :one
 SELECT COUNT(*)::int FROM docker_images
 WHERE ($1::text IS NULL OR source = $1)
 AND ($2::text IS NULL OR repository ILIKE '%' || $2 || '%' OR tag ILIKE '%' || $2 || '%')
+AND (EXISTS (SELECT 1 FROM docker_containers dc0 WHERE dc0.image_id = docker_images.id) OR EXISTS (SELECT 1 FROM docker_host_images dhi0 WHERE dhi0.image_id = docker_images.id))
+AND ($3::text IS NULL
+    OR ($3 = 'recreate_needed' AND EXISTS (
+        SELECT 1 FROM docker_containers dc WHERE dc.image_id = docker_images.id AND dc.image_stale))
+    OR ($3 <> 'recreate_needed' AND COALESCE((
+        SELECT CASE MIN(CASE c.status
+                WHEN 'update_available' THEN 1 WHEN 'unknown' THEN 2 WHEN 'up_to_date' THEN 3
+                WHEN 'local_build' THEN 4 WHEN 'pinned' THEN 5 WHEN 'skipped' THEN 6 END)
+            WHEN 1 THEN 'update_available' WHEN 2 THEN 'unknown' WHEN 3 THEN 'up_to_date'
+            WHEN 4 THEN 'local_build' WHEN 5 THEN 'pinned' WHEN 6 THEN 'skipped' END
+        FROM docker_image_checks c WHERE c.image_id = docker_images.id), 'not_checked') = $3))
 `
 
 type CountImagesParams struct {
-	Source *string `json:"source"`
-	Search *string `json:"search"`
+	Source       *string `json:"source"`
+	Search       *string `json:"search"`
+	UpdateStatus *string `json:"update_status"`
 }
 
 func (q *Queries) CountImages(ctx context.Context, arg CountImagesParams) (int32, error) {
-	row := q.db.QueryRow(ctx, countImages, arg.Source, arg.Search)
+	row := q.db.QueryRow(ctx, countImages, arg.Source, arg.Search, arg.UpdateStatus)
 	var column_1 int32
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -164,15 +176,6 @@ func (q *Queries) DeleteImageByID(ctx context.Context, id string) error {
 	return err
 }
 
-const deleteImageUpdatesByImageID = `-- name: DeleteImageUpdatesByImageID :exec
-DELETE FROM docker_image_updates WHERE image_id = $1
-`
-
-func (q *Queries) DeleteImageUpdatesByImageID(ctx context.Context, imageID string) error {
-	_, err := q.db.Exec(ctx, deleteImageUpdatesByImageID, imageID)
-	return err
-}
-
 const deleteImagesByIDs = `-- name: DeleteImagesByIDs :exec
 DELETE FROM docker_images WHERE id = ANY($1::text[])
 `
@@ -191,6 +194,81 @@ func (q *Queries) DeleteNetwork(ctx context.Context, id string) error {
 	return err
 }
 
+const deleteStaleContainers = `-- name: DeleteStaleContainers :exec
+DELETE FROM docker_containers
+WHERE host_id = $1 AND NOT (container_id = ANY($2::text[]))
+`
+
+type DeleteStaleContainersParams struct {
+	HostID       string   `json:"host_id"`
+	ContainerIds []string `json:"container_ids"`
+}
+
+func (q *Queries) DeleteStaleContainers(ctx context.Context, arg DeleteStaleContainersParams) error {
+	_, err := q.db.Exec(ctx, deleteStaleContainers, arg.HostID, arg.ContainerIds)
+	return err
+}
+
+const deleteStaleDockerHostImages = `-- name: DeleteStaleDockerHostImages :exec
+DELETE FROM docker_host_images
+WHERE host_id = $1 AND NOT (image_id = ANY($2::text[]))
+`
+
+type DeleteStaleDockerHostImagesParams struct {
+	HostID   string   `json:"host_id"`
+	ImageIds []string `json:"image_ids"`
+}
+
+func (q *Queries) DeleteStaleDockerHostImages(ctx context.Context, arg DeleteStaleDockerHostImagesParams) error {
+	_, err := q.db.Exec(ctx, deleteStaleDockerHostImages, arg.HostID, arg.ImageIds)
+	return err
+}
+
+const deleteStaleDockerImageChecks = `-- name: DeleteStaleDockerImageChecks :exec
+DELETE FROM docker_image_checks
+WHERE host_id = $1 AND NOT (image_id = ANY($2::text[]))
+`
+
+type DeleteStaleDockerImageChecksParams struct {
+	HostID   string   `json:"host_id"`
+	ImageIds []string `json:"image_ids"`
+}
+
+func (q *Queries) DeleteStaleDockerImageChecks(ctx context.Context, arg DeleteStaleDockerImageChecksParams) error {
+	_, err := q.db.Exec(ctx, deleteStaleDockerImageChecks, arg.HostID, arg.ImageIds)
+	return err
+}
+
+const deleteStaleNetworks = `-- name: DeleteStaleNetworks :exec
+DELETE FROM docker_networks
+WHERE host_id = $1 AND NOT (network_id = ANY($2::text[]))
+`
+
+type DeleteStaleNetworksParams struct {
+	HostID     string   `json:"host_id"`
+	NetworkIds []string `json:"network_ids"`
+}
+
+func (q *Queries) DeleteStaleNetworks(ctx context.Context, arg DeleteStaleNetworksParams) error {
+	_, err := q.db.Exec(ctx, deleteStaleNetworks, arg.HostID, arg.NetworkIds)
+	return err
+}
+
+const deleteStaleVolumes = `-- name: DeleteStaleVolumes :exec
+DELETE FROM docker_volumes
+WHERE host_id = $1 AND NOT (volume_id = ANY($2::text[]))
+`
+
+type DeleteStaleVolumesParams struct {
+	HostID    string   `json:"host_id"`
+	VolumeIds []string `json:"volume_ids"`
+}
+
+func (q *Queries) DeleteStaleVolumes(ctx context.Context, arg DeleteStaleVolumesParams) error {
+	_, err := q.db.Exec(ctx, deleteStaleVolumes, arg.HostID, arg.VolumeIds)
+	return err
+}
+
 const deleteVolume = `-- name: DeleteVolume :exec
 DELETE FROM docker_volumes WHERE id = $1
 `
@@ -201,7 +279,7 @@ func (q *Queries) DeleteVolume(ctx context.Context, id string) error {
 }
 
 const getContainerByID = `-- name: GetContainerByID :one
-SELECT id, host_id, container_id, name, image_id, image_name, image_tag, status, state, ports, labels, created_at, started_at, updated_at, last_checked FROM docker_containers WHERE id = $1
+SELECT id, host_id, container_id, name, image_id, image_name, image_tag, status, state, ports, labels, created_at, started_at, updated_at, last_checked, image_stale, restart_count, image_digest FROM docker_containers WHERE id = $1
 `
 
 // Containers
@@ -224,6 +302,9 @@ func (q *Queries) GetContainerByID(ctx context.Context, id string) (DockerContai
 		&i.StartedAt,
 		&i.UpdatedAt,
 		&i.LastChecked,
+		&i.ImageStale,
+		&i.RestartCount,
+		&i.ImageDigest,
 	)
 	return i, err
 }
@@ -258,7 +339,7 @@ func (q *Queries) GetContainerCountsByImageIDs(ctx context.Context, dollar_1 []s
 }
 
 const getContainersByHostID = `-- name: GetContainersByHostID :many
-SELECT id, host_id, container_id, name, image_id, image_name, image_tag, status, state, ports, labels, created_at, started_at, updated_at, last_checked FROM docker_containers WHERE host_id = $1 ORDER BY name ASC
+SELECT id, host_id, container_id, name, image_id, image_name, image_tag, status, state, ports, labels, created_at, started_at, updated_at, last_checked, image_stale, restart_count, image_digest FROM docker_containers WHERE host_id = $1 ORDER BY name ASC
 `
 
 func (q *Queries) GetContainersByHostID(ctx context.Context, hostID string) ([]DockerContainer, error) {
@@ -286,6 +367,9 @@ func (q *Queries) GetContainersByHostID(ctx context.Context, hostID string) ([]D
 			&i.StartedAt,
 			&i.UpdatedAt,
 			&i.LastChecked,
+			&i.ImageStale,
+			&i.RestartCount,
+			&i.ImageDigest,
 		); err != nil {
 			return nil, err
 		}
@@ -298,7 +382,7 @@ func (q *Queries) GetContainersByHostID(ctx context.Context, hostID string) ([]D
 }
 
 const getContainersByImageID = `-- name: GetContainersByImageID :many
-SELECT id, host_id, container_id, name, image_id, image_name, image_tag, status, state, ports, labels, created_at, started_at, updated_at, last_checked FROM docker_containers WHERE image_id = $1 AND id != $2 LIMIT 10
+SELECT id, host_id, container_id, name, image_id, image_name, image_tag, status, state, ports, labels, created_at, started_at, updated_at, last_checked, image_stale, restart_count, image_digest FROM docker_containers WHERE image_id = $1 AND id != $2 LIMIT 10
 `
 
 type GetContainersByImageIDParams struct {
@@ -331,6 +415,9 @@ func (q *Queries) GetContainersByImageID(ctx context.Context, arg GetContainersB
 			&i.StartedAt,
 			&i.UpdatedAt,
 			&i.LastChecked,
+			&i.ImageStale,
+			&i.RestartCount,
+			&i.ImageDigest,
 		); err != nil {
 			return nil, err
 		}
@@ -343,7 +430,7 @@ func (q *Queries) GetContainersByImageID(ctx context.Context, arg GetContainersB
 }
 
 const getContainersByImageIDAll = `-- name: GetContainersByImageIDAll :many
-SELECT id, host_id, container_id, name, image_id, image_name, image_tag, status, state, ports, labels, created_at, started_at, updated_at, last_checked FROM docker_containers WHERE image_id = $1 LIMIT 100
+SELECT id, host_id, container_id, name, image_id, image_name, image_tag, status, state, ports, labels, created_at, started_at, updated_at, last_checked, image_stale, restart_count, image_digest FROM docker_containers WHERE image_id = $1 LIMIT 100
 `
 
 func (q *Queries) GetContainersByImageIDAll(ctx context.Context, imageID *string) ([]DockerContainer, error) {
@@ -371,6 +458,9 @@ func (q *Queries) GetContainersByImageIDAll(ctx context.Context, imageID *string
 			&i.StartedAt,
 			&i.UpdatedAt,
 			&i.LastChecked,
+			&i.ImageStale,
+			&i.RestartCount,
+			&i.ImageDigest,
 		); err != nil {
 			return nil, err
 		}
@@ -446,8 +536,8 @@ const getDockerDashboardStats = `-- name: GetDockerDashboardStats :one
 SELECT
     (SELECT COUNT(*)::int FROM docker_containers),
     (SELECT COUNT(*)::int FROM docker_containers WHERE status = 'running'),
-    (SELECT COUNT(*)::int FROM docker_images),
-    (SELECT COUNT(*)::int FROM docker_image_updates)
+    (SELECT COUNT(*)::int FROM docker_images di WHERE (EXISTS (SELECT 1 FROM docker_containers dc0 WHERE dc0.image_id = di.id) OR EXISTS (SELECT 1 FROM docker_host_images dhi0 WHERE dhi0.image_id = di.id))),
+    (SELECT COUNT(DISTINCT image_id)::int FROM docker_image_checks WHERE status = 'update_available')
 `
 
 type GetDockerDashboardStatsRow struct {
@@ -545,11 +635,33 @@ func (q *Queries) GetDockerHostsMinimalByIDs(ctx context.Context, dollar_1 []str
 	return items, nil
 }
 
+const getDockerImageCheckStats = `-- name: GetDockerImageCheckStats :one
+SELECT
+    (SELECT COUNT(*)::int FROM docker_containers WHERE image_stale) AS containers_needing_recreate,
+    (SELECT MAX(checked_at) FROM docker_image_checks)::timestamp(3) AS last_image_check_at
+`
+
+type GetDockerImageCheckStatsRow struct {
+	ContainersNeedingRecreate int32            `json:"containers_needing_recreate"`
+	LastImageCheckAt          pgtype.Timestamp `json:"last_image_check_at"`
+}
+
+func (q *Queries) GetDockerImageCheckStats(ctx context.Context) (GetDockerImageCheckStatsRow, error) {
+	row := q.db.QueryRow(ctx, getDockerImageCheckStats)
+	var i GetDockerImageCheckStatsRow
+	err := row.Scan(&i.ContainersNeedingRecreate, &i.LastImageCheckAt)
+	return i, err
+}
+
 const getHostDockerStats = `-- name: GetHostDockerStats :one
 SELECT
     COUNT(*)::int,
     COUNT(*) FILTER (WHERE status = 'running')::int,
-    COUNT(DISTINCT image_id) FILTER (WHERE image_id IS NOT NULL)::int
+    (SELECT COUNT(*)::int FROM (
+        SELECT dhi.image_id FROM docker_host_images dhi WHERE dhi.host_id = $1
+        UNION
+        SELECT dc2.image_id FROM docker_containers dc2 WHERE dc2.host_id = $1 AND dc2.image_id IS NOT NULL
+    ) hi)
 FROM docker_containers
 WHERE host_id = $1
 `
@@ -565,6 +677,32 @@ func (q *Queries) GetHostDockerStats(ctx context.Context, hostID string) (GetHos
 	var i GetHostDockerStatsRow
 	err := row.Scan(&i.Column1, &i.Column2, &i.Column3)
 	return i, err
+}
+
+const getHostIDsForImage = `-- name: GetHostIDsForImage :many
+SELECT dhi.host_id FROM docker_host_images dhi WHERE dhi.image_id = $1
+UNION
+SELECT dc.host_id FROM docker_containers dc WHERE dc.image_id = $1
+`
+
+func (q *Queries) GetHostIDsForImage(ctx context.Context, imageID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, getHostIDsForImage, imageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var host_id string
+		if err := rows.Scan(&host_id); err != nil {
+			return nil, err
+		}
+		items = append(items, host_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getImageByID = `-- name: GetImageByID :one
@@ -591,45 +729,243 @@ func (q *Queries) GetImageByID(ctx context.Context, id string) (DockerImage, err
 	return i, err
 }
 
-const getImageIDByRepositoryTagImageID = `-- name: GetImageIDByRepositoryTagImageID :one
-SELECT id FROM docker_images WHERE repository = $1 AND tag = $2 AND image_id = $3
+const getImageCheckAggregatesByImageIDs = `-- name: GetImageCheckAggregatesByImageIDs :many
+SELECT
+    a.image_id,
+    a.hosts_checked,
+    a.hosts_update_available,
+    a.hosts_unknown,
+    a.hosts_up_to_date,
+    a.hosts_local_build,
+    a.hosts_pinned,
+    a.hosts_skipped,
+    l.checked_at,
+    l.remote_digest,
+    l.reason
+FROM (
+    SELECT
+        image_id,
+        COUNT(*)::int AS hosts_checked,
+        COUNT(*) FILTER (WHERE status = 'update_available')::int AS hosts_update_available,
+        COUNT(*) FILTER (WHERE status = 'unknown')::int AS hosts_unknown,
+        COUNT(*) FILTER (WHERE status = 'up_to_date')::int AS hosts_up_to_date,
+        COUNT(*) FILTER (WHERE status = 'local_build')::int AS hosts_local_build,
+        COUNT(*) FILTER (WHERE status = 'pinned')::int AS hosts_pinned,
+        COUNT(*) FILTER (WHERE status = 'skipped')::int AS hosts_skipped
+    FROM docker_image_checks
+    WHERE image_id = ANY($1::text[])
+    GROUP BY image_id
+) a
+JOIN LATERAL (
+    SELECT c.checked_at, c.remote_digest, c.reason
+    FROM docker_image_checks c
+    WHERE c.image_id = a.image_id
+    ORDER BY c.checked_at DESC, c.host_id ASC
+    LIMIT 1
+) l ON true
 `
 
-type GetImageIDByRepositoryTagImageIDParams struct {
-	Repository string `json:"repository"`
-	Tag        string `json:"tag"`
-	ImageID    string `json:"image_id"`
+type GetImageCheckAggregatesByImageIDsRow struct {
+	ImageID              string           `json:"image_id"`
+	HostsChecked         int32            `json:"hosts_checked"`
+	HostsUpdateAvailable int32            `json:"hosts_update_available"`
+	HostsUnknown         int32            `json:"hosts_unknown"`
+	HostsUpToDate        int32            `json:"hosts_up_to_date"`
+	HostsLocalBuild      int32            `json:"hosts_local_build"`
+	HostsPinned          int32            `json:"hosts_pinned"`
+	HostsSkipped         int32            `json:"hosts_skipped"`
+	CheckedAt            pgtype.Timestamp `json:"checked_at"`
+	RemoteDigest         *string          `json:"remote_digest"`
+	Reason               *string          `json:"reason"`
 }
 
-func (q *Queries) GetImageIDByRepositoryTagImageID(ctx context.Context, arg GetImageIDByRepositoryTagImageIDParams) (string, error) {
-	row := q.db.QueryRow(ctx, getImageIDByRepositoryTagImageID, arg.Repository, arg.Tag, arg.ImageID)
-	var id string
-	err := row.Scan(&id)
-	return id, err
-}
-
-const getImageUpdatesByImageID = `-- name: GetImageUpdatesByImageID :many
-SELECT id, image_id, current_tag, available_tag, is_security_update, severity, changelog_url, created_at, updated_at FROM docker_image_updates WHERE image_id = $1 ORDER BY created_at DESC
-`
-
-func (q *Queries) GetImageUpdatesByImageID(ctx context.Context, imageID string) ([]DockerImageUpdate, error) {
-	rows, err := q.db.Query(ctx, getImageUpdatesByImageID, imageID)
+func (q *Queries) GetImageCheckAggregatesByImageIDs(ctx context.Context, imageIds []string) ([]GetImageCheckAggregatesByImageIDsRow, error) {
+	rows, err := q.db.Query(ctx, getImageCheckAggregatesByImageIDs, imageIds)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []DockerImageUpdate
+	var items []GetImageCheckAggregatesByImageIDsRow
 	for rows.Next() {
-		var i DockerImageUpdate
+		var i GetImageCheckAggregatesByImageIDsRow
+		if err := rows.Scan(
+			&i.ImageID,
+			&i.HostsChecked,
+			&i.HostsUpdateAvailable,
+			&i.HostsUnknown,
+			&i.HostsUpToDate,
+			&i.HostsLocalBuild,
+			&i.HostsPinned,
+			&i.HostsSkipped,
+			&i.CheckedAt,
+			&i.RemoteDigest,
+			&i.Reason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getImageCheckStatusesByImageIDs = `-- name: GetImageCheckStatusesByImageIDs :many
+SELECT host_id, image_id, status FROM docker_image_checks WHERE image_id = ANY($1::text[])
+`
+
+type GetImageCheckStatusesByImageIDsRow struct {
+	HostID  string `json:"host_id"`
+	ImageID string `json:"image_id"`
+	Status  string `json:"status"`
+}
+
+func (q *Queries) GetImageCheckStatusesByImageIDs(ctx context.Context, dollar_1 []string) ([]GetImageCheckStatusesByImageIDsRow, error) {
+	rows, err := q.db.Query(ctx, getImageCheckStatusesByImageIDs, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetImageCheckStatusesByImageIDsRow
+	for rows.Next() {
+		var i GetImageCheckStatusesByImageIDsRow
+		if err := rows.Scan(&i.HostID, &i.ImageID, &i.Status); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getImageChecksByHostID = `-- name: GetImageChecksByHostID :many
+SELECT image_id, status, local_digest, remote_digest, reason, registry, checked_at
+FROM docker_image_checks
+WHERE host_id = $1
+`
+
+type GetImageChecksByHostIDRow struct {
+	ImageID      string           `json:"image_id"`
+	Status       string           `json:"status"`
+	LocalDigest  *string          `json:"local_digest"`
+	RemoteDigest *string          `json:"remote_digest"`
+	Reason       *string          `json:"reason"`
+	Registry     *string          `json:"registry"`
+	CheckedAt    pgtype.Timestamp `json:"checked_at"`
+}
+
+func (q *Queries) GetImageChecksByHostID(ctx context.Context, hostID string) ([]GetImageChecksByHostIDRow, error) {
+	rows, err := q.db.Query(ctx, getImageChecksByHostID, hostID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetImageChecksByHostIDRow
+	for rows.Next() {
+		var i GetImageChecksByHostIDRow
+		if err := rows.Scan(
+			&i.ImageID,
+			&i.Status,
+			&i.LocalDigest,
+			&i.RemoteDigest,
+			&i.Reason,
+			&i.Registry,
+			&i.CheckedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getImageChecksByImageID = `-- name: GetImageChecksByImageID :many
+SELECT c.host_id, c.status, c.local_digest, c.remote_digest, c.reason, c.registry, c.checked_at,
+       h.friendly_name, h.hostname
+FROM docker_image_checks c
+JOIN hosts h ON h.id = c.host_id
+WHERE c.image_id = $1
+ORDER BY h.friendly_name ASC
+`
+
+type GetImageChecksByImageIDRow struct {
+	HostID       string           `json:"host_id"`
+	Status       string           `json:"status"`
+	LocalDigest  *string          `json:"local_digest"`
+	RemoteDigest *string          `json:"remote_digest"`
+	Reason       *string          `json:"reason"`
+	Registry     *string          `json:"registry"`
+	CheckedAt    pgtype.Timestamp `json:"checked_at"`
+	FriendlyName string           `json:"friendly_name"`
+	Hostname     *string          `json:"hostname"`
+}
+
+func (q *Queries) GetImageChecksByImageID(ctx context.Context, imageID string) ([]GetImageChecksByImageIDRow, error) {
+	rows, err := q.db.Query(ctx, getImageChecksByImageID, imageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetImageChecksByImageIDRow
+	for rows.Next() {
+		var i GetImageChecksByImageIDRow
+		if err := rows.Scan(
+			&i.HostID,
+			&i.Status,
+			&i.LocalDigest,
+			&i.RemoteDigest,
+			&i.Reason,
+			&i.Registry,
+			&i.CheckedAt,
+			&i.FriendlyName,
+			&i.Hostname,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getImagesByHostID = `-- name: GetImagesByHostID :many
+SELECT id, repository, tag, image_id, digest, size_bytes, source, created_at, last_pulled, last_checked, updated_at FROM docker_images
+WHERE id IN (
+    SELECT dhi.image_id FROM docker_host_images dhi WHERE dhi.host_id = $1
+    UNION
+    SELECT dc.image_id FROM docker_containers dc WHERE dc.host_id = $1 AND dc.image_id IS NOT NULL
+)
+ORDER BY repository ASC, tag ASC
+`
+
+func (q *Queries) GetImagesByHostID(ctx context.Context, hostID string) ([]DockerImage, error) {
+	rows, err := q.db.Query(ctx, getImagesByHostID, hostID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DockerImage
+	for rows.Next() {
+		var i DockerImage
 		if err := rows.Scan(
 			&i.ID,
+			&i.Repository,
+			&i.Tag,
 			&i.ImageID,
-			&i.CurrentTag,
-			&i.AvailableTag,
-			&i.IsSecurityUpdate,
-			&i.Severity,
-			&i.ChangelogUrl,
+			&i.Digest,
+			&i.SizeBytes,
+			&i.Source,
 			&i.CreatedAt,
+			&i.LastPulled,
+			&i.LastChecked,
 			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -679,7 +1015,9 @@ func (q *Queries) GetImagesByIDs(ctx context.Context, dollar_1 []string) ([]Dock
 }
 
 const getImagesBySource = `-- name: GetImagesBySource :many
-SELECT source, COUNT(*)::int as count FROM docker_images GROUP BY source
+SELECT source, COUNT(*)::int as count FROM docker_images di
+WHERE (EXISTS (SELECT 1 FROM docker_containers dc0 WHERE dc0.image_id = di.id) OR EXISTS (SELECT 1 FROM docker_host_images dhi0 WHERE dhi0.image_id = di.id))
+GROUP BY source
 `
 
 type GetImagesBySourceRow struct {
@@ -779,24 +1117,24 @@ func (q *Queries) GetNetworksByHostID(ctx context.Context, hostID string) ([]Doc
 	return items, nil
 }
 
-const getUpdateCountsByImageIDs = `-- name: GetUpdateCountsByImageIDs :many
-SELECT image_id, COUNT(*)::int as cnt FROM docker_image_updates WHERE image_id = ANY($1::text[]) GROUP BY image_id
+const getStaleContainerCountsByImageIDs = `-- name: GetStaleContainerCountsByImageIDs :many
+SELECT image_id, COUNT(*)::int as cnt FROM docker_containers WHERE image_id = ANY($1::text[]) AND image_stale GROUP BY image_id
 `
 
-type GetUpdateCountsByImageIDsRow struct {
-	ImageID string `json:"image_id"`
-	Cnt     int32  `json:"cnt"`
+type GetStaleContainerCountsByImageIDsRow struct {
+	ImageID *string `json:"image_id"`
+	Cnt     int32   `json:"cnt"`
 }
 
-func (q *Queries) GetUpdateCountsByImageIDs(ctx context.Context, dollar_1 []string) ([]GetUpdateCountsByImageIDsRow, error) {
-	rows, err := q.db.Query(ctx, getUpdateCountsByImageIDs, dollar_1)
+func (q *Queries) GetStaleContainerCountsByImageIDs(ctx context.Context, dollar_1 []string) ([]GetStaleContainerCountsByImageIDsRow, error) {
+	rows, err := q.db.Query(ctx, getStaleContainerCountsByImageIDs, dollar_1)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []GetUpdateCountsByImageIDsRow
+	var items []GetStaleContainerCountsByImageIDsRow
 	for rows.Next() {
-		var i GetUpdateCountsByImageIDsRow
+		var i GetStaleContainerCountsByImageIDsRow
 		if err := rows.Scan(&i.ImageID, &i.Cnt); err != nil {
 			return nil, err
 		}
@@ -876,8 +1214,39 @@ func (q *Queries) GetVolumesByHostID(ctx context.Context, hostID string) ([]Dock
 	return items, nil
 }
 
+const insertDockerImageFromContainer = `-- name: InsertDockerImageFromContainer :one
+INSERT INTO docker_images (id, repository, tag, image_id, source, created_at, last_checked, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $6, $6)
+ON CONFLICT (repository, tag, image_id) DO UPDATE SET
+  last_checked = EXCLUDED.last_checked
+RETURNING id
+`
+
+type InsertDockerImageFromContainerParams struct {
+	ID         string           `json:"id"`
+	Repository string           `json:"repository"`
+	Tag        string           `json:"tag"`
+	ImageID    string           `json:"image_id"`
+	Source     string           `json:"source"`
+	CreatedAt  pgtype.Timestamp `json:"created_at"`
+}
+
+func (q *Queries) InsertDockerImageFromContainer(ctx context.Context, arg InsertDockerImageFromContainerParams) (string, error) {
+	row := q.db.QueryRow(ctx, insertDockerImageFromContainer,
+		arg.ID,
+		arg.Repository,
+		arg.Tag,
+		arg.ImageID,
+		arg.Source,
+		arg.CreatedAt,
+	)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const listContainers = `-- name: ListContainers :many
-SELECT id, host_id, container_id, name, image_id, image_name, image_tag, status, state, ports, labels, created_at, started_at, updated_at, last_checked FROM docker_containers
+SELECT id, host_id, container_id, name, image_id, image_name, image_tag, status, state, ports, labels, created_at, started_at, updated_at, last_checked, image_stale, restart_count, image_digest FROM docker_containers
 WHERE ($1::text IS NULL OR status = $1)
 AND ($2::text IS NULL OR host_id = $2)
 AND ($3::text IS NULL OR image_id = $3)
@@ -927,7 +1296,49 @@ func (q *Queries) ListContainers(ctx context.Context, arg ListContainersParams) 
 			&i.StartedAt,
 			&i.UpdatedAt,
 			&i.LastChecked,
+			&i.ImageStale,
+			&i.RestartCount,
+			&i.ImageDigest,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDockerHostAPIIDs = `-- name: ListDockerHostAPIIDs :many
+SELECT id, api_id FROM hosts
+WHERE id IN (
+    SELECT host_id FROM docker_containers
+    UNION
+    SELECT host_id FROM docker_host_images
+    UNION
+    SELECT host_id FROM docker_volumes
+    UNION
+    SELECT host_id FROM docker_networks
+)
+ORDER BY id
+`
+
+type ListDockerHostAPIIDsRow struct {
+	ID    string `json:"id"`
+	ApiID string `json:"api_id"`
+}
+
+func (q *Queries) ListDockerHostAPIIDs(ctx context.Context) ([]ListDockerHostAPIIDsRow, error) {
+	rows, err := q.db.Query(ctx, listDockerHostAPIIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDockerHostAPIIDsRow
+	for rows.Next() {
+		var i ListDockerHostAPIIDsRow
+		if err := rows.Scan(&i.ID, &i.ApiID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -988,25 +1399,68 @@ func (q *Queries) ListDockerHostsPaginated(ctx context.Context, arg ListDockerHo
 	return items, nil
 }
 
+const listDockerImageChecksByHost = `-- name: ListDockerImageChecksByHost :many
+SELECT image_id, status, first_seen_update_at FROM docker_image_checks WHERE host_id = $1
+`
+
+type ListDockerImageChecksByHostRow struct {
+	ImageID           string           `json:"image_id"`
+	Status            string           `json:"status"`
+	FirstSeenUpdateAt pgtype.Timestamp `json:"first_seen_update_at"`
+}
+
+func (q *Queries) ListDockerImageChecksByHost(ctx context.Context, hostID string) ([]ListDockerImageChecksByHostRow, error) {
+	rows, err := q.db.Query(ctx, listDockerImageChecksByHost, hostID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDockerImageChecksByHostRow
+	for rows.Next() {
+		var i ListDockerImageChecksByHostRow
+		if err := rows.Scan(&i.ImageID, &i.Status, &i.FirstSeenUpdateAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listImages = `-- name: ListImages :many
 SELECT id, repository, tag, image_id, digest, size_bytes, source, created_at, last_pulled, last_checked, updated_at FROM docker_images
 WHERE ($1::text IS NULL OR source = $1)
 AND ($2::text IS NULL OR repository ILIKE '%' || $2 || '%' OR tag ILIKE '%' || $2 || '%')
+AND (EXISTS (SELECT 1 FROM docker_containers dc0 WHERE dc0.image_id = docker_images.id) OR EXISTS (SELECT 1 FROM docker_host_images dhi0 WHERE dhi0.image_id = docker_images.id))
+AND ($3::text IS NULL
+    OR ($3 = 'recreate_needed' AND EXISTS (
+        SELECT 1 FROM docker_containers dc WHERE dc.image_id = docker_images.id AND dc.image_stale))
+    OR ($3 <> 'recreate_needed' AND COALESCE((
+        SELECT CASE MIN(CASE c.status
+                WHEN 'update_available' THEN 1 WHEN 'unknown' THEN 2 WHEN 'up_to_date' THEN 3
+                WHEN 'local_build' THEN 4 WHEN 'pinned' THEN 5 WHEN 'skipped' THEN 6 END)
+            WHEN 1 THEN 'update_available' WHEN 2 THEN 'unknown' WHEN 3 THEN 'up_to_date'
+            WHEN 4 THEN 'local_build' WHEN 5 THEN 'pinned' WHEN 6 THEN 'skipped' END
+        FROM docker_image_checks c WHERE c.image_id = docker_images.id), 'not_checked') = $3))
 ORDER BY updated_at DESC
-LIMIT $4 OFFSET $3
+LIMIT $5 OFFSET $4
 `
 
 type ListImagesParams struct {
-	Source *string `json:"source"`
-	Search *string `json:"search"`
-	Offset int32   `json:"offset"`
-	Limit  int32   `json:"limit"`
+	Source       *string `json:"source"`
+	Search       *string `json:"search"`
+	UpdateStatus *string `json:"update_status"`
+	Offset       int32   `json:"offset"`
+	Limit        int32   `json:"limit"`
 }
 
 func (q *Queries) ListImages(ctx context.Context, arg ListImagesParams) ([]DockerImage, error) {
 	rows, err := q.db.Query(ctx, listImages,
 		arg.Source,
 		arg.Search,
+		arg.UpdateStatus,
 		arg.Offset,
 		arg.Limit,
 	)
@@ -1140,6 +1594,7 @@ func (q *Queries) ListOrphanedContainers(ctx context.Context) ([]ListOrphanedCon
 const listOrphanedImages = `-- name: ListOrphanedImages :many
 SELECT id, repository, tag, image_id FROM docker_images di
 WHERE NOT EXISTS (SELECT 1 FROM docker_containers dc WHERE dc.image_id = di.id)
+AND NOT EXISTS (SELECT 1 FROM docker_host_images dhi WHERE dhi.image_id = di.id)
 `
 
 type ListOrphanedImagesRow struct {
@@ -1230,10 +1685,67 @@ func (q *Queries) ListVolumes(ctx context.Context, arg ListVolumesParams) ([]Doc
 	return items, nil
 }
 
+const resolveDockerImageIDs = `-- name: ResolveDockerImageIDs :many
+SELECT di.id, di.repository, di.tag, di.image_id FROM docker_images di
+JOIN docker_host_images dhi ON dhi.image_id = di.id AND dhi.host_id = $1
+JOIN (
+    SELECT unnest($2::text[]) AS repository,
+           unnest($3::text[]) AS tag,
+           unnest($4::text[]) AS image_id
+) k ON di.repository = k.repository AND di.tag = k.tag AND di.image_id = k.image_id
+`
+
+type ResolveDockerImageIDsParams struct {
+	HostID       string   `json:"host_id"`
+	Repositories []string `json:"repositories"`
+	Tags         []string `json:"tags"`
+	ImageIds     []string `json:"image_ids"`
+}
+
+type ResolveDockerImageIDsRow struct {
+	ID         string `json:"id"`
+	Repository string `json:"repository"`
+	Tag        string `json:"tag"`
+	ImageID    string `json:"image_id"`
+}
+
+func (q *Queries) ResolveDockerImageIDs(ctx context.Context, arg ResolveDockerImageIDsParams) ([]ResolveDockerImageIDsRow, error) {
+	rows, err := q.db.Query(ctx, resolveDockerImageIDs,
+		arg.HostID,
+		arg.Repositories,
+		arg.Tags,
+		arg.ImageIds,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ResolveDockerImageIDsRow
+	for rows.Next() {
+		var i ResolveDockerImageIDsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Repository,
+			&i.Tag,
+			&i.ImageID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertDockerContainer = `-- name: UpsertDockerContainer :exec
-INSERT INTO docker_containers (id, host_id, container_id, name, image_id, image_name, image_tag, status, state, ports, labels, created_at, started_at, updated_at, last_checked)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+INSERT INTO docker_containers (id, host_id, container_id, name, image_id, image_name, image_tag, status, state, ports, labels, created_at, started_at, updated_at, last_checked, image_stale, restart_count, image_digest)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 ON CONFLICT (host_id, container_id) DO UPDATE SET
+  image_stale = EXCLUDED.image_stale,
+  image_digest = EXCLUDED.image_digest,
+  restart_count = EXCLUDED.restart_count,
   name = EXCLUDED.name,
   image_id = EXCLUDED.image_id,
   image_name = EXCLUDED.image_name,
@@ -1248,21 +1760,24 @@ ON CONFLICT (host_id, container_id) DO UPDATE SET
 `
 
 type UpsertDockerContainerParams struct {
-	ID          string           `json:"id"`
-	HostID      string           `json:"host_id"`
-	ContainerID string           `json:"container_id"`
-	Name        string           `json:"name"`
-	ImageID     *string          `json:"image_id"`
-	ImageName   string           `json:"image_name"`
-	ImageTag    string           `json:"image_tag"`
-	Status      string           `json:"status"`
-	State       *string          `json:"state"`
-	Ports       []byte           `json:"ports"`
-	Labels      []byte           `json:"labels"`
-	CreatedAt   pgtype.Timestamp `json:"created_at"`
-	StartedAt   pgtype.Timestamp `json:"started_at"`
-	UpdatedAt   pgtype.Timestamp `json:"updated_at"`
-	LastChecked pgtype.Timestamp `json:"last_checked"`
+	ID           string           `json:"id"`
+	HostID       string           `json:"host_id"`
+	ContainerID  string           `json:"container_id"`
+	Name         string           `json:"name"`
+	ImageID      *string          `json:"image_id"`
+	ImageName    string           `json:"image_name"`
+	ImageTag     string           `json:"image_tag"`
+	Status       string           `json:"status"`
+	State        *string          `json:"state"`
+	Ports        []byte           `json:"ports"`
+	Labels       []byte           `json:"labels"`
+	CreatedAt    pgtype.Timestamp `json:"created_at"`
+	StartedAt    pgtype.Timestamp `json:"started_at"`
+	UpdatedAt    pgtype.Timestamp `json:"updated_at"`
+	LastChecked  pgtype.Timestamp `json:"last_checked"`
+	ImageStale   bool             `json:"image_stale"`
+	RestartCount int32            `json:"restart_count"`
+	ImageDigest  *string          `json:"image_digest"`
 }
 
 func (q *Queries) UpsertDockerContainer(ctx context.Context, arg UpsertDockerContainerParams) error {
@@ -1282,16 +1797,39 @@ func (q *Queries) UpsertDockerContainer(ctx context.Context, arg UpsertDockerCon
 		arg.StartedAt,
 		arg.UpdatedAt,
 		arg.LastChecked,
+		arg.ImageStale,
+		arg.RestartCount,
+		arg.ImageDigest,
 	)
+	return err
+}
+
+const upsertDockerHostImage = `-- name: UpsertDockerHostImage :exec
+INSERT INTO docker_host_images (host_id, image_id, last_seen)
+VALUES ($1, $2, $3)
+ON CONFLICT (host_id, image_id) DO UPDATE SET last_seen = EXCLUDED.last_seen
+`
+
+type UpsertDockerHostImageParams struct {
+	HostID   string           `json:"host_id"`
+	ImageID  string           `json:"image_id"`
+	LastSeen pgtype.Timestamp `json:"last_seen"`
+}
+
+func (q *Queries) UpsertDockerHostImage(ctx context.Context, arg UpsertDockerHostImageParams) error {
+	_, err := q.db.Exec(ctx, upsertDockerHostImage, arg.HostID, arg.ImageID, arg.LastSeen)
 	return err
 }
 
 const upsertDockerImage = `-- name: UpsertDockerImage :one
 INSERT INTO docker_images (id, repository, tag, image_id, digest, size_bytes, source, created_at, last_checked, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+VALUES ($1, $2, $3, $4, $5, $6, $7,
+        COALESCE($8::timestamp(3), $9::timestamp(3)), $9, $10)
 ON CONFLICT (repository, tag, image_id) DO UPDATE SET
   digest = COALESCE(EXCLUDED.digest, docker_images.digest),
   size_bytes = COALESCE(EXCLUDED.size_bytes, docker_images.size_bytes),
+  source = EXCLUDED.source,
+  created_at = COALESCE($8::timestamp(3), docker_images.created_at),
   last_checked = EXCLUDED.last_checked,
   updated_at = EXCLUDED.updated_at
 RETURNING id
@@ -1328,37 +1866,46 @@ func (q *Queries) UpsertDockerImage(ctx context.Context, arg UpsertDockerImagePa
 	return id, err
 }
 
-const upsertDockerImageUpdate = `-- name: UpsertDockerImageUpdate :exec
-INSERT INTO docker_image_updates (id, image_id, current_tag, available_tag, is_security_update, severity, changelog_url, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-ON CONFLICT (image_id, available_tag) DO UPDATE SET
-  severity = EXCLUDED.severity,
-  changelog_url = EXCLUDED.changelog_url,
+const upsertDockerImageCheck = `-- name: UpsertDockerImageCheck :exec
+INSERT INTO docker_image_checks (id, host_id, image_id, status, local_digest, remote_digest, registry, reason, checked_at, first_seen_update_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+ON CONFLICT (host_id, image_id) DO UPDATE SET
+  status = EXCLUDED.status,
+  local_digest = EXCLUDED.local_digest,
+  remote_digest = EXCLUDED.remote_digest,
+  registry = EXCLUDED.registry,
+  reason = EXCLUDED.reason,
+  checked_at = EXCLUDED.checked_at,
+  first_seen_update_at = EXCLUDED.first_seen_update_at,
   updated_at = EXCLUDED.updated_at
 `
 
-type UpsertDockerImageUpdateParams struct {
-	ID               string           `json:"id"`
-	ImageID          string           `json:"image_id"`
-	CurrentTag       string           `json:"current_tag"`
-	AvailableTag     string           `json:"available_tag"`
-	IsSecurityUpdate bool             `json:"is_security_update"`
-	Severity         *string          `json:"severity"`
-	ChangelogUrl     *string          `json:"changelog_url"`
-	CreatedAt        pgtype.Timestamp `json:"created_at"`
-	UpdatedAt        pgtype.Timestamp `json:"updated_at"`
+type UpsertDockerImageCheckParams struct {
+	ID                string           `json:"id"`
+	HostID            string           `json:"host_id"`
+	ImageID           string           `json:"image_id"`
+	Status            string           `json:"status"`
+	LocalDigest       *string          `json:"local_digest"`
+	RemoteDigest      *string          `json:"remote_digest"`
+	Registry          *string          `json:"registry"`
+	Reason            *string          `json:"reason"`
+	CheckedAt         pgtype.Timestamp `json:"checked_at"`
+	FirstSeenUpdateAt pgtype.Timestamp `json:"first_seen_update_at"`
+	UpdatedAt         pgtype.Timestamp `json:"updated_at"`
 }
 
-func (q *Queries) UpsertDockerImageUpdate(ctx context.Context, arg UpsertDockerImageUpdateParams) error {
-	_, err := q.db.Exec(ctx, upsertDockerImageUpdate,
+func (q *Queries) UpsertDockerImageCheck(ctx context.Context, arg UpsertDockerImageCheckParams) error {
+	_, err := q.db.Exec(ctx, upsertDockerImageCheck,
 		arg.ID,
+		arg.HostID,
 		arg.ImageID,
-		arg.CurrentTag,
-		arg.AvailableTag,
-		arg.IsSecurityUpdate,
-		arg.Severity,
-		arg.ChangelogUrl,
-		arg.CreatedAt,
+		arg.Status,
+		arg.LocalDigest,
+		arg.RemoteDigest,
+		arg.Registry,
+		arg.Reason,
+		arg.CheckedAt,
+		arg.FirstSeenUpdateAt,
 		arg.UpdatedAt,
 	)
 	return err

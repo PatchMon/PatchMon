@@ -3,10 +3,12 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/safeconv"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -17,7 +19,12 @@ type DockerReceivePayload struct {
 	Images     []DockerReceiveImage
 	Volumes    []DockerReceiveVolume
 	Networks   []DockerReceiveNetwork
-	Updates    []DockerReceiveImageUpdate
+	Collected  []string
+}
+
+// An empty list from an agent that does not send Collected may be a failed collection, so it must not prune.
+func (p *DockerReceivePayload) reconciles(kind string, reported int) bool {
+	return reported > 0 || slices.Contains(p.Collected, kind)
 }
 
 type DockerReceiveContainer struct {
@@ -34,6 +41,9 @@ type DockerReceiveContainer struct {
 	CreatedAt       *time.Time
 	StartedAt       *time.Time
 	Labels          map[string]string
+	ImageStale      bool
+	RestartCount    int
+	ImageDigest     string
 }
 
 type DockerReceiveImage struct {
@@ -76,15 +86,6 @@ type DockerReceiveNetwork struct {
 	ContainerCount int
 }
 
-type DockerReceiveImageUpdate struct {
-	Repository      string
-	CurrentTag      string
-	AvailableTag    string
-	CurrentDigest   string
-	AvailableDigest string
-	ImageID         string
-}
-
 // ContainerStatusChange records a container that transitioned between running and stopped.
 type ContainerStatusChange struct {
 	ContainerID string // Docker container ID
@@ -101,7 +102,6 @@ type DockerReceiveResult struct {
 	ImagesReceived     int
 	VolumesReceived    int
 	NetworksReceived   int
-	UpdatesFound       int
 	StatusChanges      []ContainerStatusChange
 }
 
@@ -120,7 +120,7 @@ func mapToJSON(m interface{}) []byte {
 	return b
 }
 
-// ReceiveDockerData processes and stores Docker data from an agent.
+// ReceiveDockerData processes and stores Docker data from an agent in one transaction.
 func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payload *DockerReceivePayload) (*DockerReceiveResult, error) {
 	// Strip NUL before anything touches a query parameter. The handler has
 	// already run the canonical docker-hash check by this point, so cleaning
@@ -128,83 +128,112 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 	sanitizeDockerPayload(payload)
 
 	d := s.db.DB(ctx)
-	now := time.Now().UTC()
-	nowPg := pgtime.From(now)
+	tx, err := d.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+	}()
+	result, err := receiveDockerData(ctx, d.Queries.WithTx(tx), hostID, payload, time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
 
+func dockerImageKey(repository, tag, imageID string) string {
+	return repository + "|" + tag + "|" + imageID
+}
+
+func containerImageKey(c *DockerReceiveContainer) (string, bool) {
+	if c.ImageRepository == "" || c.ImageTag == "" {
+		return "", false
+	}
+	imgID := c.ImageID
+	if imgID == "" {
+		imgID = "unknown"
+	}
+	return dockerImageKey(c.ImageRepository, c.ImageTag, imgID), true
+}
+
+func receiveDockerData(ctx context.Context, q *db.Queries, hostID string, payload *DockerReceivePayload, now time.Time) (*DockerReceiveResult, error) {
+	nowPg := pgtime.From(now)
 	result := &DockerReceiveResult{}
 
-	// Map: "repository|tag|image_id" -> docker_images.id (UUID)
-	imageIDMap := make(map[string]string)
-
-	// 1. Process images from containers first
-	for _, c := range payload.Containers {
-		if c.ImageRepository == "" || c.ImageTag == "" {
-			continue
-		}
-		imgID := c.ImageID
-		if imgID == "" {
-			imgID = "unknown"
-		}
-		key := c.ImageRepository + "|" + c.ImageTag + "|" + imgID
-		if _, ok := imageIDMap[key]; ok {
-			continue
-		}
-		source := c.ImageSource
-		if source == "" {
-			source = "docker-hub"
-		}
-		createdAt := timeToPg(c.CreatedAt)
-		id := uuid.New().String()
-		retID, err := d.Queries.UpsertDockerImage(ctx, db.UpsertDockerImageParams{
-			ID:          id,
-			Repository:  c.ImageRepository,
-			Tag:         c.ImageTag,
-			ImageID:     imgID,
-			Digest:      nil,
-			SizeBytes:   nil,
-			Source:      source,
-			CreatedAt:   createdAt,
-			LastChecked: nowPg,
-			UpdatedAt:   nowPg,
-		})
-		if err != nil {
-			return nil, err
-		}
-		imageIDMap[key] = retID
+	type imageSource struct {
+		reported *DockerReceiveImage
+		derived  *DockerReceiveContainer
 	}
+	sources := make(map[string]imageSource, len(payload.Images)+len(payload.Containers))
+	for i := range payload.Images {
+		img := &payload.Images[i]
+		key := dockerImageKey(img.Repository, img.Tag, img.ImageID)
+		if _, ok := sources[key]; !ok {
+			sources[key] = imageSource{reported: img}
+		}
+	}
+	for i := range payload.Containers {
+		c := &payload.Containers[i]
+		if key, ok := containerImageKey(c); ok {
+			if _, known := sources[key]; !known {
+				sources[key] = imageSource{derived: c}
+			}
+		}
+	}
+	keys := make([]string, 0, len(sources))
+	for key := range sources {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
 
-	// 2. Process standalone images
-	for _, img := range payload.Images {
-		key := img.Repository + "|" + img.Tag + "|" + img.ImageID
-		if _, ok := imageIDMap[key]; ok {
-			continue
+	imageIDMap := make(map[string]string, len(keys))
+	for _, key := range keys {
+		var retID string
+		var err error
+		if img := sources[key].reported; img != nil {
+			source := img.Source
+			if source == "" {
+				source = "docker-hub"
+			}
+			var sizeBytes *int64
+			if img.SizeBytes > 0 {
+				sizeBytes = &img.SizeBytes
+			}
+			retID, err = q.UpsertDockerImage(ctx, db.UpsertDockerImageParams{
+				ID:          uuid.New().String(),
+				Repository:  img.Repository,
+				Tag:         img.Tag,
+				ImageID:     img.ImageID,
+				Digest:      optionalText(img.Digest),
+				SizeBytes:   sizeBytes,
+				Source:      source,
+				CreatedAt:   pgtime.FromPtr(nonZeroTime(img.CreatedAt)),
+				LastChecked: nowPg,
+				UpdatedAt:   nowPg,
+			})
+		} else {
+			c := sources[key].derived
+			imgID := c.ImageID
+			if imgID == "" {
+				imgID = "unknown"
+			}
+			source := c.ImageSource
+			if source == "" {
+				source = "docker-hub"
+			}
+			retID, err = q.InsertDockerImageFromContainer(ctx, db.InsertDockerImageFromContainerParams{
+				ID:         uuid.New().String(),
+				Repository: c.ImageRepository,
+				Tag:        c.ImageTag,
+				ImageID:    imgID,
+				Source:     source,
+				CreatedAt:  nowPg,
+			})
 		}
-		source := img.Source
-		if source == "" {
-			source = "docker-hub"
-		}
-		var digest *string
-		if img.Digest != "" {
-			digest = &img.Digest
-		}
-		var sizeBytes *int64
-		if img.SizeBytes > 0 {
-			sizeBytes = &img.SizeBytes
-		}
-		createdAt := timeToPg(img.CreatedAt)
-		id := uuid.New().String()
-		retID, err := d.Queries.UpsertDockerImage(ctx, db.UpsertDockerImageParams{
-			ID:          id,
-			Repository:  img.Repository,
-			Tag:         img.Tag,
-			ImageID:     img.ImageID,
-			Digest:      digest,
-			SizeBytes:   sizeBytes,
-			Source:      source,
-			CreatedAt:   createdAt,
-			LastChecked: nowPg,
-			UpdatedAt:   nowPg,
-		})
 		if err != nil {
 			return nil, err
 		}
@@ -212,22 +241,44 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 	}
 	result.ImagesReceived = len(payload.Images)
 
-	// 3. Process containers — snapshot existing statuses for change detection.
-	oldContainers, _ := d.Queries.GetContainersByHostID(ctx, hostID)
-	oldStatusMap := make(map[string]string, len(oldContainers)) // container_id -> status
+	linkedImageIDs := make([]string, 0, len(imageIDMap))
+	for _, id := range imageIDMap {
+		linkedImageIDs = append(linkedImageIDs, id)
+	}
+	slices.Sort(linkedImageIDs)
+	linkedImageIDs = slices.Compact(linkedImageIDs)
+	for _, id := range linkedImageIDs {
+		if err := q.UpsertDockerHostImage(ctx, db.UpsertDockerHostImageParams{
+			HostID:   hostID,
+			ImageID:  id,
+			LastSeen: nowPg,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	if payload.reconciles("images", len(payload.Images)) {
+		if err := q.DeleteStaleDockerHostImages(ctx, db.DeleteStaleDockerHostImagesParams{
+			HostID:   hostID,
+			ImageIds: linkedImageIDs,
+		}); err != nil {
+			return nil, err
+		}
+	}
+
+	oldContainers, err := q.GetContainersByHostID(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+	oldStatusMap := make(map[string]string, len(oldContainers))
 	oldNameMap := make(map[string]string, len(oldContainers))
 	for _, oc := range oldContainers {
 		oldStatusMap[oc.ContainerID] = oc.Status
 		oldNameMap[oc.ContainerID] = oc.Name
 	}
-	for _, c := range payload.Containers {
+	for i := range payload.Containers {
+		c := &payload.Containers[i]
 		var imgUUID *string
-		if c.ImageRepository != "" && c.ImageTag != "" {
-			imgID := c.ImageID
-			if imgID == "" {
-				imgID = "unknown"
-			}
-			key := c.ImageRepository + "|" + c.ImageTag + "|" + imgID
+		if key, ok := containerImageKey(c); ok {
 			if id, ok := imageIDMap[key]; ok {
 				imgUUID = &id
 			}
@@ -240,24 +291,25 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 		if tag == "" {
 			tag = "latest"
 		}
-		createdAt := timeToPg(c.CreatedAt)
-		startedAt := pgtime.FromPtr(c.StartedAt)
-		err := d.Queries.UpsertDockerContainer(ctx, db.UpsertDockerContainerParams{
-			ID:          uuid.New().String(),
-			HostID:      hostID,
-			ContainerID: c.ContainerID,
-			Name:        c.Name,
-			ImageID:     imgUUID,
-			ImageName:   c.ImageName,
-			ImageTag:    tag,
-			Status:      c.Status,
-			State:       &state,
-			Ports:       mapToJSON(c.Ports),
-			Labels:      mapToJSON(c.Labels),
-			CreatedAt:   createdAt,
-			StartedAt:   startedAt,
-			UpdatedAt:   nowPg,
-			LastChecked: nowPg,
+		err := q.UpsertDockerContainer(ctx, db.UpsertDockerContainerParams{
+			ID:           uuid.New().String(),
+			HostID:       hostID,
+			ContainerID:  c.ContainerID,
+			Name:         c.Name,
+			ImageID:      imgUUID,
+			ImageName:    c.ImageName,
+			ImageTag:     tag,
+			Status:       c.Status,
+			State:        &state,
+			Ports:        mapToJSON(c.Ports),
+			Labels:       mapToJSON(c.Labels),
+			CreatedAt:    timeToPg(c.CreatedAt),
+			StartedAt:    pgtime.FromPtr(nonZeroTime(c.StartedAt)),
+			UpdatedAt:    nowPg,
+			LastChecked:  nowPg,
+			ImageStale:   c.ImageStale,
+			RestartCount: safeconv.ClampToInt32(c.RestartCount),
+			ImageDigest:  optionalText(c.ImageDigest),
 		})
 		if err != nil {
 			return nil, err
@@ -265,19 +317,12 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 	}
 	result.ContainersReceived = len(payload.Containers)
 
-	// Detect container status transitions (running ↔ stopped/exited).
 	for _, c := range payload.Containers {
 		oldStatus, existed := oldStatusMap[c.ContainerID]
-		if !existed {
-			continue // new container, no transition
-		}
-		newStatus := c.Status
-		if oldStatus == newStatus {
+		if !existed || oldStatus == c.Status {
 			continue
 		}
-		wasRunning := isRunningStatus(oldStatus)
-		nowRunning := isRunningStatus(newStatus)
-		if wasRunning != nowRunning {
+		if isRunningStatus(oldStatus) != isRunningStatus(c.Status) {
 			name := c.Name
 			if name == "" {
 				name = oldNameMap[c.ContainerID]
@@ -288,12 +333,24 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 				ImageName:   c.ImageName,
 				HostID:      hostID,
 				OldStatus:   oldStatus,
-				NewStatus:   newStatus,
+				NewStatus:   c.Status,
 			})
 		}
 	}
 
-	// 4. Process volumes
+	if payload.reconciles("containers", len(payload.Containers)) {
+		reportedContainerIDs := make([]string, 0, len(payload.Containers))
+		for _, c := range payload.Containers {
+			reportedContainerIDs = append(reportedContainerIDs, c.ContainerID)
+		}
+		if err := q.DeleteStaleContainers(ctx, db.DeleteStaleContainersParams{
+			HostID:       hostID,
+			ContainerIds: reportedContainerIDs,
+		}); err != nil {
+			return nil, err
+		}
+	}
+
 	for _, v := range payload.Volumes {
 		scope := v.Scope
 		if scope == "" {
@@ -310,8 +367,7 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 		if v.Renderer != "" {
 			renderer = &v.Renderer
 		}
-		createdAt := timeToPg(v.CreatedAt)
-		err := d.Queries.UpsertDockerVolume(ctx, db.UpsertDockerVolumeParams{
+		err := q.UpsertDockerVolume(ctx, db.UpsertDockerVolumeParams{
 			ID:          uuid.New().String(),
 			HostID:      hostID,
 			VolumeID:    v.VolumeID,
@@ -323,8 +379,8 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 			Labels:      mapToJSON(v.Labels),
 			Options:     mapToJSON(v.Options),
 			SizeBytes:   v.SizeBytes,
-			RefCount:    int32(v.RefCount),
-			CreatedAt:   createdAt,
+			RefCount:    safeconv.ClampToInt32(v.RefCount),
+			CreatedAt:   timeToPg(v.CreatedAt),
 			UpdatedAt:   nowPg,
 			LastChecked: nowPg,
 		})
@@ -334,15 +390,25 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 	}
 	result.VolumesReceived = len(payload.Volumes)
 
-	// 5. Process networks
+	if payload.reconciles("volumes", len(payload.Volumes)) {
+		reportedVolumeIDs := make([]string, 0, len(payload.Volumes))
+		for _, v := range payload.Volumes {
+			reportedVolumeIDs = append(reportedVolumeIDs, v.VolumeID)
+		}
+		if err := q.DeleteStaleVolumes(ctx, db.DeleteStaleVolumesParams{
+			HostID:    hostID,
+			VolumeIds: reportedVolumeIDs,
+		}); err != nil {
+			return nil, err
+		}
+	}
+
 	for _, n := range payload.Networks {
 		scope := n.Scope
 		if scope == "" {
 			scope = "local"
 		}
-		attachable := n.Attachable
-		createdAt := pgtime.FromPtr(n.CreatedAt)
-		err := d.Queries.UpsertDockerNetwork(ctx, db.UpsertDockerNetworkParams{
+		err := q.UpsertDockerNetwork(ctx, db.UpsertDockerNetworkParams{
 			ID:             uuid.New().String(),
 			HostID:         hostID,
 			NetworkID:      n.NetworkID,
@@ -351,13 +417,13 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 			Scope:          scope,
 			Ipv6Enabled:    n.IPv6Enabled,
 			Internal:       n.Internal,
-			Attachable:     attachable,
+			Attachable:     n.Attachable,
 			Ingress:        n.Ingress,
 			ConfigOnly:     n.ConfigOnly,
 			Labels:         mapToJSON(n.Labels),
 			Ipam:           mapToJSON(n.IPAM),
-			ContainerCount: int32(n.ContainerCount),
-			CreatedAt:      createdAt,
+			ContainerCount: safeconv.ClampToInt32(n.ContainerCount),
+			CreatedAt:      pgtime.FromPtr(n.CreatedAt),
 			UpdatedAt:      nowPg,
 			LastChecked:    nowPg,
 		})
@@ -367,44 +433,27 @@ func (s *DockerStore) ReceiveDockerData(ctx context.Context, hostID string, payl
 	}
 	result.NetworksReceived = len(payload.Networks)
 
-	// 6. Process updates (need to resolve image_id UUID from repository+current_tag+image_id)
-	for _, u := range payload.Updates {
-		imgUUID, err := d.Queries.GetImageIDByRepositoryTagImageID(ctx, db.GetImageIDByRepositoryTagImageIDParams{
-			Repository: u.Repository,
-			Tag:        u.CurrentTag,
-			ImageID:    u.ImageID,
-		})
-		if err != nil {
-			continue // image may not exist yet, skip
+	if payload.reconciles("networks", len(payload.Networks)) {
+		reportedNetworkIDs := make([]string, 0, len(payload.Networks))
+		for _, n := range payload.Networks {
+			reportedNetworkIDs = append(reportedNetworkIDs, n.NetworkID)
 		}
-		digestInfo := ""
-		if u.CurrentDigest != "" || u.AvailableDigest != "" {
-			digestJSON, _ := json.Marshal(map[string]string{
-				"method":           "digest_comparison",
-				"current_digest":   u.CurrentDigest,
-				"available_digest": u.AvailableDigest,
-			})
-			digestInfo = string(digestJSON)
-		}
-		severity := "digest_changed"
-		err = d.Queries.UpsertDockerImageUpdate(ctx, db.UpsertDockerImageUpdateParams{
-			ID:               uuid.New().String(),
-			ImageID:          imgUUID,
-			CurrentTag:       u.CurrentTag,
-			AvailableTag:     u.AvailableTag,
-			IsSecurityUpdate: false,
-			Severity:         &severity,
-			ChangelogUrl:     &digestInfo,
-			CreatedAt:        nowPg,
-			UpdatedAt:        nowPg,
-		})
-		if err != nil {
+		if err := q.DeleteStaleNetworks(ctx, db.DeleteStaleNetworksParams{
+			HostID:     hostID,
+			NetworkIds: reportedNetworkIDs,
+		}); err != nil {
 			return nil, err
 		}
-		result.UpdatesFound++
 	}
 
 	return result, nil
+}
+
+func nonZeroTime(t *time.Time) *time.Time {
+	if t == nil || t.IsZero() {
+		return nil
+	}
+	return t
 }
 
 // isRunningStatus returns true for Docker container statuses that indicate a running container.

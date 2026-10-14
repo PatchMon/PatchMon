@@ -33,28 +33,32 @@ const (
 	hostStatusMonitorConcurrency = 20
 )
 
-// resolveDBFromPayload returns the DB to use: from poolCache when host is in payload, else defaultDB.
-func resolveDBFromPayload(ctx context.Context, payload []byte, defaultDB *database.DB, poolCache *hostctx.PoolCache) *database.DB {
+// resolveDBFromPayload resolves the DB for the host named in an AutomationPayload.
+func resolveDBFromPayload(ctx context.Context, payload []byte, defaultDB *database.DB, poolCache *hostctx.PoolCache) (context.Context, *database.DB, error) {
 	if len(payload) == 0 || poolCache == nil {
-		return defaultDB
+		return ctx, defaultDB, nil
 	}
 	var p AutomationPayload
 	if err := json.Unmarshal(payload, &p); err == nil {
 		return resolveDBForHost(ctx, p.Host, defaultDB, poolCache)
 	}
-	return defaultDB
+	return ctx, defaultDB, nil
 }
 
-// resolveDBForHost returns the database for a job's context. Workers have no
-// HTTP request, so the host travels in the job payload.
-func resolveDBForHost(ctx context.Context, host string, defaultDB *database.DB, poolCache *hostctx.PoolCache) *database.DB {
+// resolveDBForHost returns the database for a job's context. A named host must
+// never fall back to defaultDB, or its writes land in another context's database.
+func resolveDBForHost(ctx context.Context, host string, defaultDB *database.DB, poolCache *hostctx.PoolCache) (context.Context, *database.DB, error) {
 	if poolCache == nil || strings.TrimSpace(host) == "" {
-		return defaultDB
+		return ctx, defaultDB, nil
 	}
-	if resolved, err := poolCache.GetOrCreate(ctx, host); err == nil && resolved != nil {
-		return resolved
+	resolved, err := poolCache.GetOrCreate(ctx, host)
+	if err != nil {
+		return ctx, nil, fmt.Errorf("resolve database for %q: %w", host, err)
 	}
-	return defaultDB
+	if resolved == nil {
+		return ctx, nil, fmt.Errorf("no database registered for %q: %w", host, asynq.SkipRetry)
+	}
+	return hostctx.WithEntry(ctx, &hostctx.Entry{Host: host}), resolved, nil
 }
 
 // workerTenantKey prefixes a Redis key with the context domain for multi-context isolation.
@@ -84,11 +88,11 @@ func forEachDB(ctx context.Context, defaultDB *database.DB, poolCache *hostctx.P
 		return
 	}
 	for _, host := range poolCache.ListHosts() {
-		d, err := poolCache.GetOrCreate(ctx, host)
-		if err != nil || d == nil {
+		hctx, d, _ := resolveDBForHost(ctx, host, nil, poolCache)
+		if d == nil {
 			continue
 		}
-		fn(ctx, d, host)
+		fn(hctx, d, host)
 	}
 }
 
@@ -115,7 +119,10 @@ func (h *HostStatusMonitorHandler) ProcessTask(ctx context.Context, t *asynq.Tas
 
 	// Payload has host: single-host or manual trigger with host
 	if len(payload) > 0 {
-		db := resolveDBFromPayload(ctx, payload, h.defaultDB, h.poolCache)
+		ctx, db, err := resolveDBFromPayload(ctx, payload, h.defaultDB, h.poolCache)
+		if err != nil {
+			return err
+		}
 		alertsCreated, err := alerts.ProcessHostStatusMonitor(ctx, db, tenantHostFromPayload(payload), h.registry, h.emit, h.log)
 		if err != nil {
 			return err
@@ -155,11 +162,11 @@ func (h *HostStatusMonitorHandler) ProcessTask(ctx context.Context, t *asynq.Tas
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			db, err := h.poolCache.GetOrCreate(ctx, host)
-			if err != nil || db == nil {
+			hctx, db, _ := resolveDBForHost(ctx, host, nil, h.poolCache)
+			if db == nil {
 				return
 			}
-			if n, err := alerts.ProcessHostStatusMonitor(ctx, db, host, h.registry, h.emit, h.log); err == nil {
+			if n, err := alerts.ProcessHostStatusMonitor(hctx, db, host, h.registry, h.emit, h.log); err == nil {
 				totalCreated.Add(int64(n))
 			}
 		}()
@@ -189,12 +196,15 @@ func (h *UpdateThresholdMonitorHandler) ProcessTask(ctx context.Context, t *asyn
 
 	// Payload has host: single-host or manual trigger with host
 	if len(payload) > 0 {
-		db := resolveDBFromPayload(ctx, payload, h.defaultDB, h.poolCache)
+		ctx, db, err := resolveDBFromPayload(ctx, payload, h.defaultDB, h.poolCache)
+		if err != nil {
+			return err
+		}
 		alertsCreated, err := alerts.ProcessUpdateThresholdMonitor(ctx, db, tenantHostFromPayload(payload), h.emit, h.log)
 		if err != nil {
 			return err
 		}
-		h.log.Info("update threshold monitor completed", "alerts_created", alertsCreated)
+		h.logCompleted(int64(alertsCreated))
 		return nil
 	}
 
@@ -204,7 +214,7 @@ func (h *UpdateThresholdMonitorHandler) ProcessTask(ctx context.Context, t *asyn
 		if err != nil {
 			return err
 		}
-		h.log.Info("update threshold monitor completed", "alerts_created", alertsCreated)
+		h.logCompleted(int64(alertsCreated))
 		return nil
 	}
 
@@ -216,7 +226,7 @@ func (h *UpdateThresholdMonitorHandler) ProcessTask(ctx context.Context, t *asyn
 
 	hosts := h.poolCache.ListHosts()
 	if len(hosts) == 0 {
-		h.log.Info("update threshold monitor completed", "alerts_created", totalCreated.Load(), "hosts_processed", 1)
+		h.logCompleted(totalCreated.Load(), "hosts_processed", 1)
 		return nil
 	}
 
@@ -229,19 +239,27 @@ func (h *UpdateThresholdMonitorHandler) ProcessTask(ctx context.Context, t *asyn
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			db, err := h.poolCache.GetOrCreate(ctx, host)
-			if err != nil || db == nil {
+			hctx, db, _ := resolveDBForHost(ctx, host, nil, h.poolCache)
+			if db == nil {
 				return
 			}
-			if n, err := alerts.ProcessUpdateThresholdMonitor(ctx, db, host, h.emit, h.log); err == nil {
+			if n, err := alerts.ProcessUpdateThresholdMonitor(hctx, db, host, h.emit, h.log); err == nil {
 				totalCreated.Add(int64(n))
 			}
 		}()
 	}
 	wg.Wait()
 
-	h.log.Info("update threshold monitor completed", "alerts_created", totalCreated.Load(), "hosts_processed", len(hosts)+1)
+	h.logCompleted(totalCreated.Load(), "hosts_processed", len(hosts)+1)
 	return nil
+}
+
+func (h *UpdateThresholdMonitorHandler) logCompleted(alertsCreated int64, attrs ...any) {
+	level := slog.LevelDebug
+	if alertsCreated > 0 {
+		level = slog.LevelInfo
+	}
+	h.log.Log(context.Background(), level, "update threshold monitor completed", append([]any{"alerts_created", alertsCreated}, attrs...)...)
 }
 
 // SessionCleanupHandler handles session-cleanup jobs.
@@ -259,7 +277,10 @@ func NewSessionCleanupHandler(defaultDB *database.DB, poolCache *hostctx.PoolCac
 // ProcessTask implements asynq.Handler.
 func (h *SessionCleanupHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d, err := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		if err != nil {
+			return err
+		}
 		return d.Queries.DeleteExpiredSessions(ctx)
 	}
 	forEachDB(ctx, h.defaultDB, h.poolCache, func(ctx context.Context, d *database.DB, host string) {
@@ -286,7 +307,10 @@ func NewOrphanedRepoCleanupHandler(defaultDB *database.DB, poolCache *hostctx.Po
 // ProcessTask implements asynq.Handler.
 func (h *OrphanedRepoCleanupHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d, err := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		if err != nil {
+			return err
+		}
 		ctx = hostctx.WithDB(ctx, d)
 		repos := store.NewRepositoriesStore(&hostctx.DBResolver{Default: d})
 		_, count, err := repos.CleanupOrphaned(ctx)
@@ -327,7 +351,10 @@ func NewOrphanedPkgCleanupHandler(defaultDB *database.DB, poolCache *hostctx.Poo
 // ProcessTask implements asynq.Handler.
 func (h *OrphanedPkgCleanupHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d, err := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		if err != nil {
+			return err
+		}
 		return h.cleanupDB(ctx, d)
 	}
 	forEachDB(ctx, h.defaultDB, h.poolCache, func(ctx context.Context, d *database.DB, host string) {
@@ -369,7 +396,10 @@ func NewDockerInvCleanupHandler(defaultDB *database.DB, poolCache *hostctx.PoolC
 // ProcessTask implements asynq.Handler.
 func (h *DockerInvCleanupHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d, err := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		if err != nil {
+			return err
+		}
 		return h.cleanupDB(ctx, d)
 	}
 	forEachDB(ctx, h.defaultDB, h.poolCache, func(ctx context.Context, d *database.DB, host string) {
@@ -402,7 +432,6 @@ func (h *DockerInvCleanupHandler) cleanupDB(ctx context.Context, d *database.DB)
 		return err
 	}
 	for _, img := range images {
-		_ = d.Queries.DeleteImageUpdatesByImageID(ctx, img.ID)
 		if err := d.Queries.DeleteImageByID(ctx, img.ID); err != nil {
 			h.log.Warn("failed to delete orphaned image", "id", img.ID, "error", err)
 			continue
@@ -429,7 +458,10 @@ func NewSystemStatisticsHandler(defaultDB *database.DB, poolCache *hostctx.PoolC
 // ProcessTask implements asynq.Handler.
 func (h *SystemStatisticsHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d, err := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		if err != nil {
+			return err
+		}
 		return h.collectStats(ctx, d)
 	}
 	forEachDB(ctx, h.defaultDB, h.poolCache, func(ctx context.Context, d *database.DB, host string) {
@@ -474,7 +506,10 @@ func NewVersionUpdateCheckHandler(defaultDB *database.DB, poolCache *hostctx.Poo
 // ProcessTask implements asynq.Handler.
 func (h *VersionUpdateCheckHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d, err := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		if err != nil {
+			return err
+		}
 		th := tenantHostFromPayload(t.Payload())
 		return h.checkVersions(ctx, d, th)
 	}
@@ -510,7 +545,10 @@ func NewComplianceScanCleanupHandler(defaultDB *database.DB, poolCache *hostctx.
 // ProcessTask implements asynq.Handler.
 func (h *ComplianceScanCleanupHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d, err := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		if err != nil {
+			return err
+		}
 		return h.cleanupDB(ctx, d)
 	}
 	forEachDB(ctx, h.defaultDB, h.poolCache, func(ctx context.Context, d *database.DB, host string) {
@@ -530,6 +568,10 @@ func (h *ComplianceScanCleanupHandler) cleanupDB(ctx context.Context, d *databas
 		ErrorMessage: &msg,
 	})
 }
+
+const undispatchedPatchRunExpiry = 24 * time.Hour
+
+var undispatchedPatchRunExpiredMsg = "Marked as timed_out: the run was not dispatched to the agent within 24 hours of becoming due"
 
 // PatchRunCleanupHandler handles patch-run-cleanup jobs.
 type PatchRunCleanupHandler struct {
@@ -556,7 +598,10 @@ func (h *PatchRunCleanupHandler) ProcessTask(ctx context.Context, t *asynq.Task)
 	// fresh per-host would just add N redundant DB hits.
 	stallMin := h.resolveStallTimeoutMin()
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d, err := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		if err != nil {
+			return err
+		}
 		count, err := h.cleanupDB(ctx, d, stallMin)
 		if err != nil {
 			return err
@@ -599,10 +644,18 @@ func (h *PatchRunCleanupHandler) cleanupDB(ctx context.Context, d *database.DB, 
 	// output is never swept, however long it takes.
 	pgThreshold := pgtime.From(time.Now().Add(-time.Duration(stallMin) * time.Minute))
 	msg := fmt.Sprintf("Marked as timed_out after %d minutes with no progress from the agent", stallMin)
-	return d.Queries.MarkPatchRunsTimedOut(ctx, db.MarkPatchRunsTimedOutParams{
+	stalled, err := d.Queries.MarkPatchRunsTimedOut(ctx, db.MarkPatchRunsTimedOutParams{
 		StaleBefore:  pgThreshold,
 		ErrorMessage: &msg,
 	})
+	if err != nil {
+		return 0, err
+	}
+	undispatched, err := d.Queries.MarkUndispatchedPatchRunsTimedOut(ctx, db.MarkUndispatchedPatchRunsTimedOutParams{
+		DueBefore:    pgtime.From(time.Now().Add(-undispatchedPatchRunExpiry)),
+		ErrorMessage: &undispatchedPatchRunExpiredMsg,
+	})
+	return stalled + undispatched, err
 }
 
 // AgentReportsCleanupHandler sweeps update_history (the Agent Activity feed
@@ -629,7 +682,10 @@ func NewAgentReportsCleanupHandler(defaultDB *database.DB, poolCache *hostctx.Po
 func (h *AgentReportsCleanupHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	retentionDays := h.resolveRetentionDays()
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d, err := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		if err != nil {
+			return err
+		}
 		count, err := h.cleanupDB(ctx, d, retentionDays)
 		if err != nil {
 			return err
@@ -726,7 +782,10 @@ func NewPackageStatsRefreshHandler(defaultDB *database.DB, poolCache *hostctx.Po
 // ProcessTask implements asynq.Handler.
 func (h *PackageStatsRefreshHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d, err := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		if err != nil {
+			return err
+		}
 		return h.refresh(ctx, d, "")
 	}
 	forEachDB(ctx, h.defaultDB, h.poolCache, func(ctx context.Context, d *database.DB, host string) {
@@ -793,7 +852,10 @@ func NewAlertCleanupHandler(defaultDB *database.DB, poolCache *hostctx.PoolCache
 // ProcessTask implements asynq.Handler.
 func (h *AlertCleanupHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
 	if len(t.Payload()) > 0 {
-		d := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		ctx, d, err := resolveDBFromPayload(ctx, t.Payload(), h.defaultDB, h.poolCache)
+		if err != nil {
+			return err
+		}
 		ctx = hostctx.WithDB(ctx, d)
 		return h.cleanupDB(ctx, d)
 	}

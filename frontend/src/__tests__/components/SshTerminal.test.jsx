@@ -151,6 +151,24 @@ describe("SshTerminal Component", () => {
 			renderComponent({ embedded: true });
 			expect(screen.getByText(mockHost.friendly_name)).toBeInTheDocument();
 		});
+
+		it("portals the modal overlay above the sidebar", () => {
+			const { container } = renderComponent();
+			const overlay = screen
+				.getByText(/SSH Terminal - Test Host/)
+				.closest(".fixed.inset-0");
+			expect(container).not.toContainElement(overlay);
+			expect(overlay.parentElement).toBe(document.body);
+			expect(overlay).toHaveClass("z-[120]");
+		});
+
+		it("keeps embedded mode in place", () => {
+			const { container } = renderComponent({ embedded: true });
+			expect(container).toContainElement(
+				screen.getByText(mockHost.friendly_name),
+			);
+			expect(document.body.querySelector(".z-\\[120\\]")).toBeNull();
+		});
 	});
 
 	describe("Authentication Methods", () => {

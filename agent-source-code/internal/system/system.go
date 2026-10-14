@@ -294,6 +294,22 @@ func (d *Detector) GetHostname() (string, error) {
 	return info.Hostname, nil
 }
 
+func selectPrimaryIPAddress(ips []net.IP) string {
+	var ipv6Fallback string
+	for _, ip := range ips {
+		if !ip.IsGlobalUnicast() {
+			continue
+		}
+		if ip.To4() != nil {
+			return ip.String()
+		}
+		if ipv6Fallback == "" {
+			ipv6Fallback = ip.String()
+		}
+	}
+	return ipv6Fallback
+}
+
 // GetIPAddress gets the primary IP address using network interfaces
 func (d *Detector) GetIPAddress() string {
 	interfaces, err := net.Interfaces()
@@ -301,6 +317,8 @@ func (d *Detector) GetIPAddress() string {
 		d.logger.WithError(err).Warn("Failed to get network interfaces")
 		return ""
 	}
+
+	var ips []net.IP
 
 	for _, iface := range interfaces {
 		// Skip loopback and down interfaces
@@ -315,14 +333,12 @@ func (d *Detector) GetIPAddress() string {
 
 		for _, addr := range addrs {
 			if ipnet, ok := addr.(*net.IPNet); ok {
-				if ipnet.IP.To4() != nil && !ipnet.IP.IsLoopback() {
-					return ipnet.IP.String()
-				}
+				ips = append(ips, ipnet.IP)
 			}
 		}
 	}
 
-	return ""
+	return selectPrimaryIPAddress(ips)
 }
 
 // GetKernelVersion gets the kernel version

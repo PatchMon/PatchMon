@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
@@ -66,6 +67,15 @@ func (s *DockerStore) GetDashboard(ctx context.Context) (map[string]interface{},
 		return nil, err
 	}
 
+	checkStats, err := d.Queries.GetDockerImageCheckStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var lastImageCheckAt *time.Time
+	if checkStats.LastImageCheckAt.Valid {
+		lastImageCheckAt = pgTimePtr(checkStats.LastImageCheckAt)
+	}
+
 	containersByStatus, _ := d.Queries.GetContainersByStatus(ctx)
 	imagesBySource, _ := d.Queries.GetImagesBySource(ctx)
 
@@ -80,11 +90,13 @@ func (s *DockerStore) GetDashboard(ctx context.Context) (map[string]interface{},
 
 	return map[string]interface{}{
 		"stats": map[string]interface{}{
-			"totalHostsWithDocker": totalHosts,
-			"totalContainers":      stats.Column1,
-			"runningContainers":    stats.Column2,
-			"totalImages":          stats.Column3,
-			"availableUpdates":     stats.Column4,
+			"totalHostsWithDocker":      totalHosts,
+			"totalContainers":           stats.Column1,
+			"runningContainers":         stats.Column2,
+			"totalImages":               stats.Column3,
+			"availableUpdates":          stats.Column4,
+			"containersNeedingRecreate": checkStats.ContainersNeedingRecreate,
+			"lastImageCheckAt":          lastImageCheckAt,
 		},
 		"containersByStatus": cbStatus,
 		"imagesBySource":     ibSource,
@@ -183,11 +195,15 @@ func (s *DockerStore) ListContainers(ctx context.Context, params ContainerListPa
 		hostMap[h.ID] = h
 	}
 
-	out := make([]ContainerWithHost, len(containers))
-	for i := range containers {
+	annotated := convertContainers(containers)
+	if err := annotateContainers(ctx, d.Queries, annotated); err != nil {
+		return nil, 0, err
+	}
+	out := make([]ContainerWithHost, len(annotated))
+	for i := range annotated {
 		out[i] = ContainerWithHost{
-			DockerContainer: dbDockerContainerToModel(containers[i]),
-			Host:            hostMap[containers[i].HostID],
+			DockerContainer: annotated[i],
+			Host:            hostMap[annotated[i].HostID],
 		}
 	}
 	return out, int(total), nil
@@ -208,43 +224,40 @@ func (s *DockerStore) GetContainer(ctx context.Context, id string) (*ContainerDe
 	}
 
 	var dockerImage *models.DockerImage
-	var imageUpdates []models.DockerImageUpdate
-	var similar []models.DockerContainer
+	similar := []models.DockerContainer{}
 	if c.ImageID != nil && *c.ImageID != "" {
 		img, err := d.Queries.GetImageByID(ctx, *c.ImageID)
 		if err == nil {
-			dockerImage = ptr(dbDockerImageToModel(img))
-			updates, _ := d.Queries.GetImageUpdatesByImageID(ctx, *c.ImageID)
-			imageUpdates = make([]models.DockerImageUpdate, len(updates))
-			for i := range updates {
-				imageUpdates[i] = dbDockerImageUpdateToModel(updates[i])
+			imgs := []models.DockerImage{dbDockerImageToModel(img)}
+			if err := annotateImages(ctx, d.Queries, imgs); err != nil {
+				return nil, err
 			}
+			dockerImage = &imgs[0]
 		}
 		sim, _ := d.Queries.GetContainersByImageID(ctx, db.GetContainersByImageIDParams{ImageID: c.ImageID, ID: id})
-		similar = make([]models.DockerContainer, len(sim))
-		for i := range sim {
-			similar[i] = dbDockerContainerToModel(sim[i])
-		}
+		similar = convertContainers(sim)
 	}
 
+	all := append([]models.DockerContainer{dbDockerContainerToModel(c)}, similar...)
+	if err := annotateContainers(ctx, d.Queries, all); err != nil {
+		return nil, err
+	}
+	similar = all[1:]
+
 	return &ContainerDetail{
-		Container:          dbDockerContainerToModel(c),
-		Host:               hostPtr,
-		DockerImages:       dockerImage,
-		DockerImageUpdates: imageUpdates,
-		SimilarContainers:  similar,
+		Container:         all[0],
+		Host:              hostPtr,
+		DockerImages:      dockerImage,
+		SimilarContainers: similar,
 	}, nil
 }
 
-func ptr[T any](v T) *T { return &v }
-
 // ContainerDetail is container with host, image, and similar containers.
 type ContainerDetail struct {
-	Container          models.DockerContainer     `json:"container"`
-	Host               *HostInfo                  `json:"host"`
-	DockerImages       *models.DockerImage        `json:"-"`
-	DockerImageUpdates []models.DockerImageUpdate `json:"-"`
-	SimilarContainers  []models.DockerContainer   `json:"similarContainers"`
+	Container         models.DockerContainer   `json:"container"`
+	Host              *HostInfo                `json:"host"`
+	DockerImages      *models.DockerImage      `json:"-"`
+	SimilarContainers []models.DockerContainer `json:"similarContainers"`
 }
 
 // DeleteContainer removes a container from inventory.
@@ -255,21 +268,20 @@ func (s *DockerStore) DeleteContainer(ctx context.Context, id string) error {
 
 // ImageListParams holds filters for ListImages.
 type ImageListParams struct {
-	Source string
-	Search string
-	Page   int
-	Limit  int
+	Source       string
+	Search       string
+	UpdateStatus string
+	Page         int
+	Limit        int
 }
 
-// ImageWithCounts extends DockerImage with counts and hasUpdates.
+// ImageWithCounts extends DockerImage with its container count.
 type ImageWithCounts struct {
 	models.DockerImage
-	CountContainers int  `json:"-"`
-	HasUpdates      bool `json:"hasUpdates"`
-	CountUpdates    int  `json:"-"`
+	CountContainers int `json:"-"`
 }
 
-// ListImages returns images with container count and hasUpdates.
+// ListImages returns images with container count and update-check summary.
 func (s *DockerStore) ListImages(ctx context.Context, params ImageListParams) ([]ImageWithCounts, int, error) {
 	d := s.db.DB(ctx)
 	skip, take := validatePagination(params.Page, params.Limit, 10000)
@@ -281,6 +293,9 @@ func (s *DockerStore) ListImages(ctx context.Context, params ImageListParams) ([
 	if params.Search != "" {
 		arg.Search = &params.Search
 	}
+	if params.UpdateStatus != "" {
+		arg.UpdateStatus = &params.UpdateStatus
+	}
 
 	countArg := db.CountImagesParams{}
 	if params.Source != "" {
@@ -288,6 +303,9 @@ func (s *DockerStore) ListImages(ctx context.Context, params ImageListParams) ([
 	}
 	if params.Search != "" {
 		countArg.Search = &params.Search
+	}
+	if params.UpdateStatus != "" {
+		countArg.UpdateStatus = &params.UpdateStatus
 	}
 
 	total, err := d.Queries.CountImages(ctx, countArg)
@@ -317,19 +335,19 @@ func (s *DockerStore) ListImages(ctx context.Context, params ImageListParams) ([
 		}
 	}
 
-	updateRows, _ := d.Queries.GetUpdateCountsByImageIDs(ctx, ids)
-	updateCount := make(map[string]int)
-	for _, r := range updateRows {
-		updateCount[r.ImageID] = int(r.Cnt)
+	imgs := make([]models.DockerImage, len(images))
+	for i := range images {
+		imgs[i] = dbDockerImageToModel(images[i])
+	}
+	if err := annotateImages(ctx, d.Queries, imgs); err != nil {
+		return nil, 0, err
 	}
 
-	out := make([]ImageWithCounts, len(images))
-	for i := range images {
+	out := make([]ImageWithCounts, len(imgs))
+	for i := range imgs {
 		out[i] = ImageWithCounts{
-			DockerImage:     dbDockerImageToModel(images[i]),
-			CountContainers: containerCount[images[i].ID],
-			HasUpdates:      updateCount[images[i].ID] > 0,
-			CountUpdates:    updateCount[images[i].ID],
+			DockerImage:     imgs[i],
+			CountContainers: containerCount[imgs[i].ID],
 		}
 	}
 	return out, int(total), nil
@@ -343,31 +361,63 @@ func (s *DockerStore) GetImage(ctx context.Context, id string) (*ImageDetail, er
 		return nil, err
 	}
 
-	containers, _ := d.Queries.GetContainersByImageIDAll(ctx, &id)
-	hostIDs := make(map[string]bool)
-	for _, c := range containers {
-		hostIDs[c.HostID] = true
+	containerRows, err := d.Queries.GetContainersByImageIDAll(ctx, &id)
+	if err != nil {
+		return nil, err
 	}
-	ids := make([]string, 0, len(hostIDs))
-	for hid := range hostIDs {
-		ids = append(ids, hid)
+	containers := convertContainers(containerRows)
+	if err := annotateContainers(ctx, d.Queries, containers); err != nil {
+		return nil, err
 	}
 
-	var hosts []HostInfo
-	if len(ids) > 0 {
-		hostRows, _ := d.Queries.GetDockerHostsMinimalByIDs(ctx, ids)
+	hostIDs, err := d.Queries.GetHostIDsForImage(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	hosts := []HostInfo{}
+	if len(hostIDs) > 0 {
+		hostRows, err := d.Queries.GetDockerHostsMinimalByIDs(ctx, hostIDs)
+		if err != nil {
+			return nil, err
+		}
 		hosts = make([]HostInfo, len(hostRows))
 		for i := range hostRows {
 			hosts[i] = *dockerHostRowToHostInfo(hostRows[i])
 		}
 	}
 
+	checkRows, err := d.Queries.GetImageChecksByImageID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	checks := make([]models.DockerImageCheck, len(checkRows))
+	for i, c := range checkRows {
+		checks[i] = models.DockerImageCheck{
+			HostID:       c.HostID,
+			Host:         &models.DockerCheckHost{ID: c.HostID, FriendlyName: c.FriendlyName, Hostname: c.Hostname},
+			Status:       c.Status,
+			LocalDigest:  c.LocalDigest,
+			RemoteDigest: c.RemoteDigest,
+			Reason:       c.Reason,
+			Registry:     c.Registry,
+			CheckedAt:    pgTime(c.CheckedAt),
+		}
+	}
+
+	imgs := []models.DockerImage{dbDockerImageToModel(img)}
+	if err := annotateImages(ctx, d.Queries, imgs); err != nil {
+		return nil, err
+	}
+
 	return &ImageDetail{
-		Image:            dbDockerImageToModel(img),
-		Hosts:            hosts,
-		TotalContainers:  len(containers),
-		TotalHosts:       len(hosts),
-		DockerContainers: convertContainers(containers),
+		Image: ImageDetailImage{
+			DockerImage:       imgs[0],
+			DockerContainers:  containers,
+			DockerImageChecks: checks,
+		},
+		Hosts:           hosts,
+		TotalContainers: len(containers),
+		TotalHosts:      len(hosts),
 	}, nil
 }
 
@@ -381,11 +431,17 @@ func convertContainers(dc []db.DockerContainer) []models.DockerContainer {
 
 // ImageDetail is image with containers and hosts.
 type ImageDetail struct {
-	Image            models.DockerImage       `json:"image"`
-	Hosts            []HostInfo               `json:"hosts"`
-	TotalContainers  int                      `json:"totalContainers"`
-	TotalHosts       int                      `json:"totalHosts"`
-	DockerContainers []models.DockerContainer `json:"docker_containers,omitempty"`
+	Image           ImageDetailImage `json:"image"`
+	Hosts           []HostInfo       `json:"hosts"`
+	TotalContainers int              `json:"totalContainers"`
+	TotalHosts      int              `json:"totalHosts"`
+}
+
+// ImageDetailImage is the image object on the detail endpoint.
+type ImageDetailImage struct {
+	models.DockerImage
+	DockerContainers  []models.DockerContainer  `json:"docker_containers"`
+	DockerImageChecks []models.DockerImageCheck `json:"docker_image_checks"`
 }
 
 // DeleteImage removes an image from inventory (must not be in use).
@@ -398,7 +454,6 @@ func (s *DockerStore) DeleteImage(ctx context.Context, id string) (int, error) {
 	if cnt > 0 {
 		return int(cnt), nil
 	}
-	_ = d.Queries.DeleteImageUpdatesByImageID(ctx, id)
 	err = d.Queries.DeleteImageByID(ctx, id)
 	return 0, err
 }
@@ -468,25 +523,25 @@ func (s *DockerStore) GetHostDockerDetail(ctx context.Context, hostID string) (*
 		return nil, err
 	}
 
-	containers, _ := d.Queries.GetContainersByHostID(ctx, hostID)
-	imageIDs := make(map[string]bool)
-	for _, c := range containers {
-		if c.ImageID != nil && *c.ImageID != "" {
-			imageIDs[*c.ImageID] = true
-		}
+	containerRows, err := d.Queries.GetContainersByHostID(ctx, hostID)
+	if err != nil {
+		return nil, err
 	}
-	ids := make([]string, 0, len(imageIDs))
-	for id := range imageIDs {
-		ids = append(ids, id)
+	containers := convertContainers(containerRows)
+	if err := annotateContainers(ctx, d.Queries, containers); err != nil {
+		return nil, err
 	}
 
-	var images []models.DockerImage
-	if len(ids) > 0 {
-		imgRows, _ := d.Queries.GetImagesByIDs(ctx, ids)
-		images = make([]models.DockerImage, len(imgRows))
-		for i := range imgRows {
-			images[i] = dbDockerImageToModel(imgRows[i])
-		}
+	imgRows, err := d.Queries.GetImagesByHostID(ctx, hostID)
+	if err != nil {
+		return nil, err
+	}
+	images := make([]models.DockerImage, len(imgRows))
+	for i := range imgRows {
+		images[i] = dbDockerImageToModel(imgRows[i])
+	}
+	if err := annotateImagesForHost(ctx, d.Queries, hostID, images, containers); err != nil {
+		return nil, err
 	}
 
 	volumes, _ := d.Queries.GetVolumesByHostID(ctx, hostID)
@@ -504,7 +559,7 @@ func (s *DockerStore) GetHostDockerDetail(ctx context.Context, hostID string) (*
 
 	return &HostDockerDetail{
 		Host:       *dbHostToModel(host),
-		Containers: convertContainers(containers),
+		Containers: containers,
 		Images:     images,
 		Volumes:    convertVolumes(volumes),
 		Networks:   convertNetworks(networks),

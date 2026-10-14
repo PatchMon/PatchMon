@@ -18,6 +18,21 @@ jobs:
     name: Test (server)
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: patchmon_test
+          POSTGRES_PASSWORD: patchmon_test
+          POSTGRES_DB: patchmon_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U patchmon_test -d patchmon_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - name: Checkout code
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -47,7 +62,9 @@ jobs:
 
       - name: Run tests
         working-directory: server-source-code
-        run: go test -v -race -coverprofile=coverage.out ./...
+        env:
+          PATCHMON_TEST_DATABASE_URL: postgresql://patchmon_test:patchmon_test@localhost:5432/patchmon_test?sslmode=disable
+        run: go test -v -race -count=1 -coverprofile=coverage.out ./...
 
       - name: Generate coverage report
         working-directory: server-source-code
@@ -261,7 +278,8 @@ jobs:
   # Everything above runs with the default GOOS, so nothing behind
   # //go:build windows is ever compiled: service_windows.go,
   # updatedir_windows.go, sysproc_windows.go and windows_patch.go used to reach
-  # their first compile in agent-release.yml, i.e. after a tag already existed.
+  # their first compile in docker.yml's build-agents job, which a fork PR only
+  # reaches once a maintainer labels it for a build.
   # This job is the cheap gate that closes that hole on every PR.
   agent-windows-crosscompile:
     name: Agent Cross-Compile (windows)

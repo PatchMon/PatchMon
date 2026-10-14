@@ -37,6 +37,7 @@ const ScanResultsTab = ({
 	const [severity_filter, set_severity_filter] = useState("");
 	const [status_filter, set_status_filter] = useState("");
 	const [host_filter, set_host_filter] = useState("");
+	const [scan_type_filter, set_scan_type_filter] = useState("");
 	const [page, setPage] = useState(0);
 	const [sort_by, set_sort_by] = useState("status"); // failing + high severity first
 	const [sort_asc, set_sort_asc] = useState(false); // false = worst first
@@ -50,6 +51,7 @@ const ScanResultsTab = ({
 			set_severity_filter(initialFilters.severity || "");
 			set_status_filter(initialFilters.status || "");
 			set_host_filter(initialFilters.host_id || "");
+			set_scan_type_filter(initialFilters.profile_type || "");
 			setPage(0);
 		}
 	}, [initialFilters]);
@@ -65,6 +67,10 @@ const ScanResultsTab = ({
 			),
 		);
 
+	const page_scan_type =
+		profileTypeFilter && profileTypeFilter !== "all" ? profileTypeFilter : "";
+	const effective_scan_type = page_scan_type || scan_type_filter;
+
 	const { data, isLoading, isFetching } = useQuery({
 		queryKey: [
 			"compliance-rules",
@@ -72,7 +78,7 @@ const ScanResultsTab = ({
 			severity_filter,
 			status_filter,
 			host_filter,
-			profileTypeFilter,
+			effective_scan_type,
 			sort_by,
 			sort_asc,
 			page,
@@ -83,10 +89,7 @@ const ScanResultsTab = ({
 				severity: severity_filter || undefined,
 				status: status_filter || undefined,
 				host_id: host_filter || undefined,
-				profile_type:
-					profileTypeFilter && profileTypeFilter !== "all"
-						? profileTypeFilter
-						: undefined,
+				profile_type: effective_scan_type || undefined,
 				sort_by,
 				sort_dir: sort_asc ? "asc" : "desc",
 				limit,
@@ -236,6 +239,22 @@ const ScanResultsTab = ({
 									{h.friendly_name || h.hostname || h.host_id}
 								</option>
 							))}
+						</select>
+					)}
+
+					{/* Scan Type Filter */}
+					{!page_scan_type && (
+						<select
+							value={scan_type_filter}
+							onChange={(e) => {
+								set_scan_type_filter(e.target.value);
+								setPage(0);
+							}}
+							className="px-3 py-2 bg-secondary-50 dark:bg-secondary-700 border border-secondary-200 dark:border-secondary-600 rounded-lg text-sm text-secondary-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500"
+						>
+							<option value="">All Scan Types</option>
+							<option value="openscap">OpenSCAP</option>
+							<option value="docker-bench">Docker Bench</option>
 						</select>
 					)}
 

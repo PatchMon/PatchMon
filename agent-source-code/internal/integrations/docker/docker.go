@@ -99,9 +99,8 @@ func (d *Integration) Collect(ctx context.Context) (*models.IntegrationData, err
 		}
 	}
 
-	d.logger.Info("Collecting Docker data...")
+	d.logger.Debug("Collecting Docker data...")
 
-	// Collect all Docker data
 	dockerData := &models.DockerData{
 		Containers: make([]models.DockerContainer, 0),
 		Images:     make([]models.DockerImage, 0),
@@ -110,43 +109,40 @@ func (d *Integration) Collect(ctx context.Context) (*models.IntegrationData, err
 		Updates:    make([]models.DockerImageUpdate, 0),
 	}
 
-	// Collect containers
-	containers, err := d.collectContainers(ctx)
+	var idx *imageIndex
+	images, err := d.listImages(ctx)
+	if err != nil {
+		d.logger.WithError(err).Warn("Failed to collect images")
+	} else {
+		idx = newImageIndex(images)
+		dockerData.Images = buildImages(images)
+		dockerData.Collected = append(dockerData.Collected, "images")
+	}
+
+	containers, usage, err := d.collectContainers(ctx, idx)
 	if err != nil {
 		d.logger.WithError(err).Warn("Failed to collect containers")
 	} else {
 		dockerData.Containers = containers
-		d.logger.WithField("count", len(containers)).Info("Collected containers")
+		dockerData.Collected = append(dockerData.Collected, "containers")
 	}
 
-	// Collect images
-	images, err := d.collectImages(ctx)
-	if err != nil {
-		d.logger.WithError(err).Warn("Failed to collect images")
-	} else {
-		dockerData.Images = images
-		d.logger.WithField("count", len(images)).Info("Collected images")
-	}
-
-	// Collect volumes
-	volumes, err := d.collectVolumes(ctx)
+	volumes, err := d.collectVolumes(ctx, usage)
 	if err != nil {
 		d.logger.WithError(err).Warn("Failed to collect volumes")
 	} else {
 		dockerData.Volumes = volumes
-		d.logger.WithField("count", len(volumes)).Info("Collected volumes")
+		dockerData.Collected = append(dockerData.Collected, "volumes")
 	}
 
-	// Collect networks
-	networks, err := d.collectNetworks(ctx)
+	networks, err := d.collectNetworks(ctx, usage)
 	if err != nil {
 		d.logger.WithError(err).Warn("Failed to collect networks")
 	} else {
 		dockerData.Networks = networks
-		d.logger.WithField("count", len(networks)).Info("Collected networks")
+		dockerData.Collected = append(dockerData.Collected, "networks")
 	}
 
-	// Collect daemon info
 	daemonInfo, err := d.collectDaemonInfo(ctx)
 	if err != nil {
 		d.logger.WithError(err).Warn("Failed to collect daemon info")
@@ -154,15 +150,12 @@ func (d *Integration) Collect(ctx context.Context) (*models.IntegrationData, err
 		dockerData.DaemonInfo = daemonInfo
 	}
 
-	// Check for updates (optional, can be slow)
-	// TODO: Make this configurable or run in background
-	// updates, err := d.checkImageUpdates(ctx, images)
-	// if err != nil {
-	// 	d.logger.WithError(err).Warn("Failed to check for image updates")
-	// } else {
-	// 	dockerData.Updates = updates
-	// 	d.logger.WithField("count", len(updates)).Info("Found image updates")
-	// }
+	d.logger.WithFields(logrus.Fields{
+		"containers": len(dockerData.Containers),
+		"images":     len(dockerData.Images),
+		"volumes":    len(dockerData.Volumes),
+		"networks":   len(dockerData.Networks),
+	}).Debug("Collected Docker data")
 
 	executionTime := time.Since(startTime).Seconds()
 
@@ -278,62 +271,29 @@ func determineImageSource(imageName string) string {
 	}
 }
 
-// parseImageName parses image name into repository and tag
-func parseImageName(fullImage string) (repository, tag string) {
-	// Default tag
-	tag = "latest"
-
-	// Find the last colon to separate tag
-	lastColon := -1
-	for i := len(fullImage) - 1; i >= 0; i-- {
-		if fullImage[i] == ':' {
-			lastColon = i
-			break
-		}
-		// If we hit a slash before a colon, there's no tag
-		if fullImage[i] == '/' {
-			break
-		}
-	}
-
-	if lastColon > 0 {
-		repository = fullImage[:lastColon]
-		tag = fullImage[lastColon+1:]
-	} else {
-		repository = fullImage
-	}
-
-	return repository, tag
-}
-
-// cleanImageRepository removes registry prefix for common registries
-func cleanImageRepository(repository string) string {
-	// Remove common registry prefixes
-	prefixes := []string{
-		"ghcr.io/",
-		"registry.gitlab.com/",
-		"gcr.io/",
-		"quay.io/",
-	}
-
-	for _, prefix := range prefixes {
-		if len(repository) > len(prefix) && repository[:len(prefix)] == prefix {
-			return repository[len(prefix):]
-		}
-	}
-
-	return repository
-}
-
-// convertPorts converts Docker port bindings to simplified map
+// convertPorts reports one binding per port/proto, preferring IPv4 over IPv6.
 func convertPorts(ports []container.PortSummary) map[string]string {
 	portMap := make(map[string]string)
+	isV4 := make(map[string]bool)
 	for _, port := range ports {
-		if port.PublicPort > 0 {
-			key := fmt.Sprintf("%d/%s", port.PrivatePort, port.Type)
-			value := fmt.Sprintf("%s:%d", port.IP, port.PublicPort)
-			portMap[key] = value
+		if port.PublicPort == 0 {
+			continue
 		}
+		key := fmt.Sprintf("%d/%s", port.PrivatePort, port.Type)
+		addr := port.IP.Unmap()
+		v4 := addr.Is4()
+		if _, exists := portMap[key]; exists && (isV4[key] || !v4) {
+			continue
+		}
+		switch {
+		case v4:
+			portMap[key] = fmt.Sprintf("%s:%d", addr, port.PublicPort)
+		case addr.IsValid():
+			portMap[key] = fmt.Sprintf("[%s]:%d", addr, port.PublicPort)
+		default:
+			portMap[key] = fmt.Sprintf("%d", port.PublicPort)
+		}
+		isV4[key] = v4
 	}
 	return portMap
 }

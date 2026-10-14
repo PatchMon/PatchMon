@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 	"github.com/hibiken/asynq"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -148,6 +150,19 @@ func (h *HostsHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, hostToResponse(host, groups, h.hosts.StaleCutoff(r.Context())))
 }
 
+func newPendingHost(friendlyName, machineID, apiID, apiKeyHash string) *models.Host {
+	return &models.Host{
+		MachineID:    &machineID,
+		FriendlyName: friendlyName,
+		OSType:       "unknown",
+		OSVersion:    "unknown",
+		Status:       "pending",
+		ApiID:        apiID,
+		ApiKey:       apiKeyHash,
+		AutoUpdate:   true,
+	}
+}
+
 // Create handles POST /hosts/create.
 func (h *HostsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -193,19 +208,11 @@ func (h *HostsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	machineID := "pending-" + uuid.New().String()
-	host := &models.Host{
-		MachineID:              &machineID,
-		FriendlyName:           req.FriendlyName,
-		OSType:                 "unknown",
-		OSVersion:              "unknown",
-		Status:                 "pending",
-		ApiID:                  apiID,
-		ApiKey:                 apiKeyHash,
-		DockerEnabled:          req.DockerEnabled != nil && *req.DockerEnabled,
-		ComplianceEnabled:      complianceEnabled,
-		ComplianceOnDemandOnly: complianceOnDemandOnly,
-		ExpectedPlatform:       req.ExpectedPlatform,
-	}
+	host := newPendingHost(req.FriendlyName, machineID, apiID, apiKeyHash)
+	host.DockerEnabled = req.DockerEnabled != nil && *req.DockerEnabled
+	host.ComplianceEnabled = complianceEnabled
+	host.ComplianceOnDemandOnly = complianceOnDemandOnly
+	host.ExpectedPlatform = req.ExpectedPlatform
 	if err := h.hosts.Create(r.Context(), host); err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to create host")
 		return
@@ -382,6 +389,10 @@ func (h *HostsHandler) UpdateConnection(w http.ResponseWriter, r *http.Request) 
 		Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+	if req.IP != nil && *req.IP != "" && net.ParseIP(*req.IP) == nil {
+		Error(w, http.StatusBadRequest, "Invalid IP address")
+		return
+	}
 
 	existing, ok := h.requireHost(w, r, hostID)
 	if !ok {
@@ -532,6 +543,21 @@ func (h *HostsHandler) RegenerateCredentials(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+// DismissIdentityConflict handles POST /hosts/:hostId/identity-conflict/dismiss.
+func (h *HostsHandler) DismissIdentityConflict(w http.ResponseWriter, r *http.Request) {
+	hostID := chi.URLParam(r, "hostId")
+	found, err := h.hosts.DismissIdentityConflict(r.Context(), hostID)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to dismiss identity conflict")
+		return
+	}
+	if !found {
+		Error(w, http.StatusNotFound, "Host not found")
+		return
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{"message": "Identity conflict dismissed", "host_id": hostID})
+}
+
 // FetchReport handles POST /hosts/:hostId/fetch-report.
 func (h *HostsHandler) FetchReport(w http.ResponseWriter, r *http.Request) {
 	if h.queueClient == nil {
@@ -665,6 +691,34 @@ func (h *HostsHandler) RefreshDocker(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"message": "Docker inventory refresh queued",
 		"jobId":   info.ID,
+		"host": map[string]interface{}{
+			"id":           host.ID,
+			"friendlyName": host.FriendlyName,
+			"apiId":        host.ApiID,
+		},
+	})
+}
+
+// DockerImageCheck handles POST /hosts/:hostId/docker-image-check.
+func (h *HostsHandler) DockerImageCheck(w http.ResponseWriter, r *http.Request) {
+	hostID := chi.URLParam(r, "hostId")
+	host, err := h.hosts.GetByID(r.Context(), hostID)
+	if err != nil || host == nil {
+		Error(w, http.StatusNotFound, "Host not found")
+		return
+	}
+	if h.registry == nil || !h.registry.IsConnected(host.ApiID) || h.registry.Get(host.ApiID).Scope != hostctx.TenantHostKey(r.Context()) {
+		Error(w, http.StatusConflict, "Agent is not connected, so the image update check cannot be started")
+		return
+	}
+	if err := h.registry.SendMessage(host.ApiID, websocket.TextMessage, dockerImageCheckCommand); err != nil {
+		slog.Warn("docker image check: send failed", "host_id", host.ID, "error", err)
+		Error(w, http.StatusServiceUnavailable, "Failed to send the image update check to the agent")
+		return
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "Docker image update check requested",
 		"host": map[string]interface{}{
 			"id":           host.ID,
 			"friendlyName": host.FriendlyName,
@@ -1289,10 +1343,61 @@ func (h *HostsHandler) ApplyPendingConfig(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	installQueued := false
+	if openscapNewlyEnabled(host, complianceEnabled, openscapEnabled) && openscapInstallSupported(host) {
+		installQueued = h.queueScannerInstall(r, host)
+	}
+
 	JSON(w, http.StatusOK, map[string]interface{}{
-		"success": true,
-		"message": "Configuration applied successfully",
+		"success":              true,
+		"message":              "Configuration applied successfully",
+		"scannerInstallQueued": installQueued,
 	})
+}
+
+// The agent restarts after apply_config; the install command must reach it once it has reconnected.
+const scannerInstallDelay = 30 * time.Second
+
+func openscapNewlyEnabled(before *models.Host, complianceEnabled, openscapEnabled bool) bool {
+	return complianceEnabled && openscapEnabled &&
+		(!before.ComplianceEnabled || !before.ComplianceOpenscapEnabled)
+}
+
+// openscapInstallSupported skips platforms the agent cannot install OpenSCAP on.
+// SUSE reports "unknown", so this must stay a deny-list.
+func openscapInstallSupported(host *models.Host) bool {
+	if host.PackageManager == nil {
+		return true
+	}
+	switch *host.PackageManager {
+	case "windows", "pkg", "apk", "pacman":
+		return false
+	}
+	return true
+}
+
+func (h *HostsHandler) queueScannerInstall(r *http.Request, host *models.Host) bool {
+	if h.queueClient == nil {
+		return false
+	}
+	task, err := queue.NewInstallComplianceToolsTask(host.ID, host.ApiID, hostFromRequest(r))
+	if err != nil {
+		slog.Error("apply-pending-config: failed to build scanner install task", "host_id", host.ID, "error", err)
+		return false
+	}
+	if h.integrationStatus != nil {
+		_ = h.integrationStatus.ClearInstallEvents(r.Context(), host.ApiID, "compliance")
+	}
+	info, err := h.queueClient.Enqueue(task, asynq.ProcessIn(scannerInstallDelay))
+	if err != nil {
+		slog.Error("apply-pending-config: failed to queue scanner install", "host_id", host.ID, "error", err)
+		return false
+	}
+	if h.integrationStatus != nil {
+		_ = h.integrationStatus.SetComplianceInstallJob(r.Context(), host.ID, info.ID)
+	}
+	slog.Info("apply-pending-config: queued scanner install", "host_id", host.ID, "job_id", info.ID)
+	return true
 }
 
 func hostToResponse(h *models.Host, groups []models.HostGroup, staleCutoff time.Time) map[string]interface{} {
@@ -1308,6 +1413,11 @@ func hostToResponse(h *models.Host, groups []models.HostGroup, staleCutoff time.
 		"package_manager": h.PackageManager, "primary_interface": h.PrimaryInterface,
 		"awaiting_post_patch_report_run_id": h.AwaitingPostPatchReportRunID,
 		"expected_platform":                 h.ExpectedPlatform,
+		"config_version":                    h.ConfigVersion,
+		"reported_host_id":                  h.ReportedHostID,
+		"host_id_mismatch":                  h.HostIDMismatch(),
+		"identity_conflict_at":              h.IdentityConflictAt,
+		"credentials_reissued_at":           h.CredentialsReissuedAt,
 	}
 	hg := make([]map[string]interface{}, len(groups))
 	for i, g := range groups {

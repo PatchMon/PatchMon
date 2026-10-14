@@ -43,24 +43,25 @@ type AlertAction struct {
 
 // AlertConfig matches alert_config table.
 type AlertConfig struct {
-	ID                   string    `db:"id"`
-	AlertType            string    `db:"alert_type"`
-	IsEnabled            bool      `db:"is_enabled"`
-	DefaultSeverity      string    `db:"default_severity"`
-	AutoAssignEnabled    bool      `db:"auto_assign_enabled"`
-	AutoAssignUserID     *string   `db:"auto_assign_user_id"`
-	AutoAssignRule       *string   `db:"auto_assign_rule"`
-	AutoAssignConditions JSON      `db:"auto_assign_conditions"`
-	RetentionDays        *int      `db:"retention_days"`
-	AutoResolveAfterDays *int      `db:"auto_resolve_after_days"`
-	CleanupResolvedOnly  bool      `db:"cleanup_resolved_only"`
-	NotificationEnabled  bool      `db:"notification_enabled"`
-	EscalationEnabled    bool      `db:"escalation_enabled"`
-	EscalationAfterHours *int      `db:"escalation_after_hours"`
-	AlertDelaySeconds    *int      `db:"alert_delay_seconds"`
-	Metadata             JSON      `db:"metadata"`
-	Category             string    `db:"category"`
-	CheckIntervalMinutes *int      `db:"check_interval_minutes"`
-	CreatedAt            time.Time `db:"created_at"`
-	UpdatedAt            time.Time `db:"updated_at"`
+	ID                    string    `db:"id"`
+	AlertType             string    `db:"alert_type"`
+	IsEnabled             bool      `db:"is_enabled"`
+	DefaultSeverity       string    `db:"default_severity"`
+	AutoAssignEnabled     bool      `db:"auto_assign_enabled"`
+	AutoAssignUserID      *string   `db:"auto_assign_user_id"`
+	AutoAssignRule        *string   `db:"auto_assign_rule"`
+	AutoAssignConditions  JSON      `db:"auto_assign_conditions"`
+	RetentionDays         *int      `db:"retention_days"`
+	AutoResolveAfterDays  *int      `db:"auto_resolve_after_days"`
+	CleanupResolvedOnly   bool      `db:"cleanup_resolved_only"`
+	NotificationEnabled   bool      `db:"notification_enabled"`
+	EscalationEnabled     bool      `db:"escalation_enabled"`
+	EscalationAfterHours  *int      `db:"escalation_after_hours"`
+	AlertDelaySeconds     *int      `db:"alert_delay_seconds"`
+	Metadata              JSON      `db:"metadata"`
+	Category              string    `db:"category"`
+	CheckIntervalMinutes  *int      `db:"check_interval_minutes"`
+	ReminderIntervalHours *int      `db:"reminder_interval_hours"`
+	CreatedAt             time.Time `db:"created_at"`
+	UpdatedAt             time.Time `db:"updated_at"`
 }

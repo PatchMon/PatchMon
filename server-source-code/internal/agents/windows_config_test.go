@@ -21,6 +21,7 @@ func TestWindowsInstallScriptGeneratesParseableConfig(t *testing.T) {
 	const (
 		serverURL  = "https://patchmon.example.net"
 		configPath = `C:\ProgramData\PatchMon`
+		hostID     = "3b0c2f7e-6a1d-4c55-9a0e-2f1f7d9e8c41"
 	)
 
 	block := extractConfigHereString(t, string(PatchmonWindowsInstallScript))
@@ -31,6 +32,7 @@ func TestWindowsInstallScriptGeneratesParseableConfig(t *testing.T) {
 		`$($ServerURL -replace "'", "''")`, serverURL,
 		`$($ConfigPath -replace "'", "''")`, configPath,
 		`$($SkipSslVerify.ToString().ToLower())`, "false",
+		`$HostId`, hostID,
 	)
 	rendered := subs.Replace(block)
 
@@ -48,6 +50,7 @@ func TestWindowsInstallScriptGeneratesParseableConfig(t *testing.T) {
 		LogFile         string `yaml:"log_file"`
 		LogLevel        string `yaml:"log_level"`
 		SkipSSLVerify   bool   `yaml:"skip_ssl_verify"`
+		HostID          string `yaml:"host_id"`
 	}
 	if err := yaml.Unmarshal([]byte(rendered), &got); err != nil {
 		t.Fatalf("generated config.yml does not parse: %v\n%s", err, rendered)
@@ -62,6 +65,7 @@ func TestWindowsInstallScriptGeneratesParseableConfig(t *testing.T) {
 		{"credentials_file", got.CredentialsFile, configPath + `\credentials.yml`},
 		{"log_file", got.LogFile, configPath + `\patchmon-agent.log`},
 		{"log_level", got.LogLevel, "info"},
+		{"host_id", got.HostID, hostID},
 	} {
 		if c.got != c.want {
 			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)

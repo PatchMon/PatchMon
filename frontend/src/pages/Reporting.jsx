@@ -38,10 +38,12 @@ import {
 } from "../components/alerting/widgets";
 import TierBadge from "../components/TierBadge";
 import UpgradeRequiredContent from "../components/UpgradeRequiredContent";
+import ModalPortal from "../components/ui/ModalPortal";
 import { getRequiredTier } from "../constants/tiers";
 import { useAuth } from "../contexts/AuthContext";
 import { useConfirm } from "../contexts/ConfirmContext";
 import { useToast } from "../contexts/ToastContext";
+import { searchWithoutTab, useTabParam } from "../hooks/useTabParam";
 import {
 	adminUsersAPI,
 	alertsAPI,
@@ -152,18 +154,22 @@ const Reporting = () => {
 		};
 	}, [searchTerm]);
 
-	// Sync tab and filters on actual URL navigation (not in-page tab clicks)
+	useTabParam(activeTab);
+
 	useEffect(() => {
-		const params = new URLSearchParams(location.search);
-		const tab = params.get("tab");
-		if (tab && VALID_TABS.has(tab)) {
-			setActiveTab(tab);
+		if (urlTab && VALID_TABS.has(urlTab)) {
+			setActiveTab(urlTab);
 		}
+	}, [urlTab]);
+
+	const filterSearch = searchWithoutTab(location.search);
+	useEffect(() => {
+		const params = new URLSearchParams(filterSearch);
 		setSeverityFilter(params.get("severity") || "all");
 		setStatusFilter(params.get("status") || "all");
 		setTypeFilter(params.get("type") || "all");
 		setAssignmentFilter(params.get("assignment") || "all");
-	}, [location.search]);
+	}, [filterSearch]);
 
 	const tabs = [
 		{ id: "overview", name: "Overview", icon: LayoutDashboard },
@@ -1418,215 +1424,219 @@ const Reporting = () => {
 
 			{/* Alert Details Modal */}
 			{showAlertModal && selectedAlert && (
-				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-					<button
-						type="button"
-						onClick={() => {
-							setShowAlertModal(false);
-							setSelectedAlert(null);
-						}}
-						className="fixed inset-0 cursor-default"
-						aria-label="Close modal"
-					/>
-					<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-3xl w-full mx-4 relative z-10 max-h-[90vh] overflow-y-auto">
-						<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600 sticky top-0 bg-white dark:bg-secondary-800">
-							<div className="flex items-center justify-between">
-								<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
-									Alert Details
-								</h3>
+				<ModalPortal>
+					<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120] p-4">
+						<button
+							type="button"
+							onClick={() => {
+								setShowAlertModal(false);
+								setSelectedAlert(null);
+							}}
+							className="fixed inset-0 cursor-default"
+							aria-label="Close modal"
+						/>
+						<div className="bg-white dark:bg-secondary-800 rounded-lg shadow-xl max-w-3xl w-full mx-4 relative z-10 max-h-[90vh] overflow-y-auto">
+							<div className="px-6 py-4 border-b border-secondary-200 dark:border-secondary-600 sticky top-0 bg-white dark:bg-secondary-800">
+								<div className="flex items-center justify-between">
+									<h3 className="text-lg font-medium text-secondary-900 dark:text-white">
+										Alert Details
+									</h3>
+									<button
+										type="button"
+										onClick={() => {
+											setShowAlertModal(false);
+											setSelectedAlert(null);
+										}}
+										className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
+									>
+										<X className="h-5 w-5" />
+									</button>
+								</div>
+							</div>
+							<div className="px-6 py-4 space-y-4">
+								{/* Alert Info */}
+								<div className="grid grid-cols-2 gap-4">
+									<div>
+										<label className="text-xs font-medium text-secondary-500 dark:text-white">
+											Severity
+										</label>
+										<div className="mt-1">
+											{getSeverityBadge(selectedAlert.severity)}
+										</div>
+									</div>
+									<div>
+										<label className="text-xs font-medium text-secondary-500 dark:text-white">
+											Type
+										</label>
+										<div className="mt-1">
+											{getTypeBadge(selectedAlert.type)}
+										</div>
+									</div>
+									<div>
+										<label className="text-xs font-medium text-secondary-500 dark:text-white">
+											Status
+										</label>
+										<div className="mt-1">{getStatusBadge(selectedAlert)}</div>
+									</div>
+									<div>
+										<label className="text-xs font-medium text-secondary-500 dark:text-white">
+											Created
+										</label>
+										<div className="mt-1 text-sm text-secondary-900 dark:text-white">
+											{formatDate(selectedAlert.created_at)}
+										</div>
+									</div>
+									<div>
+										<label className="text-xs font-medium text-secondary-500 dark:text-white">
+											Assigned To
+										</label>
+										<select
+											value={selectedAlert.assigned_to_user_id || ""}
+											onChange={(e) => {
+												const newUserId = e.target.value;
+												handleInlineAssign(selectedAlert.id, newUserId);
+											}}
+											className="mt-1 w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm"
+											disabled={
+												assignAlertMutation.isPending ||
+												unassignAlertMutation.isPending
+											}
+										>
+											<option value="">Unassigned</option>
+											{usersData?.map((u) => (
+												<option key={u.id} value={u.id}>
+													{u.username || u.email}
+												</option>
+											))}
+										</select>
+									</div>
+								</div>
+
+								{/* Title */}
+								<div>
+									<label className="text-xs font-medium text-secondary-500 dark:text-white">
+										Title
+									</label>
+									<div className="mt-1 text-sm font-medium text-secondary-900 dark:text-white">
+										{selectedAlert.title}
+									</div>
+								</div>
+
+								{/* Message */}
+								<div>
+									<label className="text-xs font-medium text-secondary-500 dark:text-white">
+										Message
+									</label>
+									<div className="mt-1 text-sm text-secondary-700 dark:text-white whitespace-pre-wrap">
+										{selectedAlert.message}
+									</div>
+								</div>
+
+								{/* Metadata */}
+								{selectedAlert.metadata &&
+									Object.keys(selectedAlert.metadata).length > 0 && (
+										<div>
+											<label className="text-xs font-medium text-secondary-500 dark:text-white">
+												Metadata
+											</label>
+											<div className="mt-1 text-sm text-secondary-700 dark:text-white bg-secondary-50 dark:bg-secondary-900 p-3 rounded-md">
+												<pre className="whitespace-pre-wrap">
+													{JSON.stringify(selectedAlert.metadata, null, 2)}
+												</pre>
+											</div>
+										</div>
+									)}
+
+								{/* Actions */}
+								<div>
+									<label className="text-xs font-medium text-secondary-500 dark:text-white mb-2 block">
+										Actions
+									</label>
+									<div className="flex flex-wrap gap-2">
+										{workflowActions.map((action) => (
+											<button
+												key={action.name}
+												type="button"
+												onClick={() => {
+													handleAction(selectedAlert.id, action.name);
+													setShowAlertModal(false);
+													setSelectedAlert(null);
+												}}
+												className="btn-outline text-xs px-3 py-1"
+												disabled={performActionMutation.isPending}
+											>
+												{action.display_name}
+											</button>
+										))}
+										{resolutionActions.map((action) => (
+											<button
+												key={action.name}
+												type="button"
+												onClick={() => {
+													handleAction(selectedAlert.id, action.name);
+													setShowAlertModal(false);
+													setSelectedAlert(null);
+												}}
+												className="btn-outline text-xs px-3 py-1 border-red-300 text-red-700 hover:bg-red-50 dark:border-red-600 dark:text-red-400 dark:hover:bg-red-900"
+												disabled={performActionMutation.isPending}
+											>
+												{action.display_name}
+											</button>
+										))}
+									</div>
+								</div>
+
+								{/* History */}
+								<div>
+									<label className="text-xs font-medium text-secondary-500 dark:text-white mb-2 block">
+										History
+									</label>
+									<div className="space-y-2 max-h-64 overflow-y-auto">
+										{alertHistory && alertHistory.length > 0 ? (
+											alertHistory.map((historyItem) => (
+												<div
+													key={historyItem.id}
+													className="flex items-start gap-3 p-2 bg-secondary-50 dark:bg-secondary-900 rounded-md"
+												>
+													<div className="flex-1">
+														<div className="text-sm font-medium text-secondary-900 dark:text-white">
+															{historyItem.action}
+														</div>
+														<div className="text-xs text-secondary-500 dark:text-white">
+															by{" "}
+															{historyItem.users?.username ||
+																historyItem.users?.email ||
+																"System"}
+														</div>
+														<div className="text-xs text-secondary-400">
+															{formatDate(historyItem.created_at)}
+														</div>
+													</div>
+												</div>
+											))
+										) : (
+											<div className="text-sm text-secondary-500 dark:text-white">
+												No history available
+											</div>
+										)}
+									</div>
+								</div>
+							</div>
+							<div className="px-6 py-4 border-t border-secondary-200 dark:border-secondary-600 flex justify-end">
 								<button
 									type="button"
 									onClick={() => {
 										setShowAlertModal(false);
 										setSelectedAlert(null);
 									}}
-									className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
+									className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700"
 								>
-									<X className="h-5 w-5" />
+									Close
 								</button>
 							</div>
 						</div>
-						<div className="px-6 py-4 space-y-4">
-							{/* Alert Info */}
-							<div className="grid grid-cols-2 gap-4">
-								<div>
-									<label className="text-xs font-medium text-secondary-500 dark:text-white">
-										Severity
-									</label>
-									<div className="mt-1">
-										{getSeverityBadge(selectedAlert.severity)}
-									</div>
-								</div>
-								<div>
-									<label className="text-xs font-medium text-secondary-500 dark:text-white">
-										Type
-									</label>
-									<div className="mt-1">{getTypeBadge(selectedAlert.type)}</div>
-								</div>
-								<div>
-									<label className="text-xs font-medium text-secondary-500 dark:text-white">
-										Status
-									</label>
-									<div className="mt-1">{getStatusBadge(selectedAlert)}</div>
-								</div>
-								<div>
-									<label className="text-xs font-medium text-secondary-500 dark:text-white">
-										Created
-									</label>
-									<div className="mt-1 text-sm text-secondary-900 dark:text-white">
-										{formatDate(selectedAlert.created_at)}
-									</div>
-								</div>
-								<div>
-									<label className="text-xs font-medium text-secondary-500 dark:text-white">
-										Assigned To
-									</label>
-									<select
-										value={selectedAlert.assigned_to_user_id || ""}
-										onChange={(e) => {
-											const newUserId = e.target.value;
-											handleInlineAssign(selectedAlert.id, newUserId);
-										}}
-										className="mt-1 w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md bg-white dark:bg-secondary-800 text-secondary-900 dark:text-white text-sm"
-										disabled={
-											assignAlertMutation.isPending ||
-											unassignAlertMutation.isPending
-										}
-									>
-										<option value="">Unassigned</option>
-										{usersData?.map((u) => (
-											<option key={u.id} value={u.id}>
-												{u.username || u.email}
-											</option>
-										))}
-									</select>
-								</div>
-							</div>
-
-							{/* Title */}
-							<div>
-								<label className="text-xs font-medium text-secondary-500 dark:text-white">
-									Title
-								</label>
-								<div className="mt-1 text-sm font-medium text-secondary-900 dark:text-white">
-									{selectedAlert.title}
-								</div>
-							</div>
-
-							{/* Message */}
-							<div>
-								<label className="text-xs font-medium text-secondary-500 dark:text-white">
-									Message
-								</label>
-								<div className="mt-1 text-sm text-secondary-700 dark:text-white whitespace-pre-wrap">
-									{selectedAlert.message}
-								</div>
-							</div>
-
-							{/* Metadata */}
-							{selectedAlert.metadata &&
-								Object.keys(selectedAlert.metadata).length > 0 && (
-									<div>
-										<label className="text-xs font-medium text-secondary-500 dark:text-white">
-											Metadata
-										</label>
-										<div className="mt-1 text-sm text-secondary-700 dark:text-white bg-secondary-50 dark:bg-secondary-900 p-3 rounded-md">
-											<pre className="whitespace-pre-wrap">
-												{JSON.stringify(selectedAlert.metadata, null, 2)}
-											</pre>
-										</div>
-									</div>
-								)}
-
-							{/* Actions */}
-							<div>
-								<label className="text-xs font-medium text-secondary-500 dark:text-white mb-2 block">
-									Actions
-								</label>
-								<div className="flex flex-wrap gap-2">
-									{workflowActions.map((action) => (
-										<button
-											key={action.name}
-											type="button"
-											onClick={() => {
-												handleAction(selectedAlert.id, action.name);
-												setShowAlertModal(false);
-												setSelectedAlert(null);
-											}}
-											className="btn-outline text-xs px-3 py-1"
-											disabled={performActionMutation.isPending}
-										>
-											{action.display_name}
-										</button>
-									))}
-									{resolutionActions.map((action) => (
-										<button
-											key={action.name}
-											type="button"
-											onClick={() => {
-												handleAction(selectedAlert.id, action.name);
-												setShowAlertModal(false);
-												setSelectedAlert(null);
-											}}
-											className="btn-outline text-xs px-3 py-1 border-red-300 text-red-700 hover:bg-red-50 dark:border-red-600 dark:text-red-400 dark:hover:bg-red-900"
-											disabled={performActionMutation.isPending}
-										>
-											{action.display_name}
-										</button>
-									))}
-								</div>
-							</div>
-
-							{/* History */}
-							<div>
-								<label className="text-xs font-medium text-secondary-500 dark:text-white mb-2 block">
-									History
-								</label>
-								<div className="space-y-2 max-h-64 overflow-y-auto">
-									{alertHistory && alertHistory.length > 0 ? (
-										alertHistory.map((historyItem) => (
-											<div
-												key={historyItem.id}
-												className="flex items-start gap-3 p-2 bg-secondary-50 dark:bg-secondary-900 rounded-md"
-											>
-												<div className="flex-1">
-													<div className="text-sm font-medium text-secondary-900 dark:text-white">
-														{historyItem.action}
-													</div>
-													<div className="text-xs text-secondary-500 dark:text-white">
-														by{" "}
-														{historyItem.users?.username ||
-															historyItem.users?.email ||
-															"System"}
-													</div>
-													<div className="text-xs text-secondary-400">
-														{formatDate(historyItem.created_at)}
-													</div>
-												</div>
-											</div>
-										))
-									) : (
-										<div className="text-sm text-secondary-500 dark:text-white">
-											No history available
-										</div>
-									)}
-								</div>
-							</div>
-						</div>
-						<div className="px-6 py-4 border-t border-secondary-200 dark:border-secondary-600 flex justify-end">
-							<button
-								type="button"
-								onClick={() => {
-									setShowAlertModal(false);
-									setSelectedAlert(null);
-								}}
-								className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-md hover:bg-primary-700"
-							>
-								Close
-							</button>
-						</div>
 					</div>
-				</div>
+				</ModalPortal>
 			)}
 		</div>
 	);

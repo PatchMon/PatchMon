@@ -179,6 +179,7 @@ func alertConfigToMap(c *models.AlertConfig, autoAssignUser *store.UserRef) map[
 		"alert_delay_seconds":     c.AlertDelaySeconds,
 		"category":                c.Category,
 		"check_interval_minutes":  c.CheckIntervalMinutes,
+		"reminder_interval_hours": c.ReminderIntervalHours,
 		"created_at":              c.CreatedAt,
 		"updated_at":              c.UpdatedAt,
 	}
@@ -204,6 +205,39 @@ func alertConfigToMap(c *models.AlertConfig, autoAssignUser *store.UserRef) map[
 	return m
 }
 
+func applyNullableInt(dst **int, req map[string]interface{}, key string) {
+	v, present := req[key]
+	if !present {
+		return
+	}
+	switch n := v.(type) {
+	case nil:
+		*dst = nil
+	case float64:
+		i := int(n)
+		*dst = &i
+	case int:
+		*dst = &n
+	}
+}
+
+func applyNullableString(dst **string, req map[string]interface{}, key string) {
+	v, present := req[key]
+	if !present {
+		return
+	}
+	switch s := v.(type) {
+	case nil:
+		*dst = nil
+	case string:
+		if s == "" {
+			*dst = nil
+		} else {
+			*dst = &s
+		}
+	}
+}
+
 func applyAlertConfigUpdate(cfg *models.AlertConfig, req map[string]interface{}) {
 	if v, ok := req["is_enabled"].(bool); ok {
 		cfg.IsEnabled = v
@@ -214,40 +248,10 @@ func applyAlertConfigUpdate(cfg *models.AlertConfig, req map[string]interface{})
 	if v, ok := req["auto_assign_enabled"].(bool); ok {
 		cfg.AutoAssignEnabled = v
 	}
-	if v, ok := req["auto_assign_user_id"].(string); ok {
-		if v == "" {
-			cfg.AutoAssignUserID = nil
-		} else {
-			cfg.AutoAssignUserID = &v
-		}
-	}
-	if v, ok := req["auto_assign_rule"].(string); ok {
-		if v == "" {
-			cfg.AutoAssignRule = nil
-		} else {
-			cfg.AutoAssignRule = &v
-		}
-	}
-	if v, ok := req["retention_days"].(float64); ok {
-		n := int(v)
-		cfg.RetentionDays = &n
-	}
-	if v, ok := req["retention_days"].(int); ok {
-		cfg.RetentionDays = &v
-	}
-	if req["retention_days"] == nil {
-		cfg.RetentionDays = nil
-	}
-	if v, ok := req["auto_resolve_after_days"].(float64); ok {
-		n := int(v)
-		cfg.AutoResolveAfterDays = &n
-	}
-	if v, ok := req["auto_resolve_after_days"].(int); ok {
-		cfg.AutoResolveAfterDays = &v
-	}
-	if req["auto_resolve_after_days"] == nil {
-		cfg.AutoResolveAfterDays = nil
-	}
+	applyNullableString(&cfg.AutoAssignUserID, req, "auto_assign_user_id")
+	applyNullableString(&cfg.AutoAssignRule, req, "auto_assign_rule")
+	applyNullableInt(&cfg.RetentionDays, req, "retention_days")
+	applyNullableInt(&cfg.AutoResolveAfterDays, req, "auto_resolve_after_days")
 	if v, ok := req["cleanup_resolved_only"].(bool); ok {
 		cfg.CleanupResolvedOnly = v
 	}
@@ -257,36 +261,10 @@ func applyAlertConfigUpdate(cfg *models.AlertConfig, req map[string]interface{})
 	if v, ok := req["escalation_enabled"].(bool); ok {
 		cfg.EscalationEnabled = v
 	}
-	if v, ok := req["escalation_after_hours"].(float64); ok {
-		n := int(v)
-		cfg.EscalationAfterHours = &n
-	}
-	if v, ok := req["escalation_after_hours"].(int); ok {
-		cfg.EscalationAfterHours = &v
-	}
-	if req["escalation_after_hours"] == nil {
-		cfg.EscalationAfterHours = nil
-	}
-	if v, ok := req["alert_delay_seconds"].(float64); ok {
-		n := int(v)
-		cfg.AlertDelaySeconds = &n
-	}
-	if v, ok := req["alert_delay_seconds"].(int); ok {
-		cfg.AlertDelaySeconds = &v
-	}
-	if req["alert_delay_seconds"] == nil {
-		cfg.AlertDelaySeconds = nil
-	}
-	if v, ok := req["check_interval_minutes"].(float64); ok {
-		n := int(v)
-		cfg.CheckIntervalMinutes = &n
-	}
-	if v, ok := req["check_interval_minutes"].(int); ok {
-		cfg.CheckIntervalMinutes = &v
-	}
-	if req["check_interval_minutes"] == nil {
-		cfg.CheckIntervalMinutes = nil
-	}
+	applyNullableInt(&cfg.EscalationAfterHours, req, "escalation_after_hours")
+	applyNullableInt(&cfg.AlertDelaySeconds, req, "alert_delay_seconds")
+	applyNullableInt(&cfg.CheckIntervalMinutes, req, "check_interval_minutes")
+	applyNullableInt(&cfg.ReminderIntervalHours, req, "reminder_interval_hours")
 	if v, ok := req["auto_assign_conditions"].(map[string]interface{}); ok {
 		b, _ := json.Marshal(v)
 		cfg.AutoAssignConditions = b

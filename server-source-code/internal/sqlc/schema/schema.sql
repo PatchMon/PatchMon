@@ -253,8 +253,29 @@ CREATE TABLE IF NOT EXISTS hosts (
     hostname_hash TEXT,
     docker_hash TEXT,
     compliance_hash TEXT,
-    last_full_report_at TIMESTAMP(3)
+    last_full_report_at TIMESTAMP(3),
+    config_version TEXT,
+    reported_host_id TEXT,
+    enrolment_token_id TEXT REFERENCES auto_enrollment_tokens(id) ON DELETE SET NULL,
+    credentials_reissued_at TIMESTAMP(3),
+    identity_fingerprint TEXT,
+    identity_prev_fingerprint TEXT,
+    identity_fingerprint_changed_at TIMESTAMP(3),
+    identity_conflict_at TIMESTAMP(3),
+    enrolment_machine_id TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_hosts_machine_id
+    ON hosts (machine_id);
+
+CREATE INDEX IF NOT EXISTS idx_hosts_enrolment_token_id
+    ON hosts (enrolment_token_id) WHERE enrolment_token_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_hosts_enrolment_machine_id_norm
+    ON hosts (lower(replace(enrolment_machine_id, '-', ''))) WHERE enrolment_machine_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_hosts_machine_id_norm
+    ON hosts (lower(replace(machine_id, '-', '')));
 
 -- dashboard_preferences
 CREATE TABLE IF NOT EXISTS dashboard_preferences (
@@ -460,7 +481,34 @@ CREATE TABLE IF NOT EXISTS docker_containers (
     started_at TIMESTAMP(3),
     updated_at TIMESTAMP(3) NOT NULL,
     last_checked TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    image_stale BOOLEAN NOT NULL DEFAULT false,
+    restart_count INTEGER NOT NULL DEFAULT 0,
+    image_digest TEXT,
     UNIQUE(host_id, container_id)
+);
+
+-- docker_host_images
+CREATE TABLE IF NOT EXISTS docker_host_images (
+    host_id TEXT NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+    image_id TEXT NOT NULL REFERENCES docker_images(id) ON DELETE CASCADE,
+    last_seen TIMESTAMP(3) NOT NULL,
+    PRIMARY KEY(host_id, image_id)
+);
+
+-- docker_image_checks
+CREATE TABLE IF NOT EXISTS docker_image_checks (
+    id TEXT PRIMARY KEY,
+    host_id TEXT NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+    image_id TEXT NOT NULL REFERENCES docker_images(id) ON DELETE CASCADE,
+    status TEXT NOT NULL,
+    local_digest TEXT,
+    remote_digest TEXT,
+    registry TEXT,
+    reason TEXT,
+    checked_at TIMESTAMP(3) NOT NULL,
+    first_seen_update_at TIMESTAMP(3),
+    updated_at TIMESTAMP(3) NOT NULL,
+    UNIQUE(host_id, image_id)
 );
 
 -- docker_image_updates
@@ -728,6 +776,10 @@ CREATE TABLE IF NOT EXISTS patch_runs (
     updated_at TIMESTAMP(3) NOT NULL
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS patch_runs_one_active_per_host
+    ON patch_runs (host_id)
+    WHERE status IN ('queued', 'pending_validation', 'running');
+
 -- alert_config
 CREATE TABLE IF NOT EXISTS alert_config (
     id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
@@ -748,6 +800,7 @@ CREATE TABLE IF NOT EXISTS alert_config (
     metadata JSONB,
     category TEXT NOT NULL DEFAULT 'general',
     check_interval_minutes INTEGER,
+    reminder_interval_hours INTEGER,
     created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP(3) NOT NULL
 );

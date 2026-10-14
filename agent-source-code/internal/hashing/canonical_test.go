@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"patchmon-agent/pkg/models"
 )
@@ -184,5 +185,81 @@ func TestInterfacesHashIncludesAddresses(t *testing.T) {
 	}
 	if hBase == hIP {
 		t.Errorf("IP change did not change hash: both %s", hBase)
+	}
+}
+
+func TestDockerHashIgnoresCollected(t *testing.T) {
+	d := models.DockerData{Containers: []models.DockerContainer{{ContainerID: "c1", Name: "a", Status: "running"}}}
+	before, err := DockerHash(&d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Collected = []string{"containers", "images", "volumes", "networks"}
+	after, err := DockerHash(&d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before != after {
+		t.Fatal("Collected must not change the docker hash; the server does not hash it")
+	}
+}
+
+func TestDockerHashContainerFreshness(t *testing.T) {
+	base := func() models.DockerData {
+		return models.DockerData{Containers: []models.DockerContainer{{ContainerID: "c1", Name: "a", Status: "running"}}}
+	}
+	hash := func(d models.DockerData) string {
+		t.Helper()
+		h, err := DockerHash(&d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h
+	}
+	plain := hash(base())
+
+	stale := base()
+	stale.Containers[0].ImageStale = true
+	if hash(stale) == plain {
+		t.Error("image_stale must change the docker hash")
+	}
+
+	started := time.Date(2026, 10, 13, 11, 59, 30, 0, time.UTC)
+	restarted := base()
+	restarted.Containers[0].StartedAt = &started
+	withStart := hash(restarted)
+	if withStart == plain {
+		t.Error("started_at must change the docker hash")
+	}
+
+	sameInstant := started.In(time.FixedZone("BST", 3600)).Add(400 * time.Millisecond)
+	restarted.Containers[0].StartedAt = &sameInstant
+	if hash(restarted) != withStart {
+		t.Error("started_at must hash as UTC at second precision")
+	}
+
+	var zero time.Time
+	restarted.Containers[0].StartedAt = &zero
+	if hash(restarted) != plain {
+		t.Error("zero started_at must hash as empty")
+	}
+}
+
+func TestDockerHashUnchangedForOldAgentPayload(t *testing.T) {
+	f := loadFixture(t)
+	var old models.DockerData
+	old.Images, old.Volumes, old.Networks = f.Docker.Input.Images, f.Docker.Input.Volumes, f.Docker.Input.Networks
+	for _, c := range f.Docker.Input.Containers {
+		if c.ContainerID != "c3" {
+			old.Containers = append(old.Containers, c)
+		}
+	}
+	got, err := DockerHash(&old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const preFreshnessHash = "8fd8bc9bc047aaeab2e561f0181fb2d3e36b36a1a7bb1040d80d5ae8b3634234"
+	if got != preFreshnessHash {
+		t.Errorf("a payload without image_stale/started_at must hash as before: got %s", got)
 	}
 }

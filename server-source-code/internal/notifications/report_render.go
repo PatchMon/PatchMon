@@ -30,6 +30,79 @@ type ReportBranding struct {
 	LogoLightURL string // full URL to light logo, empty if unset
 }
 
+func resolveHostGroupIDs(ctx context.Context, d *database.DB, groupIDs []string) (map[string]struct{}, error) {
+	groupsStore := store.NewHostGroupsStore(d)
+	ids := make(map[string]struct{})
+	for _, gid := range groupIDs {
+		hostIDs, err := groupsStore.GetHostIDs(ctx, gid)
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range hostIDs {
+			ids[id] = struct{}{}
+		}
+	}
+	return ids, nil
+}
+
+func alertHostID(a store.AlertWithDetails) string {
+	if len(a.Metadata) == 0 {
+		return ""
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(a.Metadata, &m); err != nil {
+		return ""
+	}
+	if id, ok := m["host_id"].(string); ok {
+		return id
+	}
+	return ""
+}
+
+// Host-less alerts are dropped except release notices: user events can name accounts outside the group.
+func scopeAlertsToHostGroup(alerts []store.AlertWithDetails, groupHostIDs map[string]struct{}) []store.AlertWithDetails {
+	filtered := make([]store.AlertWithDetails, 0, len(alerts))
+	for _, a := range alerts {
+		hostID := alertHostID(a)
+		if hostID == "" {
+			if a.Type == "server_update" || a.Type == "agent_update" {
+				filtered = append(filtered, a)
+			}
+			continue
+		}
+		if _, ok := groupHostIDs[hostID]; ok {
+			filtered = append(filtered, a)
+		}
+	}
+	return filtered
+}
+
+func scopePackagesToHostGroup(pkgs []map[string]interface{}, groupHostIDs map[string]struct{}) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(pkgs))
+	for _, p := range pkgs {
+		hosts, _ := p["affectedHosts"].([]map[string]interface{})
+		filtered := make([]map[string]interface{}, 0, len(hosts))
+		isSecurity := false
+		for _, h := range hosts {
+			hostID, _ := h["hostId"].(string)
+			if _, ok := groupHostIDs[hostID]; ok {
+				filtered = append(filtered, h)
+				if sec, _ := h["isSecurityUpdate"].(bool); sec {
+					isSecurity = true
+				}
+			}
+		}
+		if len(filtered) == 0 {
+			continue
+		}
+		p["affectedHosts"] = filtered
+		p["affectedHostsCount"] = len(filtered)
+		p["isSecurityUpdate"] = isSecurity
+		result = append(result, p)
+	}
+	return result
+}
+
 // BuildScheduledReport produces HTML and CSV for a scheduled report.
 func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string, defJSON []byte, branding ReportBranding) (subject string, html string, csvOut string, err error) {
 	var def ReportDefinition
@@ -55,11 +128,26 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 	complianceStore := store.NewComplianceStore(d)
 	patchStore := store.NewPatchRunsStore(d)
 
+	// nil means unscoped; a non-nil empty list (empty or deleted group) must match no hosts.
+	var groupHostIDs map[string]struct{}
+	var groupHostIDList []string
+	if len(def.HostGroupIDs) > 0 {
+		resolved, ge := resolveHostGroupIDs(ctx, d, def.HostGroupIDs)
+		if ge != nil {
+			return "", "", "", fmt.Errorf("resolve report host groups: %w", ge)
+		}
+		groupHostIDs = resolved
+		groupHostIDList = make([]string, 0, len(resolved))
+		for id := range resolved {
+			groupHostIDList = append(groupHostIDList, id)
+		}
+	}
+
 	for _, sec := range def.Sections {
 		switch sec {
 		case "executive_summary":
 			body.WriteString(sectionHeader("Executive Summary"))
-			dash, e := complianceStore.GetDashboard(ctx)
+			dash, e := complianceStore.GetDashboard(ctx, groupHostIDList)
 			if e == nil {
 				body.WriteString(`<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">`)
 				body.WriteString(`<tr>`)
@@ -72,7 +160,7 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 				_ = cw.Write([]string{"executive_summary", "total_hosts", fmt.Sprintf("%d", dash.Summary.TotalHosts)})
 				_ = cw.Write([]string{"executive_summary", "average_score", fmt.Sprintf("%.1f", dash.Summary.AverageScore)})
 			}
-			total, byStatus, _, _, e := patchStore.GetDashboard(ctx)
+			total, byStatus, _, _, e := patchStore.GetDashboard(ctx, groupHostIDList)
 			if e == nil {
 				body.WriteString(`<h3 style="color:#0f172a;font-size:15px;font-weight:600;margin:16px 0 8px;">Patching Overview</h3>`)
 				body.WriteString(`<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;"><tr>`)
@@ -92,7 +180,7 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 
 		case "compliance_summary":
 			body.WriteString(sectionHeader("Compliance Summary"))
-			dash, e := complianceStore.GetDashboard(ctx)
+			dash, e := complianceStore.GetDashboard(ctx, groupHostIDList)
 			if e == nil {
 				body.WriteString(`<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;"><tr>`)
 				writeKPICard(&body, fmt.Sprintf("%d", dash.Summary.TotalPassedRules), "Passed Rules", "#16a34a")
@@ -143,7 +231,7 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 
 		case "recent_patch_runs":
 			body.WriteString(sectionHeader("Recent Patch Runs"))
-			_, _, recent, _, e := patchStore.GetDashboard(ctx)
+			_, _, recent, _, e := patchStore.GetDashboard(ctx, groupHostIDList)
 			if e == nil && len(recent) > 0 {
 				body.WriteString(tableOpen([]string{"Host", "Status", "Type", "Package", "Started", "Completed"}))
 				n := 0
@@ -204,6 +292,15 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 		case "hosts_offline":
 			body.WriteString(sectionHeader("Host Status"))
 			hosts, e := d.Queries.ListHosts(ctx)
+			if e == nil && groupHostIDs != nil {
+				filtered := hosts[:0]
+				for _, h := range hosts {
+					if _, ok := groupHostIDs[h.ID]; ok {
+						filtered = append(filtered, h)
+					}
+				}
+				hosts = filtered
+			}
 			if e == nil && len(hosts) > 0 {
 				body.WriteString(tableOpen([]string{"Host", "Status", "Last Seen"}))
 				n := 0
@@ -235,23 +332,45 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 			body.WriteString(sectionHeader("Open Alerts"))
 			alertsStore := store.NewAlertsStore(d)
 
-			// Stats summary
-			stats, e := alertsStore.GetStats(ctx)
-			if e == nil {
-				body.WriteString(`<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;"><tr>`)
-				writeKPICard(&body, fmt.Sprintf("%d", stats["total"]), "Total Open", "#6366f1")
-				writeKPICard(&body, fmt.Sprintf("%d", stats["critical"]), "Critical", criticalColor(stats["critical"]))
-				writeKPICard(&body, fmt.Sprintf("%d", stats["error"]), "Error", criticalColor(stats["error"]))
-				writeKPICard(&body, fmt.Sprintf("%d", stats["warning"]), "Warning", "#d97706")
-				body.WriteString(`</tr></table>`)
-
-				for k, v := range stats {
-					_ = cw.Write([]string{"open_alerts", k, fmt.Sprintf("%d", v)})
-				}
+			alerts, e := alertsStore.List(ctx, nil)
+			if e == nil && groupHostIDs != nil {
+				alerts = scopeAlertsToHostGroup(alerts, groupHostIDs)
 			}
 
-			// Active alerts list
-			alerts, e := alertsStore.List(ctx, nil)
+			if e == nil {
+				total, critical, errorCount, warning, informational := 0, 0, 0, 0, 0
+				for _, a := range alerts {
+					if !a.IsActive || a.ResolvedAt != nil {
+						continue
+					}
+					switch strings.ToLower(a.Severity) {
+					case "critical":
+						critical++
+					case "error":
+						errorCount++
+					case "warning":
+						warning++
+					case "informational":
+						informational++
+					default:
+						continue
+					}
+					total++
+				}
+				body.WriteString(`<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;"><tr>`)
+				writeKPICard(&body, fmt.Sprintf("%d", total), "Total Open", "#6366f1")
+				writeKPICard(&body, fmt.Sprintf("%d", critical), "Critical", criticalColor(critical))
+				writeKPICard(&body, fmt.Sprintf("%d", errorCount), "Error", criticalColor(errorCount))
+				writeKPICard(&body, fmt.Sprintf("%d", warning), "Warning", "#d97706")
+				body.WriteString(`</tr></table>`)
+
+				_ = cw.Write([]string{"open_alerts", "total", fmt.Sprintf("%d", total)})
+				_ = cw.Write([]string{"open_alerts", "critical", fmt.Sprintf("%d", critical)})
+				_ = cw.Write([]string{"open_alerts", "error", fmt.Sprintf("%d", errorCount)})
+				_ = cw.Write([]string{"open_alerts", "warning", fmt.Sprintf("%d", warning)})
+				_ = cw.Write([]string{"open_alerts", "informational", fmt.Sprintf("%d", informational)})
+			}
+
 			if e == nil && len(alerts) > 0 {
 				body.WriteString(tableOpen([]string{"Severity", "Title", "Created", "Assigned To"}))
 				n := 0
@@ -287,7 +406,12 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 			// Pull as wide a page as the store allows so the report
 			// covers the whole fleet at typical sizes. We then sort +
 			// truncate to `top` below.
-			hostsData, e := dashStore.GetHostsWithCounts(ctx, store.HostsListParams{Limit: store.HostsListMaxLimit})
+			listParams := store.HostsListParams{Limit: store.HostsListMaxLimit}
+			if groupHostIDList != nil {
+				listParams.Filter = "selected"
+				listParams.SelectedIDs = groupHostIDList
+			}
+			hostsData, e := dashStore.GetHostsWithCounts(ctx, listParams)
 			if e == nil && hostsData != nil && len(hostsData.Items) > 0 {
 				items := hostsData.Items
 				// Sort by updates count descending
@@ -367,6 +491,9 @@ func BuildScheduledReport(ctx context.Context, d *database.DB, reportName string
 			body.WriteString(sectionHeader("Top Outdated Security Packages"))
 			pkgStore := store.NewPackagesStore(d)
 			pkgs, e := pkgStore.ListNeedingUpdates(ctx)
+			if e == nil && groupHostIDs != nil {
+				pkgs = scopePackagesToHostGroup(pkgs, groupHostIDs)
+			}
 			if e == nil && len(pkgs) > 0 {
 				// Filter to security updates and sort by affected hosts count
 				var secPkgs []map[string]interface{}
@@ -576,7 +703,7 @@ func statusBadgeHTML(status string) string {
 	case "running", "warning":
 		color = "#d97706"
 		bg = "#fffbeb"
-	case "queued", "pending", "pending_validation", "pending_approval":
+	case "scheduled", "queued", "pending", "pending_validation", "pending_approval":
 		color = "#6366f1"
 		bg = "#eef2ff"
 	case "inactive", "offline":

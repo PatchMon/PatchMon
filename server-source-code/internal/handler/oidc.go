@@ -360,77 +360,10 @@ func (h *OidcHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?error=Authentication+failed", http.StatusFound)
 		return
 	}
-	user, err := h.users.GetByOidcSubOrEmail(r.Context(), userInfo.Sub, userInfo.Email)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		if h.log != nil {
-			h.log.Error("oidc user lookup failed", "error", err)
-		}
-		http.Redirect(w, r, "/login?error=Authentication+failed", http.StatusFound)
-		return
-	}
-	// The lookup matches on oidc_sub OR email; establish which before trusting it.
-	matchedBySub := user != nil && user.OidcSub != nil && *user.OidcSub == userInfo.Sub
-
-	// An email match, or auto-create, means the email claim decides who this is,
-	// so it has to be verified.
-	if !matchedBySub && !userInfo.EmailVerified {
-		if h.oidcTrustUnverifiedEmail(r.Context()) {
-			if h.log != nil {
-				h.log.Warn("oidc accepting unverified email: trust_unverified_email is enabled",
-					"email", userInfo.Email, "sub", userInfo.Sub)
-			}
-		} else {
-			if h.log != nil {
-				h.log.Warn("oidc login rejected: unverified email claim",
-					"email", userInfo.Email, "sub", userInfo.Sub,
-					"reason", userInfo.EmailVerifiedReason,
-					"hint", "see the operator guide, The verified email requirement")
-			}
-			http.Redirect(w, r, "/login?error=Unable+to+sign+in+with+this+account", http.StatusFound)
-			return
-		}
-	}
-
-	if user == nil && h.oidcAutoCreateUsers(r.Context()) {
-		user = h.createOidcUser(r.Context(), userInfo)
-	}
+	user, failURL := h.resolveOidcUser(r.Context(), userInfo)
 	if user == nil {
-		if h.log != nil {
-			h.log.Error("oidc user not found and auto-create disabled", "email", userInfo.Email)
-		}
-		http.Redirect(w, r, "/login?error=Unable+to+sign+in+with+this+account", http.StatusFound)
+		http.Redirect(w, r, failURL, http.StatusFound)
 		return
-	}
-	if !user.IsActive {
-		if h.log != nil {
-			h.log.Error("oidc login inactive user", "email", userInfo.Email)
-		}
-		http.Redirect(w, r, "/login?error=Account+disabled", http.StatusFound)
-		return
-	}
-	if !matchedBySub {
-		// An email match must not override an established identity binding.
-		if user.OidcSub != nil {
-			if h.log != nil {
-				h.log.Error("oidc login rejected: account is linked to a different subject",
-					"email", userInfo.Email, "sub", userInfo.Sub)
-			}
-			http.Redirect(w, r, "/login?error=Unable+to+sign+in+with+this+account", http.StatusFound)
-			return
-		}
-		existing, _ := h.users.GetByOidcSub(r.Context(), userInfo.Sub)
-		if existing != nil && existing.ID != user.ID {
-			if h.log != nil {
-				h.log.Error("oidc sub already linked", "email", existing.Email)
-			}
-			http.Redirect(w, r, "/login?error=Unable+to+sign+in+with+this+account", http.StatusFound)
-			return
-		}
-		issuerHost := extractHost(h.oidcIssuerURL(r.Context()))
-		_ = h.users.UpdateOidcLink(r.Context(), user.ID, userInfo.Sub, issuerHost, strPtr(userInfo.Picture))
-		user.OidcSub = &userInfo.Sub
-		user.OidcProvider = &issuerHost
-		user.AvatarURL = strPtr(userInfo.Picture)
 	}
 	effectiveRole := user.Role // preserve existing role by default
 	if h.oidcSyncRoles(r.Context()) {
@@ -465,6 +398,77 @@ func (h *OidcHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		_ = h.oidcStore.StoreIDToken(r.Context(), user.ID, userInfo.IDToken)
 	}
 	h.auth.CompleteOidcLogin(w, r, user)
+}
+
+func (h *OidcHandler) resolveOidcUser(ctx context.Context, userInfo *oidc.UserInfo) (*models.User, string) {
+	user, err := h.users.GetByOidcSubOrEmail(ctx, userInfo.Sub, userInfo.Email)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		if h.log != nil {
+			h.log.Error("oidc user lookup failed", "error", err)
+		}
+		return nil, "/login?error=Authentication+failed"
+	}
+	// The lookup matches on oidc_sub OR email; establish which before trusting it.
+	matchedBySub := user != nil && user.OidcSub != nil && *user.OidcSub == userInfo.Sub
+
+	// An email match, or auto-create, means the email claim decides who this is,
+	// so it has to be verified.
+	if !matchedBySub && !userInfo.EmailVerified {
+		if h.oidcTrustUnverifiedEmail(ctx) {
+			if h.log != nil {
+				h.log.Warn("oidc accepting unverified email: trust_unverified_email is enabled",
+					"email", userInfo.Email, "sub", userInfo.Sub)
+			}
+		} else {
+			if h.log != nil {
+				h.log.Warn("oidc login rejected: unverified email claim",
+					"email", userInfo.Email, "sub", userInfo.Sub,
+					"reason", userInfo.EmailVerifiedReason,
+					"hint", "see the operator guide, The verified email requirement")
+			}
+			return nil, "/login?error=Unable+to+sign+in+with+this+account"
+		}
+	}
+
+	if user == nil && h.oidcAutoCreateUsers(ctx) {
+		user = h.createOidcUser(ctx, userInfo)
+		matchedBySub = user != nil
+	}
+	if user == nil {
+		if h.log != nil {
+			h.log.Error("oidc user not found and auto-create disabled", "email", userInfo.Email)
+		}
+		return nil, "/login?error=Unable+to+sign+in+with+this+account"
+	}
+	if !user.IsActive {
+		if h.log != nil {
+			h.log.Error("oidc login inactive user", "email", userInfo.Email)
+		}
+		return nil, "/login?error=Account+disabled"
+	}
+	if !matchedBySub {
+		// An email match must not override an established identity binding.
+		if user.OidcSub != nil {
+			if h.log != nil {
+				h.log.Error("oidc login rejected: account is linked to a different subject",
+					"email", userInfo.Email, "sub", userInfo.Sub)
+			}
+			return nil, "/login?error=Unable+to+sign+in+with+this+account"
+		}
+		existing, _ := h.users.GetByOidcSub(ctx, userInfo.Sub)
+		if existing != nil && existing.ID != user.ID {
+			if h.log != nil {
+				h.log.Error("oidc sub already linked", "email", existing.Email)
+			}
+			return nil, "/login?error=Unable+to+sign+in+with+this+account"
+		}
+		issuerHost := extractHost(h.oidcIssuerURL(ctx))
+		_ = h.users.UpdateOidcLink(ctx, user.ID, userInfo.Sub, issuerHost, strPtr(userInfo.Picture))
+		user.OidcSub = &userInfo.Sub
+		user.OidcProvider = &issuerHost
+		user.AvatarURL = strPtr(userInfo.Picture)
+	}
+	return user, ""
 }
 
 // GetSettings handles GET /api/v1/auth/oidc/settings.
@@ -971,11 +975,19 @@ func mapGroupsToRoleFromConfig(groups []string, cfg *config.Config) string {
 
 var usernameSanitize = regexp.MustCompile(`[^a-zA-Z0-9._-]`)
 
-func (h *OidcHandler) createOidcUser(ctx context.Context, info *oidc.UserInfo) *models.User {
-	baseUsername := usernameSanitize.ReplaceAllString(strings.Split(info.Email, "@")[0], "")
-	if len(baseUsername) > 32 {
-		baseUsername = baseUsername[:32]
+func oidcBaseUsername(info *oidc.UserInfo) string {
+	base := usernameSanitize.ReplaceAllString(strings.Split(info.PreferredUsername, "@")[0], "")
+	if len(base) < 3 {
+		base = usernameSanitize.ReplaceAllString(strings.Split(info.Email, "@")[0], "")
 	}
+	if len(base) > 32 {
+		base = base[:32]
+	}
+	return base
+}
+
+func (h *OidcHandler) createOidcUser(ctx context.Context, info *oidc.UserInfo) *models.User {
+	baseUsername := oidcBaseUsername(info)
 	username := baseUsername
 	counter := 1
 	for {
@@ -1031,6 +1043,6 @@ func (h *OidcHandler) createOidcUser(ctx context.Context, info *oidc.UserInfo) *
 		}
 		return nil
 	}
-	AutoSubscribeIfHosted(h.cfg != nil && h.cfg.AdminMode, h.users, h.log, u)
+	AutoSubscribeIfHosted(ctx, h.cfg != nil && h.cfg.AdminMode, h.users, h.log, u)
 	return u
 }

@@ -188,6 +188,7 @@ func sanitizeDockerPayload(p *DockerReceivePayload) {
 		c.ImageRepository = sanitizeText(c.ImageRepository)
 		c.ImageSource = sanitizeText(c.ImageSource)
 		c.ImageID = sanitizeText(c.ImageID)
+		c.ImageDigest = sanitizeText(c.ImageDigest)
 		c.Status = sanitizeText(c.Status)
 		c.State = sanitizeText(c.State)
 		c.Ports = sanitizeTextMap(c.Ports)
@@ -222,16 +223,6 @@ func sanitizeDockerPayload(p *DockerReceivePayload) {
 		n.Driver = sanitizeText(n.Driver)
 		n.Scope = sanitizeText(n.Scope)
 		n.Labels = sanitizeTextMap(n.Labels)
-	}
-
-	for i := range p.Updates {
-		u := &p.Updates[i]
-		u.Repository = sanitizeText(u.Repository)
-		u.CurrentTag = sanitizeText(u.CurrentTag)
-		u.AvailableTag = sanitizeText(u.AvailableTag)
-		u.CurrentDigest = sanitizeText(u.CurrentDigest)
-		u.AvailableDigest = sanitizeText(u.AvailableDigest)
-		u.ImageID = sanitizeText(u.ImageID)
 	}
 }
 
