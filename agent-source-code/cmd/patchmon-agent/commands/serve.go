@@ -32,6 +32,7 @@ import (
 	"patchmon-agent/internal/pkgversion"
 	"patchmon-agent/internal/system"
 	"patchmon-agent/internal/utils"
+	"patchmon-agent/internal/winsec"
 	"patchmon-agent/pkg/models"
 
 	"github.com/gorilla/websocket"
@@ -176,6 +177,12 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 	// Fail visibly instead of running blind.
 	if err := cfgManager.LoadError(); err != nil {
 		return fmt.Errorf("config file %s could not be read, refusing to start on defaults: %w", cfgManager.GetConfigFile(), err)
+	}
+
+	// Re-lock the Windows data directory on every start so installs that predate
+	// the ACL hardening stop exposing credentials. A no-op off Windows.
+	if err := winsec.EnsureDataDir(); err != nil {
+		logger.WithError(err).Error("Failed to secure agent data directory")
 	}
 
 	// When running as Windows service, allow a brief delay for system initialization
