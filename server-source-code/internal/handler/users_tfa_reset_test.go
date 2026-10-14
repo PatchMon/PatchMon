@@ -722,6 +722,16 @@ func TestResetPasswordDuringTfaResetWindow(t *testing.T) {
 		}
 	}
 
+	t.Run("superadmin may act on another superadmin mid-reset", func(t *testing.T) {
+		other := x.mkUser(ctx, "superadmin", true)
+		if rec := x.post(ctx, super, other.ID, map[string]string{"password": tfaResetTestPassword}); rec.Code != http.StatusOK {
+			t.Fatalf("2FA reset: %d %s", rec.Code, rec.Body.String())
+		}
+		if got := resetPassword(super, other.ID); got != http.StatusOK {
+			t.Fatalf("superadmin on superadmin: got %d", got)
+		}
+	})
+
 	t.Run("ordinary targets are unchanged", func(t *testing.T) {
 		peer := x.mkUser(ctx, "admin", true)
 		if got := resetPassword(adminy, peer.ID); got != http.StatusOK {

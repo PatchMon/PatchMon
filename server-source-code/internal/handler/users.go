@@ -527,11 +527,10 @@ func (h *UsersHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Mid 2FA reset, a peer who sets the password could enrol their own authenticator.
 	if existing.TfaEnrolmentRequired || existing.PasswordChangeRequired {
 		callerID, _ := r.Context().Value(middleware.UserIDKey).(string)
 		caller, err := h.users.GetByID(r.Context(), callerID)
-		if err != nil || caller == nil || roleRank(caller.Role) <= roleRank(existing.Role) {
+		if err != nil || caller == nil || !canResetTfaOf(caller, existing) {
 			Error(w, http.StatusForbidden, "This user is part-way through a two-factor reset. Only a user with a higher role can reset their password now.")
 			return
 		}
