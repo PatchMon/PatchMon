@@ -217,7 +217,7 @@ func (s *Sessions) Create(ctx context.Context, owner Owner) (sessionID string, p
 	s.sessions[sessionID] = sess
 
 	if s.log != nil {
-		s.log.Info("rdp proxy session created", "session_id", sessionID, "proxy_port", port, "host_id", owner.HostID, "user_id", owner.UserID)
+		s.log.Info("rdp proxy session created", "session_id", sessionID, "proxy_port", port, "host_id", owner.HostID, "user_id", owner.UserID, "scope", owner.Scope)
 	}
 
 	go sess.acceptLoop(sessCtx)
@@ -391,6 +391,7 @@ func (s *Session) cleanup(reason string, notifyAgent bool) {
 				"session_id", s.SessionID,
 				"user_id", s.UserID,
 				"host_id", s.HostID,
+				"scope", s.Scope,
 				"reason", reason,
 				"attached", s.attached.Load(),
 				"duration_s", int64(time.Since(s.createdAt).Seconds()),
