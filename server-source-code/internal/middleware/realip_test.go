@@ -33,6 +33,12 @@ func TestRealIP_RewritesRemoteAddr(t *testing.T) {
 			want:       "203.0.113.7",
 		},
 		{
+			name:       "public peer without a proxy cannot spoof",
+			remoteAddr: "198.51.100.210:5555",
+			xff:        "203.0.113.9",
+			want:       "198.51.100.210",
+		},
+		{
 			name:       "trusted hop is skipped",
 			remoteAddr: "10.0.0.1:9000",
 			xff:        "203.0.113.7, 10.0.0.5",
@@ -51,7 +57,7 @@ func TestRealIP_RewritesRemoteAddr(t *testing.T) {
 			}
 
 			var got string
-			handler := RealIP(trusted)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			handler := RealIP(trusted, nil)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 				got = r.RemoteAddr
 			}))
 
@@ -76,7 +82,7 @@ func TestRealIP_RewritesRemoteAddr(t *testing.T) {
 func TestRealIP_ConsumersAgree(t *testing.T) {
 	t.Parallel()
 
-	handler := RealIP(nil)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+	handler := RealIP(nil, nil)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		rateLimitIP := rateLimitClientIP(r)
 		apiAuthIP := clientIPFromRequest(r)
 

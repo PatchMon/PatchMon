@@ -68,11 +68,16 @@ func ParseTrustedProxies(entries []string) ([]netip.Prefix, []string) {
 //
 // With trustedProxies empty the rightmost entry is used, which is correct for
 // the single reverse proxy PatchMon's Docker deployment assumes.
+//
+// The header is only honoured when the TCP peer is itself a proxy we trust:
+// one in trustedProxies, or, when that is empty, a loopback, private,
+// link-local or CGNAT address. Anything else connected directly, so its header
+// is ignored.
 func Resolve(r *http.Request, trustedProxies []netip.Prefix) string {
 	peer := hostOnly(r.RemoteAddr)
 
 	xff := r.Header.Get("X-Forwarded-For")
-	if xff == "" {
+	if xff == "" || !PeerMayForward(peer, trustedProxies) {
 		return peer
 	}
 
@@ -137,6 +142,20 @@ func parseAddr(entry string) (netip.Addr, bool) {
 	// Normalise IPv4-mapped IPv6 (::ffff:203.0.113.7) to plain IPv4 so trusted
 	// prefix matching and downstream string comparisons behave predictably.
 	return addr.Unmap(), true
+}
+
+var cgnat = netip.MustParsePrefix("100.64.0.0/10")
+
+// PeerMayForward reports whether X-Forwarded-For from this TCP peer is honoured.
+func PeerMayForward(peer string, trustedProxies []netip.Prefix) bool {
+	addr, ok := parseAddr(peer)
+	if !ok {
+		return false
+	}
+	if len(trustedProxies) > 0 {
+		return isTrusted(addr, trustedProxies)
+	}
+	return addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() || cgnat.Contains(addr)
 }
 
 func isTrusted(addr netip.Addr, trustedProxies []netip.Prefix) bool {

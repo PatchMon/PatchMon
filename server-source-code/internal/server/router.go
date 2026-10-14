@@ -81,7 +81,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			log.Warn("ignoring invalid TRUSTED_PROXY_RANGES entries",
 				"entries", strings.Join(invalid, ", "))
 		}
-		r.Use(middleware.RealIP(trustedProxies))
+		r.Use(middleware.RealIP(trustedProxies, log))
 	}
 	// Note: chi's Timeout middleware is NOT applied globally because it conflicts with
 	// WebSocket/SSE routes (hijacked connections). It writes a 503 to a
