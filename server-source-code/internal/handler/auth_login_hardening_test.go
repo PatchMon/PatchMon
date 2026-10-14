@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -600,5 +601,17 @@ func TestLoginSaturationAnswersIdenticallyForEveryAccountState(t *testing.T) {
 		} else if got != *want {
 			t.Fatalf("%s answered %+v, another state answered %+v", name, got, *want)
 		}
+	}
+}
+
+func TestLoginBcryptGateUsesHalfTheCores(t *testing.T) {
+	t.Parallel()
+	for procs, want := range map[int]int{1: 1, 2: 1, 3: 1, 4: 2, 18: 9} {
+		if got := loginBcryptSlots(procs); got != want {
+			t.Errorf("loginBcryptSlots(%d) = %d, want %d", procs, got, want)
+		}
+	}
+	if got, want := cap(loginBcrypt), loginBcryptSlots(runtime.GOMAXPROCS(0)); got != want {
+		t.Errorf("gate holds %d slots, want %d", got, want)
 	}
 }

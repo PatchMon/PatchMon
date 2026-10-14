@@ -104,7 +104,12 @@ func (h *AuthHandler) writeLoginBusy(w http.ResponseWriter, r *http.Request, use
 // username spray queues instead of starving every context of CPU.
 type bcryptGate chan struct{}
 
-var loginBcrypt = make(bcryptGate, max(1, runtime.GOMAXPROCS(0)))
+var loginBcrypt = make(bcryptGate, loginBcryptSlots(runtime.GOMAXPROCS(0)))
+
+// loginBcryptSlots leaves at least half the cores for everything else.
+func loginBcryptSlots(procs int) int {
+	return max(1, procs/2)
+}
 
 func (g bcryptGate) do(ctx context.Context, fn func() error) error {
 	wait := time.NewTimer(bcryptGateWait)
