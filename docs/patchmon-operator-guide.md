@@ -6051,7 +6051,7 @@ Alpine's `apk` has no security metadata of its own, so on Alpine hosts the agent
 |-----|------|---------|-------------|
 | `enabled` | Boolean | `true` | Set to `false` to stop the lookup. Updates on the host are then never marked as security updates. |
 
-The files are cached in `/var/cache/patchmon/apk-secdb/` and fetched again at most every 6 hours. Each request times out after 20 seconds. If the database cannot be reached, the agent uses its last cached copy, or, with none, sends the report without security flags; the report itself never fails because of it. The host needs outbound HTTPS (TCP/443) to `secdb.alpinelinux.org`, and the agent honours the standard `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` environment variables.
+The files are cached in `/var/cache/patchmon/apk-secdb/` and fetched again at most every 6 hours. The cache is only used while that directory is owned by root and not writable by group or others. Each request times out after 20 seconds, follows redirects only over HTTPS to the same host, and accepts at most 8 MiB. If the database cannot be reached, the agent waits an hour before trying it again and meanwhile uses its last cached copy, or, with none, sends the report without security flags; the report itself never fails because of it. The agent logs a warning about it at most once every 6 hours. The host needs outbound HTTPS (TCP/443) to `secdb.alpinelinux.org`, and the agent honours the standard `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` environment variables.
 
 Like `docker_update_check`, this block is **not server-pushable**: edit `config.yml` and restart the agent service to change it. The agent writes the block into `config.yml` with its current value whenever it saves its configuration.
 

@@ -1525,16 +1525,16 @@ The agent chooses the patching back-end by detecting the host's package manager.
 | `yum` | RHEL 7, CentOS 7 | Yes |
 | `pacman` | Arch Linux, Manjaro | Yes |
 | `pkg` | FreeBSD 13+ (plus `freebsd-update` for the base system on `patch_all`) | Yes |
-| `apk` | Alpine Linux 3.21 and later (apk-tools 2 and 3) | Yes, with agent 2.1.4 or later. See [Alpine patching](#alpine-patching). |
+| `apk` | Alpine Linux 3.21 and later (apk-tools 2 on 3.21 and 3.22, apk-tools 3 from 3.23) | Yes, with agent 2.1.4 or later. See [Alpine patching](#alpine-patching). |
 | `zypper` | openSUSE Leap, openSUSE Tumbleweed, SLES | **No, and no inventory either. Coming soon.** The installer detects zypper and completes, and the agent detects the OS correctly, but the agent has no zypper backend. Package collection therefore fails with `unsupported package manager: unknown` and the host never completes its first report, so it sits at "Waiting for initial system report". Follow and vote for zypper support at [feedback.patchmon.net](https://feedback.patchmon.net/b/feature-requests/posts/post_01kyza53c0fzst214afbr1qn9a). |
 | Windows Update Agent (WUA) + winget | Windows 10/11, Server 2019/2022/2025 | Yes, with agent 2.1.4 or later (separate path) |
 
 #### Alpine patching {#alpine-patching}
 
-Alpine hosts are patched with `apk`, on both apk-tools 2 (Alpine 3.21 and 3.22) and apk-tools 3 (Alpine 3.23 and later). Every run, real or dry, plans before it changes anything:
+Alpine hosts are patched with `apk` on Alpine 3.21 and later, with agent 2.1.4 or later: apk-tools 2 on 3.21 and 3.22, apk-tools 3 from 3.23. Every run, real or dry, plans before it changes anything:
 
 1. `apk update` refreshes the package indexes.
-2. `apk upgrade --simulate` works out the transaction. On a real run, if apk says the plan is unreliable because apk-tools itself has an update, the agent installs that update first (`--self-upgrade-only` on apk-tools 2, `--preupgrade-only` on apk-tools 3) and plans again.
+2. `apk upgrade --simulate` works out the transaction. On a real run, if apk says the plan is unreliable because apk-tools itself has an update, the agent installs that update first (`--self-upgrade-only` on apk-tools 2, `--preupgrade-only` on apk-tools 3), says so in the run output, and plans again. If it cannot tell which apk-tools version is installed, it stops instead.
 3. The agent refuses the run, before changing anything, if the plan would **downgrade**, **remove** or **replace** a package, or contains a step it does not recognise. This usually means a repository was removed from `/etc/apk/repositories`. Review the plan with `apk upgrade --simulate` on the host and fix the repositories file first.
 4. A real run then applies the plan with `apk upgrade`.
 
@@ -1544,7 +1544,7 @@ Alpine hosts are patched with `apk`, on both apk-tools 2 (Alpine 3.21 and 3.22) 
 
 If the installed version of a package breaks its own constraint in `/etc/apk/world`, apk refuses every upgrade. PatchMon then fails the run before changing anything and names the line to correct, for example change `busybox<1.0` to `busybox=1.37.0-r29` or remove the version, then retry.
 
-**Security updates** on Alpine come from the Alpine security database (`secdb.alpinelinux.org`). An update is marked as a security update when it moves the package past a version that fixed a published issue. The agent fetches the database for the branch in `/etc/apk/repositories` at most every 6 hours; if it cannot reach it, the report still goes through and updates are not marked as security updates. See `apk_secdb` in the Operator Guide to turn the lookup off.
+**Security updates** on Alpine come from the Alpine security database (`secdb.alpinelinux.org`). An update is marked as a security update when it moves the package past a version that fixed a published issue. The agent fetches the database for the branch in `/etc/apk/repositories` at most every 6 hours. If it cannot reach it, it tries again after an hour, and meanwhile the report still goes through, using the last copy it fetched or, without one, marking no updates as security updates. See `apk_secdb` in the Operator Guide to turn the lookup off.
 
 **Reboot required** is set when the installed kernel package (`linux-lts`, `linux-virt` and so on) is newer than the running kernel. Alpine containers (Docker or LXC) run the host's kernel, so they never report a reboot as required.
 
