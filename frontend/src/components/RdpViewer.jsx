@@ -26,6 +26,14 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { rdpAPI } from "../utils/api";
+import {
+	loadRdpKeyboardLayout,
+	RDP_KEYBOARD_LAYOUTS,
+	saveRdpKeyboardLayout,
+} from "../utils/rdpKeyboardLayouts";
+
+const browserLanguages = () =>
+	navigator.languages?.length ? navigator.languages : [navigator.language];
 
 // Guacamole Status codes we surface with bespoke guidance. See
 // https://guacamole.apache.org/doc/gug/protocol-reference.html#status-codes
@@ -441,6 +449,9 @@ const RdpViewer = ({ host, isOpen }) => {
 	const [isFullscreen, setIsFullscreen] = useState(false);
 	const [requirementsOpen, setRequirementsOpen] = useState(false);
 	const [remoteClipboard, setRemoteClipboard] = useState(null);
+	const [keyboardLayout, setKeyboardLayout] = useState(() =>
+		loadRdpKeyboardLayout(host?.id, browserLanguages()),
+	);
 	const [credentials, setCredentials] = useState({
 		username: "",
 		password: "",
@@ -526,13 +537,12 @@ const RdpViewer = ({ host, isOpen }) => {
 	}, [isOpen, host, disconnect]);
 
 	// Reset transient state when the host changes so stale errors and creds
-	// from a previous host do not bleed into the new one. host?.id is the
-	// intentional trigger; setState callbacks are stable and correctly omitted.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset trigger
+	// from a previous host do not bleed into the new one.
 	useEffect(() => {
 		setError(null);
 		setCredentials({ username: "", password: "" });
 		setRequirementsOpen(false);
+		setKeyboardLayout(loadRdpKeyboardLayout(host?.id, browserLanguages()));
 	}, [host?.id]);
 
 	const connect = useCallback(async () => {
@@ -551,6 +561,7 @@ const RdpViewer = ({ host, isOpen }) => {
 				hostId: host.id,
 				username: credentials.username || undefined,
 				password: credentials.password || undefined,
+				keyboardLayout,
 				width: containerWidth,
 				height: containerHeight,
 			});
@@ -860,6 +871,7 @@ const RdpViewer = ({ host, isOpen }) => {
 		isOpen,
 		credentials.username,
 		credentials.password,
+		keyboardLayout,
 		disconnect,
 		scaleDisplay,
 	]);
@@ -923,7 +935,27 @@ const RdpViewer = ({ host, isOpen }) => {
 				</div>
 				<div className="flex items-center gap-2">
 					{!isConnected && !isConnecting && (
-						<div className="flex gap-2 items-center">
+						<div className="flex flex-wrap gap-2 items-center justify-end">
+							<div className="relative">
+								<select
+									aria-label="Keyboard layout"
+									title="Keyboard layout of the Windows session"
+									value={keyboardLayout}
+									onChange={(e) => {
+										setKeyboardLayout(e.target.value);
+										if (host?.id)
+											saveRdpKeyboardLayout(host.id, e.target.value);
+									}}
+									className="appearance-none pl-2 pr-7 py-1 text-sm rounded bg-secondary-700 text-white border border-secondary-600 w-44"
+								>
+									{RDP_KEYBOARD_LAYOUTS.map((l) => (
+										<option key={l.value} value={l.value}>
+											{l.label}
+										</option>
+									))}
+								</select>
+								<ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-secondary-400 pointer-events-none" />
+							</div>
 							<input
 								type="text"
 								placeholder="Username (optional)"

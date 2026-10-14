@@ -180,6 +180,17 @@ describe("RdpViewer session behaviour", () => {
 		expect(guac.client.sendSize).not.toHaveBeenCalled();
 	});
 
+	it("sends the chosen keyboard layout with the ticket request", async () => {
+		render(<RdpViewer host={{ id: "h1", hostname: "win" }} isOpen />);
+		fireEvent.change(screen.getByLabelText("Keyboard layout"), {
+			target: { value: "en-gb-qwerty" },
+		});
+		await startConnect();
+		expect(rdpAPI.createTicket).toHaveBeenCalledWith(
+			expect.objectContaining({ keyboardLayout: "en-gb-qwerty" }),
+		);
+	});
+
 	it("sends the new container size to the remote session after a resize", async () => {
 		await connectViewer();
 		vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(1600);
