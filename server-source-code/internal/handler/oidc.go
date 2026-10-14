@@ -583,12 +583,19 @@ func oidcTrustChanged(before, after *models.Settings) bool {
 		d(before.OidcRedirectURI) != d(after.OidcRedirectURI) ||
 		before.OidcTrustUnverifiedEmail != after.OidcTrustUnverifiedEmail ||
 		before.OidcSyncRoles != after.OidcSyncRoles ||
-		d(before.OidcDefaultRole) != d(after.OidcDefaultRole) ||
+		orUser(d(before.OidcDefaultRole)) != orUser(d(after.OidcDefaultRole)) ||
 		d(before.OidcSuperadminGroup) != d(after.OidcSuperadminGroup) ||
 		d(before.OidcAdminGroup) != d(after.OidcAdminGroup) ||
 		d(before.OidcHostManagerGroup) != d(after.OidcHostManagerGroup) ||
 		d(before.OidcReadonlyGroup) != d(after.OidcReadonlyGroup) ||
 		d(before.OidcUserGroup) != d(after.OidcUserGroup)
+}
+
+func orUser(role string) string {
+	if role == "" {
+		return "user"
+	}
+	return role
 }
 
 func (h *OidcHandler) canManageSuperusers(ctx context.Context, role string) bool {

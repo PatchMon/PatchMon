@@ -317,3 +317,15 @@ func TestUserManagementRespectsRoleCoverage(t *testing.T) {
 		}
 	}
 }
+
+func TestOidcTrustChangedTreatsMissingDefaultRoleAsUser(t *testing.T) {
+	t.Parallel()
+	user := "user"
+	admin := "admin"
+	if oidcTrustChanged(&models.Settings{}, &models.Settings{OidcDefaultRole: &user}) {
+		t.Error("unset -> user counted as a change")
+	}
+	if !oidcTrustChanged(&models.Settings{}, &models.Settings{OidcDefaultRole: &admin}) {
+		t.Error("unset -> admin not counted as a change")
+	}
+}
