@@ -3840,6 +3840,8 @@ When a username or password is set, PatchMon reads the `AUTH` mechanisms the rel
 
 Both mechanisms follow the same TLS rules: credentials are only sent once the connection is encrypted, or in **None (insecure)** mode with the cleartext opt-in described below. If the relay offers neither PLAIN nor LOGIN (for example only `CRAM-MD5` or `XOAUTH2`), PatchMon does not attempt to authenticate and the send fails at the `auth` stage with a message listing what the relay offered.
 
+If the relay does not advertise `AUTH` at all, PatchMon skips authentication and sends the message unauthenticated, even when a username and password are set. The relay then decides whether to accept it.
+
 ##### TLS modes
 
 PatchMon offers four TLS modes on every email destination. Pick the one your relay actually supports rather than leaving it on **Auto**, so a misconfigured server fails closed instead of silently downgrading to plaintext.

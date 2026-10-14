@@ -447,3 +447,62 @@ func TestLoginAuth_Next(t *testing.T) {
 		t.Fatalf("final Next: got (%q, %v)", resp, err)
 	}
 }
+
+func TestLoginAuth_NextEmptyCredentialIsNonNil(t *testing.T) {
+	a := &loginAuth{username: "user", password: "", host: "h"}
+	if _, _, err := a.Start(&smtp.ServerInfo{Name: "h", TLS: true}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, err := a.Next([]byte("Username:"), true); err != nil {
+		t.Fatalf("username: %v", err)
+	}
+	resp, err := a.Next([]byte("Password:"), true)
+	if err != nil || resp == nil || len(resp) != 0 {
+		t.Fatalf("empty password must be a non-nil empty response, got (%#v, %v)", resp, err)
+	}
+}
+
+func TestSend_Auto_LoginOnlyWithoutTLS_SendsNoAuth(t *testing.T) {
+	srv := newScriptedAuthServer(t, &scriptedAuthServer{
+		mechs:      "LOGIN",
+		userPrompt: "Username:", passPrompt: "Password:",
+		wantUser: "relay-user", wantPass: "relay-pass",
+	})
+
+	if err := scriptedSend(t, srv, TLSModeAuto, "relay-pass"); err == nil {
+		t.Fatal("auto mode must not deliver to a relay that offers no TLS")
+	}
+	for _, l := range srv.lines() {
+		if strings.HasPrefix(strings.ToUpper(l), "C: AUTH") {
+			t.Fatalf("client sent %q to a relay with no TLS", l)
+		}
+	}
+}
+
+func TestSend_Auto_LoginOnlyAuthOnlyAfterSTARTTLS(t *testing.T) {
+	srv := newScriptedAuthServer(t, &scriptedAuthServer{
+		mechs: "LOGIN", startTLS: true,
+		userPrompt: "Username:", passPrompt: "Password:",
+		wantUser: "relay-user", wantPass: "relay-pass",
+	})
+
+	if err := scriptedSend(t, srv, TLSModeAuto, "relay-pass"); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	lines := srv.lines()
+	tlsAt, authAt := -1, -1
+	for i, l := range lines {
+		switch {
+		case l == "C: STARTTLS" && tlsAt < 0:
+			tlsAt = i
+		case strings.HasPrefix(l, "C: AUTH") && authAt < 0:
+			authAt = i
+		}
+	}
+	if tlsAt < 0 || authAt < 0 || authAt < tlsAt {
+		t.Fatalf("AUTH must follow STARTTLS (STARTTLS at %d, AUTH at %d):\n%s", tlsAt, authAt, strings.Join(lines, "\n"))
+	}
+	if lines[authAt] != "C: AUTH LOGIN" {
+		t.Errorf("first AUTH line = %q, want AUTH LOGIN", lines[authAt])
+	}
+}

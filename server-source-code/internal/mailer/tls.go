@@ -73,7 +73,8 @@ func (a insecurePlainAuth) Next(_ []byte, more bool) ([]byte, error) {
 	return nil, nil
 }
 
-// An empty AUTH list keeps the historical PLAIN attempt.
+// selectAuth prefers PLAIN, then LOGIN. An empty AUTH list keeps the historical
+// PLAIN attempt.
 func selectAuth(cfg Config, advertised string) (smtp.Auth, error) {
 	mechs := strings.Fields(strings.ToUpper(advertised))
 	switch {
@@ -125,14 +126,20 @@ func (a *loginAuth) Next(fromServer []byte, more bool) ([]byte, error) {
 	prompt := strings.ToLower(strings.TrimSpace(string(fromServer)))
 	switch {
 	case strings.HasPrefix(prompt, "pass"):
-		return []byte(a.password), nil
+		return loginResponse(a.password), nil
 	case strings.HasPrefix(prompt, "user"):
-		return []byte(a.username), nil
+		return loginResponse(a.username), nil
 	case a.step == 1:
-		return []byte(a.username), nil
+		return loginResponse(a.username), nil
 	default:
-		return []byte(a.password), nil
+		return loginResponse(a.password), nil
 	}
+}
+
+// loginResponse never returns nil: smtp.Client.Auth treats a nil response as the
+// end of the exchange, so an empty credential must still be answered.
+func loginResponse(v string) []byte {
+	return append([]byte{}, v...)
 }
 
 func isLocalhost(name string) bool {
