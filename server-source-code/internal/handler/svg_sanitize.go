@@ -6,7 +6,9 @@ import (
 	"errors"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -29,18 +31,85 @@ var svgAllowedElements = map[string]bool{
 	"fePointLight": true, "feSpecularLighting": true, "feSpotLight": true, "feTile": true, "feTurbulence": true,
 }
 
+const (
+	maxSVGEntities        = 16
+	maxSVGEntityExpansion = 64 << 10
+	maxSVGDepth           = 256
+)
+
 var (
 	svgEntityDecl = regexp.MustCompile(`<!ENTITY\s+([A-Za-z_][\w.-]*)\s+"([^"%&<]{0,256})"\s*>`)
-	cssImport     = regexp.MustCompile(`(?i)@import\s+[^;]+;?`)
+	cssEscape     = regexp.MustCompile(`(?s)\\(?:([0-9A-Fa-f]{1,6})[ \t\n\f]?|(.))`)
+	cssImport     = regexp.MustCompile(`(?i)@import\b[^;]*;?`)
+	cssImageSet   = regexp.MustCompile(`(?i)(-webkit-)?image-set\([^)]*\)`)
+	cssURL        = regexp.MustCompile(`(?i)url\(\s*['"]?\s*([^'")\s]*)[^)]*\)`)
 	errInvalidSVG = errors.New("invalid SVG")
 )
+
+// svgEntities returns the internal entities the input declares, refusing any set whose total
+// expansion could exceed the input size, so references cannot multiply memory use.
+func svgEntities(in []byte) (map[string]string, error) {
+	decls := svgEntityDecl.FindAllSubmatch(in, maxSVGEntities+1)
+	if len(decls) > maxSVGEntities {
+		return nil, errInvalidSVG
+	}
+	budget := min(len(in), maxSVGEntityExpansion)
+	entities := make(map[string]string, len(decls))
+	total := 0
+	for _, m := range decls {
+		name := string(m[1])
+		if _, seen := entities[name]; seen {
+			continue
+		}
+		entities[name] = string(m[2])
+		total += bytes.Count(in, []byte("&"+name+";")) * len(m[2])
+		if total > budget {
+			return nil, errInvalidSVG
+		}
+	}
+	return entities, nil
+}
+
+func unescapeCSS(v string) string {
+	return cssEscape.ReplaceAllStringFunc(v, func(m string) string {
+		sub := cssEscape.FindStringSubmatch(m)
+		if sub[1] == "" {
+			if sub[2] == "\n" {
+				return ""
+			}
+			return sub[2]
+		}
+		n, _ := strconv.ParseUint(sub[1], 16, 32)
+		if n == 0 || !utf8.ValidRune(rune(n)) {
+			return "\uFFFD"
+		}
+		return string(rune(n))
+	})
+}
+
+// cleanCSS drops @import, image-set() and url() references to anything but a fragment or embedded image.
+func cleanCSS(v string) string {
+	v = cssImport.ReplaceAllString(unescapeCSS(v), "")
+	v = cssImageSet.ReplaceAllString(v, "none")
+	return cssURL.ReplaceAllStringFunc(v, func(m string) string {
+		target := strings.ToLower(cssURL.FindStringSubmatch(m)[1])
+		if strings.HasPrefix(target, "#") || strings.HasPrefix(target, "data:image/") {
+			return m
+		}
+		return "none"
+	})
+}
 
 // sanitizeSVG re-serialises an SVG keeping only allow-listed SVG elements and safe attributes.
 // Anything that does not parse as well-formed XML is rejected rather than repaired.
 func sanitizeSVG(in []byte) ([]byte, error) {
+	entities, err := svgEntities(in)
+	if err != nil {
+		return nil, err
+	}
 	d := xml.NewDecoder(bytes.NewReader(in))
 	d.Strict = true
-	d.Entity = map[string]string{}
+	d.Entity = entities
 
 	var out bytes.Buffer
 	var stack []xml.Name
@@ -59,6 +128,9 @@ func sanitizeSVG(in []byte) ([]byte, error) {
 		switch t := tok.(type) {
 		case xml.StartElement:
 			stack = append(stack, t.Name)
+			if len(stack) > maxSVGDepth {
+				return nil, errInvalidSVG
+			}
 			if !sawRoot {
 				if t.Name.Space != "" || t.Name.Local != "svg" {
 					return nil, errInvalidSVG
@@ -105,13 +177,9 @@ func sanitizeSVG(in []byte) ([]byte, error) {
 			}
 			text := []byte(t)
 			if stack[len(stack)-1].Local == "style" {
-				text = cssImport.ReplaceAll(text, nil)
+				text = []byte(cleanCSS(string(text)))
 			}
 			_ = xml.EscapeText(&out, text)
-		case xml.Directive:
-			for _, m := range svgEntityDecl.FindAllSubmatch(t, -1) {
-				d.Entity[string(m[1])] = string(m[2])
-			}
 		}
 		if out.Len() > maxOut {
 			return nil, errInvalidSVG
@@ -134,8 +202,8 @@ func sanitizeSVGAttr(a xml.Attr) (string, bool) {
 			return "", false
 		case local == "href":
 			return a.Value, safeSVGHref(a.Value)
-		case local == "style":
-			return cssImport.ReplaceAllString(a.Value, ""), true
+		case strings.ContainsAny(a.Value, `\(@`):
+			return cleanCSS(a.Value), true
 		}
 		return a.Value, true
 	case "xmlns":
@@ -146,7 +214,7 @@ func sanitizeSVGAttr(a xml.Attr) (string, bool) {
 		}
 		return a.Value, true
 	case "xml":
-		return a.Value, true
+		return a.Value, local != "base"
 	}
 	return "", false
 }

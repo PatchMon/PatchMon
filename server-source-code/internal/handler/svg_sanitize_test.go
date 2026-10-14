@@ -1,12 +1,15 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/xml"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -131,5 +134,68 @@ func TestGetLogoServesSVGWithRestrictiveHeaders(t *testing.T) {
 	}
 	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 		t.Errorf("X-Content-Type-Options = %q", got)
+	}
+}
+
+func TestSanitizeSVGBoundsEntityExpansion(t *testing.T) {
+	head := `<!DOCTYPE svg [<!ENTITY a "` + strings.Repeat("x", 256) + `">]><svg xmlns="http://www.w3.org/2000/svg"><text>`
+	in := append([]byte(head), bytes.Repeat([]byte("&a;"), (3750000-len(head))/3)...)
+	in = append(in, `</text></svg>`...)
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	_, err := sanitizeSVG(in)
+	runtime.ReadMemStats(&after)
+	if err == nil {
+		t.Fatal("entity expansion bomb accepted")
+	}
+	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 64<<20 {
+		t.Fatalf("rejecting a %d byte entity bomb allocated %d MB", len(in), alloc>>20)
+	}
+
+	var decls strings.Builder
+	for i := 0; i <= maxSVGEntities; i++ {
+		decls.WriteString(`<!ENTITY e` + strconv.Itoa(i) + ` "v">`)
+	}
+	if _, err := sanitizeSVG([]byte(`<!DOCTYPE svg [` + decls.String() + `]>` + svgOpen + `</svg>`)); err == nil {
+		t.Error("too many entity declarations accepted")
+	}
+	small := `<!DOCTYPE svg [<!ENTITY n "http://www.w3.org/2000/svg">]><svg xmlns="&n;"><text>&n;</text></svg>`
+	if _, err := sanitizeSVG([]byte(small)); err != nil {
+		t.Errorf("small entity use rejected: %v", err)
+	}
+}
+
+func TestSanitizeSVGDepthCap(t *testing.T) {
+	t.Parallel()
+	deep := svgOpen + strings.Repeat("<g>", maxSVGDepth) + strings.Repeat("</g>", maxSVGDepth) + `</svg>`
+	if _, err := sanitizeSVG([]byte(deep)); err == nil {
+		t.Error("nesting beyond the depth cap accepted")
+	}
+	ok := svgOpen + strings.Repeat("<g>", 50) + strings.Repeat("</g>", 50) + `</svg>`
+	if _, err := sanitizeSVG([]byte(ok)); err != nil {
+		t.Errorf("ordinary nesting rejected: %v", err)
+	}
+}
+
+func TestSanitizeSVGCleansCSSAndBase(t *testing.T) {
+	t.Parallel()
+	in := svgOpen + `<style>@\69mport url(https://evil.example/a.css); @IMPORT "https://evil.example/b.css"; .a{background:u\72l("https://evil.example/c.png")} .b{background-image:image-set("https://evil.example/d.png" 1x)} .c{fill:url(#g)}</style>` +
+		`<g xml:base="https://evil.example/" xml:space="preserve"><rect width="1" height="1" fill="url(https://evil.example/e#x)" filter="url('//evil.example/f#x')" style="stroke:url(&quot;https://evil.example/g&quot;)"/><rect width="1" height="1" fill="url(#g)"/></g></svg>`
+	out, err := sanitizeSVG([]byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := strings.ToLower(string(out))
+	for _, bad := range []string{"evil.example", "@import", "xml:base", "image-set"} {
+		if strings.Contains(s, bad) {
+			t.Errorf("output still contains %q: %s", bad, out)
+		}
+	}
+	for _, want := range []string{`fill="url(#g)"`, `.c{fill:url(#g)}`, `xml:space="preserve"`} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("missing %q in %s", want, out)
+		}
 	}
 }
