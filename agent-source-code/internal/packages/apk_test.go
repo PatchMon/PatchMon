@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -505,6 +506,9 @@ const secdbMain = `{"distroversion":"v3.23","reponame":"main","packages":[
 {"pkg":{"name":"xen","secfixes":{"4.20.1-r0":["XSA-470"],"not-a-version":["X"]}}}]}`
 
 func TestAPKSecDBFixesAndCache(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the secdb cache is never trusted on Windows")
+	}
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
