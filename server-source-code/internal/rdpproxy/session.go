@@ -260,6 +260,7 @@ func (s *Session) acceptLoop(ctx context.Context) {
 		s.guacdConn = conn
 		s.mu.Unlock()
 		s.attached.Store(true)
+		_ = s.Listener.Close()
 
 		go s.bridgeGuacdToAgent(conn)
 		return

@@ -246,3 +246,18 @@ func TestEmptyScopeCapOnlyInMultiContextMode(t *testing.T) {
 	}
 	create(t, multi, "a1", "ctx-a.example")
 }
+
+func TestListenerClosesAfterFirstAccept(t *testing.T) {
+	s := NewSessions(nil, &recSender{})
+	_, port := create(t, s, "api1", "")
+	c := attach(t, port)
+	defer func() { _ = c.Close() }()
+	waitFor(t, "listener closed", func() bool {
+		c2, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 200*time.Millisecond)
+		if err != nil {
+			return true
+		}
+		_ = c2.Close()
+		return false
+	})
+}
