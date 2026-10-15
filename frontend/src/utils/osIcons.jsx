@@ -56,6 +56,8 @@ export const getOSIcon = (osType) => {
 	// Elementary OS
 	if (os.includes("elementary")) return SiElementary;
 
+	if (os.includes("univention")) return SiLinux;
+
 	// Debian
 	if (os.includes("debian")) return SiDebian;
 
@@ -166,6 +168,8 @@ export const getOSDisplayName = (osType) => {
 
 	// Elementary OS
 	if (os.includes("elementary")) return "Elementary OS";
+
+	if (os.includes("univention")) return "Univention Corporate Server";
 
 	// Debian
 	if (os.includes("debian")) return "Debian";

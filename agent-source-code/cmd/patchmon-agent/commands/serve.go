@@ -2560,6 +2560,23 @@ func aptUpgradeArgs(dryRun bool) []string {
 	return append(slices.Clone(dpkgConfOptions), "--with-new-pkgs", "upgrade", "-y")
 }
 
+// ucsUpgradeArgs keeps univention-upgrade to the installed release: no App Center app updates
+// and no release update, which the inventory and the dry run never show.
+func ucsUpgradeArgs(release string) []string {
+	return []string{"--noninteractive", "--disable-app-updates", "--updateto", release}
+}
+
+// ucsUpgradeRefusal returns why Patch all cannot run univention-upgrade on this host, or "".
+func ucsUpgradeRefusal(release string) string {
+	if release == "" {
+		return "cannot read the installed UCS release from /etc/univention/base.conf, so PatchMon cannot limit univention-upgrade to it. Nothing was changed"
+	}
+	if _, err := exec.LookPath("univention-upgrade"); err != nil {
+		return "univention-upgrade not found on this Univention Corporate Server host. Nothing was changed"
+	}
+	return ""
+}
+
 // aptOnlyUpgradeArgs builds the apt-get arguments for upgrading named packages.
 func aptOnlyUpgradeArgs(dryRun bool, packageNames []string) []string {
 	if dryRun {
@@ -2617,6 +2634,12 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		return errors.New(msg)
 	}
 
+	ucsUpgrade := pkgManager == "apt" && patchType == "patch_all" && packages.IsUCS()
+	ucsRelease := ""
+	if ucsUpgrade {
+		ucsRelease = packages.UCSRelease()
+	}
+
 	var env []string
 	var upgradeBin string
 	var freeBSDUpdateBin string
@@ -2627,6 +2650,12 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		if _, err := exec.LookPath("apt-get"); err != nil {
 			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "apt-get not found: not a Debian/Ubuntu system or apt not installed")
 			return fmt.Errorf("apt-get not found: %w", err)
+		}
+		if ucsUpgrade {
+			if msg := ucsUpgradeRefusal(ucsRelease); msg != "" {
+				_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", msg)
+				return errors.New(msg)
+			}
 		}
 		env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
 		upgradeBin = "apt-get"
@@ -2759,6 +2788,16 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		if patchType == "patch_all" {
 			switch pkgManager {
 			case "apt":
+				if ucsUpgrade {
+					if dryRun {
+						if err, abort := runStep(false, "apt-get -s dist-upgrade", "apt-get -s dist-upgrade failed: %w", "apt-get", "-s", "dist-upgrade"); abort {
+							stepErr = err
+						}
+					} else if err, abort := runStep(false, "univention-upgrade", "univention-upgrade failed: %w", "univention-upgrade", ucsUpgradeArgs(ucsRelease)...); abort {
+						stepErr = err
+					}
+					break
+				}
 				// --with-new-pkgs makes apt-get match what the collector
 				// measures. Collection runs /usr/bin/apt (see
 				// internal/packages/apt.go), whose upgrade allows new packages;

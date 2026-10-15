@@ -192,3 +192,58 @@ func TestZorinPicksNobleContent(t *testing.T) {
 		t.Fatal("24.04 content must match a noble base")
 	}
 }
+
+func TestUCSPicksBookwormContent(t *testing.T) {
+	const osRelease = `PRETTY_NAME="Univention Corporate Server 5.2"
+NAME="Univention Corporate Server"
+VERSION="5.2"
+ID="ucs"
+VERSION_ID="5.2"
+ID_LIKE="debian"
+VERSION_CODENAME=bookworm
+`
+	s := newTestScanner()
+	s.osInfo = s.parseOSRelease(strings.NewReader(osRelease))
+	if s.osInfo.Family != "debian" {
+		t.Fatalf("family %q, want debian", s.osInfo.Family)
+	}
+	available := []string{"ssg-debian11-ds.xml", "ssg-debian12-ds.xml", "ssg-debian13-ds.xml"}
+	if got := s.pickSSGFile(available); got != "ssg-debian12-ds.xml" {
+		t.Fatalf("server sync picked %q", got)
+	}
+	if got := s.getProfileID("level1_server"); got != "xccdf_org.ssgproject.content_profile_cis_level1_server" {
+		t.Fatalf("profile %q", got)
+	}
+}
+
+func TestDebianCodenameWinsOverVersionCodename(t *testing.T) {
+	s := newTestScanner()
+	s.osInfo = s.parseOSRelease(strings.NewReader("ID=linuxmint\nVERSION_ID=6\nID_LIKE=debian\nVERSION_CODENAME=faye\nDEBIAN_CODENAME=bookworm\n"))
+	if got := s.contentVersion(); got != "12" {
+		t.Fatalf("contentVersion %q, want 12", got)
+	}
+}
+
+func TestOSReleaseContentSelection(t *testing.T) {
+	tests := []struct {
+		name, osRelease, wantName, wantVersion string
+	}{
+		{"ubuntu", "ID=ubuntu\nVERSION_ID=\"24.04\"\nID_LIKE=debian\nVERSION_CODENAME=noble\n", "ubuntu", "24.04"},
+		{"debian", "ID=debian\nVERSION_ID=\"12\"\nVERSION_CODENAME=bookworm\n", "debian", "12"},
+		{"mint", "ID=linuxmint\nVERSION_ID=\"22\"\nID_LIKE=\"ubuntu debian\"\nVERSION_CODENAME=wilma\nUBUNTU_CODENAME=noble\n", "ubuntu", "24.04"},
+		{"kali", "ID=kali\nVERSION_ID=\"2025.1\"\nID_LIKE=debian\nVERSION_CODENAME=kali-rolling\n", "debian", "2025.1"},
+		{"ucs 5.2", "ID=\"ucs\"\nVERSION_ID=\"5.2\"\nID_LIKE=\"debian\"\nVERSION_CODENAME=bookworm\n", "debian", "12"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestScanner()
+			s.osInfo = s.parseOSRelease(strings.NewReader(tt.osRelease))
+			if got := s.getContentOSName(); got != tt.wantName {
+				t.Fatalf("content OS %q, want %q", got, tt.wantName)
+			}
+			if got := s.contentVersion(); got != tt.wantVersion {
+				t.Fatalf("content version %q, want %q", got, tt.wantVersion)
+			}
+		})
+	}
+}

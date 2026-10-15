@@ -244,6 +244,9 @@ func (d *Detector) DetectOS() (osType, osVersion string, err error) {
 		}
 	}
 	osVersion = resolveLinuxOSVersion(osReleaseInfo, alpineRelease)
+	if release := ucsRelease(lsbReleaseFile); release != "" {
+		osType, osVersion = ucsOSType, release
+	}
 
 	d.logger.WithFields(logrus.Fields{
 		"name":          osReleaseInfo.Name,

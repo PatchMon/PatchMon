@@ -51,6 +51,10 @@ func isFreeBSD(osType string) bool {
 	return strings.EqualFold(strings.TrimSpace(osType), "freebsd")
 }
 
+func isUCS(osType string) bool {
+	return strings.Contains(strings.ToLower(osType), "univention")
+}
+
 // PacmanSelectedPatchUnsupported must match the agent's message for the same refusal.
 const PacmanSelectedPatchUnsupported = "Arch Linux does not support partial upgrades, so PatchMon cannot patch selected packages on this host. Use Patch all."
 
@@ -161,12 +165,33 @@ func parsePackagesAffectedFromRealOutput(osType, output string) []string {
 	}
 
 	inFreeBSDPkgSection := false
+	ucs := isUCS(osType)
+	inUCSUpgrade := false
+	inUCSPkgList := false
 	// A real apk run also echoes its --simulate plans, which use the same step lines.
 	apkApplying := true
 	for _, line := range strings.Split(output, "\n") {
 		trimmed := strings.TrimSpace(line)
+		// univention-upgrade lists the packages it installs on one comma-separated line
+		// and hides apt's own output. Names are kept whole: libperl5.36 is not libperl5.
+		if inUCSPkgList {
+			inUCSPkgList = false
+			for _, name := range strings.Split(trimmed, ",") {
+				name = strings.TrimSpace(strings.SplitN(name, ":", 2)[0])
+				if name != "" && !seen[name] {
+					seen[name] = true
+					pkgs = append(pkgs, name)
+				}
+			}
+			continue
+		}
 		if strings.HasPrefix(trimmed, "$ ") {
+			inUCSUpgrade = ucs && strings.HasPrefix(trimmed, "$ univention-upgrade")
 			apkApplying = strings.HasPrefix(trimmed, "$ apk upgrade") && !strings.Contains(trimmed, "--simulate")
+		}
+		if inUCSUpgrade && (trimmed == "The following packages will be upgraded:" || trimmed == "The following packages will be installed:") {
+			inUCSPkgList = true
+			continue
 		}
 		// apt-get simulate: "Inst pkgname ..."
 		if strings.HasPrefix(trimmed, "Inst ") {
