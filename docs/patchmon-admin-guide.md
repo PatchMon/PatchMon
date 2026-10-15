@@ -1541,6 +1541,7 @@ The agent chooses the patching back-end by detecting the host's package manager.
 | `pkg` | FreeBSD 13+ (plus `freebsd-update` for the base system on `patch_all`) | Yes |
 | `apk` | Alpine Linux 3.21 and later (apk-tools 2 on 3.21 and 3.22, apk-tools 3 from 3.23) | Yes, with agent 2.1.4 or later. See [Alpine patching](#alpine-patching). |
 | `zypper` | openSUSE Leap 15.6 and 16.0, openSUSE Tumbleweed and Slowroll, SLES 15 and 16 | Yes, with agent 2.1.4 or later. See [openSUSE and SLES patching](#zypper-patching). |
+| `apt-get` and `univention-upgrade` | Univention Corporate Server 5.0-10 and 5.2 | Yes, with agent 2.1.4 or later. See [Univention Corporate Server patching](#ucs-patching). |
 | Windows Update Agent (WUA) + winget | Windows 10/11, Server 2019/2022/2025 | Yes, with agent 2.1.4 or later (separate path) |
 
 #### Arch Linux patching {#arch-patching}
@@ -1578,6 +1579,23 @@ If the installed version of a package breaks its own constraint in `/etc/apk/wor
 **Security updates** on Alpine come from the Alpine security database (`secdb.alpinelinux.org`). An update is marked as a security update when it moves the package past a version that fixed a published issue. The agent fetches the database for the branch in `/etc/apk/repositories` at most every 6 hours. If it cannot reach it, it tries again after an hour, and meanwhile the report still goes through, using the last copy it fetched or, without one, marking no updates as security updates. See `apk_secdb` in the Operator Guide to turn the lookup off.
 
 **Reboot required** is set when the installed kernel package (`linux-lts`, `linux-virt` and so on) is newer than the running kernel. Alpine containers (Docker or LXC) run the host's kernel, so they never report a reboot as required.
+
+#### Univention Corporate Server patching {#ucs-patching}
+
+Univention Corporate Server (UCS) hosts use the Linux agent: choose **Linux** in the Add Host wizard. With agent 2.1.4 or later they are listed as Univention Corporate Server with their release, patch level and errata level, for example `5.2-7 errata606`. Older agents show UCS 5.0 as Debian 10 and UCS 5.2 without its patch level, but report and patch through apt as they do on Debian.
+
+**Inventory** comes from apt, as on Debian, so the outdated packages are the errata updates published for the installed release.
+
+| Run | Command |
+|---|---|
+| **Patch all** | `univention-upgrade --noninteractive --disable-app-updates --updateto <installed release>`, for example `--updateto 5.2-7` |
+| **Patch selected** | `apt-get --only-upgrade install <packages>`, as on Debian |
+
+**Patch all** installs every errata update for the installed release through Univention's own updater, which also clears the "updates available" notice in the Univention Management Console. It never starts a release update, such as 5.2-7 to 5.2-8 or 5.0-10 to 5.1-0, and never updates App Center apps. Neither appears in the package list PatchMon shows, and a release update can need preparation and a maintenance window. Install them from the Univention Management Console, or by running `univention-upgrade` on the host. When a release update is waiting, the run output says so: `5.1-0 is available but updater has been instructed to stop at version 5.0-10.`
+
+**Security updates.** Univention publishes fixes as errata updates, not through a separate security repository, so PatchMon does not mark UCS updates as security updates.
+
+**Reboot required** is set when an update installs a newer kernel than the one running.
 
 #### openSUSE and SLES patching {#zypper-patching}
 

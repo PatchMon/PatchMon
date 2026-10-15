@@ -3865,6 +3865,8 @@ The installer will:
 
 On a clean host with a working network, the whole process takes 10–30 seconds.
 
+> **Univention Corporate Server:** choose **Linux** in the Add Host wizard. The Linux install command works on UCS 5.0 and 5.2. See "Univention Corporate Server patching" in the Admin Guide.
+
 > **openSUSE and SLES:** hosts report inventory and can be patched with agent 2.1.4 or later. Older agents install and start, but every report fails with `unsupported package manager: unknown` and the host stays on "Waiting for initial system report". Update the agent to fix it. See "openSUSE and SLES patching" in the Admin Guide.
 
 #### Step 6: Watch the "Waiting for Connection" Screen
