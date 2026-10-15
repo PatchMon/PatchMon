@@ -27,6 +27,22 @@ var freeBSDPkgActionLinePattern = regexp.MustCompile(`^\[\d+/\d+\]\s+(?:Installi
 // Purging counts: the agent lets apk remove orphans, and a reviewer should see them.
 var apkActionLinePattern = regexp.MustCompile(`^\(\s*\d+/\d+\)\s+(?:Installing|Upgrading|Reinstalling|Downgrading|Replacing|Purging)\s+([^\s@]+)`)
 
+// The agent prints the plan zypper returned as XML under a "[patchmon] zypper plans" line.
+var zypperPlanLinePattern = regexp.MustCompile(`^  (?:upgrade|install|reinstall|remove) (\S+) `)
+var zypperCommitLinePattern = regexp.MustCompile(`^\(\s*\d+/\d+\) (?:Installing|Removing): (\S+)`)
+
+// rpmNameFromNVRA turns libsolv-tools-base-0.7.31-150500.6.5.1.aarch64 into libsolv-tools-base.
+func rpmNameFromNVRA(nvra string) string {
+	for range 2 {
+		i := strings.LastIndex(nvra, "-")
+		if i <= 0 {
+			return ""
+		}
+		nvra = nvra[:i]
+	}
+	return nvra
+}
+
 // isFreeBSD reports whether the host OS type represents FreeBSD. The synthetic
 // "freebsd-base" package must only be emitted for FreeBSD hosts; otherwise
 // generic phrases like "will be installed" from apt/dnf/yum/pkg output would
@@ -60,8 +76,23 @@ func parsePackagesAffectedFromDryRunOutput(osType, output string) []string {
 	}
 
 	inFreeBSDPkgSection := false
+	inZypperPlan := false
 	for _, line := range strings.Split(output, "\n") {
 		trimmed := strings.TrimSpace(line)
+
+		switch {
+		case strings.HasPrefix(trimmed, "[patchmon] zypper plans"):
+			inZypperPlan = true
+			continue
+		case strings.HasPrefix(trimmed, "$ "), strings.HasPrefix(trimmed, "[patchmon] "):
+			inZypperPlan = false
+		}
+		if inZypperPlan {
+			if matches := zypperPlanLinePattern.FindStringSubmatch(line); len(matches) == 2 {
+				addPkg(matches[1])
+			}
+			continue
+		}
 
 		// apt-get simulate: "Inst pkgname ..."
 		if strings.HasPrefix(trimmed, "Inst ") {
@@ -158,6 +189,13 @@ func parsePackagesAffectedFromRealOutput(osType, output string) []string {
 			fields := strings.Fields(trimmed)
 			if len(fields) >= 3 {
 				addPkg(fields[2])
+			}
+			continue
+		}
+		if matches := zypperCommitLinePattern.FindStringSubmatch(trimmed); len(matches) == 2 {
+			if name := rpmNameFromNVRA(matches[1]); name != "" && !seen[name] {
+				seen[name] = true
+				pkgs = append(pkgs, name)
 			}
 			continue
 		}

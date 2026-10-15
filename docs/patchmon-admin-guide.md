@@ -1540,7 +1540,7 @@ The agent chooses the patching back-end by detecting the host's package manager.
 | `pacman` | Arch Linux, Manjaro | **Patch all** only. See [Arch Linux patching](#arch-patching). |
 | `pkg` | FreeBSD 13+ (plus `freebsd-update` for the base system on `patch_all`) | Yes |
 | `apk` | Alpine Linux 3.21 and later (apk-tools 2 on 3.21 and 3.22, apk-tools 3 from 3.23) | Yes, with agent 2.1.4 or later. See [Alpine patching](#alpine-patching). |
-| `zypper` | openSUSE Leap, openSUSE Tumbleweed, SLES | **No, and no inventory either. Coming soon.** The installer detects zypper and completes, and the agent detects the OS correctly, but the agent has no zypper backend. Package collection therefore fails with `unsupported package manager: unknown` and the host never completes its first report, so it sits at "Waiting for initial system report". Follow and vote for zypper support at [feedback.patchmon.net](https://feedback.patchmon.net/b/feature-requests/posts/post_01kyza53c0fzst214afbr1qn9a). |
+| `zypper` | openSUSE Leap 15.6 and 16.0, openSUSE Tumbleweed and Slowroll, SLES 15 and 16 | Yes, with agent 2.1.4 or later. See [openSUSE and SLES patching](#zypper-patching). |
 | Windows Update Agent (WUA) + winget | Windows 10/11, Server 2019/2022/2025 | Yes, with agent 2.1.4 or later (separate path) |
 
 #### Arch Linux patching {#arch-patching}
@@ -1578,6 +1578,43 @@ If the installed version of a package breaks its own constraint in `/etc/apk/wor
 **Security updates** on Alpine come from the Alpine security database (`secdb.alpinelinux.org`). An update is marked as a security update when it moves the package past a version that fixed a published issue. The agent fetches the database for the branch in `/etc/apk/repositories` at most every 6 hours. If it cannot reach it, it tries again after an hour, and meanwhile the report still goes through, using the last copy it fetched or, without one, marking no updates as security updates. See `apk_secdb` in the Operator Guide to turn the lookup off.
 
 **Reboot required** is set when the installed kernel package (`linux-lts`, `linux-virt` and so on) is newer than the running kernel. Alpine containers (Docker or LXC) run the host's kernel, so they never report a reboot as required.
+
+#### openSUSE and SLES patching {#zypper-patching}
+
+openSUSE and SLES hosts report inventory and are patched with `zypper`, with agent 2.1.4 or later. Older agents fail every report on these hosts with `unsupported package manager: unknown`; update the agent to fix it.
+
+**Inventory.** Installed packages come from `rpm`, and available updates from `zypper list-updates`, which leaves out packages locked with `zypper addlock`. An update is marked as a security update when a needed patch in the `security` category updates that package. Tumbleweed and Slowroll publish no patches, and an unregistered SLES host has no update repositories, so neither shows security updates. The repositories list shows each enabled zypper repository, without credentials or the registration token that SUSE Customer Center repositories carry in their URL.
+
+**Every run, real or dry, plans before it changes anything:**
+
+1. `zypper refresh` refreshes the repositories. If a repository cannot be reached, the run says so and carries on with the metadata zypper already has, so one unreachable repository does not block patching.
+2. The agent asks zypper for the plan with `--dry-run` and prints it in the run output. It refuses the run, before changing anything, if the plan would **downgrade** a package or change its **architecture** or **vendor**. Removals are allowed, because an update can obsolete or replace a package, and each one is named in the run output: `Removing libcurl-mini4: zypper's plan removes it, usually because an update obsoletes or replaces it.` A dry run says `Would remove` instead.
+3. A real run applies the plan.
+
+| Run | openSUSE Leap and SLES | Tumbleweed and Slowroll |
+|---|---|---|
+| **Patch all** | `zypper patch --with-update`: every needed patch, then any update that no patch covers, such as packages from third-party repositories | `zypper dist-upgrade`, the only supported way to update a rolling release |
+| **Patch selected** | `zypper update <packages>` | `zypper update <packages>`, with a warning that a partial update of a rolling release is not supported upstream |
+
+**Tumbleweed with Packman or other OBS repositories.** `zypper dist-upgrade` keeps each package with the vendor it came from, and PatchMon refuses any plan that changes a package's vendor. If you switch packages to Packman or another vendor, run `zypper dup --allow-vendor-change` once by hand to make that move deliberately; later runs keep the new vendor and patch normally.
+
+Patch runs include patches that suggest a reboot, such as kernel updates, and accept licence prompts, so an unattended run does not silently skip them.
+
+**zypper updating itself.** When a patch updates zypper or libzypp, zypper installs that first and asks to be run again. The agent does so, up to three times in one run, and says so in the run output. A dry run cannot see past that step: it shows only zypper's own update and says that a real run will apply more.
+
+**Locked packages.** Packages locked with `zypper addlock` are left alone, and the run output names them. Selecting only locked packages fails the run before anything changes; remove the lock with `zypper removelock` to patch them.
+
+**The zypp lock.** If another process holds the zypp lock, for example PackageKit or an administrator running zypper, the agent waits 30 seconds and then fails the run, naming the cause. Retry when it has finished.
+
+**Exit codes** are reported in plain words. A run that needs a reboot (zypper exit code 102) or skipped a repository it could not refresh (106) succeeds with a note in the output. A run where packages were installed but an RPM script failed (107) is marked failed, so that someone checks the output and runs `zypper verify` on the host.
+
+**Dependency problems.** If zypper cannot plan an update without a choice, for example removing a package or skipping patches, PatchMon does not choose for you. The run fails and quotes zypper's problem and the solutions it offers. Resolve it once on the host with zypper, then run the patch again.
+
+Leap 16.0 containers made from the stock Proxmox template hit this on their first Patch all. The template ships `systemd-sysvcompat`, which the Leap 16.0 repository no longer carries, and the systemd update conflicts with it. Run `zypper rm systemd-sysvcompat` once on the container, then patch.
+
+**Transactional hosts.** openSUSE MicroOS, Leap Micro and SUSE Linux Micro have a read-only root filesystem and are updated with `transactional-update`. They report inventory, but patch runs are refused with an explanation, and nothing is changed.
+
+**Reboot required** is set when libzypp flags it after installing a kernel or another package that needs a reboot (`zypper needs-rebooting`), or when the running kernel is older than the newest installed one.
 
 #### Windows patching {#windows-patching}
 
@@ -2954,7 +2991,7 @@ The per-host **default profile** setting (Host Detail → Integrations → Compl
 
 Any host OS not listed has no SSG datastream available and OpenSCAP scans will be skipped on it. The scanner is still "available" in the integrations metadata if `oscap` is installed; it just has nothing to evaluate.
 
-> **SLES and OpenSUSE:** the datastreams above ship with the server and the agent already maps SUSE-family hosts to the right profiles, but these rows are not usable yet in practice. SUSE hosts cannot complete enrolment because the agent has no zypper backend (see the package manager table earlier in this guide), so they never reach the point of running a scan. These profiles become available once zypper support lands.
+> **SLES and OpenSUSE:** SUSE hosts need agent 2.1.4 or later to complete enrolment and run scans. Older agents fail every report with `unsupported package manager: unknown`.
 
 **Default per-host state:** OpenSCAP is **enabled by default** on every host that has compliance turned on. This is controlled by the `compliance_openscap_enabled` host flag, defaulted to `true` in 1.4.2 and preserved on upgrade.
 

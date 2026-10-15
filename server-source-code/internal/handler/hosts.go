@@ -1371,7 +1371,7 @@ func openscapNewlyEnabled(before *models.Host, complianceEnabled, openscapEnable
 }
 
 // openscapInstallSupported skips platforms the agent cannot install OpenSCAP on.
-// SUSE reports "unknown", so this must stay a deny-list.
+// Agents older than zypper support report "unknown" on SUSE, so this must stay a deny-list.
 func openscapInstallSupported(host *models.Host) bool {
 	if host.PackageManager == nil {
 		return true

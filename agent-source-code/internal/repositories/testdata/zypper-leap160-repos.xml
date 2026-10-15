@@ -1,0 +1,24 @@
+<?xml version='1.0'?>
+<stream>
+<message type="info">Refreshing service &apos;openSUSE&apos;.</message>
+<repo-list>
+<repo alias="openSUSE:repo-non-oss" name="repo-non-oss (16.0)" priority="99" enabled="0" autorefresh="1" gpgcheck="1" repo_gpgcheck="1" pkg_gpgcheck="1" gpgkey="http://cdn.opensuse.org/distribution/leap/16.0/repo/non-oss/aarch64/repodata/repomd.xml.key">
+<url>http://cdn.opensuse.org/distribution/leap/16.0/repo/non-oss/aarch64</url>
+</repo>
+<repo alias="openSUSE:repo-non-oss-debug" name="repo-non-oss-debug (16.0)" priority="99" enabled="0" autorefresh="1" gpgcheck="1" repo_gpgcheck="1" pkg_gpgcheck="1" gpgkey="http://cdn.opensuse.org/debug/distribution/leap/16.0/repo/non-oss/aarch64/repodata/repomd.xml.key">
+<url>http://cdn.opensuse.org/debug/distribution/leap/16.0/repo/non-oss/aarch64</url>
+</repo>
+<repo alias="openSUSE:repo-openh264" name="repo-openh264 (16.0)" priority="99" enabled="1" autorefresh="1" gpgcheck="1" repo_gpgcheck="1" pkg_gpgcheck="1" gpgkey="https://codecs.opensuse.org/openh264/openSUSE_Leap_16/repodata/repomd.xml.key">
+<url>https://codecs.opensuse.org/openh264/openSUSE_Leap_16</url>
+</repo>
+<repo alias="openSUSE:repo-oss" name="repo-oss (16.0)" priority="99" enabled="1" autorefresh="1" gpgcheck="1" repo_gpgcheck="1" pkg_gpgcheck="1" gpgkey="http://cdn.opensuse.org/distribution/leap/16.0/repo/oss/aarch64/repodata/repomd.xml.key">
+<url>http://cdn.opensuse.org/distribution/leap/16.0/repo/oss/aarch64</url>
+</repo>
+<repo alias="openSUSE:repo-oss-debug" name="repo-oss-debug (16.0)" priority="99" enabled="0" autorefresh="1" gpgcheck="1" repo_gpgcheck="1" pkg_gpgcheck="1" gpgkey="http://cdn.opensuse.org/debug/distribution/leap/16.0/repo/oss/aarch64/repodata/repomd.xml.key">
+<url>http://cdn.opensuse.org/debug/distribution/leap/16.0/repo/oss/aarch64</url>
+</repo>
+<repo alias="openSUSE:repo-oss-source" name="repo-oss-source (16.0)" priority="99" enabled="0" autorefresh="1" gpgcheck="1" repo_gpgcheck="1" pkg_gpgcheck="1" gpgkey="http://cdn.opensuse.org/source/distribution/leap/16.0/repo/oss/repodata/repomd.xml.key">
+<url>http://cdn.opensuse.org/source/distribution/leap/16.0/repo/oss</url>
+</repo>
+</repo-list>
+</stream>

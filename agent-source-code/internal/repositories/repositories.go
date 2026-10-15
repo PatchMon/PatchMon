@@ -16,6 +16,7 @@ type Manager struct {
 	apkManager     *APKManager
 	pacmanManager  *PacmanManager
 	freebsdManager *FreeBSDManager
+	zypperManager  *ZypperManager
 	winManager     *WindowsManager
 }
 
@@ -28,6 +29,7 @@ func New(logger *logrus.Logger) *Manager {
 		apkManager:     NewAPKManager(logger),
 		pacmanManager:  NewPacmanManager(logger),
 		freebsdManager: NewFreeBSDManager(logger),
+		zypperManager:  NewZypperManager(logger),
 		winManager:     NewWindowsManager(logger),
 	}
 }
@@ -55,6 +57,8 @@ func (m *Manager) GetRepositories() ([]models.Repository, error) {
 		repos, err = m.pacmanManager.GetRepositories()
 	case "pkg":
 		repos, err = m.freebsdManager.GetRepositories()
+	case "zypper":
+		repos, err = m.zypperManager.GetRepositories()
 	default:
 		m.logger.WithField("package_manager", packageManager).Warn("Unsupported package manager")
 		return []models.Repository{}, nil

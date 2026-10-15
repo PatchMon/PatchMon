@@ -1,0 +1,102 @@
+<?xml version='1.0'?>
+<stream>
+<message type="info">Loading repository data...</message>
+<message type="warning">Repository &apos;Update repository of openSUSE Backports&apos; metadata expired since 2025-03-02 19:18:12 UTC.</message>
+<message type="warning">Repository &apos;Main Update Repository&apos; metadata expired since 2025-08-30 08:17:31 UTC.</message>
+<message type="warning">Repository &apos;Update Repository (Non-Oss)&apos; metadata expired since 2025-04-10 11:03:28 UTC.</message>
+<message type="info">    Warning: Repository metadata expired: Check if &apos;autorefresh&apos; is turned on (zypper lr), otherwise
+    manually refresh the repository (zypper ref). If this does not solve the issue, it could be that
+    you are using a broken mirror or the server has actually discontinued to support the repository.</message>
+<message type="info">Reading installed packages...</message>
+<message type="info">Resolving package dependencies...</message>
+<install-summary download-size="5612984" space-usage-diff="-158901" space-usage-installed="26871289" space-usage-removed="27030190" packages-to-change="4" need-restart="1" need-reboot="0">
+<to-upgrade>
+<solvable type="package" name="libsolv-tools" edition="0.7.31-150500.6.5.1" arch="aarch64" repository="repo-sle-update" edition-old="0.7.30-150400.3.27.2" arch-old="aarch64" summary="Utilities to work with .solv files">
+<description>libsolv is a library for solving packages and reading repositories.
+
+This subpackage contains utilities to create and work with the .solv
+files used by libsolv.</description></solvable>
+<solvable type="package" name="libsolv-tools-base" edition="0.7.31-150500.6.5.1" arch="aarch64" repository="repo-sle-update" edition-old="0.7.30-150400.3.27.2" arch-old="aarch64" summary="Utilities used by libzypp to manage .solv files">
+<description>This subpackage contains utilities used by libzypp to manage solv files.</description></solvable>
+<solvable type="package" name="libzypp" edition="17.35.16-150500.6.31.1" arch="aarch64" repository="repo-sle-update" edition-old="17.35.8-150500.6.13.1" arch-old="aarch64" summary="Library for package, patch, pattern and product management">
+<description>libzypp is the package management library that powers applications
+like YaST, zypper and the openSUSE/SLE implementation of PackageKit.
+
+libzypp provides functionality for a package manager:
+
+  * An API for package repository management, supporting most common
+    repository metadata formats and signed repositories.
+  * An API for solving packages, products, patterns and patches
+    (installation, removal, update and distribution upgrade
+    operations) dependencies, with additional features like locking.
+  * An API for commiting the transaction to the system over a rpm
+    target. Supporting deltarpm calculation, media changing and
+    installation order calculation.
+  * An API for browsing available and installed software, with some
+    facilities for programs with an user interface.</description></solvable>
+<solvable type="package" name="zypper" edition="1.14.78-150500.6.14.1" arch="aarch64" repository="repo-sle-update" edition-old="1.14.76-150500.6.6.15" arch-old="aarch64" summary="Command line software manager using libzypp">
+<description>Zypper is a command line tool for managing software. It can be used to add
+package repositories, search for packages, install, remove, or update packages,
+install patches, hardware drivers, verify dependencies, and more.
+
+Zypper can be used interactively or non-interactively by user, from scripts,
+or front-ends.</description></solvable>
+</to-upgrade>
+<to-install>
+<solvable type="patch" name="openSUSE-SLE-15.5-2024-3420" edition="1" arch="noarch" repository="repo-sle-update" summary="Recommended update for libzypp, zypper">
+<description>This update for libzypp, zypper fixes the following issues:
+
+- API refactoring. Prevent zypper from using now private libzypp symbols (bsc#1230267)
+- single_rpmtrans: fix installation of .src.rpms (bsc#1228647)
+</description></solvable>
+<solvable type="patch" name="openSUSE-SLE-15.5-2024-3718" edition="1" arch="noarch" repository="repo-sle-update" summary="Recommended update for libzypp">
+<description>This update for libzypp fixes the following issues:
+
+- Send unescaped colons in header values. According to the STOMP protocol, it
+  would be correct to escape colon here but the practice broke plugin receivers
+  that didn&apos;t expect this. The incompatiblity affected customers who were
+  running spacewalk-repo-sync and experienced issues when accessing the cloud
+  URL. [bsc#1231043]
+  
+- Fix hang in curl code with no network connection. [bsc#1230912]
+</description></solvable>
+<solvable type="patch" name="openSUSE-SLE-15.5-2024-4198" edition="1" arch="noarch" repository="repo-sle-update" summary="Recommended update for libsolv, libzypp, zypper">
+<description>This update for libsolv, libzypp, zypper fixes the following issues:
+
+- Fix replaces_installed_package using the wrong solvable id when checking the noupdate map
+- Make POOL_FLAG_ADDFILEPROVIDESFILTERED behaviour more standard
+- Add rpm_query_idarray query function
+- Support rpm&apos;s &quot;orderwithrequires&quot; dependency
+- BuildCache: Don&apos;t try to retrieve missing raw metadata if no permission to write the cache (bsc#1225451)
+- RepoManager: Throw RepoNoPermissionException if the user has no permission to update(write) the caches (bsc#1225451)
+- The 20MB download limit must not apply to non-metadata files like package URLs provided via the CLI (bsc#1233393)
+- Don&apos;t try to download missing raw metadata if cache is not writable (bsc#1225451)
+</description></solvable>
+<solvable type="patch" name="openSUSE-SLE-15.5-2024-4403" edition="1" arch="noarch" repository="repo-sle-update" summary="Recommended update for libzypp">
+<description>This update for libzypp fixes the following issues:
+
+- Url: queryparams without value should not have a trailing &quot;=&quot;
+</description></solvable>
+</to-install>
+</install-summary>
+<prompt id="0">
+<text>Backend:  classic_rpmtrans --dry-run
+Continue?</text>
+<option default="1" value="y" desc="Yes, accept the summary and proceed with installation/removal of packages."/>
+<option value="n" desc="No, cancel the operation."/>
+<option value="v" desc="Toggle display of package versions."/>
+<option value="a" desc="Toggle display of package architectures."/>
+<option value="r" desc="Toggle display of repositories from which the packages will be installed."/>
+<option value="m" desc="Toggle display of package vendor names."/>
+<option value="d" desc="Toggle between showing all details and as few details as possible."/>
+<option value="g" desc="View the summary in pager."/>
+</prompt>
+<progress id="fileconflict-check" name="Checking for file conflicts:"/>
+<progress id="fileconflict-check" name="Checking for file conflicts:" value="0"/>
+<progress id="fileconflict-check" name="Checking for file conflicts: (1 skipped)" value="0"/>
+<progress id="fileconflict-check" name="Checking for file conflicts: (1 skipped)" done="1"/>
+<fileconflict-summary><message type="warning">4 packages had to be excluded from file conflicts check because they are not yet downloaded.</message>
+<message type="info">    Note: Checking for file conflicts requires not installed packages to be downloaded in advance in
+    order to access their file lists. See option &apos;--download-in-advance / --dry-run --download-only&apos;
+    in the zypper manual page for details.</message>
+</fileconflict-summary></stream>

@@ -26,6 +26,7 @@ type Manager struct {
 	apkManager     *APKManager
 	pacmanManager  *PacmanManager
 	freebsdManager *FreeBSDManager
+	zypperManager  *ZypperManager
 	winManager     *WindowsManager
 
 	windowsUpdatesOmitted bool
@@ -47,6 +48,7 @@ func New(logger *logrus.Logger, cacheRefresh CacheRefreshConfig) *Manager {
 		apkManager:     apkManager,
 		pacmanManager:  pacmanManager,
 		freebsdManager: freebsdManager,
+		zypperManager:  NewZypperManager(logger),
 		winManager:     winManager,
 	}
 }
@@ -74,6 +76,8 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 		pkgs, err = m.pacmanManager.GetPackages()
 	case "pkg":
 		pkgs, err = m.freebsdManager.GetPackages()
+	case "zypper":
+		pkgs, err = m.zypperManager.GetPackages()
 	default:
 		return nil, fmt.Errorf("unsupported package manager: %s", packageManager)
 	}
@@ -93,7 +97,7 @@ func (m *Manager) SetAPKSecDBEnabled(enabled bool) { m.apkManager.SetSecDBEnable
 func (m *Manager) WindowsUpdatesOmitted() bool { return m.windowsUpdatesOmitted }
 
 // DetectPackageManager detects which package manager is available on the system.
-// Returns one of: apt, dnf, yum, apk, pacman, pkg, windows, or unknown.
+// Returns one of: apt, dnf, yum, apk, pacman, zypper, pkg, windows, or unknown.
 func (m *Manager) DetectPackageManager() string {
 	return pkgmgr.Detect()
 }

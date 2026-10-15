@@ -2590,8 +2590,8 @@ func patchTypeRefusal(pkgManager, patchType string, dryRun bool) string {
 }
 
 // runPatch runs package manager update and upgrade (patch_all) or install (patch_package).
-// Supports apt-get (Debian/Ubuntu), dnf, yum (RHEL-based), pkg (FreeBSD), pacman (Arch)
-// and apk (Alpine). When dryRun is true, simulates and sends dry_run_completed instead of completed.
+// Supports apt-get (Debian/Ubuntu), dnf, yum (RHEL-based), pkg (FreeBSD), pacman (Arch),
+// apk (Alpine) and zypper (openSUSE, SLES). When dryRun is true, simulates and sends dry_run_completed instead of completed.
 func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -2607,8 +2607,8 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 	})
 	pkgManager := packageMgr.DetectPackageManager()
 
-	if pkgManager != "apt" && pkgManager != "dnf" && pkgManager != "yum" && pkgManager != "pkg" && pkgManager != "pacman" && pkgManager != "apk" {
-		errMsg := fmt.Sprintf("package manager %q not supported for patching (apt, dnf, yum, pkg, pacman, apk required)", pkgManager)
+	if !slices.Contains([]string{"apt", "dnf", "yum", "pkg", "pacman", "apk", "zypper"}, pkgManager) {
+		errMsg := fmt.Sprintf("package manager %q not supported for patching (apt, dnf, yum, pkg, pacman, apk, zypper required)", pkgManager)
 		_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", errMsg)
 		return fmt.Errorf("%s", errMsg)
 	}
@@ -2646,6 +2646,11 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		if _, err := exec.LookPath("apk"); err != nil {
 			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "apk not found: Alpine Linux package manager not installed")
 			return fmt.Errorf("apk not found: %w", err)
+		}
+	case "zypper":
+		if _, err := exec.LookPath("zypper"); err != nil {
+			_ = httpClient.SendPatchOutput(ctx, patchRunID, "failed", "", "zypper not found: SUSE package manager not installed")
+			return fmt.Errorf("zypper not found: %w", err)
 		}
 	case "pacman":
 		if _, err := exec.LookPath("pacman"); err != nil {
@@ -2718,11 +2723,15 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		}
 	}
 
-	if pkgManager == "apk" {
+	ownRunner := pkgManager == "apk" || pkgManager == "zypper"
+	switch pkgManager {
+	case "apk":
 		stepErr = runPatchAPK(ctx, sink, env, patchType, packageNames, dryRun)
+	case "zypper":
+		stepErr = runPatchZypper(ctx, sink, env, patchType, packageNames, dryRun)
 	}
 
-	needsPkgTransaction := pkgManager != "apk" && (pkgManager != "pkg" || patchType == "patch_all" || len(freeBSDPkgTargets) > 0)
+	needsPkgTransaction := !ownRunner && (pkgManager != "pkg" || patchType == "patch_all" || len(freeBSDPkgTargets) > 0)
 	if stepErr == nil && needsPkgTransaction {
 		// Update package cache
 		switch pkgManager {
@@ -2746,7 +2755,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		}
 	}
 
-	if stepErr == nil && pkgManager != "apk" {
+	if stepErr == nil && !ownRunner {
 		if patchType == "patch_all" {
 			switch pkgManager {
 			case "apt":

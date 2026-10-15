@@ -1,0 +1,66 @@
+<?xml version='1.0'?>
+<stream>
+<message type="info">Loading repository data...</message>
+<message type="warning">Repository &apos;Update repository of openSUSE Backports&apos; metadata expired since 2025-03-02 19:18:12 UTC.</message>
+<message type="warning">Repository &apos;Main Update Repository&apos; metadata expired since 2025-08-30 08:17:31 UTC.</message>
+<message type="warning">Repository &apos;Update Repository (Non-Oss)&apos; metadata expired since 2025-04-10 11:03:28 UTC.</message>
+<message type="info">    Warning: Repository metadata expired: Check if &apos;autorefresh&apos; is turned on (zypper lr), otherwise
+    manually refresh the repository (zypper ref). If this does not solve the issue, it could be that
+    you are using a broken mirror or the server has actually discontinued to support the repository.</message>
+<message type="info">Reading installed packages...</message>
+<update-status version="0.6">
+<update-list>
+<update kind="package" name="aaa_base" edition="84.87+git20180409.04c9dae-150300.10.23.1" arch="aarch64" edition-old="84.87+git20180409.04c9dae-150300.10.20.1"><summary>openSUSE Base Package</summary><description>This package installs several important configuration files and central scripts.</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update><update kind="package" name="bash" edition="4.4-150400.27.3.2" arch="aarch64" edition-old="4.4-150400.25.22"><summary>The GNU Bourne-Again Shell</summary><description>Bash is an sh-compatible command interpreter that executes commands
+read from standard input or from a file.  Bash incorporates useful
+features from the Korn and C shells (ksh and csh).  Bash is intended to
+be a conformant implementation of the IEEE Posix Shell and Tools
+specification (IEEE Working Group 1003.2).</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update><update kind="package" name="bash-sh" edition="4.4-150400.27.3.2" arch="aarch64" edition-old="4.4-150400.25.22"><summary>Handle behaviour of /bin/sh</summary><description>Use bash as /bin/sh implementation.</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update><update kind="package" name="crypto-policies" edition="20210917.c9d86d1-150400.3.8.1" arch="noarch" edition-old="20210917.c9d86d1-150400.3.6.1"><summary>System-wide crypto policies</summary><description>This package provides pre-built configuration files with
+cryptographic policies for various cryptographic back-ends,
+such as SSL/TLS libraries.</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update><update kind="package" name="curl" edition="8.0.1-150400.5.59.1" arch="aarch64" edition-old="8.0.1-150400.5.50.1"><summary>A Tool for Transferring Data from URLs</summary><description>Curl is a client to get documents and files from or send documents to a
+server using any of the supported protocols (HTTP, HTTPS, FTP, FTPS,
+TFTP, DICT, TELNET, LDAP, or FILE). The command is designed to work
+without user interaction or any kind of interactivity.</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update><update kind="package" name="glibc" edition="2.31-150300.89.2" arch="aarch64" edition-old="2.31-150300.86.3"><summary>Standard Shared Libraries (from the GNU C Library)</summary><description>The GNU C Library provides the most important standard libraries used
+by nearly all programs: the standard C library, the standard math
+library, and the POSIX thread library. A system is not functional
+without these libraries.</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update><update kind="package" name="libcom_err2" edition="1.46.4-150400.3.9.2" arch="aarch64" edition-old="1.46.4-150400.3.6.2"><summary>E2fsprogs error reporting library</summary><description>
+com_err is an error message display library.</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update><update kind="package" name="libcurl4" edition="8.0.1-150400.5.59.1" arch="aarch64" edition-old="8.0.1-150400.5.50.1"><summary>Library for transferring data from URLs</summary><description>The cURL shared library for accessing data using different
+network protocols.</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update><update kind="package" name="libgcc_s1" edition="14.2.0+git10526-150000.1.6.1" arch="aarch64" edition-old="13.3.0+git8781-150000.1.12.1"><summary>C compiler runtime library</summary><description>Libgcc is needed for dynamically linked C programs.</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update><update kind="package" name="libglib-2_0-0" edition="2.70.5-150400.3.17.1" arch="aarch64" edition-old="2.70.5-150400.3.14.1"><summary>General-Purpose Utility Library</summary><description>GLib is a general-purpose utility library, which provides many useful
+data types, macros, type conversions, string utilities, file utilities,
+a main loop abstraction, and so on.</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update><update kind="package" name="libopenssl1_1" edition="1.1.1l-150500.17.37.1" arch="aarch64" edition-old="1.1.1l-150500.17.34.1"><summary>Secure Sockets and Transport Layer Security</summary><description>OpenSSL is a software library to be used in applications that need to
+secure communications over computer networks against eavesdropping or
+need to ascertain the identity of the party at the other end.
+OpenSSL contains an implementation of the SSL and TLS protocols.</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update><update kind="package" name="libopenssl1_1-hmac" edition="1.1.1l-150500.17.37.1" arch="aarch64" edition-old="1.1.1l-150500.17.34.1"><summary>HMAC files for FIPS-140-2 integrity checking of the openssl shared libraries</summary><description>The FIPS compliant operation of the openssl shared libraries is NOT
+possible without the HMAC hashes contained in this package!</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update><update kind="package" name="libreadline7" edition="7.0-150400.27.3.2" arch="aarch64" edition-old="7.0-150400.25.22"><summary>The Readline Library</summary><description>The readline library is used by the Bourne Again Shell (bash, the
+standard command interpreter) for easy editing of command lines.  This
+includes history and search functionality.</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update><update kind="package" name="libsolv-tools" edition="0.7.31-150500.6.5.1" arch="aarch64" edition-old="0.7.30-150400.3.27.2"><summary>Utilities to work with .solv files</summary><description>libsolv is a library for solving packages and reading repositories.
+
+This subpackage contains utilities to create and work with the .solv
+files used by libsolv.</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update><update kind="package" name="libsolv-tools-base" edition="0.7.31-150500.6.5.1" arch="aarch64" edition-old="0.7.30-150400.3.27.2"><summary>Utilities used by libzypp to manage .solv files</summary><description>This subpackage contains utilities used by libzypp to manage solv files.</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update><update kind="package" name="libstdc++6" edition="14.2.0+git10526-150000.1.6.1" arch="aarch64" edition-old="13.3.0+git8781-150000.1.12.1"><summary>The standard C++ shared library</summary><description>The standard C++ library, needed for dynamically linked C++ programs.</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update><update kind="package" name="libudev1" edition="249.17-150400.8.46.1" arch="aarch64" edition-old="249.17-150400.8.43.1"><summary>Dynamic library to access udev device information</summary><description>This package contains the dynamic library libudev, which provides
+access to udev device information</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update><update kind="package" name="libzypp" edition="17.35.16-150500.6.31.1" arch="aarch64" edition-old="17.35.8-150500.6.13.1"><summary>Library for package, patch, pattern and product management</summary><description>libzypp is the package management library that powers applications
+like YaST, zypper and the openSUSE/SLE implementation of PackageKit.
+
+libzypp provides functionality for a package manager:
+
+  * An API for package repository management, supporting most common
+    repository metadata formats and signed repositories.
+  * An API for solving packages, products, patterns and patches
+    (installation, removal, update and distribution upgrade
+    operations) dependencies, with additional features like locking.
+  * An API for commiting the transaction to the system over a rpm
+    target. Supporting deltarpm calculation, media changing and
+    installation order calculation.
+  * An API for browsing available and installed software, with some
+    facilities for programs with an user interface.</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update><update kind="package" name="login_defs" edition="4.8.1-150400.10.24.1" arch="noarch" edition-old="4.8.1-150400.10.21.1"><summary>login.defs configuration file</summary><description>This package contains the default login.defs configuration file
+as used by util-linux, pam and shadow.</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update><update kind="package" name="openssl-1_1" edition="1.1.1l-150500.17.37.1" arch="aarch64" edition-old="1.1.1l-150500.17.34.1"><summary>Secure Sockets and Transport Layer Security</summary><description>OpenSSL is a software library to be used in applications that need to
+secure communications over computer networks against eavesdropping or
+need to ascertain the identity of the party at the other end.
+OpenSSL contains an implementation of the SSL and TLS protocols.</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update><update kind="package" name="shadow" edition="4.8.1-150400.10.24.1" arch="aarch64" edition-old="4.8.1-150400.10.21.1"><summary>Utilities to Manage User and Group Accounts</summary><description>This package includes the necessary programs for converting plain
+password files to the shadow password format and to manage user and
+group accounts.</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update><update kind="package" name="zypper" edition="1.14.78-150500.6.14.1" arch="aarch64" edition-old="1.14.76-150500.6.6.15"><summary>Command line software manager using libzypp</summary><description>Zypper is a command line tool for managing software. It can be used to add
+package repositories, search for packages, install, remove, or update packages,
+install patches, hardware drivers, verify dependencies, and more.
+
+Zypper can be used interactively or non-interactively by user, from scripts,
+or front-ends.</description><license/><source url="http://download.opensuse.org/update/leap/15.5/sle/" alias="repo-sle-update"/></update></update-list>
+</update-status>
+</stream>
