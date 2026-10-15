@@ -36,15 +36,15 @@ func TestCompare(t *testing.T) {
 		{"build metadata ignored", "2.0.3+abc", "2.0.3", 0},
 		{"build metadata on rc ignored", "2.0.3-rc.4+abc", "2.0.3-rc.4", 0},
 
-		{"rc config below final release", "2.1.5-rc.1", "2.1.5", -1},
-		{"rc patch build below next rc", "2.1.5-rc.1.4", "2.1.5-rc.2", -1},
-		{"dev build of an older release", "2.1.3-main-93c589a4", "2.1.5", -1},
-		{"dev build of the same release", "2.1.5-main-93c589a4", "2.1.5", -1},
-		{"unstamped dev build", "0.0.0", "2.1.5", -1},
-		{"dev suffix on zero", "0.0.0-dev", "2.1.5", -1},
-		{"empty config_version", "", "2.1.5", -1},
-		{"unknown config_version", "unknown", "2.1.5", -1},
-		{"v prefix on step version", "v2.1.5", "2.1.5", 0},
+		{"rc config below final release", "2.1.4-rc.1", "2.1.4", -1},
+		{"rc patch build below next rc", "2.1.4-rc.1.4", "2.1.4-rc.2", -1},
+		{"dev build of an older release", "2.1.3-main-93c589a4", "2.1.4", -1},
+		{"dev build of the same release", "2.1.4-main-93c589a4", "2.1.4", -1},
+		{"unstamped dev build", "0.0.0", "2.1.4", -1},
+		{"dev suffix on zero", "0.0.0-dev", "2.1.4", -1},
+		{"empty config_version", "", "2.1.4", -1},
+		{"unknown config_version", "unknown", "2.1.4", -1},
+		{"v prefix on step version", "v2.1.4", "2.1.4", 0},
 	}
 
 	for _, tt := range tests {

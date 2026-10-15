@@ -54,18 +54,18 @@ func (m *Manager) DiscoverIntegrations() []Integration {
 	for _, integration := range m.integrations {
 		// Check if integration is available
 		if !integration.IsAvailable() {
-			m.logger.WithField("integration", integration.Name()).Debug("✗ Integration not available")
+			m.logger.WithField("integration", integration.Name()).Debug("Integration not available")
 			continue
 		}
 
 		// Check if integration is enabled (if enabled checker is set)
 		if m.isEnabledChecker != nil && !m.isEnabledChecker(integration.Name()) {
-			m.logger.WithField("integration", integration.Name()).Debug("✗ Integration disabled in config")
+			m.logger.WithField("integration", integration.Name()).Debug("Integration disabled in config")
 			continue
 		}
 
 		available = append(available, integration)
-		m.logger.WithField("integration", integration.Name()).Info("✓ Integration discovered")
+		m.logger.WithField("integration", integration.Name()).Info("Integration discovered")
 	}
 
 	// Sort by priority (lower number = higher priority)
@@ -162,7 +162,7 @@ func (m *Manager) GetRealtimeIntegrations() []RealtimeIntegration {
 
 		// Check if integration is enabled (if enabled checker is set)
 		if m.isEnabledChecker != nil && !m.isEnabledChecker(integration.Name()) {
-			m.logger.WithField("integration", integration.Name()).Debug("✗ Realtime integration disabled in config")
+			m.logger.WithField("integration", integration.Name()).Debug("Realtime integration disabled in config")
 			continue
 		}
 

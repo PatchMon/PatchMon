@@ -64,7 +64,7 @@ jobs:
         working-directory: server-source-code
         env:
           PATCHMON_TEST_DATABASE_URL: postgresql://patchmon_test:patchmon_test@localhost:5432/patchmon_test?sslmode=disable
-        run: go test -v -race -count=1 -coverprofile=coverage.out ./...
+        run: go test -v -race -count=1 -timeout 25m -coverprofile=coverage.out ./...
 
       - name: Generate coverage report
         working-directory: server-source-code

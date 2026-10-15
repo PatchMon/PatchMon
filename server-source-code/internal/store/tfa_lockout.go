@@ -88,6 +88,15 @@ func (s *TfaLockoutStore) RecordFailedAttempt(ctx context.Context, userID string
 	return attempts, false
 }
 
+// ClearLockout removes both the failed-attempt counter and any active lockout.
+func (s *TfaLockoutStore) ClearLockout(ctx context.Context, userID string) {
+	rdb := s.rdb.RDB(ctx)
+	if rdb == nil {
+		return
+	}
+	_ = rdb.Del(ctx, hostctx.TenantKey(ctx, TfaFailedPrefix+userID), hostctx.TenantKey(ctx, TfaLockoutPrefix+userID)).Err()
+}
+
 // ClearFailedAttempts removes failed attempt counter (call on success).
 func (s *TfaLockoutStore) ClearFailedAttempts(ctx context.Context, userID string) {
 	rdb := s.rdb.RDB(ctx)

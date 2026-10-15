@@ -102,6 +102,46 @@ Conf libcap2-bin (1:2.66-5ubuntu2.4 Ubuntu:24.04/noble-updates, Ubuntu:24.04/nob
 		}
 	})
 
+	t.Run("parses apk simulate output", func(t *testing.T) {
+		output := `$ apk update
+v3.22.4-151-g9faf79747cd [http://dl-cdn.alpinelinux.org/alpine/v3.22/main]
+v3.22.4-142-g851e02b940b [http://dl-cdn.alpinelinux.org/alpine/v3.22/community]
+OK: 26353 distinct packages available
+$ apk upgrade --simulate libssl3
+(1/2) Upgrading libcrypto3 (3.5.4-r0 -> 3.5.7-r0)
+(2/2) Upgrading libssl3 (3.5.4-r0 -> 3.5.7-r0)
+OK: 80 MiB in 76 packages
+
+--- Dry run completed at 2026-06-20T15:55:42Z ---`
+
+		got := parsePackagesAffectedFromDryRunOutput("alpine", output)
+		want := []string{"libcrypto3", "libssl3"}
+
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("parsePackagesAffectedFromDryRunOutput() = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("parses apk v3 simulate output with padded counters and tags", func(t *testing.T) {
+		output := `$ apk update --wait 30
+v3.23.6-59-g3461381db6a [https://dl-cdn.alpinelinux.org/alpine/v3.23/main]
+OK: 27456 distinct packages available
+$ apk upgrade --no-progress --simulate lua5.4 libssl3 libcrypto3
+WARNING: This simulation might not reliable as a preupgrade is available.
+( 1/11) Upgrading lua5.4-libs (5.4.7-r0 -> 5.4.8-r0)
+( 2/11) Installing py3.12-foo (1.0-r0)
+(10/11) Upgrading busybox@edge (1.37.0-r14 -> 1.38.0-r7)
+(11/11) Upgrading libssl3 (3.5.4-r0 -> 3.5.9-r0)
+OK: 8 MiB in 16 packages
+[patchmon] Not upgraded by apk: lua5.4 5.4.7-r0 (5.4.8-r0 available). Its new version needs other packages upgraded too; select those as well or use Patch all`
+
+		got := parsePackagesAffectedFromDryRunOutput("Alpine Linux", output)
+		want := []string{"lua5.4-libs", "py3.12-foo", "busybox", "libssl3"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("parsePackagesAffectedFromDryRunOutput() = %v, want %v", got, want)
+		}
+	})
+
 	t.Run("apt bulk dry run does not emit freebsd-base on linux", func(t *testing.T) {
 		output := `$ apt-get update -qq
 $ apt-get -s install libcap2 libcap2-bin libntfs-3g89t64 libpam-cap libpython3.12-minimal libpython3.12-stdlib libpython3.12t64 ntfs-3g python3.12 python3.12-minimal
@@ -168,6 +208,126 @@ Number of packages to be installed: 1
 		got := parsePackagesAffectedFromRealOutput("freebsd", output)
 		want := []string{freeBSDBasePackageName, "curl", "ca_root_nss"}
 
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("parsePackagesAffectedFromRealOutput() = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("parses apk real output", func(t *testing.T) {
+		output := `$ apk update
+v3.22.4-151-g9faf79747cd [http://dl-cdn.alpinelinux.org/alpine/v3.22/main]
+v3.22.4-142-g851e02b940b [http://dl-cdn.alpinelinux.org/alpine/v3.22/community]
+OK: 26353 distinct packages available
+$ apk upgrade libssl3
+(1/2) Upgrading libcrypto3 (3.5.4-r0 -> 3.5.7-r0)
+(2/2) Upgrading libssl3 (3.5.4-r0 -> 3.5.7-r0)
+OK: 80 MiB in 76 packages
+
+--- Patch run completed at 2026-06-20T16:00:55Z ---`
+
+		got := parsePackagesAffectedFromRealOutput("alpine", output)
+		want := []string{"libcrypto3", "libssl3"}
+
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("parsePackagesAffectedFromRealOutput() = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("apk orphan purge counts as affected in dry and real runs", func(t *testing.T) {
+		dry := `$ apk upgrade --no-progress --simulate
+(  1/141) Upgrading musl (1.2.6-r2 -> 1.2.6-r5)
+(141/141) Purging gdbm (1.26-r0)
+OK: 143.8 MiB in 215 packages
+[patchmon] Removing gdbm 1.26-r0: no longer required by any package and not in /etc/apk/world.`
+		realOut := dry + `
+$ apk upgrade --no-progress --wait 30
+(  1/141) Upgrading musl (1.2.6-r2 -> 1.2.6-r5)
+(141/141) Purging gdbm (1.26-r0)
+OK: 143.8 MiB in 215 packages`
+		want := []string{"musl", "gdbm"}
+		if got := parsePackagesAffectedFromDryRunOutput("Alpine Linux", dry); !reflect.DeepEqual(got, want) {
+			t.Errorf("dry run = %v, want %v", got, want)
+		}
+		if got := parsePackagesAffectedFromRealOutput("Alpine Linux", realOut); !reflect.DeepEqual(got, want) {
+			t.Errorf("real run = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("apk run cancelled during preupgrade counts only what was applied", func(t *testing.T) {
+		output := `$ apk update --wait 30
+OK: 27456 distinct packages available
+$ apk upgrade --no-progress --simulate
+WARNING: This simulation might not reliable as a preupgrade is available.
+( 1/3) Upgrading musl (1.2.5-r21 -> 1.2.5-r23)
+( 2/3) Upgrading libapk (3.0.1-r1 -> 3.0.8-r0)
+( 3/3) Upgrading apk-tools (3.0.1-r1 -> 3.0.8-r0)
+OK: 8 MiB in 16 packages
+[patchmon] apk-tools has an update of its own. Installing it first, then planning again.
+$ apk upgrade --no-progress --wait 30 --preupgrade-only
+Preupgrading:
+(1/2) Upgrading libapk (3.0.1-r1 -> 3.0.8-r0)
+
+--- Patch run stopped by user at 2026-10-14T13:53:14Z ---`
+
+		got := parsePackagesAffectedFromRealOutput("Alpine Linux", output)
+		want := []string{"libapk"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("parsePackagesAffectedFromRealOutput() = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("completed apk run counts the applied plan, not an earlier simulation", func(t *testing.T) {
+		output := `$ apk update --wait 30
+$ apk upgrade --no-progress --simulate
+WARNING: This simulation is not reliable as apk-tools upgrade is available.
+(1/3) Upgrading busybox (1.37.0-r8 -> 1.37.0-r14)
+(2/3) Upgrading apk-tools (2.14.6-r2 -> 2.14.6-r3)
+(3/3) Upgrading zlib (1.3.1-r2 -> 1.3.2-r1)
+$ apk upgrade --no-progress --wait 30 --self-upgrade-only
+Upgrading critical system libraries and apk-tools:
+(1/1) Upgrading apk-tools (2.14.6-r2 -> 2.14.6-r3)
+$ apk upgrade --no-progress --simulate
+(1/1) Upgrading zlib (1.3.1-r2 -> 1.3.2-r1)
+[patchmon] Held by /etc/apk/world: busybox=1.37.0-r8 (1.37.0-r14 available)
+$ apk upgrade --no-progress --wait 30
+(1/1) Upgrading zlib (1.3.1-r2 -> 1.3.2-r1)
+OK: 7 MiB in 15 packages
+
+--- Patch run completed at 2026-10-14T13:53:14Z ---`
+
+		got := parsePackagesAffectedFromRealOutput("Alpine Linux", output)
+		want := []string{"apk-tools", "zlib"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("parsePackagesAffectedFromRealOutput() = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("parses apk v3 real run with preupgrade and dotted names", func(t *testing.T) {
+		output := `$ apk update --wait 30
+OK: 27456 distinct packages available
+$ apk upgrade --no-progress --simulate
+WARNING: This simulation might not reliable as a preupgrade is available.
+( 1/3) Upgrading lua5.4-libs (5.4.7-r0 -> 5.4.8-r0)
+( 2/3) Upgrading libapk (3.0.1-r1 -> 3.0.8-r0)
+( 3/3) Upgrading apk-tools (3.0.1-r1 -> 3.0.8-r0)
+$ apk upgrade --no-progress --wait 30 --preupgrade-only
+Preupgrading:
+(1/2) Upgrading libapk (3.0.1-r1 -> 3.0.8-r0)
+(2/2) Upgrading apk-tools (3.0.1-r1 -> 3.0.8-r0)
+Executing busybox-1.37.0-r29.trigger
+$ apk upgrade --no-progress --simulate
+(1/1) Upgrading lua5.4-libs (5.4.7-r0 -> 5.4.8-r0)
+[patchmon] Held by /etc/apk/world: busybox=1.37.0-r29 (1.37.0-r30 available)
+$ apk upgrade --no-progress --wait 30
+(1/1) Upgrading lua5.4-libs (5.4.7-r0 -> 5.4.8-r0)
+  Installing file to etc/hosts.apk-new
+  Executing lua5.4-libs-5.4.8-r0.post-upgrade
+OK: 8435 KiB in 16 packages
+
+--- Patch run completed at 2026-10-14T13:53:14Z ---`
+
+		got := parsePackagesAffectedFromRealOutput("Alpine Linux", output)
+		want := []string{"libapk", "apk-tools", "lua5.4-libs"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("parsePackagesAffectedFromRealOutput() = %v, want %v", got, want)
 		}
@@ -496,4 +656,24 @@ func TestComputeRunAtWithMeta(t *testing.T) {
 			t.Errorf("legacy policy.Timezone leaked into scheduler; meta.Timezone = %q, want Europe/Berlin", meta.Timezone)
 		}
 	})
+}
+
+func TestRefusesSelectedPatch(t *testing.T) {
+	pm := func(s string) *string { return &s }
+	cases := []struct {
+		pkgMgr    *string
+		patchType string
+		want      bool
+	}{
+		{pm("pacman"), "patch_package", true},
+		{pm("pacman"), "patch_all", false},
+		{pm("apt"), "patch_package", false},
+		{pm("zypper"), "patch_package", false},
+		{nil, "patch_package", false},
+	}
+	for _, c := range cases {
+		if got := RefusesSelectedPatch(c.pkgMgr, c.patchType); got != c.want {
+			t.Errorf("RefusesSelectedPatch(%v, %q) = %v, want %v", c.pkgMgr, c.patchType, got, c.want)
+		}
+	}
 }

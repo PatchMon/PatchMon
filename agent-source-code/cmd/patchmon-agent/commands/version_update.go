@@ -24,6 +24,8 @@ import (
 	"patchmon-agent/internal/config"
 	"patchmon-agent/internal/logutil"
 	"patchmon-agent/internal/pkgversion"
+	"patchmon-agent/internal/winexec"
+	"patchmon-agent/internal/winsec"
 
 	"github.com/spf13/cobra"
 )
@@ -234,7 +236,7 @@ func updateAgent() error {
 	// into the locked install directory.
 	tempPath := executablePath + ".new"
 	if runtime.GOOS == "windows" {
-		dir, dirErr := secureUpdateDir()
+		dir, dirErr := winsec.SecureUpdateDir()
 		if dirErr != nil {
 			return fmt.Errorf("failed to prepare update directory: %w", dirErr)
 		}
@@ -368,7 +370,7 @@ func psQuote(s string) string {
 //  3. Launch that script detached so it outlives this process.
 //  4. Exit immediately — the script takes over.
 func updateAgentWindows(executablePath, tempPath, newVersion string) error {
-	dir, err := secureUpdateDir()
+	dir, err := winsec.SecureUpdateDir()
 	if err != nil {
 		_ = os.Remove(tempPath)
 		return fmt.Errorf("failed to prepare update directory: %w", err)
@@ -412,7 +414,7 @@ try {
 		"script":      psScriptPath,
 	})).Info("Launching Windows update script (stop service → replace binary → start service)...")
 
-	cmd := exec.Command("powershell",
+	cmd := exec.Command(winexec.PowerShellPath(),
 		"-NonInteractive", "-WindowStyle", "Hidden",
 		"-ExecutionPolicy", "Bypass",
 		"-File", psScriptPath)
@@ -423,7 +425,7 @@ try {
 		return fmt.Errorf("failed to launch Windows update script: %w", err)
 	}
 
-	logger.Info("Windows update script launched — exiting to allow service replacement")
+	logger.Info("Windows update script launched; exiting to allow service replacement")
 	time.Sleep(500 * time.Millisecond)
 	os.Exit(0)
 	return nil // unreachable
@@ -793,7 +795,7 @@ func restartService(_ string, _ string) error {
 	// This branch is a safety net; the primary Windows update path goes through
 	// updateAgentWindows() before restartService is ever called.
 	if runtime.GOOS == "windows" {
-		dir, dirErr := secureUpdateDir()
+		dir, dirErr := winsec.SecureUpdateDir()
 		if dirErr != nil {
 			logger.WithError(dirErr).Error("Failed to prepare update directory for restart script")
 			os.Exit(0)
@@ -812,7 +814,7 @@ Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyConti
 			os.Exit(0)
 			return nil
 		}
-		cmd := exec.Command("powershell",
+		cmd := exec.Command(winexec.PowerShellPath(),
 			"-NonInteractive", "-WindowStyle", "Hidden",
 			"-ExecutionPolicy", "Bypass",
 			"-File", psScriptPath)

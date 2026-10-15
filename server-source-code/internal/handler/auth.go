@@ -6,13 +6,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
 	"log/slog"
 
-	"github.com/PatchMon/PatchMon/server-source-code/internal/clientip"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
 	hostctx "github.com/PatchMon/PatchMon/server-source-code/internal/context"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
@@ -43,13 +43,114 @@ type AuthHandler struct {
 	releaseNotesAcceptance *store.ReleaseNotesAcceptanceStore
 	db                     database.DBProvider
 	notify                 *notifications.Emitter
-	log                    *slog.Logger
+	// emitEvent overrides notify.EmitEvent; set only by tests.
+	emitEvent func(ctx context.Context, d *database.DB, host string, ev notifications.Event)
+	log       *slog.Logger
 	// permissions is optional - used by MeContext to surface role permission flags
 	// (such as can_manage_billing) alongside the user response. Wired via
 	// WithPermissions to avoid threading it through the constructor signature.
 	permissions *store.PermissionsStore
 	// Resolves the calling context's own settings; `resolved` is startup-only.
 	cfgResolver *hostctx.ConfigResolver
+	localAuth   LocalAuthPolicy
+	tfaReplay   *store.TfaReplayStore
+	audit       *store.AuditLogsStore
+}
+
+// LocalAuthPolicy reports whether the calling context has turned off password
+// sign-in; a non-empty fallback is the reason it is allowed through regardless.
+type LocalAuthPolicy interface {
+	LocalAuthDecision(ctx context.Context) (disabled bool, fallback string)
+}
+
+// WithLocalAuthPolicy wires the per-context "disable local authentication" setting.
+func (h *AuthHandler) WithLocalAuthPolicy(p LocalAuthPolicy) *AuthHandler {
+	h.localAuth = p
+	return h
+}
+
+func (h *AuthHandler) localAuthDecision(ctx context.Context) (disabled bool, fallback string) {
+	if h.localAuth != nil {
+		if disabled, fallback = h.localAuth.LocalAuthDecision(ctx); disabled || fallback != "" {
+			return disabled, fallback
+		}
+	}
+	return h.cfg != nil && h.cfg.OidcEnabled && h.cfg.OidcDisableLocalAuth, ""
+}
+
+// dummyPasswordHash must stay a valid hash at the cost used for real passwords,
+// or the comparison against it returns early and the timing leak reopens.
+const dummyPasswordHash = "$2a$12$Jf3V8YDiVO/jiJmbThjnYeiiuNro41Hsodwjpw3O977bmeZiXvPLC"
+
+// spendPasswordCheck returns only errLoginBusy; the comparison itself always fails.
+func spendPasswordCheck(ctx context.Context, password string) error {
+	if err := loginBcrypt.compare(ctx, dummyPasswordHash, strings.TrimSpace(password)); errors.Is(err, errLoginBusy) {
+		return err
+	}
+	return nil
+}
+
+var errLoginBusy = errors.New("sign-in capacity exhausted")
+
+// bcryptGateWait bounds the queue. A var so tests can shorten it.
+var bcryptGateWait = 5 * time.Second
+
+// writeLoginBusy must stay identical for every path, or saturation becomes an
+// account-existence oracle.
+func (h *AuthHandler) writeLoginBusy(w http.ResponseWriter, r *http.Request, username string) {
+	h.logLoginFailure(r, "busy", username, "")
+	w.Header().Set("Retry-After", "5")
+	Error(w, http.StatusServiceUnavailable, "Too many sign-in attempts, try again shortly")
+}
+
+// bcryptGate caps concurrent sign-in bcrypt work for the whole process, so a
+// username spray queues instead of starving every context of CPU.
+type bcryptGate chan struct{}
+
+var loginBcrypt = make(bcryptGate, loginBcryptSlots(runtime.GOMAXPROCS(0)))
+
+// loginBcryptSlots leaves at least half the cores for everything else.
+func loginBcryptSlots(procs int) int {
+	return max(1, procs/2)
+}
+
+func (g bcryptGate) do(ctx context.Context, fn func() error) error {
+	wait := time.NewTimer(bcryptGateWait)
+	defer wait.Stop()
+	select {
+	case g <- struct{}{}:
+	case <-ctx.Done():
+		return errLoginBusy
+	case <-wait.C:
+		return errLoginBusy
+	}
+	defer func() { <-g }()
+	return fn()
+}
+
+func (g bcryptGate) compare(ctx context.Context, hash, password string) error {
+	return g.do(ctx, func() error {
+		return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	})
+}
+
+const passwordBcryptCost = 12
+
+// upgradePasswordHash rehashes a password stored at a lower cost, which would
+// otherwise answer faster than dummyPasswordHash and stand out by timing.
+func (h *AuthHandler) upgradePasswordHash(ctx context.Context, user *models.User, password string) {
+	var newHash []byte
+	err := loginBcrypt.do(ctx, func() error {
+		var genErr error
+		newHash, genErr = bcrypt.GenerateFromPassword([]byte(password), passwordBcryptCost)
+		return genErr
+	})
+	if err == nil {
+		_, err = h.users.UpgradePasswordHash(ctx, user.ID, *user.PasswordHash, string(newHash))
+	}
+	if err != nil && h.log != nil {
+		h.log.Warn("password hash upgrade failed", "user_id", user.ID, "error", err)
+	}
 }
 
 // WithConfigResolver wires the per-context config resolver.
@@ -168,7 +269,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if h.log != nil {
 		h.log.Debug("auth request", "method", r.Method, "path", r.URL.Path)
 	}
-	if h.cfg.OidcEnabled && h.cfg.OidcDisableLocalAuth {
+	localAuthOff, localAuthFallback := h.localAuthDecision(r.Context())
+	if localAuthOff {
 		h.logLoginFailure(r, "local_auth_disabled", "", "")
 		Error(w, http.StatusForbidden, "Local authentication is disabled. Please use SSO.")
 		return
@@ -212,6 +314,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// A DB failure is not a wrong username. Counting it would let an outage
 		// lock out the very people retrying a correct password.
+		if spendPasswordCheck(r.Context(), req.Password) != nil {
+			h.writeLoginBusy(w, r, req.Username)
+			return
+		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			if h.log != nil {
 				h.log.Error("auth login lookup failed", "ip", h.clientIP(r), "error", err)
@@ -238,19 +344,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if h.log != nil {
 		h.log.Debug("auth login user found", "user_id", user.ID, "username", user.Username, "is_active", user.IsActive, "has_password", user.PasswordHash != nil)
 	}
-	// These two branches consume an attempt as well. If they did not, the absence
-	// of a lockout would identify exactly the accounts that are disabled or
-	// SSO-only, now that unknown usernames do lock out.
-	if !user.IsActive {
-		if locked := h.recordLoginFailure(w, r, req.Username); locked {
-			h.logLoginFailure(r, "account_disabled", req.Username, user.ID, "locked", true)
+	// Consumes an attempt as well. If it did not, the absence of a lockout would
+	// identify exactly the SSO-only accounts, now that unknown usernames do lock out.
+	if user.PasswordHash == nil {
+		if spendPasswordCheck(r.Context(), req.Password) != nil {
+			h.writeLoginBusy(w, r, req.Username)
 			return
 		}
-		h.logLoginFailure(r, "account_disabled", req.Username, user.ID)
-		Error(w, http.StatusUnauthorized, "Account is disabled")
-		return
-	}
-	if user.PasswordHash == nil {
 		if locked := h.recordLoginFailure(w, r, req.Username); locked {
 			h.logLoginFailure(r, "no_password_set", req.Username, user.ID, "locked", true)
 			return
@@ -264,43 +364,20 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	hash := strings.TrimSpace(*user.PasswordHash)
 	// Trim password - forms often introduce accidental leading/trailing whitespace
 	password := strings.TrimSpace(req.Password)
-	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)); err != nil {
+	if err := loginBcrypt.compare(r.Context(), hash, password); err != nil {
+		if errors.Is(err, errLoginBusy) {
+			h.writeLoginBusy(w, r, req.Username)
+			return
+		}
 		if h.loginLockout != nil {
 			identifier := h.loginLockout.Identifier(h.clientIP(r), req.Username)
 			_, locked := h.loginLockout.RecordFailedAttempt(r.Context(), identifier)
 			if locked {
-				// Emit account_locked event
-				if h.notify != nil {
-					if d := h.db.DB(r.Context()); d != nil {
-						h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
-							Type:          "account_locked",
-							Severity:      "error",
-							Title:         "Account Locked",
-							Message:       "Account locked due to too many failed login attempts for user " + user.Username + ".",
-							ReferenceType: "user",
-							ReferenceID:   user.ID,
-							Metadata: map[string]interface{}{
-								"user_id":    user.ID,
-								"username":   user.Username,
-								"ip_address": h.clientIP(r),
-								"user_agent": r.UserAgent(),
-							},
-						})
-					}
-				}
-				h.logLoginFailure(r, "invalid_password", req.Username, user.ID, "locked", true)
-				writeLoginLockedResponse(w, h.lockoutRemaining(r.Context(), identifier))
-				return
-			}
-		}
-		// Emit user_login_failed event
-		if h.notify != nil {
-			if d := h.db.DB(r.Context()); d != nil {
-				h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
-					Type:          "user_login_failed",
-					Severity:      "warning",
-					Title:         "Failed Login Attempt",
-					Message:       "Failed login attempt for user " + user.Username + ".",
+				h.emitEventAsync(r, notifications.Event{
+					Type:          "account_locked",
+					Severity:      "error",
+					Title:         "Account Locked",
+					Message:       "Account locked due to too many failed login attempts for user " + user.Username + ".",
 					ReferenceType: "user",
 					ReferenceID:   user.ID,
 					Metadata: map[string]interface{}{
@@ -308,17 +385,89 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 						"username":   user.Username,
 						"ip_address": h.clientIP(r),
 						"user_agent": r.UserAgent(),
-						"reason":     "invalid_password",
 					},
 				})
+				h.logLoginFailure(r, "invalid_password", req.Username, user.ID, "locked", true)
+				writeLoginLockedResponse(w, h.lockoutRemaining(r.Context(), identifier))
+				return
 			}
 		}
+		h.emitEventAsync(r, notifications.Event{
+			Type:          "user_login_failed",
+			Severity:      "warning",
+			Title:         "Failed Login Attempt",
+			Message:       "Failed login attempt for user " + user.Username + ".",
+			ReferenceType: "user",
+			ReferenceID:   user.ID,
+			Metadata: map[string]interface{}{
+				"user_id":    user.ID,
+				"username":   user.Username,
+				"ip_address": h.clientIP(r),
+				"user_agent": r.UserAgent(),
+				"reason":     "invalid_password",
+			},
+		})
 		h.logLoginFailure(r, "invalid_password", req.Username, user.ID)
 		if h.log != nil {
 			h.log.Debug("auth login bcrypt failed", "user_id", user.ID, "hash_len", len(hash), "bcrypt_err", err.Error())
 		}
 		Error(w, http.StatusUnauthorized, "Invalid credentials")
 		return
+	}
+
+	// Only after the password is proven, so the message cannot confirm a disabled account to a guesser.
+	if !user.IsActive {
+		if locked := h.recordLoginFailure(w, r, req.Username); locked {
+			h.logLoginFailure(r, "account_disabled", req.Username, user.ID, "locked", true)
+			return
+		}
+		h.logLoginFailure(r, "account_disabled", req.Username, user.ID)
+		Error(w, http.StatusUnauthorized, "Account is disabled")
+		return
+	}
+
+	if localAuthFallback != "" {
+		// Answered like a wrong password, so an outage is not a password oracle for ordinary accounts.
+		if user.Role != "superadmin" {
+			h.recordAuditAsync(r, auditEventSSOFallbackRefused, user, false, map[string]any{"reason": "not_superadmin", "sso_reason": localAuthFallback})
+			if locked := h.recordLoginFailure(w, r, req.Username); locked {
+				h.logLoginFailure(r, "sso_fallback_not_superadmin", req.Username, user.ID, "locked", true)
+				return
+			}
+			h.logLoginFailure(r, "sso_fallback_not_superadmin", req.Username, user.ID)
+			Error(w, http.StatusUnauthorized, "Invalid credentials")
+			return
+		}
+		if !user.TfaEnabled {
+			h.recordAuditAsync(r, auditEventSSOFallbackRefused, user, false, map[string]any{"reason": "tfa_required", "sso_reason": localAuthFallback})
+			h.emitEventAsync(r, notifications.Event{
+				Type:          "sso_fallback_refused",
+				Severity:      "warning",
+				Title:         "Password Login Refused During SSO Outage",
+				Message:       "Superadmin " + user.Username + " tried to sign in with a password while the SSO provider is unreachable, and was refused because two-factor authentication is not set up.",
+				ReferenceType: "user",
+				ReferenceID:   user.ID,
+				Metadata: map[string]interface{}{
+					"user_id":    user.ID,
+					"username":   user.Username,
+					"ip_address": h.clientIP(r),
+					"user_agent": r.UserAgent(),
+					"reason":     localAuthFallback,
+				},
+			})
+			if locked := h.recordLoginFailure(w, r, req.Username); locked {
+				h.logLoginFailure(r, "sso_fallback_tfa_required", req.Username, user.ID, "sso_reason", localAuthFallback, "locked", true)
+				return
+			}
+			h.logLoginFailure(r, "sso_fallback_tfa_required", req.Username, user.ID, "sso_reason", localAuthFallback)
+			Error(w, http.StatusForbidden, "Your identity provider is unreachable. Password sign-in is only allowed in that case for superadmins with two-factor authentication, which is not set up on this account.")
+			return
+		}
+	}
+
+	// Rehash exactly what was just verified; bcrypt cannot hash more than 72 bytes.
+	if cost, err := bcrypt.Cost([]byte(hash)); err == nil && cost < passwordBcryptCost && len(password) <= 72 {
+		h.upgradePasswordHash(r.Context(), user, password)
 	}
 
 	// Clear lockout on success
@@ -333,13 +482,19 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			attrs = append(attrs, "host", host)
 		}
 		h.log.Info("login succeeded", attrs...)
+		if localAuthFallback != "" {
+			h.log.Warn("sso fallback: superadmin password accepted, two-factor pending", append(attrs, "reason", localAuthFallback)...)
+		}
 	}
 
 	// TFA check: if enabled, require TFA verification unless a valid device-trust
 	// cookie is present. Trust is keyed on (user_id, sha256(cookie_value)) only;
 	// it is independent from the user_sessions table, network, and user-agent.
 	if user.TfaEnabled {
-		td := h.hasValidDeviceTrust(r, user.ID)
+		var td *models.TrustedDevice
+		if localAuthFallback == "" {
+			td = h.hasValidDeviceTrust(r, user.ID)
+		}
 		if td == nil {
 			// Single-use proof the password was verified; VerifyTfa requires it.
 			if h.pendingLogin == nil {
@@ -385,6 +540,12 @@ type VerifyTfaRequest struct {
 
 // VerifyTfa handles POST /auth/verify-tfa.
 func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
+	off, ssoFallback := h.localAuthDecision(r.Context())
+	if off {
+		h.logLoginFailure(r, "local_auth_disabled", "", "")
+		Error(w, http.StatusForbidden, "Local authentication is disabled. Please use SSO.")
+		return
+	}
 	var req VerifyTfaRequest
 	if err := decodeJSON(r, &req); err != nil {
 		Error(w, http.StatusBadRequest, "Invalid request body")
@@ -420,7 +581,7 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, err := h.users.GetByID(r.Context(), userID)
-	if err != nil || user == nil || !user.IsActive || !user.TfaEnabled || user.TfaSecret == nil {
+	if err != nil || user == nil || !user.IsActive || !user.TfaEnabled || user.TfaSecret == nil || (ssoFallback != "" && user.Role != "superadmin") {
 		h.logLoginFailure(r, "tfa_user_ineligible", "", userID)
 		Error(w, http.StatusUnauthorized, "Invalid credentials or TFA not enabled")
 		return
@@ -435,20 +596,13 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	secret := strings.TrimSpace(*user.TfaSecret)
-	verified := util.VerifyTOTP(secret, req.Token, util.TOTPWindow)
-
-	if !verified {
-		hashed := util.ParseBackupCodesJSON(user.TfaBackupCodes)
-		if len(hashed) > 0 {
-			valid, idx := util.VerifyBackupCode(req.Token, hashed)
-			if valid {
-				verified = true
-				hashed = append(hashed[:idx], hashed[idx+1:]...)
-				updated := util.EncodeBackupCodesJSON(hashed)
-				_ = h.users.UpdateTfaBackupCodes(r.Context(), user.ID, &updated)
-			}
+	verified, err := verifyTfaCode(r.Context(), h.users, h.tfaReplay, user, req.Token)
+	if err != nil {
+		if h.log != nil {
+			h.log.Error("auth: tfa verification failed", "user_id", user.ID, "error", err)
 		}
+		Error(w, http.StatusInternalServerError, "Two-factor verification unavailable")
+		return
 	}
 
 	if !verified {
@@ -479,7 +633,88 @@ func (h *AuthHandler) VerifyTfa(w http.ResponseWriter, r *http.Request) {
 		h.tfaLockout.ClearFailedAttempts(r.Context(), user.ID)
 	}
 
+	if ssoFallback != "" {
+		h.recordSSOFallbackLogin(r, user, ssoFallback)
+		req.RememberMe = false
+	}
 	h.completeLogin(w, r, user, req.RememberMe)
+}
+
+const (
+	auditEventSSOFallbackLogin   = "sso_fallback_login"
+	auditEventSSOFallbackRefused = "sso_fallback_refused"
+)
+
+// WithAudit wires the audit_logs writer.
+func (h *AuthHandler) WithAudit(a *store.AuditLogsStore) *AuthHandler {
+	h.audit = a
+	return h
+}
+
+func (h *AuthHandler) recordAudit(r *http.Request, event string, user *models.User, success bool, metadata map[string]any) {
+	if h.audit == nil {
+		return
+	}
+	if err := h.audit.Record(r.Context(), newAuditEntry(r, event, user.ID, user.ID, success, metadata)); err != nil && h.log != nil {
+		h.log.Error("auth: audit write failed", "event", event, "user_id", user.ID, "error", err)
+	}
+}
+
+// pendingAuditWrites bounds background audit writes on sign-in paths, which must
+// stay off the request so a correct password answers as fast as a wrong one.
+var pendingAuditWrites = make(chan struct{}, 16)
+
+func (h *AuthHandler) recordAuditAsync(r *http.Request, event string, user *models.User, success bool, metadata map[string]any) {
+	if h.audit == nil {
+		return
+	}
+	select {
+	case pendingAuditWrites <- struct{}{}:
+	default:
+		if h.log != nil {
+			h.log.Warn("audit write dropped: too many pending", "event", event, "user_id", user.ID)
+		}
+		return
+	}
+	entry := newAuditEntry(r, event, user.ID, user.ID, success, metadata)
+	ctx := context.WithoutCancel(r.Context())
+	go func() {
+		defer func() { <-pendingAuditWrites }()
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if err := h.audit.Record(ctx, entry); err != nil && h.log != nil {
+			h.log.Error("auth: audit write failed", "event", event, "user_id", user.ID, "error", err)
+		}
+	}()
+}
+
+// recordSSOFallbackLogin marks a session issued only because the SSO provider
+// was unreachable.
+func (h *AuthHandler) recordSSOFallbackLogin(r *http.Request, user *models.User, reason string) {
+	ip := h.clientIP(r)
+	h.recordAudit(r, auditEventSSOFallbackLogin, user, true, map[string]any{"sso_reason": reason})
+	if h.log != nil {
+		attrs := []any{"audit_action", "sso_fallback_login", "user_id", user.ID, "username", user.Username, "ip", ip, "reason", reason}
+		if host := hostctx.TenantHostKey(r.Context()); host != "" {
+			attrs = append(attrs, "host", host)
+		}
+		h.log.Warn("password login allowed because the SSO provider is unreachable", attrs...)
+	}
+	h.emitEventAsync(r, notifications.Event{
+		Type:          "sso_fallback_login",
+		Severity:      "warning",
+		Title:         "Password Login During SSO Outage",
+		Message:       "Superadmin " + user.Username + " signed in with a password because the SSO provider is unreachable.",
+		ReferenceType: "user",
+		ReferenceID:   user.ID,
+		Metadata: map[string]interface{}{
+			"user_id":    user.ID,
+			"username":   user.Username,
+			"ip_address": ip,
+			"user_agent": r.UserAgent(),
+			"reason":     reason,
+		},
+	})
 }
 
 func cookieSameSite(env string, useLax, secure bool) http.SameSite {
@@ -644,6 +879,12 @@ func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, user
 	if rememberMe && !trustExpiresAt.IsZero() {
 		resp["tfa_bypass_until"] = trustExpiresAt.Format(time.RFC3339)
 	}
+	if user.TfaEnrolmentPending() {
+		resp["tfaEnrolmentRequired"] = true
+	}
+	if user.PasswordChangePending() {
+		resp["passwordChangeRequired"] = true
+	}
 	JSON(w, http.StatusOK, resp)
 }
 
@@ -669,10 +910,7 @@ func buildDeviceLabel(ua string) string {
 // Either way RemoteAddr is the correct source, and reading the header here
 // would reintroduce lockout evasion via a client-supplied leftmost entry.
 func (h *AuthHandler) clientIP(r *http.Request) string {
-	if ip := clientip.FromRequest(r); ip != "" {
-		return ip
-	}
-	return r.RemoteAddr
+	return requestClientIP(r)
 }
 
 // maxLoginIdentifierBytes caps the username accepted at sign-in. 254 is the
@@ -685,6 +923,54 @@ func truncateForLog(s string, max int) string {
 		return s
 	}
 	return strings.ToValidUTF8(s[:max], "") + "..."
+}
+
+// pendingAuthEvents bounds the background goroutines sign-in events can hold,
+// so a spray of failures cannot pile them up behind a slow database.
+var pendingAuthEvents = make(chan struct{}, 64)
+
+// pendingSSOFallbackEvents is reserved so a spray of failed logins cannot crowd
+// out the outage-fallback alerts.
+var pendingSSOFallbackEvents = make(chan struct{}, 8)
+
+func eventSlots(eventType string) chan struct{} {
+	if strings.HasPrefix(eventType, "sso_fallback_") {
+		return pendingSSOFallbackEvents
+	}
+	return pendingAuthEvents
+}
+
+// emitEventAsync sends a notification event without making the caller wait on
+// it, so a wrong password for a real account answers as fast as any other.
+func (h *AuthHandler) emitEventAsync(r *http.Request, ev notifications.Event) {
+	emit := h.emitEvent
+	if emit == nil && h.notify != nil {
+		emit = h.notify.EmitEvent
+	}
+	if emit == nil || h.db == nil {
+		return
+	}
+	d := h.db.DB(r.Context())
+	if d == nil {
+		return
+	}
+	slots := eventSlots(ev.Type)
+	select {
+	case slots <- struct{}{}:
+	default:
+		if h.log != nil {
+			h.log.Warn("notification event dropped: too many pending", "event_type", ev.Type)
+		}
+		return
+	}
+	ctx := context.WithoutCancel(r.Context())
+	host := hostctx.TenantHostKey(r.Context())
+	go func() {
+		defer func() { <-slots }()
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		emit(ctx, d, host, ev)
+	}()
 }
 
 // logLoginFailure records a rejected sign-in at Warn, so it is visible at the
@@ -1283,6 +1569,8 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+	req.CurrentPassword = strings.TrimSpace(req.CurrentPassword)
+	req.NewPassword = strings.TrimSpace(req.NewPassword)
 	if req.CurrentPassword == "" {
 		Error(w, http.StatusBadRequest, "Current password is required")
 		return
@@ -1303,6 +1591,15 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	hash := strings.TrimSpace(*user.PasswordHash)
 	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.CurrentPassword)); err != nil {
 		Error(w, http.StatusUnauthorized, "Current password is incorrect")
+		return
+	}
+	if req.NewPassword == req.CurrentPassword {
+		Error(w, http.StatusBadRequest, "New password must be different from the current password")
+		return
+	}
+	if user.PasswordChangeRequired && user.PreviousPasswordHash != nil &&
+		bcrypt.CompareHashAndPassword([]byte(strings.TrimSpace(*user.PreviousPasswordHash)), []byte(req.NewPassword)) == nil {
+		Error(w, http.StatusBadRequest, "Choose a password you haven't used before")
 		return
 	}
 	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), 12)
@@ -1625,6 +1922,7 @@ func (h *AuthHandler) SetupAdmin(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+	req.Password = strings.TrimSpace(req.Password)
 	if req.FirstName == "" || req.LastName == "" || req.Username == "" || req.Email == "" || req.Password == "" {
 		Error(w, http.StatusBadRequest, "All fields are required")
 		return
@@ -1695,6 +1993,10 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	if h.log != nil {
 		h.log.Debug("auth request", "method", r.Method, "path", r.URL.Path)
 	}
+	if off, fallback := h.localAuthDecision(r.Context()); off || fallback != "" {
+		Error(w, http.StatusForbidden, "Local authentication is disabled. Please use SSO.")
+		return
+	}
 	s, err := h.settings.GetFirst(r.Context())
 	if err != nil || s == nil || !s.SignupEnabled {
 		Error(w, http.StatusForbidden, "User signup is currently disabled")
@@ -1712,6 +2014,7 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
+	req.Password = strings.TrimSpace(req.Password)
 	if req.FirstName == "" || req.LastName == "" || req.Username == "" || req.Email == "" || req.Password == "" {
 		Error(w, http.StatusBadRequest, "All fields are required")
 		return
@@ -1781,9 +2084,11 @@ func userToResponse(u *models.User, acceptedVersions []string) map[string]interf
 	res := map[string]interface{}{
 		"id": u.ID, "username": u.Username, "email": u.Email, "role": u.Role,
 		"is_active": u.IsActive, "theme_preference": strVal(u.ThemePreference, "dark"),
-		"color_theme":  strVal(u.ColorTheme, "cyber_blue"),
-		"updated_at":   u.UpdatedAt,
-		"has_password": u.PasswordHash != nil && *u.PasswordHash != "",
+		"color_theme":              strVal(u.ColorTheme, "cyber_blue"),
+		"updated_at":               u.UpdatedAt,
+		"has_password":             u.PasswordHash != nil && *u.PasswordHash != "",
+		"tfa_enrolment_required":   u.TfaEnrolmentPending(),
+		"password_change_required": u.PasswordChangePending(),
 	}
 	if u.FirstName != nil {
 		res["first_name"] = *u.FirstName

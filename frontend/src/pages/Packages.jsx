@@ -29,10 +29,22 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import PatchWizard from "../components/PatchWizard";
 import ModalPortal from "../components/ui/ModalPortal";
+import Tooltip from "../components/ui/Tooltip";
 import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../contexts/ToastContext";
 import { usePageRefresh } from "../hooks/usePageRefresh";
 import { dashboardAPI, packagesAPI } from "../utils/api";
+import {
+	isPacmanHost,
+	PACMAN_SELECTED_PATCH_UNSUPPORTED,
+} from "../utils/patchSupport";
+import {
+	isPendingRestart,
+	RESTART_REQUIRED_BADGE,
+	windowsBadges,
+	windowsPatchInfo,
+	windowsSourceLabel,
+} from "../utils/windowsPatching";
 
 // The table, the stat cards and the host filter are three separate queries.
 const PACKAGES_REFRESH_KEYS = [
@@ -61,6 +73,40 @@ function formatRepoName(name) {
 	return name;
 }
 
+const PACKAGE_COLUMN_WIDTH = {
+	packageHosts: "w-28",
+	status: "w-56",
+	latestVersion: "w-40",
+	sourceRepos: "w-48",
+};
+
+const WindowsPackageTags = ({ info }) => {
+	const source = windowsSourceLabel(info);
+	const badges = windowsBadges(info).filter((b) => b.key !== "not-patchable");
+	if (!source && badges.length === 0) return null;
+	return (
+		<div className="flex flex-wrap items-center gap-1 mt-1">
+			{source && (
+				<span
+					className={
+						info.patchable || info.reason === "not_pending"
+							? "text-xs text-secondary-500 dark:text-secondary-300"
+							: "badge-secondary"
+					}
+					title={info.reasonText || undefined}
+				>
+					{source}
+				</span>
+			)}
+			{badges.map((b) => (
+				<span key={b.key} className={b.className} title={b.title}>
+					{b.label}
+				</span>
+			))}
+		</div>
+	);
+};
+
 const Packages = () => {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
@@ -78,6 +124,7 @@ const Packages = () => {
 	const [showPatchPackageMultiHostModal, setShowPatchPackageMultiHostModal] =
 		useState(false);
 	const [selectedPackages, setSelectedPackages] = useState([]); // package names (pkg.name)
+	const [selectedPackageMeta, setSelectedPackageMeta] = useState({});
 	const [currentPage, setCurrentPage] = useState(1);
 	const [pageSize, setPageSize] = useState(() => {
 		const saved = localStorage.getItem("packages-page-size");
@@ -306,7 +353,25 @@ const Packages = () => {
 		toast.success("Patch all queued. View progress in Patching.");
 	};
 
-	const handleSelectPackage = (packageName) => {
+	const rememberMeta = (pkgs) => {
+		if (!isWindowsHostFilter) return;
+		setSelectedPackageMeta((prev) => {
+			const next = { ...prev };
+			for (const p of pkgs) {
+				const info = windowsInfoFor(p);
+				next[p.name] = {
+					source: info.source,
+					featureUpgrade: info.featureUpgrade,
+				};
+			}
+			return next;
+		});
+	};
+
+	const handleSelectPackage = (pkg) => {
+		if (!isPackageSelectable(pkg)) return;
+		const packageName = pkg.name;
+		if (!selectedPackages.includes(packageName)) rememberMeta([pkg]);
 		setSelectedPackages((prev) =>
 			prev.includes(packageName)
 				? prev.filter((n) => n !== packageName)
@@ -315,7 +380,9 @@ const Packages = () => {
 	};
 
 	const handleSelectAllOnPage = () => {
-		const namesOnPage = paginatedPackages.map((p) => p.name);
+		const selectable = paginatedPackages.filter(isPackageSelectable);
+		rememberMeta(selectable);
+		const namesOnPage = selectable.map((p) => p.name);
 		const allSelected = namesOnPage.every((n) => selectedPackages.includes(n));
 		if (allSelected) {
 			setSelectedPackages((prev) =>
@@ -387,12 +454,30 @@ const Packages = () => {
 		(hosts?.find((h) => h.id === hostFilter)?.os_type || "")
 			.toLowerCase()
 			.includes("windows");
+	const isPacmanHostFilter =
+		hostFilter &&
+		hostFilter !== "all" &&
+		isPacmanHost(hosts?.find((h) => h.id === hostFilter));
+
+	const windowsInfoFor = (pkg) =>
+		windowsPatchInfo(
+			pkg.packageHosts?.find((h) => h.hostId === hostFilter) || {
+				needsUpdate: (pkg.stats?.updatesNeeded || 0) > 0,
+			},
+		);
+
+	const isPackageSelectable = (pkg) =>
+		!isWindowsHostFilter || windowsInfoFor(pkg).patchable;
 
 	// Packages are filtered, sorted, and paginated by the backend.
 	const filteredAndSortedPackages = useMemo(() => {
 		return packages || [];
 	}, [packages]);
 	const paginatedPackages = filteredAndSortedPackages;
+	const selectableOnPage = paginatedPackages.filter(isPackageSelectable);
+	const allSelectableOnPageSelected =
+		selectableOnPage.length > 0 &&
+		selectableOnPage.every((p) => selectedPackages.includes(p.name));
 
 	// Reset to first page when filters or page size change
 	// biome-ignore lint/correctness/useExhaustiveDependencies: We want this effect to run when filter values or page size change to reset pagination
@@ -489,17 +574,23 @@ const Packages = () => {
 						<button
 							type="button"
 							onClick={() => navigate(`/packages/${pkg.id}`)}
-							className="flex items-center text-left hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded p-2 -m-2 transition-colors group flex-1"
+							className="flex items-center text-left hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded p-2 -m-2 transition-colors group flex-1 min-w-0"
 						>
 							<Package className="h-5 w-5 text-secondary-400 mr-3 flex-shrink-0" />
-							<div className="flex-1">
-								<div className="text-sm font-medium text-secondary-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400">
+							<div className="flex-1 min-w-0">
+								<div
+									className="text-sm font-medium text-secondary-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400 line-clamp-2 [overflow-wrap:anywhere]"
+									title={pkg.name}
+								>
 									{pkg.name}
 								</div>
 								{pkg.category && (
 									<div className="text-xs text-secondary-400 dark:text-white">
 										Category: {pkg.category}
 									</div>
+								)}
+								{isWindowsHostFilter && (
+									<WindowsPackageTags info={windowsInfoFor(pkg)} />
 								)}
 							</div>
 						</button>
@@ -559,7 +650,16 @@ const Packages = () => {
 				const needsUpdates = (pkg.stats?.updatesNeeded || 0) > 0;
 
 				if (!needsUpdates) {
-					return <span className="badge-success">Up to Date</span>;
+					return pkg.packageHosts?.some(isPendingRestart) ? (
+						<span
+							className={RESTART_REQUIRED_BADGE.className}
+							title={RESTART_REQUIRED_BADGE.title}
+						>
+							{RESTART_REQUIRED_BADGE.label}
+						</span>
+					) : (
+						<span className="badge-success">Up to Date</span>
+					);
 				}
 
 				return (pkg.stats?.securityUpdates || 0) > 0 ? (
@@ -574,7 +674,7 @@ const Packages = () => {
 			case "latestVersion":
 				return (
 					<div
-						className="text-sm text-secondary-900 dark:text-white max-w-xs truncate"
+						className="text-sm text-secondary-900 dark:text-white max-w-[10rem] mx-auto truncate"
 						title={pkg.latestVersion || "N/A"}
 					>
 						{pkg.latestVersion || "N/A"}
@@ -704,7 +804,27 @@ const Packages = () => {
 				<div className="flex items-center gap-3">
 					{selectedPackages.length > 0 &&
 						canManageHosts() &&
-						!isWindowsHostFilter && (
+						isPacmanHostFilter && (
+							<Tooltip content={PACMAN_SELECTED_PATCH_UNSUPPORTED}>
+								<span
+									// biome-ignore lint/a11y/noNoninteractiveTabindex: a disabled button cannot take focus, so the wrapper carries the explanation
+									tabIndex={0}
+									className="inline-flex"
+								>
+									<button
+										type="button"
+										disabled
+										className="btn-primary flex items-center gap-2 pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed"
+									>
+										<Wrench className="h-4 w-4" />
+										Patch selected ({selectedPackages.length})
+									</button>
+								</span>
+							</Tooltip>
+						)}
+					{selectedPackages.length > 0 &&
+						canManageHosts() &&
+						!isPacmanHostFilter && (
 							<button
 								type="button"
 								onClick={() => setShowPatchPackageMultiHostModal(true)}
@@ -721,31 +841,21 @@ const Packages = () => {
 								Patch selected ({selectedPackages.length})
 							</button>
 						)}
-					{hostFilter &&
-						hostFilter !== "all" &&
-						canManageHosts() &&
-						!isWindowsHostFilter && (
-							<button
-								type="button"
-								onClick={() => setShowPatchConfirmModal(true)}
-								className="btn-primary flex items-center gap-2"
-								title="Run system package updates on this host"
-							>
-								<Wrench className="h-4 w-4" />
-								Patch all
-							</button>
-						)}
-					{hostFilter &&
-						hostFilter !== "all" &&
-						canManageHosts() &&
-						isWindowsHostFilter && (
-							<span
-								className="text-xs text-secondary-400 dark:text-secondary-300 italic"
-								title="Windows patching is managed through Windows Update or WinGet on the host"
-							>
-								Patching managed via Windows Update
-							</span>
-						)}
+					{hostFilter && hostFilter !== "all" && canManageHosts() && (
+						<button
+							type="button"
+							onClick={() => setShowPatchConfirmModal(true)}
+							className="btn-primary flex items-center gap-2"
+							title={
+								isWindowsHostFilter
+									? "Install pending Windows updates and winget app upgrades on this host"
+									: "Run system package updates on this host"
+							}
+						>
+							<Wrench className="h-4 w-4" />
+							Patch all
+						</button>
+					)}
 					<button
 						type="button"
 						onClick={() => handleRefresh()}
@@ -1028,8 +1138,15 @@ const Packages = () => {
 												<div className="flex items-center gap-2">
 													<button
 														type="button"
-														onClick={() => handleSelectPackage(pkg.name)}
-														className="flex-shrink-0 min-w-[44px] min-h-[44px] flex items-center justify-center"
+														onClick={() => handleSelectPackage(pkg)}
+														disabled={!isPackageSelectable(pkg)}
+														title={
+															isPackageSelectable(pkg)
+																? undefined
+																: windowsInfoFor(pkg).reasonText ||
+																	"Not patchable"
+														}
+														className="flex-shrink-0 min-w-[44px] min-h-[44px] flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
 													>
 														{isSelected ? (
 															<CheckSquare className="h-5 w-5 text-primary-600" />
@@ -1040,12 +1157,22 @@ const Packages = () => {
 													<button
 														type="button"
 														onClick={() => navigate(`/packages/${pkg.id}`)}
-														className="text-left flex-1"
+														className="text-left flex-1 min-w-0"
 													>
 														<div className="flex items-center gap-3">
 															<Package className="h-5 w-5 text-secondary-400 flex-shrink-0" />
-															<div className="text-base font-semibold text-secondary-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400">
-																{pkg.name}
+															<div className="text-base font-semibold text-secondary-900 dark:text-white hover:text-primary-600 dark:hover:text-primary-400 min-w-0">
+																<span
+																	className="line-clamp-2 [overflow-wrap:anywhere]"
+																	title={pkg.name}
+																>
+																	{pkg.name}
+																</span>
+																{isWindowsHostFilter && (
+																	<WindowsPackageTags
+																		info={windowsInfoFor(pkg)}
+																	/>
+																)}
 															</div>
 														</div>
 													</button>
@@ -1074,7 +1201,16 @@ const Packages = () => {
 															const needsUpdates =
 																(pkg.stats?.updatesNeeded || 0) > 0;
 															if (!needsUpdates) {
-																return (
+																return pkg.packageHosts?.some(
+																	isPendingRestart,
+																) ? (
+																	<span
+																		className={`${RESTART_REQUIRED_BADGE.className} text-xs`}
+																		title={RESTART_REQUIRED_BADGE.title}
+																	>
+																		{RESTART_REQUIRED_BADGE.label}
+																	</span>
+																) : (
 																	<span className="badge-success text-xs">
 																		Up to Date
 																	</span>
@@ -1177,18 +1313,14 @@ const Packages = () => {
 														type="button"
 														onClick={handleSelectAllOnPage}
 														className="flex items-center justify-center w-full"
+														disabled={selectableOnPage.length === 0}
 														title={
-															paginatedPackages.every((p) =>
-																selectedPackages.includes(p.name),
-															)
+															allSelectableOnPageSelected
 																? "Deselect all on page"
 																: "Select all on page"
 														}
 													>
-														{paginatedPackages.length > 0 &&
-														paginatedPackages.every((p) =>
-															selectedPackages.includes(p.name),
-														) ? (
+														{allSelectableOnPageSelected ? (
 															<CheckSquare className="h-5 w-5 text-primary-600" />
 														) : (
 															<Square className="h-5 w-5 text-secondary-400" />
@@ -1198,7 +1330,9 @@ const Packages = () => {
 												{visibleColumns.map((column) => (
 													<th
 														key={column.id}
-														className="px-4 py-2 text-center text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider"
+														className={`px-4 py-2 text-center text-xs font-medium text-secondary-500 dark:text-white uppercase tracking-wider whitespace-nowrap ${
+															PACKAGE_COLUMN_WIDTH[column.id] || ""
+														}`}
 													>
 														{PACKAGES_SORTABLE_COLUMNS.has(column.id) ? (
 															<button
@@ -1233,8 +1367,15 @@ const Packages = () => {
 														<td className="w-12 px-2 py-2">
 															<button
 																type="button"
-																onClick={() => handleSelectPackage(pkg.name)}
-																className="flex items-center justify-center w-full p-1"
+																onClick={() => handleSelectPackage(pkg)}
+																disabled={!isPackageSelectable(pkg)}
+																title={
+																	isPackageSelectable(pkg)
+																		? undefined
+																		: windowsInfoFor(pkg).reasonText ||
+																			"Not patchable"
+																}
+																className="flex items-center justify-center w-full p-1 disabled:opacity-40 disabled:cursor-not-allowed"
 															>
 																{isSelected ? (
 																	<CheckSquare className="h-5 w-5 text-primary-600" />
@@ -1246,7 +1387,11 @@ const Packages = () => {
 														{visibleColumns.map((column) => (
 															<td
 																key={column.id}
-																className="px-4 py-2 whitespace-nowrap text-center"
+																className={`px-4 py-2 text-center ${
+																	column.id === "name"
+																		? "min-w-[16rem]"
+																		: `whitespace-nowrap ${PACKAGE_COLUMN_WIDTH[column.id] || ""}`
+																}`}
 															>
 																{renderCellContent(column, pkg)}
 															</td>
@@ -1389,8 +1534,10 @@ const Packages = () => {
 										friendly_name: hosts?.find((h) => h.id === hostFilter)
 											?.friendly_name,
 										hostname: hosts?.find((h) => h.id === hostFilter)?.hostname,
+										os_type: hosts?.find((h) => h.id === hostFilter)?.os_type,
 									},
 								],
+								packageMeta: selectedPackageMeta,
 							}
 						: {})}
 					onSuccess={(mode, info) => {
@@ -1427,7 +1574,13 @@ const Packages = () => {
 					mode="trigger"
 					patchType="patch_all"
 					lockHosts
-					presetHosts={[{ id: hostFilter, friendly_name: patchModalHostName }]}
+					presetHosts={[
+						{
+							id: hostFilter,
+							friendly_name: patchModalHostName,
+							os_type: hosts?.find((h) => h.id === hostFilter)?.os_type,
+						},
+					]}
 					onSuccess={handlePatchAllSuccess}
 				/>
 			)}

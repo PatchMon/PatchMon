@@ -105,7 +105,7 @@ func TestResolve(t *testing.T) {
 			name:       "bare trusted IP is treated as a single host",
 			remoteAddr: "10.0.0.1:9000",
 			xff:        "203.0.113.7, 10.0.0.5",
-			trusted:    []string{"10.0.0.5"},
+			trusted:    []string{"10.0.0.5", "10.0.0.1"},
 			want:       "203.0.113.7",
 		},
 		{
@@ -149,6 +149,58 @@ func TestResolve(t *testing.T) {
 			name:       "peer without a port is still usable",
 			remoteAddr: "203.0.113.7",
 			want:       "203.0.113.7",
+		},
+		{
+			name:       "public peer connecting directly cannot forge its address",
+			remoteAddr: "198.51.100.210:5555",
+			xff:        "203.0.113.9",
+			want:       "198.51.100.210",
+		},
+		{
+			name:       "public ipv6 peer connecting directly cannot forge its address",
+			remoteAddr: "[2001:db8::7]:5555",
+			xff:        "203.0.113.9",
+			want:       "2001:db8::7",
+		},
+		{
+			name:       "public peer listed in trusted ranges is honoured",
+			remoteAddr: "198.51.100.210:5555",
+			xff:        "203.0.113.9",
+			trusted:    []string{"198.51.100.0/24"},
+			want:       "203.0.113.9",
+		},
+		{
+			name:       "loopback peer is honoured",
+			remoteAddr: "127.0.0.1:5555",
+			xff:        "203.0.113.9",
+			want:       "203.0.113.9",
+		},
+		{
+			name:       "cgnat peer is honoured",
+			remoteAddr: "100.101.102.103:5555",
+			xff:        "203.0.113.9",
+			want:       "203.0.113.9",
+		},
+		{
+			name:       "private peer outside configured ranges is not honoured",
+			remoteAddr: "172.18.0.4:5555",
+			xff:        "203.0.113.9, 104.16.0.1",
+			trusted:    []string{"104.16.0.0/13"},
+			want:       "172.18.0.4",
+		},
+		{
+			name:       "two-hop chain: CDN then private proxy, both listed",
+			remoteAddr: "172.18.0.4:5555",
+			xff:        "1.2.3.4, 203.0.113.9, 104.16.0.1",
+			trusted:    []string{"104.16.0.0/13", "172.16.0.0/12"},
+			want:       "203.0.113.9",
+		},
+		{
+			name:       "two-hop chain: client hitting the CDN address cannot spoof past it",
+			remoteAddr: "172.18.0.4:5555",
+			xff:        "203.0.113.9, 198.51.100.66",
+			trusted:    []string{"104.16.0.0/13", "172.16.0.0/12"},
+			want:       "198.51.100.66",
 		},
 		{
 			name:       "whitespace around entries is tolerated",
@@ -219,5 +271,15 @@ func TestFromRequest(t *testing.T) {
 				t.Fatalf("want %q, got %q", tc.want, got)
 			}
 		})
+	}
+}
+
+func TestResolve_MultipleHeaderLines(t *testing.T) {
+	t.Parallel()
+	r := request("10.0.0.1:9000", "")
+	r.Header.Add("X-Forwarded-For", "1.2.3.4")
+	r.Header.Add("X-Forwarded-For", "203.0.113.7")
+	if got := Resolve(r, nil); got != "203.0.113.7" {
+		t.Fatalf("want the address the proxy appended on its own header line, got %q", got)
 	}
 }

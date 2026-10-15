@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -98,12 +99,11 @@ func AuthWithSessionCheck(cfg *config.Config, sessionsStore *store.SessionsStore
 			// what makes revocation work, and must not be switchable off by
 			// setting SESSION_INACTIVITY_TIMEOUT_MINUTES=0.
 			if sessionID != "" && sessionsStore != nil {
-				sess, err := sessionsStore.GetByID(r.Context(), sessionID, userID)
+				sess, err := sessionsStore.GetAuthState(r.Context(), sessionID, userID)
 				if err != nil || sess == nil {
 					http.Error(w, `{"error":"Session expired"}`, http.StatusUnauthorized)
 					return
 				}
-
 				// The inactivity comparison is opt-in.
 				resolved := cfgResolver.Resolve(r.Context())
 				if resolved != nil && resolved.SessionInactivityTimeoutMin > 0 {
@@ -115,6 +115,20 @@ func AuthWithSessionCheck(cfg *config.Config, sessionsStore *store.SessionsStore
 						http.Error(w, `{"error":"Session expired due to inactivity"}`, http.StatusUnauthorized)
 						return
 					}
+				}
+
+				route := ""
+				if r.URL.RawPath == "" {
+					route = r.Method + " " + r.URL.Path
+				}
+				if sess.PasswordChangePending {
+					if !passwordChangeRoutes[route] {
+						writeAccountSetupRequired(w, PasswordChangeRequiredCode, "A new password is required")
+						return
+					}
+				} else if sess.TfaEnrolmentPending && !tfaEnrolmentRoutes[route] {
+					writeAccountSetupRequired(w, TfaEnrolmentRequiredCode, "Two-factor authentication setup is required")
+					return
 				}
 
 				if userActivity(r) {
@@ -177,6 +191,32 @@ func OptionalAuth(cfg *config.Config) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// TfaEnrolmentRequiredCode marks a 403 from a session that must set up 2FA first.
+const TfaEnrolmentRequiredCode = "TFA_ENROLMENT_REQUIRED"
+
+var tfaEnrolmentRoutes = map[string]bool{
+	http.MethodGet + " /api/v1/tfa/setup":         true,
+	http.MethodPost + " /api/v1/tfa/verify-setup": true,
+	http.MethodGet + " /api/v1/tfa/status":        true,
+	http.MethodGet + " /api/v1/auth/profile":      true,
+	http.MethodPost + " /api/v1/auth/logout":      true,
+}
+
+// PasswordChangeRequiredCode marks a 403 from a session that must replace a temporary password first.
+const PasswordChangeRequiredCode = "PASSWORD_CHANGE_REQUIRED"
+
+var passwordChangeRoutes = map[string]bool{
+	http.MethodPut + " /api/v1/auth/change-password": true,
+	http.MethodGet + " /api/v1/auth/profile":         true,
+	http.MethodPost + " /api/v1/auth/logout":         true,
+}
+
+func writeAccountSetupRequired(w http.ResponseWriter, code, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg, "code": code})
 }
 
 func extractToken(r *http.Request) (token, source string) {

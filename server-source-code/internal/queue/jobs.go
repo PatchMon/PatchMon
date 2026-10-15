@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/hibiken/asynq"
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -155,6 +157,22 @@ func NewRunPatchTask(p RunPatchPayload) (*asynq.Task, error) {
 		asynq.TaskID("patch-run-" + p.PatchRunID),
 	}
 	return asynq.NewTask(TypeRunPatch, payload, opts...), nil
+}
+
+// RunPatchRetryTaskIDs are the retry task IDs a run can have, so the delete handler can cancel them.
+// Two alternate because a running task cannot enqueue a task with its own ID.
+func RunPatchRetryTaskIDs(patchRunID string) [2]string {
+	base := "patch-run-" + patchRunID + "-retry"
+	return [2]string{base, base + "-2"}
+}
+
+// NextRunPatchRetryTaskID picks the retry ID that is not the task currently running.
+func NextRunPatchRetryTaskID(patchRunID, currentTaskID string) string {
+	ids := RunPatchRetryTaskIDs(patchRunID)
+	if currentTaskID == ids[0] {
+		return ids[1]
+	}
+	return ids[0]
 }
 
 // NewRunPatchRetryTask creates a run_patch task with a custom task ID so that
@@ -642,6 +660,21 @@ func (h *UpdateAgentHandler) ProcessTask(ctx context.Context, t *asynq.Task) err
 		}
 	}
 
+	if d != nil {
+		patching, err := hostIsPatching(ctx, d.Queries, p.ApiID)
+		if err != nil {
+			return err
+		}
+		if patching {
+			msg := store.PatchRunInProgressMessage
+			if taskID != "" {
+				_ = d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
+			}
+			h.log.Info("update_agent: skipped, patch run in progress", "api_id", p.ApiID)
+			return nil
+		}
+	}
+
 	if !h.registry.IsConnected(p.ApiID) {
 		h.log.Warn("update_agent: agent not connected", "api_id", p.ApiID)
 		if taskID != "" && d != nil {
@@ -761,18 +794,18 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 			return nil
 		}
 
-		// Use a deterministic retry task ID so only one retry can exist at a time
-		// and the delete handler can cancel it.
-		retryTaskID := "patch-run-" + p.PatchRunID + "-retry"
-		task, err := NewRunPatchRetryTask(p, retryTaskID)
+		currentTaskID, _ := asynq.GetTaskID(ctx)
+		task, err := NewRunPatchRetryTask(p, NextRunPatchRetryTaskID(p.PatchRunID, currentTaskID))
 		if err != nil {
 			return err
 		}
 		_, err = h.queueClient.Enqueue(task, asynq.ProcessIn(5*time.Minute))
-		if err != nil {
-			// If a task with this ID already exists (pending), that's fine - skip.
-			h.log.Debug("run_patch: re-enqueue skipped or failed", "api_id", p.ApiID, "error", err)
-		} else {
+		switch {
+		case errors.Is(err, asynq.ErrTaskIDConflict):
+			h.log.Debug("run_patch: retry already pending", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
+		case err != nil:
+			h.log.Warn("run_patch: failed to re-queue run for offline agent", "api_id", p.ApiID, "patch_run_id", p.PatchRunID, "error", err)
+		default:
 			h.log.Info("run_patch: agent offline, re-queued in 5m", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
 		}
 		return nil
@@ -790,21 +823,39 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 		h.log.Info("run_patch: run no longer awaiting dispatch, dropping task", "api_id", p.ApiID, "patch_run_id", p.PatchRunID, "status", status)
 		return nil
 	}
+	// Covers runs queued before the API refused them.
+	if store.RefusesSelectedPatch(run.HostPackageManager, run.PatchType) {
+		if err := h.patchRuns.FailRun(ctx, p.PatchRunID, store.PacmanSelectedPatchUnsupported); err != nil {
+			return err
+		}
+		h.log.Warn("run_patch: selected patching refused on a pacman host, marked failed", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
+		return nil
+	}
 
-	// Build run_patch payload
-	payload := map[string]interface{}{
-		"type":         "run_patch",
-		"patch_run_id": p.PatchRunID,
-		"patch_type":   p.PatchType,
-		"dry_run":      p.DryRun,
+	var pending []db.PatchRunItem
+	windows := run.HostOsType != nil && store.IsWindowsOSType(*run.HostOsType)
+	if windows && p.PatchType == "patch_package" {
+		pending, err = h.patchRuns.ListPendingItems(ctx, p.PatchRunID)
+		if err != nil {
+			return err
+		}
+		var invalid []string
+		pending, invalid = splitDispatchableItems(pending)
+		if len(invalid) > 0 {
+			if err := h.patchRuns.AbortPendingItems(ctx, invalid, invalidTargetMessage); err != nil {
+				return err
+			}
+			h.log.Warn("run_patch: dropped items with an invalid identifier", "api_id", p.ApiID, "patch_run_id", p.PatchRunID, "count", len(invalid))
+		}
+		if len(pending) == 0 {
+			if err := h.patchRuns.FailRun(ctx, p.PatchRunID, noTargetsMessage(len(invalid))); err != nil {
+				return err
+			}
+			h.log.Warn("run_patch: windows run has no patch targets, marked failed", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
+			return nil
+		}
 	}
-	if p.PackageName != nil {
-		payload["package_name"] = *p.PackageName
-	}
-	if len(p.PackageNames) > 0 {
-		payload["package_names"] = p.PackageNames
-	}
-	msg, err := json.Marshal(payload)
+	msg, err := json.Marshal(buildRunPatchMessage(p, run, windows, pending))
 	if err != nil {
 		return err
 	}
@@ -818,4 +869,84 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 	}
 	h.log.Info("run_patch sent", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
 	return nil
+}
+
+const (
+	noPatchTargetsMessage = "No patch targets: none of the selected updates or apps are pending on this host"
+	invalidTargetMessage  = "Invalid target identifier"
+)
+
+func noTargetsMessage(invalid int) string {
+	switch invalid {
+	case 0:
+		return noPatchTargetsMessage
+	case 1:
+		return "No valid patch targets: 1 item had an invalid identifier"
+	}
+	return fmt.Sprintf("No valid patch targets: %d items had an invalid identifier", invalid)
+}
+
+func splitDispatchableItems(items []db.PatchRunItem) (valid []db.PatchRunItem, invalidIDs []string) {
+	for _, it := range items {
+		switch {
+		case it.Kind == store.PatchItemKindWUA && store.IsValidWUAGuid(it.Identifier),
+			it.Kind == store.PatchItemKindWinget && store.IsValidWingetID(it.Identifier):
+			valid = append(valid, it)
+		default:
+			invalidIDs = append(invalidIDs, it.ID)
+		}
+	}
+	return valid, invalidIDs
+}
+
+type runPatchTarget struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
+}
+
+func buildRunPatchMessage(p RunPatchPayload, run *db.GetPatchRunByIDRow, windows bool, pending []db.PatchRunItem) map[string]interface{} {
+	payload := map[string]interface{}{
+		"type":         "run_patch",
+		"patch_run_id": p.PatchRunID,
+		"patch_type":   p.PatchType,
+		"dry_run":      p.DryRun,
+	}
+	if !windows {
+		if p.PackageName != nil {
+			payload["package_name"] = *p.PackageName
+		}
+		if len(p.PackageNames) > 0 {
+			payload["package_names"] = p.PackageNames
+		}
+		return payload
+	}
+	switch p.PatchType {
+	case "patch_package":
+		targets := make([]runPatchTarget, len(pending))
+		for i, it := range pending {
+			targets[i] = runPatchTarget{Kind: it.Kind, ID: it.Identifier}
+		}
+		payload["targets"] = targets
+	case "patch_all":
+		payload["include_updates"] = run.WindowsIncludeUpdates == nil || *run.WindowsIncludeUpdates
+		payload["include_apps"] = run.WindowsIncludeApps == nil || *run.WindowsIncludeApps
+	}
+	return payload
+}
+
+type activeRunChecker interface {
+	GetHostByApiID(ctx context.Context, apiID string) (db.Host, error)
+	HostHasActivePatchRun(ctx context.Context, hostID string) (bool, error)
+}
+
+// hostIsPatching fails closed: any lookup error other than an unknown host is returned so the update retries.
+func hostIsPatching(ctx context.Context, q activeRunChecker, apiID string) (bool, error) {
+	host, err := q.GetHostByApiID(ctx, apiID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return q.HostHasActivePatchRun(ctx, host.ID)
 }

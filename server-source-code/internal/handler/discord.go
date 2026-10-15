@@ -85,8 +85,22 @@ func (h *DiscordHandler) loadDiscordConfig(ctx context.Context) (*discord.Config
 	}, nil
 }
 
+// blockedByLocalAuth reports whether "Disable local auth" is in force, which
+// leaves SSO as the only way in, so Discord sign-in is refused too.
+func (h *DiscordHandler) blockedByLocalAuth(ctx context.Context) bool {
+	if h.auth == nil {
+		return false
+	}
+	off, fallback := h.auth.localAuthDecision(ctx)
+	return off || fallback != ""
+}
+
 // Config handles GET /api/v1/auth/discord/config.
 func (h *DiscordHandler) Config(w http.ResponseWriter, r *http.Request) {
+	if h.blockedByLocalAuth(r.Context()) {
+		JSON(w, http.StatusOK, map[string]interface{}{"enabled": false, "buttonText": "Login with Discord"})
+		return
+	}
 	cfg, _ := h.loadDiscordConfig(r.Context())
 	enabled := cfg != nil
 	buttonText := "Login with Discord"
@@ -104,6 +118,10 @@ func (h *DiscordHandler) Config(w http.ResponseWriter, r *http.Request) {
 
 // Login handles GET /api/v1/auth/discord/login.
 func (h *DiscordHandler) Login(w http.ResponseWriter, r *http.Request) {
+	if h.blockedByLocalAuth(r.Context()) {
+		Error(w, http.StatusForbidden, "Discord sign-in is disabled because local authentication is disabled. Please use SSO.")
+		return
+	}
 	if h.discordStore == nil {
 		Error(w, http.StatusServiceUnavailable, "Discord authentication is not available")
 		return
@@ -204,6 +222,13 @@ func (h *DiscordHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: "discord_state", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: isSecureRequest(r)})
+	if sessionData.Mode != "link" && h.blockedByLocalAuth(r.Context()) {
+		if h.log != nil {
+			h.log.Warn("discord login refused: local authentication is disabled")
+		}
+		redirectTo("/login?error=Discord+sign-in+is+disabled.+Please+use+SSO.")
+		return
+	}
 	cfg, err := h.loadDiscordConfig(r.Context())
 	if err != nil || cfg == nil {
 		redirectTo("/login?error=Discord+not+configured")

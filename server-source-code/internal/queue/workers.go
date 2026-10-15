@@ -602,23 +602,14 @@ func (h *PatchRunCleanupHandler) ProcessTask(ctx context.Context, t *asynq.Task)
 		if err != nil {
 			return err
 		}
-		count, err := h.cleanupDB(ctx, d, stallMin)
-		if err != nil {
+		if err := h.cleanupDB(ctx, d, stallMin, ""); err != nil {
 			return err
-		}
-		if count > 0 {
-			h.log.Info("patch run cleanup: marked timed_out", "count", count, "stall_min", stallMin)
 		}
 		return nil
 	}
 	forEachDB(ctx, h.defaultDB, h.poolCache, func(ctx context.Context, d *database.DB, host string) {
-		count, err := h.cleanupDB(ctx, d, stallMin)
-		if err != nil {
-			h.log.Warn("patch run cleanup failed", "host", host, "error", err)
-			return
-		}
-		if count > 0 {
-			h.log.Info("patch run cleanup: marked timed_out", "host", host, "count", count, "stall_min", stallMin)
+		if err := h.cleanupDB(ctx, d, stallMin, host); err != nil {
+			h.log.Warn("patch run cleanup failed", "context", host, "error", err)
 		}
 	})
 	h.log.Info("patch run cleanup completed", "stall_min", stallMin)
@@ -638,7 +629,7 @@ func (h *PatchRunCleanupHandler) resolveStallTimeoutMin() int {
 	return v
 }
 
-func (h *PatchRunCleanupHandler) cleanupDB(ctx context.Context, d *database.DB, stallMin int) (int64, error) {
+func (h *PatchRunCleanupHandler) cleanupDB(ctx context.Context, d *database.DB, stallMin int, contextHost string) error {
 	// Inactivity window, not total runtime: the query matches on updated_at,
 	// which every streamed progress chunk bumps. A run that is still producing
 	// output is never swept, however long it takes.
@@ -649,13 +640,30 @@ func (h *PatchRunCleanupHandler) cleanupDB(ctx context.Context, d *database.DB, 
 		ErrorMessage: &msg,
 	})
 	if err != nil {
-		return 0, err
+		return err
+	}
+	for _, r := range stalled {
+		h.logTimedOut(contextHost, "stalled", r.ID, r.HostID, r.HostName, stallMin)
 	}
 	undispatched, err := d.Queries.MarkUndispatchedPatchRunsTimedOut(ctx, db.MarkUndispatchedPatchRunsTimedOutParams{
 		DueBefore:    pgtime.From(time.Now().Add(-undispatchedPatchRunExpiry)),
 		ErrorMessage: &undispatchedPatchRunExpiredMsg,
 	})
-	return stalled + undispatched, err
+	if err != nil {
+		return err
+	}
+	for _, r := range undispatched {
+		h.logTimedOut(contextHost, "never_dispatched", r.ID, r.HostID, r.HostName, stallMin)
+	}
+	return nil
+}
+
+func (h *PatchRunCleanupHandler) logTimedOut(contextHost, reason, runID, hostID, hostName string, stallMin int) {
+	attrs := []any{"patch_run_id", runID, "host_id", hostID, "host_name", hostName, "reason", reason, "stall_min", stallMin}
+	if contextHost != "" {
+		attrs = append(attrs, "context", contextHost)
+	}
+	h.log.Info("patch run cleanup: marked timed_out", attrs...)
 }
 
 // AgentReportsCleanupHandler sweeps update_history (the Agent Activity feed

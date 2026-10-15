@@ -1,0 +1,47 @@
+<?xml version='1.0'?>
+<stream>
+<repo-list>
+<repo alias="repo-backports-debug-update" name="Update repository with updates for openSUSE Leap debuginfo packages from openSUSE Backports" priority="99" enabled="0" autorefresh="1" gpgcheck="1" repo_gpgcheck="1" pkg_gpgcheck="1">
+<url>http://download.opensuse.org/update/leap/15.5/backports_debug/</url>
+</repo>
+<repo alias="repo-backports-update" name="Update repository of openSUSE Backports" type="rpm-md" priority="99" enabled="1" autorefresh="1" gpgcheck="1" repo_gpgcheck="1" pkg_gpgcheck="0">
+<url>http://download.opensuse.org/update/leap/15.5/backports/</url>
+</repo>
+<repo alias="repo-debug" name="Debug Repository" priority="99" enabled="0" autorefresh="1" gpgcheck="1" repo_gpgcheck="1" pkg_gpgcheck="1">
+<url>http://download.opensuse.org/debug/distribution/leap/15.5/repo/oss/</url>
+</repo>
+<repo alias="repo-debug-non-oss" name="Debug Repository (Non-OSS)" priority="99" enabled="0" autorefresh="1" gpgcheck="1" repo_gpgcheck="1" pkg_gpgcheck="1">
+<url>http://download.opensuse.org/debug/distribution/leap/15.5/repo/non-oss/</url>
+</repo>
+<repo alias="repo-debug-update" name="Update Repository (Debug)" priority="99" enabled="0" autorefresh="1" gpgcheck="1" repo_gpgcheck="1" pkg_gpgcheck="1">
+<url>http://download.opensuse.org/debug/update/leap/15.5/oss/</url>
+</repo>
+<repo alias="repo-debug-update-non-oss" name="Update Repository (Debug, Non-OSS)" priority="99" enabled="0" autorefresh="1" gpgcheck="1" repo_gpgcheck="1" pkg_gpgcheck="1">
+<url>http://download.opensuse.org/debug/update/leap/15.5/non-oss/</url>
+</repo>
+<repo alias="repo-non-oss" name="Non-OSS Repository" type="rpm-md" priority="99" enabled="1" autorefresh="1" gpgcheck="1" repo_gpgcheck="1" pkg_gpgcheck="0">
+<url>http://download.opensuse.org/distribution/leap/15.5/repo/non-oss/</url>
+</repo>
+<repo alias="repo-openh264" name="Open H.264 Codec (openSUSE Leap)" type="rpm-md" priority="99" enabled="1" autorefresh="1" gpgcheck="1" repo_gpgcheck="1" pkg_gpgcheck="0">
+<url>http://codecs.opensuse.org/openh264/openSUSE_Leap/</url>
+</repo>
+<repo alias="repo-oss" name="Main Repository" type="rpm-md" priority="99" enabled="1" autorefresh="1" gpgcheck="1" repo_gpgcheck="1" pkg_gpgcheck="0">
+<url>http://download.opensuse.org/distribution/leap/15.5/repo/oss/</url>
+</repo>
+<repo alias="repo-sle-debug-update" name="Update repository with debuginfo for updates from SUSE Linux Enterprise 15" priority="99" enabled="0" autorefresh="1" gpgcheck="1" repo_gpgcheck="1" pkg_gpgcheck="1">
+<url>http://download.opensuse.org/debug/update/leap/15.5/sle/</url>
+</repo>
+<repo alias="repo-sle-update" name="Update repository with updates from SUSE Linux Enterprise 15" type="rpm-md" priority="99" enabled="1" autorefresh="1" gpgcheck="1" repo_gpgcheck="1" pkg_gpgcheck="0">
+<url>http://download.opensuse.org/update/leap/15.5/sle/</url>
+</repo>
+<repo alias="repo-source" name="Source Repository" priority="99" enabled="0" autorefresh="1" gpgcheck="1" repo_gpgcheck="1" pkg_gpgcheck="1">
+<url>http://download.opensuse.org/source/distribution/leap/15.5/repo/oss/</url>
+</repo>
+<repo alias="repo-update" name="Main Update Repository" type="rpm-md" priority="99" enabled="1" autorefresh="1" gpgcheck="1" repo_gpgcheck="1" pkg_gpgcheck="0">
+<url>http://download.opensuse.org/update/leap/15.5/oss/</url>
+</repo>
+<repo alias="repo-update-non-oss" name="Update Repository (Non-Oss)" type="rpm-md" priority="99" enabled="1" autorefresh="1" gpgcheck="1" repo_gpgcheck="1" pkg_gpgcheck="0">
+<url>http://download.opensuse.org/update/leap/15.5/non-oss/</url>
+</repo>
+</repo-list>
+</stream>

@@ -12,7 +12,7 @@ UPDATE hosts SET
     ip = COALESCE(sqlc.narg('ip')::text, ip),
     architecture = COALESCE(sqlc.narg('architecture')::text, architecture),
     agent_version = COALESCE(sqlc.narg('agent_version')::text, agent_version),
-    -- An agent version without a config version is a pre-2.1.5 agent, which has none.
+    -- An agent version without a config version is a pre-2.1.4 agent, which has none.
     config_version = CASE
         WHEN sqlc.narg('config_version')::text IS NOT NULL THEN sqlc.narg('config_version')::text
         WHEN sqlc.narg('agent_version')::text IS NOT NULL THEN NULL
@@ -33,7 +33,9 @@ UPDATE hosts SET
     system_uptime = COALESCE(sqlc.narg('system_uptime')::text, system_uptime),
     boot_time = COALESCE(sqlc.narg('boot_time')::timestamptz, boot_time),
     load_average = COALESCE(sqlc.narg('load_average')::jsonb, load_average),
-    needs_reboot = COALESCE(sqlc.narg('needs_reboot')::boolean, needs_reboot),
+    -- A run that needed a restart pins needs_reboot until boot_time moves; 60s absorbs uptime jitter.
+    needs_reboot = COALESCE(sqlc.narg('needs_reboot')::boolean, needs_reboot) OR (patch_reboot_pending_boot_time IS NOT NULL
+            AND ABS(EXTRACT(EPOCH FROM (COALESCE(sqlc.narg('boot_time')::timestamptz, boot_time) - patch_reboot_pending_boot_time))) < 60),
     -- reboot_reason is only rewritten when this report also carries
     -- needs_reboot. A hash-gated partial report never carries either (the ping
     -- metrics path owns both fields), and reboot_reason has no COALESCE guard
@@ -42,6 +44,9 @@ UPDATE hosts SET
     -- Second arm: a report asserting needs_reboot without a reason must not
     -- blank a stored one; clearing the flag still clears both.
     reboot_reason = CASE
+        WHEN (patch_reboot_pending_boot_time IS NOT NULL
+                AND ABS(EXTRACT(EPOCH FROM (COALESCE(sqlc.narg('boot_time')::timestamptz, boot_time) - patch_reboot_pending_boot_time))) < 60)
+             AND NOT COALESCE(sqlc.narg('needs_reboot')::boolean, false) THEN 'Restart required to finish a patch run'
         WHEN sqlc.narg('needs_reboot')::boolean IS NULL THEN reboot_reason
         WHEN sqlc.narg('needs_reboot')::boolean IS TRUE
              AND sqlc.narg('reboot_reason')::text IS NULL THEN reboot_reason
@@ -53,11 +58,18 @@ UPDATE hosts SET
     interfaces_hash = COALESCE(sqlc.narg('interfaces_hash')::text, interfaces_hash),
     hostname_hash = COALESCE(sqlc.narg('hostname_hash')::text, hostname_hash),
     last_full_report_at = COALESCE(sqlc.narg('last_full_report_at')::timestamp, last_full_report_at),
-    awaiting_post_patch_report_run_id = NULL
+    awaiting_post_patch_report_run_id = NULL,
+    patch_reboot_pending_boot_time = CASE WHEN (patch_reboot_pending_boot_time IS NOT NULL
+            AND ABS(EXTRACT(EPOCH FROM (COALESCE(sqlc.narg('boot_time')::timestamptz, boot_time) - patch_reboot_pending_boot_time))) < 60) THEN patch_reboot_pending_boot_time END
 WHERE id = sqlc.arg('id');
 
 -- name: DeleteHostPackagesByHostID :exec
 DELETE FROM host_packages WHERE host_id = $1;
+
+-- name: DeleteHostPackagesExceptWindowsUpdates :exec
+DELETE FROM host_packages hp
+WHERE hp.host_id = $1
+  AND NOT EXISTS (SELECT 1 FROM packages p WHERE p.id = hp.package_id AND p.category = 'Windows Update');
 
 -- name: GetPackageByName :one
 SELECT id, name, description, category, latest_version, created_at, updated_at
@@ -195,6 +207,7 @@ INSERT INTO host_packages (
     needs_update, is_security_update, source_repository_id,
     wua_guid, wua_kb, wua_severity, wua_categories,
     wua_description, wua_support_url, wua_revision_number,
+    winget_id, winget_pinned, winget_store_app, wua_browse_only, wua_update_type,
     last_checked
 )
 SELECT
@@ -209,6 +222,11 @@ SELECT
     NULLIF(wua_description, '')          AS wua_description,
     NULLIF(wua_support_url, '')          AS wua_support_url,
     NULLIF(wua_revision_number, 0)       AS wua_revision_number,
+    NULLIF(winget_id, '')                AS winget_id,
+    winget_pinned,
+    winget_store_app,
+    wua_browse_only,
+    NULLIF(wua_update_type, '')          AS wua_update_type,
     NOW()
 FROM jsonb_to_recordset(sqlc.arg('payload')::jsonb)
     AS t(
@@ -219,7 +237,8 @@ FROM jsonb_to_recordset(sqlc.arg('payload')::jsonb)
         wua_guid text, wua_kb text, wua_severity text,
         wua_categories jsonb,
         wua_description text, wua_support_url text,
-        wua_revision_number int
+        wua_revision_number int,
+        winget_id text, winget_pinned boolean, winget_store_app boolean, wua_browse_only boolean, wua_update_type text
     )
 ORDER BY package_id;
 
@@ -240,3 +259,12 @@ VALUES (
     $6, $7, NOW(), $8, $9,
     $10, $11, $12, $13
 );
+
+-- name: CountHostWindowsUpdateRows :one
+SELECT
+    COUNT(*)::int AS total,
+    COUNT(*) FILTER (WHERE hp.needs_update)::int AS needs_update,
+    COUNT(*) FILTER (WHERE hp.is_security_update)::int AS security
+FROM host_packages hp
+JOIN packages p ON p.id = hp.package_id
+WHERE hp.host_id = $1 AND p.category = 'Windows Update';

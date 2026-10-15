@@ -1,14 +1,43 @@
 import { Package } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { packageDetailPath } from "../utils/packageLinks";
 
 const COLLAPSE_THRESHOLD = 2;
 
+const NOT_IN_INVENTORY = "Not in the package inventory";
+
+function PackageName({ name, packageIds, className = "", onClick }) {
+	const to = packageDetailPath(name, packageIds);
+	if (!to) {
+		return (
+			<span className={className} title={NOT_IN_INVENTORY}>
+				{name}
+			</span>
+		);
+	}
+	return (
+		<Link
+			to={to}
+			className={`text-primary-600 dark:text-primary-400 hover:underline ${className}`}
+			onClick={onClick}
+		>
+			{name}
+		</Link>
+	);
+}
+
 /**
  * Renders a list of package names. When count > COLLAPSE_THRESHOLD, shows
- * "firstPackage + N more" with expandable full list. Each package links to its detail page.
+ * "firstPackage + N more" with expandable full list. Each package links to its
+ * detail page; with packageIds, only names in the inventory are linked, by ID.
  */
-export function PackageNameList({ packages, className = "", showIcon = true }) {
+export function PackageNameList({
+	packages,
+	packageIds,
+	className = "",
+	showIcon = true,
+}) {
 	const [expanded, setExpanded] = useState(false);
 
 	if (!packages || packages.length === 0) return null;
@@ -21,12 +50,7 @@ export function PackageNameList({ packages, className = "", showIcon = true }) {
 			{showIcon && <Package className="h-4 w-4 shrink-0" />}
 			{showCollapsed ? (
 				<>
-					<Link
-						to={`/packages/${encodeURIComponent(first)}`}
-						className="text-primary-600 dark:text-primary-400 hover:underline"
-					>
-						{first}
-					</Link>
+					<PackageName name={first} packageIds={packageIds} />
 					<button
 						type="button"
 						onClick={() => setExpanded(true)}
@@ -39,12 +63,7 @@ export function PackageNameList({ packages, className = "", showIcon = true }) {
 				packages.map((pkg, i) => (
 					<span key={pkg}>
 						{i > 0 && ", "}
-						<Link
-							to={`/packages/${encodeURIComponent(pkg)}`}
-							className="text-primary-600 dark:text-primary-400 hover:underline"
-						>
-							{pkg}
-						</Link>
+						<PackageName name={pkg} packageIds={packageIds} />
 					</span>
 				))
 			)}
@@ -101,13 +120,12 @@ export function CompactPackageSummary({ run, className = "" }) {
 			title={fullList}
 		>
 			<Package className="h-4 w-4 text-secondary-400 dark:text-secondary-500 shrink-0" />
-			<Link
-				to={`/packages/${encodeURIComponent(first)}`}
-				className="text-primary-600 dark:text-primary-400 hover:underline truncate"
+			<PackageName
+				name={first}
+				packageIds={run.package_ids}
+				className="truncate"
 				onClick={(e) => e.stopPropagation()}
-			>
-				{first}
-			</Link>
+			/>
 			{restCount > 0 && (
 				<span className="text-xs font-medium text-secondary-500 dark:text-secondary-400 shrink-0">
 					+{restCount} more
@@ -144,11 +162,16 @@ export function PackageListDisplay({ run }) {
 
 	return (
 		<span className="flex flex-col gap-0.5">
-			<PackageNameList packages={requested} />
+			<PackageNameList packages={requested} packageIds={run.package_ids} />
 			{extraDeps.length > 0 && (
 				<span className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1 flex-wrap">
 					(+ {extraDeps.length} dep{extraDeps.length !== 1 ? "s" : ""}:{" "}
-					<PackageNameList packages={extraDeps} showIcon={false} />)
+					<PackageNameList
+						packages={extraDeps}
+						packageIds={run.package_ids}
+						showIcon={false}
+					/>
+					)
 				</span>
 			)}
 		</span>

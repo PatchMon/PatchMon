@@ -11,6 +11,35 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const clearUserOidcLink = `-- name: ClearUserOidcLink :exec
+UPDATE users SET oidc_sub = NULL, oidc_provider = NULL, updated_at = NOW()
+WHERE id = $1
+`
+
+func (q *Queries) ClearUserOidcLink(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, clearUserOidcLink, id)
+	return err
+}
+
+const consumeTfaBackupCode = `-- name: ConsumeTfaBackupCode :execrows
+UPDATE users SET tfa_backup_codes = $1, updated_at = NOW()
+WHERE id = $2 AND tfa_backup_codes = $3::TEXT
+`
+
+type ConsumeTfaBackupCodeParams struct {
+	NewCodes *string `json:"new_codes"`
+	ID       string  `json:"id"`
+	OldCodes string  `json:"old_codes"`
+}
+
+func (q *Queries) ConsumeTfaBackupCode(ctx context.Context, arg ConsumeTfaBackupCodeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, consumeTfaBackupCode, arg.NewCodes, arg.ID, arg.OldCodes)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countActiveAdmins = `-- name: CountActiveAdmins :one
 SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = true
 `
@@ -226,7 +255,7 @@ func (q *Queries) ExistsByUsernameOrEmail(ctx context.Context, arg ExistsByUsern
 }
 
 const getUserByDiscordID = `-- name: GetUserByDiscordID :one
-SELECT id, username, email, password_hash, role, is_active, last_login, created_at, updated_at, tfa_backup_codes, tfa_enabled, tfa_secret, first_name, last_name, theme_preference, color_theme, ui_preferences, oidc_sub, oidc_provider, avatar_url, discord_id, discord_username, discord_avatar, discord_linked_at, newsletter_subscribed, newsletter_subscribed_at FROM users WHERE discord_id = $1
+SELECT id, username, email, password_hash, role, is_active, last_login, created_at, updated_at, tfa_backup_codes, tfa_enabled, tfa_secret, first_name, last_name, theme_preference, color_theme, ui_preferences, oidc_sub, oidc_provider, avatar_url, discord_id, discord_username, discord_avatar, discord_linked_at, newsletter_subscribed, newsletter_subscribed_at, tfa_enrolment_required, password_change_required, previous_password_hash FROM users WHERE discord_id = $1
 `
 
 func (q *Queries) GetUserByDiscordID(ctx context.Context, discordID *string) (User, error) {
@@ -259,12 +288,15 @@ func (q *Queries) GetUserByDiscordID(ctx context.Context, discordID *string) (Us
 		&i.DiscordLinkedAt,
 		&i.NewsletterSubscribed,
 		&i.NewsletterSubscribedAt,
+		&i.TfaEnrolmentRequired,
+		&i.PasswordChangeRequired,
+		&i.PreviousPasswordHash,
 	)
 	return i, err
 }
 
 const getUserByDiscordIDOrEmail = `-- name: GetUserByDiscordIDOrEmail :one
-SELECT id, username, email, password_hash, role, is_active, last_login, created_at, updated_at, tfa_backup_codes, tfa_enabled, tfa_secret, first_name, last_name, theme_preference, color_theme, ui_preferences, oidc_sub, oidc_provider, avatar_url, discord_id, discord_username, discord_avatar, discord_linked_at, newsletter_subscribed, newsletter_subscribed_at FROM users
+SELECT id, username, email, password_hash, role, is_active, last_login, created_at, updated_at, tfa_backup_codes, tfa_enabled, tfa_secret, first_name, last_name, theme_preference, color_theme, ui_preferences, oidc_sub, oidc_provider, avatar_url, discord_id, discord_username, discord_avatar, discord_linked_at, newsletter_subscribed, newsletter_subscribed_at, tfa_enrolment_required, password_change_required, previous_password_hash FROM users
 WHERE discord_id = $1 OR (LOWER(email) = LOWER($2) AND $2 != '')
 ORDER BY CASE WHEN discord_id = $1 THEN 0 ELSE 1 END
 LIMIT 1
@@ -305,12 +337,15 @@ func (q *Queries) GetUserByDiscordIDOrEmail(ctx context.Context, arg GetUserByDi
 		&i.DiscordLinkedAt,
 		&i.NewsletterSubscribed,
 		&i.NewsletterSubscribedAt,
+		&i.TfaEnrolmentRequired,
+		&i.PasswordChangeRequired,
+		&i.PreviousPasswordHash,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, role, is_active, last_login, created_at, updated_at, tfa_backup_codes, tfa_enabled, tfa_secret, first_name, last_name, theme_preference, color_theme, ui_preferences, oidc_sub, oidc_provider, avatar_url, discord_id, discord_username, discord_avatar, discord_linked_at, newsletter_subscribed, newsletter_subscribed_at FROM users WHERE LOWER(email) = LOWER($1)
+SELECT id, username, email, password_hash, role, is_active, last_login, created_at, updated_at, tfa_backup_codes, tfa_enabled, tfa_secret, first_name, last_name, theme_preference, color_theme, ui_preferences, oidc_sub, oidc_provider, avatar_url, discord_id, discord_username, discord_avatar, discord_linked_at, newsletter_subscribed, newsletter_subscribed_at, tfa_enrolment_required, password_change_required, previous_password_hash FROM users WHERE LOWER(email) = LOWER($1)
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error) {
@@ -343,12 +378,15 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 		&i.DiscordLinkedAt,
 		&i.NewsletterSubscribed,
 		&i.NewsletterSubscribedAt,
+		&i.TfaEnrolmentRequired,
+		&i.PasswordChangeRequired,
+		&i.PreviousPasswordHash,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, email, password_hash, role, is_active, last_login, created_at, updated_at, tfa_backup_codes, tfa_enabled, tfa_secret, first_name, last_name, theme_preference, color_theme, ui_preferences, oidc_sub, oidc_provider, avatar_url, discord_id, discord_username, discord_avatar, discord_linked_at, newsletter_subscribed, newsletter_subscribed_at FROM users WHERE id = $1
+SELECT id, username, email, password_hash, role, is_active, last_login, created_at, updated_at, tfa_backup_codes, tfa_enabled, tfa_secret, first_name, last_name, theme_preference, color_theme, ui_preferences, oidc_sub, oidc_provider, avatar_url, discord_id, discord_username, discord_avatar, discord_linked_at, newsletter_subscribed, newsletter_subscribed_at, tfa_enrolment_required, password_change_required, previous_password_hash FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
@@ -381,12 +419,15 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
 		&i.DiscordLinkedAt,
 		&i.NewsletterSubscribed,
 		&i.NewsletterSubscribedAt,
+		&i.TfaEnrolmentRequired,
+		&i.PasswordChangeRequired,
+		&i.PreviousPasswordHash,
 	)
 	return i, err
 }
 
 const getUserByOidcSub = `-- name: GetUserByOidcSub :one
-SELECT id, username, email, password_hash, role, is_active, last_login, created_at, updated_at, tfa_backup_codes, tfa_enabled, tfa_secret, first_name, last_name, theme_preference, color_theme, ui_preferences, oidc_sub, oidc_provider, avatar_url, discord_id, discord_username, discord_avatar, discord_linked_at, newsletter_subscribed, newsletter_subscribed_at FROM users WHERE oidc_sub = $1
+SELECT id, username, email, password_hash, role, is_active, last_login, created_at, updated_at, tfa_backup_codes, tfa_enabled, tfa_secret, first_name, last_name, theme_preference, color_theme, ui_preferences, oidc_sub, oidc_provider, avatar_url, discord_id, discord_username, discord_avatar, discord_linked_at, newsletter_subscribed, newsletter_subscribed_at, tfa_enrolment_required, password_change_required, previous_password_hash FROM users WHERE oidc_sub = $1
 `
 
 func (q *Queries) GetUserByOidcSub(ctx context.Context, oidcSub *string) (User, error) {
@@ -419,12 +460,15 @@ func (q *Queries) GetUserByOidcSub(ctx context.Context, oidcSub *string) (User, 
 		&i.DiscordLinkedAt,
 		&i.NewsletterSubscribed,
 		&i.NewsletterSubscribedAt,
+		&i.TfaEnrolmentRequired,
+		&i.PasswordChangeRequired,
+		&i.PreviousPasswordHash,
 	)
 	return i, err
 }
 
 const getUserByOidcSubOrEmail = `-- name: GetUserByOidcSubOrEmail :one
-SELECT id, username, email, password_hash, role, is_active, last_login, created_at, updated_at, tfa_backup_codes, tfa_enabled, tfa_secret, first_name, last_name, theme_preference, color_theme, ui_preferences, oidc_sub, oidc_provider, avatar_url, discord_id, discord_username, discord_avatar, discord_linked_at, newsletter_subscribed, newsletter_subscribed_at FROM users
+SELECT id, username, email, password_hash, role, is_active, last_login, created_at, updated_at, tfa_backup_codes, tfa_enabled, tfa_secret, first_name, last_name, theme_preference, color_theme, ui_preferences, oidc_sub, oidc_provider, avatar_url, discord_id, discord_username, discord_avatar, discord_linked_at, newsletter_subscribed, newsletter_subscribed_at, tfa_enrolment_required, password_change_required, previous_password_hash FROM users
 WHERE oidc_sub = $1 OR (LOWER(email) = LOWER($2) AND $2 != '')
 ORDER BY CASE WHEN oidc_sub = $1 THEN 0 ELSE 1 END
 LIMIT 1
@@ -469,12 +513,15 @@ func (q *Queries) GetUserByOidcSubOrEmail(ctx context.Context, arg GetUserByOidc
 		&i.DiscordLinkedAt,
 		&i.NewsletterSubscribed,
 		&i.NewsletterSubscribedAt,
+		&i.TfaEnrolmentRequired,
+		&i.PasswordChangeRequired,
+		&i.PreviousPasswordHash,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT id, username, email, password_hash, role, is_active, last_login, created_at, updated_at, tfa_backup_codes, tfa_enabled, tfa_secret, first_name, last_name, theme_preference, color_theme, ui_preferences, oidc_sub, oidc_provider, avatar_url, discord_id, discord_username, discord_avatar, discord_linked_at, newsletter_subscribed, newsletter_subscribed_at FROM users WHERE LOWER(username) = LOWER($1)
+SELECT id, username, email, password_hash, role, is_active, last_login, created_at, updated_at, tfa_backup_codes, tfa_enabled, tfa_secret, first_name, last_name, theme_preference, color_theme, ui_preferences, oidc_sub, oidc_provider, avatar_url, discord_id, discord_username, discord_avatar, discord_linked_at, newsletter_subscribed, newsletter_subscribed_at, tfa_enrolment_required, password_change_required, previous_password_hash FROM users WHERE LOWER(username) = LOWER($1)
 `
 
 func (q *Queries) GetUserByUsername(ctx context.Context, lower string) (User, error) {
@@ -507,12 +554,15 @@ func (q *Queries) GetUserByUsername(ctx context.Context, lower string) (User, er
 		&i.DiscordLinkedAt,
 		&i.NewsletterSubscribed,
 		&i.NewsletterSubscribedAt,
+		&i.TfaEnrolmentRequired,
+		&i.PasswordChangeRequired,
+		&i.PreviousPasswordHash,
 	)
 	return i, err
 }
 
 const getUserByUsernameOrEmail = `-- name: GetUserByUsernameOrEmail :one
-SELECT id, username, email, password_hash, role, is_active, last_login, created_at, updated_at, tfa_backup_codes, tfa_enabled, tfa_secret, first_name, last_name, theme_preference, color_theme, ui_preferences, oidc_sub, oidc_provider, avatar_url, discord_id, discord_username, discord_avatar, discord_linked_at, newsletter_subscribed, newsletter_subscribed_at FROM users
+SELECT id, username, email, password_hash, role, is_active, last_login, created_at, updated_at, tfa_backup_codes, tfa_enabled, tfa_secret, first_name, last_name, theme_preference, color_theme, ui_preferences, oidc_sub, oidc_provider, avatar_url, discord_id, discord_username, discord_avatar, discord_linked_at, newsletter_subscribed, newsletter_subscribed_at, tfa_enrolment_required, password_change_required, previous_password_hash FROM users
 WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($1)
 ORDER BY CASE WHEN LOWER(username) = LOWER($1) THEN 0 ELSE 1 END
 LIMIT 1
@@ -548,12 +598,15 @@ func (q *Queries) GetUserByUsernameOrEmail(ctx context.Context, lower string) (U
 		&i.DiscordLinkedAt,
 		&i.NewsletterSubscribed,
 		&i.NewsletterSubscribedAt,
+		&i.TfaEnrolmentRequired,
+		&i.PasswordChangeRequired,
+		&i.PreviousPasswordHash,
 	)
 	return i, err
 }
 
 const listActiveUsers = `-- name: ListActiveUsers :many
-SELECT id, username, email, password_hash, role, is_active, last_login, created_at, updated_at, tfa_backup_codes, tfa_enabled, tfa_secret, first_name, last_name, theme_preference, color_theme, ui_preferences, oidc_sub, oidc_provider, avatar_url, discord_id, discord_username, discord_avatar, discord_linked_at, newsletter_subscribed, newsletter_subscribed_at FROM users WHERE is_active = true ORDER BY username
+SELECT id, username, email, password_hash, role, is_active, last_login, created_at, updated_at, tfa_backup_codes, tfa_enabled, tfa_secret, first_name, last_name, theme_preference, color_theme, ui_preferences, oidc_sub, oidc_provider, avatar_url, discord_id, discord_username, discord_avatar, discord_linked_at, newsletter_subscribed, newsletter_subscribed_at, tfa_enrolment_required, password_change_required, previous_password_hash FROM users WHERE is_active = true ORDER BY username
 `
 
 func (q *Queries) ListActiveUsers(ctx context.Context) ([]User, error) {
@@ -592,6 +645,9 @@ func (q *Queries) ListActiveUsers(ctx context.Context) ([]User, error) {
 			&i.DiscordLinkedAt,
 			&i.NewsletterSubscribed,
 			&i.NewsletterSubscribedAt,
+			&i.TfaEnrolmentRequired,
+			&i.PasswordChangeRequired,
+			&i.PreviousPasswordHash,
 		); err != nil {
 			return nil, err
 		}
@@ -604,7 +660,7 @@ func (q *Queries) ListActiveUsers(ctx context.Context) ([]User, error) {
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, username, email, password_hash, role, is_active, last_login, created_at, updated_at, tfa_backup_codes, tfa_enabled, tfa_secret, first_name, last_name, theme_preference, color_theme, ui_preferences, oidc_sub, oidc_provider, avatar_url, discord_id, discord_username, discord_avatar, discord_linked_at, newsletter_subscribed, newsletter_subscribed_at FROM users ORDER BY username LIMIT $1 OFFSET $2
+SELECT id, username, email, password_hash, role, is_active, last_login, created_at, updated_at, tfa_backup_codes, tfa_enabled, tfa_secret, first_name, last_name, theme_preference, color_theme, ui_preferences, oidc_sub, oidc_provider, avatar_url, discord_id, discord_username, discord_avatar, discord_linked_at, newsletter_subscribed, newsletter_subscribed_at, tfa_enrolment_required, password_change_required, previous_password_hash FROM users ORDER BY username LIMIT $1 OFFSET $2
 `
 
 type ListUsersParams struct {
@@ -648,6 +704,9 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, e
 			&i.DiscordLinkedAt,
 			&i.NewsletterSubscribed,
 			&i.NewsletterSubscribedAt,
+			&i.TfaEnrolmentRequired,
+			&i.PasswordChangeRequired,
+			&i.PreviousPasswordHash,
 		); err != nil {
 			return nil, err
 		}
@@ -659,12 +718,40 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, e
 	return items, nil
 }
 
+const resetUserTfa = `-- name: ResetUserTfa :one
+UPDATE users SET tfa_enabled = false, tfa_secret = NULL, tfa_backup_codes = NULL,
+    tfa_enrolment_required = (password_hash IS NOT NULL AND oidc_sub IS NULL AND oidc_provider IS NULL), updated_at = NOW()
+WHERE id = $1 AND tfa_enabled = true
+RETURNING tfa_enrolment_required
+`
+
+func (q *Queries) ResetUserTfa(ctx context.Context, id string) (bool, error) {
+	row := q.db.QueryRow(ctx, resetUserTfa, id)
+	var tfa_enrolment_required bool
+	err := row.Scan(&tfa_enrolment_required)
+	return tfa_enrolment_required, err
+}
+
 const setNewsletterSubscribed = `-- name: SetNewsletterSubscribed :exec
 UPDATE users SET newsletter_subscribed = true, newsletter_subscribed_at = NOW(), updated_at = NOW() WHERE id = $1
 `
 
 func (q *Queries) SetNewsletterSubscribed(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, setNewsletterSubscribed, id)
+	return err
+}
+
+const setTemporaryPassword = `-- name: SetTemporaryPassword :exec
+UPDATE users SET previous_password_hash = password_hash, password_hash = $2, password_change_required = true, updated_at = NOW() WHERE id = $1
+`
+
+type SetTemporaryPasswordParams struct {
+	ID           string  `json:"id"`
+	PasswordHash *string `json:"password_hash"`
+}
+
+func (q *Queries) SetTemporaryPassword(ctx context.Context, arg SetTemporaryPasswordParams) error {
+	_, err := q.db.Exec(ctx, setTemporaryPassword, arg.ID, arg.PasswordHash)
 	return err
 }
 
@@ -683,7 +770,7 @@ func (q *Queries) UpdateLastLogin(ctx context.Context, arg UpdateLastLoginParams
 }
 
 const updatePassword = `-- name: UpdatePassword :exec
-UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2
+UPDATE users SET password_hash = $1, password_change_required = false, previous_password_hash = NULL, updated_at = NOW() WHERE id = $2
 `
 
 type UpdatePasswordParams struct {
@@ -711,7 +798,7 @@ func (q *Queries) UpdateTfaBackupCodes(ctx context.Context, arg UpdateTfaBackupC
 }
 
 const updateTfaEnabled = `-- name: UpdateTfaEnabled :exec
-UPDATE users SET tfa_enabled = $1, tfa_backup_codes = $2, updated_at = NOW() WHERE id = $3
+UPDATE users SET tfa_enabled = $1, tfa_backup_codes = $2, tfa_enrolment_required = false, updated_at = NOW() WHERE id = $3
 `
 
 type UpdateTfaEnabledParams struct {
@@ -889,6 +976,21 @@ func (q *Queries) UpdateUserOidcProfile(ctx context.Context, arg UpdateUserOidcP
 	return err
 }
 
+const updateUserOidcProvider = `-- name: UpdateUserOidcProvider :exec
+UPDATE users SET oidc_provider = $1, updated_at = NOW()
+WHERE id = $2
+`
+
+type UpdateUserOidcProviderParams struct {
+	OidcProvider *string `json:"oidc_provider"`
+	ID           string  `json:"id"`
+}
+
+func (q *Queries) UpdateUserOidcProvider(ctx context.Context, arg UpdateUserOidcProviderParams) error {
+	_, err := q.db.Exec(ctx, updateUserOidcProvider, arg.OidcProvider, arg.ID)
+	return err
+}
+
 const updateUserPreferences = `-- name: UpdateUserPreferences :exec
 UPDATE users SET
     theme_preference = COALESCE($1::text, theme_preference),
@@ -913,4 +1015,22 @@ func (q *Queries) UpdateUserPreferences(ctx context.Context, arg UpdateUserPrefe
 		arg.ID,
 	)
 	return err
+}
+
+const upgradePasswordHash = `-- name: UpgradePasswordHash :execrows
+UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2 AND password_hash = $3
+`
+
+type UpgradePasswordHashParams struct {
+	NewHash *string `json:"new_hash"`
+	ID      string  `json:"id"`
+	OldHash *string `json:"old_hash"`
+}
+
+func (q *Queries) UpgradePasswordHash(ctx context.Context, arg UpgradePasswordHashParams) (int64, error) {
+	result, err := q.db.Exec(ctx, upgradePasswordHash, arg.NewHash, arg.ID, arg.OldHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

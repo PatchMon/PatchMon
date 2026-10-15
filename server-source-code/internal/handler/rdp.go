@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/agentregistry"
@@ -20,6 +22,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/rdpproxy"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
+	"github.com/gorilla/websocket"
 	"github.com/wwt/guac"
 )
 
@@ -35,6 +38,82 @@ const (
 )
 
 var ErrRDPTicketRequired = errors.New("valid RDP ticket required")
+
+// Machine codes prefixed as "<code>: " to Guacamole error messages the server
+// sends itself; the frontend picks its guidance panel from them.
+const (
+	rdpAbortAgentGone     = "agent_disconnected"
+	rdpAbortSessionEnded  = "rdp_session_ended"
+	rdpAbortTicketInvalid = "rdp_ticket_invalid"
+	rdpAbortServerError   = "server_error"
+
+	rdpMsgAgentGone     = rdpAbortAgentGone + ": The PatchMon agent on this host disconnected. Connect again once it is back online."
+	rdpMsgSessionEnded  = rdpAbortSessionEnded + ": The RDP session ended before it could start. Connect again."
+	rdpMsgTicketInvalid = rdpAbortTicketInvalid + ": This RDP ticket is invalid, expired or already used. Connect again to get a new one."
+	rdpMsgServerError   = rdpAbortServerError + ": The RDP session could not be started on the PatchMon server. Check the server logs."
+)
+
+// rdpTunnel ties a guac tunnel to its proxy session so the session is torn
+// down, and the agent told, whenever the browser side ends.
+type rdpTunnel struct {
+	guac.Tunnel
+	sessionID string
+	guacdConn net.Conn
+	abortIns  atomic.Pointer[[]byte]
+	abortWS   atomic.Int32
+}
+
+func (t *rdpTunnel) AcquireReader() guac.InstructionReader {
+	return &abortableReader{InstructionReader: t.Tunnel.AcquireReader(), t: t}
+}
+
+// AcquireWriter discards browser input after an abort instead of failing, so
+// the ws reader keeps draining the socket until the browser closes it.
+func (t *rdpTunnel) AcquireWriter() io.Writer {
+	return &abortableWriter{w: t.Tunnel.AcquireWriter(), t: t}
+}
+
+type abortableWriter struct {
+	w io.Writer
+	t *rdpTunnel
+}
+
+func (w *abortableWriter) Write(p []byte) (int, error) {
+	if w.t.abortIns.Load() != nil {
+		return len(p), nil
+	}
+	return w.w.Write(p)
+}
+
+// abort ends the browser side with a Guacamole error. guacd does not notice
+// the proxy socket closing, so the tunnel is ended from this side.
+func (t *rdpTunnel) abort(status guac.Status, msg string) {
+	ins := []byte(guac.NewInstruction("error", msg, strconv.Itoa(status.GetGuacamoleStatusCode())).String())
+	t.abortWS.Store(int32(status.GetGuacamoleStatusCode()))
+	t.abortIns.Store(&ins)
+	_ = t.guacdConn.Close()
+}
+
+type abortableReader struct {
+	guac.InstructionReader
+	t    *rdpTunnel
+	sent bool
+}
+
+func (r *abortableReader) ReadSome() ([]byte, error) {
+	ins, err := r.InstructionReader.ReadSome()
+	if err != nil && !r.sent {
+		if p := r.t.abortIns.Load(); p != nil {
+			r.sent = true
+			return *p, nil
+		}
+	}
+	return ins, err
+}
+
+func (r *abortableReader) Available() bool {
+	return !r.sent && r.InstructionReader.Available()
+}
 
 // RDPHandler handles RDP ticket creation and WebSocket tunnel.
 type RDPHandler struct {
@@ -132,6 +211,7 @@ func (h *RDPHandler) ServeCreateTicket(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 		Width    int    `json:"width,omitempty"`
 		Height   int    `json:"height,omitempty"`
+		Layout   string `json:"keyboardLayout,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
@@ -139,6 +219,10 @@ func (h *RDPHandler) ServeCreateTicket(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.HostID == "" {
 		JSON(w, http.StatusBadRequest, map[string]string{"error": "hostId is required"})
+		return
+	}
+	if !validRDPKeyboardLayout(req.Layout) {
+		JSON(w, http.StatusBadRequest, map[string]string{"error": "Unsupported keyboard layout", "code": "invalid_keyboard_layout"})
 		return
 	}
 
@@ -201,7 +285,7 @@ func (h *RDPHandler) ServeCreateTicket(w http.ResponseWriter, r *http.Request) {
 	if probe, err := net.DialTimeout("tcp", h.guacdAddress, guacdPreflightTimeout); err != nil {
 		h.log.Warn("rdp-ticket guacd preflight failed", "addr", h.guacdAddress, "error", err)
 		JSON(w, http.StatusServiceUnavailable, map[string]string{
-			"error": "guacd is not reachable on the PatchMon server. Install it (apt install guacd / yum install guacd) or set GUACD_ADDRESS to a running sidecar.",
+			"error": "guacd is not reachable on the PatchMon server. Install it (apt install guacd / yum install guacd), or in Docker run the guacd sidecar in the server's network namespace and set GUACD_ADDRESS=127.0.0.1:4822.",
 			"code":  "guacd_unavailable",
 		})
 		return
@@ -209,8 +293,20 @@ func (h *RDPHandler) ServeCreateTicket(w http.ResponseWriter, r *http.Request) {
 		_ = probe.Close()
 	}
 
-	sessionID, port, err := h.rdpSessions.Create(r.Context(), host.ApiID, host.ID)
+	sessionID, port, err := h.rdpSessions.Create(r.Context(), rdpproxy.Owner{
+		ApiID:  host.ApiID,
+		HostID: host.ID,
+		UserID: userID,
+		Scope:  hostctx.TenantHostKey(r.Context()),
+	})
 	if err != nil {
+		if errors.Is(err, rdpproxy.ErrMaxScopeSessionsReached) {
+			JSON(w, http.StatusServiceUnavailable, map[string]string{
+				"error": "Too many RDP sessions are open, please close an existing session or try again later.",
+				"code":  "max_sessions_context",
+			})
+			return
+		}
 		if errors.Is(err, rdpproxy.ErrMaxSessionsReached) {
 			JSON(w, http.StatusServiceUnavailable, map[string]string{
 				"error": "Too many concurrent RDP sessions on this server, please try again later.",
@@ -248,9 +344,6 @@ func (h *RDPHandler) ServeCreateTicket(w http.ResponseWriter, r *http.Request) {
 	// torn down, and the user would see only a generic "invalid ticket" error.
 	result, waitErr := h.rdpSessions.WaitAgentReady(r.Context(), sessionID, agentHandshakeTimeout)
 	if waitErr != nil {
-		// Always notify the agent before removing from the map — SendDisconnect
-		// looks the session up, so the write must happen while it is still there.
-		h.rdpSessions.SendDisconnect(sessionID)
 		h.rdpSessions.Delete(sessionID)
 		if errors.Is(waitErr, context.Canceled) || errors.Is(waitErr, context.DeadlineExceeded) {
 			// Client disconnected mid-request; no useful response to send.
@@ -271,10 +364,6 @@ func (h *RDPHandler) ServeCreateTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !result.Connected {
-		// Agent already tore its side down (OnAgentError calls cleanup); the
-		// SendDisconnect is a best-effort courtesy and will no-op if the session
-		// is already gone from the map.
-		h.rdpSessions.SendDisconnect(sessionID)
 		h.rdpSessions.Delete(sessionID)
 		msg := result.ErrorMsg
 		if msg == "" {
@@ -287,11 +376,8 @@ func (h *RDPHandler) ServeCreateTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ticket, err := h.rdpTicketStore.CreateTicket(r.Context(), userID, host.ID, sessionID, port, req.Username, req.Password, reqWidth, reqHeight)
+	ticket, err := h.rdpTicketStore.CreateTicket(r.Context(), userID, host.ID, sessionID, port, req.Username, req.Password, reqWidth, reqHeight, req.Layout)
 	if err != nil {
-		// Agent still thinks the proxy is live — tell it to disconnect before
-		// removing the session from the map.
-		h.rdpSessions.SendDisconnect(sessionID)
 		h.rdpSessions.Delete(sessionID)
 		JSON(w, http.StatusInternalServerError, map[string]string{
 			"error": "Failed to create RDP ticket.",
@@ -338,6 +424,13 @@ func isWindowsHost(host *models.Host) bool {
 		expected = *host.ExpectedPlatform
 	}
 	return strings.Contains(strings.ToLower(osType), "windows") || strings.Contains(strings.ToLower(expected), "windows")
+}
+
+// OnAgentConnClosed ends the RDP sessions that were riding a dropped agent WebSocket.
+func (h *RDPHandler) OnAgentConnClosed(apiID string, cutoff time.Time) {
+	if n := h.rdpSessions.CloseAgentSessions(apiID, cutoff); n > 0 {
+		h.log.Info("rdp sessions closed after agent websocket ended", "api_id", apiID, "sessions", n)
+	}
 }
 
 // HandleRDPProxyMessage forwards rdp_proxy_* messages from agent to the RDP proxy store.
@@ -394,10 +487,30 @@ func classifyAgentError(msg string) string {
 	}
 }
 
+// tunnelServer wraps connect in the guac WebSocket server with RDP session teardown.
+func (h *RDPHandler) tunnelServer(connect func(*websocket.Conn, *http.Request) (guac.Tunnel, error)) *guac.WebsocketServer {
+	guacWSHandler := guac.NewWebsocketServerWs(connect)
+	guacWSHandler.OnDisconnectWs = func(_ string, ws *websocket.Conn, _ *http.Request, t guac.Tunnel) {
+		rt, ok := t.(*rdpTunnel)
+		if !ok {
+			return
+		}
+		h.rdpSessions.Delete(rt.sessionID)
+		if code := rt.abortWS.Load(); code != 0 {
+			// Close cleanly and let the ws reader, still draining, read the reply: a
+			// socket closed with unread input is reset, which can drop the error frame.
+			reason := strconv.Itoa(int(code))
+			_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseInternalServerErr, reason), time.Now().Add(time.Second))
+			time.Sleep(time.Second)
+		}
+	}
+	return guacWSHandler
+}
+
 // WebsocketTunnelHandler returns an http.Handler for the Guacamole WebSocket tunnel.
 // It wraps the guac WebSocket server with origin validation to prevent cross-origin hijacking.
 func (h *RDPHandler) WebsocketTunnelHandler() http.Handler {
-	guacWSHandler := guac.NewWebsocketServer(h.doGuacConnect)
+	guacWSHandler := h.tunnelServer(h.connectTunnel)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Validate Origin header before handing off to guac's WebSocket upgrader.
@@ -412,8 +525,78 @@ func (h *RDPHandler) WebsocketTunnelHandler() http.Handler {
 	})
 }
 
-// doGuacConnect is the guac.DoConnect callback for the WebSocket tunnel.
-func (h *RDPHandler) doGuacConnect(r *http.Request) (guac.Tunnel, error) {
+func (h *RDPHandler) connectTunnel(ws *websocket.Conn, r *http.Request) (guac.Tunnel, error) {
+	t, err := h.doGuacConnect(r)
+	if err != nil {
+		writeGuacError(ws, err)
+		return nil, err
+	}
+	abortOnAgentLoss := func(reason string) {
+		if reason == rdpproxy.ReasonAgentGone {
+			t.abort(guac.UpstreamError, rdpMsgAgentGone)
+		}
+	}
+	if !h.rdpSessions.OnClose(t.sessionID, abortOnAgentLoss) {
+		t.abort(guac.UpstreamError, rdpMsgSessionEnded)
+	}
+	return t, nil
+}
+
+// writeGuacError sends a Guacamole error instruction and a close frame whose
+// reason is the Guacamole status code, which guacamole-common-js reads.
+func writeGuacError(ws *websocket.Conn, err error) {
+	status := guac.ServerError
+	msg := rdpMsgServerError
+	if errors.Is(err, ErrRDPTicketRequired) {
+		status = guac.ResourceNotFound
+		msg = rdpMsgTicketInvalid
+	}
+	code := strconv.Itoa(status.GetGuacamoleStatusCode())
+	deadline := time.Now().Add(2 * time.Second)
+	_ = ws.SetWriteDeadline(deadline)
+	_ = ws.WriteMessage(websocket.TextMessage, []byte(guac.NewInstruction("error", msg, code).String()))
+	_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(status.GetWebSocketCode(), code), deadline)
+}
+
+// rdpKeyboardLayouts are the keymaps compiled into guacd 1.6.0.
+var rdpKeyboardLayouts = map[string]bool{
+	"cs-cz-qwertz": true, "da-dk-qwerty": true, "de-ch-qwertz": true, "de-de-qwertz": true,
+	"en-gb-qwerty": true, "en-us-qwerty": true, "es-es-qwerty": true, "es-latam-qwerty": true,
+	"fr-be-azerty": true, "fr-ca-qwerty": true, "fr-ch-qwertz": true, "fr-fr-azerty": true,
+	"hu-hu-qwertz": true, "it-it-qwerty": true, "ja-jp-qwerty": true, "no-no-qwerty": true,
+	"pl-pl-qwerty": true, "pt-br-qwerty": true, "pt-pt-qwerty": true, "ro-ro-qwerty": true,
+	"sv-se-qwerty": true, "tr-tr-qwerty": true,
+}
+
+func validRDPKeyboardLayout(layout string) bool {
+	return layout == "" || rdpKeyboardLayouts[layout]
+}
+
+const (
+	rdpSecurityMode = "any"
+	rdpIgnoreCert   = "true"
+)
+
+func rdpConnectionParameters(port int, username, password, keyboardLayout string) map[string]string {
+	params := map[string]string{
+		"hostname":    "127.0.0.1",
+		"port":        strconv.Itoa(port),
+		"username":    username,
+		"password":    password,
+		"security":    rdpSecurityMode,
+		"ignore-cert": rdpIgnoreCert,
+		// Without a resize method guacd ignores the browser's size updates.
+		"resize-method": "display-update",
+	}
+	if keyboardLayout != "" {
+		params["server-layout"] = keyboardLayout
+	}
+	return params
+}
+
+// doGuacConnect resolves the ticket and opens the guacd connection. Once the
+// ticket is consumed, every failure deletes the proxy session it names.
+func (h *RDPHandler) doGuacConnect(r *http.Request) (*rdpTunnel, error) {
 	ticket := r.URL.Query().Get("ticket")
 	if ticket == "" {
 		return nil, ErrRDPTicketRequired
@@ -424,6 +607,15 @@ func (h *RDPHandler) doGuacConnect(r *http.Request) (guac.Tunnel, error) {
 		h.log.Info("rdp tunnel invalid ticket", "error", err)
 		return nil, ErrRDPTicketRequired
 	}
+	t, err := h.openGuacTunnel(r, data)
+	if err != nil {
+		h.rdpSessions.Delete(data.SessionID)
+		return nil, err
+	}
+	return t, nil
+}
+
+func (h *RDPHandler) openGuacTunnel(r *http.Request, data *store.RDPTicketData) (*rdpTunnel, error) {
 
 	// Verify the user who created this ticket is still active.
 	// This closes the window where a revoked/deactivated user could use
@@ -465,14 +657,7 @@ func (h *RDPHandler) doGuacConnect(r *http.Request) (guac.Tunnel, error) {
 	// Negotiate/TLS-only security layers and refuses blank-credential sessions.
 	// ignore-cert=true accepts the self-signed RDP cert Windows generates by
 	// default. If a customer needs hardened RDP later, expose per-host overrides.
-	config.Parameters = map[string]string{
-		"hostname":    "127.0.0.1",
-		"port":        strconv.Itoa(port),
-		"username":    data.Username,
-		"password":    data.Password,
-		"security":    "any",
-		"ignore-cert": "true",
-	}
+	config.Parameters = rdpConnectionParameters(port, data.Username, data.Password, data.KeyboardLayout)
 	// Resolve screen dimensions: ticket data > query params > defaults.
 	screenW, screenH := 1024, 768
 	if data.Width > 0 {
@@ -514,9 +699,9 @@ func (h *RDPHandler) doGuacConnect(r *http.Request) (guac.Tunnel, error) {
 			"session_id", data.SessionID,
 			"user_id", data.UserID,
 			"host_id", data.HostID,
-			"requested_security_mode", config.Parameters["security"],
-			"requested_ignore_cert", config.Parameters["ignore-cert"],
-			"missing_username_or_password", data.Username == "" || data.Password == "",
+			"requested_security_mode", rdpSecurityMode,
+			"requested_ignore_cert", rdpIgnoreCert,
+			"missing_username", data.Username == "",
 			"error", err,
 		)
 		return nil, err
@@ -530,13 +715,12 @@ func (h *RDPHandler) doGuacConnect(r *http.Request) (guac.Tunnel, error) {
 		"session_id", data.SessionID,
 		"user_id", data.UserID,
 		"host_id", data.HostID,
-		"requested_security_mode", config.Parameters["security"],
-		"requested_ignore_cert", config.Parameters["ignore-cert"],
-		"missing_username_or_password", data.Username == "" || data.Password == "",
+		"requested_security_mode", rdpSecurityMode,
+		"requested_ignore_cert", rdpIgnoreCert,
+		"missing_username", data.Username == "",
 	)
 
-	// Clean up session when tunnel closes (handled by caller)
-	return guac.NewSimpleTunnel(stream), nil
+	return &rdpTunnel{Tunnel: guac.NewSimpleTunnel(stream), sessionID: data.SessionID, guacdConn: conn}, nil
 }
 
 // WebsocketTunnelHandlerWithQuery builds the WebSocket URL with ticket and params.

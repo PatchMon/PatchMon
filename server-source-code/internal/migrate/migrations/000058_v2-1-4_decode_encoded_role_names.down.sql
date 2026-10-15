@@ -1,0 +1,1 @@
+-- Decoded role names cannot be told apart from ones typed that way, so nothing is reverted.

@@ -147,6 +147,31 @@ Operation aborted.`,
 			output: "",
 			want:   false,
 		},
+		{
+			name:   "apk plan",
+			output: "( 1/2) Upgrading libcrypto3 (3.5.4-r0 -> 3.5.9-r0)\n( 2/2) Upgrading libssl3 (3.5.4-r0 -> 3.5.9-r0)\nOK: 8 MiB in 16 packages",
+			want:   false,
+		},
+		{
+			name:   "apk unreliable simulation warning",
+			output: "WARNING: This simulation might not reliable as a preupgrade is available.\nOK: 8 MiB in 16 packages",
+			want:   false,
+		},
+		{
+			name:   "apk unknown package",
+			output: "ERROR: Package 'nosuchpkg' not found",
+			want:   true,
+		},
+		{
+			name:   "apk world conflict",
+			output: "ERROR: unable to select packages:\n  busybox-1.37.0-r29:\n    breaks: world[busybox<1.0]",
+			want:   true,
+		},
+		{
+			name:   "apk stale indexes",
+			output: "ERROR: Not continuing due to stale/unavailable repositories. Use --force-missing-repositories to continue.",
+			want:   true,
+		},
 	}
 
 	for _, tt := range tests {

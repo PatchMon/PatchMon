@@ -1,6 +1,7 @@
 package util
 
 import (
+	"crypto/subtle"
 	"time"
 
 	"github.com/pquerna/otp"
@@ -39,4 +40,23 @@ func GenerateTOTPSecret(issuer, accountName string) (base32Secret, otpauthURL st
 		return "", "", err
 	}
 	return key.Secret(), key.URL(), nil
+}
+
+// MatchTOTPStep returns the 30-second step the token is valid for, within ±window steps of now.
+func MatchTOTPStep(secret, token string, window int, now time.Time) (int64, bool) {
+	if secret == "" || len(token) != 6 {
+		return 0, false
+	}
+	opts := totp.ValidateOpts{Period: 30, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1}
+	for i := -window; i <= window; i++ {
+		t := now.UTC().Add(time.Duration(i) * 30 * time.Second)
+		code, err := totp.GenerateCodeCustom(secret, t, opts)
+		if err != nil {
+			return 0, false
+		}
+		if subtle.ConstantTimeCompare([]byte(code), []byte(token)) == 1 {
+			return t.Unix() / 30, true
+		}
+	}
+	return 0, false
 }

@@ -1331,7 +1331,7 @@ PatchMon's Proxmox Auto-Enrollment feature enables you to automatically discover
 
 #### Running the Script Again
 
-The script is safe to rerun, by hand or from cron. From PatchMon 2.1.5 (script version 2.2.0), a rerun repairs a broken agent on the host it already has, instead of creating a second host. For each container:
+The script is safe to rerun, by hand or from cron. From PatchMon 2.1.4 (script version 2.2.0), a rerun repairs a broken agent on the host it already has, instead of creating a second host. For each container:
 
 | Container state | What the script does |
 |-----------------|----------------------|
@@ -1349,7 +1349,7 @@ When the script enrols with a `host_id`, PatchMon answers in one of these ways:
 | `200`, `reenrolled: true` | The host exists, has never reported or connected, was created by this same token, and was enrolled with the same machine ID (typically an earlier run whose install failed part-way). PatchMon issues a new API key for it | Installs the agent with the new credentials; same host record |
 | `201` | No host with that ID exists; a new host is created | Installs as for any new host |
 | `409`, code `host_reporting` | The host has already reported. PatchMon never re-keys such a host from enrolment. Usually a cloned container, or credentials regenerated in PatchMon but not applied | Skipped with a warning |
-| `409`, code `host_not_reenrollable` | The host was added another way (for example in the UI), by a different token, or before PatchMon 2.1.5 | Skipped with a warning; use the install command on the host's page |
+| `409`, code `host_not_reenrollable` | The host was added another way (for example in the UI), by a different token, or before PatchMon 2.1.4 | Skipped with a warning; use the install command on the host's page |
 | `429`, code `reenrol_cooldown` | Credentials for this host were re-issued less than 60 seconds ago | Fails the container for this run; the next run retries |
 
 The token's daily host limit applies only when a host is created. Repairs and re-issues do not count towards it.
@@ -2133,7 +2133,7 @@ If you need to re-enroll:
 [WARN]   ⊘ container-name was added to PatchMon another way as container-name; skipping
 ```
 
-**Cause:** The container's `host_id` names a host that has never reported but was not created by this token, for example one added in the UI or enrolled before PatchMon 2.1.5 (code `host_not_reenrollable`).
+**Cause:** The container's `host_id` names a host that has never reported but was not created by this token, for example one added in the UI or enrolled before PatchMon 2.1.4 (code `host_not_reenrollable`).
 
 **Solution:** Use the install command on that host's page in PatchMon, or delete that host and rerun the script.
 
@@ -3051,7 +3051,7 @@ Content-Type: application/json
 |-------|------|----------|-------------|
 | `friendly_name` | string | Yes | Display name for the host (max 255 chars) |
 | `machine_id` | string | No | Unique machine identifier (max 255 chars) |
-| `host_id` | string | No | The `host_id` from the machine's existing `config.yml`, if it has one (1 to 64 letters, digits or hyphens). Lets PatchMon recognise a machine it has already enrolled. Never used as the ID of a new host. Added in 2.1.5 |
+| `host_id` | string | No | The `host_id` from the machine's existing `config.yml`, if it has one (1 to 64 letters, digits or hyphens). Lets PatchMon recognise a machine it has already enrolled. Never used as the ID of a new host. Added in 2.1.4 |
 | `metadata` | object | No | Additional metadata (vmid, proxmox_node, ip_address, os_info, etc.) |
 
 **Example Request:**
@@ -3114,7 +3114,7 @@ Returned when `host_id` names a host that exists, has never reported or connecte
 |-------------------------|--------|
 | Not found | Enrolled as a new host (`201`), exactly as if `host_id` were not sent |
 | Has reported, or its agent has connected to PatchMon | `409`, code `host_reporting`. Such a host is never re-keyed by enrolment |
-| Never reported, created by a different token, in the UI, or before 2.1.5 | `409`, code `host_not_reenrollable` |
+| Never reported, created by a different token, in the UI, or before 2.1.4 | `409`, code `host_not_reenrollable` |
 | Never reported, created by this token, but enrolled with a different `machine_id` | `409`, code `host_not_reenrollable` |
 | Never reported, created by this token, credentials re-issued less than 60 seconds ago | `429`, code `reenrol_cooldown` |
 | Never reported, created by this token | `200`, credentials re-issued |
@@ -3239,8 +3239,8 @@ Content-Type: application/json
 | `bootTime` | string | No | Boot instant as a UTC ISO 8601 timestamp. Lets the UI tick uptime live between reports |
 | `loadAverage` | array | No | Load average values |
 | `machineId` | string | No | Machine ID |
-| `hostId` | string | No | `host_id` from the agent's `config.yml` (agent 2.1.5+). A value that differs from the authenticated host's ID does not reject the report; the host is flagged with a host ID mismatch |
-| `configVersion` | string | No | `config_version` from the agent's `config.yml` (agent 2.1.5+). Recorded only when it starts with `N.N.N` (optionally followed by a pre-release or build suffix) and is at most 64 bytes |
+| `hostId` | string | No | `host_id` from the agent's `config.yml` (agent 2.1.4+). A value that differs from the authenticated host's ID does not reject the report; the host is flagged with a host ID mismatch |
+| `configVersion` | string | No | `config_version` from the agent's `config.yml` (agent 2.1.4+). Recorded only when it starts with `N.N.N` (optionally followed by a pre-release or build suffix) and is at most 64 bytes |
 | `needsReboot` | boolean | No | Whether a reboot is required |
 | `rebootReason` | string | No | Reason a reboot is required |
 | `repositories` | array | No | Configured package repositories |
@@ -3297,7 +3297,7 @@ Content-Type: application/json
 }
 ```
 
-`hostId` (2.1.5+) is the ID of the host the credentials belong to. Agents record it in `config.yml` as `host_id` when they have none.
+`hostId` (2.1.4+) is the ID of the host the credentials belong to. Agents record it in `config.yml` as `host_id` when they have none.
 
 ### Ansible Integration Examples
 
@@ -4206,8 +4206,8 @@ GET /api/v1/api/hosts/:id/info
   "ip": "192.168.1.100",
   "os_type": "Ubuntu",
   "os_version": "24.04 LTS",
-  "agent_version": "2.1.5",
-  "config_version": "2.1.5",
+  "agent_version": "2.1.4",
+  "config_version": "2.1.4",
   "host_groups": [
     {
       "id": "660e8400-e29b-41d4-a716-446655440001",
@@ -4217,7 +4217,7 @@ GET /api/v1/api/hosts/:id/info
 }
 ```
 
-`config_version` (added in 2.1.5) is the `config.yml` layout version the agent last reported. It normally equals `agent_version`; it is an empty string when the agent is older than 2.1.5 or has not reported one.
+`config_version` (added in 2.1.4) is the `config.yml` layout version the agent last reported. It normally equals `agent_version`; it is an empty string when the agent is older than 2.1.4 or has not reported one.
 
 ---
 

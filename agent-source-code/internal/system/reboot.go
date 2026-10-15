@@ -15,12 +15,18 @@ import (
 	"patchmon-agent/internal/winexec"
 )
 
+// libzypp touches this after installing a kernel or a package flagged as needing a reboot.
+var zyppRebootFlag = "/run/reboot-needed"
+
 // CheckRebootRequired checks if the system requires a reboot
 // Returns (needsReboot bool, reason string)
 func (d *Detector) CheckRebootRequired() (bool, string) {
 	// Windows: check registry keys and CBS reboot-pending (per UsoClient/WUA docs)
 	if runtime.GOOS == "windows" {
 		return d.checkWindowsRebootRequired()
+	}
+	if isAlpine() {
+		return d.checkAlpineRebootRequired()
 	}
 
 	runningKernel := d.getRunningKernel()
@@ -31,6 +37,14 @@ func (d *Detector) CheckRebootRequired() (bool, string) {
 	if _, err := os.Stat("/var/run/reboot-required"); err == nil {
 		d.logger.Debug("Reboot required: /var/run/reboot-required file exists")
 		reason := "Reboot flag file exists (/var/run/reboot-required)"
+		if kernelStale {
+			reason += fmt.Sprintf(" | Running kernel: %s, Installed kernel: %s", runningKernel, latestKernel)
+		}
+		return true, reason
+	}
+
+	if _, err := os.Stat(zyppRebootFlag); err == nil {
+		reason := "Reboot flag file exists (" + zyppRebootFlag + ")"
 		if kernelStale {
 			reason += fmt.Sprintf(" | Running kernel: %s, Installed kernel: %s", runningKernel, latestKernel)
 		}
@@ -97,7 +111,7 @@ if ($reasons.Count -gt 0) {
   Write-Output "REBOOT_NOT_REQUIRED"
 }
 `
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
+	cmd := exec.Command(winexec.PowerShellPath(), "-NoProfile", "-NonInteractive", "-Command", winexec.Script(psScript))
 	output, err := cmd.Output()
 	if err != nil {
 		d.logger.WithError(err).Debug("Windows reboot check failed")
@@ -152,6 +166,9 @@ func (d *Detector) getRunningKernel() string {
 
 // GetLatestInstalledKernel gets the latest installed kernel version (public method)
 func (d *Detector) GetLatestInstalledKernel() string {
+	if runtime.GOOS != "windows" && isAlpine() {
+		return d.alpineLatestInstalledKernel()
+	}
 	return d.latestInstalledKernel(d.getRunningKernel())
 }
 
@@ -258,7 +275,7 @@ func (d *Detector) collectKernelsFromBoot() []string {
 // an unversioned image such as Arch's /boot/vmlinuz-linux, where no version can be
 // recovered from the boot directory at all.
 func (d *Detector) collectKernelsFromModules() []string {
-	entries, err := os.ReadDir("/lib/modules")
+	entries, err := os.ReadDir(kernelModulesDir)
 	if err != nil {
 		d.logger.WithError(err).Debug("Failed to read /lib/modules directory")
 		return nil

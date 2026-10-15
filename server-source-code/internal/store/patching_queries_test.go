@@ -168,3 +168,10 @@ func TestUpdatePatchRunProgressBumpsUpdatedAt(t *testing.T) {
 		t.Errorf("UpdatePatchRunProgress must bump updated_at, otherwise MarkPatchRunsTimedOut's inactivity window sweeps healthy runs:\n%s", q)
 	}
 }
+
+func TestHostHasActivePatchRunMatchesActiveIndex(t *testing.T) {
+	q := namedQuery(t, loadPatchingQueries(t), "HostHasActivePatchRun")
+	if !strings.Contains(q, "status IN ('queued', 'pending_validation', 'running')") {
+		t.Fatalf("HostHasActivePatchRun must use the patch_runs_one_active_per_host status set:\n%s", q)
+	}
+}

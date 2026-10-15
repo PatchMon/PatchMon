@@ -134,7 +134,6 @@ func TestDetectUnchangedForSupportedPlatforms(t *testing.T) {
 		{"Alpine", host{osRelease: "ID=alpine\n", bins: []string{"apk"}}, "apk"},
 		{"Arch", host{osRelease: "ID=arch\n", bins: []string{"pacman"}}, "pacman"},
 		{"Manjaro", host{osRelease: "ID=manjaro\nID_LIKE=arch\n", bins: []string{"pacman"}}, "pacman"},
-		{"openSUSE Leap (unsupported)", host{osRelease: "ID=\"opensuse-leap\"\nID_LIKE=\"suse opensuse\"\n", bins: []string{"zypper", "rpm"}, paths: map[string]fs.FileMode{"/usr/lib/sysimage/rpm": fs.ModeDir}}, "unknown"},
 		{"no os-release", host{bins: []string{"apt-get"}}, "apt"},
 		{"FreeBSD under rc.d with a minimal PATH", host{goos: "freebsd", uname: "FreeBSD", paths: map[string]fs.FileMode{"/usr/sbin/pkg": exec}}, "pkg"},
 		{"FreeBSD with pkg on PATH", host{goos: "freebsd", uname: "FreeBSD", bins: []string{"pkg"}}, "pkg"},
@@ -180,5 +179,27 @@ func TestDetectSkipsAnOSReleaseWithoutID(t *testing.T) {
 	p.OSReleasePaths = []string{empty, full}
 	if got := p.Detect(); got != "yum" {
 		t.Errorf("Detect() = %q, want yum from the second os-release", got)
+	}
+}
+
+func TestDetectSUSE(t *testing.T) {
+	rpmDB := map[string]fs.FileMode{"/var/lib/rpm": fs.ModeDir}
+	cases := []struct {
+		name string
+		host host
+		want string
+	}{
+		{"openSUSE Leap 15.6", host{osRelease: "ID=\"opensuse-leap\"\nID_LIKE=\"suse opensuse\"\n", bins: []string{"zypper", "rpm"}, paths: map[string]fs.FileMode{"/usr/lib/sysimage/rpm": fs.ModeDir}}, "zypper"},
+		{"openSUSE Tumbleweed", host{osRelease: "ID=\"opensuse-tumbleweed\"\nID_LIKE=\"opensuse suse\"\n", bins: []string{"zypper", "rpm"}, paths: map[string]fs.FileMode{"/usr/lib/sysimage/rpm": fs.ModeDir}}, "zypper"},
+		{"SLES 15, ID_LIKE suse only", host{osRelease: "ID=\"sles\"\nID_LIKE=\"suse\"\n", bins: []string{"zypper", "rpm"}, paths: rpmDB}, "zypper"},
+		{"SLES 15 with dnf installed from a module", host{osRelease: "ID=\"sles\"\nID_LIKE=\"suse\"\n", bins: []string{"zypper", "rpm", "dnf"}, paths: rpmDB}, "zypper"},
+		{"rpm host without os-release and only zypper", host{bins: []string{"zypper", "rpm"}, paths: rpmDB}, "zypper"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.host.probe(t).Detect(); got != tc.want {
+				t.Errorf("Detect() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

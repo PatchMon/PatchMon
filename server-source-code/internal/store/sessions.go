@@ -180,6 +180,23 @@ func (s *SessionsStore) GetByID(ctx context.Context, id, userID string) (*models
 	return &out, nil
 }
 
+// SessionAuthState is what the auth middleware needs on every request.
+type SessionAuthState struct {
+	LastActivity          time.Time
+	TfaEnrolmentPending   bool
+	PasswordChangePending bool
+}
+
+// GetAuthState returns the live session's activity time and the user's enrolment restriction.
+func (s *SessionsStore) GetAuthState(ctx context.Context, id, userID string) (*SessionAuthState, error) {
+	d := s.db.DB(ctx)
+	row, err := d.Queries.GetSessionAuthState(ctx, db.GetSessionAuthStateParams{ID: id, UserID: userID})
+	if err != nil {
+		return nil, err
+	}
+	return &SessionAuthState{LastActivity: pgTime(row.LastActivity), TfaEnrolmentPending: row.TfaEnrolmentPending, PasswordChangePending: row.PasswordChangePending}, nil
+}
+
 // ListByUserID returns all sessions for a user.
 func (s *SessionsStore) ListByUserID(ctx context.Context, userID string) ([]models.UserSession, error) {
 	d := s.db.DB(ctx)

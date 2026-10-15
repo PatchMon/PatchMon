@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/config"
@@ -13,6 +14,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/mailer"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/netguard"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtime"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
@@ -81,6 +83,31 @@ func (h *NotificationsHandler) ListDestinations(w http.ResponseWriter, r *http.R
 	JSON(w, http.StatusOK, out)
 }
 
+// destinationConfigURL returns the outbound URL a destination config fetches, if
+// any. Only webhook and ntfy destinations issue server-initiated HTTP requests.
+func destinationConfigURL(channelType string, cfg map[string]interface{}) string {
+	switch strings.ToLower(strings.TrimSpace(channelType)) {
+	case "webhook":
+		s, _ := cfg["url"].(string)
+		return s
+	case "ntfy":
+		s, _ := cfg["server_url"].(string)
+		return s
+	default:
+		return ""
+	}
+}
+
+// validateDestinationOutbound rejects destinations whose URL would target a
+// cloud-metadata or loopback address. RFC-1918/ULA stay allowed.
+func validateDestinationOutbound(channelType string, cfg map[string]interface{}) error {
+	raw := destinationConfigURL(channelType, cfg)
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	return netguard.ValidateOutboundURL(raw)
+}
+
 // CreateDestination POST /notifications/destinations
 func (h *NotificationsHandler) CreateDestination(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -91,6 +118,10 @@ func (h *NotificationsHandler) CreateDestination(w http.ResponseWriter, r *http.
 	}
 	if err := decodeJSON(r, &req); err != nil || req.ChannelType == "" || req.DisplayName == "" {
 		Error(w, http.StatusBadRequest, "channel_type, display_name, and config required")
+		return
+	}
+	if err := validateDestinationOutbound(req.ChannelType, req.Config); err != nil {
+		Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	cfgJSON, _ := json.Marshal(req.Config)
@@ -140,6 +171,12 @@ func (h *NotificationsHandler) UpdateDestination(w http.ResponseWriter, r *http.
 	if err != nil {
 		Error(w, http.StatusNotFound, "Not found")
 		return
+	}
+	if req.Config != nil {
+		if err := validateDestinationOutbound(existing.ChannelType, req.Config); err != nil {
+			Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	encStr := existing.ConfigEncrypted
 	if req.Config != nil {
@@ -481,7 +518,7 @@ type testSMTPRequest struct {
 	To       string `json:"to"`
 	UseTLS   *bool  `json:"use_tls"`
 	TLSMode  string `json:"tls_mode"`
-	// AllowInsecureAuth permits PLAIN auth over cleartext. Only meaningful
+	// AllowInsecureAuth permits PLAIN or LOGIN auth over cleartext. Only meaningful
 	// with tls_mode=none; see mailer.Config.AllowInsecureAuth.
 	AllowInsecureAuth bool `json:"allow_insecure_auth"`
 }

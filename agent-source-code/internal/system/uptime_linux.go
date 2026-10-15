@@ -63,6 +63,12 @@ func containerUptime() (time.Duration, bool) {
 	return defaultProcSources.containerUptime()
 }
 
+// runningInContainer reports whether the agent runs inside LXC, Docker or similar.
+func runningInContainer() bool {
+	_, lxcfsProcMount := defaultProcSources.mountinfoSignals()
+	return defaultProcSources.inContainer(lxcfsProcMount)
+}
+
 func (p procSources) containerUptime() (time.Duration, bool) {
 	procUptime, err := p.readProcUptime()
 	if err != nil {

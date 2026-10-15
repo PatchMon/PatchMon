@@ -19,6 +19,11 @@ type Package struct {
 	WUACategories     []string `json:"wuaCategories,omitempty"`
 	WUASupportURL     string   `json:"wuaSupportUrl,omitempty"`
 	WUARevisionNumber int32    `json:"wuaRevisionNumber,omitempty"`
+	WUABrowseOnly     bool     `json:"wuaBrowseOnly,omitempty"`
+	WUAType           string   `json:"wuaType,omitempty"`
+	WingetID          string   `json:"wingetId,omitempty"`
+	WingetPinned      bool     `json:"wingetPinned,omitempty"`
+	WingetStoreApp    bool     `json:"wingetStoreApp,omitempty"`
 }
 
 // Repository represents a software repository
@@ -133,6 +138,9 @@ type ReportPayload struct {
 	// spent collecting the data shipped in this report. Used by the server's
 	// Agent Activity feed; older servers ignore it.
 	AgentExecutionMs *int `json:"agentExecutionMs,omitempty"`
+	// WindowsUpdatesOmitted tells the server this report has no Windows Update rows
+	// because a patch run held Windows Update, so it keeps the stored ones.
+	WindowsUpdatesOmitted bool `json:"windowsUpdatesOmitted,omitempty"`
 }
 
 // ReportHashes is the four "main report" canonical hashes the agent ships
@@ -215,12 +223,14 @@ type PingResponse struct {
 	// "nothing changed" — see serverSupportsHashGate. The exact "hashGate"
 	// JSON key is a client/server contract; do not rename it.
 	HashGate bool `json:"hashGate,omitempty"`
+	// Capabilities lists optional report fields the server accepts, such as "wingetPinned".
+	Capabilities []string `json:"capabilities,omitempty"`
 	// RequestFull lists the section identifiers (subset of the closed
 	// SectionXxx constants) whose stored server-side hash differs from
 	// what the agent shipped. Empty array == nothing changed, agent stays
 	// quiet. Only meaningful when HashGate is true.
 	RequestFull []string `json:"requestFull,omitempty"`
-	// Servers older than 2.1.5 omit HostID.
+	// Servers older than 2.1.4 omit HostID.
 	HostID         string `json:"hostId,omitempty"`
 	HostIDMismatch bool   `json:"hostIdMismatch,omitempty"`
 }
@@ -386,8 +396,14 @@ type Config struct {
 	PackageCacheRefreshMaxAge int                     `yaml:"package_cache_refresh_max_age" mapstructure:"package_cache_refresh_max_age"` // minutes
 	Integrations              map[string]interface{}  `yaml:"integrations" mapstructure:"integrations"`                                   // Supports bool for simple integrations, string for compliance mode
 	DockerUpdateCheck         DockerUpdateCheckConfig `yaml:"docker_update_check" mapstructure:"docker_update_check"`
+	APKSecDB                  APKSecDBConfig          `yaml:"apk_secdb" mapstructure:"apk_secdb"`
 	HostID                    string                  `yaml:"host_id" mapstructure:"host_id"`
 	ConfigVersion             string                  `yaml:"config_version" mapstructure:"config_version"`
+}
+
+// APKSecDBConfig controls the Alpine secdb lookup that flags security updates.
+type APKSecDBConfig struct {
+	Enabled *bool `yaml:"enabled" mapstructure:"enabled"`
 }
 
 // DockerUpdateCheckConfig controls the agent-side Docker image update check.

@@ -45,7 +45,23 @@ SELECT hp.id, hp.host_id, hp.package_id, hp.current_version, hp.available_versio
     r.name as source_repo_name, r.url as source_repo_url,
     h.friendly_name as host_friendly_name, h.hostname as host_hostname, h.ip as host_ip,
     h.os_type as host_os_type, h.os_version as host_os_version,
-    h.last_update as host_last_update, h.needs_reboot as host_needs_reboot
+    h.last_update as host_last_update, h.needs_reboot as host_needs_reboot,
+    (CASE WHEN h.os_type ILIKE '%windows%'
+        THEN hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL) AND NOT COALESCE(hp.winget_pinned, false) AND NOT COALESCE(hp.winget_store_app, false)
+        ELSE hp.needs_update END)::boolean AS patchable,
+    (CASE
+        WHEN NOT hp.needs_update THEN 'not_pending'
+        WHEN h.os_type ILIKE '%windows%' AND COALESCE(hp.winget_pinned, false) THEN 'winget_pinned'
+        WHEN h.os_type ILIKE '%windows%' AND COALESCE(hp.winget_store_app, false) THEN 'store_app'
+        WHEN h.os_type ILIKE '%windows%' AND hp.wua_guid IS NULL AND hp.winget_id IS NULL THEN 'no_winget_id'
+        ELSE ''
+    END)::text AS not_patchable_reason,
+    (CASE WHEN hp.wua_guid IS NOT NULL THEN 'wua' WHEN hp.winget_id IS NOT NULL THEN 'winget' ELSE '' END)::text AS patch_source,
+    COALESCE(hp.wua_browse_only, false)::boolean AS wua_browse_only,
+    COALESCE(hp.wua_update_type, '')::text AS wua_update_type,
+    (hp.wua_update_type IS NOT DISTINCT FROM 'FeatureUpgrade' OR COALESCE(hp.wua_categories @> '["Upgrades"]'::jsonb, false))::boolean AS is_feature_upgrade,
+    (hp.current_version = 'pending restart'
+        AND EXISTS (SELECT 1 FROM packages wp WHERE wp.id = hp.package_id AND wp.category = 'Windows Update'))::boolean AS pending_restart
 FROM host_packages hp
 JOIN hosts h ON h.id = hp.host_id
 LEFT JOIN repositories r ON r.id = hp.source_repository_id
@@ -63,6 +79,22 @@ AND (sqlc.narg('needs_update')::bool IS NULL OR hp.needs_update = sqlc.narg('nee
 WITH ranked_refs AS (
     SELECT hp.package_id, h.id as host_id, h.friendly_name, h.os_type,
         hp.current_version, hp.available_version, hp.needs_update, hp.is_security_update,
+        (CASE WHEN h.os_type ILIKE '%windows%'
+            THEN hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL) AND NOT COALESCE(hp.winget_pinned, false) AND NOT COALESCE(hp.winget_store_app, false)
+            ELSE hp.needs_update END)::boolean AS patchable,
+        (CASE
+            WHEN NOT hp.needs_update THEN 'not_pending'
+            WHEN h.os_type ILIKE '%windows%' AND COALESCE(hp.winget_pinned, false) THEN 'winget_pinned'
+            WHEN h.os_type ILIKE '%windows%' AND COALESCE(hp.winget_store_app, false) THEN 'store_app'
+            WHEN h.os_type ILIKE '%windows%' AND hp.wua_guid IS NULL AND hp.winget_id IS NULL THEN 'no_winget_id'
+            ELSE ''
+        END)::text AS not_patchable_reason,
+        (CASE WHEN hp.wua_guid IS NOT NULL THEN 'wua' WHEN hp.winget_id IS NOT NULL THEN 'winget' ELSE '' END)::text AS patch_source,
+        COALESCE(hp.wua_browse_only, false)::boolean AS wua_browse_only,
+        COALESCE(hp.wua_update_type, '')::text AS wua_update_type,
+        (hp.wua_update_type IS NOT DISTINCT FROM 'FeatureUpgrade' OR COALESCE(hp.wua_categories @> '["Upgrades"]'::jsonb, false))::boolean AS is_feature_upgrade,
+    (hp.current_version = 'pending restart'
+        AND EXISTS (SELECT 1 FROM packages wp WHERE wp.id = hp.package_id AND wp.category = 'Windows Update'))::boolean AS pending_restart,
         row_number() OVER (
             PARTITION BY hp.package_id
             ORDER BY hp.needs_update DESC, h.friendly_name ASC, h.id ASC
@@ -72,7 +104,8 @@ WITH ranked_refs AS (
     WHERE hp.package_id = ANY($1::text[])
     AND (sqlc.narg('host_id')::text IS NULL OR hp.host_id = sqlc.narg('host_id'))
 )
-SELECT package_id, host_id, friendly_name, os_type, current_version, available_version, needs_update, is_security_update
+SELECT package_id, host_id, friendly_name, os_type, current_version, available_version, needs_update, is_security_update,
+    patchable, not_patchable_reason, patch_source, wua_browse_only, wua_update_type, is_feature_upgrade, pending_restart
 FROM ranked_refs
 WHERE rn <= 10
 ORDER BY package_id, needs_update DESC, friendly_name ASC;
@@ -86,9 +119,25 @@ AND (sqlc.narg('host_id')::text IS NULL OR hp.host_id = sqlc.narg('host_id'))
 ORDER BY hp.package_id, r.name;
 
 -- name: ListHostsForPackage :many
-SELECT h.id, h.friendly_name, h.hostname, h.os_type, h.os_version, h.last_update, h.needs_reboot, h.reboot_reason,
+SELECT h.id, h.friendly_name, h.hostname, h.os_type, h.os_version, h.package_manager, h.last_update, h.needs_reboot, h.reboot_reason,
     hp.current_version, hp.available_version, hp.needs_update, hp.is_security_update, hp.last_checked,
-    hp.source_repository_id, r.name as source_repo_name
+    hp.source_repository_id, r.name as source_repo_name,
+    (CASE WHEN h.os_type ILIKE '%windows%'
+        THEN hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL) AND NOT COALESCE(hp.winget_pinned, false) AND NOT COALESCE(hp.winget_store_app, false)
+        ELSE hp.needs_update END)::boolean AS patchable,
+    (CASE
+        WHEN NOT hp.needs_update THEN 'not_pending'
+        WHEN h.os_type ILIKE '%windows%' AND COALESCE(hp.winget_pinned, false) THEN 'winget_pinned'
+        WHEN h.os_type ILIKE '%windows%' AND COALESCE(hp.winget_store_app, false) THEN 'store_app'
+        WHEN h.os_type ILIKE '%windows%' AND hp.wua_guid IS NULL AND hp.winget_id IS NULL THEN 'no_winget_id'
+        ELSE ''
+    END)::text AS not_patchable_reason,
+    (CASE WHEN hp.wua_guid IS NOT NULL THEN 'wua' WHEN hp.winget_id IS NOT NULL THEN 'winget' ELSE '' END)::text AS patch_source,
+    COALESCE(hp.wua_browse_only, false)::boolean AS wua_browse_only,
+    COALESCE(hp.wua_update_type, '')::text AS wua_update_type,
+    (hp.wua_update_type IS NOT DISTINCT FROM 'FeatureUpgrade' OR COALESCE(hp.wua_categories @> '["Upgrades"]'::jsonb, false))::boolean AS is_feature_upgrade,
+    (hp.current_version = 'pending restart'
+        AND EXISTS (SELECT 1 FROM packages wp WHERE wp.id = hp.package_id AND wp.category = 'Windows Update'))::boolean AS pending_restart
 FROM host_packages hp
 JOIN hosts h ON h.id = hp.host_id
 LEFT JOIN repositories r ON r.id = hp.source_repository_id
@@ -122,3 +171,6 @@ SELECT
 FROM host_packages hp
 JOIN hosts h ON h.id = hp.host_id AND h.status = 'active'
 GROUP BY hp.host_id;
+
+-- name: ListPackageIDsByNames :many
+SELECT id, name FROM packages WHERE name = ANY(@names::text[]);

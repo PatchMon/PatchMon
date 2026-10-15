@@ -182,7 +182,7 @@ func TestEnroll_HostIDReissueRules(t *testing.T) {
 	})
 
 	t.Run("a host that has reported is never re-keyed", func(t *testing.T) {
-		if _, err := f.d.Exec(ctx, `UPDATE hosts SET status = 'active', agent_version = '2.1.5' WHERE id = $1`, hostID); err != nil {
+		if _, err := f.d.Exec(ctx, `UPDATE hosts SET status = 'active', agent_version = '2.1.4' WHERE id = $1`, hostID); err != nil {
 			t.Fatal(err)
 		}
 		before, _ := f.hosts.GetByID(ctx, hostID)
@@ -301,7 +301,7 @@ func TestEnroll_MachineIDGuardSurvivesReportOverwrite(t *testing.T) {
 	}
 	hostID := hostField(out, "id")
 	dashed := strings.ToUpper(raw[0:8] + "-" + raw[8:12] + "-" + raw[12:16] + "-" + raw[16:20] + "-" + raw[20:])
-	if _, err := f.d.Exec(ctx, `UPDATE hosts SET machine_id = $2, status = 'active', agent_version = '2.1.5' WHERE id = $1`, hostID, dashed); err != nil {
+	if _, err := f.d.Exec(ctx, `UPDATE hosts SET machine_id = $2, status = 'active', agent_version = '2.1.4' WHERE id = $1`, hostID, dashed); err != nil {
 		t.Fatal(err)
 	}
 	row, _ := f.hosts.GetByID(ctx, hostID)

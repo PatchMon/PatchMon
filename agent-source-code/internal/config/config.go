@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"patchmon-agent/internal/pkgversion"
+	"patchmon-agent/internal/winsec"
 	"patchmon-agent/pkg/models"
 
 	"github.com/spf13/viper"
@@ -497,6 +498,9 @@ func (m *Manager) saveConfigLocked() error {
 		"enabled":        updateCheckEnabled,
 		"interval_hours": updateCheckHours,
 	})
+	configViper.Set("apk_secdb", map[string]interface{}{
+		"enabled": m.apkSecDBEnabledLocked(),
+	})
 
 	return writeConfigAtomically(configViper, m.configFile)
 }
@@ -727,6 +731,17 @@ func (m *Manager) dockerUpdateCheckLocked() (bool, int) {
 		hours = DefaultDockerUpdateCheckIntervalHours
 	}
 	return enabled, hours
+}
+
+// GetAPKSecDBEnabled reports whether Alpine hosts fetch secdb to flag security updates.
+func (m *Manager) GetAPKSecDBEnabled() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.apkSecDBEnabledLocked()
+}
+
+func (m *Manager) apkSecDBEnabledLocked() bool {
+	return m.config.APKSecDB.Enabled == nil || *m.config.APKSecDB.Enabled
 }
 
 // IsIntegrationEnabled checks if an integration is enabled
@@ -1030,6 +1045,14 @@ func (m *Manager) setupDirectories() error {
 		// Use 0750 - owner full access, group read/execute, no world access
 		if err := os.MkdirAll(dir, 0750); err != nil {
 			return fmt.Errorf("error creating directory %s: %w", dir, err)
+		}
+	}
+
+	// Windows ignores file modes, so lock the standard data directory to SYSTEM
+	// and Administrators by ACL. Guarded to the default path; a no-op off Windows.
+	if m.config.CredentialsFile == DefaultCredentialsFileWindows {
+		if err := winsec.EnsureDataDir(); err != nil {
+			return fmt.Errorf("error securing data directory: %w", err)
 		}
 	}
 

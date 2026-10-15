@@ -36,23 +36,30 @@ func SystemProbe() Probe {
 	}
 }
 
-// Detect returns apt, dnf, yum, apk, pacman, pkg, windows or unknown.
+// Detect returns apt, dnf, yum, apk, pacman, zypper, pkg, windows or unknown.
 func Detect() string {
 	return SystemProbe().Detect()
 }
 
 var familyByOSID = map[string]string{
-	"debian":    "apt",
-	"ubuntu":    "apt",
-	"rhel":      "rpm",
-	"fedora":    "rpm",
-	"centos":    "rpm",
-	"rocky":     "rpm",
-	"almalinux": "rpm",
-	"ol":        "rpm",
-	"amzn":      "rpm",
-	"alpine":    "apk",
-	"arch":      "pacman",
+	"debian":              "apt",
+	"ubuntu":              "apt",
+	"rhel":                "rpm",
+	"fedora":              "rpm",
+	"centos":              "rpm",
+	"rocky":               "rpm",
+	"almalinux":           "rpm",
+	"ol":                  "rpm",
+	"amzn":                "rpm",
+	"alpine":              "apk",
+	"arch":                "pacman",
+	"suse":                "zypper",
+	"opensuse":            "zypper",
+	"opensuse-leap":       "zypper",
+	"opensuse-tumbleweed": "zypper",
+	"opensuse-slowroll":   "zypper",
+	"sles":                "zypper",
+	"sled":                "zypper",
 }
 
 // Detect works through os-release, then the installed package database, then
@@ -91,7 +98,7 @@ func (p Probe) Detect() string {
 		}
 	}
 
-	for _, family := range []string{"apk", "apt", "rpm", "pacman"} {
+	for _, family := range []string{"apk", "apt", "rpm", "pacman", "zypper"} {
 		if m := p.resolveFamily(family); m != "" {
 			return m
 		}
@@ -112,7 +119,10 @@ func (p Probe) resolveFamily(family string) string {
 		if p.has("yum") {
 			return "yum"
 		}
-	case "apk", "pacman":
+		if p.has("zypper") {
+			return "zypper"
+		}
+	case "apk", "pacman", "zypper":
 		if p.has(family) {
 			return family
 		}

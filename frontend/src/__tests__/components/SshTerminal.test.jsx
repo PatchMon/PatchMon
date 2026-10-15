@@ -539,4 +539,85 @@ describe("SshTerminal Component", () => {
 			});
 		});
 	});
+	describe("Windows hosts", () => {
+		const windowsHost = (extra = {}) => ({
+			...mockHost,
+			os_type: "Windows Server 2022 Datacenter",
+			...extra,
+		});
+
+		beforeEach(() => {
+			localStorage.getItem = vi.fn(() => null);
+		});
+
+		it.each([
+			true,
+			false,
+		])("defaults the username to Administrator (embedded=%s)", (embedded) => {
+			renderComponent({ host: windowsHost(), embedded });
+			const input = screen.getByPlaceholderText("Administrator");
+			expect(input).toHaveValue("Administrator");
+			expect(screen.queryByPlaceholderText("root")).toBeNull();
+		});
+
+		it("detects Windows from expected_platform before the first report", () => {
+			renderComponent({
+				host: { ...mockHost, os_type: "unknown", expected_platform: "windows" },
+				embedded: true,
+			});
+			expect(screen.getByPlaceholderText("Administrator")).toHaveValue(
+				"Administrator",
+			);
+		});
+
+		it("keeps a cached per-host username", () => {
+			localStorage.getItem = vi.fn((key) =>
+				key === `ssh_username_${mockHost.id}` ? "patchadmin" : null,
+			);
+			renderComponent({ host: windowsHost(), embedded: true });
+			expect(screen.getByPlaceholderText("Administrator")).toHaveValue(
+				"patchadmin",
+			);
+		});
+
+		it("shows the OpenSSH Server note with a link to the admin guide", () => {
+			renderComponent({ host: windowsHost(), embedded: true });
+			expect(screen.getByText(/OpenSSH Server feature/)).toBeInTheDocument();
+			expect(
+				screen.getByRole("link", { name: /enable openssh server/i }),
+			).toHaveAttribute(
+				"href",
+				"https://patchmon.net/docs/patchmon-admin-guide#web-ssh-terminal-windows",
+			);
+		});
+
+		it("does not offer the Linux agent install command", async () => {
+			renderComponent({ host: windowsHost(), embedded: true });
+			fireEvent.change(screen.getByPlaceholderText(/password/i), {
+				target: { value: "testpass" },
+			});
+			fireEvent.click(screen.getByRole("button", { name: /^connect$/i }));
+			await waitFor(() => {
+				expect(WebSocket).toHaveBeenCalled();
+			});
+			const wsInstance = WebSocket.mock.results[0].value;
+			await act(async () => {
+				wsInstance._simulateOpen();
+				wsInstance._simulateMessage(JSON.stringify({ type: "connected" }));
+			});
+			await waitFor(() => {
+				expect(screen.getByText("Connected")).toBeInTheDocument();
+			});
+			expect(screen.queryByText(/install agent/i)).toBeNull();
+		});
+
+		it("keeps root and no note on Linux hosts", () => {
+			renderComponent({
+				host: { ...mockHost, os_type: "Ubuntu" },
+				embedded: true,
+			});
+			expect(screen.getByPlaceholderText("root")).toHaveValue("root");
+			expect(screen.queryByText(/OpenSSH Server feature/)).toBeNull();
+		});
+	});
 });

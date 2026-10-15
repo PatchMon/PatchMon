@@ -312,6 +312,7 @@ type Host struct {
 	Notes                        *string            `json:"notes"`
 	NeedsReboot                  *bool              `json:"needs_reboot"`
 	RebootReason                 *string            `json:"reboot_reason"`
+	PatchRebootPendingBootTime   pgtype.Timestamptz `json:"patch_reboot_pending_boot_time"`
 	DockerEnabled                bool               `json:"docker_enabled"`
 	ComplianceEnabled            bool               `json:"compliance_enabled"`
 	ComplianceOnDemandOnly       bool               `json:"compliance_on_demand_only"`
@@ -376,8 +377,12 @@ type HostPackage struct {
 	WuaSupportUrl      *string          `json:"wua_support_url"`
 	WuaRevisionNumber  *int32           `json:"wua_revision_number"`
 	WuaDateInstalled   pgtype.Timestamp `json:"wua_date_installed"`
-	WuaInstallResult   *string          `json:"wua_install_result"`
 	SourceRepositoryID *string          `json:"source_repository_id"`
+	WingetID           *string          `json:"winget_id"`
+	WingetPinned       *bool            `json:"winget_pinned"`
+	WingetStoreApp     *bool            `json:"winget_store_app"`
+	WuaBrowseOnly      *bool            `json:"wua_browse_only"`
+	WuaUpdateType      *string          `json:"wua_update_type"`
 }
 
 type HostPendingConfig struct {
@@ -500,28 +505,53 @@ type PatchPolicyExclusion struct {
 }
 
 type PatchRun struct {
-	ID                string           `json:"id"`
-	HostID            string           `json:"host_id"`
-	JobID             string           `json:"job_id"`
-	PatchType         string           `json:"patch_type"`
-	PackageName       *string          `json:"package_name"`
-	PackageNames      []byte           `json:"package_names"`
-	Status            string           `json:"status"`
-	ShellOutput       string           `json:"shell_output"`
-	ErrorMessage      *string          `json:"error_message"`
-	StartedAt         pgtype.Timestamp `json:"started_at"`
-	CompletedAt       pgtype.Timestamp `json:"completed_at"`
-	ScheduledAt       pgtype.Timestamp `json:"scheduled_at"`
-	TriggeredByUserID *string          `json:"triggered_by_user_id"`
-	ApprovedByUserID  *string          `json:"approved_by_user_id"`
-	DryRun            bool             `json:"dry_run"`
-	PackagesAffected  []byte           `json:"packages_affected"`
-	PolicyID          *string          `json:"policy_id"`
-	PolicyName        *string          `json:"policy_name"`
-	PolicySnapshot    []byte           `json:"policy_snapshot"`
-	ValidationRunID   *string          `json:"validation_run_id"`
-	CreatedAt         pgtype.Timestamp `json:"created_at"`
-	UpdatedAt         pgtype.Timestamp `json:"updated_at"`
+	ID                    string           `json:"id"`
+	HostID                string           `json:"host_id"`
+	JobID                 string           `json:"job_id"`
+	PatchType             string           `json:"patch_type"`
+	PackageName           *string          `json:"package_name"`
+	PackageNames          []byte           `json:"package_names"`
+	Status                string           `json:"status"`
+	ShellOutput           string           `json:"shell_output"`
+	ErrorMessage          *string          `json:"error_message"`
+	StartedAt             pgtype.Timestamp `json:"started_at"`
+	CompletedAt           pgtype.Timestamp `json:"completed_at"`
+	ScheduledAt           pgtype.Timestamp `json:"scheduled_at"`
+	TriggeredByUserID     *string          `json:"triggered_by_user_id"`
+	ApprovedByUserID      *string          `json:"approved_by_user_id"`
+	DryRun                bool             `json:"dry_run"`
+	PackagesAffected      []byte           `json:"packages_affected"`
+	PolicyID              *string          `json:"policy_id"`
+	PolicyName            *string          `json:"policy_name"`
+	PolicySnapshot        []byte           `json:"policy_snapshot"`
+	ValidationRunID       *string          `json:"validation_run_id"`
+	CreatedAt             pgtype.Timestamp `json:"created_at"`
+	UpdatedAt             pgtype.Timestamp `json:"updated_at"`
+	RebootRequired        *bool            `json:"reboot_required"`
+	WindowsIncludeUpdates *bool            `json:"windows_include_updates"`
+	WindowsIncludeApps    *bool            `json:"windows_include_apps"`
+}
+
+type PatchRunItem struct {
+	ID             string           `json:"id"`
+	PatchRunID     string           `json:"patch_run_id"`
+	HostID         string           `json:"host_id"`
+	Kind           string           `json:"kind"`
+	Identifier     string           `json:"identifier"`
+	RevisionNumber *int32           `json:"revision_number"`
+	Title          string           `json:"title"`
+	Kb             *string          `json:"kb"`
+	Status         string           `json:"status"`
+	ResultCode     *int32           `json:"result_code"`
+	Hresult        *string          `json:"hresult"`
+	ExitCode       *int64           `json:"exit_code"`
+	RebootRequired bool             `json:"reboot_required"`
+	DownloadBytes  *int64           `json:"download_bytes"`
+	Message        *string          `json:"message"`
+	StartedAt      pgtype.Timestamp `json:"started_at"`
+	CompletedAt    pgtype.Timestamp `json:"completed_at"`
+	CreatedAt      pgtype.Timestamp `json:"created_at"`
+	UpdatedAt      pgtype.Timestamp `json:"updated_at"`
 }
 
 type ReleaseNotesAcceptance struct {
@@ -661,6 +691,7 @@ type Setting struct {
 	OidcUserGroup                   *string          `json:"oidc_user_group"`
 	OidcEnforceHttps                bool             `json:"oidc_enforce_https"`
 	OidcTrustUnverifiedEmail        bool             `json:"oidc_trust_unverified_email"`
+	OidcLocalAuthFallback           bool             `json:"oidc_local_auth_fallback"`
 	MaxLoginAttempts                *int32           `json:"max_login_attempts"`
 	LockoutDurationMinutes          *int32           `json:"lockout_duration_minutes"`
 	SessionInactivityTimeoutMinutes *int32           `json:"session_inactivity_timeout_minutes"`
@@ -752,6 +783,9 @@ type User struct {
 	DiscordLinkedAt        pgtype.Timestamp `json:"discord_linked_at"`
 	NewsletterSubscribed   bool             `json:"newsletter_subscribed"`
 	NewsletterSubscribedAt pgtype.Timestamp `json:"newsletter_subscribed_at"`
+	TfaEnrolmentRequired   bool             `json:"tfa_enrolment_required"`
+	PasswordChangeRequired bool             `json:"password_change_required"`
+	PreviousPasswordHash   *string          `json:"previous_password_hash"`
 }
 
 type UserSession struct {

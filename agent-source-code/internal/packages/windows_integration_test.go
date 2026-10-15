@@ -3,7 +3,6 @@
 package packages
 
 import (
-	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -150,11 +149,33 @@ func TestWingetUpgradeMapLive(t *testing.T) {
 func TestWindowsUpdatesCollectorLive(t *testing.T) {
 	requireWindowsIntegration(t)
 
-	done := make(chan []models.Package, 1)
-	go func() { done <- newTestWindowsManager().getWindowsUpdates() }()
+	type collected struct {
+		pkgs   []models.Package
+		search wuSearch
+	}
+	done := make(chan collected, 1)
+	start := time.Now()
+	go func() {
+		pkgs, search := newTestWindowsManager().getWindowsUpdates()
+		done <- collected{pkgs, search}
+	}()
 
 	select {
-	case pkgs := <-done:
+	case c := <-done:
+		pkgs := c.pkgs
+		if c.search.status == wuSearchFailed {
+			if len(pkgs) != 0 {
+				t.Fatalf("a failed search must return no rows, got %d", len(pkgs))
+			}
+			if c.search.detail == "" {
+				t.Fatal("a failed search must say why")
+			}
+			requireSearchTimedOut(t, time.Since(start), c.search.detail)
+			t.Skipf("Windows Update search timed out on this runner (%s); reports keep the server's rows", c.search.detail)
+		}
+		if c.search.status == wuSearchCOMFailed {
+			t.Logf("Windows Update COM search failed (%s); checking the installed updates it still listed", c.search.detail)
+		}
 		assertPackagesWellFormed(t, pkgs)
 		missingGUID := 0
 		for i, p := range pkgs {
@@ -163,7 +184,7 @@ func TestWindowsUpdatesCollectorLive(t *testing.T) {
 			}
 			if p.WUAGuid == "" {
 				missingGUID++
-				t.Logf("update %d (%s) has no WUA GUID, so InstallWindowsUpdate cannot act on it", i, p.Name)
+				t.Logf("update %d (%s) has no WUA GUID, so the patch runner cannot target it", i, p.Name)
 			}
 		}
 		// Logged rather than failed: a hosted runner has a constrained Windows
@@ -180,44 +201,36 @@ func TestWindowsUpdatesCollectorLive(t *testing.T) {
 	}
 }
 
+// requireSearchTimedOut fails unless a failed search ran into its time limit: failing well
+// before it means the script or its output is broken, not that Windows Update is slow.
+func requireSearchTimedOut(t *testing.T, elapsed time.Duration, detail string) {
+	t.Helper()
+	if elapsed < networkCollectorTimeout-30*time.Second {
+		t.Fatalf("the Windows Update search failed after %s, long before its %s limit, so the script is broken: %s", elapsed.Round(time.Second), networkCollectorTimeout, detail)
+	}
+}
+
 func TestWSUSCheckLive(t *testing.T) {
 	requireWindowsIntegration(t)
 
 	t.Logf("isWSUSActive() = %v", newTestWindowsManager().isWSUSActive())
 }
 
-func TestRebootRequiredLive(t *testing.T) {
-	requireWindowsIntegration(t)
-
-	t.Logf("RebootRequired() = %v", RebootRequired())
-}
-
-// The dry run lists upgrades without installing anything, which is enough to
-// prove wingetResolveBlock and the surrounding script parse and execute.
-func TestWinGetUpgradeAllDryRunLive(t *testing.T) {
-	requireWindowsIntegration(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
-	defer cancel()
-
-	out, err := NewWindowsPatcher().WinGetUpgradeAll(ctx, true)
-	if ctx.Err() != nil {
-		t.Fatalf("winget dry run exceeded its deadline: %v", ctx.Err())
-	}
-	// A non-zero exit is acceptable (winget may be absent); a PowerShell parse
-	// error is not, and it surfaces in the output rather than as a Go error.
-	assertNoPowerShellParseError(t, out)
-	if err != nil {
-		t.Logf("winget dry run exited non-zero (acceptable if winget is absent): %v", err)
-	}
-	t.Logf("winget dry run output:\n%s", out)
-}
-
 // The full merge path, which is what serve actually calls.
 func TestGetPackagesLive(t *testing.T) {
 	requireWindowsIntegration(t)
 
-	pkgs := newTestWindowsManager().GetPackages()
+	start := time.Now()
+	pkgs, omitted := newTestWindowsManager().GetPackages()
+	if omitted {
+		for _, p := range pkgs {
+			if p.Category == "Windows Update" {
+				t.Fatalf("Windows Update rows were omitted but %q was still sent", p.Name)
+			}
+		}
+		requireSearchTimedOut(t, time.Since(start), "rows omitted")
+		t.Log("Windows Update search timed out on this runner, so its rows were omitted")
+	}
 	if len(pkgs) == 0 {
 		t.Fatal("GetPackages returned nothing; the registry collector alone should have populated it")
 	}

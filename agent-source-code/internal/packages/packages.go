@@ -26,8 +26,11 @@ type Manager struct {
 	apkManager     *APKManager
 	pacmanManager  *PacmanManager
 	freebsdManager *FreeBSDManager
+	zypperManager  *ZypperManager
 	winManager     *WindowsManager
 	ucsManager     *UCSManager
+
+	windowsUpdatesOmitted bool
 }
 
 // New creates a new package manager
@@ -47,6 +50,7 @@ func New(logger *logrus.Logger, cacheRefresh CacheRefreshConfig) *Manager {
 		apkManager:     apkManager,
 		pacmanManager:  pacmanManager,
 		freebsdManager: freebsdManager,
+		zypperManager:  NewZypperManager(logger),
 		winManager:     winManager,
 		ucsManager:     ucsManager,
 	}
@@ -64,7 +68,7 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 	)
 	switch packageManager {
 	case "windows":
-		pkgs = m.winManager.GetPackages()
+		pkgs, m.windowsUpdatesOmitted = m.winManager.GetPackages()
 	case "ucs":
 		pkgs, err = m.ucsManager.GetPackages()
 	case "apt":
@@ -77,6 +81,8 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 		pkgs, err = m.pacmanManager.GetPackages()
 	case "pkg":
 		pkgs, err = m.freebsdManager.GetPackages()
+	case "zypper":
+		pkgs, err = m.zypperManager.GetPackages()
 	default:
 		return nil, fmt.Errorf("unsupported package manager: %s", packageManager)
 	}
@@ -88,8 +94,15 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 	return textsan.CleanPackages(pkgs), nil
 }
 
+// SetAPKSecDBEnabled controls whether Alpine hosts look up security fixes in secdb.
+func (m *Manager) SetAPKSecDBEnabled(enabled bool) { m.apkManager.SetSecDBEnabled(enabled) }
+
+// WindowsUpdatesOmitted reports whether the last GetPackages left out Windows Update rows
+// because a patch run was using Windows Update.
+func (m *Manager) WindowsUpdatesOmitted() bool { return m.windowsUpdatesOmitted }
+
 // DetectPackageManager detects which package manager is available on the system.
-// Returns one of: ucs, apt, dnf, yum, apk, pacman, pkg, windows, or unknown.
+// Returns one of: ucs, apt, dnf, yum, apk, pacman, zypper, pkg, windows, or unknown.
 func (m *Manager) DetectPackageManager() string {
 	// Check for UCS before generic detection — UCS is Debian-based and has apt,
 	// but uses univention-upgrade for patching

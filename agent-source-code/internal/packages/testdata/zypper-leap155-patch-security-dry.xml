@@ -1,0 +1,102 @@
+<?xml version='1.0'?>
+<stream>
+<message type="info">Loading repository data...</message>
+<message type="warning">Repository &apos;Update repository of openSUSE Backports&apos; metadata expired since 2025-03-02 19:18:12 UTC.</message>
+<message type="warning">Repository &apos;Main Update Repository&apos; metadata expired since 2025-08-30 08:17:31 UTC.</message>
+<message type="warning">Repository &apos;Update Repository (Non-Oss)&apos; metadata expired since 2025-04-10 11:03:28 UTC.</message>
+<message type="info">    Warning: Repository metadata expired: Check if &apos;autorefresh&apos; is turned on (zypper lr), otherwise
+    manually refresh the repository (zypper ref). If this does not solve the issue, it could be that
+    you are using a broken mirror or the server has actually discontinued to support the repository.</message>
+<message type="info">Reading installed packages...</message>
+<message type="info">Patch &apos;openSUSE-SLE-15.5-2024-4403-1&apos; is not in the specified category.</message>
+<message type="info">Patch &apos;openSUSE-SLE-15.5-2024-4198-1&apos; is not in the specified category.</message>
+<message type="info">Patch &apos;openSUSE-SLE-15.5-2024-3718-1&apos; is not in the specified category.</message>
+<message type="info">Patch &apos;openSUSE-SLE-15.5-2024-3420-1&apos; is not in the specified category.</message>
+<message type="info">Patch &apos;openSUSE-SLE-15.5-2024-4065-1&apos; is not in the specified category.</message>
+<message type="info">Patch &apos;openSUSE-SLE-15.5-2024-4403-1&apos; is not in the specified category.</message>
+<message type="info">Patch &apos;openSUSE-SLE-15.5-2024-4378-1&apos; is not in the specified category.</message>
+<message type="info">Patch &apos;openSUSE-SLE-15.5-2024-4338-1&apos; is not in the specified category.</message>
+<message type="info">Patch &apos;openSUSE-SLE-15.5-2024-4198-1&apos; is not in the specified category.</message>
+<message type="info">Patch &apos;openSUSE-SLE-15.5-2024-3897-1&apos; is not in the specified category.</message>
+<message type="info">Patch &apos;openSUSE-SLE-15.5-2024-3865-1&apos; is not in the specified category.</message>
+<message type="info">Patch &apos;openSUSE-SLE-15.5-2024-3718-1&apos; is not in the specified category.</message>
+<message type="info">Patch &apos;openSUSE-SLE-15.5-2024-3659-1&apos; is not in the specified category.</message>
+<message type="info">Patch &apos;openSUSE-SLE-15.5-2024-3597-1&apos; is not in the specified category.</message>
+<message type="info">Patch &apos;openSUSE-SLE-15.5-2024-3527-1&apos; is not in the specified category.</message>
+<message type="info">Patch &apos;openSUSE-SLE-15.5-2024-3503-1&apos; is not in the specified category.</message>
+<message type="info">Patch &apos;openSUSE-SLE-15.5-2024-3477-1&apos; is not in the specified category.</message>
+<message type="info">Patch &apos;openSUSE-SLE-15.5-2024-3420-1&apos; is not in the specified category.</message>
+<message type="info">Resolving package dependencies...</message>
+<install-summary download-size="3837220" space-usage-diff="65915" space-usage-installed="9021658" space-usage-removed="8955743" packages-to-change="6" need-restart="0" need-reboot="0">
+<to-upgrade>
+<solvable type="package" name="curl" edition="8.0.1-150400.5.59.1" arch="aarch64" repository="repo-sle-update" edition-old="8.0.1-150400.5.50.1" arch-old="aarch64" summary="A Tool for Transferring Data from URLs">
+<description>Curl is a client to get documents and files from or send documents to a
+server using any of the supported protocols (HTTP, HTTPS, FTP, FTPS,
+TFTP, DICT, TELNET, LDAP, or FILE). The command is designed to work
+without user interaction or any kind of interactivity.</description></solvable>
+<solvable type="package" name="libcurl4" edition="8.0.1-150400.5.59.1" arch="aarch64" repository="repo-sle-update" edition-old="8.0.1-150400.5.50.1" arch-old="aarch64" summary="Library for transferring data from URLs">
+<description>The cURL shared library for accessing data using different
+network protocols.</description></solvable>
+<solvable type="package" name="libglib-2_0-0" edition="2.70.5-150400.3.17.1" arch="aarch64" repository="repo-sle-update" edition-old="2.70.5-150400.3.14.1" arch-old="aarch64" summary="General-Purpose Utility Library">
+<description>GLib is a general-purpose utility library, which provides many useful
+data types, macros, type conversions, string utilities, file utilities,
+a main loop abstraction, and so on.</description></solvable>
+<solvable type="package" name="libopenssl1_1" edition="1.1.1l-150500.17.37.1" arch="aarch64" repository="repo-sle-update" edition-old="1.1.1l-150500.17.34.1" arch-old="aarch64" summary="Secure Sockets and Transport Layer Security">
+<description>OpenSSL is a software library to be used in applications that need to
+secure communications over computer networks against eavesdropping or
+need to ascertain the identity of the party at the other end.
+OpenSSL contains an implementation of the SSL and TLS protocols.</description></solvable>
+<solvable type="package" name="libopenssl1_1-hmac" edition="1.1.1l-150500.17.37.1" arch="aarch64" repository="repo-sle-update" edition-old="1.1.1l-150500.17.34.1" arch-old="aarch64" summary="HMAC files for FIPS-140-2 integrity checking of the openssl shared libraries">
+<description>The FIPS compliant operation of the openssl shared libraries is NOT
+possible without the HMAC hashes contained in this package!</description></solvable>
+<solvable type="package" name="openssl-1_1" edition="1.1.1l-150500.17.37.1" arch="aarch64" repository="repo-sle-update" edition-old="1.1.1l-150500.17.34.1" arch-old="aarch64" summary="Secure Sockets and Transport Layer Security">
+<description>OpenSSL is a software library to be used in applications that need to
+secure communications over computer networks against eavesdropping or
+need to ascertain the identity of the party at the other end.
+OpenSSL contains an implementation of the SSL and TLS protocols.</description></solvable>
+</to-upgrade>
+<to-install>
+<solvable type="patch" name="openSUSE-SLE-15.5-2024-3765" edition="1" arch="noarch" repository="repo-sle-update" summary="Security update for openssl-1_1">
+<description>This update for openssl-1_1 fixes the following issues:
+
+- CVE-2023-50782: Implicit rejection in PKCS#1 v1.5 (bsc#1220262)
+</description></solvable>
+<solvable type="patch" name="openSUSE-SLE-15.5-2024-3926" edition="1" arch="noarch" repository="repo-sle-update" summary="Security update for curl">
+<description>This update for curl fixes the following issues:
+
+- CVE-2024-9681: Fixed HSTS subdomain overwrites parent cache entry (bsc#1232528)
+</description></solvable>
+<solvable type="patch" name="openSUSE-SLE-15.5-2024-4078" edition="1" arch="noarch" repository="repo-sle-update" summary="Security update for glib2">
+<description>This update for glib2 fixes the following issues:
+
+- CVE-2024-52533: Fixed a single byte buffer overflow (bsc#1233282).
+</description></solvable>
+<solvable type="patch" name="openSUSE-SLE-15.5-2024-4359" edition="1" arch="noarch" repository="repo-sle-update" summary="Security update for curl">
+<description>This update for curl fixes the following issues:
+
+ - CVE-2024-11053: Fixed password leak in curl used for the first host to the followed-to host under certain circumstances (bsc#1234068)
+
+</description></solvable>
+</to-install>
+</install-summary>
+<prompt id="0">
+<text>Backend:  classic_rpmtrans --dry-run
+Continue?</text>
+<option default="1" value="y" desc="Yes, accept the summary and proceed with installation/removal of packages."/>
+<option value="n" desc="No, cancel the operation."/>
+<option value="v" desc="Toggle display of package versions."/>
+<option value="a" desc="Toggle display of package architectures."/>
+<option value="r" desc="Toggle display of repositories from which the packages will be installed."/>
+<option value="m" desc="Toggle display of package vendor names."/>
+<option value="d" desc="Toggle between showing all details and as few details as possible."/>
+<option value="g" desc="View the summary in pager."/>
+</prompt>
+<progress id="fileconflict-check" name="Checking for file conflicts:"/>
+<progress id="fileconflict-check" name="Checking for file conflicts:" value="0"/>
+<progress id="fileconflict-check" name="Checking for file conflicts: (1 skipped)" value="0"/>
+<progress id="fileconflict-check" name="Checking for file conflicts: (1 skipped)" done="1"/>
+<fileconflict-summary><message type="warning">6 packages had to be excluded from file conflicts check because they are not yet downloaded.</message>
+<message type="info">    Note: Checking for file conflicts requires not installed packages to be downloaded in advance in
+    order to access their file lists. See option &apos;--download-in-advance / --dry-run --download-only&apos;
+    in the zypper manual page for details.</message>
+</fileconflict-summary></stream>

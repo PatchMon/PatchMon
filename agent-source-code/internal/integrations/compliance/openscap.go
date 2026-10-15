@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"patchmon-agent/internal/logutil"
+	"patchmon-agent/internal/packages"
 	"patchmon-agent/pkg/models"
 
 	"github.com/sirupsen/logrus"
@@ -554,7 +555,20 @@ func (s *OpenSCAPScanner) installRHEL(ctx context.Context) error {
 func (s *OpenSCAPScanner) installSUSE(ctx context.Context) error {
 	s.logger.Info("Installing/upgrading OpenSCAP on SUSE-based system...")
 
-	output, err := exec.CommandContext(ctx, "zypper", "--non-interactive", "install", "openscap-utils").CombinedOutput()
+	release, err := packages.AcquireZypper(ctx, func() {
+		s.logger.Info("Waiting for a zypper operation by this agent to finish before installing OpenSCAP")
+	})
+	if err != nil {
+		return fmt.Errorf("waiting for zypper: %w", err)
+	}
+	defer release()
+	zypper := func(pkg string) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, "zypper", "--non-interactive", "install", pkg)
+		cmd.Env = packages.ZypperEnv(os.Environ())
+		return cmd
+	}
+
+	output, err := zypper("openscap-utils").CombinedOutput()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			s.logger.Warn("OpenSCAP installation timed out after 5 minutes")
@@ -564,7 +578,7 @@ func (s *OpenSCAPScanner) installSUSE(ctx context.Context) error {
 		return fmt.Errorf("failed to install OpenSCAP: %w - %s", err, truncateOutput(output))
 	}
 
-	ssgOutput, ssgErr := exec.CommandContext(ctx, "zypper", "--non-interactive", "install", "scap-security-guide").CombinedOutput()
+	ssgOutput, ssgErr := zypper("scap-security-guide").CombinedOutput()
 	if ssgErr != nil {
 		s.logger.WithField("output", logutil.Sanitize(string(ssgOutput))).Warn("scap-security-guide not available; content will be synced from the PatchMon server")
 	}

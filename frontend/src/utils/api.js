@@ -264,15 +264,23 @@ export const adminUsersAPI = {
 	delete: (userId) => api.delete(`/auth/admin/users/${userId}`),
 	resetPassword: (userId, newPassword) =>
 		api.post(`/auth/admin/users/${userId}/reset-password`, { newPassword }),
+	unlinkOidc: (userId) => api.post(`/auth/admin/users/${userId}/unlink-oidc`),
+	resetTfa: (userId, { password, tfaToken, newPassword }) =>
+		api.post(`/auth/admin/users/${userId}/reset-tfa`, {
+			password,
+			tfaToken,
+			newPassword,
+		}),
 };
 
 // Permissions API (for role management)
 export const permissionsAPI = {
 	getRoles: () => api.get("/permissions/roles"),
-	getRole: (role) => api.get(`/permissions/roles/${role}`),
+	getRole: (role) => api.get(`/permissions/roles/${encodeURIComponent(role)}`),
 	updateRole: (role, permissions) =>
-		api.put(`/permissions/roles/${role}`, permissions),
-	deleteRole: (role) => api.delete(`/permissions/roles/${role}`),
+		api.put(`/permissions/roles/${encodeURIComponent(role)}`, permissions),
+	deleteRole: (role) =>
+		api.delete(`/permissions/roles/${encodeURIComponent(role)}`),
 	getUserPermissions: () => api.get("/permissions/user-permissions"),
 };
 
@@ -422,13 +430,14 @@ export const hostsAPI = {
 // Packages API
 export const packagesAPI = {
 	getAll: (params = {}) => api.get("/packages", { params }),
-	getById: (packageId) => api.get(`/packages/${packageId}`),
+	getById: (packageId) => api.get(`/packages/${encodeURIComponent(packageId)}`),
 	getCategories: () => api.get("/packages/categories/list"),
 	getHosts: (packageId, params = {}) =>
-		api.get(`/packages/${packageId}/hosts`, { params }),
+		api.get(`/packages/${encodeURIComponent(packageId)}/hosts`, { params }),
 	getActivity: (packageId, params = {}) =>
-		api.get(`/packages/${packageId}/activity`, { params }).then((r) => r.data),
-	update: (packageId, data) => api.put(`/packages/${packageId}`, data),
+		api
+			.get(`/packages/${encodeURIComponent(packageId)}/activity`, { params })
+			.then((r) => r.data),
 };
 
 // Utility functions
@@ -599,8 +608,10 @@ export const agentVersionAPI = {
 };
 
 // RDP API (in-browser RDP for Windows hosts via guacd)
+// Must exceed the server's 12s agent handshake so its agent_timeout reply reaches the UI.
 export const rdpAPI = {
-	createTicket: (data) => api.post("/auth/rdp-ticket", data),
+	createTicket: (data) =>
+		api.post("/auth/rdp-ticket", data, { timeout: 20000 }),
 };
 
 // Auth API

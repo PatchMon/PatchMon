@@ -21,12 +21,17 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/mailer"
+	"github.com/PatchMon/PatchMon/server-source-code/internal/netguard"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/google/uuid"
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
 )
+
+// outboundClient is a var so tests can swap in a client without the SSRF dial
+// guard; production uses netguard.GuardedClient.
+var outboundClient = netguard.GuardedClient
 
 // NotificationDeliverHandler sends webhook or email notifications.
 type NotificationDeliverHandler struct {
@@ -731,7 +736,7 @@ type emailConfig struct {
 	// mailer.ResolveMode pick the effective policy.
 	UseTLS  *bool  `json:"use_tls"`
 	TLSMode string `json:"tls_mode"`
-	// AllowInsecureAuth permits PLAIN auth over cleartext. Only meaningful
+	// AllowInsecureAuth permits PLAIN or LOGIN auth over cleartext. Only meaningful
 	// with tls_mode=none; see mailer.Config.AllowInsecureAuth.
 	AllowInsecureAuth bool `json:"allow_insecure_auth"`
 }
@@ -802,7 +807,7 @@ func (h *NotificationDeliverHandler) sendWebhook(ctx context.Context, plain stri
 		sig := hex.EncodeToString(mac.Sum(nil))
 		req.Header.Set("X-PatchMon-Signature", "sha256="+sig)
 	}
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := outboundClient(30 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -1138,7 +1143,7 @@ func (h *NotificationDeliverHandler) sendNtfy(ctx context.Context, plain string,
 		req.SetBasicAuth(cfg.Username, cfg.Password)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := outboundClient(30 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return err

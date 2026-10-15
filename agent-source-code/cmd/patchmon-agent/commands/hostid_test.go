@@ -167,16 +167,16 @@ func TestPartialReportCarriesIdentityFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	full := &models.ReportPayload{
-		AgentVersion:  "2.1.5",
+		AgentVersion:  "2.1.4",
 		MachineID:     "abcd",
 		HostID:        serverHostID,
-		ConfigVersion: "2.1.5",
+		ConfigVersion: "2.1.4",
 		Hostname:      "web-01",
 	}
 	if err := sendPartialReport(context.Background(), client.New(m, logger), full, []string{models.SectionHostname}); err != nil {
 		t.Fatal(err)
 	}
-	if got["hostId"] != serverHostID || got["configVersion"] != "2.1.5" || got["machineId"] != "abcd" {
+	if got["hostId"] != serverHostID || got["configVersion"] != "2.1.4" || got["machineId"] != "abcd" {
 		t.Fatalf("partial payload identity = hostId %v configVersion %v machineId %v", got["hostId"], got["configVersion"], got["machineId"])
 	}
 }
@@ -184,13 +184,13 @@ func TestPartialReportCarriesIdentityFields(t *testing.T) {
 func TestOldServerPayloadsStillDecode(t *testing.T) {
 	var ping models.PingResponse
 	if err := json.Unmarshal([]byte(`{"message":"Ping successful","hashGate":true}`), &ping); err != nil || ping.HostID != "" {
-		t.Fatalf("pre-2.1.5 ping response: %v %q", err, ping.HostID)
+		t.Fatalf("pre-2.1.4 ping response: %v %q", err, ping.HostID)
 	}
 	var upd models.UpdateResponse
 	if err := json.Unmarshal([]byte(`{"message":"ok","packagesProcessed":1,"hostId":"`+serverHostID+`"}`), &upd); err != nil || upd.HostID != serverHostID {
 		t.Fatalf("update response: %v %q", err, upd.HostID)
 	}
-	b, _ := json.Marshal(models.PingRequest{AgentVersion: "2.1.5"})
+	b, _ := json.Marshal(models.PingRequest{AgentVersion: "2.1.4"})
 	for _, k := range []string{"hostId", "configVersion", "machineId"} {
 		if strings.Contains(string(b), k) {
 			t.Fatalf("empty %s must be omitted from the ping body: %s", k, b)

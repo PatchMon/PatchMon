@@ -1,0 +1,16 @@
+<?xml version='1.0'?>
+<stream>
+<message type="info">Refreshing service &apos;openSUSE&apos;.</message>
+<message type="info">Loading repository data...</message>
+<message type="info">Reading installed packages...</message>
+<update-status version="0.6">
+<update-list>
+<update kind="package" name="patterns-base-fips" edition="20241218+leap-lp160.1.1" arch="aarch64" edition-old="20241218-lp160.5.1"><summary>FIPS 140-3 specific packages</summary><description>This pattern installs the FIPS 140-3 specific packages that are required
+if you want to run the machine with &quot;fips=1&quot;.
+
+Please note that this pattern only enables FIPS 140-3 compliant operation, it does
+not directly make the system FIPS 140-3 certified nor validated.
+
+Please refer to SUSE official statements on the state of FIPS 140-3 certification.</description><license/><source url="http://cdn.opensuse.org/distribution/leap/16.0/repo/oss/aarch64" alias="openSUSE:repo-oss"/></update><update kind="package" name="patterns-base-minimal_base" edition="20241218+leap-lp160.1.1" arch="aarch64" edition-old="20241218-lp160.5.1"><summary>Minimal Appliance Base</summary><description>This is the minimal runtime system. It is really a minimal system. It is intended as base for Appliances.</description><license/><source url="http://cdn.opensuse.org/distribution/leap/16.0/repo/oss/aarch64" alias="openSUSE:repo-oss"/></update></update-list>
+</update-status>
+</stream>

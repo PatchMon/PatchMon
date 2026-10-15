@@ -116,7 +116,23 @@ SELECT hp.id, hp.host_id, hp.package_id, hp.current_version, hp.available_versio
     r.name as source_repo_name, r.url as source_repo_url,
     h.friendly_name as host_friendly_name, h.hostname as host_hostname, h.ip as host_ip,
     h.os_type as host_os_type, h.os_version as host_os_version,
-    h.last_update as host_last_update, h.needs_reboot as host_needs_reboot
+    h.last_update as host_last_update, h.needs_reboot as host_needs_reboot,
+    (CASE WHEN h.os_type ILIKE '%windows%'
+        THEN hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL) AND NOT COALESCE(hp.winget_pinned, false) AND NOT COALESCE(hp.winget_store_app, false)
+        ELSE hp.needs_update END)::boolean AS patchable,
+    (CASE
+        WHEN NOT hp.needs_update THEN 'not_pending'
+        WHEN h.os_type ILIKE '%windows%' AND COALESCE(hp.winget_pinned, false) THEN 'winget_pinned'
+        WHEN h.os_type ILIKE '%windows%' AND COALESCE(hp.winget_store_app, false) THEN 'store_app'
+        WHEN h.os_type ILIKE '%windows%' AND hp.wua_guid IS NULL AND hp.winget_id IS NULL THEN 'no_winget_id'
+        ELSE ''
+    END)::text AS not_patchable_reason,
+    (CASE WHEN hp.wua_guid IS NOT NULL THEN 'wua' WHEN hp.winget_id IS NOT NULL THEN 'winget' ELSE '' END)::text AS patch_source,
+    COALESCE(hp.wua_browse_only, false)::boolean AS wua_browse_only,
+    COALESCE(hp.wua_update_type, '')::text AS wua_update_type,
+    (hp.wua_update_type IS NOT DISTINCT FROM 'FeatureUpgrade' OR COALESCE(hp.wua_categories @> '["Upgrades"]'::jsonb, false))::boolean AS is_feature_upgrade,
+    (hp.current_version = 'pending restart'
+        AND EXISTS (SELECT 1 FROM packages wp WHERE wp.id = hp.package_id AND wp.category = 'Windows Update'))::boolean AS pending_restart
 FROM host_packages hp
 JOIN hosts h ON h.id = hp.host_id
 LEFT JOIN repositories r ON r.id = hp.source_repository_id
@@ -143,6 +159,13 @@ type GetHostPackagesWithHostsByPackageIDRow struct {
 	HostOsVersion      string           `json:"host_os_version"`
 	HostLastUpdate     pgtype.Timestamp `json:"host_last_update"`
 	HostNeedsReboot    *bool            `json:"host_needs_reboot"`
+	Patchable          bool             `json:"patchable"`
+	NotPatchableReason string           `json:"not_patchable_reason"`
+	PatchSource        string           `json:"patch_source"`
+	WuaBrowseOnly      bool             `json:"wua_browse_only"`
+	WuaUpdateType      string           `json:"wua_update_type"`
+	IsFeatureUpgrade   bool             `json:"is_feature_upgrade"`
+	PendingRestart     bool             `json:"pending_restart"`
 }
 
 // ListPackages and CountPackages are intentionally NOT defined here.
@@ -197,6 +220,13 @@ func (q *Queries) GetHostPackagesWithHostsByPackageID(ctx context.Context, packa
 			&i.HostOsVersion,
 			&i.HostLastUpdate,
 			&i.HostNeedsReboot,
+			&i.Patchable,
+			&i.NotPatchableReason,
+			&i.PatchSource,
+			&i.WuaBrowseOnly,
+			&i.WuaUpdateType,
+			&i.IsFeatureUpgrade,
+			&i.PendingRestart,
 		); err != nil {
 			return nil, err
 		}
@@ -212,6 +242,22 @@ const getHostRefsForPackageIDs = `-- name: GetHostRefsForPackageIDs :many
 WITH ranked_refs AS (
     SELECT hp.package_id, h.id as host_id, h.friendly_name, h.os_type,
         hp.current_version, hp.available_version, hp.needs_update, hp.is_security_update,
+        (CASE WHEN h.os_type ILIKE '%windows%'
+            THEN hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL) AND NOT COALESCE(hp.winget_pinned, false) AND NOT COALESCE(hp.winget_store_app, false)
+            ELSE hp.needs_update END)::boolean AS patchable,
+        (CASE
+            WHEN NOT hp.needs_update THEN 'not_pending'
+            WHEN h.os_type ILIKE '%windows%' AND COALESCE(hp.winget_pinned, false) THEN 'winget_pinned'
+            WHEN h.os_type ILIKE '%windows%' AND COALESCE(hp.winget_store_app, false) THEN 'store_app'
+            WHEN h.os_type ILIKE '%windows%' AND hp.wua_guid IS NULL AND hp.winget_id IS NULL THEN 'no_winget_id'
+            ELSE ''
+        END)::text AS not_patchable_reason,
+        (CASE WHEN hp.wua_guid IS NOT NULL THEN 'wua' WHEN hp.winget_id IS NOT NULL THEN 'winget' ELSE '' END)::text AS patch_source,
+        COALESCE(hp.wua_browse_only, false)::boolean AS wua_browse_only,
+        COALESCE(hp.wua_update_type, '')::text AS wua_update_type,
+        (hp.wua_update_type IS NOT DISTINCT FROM 'FeatureUpgrade' OR COALESCE(hp.wua_categories @> '["Upgrades"]'::jsonb, false))::boolean AS is_feature_upgrade,
+    (hp.current_version = 'pending restart'
+        AND EXISTS (SELECT 1 FROM packages wp WHERE wp.id = hp.package_id AND wp.category = 'Windows Update'))::boolean AS pending_restart,
         row_number() OVER (
             PARTITION BY hp.package_id
             ORDER BY hp.needs_update DESC, h.friendly_name ASC, h.id ASC
@@ -221,7 +267,8 @@ WITH ranked_refs AS (
     WHERE hp.package_id = ANY($1::text[])
     AND ($2::text IS NULL OR hp.host_id = $2)
 )
-SELECT package_id, host_id, friendly_name, os_type, current_version, available_version, needs_update, is_security_update
+SELECT package_id, host_id, friendly_name, os_type, current_version, available_version, needs_update, is_security_update,
+    patchable, not_patchable_reason, patch_source, wua_browse_only, wua_update_type, is_feature_upgrade, pending_restart
 FROM ranked_refs
 WHERE rn <= 10
 ORDER BY package_id, needs_update DESC, friendly_name ASC
@@ -233,14 +280,21 @@ type GetHostRefsForPackageIDsParams struct {
 }
 
 type GetHostRefsForPackageIDsRow struct {
-	PackageID        string  `json:"package_id"`
-	HostID           string  `json:"host_id"`
-	FriendlyName     string  `json:"friendly_name"`
-	OsType           string  `json:"os_type"`
-	CurrentVersion   string  `json:"current_version"`
-	AvailableVersion *string `json:"available_version"`
-	NeedsUpdate      bool    `json:"needs_update"`
-	IsSecurityUpdate bool    `json:"is_security_update"`
+	PackageID          string  `json:"package_id"`
+	HostID             string  `json:"host_id"`
+	FriendlyName       string  `json:"friendly_name"`
+	OsType             string  `json:"os_type"`
+	CurrentVersion     string  `json:"current_version"`
+	AvailableVersion   *string `json:"available_version"`
+	NeedsUpdate        bool    `json:"needs_update"`
+	IsSecurityUpdate   bool    `json:"is_security_update"`
+	Patchable          bool    `json:"patchable"`
+	NotPatchableReason string  `json:"not_patchable_reason"`
+	PatchSource        string  `json:"patch_source"`
+	WuaBrowseOnly      bool    `json:"wua_browse_only"`
+	WuaUpdateType      string  `json:"wua_update_type"`
+	IsFeatureUpgrade   bool    `json:"is_feature_upgrade"`
+	PendingRestart     bool    `json:"pending_restart"`
 }
 
 func (q *Queries) GetHostRefsForPackageIDs(ctx context.Context, arg GetHostRefsForPackageIDsParams) ([]GetHostRefsForPackageIDsRow, error) {
@@ -261,6 +315,13 @@ func (q *Queries) GetHostRefsForPackageIDs(ctx context.Context, arg GetHostRefsF
 			&i.AvailableVersion,
 			&i.NeedsUpdate,
 			&i.IsSecurityUpdate,
+			&i.Patchable,
+			&i.NotPatchableReason,
+			&i.PatchSource,
+			&i.WuaBrowseOnly,
+			&i.WuaUpdateType,
+			&i.IsFeatureUpgrade,
+			&i.PendingRestart,
 		); err != nil {
 			return nil, err
 		}
@@ -376,9 +437,25 @@ func (q *Queries) GetSourceReposByPackageIDs(ctx context.Context, arg GetSourceR
 }
 
 const listHostsForPackage = `-- name: ListHostsForPackage :many
-SELECT h.id, h.friendly_name, h.hostname, h.os_type, h.os_version, h.last_update, h.needs_reboot, h.reboot_reason,
+SELECT h.id, h.friendly_name, h.hostname, h.os_type, h.os_version, h.package_manager, h.last_update, h.needs_reboot, h.reboot_reason,
     hp.current_version, hp.available_version, hp.needs_update, hp.is_security_update, hp.last_checked,
-    hp.source_repository_id, r.name as source_repo_name
+    hp.source_repository_id, r.name as source_repo_name,
+    (CASE WHEN h.os_type ILIKE '%windows%'
+        THEN hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL) AND NOT COALESCE(hp.winget_pinned, false) AND NOT COALESCE(hp.winget_store_app, false)
+        ELSE hp.needs_update END)::boolean AS patchable,
+    (CASE
+        WHEN NOT hp.needs_update THEN 'not_pending'
+        WHEN h.os_type ILIKE '%windows%' AND COALESCE(hp.winget_pinned, false) THEN 'winget_pinned'
+        WHEN h.os_type ILIKE '%windows%' AND COALESCE(hp.winget_store_app, false) THEN 'store_app'
+        WHEN h.os_type ILIKE '%windows%' AND hp.wua_guid IS NULL AND hp.winget_id IS NULL THEN 'no_winget_id'
+        ELSE ''
+    END)::text AS not_patchable_reason,
+    (CASE WHEN hp.wua_guid IS NOT NULL THEN 'wua' WHEN hp.winget_id IS NOT NULL THEN 'winget' ELSE '' END)::text AS patch_source,
+    COALESCE(hp.wua_browse_only, false)::boolean AS wua_browse_only,
+    COALESCE(hp.wua_update_type, '')::text AS wua_update_type,
+    (hp.wua_update_type IS NOT DISTINCT FROM 'FeatureUpgrade' OR COALESCE(hp.wua_categories @> '["Upgrades"]'::jsonb, false))::boolean AS is_feature_upgrade,
+    (hp.current_version = 'pending restart'
+        AND EXISTS (SELECT 1 FROM packages wp WHERE wp.id = hp.package_id AND wp.category = 'Windows Update'))::boolean AS pending_restart
 FROM host_packages hp
 JOIN hosts h ON h.id = hp.host_id
 LEFT JOIN repositories r ON r.id = hp.source_repository_id
@@ -403,6 +480,7 @@ type ListHostsForPackageRow struct {
 	Hostname           *string          `json:"hostname"`
 	OsType             string           `json:"os_type"`
 	OsVersion          string           `json:"os_version"`
+	PackageManager     *string          `json:"package_manager"`
 	LastUpdate         pgtype.Timestamp `json:"last_update"`
 	NeedsReboot        *bool            `json:"needs_reboot"`
 	RebootReason       *string          `json:"reboot_reason"`
@@ -413,6 +491,13 @@ type ListHostsForPackageRow struct {
 	LastChecked        pgtype.Timestamp `json:"last_checked"`
 	SourceRepositoryID *string          `json:"source_repository_id"`
 	SourceRepoName     *string          `json:"source_repo_name"`
+	Patchable          bool             `json:"patchable"`
+	NotPatchableReason string           `json:"not_patchable_reason"`
+	PatchSource        string           `json:"patch_source"`
+	WuaBrowseOnly      bool             `json:"wua_browse_only"`
+	WuaUpdateType      string           `json:"wua_update_type"`
+	IsFeatureUpgrade   bool             `json:"is_feature_upgrade"`
+	PendingRestart     bool             `json:"pending_restart"`
 }
 
 func (q *Queries) ListHostsForPackage(ctx context.Context, arg ListHostsForPackageParams) ([]ListHostsForPackageRow, error) {
@@ -436,6 +521,7 @@ func (q *Queries) ListHostsForPackage(ctx context.Context, arg ListHostsForPacka
 			&i.Hostname,
 			&i.OsType,
 			&i.OsVersion,
+			&i.PackageManager,
 			&i.LastUpdate,
 			&i.NeedsReboot,
 			&i.RebootReason,
@@ -446,6 +532,13 @@ func (q *Queries) ListHostsForPackage(ctx context.Context, arg ListHostsForPacka
 			&i.LastChecked,
 			&i.SourceRepositoryID,
 			&i.SourceRepoName,
+			&i.Patchable,
+			&i.NotPatchableReason,
+			&i.PatchSource,
+			&i.WuaBrowseOnly,
+			&i.WuaUpdateType,
+			&i.IsFeatureUpgrade,
+			&i.PendingRestart,
 		); err != nil {
 			return nil, err
 		}
@@ -542,6 +635,35 @@ func (q *Queries) ListOrphanedPackages(ctx context.Context) ([]ListOrphanedPacka
 			&i.Category,
 			&i.LatestVersion,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPackageIDsByNames = `-- name: ListPackageIDsByNames :many
+SELECT id, name FROM packages WHERE name = ANY($1::text[])
+`
+
+type ListPackageIDsByNamesRow struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func (q *Queries) ListPackageIDsByNames(ctx context.Context, names []string) ([]ListPackageIDsByNamesRow, error) {
+	rows, err := q.db.Query(ctx, listPackageIDsByNames, names)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPackageIDsByNamesRow
+	for rows.Next() {
+		var i ListPackageIDsByNamesRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

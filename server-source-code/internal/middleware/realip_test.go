@@ -1,8 +1,12 @@
 package middleware
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/clientip"
@@ -33,6 +37,12 @@ func TestRealIP_RewritesRemoteAddr(t *testing.T) {
 			want:       "203.0.113.7",
 		},
 		{
+			name:       "public peer without a proxy cannot spoof",
+			remoteAddr: "198.51.100.210:5555",
+			xff:        "203.0.113.9",
+			want:       "198.51.100.210",
+		},
+		{
 			name:       "trusted hop is skipped",
 			remoteAddr: "10.0.0.1:9000",
 			xff:        "203.0.113.7, 10.0.0.5",
@@ -51,7 +61,7 @@ func TestRealIP_RewritesRemoteAddr(t *testing.T) {
 			}
 
 			var got string
-			handler := RealIP(trusted)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			handler := RealIP(trusted, nil)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 				got = r.RemoteAddr
 			}))
 
@@ -76,7 +86,7 @@ func TestRealIP_RewritesRemoteAddr(t *testing.T) {
 func TestRealIP_ConsumersAgree(t *testing.T) {
 	t.Parallel()
 
-	handler := RealIP(nil)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+	handler := RealIP(nil, nil)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		rateLimitIP := rateLimitClientIP(r)
 		apiAuthIP := clientIPFromRequest(r)
 
@@ -93,4 +103,30 @@ func TestRealIP_ConsumersAgree(t *testing.T) {
 	req.Header.Set("X-Forwarded-For", "1.2.3.4, 203.0.113.7")
 
 	handler.ServeHTTP(httptest.NewRecorder(), req)
+}
+
+func TestRealIP_WarnsOncePerUntrustedPeer(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	handler := RealIP(nil, slog.New(slog.NewTextHandler(&buf, nil)))(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	send := func(peer string) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = peer + ":5555"
+		req.Header.Set("X-Forwarded-For", "203.0.113.9")
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+	}
+	for range 3 {
+		send("198.51.100.1")
+		send("198.51.100.2")
+	}
+	for i := 10; i < 30; i++ {
+		send("198.51.100." + strconv.Itoa(i))
+	}
+	send("10.0.0.1")
+	if got := strings.Count(buf.String(), "ignoring X-Forwarded-For"); got != maxUntrustedPeerWarnings {
+		t.Fatalf("want %d warnings (one per distinct peer, capped), got %d:\n%s", maxUntrustedPeerWarnings, got, buf.String())
+	}
+	if !strings.Contains(buf.String(), "peer=198.51.100.2") {
+		t.Error("second distinct peer was not reported")
+	}
 }

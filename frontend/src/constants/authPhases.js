@@ -2,10 +2,13 @@
  * Authentication phases for the centralized auth state machine
  *
  * Flow: INITIALISING -> CHECKING_SETUP -> READY
+ * A signed-in user an admin reset sits in ACCOUNT_SETUP_REQUIRED until they replace a temporary
+ * password and set up 2FA again.
  */
 export const AUTH_PHASES = {
 	INITIALISING: "INITIALISING",
 	CHECKING_SETUP: "CHECKING_SETUP",
+	ACCOUNT_SETUP_REQUIRED: "ACCOUNT_SETUP_REQUIRED",
 	READY: "READY",
 };
 
@@ -15,6 +18,7 @@ export const AUTH_PHASES = {
 export const isAuthPhase = {
 	initialising: (phase) => phase === AUTH_PHASES.INITIALISING,
 	checkingSetup: (phase) => phase === AUTH_PHASES.CHECKING_SETUP,
+	accountSetupRequired: (phase) => phase === AUTH_PHASES.ACCOUNT_SETUP_REQUIRED,
 	ready: (phase) => phase === AUTH_PHASES.READY,
 };
 

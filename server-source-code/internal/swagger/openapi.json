@@ -215,7 +215,7 @@
 			"get": {
 				"tags": ["Scoped API - Hosts"],
 				"summary": "Get detailed host information",
-				"description": "Retrieve detailed information about a specific host including OS details, hostname, IP, and host groups. config_version is the config.yml schema version the agent last reported (agent 2.1.5 or later); it is an empty string when unknown. Requires Basic Auth (host:get).",
+				"description": "Retrieve detailed information about a specific host including OS details, hostname, IP, and host groups. config_version is the config.yml schema version the agent last reported (agent 2.1.4 or later); it is an empty string when unknown. Requires Basic Auth (host:get).",
 				"security": [{ "basicAuth": [] }],
 				"parameters": [
 					{
@@ -239,8 +239,8 @@
 									"ip": "192.168.1.10",
 									"os_type": "Ubuntu",
 									"os_version": "22.04",
-									"agent_version": "2.1.5",
-									"config_version": "2.1.5",
+									"agent_version": "2.1.4",
+									"config_version": "2.1.4",
 									"host_groups": [{ "id": "g1", "name": "Production" }]
 								}
 							}
@@ -1128,15 +1128,15 @@
 									"req": { "type": "object" },
 									"hostId": {
 										"type": "string",
-										"description": "host_id from the agent's config.yml (agent 2.1.5 or later). Ignored unless it is 1 to 64 letters, digits or hyphens. When it differs from the authenticated host's ID the ping still succeeds, the response sets hostIdMismatch, and the host is flagged with a host ID mismatch."
+										"description": "host_id from the agent's config.yml (agent 2.1.4 or later). Ignored unless it is 1 to 64 letters, digits or hyphens. When it differs from the authenticated host's ID the ping still succeeds, the response sets hostIdMismatch, and the host is flagged with a host ID mismatch."
 									},
 									"configVersion": {
 										"type": "string",
-										"description": "config_version from the agent's config.yml (agent 2.1.5 or later). Stored only when it starts with N.N.N, optionally followed by a pre-release or build suffix, and is at most 64 bytes; anything else is ignored."
+										"description": "config_version from the agent's config.yml (agent 2.1.4 or later). Stored only when it starts with N.N.N, optionally followed by a pre-release or build suffix, and is at most 64 bytes; anything else is ignored."
 									},
 									"machineId": {
 										"type": "string",
-										"description": "Machine ID of the host (agent 2.1.5 or later). Used with the hostname hash to detect two machines reporting with the same credentials (a possible clone)."
+										"description": "Machine ID of the host (agent 2.1.4 or later). Used with the hostname hash to detect two machines reporting with the same credentials (a possible clone)."
 									}
 								}
 							}
@@ -1215,15 +1215,15 @@
 						"application/json": {
 							"schema": {
 								"type": "object",
-								"description": "Full or partial agent report. Only the identity fields added in 2.1.5 are listed here; see the API and integrations guide for the full report body.",
+								"description": "Full or partial agent report. Only the identity fields added in 2.1.4 are listed here; see the API and integrations guide for the full report body.",
 								"properties": {
 									"hostId": {
 										"type": "string",
-										"description": "host_id from the agent's config.yml (agent 2.1.5 or later). Ignored unless it is 1 to 64 letters, digits or hyphens. A value that differs from the authenticated host's ID does not reject the report; the host is flagged with a host ID mismatch."
+										"description": "host_id from the agent's config.yml (agent 2.1.4 or later). Ignored unless it is 1 to 64 letters, digits or hyphens. A value that differs from the authenticated host's ID does not reject the report; the host is flagged with a host ID mismatch."
 									},
 									"configVersion": {
 										"type": "string",
-										"description": "config_version from the agent's config.yml (agent 2.1.5 or later). Stored only when it starts with N.N.N, optionally followed by a pre-release or build suffix, and is at most 64 bytes."
+										"description": "config_version from the agent's config.yml (agent 2.1.4 or later). Stored only when it starts with N.N.N, optionally followed by a pre-release or build suffix, and is at most 64 bytes."
 									}
 								},
 								"additionalProperties": true

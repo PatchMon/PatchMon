@@ -1,0 +1,13 @@
+<?xml version='1.0'?>
+<stream>
+<message type="info">Loading repository data...</message>
+<message type="warning">Repository &apos;Update repository of openSUSE Backports&apos; metadata expired since 2025-03-02 19:18:12 UTC.</message>
+<message type="warning">Repository &apos;Main Update Repository&apos; metadata expired since 2025-08-30 08:17:31 UTC.</message>
+<message type="warning">Repository &apos;Update Repository (Non-Oss)&apos; metadata expired since 2025-04-10 11:03:28 UTC.</message>
+<message type="info">    Warning: Repository metadata expired: Check if &apos;autorefresh&apos; is turned on (zypper lr), otherwise
+    manually refresh the repository (zypper ref). If this does not solve the issue, it could be that
+    you are using a broken mirror or the server has actually discontinued to support the repository.</message>
+<message type="info">Reading installed packages...</message>
+<message type="info">&apos;nonexistentpkg-xyz&apos; not found in package names. Trying capabilities.</message>
+<message type="error">No provider of &apos;nonexistentpkg-xyz&apos; found.</message>
+</stream>

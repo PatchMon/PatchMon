@@ -28,6 +28,7 @@ type OSReleaseInfo struct {
 	ID              string
 	IDLike          string
 	VersionCodename string
+	BuildID         string
 }
 
 // Detector handles system information detection
@@ -87,6 +88,8 @@ func (d *Detector) parseOSRelease() (*OSReleaseInfo, error) {
 			info.IDLike = value
 		case "VERSION_CODENAME":
 			info.VersionCodename = value
+		case "BUILD_ID":
+			info.BuildID = value
 		}
 	}
 
@@ -172,6 +175,21 @@ func resolveWindowsOSVersion(platformVersion, releaseID, kernelVersion string) s
 	return "Unknown"
 }
 
+// Alpine has no VERSION, only VERSION_ID. Arch has BUILD_ID=rolling, and its container
+// images add a VERSION_ID that is only the image build date.
+func resolveLinuxOSVersion(info *OSReleaseInfo, alpineRelease string) string {
+	rolling := ""
+	if info.BuildID == "rolling" {
+		rolling = info.BuildID
+	}
+	for _, v := range []string{info.Version, rolling, info.VersionID, alpineRelease, info.BuildID} {
+		if v != "" {
+			return v
+		}
+	}
+	return "Unknown"
+}
+
 // DetectOS detects the operating system and version using /etc/os-release
 func (d *Detector) DetectOS() (osType, osVersion string, err error) {
 	// Check for Windows first (uses gopsutil)
@@ -219,11 +237,13 @@ func (d *Detector) DetectOS() (osType, osVersion string, err error) {
 		osType = "Unknown"
 	}
 
-	// Use VERSION for OS version (e.g., "22.04 LTS", "12 (bookworm)", "10.0 (Red Quartz)")
-	osVersion = osReleaseInfo.Version
-	if osVersion == "" {
-		osVersion = "Unknown"
+	alpineRelease := ""
+	if osReleaseInfo.Version == "" && osReleaseInfo.VersionID == "" {
+		if data, err := os.ReadFile(alpineReleaseFile); err == nil {
+			alpineRelease = strings.TrimSpace(string(data))
+		}
 	}
+	osVersion = resolveLinuxOSVersion(osReleaseInfo, alpineRelease)
 
 	d.logger.WithFields(logrus.Fields{
 		"name":          osReleaseInfo.Name,
