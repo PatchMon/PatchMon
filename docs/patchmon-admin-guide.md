@@ -1595,6 +1595,8 @@ Univention Corporate Server (UCS) hosts use the Linux agent: choose **Linux** in
 
 **Security updates.** Univention publishes fixes as errata updates, not through a separate security repository, so PatchMon does not mark UCS updates as security updates.
 
+**Compliance scanning.** UCS 5.2 is scanned with the Debian 12 OpenSCAP content and CIS profiles, which needs agent 2.1.4 or later. UCS 5.0 is based on Debian 10, for which no current OpenSCAP content is published, so compliance scanning is not supported on it.
+
 **Reboot required** is set when an update installs a newer kernel than the one running.
 
 #### openSUSE and SLES patching {#zypper-patching}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -812,12 +813,10 @@ func (s *OpenSCAPScanner) checkAvailability() {
 
 // detectOS detects the operating system
 func (s *OpenSCAPScanner) detectOS() models.ComplianceOSInfo {
-	info := models.ComplianceOSInfo{}
-
 	file, err := os.Open(osReleasePath)
 	if err != nil {
 		s.logger.WithError(err).Debug("Failed to open os-release")
-		return info
+		return models.ComplianceOSInfo{}
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
@@ -825,7 +824,15 @@ func (s *OpenSCAPScanner) detectOS() models.ComplianceOSInfo {
 		}
 	}()
 
-	scanner := bufio.NewScanner(file)
+	return s.parseOSRelease(file)
+}
+
+// parseOSRelease reads os-release content. A derivative that sets ID_LIKE=debian but no
+// DEBIAN_CODENAME, such as UCS 5.2, takes its Debian codename from VERSION_CODENAME.
+func (s *OpenSCAPScanner) parseOSRelease(r io.Reader) models.ComplianceOSInfo {
+	info := models.ComplianceOSInfo{}
+	var versionCodename string
+	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		line := scanner.Text()
 		parts := strings.SplitN(line, "=", 2)
@@ -844,6 +851,8 @@ func (s *OpenSCAPScanner) detectOS() models.ComplianceOSInfo {
 			s.ubuntuCodename = value
 		case "DEBIAN_CODENAME":
 			s.debianCodename = value
+		case "VERSION_CODENAME":
+			versionCodename = value
 		case "ID_LIKE":
 			// Store ID_LIKE for base distribution detection
 			s.idLike = value
@@ -856,6 +865,10 @@ func (s *OpenSCAPScanner) detectOS() models.ComplianceOSInfo {
 				info.Family = "suse"
 			}
 		}
+	}
+
+	if s.debianCodename == "" && strings.Contains(s.idLike, "debian") {
+		s.debianCodename = versionCodename
 	}
 
 	// Set family from ID if not set from ID_LIKE
