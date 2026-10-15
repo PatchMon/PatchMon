@@ -1,42 +1,44 @@
 package packages
 
 import (
+	"bufio"
 	"os"
-	"os/exec"
-
-	"patchmon-agent/pkg/models"
-
-	"github.com/sirupsen/logrus"
+	"strings"
 )
 
-// UCSManager handles package information collection on Univention Corporate Server.
-// UCS is Debian-based; package listing delegates to APTManager.
-type UCSManager struct {
-	logger     *logrus.Logger
-	aptManager *APTManager
-}
+var ucsBaseConf = "/etc/univention/base.conf"
 
-// NewUCSManager creates a new UCS package manager.
-func NewUCSManager(logger *logrus.Logger, cacheRefresh CacheRefreshConfig) *UCSManager {
-	return &UCSManager{
-		logger:     logger,
-		aptManager: NewAPTManager(logger, cacheRefresh),
-	}
-}
-
-// GetPackages returns installed packages on a UCS host via the underlying apt layer.
-func (m *UCSManager) GetPackages() ([]models.Package, error) {
-	return m.aptManager.GetPackages()
-}
-
-// IsUCS returns true when running on Univention Corporate Server.
-// The /etc/univention/ directory is the canonical marker for a UCS installation.
+// IsUCS reports whether the host is Univention Corporate Server.
 func IsUCS() bool {
-	if info, err := os.Stat("/etc/univention"); err == nil && info.IsDir() {
-		return true
+	info, err := os.Stat(ucsBaseConf)
+	return err == nil && info.Mode().IsRegular()
+}
+
+// UCSRelease returns the installed UCS release as "<version>-<patchlevel>", such as "5.2-7",
+// or "" when it cannot be read.
+func UCSRelease() string {
+	f, err := os.Open(ucsBaseConf)
+	if err != nil {
+		return ""
 	}
-	if _, err := exec.LookPath("ucr"); err == nil {
-		return true
+	defer func() { _ = f.Close() }()
+
+	var version, patchlevel string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		key, value, ok := strings.Cut(scanner.Text(), ": ")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "version/version":
+			version = strings.TrimSpace(value)
+		case "version/patchlevel":
+			patchlevel = strings.TrimSpace(value)
+		}
 	}
-	return false
+	if version == "" || patchlevel == "" {
+		return ""
+	}
+	return version + "-" + patchlevel
 }

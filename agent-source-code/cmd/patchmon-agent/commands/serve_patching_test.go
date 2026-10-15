@@ -123,3 +123,17 @@ func TestPatchTypeRefusal(t *testing.T) {
 		t.Errorf("refusal must explain partial upgrades, got %q", got)
 	}
 }
+
+func TestUCSUpgradeArgs(t *testing.T) {
+	got := ucsUpgradeArgs("5.2-7")
+	want := []string{"--noninteractive", "--disable-app-updates", "--updateto", "5.2-7"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ucsUpgradeArgs() = %v, want %v", got, want)
+	}
+}
+
+func TestUCSUpgradeRefusalWithoutRelease(t *testing.T) {
+	if msg := ucsUpgradeRefusal(""); msg == "" {
+		t.Fatal("expected a refusal when the UCS release is unknown")
+	}
+}

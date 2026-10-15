@@ -28,7 +28,6 @@ type Manager struct {
 	freebsdManager *FreeBSDManager
 	zypperManager  *ZypperManager
 	winManager     *WindowsManager
-	ucsManager     *UCSManager
 
 	windowsUpdatesOmitted bool
 }
@@ -41,7 +40,6 @@ func New(logger *logrus.Logger, cacheRefresh CacheRefreshConfig) *Manager {
 	pacmanManager := NewPacmanManager(logger)
 	freebsdManager := NewFreeBSDManager(logger)
 	winManager := NewWindowsManager(logger)
-	ucsManager := NewUCSManager(logger, cacheRefresh)
 
 	return &Manager{
 		logger:         logger,
@@ -52,7 +50,6 @@ func New(logger *logrus.Logger, cacheRefresh CacheRefreshConfig) *Manager {
 		freebsdManager: freebsdManager,
 		zypperManager:  NewZypperManager(logger),
 		winManager:     winManager,
-		ucsManager:     ucsManager,
 	}
 }
 
@@ -69,8 +66,6 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 	switch packageManager {
 	case "windows":
 		pkgs, m.windowsUpdatesOmitted = m.winManager.GetPackages()
-	case "ucs":
-		pkgs, err = m.ucsManager.GetPackages()
 	case "apt":
 		pkgs, err = m.aptManager.GetPackages()
 	case "dnf", "yum":
@@ -102,13 +97,8 @@ func (m *Manager) SetAPKSecDBEnabled(enabled bool) { m.apkManager.SetSecDBEnable
 func (m *Manager) WindowsUpdatesOmitted() bool { return m.windowsUpdatesOmitted }
 
 // DetectPackageManager detects which package manager is available on the system.
-// Returns one of: ucs, apt, dnf, yum, apk, pacman, zypper, pkg, windows, or unknown.
+// Returns one of: apt, dnf, yum, apk, pacman, zypper, pkg, windows, or unknown.
 func (m *Manager) DetectPackageManager() string {
-	// Check for UCS before generic detection — UCS is Debian-based and has apt,
-	// but uses univention-upgrade for patching
-	if IsUCS() {
-		return "ucs"
-	}
 	return pkgmgr.Detect()
 }
 
