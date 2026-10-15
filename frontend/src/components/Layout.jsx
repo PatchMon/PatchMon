@@ -389,7 +389,7 @@ const Layout = ({ children }) => {
 					name: "Docker",
 					href: "/docker",
 					icon: Container,
-					beta: !dockerLocked,
+					new: !dockerLocked,
 					lockedModule: dockerLocked ? "docker" : null,
 					lockedTier: dockerLocked ? getRequiredTier("docker") : null,
 					children: [
