@@ -1541,7 +1541,7 @@ The agent chooses the patching back-end by detecting the host's package manager.
 | `pkg` | FreeBSD 13+ (plus `freebsd-update` for the base system on `patch_all`) | Yes |
 | `apk` | Alpine Linux 3.21 and later (apk-tools 2 on 3.21 and 3.22, apk-tools 3 from 3.23) | Yes, with agent 2.1.4 or later. See [Alpine patching](#alpine-patching). |
 | `zypper` | openSUSE Leap 15.6 and 16.0, openSUSE Tumbleweed and Slowroll, SLES 15 and 16 | Yes, with agent 2.1.4 or later. See [openSUSE and SLES patching](#zypper-patching). |
-| `apt-get` and `univention-upgrade` | Univention Corporate Server 5.0-10 and 5.2 | Yes, with agent 2.1.4 or later. See [Univention Corporate Server patching](#ucs-patching). |
+| `apt-get` and `univention-upgrade` | Univention Corporate Server 5.0 and 5.2 (tested on 5.0-10 and 5.2-7) | Yes, with agent 2.1.4 or later. See [Univention Corporate Server patching](#ucs-patching). |
 | Windows Update Agent (WUA) + winget | Windows 10/11, Server 2019/2022/2025 | Yes, with agent 2.1.4 or later (separate path) |
 
 #### Arch Linux patching {#arch-patching}
@@ -1582,7 +1582,7 @@ If the installed version of a package breaks its own constraint in `/etc/apk/wor
 
 #### Univention Corporate Server patching {#ucs-patching}
 
-Univention Corporate Server (UCS) hosts use the Linux agent: choose **Linux** in the Add Host wizard. With agent 2.1.4 or later they are listed as Univention Corporate Server with their release, patch level and errata level, for example `5.2-7 errata606`. Older agents show UCS 5.0 as Debian 10 and UCS 5.2 without its patch level, but report and patch through apt as they do on Debian.
+Univention Corporate Server (UCS) hosts use the Linux agent: choose **Linux** in the Add Host wizard. With PatchMon 2.1.4 or later, server and agent, they are listed as Univention Corporate Server with their release, patch level and errata level, for example `5.2-7 errata606`. Older agents show UCS 5.0 as Debian 10 and UCS 5.2 without its patch level, but report and patch through apt as they do on Debian.
 
 **Inventory** comes from apt, as on Debian, so the outdated packages are the errata updates published for the installed release.
 

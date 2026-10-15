@@ -166,6 +166,7 @@ func parsePackagesAffectedFromRealOutput(osType, output string) []string {
 
 	inFreeBSDPkgSection := false
 	ucs := isUCS(osType)
+	inUCSUpgrade := false
 	inUCSPkgList := false
 	// A real apk run also echoes its --simulate plans, which use the same step lines.
 	apkApplying := true
@@ -184,12 +185,13 @@ func parsePackagesAffectedFromRealOutput(osType, output string) []string {
 			}
 			continue
 		}
-		if ucs && (trimmed == "The following packages will be upgraded:" || trimmed == "The following packages will be installed:") {
+		if strings.HasPrefix(trimmed, "$ ") {
+			inUCSUpgrade = ucs && strings.HasPrefix(trimmed, "$ univention-upgrade")
+			apkApplying = strings.HasPrefix(trimmed, "$ apk upgrade") && !strings.Contains(trimmed, "--simulate")
+		}
+		if inUCSUpgrade && (trimmed == "The following packages will be upgraded:" || trimmed == "The following packages will be installed:") {
 			inUCSPkgList = true
 			continue
-		}
-		if strings.HasPrefix(trimmed, "$ ") {
-			apkApplying = strings.HasPrefix(trimmed, "$ apk upgrade") && !strings.Contains(trimmed, "--simulate")
 		}
 		// apt-get simulate: "Inst pkgname ..."
 		if strings.HasPrefix(trimmed, "Inst ") {
