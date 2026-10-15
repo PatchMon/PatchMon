@@ -759,7 +759,7 @@ Clearing the primary flag re-enables auto-detection.
 
 Hardware and OS specifics collected on each report:
 
-- **Kernel version**, **SELinux status**, **architecture**, **package manager**.
+- **Kernel version**, **SELinux status** (Linux hosts only), **architecture**, **package manager**.
 - **CPU** model, socket/core counts, frequency.
 - **Memory**: total, used, free, swap (formatted in GiB).
 - **Storage / disk layout**.

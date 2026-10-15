@@ -80,6 +80,11 @@ import {
 } from "../utils/api";
 import { complianceAPI } from "../utils/complianceApi";
 import { shortImageId } from "../utils/docker";
+import {
+	hostIsFreeBSD,
+	hostIsWindows,
+	showsSELinuxStatus,
+} from "../utils/hostPlatform";
 import { OSIcon } from "../utils/osIcons.jsx";
 import { patchingAPI } from "../utils/patchingApi";
 import { invalidateHostScope } from "../utils/queryScopes";
@@ -339,18 +344,13 @@ const HostDetail = () => {
 		}
 	}, [host]);
 
-	const isWindowsHost = (host?.os_type || host?.expected_platform || "")
-		.toLowerCase()
-		.includes("windows");
+	const isWindowsHost = hostIsWindows(host);
 	const remoteAccessTabs = getRemoteAccessTabs({
 		isWindowsHost,
 		canUseRemoteAccess: canUseRemoteAccess(),
 	});
-	const isFreeBSDHost =
-		(host?.package_manager || "").toLowerCase() === "pkg" ||
-		(host?.os_type || host?.expected_platform || "")
-			.toLowerCase()
-			.includes("freebsd");
+	const isFreeBSDHost = hostIsFreeBSD(host);
+	const showSELinux = showsSELinuxStatus(host);
 	const patchAllTitle = !wsStatus?.connected
 		? "Agent must be connected to patch"
 		: isWindowsHost
@@ -2506,9 +2506,7 @@ const HostDetail = () => {
 						</h3>
 						<div className="space-y-4">
 							{/* System Information */}
-							{(host.kernel_version ||
-								host.selinux_status ||
-								host.architecture) && (
+							{(host.kernel_version || showSELinux || host.architecture) && (
 								<div>
 									<h4 className="text-sm font-medium text-secondary-900 dark:text-white mb-3 flex items-center gap-2">
 										<Terminal className="h-4 w-4 text-primary-600 dark:text-primary-400" />
@@ -2548,7 +2546,7 @@ const HostDetail = () => {
 											</div>
 										)}
 
-										{host.selinux_status && (
+										{showSELinux && (
 											<div>
 												<p className="text-xs text-secondary-500 dark:text-white">
 													SELinux Status
@@ -2731,7 +2729,7 @@ const HostDetail = () => {
 
 							{/* No Data State */}
 							{!host.kernel_version &&
-								!host.selinux_status &&
+								!showSELinux &&
 								!host.architecture &&
 								!host.boot_time &&
 								!host.system_uptime &&
@@ -3575,7 +3573,7 @@ const HostDetail = () => {
 							<div className="space-y-6">
 								{/* Basic System Information */}
 								{(host.kernel_version ||
-									host.selinux_status ||
+									showSELinux ||
 									host.architecture ||
 									host.package_manager) && (
 									<div>
@@ -3617,7 +3615,7 @@ const HostDetail = () => {
 												</div>
 											)}
 
-											{host.selinux_status && (
+											{showSELinux && (
 												<div>
 													<p className="text-xs text-secondary-500 dark:text-white">
 														SELinux Status
@@ -3838,7 +3836,7 @@ const HostDetail = () => {
 
 								{/* No Data State */}
 								{!host.kernel_version &&
-									!host.selinux_status &&
+									!showSELinux &&
 									!host.architecture &&
 									!host.boot_time &&
 									!host.system_uptime &&
