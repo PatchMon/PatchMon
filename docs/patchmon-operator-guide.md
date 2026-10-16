@@ -4818,7 +4818,7 @@ The agent writes logs to two locations depending on the service manager:
 | **Rotation** | Automatic (handled by the agent) |
 | **Tail live** | `Get-Content 'C:\ProgramData\PatchMon\patchmon-agent.log' -Tail 50 -Wait` |
 
-The agent uses the [lumberjack](https://github.com/natefinsh/lumberjack.v2) library for built-in log rotation. You do not need to configure logrotate separately.
+The agent uses the [lumberjack](https://github.com/natefinch/lumberjack) library for built-in log rotation. You do not need to configure logrotate separately.
 
 #### Log Levels
 
