@@ -1599,8 +1599,8 @@ export default function PatchWizard({
 										<button
 											type="button"
 											onClick={handleValidate}
-											disabled={selectedTargetIds.size === 0 || !canValidate}
-											className="btn-primary inline-flex items-center gap-2"
+											disabled={selectedTargetIds.size === 0 || !scopeValid}
+											className="btn-primary inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
 										>
 											<Eye className="h-4 w-4" />
 											Run validation
