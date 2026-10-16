@@ -218,6 +218,12 @@ const AiSettings = () => {
 							disabled={updateMutation.isPending}
 							className="w-full px-3 py-2 bg-white dark:bg-secondary-900 border border-secondary-300 dark:border-secondary-600 rounded-md text-secondary-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
 						>
+							{settings?.ai_model &&
+								!selectedProvider?.models.some(
+									(model) => model.id === settings.ai_model,
+								) && (
+									<option value={settings.ai_model}>{settings.ai_model}</option>
+								)}
 							{selectedProvider?.models.map((model) => (
 								<option key={model.id} value={model.id}>
 									{model.name}

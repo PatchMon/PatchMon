@@ -64,8 +64,11 @@ func TestResolveModel(t *testing.T) {
 		{"anthropic", "claude-custom-model", "claude-custom-model"},
 		{"openrouter", "anthropic/claude-3.5-sonnet", "anthropic/claude-sonnet-5.5"},
 		{"openrouter", "openai/gpt-4o", "openai/gpt-4o"},
-		{"gemini", "gemini-1.5-flash", "gemini-2.5-flash-lite"},
+		{"openrouter", "google/gemini-2.5-flash", "anthropic/claude-sonnet-5.5"},
+		{"gemini", "gemini-1.5-flash", "gemini-3.5-flash-lite"},
+		{"gemini", "gemini-2.5-flash", "gemini-2.5-flash"},
 		{"openai", "gpt-4o", "gpt-4o"},
+		{"openai", "gpt-4-turbo", "gpt-4o-mini"},
 		{"unknown", "x", "x"},
 	}
 	for _, c := range cases {
@@ -207,5 +210,168 @@ func TestNormaliseCompletion(t *testing.T) {
 				t.Errorf("normaliseCompletion(%q, %q) = %q, want %q", c.input, c.response, got, c.want)
 			}
 		})
+	}
+}
+
+func withProviderServer(t *testing.T, id string, handler http.HandlerFunc) {
+	t.Helper()
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	orig := providers[id]
+	patched := orig
+	patched.baseURL = srv.URL
+	providers[id] = patched
+	t.Cleanup(func() { providers[id] = orig })
+}
+
+func TestCallGeminiRequestByModel(t *testing.T) {
+	cases := []struct {
+		model         string
+		wantLevel     string
+		wantMaxTokens float64
+		wantTemp      bool
+	}{
+		{"gemini-3.5-flash-lite", "MINIMAL", reasoningMinMaxTokens, false},
+		{"gemini-3.6-flash", "MINIMAL", reasoningMinMaxTokens, false},
+		{"gemini-3.8-flash", "LOW", reasoningMinMaxTokens, false},
+		{"gemini-2.5-flash", "", 100, true},
+	}
+	for _, c := range cases {
+		t.Run(c.model, func(t *testing.T) {
+			var body map[string]any
+			withProviderServer(t, "gemini", func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				_, _ = io.WriteString(w, `{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}`)
+			})
+			if _, err := callGemini("key", c.model, []Message{{Role: "user", Content: "hi"}}, &callOptions{maxTokens: 100, temperature: 0.2}); err != nil {
+				t.Fatal(err)
+			}
+			gen, _ := body["generationConfig"].(map[string]any)
+			level := ""
+			if tc, ok := gen["thinkingConfig"].(map[string]any); ok {
+				level, _ = tc["thinkingLevel"].(string)
+			}
+			if level != c.wantLevel {
+				t.Errorf("thinkingLevel = %q, want %q", level, c.wantLevel)
+			}
+			if gen["maxOutputTokens"] != c.wantMaxTokens {
+				t.Errorf("maxOutputTokens = %v, want %v", gen["maxOutputTokens"], c.wantMaxTokens)
+			}
+			if _, ok := gen["temperature"]; ok != c.wantTemp {
+				t.Errorf("temperature sent = %v, want %v", ok, c.wantTemp)
+			}
+		})
+	}
+}
+
+func TestCallGeminiSkipsThoughtParts(t *testing.T) {
+	withProviderServer(t, "gemini", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"candidates":[{"content":{"parts":[{"text":"thinking","thought":true},{"text":"ls ","thoughtSignature":"x"},{"text":"-la"}]}}]}`)
+	})
+	got, err := callGemini("key", "gemini-3.8-flash", []Message{{Role: "user", Content: "hi"}}, &callOptions{maxTokens: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "ls -la" {
+		t.Fatalf("got %q, want %q", got, "ls -la")
+	}
+}
+
+func TestCallGeminiErrorsWhenThinkingExhaustsTokens(t *testing.T) {
+	withProviderServer(t, "gemini", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"candidates":[{"content":{"parts":[]},"finishReason":"MAX_TOKENS"}]}`)
+	})
+	if _, err := callGemini("key", "gemini-3.8-flash", []Message{{Role: "user", Content: "hi"}}, &callOptions{maxTokens: 100}); err == nil {
+		t.Fatal("expected an error when no text is returned")
+	}
+}
+
+func TestCallOpenAIRequestByModel(t *testing.T) {
+	cases := []struct {
+		model      string
+		wantLimit  string
+		wantTokens float64
+		wantEffort string
+		wantTemp   bool
+	}{
+		{"gpt-5.6-sol", "max_completion_tokens", reasoningMinMaxTokens, "low", false},
+		{"gpt-4o-mini", "max_tokens", 100, "", true},
+	}
+	for _, c := range cases {
+		t.Run(c.model, func(t *testing.T) {
+			var body map[string]any
+			withProviderServer(t, "openai", func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+			})
+			if _, err := callOpenAI("key", c.model, []Message{{Role: "user", Content: "hi"}}, &callOptions{maxTokens: 100, temperature: 0.2}); err != nil {
+				t.Fatal(err)
+			}
+			if body[c.wantLimit] != c.wantTokens {
+				t.Errorf("%s = %v, want %v", c.wantLimit, body[c.wantLimit], c.wantTokens)
+			}
+			effort, _ := body["reasoning_effort"].(string)
+			if effort != c.wantEffort {
+				t.Errorf("reasoning_effort = %q, want %q", effort, c.wantEffort)
+			}
+			if _, ok := body["temperature"]; ok != c.wantTemp {
+				t.Errorf("temperature sent = %v, want %v", ok, c.wantTemp)
+			}
+		})
+	}
+}
+
+func TestCallOpenAIErrorsWhenReasoningExhaustsTokens(t *testing.T) {
+	withProviderServer(t, "openai", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":""},"finish_reason":"length"}]}`)
+	})
+	if _, err := callOpenAI("key", "gpt-5.6-sol", []Message{{Role: "user", Content: "hi"}}, &callOptions{maxTokens: 100}); err == nil {
+		t.Fatal("expected an error when no text is returned")
+	}
+}
+
+func TestCallOpenRouterReasoningForGemini3(t *testing.T) {
+	var body map[string]any
+	withProviderServer(t, "openrouter", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+	})
+	if _, err := callOpenRouter("key", "google/gemini-3.8-flash", []Message{{Role: "user", Content: "hi"}}, &callOptions{maxTokens: 100, temperature: 0.2}); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := body["reasoning"].(map[string]any); r["effort"] != "low" {
+		t.Errorf("reasoning = %v, want effort low", body["reasoning"])
+	}
+	if body["max_tokens"] != float64(reasoningMinMaxTokens) {
+		t.Errorf("max_tokens = %v, want %v", body["max_tokens"], reasoningMinMaxTokens)
+	}
+	if _, ok := body["temperature"]; ok {
+		t.Error("temperature must not be sent to a reasoning model")
+	}
+}
+
+func TestCallOpenRouterErrorsWhenReasoningExhaustsTokens(t *testing.T) {
+	withProviderServer(t, "openrouter", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":""},"finish_reason":"length"}]}`)
+	})
+	if _, err := callOpenRouter("key", "google/gemini-3.8-flash", []Message{{Role: "user", Content: "hi"}}, &callOptions{maxTokens: 100}); err == nil {
+		t.Fatal("expected an error when no text is returned")
+	}
+}
+
+func TestCallOpenRouterNoReasoningForGPT4o(t *testing.T) {
+	var body map[string]any
+	withProviderServer(t, "openrouter", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+	})
+	if _, err := callOpenRouter("key", "openai/gpt-4o", []Message{{Role: "user", Content: "hi"}}, &callOptions{maxTokens: 100, temperature: 0.2}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := body["reasoning"]; ok {
+		t.Error("reasoning must not be sent to a non-reasoning model")
+	}
+	if body["max_tokens"] != float64(100) {
+		t.Errorf("max_tokens = %v, want 100", body["max_tokens"])
 	}
 }

@@ -42,7 +42,7 @@ var providers = map[string]struct {
 			{ID: "anthropic/claude-haiku-5.5", Name: "Claude Haiku 5.5"},
 			{ID: "openai/gpt-4o", Name: "GPT-4o"},
 			{ID: "openai/gpt-4o-mini", Name: "GPT-4o Mini"},
-			{ID: "google/gemini-2.5-flash", Name: "Gemini 2.5 Flash"},
+			{ID: "google/gemini-3.8-flash", Name: "Gemini 3.8 Flash"},
 			{ID: "meta-llama/llama-3.1-70b-instruct", Name: "Llama 3.1 70B"},
 		},
 		defaultModel: "anthropic/claude-sonnet-5.5",
@@ -63,7 +63,7 @@ var providers = map[string]struct {
 		models: []Model{
 			{ID: "gpt-4o", Name: "GPT-4o"},
 			{ID: "gpt-4o-mini", Name: "GPT-4o Mini"},
-			{ID: "gpt-4-turbo", Name: "GPT-4 Turbo"},
+			{ID: "gpt-5.6-sol", Name: "GPT-5.6 Sol"},
 		},
 		defaultModel: "gpt-4o-mini",
 	},
@@ -71,11 +71,11 @@ var providers = map[string]struct {
 		name:    "Google Gemini",
 		baseURL: "https://generativelanguage.googleapis.com/v1beta",
 		models: []Model{
-			{ID: "gemini-2.5-flash-lite", Name: "Gemini 2.5 Flash-Lite"},
-			{ID: "gemini-2.5-flash", Name: "Gemini 2.5 Flash"},
-			{ID: "gemini-2.5-pro", Name: "Gemini 2.5 Pro"},
+			{ID: "gemini-3.5-flash-lite", Name: "Gemini 3.5 Flash-Lite"},
+			{ID: "gemini-3.6-flash", Name: "Gemini 3.6 Flash"},
+			{ID: "gemini-3.8-flash", Name: "Gemini 3.8 Flash"},
 		},
-		defaultModel: "gemini-2.5-flash-lite",
+		defaultModel: "gemini-3.5-flash-lite",
 	},
 }
 
@@ -84,11 +84,15 @@ var retiredModels = map[string]map[string]bool{
 		"anthropic/claude-3.5-sonnet": true,
 		"anthropic/claude-3-haiku":    true,
 		"google/gemini-pro-1.5":       true,
+		"google/gemini-2.5-flash":     true,
 	},
 	"anthropic": {
 		"claude-sonnet-4-20250514":   true,
 		"claude-3-5-sonnet-20241022": true,
 		"claude-3-5-haiku-20241022":  true,
+	},
+	"openai": {
+		"gpt-4-turbo": true,
 	},
 	"gemini": {
 		"gemini-1.5-pro":       true,
@@ -105,6 +109,23 @@ var anthropicThinking = map[string]map[string]string{
 var anthropicMinMaxTokens = map[string]int{
 	"claude-opus-5-5": 16000,
 }
+
+var reasoningEffort = map[string]map[string]string{
+	"openrouter": {
+		"google/gemini-3.8-flash": "low",
+	},
+	"openai": {
+		"gpt-5.6-sol": "low",
+	},
+	"gemini": {
+		"gemini-3.5-flash-lite": "MINIMAL",
+		"gemini-3.6-flash":      "MINIMAL",
+		"gemini-3.8-flash":      "LOW",
+	},
+}
+
+// Reasoning tokens count against the output limit, so a small one can return no text.
+const reasoningMinMaxTokens = 4096
 
 // ResolveModel returns the saved model, or the provider default when the saved
 // model is unset or has been retired by the provider.
@@ -321,7 +342,10 @@ func callOpenRouter(apiKey, model string, messages []Message, opts *callOptions)
 		"max_tokens": opts.maxTokens,
 		"stream":     false,
 	}
-	if !strings.HasPrefix(model, "anthropic/") {
+	if effort, ok := reasoningEffort["openrouter"][model]; ok {
+		body["max_tokens"] = max(opts.maxTokens, reasoningMinMaxTokens)
+		body["reasoning"] = map[string]string{"effort": effort}
+	} else if !strings.HasPrefix(model, "anthropic/") {
 		body["temperature"] = opts.temperature
 	}
 	reqBody, _ := json.Marshal(body)
@@ -348,15 +372,19 @@ func callOpenRouter(apiKey, model string, messages []Message, opts *callOptions)
 			Message struct {
 				Content string `json:"content"`
 			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
 		return "", err
 	}
-	if len(out.Choices) > 0 {
-		return out.Choices[0].Message.Content, nil
+	if len(out.Choices) == 0 {
+		return "", nil
 	}
-	return "", nil
+	if out.Choices[0].Message.Content == "" && out.Choices[0].FinishReason == "length" {
+		return "", fmt.Errorf("OpenRouter API returned no text before reaching its token limit")
+	}
+	return out.Choices[0].Message.Content, nil
 }
 
 // Anthropic
@@ -436,10 +464,15 @@ func callOpenAI(apiKey, model string, messages []Message, opts *callOptions) (st
 		model = cfg.defaultModel
 	}
 	body := map[string]interface{}{
-		"model":       model,
-		"messages":    messages,
-		"max_tokens":  opts.maxTokens,
-		"temperature": opts.temperature,
+		"model":    model,
+		"messages": messages,
+	}
+	if effort, ok := reasoningEffort["openai"][model]; ok {
+		body["max_completion_tokens"] = max(opts.maxTokens, reasoningMinMaxTokens)
+		body["reasoning_effort"] = effort
+	} else {
+		body["max_tokens"] = opts.maxTokens
+		body["temperature"] = opts.temperature
 	}
 	reqBody, _ := json.Marshal(body)
 	req, err := http.NewRequest("POST", cfg.baseURL+"/chat/completions", bytes.NewReader(reqBody))
@@ -463,15 +496,19 @@ func callOpenAI(apiKey, model string, messages []Message, opts *callOptions) (st
 			Message struct {
 				Content string `json:"content"`
 			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
 		return "", err
 	}
-	if len(out.Choices) > 0 {
-		return out.Choices[0].Message.Content, nil
+	if len(out.Choices) == 0 {
+		return "", nil
 	}
-	return "", nil
+	if out.Choices[0].Message.Content == "" && out.Choices[0].FinishReason == "length" {
+		return "", fmt.Errorf("OpenAI API returned no text before reaching its token limit")
+	}
+	return out.Choices[0].Message.Content, nil
 }
 
 // Gemini
@@ -504,12 +541,18 @@ func callGemini(apiKey, model string, messages []Message, opts *callOptions) (st
 			contents = append(contents, content{Role: role, Parts: []part{{Text: m.Content}}})
 		}
 	}
+	genCfg := map[string]interface{}{
+		"maxOutputTokens": opts.maxTokens,
+	}
+	if level, ok := reasoningEffort["gemini"][model]; ok {
+		genCfg["maxOutputTokens"] = max(opts.maxTokens, reasoningMinMaxTokens)
+		genCfg["thinkingConfig"] = map[string]string{"thinkingLevel": level}
+	} else {
+		genCfg["temperature"] = opts.temperature
+	}
 	body := map[string]interface{}{
-		"contents": contents,
-		"generationConfig": map[string]interface{}{
-			"maxOutputTokens": opts.maxTokens,
-			"temperature":     opts.temperature,
-		},
+		"contents":         contents,
+		"generationConfig": genCfg,
 	}
 	if systemInstruction != nil {
 		body["systemInstruction"] = systemInstruction
@@ -535,16 +578,27 @@ func callGemini(apiKey, model string, messages []Message, opts *callOptions) (st
 		Candidates []struct {
 			Content struct {
 				Parts []struct {
-					Text string `json:"text"`
+					Text    string `json:"text"`
+					Thought bool   `json:"thought"`
 				} `json:"parts"`
 			} `json:"content"`
+			FinishReason string `json:"finishReason"`
 		} `json:"candidates"`
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
 		return "", err
 	}
-	if len(out.Candidates) > 0 && len(out.Candidates[0].Content.Parts) > 0 {
-		return out.Candidates[0].Content.Parts[0].Text, nil
+	if len(out.Candidates) == 0 {
+		return "", nil
 	}
-	return "", nil
+	var text strings.Builder
+	for _, p := range out.Candidates[0].Content.Parts {
+		if !p.Thought {
+			text.WriteString(p.Text)
+		}
+	}
+	if text.Len() == 0 && out.Candidates[0].FinishReason == "MAX_TOKENS" {
+		return "", fmt.Errorf("gemini API returned no text before reaching maxOutputTokens")
+	}
+	return text.String(), nil
 }
