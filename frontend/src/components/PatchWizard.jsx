@@ -836,15 +836,6 @@ export default function PatchWizard({
 
 	const scopeValid = !windowsPatchAll || isWindowsScopeValid(windowsScope);
 
-	const canValidate = windowsPatchAll
-		? scopeValid
-		: !isApprove &&
-			!isPatchAll &&
-			selectedPkgs.length > 0 &&
-			selectedTargets.every(
-				(t) => packagesForTarget(t).length <= dryRunPackageLimit(t.osType),
-			);
-
 	const windowsScopeBody = (target) =>
 		isPatchAll && isWindowsTarget(target)
 			? { windows_scope: { ...windowsScope } }
@@ -1599,8 +1590,8 @@ export default function PatchWizard({
 										<button
 											type="button"
 											onClick={handleValidate}
-											disabled={selectedTargetIds.size === 0 || !canValidate}
-											className="btn-primary inline-flex items-center gap-2"
+											disabled={selectedTargetIds.size === 0 || !scopeValid}
+											className="btn-primary inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
 										>
 											<Eye className="h-4 w-4" />
 											Run validation
@@ -1986,9 +1977,8 @@ export default function PatchWizard({
 							{selectedPackageNames.length > dryRunLimit && (
 								<p className="text-xs text-amber-700 dark:text-amber-400 flex items-center gap-1">
 									<AlertTriangle className="h-3.5 w-3.5" />
-									{dryRunLimit} package limit for dry-run validation. The next
-									step will let you skip validation and queue the patch
-									directly.
+									Validating more than {dryRunLimit} packages can take a while.
+									You can skip validation on the next step.
 								</p>
 							)}
 						</div>
@@ -2723,18 +2713,16 @@ export default function PatchWizard({
 										Continue without waiting
 									</button>
 								)}
-								{!validationDone &&
-									!isValidating &&
-									(canValidate || windowsPatchAll) && (
-										<button
-											type="button"
-											onClick={goNext}
-											disabled={!scopeValid}
-											className="btn-outline text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-										>
-											Skip validation
-										</button>
-									)}
+								{!validationDone && !isValidating && (
+									<button
+										type="button"
+										onClick={goNext}
+										disabled={!scopeValid}
+										className="btn-outline text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+									>
+										Skip validation
+									</button>
+								)}
 								{validationDone && !isValidating && (
 									<button
 										type="button"
@@ -2744,15 +2732,6 @@ export default function PatchWizard({
 									>
 										Next
 										<ArrowRight className="h-4 w-4" />
-									</button>
-								)}
-								{!canValidate && !validationDone && !windowsPatchAll && (
-									<button
-										type="button"
-										onClick={goNext}
-										className="btn-outline text-sm"
-									>
-										Skip (too many packages)
 									</button>
 								)}
 							</div>

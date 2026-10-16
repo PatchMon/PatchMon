@@ -1512,7 +1512,7 @@ Policies are assigned to **hosts** or **host groups**. You can also add per-host
 A **dry-run** (also called a validation run) asks the agent to simulate the package installation without applying it. It exists to catch problems *before* you touch the host:
 
 - For `apt-get`, the agent runs `apt-get -s install <packages>` and parses the simulation output.
-- For `dnf`/`yum`, the agent runs the planning step that reports "what would be installed" without committing.
+- For `dnf`/`yum`, the agent runs `dnf upgrade --assumeno <packages>` (or `yum`), which prints the transaction plan and stops before committing. Every package in the plan, including dependencies, is listed in the validation result.
 - For `pkg` on FreeBSD, the agent runs `pkg upgrade -n` or the equivalent install-no-run.
 - `pacman` (Arch Linux) has no validation step, because selected patching is not available on Arch and `patch_all` cannot be dry-run. See [Arch Linux patching](#arch-patching).
 - For `apk` on Alpine, the agent runs `apk upgrade --simulate <packages>`, which opens the package database read-only. A validation fails if apk reports an error (for example an unknown package or a conflict with `/etc/apk/world`), or if the plan would downgrade or replace a package, or remove one listed in `/etc/apk/world`.

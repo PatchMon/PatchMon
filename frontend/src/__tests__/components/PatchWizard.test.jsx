@@ -804,6 +804,44 @@ describe("PatchWizard on Windows hosts", () => {
 	});
 });
 
+describe("PatchWizard on Linux hosts", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		patchingAPI.getPreviewRun.mockResolvedValue({});
+	});
+
+	it("validates a Linux host past the dry-run package limit", async () => {
+		const { pollDryRunUntilDone } = await import("../../utils/patchingApi");
+		const names = ["p1", "p2", "p3", "p4", "p5", "p6"];
+		patchingAPI.trigger.mockResolvedValue({ patch_run_id: "v1" });
+		pollDryRunUntilDone.mockResolvedValue({
+			status: "validated",
+			packages_affected: names,
+			shell_output: "",
+			error: null,
+		});
+		renderWizard(HOSTS.slice(0, 1), {
+			patchType: "patch_package",
+			packageNames: names,
+			lockPackages: true,
+			initialStep: 0,
+		});
+		const run = screen.getByRole("button", { name: "Run validation" });
+		expect(run).toBeEnabled();
+		expect(
+			screen.getByRole("button", { name: "Skip validation" }),
+		).toBeEnabled();
+		expect(screen.queryByText("Skip (too many packages)")).toBeNull();
+		await clickAndSettle(run);
+		await waitFor(() => expect(patchingAPI.trigger).toHaveBeenCalledTimes(1));
+		const [hostId, patchType, , pkgs, opts] = patchingAPI.trigger.mock.calls[0];
+		expect(hostId).toBe("h1");
+		expect(patchType).toBe("patch_package");
+		expect(pkgs).toEqual(names);
+		expect(opts).toMatchObject({ dry_run: true });
+	});
+});
+
 describe("runMessageNotice", () => {
 	it("treats a user stop as neutral, not an error", () => {
 		for (const error_message of [
