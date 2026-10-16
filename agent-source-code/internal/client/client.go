@@ -86,6 +86,8 @@ func (c *Client) Ping(ctx context.Context, req *models.PingRequest) (*models.Pin
 
 	r := c.client.R().
 		SetContext(ctx).
+		// Without this a nil-body ping goes out over HTTP/2 with no length, and WAF proxies drop it.
+		SetContentLength(true).
 		SetHeader("Content-Type", "application/json").
 		SetHeader("X-API-ID", c.credentials.APIID).
 		SetHeader("X-API-KEY", c.credentials.APIKey).

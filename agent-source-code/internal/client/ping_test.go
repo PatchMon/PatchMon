@@ -157,3 +157,33 @@ func TestPingNilRequestSendsEmptyBody(t *testing.T) {
 		t.Fatalf("expected an empty body for a nil ping request, got %q", string(gotBody))
 	}
 }
+
+func TestPingNilRequestDeclaresLengthOverHTTP2(t *testing.T) {
+	t.Setenv("PATCHMON_SKIP_SSL_VERIFY", "true")
+
+	var gotProto int
+	var gotContentLength int64
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotProto = r.ProtoMajor
+		gotContentLength = r.ContentLength
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := w.Write([]byte(`{"message":"pong","timestamp":"2026-07-27T10:00:00Z"}`)); err != nil {
+			t.Errorf("failed to write response: %v", err)
+		}
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL)
+
+	if _, err := c.Ping(context.Background(), nil); err != nil {
+		t.Fatalf("Ping() returned error: %v", err)
+	}
+	if gotProto != 2 {
+		t.Fatalf("request used HTTP/%d, want HTTP/2", gotProto)
+	}
+	if gotContentLength != 0 {
+		t.Fatalf("ContentLength = %d, want 0 so proxies can inspect the body", gotContentLength)
+	}
+}
