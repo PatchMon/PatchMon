@@ -828,6 +828,10 @@ describe("PatchWizard on Linux hosts", () => {
 		});
 		const run = screen.getByRole("button", { name: "Run validation" });
 		expect(run).toBeEnabled();
+		expect(
+			screen.getByRole("button", { name: "Skip validation" }),
+		).toBeEnabled();
+		expect(screen.queryByText("Skip (too many packages)")).toBeNull();
 		await clickAndSettle(run);
 		await waitFor(() => expect(patchingAPI.trigger).toHaveBeenCalledTimes(1));
 		const [hostId, patchType, , pkgs, opts] = patchingAPI.trigger.mock.calls[0];
