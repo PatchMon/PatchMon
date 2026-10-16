@@ -31,6 +31,30 @@ var apkActionLinePattern = regexp.MustCompile(`^\(\s*\d+/\d+\)\s+(?:Installing|U
 var zypperPlanLinePattern = regexp.MustCompile(`^  (?:upgrade|install|reinstall|remove) (\S+) `)
 var zypperCommitLinePattern = regexp.MustCompile(`^\(\s*\d+/\d+\) (?:Installing|Removing): (\S+)`)
 
+// dnf and yum transaction tables list one package per line, indented one space, under these headers.
+var dnfTransactionSections = map[string]bool{
+	"Installing:":                   true,
+	"Upgrading:":                    true,
+	"Updating:":                     true,
+	"Reinstalling:":                 true,
+	"Downgrading:":                  true,
+	"Removing:":                     true,
+	"Installing dependencies:":      true,
+	"Installing weak dependencies:": true,
+	"Upgrading dependencies:":       true,
+	"Removing dependent packages:":  true,
+	"Removing unused dependencies:": true,
+	"Installing for dependencies:":  true,
+	"Updating for dependencies:":    true,
+	"Removing for dependencies:":    true,
+}
+
+var rpmArches = map[string]bool{
+	"noarch": true, "x86_64": true, "x86_64_v2": true, "i486": true, "armv7l": true, "ppc": true, "aarch64": true, "i686": true, "i586": true, "i386": true,
+	"armv7hl": true, "armhfp": true, "ppc64le": true, "ppc64": true, "s390x": true, "riscv64": true,
+	"loongarch64": true, "src": true,
+}
+
 // rpmNameFromNVRA turns libsolv-tools-base-0.7.31-150500.6.5.1.aarch64 into libsolv-tools-base.
 func rpmNameFromNVRA(nvra string) string {
 	for range 2 {
@@ -81,8 +105,41 @@ func parsePackagesAffectedFromDryRunOutput(osType, output string) []string {
 
 	inFreeBSDPkgSection := false
 	inZypperPlan := false
+	inDnfSection := false
+	dnfWrappedName := ""
 	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimRight(line, "\r")
 		trimmed := strings.TrimSpace(line)
+
+		if dnfTransactionSections[line] {
+			inDnfSection = true
+			dnfWrappedName = ""
+			continue
+		}
+		if inDnfSection {
+			fields := strings.Fields(line)
+			switch {
+			case trimmed == "", strings.HasPrefix(line, "Transaction Summary"), strings.HasPrefix(line, "==="),
+				line[0] != ' ' && strings.HasSuffix(trimmed, ":"):
+				inDnfSection = false
+				dnfWrappedName = ""
+			case len(line) > 1 && line[0] == ' ' && line[1] != ' ':
+				// dnf writes its stderr into the table, so a column must be an arch to count.
+				dnfWrappedName = ""
+				if len(fields) >= 2 && rpmArches[fields[1]] {
+					addPkg(fields[0])
+				} else if len(fields) == 1 {
+					dnfWrappedName = fields[0]
+				}
+				continue
+			default:
+				if dnfWrappedName != "" && rpmArches[fields[0]] {
+					addPkg(dnfWrappedName)
+				}
+				dnfWrappedName = ""
+				continue
+			}
+		}
 
 		switch {
 		case strings.HasPrefix(trimmed, "[patchmon] zypper plans"):
