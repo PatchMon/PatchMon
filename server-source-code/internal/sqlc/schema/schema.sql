@@ -594,8 +594,8 @@ CREATE TABLE IF NOT EXISTS job_history (
 );
 CREATE INDEX IF NOT EXISTS idx_job_history_host_id_created_at
     ON job_history (host_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_job_history_job_id
-    ON job_history (job_id);
+CREATE INDEX IF NOT EXISTS idx_job_history_job_id_created_at
+    ON job_history (job_id, created_at DESC);
 
 -- release_notes_acceptances
 CREATE TABLE IF NOT EXISTS release_notes_acceptances (
