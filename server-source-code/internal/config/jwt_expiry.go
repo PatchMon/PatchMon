@@ -13,6 +13,9 @@ import (
 // DefaultJWTExpiresIn is the access-token lifetime used when JWT_EXPIRES_IN is unset or unparseable.
 const DefaultJWTExpiresIn = time.Hour
 
+// DefaultJWTExpiresInSetting is DefaultJWTExpiresIn written as a setting value.
+const DefaultJWTExpiresInSetting = "1h"
+
 var warnedJWTExpiresIn sync.Map
 
 // ParseJWTExpiresIn parses a positive whole number followed by m, h or d (e.g. 30m, 1h, 7d).
@@ -51,10 +54,25 @@ func JWTExpiresInSeconds(s string) int64 {
 	if d, ok := ParseJWTExpiresIn(s); ok {
 		return int64(d.Seconds())
 	}
+	warnInvalidJWTExpiresIn(s)
+	return int64(DefaultJWTExpiresIn.Seconds())
+}
+
+// EffectiveJWTExpiresIn returns s when it parses, otherwise the default it resolves to.
+func EffectiveJWTExpiresIn(s string) string {
+	if _, ok := ParseJWTExpiresIn(s); ok {
+		return strings.TrimSpace(s)
+	}
+	return DefaultJWTExpiresInSetting
+}
+
+func warnInvalidJWTExpiresIn(s string) {
+	if _, ok := ParseJWTExpiresIn(s); ok {
+		return
+	}
 	if _, seen := warnedJWTExpiresIn.LoadOrStore(s, struct{}{}); !seen {
 		slog.Warn("JWT_EXPIRES_IN is not a valid duration, using the default", "value", s, "default", DefaultJWTExpiresIn.String())
 	}
-	return int64(DefaultJWTExpiresIn.Seconds())
 }
 
 // ValidateJWTExpiresIn rejects a value the resolver would discard in favour of the default.

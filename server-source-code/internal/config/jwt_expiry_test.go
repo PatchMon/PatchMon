@@ -41,3 +41,17 @@ func TestValidateJWTExpiresIn(t *testing.T) {
 		t.Error("bare number accepted")
 	}
 }
+
+func TestEffectiveJWTExpiresIn(t *testing.T) {
+	for in, want := range map[string]string{"30m": "30m", " 7d ": "7d", "60": "1h", "1hr": "1h", "": "1h"} {
+		if got := EffectiveJWTExpiresIn(in); got != want {
+			t.Errorf("EffectiveJWTExpiresIn(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestDefaultJWTExpiresInSettingMatchesDuration(t *testing.T) {
+	if d, ok := ParseJWTExpiresIn(DefaultJWTExpiresInSetting); !ok || d != DefaultJWTExpiresIn {
+		t.Errorf("ParseJWTExpiresIn(%q) = %v, %v; want %v", DefaultJWTExpiresInSetting, d, ok, DefaultJWTExpiresIn)
+	}
+}
