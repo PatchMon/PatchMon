@@ -671,6 +671,13 @@ func (h *SettingsHandler) UpdateEnvironmentConfig(w http.ResponseWriter, r *http
 			return
 		}
 	}
+	if key == "JWT_EXPIRES_IN" {
+		v, _ := req.Value.(string)
+		if err := config.ValidateJWTExpiresIn(v); err != nil {
+			Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	if config.IsBodyLimitKey(key) {
 		v, _ := req.Value.(string)
 		if err := config.ValidateBodyLimit(key, v); err != nil {

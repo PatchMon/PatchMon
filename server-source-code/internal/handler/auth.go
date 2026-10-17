@@ -1051,12 +1051,7 @@ func (h *AuthHandler) getJwtExpiresInSeconds(ctx context.Context) int64 {
 	if rc := h.resolvedFor(ctx); rc != nil && rc.JwtExpiresIn != "" {
 		s = rc.JwtExpiresIn
 	}
-	return parseJwtExpiresInSeconds(s)
-}
-
-func parseJwtExpiresInSeconds(s string) int64 {
-	d := parseTfaRememberDuration(s)
-	return int64(d.Seconds())
+	return config.JWTExpiresInSeconds(s)
 }
 
 // getTfaRememberMeExpiresIn returns TFA remember-me duration string (resolved from env -> DB -> default).

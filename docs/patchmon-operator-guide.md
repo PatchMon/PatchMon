@@ -2254,7 +2254,7 @@ Settings for JWT tokens, browser sessions, account lockout, two-factor authentic
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
 | `JWT_SECRET` | _(none)_ | **Yes** | See [Required Variables](#1-required-variables). |
-| `JWT_EXPIRES_IN` | `1h` | No | How long an access token is valid. Accepts duration strings: `30m`, `1h`, `2h`, `1d`. The web interface renews the token automatically in the background, so a short value is not visible to signed-in users; it only controls how quickly a stolen token becomes useless. |
+| `JWT_EXPIRES_IN` | `1h` | No | How long an access token is valid. A whole number followed by `m`, `h` or `d`: `30m`, `1h`, `2h`, `1d`. Any other value (`60`, `90s`, `1 h`) is rejected when saved in Settings, and from the environment it falls back to `1h` with a warning in the server log. The web interface renews the token automatically in the background, so a short value is not visible to signed-in users; it only controls how quickly a stolen token becomes useless. |
 | `AUTH_BROWSER_SESSION_COOKIES` | `false` | No | When set to `true`, the `token` and `refresh_token` cookies are issued without a `Max-Age` attribute, making them session cookies that are cleared when the browser is closed rather than persisting across browser restarts. |
 
 #### Account Lockout

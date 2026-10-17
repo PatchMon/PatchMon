@@ -86,3 +86,20 @@ func TestUpdateEnvironmentConfig_AcceptsValidBodyLimits(t *testing.T) {
 		t.Errorf("AGENT_PING_BODY_LIMIT stored = %v, want 64kb", s.AgentPingBodyLimit)
 	}
 }
+
+func TestUpdateEnvironmentConfig_RejectsInvalidJWTExpiresIn(t *testing.T) {
+	t.Parallel()
+	h := &SettingsHandler{}
+	for _, body := range []string{`{"value":"60"}`, `{"value":"90s"}`, `{"value":"1 h"}`, `{"value":"0h"}`, `{"value":""}`, `{"value":3600}`} {
+		t.Run(body, func(t *testing.T) {
+			t.Parallel()
+			rec := patchEnvKey(h, "JWT_EXPIRES_IN", body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", rec.Code)
+			}
+			if !strings.Contains(rec.Body.String(), "JWT_EXPIRES_IN") {
+				t.Errorf("error %q does not name JWT_EXPIRES_IN", rec.Body.String())
+			}
+		})
+	}
+}
