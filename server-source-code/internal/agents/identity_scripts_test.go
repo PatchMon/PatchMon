@@ -342,3 +342,75 @@ func TestRestoreIdentityUndoesSetAside(t *testing.T) {
 		})
 	}
 }
+
+func TestGetMachineIDMatchesInstallScript(t *testing.T) {
+	if extractShellFunc(t, DirectHostAutoEnrollScript, "get_machine_id") != extractShellFunc(t, PatchmonInstallScript, "get_machine_id") {
+		t.Error("get_machine_id differs between direct_host_auto_enroll.sh and patchmon_install.sh")
+	}
+}
+
+func TestGetMachineIDFallbackIsStable(t *testing.T) {
+	fn := extractShellFunc(t, DirectHostAutoEnrollScript, "get_machine_id")
+	for _, sh := range shells(t) {
+		t.Run(filepath.Base(sh), func(t *testing.T) {
+			for _, osName := range []string{"Linux", "FreeBSD"} {
+				dir := t.TempDir()
+				etc := filepath.Join(dir, "machine-id")
+				dbus := filepath.Join(dir, "dbus-machine-id")
+				store := filepath.Join(dir, "var", "patchmon", "machine-id")
+				random := filepath.Join(dir, "random")
+				if err := os.WriteFile(random, []byte("11111111-2222-3333-4444-555555555555\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				src := strings.NewReplacer(
+					"/etc/machine-id", etc,
+					"/var/lib/dbus/machine-id", dbus,
+					"/etc/hostid", filepath.Join(dir, "hostid"),
+					"/var/lib/patchmon/machine-id", store,
+					"/sys/class/dmi/id/product_uuid", filepath.Join(dir, "product_uuid"),
+					"/proc/sys/kernel/random/uuid", random,
+				).Replace(fn)
+				src = "uname() { echo " + osName + "; }\nsysctl() { return 1; }\n" + src + "get_machine_id"
+				get := func() string { return strings.TrimSpace(runShell(t, sh, src)) }
+
+				first := get()
+				if !strings.HasPrefix(first, "patchmon-") || first == "patchmon-" {
+					t.Fatalf("%s: fallback = %q", osName, first)
+				}
+				if err := os.WriteFile(random, []byte("66666666-7777-8888-9999-000000000000\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if again := get(); again != first {
+					t.Errorf("%s: fallback changed between runs: %q then %q", osName, first, again)
+				}
+				if fi, err := os.Stat(store); err != nil || fi.Mode().Perm() != 0o600 {
+					t.Errorf("%s: stored fallback: %v %v", osName, fi, err)
+				}
+				if osName == "FreeBSD" {
+					continue
+				}
+
+				for _, junk := range []string{"", "uninitialized\n"} {
+					if err := os.WriteFile(etc, []byte(junk), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					if got := get(); got != first {
+						t.Errorf("/etc/machine-id %q: got %q, want the stored fallback", junk, got)
+					}
+				}
+				if err := os.WriteFile(dbus, []byte("dbusid\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if got := get(); got != "dbusid" {
+					t.Errorf("dbus machine-id not preferred over the fallback: %q", got)
+				}
+				if err := os.WriteFile(etc, []byte("0123abcd\nextra\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if got := get(); got != "0123abcd" {
+					t.Errorf("/etc/machine-id not preferred: %q", got)
+				}
+			}
+		})
+	}
+}
