@@ -1,0 +1,42 @@
+{{- if .Values.route.enabled }}
+{{- $root := . }}
+apiVersion: {{ .Values.route.group }}/{{ .Values.route.version }}
+kind: {{ .Values.route.kind }}
+metadata:
+  name: {{ include "patchmon.fullname" . }}-route
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "patchmon.labels" . | nindent 4 }}
+  {{- with .Values.route.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.route.hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.route.parentRefs }}
+  parentRefs:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: {{ .Values.route.path | default "/" }}
+      {{- if and .Values.route.path (ne .Values.route.path "/") .Values.route.stripPathPrefix }}
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      {{- end }}
+      backendRefs:
+        - name: {{ include "patchmon.fullname" $root }}-server
+          kind: Service
+          namespace: {{ $root.Release.Namespace }}
+          port: {{ $root.Values.server.service.port }}
+          weight: {{ $root.Values.route.weight | default 100 }}
+{{- end }}
