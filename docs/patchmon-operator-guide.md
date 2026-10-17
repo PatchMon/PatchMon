@@ -587,7 +587,7 @@ The quickest way to try PatchMon on Kubernetes is the provided `values-quick-sta
 #### 1. Install the chart
 
 ```bash
-wget https://raw.githubusercontent.com/RuTHlessBEat200/PatchMon-helm/refs/heads/main/values-quick-start.yaml
+wget https://raw.githubusercontent.com/RuTHlessBEat200/PatchMon-helm/main/examples/values-quick-start.yaml
 
 helm install patchmon oci://ghcr.io/ruthlessbeat200/charts/patchmon \
   --namespace patchmon \
