@@ -718,3 +718,48 @@ jobs:
             dist/patchmon-*
             dist/SHA256SUMS
             sbom-source.cdx.json
+
+  deploy-pmon:
+    name: Deploy release (canary)
+    needs: build-server
+    if: github.ref_type == 'tag' && !contains(github.ref_name, '-')
+    runs-on: ubuntu-latest
+    permissions: {}
+    environment: deploy-pmon
+    steps:
+      - name: Ask docker-updater to update the canary
+        env:
+          STACK: ${{ vars.DUP_STACK }}
+          RELAY_URL: ${{ vars.DUP_RELAY_URL }}
+          RELAY_TOKEN: ${{ secrets.DUP_RELAY_TOKEN }}
+        run: &deploy |
+          if [ -z "$RELAY_URL" ] || [ -z "$RELAY_TOKEN" ] || [ -z "$STACK" ]; then
+            echo "::warning::DUP_RELAY_URL, DUP_RELAY_TOKEN or DUP_STACK is not set, so this waits for docker-updater's own polling."
+            exit 0
+          fi
+          payload=$(jq -nc --arg stack "$STACK" --arg repo "$GITHUB_REPOSITORY" --arg sha "$GITHUB_SHA" \
+            --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            '{stack: $stack, repo: $repo, sha: $sha, run: $run}')
+          code=$(curl -sS -o relay.json -w '%{http_code}' --max-time 60 -X POST "$RELAY_URL" \
+            -H "X-Relay-Token: $RELAY_TOKEN" -H 'Content-Type: application/json' -d "$payload") || code=000
+          echo "Relay answered HTTP $code: $(jq -c . relay.json 2>/dev/null || echo 'no JSON body')"
+          if [ "$code" != 202 ]; then
+            echo "::error::docker-updater did not accept the update of $STACK (HTTP $code)."
+            exit 1
+          fi
+          echo "docker-updater is updating $STACK; it posts the result to Discord." >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-cloud:
+    name: Deploy release (Cloud)
+    needs: deploy-pmon
+    if: github.ref_type == 'tag' && !contains(github.ref_name, '-')
+    runs-on: ubuntu-latest
+    permissions: {}
+    environment: deploy-cloud
+    steps:
+      - name: Ask docker-updater to update Cloud
+        env:
+          STACK: ${{ vars.DUP_STACK }}
+          RELAY_URL: ${{ vars.DUP_RELAY_URL }}
+          RELAY_TOKEN: ${{ secrets.DUP_RELAY_TOKEN }}
+        run: *deploy
