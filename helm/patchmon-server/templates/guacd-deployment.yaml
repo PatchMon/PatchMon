@@ -1,0 +1,92 @@
+{{- if .Values.guacd.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "patchmon.fullname" . }}-guacd
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "patchmon.guacd.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.guacd.replicaCount }}
+  {{- if .Values.guacd.updateStrategy }}
+  strategy:
+    {{- toYaml .Values.guacd.updateStrategy | nindent 4 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "patchmon.guacd.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "patchmon.guacd.selectorLabels" . | nindent 8 }}
+      {{- with .Values.guacd.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.guacd.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: guacd
+          image: {{ include "patchmon.guacd.image" . }}
+          imagePullPolicy: {{ .Values.guacd.image.pullPolicy }}
+          ports:
+            - name: guacd
+              containerPort: {{ .Values.guacd.service.port }}
+              protocol: TCP
+          {{- if .Values.guacd.livenessProbe.enabled }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.guacd.service.port }}
+            initialDelaySeconds: {{ .Values.guacd.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.guacd.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.guacd.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.guacd.livenessProbe.failureThreshold }}
+          {{- end }}
+          {{- if .Values.guacd.readinessProbe.enabled }}
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.guacd.service.port }}
+            initialDelaySeconds: {{ .Values.guacd.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.guacd.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.guacd.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.guacd.readinessProbe.failureThreshold }}
+          {{- end }}
+          {{- with .Values.guacd.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.guacd.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+      {{- with .Values.guacd.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.guacd.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.guacd.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
