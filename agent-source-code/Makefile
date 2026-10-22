@@ -20,8 +20,10 @@ AGENTS_DOCKER=../docker/compose_dev_data/agents
 VERSION ?= $(patsubst v%,%,$(shell git describe --tags --abbrev=0 2>/dev/null))
 VERSION_RESOLVED = $(if $(strip $(VERSION)),$(strip $(VERSION)),0.0.0-dev)
 VERSION_X = -X patchmon-agent/internal/pkgversion.Version=$(VERSION_RESOLVED)
-# Strip debug info; inject the version resolved above.
-LDFLAGS=-ldflags "-s -w $(VERSION_X)"
+# Embed signing public key (required for release builds — must be set via PATCHMON_SIGNING_PUBLIC_KEY env var)
+SIGNING_KEY_LDFLAG=$(if $(PATCHMON_SIGNING_PUBLIC_KEY),-X patchmon-agent/internal/pkgversion.SigningPublicKey=$(PATCHMON_SIGNING_PUBLIC_KEY),)
+# Strip debug info; inject the version resolved above and the signing key.
+LDFLAGS=-ldflags "-s -w $(VERSION_X) $(SIGNING_KEY_LDFLAG)"
 # Disable VCS stamping
 BUILD_FLAGS=-buildvcs=false
 
@@ -37,7 +39,12 @@ GOLANGCI_LINT_CMD ?= $(shell command -v golangci-lint 2>/dev/null || echo /root/
 .PHONY: all
 all: build
 
-# Build the application
+# Fail fast if PATCHMON_SIGNING_PUBLIC_KEY is not set (required for all release builds)
+.PHONY: check-signing-key
+check-signing-key:
+	@[ -n "$(PATCHMON_SIGNING_PUBLIC_KEY)" ] || (echo "❌ Error: PATCHMON_SIGNING_PUBLIC_KEY is not set. Export it before building."; exit 1)
+
+# Build the application (no signing key required for local dev builds)
 .PHONY: build
 build:
 	@echo "Building $(BINARY_NAME)..."
@@ -46,7 +53,7 @@ build:
 
 # Build Linux binaries only (amd64, 386, arm64, arm)
 .PHONY: build-linux
-build-linux:
+build-linux: check-signing-key
 	@mkdir -p $(BUILD_DIR)
 	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-linux-amd64 ./cmd/patchmon-agent
 	@GOOS=linux GOARCH=386 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-linux-386 ./cmd/patchmon-agent
@@ -55,7 +62,7 @@ build-linux:
 
 # Build FreeBSD binaries only (amd64, 386, arm64, arm)
 .PHONY: build-freebsd
-build-freebsd:
+build-freebsd: check-signing-key
 	@mkdir -p $(BUILD_DIR)
 	@GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-freebsd-amd64 ./cmd/patchmon-agent
 	@GOOS=freebsd GOARCH=386 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-freebsd-386 ./cmd/patchmon-agent
@@ -64,19 +71,36 @@ build-freebsd:
 
 # Build Windows binaries only (amd64, arm64 — 32-bit Windows is not supported; Win10 x86 hit EOL 2025-10-14)
 .PHONY: build-windows
-build-windows:
+build-windows: check-signing-key
 	@mkdir -p $(BUILD_DIR)
 	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-windows-amd64.exe ./cmd/patchmon-agent
 	@GOOS=windows GOARCH=arm64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-windows-arm64.exe ./cmd/patchmon-agent
 
-# Build all (Linux + FreeBSD + Windows) and copy to backend serve dirs
+# Sign all built binaries in BUILD_DIR using minisign.
+# Requires PATCHMON_SIGNING_PRIVATE_KEY (path to private key file) to be set.
+.PHONY: sign-all
+sign-all: check-signing-key
+	@[ -n "$(PATCHMON_SIGNING_PRIVATE_KEY)" ] || (echo "❌ Error: PATCHMON_SIGNING_PRIVATE_KEY (path to private key file) is not set."; exit 1)
+	@command -v minisign >/dev/null 2>&1 || (echo "❌ Error: minisign is not installed. See https://jedisct1.github.io/minisign/"; exit 1)
+	@echo "Signing agent binaries..."
+	@for f in $(GOBIN)/$(BINARY_NAME)-linux-* $(GOBIN)/$(BINARY_NAME)-freebsd-* $(GOBIN)/$(BINARY_NAME)-windows-*.exe; do \
+		case "$$f" in *.minisig) continue ;; esac; \
+		[ -f "$$f" ] || continue; \
+		if [ -n "$(MINISIGN_PASSWORD)" ]; then \
+			printf '%s\n' "$(MINISIGN_PASSWORD)" | minisign -S -s $(PATCHMON_SIGNING_PRIVATE_KEY) -m "$$f" -x "$$f.minisig" -W && echo "  ✅ Signed $$f" || { echo "  ❌ Failed to sign $$f (wrong password?)"; exit 1; }; \
+		else \
+			minisign -S -s $(PATCHMON_SIGNING_PRIVATE_KEY) -m "$$f" -x "$$f.minisig" && echo "  ✅ Signed $$f" || { echo "  ❌ Failed to sign $$f"; exit 1; }; \
+		fi; \
+	done
+
+# Build all (Linux + FreeBSD + Windows), sign, and copy to backend serve dirs
 .PHONY: build-all
-build-all: build-linux build-freebsd build-windows
+build-all: build-linux build-freebsd build-windows sign-all
 	@mkdir -p $(AGENTS_REPO) $(AGENTS_DOCKER)
 	@for f in $(GOBIN)/$(BINARY_NAME)-linux-* $(GOBIN)/$(BINARY_NAME)-freebsd-* $(GOBIN)/$(BINARY_NAME)-windows-*.exe; do \
-		[ -f "$$f" ] && cp "$$f" $(AGENTS_REPO)/ && cp "$$f" $(AGENTS_DOCKER)/; \
+		[ -f "$$f" ] && cp "$$f" "$$f.minisig" $(AGENTS_REPO)/ && cp "$$f" "$$f.minisig" $(AGENTS_DOCKER)/; \
 	done
-	@echo "Done. agents/ and docker/compose_dev_data/agents/ updated."
+	@echo "Done. agents/ and docker/compose_dev_data/agents/ updated (binaries + signatures)."
 
 # Build all agent binaries into agents-prebuilt/ (for local Docker backend build)
 .PHONY: build-all-for-docker
@@ -84,7 +108,8 @@ build-all-for-docker:
 	@mkdir -p ../agents-prebuilt
 	@$(MAKE) build-all
 	@cp $(BUILD_DIR)/$(BINARY_NAME)-linux-* $(BUILD_DIR)/$(BINARY_NAME)-freebsd-* $(BUILD_DIR)/$(BINARY_NAME)-windows-*.exe ../agents-prebuilt/ 2>/dev/null || true
-	@echo "Agent binaries copied to agents-prebuilt/"
+	@cp $(BUILD_DIR)/$(BINARY_NAME)-linux-*.minisig $(BUILD_DIR)/$(BINARY_NAME)-freebsd-*.minisig $(BUILD_DIR)/$(BINARY_NAME)-windows-*.minisig ../agents-prebuilt/ 2>/dev/null || true
+	@echo "Agent binaries and signatures copied to agents-prebuilt/"
 
 # Install dependencies
 .PHONY: deps
