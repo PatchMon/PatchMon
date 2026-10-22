@@ -323,6 +323,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		r.Get("/hosts/remove", installHandler.ServeRemove)
 		r.Get("/hosts/agent/version", installHandler.ServeAgentVersion)
 		r.Get("/hosts/agent/download", installHandler.ServeAgentDownload)
+		r.Get("/hosts/agent/signature", installHandler.ServeAgentSignature)
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent), middleware.BodyLimitFor(cfgResolver, func(rc *config.ResolvedConfig) int64 { return rc.AgentPingBodyLimitBytes })).Post("/hosts/ping", installHandler.ServePing)
 		r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitAgent), middleware.BodyLimitFor(cfgResolver, func(rc *config.ResolvedConfig) int64 { return rc.AgentUpdateBodyLimitBytes })).Post("/hosts/update", installHandler.ServeUpdate)
 		r.Post("/hosts/bootstrap/exchange", installHandler.BootstrapExchange)
