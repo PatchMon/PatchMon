@@ -79,18 +79,20 @@ build-windows: check-signing-key
 # Sign all built binaries in BUILD_DIR using minisign. The trusted comment
 # carries the version, which the agent uses for downgrade protection.
 # Requires PATCHMON_SIGNING_PRIVATE_KEY (path to private key file) to be set.
+# MINISIGN_PASSWORD is read by the shell, not expanded by make, so it never
+# appears in the command line (ps) and may contain any character.
 .PHONY: sign-all
 sign-all: check-signing-key
-	@[ -n "$(PATCHMON_SIGNING_PRIVATE_KEY)" ] || (echo "❌ Error: PATCHMON_SIGNING_PRIVATE_KEY (path to private key file) is not set."; exit 1)
+	@[ -n "$$PATCHMON_SIGNING_PRIVATE_KEY" ] || (echo "❌ Error: PATCHMON_SIGNING_PRIVATE_KEY (path to private key file) is not set."; exit 1)
 	@command -v minisign >/dev/null 2>&1 || (echo "❌ Error: minisign is not installed. See https://jedisct1.github.io/minisign/"; exit 1)
 	@echo "Signing agent binaries..."
 	@for f in $(GOBIN)/$(BINARY_NAME)-linux-* $(GOBIN)/$(BINARY_NAME)-freebsd-* $(GOBIN)/$(BINARY_NAME)-windows-*.exe; do \
 		case "$$f" in *.minisig) continue ;; esac; \
 		[ -f "$$f" ] || continue; \
-		if [ -n "$(MINISIGN_PASSWORD)" ]; then \
-			printf '%s\n' "$(MINISIGN_PASSWORD)" | minisign -S -s $(PATCHMON_SIGNING_PRIVATE_KEY) -m "$$f" -t "PatchMon Agent $(VERSION_RESOLVED)" -x "$$f.minisig" -W && echo "  ✅ Signed $$f" || { echo "  ❌ Failed to sign $$f (wrong password?)"; exit 1; }; \
+		if [ -n "$${MINISIGN_PASSWORD:-}" ]; then \
+			printf '%s\n' "$$MINISIGN_PASSWORD" | minisign -S -s "$$PATCHMON_SIGNING_PRIVATE_KEY" -m "$$f" -t "PatchMon Agent $(VERSION_RESOLVED)" -x "$$f.minisig" && echo "  ✅ Signed $$f" || { echo "  ❌ Failed to sign $$f (wrong password?)"; exit 1; }; \
 		else \
-			minisign -S -s $(PATCHMON_SIGNING_PRIVATE_KEY) -m "$$f" -t "PatchMon Agent $(VERSION_RESOLVED)" -x "$$f.minisig" && echo "  ✅ Signed $$f" || { echo "  ❌ Failed to sign $$f"; exit 1; }; \
+			minisign -S -s "$$PATCHMON_SIGNING_PRIVATE_KEY" -m "$$f" -t "PatchMon Agent $(VERSION_RESOLVED)" -x "$$f.minisig" && echo "  ✅ Signed $$f" || { echo "  ❌ Failed to sign $$f"; exit 1; }; \
 		fi; \
 	done
 
