@@ -76,7 +76,8 @@ build-windows: check-signing-key
 	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-windows-amd64.exe ./cmd/patchmon-agent
 	@GOOS=windows GOARCH=arm64 CGO_ENABLED=0 $(GO_CMD) build $(BUILD_FLAGS) $(LDFLAGS) -o $(GOBIN)/$(BINARY_NAME)-windows-arm64.exe ./cmd/patchmon-agent
 
-# Sign all built binaries in BUILD_DIR using minisign.
+# Sign all built binaries in BUILD_DIR using minisign. The trusted comment
+# carries the version, which the agent uses for downgrade protection.
 # Requires PATCHMON_SIGNING_PRIVATE_KEY (path to private key file) to be set.
 .PHONY: sign-all
 sign-all: check-signing-key
@@ -87,9 +88,9 @@ sign-all: check-signing-key
 		case "$$f" in *.minisig) continue ;; esac; \
 		[ -f "$$f" ] || continue; \
 		if [ -n "$(MINISIGN_PASSWORD)" ]; then \
-			printf '%s\n' "$(MINISIGN_PASSWORD)" | minisign -S -s $(PATCHMON_SIGNING_PRIVATE_KEY) -m "$$f" -x "$$f.minisig" -W && echo "  ✅ Signed $$f" || { echo "  ❌ Failed to sign $$f (wrong password?)"; exit 1; }; \
+			printf '%s\n' "$(MINISIGN_PASSWORD)" | minisign -S -s $(PATCHMON_SIGNING_PRIVATE_KEY) -m "$$f" -t "PatchMon Agent $(VERSION_RESOLVED)" -x "$$f.minisig" -W && echo "  ✅ Signed $$f" || { echo "  ❌ Failed to sign $$f (wrong password?)"; exit 1; }; \
 		else \
-			minisign -S -s $(PATCHMON_SIGNING_PRIVATE_KEY) -m "$$f" -x "$$f.minisig" && echo "  ✅ Signed $$f" || { echo "  ❌ Failed to sign $$f"; exit 1; }; \
+			minisign -S -s $(PATCHMON_SIGNING_PRIVATE_KEY) -m "$$f" -t "PatchMon Agent $(VERSION_RESOLVED)" -x "$$f.minisig" && echo "  ✅ Signed $$f" || { echo "  ❌ Failed to sign $$f"; exit 1; }; \
 		fi; \
 	done
 
