@@ -1,6 +1,6 @@
 module patchmon-agent
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/distribution/reference v0.6.0
@@ -13,9 +13,9 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
-	golang.org/x/crypto v0.57.0
-	golang.org/x/sys v0.48.0
-	golang.org/x/text v0.42.0
+	golang.org/x/crypto v0.58.0
+	golang.org/x/sys v0.49.0
+	golang.org/x/text v0.43.0
 	gopkg.in/ini.v1 v1.67.3
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
