@@ -346,6 +346,7 @@ func Load() (*Config, error) {
 		slog.Warn("AGENT_REPORTS_RETENTION_DAYS above maximum, clamping to 365", "value", cfg.AgentReportsRetentionDays)
 		cfg.AgentReportsRetentionDays = 365
 	}
+	warnInvalidJWTExpiresIn(strings.TrimSpace(cfg.JWTExpiresIn))
 
 	if err := cfg.Validate(); err != nil {
 		return nil, err

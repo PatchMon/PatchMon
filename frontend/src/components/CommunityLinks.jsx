@@ -13,6 +13,7 @@ import {
 	Globe,
 	Mail,
 	Route,
+	ShieldCheck,
 	Star,
 } from "lucide-react";
 import { FaLinkedin, FaYoutube } from "react-icons/fa";
@@ -33,6 +34,7 @@ const ICON_MAP = {
 	roadmap: Route,
 	docs: BookOpen,
 	website: Globe,
+	trust: ShieldCheck,
 	billing: CreditCard,
 };
 
@@ -47,6 +49,7 @@ const ICON_COLORS = {
 	roadmap: "",
 	docs: "",
 	website: "",
+	trust: "",
 	billing: "",
 };
 

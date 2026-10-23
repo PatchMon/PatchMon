@@ -232,16 +232,32 @@ get_machine_id() {
             echo "$_uuid"
             return
         fi
-        echo "patchmon-freebsd-$(hostname 2>/dev/null)-$(date +%s 2>/dev/null)"
-        return
-    fi
-    if [ -f /etc/machine-id ]; then
-        cat /etc/machine-id
-    elif [ -f /var/lib/dbus/machine-id ]; then
-        cat /var/lib/dbus/machine-id
     else
-        echo "patchmon-$(cat /sys/class/dmi/id/product_uuid 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null)"
+        for _mid_file in /etc/machine-id /var/lib/dbus/machine-id; do
+            _mid=$(head -n 1 "$_mid_file" 2>/dev/null | tr -d '[:space:]')
+            case "$_mid" in
+                ""|uninitialized) ;;
+                *) echo "$_mid"; return ;;
+            esac
+        done
     fi
+    # Reruns must send the same ID, or the server cannot match this machine to its host
+    _mid_store=/var/lib/patchmon/machine-id
+    _mid=$(head -n 1 "$_mid_store" 2>/dev/null | tr -d '[:space:]')
+    if [ -z "$_mid" ]; then
+        if [ "$(uname -s 2>/dev/null)" = "FreeBSD" ]; then
+            _mid="patchmon-freebsd-$(hostname 2>/dev/null)-$(date +%s 2>/dev/null)"
+        else
+            _mid=$( (cat /sys/class/dmi/id/product_uuid || cat /proc/sys/kernel/random/uuid) 2>/dev/null | tr -d '[:space:]')
+            [ -n "$_mid" ] && _mid="patchmon-$_mid"
+        fi
+        if [ -n "$_mid" ] && mkdir -p "${_mid_store%/*}" 2>/dev/null; then
+            (umask 077; set -C; printf '%s\n' "$_mid" > "$_mid_store") 2>/dev/null || true
+            _mid_saved=$(head -n 1 "$_mid_store" 2>/dev/null | tr -d '[:space:]')
+            if [ -n "$_mid_saved" ]; then _mid=$_mid_saved; fi
+        fi
+    fi
+    echo "$_mid"
 }
 machine_id=$(get_machine_id 2>/dev/null | head -n 1 || echo "")
 

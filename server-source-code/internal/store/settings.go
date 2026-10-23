@@ -212,6 +212,9 @@ func (s *SettingsStore) UpdateConfigKey(ctx context.Context, settingsID, key str
 		if !ok {
 			return errors.New("JWT_EXPIRES_IN requires a string value (e.g. 1h, 30m)")
 		}
+		if err := config.ValidateJWTExpiresIn(v); err != nil {
+			return err
+		}
 		arg.JwtExpiresIn = &v
 	case "AUTH_BROWSER_SESSION_COOKIES":
 		v, ok := toBool(value)

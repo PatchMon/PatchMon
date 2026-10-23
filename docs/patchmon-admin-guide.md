@@ -91,6 +91,7 @@ PatchMon uses a lightweight agent model:
 - [YouTube](https://www.youtube.com/@patchmonTV)
 - [Discord Community](https://patchmon.net/discord)
 - [GitHub Repository](https://github.com/PatchMon/PatchMon)
+- [Trust Centre](https://trust.patchmon.net) (security and compliance documentation)
 
 ---
 

@@ -52,6 +52,19 @@ func main() {
 
 	ctx := context.Background()
 
+	startupWait := database.WaitOptions{
+		Attempts:       cfg.DBConnMaxAttempts,
+		Interval:       time.Duration(cfg.DBConnWaitInterval) * time.Second,
+		AttemptTimeout: time.Duration(cfg.DBConnectTimeout) * time.Second,
+		Log:            bootstrapSlog,
+		Stderr:         os.Stderr,
+	}
+	dbWait := startupWait
+	dbWait.Name = "database"
+	if err := database.WaitForDatabase(ctx, migrate.EnsureSSLMode(cfg.DatabaseURL), dbWait); err != nil {
+		fatal(bootstrapSlog, "startup", err)
+	}
+
 	if err := migrate.Run(cfg.DatabaseURL, bootstrapSlog); err != nil {
 		fatal(bootstrapSlog, "migrations failed", err)
 	}
@@ -82,7 +95,13 @@ func main() {
 	rdb := redis.NewClient()
 	redisAddr := rdb.Options().Addr
 	slog.Info("connecting to redis", "addr", redisAddr, "db", rdb.Options().DB)
-	if err := redis.Ping(ctx, rdb); err != nil {
+	redisWait := startupWait
+	redisWait.Name = "redis"
+	if redisWait.AttemptTimeout <= 0 {
+		redisWait.AttemptTimeout = database.DefaultAttemptTimeout
+	}
+	redisWait.Log = slog
+	if err := database.WaitUntilReady(ctx, redisWait, func(ctx context.Context) error { return redis.Ping(ctx, rdb) }, redis.IsPermanentError); err != nil {
 		fatal(slog, "redis "+redisAddr, err)
 	}
 	defer func() { _ = redis.Close(rdb) }()

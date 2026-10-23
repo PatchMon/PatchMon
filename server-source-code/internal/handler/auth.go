@@ -1051,12 +1051,7 @@ func (h *AuthHandler) getJwtExpiresInSeconds(ctx context.Context) int64 {
 	if rc := h.resolvedFor(ctx); rc != nil && rc.JwtExpiresIn != "" {
 		s = rc.JwtExpiresIn
 	}
-	return parseJwtExpiresInSeconds(s)
-}
-
-func parseJwtExpiresInSeconds(s string) int64 {
-	d := parseTfaRememberDuration(s)
-	return int64(d.Seconds())
+	return config.JWTExpiresInSeconds(s)
 }
 
 // getTfaRememberMeExpiresIn returns TFA remember-me duration string (resolved from env -> DB -> default).
@@ -1966,7 +1961,7 @@ func (h *AuthHandler) SetupAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 	AutoSubscribeIfHosted(r.Context(), h.cfg != nil && h.cfg.AdminMode, h.users, h.log, u)
 
-	expiresIn := int64(3600)
+	expiresIn := h.getJwtExpiresInSeconds(r.Context())
 	accessToken, refreshToken, err := h.issueSessionTokens(r, u, expiresIn, 7*24*3600)
 	if err != nil {
 		if h.log != nil {
@@ -2064,7 +2059,7 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	}
 	AutoSubscribeIfHosted(r.Context(), h.cfg != nil && h.cfg.AdminMode, h.users, h.log, u)
 
-	accessToken, _, err := h.issueSessionTokens(r, u, 3600, 7*24*3600)
+	accessToken, _, err := h.issueSessionTokens(r, u, h.getJwtExpiresInSeconds(r.Context()), 7*24*3600)
 	if err != nil {
 		if h.log != nil {
 			h.log.Error("signup session creation failed", "user_id", u.ID, "error", err)

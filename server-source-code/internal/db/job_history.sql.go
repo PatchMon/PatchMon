@@ -89,9 +89,12 @@ func (q *Queries) ListJobHistoryByApiID(ctx context.Context, arg ListJobHistoryB
 const updateJobHistoryCompleted = `-- name: UpdateJobHistoryCompleted :exec
 UPDATE job_history
 SET status = 'completed', completed_at = NOW(), updated_at = NOW()
-WHERE job_id = $1
+WHERE id = (
+    SELECT jh.id FROM job_history jh WHERE jh.job_id = $1 ORDER BY jh.created_at DESC LIMIT 1
+)
 `
 
+// Task IDs recur across runs, so only the newest row for a job_id is the current run.
 func (q *Queries) UpdateJobHistoryCompleted(ctx context.Context, jobID string) error {
 	_, err := q.db.Exec(ctx, updateJobHistoryCompleted, jobID)
 	return err
@@ -100,7 +103,9 @@ func (q *Queries) UpdateJobHistoryCompleted(ctx context.Context, jobID string) e
 const updateJobHistoryDelayed = `-- name: UpdateJobHistoryDelayed :exec
 UPDATE job_history
 SET status = 'delayed', updated_at = NOW()
-WHERE job_id = $1
+WHERE id = (
+    SELECT jh.id FROM job_history jh WHERE jh.job_id = $1 ORDER BY jh.created_at DESC LIMIT 1
+)
 `
 
 func (q *Queries) UpdateJobHistoryDelayed(ctx context.Context, jobID string) error {
@@ -111,7 +116,9 @@ func (q *Queries) UpdateJobHistoryDelayed(ctx context.Context, jobID string) err
 const updateJobHistoryFailed = `-- name: UpdateJobHistoryFailed :exec
 UPDATE job_history
 SET status = 'failed', error_message = $2, completed_at = NOW(), updated_at = NOW()
-WHERE job_id = $1
+WHERE id = (
+    SELECT jh.id FROM job_history jh WHERE jh.job_id = $1 ORDER BY jh.created_at DESC LIMIT 1
+)
 `
 
 type UpdateJobHistoryFailedParams struct {

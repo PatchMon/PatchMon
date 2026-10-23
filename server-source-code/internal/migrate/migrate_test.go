@@ -186,8 +186,8 @@ func TestEnsureSSLMode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := ensureSSLMode(tt.dsn); got != tt.want {
-				t.Errorf("ensureSSLMode(%q) = %q, want %q", tt.dsn, got, tt.want)
+			if got := EnsureSSLMode(tt.dsn); got != tt.want {
+				t.Errorf("EnsureSSLMode(%q) = %q, want %q", tt.dsn, got, tt.want)
 			}
 		})
 	}
