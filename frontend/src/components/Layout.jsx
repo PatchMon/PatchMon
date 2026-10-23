@@ -458,6 +458,7 @@ const Layout = ({ children }) => {
 				"docs",
 				"email",
 				"website",
+				"trust",
 				"billing",
 			];
 			const linkChildren = communityLinks

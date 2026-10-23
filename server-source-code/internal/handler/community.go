@@ -37,6 +37,7 @@ var defaultCommunityLinks = []CommunityLink{
 	{ID: "github_issues", URL: "https://github.com/PatchMon/PatchMon/issues", Label: "Report a Bug"},
 	{ID: "docs", URL: "https://patchmon.net/docs", Label: "Documentation"},
 	{ID: "website", URL: "https://patchmon.net", Label: "Website"},
+	{ID: "trust", URL: "https://trust.patchmon.net", Label: "Trust Centre"},
 }
 
 // injectedCounts maps a link ID to the raw count baked in at build time.
