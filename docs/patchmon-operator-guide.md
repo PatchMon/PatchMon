@@ -533,10 +533,12 @@ Either way, read the "Important: PatchMon 2.0 architecture" note below first, be
 
 The community Helm chart for PatchMon deploys the server on any Kubernetes 1.19+ cluster. It is maintained in a separate repository:
 
-- Chart repository: [github.com/RuTHlessBEat200/PatchMon-helm](https://github.com/RuTHlessBEat200/PatchMon-helm)
+- Chart repository:
+  - [github.com/fidentity/patchmon-helm](https://github.com/fidentity/patchmon-helm)
+  - [github.com/RuTHlessBEat200/PatchMon-helm](https://github.com/RuTHlessBEat200/PatchMon-helm)(Archived)
 - Application repository: [github.com/PatchMon/PatchMon](https://github.com/PatchMon/PatchMon)
 
-> **Verify against the latest chart.** This page describes the chart values shape. The chart is community-maintained and may be a version or two behind the latest PatchMon release. Always check the [chart's own README](https://github.com/RuTHlessBEat200/PatchMon-helm) for the current value names and defaults before upgrading.
+> **Verify against the latest chart.** This page describes the chart values shape. The chart is community-maintained and may be a version or two behind the latest PatchMon release. Always check the [chart's own README](https://github.com/fidentity/patchmon-helm) for the current value names and defaults before upgrading.
 
 #### Important: PatchMon 2.0 architecture
 
@@ -1514,7 +1516,7 @@ Response is `healthy` (plain text) or a JSON structure when the `Accept: applica
 
 ### Support
 
-- Chart issues: [github.com/RuTHlessBEat200/PatchMon-helm/issues](https://github.com/RuTHlessBEat200/PatchMon-helm/issues)
+- Chart issues: [github.com/fidentity/patchmon-helm/issues](https://github.com/fidentity/patchmon-helm/issues)
 - Application issues: [github.com/PatchMon/PatchMon](https://github.com/PatchMon/PatchMon)
 - Community: [Discord](https://patchmon.net/discord)
 
