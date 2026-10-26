@@ -3742,7 +3742,7 @@ The state cookie has a 10-minute TTL by default. If users take too long on the M
 
 The PatchMon agent is enrolled through the web UI's **Add Host** wizard. The wizard provisions a host record in the database, issues a one-time bootstrap token, and builds a ready-to-paste one-liner. Running that command on the target host downloads the platform-specific agent binary over an authenticated HTTPS channel, writes config and credentials, registers a system service, and opens a persistent WebSocket connection back to the server.
 
-This page covers the UI-driven install flow end to end. For everything that happens after the first check-in (CLI commands, service management, logs, updates), see [Managing the PatchMon Agent](#managing-the-patchmon-agent). For bulk enrolment on container hosts, see Proxmox LXC Auto-Enrollment Guide.
+This page covers the UI-driven install flow end to end. For everything that happens after the first check-in (CLI commands, service management, logs, updates), see [Managing the PatchMon Agent](#managing-the-patchmon-agent). For bulk enrolment on container hosts, see Proxmox LXC Auto-Enrollment Guide. To deploy the Windows agent to devices managed by Microsoft Intune, see the Intune chapter of the **API & Integrations Guide**.
 
 #### How it Works
 
