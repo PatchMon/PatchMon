@@ -1,11 +1,11 @@
 ---
 title: "PatchMon API & Integrations Guide"
-description: "Discord, gethomepage, Ansible, Proxmox auto-enrollment, plus the Auto-Enrollment and Integration REST APIs with an embedded OpenAPI browser."
+description: "Discord, gethomepage, Ansible, Proxmox auto-enrollment, Microsoft Intune, plus the Auto-Enrollment and Integration REST APIs with an embedded OpenAPI browser."
 ---
 
 # PatchMon API & Integrations Guide
 
-This guide covers PatchMon's third-party integrations (Discord, gethomepage, Ansible, Proxmox LXC auto-enrollment) and the REST APIs exposed by the server (Auto-Enrollment API, Integration API). A live, interactive API browser rendered from the server's OpenAPI spec is embedded in the published version of this book on patchmon.net/docs.
+This guide covers PatchMon's third-party integrations (Discord, gethomepage, Ansible, Proxmox LXC auto-enrollment, Microsoft Intune) and the REST APIs exposed by the server (Auto-Enrollment API, Integration API). A live, interactive API browser rendered from the server's OpenAPI spec is embedded in the published version of this book on patchmon.net/docs.
 
 ## Table of Contents
 
@@ -13,8 +13,9 @@ This guide covers PatchMon's third-party integrations (Discord, gethomepage, Ans
 - [Chapter 2: gethomepage Dashboard Card](#gethomepage-dashboard-card)
 - [Chapter 3: Ansible Dynamic Inventory](#ansible-dynamic-inventory)
 - [Chapter 4: Proxmox LXC Auto-Enrollment Guide](#proxmox-lxc-auto-enrollment-guide)
-- [Chapter 5: Auto-Enrollment API Documentation](#auto-enrolment-api-docs)
-- [Chapter 6: Integration API Documentation](#integration-api-documentation)
+- [Chapter 5: Deploying the Windows Agent with Microsoft Intune](#deploying-the-windows-agent-with-microsoft-intune)
+- [Chapter 6: Auto-Enrollment API Documentation](#auto-enrolment-api-docs)
+- [Chapter 7: Integration API Documentation](#integration-api-documentation)
 
 ---
 
@@ -2733,7 +2734,173 @@ For enterprise support, training, or custom integrations:
 
 ---
 
-## Chapter 5: Auto-Enrollment API Documentation {#auto-enrolment-api-docs}
+## Chapter 5: Deploying the Windows Agent with Microsoft Intune {#deploying-the-windows-agent-with-microsoft-intune}
+
+### Overview
+
+This chapter deploys the PatchMon agent to Windows devices as an Intune **Win32 app**. A single package, built from three scripts kept in the PatchMon repository, enrols every device with one auto-enrolment token, installs the agent and registers the `PatchMonAgent` service. You do not need to create hosts by hand or copy per-host install commands.
+
+The scripts live in [`tools/intune/`](https://github.com/PatchMon/PatchMon/tree/main/tools/intune) on GitHub:
+
+| File | Used as | What it does |
+|------|---------|--------------|
+| `install.ps1` | Win32 app install command | Enrols the device through the [Auto-Enrollment API](#auto-enrolment-api-docs), downloads the server's Windows installer with the new host's credentials, runs it and checks the service is running |
+| `detect.ps1` | Custom detection script | Reports the app as installed when the `PatchMonAgent` service is running |
+| `uninstall.ps1` | Win32 app uninstall command | Downloads and runs the server's Windows removal script |
+
+#### How it Works
+
+1. Intune runs `install.ps1` as SYSTEM. Intune starts Win32 app commands in 32-bit PowerShell, so the script relaunches itself in 64-bit PowerShell first.
+2. The script reads the device's `MachineGuid` and calls `POST /api/v1/auto-enrollment/enroll` with the computer name and that machine ID. PatchMon creates a pending host and returns its `api_id` and `api_key`.
+3. The script fetches `GET /api/v1/hosts/install?os=windows` with those credentials and runs the returned installer, the same one the **Add Host** wizard uses. That installer downloads the agent binary, writes `C:\ProgramData\PatchMon\config.yml` and `credentials.yml`, and creates the `PatchMonAgent` service.
+4. The script exits `0` only when the service is running.
+
+#### Retries
+
+The script tells Intune how to treat a failure through its exit code:
+
+| Exit code | Meaning | What Intune does |
+|-----------|---------|------------------|
+| `0` | The agent is installed and the service is running | Marks the app installed |
+| `1618` | A failure that may clear by itself: a network error, the token's daily limit, a failed download, the installer failing (often Defender), or the service not starting | Retries up to three times, five minutes apart |
+| `1` | PatchMon refused the enrolment (HTTP 400, 401, 403 or 409). Retrying will not help until someone fixes the cause | Marks the install failed and offers it again on its next re-evaluation, roughly every 24 hours |
+
+`1618` is in Intune's default return code list as **Retry**, so you do not need to add it. After its retries run out, Intune treats the install as failed and tries again on the 24-hour cycle.
+
+The script is safe to run again at any point:
+
+- **The service is running:** the script exits `0` straight away. If the service exists but is stopped, the script tries to start it, and reinstalls if it will not start.
+- **The agent already has credentials** (an earlier attempt got as far as writing `credentials.yml`): the script reuses them and does not enrol again.
+- **An earlier attempt enrolled but failed before writing credentials:** the script sends the host ID it saved in `C:\ProgramData\PatchMon\intune-host-id`. Because that host has never reported, PatchMon re-issues its credentials instead of creating a duplicate.
+
+### Before You Start
+
+**Intune**
+
+- Devices are Microsoft Entra joined, hybrid joined or Entra registered, and enrolled in Intune. The Intune Management Extension installs itself when the first Win32 app is assigned.
+- Devices run 64-bit Windows 10 or 11. 32-bit Windows is not supported by the agent.
+- You have the [Microsoft Win32 Content Prep Tool](https://github.com/microsoft/Microsoft-Win32-Content-Prep-Tool) (`IntuneWinAppUtil.exe`).
+
+**PatchMon**
+
+- Devices can reach the PatchMon server over HTTPS.
+- On a self-hosted install, **Settings → Server URL** is set to the address devices will use. The installer writes it into the agent's config.
+- If PatchMon uses a certificate from a private CA, deploy that CA to devices first with an Intune **Trusted certificate** profile. The enrolment call checks the certificate even if **Ignore SSL self-signed** is turned on in PatchMon.
+
+**Microsoft Defender**
+
+The agent binary is not code-signed yet, and real-time protection can quarantine it or lock it while scanning, which fails the install. Before assigning the app, add a Defender exclusion for `C:\Program Files\PatchMon` through **Endpoint security → Antivirus** and assign it to the same devices.
+
+### Step 1: Create an Auto-Enrolment Token
+
+1. In PatchMon, go to **Settings → API integrations**, open the **Auto-Enrollment (Direct)** tab and select **New Token**.
+2. Fill in:
+   - **Token Name:** for example `Intune - Windows`.
+   - **Max Hosts Per Day:** at least the number of devices you expect to enrol in a day. When the limit is reached, further devices retry and then wait for Intune's next cycle.
+   - **Default Host Group (Optional):** a group such as `Windows - Intune`, so new hosts are easy to find.
+   - **Allowed IP Addresses (Optional):** leave empty unless every device reaches PatchMon from known public IPs. Remote and home-working devices are refused otherwise.
+   - **Expiration Date (Optional):** set one if you want the token to stop working after the rollout.
+3. Copy the **Token Key** and **Token Secret**. The secret is shown only once.
+
+### Step 2: Prepare the Scripts
+
+1. Download `install.ps1`, `detect.ps1` and `uninstall.ps1` from [`tools/intune/`](https://github.com/PatchMon/PatchMon/tree/main/tools/intune).
+2. In `install.ps1`, set the three values at the top:
+
+   ```powershell
+   $Server = "https://patchmon.example.com"
+   $Key    = "patchmon_ae_xxxxxxxx"
+   $Secret = "xxxxxxxx"
+   ```
+
+3. In `uninstall.ps1`, set `$Server` to the same URL.
+4. Put `install.ps1` and `uninstall.ps1` in an otherwise empty folder, for example `C:\IntunePackages\PatchMon\source`. Keep `detect.ps1` and the prep tool out of it: everything in the folder is packed into the app.
+
+### Step 3: Build the Package
+
+From the folder that holds `IntuneWinAppUtil.exe`:
+
+```powershell
+.\IntuneWinAppUtil.exe -c C:\IntunePackages\PatchMon\source -s install.ps1 -o C:\IntunePackages\PatchMon\output -q
+```
+
+This writes `install.intunewin` to the output folder.
+
+### Step 4: Create the Win32 App
+
+In the Intune admin center, go to **Apps → All Apps → Create**, choose **Windows app (Win32)** and upload `install.intunewin`. Use these settings:
+
+| Page | Setting | Value |
+|------|---------|-------|
+| App information | Name / Publisher | `PatchMon Agent` / your organisation |
+| Program | Installer type | Command line |
+| Program | Install command | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File install.ps1` |
+| Program | Uninstall command | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File uninstall.ps1` |
+| Program | Installation time required | 30 minutes |
+| Program | Install behaviour | **System** |
+| Program | Device restart behaviour | No specific action |
+| Program | Return codes | Leave the defaults |
+| Requirements | Operating system architecture | x64 and ARM64 |
+| Detection rules | Rules format | Use a custom detection script |
+| Detection rules | Script file | `detect.ps1` |
+| Detection rules | Run script as 32-bit process on 64-bit clients | No |
+| Detection rules | Enforce script signature check | No |
+| Assignments | Required | A device group |
+
+Both scripts switch to 64-bit PowerShell themselves, so the commands can use plain `powershell.exe`.
+
+Detection checks that the service is **running**, not only that it exists. Two things follow from that:
+
+- If someone stops the agent, Intune starts it again (or reinstalls it) at its next evaluation. Exclude a device from the assignment while you work on it.
+- An **Uninstall** assignment skips devices whose agent service is stopped, because Intune sees the app as already gone. Remove the agent from those devices with the removal script described in the Operator Guide.
+
+Assign the app to a small pilot group first, then widen it.
+
+### Step 5: Check the Rollout
+
+- **Intune:** the app's **Device install status** shows each device. Installs normally finish a few minutes after the device next checks in.
+- **PatchMon:** new hosts appear under **Hosts**, named after the computer and placed in the token's default host group. They turn active when the installer's connectivity test reaches the server.
+- **On a device:** `install.ps1` logs every run to `C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\PatchMonInstall.log`, which Intune's **Collect diagnostics** device action also gathers. The agent's own log is `C:\ProgramData\PatchMon\patchmon-agent.log`.
+
+To test the install script on one machine without Intune, run it as SYSTEM with [PsExec](https://learn.microsoft.com/en-us/sysinternals/downloads/psexec) from an elevated prompt, then check the exit code:
+
+```powershell
+psexec -i -s powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\IntunePackages\PatchMon\source\install.ps1
+```
+
+### Uninstalling
+
+Assign the app to a group with the **Uninstall** intent. `uninstall.ps1` stops and removes the service and deletes the agent's program files, configuration, credentials and logs. It downloads the removal script from your PatchMon server, so the server must be reachable when it runs.
+
+The host record stays in PatchMon. Delete it from the host's page once the device has gone. If the same device will get the agent again later, delete the host **before** reassigning the app: otherwise PatchMon recognises the machine and refuses to enrol it a second time.
+
+### Troubleshooting
+
+Every message below is in `PatchMonInstall.log` on the device.
+
+| Message | Cause | Fix |
+|---------|-------|-----|
+| `HTTP 429` with `Rate limit exceeded` | The token's **Max Hosts Per Day** was reached | Raise the limit. Devices retry on their own |
+| `HTTP 401` with `Invalid or inactive token`, `Invalid token secret` or `Token expired` | Wrong key or secret in `install.ps1`, or the token was revoked or has expired | Fix the values, rebuild the package and upload the new `.intunewin` to the same app |
+| `HTTP 403` with `IP address not authorized for this token` | The device's public IP is outside **Allowed IP Addresses** | Widen or clear the allow list |
+| `HTTP 403` with `Host limit reached for this host's package` | Your plan's host allowance is used up | Remove hosts you no longer need, or raise the allowance |
+| `HTTP 409` with `Host already enrolled` | PatchMon already has a host with this machine ID and computer name: the device was uninstalled and reassigned without deleting its host, or it had an earlier manual install | Delete that host in PatchMon. The device enrols on Intune's next cycle |
+| `HTTP 409` with code `host_not_reenrollable` | The device enrolled with a previous token and never finished, then the token was replaced | Delete the pending host in PatchMon. The device enrols as a new host on Intune's next cycle |
+| `HTTP 409` with code `host_reporting` | The saved host ID belongs to a host that has already reported, for example after its credentials were regenerated in PatchMon | Reinstall with the install command on the host's page, or delete the host in PatchMon |
+| `HTTP 0`, or `Installer download failed` with a connection error | The device could not reach the server: DNS, firewall, proxy or an untrusted certificate | Check the device can open `$Server` in a browser, and deploy your CA if it is private |
+| `PatchMon installer exited with 1`, agent binary missing from `C:\Program Files\PatchMon` | Defender quarantined it | Add the exclusion described in [Before You Start](#before-you-start), then let Intune retry |
+| Intune shows the app installed but no host appears in PatchMon | A running agent from an earlier install points at another server, or uses credentials that were deleted in PatchMon | Check `patchmon_server` in `C:\ProgramData\PatchMon\config.yml`. Uninstall the old agent, then let Intune install again |
+| No `PatchMonInstall.log` and the scripts never run | A group policy enforces an `AllSigned` execution policy, which overrides the `Bypass` in the install command | Sign the scripts with a trusted certificate, or exclude these devices from that policy |
+
+### Security Notes
+
+- The token secret is inside the package. Anyone who can download the app from Intune, and SYSTEM on a device while the install runs, can read it. Use a dedicated token for Intune, keep **Max Hosts Per Day** close to your real rollout pace, and revoke or replace the token when the rollout ends. Revoking it does not affect hosts that are already enrolled.
+- A leaked token lets someone add hosts to PatchMon, which can use up your host allowance and block new enrolments. With a pending host's ID and its machine's `MachineGuid` as well, it can re-issue that host's credentials. It gives no access to hosts that are already reporting, or to their credentials.
+- The installer locks `C:\ProgramData\PatchMon` to SYSTEM and Administrators before it writes `credentials.yml`.
+
+---
+
+## Chapter 6: Auto-Enrollment API Documentation {#auto-enrolment-api-docs}
 
 ### Overview
 
@@ -3728,7 +3895,7 @@ curl -s "https://patchmon.example.com/api/v1/auto-enrollment/script?type=proxmox
 
 ---
 
-## Chapter 6: Integration API Documentation {#integration-api-documentation}
+## Chapter 7: Integration API Documentation {#integration-api-documentation}
 
 ### Table of Contents
 
