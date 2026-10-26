@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -1095,6 +1096,25 @@ func (s *OpenSCAPScanner) getProfileID(profileName string) string {
 	return ""
 }
 
+// reportedProfileName returns the alias whose mapping on this OS is the given
+// XCCDF ID, so the server stores one profile however the scan was requested.
+func (s *OpenSCAPScanner) reportedProfileName(requested string) string {
+	if !strings.HasPrefix(requested, "xccdf_") {
+		return requested
+	}
+	aliases := make([]string, 0, len(profileMappings))
+	for alias := range profileMappings {
+		aliases = append(aliases, alias)
+	}
+	sort.Strings(aliases)
+	for _, alias := range aliases {
+		if s.getProfileID(alias) == requested {
+			return alias
+		}
+	}
+	return requested
+}
+
 // discoveredProfileID maps a short ID advertised by DiscoverProfiles back to
 // its exact XCCDF ID. No fallback: an unknown ID must not scan another profile.
 func (s *OpenSCAPScanner) discoveredProfileID(contentFile, shortID string) string {
@@ -1394,7 +1414,7 @@ func (s *OpenSCAPScanner) RunScanWithOptions(ctx context.Context, options *model
 	}
 
 	// Parse results (pass oscap output and content file for metadata)
-	scan, err := s.parseResults(resultsPath, contentFile, options.ProfileID, string(output))
+	scan, err := s.parseResults(resultsPath, contentFile, s.reportedProfileName(options.ProfileID), string(output))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse results: %w", err)
 	}
