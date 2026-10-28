@@ -294,7 +294,7 @@ export default function PatchWizard({
 					queryKey: ["package-hosts-for-patch", pkgName],
 					queryFn: () =>
 						packagesAPI
-							.getHosts(encodeURIComponent(pkgName), {
+							.getHosts(pkgName, {
 								limit: 500,
 								needsUpdate: true,
 							})

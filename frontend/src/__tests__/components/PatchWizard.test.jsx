@@ -737,6 +737,11 @@ describe("PatchWizard on Windows hosts", () => {
 		).toEqual(names);
 		expect(list).not.toHaveClass("max-h-16");
 		expect(list).toHaveClass("max-h-48", "scrollbar-thin");
+		await waitFor(() =>
+			expect(
+				packagesAPI.getHosts.mock.calls.map(([packageName]) => packageName),
+			).toEqual(names),
+		);
 	});
 
 	it("keeps Linux Patch all without a Validate step or scope", () => {
