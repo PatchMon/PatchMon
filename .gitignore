@@ -77,6 +77,8 @@ coverage/
 !frontend/public/assets/*.svg
 !frontend/public/assets/*.jpg
 
+# Exception: Allow helm/patchmon-server
+!helm/patchmon-server
 # Temporary folders
 tmp/
 temp/

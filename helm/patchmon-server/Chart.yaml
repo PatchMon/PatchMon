@@ -1,0 +1,17 @@
+apiVersion: v2
+name: patchmon
+description: A Helm chart for PatchMon - Linux Patch Monitoring and Management System
+type: application
+version: 2.0.2
+appVersion: "v2.0.2"
+keywords:
+- patchmon
+- monitoring
+- patch-management
+- security
+home: https://github.com/patchmon/patchmon
+sources:
+- https://github.com/PatchMon/PatchMon/pkgs/container/patchmon-server
+maintainers:
+- name: PatchMon Team
+icon: https://raw.githubusercontent.com/patchmon/patchmon/main/docs/logo.png

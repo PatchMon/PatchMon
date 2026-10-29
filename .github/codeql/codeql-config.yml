@@ -3,6 +3,10 @@
 # See: internal/logutil (agent), internal/safeconv, internal/util/path.go (server).
 name: "PatchMon CodeQL config"
 
+# Skip scanning Helm charts and related manifests
+paths-ignore:
+    - "helm/**"
+
 query-filters:
   # Log injection: We use logutil.Sanitize/SanitizeMap; CodeQL does not recognize them.
   - exclude:

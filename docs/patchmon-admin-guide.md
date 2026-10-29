@@ -82,6 +82,7 @@ PatchMon uses a lightweight agent model:
 ### Quick Links
 
 - Installing PatchMon Server on Docker
+- [Installing PatchMon Server on k8s](https://github.com/PatchMon/PatchMon/helm/patchmon-server)
 - Installing the PatchMon Agent
 - Proxmox LXC Auto-Enrollment Guide
 - PatchMon Environment Variables Reference
