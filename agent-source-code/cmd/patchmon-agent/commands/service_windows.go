@@ -61,7 +61,13 @@ func (s *patchmonService) Execute(_ []string, r <-chan svc.ChangeRequest, change
 				close(s.stopCh)
 				// Wait briefly for clean shutdown
 				select {
-				case <-errCh:
+				case err := <-errCh:
+					if err != nil {
+						if elog, _ := eventlog.Open(serviceName); elog != nil {
+							_ = elog.Error(1, fmt.Sprintf("Service error during shutdown: %v", err))
+							_ = elog.Close()
+						}
+					}
 				case <-time.After(10 * time.Second):
 				}
 				return false, 0

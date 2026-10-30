@@ -105,7 +105,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9
         with:
-          version: v2.13.1
+          version: v2.15.0
           working-directory: server-source-code
 
   fmt-check:
@@ -253,7 +253,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9
         with:
-          version: v2.13.1
+          version: v2.15.0
           working-directory: agent-source-code
 
   agent-build:
@@ -352,7 +352,7 @@ jobs:
           GOOS: windows
           GOARCH: amd64
         with:
-          version: v2.13.1
+          version: v2.15.0
           working-directory: agent-source-code
 
   # Runs the agent on a real Windows host: unit tests compiled for Windows, the
