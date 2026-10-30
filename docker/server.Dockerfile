@@ -1,5 +1,5 @@
 # Development stage - run with go run, source can be volume-mounted for live reload
-FROM golang:1.26-alpine AS development
+FROM golang:1.26.10-alpine3.24 AS development
 
 RUN apk add --no-cache git ca-certificates tzdata curl nodejs npm
 
@@ -40,7 +40,7 @@ CMD ["go", "run", "./cmd/server"]
 # is ssg-*-ds.xml datastream files, which are architecture-independent. Left
 # unpinned, this stage downloaded and unpacked the same ~30s archive once per
 # target platform, and did the unpacking under QEMU for the non-native one.
-FROM --platform=$BUILDPLATFORM alpine:3.23 AS ssg-content
+FROM --platform=$BUILDPLATFORM alpine:3.24 AS ssg-content
 ARG SSG_VERSION=""
 # Use shell variable VER to avoid Docker ARG substitution in the wget URL.
 # Docker substitutes ${SSG_VERSION} at parse time; when empty, the URL would be
@@ -63,8 +63,8 @@ RUN apk add --no-cache wget unzip jq \
     && echo "${VER}" > /ssg-content/.ssg-version \
     && rm -rf /tmp/ssg.zip /tmp/ssg-extract
 
-# Production stage — hardened Alpine runtime (no -dev; no shell/apk). Use 3.23 for production.
-FROM dhi.io/alpine-base:3.23
+# Production stage — hardened Alpine runtime (no -dev; no shell/apk). Use 3.24 for production.
+FROM dhi.io/alpine-base:3.24
 
 # Runtime image has no apk; ca-certificates/tzdata are in the base. No RUN needed.
 
