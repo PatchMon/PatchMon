@@ -143,50 +143,53 @@ describe("Environment settings for a value set in .env", () => {
 });
 
 describe("Environment settings for a value held in the database", () => {
-	it.each(
-		CASES,
-	)("saves a $kind variable and shows the server's message", async (c) => {
-		const message =
-			c.key === "LOG_LEVEL"
-				? "Saved. Restart the application for this change to take effect."
-				: "Saved. The new value is in effect.";
-		settingsAPI.getEnvironmentConfig
-			.mockResolvedValueOnce({
-				data: {
-					variables: [variable(c.key, { ...c.fields, effectiveSource: "db" })],
-				},
-			})
-			.mockResolvedValue({
-				data: {
-					variables: [
-						variable(c.key, {
-							...c.fields,
-							effectiveValue: c.next,
-							effectiveSource: "db",
-						}),
-					],
-				},
+	it.each(CASES)(
+		"saves a $kind variable and shows the server's message",
+		async (c) => {
+			const message =
+				c.key === "LOG_LEVEL"
+					? "Saved. Restart the application for this change to take effect."
+					: "Saved. The new value is in effect.";
+			settingsAPI.getEnvironmentConfig
+				.mockResolvedValueOnce({
+					data: {
+						variables: [
+							variable(c.key, { ...c.fields, effectiveSource: "db" }),
+						],
+					},
+				})
+				.mockResolvedValue({
+					data: {
+						variables: [
+							variable(c.key, {
+								...c.fields,
+								effectiveValue: c.next,
+								effectiveSource: "db",
+							}),
+						],
+					},
+				});
+			settingsAPI.updateEnvironmentConfig.mockResolvedValue({
+				data: { message },
 			});
-		settingsAPI.updateEnvironmentConfig.mockResolvedValue({
-			data: { message },
-		});
-		renderPage();
-		const row = await rowFor(c.key);
-		fireEvent.click(within(row).getByRole("button", { name: /edit/i }));
-		const input =
-			within(row).queryByRole("combobox") || within(row).getByRole("textbox");
-		fireEvent.change(input, { target: { value: c.next } });
-		fireEvent.click(within(row).getByRole("button", { name: "Save" }));
+			renderPage();
+			const row = await rowFor(c.key);
+			fireEvent.click(within(row).getByRole("button", { name: /edit/i }));
+			const input =
+				within(row).queryByRole("combobox") || within(row).getByRole("textbox");
+			fireEvent.change(input, { target: { value: c.next } });
+			fireEvent.click(within(row).getByRole("button", { name: "Save" }));
 
-		await screen.findByText(message);
-		expect(settingsAPI.updateEnvironmentConfig).toHaveBeenCalledWith(
-			c.key,
-			c.next,
-		);
-		await waitFor(() =>
-			expect(within(row).getByText(c.next)).toBeInTheDocument(),
-		);
-	});
+			await screen.findByText(message);
+			expect(settingsAPI.updateEnvironmentConfig).toHaveBeenCalledWith(
+				c.key,
+				c.next,
+			);
+			await waitFor(() =>
+				expect(within(row).getByText(c.next)).toBeInTheDocument(),
+			);
+		},
+	);
 
 	it("shows the value the server resolved once the save completes", async () => {
 		let resolveRefetch;

@@ -12,7 +12,7 @@ const ServerUrlCorsWarning = ({ enabled = true }) => {
 		retry: false,
 	});
 
-	if (!data || data.allowed !== false) return null;
+	if (data?.allowed !== false) return null;
 
 	const message =
 		data.reason === "server_url_invalid"

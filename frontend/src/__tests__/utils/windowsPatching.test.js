@@ -74,12 +74,15 @@ describe("windowsPatchInfo", () => {
 			"not_pending",
 			"winget",
 		],
-	])("falls back to the server's patchable predicate for %j", (row, patchable, reason, source) => {
-		const info = windowsPatchInfo(row);
-		expect(info.patchable).toBe(patchable);
-		expect(info.reason).toBe(reason);
-		expect(info.source).toBe(source);
-	});
+	])(
+		"falls back to the server's patchable predicate for %j",
+		(row, patchable, reason, source) => {
+			const info = windowsPatchInfo(row);
+			expect(info.patchable).toBe(patchable);
+			expect(info.reason).toBe(reason);
+			expect(info.source).toBe(source);
+		},
+	);
 
 	it("flags optional, driver and feature upgrade rows", () => {
 		const info = windowsPatchInfo({

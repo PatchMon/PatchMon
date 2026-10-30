@@ -62,20 +62,19 @@ describe("pollDryRunUntilDone", () => {
 		expect(result.error).toMatch(/Runs & History/);
 	});
 
-	it.each([
-		"timed_out",
-		"cancelled",
-		"failed",
-	])("stops on terminal status %s", async (status) => {
-		respondWith((now) =>
-			now - t0 < 60_000
-				? { status: "running" }
-				: { status, error_message: `run ${status}` },
-		);
-		const result = await settle(pollDryRunUntilDone("r3"), 80_000);
-		expect(result?.status).toBe("failed");
-		expect(result.error).toBe(`run ${status}`);
-	});
+	it.each(["timed_out", "cancelled", "failed"])(
+		"stops on terminal status %s",
+		async (status) => {
+			respondWith((now) =>
+				now - t0 < 60_000
+					? { status: "running" }
+					: { status, error_message: `run ${status}` },
+			);
+			const result = await settle(pollDryRunUntilDone("r3"), 80_000);
+			expect(result?.status).toBe("failed");
+			expect(result.error).toBe(`run ${status}`);
+		},
+	);
 
 	it("waits through an agent reconnect and reports the real result", async () => {
 		respondWith((now) => {

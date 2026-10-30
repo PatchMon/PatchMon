@@ -373,7 +373,7 @@ const OidcSettings = () => {
 									rel="noopener noreferrer"
 									className="text-primary-600 dark:text-primary-400 hover:underline"
 								>
-									Learn more
+									How SSO fallback works
 								</a>
 							</>
 						}

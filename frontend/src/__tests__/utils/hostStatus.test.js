@@ -105,18 +105,19 @@ describe("deriveReportingState", () => {
 		["not-a-date", false, "stale"],
 	];
 
-	it.each(
-		cases,
-	)("last_update=%s wsConnectedOrUnknown=%s -> %s", (lastUpdate, wsConnectedOrUnknown, expected) => {
-		expect(
-			deriveReportingState(
-				{ last_update: lastUpdate },
-				wsConnectedOrUnknown,
-				interval,
-				NOW,
-			),
-		).toBe(expected);
-	});
+	it.each(cases)(
+		"last_update=%s wsConnectedOrUnknown=%s -> %s",
+		(lastUpdate, wsConnectedOrUnknown, expected) => {
+			expect(
+				deriveReportingState(
+					{ last_update: lastUpdate },
+					wsConnectedOrUnknown,
+					interval,
+					NOW,
+				),
+			).toBe(expected);
+		},
+	);
 
 	it("does not depend on host.status for hosts that have reported", () => {
 		// An inactive host silent for 19 hours must read as stale, not Reporting,
