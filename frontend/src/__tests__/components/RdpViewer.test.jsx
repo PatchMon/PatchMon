@@ -118,12 +118,15 @@ describe("RdpViewer error classification", () => {
 			"server_error",
 			"The RDP session could not be started on the PatchMon server. Check the server logs.",
 		],
-	])("uses the server's code prefix for status %i", (code, message, expectedCode, expectedText) => {
-		expect(guacErrorFromStatus({ code, message }, "fallback")).toEqual({
-			code: expectedCode,
-			message: expectedText,
-		});
-	});
+	])(
+		"uses the server's code prefix for status %i",
+		(code, message, expectedCode, expectedText) => {
+			expect(guacErrorFromStatus({ code, message }, "fallback")).toEqual({
+				code: expectedCode,
+				message: expectedText,
+			});
+		},
+	);
 
 	it("falls back to the status code for unprefixed or unknown-prefix messages", () => {
 		expect(

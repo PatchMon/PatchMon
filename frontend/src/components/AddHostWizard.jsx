@@ -304,7 +304,7 @@ const AddHostWizard = ({ isOpen, onClose, onSuccess }) => {
 
 	if (!isOpen) return null;
 
-	const currentStepKey = step >= 4 ? 4 : step;
+	const currentStepKey = Math.min(step, 4);
 	const stepIndicator = (
 		<div className="flex items-center gap-2 mb-6 flex-wrap">
 			{STEPS.map((s, _i) => (

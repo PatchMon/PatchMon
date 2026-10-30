@@ -1161,7 +1161,7 @@ export default function PatchWizard({
 	const targetsWithExtraDeps = useMemo(() => {
 		return targets.filter((t) => {
 			const v = validationByTarget[t.id];
-			if (!v || v.status !== "validated") return false;
+			if (v?.status !== "validated") return false;
 			return (
 				extraDepsFor(t, packagesForTarget(t), v.packages_affected).length > 0
 			);

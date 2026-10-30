@@ -101,18 +101,14 @@ describe("getUpdateStatusMeta", () => {
 		expect(meta.className).toBe(className);
 	});
 
-	it.each([
-		undefined,
-		null,
-		"",
-		"hasUpdates",
-		"constructor",
-		"__proto__",
-	])("never claims up to date for %s", (status) => {
-		const meta = getUpdateStatusMeta(status);
-		expect(meta.status).toBe("not_checked");
-		expect(meta.label).toBe("Not checked");
-	});
+	it.each([undefined, null, "", "hasUpdates", "constructor", "__proto__"])(
+		"never claims up to date for %s",
+		(status) => {
+			const meta = getUpdateStatusMeta(status);
+			expect(meta.status).toBe("not_checked");
+			expect(meta.label).toBe("Not checked");
+		},
+	);
 
 	it("explains unknown results with the reason", () => {
 		expect(

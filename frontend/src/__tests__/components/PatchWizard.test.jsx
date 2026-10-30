@@ -636,26 +636,29 @@ describe("PatchWizard on Windows hosts", () => {
 		["failed", "boom", "validation-summary-failed", "Validated 0 / 1"],
 		["timeout", "offline", "validation-summary-warning", "Validated 0 / 1"],
 		["still_running", "slow", "validation-summary-warning", "Validated 0 / 1"],
-	])("summarises a %s validation honestly", async (status, error, icon, text) => {
-		const { pollDryRunUntilDone } = await import("../../utils/patchingApi");
-		patchingAPI.trigger.mockResolvedValue({ patch_run_id: "v4" });
-		pollDryRunUntilDone.mockResolvedValue({
-			status,
-			packages_affected: [],
-			shell_output: "",
-			error,
-		});
-		renderWizard(WIN, { initialStep: 0 });
-		await clickAndSettle(
-			screen.getByRole("button", { name: "Run validation" }),
-		);
-		await waitFor(() => expect(screen.getByTestId(icon)).toBeInTheDocument());
-		expect(
-			screen.getByText(
-				(_, el) => el?.tagName === "SPAN" && el.textContent === text,
-			),
-		).toBeInTheDocument();
-	});
+	])(
+		"summarises a %s validation honestly",
+		async (status, error, icon, text) => {
+			const { pollDryRunUntilDone } = await import("../../utils/patchingApi");
+			patchingAPI.trigger.mockResolvedValue({ patch_run_id: "v4" });
+			pollDryRunUntilDone.mockResolvedValue({
+				status,
+				packages_affected: [],
+				shell_output: "",
+				error,
+			});
+			renderWizard(WIN, { initialStep: 0 });
+			await clickAndSettle(
+				screen.getByRole("button", { name: "Run validation" }),
+			);
+			await waitFor(() => expect(screen.getByTestId(icon)).toBeInTheDocument());
+			expect(
+				screen.getByText(
+					(_, el) => el?.tagName === "SPAN" && el.textContent === text,
+				),
+			).toBeInTheDocument();
+		},
+	);
 
 	it("shows what validation will leave alone above the install list", async () => {
 		const { pollDryRunUntilDone } = await import("../../utils/patchingApi");

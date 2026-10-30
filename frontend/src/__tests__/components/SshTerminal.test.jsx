@@ -550,15 +550,15 @@ describe("SshTerminal Component", () => {
 			localStorage.getItem = vi.fn(() => null);
 		});
 
-		it.each([
-			true,
-			false,
-		])("defaults the username to Administrator (embedded=%s)", (embedded) => {
-			renderComponent({ host: windowsHost(), embedded });
-			const input = screen.getByPlaceholderText("Administrator");
-			expect(input).toHaveValue("Administrator");
-			expect(screen.queryByPlaceholderText("root")).toBeNull();
-		});
+		it.each([true, false])(
+			"defaults the username to Administrator (embedded=%s)",
+			(embedded) => {
+				renderComponent({ host: windowsHost(), embedded });
+				const input = screen.getByPlaceholderText("Administrator");
+				expect(input).toHaveValue("Administrator");
+				expect(screen.queryByPlaceholderText("root")).toBeNull();
+			},
+		);
 
 		it("detects Windows from expected_platform before the first report", () => {
 			renderComponent({

@@ -43,7 +43,7 @@
 		"esbuild": "0.25.12"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.4.3",
+		"@biomejs/biome": "^2.6.4",
 		"concurrently": "^8.2.2",
 		"lefthook": "^1.13.4",
 		"minimatch": "10.2.5"
