@@ -35,6 +35,7 @@ type HostsHandler struct {
 	pendingConfig     *store.PendingConfigStore
 	db                database.DBProvider
 	notify            *notifications.Emitter
+	queueInspector    *asynq.Inspector
 }
 
 // NewHostsHandler creates a new hosts handler.
@@ -50,6 +51,12 @@ func NewHostsHandler(hosts *store.HostsStore, hostGroups *store.HostGroupsStore,
 		db:                db,
 		notify:            notify,
 	}
+}
+
+// WithQueueInspector lets ApplyPendingConfig skip queueing a scanner install while one is already running.
+func (h *HostsHandler) WithQueueInspector(i *asynq.Inspector) *HostsHandler {
+	h.queueInspector = i
+	return h
 }
 
 // List handles GET /hosts.
@@ -1351,7 +1358,8 @@ func (h *HostsHandler) ApplyPendingConfig(w http.ResponseWriter, r *http.Request
 	}
 
 	installQueued := false
-	if openscapNewlyEnabled(host, complianceEnabled, openscapEnabled) && openscapInstallSupported(host) {
+	if scannerInstallNeeded(host, complianceEnabled, openscapEnabled, dockerBenchEnabled) && openscapInstallSupported(host) &&
+		!complianceInstallInProgress(r.Context(), h.queueInspector, h.integrationStatus, host.ID, host.ApiID) {
 		installQueued = h.queueScannerInstall(r, host)
 	}
 
@@ -1368,6 +1376,37 @@ const scannerInstallDelay = 30 * time.Second
 func openscapNewlyEnabled(before *models.Host, complianceEnabled, openscapEnabled bool) bool {
 	return complianceEnabled && openscapEnabled &&
 		(!before.ComplianceEnabled || !before.ComplianceOpenscapEnabled)
+}
+
+func dockerBenchNewlyEnabled(before *models.Host, complianceEnabled, dockerBenchEnabled bool) bool {
+	return complianceEnabled && dockerBenchEnabled &&
+		(!before.ComplianceEnabled || !before.ComplianceDockerBenchEnabled)
+}
+
+// scannerInstallNeeded also covers hosts whose flags were already on but whose scanner never
+// installed (created with compliance on, a failed install, or a switch from on-demand).
+func scannerInstallNeeded(before *models.Host, complianceEnabled, openscapEnabled, dockerBenchEnabled bool) bool {
+	if !complianceEnabled || (!openscapEnabled && !dockerBenchEnabled) {
+		return false
+	}
+	if openscapNewlyEnabled(before, complianceEnabled, openscapEnabled) ||
+		dockerBenchNewlyEnabled(before, complianceEnabled, dockerBenchEnabled) {
+		return true
+	}
+	return openscapEnabled && !openscapReported(before.ComplianceScannerStatus)
+}
+
+func openscapReported(raw []byte) bool {
+	var s struct {
+		Status      string `json:"status"`
+		ScannerInfo *struct {
+			OpenSCAPAvailable bool `json:"openscap_available"`
+		} `json:"scanner_info"`
+	}
+	if len(raw) == 0 || json.Unmarshal(raw, &s) != nil {
+		return false
+	}
+	return s.Status == "ready" && s.ScannerInfo != nil && s.ScannerInfo.OpenSCAPAvailable
 }
 
 // openscapInstallSupported skips platforms the agent cannot install OpenSCAP on.

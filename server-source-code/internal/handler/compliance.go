@@ -1404,14 +1404,18 @@ func (h *ComplianceHandler) GetInstallJobStatus(w http.ResponseWriter, r *http.R
 }
 
 func (h *ComplianceHandler) installInProgress(ctx context.Context, hostID, apiID string) bool {
-	if h.queueInspector == nil || h.integrationStatus == nil {
+	return complianceInstallInProgress(ctx, h.queueInspector, h.integrationStatus, hostID, apiID)
+}
+
+func complianceInstallInProgress(ctx context.Context, inspector *asynq.Inspector, integrationStatus *store.IntegrationStatusStore, hostID, apiID string) bool {
+	if inspector == nil || integrationStatus == nil {
 		return false
 	}
-	jobID, _ := h.integrationStatus.GetComplianceInstallJob(ctx, hostID)
+	jobID, _ := integrationStatus.GetComplianceInstallJob(ctx, hostID)
 	if jobID == "" {
 		return false
 	}
-	info, err := h.queueInspector.GetTaskInfo(queue.QueueCompliance, jobID)
+	info, err := inspector.GetTaskInfo(queue.QueueCompliance, jobID)
 	if err != nil {
 		return false
 	}
@@ -1422,7 +1426,7 @@ func (h *ComplianceHandler) installInProgress(ctx context.Context, hostID, apiID
 	default:
 		return false
 	}
-	if live, _ := h.integrationStatus.Get(ctx, apiID, "compliance"); live != nil {
+	if live, _ := integrationStatus.Get(ctx, apiID, "compliance"); live != nil {
 		eventsJobID, _ := live["install_job_id"].(string)
 		if evts, ok := live["install_events"].([]interface{}); ok && queue.InstallEventsMatchJob(eventsJobID, jobID) {
 			if _, _, finished := installJobStatusFromEvents(evts); finished {
