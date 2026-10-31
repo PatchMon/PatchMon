@@ -76,14 +76,16 @@ func TestApplyPendingConfigQueuesScannerInstall(t *testing.T) {
 		scannerStatus string
 		pending       store.PendingConfigFields
 		installActive bool
+		prevFinished  bool
 		wantQueued    bool
 	}{
-		{"disabled to enabled", false, true, false, "", store.PendingConfigFields{ComplianceEnabled: &on, ComplianceOnDemandOnly: &off}, false, true},
-		{"on-demand to enabled, scanner not ready", true, true, false, notReady, store.PendingConfigFields{ComplianceOnDemandOnly: &off}, false, true},
-		{"on-demand to enabled, scanner ready", true, true, false, ready, store.PendingConfigFields{ComplianceOnDemandOnly: &off}, false, false},
-		{"scanner not ready but install already running", true, true, false, notReady, store.PendingConfigFields{ComplianceOnDemandOnly: &off}, true, false},
-		{"docker bench newly enabled on a ready host", true, false, false, ready, store.PendingConfigFields{ComplianceDockerBenchEnabled: &on}, false, true},
-		{"disabling compliance", true, false, false, notReady, store.PendingConfigFields{ComplianceEnabled: &off}, false, false},
+		{"disabled to enabled", false, true, false, "", store.PendingConfigFields{ComplianceEnabled: &on, ComplianceOnDemandOnly: &off}, false, false, true},
+		{"on-demand to enabled, scanner not ready", true, true, false, notReady, store.PendingConfigFields{ComplianceOnDemandOnly: &off}, false, false, true},
+		{"on-demand to enabled, scanner ready", true, true, false, ready, store.PendingConfigFields{ComplianceOnDemandOnly: &off}, false, false, false},
+		{"scanner not ready but install already running", true, true, false, notReady, store.PendingConfigFields{ComplianceOnDemandOnly: &off}, true, false, false},
+		{"previous job still queued but its final step was reported", true, true, false, notReady, store.PendingConfigFields{ComplianceOnDemandOnly: &off}, true, true, true},
+		{"docker bench newly enabled on a ready host", true, false, false, ready, store.PendingConfigFields{ComplianceDockerBenchEnabled: &on}, false, false, true},
+		{"disabling compliance", true, false, false, notReady, store.PendingConfigFields{ComplianceEnabled: &off}, false, false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -117,6 +119,14 @@ func TestApplyPendingConfigQueuesScannerInstall(t *testing.T) {
 				runningJob = info.ID
 				if err := status.SetComplianceInstallJob(ctx, host.ID, runningJob); err != nil {
 					t.Fatal(err)
+				}
+				if tc.prevFinished {
+					if err := status.Set(ctx, host.ApiID, "compliance", map[string]interface{}{
+						"status": "ready", "install_job_id": runningJob,
+						"install_events": []interface{}{map[string]interface{}{"step": "complete", "status": "done"}},
+					}); err != nil {
+						t.Fatal(err)
+					}
 				}
 			}
 			connectFakeAgent(t, reg, host.ApiID)

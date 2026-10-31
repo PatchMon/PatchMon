@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -1022,6 +1023,9 @@ func (h *HostsHandler) GetIntegrationStatus(w http.ResponseWriter, r *http.Reque
 	if h.integrationStatus != nil {
 		status, err := h.integrationStatus.Get(r.Context(), host.ApiID, integrationName)
 		if err == nil && status != nil {
+			if integrationName == "compliance" {
+				status = h.overlayInstallInProgress(r.Context(), host, status)
+			}
 			JSON(w, http.StatusOK, map[string]interface{}{
 				"success": true,
 				"status":  status,
@@ -1035,7 +1039,7 @@ func (h *HostsHandler) GetIntegrationStatus(w http.ResponseWriter, r *http.Reque
 		if err := json.Unmarshal(host.ComplianceScannerStatus, &status); err == nil {
 			resp := map[string]interface{}{
 				"success": true,
-				"status":  status,
+				"status":  h.overlayInstallInProgress(r.Context(), host, status),
 				"source":  "cached",
 			}
 			if host.ComplianceScannerUpdatedAt != nil {
@@ -1050,6 +1054,28 @@ func (h *HostsHandler) GetIntegrationStatus(w http.ResponseWriter, r *http.Reque
 		"status":  nil,
 		"message": "No status available",
 	})
+}
+
+// overlayInstallInProgress reports "installing" while an install job runs, so the agent's startup
+// availability report (error/partial until the scanner lands) does not flash as a failure.
+func (h *HostsHandler) overlayInstallInProgress(ctx context.Context, host *models.Host, status map[string]interface{}) map[string]interface{} {
+	if !complianceInstallInProgress(ctx, h.queueInspector, h.integrationStatus, host.ID, host.ApiID) {
+		return status
+	}
+	out := make(map[string]interface{}, len(status)+1)
+	for k, v := range status {
+		out[k] = v
+	}
+	if reported, _ := status["status"].(string); reported != "installing" {
+		out["status"] = "installing"
+		out["reported_status"] = reported
+		out["message"] = "Installing compliance scanner..."
+	}
+	jobID, _ := h.integrationStatus.GetComplianceInstallJob(ctx, host.ID)
+	if eventsJobID, _ := status["install_job_id"].(string); eventsJobID != "" && jobID != "" && eventsJobID != jobID {
+		out["install_events"] = []interface{}{}
+	}
+	return out
 }
 
 // RequestComplianceStatus handles POST /hosts/:hostId/integrations/compliance/request-status.

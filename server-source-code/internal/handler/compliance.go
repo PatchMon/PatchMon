@@ -1419,6 +1419,15 @@ func complianceInstallInProgress(ctx context.Context, inspector *asynq.Inspector
 	if err != nil {
 		return false
 	}
+	live, _ := integrationStatus.Get(ctx, apiID, "compliance")
+	// The agent's final step settles it even while the worker still shows the task as active.
+	if eventsJobID, _ := live["install_job_id"].(string); eventsJobID == jobID {
+		if evts, ok := live["install_events"].([]interface{}); ok {
+			if _, _, finished := installJobStatusFromEvents(evts); finished {
+				return false
+			}
+		}
+	}
 	switch info.State.String() {
 	case "pending", "scheduled", "active", "retry":
 		return true
@@ -1426,7 +1435,7 @@ func complianceInstallInProgress(ctx context.Context, inspector *asynq.Inspector
 	default:
 		return false
 	}
-	if live, _ := integrationStatus.Get(ctx, apiID, "compliance"); live != nil {
+	if live != nil {
 		eventsJobID, _ := live["install_job_id"].(string)
 		if evts, ok := live["install_events"].([]interface{}); ok && queue.InstallEventsMatchJob(eventsJobID, jobID) {
 			if _, _, finished := installJobStatusFromEvents(evts); finished {
