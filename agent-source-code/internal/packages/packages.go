@@ -65,7 +65,7 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 	)
 	switch packageManager {
 	case "windows":
-		pkgs, m.windowsUpdatesOmitted = m.winManager.GetPackages()
+		pkgs, m.windowsUpdatesOmitted, err = m.winManager.GetPackages()
 	case "apt":
 		pkgs, err = m.aptManager.GetPackages()
 	case "dnf", "yum":
