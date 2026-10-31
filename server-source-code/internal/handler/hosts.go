@@ -1452,7 +1452,7 @@ func (h *HostsHandler) queueScannerInstall(r *http.Request, host *models.Host) b
 	if h.queueClient == nil {
 		return false
 	}
-	task, err := queue.NewInstallComplianceToolsTask(host.ID, host.ApiID, hostFromRequest(r))
+	task, err := queue.NewInstallComplianceToolsTask(host.ID, host.ApiID, hostctx.TenantHostKey(r.Context()))
 	if err != nil {
 		slog.Error("apply-pending-config: failed to build scanner install task", "host_id", host.ID, "error", err)
 		return false

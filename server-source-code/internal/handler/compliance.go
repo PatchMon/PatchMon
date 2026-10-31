@@ -1185,7 +1185,7 @@ func (h *ComplianceHandler) InstallScanner(w http.ResponseWriter, r *http.Reques
 		Error(w, http.StatusConflict, "An install is already running on this host. Cancel it first to start another.")
 		return
 	}
-	task, err := queue.NewInstallComplianceToolsTask(hostID, host.ApiID, hostFromRequest(r))
+	task, err := queue.NewInstallComplianceToolsTask(hostID, host.ApiID, hostctx.TenantHostKey(r.Context()))
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to create install task")
 		return
