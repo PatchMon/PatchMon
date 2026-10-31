@@ -25,6 +25,13 @@ var (
 	packageFamilyPattern  = regexp.MustCompile(`^[A-Za-z0-9.\-]+_[a-z0-9]{13}$`)
 )
 
+// WinGet catalog IDs can differ from Appx identities. Match the full family,
+// including publisher, and still require a verified Store installation below.
+var wingetStoreFamilies = map[string]string{
+	"microsoft.appinstaller": "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe",
+	"microsoft.365copilot":   "Microsoft.MicrosoftOfficeHub_8wekyb3d8bbwe",
+}
+
 func hasWingetUpdate(pkgs []models.Package) bool {
 	for _, p := range pkgs {
 		if p.NeedsUpdate && p.WingetID != "" {
@@ -50,9 +57,13 @@ func isStoreApp(p models.Package, appx []storeAppx, windowsApps string) bool {
 	if strings.EqualFold(p.SourceRepository, "msstore") || storeProductIDPattern.MatchString(id) || packageFamilyPattern.MatchString(id) {
 		return true
 	}
+	aliasFamily := wingetStoreFamilies[strings.ToLower(id)]
 	for _, a := range appx {
 		if !isStoreInstall(a, windowsApps) {
 			continue
+		}
+		if aliasFamily != "" && strings.EqualFold(a.PackageFamilyName, aliasFamily) {
+			return true
 		}
 		family, _, _ := strings.Cut(a.PackageFamilyName, "_")
 		if strings.EqualFold(a.Name, id) || strings.EqualFold(family, id) {
