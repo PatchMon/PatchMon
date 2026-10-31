@@ -240,6 +240,37 @@ func TestClassifyWingetUpgradeExit(t *testing.T) {
 	}
 }
 
+// The error code was captured from a Microsoft.Edge upgrade on Windows 11.
+// Assert the explanation does not depend on localized WinGet console output.
+func TestWingetInstallerTechnologyMismatch(t *testing.T) {
+	for _, output := range []string{"", "A newer version was found, but the install technology is different from the current version installed."} {
+		g := &fakeWinget{
+			codes:  map[string]uint32{"Microsoft.Edge": 0x8A15008E},
+			output: output,
+		}
+		rec := &recorder{}
+		res := runFake(WindowsPatchRequest{Targets: []WindowsPatchTarget{
+			{Kind: WindowsTargetWinget, ID: "Microsoft.Edge"},
+		}}, rec, &fakeWUA{}, g)
+		it := itemByID(res, "Microsoft.Edge")
+		if res.Stage != "failed" || it.Status != itemFailed || it.ExitCode == nil || *it.ExitCode != 2316632206 {
+			t.Fatalf("mismatch must remain a failed update with its original exit code: %+v", res)
+		}
+		if res.RebootRequired || it.RebootRequired {
+			t.Fatal("installer mismatch must not request a reboot")
+		}
+		if !strings.Contains(it.Message, "different installer technology") || !strings.Contains(it.Message, "compatible installer") {
+			t.Errorf("missing actionable mismatch explanation: %q", it.Message)
+		}
+		if !strings.Contains(rec.output(), it.Message) {
+			t.Error("patch output must include the item explanation")
+		}
+		if len(g.calls) != 1 || !reflect.DeepEqual(g.calls[0], wingetUpgradeArgs("Microsoft.Edge")) {
+			t.Errorf("mismatch must not trigger an uninstall or fallback: %q", g.calls)
+		}
+	}
+}
+
 func TestWingetArgs(t *testing.T) {
 	if got, want := wingetUpgradeArgs("Notepad++.Notepad++"), []string{"upgrade", "--id", "Notepad++.Notepad++", "--exact", "--source", "winget", "--silent", "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("upgrade args = %q", got)
