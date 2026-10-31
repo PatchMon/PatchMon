@@ -40,9 +40,8 @@ func osFamilyInstallable(statusJSON []byte) bool {
 	return false
 }
 
-// maybeAutoInstallScanner queues one install for a host in scheduled mode whose scanner never
-// installed. On-demand hosts are left to Apply or Install scanner, so auto-enrolled hosts
-// (on-demand by default) do not get OpenSCAP without an operator choosing it.
+// maybeAutoInstallScanner queues one install for a scheduled-mode host whose scanner never installed.
+// On-demand hosts (the auto-enrolment default) are left to Apply or Install scanner.
 func (h *IntegrationsHandler) maybeAutoInstallScanner(ctx context.Context, host *models.Host, statusJSON []byte) bool {
 	if h.queueClient == nil || h.queueInspector == nil || h.integrationStatus == nil {
 		return false
@@ -67,7 +66,6 @@ func (h *IntegrationsHandler) maybeAutoInstallScanner(ctx context.Context, host 
 	if err != nil {
 		return false
 	}
-	_ = h.integrationStatus.ClearInstallEvents(ctx, host.ApiID, "compliance")
 	info, err := h.queueClient.Enqueue(task, asynq.TaskID(autoInstallTaskID(host.ID)))
 	if err != nil {
 		if !errors.Is(err, asynq.ErrTaskIDConflict) && !errors.Is(err, asynq.ErrDuplicateTask) {
@@ -75,6 +73,7 @@ func (h *IntegrationsHandler) maybeAutoInstallScanner(ctx context.Context, host 
 		}
 		return false
 	}
+	_ = h.integrationStatus.ClearInstallEvents(ctx, host.ApiID, "compliance")
 	_ = h.integrationStatus.SetComplianceInstallJob(ctx, host.ID, info.ID)
 	slog.Info("compliance auto-install: queued scanner install", "host_id", host.ID, "job_id", info.ID)
 	return true

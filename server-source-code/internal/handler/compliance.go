@@ -40,6 +40,14 @@ type ComplianceHandler struct {
 	ssgContentDir     string
 	notify            *notifications.Emitter
 	reports           *store.ReportStore
+	jobHistory        *store.JobHistoryStore
+}
+
+// WithJobHistory lets CancelInstall record installs cancelled before they ran, so the
+// once-only automatic install does not queue again on the next agent restart.
+func (h *ComplianceHandler) WithJobHistory(j *store.JobHistoryStore) *ComplianceHandler {
+	h.jobHistory = j
+	return h
 }
 
 // NewComplianceHandler creates a new compliance handler.
@@ -1237,7 +1245,11 @@ func (h *ComplianceHandler) CancelInstall(w http.ResponseWriter, r *http.Request
 	_ = h.integrationStatus.SetComplianceInstallCancel(r.Context(), jobID)
 	_ = h.integrationStatus.ClearComplianceInstallJob(r.Context(), hostID)
 	if h.queueInspector != nil {
-		_ = h.queueInspector.DeleteTask(queue.QueueCompliance, jobID)
+		info, infoErr := h.queueInspector.GetTaskInfo(queue.QueueCompliance, jobID)
+		if err := h.queueInspector.DeleteTask(queue.QueueCompliance, jobID); err == nil && infoErr == nil && h.jobHistory != nil &&
+			(info.State == asynq.TaskStatePending || info.State == asynq.TaskStateScheduled) {
+			_ = h.jobHistory.RecordCancelledBeforeStart(r.Context(), jobID, queue.QueueCompliance, queue.TypeInstallComplianceTools, hostID, host.ApiID)
+		}
 	}
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
