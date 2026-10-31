@@ -40,16 +40,6 @@ func osFamilyInstallable(statusJSON []byte) bool {
 	return false
 }
 
-func scannerReadyFor(host *models.Host, statusJSON []byte) bool {
-	if host.ComplianceOpenscapEnabled {
-		return openscapReported(statusJSON)
-	}
-	var s struct {
-		Status string `json:"status"`
-	}
-	return json.Unmarshal(statusJSON, &s) == nil && s.Status == "ready"
-}
-
 // maybeAutoInstallScanner queues one install for a host in scheduled mode whose scanner never
 // installed. On-demand hosts are left to Apply or Install scanner, so auto-enrolled hosts
 // (on-demand by default) do not get OpenSCAP without an operator choosing it.
@@ -57,11 +47,10 @@ func (h *IntegrationsHandler) maybeAutoInstallScanner(ctx context.Context, host 
 	if h.queueClient == nil || h.queueInspector == nil || h.integrationStatus == nil {
 		return false
 	}
-	if !host.ComplianceEnabled || host.ComplianceOnDemandOnly ||
-		(!host.ComplianceOpenscapEnabled && !host.ComplianceDockerBenchEnabled) {
+	if !host.ComplianceEnabled || host.ComplianceOnDemandOnly || !host.ComplianceOpenscapEnabled {
 		return false
 	}
-	if scannerReadyFor(host, statusJSON) || !osFamilyInstallable(statusJSON) {
+	if openscapReported(statusJSON) || !osFamilyInstallable(statusJSON) {
 		return false
 	}
 	if h.jobHistory == nil {

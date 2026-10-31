@@ -40,10 +40,14 @@ func TestComplianceAvailabilityReportAutoInstallsOnce(t *testing.T) {
 
 	report := func(t *testing.T, apiID, state, osFamily string, openscap bool) {
 		t.Helper()
+		component := "failed"
+		if openscap {
+			component = "ready"
+		}
 		body, _ := json.Marshal(map[string]interface{}{
 			"integration": "compliance", "enabled": true, "status": state,
 			"message":      "All compliance tools failed to install",
-			"components":   map[string]string{"openscap": "failed"},
+			"components":   map[string]string{"openscap": component, "docker-bench": "failed"},
 			"scanner_info": map[string]interface{}{"os_family": osFamily, "openscap_available": openscap},
 		})
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/hosts/integration-status", strings.NewReader(string(body)))
@@ -64,13 +68,16 @@ func TestComplianceAvailabilityReportAutoInstallsOnce(t *testing.T) {
 		openscap   bool
 		hadHistory bool
 		wantQueued bool
+		dockerOnly bool
 	}{
-		{"enabled, scanner missing, debian", false, "debian", "error", false, false, true},
-		{"enabled, scanner missing, rhel", false, "rhel", "partial", false, false, true},
-		{"on-demand, scanner missing", true, "debian", "error", false, false, false},
-		{"enabled, unsupported os family", false, "alpine", "error", false, false, false},
-		{"enabled, an install has run before", false, "debian", "error", false, true, false},
-		{"enabled, scanner ready", false, "debian", "ready", true, false, false},
+		{"enabled, scanner missing, debian", false, "debian", "error", false, false, true, false},
+		{"enabled, scanner missing, rhel", false, "rhel", "partial", false, false, true, false},
+		{"on-demand, scanner missing", true, "debian", "error", false, false, false, false},
+		{"enabled, unsupported os family", false, "alpine", "error", false, false, false, false},
+		{"enabled, an install has run before", false, "debian", "error", false, true, false, false},
+		{"enabled, scanner ready", false, "debian", "ready", true, false, false, false},
+		{"enabled, partial with openscap working", false, "debian", "partial", true, false, false, false},
+		{"enabled, docker bench only", false, "debian", "error", false, false, false, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -80,6 +87,11 @@ func TestComplianceAvailabilityReportAutoInstallsOnce(t *testing.T) {
 			host.ComplianceOpenscapEnabled = true
 			if err := hosts.Create(ctx, host); err != nil {
 				t.Fatal(err)
+			}
+			if tc.dockerOnly {
+				if err := hosts.UpdateComplianceScanners(ctx, host.ID, false, true); err != nil {
+					t.Fatal(err)
+				}
 			}
 			t.Cleanup(func() {
 				_, _ = d.Exec(ctx, `DELETE FROM job_history WHERE host_id = $1`, host.ID)

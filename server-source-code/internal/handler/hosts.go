@@ -1384,7 +1384,7 @@ func (h *HostsHandler) ApplyPendingConfig(w http.ResponseWriter, r *http.Request
 	}
 
 	installQueued := false
-	if scannerInstallNeeded(host, complianceEnabled, openscapEnabled, dockerBenchEnabled) && openscapInstallSupported(host) &&
+	if scannerInstallNeeded(host, complianceEnabled, openscapEnabled) && openscapInstallSupported(host) &&
 		!complianceInstallInProgress(r.Context(), h.queueInspector, h.integrationStatus, host.ID, host.ApiID) {
 		installQueued = h.queueScannerInstall(r, host)
 	}
@@ -1404,27 +1404,20 @@ func openscapNewlyEnabled(before *models.Host, complianceEnabled, openscapEnable
 		(!before.ComplianceEnabled || !before.ComplianceOpenscapEnabled)
 }
 
-func dockerBenchNewlyEnabled(before *models.Host, complianceEnabled, dockerBenchEnabled bool) bool {
-	return complianceEnabled && dockerBenchEnabled &&
-		(!before.ComplianceEnabled || !before.ComplianceDockerBenchEnabled)
-}
-
 // scannerInstallNeeded also covers hosts whose flags were already on but whose scanner never
 // installed (created with compliance on, a failed install, or a switch from on-demand).
-func scannerInstallNeeded(before *models.Host, complianceEnabled, openscapEnabled, dockerBenchEnabled bool) bool {
-	if !complianceEnabled || (!openscapEnabled && !dockerBenchEnabled) {
+func scannerInstallNeeded(before *models.Host, complianceEnabled, openscapEnabled bool) bool {
+	if !complianceEnabled || !openscapEnabled {
 		return false
 	}
-	if openscapNewlyEnabled(before, complianceEnabled, openscapEnabled) ||
-		dockerBenchNewlyEnabled(before, complianceEnabled, dockerBenchEnabled) {
-		return true
-	}
-	return openscapEnabled && !openscapReported(before.ComplianceScannerStatus)
+	return openscapNewlyEnabled(before, complianceEnabled, openscapEnabled) || !openscapReported(before.ComplianceScannerStatus)
 }
 
+// openscapReported looks at OpenSCAP alone: a host whose Docker Bench is missing reports "partial"
+// overall while OpenSCAP works, and must not be reinstalled on every Apply.
 func openscapReported(raw []byte) bool {
 	var s struct {
-		Status      string `json:"status"`
+		Components  map[string]interface{} `json:"components"`
 		ScannerInfo *struct {
 			OpenSCAPAvailable bool `json:"openscap_available"`
 		} `json:"scanner_info"`
@@ -1432,7 +1425,10 @@ func openscapReported(raw []byte) bool {
 	if len(raw) == 0 || json.Unmarshal(raw, &s) != nil {
 		return false
 	}
-	return s.Status == "ready" && s.ScannerInfo != nil && s.ScannerInfo.OpenSCAPAvailable
+	if c, _ := s.Components["openscap"].(string); c == "ready" {
+		return true
+	}
+	return s.ScannerInfo != nil && s.ScannerInfo.OpenSCAPAvailable
 }
 
 // openscapInstallSupported skips platforms the agent cannot install OpenSCAP on.

@@ -59,28 +59,32 @@ func TestOpenscapInstallSupported(t *testing.T) {
 
 func TestScannerInstallNeeded(t *testing.T) {
 	ready := []byte(`{"status":"ready","scanner_info":{"openscap_available":true}}`)
+	enabled := models.Host{ComplianceEnabled: true, ComplianceOpenscapEnabled: true}
+	withStatus := func(raw string) models.Host {
+		h := enabled
+		h.ComplianceScannerStatus = []byte(raw)
+		return h
+	}
 	tests := []struct {
-		name                              string
-		before                            models.Host
-		compliance, openscap, dockerBench bool
-		want                              bool
+		name                 string
+		before               models.Host
+		compliance, openscap bool
+		want                 bool
 	}{
-		{"newly enabled", models.Host{ComplianceOpenscapEnabled: true}, true, true, false, true},
-		{"on-demand to enabled, scanner never reported", models.Host{ComplianceEnabled: true, ComplianceOpenscapEnabled: true}, true, true, false, true},
-		{"on-demand to enabled, scanner reported error", models.Host{ComplianceEnabled: true, ComplianceOpenscapEnabled: true,
-			ComplianceScannerStatus: []byte(`{"status":"error","scanner_info":{"openscap_available":false}}`)}, true, true, false, true},
-		{"partial: docker bench ready, openscap missing", models.Host{ComplianceEnabled: true, ComplianceOpenscapEnabled: true,
-			ComplianceScannerStatus: []byte(`{"status":"partial","scanner_info":{"openscap_available":false}}`)}, true, true, false, true},
-		{"already enabled and scanner ready", models.Host{ComplianceEnabled: true, ComplianceOpenscapEnabled: true, ComplianceScannerStatus: ready}, true, true, false, false},
-		{"docker bench newly enabled on a ready host", models.Host{ComplianceEnabled: true, ComplianceOpenscapEnabled: true, ComplianceScannerStatus: ready}, true, true, true, true},
-		{"docker bench already on, ready host", models.Host{ComplianceEnabled: true, ComplianceOpenscapEnabled: true, ComplianceDockerBenchEnabled: true, ComplianceScannerStatus: ready}, true, true, true, false},
-		{"compliance disabled", models.Host{ComplianceEnabled: true, ComplianceOpenscapEnabled: true}, false, true, false, false},
-		{"no scanner selected", models.Host{ComplianceEnabled: true}, true, false, false, false},
-		{"malformed status counts as not ready", models.Host{ComplianceEnabled: true, ComplianceOpenscapEnabled: true, ComplianceScannerStatus: []byte(`{`)}, true, true, false, true},
+		{"newly enabled", models.Host{ComplianceOpenscapEnabled: true}, true, true, true},
+		{"on-demand to enabled, scanner never reported", enabled, true, true, true},
+		{"on-demand to enabled, scanner reported error", withStatus(`{"status":"error","scanner_info":{"openscap_available":false}}`), true, true, true},
+		{"partial: docker bench ready, openscap missing", withStatus(`{"status":"partial","components":{"openscap":"failed","docker-bench":"ready"},"scanner_info":{"openscap_available":false}}`), true, true, true},
+		{"partial: openscap ready, docker bench missing", withStatus(`{"status":"partial","components":{"openscap":"ready","docker-bench":"failed"},"scanner_info":{"openscap_available":true}}`), true, true, false},
+		{"openscap ready per components only", withStatus(`{"status":"partial","components":{"openscap":"ready"}}`), true, true, false},
+		{"already enabled and scanner ready", models.Host{ComplianceEnabled: true, ComplianceOpenscapEnabled: true, ComplianceScannerStatus: ready}, true, true, false},
+		{"docker bench only: openscap not selected", models.Host{ComplianceEnabled: true, ComplianceDockerBenchEnabled: true}, true, false, false},
+		{"compliance disabled", enabled, false, true, false},
+		{"malformed status counts as not ready", withStatus(`{`), true, true, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := scannerInstallNeeded(&tt.before, tt.compliance, tt.openscap, tt.dockerBench); got != tt.want {
+			if got := scannerInstallNeeded(&tt.before, tt.compliance, tt.openscap); got != tt.want {
 				t.Fatalf("got %v, want %v", got, tt.want)
 			}
 		})

@@ -66,6 +66,7 @@ func TestApplyPendingConfigQueuesScannerInstall(t *testing.T) {
 
 	ready := `{"status":"ready","scanner_info":{"openscap_available":true}}`
 	notReady := `{"status":"error","scanner_info":{"openscap_available":false}}`
+	partialOpenscapOK := `{"status":"partial","components":{"openscap":"ready","docker-bench":"failed"},"scanner_info":{"openscap_available":true}}`
 	on, off := true, false
 
 	cases := []struct {
@@ -84,7 +85,8 @@ func TestApplyPendingConfigQueuesScannerInstall(t *testing.T) {
 		{"on-demand to enabled, scanner ready", true, true, false, ready, store.PendingConfigFields{ComplianceOnDemandOnly: &off}, false, false, false},
 		{"scanner not ready but install already running", true, true, false, notReady, store.PendingConfigFields{ComplianceOnDemandOnly: &off}, true, false, false},
 		{"previous job still queued but its final step was reported", true, true, false, notReady, store.PendingConfigFields{ComplianceOnDemandOnly: &off}, true, true, true},
-		{"docker bench newly enabled on a ready host", true, false, false, ready, store.PendingConfigFields{ComplianceDockerBenchEnabled: &on}, false, false, true},
+		{"docker bench newly enabled on a ready host", true, false, false, ready, store.PendingConfigFields{ComplianceDockerBenchEnabled: &on}, false, false, false},
+		{"partial with openscap working", true, false, false, partialOpenscapOK, store.PendingConfigFields{ComplianceDockerBenchEnabled: &on}, false, false, false},
 		{"disabling compliance", true, false, false, notReady, store.PendingConfigFields{ComplianceEnabled: &off}, false, false, false},
 	}
 	for _, tc := range cases {
