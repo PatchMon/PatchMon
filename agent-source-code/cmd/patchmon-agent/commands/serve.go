@@ -655,7 +655,9 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 				logger.Info("Install scanner requested (OpenSCAP + SSG)...")
 				go func() {
 					defer finishInstallScanner()
-					if err := runInstallScanner(); err != nil {
+					if err := runInstallScanner(); errors.Is(err, errComplianceDisabled) {
+						logger.Info("Install scanner refused: compliance is disabled in config.yml")
+					} else if err != nil {
 						logger.WithError(err).Warn("install_scanner failed")
 					} else {
 						logger.Info("Install scanner completed successfully")
@@ -893,6 +895,13 @@ func retrySend(attempts int, delay time.Duration, send func() error) error {
 	return err
 }
 
+// errComplianceDisabled is returned when the server asks for a scanner install on a host whose
+// compliance integration is off, for example a stale queued job retried after a server restart.
+var errComplianceDisabled = errors.New("compliance integration is disabled")
+
+// installRefusedMessage is reported to the server when an install is refused because compliance is off.
+const installRefusedMessage = "Compliance is disabled on this host; scanner install skipped"
+
 // runInstallScanner installs OpenSCAP and SSG content (apt/dnf install, update SSG) and reports status via HTTP
 // Sends granular install events so the frontend can display real-time progress.
 func runInstallScanner() error {
@@ -934,6 +943,12 @@ func runInstallScanner() error {
 		if err := retrySend(installStatusSendAttempts, installStatusRetryDelay, send); err != nil {
 			logger.WithError(err).Warn("Failed to report final install status to server")
 		}
+	}
+
+	if !enabled {
+		addEvent("complete", "failed", installRefusedMessage)
+		sendStatus("disabled", installRefusedMessage, nil)
+		return errComplianceDisabled
 	}
 
 	// Step 1: Detect OS
