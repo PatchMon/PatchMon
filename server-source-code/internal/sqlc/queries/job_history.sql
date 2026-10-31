@@ -30,3 +30,6 @@ SET status = 'delayed', updated_at = NOW()
 WHERE id = (
     SELECT jh.id FROM job_history jh WHERE jh.job_id = $1 ORDER BY jh.created_at DESC LIMIT 1
 );
+
+-- name: HostHasJobHistory :one
+SELECT EXISTS (SELECT 1 FROM job_history WHERE host_id = $1 AND job_name = $2)::bool;

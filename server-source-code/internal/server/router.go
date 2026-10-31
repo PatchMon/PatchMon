@@ -199,7 +199,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	dashboardPrefsHandler := handler.NewDashboardPreferencesHandler(dashboardPrefsStore)
 	dockerHandler := handler.NewDockerHandler(dockerStore, registry)
 	reportStore := store.NewReportStore(dbProvider)
-	integrationsHandler := handler.NewIntegrationsHandler(hostsStore, store.NewDockerStore(dbProvider), integrationStatusStore, dbProvider, notifyEmit, reportStore, store.NewJobHistoryStore(dbProvider))
+	integrationsHandler := handler.NewIntegrationsHandler(hostsStore, store.NewDockerStore(dbProvider), integrationStatusStore, dbProvider, notifyEmit, reportStore, store.NewJobHistoryStore(dbProvider)).WithScannerAutoInstall(queueClient, queueInspector)
 	complianceStore := store.NewComplianceStore(dbProvider)
 	complianceHandler := handler.NewComplianceHandler(complianceStore, hostsStore, registry, queueClient, queueInspector, integrationStatusStore, cfg.SSGContentDir, notifyEmit, reportStore)
 	autoEnrollmentStore := store.NewAutoEnrollmentStore(dbProvider)

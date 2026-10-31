@@ -15,6 +15,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/queue"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
+	"github.com/hibiken/asynq"
 )
 
 // IntegrationsHandler handles agent integration endpoints (Docker, etc.)
@@ -26,6 +27,8 @@ type IntegrationsHandler struct {
 	notify            *notifications.Emitter
 	reports           *store.ReportStore
 	jobHistory        *store.JobHistoryStore
+	queueClient       *asynq.Client
+	queueInspector    *asynq.Inspector
 }
 
 // NewIntegrationsHandler creates a new integrations handler.
@@ -498,6 +501,9 @@ func (h *IntegrationsHandler) ReceiveIntegrationStatus(w http.ResponseWriter, r 
 		_ = h.hosts.UpdateComplianceScannerStatus(r.Context(), host.ID, statusJSON, time.Now())
 		if payload.Status == "ready" {
 			_ = h.hosts.UpdateComplianceEnabled(r.Context(), host.ID, payload.Enabled)
+		}
+		if payload.Enabled && payload.InstallEvents == nil {
+			h.maybeAutoInstallScanner(r.Context(), host, statusJSON)
 		}
 	}
 
