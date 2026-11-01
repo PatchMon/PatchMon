@@ -54,7 +54,6 @@ func NewHostsHandler(hosts *store.HostsStore, hostGroups *store.HostGroupsStore,
 	}
 }
 
-// WithQueueInspector lets ApplyPendingConfig skip queueing a scanner install while one is already running.
 func (h *HostsHandler) WithQueueInspector(i *asynq.Inspector) *HostsHandler {
 	h.queueInspector = i
 	return h
@@ -1056,8 +1055,6 @@ func (h *HostsHandler) GetIntegrationStatus(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// overlayInstallInProgress reports "installing" while an install job runs, so the agent's startup
-// availability report (error/partial until the scanner lands) does not flash as a failure.
 func (h *HostsHandler) overlayInstallInProgress(ctx context.Context, host *models.Host, status map[string]interface{}) map[string]interface{} {
 	if !complianceInstallInProgress(ctx, h.queueInspector, h.integrationStatus, host.ID, host.ApiID) {
 		return status
@@ -1404,8 +1401,6 @@ func openscapNewlyEnabled(before *models.Host, complianceEnabled, openscapEnable
 		(!before.ComplianceEnabled || !before.ComplianceOpenscapEnabled)
 }
 
-// scannerInstallNeeded also covers hosts whose flags were already on but whose scanner never
-// installed (created with compliance on, a failed install, or a switch from on-demand).
 func scannerInstallNeeded(before *models.Host, complianceEnabled, openscapEnabled bool) bool {
 	if !complianceEnabled || !openscapEnabled {
 		return false

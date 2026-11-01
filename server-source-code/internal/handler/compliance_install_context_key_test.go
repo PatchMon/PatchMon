@@ -22,8 +22,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// The install worker must poll the key the agent's report is stored under, or it never sees
-// completion and records a false timeout after five minutes.
 func TestInstallWorkerSeesAgentReportBehindForwardedHost(t *testing.T) {
 	ctx := context.Background()
 	d := pgtest.Open(t)
@@ -90,7 +88,6 @@ func TestInstallWorkerSeesAgentReportBehindForwardedHost(t *testing.T) {
 				t.Fatalf("task host = %q, want %q", payload.Host, tc.wantTaskHost)
 			}
 
-			// The agent's final report arrives through the same context resolution as the request.
 			if err := status.Set(reqCtx, host.ApiID, "compliance", map[string]interface{}{
 				"status": "ready",
 				"install_events": []interface{}{

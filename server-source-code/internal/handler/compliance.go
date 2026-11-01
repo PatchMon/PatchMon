@@ -43,8 +43,6 @@ type ComplianceHandler struct {
 	jobHistory        *store.JobHistoryStore
 }
 
-// WithJobHistory lets CancelInstall record installs cancelled before they ran, so the
-// once-only automatic install does not queue again on the next agent restart.
 func (h *ComplianceHandler) WithJobHistory(j *store.JobHistoryStore) *ComplianceHandler {
 	h.jobHistory = j
 	return h
@@ -1432,7 +1430,6 @@ func complianceInstallInProgress(ctx context.Context, inspector *asynq.Inspector
 		return false
 	}
 	live, _ := integrationStatus.Get(ctx, apiID, "compliance")
-	// The agent's final step settles it even while the worker still shows the task as active.
 	if eventsJobID, _ := live["install_job_id"].(string); eventsJobID == jobID {
 		if evts, ok := live["install_events"].([]interface{}); ok {
 			if _, _, finished := installJobStatusFromEvents(evts); finished {

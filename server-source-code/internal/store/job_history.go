@@ -27,14 +27,11 @@ func (s *JobHistoryStore) RecordOutcome(ctx context.Context, jobID, failure stri
 	return d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: jobID, ErrorMessage: &failure})
 }
 
-// HostHasJob reports whether a job of this type has ever been recorded for the host.
 func (s *JobHistoryStore) HostHasJob(ctx context.Context, hostID, jobName string) (bool, error) {
 	d := s.db.DB(ctx)
 	return d.Queries.HostHasJobHistory(ctx, db.HostHasJobHistoryParams{HostID: &hostID, JobName: jobName})
 }
 
-// RecordCancelledBeforeStart logs a job that was deleted from the queue before any worker ran it,
-// which would otherwise leave no history row at all.
 func (s *JobHistoryStore) RecordCancelledBeforeStart(ctx context.Context, jobID, queueName, jobName, hostID, apiID string) error {
 	d := s.db.DB(ctx)
 	if err := d.Queries.InsertJobHistory(ctx, db.InsertJobHistoryParams{

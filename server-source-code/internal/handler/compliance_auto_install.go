@@ -12,7 +12,6 @@ import (
 	"github.com/hibiken/asynq"
 )
 
-// WithScannerAutoInstall enables the one-off scanner install for scheduled-mode hosts that report no scanner.
 func (h *IntegrationsHandler) WithScannerAutoInstall(client *asynq.Client, inspector *asynq.Inspector) *IntegrationsHandler {
 	h.queueClient = client
 	h.queueInspector = inspector
@@ -23,7 +22,6 @@ func autoInstallTaskID(hostID string) string {
 	return "compliance-install-auto:" + hostID
 }
 
-// osFamilyInstallable mirrors the families the agent's EnsureInstalled can install on.
 func osFamilyInstallable(statusJSON []byte) bool {
 	var s struct {
 		ScannerInfo *struct {
@@ -40,8 +38,6 @@ func osFamilyInstallable(statusJSON []byte) bool {
 	return false
 }
 
-// maybeAutoInstallScanner queues one install for a scheduled-mode host whose scanner never installed.
-// On-demand hosts (the auto-enrolment default) are left to Apply or Install scanner.
 func (h *IntegrationsHandler) maybeAutoInstallScanner(ctx context.Context, host *models.Host, statusJSON []byte) bool {
 	if h.queueClient == nil || h.queueInspector == nil || h.integrationStatus == nil {
 		return false

@@ -895,11 +895,8 @@ func retrySend(attempts int, delay time.Duration, send func() error) error {
 	return err
 }
 
-// errComplianceDisabled is returned when the server asks for a scanner install on a host whose
-// compliance integration is off, for example a stale queued job retried after a server restart.
 var errComplianceDisabled = errors.New("compliance integration is disabled")
 
-// installRefusedMessage is reported to the server when an install is refused because compliance is off.
 const installRefusedMessage = "Compliance is disabled on this host; scanner install skipped"
 
 // runInstallScanner installs OpenSCAP and SSG content (apt/dnf install, update SSG) and reports status via HTTP
