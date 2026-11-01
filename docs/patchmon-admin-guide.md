@@ -3010,6 +3010,8 @@ The per-host **default profile** setting (Host Detail → Integrations → Compl
 | SLES | CIS Level 1 Server, CIS Level 2 Server |
 | OpenSUSE | CIS Level 1 Server, CIS Level 2 Server |
 
+**Ubuntu 26.04 is not supported for compliance scanning yet.** The scanner installs, but the upstream ComplianceAsCode content for Ubuntu 26.04 (SSG 0.1.82) publishes no CIS or STIG profile, so a scan has no rules to run and records zero rules. Support follows once upstream publishes the profiles.
+
 Any host OS not listed has no SSG datastream available and OpenSCAP scans will be skipped on it. The scanner is still "available" in the integrations metadata if `oscap` is installed; it just has nothing to evaluate.
 
 > **SLES and OpenSUSE:** SUSE hosts need agent 2.1.4 or later to complete enrolment and run scans. Older agents fail every report with `unsupported package manager: unknown`.
@@ -3352,6 +3354,8 @@ Some supported PatchMon hosts cannot run compliance scanning at all, because the
 | Windows | The agent has no compliance integration on Windows |
 
 Everything else in the supported matrix can install the scanner: Debian 10, 12, 13 and 14, Ubuntu 22.04 and 24.04, the RHEL family (Rocky, AlmaLinux, CentOS Stream, Oracle Linux, Fedora, Amazon Linux 2023), and openSUSE.
+
+Ubuntu 26.04 also installs, but has no scannable profile until upstream publishes one (see the supported operating systems table above).
 
 On Debian 10 the install succeeds but the results are not useful. PatchMon ships no Debian 10 datastream, so the host falls back to the very old content in buster's own `ssg-debian` package, and every rule comes back as "not applicable" because the content targets an earlier Debian release. Treat compliance scanning on Debian 10 as unavailable in practice.
 
