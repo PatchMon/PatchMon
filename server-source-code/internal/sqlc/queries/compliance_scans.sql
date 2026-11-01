@@ -132,9 +132,9 @@ RETURNING id, host_id, profile_id, started_at, completed_at, status,
 DELETE FROM compliance_scans
 WHERE host_id = $1 AND status = 'running';
 
--- name: DeletePreviousCompletedScansByHostAndProfile :exec
+-- name: DeletePreviousFinishedScansByHostAndProfile :exec
 DELETE FROM compliance_scans
-WHERE host_id = $1 AND profile_id = $2 AND status = 'completed';
+WHERE host_id = $1 AND profile_id = $2 AND status IN ('completed', 'failed');
 
 -- name: GetRecentComplianceScans :many
 SELECT cs.id, cs.host_id, cs.profile_id, cs.started_at, cs.completed_at, cs.status,

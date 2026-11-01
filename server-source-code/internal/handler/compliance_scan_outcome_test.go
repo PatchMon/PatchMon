@@ -1,6 +1,10 @@
 package handler
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
+)
 
 func TestScanOutcome(t *testing.T) {
 	total120 := 120
@@ -24,6 +28,26 @@ func TestScanOutcome(t *testing.T) {
 			gotStatus, gotErr := scanOutcome(tc.scan, tc.results)
 			if gotStatus != tc.wantStatus || gotErr != tc.wantErr {
 				t.Fatalf("got (%q, %q), want (%q, %q)", gotStatus, gotErr, tc.wantStatus, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestAllScansFailed(t *testing.T) {
+	tests := []struct {
+		name  string
+		scans []store.SubmittedScan
+		want  bool
+	}{
+		{"empty", nil, false},
+		{"all errored", []store.SubmittedScan{{Error: "a"}, {Error: "b"}}, true},
+		{"one ok", []store.SubmittedScan{{Error: "a"}, {}}, false},
+		{"all ok", []store.SubmittedScan{{}, {}}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := allScansFailed(tc.scans); got != tc.want {
+				t.Fatalf("got %v, want %v", got, tc.want)
 			}
 		})
 	}

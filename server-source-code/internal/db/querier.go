@@ -222,7 +222,7 @@ type Querier interface {
 	DeletePatchRun(ctx context.Context, id string) error
 	DeletePatchRunItems(ctx context.Context, patchRunID string) error
 	DeletePendingConfig(ctx context.Context, hostID string) error
-	DeletePreviousCompletedScansByHostAndProfile(ctx context.Context, arg DeletePreviousCompletedScansByHostAndProfileParams) error
+	DeletePreviousFinishedScansByHostAndProfile(ctx context.Context, arg DeletePreviousFinishedScansByHostAndProfileParams) error
 	DeleteRepositoriesByIDs(ctx context.Context, dollar_1 []string) error
 	DeleteRepository(ctx context.Context, id string) error
 	DeleteRolePermissions(ctx context.Context, role string) error

@@ -130,6 +130,8 @@ var scanSubmitLimiter = newScanRateLimiter(10, time.Minute)
 // per 3 bytes of "{}," on the wire, so 20 MB decodes to over 1 GB.
 const maxComplianceObjects = 50000
 
+const noRulesAvailableMessage = "No rules available for this OS. The scan evaluated no rules: the benchmark content for this release may not include the selected profile yet."
+
 func scanOutcome(s complianceScanItem, resultCount int) (status, errMsg string) {
 	if resultCount == 0 && (s.TotalRules == nil || *s.TotalRules == 0) && s.ProfileType != "docker-bench" && s.Status != "failed" && s.Status != "cancelled" {
 		return "failed", noRulesAvailableMessage
@@ -137,7 +139,14 @@ func scanOutcome(s complianceScanItem, resultCount int) (status, errMsg string) 
 	return s.Status, s.Error
 }
 
-const noRulesAvailableMessage = "No rules available for this OS. The benchmark content for this release has no rules for the selected profile."
+func allScansFailed(scans []store.SubmittedScan) bool {
+	for _, s := range scans {
+		if s.Error == "" {
+			return false
+		}
+	}
+	return len(scans) > 0
+}
 
 func countJSONObjects(b []byte) int {
 	n, inString, escaped := 0, false, false
@@ -475,6 +484,7 @@ func (h *ComplianceHandler) ReceiveScans(w http.ResponseWriter, r *http.Request)
 				fallbackSev = "warning"
 			}
 			sev := alerts.ResolveSeverity(r.Context(), d, "compliance_scan_completed", fallbackSev)
+			emitCompleted := !allScansFailed(storeScans)
 
 			// Resolve host display name
 			hostName := host.FriendlyName
@@ -525,23 +535,25 @@ func (h *ComplianceHandler) ReceiveScans(w http.ResponseWriter, r *http.Request)
 				msgParts = append(msgParts, line)
 			}
 
-			h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
-				Type:          "compliance_scan_completed",
-				Severity:      sev,
-				Title:         title,
-				Message:       strings.Join(msgParts, "\n"),
-				ReferenceType: "host",
-				ReferenceID:   host.ID,
-				Metadata: map[string]interface{}{
-					"host_id":           host.ID,
-					"host_name":         hostName,
-					"failed_count":      failedTotal,
-					"passed_count":      passedTotal,
-					"total_rules":       totalRules,
-					"scans_count":       len(processed),
-					"profile_summaries": profileSummaries,
-				},
-			})
+			if emitCompleted {
+				h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
+					Type:          "compliance_scan_completed",
+					Severity:      sev,
+					Title:         title,
+					Message:       strings.Join(msgParts, "\n"),
+					ReferenceType: "host",
+					ReferenceID:   host.ID,
+					Metadata: map[string]interface{}{
+						"host_id":           host.ID,
+						"host_name":         hostName,
+						"failed_count":      failedTotal,
+						"passed_count":      passedTotal,
+						"total_rules":       totalRules,
+						"scans_count":       len(processed),
+						"profile_summaries": profileSummaries,
+					},
+				})
+			}
 
 			// Also emit compliance_scan_failed for any scans that errored.
 			for _, s := range storeScans {

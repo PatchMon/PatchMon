@@ -3119,7 +3119,7 @@ A typical ad-hoc scan flows like this:
 4. The agent runs one or both scanners in sequence. OpenSCAP calls `oscap xccdf eval` against the SSG datastream; Docker Bench calls `docker-bench-security` (bundled with the agent).
 5. Each sub-scan produces structured rule results. The agent batches them into a `CompliancePayload` and submits via `POST /api/v1/compliance/scans`.
 6. The server's `ReceiveScans` handler validates API credentials, applies a 10-requests-per-minute rate limit, and writes the scan + results into the database in a single transaction. It honours the per-host `openscap_enabled` and `docker_bench_enabled` flags on the server side too, so accidental submissions from a scanner the host has disabled are rejected.
-7. On success, the server emits a `compliance_scan_completed` notification event (with per-profile summaries) and, if any scan errored, a separate `compliance_scan_failed` event.
+7. On success, the server emits a `compliance_scan_completed` notification event (with per-profile summaries) and, if any scan errored, a separate `compliance_scan_failed` event. When every scan in the submission errored, only `compliance_scan_failed` is emitted. A scan that evaluated no rules at all is stored as failed with the message "No rules available for this OS", and each new submission replaces the host's previous completed or failed scan for that profile.
 8. The UI's active-scan poll sees the row disappear from the `active_scans` endpoint, shows a toast "Compliance scan completed", and the dashboard refetches.
 
 Scheduled scans go through the same `run_scan` → agent → `ReceiveScans` pipeline; only the initiator differs.
@@ -3639,7 +3639,7 @@ Every completed scan emits a `compliance_scan_completed` notification event. The
 
 Default severity is `informational`, escalated to `warning` when there's at least one failed rule. The per-event alert settings let you override severity or suppress these if you already have a dashboard.
 
-A separate `compliance_scan_failed` event is emitted for each sub-scan that errored during a multi-scanner run (e.g. OpenSCAP succeeded but Docker Bench failed). Default severity is `error`. Metadata includes the profile name, profile type, and the captured error.
+A separate `compliance_scan_failed` event is emitted for each sub-scan that errored during a multi-scanner run (e.g. OpenSCAP succeeded but Docker Bench failed). If every sub-scan errored, `compliance_scan_completed` is not emitted. Default severity is `error`. Metadata includes the profile name, profile type, and the captured error.
 
 ---
 
