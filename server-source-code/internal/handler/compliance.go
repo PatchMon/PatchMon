@@ -130,6 +130,15 @@ var scanSubmitLimiter = newScanRateLimiter(10, time.Minute)
 // per 3 bytes of "{}," on the wire, so 20 MB decodes to over 1 GB.
 const maxComplianceObjects = 50000
 
+func scanOutcome(s complianceScanItem, resultCount int) (status, errMsg string) {
+	if resultCount == 0 && (s.TotalRules == nil || *s.TotalRules == 0) && s.ProfileType != "docker-bench" && s.Status != "failed" && s.Status != "cancelled" {
+		return "failed", noRulesAvailableMessage
+	}
+	return s.Status, s.Error
+}
+
+const noRulesAvailableMessage = "No rules available for this OS. The benchmark content for this release has no rules for the selected profile."
+
 func countJSONObjects(b []byte) int {
 	n, inString, escaped := 0, false, false
 	for _, c := range b {
@@ -393,13 +402,14 @@ func (h *ComplianceHandler) ReceiveScans(w http.ResponseWriter, r *http.Request)
 				Expected:    res.Expected,
 			})
 		}
+		status, scanErr := scanOutcome(s, len(results))
 		storeScans = append(storeScans, store.SubmittedScan{
 			ProfileName:   s.ProfileName,
 			ProfileType:   s.ProfileType,
 			Results:       results,
 			StartedAt:     s.StartedAt,
 			CompletedAt:   s.CompletedAt,
-			Status:        s.Status,
+			Status:        status,
 			Score:         s.Score,
 			TotalRules:    s.TotalRules,
 			Passed:        s.Passed,
@@ -407,7 +417,7 @@ func (h *ComplianceHandler) ReceiveScans(w http.ResponseWriter, r *http.Request)
 			Warnings:      s.Warnings,
 			Skipped:       s.Skipped,
 			NotApplicable: s.NotApplicable,
-			Error:         s.Error,
+			Error:         scanErr,
 		})
 	}
 

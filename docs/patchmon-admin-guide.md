@@ -3010,7 +3010,7 @@ The per-host **default profile** setting (Host Detail → Integrations → Compl
 | SLES | CIS Level 1 Server, CIS Level 2 Server |
 | OpenSUSE | CIS Level 1 Server, CIS Level 2 Server |
 
-**Ubuntu 26.04 is not supported for compliance scanning yet.** The scanner installs, but the upstream ComplianceAsCode content for Ubuntu 26.04 (SSG 0.1.82) publishes no CIS or STIG profile, so a scan has no rules to run and records zero rules. Support follows once upstream publishes the profiles.
+**Ubuntu 26.04 is not supported for compliance scanning yet.** The scanner installs, but the upstream ComplianceAsCode content for Ubuntu 26.04 (SSG 0.1.82) publishes no CIS or STIG profile, so a scan has no rules to run. PatchMon records that scan as failed with the message "No rules available for this OS", and the host's Compliance tab shows it as **Last scan did not complete**. Support follows once upstream publishes the profiles.
 
 Any host OS not listed has no SSG datastream available and OpenSCAP scans will be skipped on it. The scanner is still "available" in the integrations metadata if `oscap` is installed; it just has nothing to evaluate.
 
