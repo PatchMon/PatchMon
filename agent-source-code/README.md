@@ -21,7 +21,7 @@ PatchMon's monitoring agent collects and reports package, system, hardware, and 
 When Chocolatey CLI is installed, the agent collects its installed packages and
 checks `choco outdated --limit-output` using the host's configured sources. CLI
 1.x uses `list --local-only`; CLI 2.x and later use the local `list` command.
-The agent does not install Chocolatey or change its sources, pins or packages.
+Inventory collection does not install Chocolatey or change its sources, pins or packages.
 
 Rows use `chocolatey:<package-id>` and source `chocolatey`. Chocolatey package
 versions can differ from application versions, and meta packages need not have
@@ -30,10 +30,34 @@ application records; the same software may therefore have both records and
 contribute to both counts. This avoids guessing package ownership or replacing
 WinGet's update version with one from a different feed.
 
-This is **inventory reporting only**. Chocolatey rows have no WinGet patch target
-and cannot be upgraded through PatchMon. Pinned packages still show available
-updates, with their pin noted in the description. Chocolatey does not identify
+With a Chocolatey-capable agent and server, these records can be selected for a
+validation (dry run) or upgrade. The Windows "Applications" scope also includes
+Chocolatey packages. Pinned packages remain visible but are not patchable; pins
+are checked again on the host before installation. Chocolatey does not identify
 security updates here, so these rows are not classified as security updates.
+
+Each requested package is rechecked, upgraded by ID to the version discovered
+in the configured feed, and verified afterward. Missing packages are never
+installed implicitly. No force or ignore-pin options are used. Stop requests
+prevent subsequent upgrades without interrupting the active installer; command
+and overall run time limits still apply. Restart-required exit codes are reported
+and stop subsequent Chocolatey upgrades. PatchMon does not issue a reboot.
+Package scripts run under the service account, as with other package managers.
+A failed package script may leave a partial installation; Chocolatey does not
+guarantee rollback, and PatchMon records the failure rather than claiming success.
+
+The existing patching endpoints still accept package names, for example
+`chocolatey:git`, with the existing `dry_run` flag. Agent reports add
+`chocolateyId` and `chocolateyPinned`; patch-run items use kind `chocolatey`.
+Clients with a closed enumeration of run-item kinds must recognize the new kind.
+The server resolves targets from the host's inventory, never from arbitrary
+client-supplied Chocolatey command arguments. Agent/server capability negotiation
+keeps older servers compatible with inventory reports; reporting-only agents do
+not advertise patchable Chocolatey IDs. Both components must be updated to patch.
+
+The database migration adds Chocolatey metadata and allows Chocolatey run items.
+Downgrading that migration refuses to discard Chocolatey run history: it requires
+those run items to have been handled before restoring the old kind constraint.
 
 Collection runs as the agent service account (normally SYSTEM), which needs
 access to the configured feeds. The agent locates `choco.exe` through
@@ -55,6 +79,20 @@ For a repeatable local-feed test, install `patchmon-inventory-fixture` and
 feed, and pin the latter package. Set `PATCHMON_CHOCO_EXPECT_FIXTURES=1` to assert
 both updates. Optional `PATCHMON_CHOCO_TEST_OUTPUT` saves the collected JSON.
 Run under SYSTEM as well as an administrator to check service-account feed access.
+
+### Testing Chocolatey upgrades
+
+`PATCHMON_CHOCO_PATCH_INTEGRATION=1` enables the opt-in Windows patching test.
+Use a disposable host and a local feed containing `1.0.0` and `2.0.0` versions of
+`patchmon-upgrade-fixture`, `patchmon-pinned-fixture`, `patchmon-failure-fixture`
+and `patchmon-absent-fixture`. Install the first three at `1.0.0`, pin the second,
+and make the failure fixture's `2.0.0` install script throw an error. Keep the
+absent fixture uninstalled. All other packages should be harmless text-file
+packages. The test verifies dry runs, a real upgrade, pins, failure reporting,
+no implicit installation, and an already-current target. It modifies only these
+fixtures. Optional `PATCHMON_CHOCO_PATCH_OUTPUT` saves run results as JSON.
+Reboot exit codes and stop behavior are covered by deterministic backend tests;
+this live fixture test does not reboot the host.
 
 ## Installation
 

@@ -890,7 +890,8 @@ func splitDispatchableItems(items []db.PatchRunItem) (valid []db.PatchRunItem, i
 	for _, it := range items {
 		switch {
 		case it.Kind == store.PatchItemKindWUA && store.IsValidWUAGuid(it.Identifier),
-			it.Kind == store.PatchItemKindWinget && store.IsValidWingetID(it.Identifier):
+			it.Kind == store.PatchItemKindWinget && store.IsValidWingetID(it.Identifier),
+			it.Kind == store.PatchItemKindChocolatey && store.IsValidChocolateyID(it.Identifier):
 			valid = append(valid, it)
 		default:
 			invalidIDs = append(invalidIDs, it.ID)
@@ -930,6 +931,7 @@ func buildRunPatchMessage(p RunPatchPayload, run *db.GetPatchRunByIDRow, windows
 	case "patch_all":
 		payload["include_updates"] = run.WindowsIncludeUpdates == nil || *run.WindowsIncludeUpdates
 		payload["include_apps"] = run.WindowsIncludeApps == nil || *run.WindowsIncludeApps
+		payload["include_chocolatey"] = payload["include_apps"]
 	}
 	return payload
 }

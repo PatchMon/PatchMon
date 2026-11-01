@@ -10,6 +10,8 @@ export const UNPATCHABLE_REASON_TEXT = {
 	no_winget_id:
 		"Not patchable: this app was not found in winget. Update it with its own updater.",
 	not_pending: "Up to date",
+	chocolatey_pinned:
+		"Pinned in Chocolatey; remove the pin on the host to update it",
 	winget_pinned:
 		"Pinned with winget pin; remove the pin on the host to update it",
 	store_app: "Microsoft Store app: updates through the Microsoft Store",
@@ -19,6 +21,10 @@ export const UNPATCHABLE_REASON_TEXT = {
 // Reasons that keep a pending update visible but block patching, each with
 // its own neutral badge instead of "Not patchable".
 const BLOCKED_UPDATE_BADGES = {
+	chocolatey_pinned: {
+		key: "chocolatey-pinned",
+		label: "Pinned in Chocolatey",
+	},
 	winget_pinned: { key: "pinned", label: "Pinned in winget" },
 	store_app: { key: "store-app", label: "Microsoft Store app" },
 };
@@ -102,7 +108,9 @@ export const windowsPatchInfo = (row) => {
 	const needsUpdate = !!pick(row, "needsUpdate", "needs_update");
 	const patchSource = pick(row, "patchSource", "patch_source");
 	const source =
-		patchSource === "wua" || patchSource === "winget"
+		patchSource === "wua" ||
+		patchSource === "winget" ||
+		patchSource === "chocolatey"
 			? patchSource
 			: hasValue(pick(row, "wuaGuid", "wua_guid"))
 				? "wua"
@@ -144,6 +152,7 @@ export const windowsSourceLabel = (info) => {
 	if (!info) return null;
 	if (info.reason === "no_winget_id") return "Not patchable";
 	if (info.source === "wua") return "Windows Update";
+	if (info.source === "chocolatey") return "Chocolatey";
 	if (info.source === "winget") return "winget";
 	if (info.patchable || info.reason === "not_pending") return null;
 	return "Not patchable";
@@ -203,15 +212,15 @@ export const isWindowsScopeValid = (scope) => !!(scope?.updates || scope?.apps);
 export const windowsPatchAllSummary = (scope) => {
 	const s = scope || DEFAULT_WINDOWS_SCOPE;
 	if (s.updates && s.apps) {
-		return "Installs all pending Windows updates, except optional, driver and feature upgrades, and upgrades the apps winget can update.";
+		return "Installs all pending Windows updates, except optional, driver and feature upgrades, and upgrades the apps winget and Chocolatey can update.";
 	}
 	if (s.updates) {
 		return "Installs all pending Windows updates, except optional, driver and feature upgrades.";
 	}
 	if (s.apps) {
-		return "Upgrades the apps winget can update.";
+		return "Upgrades the apps winget and Chocolatey can update.";
 	}
-	return "Nothing selected. Choose Windows Updates, Applications (winget), or both.";
+	return "Nothing selected. Choose Windows Updates, Applications (WinGet and Chocolatey), or both.";
 };
 
 // Splits package-host pairs into ones the wizard may patch and ones it must
@@ -264,7 +273,13 @@ export const runItemStatus = (status) =>
 	};
 
 export const runItemSourceLabel = (kind) =>
-	kind === "wua" ? "Windows Update" : kind === "winget" ? "winget" : kind || "";
+	kind === "wua"
+		? "Windows Update"
+		: kind === "winget"
+			? "winget"
+			: kind === "chocolatey"
+				? "Chocolatey"
+				: kind || "";
 
 // Formats an HRESULT or exit code as 0x-prefixed upper-case hex. Negative
 // numbers are treated as uint32, matching how Windows reports them.

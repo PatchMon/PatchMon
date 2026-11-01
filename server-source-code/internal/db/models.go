@@ -380,6 +380,8 @@ type HostPackage struct {
 	SourceRepositoryID *string          `json:"source_repository_id"`
 	WingetID           *string          `json:"winget_id"`
 	WingetPinned       *bool            `json:"winget_pinned"`
+	ChocolateyID       *string          `json:"chocolatey_id"`
+	ChocolateyPinned   *bool            `json:"chocolatey_pinned"`
 	WingetStoreApp     *bool            `json:"winget_store_app"`
 	WuaBrowseOnly      *bool            `json:"wua_browse_only"`
 	WuaUpdateType      *string          `json:"wua_update_type"`

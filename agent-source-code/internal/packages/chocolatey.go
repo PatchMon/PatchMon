@@ -1,6 +1,7 @@
 package packages
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -28,8 +29,14 @@ func collectChocolateyPackages() ([]models.Package, error) {
 	if exe == "" {
 		return nil, nil
 	}
-	return chocolateyPackages(func(timeout time.Duration, args ...string) (string, int, error) {
-		cmd, cancel := boundedCommand(timeout, exe, args...)
+	return chocolateyPackages(chocolateyCommandRunner(context.Background(), exe))
+}
+
+func chocolateyCommandRunner(ctx context.Context, exe string) chocolateyRunner {
+	return func(timeout time.Duration, args ...string) (string, int, error) {
+		childCtx, cancel := context.WithTimeout(ctx, timeout)
+		cmd := exec.CommandContext(childCtx, exe, args...)
+		cmd.WaitDelay = commandKillDelay
 		defer cancel()
 		hideWindow(cmd)
 		output, err := cmd.Output()
@@ -42,7 +49,7 @@ func collectChocolateyPackages() ([]models.Package, error) {
 			code = exitErr.ExitCode()
 		}
 		return string(winexec.TrimBOM(output)), code, nil
-	})
+	}
 }
 
 func findChocolatey() (string, error) {
@@ -147,7 +154,7 @@ func parseChocolateyInstalled(output string) ([]models.Package, error) {
 			return nil, errors.New("duplicate Chocolatey package ID")
 		}
 		seen[id] = true
-		pkgs = append(pkgs, models.Package{Name: "chocolatey:" + id, CurrentVersion: fields[1], SourceRepository: "chocolatey", Category: "Applications", Description: "Chocolatey-managed package (inventory only)"})
+		pkgs = append(pkgs, models.Package{ChocolateyID: id, Name: "chocolatey:" + id, CurrentVersion: fields[1], SourceRepository: "chocolatey", Category: "Applications", Description: "Chocolatey-managed package"})
 	}
 	return pkgs, nil
 }
@@ -178,6 +185,7 @@ func applyChocolateyOutdated(pkgs []models.Package, output string) error {
 		pkgs[i].NeedsUpdate = true
 		if fields[3] == "true" {
 			pkgs[i].Description += "; pinned in Chocolatey"
+			pkgs[i].ChocolateyPinned = true
 		}
 	}
 	return nil

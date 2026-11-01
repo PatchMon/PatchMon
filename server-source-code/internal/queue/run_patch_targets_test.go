@@ -91,3 +91,24 @@ func TestNoTargetsMessage(t *testing.T) {
 		}
 	}
 }
+
+func TestChocolateyDispatch(t *testing.T) {
+	valid, invalid := splitDispatchableItems([]db.PatchRunItem{{ID: "good", Kind: "chocolatey", Identifier: "git"}, {ID: "bad", Kind: "chocolatey", Identifier: "all"}})
+	if len(valid) != 1 || len(invalid) != 1 {
+		t.Fatalf("dispatch validation: %+v %v", valid, invalid)
+	}
+	msg := buildRunPatchMessage(RunPatchPayload{PatchType: "patch_package"}, &db.GetPatchRunByIDRow{}, true, valid)
+	targets := msg["targets"].([]runPatchTarget)
+	if len(targets) != 1 || targets[0].Kind != "chocolatey" || targets[0].ID != "git" {
+		t.Fatalf("bad wire target: %+v", msg)
+	}
+	msg = buildRunPatchMessage(RunPatchPayload{PatchType: "patch_all"}, &db.GetPatchRunByIDRow{}, true, nil)
+	if msg["include_chocolatey"] != true {
+		t.Fatal("new server did not explicitly enable Chocolatey")
+	}
+	disabled := false
+	msg = buildRunPatchMessage(RunPatchPayload{PatchType: "patch_all"}, &db.GetPatchRunByIDRow{WindowsIncludeApps: &disabled}, true, nil)
+	if msg["include_chocolatey"] != false {
+		t.Fatal("Windows Update-only scope enabled Chocolatey")
+	}
+}

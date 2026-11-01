@@ -38,6 +38,7 @@ func CleanPackages(pkgs []models.Package) []models.Package {
 	for i := range pkgs {
 		p := &pkgs[i]
 		p.Name = Clean(p.Name)
+		p.ChocolateyID = Clean(p.ChocolateyID)
 		p.Description = Clean(p.Description)
 		p.Category = Clean(p.Category)
 		p.CurrentVersion = Clean(p.CurrentVersion)

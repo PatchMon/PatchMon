@@ -1278,24 +1278,28 @@ export default function PatchWizard({
 	const showStepIndicator = steps.length > 1;
 
 	// Windows targets list their selection under Windows Updates and
-	// Applications (winget). Other targets keep one flat group.
+	// Applications (WinGet and Chocolatey). Other targets keep one flat group.
 	const groupPackagesForTarget = (target, names) => {
 		if (!isWindowsTarget(target)) return [{ key: "all", label: null, names }];
 		const wua = [];
-		const winget = [];
+		const apps = [];
 		const other = [];
 		for (const n of names) {
 			const src = effectivePackageMeta[n]?.source;
 			if (src === "wua") wua.push(n);
-			else if (src === "winget") winget.push(n);
+			else if (src === "winget" || src === "chocolatey") apps.push(n);
 			else other.push(n);
 		}
-		if (wua.length === 0 && winget.length === 0) {
+		if (wua.length === 0 && apps.length === 0) {
 			return [{ key: "all", label: null, names }];
 		}
 		return [
 			{ key: "wua", label: "Windows Updates", names: wua },
-			{ key: "winget", label: "Applications (winget)", names: winget },
+			{
+				key: "apps",
+				label: "Applications (WinGet and Chocolatey)",
+				names: apps,
+			},
 			{ key: "other", label: "Other", names: other },
 		].filter((g) => g.names.length > 0);
 	};
@@ -1341,7 +1345,7 @@ export default function PatchWizard({
 			<div className="grid sm:grid-cols-2 gap-2">
 				{[
 					["updates", "Windows Updates"],
-					["apps", "Applications (winget)"],
+					["apps", "Applications (WinGet and Chocolatey)"],
 				].map(([key, label]) => (
 					<button
 						key={key}
