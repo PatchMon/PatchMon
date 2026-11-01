@@ -354,7 +354,7 @@ const HostDetail = () => {
 	const patchAllTitle = !wsStatus?.connected
 		? "Agent must be connected to patch"
 		: isWindowsHost
-			? "Install pending Windows updates and winget app upgrades on this host"
+			? "Install pending Windows updates and app upgrades through WinGet and Chocolatey on this host"
 			: isFreeBSDHost
 				? "Run FreeBSD base-system and pkg updates on this host"
 				: "Run system package updates on this host";
