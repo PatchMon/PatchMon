@@ -683,6 +683,21 @@ const HostDetail = () => {
 		retry: false, // Don't retry if compliance not enabled
 	});
 
+	const { data: complianceLastScan } = useQuery({
+		queryKey: ["compliance-latest", hostId, "last-scan"],
+		queryFn: () =>
+			complianceAPI
+				.getHostScans(hostId, { limit: 1 })
+				.then((res) => res.data?.scans?.[0] ?? null)
+				.catch(() => null),
+		staleTime: 2 * 60 * 1000,
+		enabled:
+			!!hostId &&
+			!!integrationsData?.data?.integrations?.compliance &&
+			hasModule("compliance"),
+		retry: false,
+	});
+
 	// Poll for compliance setup status only when compliance integration is enabled
 	const { data: complianceSetupStatus, refetch: refetchComplianceStatus } =
 		useQuery({
@@ -4882,6 +4897,22 @@ const HostDetail = () => {
 										Security Compliance
 									</h3>
 								</div>
+
+								{complianceLastScan?.status === "failed" && (
+									<div className="bg-warning-50 dark:bg-warning-900/20 border border-warning-200 dark:border-warning-700 rounded-md p-4">
+										<div className="flex">
+											<AlertTriangle className="h-5 w-5 flex-shrink-0 text-warning-600 dark:text-warning-400" />
+											<div className="ml-3">
+												<h3 className="text-sm font-medium text-warning-800 dark:text-warning-200">
+													Last scan did not complete
+												</h3>
+												<p className="text-sm text-warning-700 dark:text-warning-300 mt-1">
+													{complianceLastScan.error_message || "Scan failed"}
+												</p>
+											</div>
+										</div>
+									</div>
+								)}
 
 								{/* Summary stats - clickable to scan results filtered by status + host */}
 								{complianceLatest && (

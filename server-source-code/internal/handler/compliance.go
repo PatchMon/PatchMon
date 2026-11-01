@@ -40,6 +40,12 @@ type ComplianceHandler struct {
 	ssgContentDir     string
 	notify            *notifications.Emitter
 	reports           *store.ReportStore
+	jobHistory        *store.JobHistoryStore
+}
+
+func (h *ComplianceHandler) WithJobHistory(j *store.JobHistoryStore) *ComplianceHandler {
+	h.jobHistory = j
+	return h
 }
 
 // NewComplianceHandler creates a new compliance handler.
@@ -123,6 +129,24 @@ var scanSubmitLimiter = newScanRateLimiter(10, time.Minute)
 // A body limit cannot bound this: complianceResultItem is 192 bytes of struct
 // per 3 bytes of "{}," on the wire, so 20 MB decodes to over 1 GB.
 const maxComplianceObjects = 50000
+
+const noRulesAvailableMessage = "No rules available for this OS. The scan evaluated no rules: the benchmark content for this release may not include the selected profile yet."
+
+func scanOutcome(s complianceScanItem, resultCount int) (status, errMsg string) {
+	if resultCount == 0 && (s.TotalRules == nil || *s.TotalRules == 0) && s.ProfileType != "docker-bench" && s.Status != "failed" && s.Status != "cancelled" {
+		return "failed", noRulesAvailableMessage
+	}
+	return s.Status, s.Error
+}
+
+func allScansFailed(scans []store.SubmittedScan) bool {
+	for _, s := range scans {
+		if s.Error == "" {
+			return false
+		}
+	}
+	return len(scans) > 0
+}
 
 func countJSONObjects(b []byte) int {
 	n, inString, escaped := 0, false, false
@@ -387,13 +411,14 @@ func (h *ComplianceHandler) ReceiveScans(w http.ResponseWriter, r *http.Request)
 				Expected:    res.Expected,
 			})
 		}
+		status, scanErr := scanOutcome(s, len(results))
 		storeScans = append(storeScans, store.SubmittedScan{
 			ProfileName:   s.ProfileName,
 			ProfileType:   s.ProfileType,
 			Results:       results,
 			StartedAt:     s.StartedAt,
 			CompletedAt:   s.CompletedAt,
-			Status:        s.Status,
+			Status:        status,
 			Score:         s.Score,
 			TotalRules:    s.TotalRules,
 			Passed:        s.Passed,
@@ -401,7 +426,7 @@ func (h *ComplianceHandler) ReceiveScans(w http.ResponseWriter, r *http.Request)
 			Warnings:      s.Warnings,
 			Skipped:       s.Skipped,
 			NotApplicable: s.NotApplicable,
-			Error:         s.Error,
+			Error:         scanErr,
 		})
 	}
 
@@ -459,6 +484,7 @@ func (h *ComplianceHandler) ReceiveScans(w http.ResponseWriter, r *http.Request)
 				fallbackSev = "warning"
 			}
 			sev := alerts.ResolveSeverity(r.Context(), d, "compliance_scan_completed", fallbackSev)
+			emitCompleted := !allScansFailed(storeScans)
 
 			// Resolve host display name
 			hostName := host.FriendlyName
@@ -509,23 +535,25 @@ func (h *ComplianceHandler) ReceiveScans(w http.ResponseWriter, r *http.Request)
 				msgParts = append(msgParts, line)
 			}
 
-			h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
-				Type:          "compliance_scan_completed",
-				Severity:      sev,
-				Title:         title,
-				Message:       strings.Join(msgParts, "\n"),
-				ReferenceType: "host",
-				ReferenceID:   host.ID,
-				Metadata: map[string]interface{}{
-					"host_id":           host.ID,
-					"host_name":         hostName,
-					"failed_count":      failedTotal,
-					"passed_count":      passedTotal,
-					"total_rules":       totalRules,
-					"scans_count":       len(processed),
-					"profile_summaries": profileSummaries,
-				},
-			})
+			if emitCompleted {
+				h.notify.EmitEvent(r.Context(), d, hostctx.TenantHostKey(r.Context()), notifications.Event{
+					Type:          "compliance_scan_completed",
+					Severity:      sev,
+					Title:         title,
+					Message:       strings.Join(msgParts, "\n"),
+					ReferenceType: "host",
+					ReferenceID:   host.ID,
+					Metadata: map[string]interface{}{
+						"host_id":           host.ID,
+						"host_name":         hostName,
+						"failed_count":      failedTotal,
+						"passed_count":      passedTotal,
+						"total_rules":       totalRules,
+						"scans_count":       len(processed),
+						"profile_summaries": profileSummaries,
+					},
+				})
+			}
 
 			// Also emit compliance_scan_failed for any scans that errored.
 			for _, s := range storeScans {
@@ -1185,7 +1213,7 @@ func (h *ComplianceHandler) InstallScanner(w http.ResponseWriter, r *http.Reques
 		Error(w, http.StatusConflict, "An install is already running on this host. Cancel it first to start another.")
 		return
 	}
-	task, err := queue.NewInstallComplianceToolsTask(hostID, host.ApiID, hostFromRequest(r))
+	task, err := queue.NewInstallComplianceToolsTask(hostID, host.ApiID, hostctx.TenantHostKey(r.Context()))
 	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to create install task")
 		return
@@ -1237,7 +1265,11 @@ func (h *ComplianceHandler) CancelInstall(w http.ResponseWriter, r *http.Request
 	_ = h.integrationStatus.SetComplianceInstallCancel(r.Context(), jobID)
 	_ = h.integrationStatus.ClearComplianceInstallJob(r.Context(), hostID)
 	if h.queueInspector != nil {
-		_ = h.queueInspector.DeleteTask(queue.QueueCompliance, jobID)
+		info, infoErr := h.queueInspector.GetTaskInfo(queue.QueueCompliance, jobID)
+		if err := h.queueInspector.DeleteTask(queue.QueueCompliance, jobID); err == nil && infoErr == nil && h.jobHistory != nil &&
+			(info.State == asynq.TaskStatePending || info.State == asynq.TaskStateScheduled) {
+			_ = h.jobHistory.RecordCancelledBeforeStart(r.Context(), jobID, queue.QueueCompliance, queue.TypeInstallComplianceTools, hostID, host.ApiID)
+		}
 	}
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
@@ -1404,16 +1436,28 @@ func (h *ComplianceHandler) GetInstallJobStatus(w http.ResponseWriter, r *http.R
 }
 
 func (h *ComplianceHandler) installInProgress(ctx context.Context, hostID, apiID string) bool {
-	if h.queueInspector == nil || h.integrationStatus == nil {
+	return complianceInstallInProgress(ctx, h.queueInspector, h.integrationStatus, hostID, apiID)
+}
+
+func complianceInstallInProgress(ctx context.Context, inspector *asynq.Inspector, integrationStatus *store.IntegrationStatusStore, hostID, apiID string) bool {
+	if inspector == nil || integrationStatus == nil {
 		return false
 	}
-	jobID, _ := h.integrationStatus.GetComplianceInstallJob(ctx, hostID)
+	jobID, _ := integrationStatus.GetComplianceInstallJob(ctx, hostID)
 	if jobID == "" {
 		return false
 	}
-	info, err := h.queueInspector.GetTaskInfo(queue.QueueCompliance, jobID)
+	info, err := inspector.GetTaskInfo(queue.QueueCompliance, jobID)
 	if err != nil {
 		return false
+	}
+	live, _ := integrationStatus.Get(ctx, apiID, "compliance")
+	if eventsJobID, _ := live["install_job_id"].(string); eventsJobID == jobID {
+		if evts, ok := live["install_events"].([]interface{}); ok {
+			if _, _, finished := installJobStatusFromEvents(evts); finished {
+				return false
+			}
+		}
 	}
 	switch info.State.String() {
 	case "pending", "scheduled", "active", "retry":
@@ -1422,7 +1466,7 @@ func (h *ComplianceHandler) installInProgress(ctx context.Context, hostID, apiID
 	default:
 		return false
 	}
-	if live, _ := h.integrationStatus.Get(ctx, apiID, "compliance"); live != nil {
+	if live != nil {
 		eventsJobID, _ := live["install_job_id"].(string)
 		if evts, ok := live["install_events"].([]interface{}); ok && queue.InstallEventsMatchJob(eventsJobID, jobID) {
 			if _, _, finished := installJobStatusFromEvents(evts); finished {

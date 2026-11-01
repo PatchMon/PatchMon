@@ -3010,6 +3010,8 @@ The per-host **default profile** setting (Host Detail → Integrations → Compl
 | SLES | CIS Level 1 Server, CIS Level 2 Server |
 | OpenSUSE | CIS Level 1 Server, CIS Level 2 Server |
 
+**Ubuntu 26.04 is not supported for compliance scanning yet.** The scanner installs, but the upstream ComplianceAsCode content for Ubuntu 26.04 (SSG 0.1.82) publishes no CIS or STIG profile, so a scan has no rules to run. PatchMon records that scan as failed with the message "No rules available for this OS", and the host's Compliance tab shows it as **Last scan did not complete**. Support follows once upstream publishes the profiles.
+
 Any host OS not listed has no SSG datastream available and OpenSCAP scans will be skipped on it. The scanner is still "available" in the integrations metadata if `oscap` is installed; it just has nothing to evaluate.
 
 > **SLES and OpenSUSE:** SUSE hosts need agent 2.1.4 or later to complete enrolment and run scans. Older agents fail every report with `unsupported package manager: unknown`.
@@ -3117,7 +3119,7 @@ A typical ad-hoc scan flows like this:
 4. The agent runs one or both scanners in sequence. OpenSCAP calls `oscap xccdf eval` against the SSG datastream; Docker Bench calls `docker-bench-security` (bundled with the agent).
 5. Each sub-scan produces structured rule results. The agent batches them into a `CompliancePayload` and submits via `POST /api/v1/compliance/scans`.
 6. The server's `ReceiveScans` handler validates API credentials, applies a 10-requests-per-minute rate limit, and writes the scan + results into the database in a single transaction. It honours the per-host `openscap_enabled` and `docker_bench_enabled` flags on the server side too, so accidental submissions from a scanner the host has disabled are rejected.
-7. On success, the server emits a `compliance_scan_completed` notification event (with per-profile summaries) and, if any scan errored, a separate `compliance_scan_failed` event.
+7. On success, the server emits a `compliance_scan_completed` notification event (with per-profile summaries) and, if any scan errored, a separate `compliance_scan_failed` event. When every scan in the submission errored, only `compliance_scan_failed` is emitted. A scan that evaluated no rules at all is stored as failed with the message "No rules available for this OS", and each new submission replaces the host's previous completed or failed scan for that profile.
 8. The UI's active-scan poll sees the row disappear from the `active_scans` endpoint, shows a toast "Compliance scan completed", and the dashboard refetches.
 
 Scheduled scans go through the same `run_scan` → agent → `ReceiveScans` pipeline; only the initiator differs.
@@ -3323,11 +3325,13 @@ After a successful bulk scan, the modal auto-closes after three seconds and each
 
 Compliance scanning on a host needs OpenSCAP (`oscap` binary) installed and the SSG content available locally. The first time you enable compliance on a host, the scanner usually isn't there yet. PatchMon handles this with an install job.
 
+Hosts in `Enabled` mode with OpenSCAP ticked, on Debian, Ubuntu, RHEL-family or SUSE, also get one automatic install attempt when the agent starts and reports that OpenSCAP is missing, provided no install has ever been run or cancelled for that host. This covers hosts added with compliance already enabled. `On-Demand` hosts, which includes auto-enrolled hosts by default, are never installed automatically; use the steps below.
+
 1. Enable **compliance mode** on the host (set to `On-Demand` or `Enabled`) with OpenSCAP ticked, and click **Apply**.
-2. The agent saves the new settings and restarts. Because compliance with OpenSCAP has just been switched on, the server also queues an install job that starts as soon as the agent has restarted and reconnected (or after 30 seconds at the latest). The Compliance tab shows it as waiting until then. Hosts whose package manager can't install OpenSCAP (Windows, FreeBSD, Alpine and Arch) are skipped.
-3. If the agent is not connected yet, the install job waits and retries every 30 seconds, up to twice, and runs straight away when the agent reconnects. While it waits, the host's queue shows it as delayed. If the agent still hasn't connected, it reports a failure. If it fails, click **Install Scanner** (or **Retry install**) on the Host Detail Compliance tab. The UI calls `POST /api/v1/compliance/install-scanner/{hostId}`, which returns `409` while an install is already running on the host; cancel that install first to start another. Hosts that already had compliance enabled before an upgrade also need this button once.
+2. The agent saves the new settings and restarts. The server also queues an install job whenever the applied settings leave compliance on with OpenSCAP ticked and the host has not reported a working OpenSCAP scanner: compliance or OpenSCAP has just been switched on, the host was switched from `On-Demand` to `Enabled` without a scanner, or an earlier install failed. No job is queued if an install is already running or the host last reported OpenSCAP as working. Ticking only Docker Bench does not queue an install; use **Install Scanner** for that. The job starts as soon as the agent has restarted and reconnected (or after 30 seconds at the latest), and the Compliance tab shows it as waiting until then. Hosts whose package manager can't install OpenSCAP (Windows, FreeBSD, Alpine and Arch) are skipped.
+3. If the agent is not connected yet, the install job waits and retries every 30 seconds, up to twice, and runs straight away when the agent reconnects. While it waits, the host's queue shows it as delayed. If the agent still hasn't connected, it reports a failure. If it fails, click **Install Scanner** (or **Retry install**) on the Host Detail Compliance tab. The UI calls `POST /api/v1/compliance/install-scanner/{hostId}`, which returns `409` while an install is already running on the host; cancel that install first to start another. Clicking **Apply** on the host's integration settings also queues the install again while the scanner is not ready.
 4. Either way the server enqueues an install task, and the worker sends an install message to the agent.
-5. The agent installs the OpenSCAP scanner with the host's own package manager, then downloads SSG content from the server via `GET /api/v1/compliance/ssg-content/{filename}`. Progress events are reported back to Redis and surfaced in the UI via `GET /compliance/install-job/{hostId}`, which returns the current state plus a per-step message and progress percent. The states are `none` (no install has been requested), `waiting`, `active`, `completed`, `failed`, and `unknown` when the job can no longer be found. The state stays `active` until the agent reports its final step; if it hasn't reported within 20 minutes, the state becomes `failed`. The job history entry is updated from the same final step, including when it arrives after the install worker has stopped waiting. A `failed` state also carries an `error` field with the reason.
+5. The agent installs the OpenSCAP scanner with the host's own package manager, then downloads SSG content from the server via `GET /api/v1/compliance/ssg-content/{filename}`. Progress events are reported back to Redis and surfaced in the UI via `GET /compliance/install-job/{hostId}`, which returns the current state plus a per-step message and progress percent. The states are `none` (no install has been requested), `waiting`, `active`, `completed`, `failed`, and `unknown` when the job can no longer be found. The state stays `active` until the agent reports its final step; if it hasn't reported within 20 minutes, the state becomes `failed`. The job history entry is updated from the same final step, including when it arrives after the install worker has stopped waiting. A `failed` state also carries an `error` field with the reason. While the install job is waiting or running, the host's compliance status reads **Installing**, even if the restarted agent briefly reports the scanner as missing; the agent's own report is returned in `reported_status`.
 6. When the install completes, the Run Scan button becomes active.
 
 The scanner package name is not the same on every release, so the agent asks the archive which one it has rather than assuming. Debian 12 and newer, and Ubuntu 24.04 and newer, provide `openscap-scanner` plus `openscap-common`; Debian 10 and Ubuntu 22.04 provide `libopenscap8` instead. RHEL-family hosts use `openscap-scanner` and SUSE hosts use `openscap-utils`.
@@ -3350,6 +3354,8 @@ Some supported PatchMon hosts cannot run compliance scanning at all, because the
 | Windows | The agent has no compliance integration on Windows |
 
 Everything else in the supported matrix can install the scanner: Debian 10, 12, 13 and 14, Ubuntu 22.04 and 24.04, the RHEL family (Rocky, AlmaLinux, CentOS Stream, Oracle Linux, Fedora, Amazon Linux 2023), and openSUSE.
+
+Ubuntu 26.04 also installs, but has no scannable profile until upstream publishes one (see the supported operating systems table above).
 
 On Debian 10 the install succeeds but the results are not useful. PatchMon ships no Debian 10 datastream, so the host falls back to the very old content in buster's own `ssg-debian` package, and every rule comes back as "not applicable" because the content targets an earlier Debian release. Treat compliance scanning on Debian 10 as unavailable in practice.
 
@@ -3633,7 +3639,7 @@ Every completed scan emits a `compliance_scan_completed` notification event. The
 
 Default severity is `informational`, escalated to `warning` when there's at least one failed rule. The per-event alert settings let you override severity or suppress these if you already have a dashboard.
 
-A separate `compliance_scan_failed` event is emitted for each sub-scan that errored during a multi-scanner run (e.g. OpenSCAP succeeded but Docker Bench failed). Default severity is `error`. Metadata includes the profile name, profile type, and the captured error.
+A separate `compliance_scan_failed` event is emitted for each sub-scan that errored during a multi-scanner run (e.g. OpenSCAP succeeded but Docker Bench failed). If every sub-scan errored, `compliance_scan_completed` is not emitted. Default severity is `error`. Metadata includes the profile name, profile type, and the captured error.
 
 ---
 

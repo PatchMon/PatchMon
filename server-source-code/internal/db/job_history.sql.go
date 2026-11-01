@@ -9,6 +9,22 @@ import (
 	"context"
 )
 
+const hostHasJobHistory = `-- name: HostHasJobHistory :one
+SELECT EXISTS (SELECT 1 FROM job_history WHERE host_id = $1 AND job_name = $2)::bool
+`
+
+type HostHasJobHistoryParams struct {
+	HostID  *string `json:"host_id"`
+	JobName string  `json:"job_name"`
+}
+
+func (q *Queries) HostHasJobHistory(ctx context.Context, arg HostHasJobHistoryParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hostHasJobHistory, arg.HostID, arg.JobName)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const insertJobHistory = `-- name: InsertJobHistory :exec
 INSERT INTO job_history (id, job_id, queue_name, job_name, host_id, api_id, status, attempt_number, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())

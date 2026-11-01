@@ -180,7 +180,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		integrationStatusStore = store.NewIntegrationStatusStore(redisResolver)
 	}
 	pendingConfigStore := store.NewPendingConfigStore(dbProvider)
-	hostsHandler := handler.NewHostsHandler(hostsStore, hostGroupsStore, settingsStore, queueClient, registry, integrationStatusStore, pendingConfigStore, dbProvider, notifyEmit)
+	hostsHandler := handler.NewHostsHandler(hostsStore, hostGroupsStore, settingsStore, queueClient, registry, integrationStatusStore, pendingConfigStore, dbProvider, notifyEmit).WithQueueInspector(queueInspector)
 	packagesHandler := handler.NewPackagesHandler(store.NewPackagesStore(dbProvider))
 	repositoriesHandler := handler.NewRepositoriesHandler(store.NewRepositoriesStore(dbProvider))
 	dockerStore := store.NewDockerStore(dbProvider)
@@ -199,9 +199,9 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	dashboardPrefsHandler := handler.NewDashboardPreferencesHandler(dashboardPrefsStore)
 	dockerHandler := handler.NewDockerHandler(dockerStore, registry)
 	reportStore := store.NewReportStore(dbProvider)
-	integrationsHandler := handler.NewIntegrationsHandler(hostsStore, store.NewDockerStore(dbProvider), integrationStatusStore, dbProvider, notifyEmit, reportStore, store.NewJobHistoryStore(dbProvider))
+	integrationsHandler := handler.NewIntegrationsHandler(hostsStore, store.NewDockerStore(dbProvider), integrationStatusStore, dbProvider, notifyEmit, reportStore, store.NewJobHistoryStore(dbProvider)).WithScannerAutoInstall(queueClient, queueInspector)
 	complianceStore := store.NewComplianceStore(dbProvider)
-	complianceHandler := handler.NewComplianceHandler(complianceStore, hostsStore, registry, queueClient, queueInspector, integrationStatusStore, cfg.SSGContentDir, notifyEmit, reportStore)
+	complianceHandler := handler.NewComplianceHandler(complianceStore, hostsStore, registry, queueClient, queueInspector, integrationStatusStore, cfg.SSGContentDir, notifyEmit, reportStore).WithJobHistory(store.NewJobHistoryStore(dbProvider))
 	autoEnrollmentStore := store.NewAutoEnrollmentStore(dbProvider)
 	autoEnrollmentHandler := handler.NewAutoEnrollmentHandler(autoEnrollmentStore, hostGroupsStore, hostsStore, settingsStore, registry, log, cfg)
 

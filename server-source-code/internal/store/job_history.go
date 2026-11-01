@@ -5,6 +5,7 @@ import (
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/database"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
+	"github.com/google/uuid"
 )
 
 // JobHistoryStore updates job_history rows outside the queue workers.
@@ -24,4 +25,21 @@ func (s *JobHistoryStore) RecordOutcome(ctx context.Context, jobID, failure stri
 		return d.Queries.UpdateJobHistoryCompleted(ctx, jobID)
 	}
 	return d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: jobID, ErrorMessage: &failure})
+}
+
+func (s *JobHistoryStore) HostHasJob(ctx context.Context, hostID, jobName string) (bool, error) {
+	d := s.db.DB(ctx)
+	return d.Queries.HostHasJobHistory(ctx, db.HostHasJobHistoryParams{HostID: &hostID, JobName: jobName})
+}
+
+func (s *JobHistoryStore) RecordCancelledBeforeStart(ctx context.Context, jobID, queueName, jobName, hostID, apiID string) error {
+	d := s.db.DB(ctx)
+	if err := d.Queries.InsertJobHistory(ctx, db.InsertJobHistoryParams{
+		ID: uuid.New().String(), JobID: jobID, QueueName: queueName, JobName: jobName,
+		HostID: &hostID, ApiID: &apiID, Status: "failed", AttemptNumber: 0,
+	}); err != nil {
+		return err
+	}
+	msg := "Cancelled before it started"
+	return d.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: jobID, ErrorMessage: &msg})
 }
