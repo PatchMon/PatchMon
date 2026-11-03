@@ -14,6 +14,8 @@ Report privately using GitHub's private vulnerability reporting:
 
 If you cannot use that, email **security@patchmon.net**.
 
+Automated scanner reports use the same address and this same policy. The scope and severity notes for that scan are in `.oss-scanner/threat_model.md`.
+
 ### What to include
 
 - The version of PatchMon affected, and the installation method (Docker, Proxmox script, `setup.sh`)
