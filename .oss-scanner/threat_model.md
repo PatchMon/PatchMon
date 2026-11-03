@@ -2,7 +2,7 @@
 
 PatchMon monitors and patches other people's machines. The server is a single Go binary with an embedded web UI. An agent on each host dials out to that server, reports installed packages, and can be told to apply updates or open a remote session. A vulnerability here can reach every host an operator monitors.
 
-This file is the scope and severity guide for an automated scan. It restates the policy in `SECURITY.md`. Where they disagree, `SECURITY.md` wins.
+This file is the scope and severity guide for an automated scan. It follows `SECURITY.md`, with one refinement: a finding that crosses from one user, host, or installation into another stays in scope even when the caller is an administrator of one installation or a compromised enrolled host.
 
 ## What to treat as untrusted
 
@@ -19,7 +19,7 @@ The agent trusts the server it enrolled with. "The server told its own agent to 
 
 In order:
 
-1. Sign-in and sessions (`server-source-code/internal/handler` auth code, `internal/middleware`). Authentication bypass, session theft, and account enumeration are in scope. The dummy bcrypt comparison and the lockout are deliberate: real accounts, unknown names, disabled accounts, and accounts with no password must keep answering the same way. A timing or body difference between those paths is a bug. A suggestion to remove the dummy hash is not.
+1. Sign-in and sessions (`server-source-code/internal/handler` auth code, `internal/middleware`). Authentication bypass, session theft, and account enumeration are in scope. The dummy bcrypt comparison and the lockout are deliberate. Until the password has been proved, a real account, an unknown name, a disabled account, and an account with no password must answer the same way, in body and in timing. A difference on those paths is a bug. A suggestion to remove the dummy hash is not. After bcrypt succeeds, a disabled account answers `Account is disabled`. That split is deliberate, so a guesser cannot confirm the account. Do not report it, and do not patch it out.
 2. Authorisation (`RequirePermission`, `internal/handler/role_guard.go`). A user gaining a permission their role does not have is in scope, including by editing a role, another user, or an OIDC default role.
 3. Host API keys (`X-API-ID` and `X-API-KEY`, checked with `util.VerifyAPIKey` in the agent handlers) and auto-enrolment (`internal/handler/auto_enrollment.go`). One host's credential must not act on another host. An enrolment token may re-issue a key only for a host that token created and that has never reported. `host_id` is not a secret.
 4. Code execution on a monitored host: patch jobs, the agent command path, the SSH terminal, and the RDP tunnel (`internal/sshproxy`, the guacd client, and the agent). The per-session RDP listener is unauthenticated on purpose and must stay on `127.0.0.1`. A report that only restates that, with no way to reach it off loopback, is not a vulnerability. `proxy_host` is bound to the enrolled host. A way to point it somewhere else is in scope.
@@ -29,7 +29,7 @@ In order:
 
 Also in scope: the install scripts embedded from `server-source-code/internal/agents/`, and the official Docker files under `docker/`.
 
-The same server binary can select a database per request when it is run for more than one installation. That selection lives in `server-source-code/internal/context`. A bug that lets one of those installations read or write another's data is in scope. Services that are not in this repository (the hosted control plane, billing, the database proxy) are out of scope. Do not file findings about code you cannot see.
+The same server binary can select a database and a Redis per request when it is run for more than one installation. That selection lives in `server-source-code/internal/context`. A bug that lets one of those installations read or write another's data is in scope, including when the caller is an administrator of one installation or a compromised enrolled host. Services that are not in this repository (the hosted control plane, billing, the database proxy) are out of scope. Do not file findings about code you cannot see.
 
 ## How to exercise it
 
@@ -60,7 +60,7 @@ We asked for email at high and above. Spend the report on critical and high. A m
 
 ## What to leave alone
 
-- A report that needs an existing administrator of the installation, or an already compromised host, and does not cross into another user, another host, or another installation. `SECURITY.md` excludes these.
+- A report that needs an existing administrator of one installation, or an already compromised host, and stays inside that installation and that host. A cross into another user, another host, or another installation is still in scope, including when the caller is that administrator or that compromised host.
 - A dependency issue that is already public and is waiting on an upstream fix. Mention it if you like. It is not a new finding in this code.
 - The marketing site at `patchmon.net`, social engineering, and anything outside this repository.
 - Style, speculative hardening, and denial of service by filling a disk with an administrator's own logs.
