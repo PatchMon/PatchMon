@@ -3,7 +3,8 @@
 # The scanner builds this file with the repository as the context, then removes
 # network access. Fetch every dependency here. The checkout must remain at /src.
 #
-# The repository .dockerignore applies, so this image has no .git directory.
+# The repository .dockerignore excludes .git from this build. The scanner may
+# restore that history afterwards.
 # Database tests skip unless PATCHMON_TEST_DATABASE_URL is set. There is no
 # Postgres or Redis in this image. See .oss-scanner/threat_model.md.
 

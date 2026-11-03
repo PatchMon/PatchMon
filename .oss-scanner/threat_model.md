@@ -45,7 +45,7 @@ Tests:
 - `cd /src/agent-source-code && go test ./... -count=1`
 - `cd /src && npm run test:run --workspace=frontend`
 
-`go test` skips a test that needs `PATCHMON_TEST_DATABASE_URL`. This image does not run Postgres or Redis. A unit test, or a request against a server started in this container, is enough for an authentication, authorisation, injection, or path bug. There is no `.git` directory in the image, so bisect from the clone rather than from `/src`.
+`go test` skips a test that needs `PATCHMON_TEST_DATABASE_URL`. This image does not run Postgres or Redis. A unit test, or a request against a server started in this container, is enough for an authentication, authorisation, injection, or path bug. The repository `.dockerignore` leaves `.git` out of the image build. If `/src` has history, use it to bisect. If it does not, bisect from the clone.
 
 ## How to rate severity
 
