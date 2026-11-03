@@ -58,3 +58,5 @@ require (
 	golang.org/x/tools v0.52.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
+
+godebug multipathtcp=0
