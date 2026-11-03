@@ -416,6 +416,10 @@ func (h *AutoEnrollmentHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 		JSON(w, http.StatusUnauthorized, map[string]string{"error": "Token expired"})
 		return
 	}
+	if !isEnrollmentToken(token.Metadata) {
+		JSON(w, http.StatusForbidden, map[string]string{"error": "Token is not authorized for enrollment"})
+		return
+	}
 
 	if len(token.AllowedIpRanges) > 0 {
 		clientIP := clientIPFromRequest(r)
@@ -850,6 +854,10 @@ func (h *AutoEnrollmentHandler) ServeScript(w http.ResponseWriter, r *http.Reque
 		JSON(w, http.StatusUnauthorized, map[string]string{"error": "Token expired"})
 		return
 	}
+	if !isEnrollmentToken(token.Metadata) {
+		JSON(w, http.StatusForbidden, map[string]string{"error": "Token is not authorized for enrollment"})
+		return
+	}
 
 	serverURL := "http://localhost:3001"
 	curlFlags := "-s"
@@ -881,6 +889,22 @@ func (h *AutoEnrollmentHandler) ServeScript(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Pragma", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(out.Bytes())
+}
+
+// isEnrollmentToken keeps enrollment operations limited to their intended token types.
+func isEnrollmentToken(raw json.RawMessage) bool {
+	var metadata struct {
+		IntegrationType string `json:"integration_type"`
+	}
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		return false
+	}
+	switch metadata.IntegrationType {
+	case "direct-host", "proxmox-lxc":
+		return true
+	default:
+		return false
+	}
 }
 
 // enrollmentScriptEnv is the set of values the server injects into a served
