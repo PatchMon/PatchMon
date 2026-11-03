@@ -2294,6 +2294,8 @@ The table has eight columns on desktop:
 
 On mobile (<768px) the table collapses into per-run cards with the same information stacked vertically. Actions sit at the bottom of each card as full-width buttons.
 
+Long package names in the desktop **Type** column are shortened with an ellipsis to keep the other columns readable. Hover over the name to see the full package name.
+
 #### Pagination and page size
 
 The table is paginated server-side via `GET /patching/runs?limit=<N>&offset=<M>`. The default is 25 rows per page. You can change the page size to 50, 100, or 200 from the dropdown at the bottom; your choice is remembered in `localStorage` under `patching-runs-limit`.
