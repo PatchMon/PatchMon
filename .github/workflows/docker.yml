@@ -110,7 +110,12 @@ jobs:
         env:
           CGO_ENABLED: 0
           VERSION: ${{ steps.ctx.outputs.version }}
+          PATCHMON_SIGNING_PUBLIC_KEY: ${{ vars.PATCHMON_SIGNING_PUBLIC_KEY }}
         run: |
+          if [ -z "${PATCHMON_SIGNING_PUBLIC_KEY}" ]; then
+            echo "::error::PATCHMON_SIGNING_PUBLIC_KEY is not set. Set it as a repository variable; agents built without it refuse every update."
+            exit 1
+          fi
           mkdir -p ../agents-prebuilt
           for target in "linux/amd64" "linux/arm64" "linux/386" "linux/arm" \
                         "freebsd/amd64" "freebsd/arm64" "freebsd/386" "freebsd/arm" \
@@ -121,9 +126,38 @@ jobs:
             case "$GOARCH" in arm) export GOARM=6 ;; *) unset GOARM ;; esac
             SUFFIX=""; case "$GOOS" in windows) SUFFIX=".exe" ;; esac
             go build -buildvcs=false \
-              -ldflags="-s -w -X patchmon-agent/internal/pkgversion.Version=$VERSION" \
+              -ldflags="-s -w -X patchmon-agent/internal/pkgversion.Version=$VERSION -X patchmon-agent/internal/pkgversion.SigningPublicKey=$PATCHMON_SIGNING_PUBLIC_KEY" \
               -o "../agents-prebuilt/patchmon-agent-${GOOS}-${GOARCH}${SUFFIX}" ./cmd/patchmon-agent
           done
+
+      - name: Install minisign
+        if: github.event_name != 'pull_request_target'
+        run: |
+          curl -fsSL https://github.com/jedisct1/minisign/releases/download/0.11/minisign-0.11-linux.tar.gz \
+            | tar xz --strip-components=2 -C /usr/local/bin minisign-linux/x86_64/minisign
+          minisign -v
+
+      # Never on pull_request_target: that run builds fork-controlled code, and
+      # the private key must not be reachable from it. PR preview images
+      # therefore ship unsigned agents, which agents in the field refuse.
+      - name: Sign agent binaries
+        if: github.event_name != 'pull_request_target'
+        working-directory: agents-prebuilt
+        env:
+          MINISIGN_PRIVATE_KEY: ${{ secrets.AGENT_SIGNING_PRIVATE_KEY }}
+          VERSION: ${{ steps.ctx.outputs.version }}
+        run: |
+          if [ -z "${MINISIGN_PRIVATE_KEY}" ]; then
+            echo "::error::AGENT_SIGNING_PRIVATE_KEY is not set."
+            exit 1
+          fi
+          umask 077
+          printf '%s' "${MINISIGN_PRIVATE_KEY}" > "${RUNNER_TEMP}/minisign.key"
+          trap 'rm -f "${RUNNER_TEMP}/minisign.key"' EXIT
+          for f in patchmon-agent-*; do
+            minisign -S -s "${RUNNER_TEMP}/minisign.key" -m "$f" -t "PatchMon Agent ${VERSION}" -x "$f.minisig"
+          done
+          ls -l
 
       - name: Upload agent binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -663,14 +697,21 @@ jobs:
         run: |
           set -euo pipefail
           expected=14
-          found=$(ls patchmon-* | wc -l)
+          found=$(ls patchmon-* | grep -vc '\.minisig$')
           if [ "$found" -ne "$expected" ]; then
             echo "::error::expected ${expected} binaries, found ${found}"
             ls -la
             exit 1
           fi
 
+          sigs=$(ls patchmon-agent-*.minisig | wc -l)
+          if [ "$sigs" -ne 10 ]; then
+            echo "::error::expected 10 agent signatures, found ${sigs}"
+            exit 1
+          fi
+
           for f in patchmon-*; do
+            case "$f" in *.minisig) continue ;; esac
             chmod +x "$f"
             case "$f" in
               *windows*) pattern="PE32|MS Windows" ;;
@@ -687,7 +728,7 @@ jobs:
               exit 1
             fi
           done
-          file patchmon-*
+          file $(ls patchmon-* | grep -v '\.minisig$')
 
       # Proves the binaries actually execute, not merely that they are the
       # right shape. Only the native arch can run on the runner.
