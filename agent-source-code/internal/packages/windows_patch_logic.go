@@ -513,6 +513,7 @@ var wingetCodeMessages = map[uint32]string{
 	0x8A150008:                 "Downloading the installer failed",
 	0x8A150011:                 "The installer's hash does not match its manifest",
 	0x8A15005E:                 "A winget source's server certificate was rejected: check TLS inspection or proxy settings",
+	0x8A15008E:                 "The update uses a different installer technology than the installed app: use the app's supported updater or a compatible installer",
 	0x8A150105:                 "Not enough disk space",
 	0x8A150107:                 "The installer needs internet access",
 	0x8A15010F:                 "Blocked by organisation policy",
