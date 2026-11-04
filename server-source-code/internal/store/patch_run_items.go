@@ -15,8 +15,9 @@ import (
 
 // Patch run item kinds.
 const (
-	PatchItemKindWUA    = "wua"
-	PatchItemKindWinget = "winget"
+	PatchItemKindWUA        = "wua"
+	PatchItemKindWinget     = "winget"
+	PatchItemKindChocolatey = "chocolatey"
 )
 
 // NewPatchRunItem is a target written to patch_run_items when a run is created.
@@ -167,6 +168,11 @@ func normaliseAgentItems(items []AgentItemReport) ([]agentItemRow, error) {
 			id = strings.ToLower(id)
 			if !IsValidWUAGuid(id) {
 				return nil, &ItemReportError{Index: i, Reason: "invalid wua id"}
+			}
+		case PatchItemKindChocolatey:
+			id = strings.ToLower(id)
+			if !IsValidChocolateyID(id) {
+				return nil, &ItemReportError{Index: i, Reason: "invalid chocolatey id"}
 			}
 		case PatchItemKindWinget:
 			if !IsValidWingetID(id) {
@@ -388,4 +394,11 @@ func (s *PatchRunsStore) PackageIDsByName(ctx context.Context, names []string) (
 		out[r.Name] = r.ID
 	}
 	return out, nil
+}
+
+var chocolateyIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$`)
+
+// IsValidChocolateyID rejects arguments and the reserved bulk-upgrade target.
+func IsValidChocolateyID(id string) bool {
+	return chocolateyIDPattern.MatchString(id) && !strings.EqualFold(id, "all")
 }

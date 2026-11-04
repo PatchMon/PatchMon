@@ -65,7 +65,13 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 	)
 	switch packageManager {
 	case "windows":
-		pkgs, m.windowsUpdatesOmitted = m.winManager.GetPackages()
+		// A failed Chocolatey scan must not clear previously reported updates.
+		var chocoPackages []models.Package
+		chocoPackages, err = collectChocolateyPackages()
+		if err == nil {
+			pkgs, m.windowsUpdatesOmitted = m.winManager.GetPackages()
+			pkgs = append(pkgs, chocoPackages...)
+		}
 	case "apt":
 		pkgs, err = m.aptManager.GetPackages()
 	case "dnf", "yum":

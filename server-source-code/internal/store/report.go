@@ -93,6 +93,8 @@ type ReportPackage struct {
 	WUARevisionNumber int32    `json:"wuaRevisionNumber,omitempty"`
 	WUABrowseOnly     bool     `json:"wuaBrowseOnly,omitempty"`
 	WUAType           string   `json:"wuaType,omitempty"`
+	ChocolateyID      string   `json:"chocolateyId,omitempty"`
+	ChocolateyPinned  bool     `json:"chocolateyPinned,omitempty"`
 	WingetID          string   `json:"wingetId,omitempty"`
 	WingetPinned      bool     `json:"wingetPinned,omitempty"`
 	WingetStoreApp    bool     `json:"wingetStoreApp,omitempty"`
@@ -1007,6 +1009,8 @@ type hostPackageRow struct {
 	WUADescription     string   `json:"wua_description"`
 	WUASupportURL      string   `json:"wua_support_url"`
 	WUARevisionNumber  int32    `json:"wua_revision_number"`
+	ChocolateyID       string   `json:"chocolatey_id"`
+	ChocolateyPinned   bool     `json:"chocolatey_pinned"`
 	WingetID           string   `json:"winget_id"`
 	WingetPinned       *bool    `json:"winget_pinned"`
 	WingetStoreApp     *bool    `json:"winget_store_app"`
@@ -1058,6 +1062,10 @@ func buildHostPackagesPayload(
 			NeedsUpdate:        p.NeedsUpdate,
 			IsSecurityUpdate:   p.IsSecurityUpdate,
 			SourceRepositoryID: sourceRepoID,
+		}
+		if IsValidChocolateyID(p.ChocolateyID) && p.Name == "chocolatey:"+p.ChocolateyID && p.WingetID == "" && p.WUAGuid == "" {
+			row.ChocolateyID = p.ChocolateyID
+			row.ChocolateyPinned = p.ChocolateyPinned
 		}
 		if IsValidWingetID(p.WingetID) {
 			row.WingetID = p.WingetID

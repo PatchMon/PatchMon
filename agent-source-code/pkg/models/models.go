@@ -21,6 +21,8 @@ type Package struct {
 	WUARevisionNumber int32    `json:"wuaRevisionNumber,omitempty"`
 	WUABrowseOnly     bool     `json:"wuaBrowseOnly,omitempty"`
 	WUAType           string   `json:"wuaType,omitempty"`
+	ChocolateyID      string   `json:"chocolateyId,omitempty"`
+	ChocolateyPinned  bool     `json:"chocolateyPinned,omitempty"`
 	WingetID          string   `json:"wingetId,omitempty"`
 	WingetPinned      bool     `json:"wingetPinned,omitempty"`
 	WingetStoreApp    bool     `json:"wingetStoreApp,omitempty"`
