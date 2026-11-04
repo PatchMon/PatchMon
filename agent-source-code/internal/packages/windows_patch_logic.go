@@ -840,7 +840,12 @@ func applyRestartPending(pkgs []models.Package) {
 // with a winget Id, and listed by winget list --upgrade-available.
 func (m *WindowsManager) UpdatableWingetApps() []models.Package {
 	var out []models.Package
-	for _, p := range m.appPackages() {
+	apps, err := m.appPackages()
+	if err != nil {
+		m.logger.WithError(err).Warn("Could not collect updatable applications")
+		return nil
+	}
+	for _, p := range apps {
 		if p.NeedsUpdate && p.WingetID != "" && !p.WingetPinned && !p.WingetStoreApp {
 			out = append(out, p)
 		}

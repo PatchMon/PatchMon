@@ -50,12 +50,15 @@ type wingetEntry struct {
 //  2. Try WinGet as supplementary source for update availability enrichment
 //  3. Merge: registry provides the baseline, WinGet adds NeedsUpdate/AvailableVersion
 //  4. Collect Windows OS updates (installed KBs + pending via WUA COM API)
-func (m *WindowsManager) GetPackages() (pkgs []models.Package, windowsUpdatesOmitted bool) {
+func (m *WindowsManager) GetPackages() (pkgs []models.Package, windowsUpdatesOmitted bool, err error) {
 	if runtime.GOOS != "windows" {
-		return nil, false
+		return nil, false, nil
 	}
 
-	appPackages := m.appPackages()
+	appPackages, err := m.appPackages()
+	if err != nil {
+		return nil, false, err
+	}
 
 	// 4. Collect Windows OS updates (installed KBs + pending updates)
 	winUpdates, omitted := m.windowsUpdatesGuarded()
@@ -76,16 +79,21 @@ func (m *WindowsManager) GetPackages() (pkgs []models.Package, windowsUpdatesOmi
 	all = append(all, winUpdates...)
 
 	if len(all) == 0 {
-		return []models.Package{}, omitted
+		return []models.Package{}, omitted, nil
 	}
-	return all, omitted
+	return all, omitted, nil
 }
 
 // appPackages collects installed applications from the registry, enriched with WinGet.
-func (m *WindowsManager) appPackages() []models.Package {
+// A failed scan must abort reporting: unenriched registry rows would otherwise
+// replace known update availability with NeedsUpdate=false on the server.
+func (m *WindowsManager) appPackages() ([]models.Package, error) {
 	// 1. Registry is the primary source — works reliably as SYSTEM in Session 0
 	//    (same approach as rmmagent's go-win64api which reads Uninstall registry keys)
-	regPackages := m.getPackagesFromRegistry()
+	regPackages, err := m.getPackagesFromRegistry()
+	if err != nil {
+		return nil, err
+	}
 	if hasUnversionedSQLServer(regPackages) {
 		applySQLServerPatchLevels(regPackages, m.getSQLServerSetups())
 	}
@@ -93,7 +101,10 @@ func (m *WindowsManager) appPackages() []models.Package {
 
 	// 2. Try WinGet for update availability enrichment
 	//    WinGet may not be available in Session 0 (per-user UWP app); that's OK
-	wingetPackages := m.getPackagesFromWinget()
+	wingetPackages, err := m.getPackagesFromWinget()
+	if err != nil {
+		return nil, err
+	}
 	if len(wingetPackages) > 0 {
 		m.logger.WithField("count", len(wingetPackages)).Info("Collected packages via WinGet (supplementary)")
 	}
@@ -114,7 +125,7 @@ func (m *WindowsManager) appPackages() []models.Package {
 		markStoreApps(appPackages, m.getStoreAppx(), windowsAppsDir())
 	}
 	m.logger.WithField("count", len(appPackages)).Info("Application packages after merge")
-	return appPackages
+	return appPackages, nil
 }
 
 // mergeRegistryAndWinget merges registry-discovered packages with WinGet data.
@@ -643,7 +654,7 @@ func normalizePackageName(name string) string {
 // This is the primary collection method — works reliably as SYSTEM in Session 0.
 // Inspired by rmmagent's use of go-win64api (which also reads these same registry keys).
 // Collects: Name, Version, Publisher, InstallDate, EstimatedSize.
-func (m *WindowsManager) getPackagesFromRegistry() []models.Package {
+func (m *WindowsManager) getPackagesFromRegistry() ([]models.Package, error) {
 	// SilentlyContinue throughout — never let a single bad entry kill the whole collection.
 	// rmmagent's go-win64api also silently skips entries with missing fields.
 	psScript := `
@@ -711,13 +722,12 @@ $result | ConvertTo-Json -Compress -Depth 3
 	defer cancel()
 	output, err := cmd.Output()
 	if err != nil {
-		m.logger.WithError(err).Warn("Registry Uninstall query failed")
-		return nil
+		return nil, fmt.Errorf("query Windows Uninstall registry: %w", err)
 	}
 
 	outputStr := strings.TrimSpace(string(winexec.TrimBOM(output)))
 	if outputStr == "" || outputStr == "null" || outputStr == "[]" {
-		return nil
+		return nil, nil
 	}
 
 	// PowerShell outputs a single object (not array) when there is exactly one result
@@ -733,8 +743,7 @@ $result | ConvertTo-Json -Compress -Depth 3
 		Size        string `json:"Size"`
 	}
 	if err := json.Unmarshal([]byte(outputStr), &raw); err != nil {
-		m.logger.WithError(err).Warn("Failed to parse registry JSON")
-		return nil
+		return nil, fmt.Errorf("parse Windows Uninstall registry: %w", err)
 	}
 
 	var packages []models.Package
@@ -756,7 +765,7 @@ $result | ConvertTo-Json -Compress -Depth 3
 			NeedsUpdate:    false,
 		})
 	}
-	return packages
+	return packages, nil
 }
 
 // buildAppDescription creates a human-readable description from registry metadata
@@ -775,20 +784,24 @@ func buildAppDescription(publisher, installDate, size string) string {
 }
 
 // getPackagesFromWinget runs winget list and parses the text-table output.
-func (m *WindowsManager) getPackagesFromWinget() []wingetRow {
+func (m *WindowsManager) getPackagesFromWinget() ([]wingetRow, error) {
 	w, ok := m.resolveWingetCommand()
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	output, ok := m.runWingetList(w, "list")
 	if !ok {
-		return nil
+		return nil, errors.New("WinGet installed-package scan failed")
 	}
 	entries := m.parseWingetTable(output)
 	if len(entries) == 0 {
-		return nil
+		return nil, nil
 	}
-	return wingetEntriesToRows(entries, m.getWingetUpgradeAvailable(w))
+	upgrades, err := m.getWingetUpgradeAvailable(w)
+	if err != nil {
+		return nil, err
+	}
+	return wingetEntriesToRows(entries, upgrades), nil
 }
 
 type wingetCommand struct {
@@ -1059,10 +1072,10 @@ func (m *WindowsManager) parseWingetTable(output string) []wingetEntry {
 }
 
 // getWingetUpgradeAvailable runs winget list --upgrade-available and returns Id -> AvailableVersion map
-func (m *WindowsManager) getWingetUpgradeAvailable(w wingetCommand) map[string]string {
+func (m *WindowsManager) getWingetUpgradeAvailable(w wingetCommand) (map[string]string, error) {
 	output, ok := m.runWingetList(w, "list", "--upgrade-available")
 	if !ok {
-		return nil
+		return nil, errors.New("WinGet available-upgrade scan failed")
 	}
 	entries := m.parseWingetTable(output)
 	upgradeMap := make(map[string]string)
@@ -1079,7 +1092,7 @@ func (m *WindowsManager) getWingetUpgradeAvailable(w wingetCommand) map[string]s
 			upgradeMap[id] = avail
 		}
 	}
-	return upgradeMap
+	return upgradeMap, nil
 }
 
 func stripEllipsis(s string) string {

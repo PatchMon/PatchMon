@@ -21,7 +21,7 @@ import (
 // customer's machine. These tests are the only thing that executes those
 // scripts, so they run them against the live host and assert on the result.
 //
-// Each collector swallows its own errors and returns an empty slice, which
+// Some collectors swallow errors and return an empty slice, which
 // makes "the script is broken" and "this host has nothing to report" look
 // identical from the outside. Where a real Windows host is guaranteed to have
 // data, the test asserts a non-empty result so a broken script actually fails.
@@ -69,7 +69,10 @@ func assertPackagesWellFormed(t *testing.T, pkgs []models.Package) {
 func TestRegistryCollectorLive(t *testing.T) {
 	requireWindowsIntegration(t)
 
-	pkgs := newTestWindowsManager().getPackagesFromRegistry()
+	pkgs, err := newTestWindowsManager().getPackagesFromRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(pkgs) == 0 {
 		t.Fatal("registry collector returned no packages; every Windows host has uninstall entries, so the PowerShell almost certainly failed")
 	}
@@ -86,7 +89,12 @@ func TestWingetCollectorLive(t *testing.T) {
 
 	done := make(chan []models.Package, 1)
 	go func() {
-		rows := newTestWindowsManager().getPackagesFromWinget()
+		rows, err := newTestWindowsManager().getPackagesFromWinget()
+		if err != nil {
+			t.Error(err)
+			done <- nil
+			return
+		}
 		pkgs := make([]models.Package, len(rows))
 		for i, r := range rows {
 			pkgs[i] = r.pkg
@@ -131,7 +139,10 @@ func TestWingetUpgradeMapLive(t *testing.T) {
 	if !ok {
 		t.Skip("winget not resolvable on this host")
 	}
-	upgrades := m.getWingetUpgradeAvailable(w)
+	upgrades, err := m.getWingetUpgradeAvailable(w)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for name, version := range upgrades {
 		if name == "" {
 			t.Error("upgrade map contains an empty package name")
@@ -221,7 +232,10 @@ func TestGetPackagesLive(t *testing.T) {
 	requireWindowsIntegration(t)
 
 	start := time.Now()
-	pkgs, omitted := newTestWindowsManager().GetPackages()
+	pkgs, omitted, err := newTestWindowsManager().GetPackages()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if omitted {
 		for _, p := range pkgs {
 			if p.Category == "Windows Update" {

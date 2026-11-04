@@ -342,6 +342,17 @@ sudo apk update         # Alpine
 sudo pacman -Sy         # Arch
 ```
 
+### Failed Windows application scans
+
+If the Uninstall registry query fails or returns invalid JSON, or a WinGet
+installed-package or available-upgrade scan fails, the agent skips the report
+instead of replacing known application updates with incomplete inventory.
+The server retains the last successful inventory until collection succeeds.
+This also delays reporting fresh Windows Update results for that cycle.
+
+Check the agent log for the collection error and retry after resolving it.
+Hosts where WinGet is unavailable can still report registry inventory.
+
 ## Uninstallation
 
 Uninstall functionality is handled by the `patchmon_remove.sh` script rather than a built-in command. This ensures clean removal of the binary, service files, crontab entries, configuration, and logs.
