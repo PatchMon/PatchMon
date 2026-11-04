@@ -10,6 +10,8 @@ import {
 const KB = "2026-10 Security Update (KB5127648) (26300.9711)";
 const FIREFOX = "Mozilla Firefox (x64 en-GB)";
 const FIREFOX_ID = "3f2b6c1e-0000-4000-8000-000000000001";
+const LONG_PACKAGE =
+	"Security Intelligence Update for Microsoft Defender Antivirus - KB2267602 (Version 1.463.33.0) - Current Channel (Broad)";
 
 const renderIn = (ui) => render(<MemoryRouter>{ui}</MemoryRouter>);
 
@@ -75,5 +77,21 @@ describe("CompactPackageSummary", () => {
 		);
 		expect(screen.queryByRole("link")).toBeNull();
 		expect(screen.getByText(KB)).toBeInTheDocument();
+	});
+
+	it("truncates long package names while preserving their full hover title", () => {
+		renderIn(
+			<CompactPackageSummary
+				run={{
+					patch_type: "patch_package",
+					package_names: [LONG_PACKAGE],
+				}}
+			/>,
+		);
+
+		const summary = screen.getByTitle(LONG_PACKAGE);
+		const packageName = screen.getByRole("link", { name: LONG_PACKAGE });
+		expect(summary).toHaveClass("flex", "min-w-0", "max-w-full");
+		expect(packageName).toHaveClass("min-w-0", "flex-1", "truncate");
 	});
 });
