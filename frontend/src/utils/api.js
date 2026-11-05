@@ -184,6 +184,8 @@ export const adminHostsAPI = {
 		api.put(`/hosts/${hostId}/group`, { hostGroupId }),
 	updateGroups: (hostId, groupIds) =>
 		api.put(`/hosts/${hostId}/groups`, { groupIds }),
+	packageHolds: (hostId) =>
+		api.get(`/hosts/${hostId}/package-holds`).then((res) => res.data),
 	bulkUpdateGroup: (hostIds, hostGroupId) =>
 		api.put("/hosts/bulk/group", { hostIds, hostGroupId }),
 	bulkUpdateGroups: (hostIds, groupIds) =>

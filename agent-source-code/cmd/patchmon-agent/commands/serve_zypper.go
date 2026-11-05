@@ -22,11 +22,12 @@ type zypperPatchIO struct {
 	locks         func() ([]packages.ZypperLock, error)
 	rolling       bool
 	transactional bool
+	excludes      []string
 }
 
 // runPatchZypper holds the in-process zypper slot for the whole run, so a report collected
 // meanwhile waits instead of failing on the zypp lock.
-func runPatchZypper(ctx context.Context, sink *streamSink, env []string, patchType string, packageNames []string, dryRun bool) error {
+func runPatchZypper(ctx context.Context, sink *streamSink, env []string, patchType string, packageNames []string, dryRun bool, excludes []string) error {
 	release, err := packages.AcquireZypper(ctx, func() {
 		sink.WriteString("[patchmon] Waiting for another zypper operation by this agent to finish.\n")
 		sink.Flush()
@@ -61,6 +62,7 @@ func runPatchZypper(ctx context.Context, sink *streamSink, env []string, patchTy
 		locks:         packages.ZypperLocks,
 		rolling:       packages.ZypperRolling(),
 		transactional: packages.ZypperTransactional(),
+		excludes:      excludes,
 	}, patchType, packageNames, dryRun)
 	if err != nil {
 		logger.WithField("error", logutil.Sanitize(err.Error())).Warn("zypper patch run failed")
@@ -113,7 +115,7 @@ func runZypperPatch(io zypperPatchIO, patchType string, packageNames []string, d
 	}
 
 	for pass := 1; pass <= zypperMaxPasses; pass++ {
-		out, planErr := io.plan(packages.ZypperTransactionArgs(io.rolling, targets, true)...)
+		out, planErr := io.plan(zypperArgsWithExcludes(packages.ZypperTransactionArgs(io.rolling, targets, true), io.excludes)...)
 		plan, parseErr := packages.ParseZypperPlan(out)
 		code := packages.ZypperExitCode(planErr)
 		switch code {
@@ -146,7 +148,7 @@ func runZypperPatch(io zypperPatchIO, patchType string, packageNames []string, d
 			return nil
 		}
 
-		out2, err := io.run(packages.ZypperTransactionArgs(io.rolling, targets, false)...)
+		out2, err := io.run(zypperArgsWithExcludes(packages.ZypperTransactionArgs(io.rolling, targets, false), io.excludes)...)
 		switch packages.ZypperExitCode(err) {
 		case 0:
 			return nil
@@ -166,6 +168,28 @@ func runZypperPatch(io zypperPatchIO, patchType string, packageNames []string, d
 		}
 	}
 	return fmt.Errorf("zypper still asked to be run again after %d passes. Run zypper patch on the host to see why", zypperMaxPasses)
+}
+
+func zypperArgsWithExcludes(args, excludes []string) []string {
+	if len(excludes) == 0 {
+		return args
+	}
+	extra := make([]string, 0, len(excludes))
+	for _, n := range excludes {
+		extra = append(extra, "--exclude="+n)
+	}
+	insertAt := len(args)
+	for i, a := range args {
+		if a == "--" {
+			insertAt = i
+			break
+		}
+	}
+	out := make([]string, 0, len(args)+len(extra))
+	out = append(out, args[:insertAt]...)
+	out = append(out, extra...)
+	out = append(out, args[insertAt:]...)
+	return out
 }
 
 func zypperNotePlan(io zypperPatchIO, plan packages.ZypperPlan, dryRun bool) {

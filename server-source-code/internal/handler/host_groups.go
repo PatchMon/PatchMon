@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
@@ -27,6 +28,11 @@ func (h *HostGroupsHandler) List(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to load host groups")
 		return
 	}
+	holdsByGroup, err := h.hostGroups.AllPackageHolds(r.Context())
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to load package holds")
+		return
+	}
 	// Build response with _count.hosts for frontend compatibility
 	data := make([]map[string]interface{}, len(rows))
 	for i, row := range rows {
@@ -41,14 +47,19 @@ func (h *HostGroupsHandler) List(w http.ResponseWriter, r *http.Request) {
 		if row.UpdatedAt.Valid {
 			updatedAt = row.UpdatedAt.Time
 		}
+		holds := holdsByGroup[row.ID]
+		if holds == nil {
+			holds = []string{}
+		}
 		data[i] = map[string]interface{}{
-			"id":          row.ID,
-			"name":        row.Name,
-			"description": row.Description,
-			"color":       color,
-			"created_at":  createdAt,
-			"updated_at":  updatedAt,
-			"_count":      map[string]interface{}{"hosts": int(row.HostCount)},
+			"id":            row.ID,
+			"name":          row.Name,
+			"description":   row.Description,
+			"color":         color,
+			"created_at":    createdAt,
+			"updated_at":    updatedAt,
+			"package_holds": holds,
+			"_count":        map[string]interface{}{"hosts": int(row.HostCount)},
 		}
 	}
 	JSON(w, http.StatusOK, data)
@@ -62,15 +73,29 @@ func (h *HostGroupsHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusNotFound, "Host group not found")
 		return
 	}
-	JSON(w, http.StatusOK, group)
+	holds, err := h.hostGroups.PackageHolds(r.Context(), id)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to load package holds")
+		return
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"id":            group.ID,
+		"name":          group.Name,
+		"description":   group.Description,
+		"color":         group.Color,
+		"created_at":    group.CreatedAt,
+		"updated_at":    group.UpdatedAt,
+		"package_holds": holds,
+	})
 }
 
 // Create handles POST /host-groups.
 func (h *HostGroupsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name        string  `json:"name"`
-		Description *string `json:"description"`
-		Color       *string `json:"color"`
+		Name         string   `json:"name"`
+		Description  *string  `json:"description"`
+		Color        *string  `json:"color"`
+		PackageHolds []string `json:"package_holds"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		Error(w, http.StatusBadRequest, "Invalid request body")
@@ -78,6 +103,11 @@ func (h *HostGroupsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name == "" {
 		Error(w, http.StatusBadRequest, "Name is required")
+		return
+	}
+	holds, holdErr := normalizePackageHolds(req.PackageHolds)
+	if holdErr != "" {
+		Error(w, http.StatusBadRequest, holdErr)
 		return
 	}
 	color := "#3B82F6"
@@ -93,6 +123,12 @@ func (h *HostGroupsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to create host group")
 		return
 	}
+	if len(holds) > 0 {
+		if err := h.hostGroups.ReplacePackageHolds(r.Context(), g.ID, holds); err != nil {
+			Error(w, http.StatusInternalServerError, "Failed to save package holds")
+			return
+		}
+	}
 	JSON(w, http.StatusCreated, g)
 }
 
@@ -105,9 +141,10 @@ func (h *HostGroupsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name        *string `json:"name"`
-		Description *string `json:"description"`
-		Color       *string `json:"color"`
+		Name         *string   `json:"name"`
+		Description  *string   `json:"description"`
+		Color        *string   `json:"color"`
+		PackageHolds *[]string `json:"package_holds"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		Error(w, http.StatusBadRequest, "Invalid request body")
@@ -126,7 +163,67 @@ func (h *HostGroupsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to update host group")
 		return
 	}
-	JSON(w, http.StatusOK, group)
+	if req.PackageHolds != nil {
+		holds, holdErr := normalizePackageHolds(*req.PackageHolds)
+		if holdErr != "" {
+			Error(w, http.StatusBadRequest, holdErr)
+			return
+		}
+		if err := h.hostGroups.ReplacePackageHolds(r.Context(), group.ID, holds); err != nil {
+			Error(w, http.StatusInternalServerError, "Failed to save package holds")
+			return
+		}
+	}
+	holds, err := h.hostGroups.PackageHolds(r.Context(), group.ID)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to load package holds")
+		return
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{
+		"id":            group.ID,
+		"name":          group.Name,
+		"description":   group.Description,
+		"color":         group.Color,
+		"package_holds": holds,
+	})
+}
+
+// EffectivePackageHolds handles GET /hosts/{hostId}/package-holds.
+func (h *HostGroupsHandler) EffectivePackageHolds(w http.ResponseWriter, r *http.Request) {
+	hostID := chi.URLParam(r, "hostId")
+	if _, err := h.hosts.GetByID(r.Context(), hostID); err != nil {
+		Error(w, http.StatusNotFound, "Host not found")
+		return
+	}
+	names, err := h.hostGroups.EffectivePackageHolds(r.Context(), hostID)
+	if err != nil {
+		Error(w, http.StatusInternalServerError, "Failed to load package holds")
+		return
+	}
+	JSON(w, http.StatusOK, map[string]interface{}{"package_holds": names})
+}
+
+func normalizePackageHolds(names []string) ([]string, string) {
+	if len(names) > maxGroupPackageHolds {
+		return nil, "A group can hold at most 200 packages"
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if n == "" {
+			continue
+		}
+		if !isValidPackageName(n) {
+			return nil, "Invalid package name"
+		}
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		out = append(out, n)
+	}
+	return out, ""
 }
 
 // Delete handles DELETE /host-groups/:id.

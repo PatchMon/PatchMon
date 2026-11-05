@@ -20,6 +20,17 @@ func TestBuildRunPatchMessageLinuxUnchanged(t *testing.T) {
 	if msg["type"] != "run_patch" || msg["patch_type"] != "patch_package" {
 		t.Fatalf("msg = %+v", msg)
 	}
+	if _, ok := msg["exclude_packages"]; ok {
+		t.Fatal("empty excludes must be omitted")
+	}
+}
+
+func TestBuildRunPatchMessageExcludePackages(t *testing.T) {
+	msg := buildRunPatchMessage(RunPatchPayload{PatchType: "patch_all", ExcludePackages: []string{"nginx"}}, &db.GetPatchRunByIDRow{}, false, nil)
+	names, ok := msg["exclude_packages"].([]string)
+	if !ok || len(names) != 1 || names[0] != "nginx" {
+		t.Fatalf("exclude_packages = %#v", msg["exclude_packages"])
+	}
 }
 
 func TestBuildRunPatchMessageWindowsTargets(t *testing.T) {

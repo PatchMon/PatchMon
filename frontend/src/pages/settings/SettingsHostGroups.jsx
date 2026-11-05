@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Edit, Plus, Server, Trash2 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import GroupPatchActions from "../../components/GroupPatchActions";
 import ModalPortal from "../../components/ui/ModalPortal";
 import { hostGroupsAPI } from "../../utils/api";
 
@@ -172,6 +173,12 @@ const SettingsHostGroups = () => {
 											{group._count?.hosts !== 1 ? "s" : ""}
 										</button>
 									</div>
+									<div className="flex flex-wrap gap-2">
+										<GroupPatchActions
+											groupId={group.id}
+											groupName={group.name}
+										/>
+									</div>
 								</div>
 							))}
 						</div>
@@ -248,14 +255,20 @@ const SettingsHostGroups = () => {
 												</button>
 											</td>
 											<td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-												<button
-													type="button"
-													onClick={() => handleEdit(group)}
-													className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
-													title="Edit group"
-												>
-													<Edit className="h-4 w-4" />
-												</button>
+												<div className="inline-flex items-center justify-end gap-2">
+													<GroupPatchActions
+														groupId={group.id}
+														groupName={group.name}
+													/>
+													<button
+														type="button"
+														onClick={() => handleEdit(group)}
+														className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-300"
+														title="Edit group"
+													>
+														<Edit className="h-4 w-4" />
+													</button>
+												</div>
 											</td>
 										</tr>
 									))}
@@ -461,11 +474,20 @@ const EditHostGroupModal = ({ group, onClose, onSubmit, isLoading }) => {
 		name: group.name,
 		description: group.description || "",
 		color: group.color || "#3B82F6",
+		package_holds: (group.package_holds || []).join("\n"),
 	});
 
 	const handleSubmit = (e) => {
 		e.preventDefault();
-		onSubmit(formData);
+		onSubmit({
+			name: formData.name,
+			description: formData.description,
+			color: formData.color,
+			package_holds: formData.package_holds
+				.split("\n")
+				.map((name) => name.trim())
+				.filter(Boolean),
+		});
 	};
 
 	const handleChange = (e) => {
@@ -545,6 +567,28 @@ const EditHostGroupModal = ({ group, onClose, onSubmit, isLoading }) => {
 								placeholder="#3B82F6"
 							/>
 						</div>
+					</div>
+
+					<div>
+						<label
+							htmlFor={`${editNameId}-holds`}
+							className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-1"
+						>
+							Held packages
+						</label>
+						<textarea
+							id={`${editNameId}-holds`}
+							name="package_holds"
+							value={formData.package_holds}
+							onChange={handleChange}
+							rows={4}
+							className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white placeholder-secondary-500 dark:placeholder-secondary-400 font-mono text-sm"
+							placeholder={"One package name per line, e.g.\nnginx\ndocker-ce"}
+						/>
+						<p className="mt-1 text-xs text-secondary-500 dark:text-secondary-300">
+							These packages are skipped on every host in this group. The hold
+							lives in PatchMon and is not written to the host.
+						</p>
 					</div>
 
 					<div className="flex justify-between pt-4">

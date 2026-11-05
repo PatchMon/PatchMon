@@ -1057,9 +1057,10 @@ Groups are a **selector** across the product. Wherever a workflow asks "which ho
 
 #### Patching
 
-- When you build a patch run, the target picker offers **Host** or **Host group** as the target type.
-- Choosing a host group expands the target to every current member at the time the run is queued.
-- Patch policies can be assigned to a host group, so a host added to the group automatically picks up that policy. The policy decides when a run someone triggers on that host actually executes; it does not start runs on its own.
+- When you assign a patch policy, the target picker offers **Host** or **Host group**. That assignment decides when a run executes. It does not start a run.
+- **Settings → Host Groups**, and the Hosts page while a single group filter is selected, can queue **Patch all** or **Security patch** for every current member. Each host gets its own run and still follows its own policy. One host failing does not stop the others.
+- **Security patch** queues the packages the last inventory report flagged `is_security_update`. Hosts with none are skipped. The flag is the apt security pocket or a dnf security advisory; Alpine, pacman and Windows are not the same list. Pacman hosts refuse a partial upgrade. A run holds at most 100 packages.
+- **Held packages** on a group (one name per line in Edit Host Group) are skipped for every host in that group. A host in several groups is covered by the union of those holds. Holds are stored in PatchMon and applied only for that run; they are not written with `apt-mark hold`. Selected-package and security runs drop the names before the agent is contacted. Patch all sends `exclude_packages`, which needs agent v2.2.0 or later; an older agent is refused so the hold cannot be ignored. Patch all with holds is not available on Windows. On apt, a Patch all that has holds upgrades the simulated package list with `--only-upgrade` after the held names are removed, rather than a blind `apt-get upgrade`.
 
 For the full patching flow, see the Patching chapter.
 

@@ -97,3 +97,73 @@ func (s *HostGroupsStore) GetHostIDs(ctx context.Context, groupID string) ([]str
 	d := s.db.DB(ctx)
 	return d.Queries.GetHostIDsByGroup(ctx, groupID)
 }
+
+// PackageHolds returns the package names held on one group, in name order.
+func (s *HostGroupsStore) PackageHolds(ctx context.Context, groupID string) ([]string, error) {
+	d := s.db.DB(ctx)
+	names, err := d.Queries.ListHostGroupPackageHolds(ctx, groupID)
+	if err != nil || names == nil {
+		return []string{}, err
+	}
+	return names, nil
+}
+
+// AllPackageHolds returns every group's held package names.
+func (s *HostGroupsStore) AllPackageHolds(ctx context.Context) (map[string][]string, error) {
+	d := s.db.DB(ctx)
+	rows, err := d.Queries.ListAllHostGroupPackageHolds(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][]string{}
+	for _, row := range rows {
+		out[row.HostGroupID] = append(out[row.HostGroupID], row.PackageName)
+	}
+	return out, nil
+}
+
+// EffectivePackageHolds is the union of holds from every group the host belongs to.
+func (s *HostGroupsStore) EffectivePackageHolds(ctx context.Context, hostID string) ([]string, error) {
+	d := s.db.DB(ctx)
+	names, err := d.Queries.ListEffectivePackageHoldsForHost(ctx, hostID)
+	if err != nil || names == nil {
+		return []string{}, err
+	}
+	return names, nil
+}
+
+// ReplacePackageHolds replaces a group's held package names.
+func (s *HostGroupsStore) ReplacePackageHolds(ctx context.Context, groupID string, names []string) error {
+	d := s.db.DB(ctx)
+	tx, err := d.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+	}()
+	q := d.Queries.WithTx(tx)
+	if err := q.DeleteHostGroupPackageHolds(ctx, groupID); err != nil {
+		return err
+	}
+	for _, name := range names {
+		if err := q.InsertHostGroupPackageHold(ctx, db.InsertHostGroupPackageHoldParams{
+			ID:          uuid.NewString(),
+			HostGroupID: groupID,
+			PackageName: name,
+		}); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// SecurityUpdatePackageNames returns packages flagged as security updates on a host.
+func (s *HostGroupsStore) SecurityUpdatePackageNames(ctx context.Context, hostID string) ([]string, error) {
+	d := s.db.DB(ctx)
+	names, err := d.Queries.ListSecurityUpdatePackageNamesByHost(ctx, hostID)
+	if err != nil || names == nil {
+		return []string{}, err
+	}
+	return names, nil
+}

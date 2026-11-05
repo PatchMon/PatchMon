@@ -512,9 +512,14 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					defer endPatchRun()
 					var err error
 					if runtime.GOOS == "windows" {
-						err = runPatchWindows(msg.patchRunID, msg.windowsPatch, msg.patchParseError)
+						if len(msg.excludePackages) > 0 {
+							err = errors.New("package holds are not applied on Windows, so this Patch all was not run")
+							_ = client.New(cfgManager, logger).SendPatchOutput(context.Background(), msg.patchRunID, "failed", "", err.Error())
+						} else {
+							err = runPatchWindows(msg.patchRunID, msg.windowsPatch, msg.patchParseError)
+						}
 					} else {
-						err = runPatch(msg.patchRunID, msg.patchType, msg.packageNames, msg.dryRun)
+						err = runPatch(msg.patchRunID, msg.patchType, msg.packageNames, msg.dryRun, msg.excludePackages)
 					}
 					switch {
 					case errors.Is(err, errPatchRunStopped):
@@ -1425,6 +1430,7 @@ type wsMsg struct {
 	patchRunID      string
 	patchType       string
 	packageNames    []string
+	excludePackages []string
 	dryRun          bool
 	windowsPatch    packages.WindowsPatchRequest
 	patchParseError string
@@ -1920,14 +1926,15 @@ func connectOnce(out chan<- wsMsg, backoff *time.Duration) (connected bool, err 
 			Rows       int    `json:"rows"`        // Terminal rows
 			Data       string `json:"data"`        // SSH input data
 			// run_patch fields
-			PatchRunID     string                        `json:"patch_run_id"`
-			PatchType      string                        `json:"patch_type"`
-			PackageName    string                        `json:"package_name"`
-			PackageNames   []string                      `json:"package_names"`
-			DryRun         bool                          `json:"dry_run"`
-			Targets        []packages.WindowsPatchTarget `json:"targets"`
-			IncludeUpdates *bool                         `json:"include_updates"`
-			IncludeApps    *bool                         `json:"include_apps"`
+			PatchRunID      string                        `json:"patch_run_id"`
+			PatchType       string                        `json:"patch_type"`
+			PackageName     string                        `json:"package_name"`
+			PackageNames    []string                      `json:"package_names"`
+			ExcludePackages []string                      `json:"exclude_packages"`
+			DryRun          bool                          `json:"dry_run"`
+			Targets         []packages.WindowsPatchTarget `json:"targets"`
+			IncludeUpdates  *bool                         `json:"include_updates"`
+			IncludeApps     *bool                         `json:"include_apps"`
 		}
 		if err := json.Unmarshal(data, &payload); err != nil {
 			logger.WithError(err).WithField("message_bytes", len(data)).Warn("Failed to parse WebSocket message")
@@ -2017,18 +2024,28 @@ func connectOnce(out chan<- wsMsg, backoff *time.Duration) (connected bool, err 
 				logger.Warn("run_patch patch_package requires package_name or package_names")
 				continue
 			}
+			var excludePackages []string
+			for _, n := range payload.ExcludePackages {
+				if validAptPackagePattern.MatchString(n) {
+					excludePackages = append(excludePackages, n)
+				} else {
+					logger.WithField("package_name", logutil.Sanitize(n)).Warn("Invalid package name in run_patch exclude_packages")
+				}
+			}
 			logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
-				"patch_run_id":  payload.PatchRunID,
-				"patch_type":    patchType,
-				"package_names": packageNames,
-				"dry_run":       payload.DryRun,
+				"patch_run_id":     payload.PatchRunID,
+				"patch_type":       patchType,
+				"package_names":    packageNames,
+				"exclude_packages": excludePackages,
+				"dry_run":          payload.DryRun,
 			})).Info("run_patch received")
 			dispatchWSMessage(out, wsMsg{
-				kind:         "run_patch",
-				patchRunID:   payload.PatchRunID,
-				patchType:    patchType,
-				packageNames: packageNames,
-				dryRun:       payload.DryRun,
+				kind:            "run_patch",
+				patchRunID:      payload.PatchRunID,
+				patchType:       patchType,
+				packageNames:    packageNames,
+				excludePackages: excludePackages,
+				dryRun:          payload.DryRun,
 			})
 		case "compliance_scan":
 			// Validate profile ID to prevent command injection
@@ -2589,6 +2606,78 @@ func ucsUpgradeRefusal(release string) string {
 	return ""
 }
 
+var aptInstRe = regexp.MustCompile(`(?m)^Inst\s+(\S+)`)
+
+// parseAptInstPackages reads package names from apt-get -s upgrade output.
+func parseAptInstPackages(output string) []string {
+	matches := aptInstRe.FindAllStringSubmatch(output, -1)
+	names := make([]string, 0, len(matches))
+	seen := map[string]struct{}{}
+	for _, m := range matches {
+		if len(m) < 2 {
+			continue
+		}
+		if _, ok := seen[m[1]]; ok {
+			continue
+		}
+		seen[m[1]] = struct{}{}
+		names = append(names, m[1])
+	}
+	return names
+}
+
+func aptPackagesExcept(names, excludes []string) []string {
+	if len(excludes) == 0 {
+		return names
+	}
+	held := map[string]struct{}{}
+	for _, n := range excludes {
+		held[n] = struct{}{}
+	}
+	keep := make([]string, 0, len(names))
+	for _, n := range names {
+		if _, ok := held[n]; ok || !validAptPackagePattern.MatchString(n) {
+			continue
+		}
+		keep = append(keep, n)
+	}
+	return keep
+}
+
+func dnfUpgradeArgs(dryRun bool, excludes []string) []string {
+	args := []string{"upgrade"}
+	if dryRun {
+		args = append(args, "--assumeno")
+	} else {
+		args = append(args, "-y")
+	}
+	for _, n := range excludes {
+		args = append(args, "--exclude="+n)
+	}
+	return args
+}
+
+func pacmanUpgradeArgs(excludes []string) []string {
+	args := []string{"-Syu", "--noconfirm"}
+	if len(excludes) > 0 {
+		args = append(args, "--ignore="+strings.Join(excludes, ","))
+	}
+	return args
+}
+
+func pkgUpgradeArgs(dryRun bool, excludes []string) []string {
+	args := []string{"upgrade"}
+	if dryRun {
+		args = append(args, "-n")
+	} else {
+		args = append(args, "-y")
+	}
+	for _, n := range excludes {
+		args = append(args, "-x", "^"+regexp.QuoteMeta(n)+"$")
+	}
+	return args
+}
+
 // aptOnlyUpgradeArgs builds the apt-get arguments for upgrading named packages.
 func aptOnlyUpgradeArgs(dryRun bool, packageNames []string) []string {
 	if dryRun {
@@ -2621,7 +2710,7 @@ func patchTypeRefusal(pkgManager, patchType string, dryRun bool) string {
 // runPatch runs package manager update and upgrade (patch_all) or install (patch_package).
 // Supports apt-get (Debian/Ubuntu), dnf, yum (RHEL-based), pkg (FreeBSD), pacman (Arch),
 // apk (Alpine) and zypper (openSUSE, SLES). When dryRun is true, simulates and sends dry_run_completed instead of completed.
-func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) error {
+func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool, excludePackages []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
@@ -2767,9 +2856,9 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 	ownRunner := pkgManager == "apk" || pkgManager == "zypper"
 	switch pkgManager {
 	case "apk":
-		stepErr = runPatchAPK(ctx, sink, env, patchType, packageNames, dryRun)
+		stepErr = runPatchAPK(ctx, sink, env, patchType, packageNames, dryRun, excludePackages)
 	case "zypper":
-		stepErr = runPatchZypper(ctx, sink, env, patchType, packageNames, dryRun)
+		stepErr = runPatchZypper(ctx, sink, env, patchType, packageNames, dryRun, excludePackages)
 	}
 
 	needsPkgTransaction := !ownRunner && (pkgManager != "pkg" || patchType == "patch_all" || len(freeBSDPkgTargets) > 0)
@@ -2801,11 +2890,36 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 			switch pkgManager {
 			case "apt":
 				if ucsUpgrade {
+					if len(excludePackages) > 0 {
+						stepErr = errors.New("package holds cannot be applied to univention-upgrade, so nothing was changed")
+						sink.WriteString("\n[patchmon] " + stepErr.Error() + "\n")
+						break
+					}
 					if dryRun {
 						if err, abort := runStep(false, "apt-get -s dist-upgrade", "apt-get -s dist-upgrade failed: %w", "apt-get", "-s", "dist-upgrade"); abort {
 							stepErr = err
 						}
 					} else if err, abort := runStep(false, "univention-upgrade", "univention-upgrade failed: %w", "univention-upgrade", ucsUpgradeArgs(ucsRelease)...); abort {
+						stepErr = err
+					}
+					break
+				}
+				if len(excludePackages) > 0 {
+					if err, abort := runStep(false, "apt-get -s upgrade", "apt-get -s upgrade failed: %w", "apt-get", aptUpgradeArgs(true)...); abort {
+						stepErr = err
+						break
+					}
+					keep := aptPackagesExcept(parseAptInstPackages(lastStepOutput), excludePackages)
+					if len(keep) == 0 {
+						sink.WriteString("\n[patchmon] Nothing to upgrade: every pending package is held in PatchMon.\n")
+						break
+					}
+					args := aptOnlyUpgradeArgs(dryRun, keep)
+					label := "apt-get --only-upgrade install"
+					if dryRun {
+						label = "apt-get -s --only-upgrade install"
+					}
+					if err, abort := runStep(false, label, label+" failed: %w", "apt-get", args...); abort {
 						stepErr = err
 					}
 					break
@@ -2828,28 +2942,27 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 					}
 				}
 			case "pkg":
+				args := pkgUpgradeArgs(dryRun, excludePackages)
+				label := "pkg upgrade"
 				if dryRun {
-					if err, abort := runStep(true, "pkg upgrade -n", "pkg upgrade -n failed: %w", upgradeBin, "upgrade", "-n"); abort {
-						stepErr = err
-					}
-				} else {
-					if err, abort := runStep(false, "pkg upgrade", "pkg upgrade failed: %w", upgradeBin, "upgrade", "-y"); abort {
-						stepErr = err
-					}
+					label = "pkg upgrade -n"
+				}
+				if err, abort := runStep(dryRun, label, label+" failed: %w", upgradeBin, args...); abort {
+					stepErr = err
 				}
 			case "pacman":
-				if err, abort := runStep(false, "pacman -Syu", "pacman -Syu failed: %w", "pacman", "-Syu", "--noconfirm"); abort {
+				args := pacmanUpgradeArgs(excludePackages)
+				if err, abort := runStep(false, "pacman -Syu", "pacman -Syu failed: %w", "pacman", args...); abort {
 					stepErr = err
 				}
 			default: // dnf, yum
+				args := dnfUpgradeArgs(dryRun, excludePackages)
+				label := upgradeBin + " upgrade"
 				if dryRun {
-					if err, abort := runStep(true, upgradeBin+" upgrade --assumeno", upgradeBin+" upgrade --assumeno failed: %w", upgradeBin, "upgrade", "--assumeno"); abort {
-						stepErr = err
-					}
-				} else {
-					if err, abort := runStep(false, upgradeBin+" upgrade", upgradeBin+" upgrade failed: %w", upgradeBin, "upgrade", "-y"); abort {
-						stepErr = err
-					}
+					label = upgradeBin + " upgrade --assumeno"
+				}
+				if err, abort := runStep(dryRun, label, label+" failed: %w", upgradeBin, args...); abort {
+					stepErr = err
 				}
 			}
 		} else {

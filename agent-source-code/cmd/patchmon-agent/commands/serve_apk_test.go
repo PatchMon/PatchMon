@@ -411,7 +411,7 @@ func TestAPKStepError(t *testing.T) {
 }
 
 func TestRunPatchAPKRequiresPackageNames(t *testing.T) {
-	err := runPatchAPK(context.Background(), nil, nil, "patch_package", nil, false)
+	err := runPatchAPK(context.Background(), nil, nil, "patch_package", nil, false, nil)
 	if err == nil || !strings.Contains(err.Error(), "package_names required") {
 		t.Fatalf("err = %v", err)
 	}

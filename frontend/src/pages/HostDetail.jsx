@@ -218,6 +218,12 @@ const HostDetail = () => {
 		return timeoutId;
 	}, []);
 
+	const { data: effectiveHolds } = useQuery({
+		queryKey: ["host-package-holds", hostId],
+		queryFn: () => adminHostsAPI.packageHolds(hostId),
+		enabled: !!hostId,
+	});
+
 	const {
 		data: host,
 		isLoading,
@@ -250,6 +256,7 @@ const HostDetail = () => {
 			["compliance-setup-status", hostId],
 			["docker", "host", hostId],
 			["patching-runs", hostId],
+			["host-package-holds", hostId],
 		],
 		[hostId],
 	);
@@ -2198,6 +2205,17 @@ const HostDetail = () => {
 									})()}
 								</div>
 
+								{effectiveHolds?.package_holds?.length > 0 && (
+									<div>
+										<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+											Held packages
+										</p>
+										<p className="text-sm text-secondary-900 dark:text-white font-mono break-all">
+											{effectiveHolds.package_holds.join(", ")}
+										</p>
+									</div>
+								)}
+
 								<div>
 									<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
 										Integrations
@@ -3270,6 +3288,17 @@ const HostDetail = () => {
 											);
 										})()}
 									</div>
+
+									{effectiveHolds?.package_holds?.length > 0 && (
+										<div>
+											<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
+												Held packages
+											</p>
+											<p className="text-sm text-secondary-900 dark:text-white font-mono break-all">
+												{effectiveHolds.package_holds.join(", ")}
+											</p>
+										</div>
+									)}
 
 									<div>
 										<p className="text-xs text-secondary-500 dark:text-white mb-1.5">
