@@ -2579,7 +2579,6 @@ var dpkgConfOptions = []string{
 	"-o", "Dpkg::Options::=--force-confold",
 }
 
-// aptRetriesOff disables apt download retries to close the CVE-2026-109518 redirect package-swap window.
 var aptRetriesOff = []string{"-o", "Acquire::Retries=0"}
 
 // aptUpgradeArgs builds the apt-get arguments for a full upgrade.
