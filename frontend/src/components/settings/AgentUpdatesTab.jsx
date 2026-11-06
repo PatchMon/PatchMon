@@ -530,7 +530,7 @@ const AgentUpdatesTab = () => {
 							Disable apt download retries
 						</label>
 						<p className="mt-1 text-sm text-secondary-500 dark:text-white">
-							On Debian and Ubuntu hosts, patch runs use{" "}
+							On Debian and Ubuntu hosts, PatchMon patch runs use{" "}
 							<code className="text-xs bg-secondary-200 dark:bg-secondary-700 px-1 py-0.5 rounded">
 								Acquire::Retries=0
 							</code>
@@ -541,8 +541,11 @@ const AgentUpdatesTab = () => {
 							instead of being retried.
 						</p>
 						<p className="mt-1 text-xs text-secondary-500 dark:text-white">
-							Applies to hosts running agent 2.1.8 or later. Updating apt itself
-							is still required.
+							Applies to PatchMon patch runs on hosts running agent 2.1.8 or
+							later. The compliance scanner install always uses it. Saving here
+							replaces any per-host apt.disable_retries value in config.yml when
+							an agent restarts or this setting changes. Updating apt itself is
+							still required.
 						</p>
 					</div>
 					<button
