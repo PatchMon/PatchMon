@@ -1,0 +1,100 @@
+{{- $fullname := include "patchmon.fullname" . -}}
+{{- $namespace := .Release.Namespace -}}
+{{- $ingressHost := "" -}}
+{{- if .Values.ingress.enabled -}}
+{{- range .Values.ingress.hosts -}}
+{{- $ingressHost = .host -}}
+{{- end -}}
+{{- end -}}
+
+**********************************************
+  PatchMon has been successfully installed!
+**********************************************
+
+Thank you for installing {{ .Chart.Name }} version {{ .Chart.Version }}.
+
+Your release is named {{ .Release.Name }} in namespace {{ $namespace }}.
+
+To learn more about the release, try:
+
+  $ helm status {{ .Release.Name }} -n {{ $namespace }}
+  $ helm get all {{ .Release.Name }} -n {{ $namespace }}
+
+{{- if .Values.ingress.enabled }}
+
+✓ Ingress is enabled. Your application will be accessible at:
+
+  {{- if .Values.ingress.tls }}
+  https://{{ $ingressHost }}
+  {{- else }}
+  http://{{ $ingressHost }}
+  {{- end }}
+
+{{- else }}
+
+Ingress is not enabled. To access the application:
+
+  export POD_NAME=$(kubectl get pods -n {{ $namespace }} -l "app={{ $fullname }}-server" -o jsonpath="{.items[0].metadata.name}")
+  kubectl port-forward -n {{ $namespace }} $POD_NAME 8080:8080
+
+Then navigate to http://localhost:8080
+
+{{- end }}
+
+Components Deployed:
+{{- if .Values.database.enabled }}
+  ✓ PostgreSQL Database
+{{- end }}
+{{- if .Values.redis.enabled }}
+  ✓ Redis Cache
+{{- end }}
+{{- if .Values.server.enabled }}
+  ✓ PatchMon Server (API + Frontend)
+{{- end }}
+{{- if .Values.guacd.enabled }}
+  ✓ Guacamole Proxy Daemon (guacd)
+{{- end }}
+
+{{- if .Values.server.autoscaling.enabled }}
+
+Autoscaling:
+  ✓ Server HPA: {{ .Values.server.autoscaling.minReplicas }}-{{ .Values.server.autoscaling.maxReplicas }} replicas
+{{- end }}
+
+Monitoring:
+
+  To check the status of your deployment:
+  $ kubectl get pods -n {{ $namespace }}
+
+  To view logs:
+  $ kubectl logs -n {{ $namespace }} -l app.kubernetes.io/name={{ include "patchmon.name" . }} --tail=100 -f
+
+  To check server health:
+  $ kubectl exec -n {{ $namespace }} -it deployment/{{ $fullname }}-server -- wget -qO- http://localhost:3000/health
+
+{{- if .Values.secret.create }}
+{{- if or (not .Values.database.auth.password) (not .Values.redis.auth.password) (not .Values.server.jwtSecret) }}
+
+⚠️  IMPORTANT SECURITY NOTICE:
+
+Auto-generated secrets have been created. For production use, it's recommended to:
+
+1. Extract the generated secrets:
+   $ kubectl get secret {{ $fullname }}-secrets -n {{ $namespace }} -o yaml > patchmon-secrets.yaml
+
+2. Back up this file securely outside the cluster
+
+3. For future upgrades, provide these values in your values.yaml or use an external secret manager
+
+To retrieve the auto-generated passwords:
+  $ kubectl get secret {{ $fullname }}-secrets -n {{ $namespace }} -o jsonpath='{.data.postgres-password}' | base64 -d
+  $ kubectl get secret {{ $fullname }}-secrets -n {{ $namespace }} -o jsonpath='{.data.redis-password}' | base64 -d
+  $ kubectl get secret {{ $fullname }}-secrets -n {{ $namespace }} -o jsonpath='{.data.jwt-secret}' | base64 -d
+
+{{- end }}
+{{- end }}
+
+For more information and documentation, visit:
+  https://github.com/patchmon/patchmon
+
+Happy monitoring! 🎉
