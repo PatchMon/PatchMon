@@ -124,6 +124,7 @@ type Settings struct {
 	ComplianceScanInterval          int        `db:"compliance_scan_interval"`
 	PackageCacheRefreshMode         string     `db:"package_cache_refresh_mode"`
 	PackageCacheRefreshMaxAge       int        `db:"package_cache_refresh_max_age"`
+	AptDisableRetries               bool       `db:"apt_disable_retries"`
 	GithubRepoURL                   string     `db:"github_repo_url"`
 	SSHKeyPath                      *string    `db:"ssh_key_path"`
 	RepositoryType                  string     `db:"repository_type"`

@@ -1,0 +1,1 @@
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS apt_disable_retries BOOLEAN NOT NULL DEFAULT true;

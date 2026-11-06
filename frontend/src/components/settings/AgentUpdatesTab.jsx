@@ -6,11 +6,13 @@ import { settingsAPI } from "../../utils/api";
 const AgentUpdatesTab = () => {
 	const updateIntervalId = useId();
 	const autoUpdateId = useId();
+	const aptDisableRetriesId = useId();
 	const [formData, setFormData] = useState({
 		updateInterval: 60,
 		autoUpdate: false,
 		packageCacheRefreshMode: "always",
 		packageCacheRefreshMaxAge: 60,
+		aptDisableRetries: true,
 	});
 	const [uninstallOs, setUninstallOs] = useState("linux");
 	const [errors, setErrors] = useState({});
@@ -101,6 +103,7 @@ const AgentUpdatesTab = () => {
 			autoUpdate: settings.auto_update || false,
 			packageCacheRefreshMode: settings.package_cache_refresh_mode || "always",
 			packageCacheRefreshMaxAge: settings.package_cache_refresh_max_age || 60,
+			aptDisableRetries: settings.apt_disable_retries ?? true,
 		});
 	}, [settings, isDirty]);
 
@@ -516,6 +519,58 @@ const AgentUpdatesTab = () => {
 						{formData.packageCacheRefreshMode === "never" &&
 							"The agent will never refresh the package cache. It relies on the host's own update schedule (e.g. systemd timers, cron). Fastest but may report stale data."}
 					</p>
+				</div>
+
+				<div className="flex items-start justify-between gap-4 p-4 bg-secondary-50 dark:bg-secondary-800/50 rounded-lg border border-secondary-200 dark:border-secondary-700">
+					<div className="flex-1">
+						<label
+							htmlFor={aptDisableRetriesId}
+							className="text-sm font-medium text-secondary-900 dark:text-secondary-100"
+						>
+							Disable apt download retries
+						</label>
+						<p className="mt-1 text-sm text-secondary-500 dark:text-white">
+							On Debian and Ubuntu hosts, PatchMon patch runs use{" "}
+							<code className="text-xs bg-secondary-200 dark:bg-secondary-700 px-1 py-0.5 rounded">
+								Acquire::Retries=0
+							</code>
+							. This closes the CVE-2026-109518 package-swap window, where an
+							on-path attacker can swap a package when apt retries a redirected
+							download. Recommended. Turn it off only if your mirrors are
+							unreliable: a transient download failure then fails the patch run
+							instead of being retried.
+						</p>
+						<p className="mt-1 text-xs text-secondary-500 dark:text-white">
+							Applies to PatchMon patch runs on hosts running agent 2.1.8 or
+							later. The compliance scanner install always uses it. Saving here
+							replaces any per-host apt.disable_retries value in config.yml when
+							an agent restarts or this setting changes. Updating apt itself is
+							still required.
+						</p>
+					</div>
+					<button
+						type="button"
+						id={aptDisableRetriesId}
+						role="switch"
+						aria-checked={formData.aptDisableRetries}
+						onClick={() =>
+							handleInputChange(
+								"aptDisableRetries",
+								!formData.aptDisableRetries,
+							)
+						}
+						className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-md border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 ${
+							formData.aptDisableRetries
+								? "bg-primary-600 dark:bg-primary-500"
+								: "bg-secondary-200 dark:bg-secondary-600"
+						}`}
+					>
+						<span
+							className={`pointer-events-none inline-block h-5 w-5 transform rounded-md bg-white shadow ring-0 transition duration-200 ease-in-out ${
+								formData.aptDisableRetries ? "translate-x-5" : "translate-x-0"
+							}`}
+						/>
+					</button>
 				</div>
 
 				{/* Save Button */}

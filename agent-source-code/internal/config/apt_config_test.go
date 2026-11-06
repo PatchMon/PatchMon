@@ -53,3 +53,41 @@ func TestAptConfig(t *testing.T) {
 		})
 	}
 }
+
+func newAptTestManager(t *testing.T, extra string) (*Manager, string) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yml")
+	body := "patchmon_server: https://pm.example.com\n" +
+		"credentials_file: " + filepath.Join(dir, "credentials.yml") + "\n" +
+		"log_file: " + filepath.Join(dir, "logs", "agent.log") + "\n" + extra
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := New()
+	m.SetConfigFile(path)
+	if err := m.LoadConfig(); err != nil {
+		t.Fatal(err)
+	}
+	return m, path
+}
+
+func TestSetAptDisableRetries(t *testing.T) {
+	for _, want := range []bool{false, true} {
+		m, path := newAptTestManager(t, "")
+		if err := m.SetAptDisableRetries(want); err != nil {
+			t.Fatal(err)
+		}
+		if got := m.GetAptDisableRetries(); got != want {
+			t.Errorf("GetAptDisableRetries() = %v, want %v", got, want)
+		}
+		reloaded := New()
+		reloaded.SetConfigFile(path)
+		if err := reloaded.LoadConfig(); err != nil {
+			t.Fatal(err)
+		}
+		if reloaded.GetAptDisableRetries() != want {
+			t.Errorf("reloaded GetAptDisableRetries() != %v", want)
+		}
+	}
+}

@@ -270,7 +270,8 @@ type VersionResponse struct {
 
 // UpdateIntervalResponse represents update interval response
 type UpdateIntervalResponse struct {
-	UpdateInterval int `json:"updateInterval"`
+	UpdateInterval    int   `json:"updateInterval"`
+	AptDisableRetries *bool `json:"aptDisableRetries"`
 }
 
 // AgentTimestampResponse represents agent timestamp response
@@ -409,8 +410,7 @@ type APKSecDBConfig struct {
 
 // AptConfig controls apt-specific patching behaviour on Debian/Ubuntu hosts.
 type AptConfig struct {
-	// DisableRetries runs apt patch commands with Acquire::Retries=0 to close the
-	// CVE-2026-109518 redirect package-swap window. Defaults to true (nil = true).
+	// nil means true.
 	DisableRetries *bool `yaml:"disable_retries" mapstructure:"disable_retries"`
 }
 
