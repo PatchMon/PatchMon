@@ -5875,6 +5875,12 @@ docker_update_check:
 apk_secdb:
   # Default: true
   enabled: true
+
+# ─── Apt Download Retries ────────────────────────────────────────────
+# apt-based hosts only. Set from Settings → Agent Updates.
+apt:
+  # Default: true
+  disable_retries: true
 ```
 
 ### Parameters In Detail
@@ -6211,6 +6217,18 @@ The files are cached in `/var/cache/patchmon/apk-secdb/` and fetched again at mo
 
 Like `docker_update_check`, this block is **not server-pushable**: edit `config.yml` and restart the agent service to change it. The agent writes the block into `config.yml` with its current value whenever it saves its configuration.
 
+### Apt Download Retries (`apt`) {#apt-download-retries-apt}
+
+apt-based hosts (Debian, Ubuntu and derivatives) only, from agent 2.1.8. Other operating systems ignore this block.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `disable_retries` | Boolean | `true` | When `true`, PatchMon patch runs call `apt-get upgrade` and `apt-get --only-upgrade install` with `-o Acquire::Retries=0`. Set to `false` to restore apt's own retry behaviour. A missing key counts as `true`. |
+
+With retries off, apt does not retry a failed or redirected download, which protects PatchMon patch runs against CVE-2026-109518. A transient mirror failure then fails the patch run instead of being retried. `apt-get update` and dry runs keep apt's normal retries. The compliance scanner install always runs with retries off, whatever this key says. On Univention Corporate Server, **Patch all** runs `univention-upgrade`, which this setting does not cover; patching selected packages is covered.
+
+This block **is server-driven**: the value comes from **Settings → Agent Updates → Disable apt download retries**. The agent saves the server's value when it starts and when the setting changes, so a hand edit is replaced. A server older than 2.1.8 sends no value and leaves the key as it is.
+
 ### How `config.yml` Is Generated
 
 #### Initial Generation (Installation)
@@ -6273,7 +6291,9 @@ The agent updates `config.yml` automatically in several scenarios. These are in-
 |---------|-------------|-----|
 | **Agent startup** | `update_interval`, `report_offset` | Agent fetches the current interval from the server. If it differs from config, the agent updates config.yml. |
 | **Agent startup** | `integrations.docker`, `integrations.compliance` | Agent fetches integration status from the server. If it differs from config, the agent updates config.yml. |
+| **Agent startup** | `apt.disable_retries` | Agent fetches the global apt retries setting from the server. If it differs from config, the agent updates config.yml. |
 | **WebSocket: `settings_update`** | `update_interval`, `report_offset` | Server pushes a new interval. Agent saves it and recalculates the report offset. |
+| **WebSocket: `settings_update`** | `apt.disable_retries` | Server pushes the apt retries setting when it changes. Agent saves it; the next patch run uses it. |
 | **WebSocket: `apply_config`** | `integrations.docker`, `integrations.compliance.enabled`, `integrations.compliance.openscap_enabled`, `integrations.compliance.docker_bench_enabled` | Toggling an integration in the UI is staged, not sent. The server holds it as a pending change until you press **Apply** on the host detail page, then pushes the whole integration block in one message. The agent saves it to config.yml and restarts itself. |
 
 #### Agent-Calculated Updates
