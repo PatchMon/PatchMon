@@ -397,6 +397,7 @@ type Config struct {
 	Integrations              map[string]interface{}  `yaml:"integrations" mapstructure:"integrations"`                                   // Supports bool for simple integrations, string for compliance mode
 	DockerUpdateCheck         DockerUpdateCheckConfig `yaml:"docker_update_check" mapstructure:"docker_update_check"`
 	APKSecDB                  APKSecDBConfig          `yaml:"apk_secdb" mapstructure:"apk_secdb"`
+	Apt                       AptConfig               `yaml:"apt" mapstructure:"apt"`
 	HostID                    string                  `yaml:"host_id" mapstructure:"host_id"`
 	ConfigVersion             string                  `yaml:"config_version" mapstructure:"config_version"`
 }
@@ -404,6 +405,13 @@ type Config struct {
 // APKSecDBConfig controls the Alpine secdb lookup that flags security updates.
 type APKSecDBConfig struct {
 	Enabled *bool `yaml:"enabled" mapstructure:"enabled"`
+}
+
+// AptConfig controls apt-specific patching behaviour on Debian/Ubuntu hosts.
+type AptConfig struct {
+	// DisableRetries runs apt patch commands with Acquire::Retries=0 to close the
+	// CVE-2026-109518 redirect package-swap window. Defaults to true (nil = true).
+	DisableRetries *bool `yaml:"disable_retries" mapstructure:"disable_retries"`
 }
 
 // DockerUpdateCheckConfig controls the agent-side Docker image update check.
