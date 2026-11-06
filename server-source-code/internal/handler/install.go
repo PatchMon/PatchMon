@@ -693,9 +693,14 @@ func (h *InstallHandler) ServeUpdateInterval(w http.ResponseWriter, r *http.Requ
 		interval = settings.UpdateInterval
 	}
 
-	JSON(w, http.StatusOK, map[string]interface{}{
+	resp := map[string]interface{}{
 		"updateInterval": interval,
-	})
+	}
+	if err == nil && settings != nil {
+		resp["aptDisableRetries"] = settings.AptDisableRetries
+	}
+
+	JSON(w, http.StatusOK, resp)
 }
 
 // rejectUpdate writes an error response for a rejected /hosts/update or ping AND

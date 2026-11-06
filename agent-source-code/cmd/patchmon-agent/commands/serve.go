@@ -287,6 +287,7 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 				logger.WithField("interval", intervalMinutes).Info("Updated interval in config.yml")
 			}
 		}
+		applyAptDisableRetries(resp.AptDisableRetries)
 	} else if err != nil {
 		logger.WithError(err).Warn("Failed to fetch interval from server, using config value")
 	}
@@ -485,6 +486,7 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 						})).Info("Package cache refresh settings updated")
 					}
 				}
+				applyAptDisableRetries(m.aptDisableRetries)
 			case "report_now":
 				if err := sendReport(false); err != nil {
 					logger.WithError(err).Warn("report_now failed")
@@ -1397,6 +1399,7 @@ type wsMsg struct {
 	complianceScanInterval    int
 	packageCacheRefreshMode   string
 	packageCacheRefreshMaxAge int
+	aptDisableRetries         *bool
 	version                   string
 	profileType               string // For compliance_scan: openscap, docker-bench, all
 	profileID                 string // For compliance_scan: specific XCCDF profile ID
@@ -1728,6 +1731,17 @@ func readWSMessage(conn *websocket.Conn) ([]byte, error) {
 	return data, nil
 }
 
+func applyAptDisableRetries(v *bool) {
+	if v == nil || *v == cfgManager.GetAptDisableRetries() {
+		return
+	}
+	if err := cfgManager.SetAptDisableRetries(*v); err != nil {
+		logger.WithError(err).Warn("Failed to save apt disable_retries to config.yml")
+		return
+	}
+	logger.WithField("apt_disable_retries", *v).Info("Apt disable_retries updated")
+}
+
 // dispatchWSMessage hands a decoded message to the service loop.
 //
 // It must never block indefinitely. While the read loop is parked on this send
@@ -1894,6 +1908,7 @@ func connectOnce(out chan<- wsMsg, backoff *time.Duration) (connected bool, err 
 			ComplianceScanInterval    int                    `json:"compliance_scan_interval"`
 			PackageCacheRefreshMode   string                 `json:"package_cache_refresh_mode"`
 			PackageCacheRefreshMaxAge int                    `json:"package_cache_refresh_max_age"`
+			AptDisableRetries         *bool                  `json:"apt_disable_retries"`
 			Version                   string                 `json:"version"`
 			ProfileType               string                 `json:"profile_type"`           // For compliance_scan
 			ProfileID                 string                 `json:"profile_id"`             // For compliance_scan: specific XCCDF profile ID
@@ -1937,7 +1952,7 @@ func connectOnce(out chan<- wsMsg, backoff *time.Duration) (connected bool, err 
 		switch payload.Type {
 		case "settings_update":
 			logger.WithField("interval", payload.UpdateInterval).Info("settings_update received")
-			dispatchWSMessage(out, wsMsg{kind: "settings_update", interval: payload.UpdateInterval, complianceScanInterval: payload.ComplianceScanInterval, packageCacheRefreshMode: payload.PackageCacheRefreshMode, packageCacheRefreshMaxAge: payload.PackageCacheRefreshMaxAge})
+			dispatchWSMessage(out, wsMsg{kind: "settings_update", interval: payload.UpdateInterval, complianceScanInterval: payload.ComplianceScanInterval, packageCacheRefreshMode: payload.PackageCacheRefreshMode, packageCacheRefreshMaxAge: payload.PackageCacheRefreshMaxAge, aptDisableRetries: payload.AptDisableRetries})
 		case "report_now":
 			logger.Info("report_now received")
 			dispatchWSMessage(out, wsMsg{kind: "report_now"})

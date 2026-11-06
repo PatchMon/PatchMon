@@ -802,6 +802,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	oldComplianceScanInterval := s.ComplianceScanInterval
 	oldPackageCacheRefreshMode := s.PackageCacheRefreshMode
 	oldPackageCacheRefreshMaxAge := s.PackageCacheRefreshMaxAge
+	oldAptDisableRetries := s.AptDisableRetries
 	before := *s
 	if err := applySettingsUpdate(s, req, h.enc); err != nil {
 		Error(w, http.StatusBadRequest, err.Error())
@@ -822,13 +823,15 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	intervalChanged := s.UpdateInterval != oldInterval && s.UpdateInterval > 0
 	complianceIntervalChanged := s.ComplianceScanInterval != oldComplianceScanInterval && s.ComplianceScanInterval > 0
 	cacheRefreshChanged := s.PackageCacheRefreshMode != oldPackageCacheRefreshMode || s.PackageCacheRefreshMaxAge != oldPackageCacheRefreshMaxAge
-	if h.registry != nil && (intervalChanged || complianceIntervalChanged || cacheRefreshChanged) {
+	aptDisableRetriesChanged := s.AptDisableRetries != oldAptDisableRetries
+	if h.registry != nil && (intervalChanged || complianceIntervalChanged || cacheRefreshChanged || aptDisableRetriesChanged) {
 		msg := map[string]interface{}{
 			"type":                          "settings_update",
 			"update_interval":               s.UpdateInterval,
 			"compliance_scan_interval":      s.ComplianceScanInterval,
 			"package_cache_refresh_mode":    s.PackageCacheRefreshMode,
 			"package_cache_refresh_max_age": s.PackageCacheRefreshMaxAge,
+			"apt_disable_retries":           s.AptDisableRetries,
 		}
 		pushed := 0
 		// Scoped to the caller's context: the registry pools every context this
@@ -862,8 +865,9 @@ func settingsToResponse(s *models.Settings, enc *util.Encryption) map[string]int
 		"update_interval": s.UpdateInterval, "auto_update": s.AutoUpdate,
 		"default_compliance_mode": s.DefaultComplianceMode, "compliance_scan_interval": s.ComplianceScanInterval,
 		"package_cache_refresh_mode": s.PackageCacheRefreshMode, "package_cache_refresh_max_age": s.PackageCacheRefreshMaxAge,
-		"github_repo_url": s.GithubRepoURL,
-		"ssh_key_path":    s.SSHKeyPath, "repository_type": s.RepositoryType,
+		"apt_disable_retries": s.AptDisableRetries,
+		"github_repo_url":     s.GithubRepoURL,
+		"ssh_key_path":        s.SSHKeyPath, "repository_type": s.RepositoryType,
 		"last_update_check": s.LastUpdateCheck, "latest_version": s.LatestVersion,
 		"update_available": s.UpdateAvailable,
 		"signup_enabled":   s.SignupEnabled, "default_user_role": s.DefaultUserRole,
@@ -1057,6 +1061,9 @@ func applySettingsUpdate(s *models.Settings, req map[string]interface{}, enc *ut
 		if val >= 1 && val <= 1440 {
 			s.PackageCacheRefreshMaxAge = val
 		}
+	}
+	if v, ok := getReqBool(req, "apt_disable_retries", "aptDisableRetries"); ok {
+		s.AptDisableRetries = v
 	}
 	if v, ok := getReqString(req, "github_repo_url", "githubRepoUrl"); ok {
 		s.GithubRepoURL = v

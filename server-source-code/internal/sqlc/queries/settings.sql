@@ -64,8 +64,9 @@ UPDATE settings SET
     package_cache_refresh_mode = $58,
     package_cache_refresh_max_age = $59,
     oidc_trust_unverified_email = $60,
-    oidc_local_auth_fallback = $61
-WHERE id = $62;
+    oidc_local_auth_fallback = $61,
+    apt_disable_retries = $62
+WHERE id = $63;
 
 -- name: UpdateSettingsConfig :exec
 UPDATE settings SET

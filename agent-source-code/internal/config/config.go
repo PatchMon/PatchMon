@@ -695,6 +695,14 @@ func (m *Manager) SetPackageCacheRefresh(mode string, maxAge int) error {
 	return m.saveConfigLocked()
 }
 
+// SetAptDisableRetries saves the apt retries toggle.
+func (m *Manager) SetAptDisableRetries(disable bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.config.Apt.DisableRetries = &disable
+	return m.saveConfigLocked()
+}
+
 // GetPackageCacheRefreshMode returns the package cache refresh mode, defaulting to "always"
 func (m *Manager) GetPackageCacheRefreshMode() string {
 	m.mu.RLock()
@@ -747,8 +755,7 @@ func (m *Manager) apkSecDBEnabledLocked() bool {
 	return m.config.APKSecDB.Enabled == nil || *m.config.APKSecDB.Enabled
 }
 
-// GetAptDisableRetries reports whether apt patch commands run with
-// Acquire::Retries=0 to close the CVE-2026-109518 package-swap window. Defaults to true.
+// GetAptDisableRetries defaults to true when the key is absent.
 func (m *Manager) GetAptDisableRetries() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
