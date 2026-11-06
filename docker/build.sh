@@ -72,7 +72,7 @@ if [ "$SKIP_AGENTS" = "true" ]; then
   echo "==> Skipping agent build"
 else
   echo "==> Building agent binaries"
-  make -C agent-source-code build-linux build-freebsd build-windows VERSION="$VERSION"
+  make -C agent-source-code build-linux build-freebsd build-openbsd build-windows VERSION="$VERSION"
 fi
 
 mkdir -p agents-prebuilt
@@ -81,7 +81,7 @@ agent_bins=(agent-source-code/build/patchmon-agent-*)
 if [ ${#agent_bins[@]} -eq 0 ]; then
   die "agents-prebuilt/ has nothing to copy and no agents were built.
   Run without --skip-agents, or build them with:
-      make -C agent-source-code build-linux build-freebsd build-windows"
+      make -C agent-source-code build-linux build-freebsd build-openbsd build-windows"
 fi
 cp -f "${agent_bins[@]}" agents-prebuilt/
 echo "==> Staged ${#agent_bins[@]} agent binaries"
