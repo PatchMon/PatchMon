@@ -58,8 +58,8 @@ func (f *enrolFixture) token(maxPerDay, createdToday int) (id, key, secret strin
 		f.t.Fatal(err)
 	}
 	if _, err := f.d.Exec(context.Background(),
-		`INSERT INTO auto_enrollment_tokens (id, token_name, token_key, token_secret, allowed_ip_ranges, max_hosts_per_day, hosts_created_today, updated_at)
-		 VALUES ($1, $2, $3, $4, '{}', $5, $6, NOW())`,
+		`INSERT INTO auto_enrollment_tokens (id, token_name, token_key, token_secret, allowed_ip_ranges, max_hosts_per_day, hosts_created_today, metadata, updated_at)
+		 VALUES ($1, $2, $3, $4, '{}', $5, $6, '{"integration_type":"direct-host"}', NOW())`,
 		id, "tok-"+id[:8], key, string(hash), maxPerDay, createdToday); err != nil {
 		f.t.Fatal(err)
 	}
