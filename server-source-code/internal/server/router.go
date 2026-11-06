@@ -276,6 +276,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	patchAssignmentsStore := store.NewPatchPolicyAssignmentsStore(dbProvider)
 	patchExclusionsStore := store.NewPatchPolicyExclusionsStore(dbProvider)
 	patchingHandler := handler.NewPatchingHandler(patchRunsStore, patchPoliciesStore, patchAssignmentsStore, patchExclusionsStore, hostsStore, settingsStore, cfg, queueClient, queueInspector, notifyEmit, log)
+	patchingHandler.SetHostGroups(hostGroupsStore)
 	// Wire up the live patch-run stream hub and the agent WebSocket registry
 	// for the stop-run endpoint. Kept as optional dependencies so unrelated
 	// call-sites don't need to thread them.
@@ -556,6 +557,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/{hostId}/integrations/apply-pending-config", hostsHandler.ApplyPendingConfig)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/{hostId}/integrations/{integrationName}/toggle", hostsHandler.ToggleIntegration)
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/hosts/{hostId}", hostsHandler.GetByID)
+			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore)).Get("/hosts/{hostId}/package-holds", hostGroupsHandler.EffectivePackageHolds)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Post("/hosts/create", hostsHandler.Create)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Put("/hosts/{hostId}/groups", hostsHandler.UpdateGroups)
 			r.With(middleware.RequirePermission("can_manage_hosts", permissionsStore)).Put("/hosts/bulk/groups", hostsHandler.BulkUpdateGroups)
@@ -646,6 +648,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore), hostctx.RequireModule("patching")).Post("/patching/runs/{id}/stop", patchingHandler.StopRun)
 			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore), hostctx.RequireModule("patching")).Delete("/patching/runs/{id}", patchingHandler.DeleteRun)
 			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore), hostctx.RequireModule("patching")).Post("/patching/trigger", patchingHandler.Trigger)
+			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore), hostctx.RequireModule("patching")).Post("/patching/groups/{id}/trigger", patchingHandler.TriggerGroup)
 			// Policies + approval workflow: patching_policies module.
 			r.With(middleware.RequirePermission("can_view_hosts", permissionsStore), hostctx.RequireModule("patching_policies")).Get("/patching/policies", patchingHandler.ListPolicies)
 			r.With(middleware.RequirePermission("can_manage_patching", permissionsStore), hostctx.RequireModule("patching_policies")).Post("/patching/policies", patchingHandler.CreatePolicy)

@@ -159,6 +159,14 @@ export const patchingAPI = {
 					: {}),
 			})
 			.then((res) => res.data),
+	triggerGroup: (groupId, { mode, pending_approval, schedule_override } = {}) =>
+		api
+			.post(`/patching/groups/${groupId}/trigger`, {
+				mode,
+				...(pending_approval ? { pending_approval: true } : {}),
+				...(schedule_override ? { schedule_override } : {}),
+			})
+			.then((res) => res.data),
 	approveRun: (id, opts = {}) =>
 		api
 			.post(`/patching/runs/${id}/approve`, {

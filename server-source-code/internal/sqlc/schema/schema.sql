@@ -325,6 +325,16 @@ CREATE TABLE IF NOT EXISTS host_group_memberships (
     UNIQUE(host_id, host_group_id)
 );
 
+-- Packages skipped when a host in this group is patched. Applied at run time
+-- only; the agent does not persist apt-mark hold or dnf versionlock.
+CREATE TABLE IF NOT EXISTS host_group_package_holds (
+    id TEXT PRIMARY KEY,
+    host_group_id TEXT NOT NULL REFERENCES host_groups(id) ON DELETE CASCADE,
+    package_name TEXT NOT NULL,
+    created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (host_group_id, package_name)
+);
+
 -- host_packages
 CREATE TABLE IF NOT EXISTS host_packages (
     id TEXT PRIMARY KEY,
@@ -791,6 +801,14 @@ CREATE TABLE IF NOT EXISTS patch_runs (
     reboot_required BOOLEAN,
     windows_include_updates BOOLEAN,
     windows_include_apps BOOLEAN
+);
+
+-- Packages a patch_all run must not upgrade. Copied onto the execution run
+-- when a pending-approval run is approved.
+CREATE TABLE IF NOT EXISTS patch_run_excludes (
+    patch_run_id TEXT NOT NULL REFERENCES patch_runs(id) ON DELETE CASCADE,
+    package_name TEXT NOT NULL,
+    PRIMARY KEY (patch_run_id, package_name)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS patch_runs_one_active_per_host

@@ -157,3 +157,18 @@ func TestUCSUpgradeRefusalWithoutRelease(t *testing.T) {
 		t.Fatal("expected a refusal when the UCS release is unknown")
 	}
 }
+
+func TestParseAptInstPackagesSkipsHolds(t *testing.T) {
+	out := "Inst openssl [1] (2 jammy-security [amd64])\nInst nginx [1] (2 jammy-updates [amd64])\n"
+	got := aptPackagesExcept(parseAptInstPackages(out), []string{"nginx"})
+	if len(got) != 1 || got[0] != "openssl" {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestDnfUpgradeArgsExclude(t *testing.T) {
+	got := strings.Join(dnfUpgradeArgs(false, []string{"nginx"}), " ")
+	if got != "upgrade -y --exclude=nginx" {
+		t.Fatalf("got %q", got)
+	}
+}

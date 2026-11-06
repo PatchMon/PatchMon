@@ -394,6 +394,8 @@ type CreateRunOpts struct {
 	Items                 []NewPatchRunItem
 	WindowsIncludeUpdates *bool
 	WindowsIncludeApps    *bool
+	// ExcludePackages are packages a patch_all run must not upgrade.
+	ExcludePackages []string
 }
 
 // ErrHostHasActivePatchRun is returned when a host already has a queued,
@@ -427,7 +429,13 @@ func (s *PatchRunsStore) CreateRun(ctx context.Context, id, hostID, jobID, patch
 		return "", err
 	}
 	d := s.db.DB(ctx)
-	if opts == nil || len(opts.Items) == 0 {
+	var items []NewPatchRunItem
+	var excludes []string
+	if opts != nil {
+		items = opts.Items
+		excludes = opts.ExcludePackages
+	}
+	if len(items) == 0 && len(excludes) == 0 {
 		if err := d.Queries.CreatePatchRun(ctx, params); err != nil {
 			return params.ID, mapActiveRunConflict(err)
 		}
@@ -444,7 +452,10 @@ func (s *PatchRunsStore) CreateRun(ctx context.Context, id, hostID, jobID, patch
 	if err := q.CreatePatchRun(ctx, params); err != nil {
 		return params.ID, mapActiveRunConflict(err)
 	}
-	if err := insertPatchRunItems(ctx, q, params.ID, hostID, opts.Items); err != nil {
+	if err := insertPatchRunItems(ctx, q, params.ID, hostID, items); err != nil {
+		return params.ID, err
+	}
+	if err := insertPatchRunExcludes(ctx, q, params.ID, excludes); err != nil {
 		return params.ID, err
 	}
 	return params.ID, tx.Commit(ctx)
@@ -491,7 +502,31 @@ func (s *PatchRunsStore) ApproveAndCreateRun(ctx context.Context, validationRunI
 	if err := insertPatchRunItems(ctx, q, params.ID, hostID, runOpts.Items); err != nil {
 		return err
 	}
+	if err := insertPatchRunExcludes(ctx, q, params.ID, runOpts.ExcludePackages); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
+}
+
+func insertPatchRunExcludes(ctx context.Context, q *db.Queries, runID string, names []string) error {
+	for _, name := range names {
+		if err := q.InsertPatchRunExclude(ctx, db.InsertPatchRunExcludeParams{
+			PatchRunID:  runID,
+			PackageName: name,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ListExcludePackages returns packages a patch_all run must not upgrade.
+func (s *PatchRunsStore) ListExcludePackages(ctx context.Context, runID string) ([]string, error) {
+	names, err := s.db.DB(ctx).Queries.ListPatchRunExcludes(ctx, runID)
+	if err != nil || names == nil {
+		return []string{}, err
+	}
+	return names, nil
 }
 
 func newCreatePatchRunParams(id, hostID, jobID, patchType string, packageName *string, packageNames []string, triggeredByUserID *string, dryRun bool, scheduledAt *time.Time, policyID, policyName *string, policySnapshot []byte, opts *CreateRunOpts) (db.CreatePatchRunParams, error) {

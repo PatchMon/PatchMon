@@ -194,6 +194,7 @@ type Querier interface {
 	DeleteHost(ctx context.Context, id string) error
 	DeleteHostGroup(ctx context.Context, id string) error
 	DeleteHostGroupMemberships(ctx context.Context, hostID string) error
+	DeleteHostGroupPackageHolds(ctx context.Context, hostGroupID string) error
 	DeleteHostPackagesByHostID(ctx context.Context, hostID string) error
 	DeleteHostPackagesExceptWindowsUpdates(ctx context.Context, hostID string) error
 	DeleteHostRepositoriesByHostID(ctx context.Context, hostID string) error
@@ -472,9 +473,11 @@ type Querier interface {
 	// ON CONFLICT: callers may pass the same group id twice, and the delete has
 	// already run by then.
 	InsertHostGroupMembership(ctx context.Context, arg InsertHostGroupMembershipParams) error
+	InsertHostGroupPackageHold(ctx context.Context, arg InsertHostGroupPackageHoldParams) error
 	InsertHostRepository(ctx context.Context, arg InsertHostRepositoryParams) error
 	InsertJobHistory(ctx context.Context, arg InsertJobHistoryParams) error
 	InsertNotificationDeliveryLog(ctx context.Context, arg InsertNotificationDeliveryLogParams) (NotificationDeliveryLog, error)
+	InsertPatchRunExclude(ctx context.Context, arg InsertPatchRunExcludeParams) error
 	InsertPatchRunItems(ctx context.Context, arg InsertPatchRunItemsParams) error
 	InsertReleaseNotesAcceptance(ctx context.Context, arg InsertReleaseNotesAcceptanceParams) (string, error)
 	InsertScheduledReportRun(ctx context.Context, arg InsertScheduledReportRunParams) (ScheduledReportRun, error)
@@ -494,6 +497,7 @@ type Querier interface {
 	ListAlertActions(ctx context.Context) ([]AlertAction, error)
 	ListAlertConfig(ctx context.Context) ([]ListAlertConfigRow, error)
 	ListAlertHistoryByAlertID(ctx context.Context, alertID string) ([]ListAlertHistoryByAlertIDRow, error)
+	ListAllHostGroupPackageHolds(ctx context.Context) ([]ListAllHostGroupPackageHoldsRow, error)
 	ListAutoEnrollmentTokens(ctx context.Context) ([]ListAutoEnrollmentTokensRow, error)
 	ListComplianceProfiles(ctx context.Context) ([]ComplianceProfile, error)
 	ListComplianceResultsByScan(ctx context.Context, arg ListComplianceResultsByScanParams) ([]ListComplianceResultsByScanRow, error)
@@ -505,7 +509,9 @@ type Querier interface {
 	ListDockerHostAPIIDs(ctx context.Context) ([]ListDockerHostAPIIDsRow, error)
 	ListDockerHostsPaginated(ctx context.Context, arg ListDockerHostsPaginatedParams) ([]ListDockerHostsPaginatedRow, error)
 	ListDockerImageChecksByHost(ctx context.Context, hostID string) ([]ListDockerImageChecksByHostRow, error)
+	ListEffectivePackageHoldsForHost(ctx context.Context, hostID string) ([]string, error)
 	ListExistingHostApiIDs(ctx context.Context, dollar_1 []string) ([]string, error)
+	ListHostGroupPackageHolds(ctx context.Context, hostGroupID string) ([]string, error)
 	ListHostGroups(ctx context.Context) ([]HostGroup, error)
 	ListHostGroupsWithHostCount(ctx context.Context) ([]ListHostGroupsWithHostCountRow, error)
 	ListHostOptions(ctx context.Context, arg ListHostOptionsParams) ([]ListHostOptionsRow, error)
@@ -532,6 +538,7 @@ type Querier interface {
 	ListPatchPolicyAssignmentsByPolicy(ctx context.Context, patchPolicyID string) ([]PatchPolicyAssignment, error)
 	// patch_policy_exclusions
 	ListPatchPolicyExclusions(ctx context.Context, patchPolicyID string) ([]ListPatchPolicyExclusionsRow, error)
+	ListPatchRunExcludes(ctx context.Context, patchRunID string) ([]string, error)
 	ListPatchRunItemKeys(ctx context.Context, patchRunID string) ([]ListPatchRunItemKeysRow, error)
 	ListPatchRunItems(ctx context.Context, patchRunID string) ([]PatchRunItem, error)
 	// The 'status' filter accepts an exact status value. The pseudo-value
@@ -552,6 +559,7 @@ type Querier interface {
 	ListRoles(ctx context.Context) ([]RolePermission, error)
 	ListScheduledReports(ctx context.Context) ([]ScheduledReport, error)
 	ListScheduledReportsDue(ctx context.Context, nextRunAt pgtype.Timestamp) ([]ScheduledReport, error)
+	ListSecurityUpdatePackageNamesByHost(ctx context.Context, hostID string) ([]string, error)
 	ListSessionsByUserID(ctx context.Context, userID string) ([]UserSession, error)
 	ListStalledComplianceScans(ctx context.Context, startedAt pgtype.Timestamp) ([]ListStalledComplianceScansRow, error)
 	ListStalledComplianceScansWithDetails(ctx context.Context, startedAt pgtype.Timestamp) ([]ListStalledComplianceScansWithDetailsRow, error)

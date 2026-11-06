@@ -135,14 +135,15 @@ func NewSSGUpgradeTask(p SSGUpgradePayload) (*asynq.Task, error) {
 
 // RunPatchPayload is the payload for run_patch job.
 type RunPatchPayload struct {
-	HostID       string   `json:"hostId"`
-	Host         string   `json:"host,omitempty"` // context host (e.g. iby1.dev.local) for per-context DB resolution
-	ApiID        string   `json:"api_id"`
-	PatchRunID   string   `json:"patch_run_id"`
-	PatchType    string   `json:"patch_type"`
-	PackageName  *string  `json:"package_name,omitempty"`
-	PackageNames []string `json:"package_names,omitempty"`
-	DryRun       bool     `json:"dry_run,omitempty"`
+	HostID          string   `json:"hostId"`
+	Host            string   `json:"host,omitempty"` // context host (e.g. iby1.dev.local) for per-context DB resolution
+	ApiID           string   `json:"api_id"`
+	PatchRunID      string   `json:"patch_run_id"`
+	PatchType       string   `json:"patch_type"`
+	PackageName     *string  `json:"package_name,omitempty"`
+	PackageNames    []string `json:"package_names,omitempty"`
+	ExcludePackages []string `json:"exclude_packages,omitempty"`
+	DryRun          bool     `json:"dry_run,omitempty"`
 }
 
 // NewRunPatchTask creates a run_patch task.
@@ -855,6 +856,18 @@ func (h *RunPatchHandler) ProcessTask(ctx context.Context, t *asynq.Task) error 
 			return nil
 		}
 	}
+	if excludes, exErr := h.patchRuns.ListExcludePackages(ctx, p.PatchRunID); exErr != nil {
+		return exErr
+	} else if len(excludes) > 0 {
+		p.ExcludePackages = excludes
+	}
+	if windows && len(p.ExcludePackages) > 0 {
+		if err := h.patchRuns.FailRun(ctx, p.PatchRunID, "Package holds are not applied on Windows, so this Patch all was not sent"); err != nil {
+			return err
+		}
+		h.log.Warn("run_patch: windows patch_all with package holds refused", "api_id", p.ApiID, "patch_run_id", p.PatchRunID)
+		return nil
+	}
 	msg, err := json.Marshal(buildRunPatchMessage(p, run, windows, pending))
 	if err != nil {
 		return err
@@ -917,6 +930,9 @@ func buildRunPatchMessage(p RunPatchPayload, run *db.GetPatchRunByIDRow, windows
 		}
 		if len(p.PackageNames) > 0 {
 			payload["package_names"] = p.PackageNames
+		}
+		if len(p.ExcludePackages) > 0 {
+			payload["exclude_packages"] = p.ExcludePackages
 		}
 		return payload
 	}

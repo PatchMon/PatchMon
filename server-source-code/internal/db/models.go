@@ -360,6 +360,13 @@ type HostGroupMembership struct {
 	CreatedAt   pgtype.Timestamp `json:"created_at"`
 }
 
+type HostGroupPackageHold struct {
+	ID          string           `json:"id"`
+	HostGroupID string           `json:"host_group_id"`
+	PackageName string           `json:"package_name"`
+	CreatedAt   pgtype.Timestamp `json:"created_at"`
+}
+
 type HostPackage struct {
 	ID                 string           `json:"id"`
 	HostID             string           `json:"host_id"`
@@ -530,6 +537,11 @@ type PatchRun struct {
 	RebootRequired        *bool            `json:"reboot_required"`
 	WindowsIncludeUpdates *bool            `json:"windows_include_updates"`
 	WindowsIncludeApps    *bool            `json:"windows_include_apps"`
+}
+
+type PatchRunExclude struct {
+	PatchRunID  string `json:"patch_run_id"`
+	PackageName string `json:"package_name"`
 }
 
 type PatchRunItem struct {

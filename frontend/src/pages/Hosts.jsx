@@ -39,6 +39,7 @@ import {
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import AddHostWizard from "../components/AddHostWizard";
+import GroupPatchActions from "../components/GroupPatchActions";
 import HostStatusPills from "../components/HostStatusPills";
 import {
 	AgentVersionIndicators,
@@ -1965,6 +1966,16 @@ const Hosts = () => {
 									/>
 								</div>
 							</div>
+							{groupFilter && groupFilter !== "all" && groupFilter !== "ungrouped" && (
+								<div className="flex flex-wrap items-center gap-2">
+									<GroupPatchActions
+										groupId={groupFilter}
+										groupName={
+											hostGroups?.find((g) => g.id === groupFilter)?.name
+										}
+									/>
+								</div>
+							)}
 							<div className="flex flex-wrap gap-2">
 								<button
 									type="button"

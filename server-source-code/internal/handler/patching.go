@@ -62,8 +62,14 @@ type PatchingHandler struct {
 	// Optional collaborators for live patch-run streaming.
 	// Populated via SetStreamDependencies after construction so existing
 	// call-sites don't need to thread these values immediately.
-	hub      *patchstream.Hub
-	registry *agentregistry.Registry
+	hub        *patchstream.Hub
+	registry   *agentregistry.Registry
+	hostGroups *store.HostGroupsStore
+}
+
+// SetHostGroups wires group membership and package holds into patch triggers.
+func (h *PatchingHandler) SetHostGroups(groups *store.HostGroupsStore) {
+	h.hostGroups = groups
 }
 
 // NewPatchingHandler creates a new patching handler.
@@ -709,6 +715,22 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 		writeRunRequestError(w, e)
 		return
 	}
+	savedExcludes, err := h.patchRuns.ListExcludePackages(r.Context(), validationID)
+	if err != nil {
+		h.log.Error("patching: list run excludes error", "validation_run_id", validationID, "error", err)
+		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to read held packages for run"})
+		return
+	}
+	if valRun.PatchType == "patch_all" && len(savedExcludes) > 0 {
+		if store.IsWindowsOSType(host.OSType) {
+			JSON(w, http.StatusBadRequest, map[string]string{"error": "Package holds are not applied on Windows, so Patch all was not queued for this host"})
+			return
+		}
+		if msg := excludeAgentRefusal(host); msg != "" {
+			JSON(w, http.StatusBadRequest, map[string]string{"error": msg})
+			return
+		}
+	}
 
 	var pkgName *string
 	if valRun.PackageName != nil {
@@ -805,15 +827,22 @@ func (h *PatchingHandler) ApproveRun(w http.ResponseWriter, r *http.Request) {
 	newRunID := uuid.New().String()
 	jobID := "patch-run-" + newRunID
 
+	if len(savedExcludes) > 0 {
+		if approveOpts == nil {
+			approveOpts = &store.CreateRunOpts{}
+		}
+		approveOpts.ExcludePackages = savedExcludes
+	}
 	task, err := queue.NewRunPatchTask(queue.RunPatchPayload{
-		HostID:       valRun.HostID,
-		Host:         r.Header.Get("X-Forwarded-Host"),
-		ApiID:        host.ApiID,
-		PatchRunID:   newRunID,
-		PatchType:    valRun.PatchType,
-		PackageName:  pkgName,
-		PackageNames: pkgNames,
-		DryRun:       false,
+		HostID:          valRun.HostID,
+		Host:            r.Header.Get("X-Forwarded-Host"),
+		ApiID:           host.ApiID,
+		PatchRunID:      newRunID,
+		PatchType:       valRun.PatchType,
+		PackageName:     pkgName,
+		PackageNames:    pkgNames,
+		ExcludePackages: savedExcludes,
+		DryRun:          false,
 	})
 	if err != nil {
 		h.log.Error("patching: create approve task error", "error", err)
@@ -1096,205 +1125,29 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if e := selectedPatchRefusal(host, body.PatchType); e != nil {
-		writeRunRequestError(w, e)
-		return
-	}
-	windows := store.IsWindowsOSType(host.OSType)
-
-	if body.DryRun && body.PatchType != "patch_package" && !windows {
-		JSON(w, http.StatusBadRequest, map[string]string{"error": "dry_run is only supported for patch_package"})
-		return
-	}
-
-	var pkgName *string
-	var pkgNames []string
-	var createOpts *store.CreateRunOpts
-	if windows {
-		names := body.PackageNames
-		if len(names) == 0 && body.PackageName != "" {
-			names = []string{body.PackageName}
-		}
-		plan, reqErr, err := h.validateWindowsRun(r.Context(), host.ID, host.AgentVersion, body.PatchType, names, body.WindowsScope)
-		if err != nil {
-			h.log.Error("patching: resolve windows targets error", "host_id", host.ID, "error", err)
-			JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to resolve patch targets"})
-			return
-		}
-		if reqErr != nil {
-			writeRunRequestError(w, reqErr)
-			return
-		}
-		if body.PatchType == "patch_package" {
-			pkgNames = itemTitles(plan.Items)
-		}
-		createOpts = &store.CreateRunOpts{
-			Items:                 plan.Items,
-			WindowsIncludeUpdates: plan.IncludeUpdates,
-			WindowsIncludeApps:    plan.IncludeApps,
-		}
-	} else if body.PatchType == "patch_package" {
-		if len(body.PackageNames) > 0 {
-			for _, n := range body.PackageNames {
-				if !isValidPackageName(n) {
-					JSON(w, http.StatusBadRequest, map[string]string{"error": "Every package_names entry must be a valid package name"})
-					return
-				}
-			}
-			if len(body.PackageNames) > maxPatchTargets {
-				JSON(w, http.StatusBadRequest, map[string]string{"error": "package_names limited to 100 packages per run"})
-				return
-			}
-			pkgNames = body.PackageNames
-		} else if body.PackageName != "" && isValidPackageName(body.PackageName) {
-			pkgName = &body.PackageName
-		} else {
-			JSON(w, http.StatusBadRequest, map[string]string{"error": "Valid package_name or non-empty package_names is required for patch_package"})
-			return
-		}
-	}
-
-	orgTZ := h.resolveOrgTimezone(r.Context())
-	policy, _ := h.patchPolicies.ResolveEffectivePolicy(r.Context(), body.HostID)
-	runAt, schedMeta := h.patchPolicies.ComputeRunAtWithMeta(policy, orgTZ)
-	if schedMeta.Err != nil {
-		h.log.Warn("patching: fixed_time_utc parse failed - running immediately",
-			"policy_id", policyIDForLog(policy), "fixed_time_utc", fixedTimeForLog(policy), "error", schedMeta.Err)
-	}
-	delayMs := time.Until(runAt).Milliseconds()
-	if delayMs < 0 {
-		delayMs = 0
-	}
-	// Dry runs and "submit for approval" runs never delay — dry runs fire
-	// immediately on the host, and pending-approval runs don't fire at all
-	// until someone approves them (delay is computed fresh at approve time).
-	if body.DryRun || body.PendingApproval {
-		delayMs = 0
-	}
-	// Manual schedule override: "immediate" bypasses policy delay
-	if body.ScheduleOverride == "immediate" {
-		delayMs = 0
-	}
-	if delayMs == 0 {
-		runAt = time.Now()
-	}
-
-	patchRunID := uuid.New().String()
-	jobID := patchRunJobIDPrefix + patchRunID
-	var triggeredBy *string
-	if userID, _ := r.Context().Value(middleware.UserIDKey).(string); userID != "" {
-		triggeredBy = &userID
-	}
-	var scheduledAt *time.Time
-	if delayMs > 0 {
-		scheduledAt = &runAt
-	}
-	// Snapshot the effective policy at trigger time so it can be shown in run details.
-	// Always snapshot even for dry runs: this records the policy that was active at
-	// the time the dry run was triggered, which is useful context for the approver.
-	var policyID, policyNamePtr *string
-	var policySnapshot []byte
-	if policy != nil {
-		policyID = &policy.ID
-		// schedule_timezone records the IANA zone actually used to compute
-		// run_at (org-resolved). The legacy per-policy timezone field is
-		// included for backward compatibility but is no longer read by the
-		// scheduler. Only set for fixed-time schedules — see ApproveRun for
-		// rationale.
-		snap := map[string]interface{}{
-			"name":             policy.Name,
-			"patch_delay_type": policy.PatchDelayType,
-			"delay_minutes":    policy.DelayMinutes,
-			"fixed_time_utc":   policy.FixedTimeUtc,
-			"timezone":         policy.Timezone,
-		}
-		if policy.PatchDelayType == "fixed_time" {
-			snap["schedule_timezone"] = schedMeta.Timezone
-		}
-		policySnapshot, _ = json.Marshal(snap)
-		n := policy.Name
-		policyNamePtr = &n
-	} else {
-		policySnapshot, _ = json.Marshal(map[string]interface{}{
-			"patch_delay_type": "immediate",
-		})
-	}
-	// Pending-approval runs land in their own "pending_approval" status: they
-	// never executed anything on the host (so they're not pending_validation,
-	// which implies an in-flight dry-run), they're just waiting for an
-	// approver to call ApproveRun, which builds the real execution run
-	// (same code path the approve wizard already uses).
-	if body.PendingApproval {
-		if createOpts == nil {
-			createOpts = &store.CreateRunOpts{}
-		}
-		createOpts.InitialStatus = "pending_approval"
-	}
-	_, err := h.patchRuns.CreateRun(r.Context(), patchRunID, body.HostID, jobID, body.PatchType, pkgName, pkgNames, triggeredBy, body.DryRun, scheduledAt, policyID, policyNamePtr, policySnapshot, createOpts)
-	if errors.Is(err, store.ErrHostHasActivePatchRun) {
-		JSON(w, http.StatusConflict, map[string]string{"error": activePatchRunMessage})
-		return
-	}
+	userID, _ := r.Context().Value(middleware.UserIDKey).(string)
+	res, reqErr, err := h.queuePatch(r.Context(), queuePatchRequest{
+		Host:             host,
+		PatchType:        body.PatchType,
+		PackageName:      body.PackageName,
+		PackageNames:     body.PackageNames,
+		DryRun:           body.DryRun,
+		PendingApproval:  body.PendingApproval,
+		ScheduleOverride: body.ScheduleOverride,
+		WindowsScope:     body.WindowsScope,
+		ForwardedHost:    r.Header.Get("X-Forwarded-Host"),
+		UserID:           userID,
+	})
 	if err != nil {
 		h.log.Error("patching: create run error", "error", err)
 		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create patch run"})
 		return
 	}
-
-	// Pending-approval runs don't enqueue any work — they sit in the DB
-	// until someone approves them. Short-circuit here.
-	if body.PendingApproval {
-		JSON(w, http.StatusOK, map[string]interface{}{
-			"message":          "Submitted for approval",
-			"patch_run_id":     patchRunID,
-			"job_id":           jobID,
-			"run_at":           runAt.UTC().Format(time.RFC3339),
-			"queued":           false,
-			"pending_approval": true,
-		})
+	if reqErr != nil {
+		writeRunRequestError(w, reqErr)
 		return
 	}
-
-	task, err := queue.NewRunPatchTask(queue.RunPatchPayload{
-		HostID:       body.HostID,
-		Host:         r.Header.Get("X-Forwarded-Host"),
-		ApiID:        host.ApiID,
-		PatchRunID:   patchRunID,
-		PatchType:    body.PatchType,
-		PackageName:  pkgName,
-		PackageNames: pkgNames,
-		DryRun:       body.DryRun,
-	})
-	if err != nil {
-		h.log.Error("patching: create task error", "error", err)
-		h.cancelOrphanedRun(r.Context(), patchRunID)
-		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Patch queue is not available"})
-		return
-	}
-	opts := []asynq.Option{}
-	if delayMs > 0 {
-		opts = append(opts, asynq.ProcessIn(time.Duration(delayMs)*time.Millisecond))
-	}
-	if _, err := h.queueClient.Enqueue(task, opts...); err != nil {
-		h.log.Error("patching: enqueue error", "error", err)
-		h.cancelOrphanedRun(r.Context(), patchRunID)
-		JSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to queue patch"})
-		return
-	}
-
-	msg := "Patch queued"
-	if body.DryRun {
-		msg = "Dry run queued"
-	} else if delayMs > 0 {
-		msg = "Patch scheduled for " + runAt.UTC().Format(time.RFC3339)
-	}
-	JSON(w, http.StatusOK, map[string]interface{}{
-		"message":      msg,
-		"patch_run_id": patchRunID,
-		"job_id":       jobID,
-		"run_at":       runAt.UTC().Format(time.RFC3339),
-		"queued":       true,
-	})
+	JSON(w, http.StatusOK, res.Body)
 }
 
 // ListPolicies returns GET /patching/policies.

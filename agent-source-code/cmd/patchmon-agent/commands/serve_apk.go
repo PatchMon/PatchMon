@@ -18,11 +18,12 @@ type apkPatchIO struct {
 	run       func(args ...string) (string, error)
 	note      func(msg string)
 	inventory func() (packages.APKInventory, error)
+	excludes  []string
 }
 
 // runPatchAPK holds the in-process apk slot for the whole run, so a report collected
 // meanwhile does not start its own apk update against the database lock.
-func runPatchAPK(ctx context.Context, sink *streamSink, env []string, patchType string, packageNames []string, dryRun bool) error {
+func runPatchAPK(ctx context.Context, sink *streamSink, env []string, patchType string, packageNames []string, dryRun bool, excludes []string) error {
 	if patchType != "patch_all" && len(packageNames) == 0 {
 		return errors.New("package_names required for patch_package")
 	}
@@ -44,6 +45,7 @@ func runPatchAPK(ctx context.Context, sink *streamSink, env []string, patchType 
 		note: func(msg string) {
 			sink.WriteString("[patchmon] " + msg + "\n")
 		},
+		excludes: excludes,
 		inventory: func() (packages.APKInventory, error) {
 			return packages.LoadAPKInventory(ctx)
 		},
@@ -132,6 +134,21 @@ func runAPKPatch(io apkPatchIO, patchType string, packageNames []string, dryRun 
 		io.note(msg)
 	}
 
+	if targets == nil && len(io.excludes) > 0 {
+		keep := apkUpgradeNamesExcept(plan, io.excludes)
+		if len(keep) == 0 {
+			io.note("Nothing to upgrade: every pending package is held in PatchMon.")
+			return nil
+		}
+		upgradeTargets = keep
+		if plan, err = apkSimulate(io, upgradeTargets, false); err != nil {
+			return err
+		}
+		if refused := plan.Refused(inv.WorldNames); len(refused) > 0 {
+			return apkRefusalError(refused)
+		}
+	}
+
 	if dryRun {
 		return nil
 	}
@@ -139,6 +156,24 @@ func runAPKPatch(io apkPatchIO, patchType string, packageNames []string, dryRun 
 		return apkStepError("apk upgrade", out, err)
 	}
 	return nil
+}
+
+func apkUpgradeNamesExcept(plan packages.APKPlan, excludes []string) []string {
+	held := map[string]struct{}{}
+	for _, n := range excludes {
+		held[n] = struct{}{}
+	}
+	var keep []string
+	for _, s := range plan.Steps {
+		if s.Action != "Upgrading" && s.Action != "Installing" {
+			continue
+		}
+		if _, ok := held[s.Name]; ok || !validAptPackagePattern.MatchString(s.Name) {
+			continue
+		}
+		keep = append(keep, s.Name)
+	}
+	return keep
 }
 
 func apkRefusalError(refused []packages.APKPlanStep) error {
