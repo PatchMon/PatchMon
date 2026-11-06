@@ -5877,7 +5877,7 @@ apk_secdb:
   enabled: true
 
 # ─── Apt Download Retries ────────────────────────────────────────────
-# Debian and Ubuntu hosts only. Set from Settings → Agent Updates.
+# apt-based hosts only. Set from Settings → Agent Updates.
 apt:
   # Default: true
   disable_retries: true
@@ -6219,13 +6219,13 @@ Like `docker_update_check`, this block is **not server-pushable**: edit `config.
 
 ### Apt Download Retries (`apt`) {#apt-download-retries-apt}
 
-Debian and Ubuntu hosts only, from agent 2.1.8. Other operating systems ignore this block.
+apt-based hosts (Debian, Ubuntu and derivatives) only, from agent 2.1.8. Other operating systems ignore this block.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `disable_retries` | Boolean | `true` | When `true`, PatchMon patch runs call `apt-get upgrade` and `apt-get --only-upgrade install` with `-o Acquire::Retries=0`. Set to `false` to restore apt's own retry behaviour. A missing key counts as `true`. |
 
-With retries off, apt does not retry a failed or redirected download, which protects PatchMon patch runs against CVE-2026-109518. A transient mirror failure then fails the patch run instead of being retried. `apt-get update` and dry runs keep apt's normal retries. The compliance scanner install always runs with retries off, whatever this key says.
+With retries off, apt does not retry a failed or redirected download, which protects PatchMon patch runs against CVE-2026-109518. A transient mirror failure then fails the patch run instead of being retried. `apt-get update` and dry runs keep apt's normal retries. The compliance scanner install always runs with retries off, whatever this key says. On Univention Corporate Server, **Patch all** runs `univention-upgrade`, which this setting does not cover; patching selected packages is covered.
 
 This block **is server-driven**: the value comes from **Settings → Agent Updates → Disable apt download retries**. The agent saves the server's value when it starts and when the setting changes, so a hand edit is replaced. A server older than 2.1.8 sends no value and leaves the key as it is.
 
