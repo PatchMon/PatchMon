@@ -501,6 +501,9 @@ func (m *Manager) saveConfigLocked() error {
 	configViper.Set("apk_secdb", map[string]interface{}{
 		"enabled": m.apkSecDBEnabledLocked(),
 	})
+	configViper.Set("apt", map[string]interface{}{
+		"disable_retries": m.aptDisableRetriesLocked(),
+	})
 
 	return writeConfigAtomically(configViper, m.configFile)
 }
@@ -742,6 +745,18 @@ func (m *Manager) GetAPKSecDBEnabled() bool {
 
 func (m *Manager) apkSecDBEnabledLocked() bool {
 	return m.config.APKSecDB.Enabled == nil || *m.config.APKSecDB.Enabled
+}
+
+// GetAptDisableRetries reports whether apt patch commands run with
+// Acquire::Retries=0 to close the CVE-2026-109518 package-swap window. Defaults to true.
+func (m *Manager) GetAptDisableRetries() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.aptDisableRetriesLocked()
+}
+
+func (m *Manager) aptDisableRetriesLocked() bool {
+	return m.config.Apt.DisableRetries == nil || *m.config.Apt.DisableRetries
 }
 
 // IsIntegrationEnabled checks if an integration is enabled

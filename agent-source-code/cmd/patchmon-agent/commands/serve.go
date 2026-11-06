@@ -2564,12 +2564,19 @@ var dpkgConfOptions = []string{
 	"-o", "Dpkg::Options::=--force-confold",
 }
 
+// aptRetriesOff disables apt download retries to close the CVE-2026-109518 redirect package-swap window.
+var aptRetriesOff = []string{"-o", "Acquire::Retries=0"}
+
 // aptUpgradeArgs builds the apt-get arguments for a full upgrade.
-func aptUpgradeArgs(dryRun bool) []string {
+func aptUpgradeArgs(dryRun, disableRetries bool) []string {
 	if dryRun {
 		return []string{"-s", "--with-new-pkgs", "upgrade"}
 	}
-	return append(slices.Clone(dpkgConfOptions), "--with-new-pkgs", "upgrade", "-y")
+	args := slices.Clone(dpkgConfOptions)
+	if disableRetries {
+		args = append(args, aptRetriesOff...)
+	}
+	return append(args, "--with-new-pkgs", "upgrade", "-y")
 }
 
 // ucsUpgradeArgs keeps univention-upgrade to the installed release: no App Center app updates
@@ -2590,11 +2597,15 @@ func ucsUpgradeRefusal(release string) string {
 }
 
 // aptOnlyUpgradeArgs builds the apt-get arguments for upgrading named packages.
-func aptOnlyUpgradeArgs(dryRun bool, packageNames []string) []string {
+func aptOnlyUpgradeArgs(dryRun, disableRetries bool, packageNames []string) []string {
 	if dryRun {
 		return append([]string{"-s", "--only-upgrade", "install"}, packageNames...)
 	}
-	args := append(slices.Clone(dpkgConfOptions), "--only-upgrade", "install", "-y")
+	args := slices.Clone(dpkgConfOptions)
+	if disableRetries {
+		args = append(args, aptRetriesOff...)
+	}
+	args = append(args, "--only-upgrade", "install", "-y")
 	return append(args, packageNames...)
 }
 
@@ -2635,6 +2646,7 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 		MaxAge: cfgManager.GetPackageCacheRefreshMaxAge(),
 	})
 	pkgManager := packageMgr.DetectPackageManager()
+	aptDisableRetries := cfgManager.GetAptDisableRetries()
 
 	if !slices.Contains([]string{"apt", "dnf", "yum", "pkg", "pacman", "apk", "zypper"}, pkgManager) {
 		errMsg := fmt.Sprintf("package manager %q not supported for patching (apt, dnf, yum, pkg, pacman, apk, zypper required)", pkgManager)
@@ -2819,11 +2831,11 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 				// applies the patch, installs nothing, and reports them as
 				// outdated again forever.
 				if dryRun {
-					if err, abort := runStep(false, "apt-get -s upgrade", "apt-get -s upgrade failed: %w", "apt-get", aptUpgradeArgs(true)...); abort {
+					if err, abort := runStep(false, "apt-get -s upgrade", "apt-get -s upgrade failed: %w", "apt-get", aptUpgradeArgs(true, aptDisableRetries)...); abort {
 						stepErr = err
 					}
 				} else {
-					if err, abort := runStep(false, "apt-get upgrade", "apt-get upgrade failed: %w", "apt-get", aptUpgradeArgs(false)...); abort {
+					if err, abort := runStep(false, "apt-get upgrade", "apt-get upgrade failed: %w", "apt-get", aptUpgradeArgs(false, aptDisableRetries)...); abort {
 						stepErr = err
 					}
 				}
@@ -2861,12 +2873,12 @@ func runPatch(patchRunID, patchType string, packageNames []string, dryRun bool) 
 			switch pkgManager {
 			case "apt":
 				if dryRun {
-					args := aptOnlyUpgradeArgs(true, packageNames)
+					args := aptOnlyUpgradeArgs(true, aptDisableRetries, packageNames)
 					if err, abort := runStep(false, "apt-get -s --only-upgrade install", "apt-get -s --only-upgrade install failed: %w", "apt-get", args...); abort {
 						stepErr = err
 					}
 				} else {
-					args := aptOnlyUpgradeArgs(false, packageNames)
+					args := aptOnlyUpgradeArgs(false, aptDisableRetries, packageNames)
 					if err, abort := runStep(false, "apt-get --only-upgrade install", "apt-get --only-upgrade install failed: %w", "apt-get", args...); abort {
 						stepErr = err
 					}

@@ -455,9 +455,11 @@ func aptAvailable(ctx context.Context, env []string, pkgs []string) []string {
 
 // aptInstall runs a non-interactive install, optionally restricted to upgrades.
 func aptInstall(ctx context.Context, env []string, onlyUpgrade bool, pkgs ...string) ([]byte, error) {
+	// Acquire::Retries=0 closes the CVE-2026-109518 package-swap window; always on for the scanner install.
 	args := []string{"install", "-y", "-qq",
 		"-o", "Dpkg::Options::=--force-confdef",
-		"-o", "Dpkg::Options::=--force-confold"}
+		"-o", "Dpkg::Options::=--force-confold",
+		"-o", "Acquire::Retries=0"}
 	if onlyUpgrade {
 		args = append(args, "--only-upgrade")
 	}

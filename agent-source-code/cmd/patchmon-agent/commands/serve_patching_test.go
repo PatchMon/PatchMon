@@ -38,23 +38,33 @@ func TestAptArgs(t *testing.T) {
 		want []string
 	}{
 		{
-			name: "upgrade forces conffile defaults",
-			got:  aptUpgradeArgs(false),
+			name: "upgrade disables retries and forces conffile defaults",
+			got:  aptUpgradeArgs(false, true),
+			want: []string{"-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold", "-o", "Acquire::Retries=0", "--with-new-pkgs", "upgrade", "-y"},
+		},
+		{
+			name: "upgrade keeps retries when disabled is off",
+			got:  aptUpgradeArgs(false, false),
 			want: []string{"-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold", "--with-new-pkgs", "upgrade", "-y"},
 		},
 		{
 			name: "simulated upgrade stays unchanged",
-			got:  aptUpgradeArgs(true),
+			got:  aptUpgradeArgs(true, true),
 			want: []string{"-s", "--with-new-pkgs", "upgrade"},
 		},
 		{
-			name: "package upgrade forces conffile defaults",
-			got:  aptOnlyUpgradeArgs(false, []string{"curl", "git"}),
+			name: "package upgrade disables retries and forces conffile defaults",
+			got:  aptOnlyUpgradeArgs(false, true, []string{"curl", "git"}),
+			want: []string{"-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold", "-o", "Acquire::Retries=0", "--only-upgrade", "install", "-y", "curl", "git"},
+		},
+		{
+			name: "package upgrade keeps retries when disabled is off",
+			got:  aptOnlyUpgradeArgs(false, false, []string{"curl", "git"}),
 			want: []string{"-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold", "--only-upgrade", "install", "-y", "curl", "git"},
 		},
 		{
 			name: "simulated package upgrade stays unchanged",
-			got:  aptOnlyUpgradeArgs(true, []string{"curl"}),
+			got:  aptOnlyUpgradeArgs(true, true, []string{"curl"}),
 			want: []string{"-s", "--only-upgrade", "install", "curl"},
 		},
 	}
@@ -69,12 +79,22 @@ func TestAptArgs(t *testing.T) {
 }
 
 func TestAptArgsDoNotShareBacking(t *testing.T) {
-	first := aptOnlyUpgradeArgs(false, []string{"curl"})
-	second := aptUpgradeArgs(false)
+	dpkgWant := []string{"-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold"}
+	retriesWant := []string{"-o", "Acquire::Retries=0"}
 
-	if !reflect.DeepEqual(dpkgConfOptions, []string{"-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold"}) {
+	got := aptOnlyUpgradeArgs(false, true, []string{"curl"})
+	for i := range got {
+		got[i] = "mutated"
+	}
+	if !reflect.DeepEqual(dpkgConfOptions, dpkgWant) {
 		t.Fatalf("dpkgConfOptions mutated: %v", dpkgConfOptions)
 	}
+	if !reflect.DeepEqual(aptRetriesOff, retriesWant) {
+		t.Fatalf("aptRetriesOff mutated: %v", aptRetriesOff)
+	}
+
+	first := aptOnlyUpgradeArgs(false, true, []string{"curl"})
+	second := aptUpgradeArgs(false, true)
 	if reflect.DeepEqual(first, second) {
 		t.Fatal("expected distinct argument lists")
 	}
