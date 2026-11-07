@@ -2,6 +2,7 @@ package store
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -154,5 +155,164 @@ Exiting on user command
 				t.Fatalf("parsePackagesAffectedFromDryRunOutput() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+const dnf5Fedora44Upgrade = `$ dnf -y upgrade NetworkManager
+Upgrading:
+ NetworkManager                   x86_64 1:1.56.1-2.fc44 updates                            6.1 MiB
+   replacing NetworkManager       x86_64 1:1.56.0-1.fc44 4e4a4f70cfdd4047b39087e8606c2591   6.0 MiB
+ NetworkManager-libnm             x86_64 1:1.56.1-2.fc44 updates                           10.2 MiB
+   replacing NetworkManager-libnm x86_64 1:1.56.0-1.fc44 4e4a4f70cfdd4047b39087e8606c2591  10.2 MiB
+ glib2                            x86_64 0:2.88.4-1.fc44 updates                           15.4 MiB
+   replacing glib2                x86_64 0:2.88.0-1.fc44 4e4a4f70cfdd4047b39087e8606c2591  15.3 MiB
+
+Transaction Summary:
+ Upgrading:          3 packages
+ Replacing:          3 packages
+
+Total size of inbound packages is 7 MiB. Need to download 7 MiB.
+After this operation, 131 KiB extra will be used (install 32 MiB, remove 32 MiB).
+[1/3] NetworkManager-libnm-1:1.56.1-2.f 100% |   4.4 MiB/s |   1.9 MiB |  00m00s
+[2/3] NetworkManager-1:1.56.1-2.fc44.x8 100% |   4.8 MiB/s |   2.3 MiB |  00m00s
+[3/3] glib2-0:2.88.4-1.fc44.x86_64      100% |   4.8 MiB/s |   3.1 MiB |  00m01s
+--------------------------------------------------------------------------------
+[3/3] Total                             100% |   4.4 MiB/s |   7.4 MiB |  00m02s
+Running transaction
+[1/8] Verify package files              100% |  12.0   B/s |   3.0   B |  00m00s
+[2/8] Prepare transaction               100% |  26.0   B/s |   6.0   B |  00m00s
+[3/8] Upgrading glib2-0:2.88.4-1.fc44.x 100% |  20.1 MiB/s |  15.4 MiB |  00m01s
+[4/8] Upgrading NetworkManager-libnm-1: 100% |  23.9 MiB/s |  10.3 MiB |  00m00s
+[5/8] Upgrading NetworkManager-1:1.56.1 100% |   9.4 MiB/s |   6.1 MiB |  00m01s
+[6/8] Removing NetworkManager-1:1.56.0- 100% | 369.0   B/s |  91.0   B |  00m00s
+[7/8] Removing NetworkManager-libnm-1:1 100% |   1.8 KiB/s |  72.0   B |  00m00s
+[8/8] Removing glib2-0:2.88.0-1.fc44.x8 100% |  67.0   B/s | 177.0   B |  00m03s
+Complete!
+`
+
+func TestParsePackagesAffectedFromRealOutputDnf(t *testing.T) {
+	cases := []struct {
+		name   string
+		osType string
+		output string
+		want   []string
+	}{
+		{
+			name:   "dnf5 on Fedora 44",
+			osType: "Fedora Linux",
+			output: dnf5Fedora44Upgrade,
+			want:   []string{"NetworkManager", "NetworkManager-libnm", "glib2"},
+		},
+		{
+			name:   "dnf5 installing a new dependency",
+			osType: "Fedora Linux",
+			output: `$ dnf -y upgrade curl
+Updating and loading repositories:
+Repositories loaded.
+Package                     Arch   Version                Repository                            Size
+Upgrading:
+ curl                       x86_64 8.15.0-10.fc43         updates                          461.4 KiB
+   replacing curl           x86_64 8.15.0-4.fc43          2040d210706d45f5b6026645179b0311 461.5 KiB
+Installing dependencies:
+ duktape                    x86_64 2.7.0-10.fc43          fedora                           615.8 KiB
+
+Transaction Summary:
+ Installing:         1 package
+ Upgrading:          1 package
+ Replacing:          1 package
+
+Total size of inbound packages is 1 MiB. Need to download 1 MiB.
+[1/2] duktape-0:2.7.0-10.fc43.x86_64    100% |   2.0 MiB/s | 180.0 KiB |  00m00s
+[2/2] curl-0:8.15.0-10.fc43.x86_64      100% |   1.9 MiB/s | 300.0 KiB |  00m00s
+Running transaction
+[1/5] Verify package files              100% |  50.0   B/s |   2.0   B |  00m00s
+[2/5] Prepare transaction               100% |  10.0   B/s |   2.0   B |  00m00s
+[3/5] Installing duktape-0:2.7.0-10.fc4 100% |  60.1 MiB/s | 616.0 KiB |  00m00s
+[4/5] Upgrading curl-0:8.15.0-10.fc43.x 100% |  10.0 MiB/s | 462.0 KiB |  00m00s
+[5/5] Removing curl-0:8.15.0-4.fc43.x86 100% |   5.0 KiB/s |  10.0   B |  00m00s
+Complete!
+`,
+			want: []string{"curl", "duktape"},
+		},
+		{
+			name:   "dnf5 stopped before the transaction ran",
+			osType: "Fedora Linux",
+			output: dnf5Fedora44Upgrade[:strings.Index(dnf5Fedora44Upgrade, "Running transaction")] +
+				"\n--- Patch run stopped by user at 2026-11-07T10:00:00Z ---\n",
+			want: nil,
+		},
+		{
+			name:   "dnf4 prefers the table and skips removals",
+			osType: "Rocky Linux",
+			output: "$ dnf upgrade -y\r\n" +
+				"Dependencies resolved.\r\n" +
+				"================================================================================\r\n" +
+				" Package             Arch      Version                 Repo           Size\r\n" +
+				"================================================================================\r\n" +
+				"Installing:\r\n" +
+				" kernel              x86_64    5.14.0-611.el9          baseos        2.0 M\r\n" +
+				"Upgrading:\r\n" +
+				" python3.11-libs     x86_64    3.11.13-2.el9           appstream      10 M\r\n" +
+				"Removing:\r\n" +
+				" kernel              x86_64    5.14.0-503.el9          @baseos         0  \r\n" +
+				" kernel-core         x86_64    5.14.0-503.el9          @baseos        66 M\r\n" +
+				"\r\n" +
+				"Transaction Summary\r\n" +
+				"================================================================================\r\n" +
+				"Install  1 Package\r\n" +
+				"Upgrade  1 Package\r\n" +
+				"Remove   2 Packages\r\n" +
+				"\r\n" +
+				"Running transaction\r\n" +
+				"  Preparing        :                                                        1/1 \r\n" +
+				"  Installing       : kernel-5.14.0-611.el9.x86_64                           1/5 \r\n" +
+				"  Upgrading        : python3.11-libs-3.11.13-2.el9.x86_64                   2/5 \r\n" +
+				"  Erasing          : kernel-core-5.14.0-503.el9.x86_64                      3/5 \r\n" +
+				"Complete!\r\n",
+			want: []string{"kernel", "python3.11-libs"},
+		},
+		{
+			name:   "dnf4 execution lines without a table",
+			osType: "Rocky Linux",
+			output: `  Upgrading   : pkg-1.0-1.el9.x86_64   1/4
+  Upgrading   : libfoo-devel-2.3-4.el9.x86_64   2/4
+  Cleanup     : pkg-0.9-1.el9.x86_64   3/4
+`,
+			want: []string{"pkg", "libfoo-devel"},
+		},
+		{
+			name:   "dnf removal-only transaction",
+			osType: "Fedora Linux",
+			output: `$ dnf -y upgrade
+Removing:
+ kernel-core                x86_64 6.17.1-300.fc43        @System                           66.0 MiB
+
+Transaction Summary:
+ Removing:           1 package
+
+Running transaction
+[1/2] Prepare transaction               100% |  10.0   B/s |   1.0   B |  00m00s
+[2/2] Removing kernel-core-0:6.17.1-300 100% |   5.0 KiB/s | 10.0   B |  00m00s
+Complete!
+`,
+			want: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parsePackagesAffectedFromRealOutput(tc.osType, tc.output)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("parsePackagesAffectedFromRealOutput() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParsePackagesAffectedDnf5RealMatchesDryRun(t *testing.T) {
+	dry := parsePackagesAffectedFromDryRunOutput("Fedora Linux", dnf5Fedora44Upgrade)
+	realRun := parsePackagesAffectedFromRealOutput("Fedora Linux", dnf5Fedora44Upgrade)
+	if !reflect.DeepEqual(dry, realRun) {
+		t.Fatalf("dry run = %q, real run = %q", dry, realRun)
 	}
 }
