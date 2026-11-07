@@ -27,6 +27,7 @@ var freeBSDPkgActionLinePattern = regexp.MustCompile(`^\[\d+/\d+\]\s+(?:Installi
 var dnf5ActionLinePattern = regexp.MustCompile(`^\[\d+/\d+\]\s+(?:Upgrading|Installing|Reinstalling|Downgrading)\s+(\S+)`)
 var dnfActionLinePattern = regexp.MustCompile(`^(?:Upgrading|Installing|Updating|Reinstalling|Downgrading)\s*:\s*(\S+)`)
 var rpmEpochPrefixPattern = regexp.MustCompile(`^\d+:`)
+var rpmEpochPattern = regexp.MustCompile(`-\d+:`)
 
 // apk v3 pads the counter ("( 1/14)") and tags packages from tagged repositories ("busybox@edge").
 // Purging counts: the agent lets apk remove orphans, and a reviewer should see them.
@@ -396,8 +397,8 @@ func parsePackagesAffectedFromRealOutput(osType, output string) []string {
 				rest := strings.TrimSpace(trimmed[colonIdx+1:])
 				// Take only the first token (package name+version+arch)
 				fields := strings.Fields(rest)
-				// The digit check skips the dnf5 summary "Upgrading:  3 packages".
-				if len(fields) >= 1 && len(dnfPlanned) == 0 && strings.Trim(fields[0], "0123456789") != "" {
+				// Skips summary counts: dnf5 "Upgrading:  3 packages", APT 3 "Upgrading: 2, Installing: 0".
+				if len(fields) >= 1 && len(dnfPlanned) == 0 && (fields[0][0] < '0' || fields[0][0] > '9') {
 					// Strip version: "pkgname-1.0-1.x86_64" -> "pkgname"
 					pkgFull := fields[0]
 					// Remove arch suffix first
@@ -440,7 +441,7 @@ func parsePackagesAffectedFromRealOutput(osType, output string) []string {
 		if len(dnfPlanned) > 0 {
 			continue
 		}
-		if matches := freeBSDPkgActionLinePattern.FindStringSubmatch(trimmed); len(matches) == 2 {
+		if matches := freeBSDPkgActionLinePattern.FindStringSubmatch(trimmed); len(matches) == 2 && !rpmEpochPattern.MatchString(matches[1]) {
 			addPkg(normalizeFreeBSDPkgActionTarget(matches[1]))
 		}
 	}

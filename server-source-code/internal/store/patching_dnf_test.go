@@ -489,3 +489,29 @@ func TestParsePackagesAffectedPfSenseActionLines(t *testing.T) {
 		t.Fatalf("parsePackagesAffectedFromRealOutput() = %q, want %q", got, want)
 	}
 }
+
+func TestParsePackagesAffectedSkipsForeignLines(t *testing.T) {
+	cases := []struct {
+		name   string
+		osType string
+		output string
+	}{
+		{
+			name:   "dnf5 execution line with no table",
+			osType: "Fedora Linux",
+			output: "$ dnf upgrade -y\nRunning transaction\n[3/8] Upgrading glib2-0:2.88.4-1.fc44.x 100% |  20.1 MiB/s |  15.4 MiB |  00m01s\n",
+		},
+		{
+			name:   "APT 3 summary counts",
+			osType: "Debian GNU/Linux",
+			output: "Summary:\n  Upgrading: 2, Installing: 0, Removing: 0, Not Upgrading: 0\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parsePackagesAffectedFromRealOutput(tc.osType, tc.output); len(got) != 0 {
+				t.Fatalf("parsePackagesAffectedFromRealOutput() = %q, want none", got)
+			}
+		})
+	}
+}
