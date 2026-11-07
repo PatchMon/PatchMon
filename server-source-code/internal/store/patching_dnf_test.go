@@ -242,6 +242,45 @@ Complete!
 			want: nil,
 		},
 		{
+			name:   "dnf5 stopped during the transaction",
+			osType: "Fedora Linux",
+			output: dnf5Fedora44Upgrade[:strings.Index(dnf5Fedora44Upgrade, "[5/8]")] +
+				"\n--- Patch run stopped by user at 2026-11-07T10:00:00Z ---\n",
+			want: []string{"NetworkManager-libnm", "glib2"},
+		},
+		{
+			name:   "dnf completed without matchable execution lines",
+			osType: "Fedora Linux",
+			output: `Upgrading:
+ glib2                            x86_64 0:2.88.4-1.fc44 updates                           15.4 MiB
+
+Running transaction
+[3/4] Upgrading a-name-cut-before-it-ends 100% |  20.1 MiB/s |  15.4 MiB |  00m01s
+Complete!
+`,
+			want: []string{"glib2"},
+		},
+		{
+			name:   "dnf4 stopped during the transaction",
+			osType: "Rocky Linux",
+			output: `$ dnf upgrade -y
+Upgrading:
+ bash                x86_64    5.1.8-9.el9             baseos        1.7 M
+ kernel-core         x86_64    5.14.0-611.el9          baseos         18 M
+ openssl             x86_64    1:3.5.1-4.el9           baseos        1.2 M
+
+Transaction Summary
+Upgrade  3 Packages
+
+Running transaction
+  Preparing        :                                                        1/1
+  Upgrading        : bash-5.1.8-9.el9.x86_64                                1/6
+
+--- Patch run stopped by user at 2026-11-07T10:00:00Z ---
+`,
+			want: []string{"bash"},
+		},
+		{
 			name:   "dnf4 prefers the table and skips removals",
 			osType: "Rocky Linux",
 			output: "$ dnf upgrade -y\r\n" +
@@ -314,5 +353,12 @@ func TestParsePackagesAffectedDnf5RealMatchesDryRun(t *testing.T) {
 	realRun := parsePackagesAffectedFromRealOutput("Fedora Linux", dnf5Fedora44Upgrade)
 	if !reflect.DeepEqual(dry, realRun) {
 		t.Fatalf("dry run = %q, real run = %q", dry, realRun)
+	}
+}
+
+func TestParsePackagesAffectedPfSenseActionLines(t *testing.T) {
+	got := parsePackagesAffectedFromRealOutput("pfSense", "[1/1] Upgrading curl from 8.9.1 to 8.10.0...\n")
+	if want := []string{"curl"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("parsePackagesAffectedFromRealOutput() = %q, want %q", got, want)
 	}
 }
