@@ -18,7 +18,7 @@ func TestBuildHostPackagesPayloadWindowsPatchFields(t *testing.T) {
 	}
 	nameToID := map[string]string{"linux-pkg": "p1", "7-Zip": "p2", "Bad App": "p3", "Driver Update": "p4", "Odd Type": "p5"}
 
-	raw, err := buildHostPackagesPayload("h1", pkgs, nameToID, nil, nil, nil)
+	raw, err := buildHostPackagesPayload("h1", pkgs, nameToID, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildHostPackagesPayload: %v", err)
 	}
@@ -121,7 +121,7 @@ func namedQueryIn(t *testing.T, src, name string) string {
 }
 
 func TestBuildHostPackagesPayloadFeatureUpgradeType(t *testing.T) {
-	raw, err := buildHostPackagesPayload("h1", []ReportPackage{{Name: "24H2", CurrentVersion: "pending", NeedsUpdate: true, WUAGuid: "aaaaaaaa-1111-2222-3333-444455556666", WUAType: "FeatureUpgrade"}}, map[string]string{"24H2": "p1"}, nil, nil, nil)
+	raw, err := buildHostPackagesPayload("h1", []ReportPackage{{Name: "24H2", CurrentVersion: "pending", NeedsUpdate: true, WUAGuid: "aaaaaaaa-1111-2222-3333-444455556666", WUAType: "FeatureUpgrade"}}, map[string]string{"24H2": "p1"}, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestWingetPinnedIsStoredAndNotPatchable(t *testing.T) {
 	raw, err := buildHostPackagesPayload("h1", []ReportPackage{
 		{Name: "Pinned", CurrentVersion: "1", NeedsUpdate: true, WingetID: "a.b", WingetPinned: true},
 		{Name: "Free", CurrentVersion: "1", NeedsUpdate: true, WingetID: "c.d"},
-	}, map[string]string{"Pinned": "p1", "Free": "p2"}, nil, nil, nil)
+	}, map[string]string{"Pinned": "p1", "Free": "p2"}, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestWingetStoreAppIsStoredAndNotPatchable(t *testing.T) {
 	raw, err := buildHostPackagesPayload("h1", []ReportPackage{
 		{Name: "Windows Terminal", CurrentVersion: "1.20", NeedsUpdate: true, WingetID: "Microsoft.WindowsTerminal", WingetStoreApp: true},
 		{Name: "Free", CurrentVersion: "1", NeedsUpdate: true, WingetID: "c.d"},
-	}, map[string]string{"Windows Terminal": "p1", "Free": "p2"}, nil, nil, nil)
+	}, map[string]string{"Windows Terminal": "p1", "Free": "p2"}, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
