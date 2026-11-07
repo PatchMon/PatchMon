@@ -190,6 +190,18 @@ Running transaction
 Complete!
 `
 
+const dnf5LongNames = `$ dnf -y upgrade
+Upgrading:
+ selinux-policy                   noarch 0:42.12-1.fc43  updates                           58.0 KiB
+ selinux-policy-targeted          noarch 0:42.12-1.fc43  updates                           18.6 MiB
+ NetworkManager-libnm             x86_64 1:1.56.1-2.fc44 updates                           10.2 MiB
+
+Running transaction
+[101/202] Upgrading selinux-policy-0:42 100% |  20.1 MiB/s |  58.0 KiB |  00m01s
+[102/202] Upgrading selinux-policy-targ 100% |  20.1 MiB/s |  18.6 MiB |  00m01s
+[103/202] Upgrading NetworkManager-libn 100% |  20.1 MiB/s |  10.2 MiB |  00m01s
+`
+
 func TestParsePackagesAffectedFromRealOutputDnf(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -279,6 +291,121 @@ Running transaction
 --- Patch run stopped by user at 2026-11-07T10:00:00Z ---
 `,
 			want: []string{"bash"},
+		},
+		{
+			name:   "dnf5 completed run with long names cut short",
+			osType: "Fedora Linux",
+			output: dnf5LongNames + "Complete!\n",
+			want:   []string{"selinux-policy", "selinux-policy-targeted", "NetworkManager-libnm"},
+		},
+		{
+			name:   "dnf5 stopped run with long names cut short",
+			osType: "Fedora Linux",
+			output: dnf5LongNames + "\n--- Patch run stopped by user at 2026-11-07T10:00:00Z ---\n",
+			want:   []string{"selinux-policy", "selinux-policy-targeted", "NetworkManager-libnm"},
+		},
+		{
+			name:   "dnf5 stopped run credits the one name a cut target fits",
+			osType: "Fedora Linux",
+			output: `Reinstalling:
+ kernel                           x86_64 0:6.17.1-300.fc43 updates                            0.0   B
+ kernel-core                      x86_64 0:6.17.1-300.fc43 updates                           66.0 MiB
+
+Running transaction
+[101/202] Reinstalling kernel-cor 100% |  20.1 MiB/s |  15.4 MiB |  00m01s
+[102/202] Reinstalling kernel-    100% |  20.1 MiB/s |  15.4 MiB |  00m01s
+`,
+			want: []string{"kernel-core"},
+		},
+		{
+			name:   "dnf5 stopped run with the cut at the epoch",
+			osType: "Fedora Linux",
+			output: `Upgrading:
+ glib2                            x86_64 0:2.88.4-1.fc44 updates                           15.4 MiB
+ glib2-devel                      x86_64 0:2.88.4-1.fc44 updates                            1.4 MiB
+
+Running transaction
+[3/8] Upgrading glib2-0 100% |  20.1 MiB/s |  15.4 MiB |  00m01s
+`,
+			want: []string{"glib2"},
+		},
+		{
+			name:   "EL7 yum stopped run with epoch-first names",
+			osType: "CentOS Linux",
+			output: `$ yum upgrade -y
+Updating:
+ openssl                         x86_64     1:1.0.2k-26.el7_9     updates    494 k
+ openssl-libs                    x86_64     1:1.0.2k-26.el7_9     updates    1.2 M
+
+Transaction Summary
+Upgrade  2 Packages
+
+Running transaction
+  Updating   : 1:openssl-libs-1.0.2k-26.el7_9.x86_64                        1/4
+
+--- Patch run stopped by user at 2026-11-07T10:00:00Z ---
+`,
+			want: []string{"openssl-libs"},
+		},
+		{
+			name:   "dnf4 completed downgrade",
+			osType: "Rocky Linux",
+			output: `$ dnf upgrade -y
+Downgrading:
+ curl                x86_64    7.76.1-29.el9           baseos        297 k
+
+Running transaction
+  Downgrading      : curl-7.76.1-29.el9.x86_64                              1/2
+  Cleanup          : curl-7.76.1-31.el9.x86_64                              2/2
+Complete!
+`,
+			want: []string{"curl"},
+		},
+		{
+			name:   "assumeno plan before a stopped real run",
+			osType: "Rocky Linux",
+			output: `$ dnf upgrade --assumeno
+Upgrading:
+ bash                x86_64    5.1.8-9.el9             baseos        1.7 M
+ openssl             x86_64    1:3.5.1-4.el9           baseos        1.2 M
+
+Transaction Summary
+Upgrade  2 Packages
+Operation aborted.
+Complete!
+$ dnf upgrade -y
+Upgrading:
+ bash                x86_64    5.1.8-9.el9             baseos        1.7 M
+ openssl             x86_64    1:3.5.1-4.el9           baseos        1.2 M
+
+Transaction Summary
+Upgrade  2 Packages
+
+Running transaction
+  Upgrading        : openssl-1:3.5.1-4.el9.x86_64                           1/4
+
+--- Patch run stopped by user at 2026-11-07T10:00:00Z ---
+`,
+			want: []string{"openssl"},
+		},
+		{
+			name:   "assumeno plan before a completed real run",
+			osType: "Rocky Linux",
+			output: `$ dnf upgrade --assumeno
+Upgrading:
+ bash                x86_64    5.1.8-9.el9             baseos        1.7 M
+ openssl             x86_64    1:3.5.1-4.el9           baseos        1.2 M
+
+Operation aborted.
+$ dnf upgrade -y
+Upgrading:
+ openssl             x86_64    1:3.5.1-4.el9           baseos        1.2 M
+
+Running transaction
+  Upgrading        : openssl-1:3.5.1-4.el9.x86_64                           1/2
+Complete!
+`,
+			want: []string{"openssl"},
 		},
 		{
 			name:   "dnf4 prefers the table and skips removals",

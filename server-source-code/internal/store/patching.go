@@ -25,6 +25,8 @@ var freeBSDPkgActionLinePattern = regexp.MustCompile(`^\[\d+/\d+\]\s+(?:Installi
 
 // dnf5 cuts these lines to the terminal width, so the target is only a prefix of name-epoch:version.
 var dnf5ActionLinePattern = regexp.MustCompile(`^\[\d+/\d+\]\s+(?:Upgrading|Installing|Reinstalling|Downgrading)\s+(\S+)`)
+var dnfActionLinePattern = regexp.MustCompile(`^(?:Upgrading|Installing|Updating|Reinstalling|Downgrading)\s*:\s*(\S+)`)
+var rpmEpochPrefixPattern = regexp.MustCompile(`^\d+:`)
 
 // apk v3 pads the counter ("( 1/14)") and tags packages from tagged repositories ("busybox@edge").
 // Purging counts: the agent lets apk remove orphans, and a reviewer should see them.
@@ -133,11 +135,29 @@ func (p *dnfTableParser) feed(line string, add func(name string, removing bool))
 	return true
 }
 
-// matchDnfPlanned returns the longest planned name that target, a NEVRA or a prefix of one, belongs to.
-func matchDnfPlanned(planned []string, target string) string {
+// matchDnfPlanned returns the planned name a NEVRA, or a truncated dnf5 target, belongs to.
+func matchDnfPlanned(planned []string, target string, truncated bool) string {
+	target = rpmEpochPrefixPattern.ReplaceAllString(target, "")
 	best := ""
+	if truncated && !strings.Contains(target, ":") {
+		// dnf5 always prints the epoch, so the cut fell inside the name or the epoch.
+		count := 0
+		for _, name := range planned {
+			if strings.HasPrefix(name+"-", target) {
+				best = name
+				count++
+			}
+		}
+		if count > 1 {
+			return ""
+		}
+		if count == 1 {
+			return best
+		}
+	}
 	for _, name := range planned {
-		if len(name) > len(best) && (target == name || strings.HasPrefix(target, name+"-")) {
+		rest, ok := strings.CutPrefix(target, name+"-")
+		if ok && len(name) > len(best) && rest != "" && rest[0] >= '0' && rest[0] <= '9' {
 			best = name
 		}
 	}
@@ -230,7 +250,7 @@ func parsePackagesAffectedFromDryRunOutput(osType, output string) []string {
 // Handles multiple package manager formats:
 //   - apt-get (real): "Unpacking pkgname" / "Setting up pkgname" lines
 //   - apt-get (simulate): "Inst pkgname" lines (fallback, same as dry-run parser)
-//   - dnf/yum: execution lines matched against the transaction table, or the whole table once "Complete!" is printed
+//   - dnf/yum: the transaction table once the transaction prints "Complete!", else execution lines matched against it
 //   - FreeBSD pkg: transaction summary lines and "[1/3] Upgrading pkgname ..." execution lines
 //   - freebsd-update: base-system updates are recorded as the synthetic "freebsd-base" package (FreeBSD hosts only)
 func parsePackagesAffectedFromRealOutput(osType, output string) []string {
@@ -254,7 +274,20 @@ func parsePackagesAffectedFromRealOutput(osType, output string) []string {
 	var dnfTable dnfTableParser
 	var dnfPlanned []string
 	dnfApplied := make(map[string]bool)
-	dnfComplete := false
+	dnfRan, dnfComplete := false, false
+	// Each command gets its own table, so an --assumeno plan never counts as applied.
+	flushDnf := func() {
+		for _, name := range dnfPlanned {
+			if (dnfComplete || dnfApplied[name]) && !seen[name] {
+				seen[name] = true
+				pkgs = append(pkgs, name)
+			}
+		}
+		dnfTable = dnfTableParser{}
+		dnfPlanned = nil
+		dnfApplied = make(map[string]bool)
+		dnfRan, dnfComplete = false, false
+	}
 	inFreeBSDPkgSection := false
 	ucs := isUCS(osType)
 	inUCSUpgrade := false
@@ -263,6 +296,9 @@ func parsePackagesAffectedFromRealOutput(osType, output string) []string {
 	apkApplying := true
 	for _, line := range strings.Split(output, "\n") {
 		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "$ ") {
+			flushDnf()
+		}
 		if dnfTable.feed(strings.TrimRight(line, "\r"), func(name string, removing bool) {
 			if !removing {
 				dnfPlanned = append(dnfPlanned, name)
@@ -270,8 +306,25 @@ func parsePackagesAffectedFromRealOutput(osType, output string) []string {
 		}) {
 			continue
 		}
-		if trimmed == "Complete!" {
+		switch {
+		case trimmed == "Running transaction":
+			dnfRan = true
+		case trimmed == "Complete!" && dnfRan:
 			dnfComplete = true
+		}
+		if len(dnfPlanned) > 0 {
+			if matches := dnfActionLinePattern.FindStringSubmatch(trimmed); len(matches) == 2 {
+				if name := matchDnfPlanned(dnfPlanned, matches[1], false); name != "" {
+					dnfApplied[name] = true
+				}
+				continue
+			}
+			if matches := dnf5ActionLinePattern.FindStringSubmatch(trimmed); len(matches) == 2 {
+				if name := matchDnfPlanned(dnfPlanned, matches[1], true); name != "" {
+					dnfApplied[name] = true
+				}
+				continue
+			}
 		}
 		// univention-upgrade lists the packages it installs on one comma-separated line
 		// and hides apt's own output. Names are kept whole: libperl5.36 is not libperl5.
@@ -343,12 +396,8 @@ func parsePackagesAffectedFromRealOutput(osType, output string) []string {
 				rest := strings.TrimSpace(trimmed[colonIdx+1:])
 				// Take only the first token (package name+version+arch)
 				fields := strings.Fields(rest)
-				// Without a table, the digit check skips the dnf5 summary "Upgrading:  3 packages".
-				if len(fields) >= 1 && len(dnfPlanned) > 0 {
-					if name := matchDnfPlanned(dnfPlanned, fields[0]); name != "" {
-						dnfApplied[name] = true
-					}
-				} else if len(fields) >= 1 && strings.Trim(fields[0], "0123456789") != "" {
+				// The digit check skips the dnf5 summary "Upgrading:  3 packages".
+				if len(fields) >= 1 && len(dnfPlanned) == 0 && strings.Trim(fields[0], "0123456789") != "" {
 					// Strip version: "pkgname-1.0-1.x86_64" -> "pkgname"
 					pkgFull := fields[0]
 					// Remove arch suffix first
@@ -389,23 +438,13 @@ func parsePackagesAffectedFromRealOutput(osType, output string) []string {
 		}
 
 		if len(dnfPlanned) > 0 {
-			if matches := dnf5ActionLinePattern.FindStringSubmatch(trimmed); len(matches) == 2 {
-				if name := matchDnfPlanned(dnfPlanned, matches[1]); name != "" {
-					dnfApplied[name] = true
-				}
-			}
 			continue
 		}
 		if matches := freeBSDPkgActionLinePattern.FindStringSubmatch(trimmed); len(matches) == 2 {
 			addPkg(normalizeFreeBSDPkgActionTarget(matches[1]))
 		}
 	}
-	for _, name := range dnfPlanned {
-		if (dnfApplied[name] || (len(dnfApplied) == 0 && dnfComplete)) && !seen[name] {
-			seen[name] = true
-			pkgs = append(pkgs, name)
-		}
-	}
+	flushDnf()
 	return pkgs
 }
 
