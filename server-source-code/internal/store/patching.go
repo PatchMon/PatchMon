@@ -398,7 +398,7 @@ func parsePackagesAffectedFromRealOutput(osType, output string) []string {
 				// Take only the first token (package name+version+arch)
 				fields := strings.Fields(rest)
 				// Skips summary counts: dnf5 "Upgrading:  3 packages", APT 3 "Upgrading: 2, Installing: 0".
-				if len(fields) >= 1 && len(dnfPlanned) == 0 && (fields[0][0] < '0' || fields[0][0] > '9') {
+				if len(fields) >= 1 && len(dnfPlanned) == 0 && strings.Trim(strings.TrimSuffix(fields[0], ","), "0123456789") != "" {
 					// Strip version: "pkgname-1.0-1.x86_64" -> "pkgname"
 					pkgFull := fields[0]
 					// Remove arch suffix first

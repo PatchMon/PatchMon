@@ -515,3 +515,10 @@ func TestParsePackagesAffectedSkipsForeignLines(t *testing.T) {
 		})
 	}
 }
+
+func TestParsePackagesAffectedKeepsDigitLeadingNames(t *testing.T) {
+	got := parsePackagesAffectedFromRealOutput("Rocky Linux", "  Upgrading   : 389-ds-base-2.4.5-1.el9.x86_64   1/2\n")
+	if want := []string{"389-ds-base"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("parsePackagesAffectedFromRealOutput() = %q, want %q", got, want)
+	}
+}
