@@ -1995,7 +1995,7 @@ A strength meter and per-rule checklist underneath the password field show which
 
 #### What happens when you click Next
 
-The form is validated client-side first, then the server checks that first-time setup has not already run on this install. Setup runs once: the first successful submission creates the superadmin and records that setup is complete, and every later submission, including ones sent at the same moment, is refused with `Admin users already exist. This endpoint is only for first-time setup.` Deactivating or deleting accounts later does not reopen it. If you see that message, an account has already been created on this install: log in with it, or ask whoever created it.
+The form is validated client-side first, then the server checks that first-time setup has not already run on this install. Setup runs once. Afterwards the endpoint returns `Admin users already exist. This endpoint is only for first-time setup.` If you see that message, an account has already been created on this install: log in with it, or ask whoever created it.
 
 The admin user is created with role **`superadmin`**, which has every permission in the system. You can demote later or create narrower roles from **Settings → Users → Roles** once you're logged in.
 
@@ -2007,7 +2007,7 @@ With `OIDC_SYNC_ROLES=true`, SSO sign-in sets each user's role from their identi
 
 #### Recovering administrator access {#recovering-administrator-access}
 
-If every administrator account has been lost (for example, all are deactivated, or nobody knows a superadmin password), the setup wizard does not come back. Recover from the database instead. The commands below use the stock Docker Compose service name and credentials; adjust them for your deployment.
+If every administrator account has been lost (for example, all are deactivated, or nobody knows a superadmin password), recover access from the database. The commands below use the stock Docker Compose service name and credentials; adjust them for your deployment.
 
 1. Open a `psql` session on the PatchMon database:
 
