@@ -57,7 +57,7 @@ const Login = () => {
 		disableLocalAuth: false,
 		passwordFallback: false,
 	});
-	const [oidcConfigStatus, setOidcConfigStatus] = useState("loading");
+	const [oidcConfigLoaded, setOidcConfigLoaded] = useState(false);
 	const [discordConfig, setDiscordConfig] = useState({
 		enabled: false,
 		buttonText: "Login with Discord",
@@ -138,10 +138,11 @@ const Login = () => {
 
 				const config = await response.json();
 				setOidcConfig(config);
-				setOidcConfigStatus("ready");
 			} catch (error) {
 				console.error("Failed to fetch OIDC config:", error);
-				setOidcConfigStatus("error");
+			} finally {
+				// Fail open: the server still refuses password login when local auth is disabled.
+				setOidcConfigLoaded(true);
 			}
 		};
 		fetchOidcConfig();
@@ -674,17 +675,6 @@ const Login = () => {
 							className="mt-8 space-y-6"
 							onSubmit={isSignupMode ? handleSignupSubmit : handleSubmit}
 						>
-							{oidcConfigStatus !== "ready" && (
-								<div
-									className="text-center text-sm text-secondary-600 dark:text-white"
-									role={oidcConfigStatus === "error" ? "alert" : "status"}
-								>
-									{oidcConfigStatus === "error"
-										? "Unable to load sign-in options. Please refresh the page to try again."
-										: "Checking sign-in options..."}
-								</div>
-							)}
-
 							{oidcConfig.passwordFallback && (
 								<div className="p-3 rounded-md bg-warning-50 dark:bg-warning-900/20 border border-warning-200 dark:border-warning-800">
 									<p className="text-sm text-warning-800 dark:text-warning-200">
@@ -695,7 +685,7 @@ const Login = () => {
 								</div>
 							)}
 							{/* Only show form fields if local auth is not disabled */}
-							{oidcConfigStatus === "ready" && !oidcConfig.disableLocalAuth && (
+							{oidcConfigLoaded && !oidcConfig.disableLocalAuth && (
 								<div className="space-y-4">
 									<div>
 										<label
@@ -854,7 +844,7 @@ const Login = () => {
 							)}
 
 							{/* Only show local auth form if not disabled by OIDC config */}
-							{oidcConfigStatus === "ready" && !oidcConfig.disableLocalAuth && (
+							{oidcConfigLoaded && !oidcConfig.disableLocalAuth && (
 								<div>
 									<button
 										type="submit"
@@ -921,7 +911,7 @@ const Login = () => {
 								</div>
 							)}
 
-							{oidcConfigStatus === "ready" &&
+							{oidcConfigLoaded &&
 								signupEnabled &&
 								!oidcConfig.disableLocalAuth &&
 								!oidcConfig.passwordFallback && (

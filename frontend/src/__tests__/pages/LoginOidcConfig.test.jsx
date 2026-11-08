@@ -61,9 +61,8 @@ describe("Login OIDC configuration", () => {
 		const oidcConfig = deferred();
 		renderLogin(oidcConfig.promise);
 
-		expect(screen.getByRole("status")).toHaveTextContent(
-			"Checking sign-in options",
-		);
+		expect(screen.queryByRole("status")).not.toBeInTheDocument();
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 		expect(
 			screen.queryByLabelText("Username or Email"),
 		).not.toBeInTheDocument();
@@ -114,27 +113,30 @@ describe("Login OIDC configuration", () => {
 		expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
 	});
 
-	it("keeps local credentials hidden when the OIDC policy cannot be loaded", async () => {
+	const expectLocalSignInAfterFailure = async (oidcResponse) => {
 		const consoleError = vi
 			.spyOn(console, "error")
 			.mockImplementation(() => {});
-		renderLogin(
-			Promise.resolve({
-				ok: false,
-				status: 503,
-			}),
-		);
+		renderLogin(oidcResponse);
 
-		expect(await screen.findByRole("alert")).toHaveTextContent(
-			"Unable to load sign-in options",
-		);
 		expect(
-			screen.queryByLabelText("Username or Email"),
-		).not.toBeInTheDocument();
-		expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
-		expect(
-			screen.queryByRole("button", { name: "Sign in" }),
-		).not.toBeInTheDocument();
+			await screen.findByLabelText("Username or Email"),
+		).toBeInTheDocument();
+		expect(screen.getByLabelText("Password")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Sign in" })).toBeInTheDocument();
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 		expect(consoleError).toHaveBeenCalled();
+	};
+
+	it("shows local sign-in when the OIDC policy request returns 503", async () => {
+		await expectLocalSignInAfterFailure(
+			Promise.resolve({ ok: false, status: 503 }),
+		);
+	});
+
+	it("shows local sign-in when the OIDC policy request fails on the network", async () => {
+		await expectLocalSignInAfterFailure(
+			Promise.reject(new TypeError("Failed to fetch")),
+		);
 	});
 });
