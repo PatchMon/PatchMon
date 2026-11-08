@@ -1927,7 +1927,7 @@ func (h *AuthHandler) SetupAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	count, err := h.users.CountAdmins(r.Context())
+	count, err := h.users.Count(r.Context())
 	if err != nil || count > 0 {
 		Error(w, http.StatusBadRequest, "Admin users already exist. This endpoint is only for first-time setup.")
 		return

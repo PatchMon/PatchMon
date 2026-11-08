@@ -311,7 +311,7 @@ func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Reques
 		// Still check users table for admin existence - do not assume hasAdminUsers=false.
 		hasAdminUsers := false
 		if h.users != nil {
-			if count, countErr := h.users.CountAdmins(r.Context()); countErr == nil {
+			if count, countErr := h.users.Count(r.Context()); countErr == nil {
 				hasAdminUsers = count > 0
 			}
 		}
@@ -354,7 +354,7 @@ func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Reques
 	hasAdminUsers := false
 	canBypassWelcome := false
 	if h.users != nil {
-		count, err := h.users.CountAdmins(r.Context())
+		count, err := h.users.Count(r.Context())
 		if err == nil {
 			hasAdminUsers = count > 0
 			canBypassWelcome = s.OidcEnabled && s.OidcAutoCreateUsers && count == 0

@@ -1247,19 +1247,17 @@ func (h *OidcHandler) createOidcUser(ctx context.Context, info *oidc.UserInfo) *
 	if h.log != nil && len(info.Groups) == 0 && h.oidcSyncRoles(ctx) {
 		h.log.Warn("oidc no groups in token for new user", "email", info.Email, "hint", "Create a Scope Mapping in Authentik to add 'groups' claim")
 	}
-	// If no admin/superadmin exists yet, promote the first auto-created user to superadmin.
-	//
 	// Must check the error: (0, err) on a transient failure would fail open and
 	// promote an ordinary user to superadmin.
-	adminCount, adminCountErr := h.users.CountAdmins(ctx)
-	if adminCountErr != nil {
+	userCount, userCountErr := h.users.Count(ctx)
+	if userCountErr != nil {
 		if h.log != nil {
-			h.log.Error("oidc: cannot determine admin count, refusing to auto-create",
-				"error", adminCountErr, "email", info.Email)
+			h.log.Error("oidc: cannot determine user count, refusing to auto-create",
+				"error", userCountErr, "email", info.Email)
 		}
 		return nil
 	}
-	if adminCount == 0 {
+	if userCount == 0 {
 		role = "superadmin"
 		if h.log != nil {
 			h.log.Info("oidc first user promoted to superadmin", "email", info.Email)

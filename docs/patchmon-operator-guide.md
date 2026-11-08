@@ -1995,7 +1995,7 @@ A strength meter and per-rule checklist underneath the password field show which
 
 #### What happens when you click Next
 
-The form is validated client-side first, then the server checks that no admin user already exists before accepting the submission. If somebody has already created an admin (for example because two people opened the wizard at the same time), you'll see `Admin users already exist. This endpoint is only for first-time setup.` The first person to submit wins; log in with those credentials instead.
+The form is validated client-side first, then the server checks that the install has no user accounts at all before accepting the submission. Once any account exists, whatever its role and whether or not it is active, the setup endpoint refuses further submissions with `Admin users already exist. This endpoint is only for first-time setup.` If you see that message, an account has already been created on this install: log in with it, or ask whoever created it.
 
 The admin user is created with role **`superadmin`**, which has every permission in the system. You can demote later or create narrower roles from **Settings → Users → Roles** once you're logged in.
 
@@ -2990,10 +2990,10 @@ If you've pre-configured OIDC via environment variables before first boot:
 
 1. Set `OIDC_AUTO_CREATE_USERS=true`
 2. The setup wizard is automatically bypassed when OIDC with auto-create is enabled
-3. The **first user** to log in via OIDC is automatically promoted to **Super Admin**, regardless of group mapping, to ensure the system always has an admin
+3. The **first user** to log in via OIDC on an install with no accounts at all is automatically promoted to **Super Admin**, regardless of group mapping
 4. Subsequent OIDC users get roles based on group mapping or the default role as normal
 
-> **Note:** You do not need to configure group mapping for the first user. The auto-promotion happens because PatchMon detects no admin exists yet.
+> **Note:** You do not need to configure group mapping for the first user. The auto-promotion happens only while PatchMon has no user accounts of any kind; once one exists, every later OIDC user gets their role from group mapping or the default role.
 
 ---
 
@@ -3618,7 +3618,7 @@ No Save button is needed for the toggles at the top (except **Enable OIDC / SSO*
 
 - A PatchMon account is created automatically. The username comes from `preferred_username` (only the part before any `@`), or from the email prefix if that claim is not sent (e.g. `alice@contoso.com` becomes `alice`).
 - The role is determined by group membership; if no group matches, the **Default (fallback)** role is used.
-- If **no admin exists yet in PatchMon**, the very first OIDC user is automatically promoted to **Super Admin** regardless of groups, so you cannot lock yourself out.
+- If **PatchMon has no user accounts yet**, the very first OIDC user is automatically promoted to **Super Admin** regardless of groups, so you cannot lock yourself out.
 
 ---
 
