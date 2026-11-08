@@ -1225,7 +1225,7 @@ function RunsTab({
 													</div>
 												</td>
 												<td className="px-3 sm:px-4 py-2 text-sm text-secondary-900 dark:text-white min-w-0">
-													<div className="max-w-[320px]">
+													<div className="min-w-0 max-w-[320px] overflow-hidden">
 														<CompactPackageSummary run={run} />
 													</div>
 												</td>

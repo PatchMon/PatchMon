@@ -5,13 +5,14 @@ import { packageDetailPath } from "../utils/packageLinks";
 
 const COLLAPSE_THRESHOLD = 2;
 
-const NOT_IN_INVENTORY = "Not in the package inventory";
-
 function PackageName({ name, packageIds, className = "", onClick }) {
 	const to = packageDetailPath(name, packageIds);
 	if (!to) {
 		return (
-			<span className={className} title={NOT_IN_INVENTORY}>
+			<span
+				className={className}
+				title={`${name} (not in the package inventory)`}
+			>
 				{name}
 			</span>
 		);
@@ -84,7 +85,7 @@ export function CompactPackageSummary({ run, className = "" }) {
 	if (run.patch_type !== "patch_package") {
 		return (
 			<span
-				className={`inline-flex items-center gap-1.5 text-sm text-secondary-900 dark:text-white min-w-0 ${className}`}
+				className={`flex items-center gap-1.5 text-sm text-secondary-900 dark:text-white min-w-0 max-w-full ${className}`}
 			>
 				<Package className="h-4 w-4 text-secondary-400 dark:text-secondary-500 shrink-0" />
 				<span className="truncate">Patch all</span>
@@ -102,7 +103,7 @@ export function CompactPackageSummary({ run, className = "" }) {
 	if (requested.length === 0) {
 		return (
 			<span
-				className={`inline-flex items-center gap-1.5 text-sm text-secondary-500 dark:text-secondary-400 min-w-0 ${className}`}
+				className={`flex items-center gap-1.5 text-sm text-secondary-500 dark:text-secondary-400 min-w-0 max-w-full ${className}`}
 			>
 				<Package className="h-4 w-4 shrink-0" />
 				<span className="truncate">—</span>
@@ -116,14 +117,14 @@ export function CompactPackageSummary({ run, className = "" }) {
 
 	return (
 		<span
-			className={`inline-flex items-center gap-1.5 text-sm text-secondary-900 dark:text-white min-w-0 ${className}`}
+			className={`flex items-center gap-1.5 text-sm text-secondary-900 dark:text-white min-w-0 max-w-full ${className}`}
 			title={fullList}
 		>
 			<Package className="h-4 w-4 text-secondary-400 dark:text-secondary-500 shrink-0" />
 			<PackageName
 				name={first}
 				packageIds={run.package_ids}
-				className="truncate"
+				className="min-w-0 flex-1 truncate"
 				onClick={(e) => e.stopPropagation()}
 			/>
 			{restCount > 0 && (
