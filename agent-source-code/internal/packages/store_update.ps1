@@ -69,7 +69,7 @@ try {
     while ($true) {
         $status = $item.GetCurrentStatus()
         $state = [string]$status.InstallState
-        if ($state -in 'Completed', 'Error', 'Canceled') { break }
+        if ($state -in 'Completed', 'Error', 'Canceled' -or $state -like 'Paused*') { break }
         if ((Get-Date) -ge $deadline) { break }
         if ($state -eq 'ReadyToDownload' -and ((Get-Date) - $nudged).TotalSeconds -ge 15) {
             $mgr.MoveToFrontOfDownloadQueue($item.ProductId, '')
@@ -90,5 +90,7 @@ try {
         installedForUser = $after.installed
     }
 } catch {
-    Emit @{ state = 'Error'; pfn = $pfn; error = $_.Exception.Message; errorCode = (Hex $_.Exception.HResult) }
+    $e = $_.Exception
+    while ($e.InnerException) { $e = $e.InnerException }
+    Emit @{ state = 'Error'; pfn = $pfn; error = $e.Message; errorCode = (Hex $e.HResult) }
 }

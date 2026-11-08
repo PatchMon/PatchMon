@@ -1570,7 +1570,7 @@ func (r *windowsPatchRun) updateStoreApp(runCtx context.Context, it *models.Patc
 		r.out("%s...\n", label)
 		ctx, cancel := context.WithTimeout(runCtx, r.timeouts.storeUpdate)
 		defer cancel()
-		wait := r.timeouts.storeUpdate - time.Minute
+		wait := storeScriptWait(ctx, r.now())
 		var res storeUpdateResult
 		var err error
 		r.withHeartbeat(label, func() {
@@ -1589,6 +1589,14 @@ func (r *windowsPatchRun) updateStoreApp(runCtx context.Context, it *models.Patc
 		r.finish(it, status, msg)
 	}
 	r.out("  %s: %s\n", it.ID, it.Message)
+}
+
+func storeScriptWait(ctx context.Context, now time.Time) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return defaultWindowsPatchTimeouts.storeUpdate - time.Minute
+	}
+	return max(deadline.Sub(now)-time.Minute, 30*time.Second)
 }
 
 func (r *windowsPatchRun) upgradeApp(runCtx context.Context, it *models.PatchRunItem, keepX86 bool) {

@@ -118,7 +118,8 @@ func TestClassifyStoreUpdate(t *testing.T) {
 		{storeUpdateResult{State: "Unavailable"}, itemSkipped, msgStoreUnavailable, ""},
 		{storeUpdateResult{State: "Error", ErrorCode: "0x80073CF9"}, itemFailed, "Microsoft Store update failed", "0x80073cf9"},
 		{storeUpdateResult{State: "Canceled"}, itemFailed, "Microsoft Store cancelled the update", ""},
-		{storeUpdateResult{State: "ReadyToDownload"}, itemFailed, "Microsoft Store did not finish the update within 29 minutes (last state: ReadyToDownload)", ""},
+		{storeUpdateResult{State: "ReadyToDownload"}, itemFailed, "Microsoft Store did not finish the update within 29 minutes (last state: ReadyToDownload); it may still complete", ""},
+		{storeUpdateResult{State: "PausedWiFiRequired"}, itemFailed, "Microsoft Store paused the update (PausedWiFiRequired)", ""},
 	}
 	for _, c := range cases {
 		status, message, hr := classifyStoreUpdate(c.res, wait)

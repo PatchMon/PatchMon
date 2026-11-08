@@ -183,9 +183,12 @@ func classifyStoreUpdate(res storeUpdateResult, wait time.Duration) (status, mes
 	case "Canceled":
 		return itemFailed, "Microsoft Store cancelled the update", normaliseHResult(res.ErrorCode)
 	}
+	if strings.HasPrefix(res.State, "Paused") {
+		return itemFailed, "Microsoft Store paused the update (" + res.State + ")", normaliseHResult(res.ErrorCode)
+	}
 	state := res.State
 	if state == "" {
 		state = "unknown"
 	}
-	return itemFailed, fmt.Sprintf("Microsoft Store did not finish the update within %d minutes (last state: %s)", minutes(wait), state), normaliseHResult(res.ErrorCode)
+	return itemFailed, fmt.Sprintf("Microsoft Store did not finish the update within %d minutes (last state: %s); it may still complete", max(1, minutes(wait)), state), normaliseHResult(res.ErrorCode)
 }

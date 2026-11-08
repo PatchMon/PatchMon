@@ -1451,3 +1451,17 @@ func TestStopDuringRecheckSkipsTheRestAsStopped(t *testing.T) {
 		t.Errorf("stage = %q", res.Stage)
 	}
 }
+
+func TestStoreScriptWaitLeavesTheScriptTimeToReport(t *testing.T) {
+	now := time.Now()
+	ctx, cancel := context.WithDeadline(context.Background(), now.Add(10*time.Minute))
+	defer cancel()
+	if got := storeScriptWait(ctx, now); got != 9*time.Minute {
+		t.Errorf("wait = %v", got)
+	}
+	short, cancelShort := context.WithDeadline(context.Background(), now.Add(20*time.Second))
+	defer cancelShort()
+	if got := storeScriptWait(short, now); got != 30*time.Second {
+		t.Errorf("short wait = %v", got)
+	}
+}
