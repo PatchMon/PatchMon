@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -164,10 +165,45 @@ func (d *Detector) getFreeBSDInfo() (osType, osVersion string, err error) {
 	return osType, osVersion, nil
 }
 
-// gopsutil returns DisplayVersion as PlatformVersion, and it is absent before
-// Server 2022, so 2016 and 2019 LTSC need the ReleaseId fallback.
-func resolveWindowsOSVersion(platformVersion, releaseID, kernelVersion string) string {
-	for _, v := range []string{platformVersion, releaseID, kernelVersion} {
+var windowsServerYears = map[int]string{
+	14393: "2016",
+	17763: "2019",
+	20348: "2022",
+	26100: "2025",
+}
+
+// windowsBuild reads the build from gopsutil's KernelVersion, e.g. "10.0.20348.2762 Build 20348.2762".
+func windowsBuild(kernelVersion string) int {
+	version, _, _ := strings.Cut(kernelVersion, " ")
+	fields := strings.Split(version, ".")
+	if len(fields) < 3 {
+		return 0
+	}
+	build, err := strconv.Atoi(fields[2])
+	if err != nil {
+		return 0
+	}
+	return build
+}
+
+// Desktop builds share the Server build numbers, so only a Server product type gets a year.
+func resolveWindowsOSVersion(platformFamily, platformVersion, releaseID, kernelVersion string) string {
+	feature := platformVersion
+	if feature == "" {
+		feature = releaseID
+	}
+	if strings.HasPrefix(platformFamily, "Server") {
+		if year, ok := windowsServerYears[windowsBuild(kernelVersion)]; ok {
+			if feature == "" {
+				return "Server " + year
+			}
+			return "Server " + year + " (" + feature + ")"
+		}
+		if feature != "" {
+			return "Server " + feature
+		}
+	}
+	for _, v := range []string{feature, kernelVersion} {
 		if v != "" {
 			return v
 		}
@@ -200,7 +236,7 @@ func (d *Detector) DetectOS() (osType, osVersion string, err error) {
 		if infoErr != nil {
 			return "Windows", "Unknown", nil
 		}
-		return "Windows", resolveWindowsOSVersion(info.PlatformVersion, windowsReleaseID(), info.KernelVersion), nil
+		return "Windows", resolveWindowsOSVersion(info.PlatformFamily, info.PlatformVersion, windowsReleaseID(), info.KernelVersion), nil
 	}
 	// Check for FreeBSD first (doesn't have /etc/os-release)
 	if d.isFreeBSD() {
