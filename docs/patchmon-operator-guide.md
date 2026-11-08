@@ -4831,6 +4831,12 @@ patchmon-agent config show
   ```
 
   Re-running the install script is safe. On a machine managed by AppLocker or WDAC, an unsigned binary in `C:\Program Files\PatchMon` may be blocked by policy instead, which no exclusion will fix; check with `Get-AppLockerPolicy -Effective -Xml`.
+- **`Access is denied` on `config.yml`, `credentials.yml` or `patchmon-agent.log` after re-running the installer.** Installers from 2.1.4 to 2.1.8 left files that already existed in `C:\ProgramData\PatchMon\` with no permissions at all when run over an existing agent, so the agent could not read its config or rotate its log. Re-run the current install command, which resets those files to inherit the directory's permissions, or repair the host by hand from an elevated PowerShell:
+
+  ```powershell
+  icacls "C:\ProgramData\PatchMon\*" /reset /C
+  Restart-Service PatchMonAgent
+  ```
 - **TLS errors against the PatchMon server.** Windows 10 pre-1903 defaults to TLS 1.0/1.1; the installer explicitly enables TLS 1.2 at the session level. For older hosts, update the .NET Framework or set the registry keys documented by Microsoft in the `SchUseStrongCrypto` KB article.
 
 ### Viewing Logs

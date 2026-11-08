@@ -94,3 +94,18 @@ func TestProxmoxDeriveMachineIDIsStable(t *testing.T) {
 		t.Error("fallback is ambiguous between vmids")
 	}
 }
+
+func TestWindowsInstallerKeepsExistingFileACLs(t *testing.T) {
+	script := string(PatchmonWindowsInstallScript)
+	if !strings.Contains(script, "/inheritance:r") {
+		t.Fatal("install script no longer locks the config directory")
+	}
+	for i, line := range strings.Split(script, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "&") && strings.Contains(line, "/inheritance:r") && strings.Contains(line, "/T") {
+			t.Errorf("line %d applies /inheritance:r recursively, which leaves existing files with an empty ACL: %s", i+1, strings.TrimSpace(line))
+		}
+	}
+	if !strings.Contains(script, "/reset") {
+		t.Error("install script must reset existing files so they inherit the directory's ACL")
+	}
+}
