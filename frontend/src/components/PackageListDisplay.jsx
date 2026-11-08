@@ -5,13 +5,14 @@ import { packageDetailPath } from "../utils/packageLinks";
 
 const COLLAPSE_THRESHOLD = 2;
 
-const NOT_IN_INVENTORY = "Not in the package inventory";
-
 function PackageName({ name, packageIds, className = "", onClick }) {
 	const to = packageDetailPath(name, packageIds);
 	if (!to) {
 		return (
-			<span className={className} title={NOT_IN_INVENTORY}>
+			<span
+				className={className}
+				title={`${name} (not in the package inventory)`}
+			>
 				{name}
 			</span>
 		);

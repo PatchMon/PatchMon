@@ -30,7 +30,7 @@ describe("PackageNameList", () => {
 		expect(screen.queryByRole("link", { name: KB })).toBeNull();
 		expect(screen.getByText(KB)).toHaveAttribute(
 			"title",
-			"Not in the package inventory",
+			`${KB} (not in the package inventory)`,
 		);
 	});
 
@@ -93,5 +93,24 @@ describe("CompactPackageSummary", () => {
 		const packageName = screen.getByRole("link", { name: LONG_PACKAGE });
 		expect(summary).toHaveClass("flex", "min-w-0", "max-w-full");
 		expect(packageName).toHaveClass("min-w-0", "flex-1", "truncate");
+	});
+
+	it("shows the full name on hover when the package is not in the inventory", () => {
+		renderIn(
+			<CompactPackageSummary
+				run={{
+					patch_type: "patch_package",
+					package_names: [LONG_PACKAGE],
+					package_ids: { [FIREFOX]: FIREFOX_ID },
+				}}
+			/>,
+		);
+
+		const packageName = screen.getByText(LONG_PACKAGE);
+		expect(packageName).toHaveClass("truncate");
+		expect(packageName).toHaveAttribute(
+			"title",
+			`${LONG_PACKAGE} (not in the package inventory)`,
+		);
 	});
 });
