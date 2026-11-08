@@ -57,6 +57,13 @@ var wuaScript string
 //go:embed wua_pending.ps1
 var wuaPendingScript string
 
+//go:embed store_update.ps1
+var storeUpdateScript string
+
+func storePowerShellArgs() []string {
+	return []string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", winexec.Script(storeUpdateScript)}
+}
+
 func wuaPowerShellArgs() []string {
 	return []string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", winexec.Script(wuaPendingScript + wuaScript)}
 }
@@ -649,11 +656,12 @@ type wingetBackend interface {
 	UpdatableApps() []models.Package
 	PendingFileRenames() []string
 	UpgradeState(ctx context.Context, id string, log func(string)) (wingetUpgradeState, error)
-	StoreApps(apps []models.Package) map[string]bool
+	StoreApps(apps []models.Package) map[string]string
+	StoreUpdate(ctx context.Context, target string, wait time.Duration) (storeUpdateResult, error)
 	KeepsX86(ctx context.Context, id string) (bool, error)
 }
 
-const msgStoreApp = "Microsoft Store app: it updates through the Store for each user, not as SYSTEM"
+const msgStoreApp = "Microsoft Store app: no Store package matches this winget Id"
 
 const msgDeferredReplace = "Installed; some files will be replaced at the next restart."
 
@@ -708,6 +716,7 @@ func newPendingRenames(before, after []string) bool {
 
 type windowsPatchTimeouts struct {
 	scan, download, downloadFeature, install, installFeature, wingetUpgrade, wingetList, heartbeat time.Duration
+	storeUpdate                                                                                    time.Duration
 	recheck, recheckEvery, recheckCall                                                             time.Duration
 }
 
@@ -719,6 +728,7 @@ var defaultWindowsPatchTimeouts = windowsPatchTimeouts{
 	installFeature:  240 * time.Minute,
 	wingetUpgrade:   30 * time.Minute,
 	wingetList:      5 * time.Minute,
+	storeUpdate:     30 * time.Minute,
 	heartbeat:       60 * time.Second,
 	recheck:         10 * time.Minute,
 	recheckEvery:    60 * time.Second,
@@ -1480,7 +1490,7 @@ func (r *windowsPatchRun) runWingetPhase(runCtx, stopCtx context.Context, winget
 	}
 	r.out("[winget] %d application(s) to check\n", len(queue))
 
-	var store map[string]bool
+	var store map[string]string
 	if len(queue) > 0 {
 		apps := make([]models.Package, 0, len(queue))
 		for _, it := range queue {
@@ -1494,9 +1504,8 @@ func (r *windowsPatchRun) runWingetPhase(runCtx, stopCtx context.Context, winget
 			r.finish(it, itemSkipped, reason)
 			continue
 		}
-		if store[strings.ToLower(it.ID)] {
-			r.finish(it, itemSkipped, msgStoreApp)
-			r.out("  %s: %s\n", it.ID, it.Message)
+		if target, ok := store[strings.ToLower(it.ID)]; ok {
+			r.updateStoreApp(runCtx, it, target)
 			continue
 		}
 		it.StartedAt = r.ts()
@@ -1546,6 +1555,40 @@ func (r *windowsPatchRun) runWingetPhase(runCtx, stopCtx context.Context, winget
 		}
 		r.out("  %s: %s\n", it.ID, it.Message)
 	}
+}
+
+func (r *windowsPatchRun) updateStoreApp(runCtx context.Context, it *models.PatchRunItem, target string) {
+	switch {
+	case target == "":
+		r.finish(it, itemSkipped, msgStoreApp)
+	case r.req.DryRun:
+		r.finish(it, itemWouldInstall, msgStoreWouldUpdate)
+	default:
+		it.StartedAt = r.ts()
+		label := "[store] Updating " + it.ID
+		r.post(it)
+		r.out("%s...\n", label)
+		ctx, cancel := context.WithTimeout(runCtx, r.timeouts.storeUpdate)
+		defer cancel()
+		wait := r.timeouts.storeUpdate - time.Minute
+		var res storeUpdateResult
+		var err error
+		r.withHeartbeat(label, func() {
+			res, err = r.winget.StoreUpdate(ctx, target, wait)
+		})
+		if err != nil {
+			if reason := r.interruptReason(runCtx); reason != "" {
+				r.finish(it, itemSkipped, reason)
+			} else {
+				r.finish(it, itemFailed, "Microsoft Store update did not complete: "+err.Error())
+			}
+			break
+		}
+		status, msg, hr := classifyStoreUpdate(res, wait)
+		it.HResult = hr
+		r.finish(it, status, msg)
+	}
+	r.out("  %s: %s\n", it.ID, it.Message)
 }
 
 func (r *windowsPatchRun) upgradeApp(runCtx context.Context, it *models.PatchRunItem, keepX86 bool) {

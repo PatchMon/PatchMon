@@ -39,6 +39,7 @@ func TestEmbeddedPowerShellScriptsParse(t *testing.T) {
 		"Windows Update inventory": winexec.Script(wuaPendingScript + windowsUpdatesScript),
 		"wua.ps1":                  winexec.Script(wuaPendingScript + wuaScript),
 		"Store app query":          winexec.Script(storeAppxScript),
+		"store_update.ps1":         winexec.Script(storeUpdateScript),
 	}
 	for name, script := range scripts {
 		if errs := powerShellParseErrors(t, script); len(errs) > 0 {

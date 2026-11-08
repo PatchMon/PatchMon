@@ -2,6 +2,7 @@ package packages
 
 import (
 	"testing"
+	"time"
 
 	"patchmon-agent/pkg/models"
 )
@@ -66,5 +67,63 @@ func TestParseStoreAppx(t *testing.T) {
 	}
 	if got := parseStoreAppx([]byte("null")); got != nil {
 		t.Errorf("null = %+v", got)
+	}
+}
+
+func TestStoreTarget(t *testing.T) {
+	appx := []storeAppx{{Name: "Microsoft.WindowsTerminal", PackageFamilyName: "Microsoft.WindowsTerminal_8wekyb3d8bbwe", InstallLocation: testWindowsApps + `\Microsoft.WindowsTerminal_1.18.10301.0_x64__8wekyb3d8bbwe`, SignatureKind: "Store"}}
+	cases := []struct {
+		pkg    models.Package
+		target string
+		ok     bool
+	}{
+		{models.Package{WingetID: "9MSMLRH6LZF3"}, "9MSMLRH6LZF3", true},
+		{models.Package{WingetID: "Microsoft.Paint_8wekyb3d8bbwe"}, "Microsoft.Paint_8wekyb3d8bbwe", true},
+		{models.Package{WingetID: "Microsoft.WindowsTerminal"}, "Microsoft.WindowsTerminal_8wekyb3d8bbwe", true},
+		{models.Package{WingetID: "Some.App", SourceRepository: "msstore"}, "", true},
+		{models.Package{WingetID: "7zip.7zip"}, "", false},
+		{models.Package{}, "", false},
+	}
+	for _, c := range cases {
+		target, ok := storeTarget(c.pkg, appx, testWindowsApps)
+		if target != c.target || ok != c.ok {
+			t.Errorf("storeTarget(%q) = %q, %v; want %q, %v", c.pkg.WingetID, target, ok, c.target, c.ok)
+		}
+	}
+}
+
+func TestParseStoreUpdateOutput(t *testing.T) {
+	out := "\ufeffnoise\r\n{\"state\":\"Completed\",\"pfn\":\"A_b\",\"before\":\"1.0\",\"after\":\"2.0\",\"installedForUser\":true}\r\n"
+	res, err := parseStoreUpdateOutput([]byte(out))
+	if err != nil || res.State != "Completed" || res.After != "2.0" || !res.InstalledForUser {
+		t.Fatalf("got %+v, %v", res, err)
+	}
+	if _, err := parseStoreUpdateOutput([]byte("nothing")); err == nil {
+		t.Fatal("no JSON line parsed without error")
+	}
+}
+
+func TestClassifyStoreUpdate(t *testing.T) {
+	wait := 29 * time.Minute
+	cases := []struct {
+		res     storeUpdateResult
+		status  string
+		message string
+		hresult string
+	}{
+		{storeUpdateResult{State: "Completed", Before: "1.0", After: "2.0", InstalledForUser: true}, itemInstalled, msgStoreUpdated, ""},
+		{storeUpdateResult{State: "Completed", Before: "1.0", After: "2.0"}, itemInstalled, msgStoreStaged, ""},
+		{storeUpdateResult{State: "Completed", Before: "1.0", After: "1.0"}, itemFailed, "Microsoft Store reported the update complete, but the installed version did not change", ""},
+		{storeUpdateResult{State: "NoUpdate"}, itemNotApplicable, msgStoreNoUpdate, ""},
+		{storeUpdateResult{State: "Unavailable"}, itemSkipped, msgStoreUnavailable, ""},
+		{storeUpdateResult{State: "Error", ErrorCode: "0x80073CF9"}, itemFailed, "Microsoft Store update failed", "0x80073cf9"},
+		{storeUpdateResult{State: "Canceled"}, itemFailed, "Microsoft Store cancelled the update", ""},
+		{storeUpdateResult{State: "ReadyToDownload"}, itemFailed, "Microsoft Store did not finish the update within 29 minutes (last state: ReadyToDownload)", ""},
+	}
+	for _, c := range cases {
+		status, message, hr := classifyStoreUpdate(c.res, wait)
+		if status != c.status || message != c.message || hr != c.hresult {
+			t.Errorf("classifyStoreUpdate(%+v) = %q, %q, %q", c.res, status, message, hr)
+		}
 	}
 }

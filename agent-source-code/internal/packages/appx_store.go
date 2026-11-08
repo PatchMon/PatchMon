@@ -2,8 +2,10 @@ package packages
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"patchmon-agent/internal/winexec"
 	"patchmon-agent/pkg/models"
@@ -43,12 +45,17 @@ func isStoreInstall(a storeAppx, windowsApps string) bool {
 // isStoreApp reports whether a winget row is an MSIX/Store install. winget run as SYSTEM
 // upgrades only the machine's staged copy of those, never a user's.
 func isStoreApp(p models.Package, appx []storeAppx, windowsApps string) bool {
+	_, ok := storeTarget(p, appx, windowsApps)
+	return ok
+}
+
+func storeTarget(p models.Package, appx []storeAppx, windowsApps string) (string, bool) {
 	id := p.WingetID
 	if id == "" {
-		return false
+		return "", false
 	}
-	if strings.EqualFold(p.SourceRepository, "msstore") || storeProductIDPattern.MatchString(id) || packageFamilyPattern.MatchString(id) {
-		return true
+	if storeProductIDPattern.MatchString(id) || packageFamilyPattern.MatchString(id) {
+		return id, true
 	}
 	for _, a := range appx {
 		if !isStoreInstall(a, windowsApps) {
@@ -56,10 +63,13 @@ func isStoreApp(p models.Package, appx []storeAppx, windowsApps string) bool {
 		}
 		family, _, _ := strings.Cut(a.PackageFamilyName, "_")
 		if strings.EqualFold(a.Name, id) || strings.EqualFold(family, id) {
-			return true
+			return a.PackageFamilyName, true
 		}
 	}
-	return false
+	if strings.EqualFold(p.SourceRepository, "msstore") {
+		return "", true
+	}
+	return "", false
 }
 
 func markStoreApps(pkgs []models.Package, appx []storeAppx, windowsApps string) {
@@ -108,4 +118,74 @@ func parseStoreAppx(output []byte) []storeAppx {
 		return nil
 	}
 	return out
+}
+
+type storeUpdateRequest struct {
+	Target  string `json:"target"`
+	Seconds int    `json:"seconds"`
+}
+
+type storeUpdateResult struct {
+	State            string `json:"state"`
+	PackageFamily    string `json:"pfn"`
+	ErrorCode        string `json:"errorCode"`
+	Error            string `json:"error"`
+	Before           string `json:"before"`
+	After            string `json:"after"`
+	InstalledForUser bool   `json:"installedForUser"`
+}
+
+const (
+	msgStoreWouldUpdate = "Microsoft Store update would be requested"
+	msgStoreUpdated     = "Updated through the Microsoft Store"
+	msgStoreStaged      = "Updated through the Microsoft Store; each user gets the new version at their next sign-in"
+	msgStoreNoUpdate    = "No Microsoft Store update available"
+	msgStoreUnavailable = "Microsoft Store is not available on this host"
+)
+
+func parseStoreUpdateOutput(output []byte) (storeUpdateResult, error) {
+	var last string
+	for _, line := range strings.Split(string(winexec.TrimBOM(output)), "\n") {
+		if line = strings.TrimSpace(line); strings.HasPrefix(line, "{") {
+			last = line
+		}
+	}
+	var res storeUpdateResult
+	if last == "" {
+		return res, fmt.Errorf("no result from the Store update script")
+	}
+	if err := json.Unmarshal([]byte(last), &res); err != nil {
+		return res, fmt.Errorf("unreadable Store update result: %w", err)
+	}
+	return res, nil
+}
+
+func classifyStoreUpdate(res storeUpdateResult, wait time.Duration) (status, message, hresult string) {
+	switch res.State {
+	case "Unavailable":
+		return itemSkipped, msgStoreUnavailable, ""
+	case "NoUpdate":
+		return itemNotApplicable, msgStoreNoUpdate, ""
+	case "Completed":
+		switch {
+		case res.After == "" || res.After == res.Before:
+			return itemFailed, "Microsoft Store reported the update complete, but the installed version did not change", ""
+		case !res.InstalledForUser:
+			return itemInstalled, msgStoreStaged, ""
+		}
+		return itemInstalled, msgStoreUpdated, ""
+	case "Error":
+		msg := "Microsoft Store update failed"
+		if res.Error != "" {
+			msg += ": " + res.Error
+		}
+		return itemFailed, msg, normaliseHResult(res.ErrorCode)
+	case "Canceled":
+		return itemFailed, "Microsoft Store cancelled the update", normaliseHResult(res.ErrorCode)
+	}
+	state := res.State
+	if state == "" {
+		state = "unknown"
+	}
+	return itemFailed, fmt.Sprintf("Microsoft Store did not finish the update within %d minutes (last state: %s)", minutes(wait), state), normaliseHResult(res.ErrorCode)
 }
