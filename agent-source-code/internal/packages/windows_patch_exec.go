@@ -210,6 +210,18 @@ func (b *wingetExecBackend) UpgradeState(ctx context.Context, id string, log fun
 	return installedUpgradeState(NewWindowsManager(quiet).parseWingetTable(out), id), nil
 }
 
+func (b *wingetExecBackend) KeepsX86(ctx context.Context, id string) (bool, error) {
+	code, out, err := b.Run(ctx, wingetDetailsArgs(id), nil)
+	if err != nil {
+		return false, err
+	}
+	if code != 0 {
+		return false, nil
+	}
+	key, ok := machineX86ARPKey(out)
+	return ok && x86OnlyBinaries(x86UninstallLocation(key)), nil
+}
+
 func (b *wingetExecBackend) StoreApps(apps []models.Package) map[string]bool {
 	quiet := logrus.New()
 	quiet.SetOutput(io.Discard)
