@@ -134,7 +134,9 @@ const VersionUpdateTab = () => {
 							</label>
 							<p className="text-xs text-secondary-500 dark:text-white mt-1">
 								When enabled, the login screen will display the latest GitHub
-								release version and release notes information.
+								release version and release notes information. When disabled,
+								the installed server version is not shown to signed-out
+								visitors.
 							</p>
 						</div>
 						<button

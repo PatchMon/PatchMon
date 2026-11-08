@@ -302,6 +302,13 @@ func (h *SettingsHandler) resolvedConfigFor(ctx context.Context, s *models.Setti
 	return config.ResolveConfig(ctx, h.cfg, s)
 }
 
+func (h *SettingsHandler) loginPageVersion(showGithubVersion bool) string {
+	if !showGithubVersion || h.cfg == nil {
+		return ""
+	}
+	return h.cfg.Version
+}
+
 // GetLoginSettings handles GET /settings/login-settings (public, used by login screen and first-time admin setup).
 // Includes has_admin_users and oidc fields for first-time setup flow (replaces /auth/check-admin-users).
 func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Request) {
@@ -315,15 +322,12 @@ func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Reques
 				hasAdminUsers = done
 			}
 		}
-		currentVersion := ""
-		if h.cfg != nil {
-			currentVersion = h.cfg.Version
-		}
 		// In admin/multi-context mode, always hide GitHub version info on login.
 		showGithubVersionFallback := true
 		if h.cfg != nil && (h.cfg.AdminMode || h.cfg.RegistryDatabaseURL != "") {
 			showGithubVersionFallback = false
 		}
+		currentVersion := h.loginPageVersion(showGithubVersionFallback)
 		showNewsletter := h.cfg == nil || !h.cfg.AdminMode
 		adminMode := h.cfg != nil && h.cfg.AdminMode
 		JSON(w, http.StatusOK, map[string]interface{}{
@@ -361,17 +365,13 @@ func (h *SettingsHandler) GetLoginSettings(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	currentVersion := ""
-	if h.cfg != nil {
-		currentVersion = h.cfg.Version
-	}
-
 	// In admin/multi-context mode, always hide GitHub version info on the login page —
 	// managed contexts should not see the upstream repo's release panel.
 	showGithubVersion := s.ShowGithubVersionOnLogin
 	if h.cfg != nil && (h.cfg.AdminMode || h.cfg.RegistryDatabaseURL != "") {
 		showGithubVersion = false
 	}
+	currentVersion := h.loginPageVersion(showGithubVersion)
 
 	showNewsletter := h.cfg == nil || !h.cfg.AdminMode
 	adminMode := h.cfg != nil && h.cfg.AdminMode

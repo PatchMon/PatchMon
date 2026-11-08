@@ -357,6 +357,8 @@ Logos can be PNG, JPEG or SVG, up to 5 MB. SVG files are cleaned on upload: scri
 
 Shows the running PatchMon server version, the latest upstream version (checked daily by the `version-update-check` automation job, see Background jobs and automation), and a manual "Check for updates" button. It does not perform the upgrade. To upgrade, PatchMon is a container-image swap (see Installing PatchMon Server on Docker).
 
+The **Show GitHub Version / Release Notes on Login Screen** toggle controls the release panel on the login page. Turning it off also stops the login page from revealing the installed server version to anyone who is not signed in.
+
 #### Metrics
 
 **Path:** `/settings/metrics`
