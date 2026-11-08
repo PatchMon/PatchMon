@@ -4837,6 +4837,7 @@ patchmon-agent config show
   icacls "C:\ProgramData\PatchMon\*" /reset /C
   Restart-Service PatchMonAgent
   ```
+- **Install stops after `Installing agent to ...` with `An object at the specified path C:\Users\XXXXX~1.XXX does not exist`.** Windows PowerShell 5.1 cannot delete a file through an 8.3 short `TEMP` path when the profile folder name contains a dot, such as `C:\Users\j.smith`. The current installer uses the long form of `TEMP`. With an older installer, set `$env:TEMP` and `$env:TMP` to the long path (`(Get-Item $env:TEMP).FullName`) in the same session, then re-run it.
 - **TLS errors against the PatchMon server.** Windows 10 pre-1903 defaults to TLS 1.0/1.1; the installer explicitly enables TLS 1.2 at the session level. For older hosts, update the .NET Framework or set the registry keys documented by Microsoft in the `SchUseStrongCrypto` KB article.
 
 ### Viewing Logs

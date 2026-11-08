@@ -2,6 +2,7 @@ package agents
 
 import (
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -107,5 +108,18 @@ func TestWindowsInstallerKeepsExistingFileACLs(t *testing.T) {
 	}
 	if !strings.Contains(script, "/reset") {
 		t.Error("install script must reset existing files so they inherit the directory's ACL")
+	}
+}
+
+func TestWindowsInstallerUsesLongTempPath(t *testing.T) {
+	script := string(PatchmonWindowsInstallScript)
+	if strings.Contains(script, "Join-Path $env:TEMP") {
+		t.Error("the download path is built from $env:TEMP directly; resolve it to its long form first")
+	}
+	if !strings.Contains(script, "(Get-Item -LiteralPath $env:TEMP).FullName") {
+		t.Error("the download path must use the long form of TEMP")
+	}
+	if !regexp.MustCompile(`try\s*\{\s*Remove-Item -LiteralPath \$tempPath -Force\s*\}\s*catch`).MatchString(script) {
+		t.Error("removing the downloaded temp file must be wrapped in try/catch; -ErrorAction does not stop this error ending the install")
 	}
 }

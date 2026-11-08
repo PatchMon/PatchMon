@@ -156,7 +156,8 @@ Write-Host "Downloading agent from PatchMon server: $downloadURL" -ForegroundCol
 
 $binaryName = "patchmon-agent.exe"
 $targetPath = Join-Path $InstallPath $binaryName
-$tempPath = Join-Path $env:TEMP "patchmon-agent-windows-${arch}.exe"
+# PowerShell 5.1 cannot delete via an 8.3 TEMP path whose profile folder name has a dot, so use the long path.
+$tempPath = Join-Path (Get-Item -LiteralPath $env:TEMP).FullName "patchmon-agent-windows-${arch}.exe"
 
 Write-Host "Architecture: $arch" -ForegroundColor Cyan
 Write-Host "Install Path: $InstallPath" -ForegroundColor Cyan
@@ -223,7 +224,11 @@ Copy-Item -Path $tempPath -Destination $targetPath -Force
 Unblock-File -Path $targetPath -ErrorAction SilentlyContinue
 
 # Clean up temp file
-Remove-Item -Path $tempPath -Force
+try {
+    Remove-Item -LiteralPath $tempPath -Force
+} catch {
+    Write-Warning "Could not delete the temporary file $tempPath. It is safe to delete it by hand."
+}
 
 # Create or update config file - ensure skip_ssl_verify reflects server settings
 $configFile = Join-Path $ConfigPath "config.yml"
