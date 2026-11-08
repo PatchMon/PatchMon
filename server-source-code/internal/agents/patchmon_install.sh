@@ -98,25 +98,31 @@ verify_datetime() {
 # Run datetime verification
 verify_datetime
 
+prune_backups() {
+    ls -t "$@" 2>/dev/null | tail -n +4 | while IFS= read -r old; do
+        rm -f "$old"
+    done
+}
+
 # Clean up old files (keep only last 3 of each type)
 cleanup_old_files() {
     # Clean up old credential backups
-    ls -t /etc/patchmon/credentials.yml.backup.* 2>/dev/null | tail -n +4 | xargs -r rm -f
+    prune_backups /etc/patchmon/credentials.yml.backup.*
     
     # Clean up old config backups
-    ls -t /etc/patchmon/config.yml.backup.* 2>/dev/null | tail -n +4 | xargs -r rm -f
+    prune_backups /etc/patchmon/config.yml.backup.*
     
     # Clean up old agent backups
-    ls -t /usr/local/bin/patchmon-agent.backup.* 2>/dev/null | tail -n +4 | xargs -r rm -f
+    prune_backups /usr/local/bin/patchmon-agent.backup.*
     
     # Clean up old log files
-    ls -t /etc/patchmon/logs/patchmon-agent.log.old.* 2>/dev/null | tail -n +4 | xargs -r rm -f
+    prune_backups /etc/patchmon/logs/patchmon-agent.log.old.*
     
     # Clean up old shell script backups (if any exist)
-    ls -t /usr/local/bin/patchmon-agent.sh.backup.* 2>/dev/null | tail -n +4 | xargs -r rm -f
+    prune_backups /usr/local/bin/patchmon-agent.sh.backup.*
     
     # Clean up old credentials backups (if any exist)
-    ls -t /etc/patchmon/credentials.backup.* 2>/dev/null | tail -n +4 | xargs -r rm -f
+    prune_backups /etc/patchmon/credentials.backup.*
 }
 
 # Run cleanup at start
@@ -586,7 +592,7 @@ if [ -f "/etc/patchmon/config.yml" ]; then
     warning "Moving existing file out of the way for fresh installation"
     
     # Clean up old config backups (keep only last 3)
-    ls -t /etc/patchmon/config.yml.backup.* 2>/dev/null | tail -n +4 | xargs -r rm -f
+    prune_backups /etc/patchmon/config.yml.backup.*
     
     # Move existing file out of the way
     mv /etc/patchmon/config.yml /etc/patchmon/config.yml.backup.$(date +%Y%m%d_%H%M%S)
@@ -599,7 +605,7 @@ if [ -f "/etc/patchmon/credentials.yml" ]; then
     warning "Moving existing file out of the way for fresh installation"
     
     # Clean up old credential backups (keep only last 3)
-    ls -t /etc/patchmon/credentials.yml.backup.* 2>/dev/null | tail -n +4 | xargs -r rm -f
+    prune_backups /etc/patchmon/credentials.yml.backup.*
     
     # Move existing file out of the way
     mv /etc/patchmon/credentials.yml /etc/patchmon/credentials.yml.backup.$(date +%Y%m%d_%H%M%S)
@@ -668,7 +674,7 @@ if [ -f "/usr/local/bin/patchmon-agent" ]; then
     warning "Moving existing file out of the way for fresh installation"
     
     # Clean up old agent backups (keep only last 3)
-    ls -t /usr/local/bin/patchmon-agent.backup.* 2>/dev/null | tail -n +4 | xargs -r rm -f
+    prune_backups /usr/local/bin/patchmon-agent.backup.*
     
     # Move existing file out of the way
     AGENT_BACKUP="/usr/local/bin/patchmon-agent.backup.$(date +%Y%m%d_%H%M%S)"
