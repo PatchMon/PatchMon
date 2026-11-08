@@ -1247,37 +1247,58 @@ func (h *OidcHandler) createOidcUser(ctx context.Context, info *oidc.UserInfo) *
 	if h.log != nil && len(info.Groups) == 0 && h.oidcSyncRoles(ctx) {
 		h.log.Warn("oidc no groups in token for new user", "email", info.Email, "hint", "Create a Scope Mapping in Authentik to add 'groups' claim")
 	}
-	// If no admin/superadmin exists yet, promote the first auto-created user to superadmin.
-	//
-	// Must check the error: (0, err) on a transient failure would fail open and
+	// Must check the error: a transient failure would otherwise fail open and
 	// promote an ordinary user to superadmin.
-	adminCount, adminCountErr := h.users.CountAdmins(ctx)
-	if adminCountErr != nil {
+	setupDone, setupErr := h.users.SetupCompleted(ctx)
+	if setupErr != nil {
 		if h.log != nil {
-			h.log.Error("oidc: cannot determine admin count, refusing to auto-create",
-				"error", adminCountErr, "email", info.Email)
+			h.log.Error("oidc: cannot determine setup state, refusing to auto-create",
+				"error", setupErr, "email", info.Email)
 		}
 		return nil
 	}
-	if adminCount == 0 {
-		role = "superadmin"
-		if h.log != nil {
-			h.log.Info("oidc first user promoted to superadmin", "email", info.Email)
+	issuer := info.Issuer
+	newUser := func(role string) *models.User {
+		return &models.User{
+			ID:           uuid.New().String(),
+			Username:     username,
+			Email:        strings.ToLower(info.Email),
+			Role:         role,
+			IsActive:     true,
+			FirstName:    strPtr(info.GivenName),
+			LastName:     strPtr(info.FamilyName),
+			OidcSub:      &info.Sub,
+			OidcProvider: &issuer,
+			AvatarURL:    strPtr(info.Picture),
 		}
 	}
-	issuer := info.Issuer
-	u := &models.User{
-		ID:           uuid.New().String(),
-		Username:     username,
-		Email:        strings.ToLower(info.Email),
-		Role:         role,
-		IsActive:     true,
-		FirstName:    strPtr(info.GivenName),
-		LastName:     strPtr(info.FamilyName),
-		OidcSub:      &info.Sub,
-		OidcProvider: &issuer,
-		AvatarURL:    strPtr(info.Picture),
+	if !setupDone {
+		u := newUser("superadmin")
+		audit := store.AuditEntry{
+			Event:     auditEventFirstUserCreated,
+			RequestID: requestIDFrom(ctx),
+			Success:   true,
+			Metadata:  map[string]any{"method": "oidc", "username": u.Username, "email": u.Email, "issuer": issuer},
+		}
+		err := h.users.CreateFirstOidcUser(ctx, u, info.Sub, issuer, strPtr(info.Picture), audit)
+		if err == nil {
+			if h.log != nil {
+				h.log.Info("oidc first user promoted to superadmin", "email", info.Email)
+			}
+			if h.auth != nil {
+				h.auth.emitFirstUserCreated(ctx, u, "oidc")
+			}
+			AutoSubscribeIfHosted(ctx, h.cfg != nil && h.cfg.AdminMode, h.users, h.log, u)
+			return u
+		}
+		if !errors.Is(err, store.ErrSetupCompleted) {
+			if h.log != nil {
+				h.log.Error("oidc create first user failed", "error", err, "email", info.Email)
+			}
+			return nil
+		}
 	}
+	u := newUser(role)
 	if err := h.users.CreateOidcUser(ctx, u, info.Sub, issuer, strPtr(info.Picture)); err != nil {
 		if h.log != nil {
 			h.log.Error("oidc create user failed", "error", err, "email", info.Email)

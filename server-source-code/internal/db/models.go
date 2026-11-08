@@ -404,6 +404,11 @@ type HostRepository struct {
 	LastChecked  pgtype.Timestamp `json:"last_checked"`
 }
 
+type InstallState struct {
+	ID               int32            `json:"id"`
+	SetupCompletedAt pgtype.Timestamp `json:"setup_completed_at"`
+}
+
 type JobHistory struct {
 	ID            string           `json:"id"`
 	JobID         string           `json:"job_id"`

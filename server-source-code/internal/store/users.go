@@ -126,14 +126,17 @@ func (s *UsersStore) GetByOidcSubOrEmail(ctx context.Context, oidcSub, email str
 
 // CreateOidcUser creates a new user from OIDC claims.
 func (s *UsersStore) CreateOidcUser(ctx context.Context, u *models.User, oidcSub, oidcProvider string, avatarURL *string) error {
-	d := s.db.DB(ctx)
+	return s.db.DB(ctx).Queries.CreateOidcUser(ctx, oidcUserParams(u, oidcSub, oidcProvider, avatarURL))
+}
+
+func oidcUserParams(u *models.User, oidcSub, oidcProvider string, avatarURL *string) db.CreateOidcUserParams {
 	if u.ID == "" {
 		u.ID = uuid.New().String()
 	}
 	now := time.Now()
 	u.CreatedAt = now
 	u.UpdatedAt = now
-	arg := db.CreateOidcUserParams{
+	return db.CreateOidcUserParams{
 		ID:           u.ID,
 		Username:     u.Username,
 		Email:        u.Email,
@@ -146,7 +149,6 @@ func (s *UsersStore) CreateOidcUser(ctx context.Context, u *models.User, oidcSub
 		OidcProvider: &oidcProvider,
 		AvatarUrl:    avatarURL,
 	}
-	return d.Queries.CreateOidcUser(ctx, arg)
 }
 
 // UpdateOidcLink links OIDC to an existing user.
@@ -221,14 +223,17 @@ func (s *UsersStore) CountAdmins(ctx context.Context) (int, error) {
 
 // Create creates a new user.
 func (s *UsersStore) Create(ctx context.Context, u *models.User) error {
-	d := s.db.DB(ctx)
+	return s.db.DB(ctx).Queries.CreateUser(ctx, userParams(u))
+}
+
+func userParams(u *models.User) db.CreateUserParams {
 	if u.ID == "" {
 		u.ID = uuid.New().String()
 	}
 	now := time.Now()
 	u.CreatedAt = now
 	u.UpdatedAt = now
-	arg := db.CreateUserParams{
+	return db.CreateUserParams{
 		ID:              u.ID,
 		Username:        u.Username,
 		Email:           u.Email,
@@ -243,14 +248,16 @@ func (s *UsersStore) Create(ctx context.Context, u *models.User) error {
 		ThemePreference: u.ThemePreference,
 		ColorTheme:      u.ColorTheme,
 	}
-	return d.Queries.CreateUser(ctx, arg)
 }
 
 // Update updates a user.
 func (s *UsersStore) Update(ctx context.Context, u *models.User) error {
-	d := s.db.DB(ctx)
+	return s.db.DB(ctx).Queries.UpdateUser(ctx, updateUserParams(u))
+}
+
+func updateUserParams(u *models.User) db.UpdateUserParams {
 	u.UpdatedAt = time.Now()
-	arg := db.UpdateUserParams{
+	return db.UpdateUserParams{
 		Username:        u.Username,
 		Email:           u.Email,
 		Role:            u.Role,
@@ -262,7 +269,6 @@ func (s *UsersStore) Update(ctx context.Context, u *models.User) error {
 		ColorTheme:      u.ColorTheme,
 		ID:              u.ID,
 	}
-	return d.Queries.UpdateUser(ctx, arg)
 }
 
 // UpdatePassword updates a user's password hash.

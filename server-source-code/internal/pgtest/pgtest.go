@@ -30,6 +30,10 @@ var (
 	dbURL    string
 	dbName   string
 	setupErr error
+
+	tplOnce sync.Once
+	tplName string
+	tplErr  error
 )
 
 // URL returns this binary's database, created and migrated on first use.
@@ -62,15 +66,74 @@ func Open(t testing.TB) *database.DB {
 	return d
 }
 
-// Main runs the tests, then drops the database that URL created.
+// OpenEmpty returns a pool on a freshly migrated database used only by this
+// test, for tests that need an empty users table. It is dropped when the test ends.
+func OpenEmpty(t testing.TB) *database.DB {
+	t.Helper()
+	URL(t)
+	tplOnce.Do(func() { tplName, tplErr = createMigrated(baseURL) })
+	if tplErr != nil {
+		t.Fatalf("pgtest: %v", tplErr)
+	}
+	name, err := randomName()
+	if err != nil {
+		t.Fatalf("pgtest: %v", err)
+	}
+	if err := adminExec(baseURL, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize()+" TEMPLATE "+pgx.Identifier{tplName}.Sanitize()); err != nil {
+		t.Fatalf("pgtest: create database: %v", err)
+	}
+	t.Cleanup(func() { dropDatabase(name) })
+	d, err := database.NewFromURL(context.Background(), withPath(baseURL, name), 10, 1, &config.Config{DBConnectTimeout: 5})
+	if err != nil {
+		t.Fatalf("pgtest: %v", err)
+	}
+	t.Cleanup(d.Close)
+	return d
+}
+
+// Main runs the tests, then drops the databases that URL and OpenEmpty created.
 func Main(m *testing.M) int {
 	code := m.Run()
-	if dbName != "" {
-		if err := adminExec(baseURL, "DROP DATABASE IF EXISTS "+pgx.Identifier{dbName}.Sanitize()+" WITH (FORCE)"); err != nil {
-			fmt.Fprintf(os.Stderr, "pgtest: drop %s: %v\n", dbName, err)
+	for _, n := range []string{dbName, tplName} {
+		if n != "" {
+			dropDatabase(n)
 		}
 	}
 	return code
+}
+
+func dropDatabase(name string) {
+	if err := adminExec(baseURL, "DROP DATABASE IF EXISTS "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)"); err != nil {
+		fmt.Fprintf(os.Stderr, "pgtest: drop %s: %v\n", name, err)
+	}
+}
+
+func randomName() (string, error) {
+	var b [6]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return "patchmon_test_" + hex.EncodeToString(b[:]), nil
+}
+
+func withPath(base, name string) string {
+	u, _ := url.Parse(base)
+	u.Path = "/" + name
+	return u.String()
+}
+
+func createMigrated(base string) (string, error) {
+	name, err := randomName()
+	if err != nil {
+		return "", err
+	}
+	if err := adminExec(base, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize()); err != nil {
+		return "", fmt.Errorf("create database: %w", err)
+	}
+	if err := migrate.Run(withPath(base, name), slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
+		return name, err
+	}
+	return name, nil
 }
 
 func setup(base string) error {
@@ -78,20 +141,13 @@ func setup(base string) error {
 	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") {
 		return errors.New(EnvURL + " must be a postgres:// URL")
 	}
-	var b [6]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	baseURL = base
+	name, err := createMigrated(base)
+	dbName = name
+	if err != nil {
 		return err
 	}
-	name := "patchmon_test_" + hex.EncodeToString(b[:])
-	if err := adminExec(base, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize()); err != nil {
-		return fmt.Errorf("create database: %w", err)
-	}
-	baseURL, dbName = base, name
-	u.Path = "/" + name
-	if err := migrate.Run(u.String(), slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
-		return err
-	}
-	dbURL = u.String()
+	dbURL = withPath(base, name)
 	return nil
 }
 

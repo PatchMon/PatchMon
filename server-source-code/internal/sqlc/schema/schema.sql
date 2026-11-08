@@ -607,6 +607,12 @@ CREATE TABLE IF NOT EXISTS release_notes_acceptances (
     UNIQUE(user_id, version)
 );
 
+-- install_state
+CREATE TABLE IF NOT EXISTS install_state (
+    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    setup_completed_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- audit_logs
 CREATE TABLE IF NOT EXISTS audit_logs (
     id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,

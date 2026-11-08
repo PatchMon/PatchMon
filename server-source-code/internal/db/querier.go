@@ -560,6 +560,7 @@ type Querier interface {
 	ListUpdateHistoryByDateRange(ctx context.Context, arg ListUpdateHistoryByDateRangeParams) ([]ListUpdateHistoryByDateRangeRow, error)
 	ListUsers(ctx context.Context, arg ListUsersParams) ([]User, error)
 	ListVolumes(ctx context.Context, arg ListVolumesParams) ([]DockerVolume, error)
+	LockAdminSet(ctx context.Context) error
 	LockPatchRunStatus(ctx context.Context, arg LockPatchRunStatusParams) (LockPatchRunStatusRow, error)
 	// User-initiated cancel from StopRun. Deliberately does NOT touch shell_output
 	// so progress chunks the agent appended between our read and write are preserved.
@@ -575,6 +576,7 @@ type Querier interface {
 	// every long run timed_out while it was still working and discard the real
 	// outcome the agent later reports.
 	MarkPatchRunsTimedOut(ctx context.Context, arg MarkPatchRunsTimedOutParams) ([]MarkPatchRunsTimedOutRow, error)
+	MarkSetupCompleted(ctx context.Context) (int64, error)
 	// Keyed on when the run became due, not updated_at: the offline-agent retry bumps updated_at every 5 minutes.
 	MarkUndispatchedPatchRunsTimedOut(ctx context.Context, arg MarkUndispatchedPatchRunsTimedOutParams) ([]MarkUndispatchedPatchRunsTimedOutRow, error)
 	// Declared :execrows, not :exec, because the status guard IS the concurrency
@@ -598,6 +600,7 @@ type Querier interface {
 	SetPatchRunPolicySnapshot(ctx context.Context, arg SetPatchRunPolicySnapshotParams) error
 	SetPatchRunRebootRequired(ctx context.Context, arg SetPatchRunRebootRequiredParams) error
 	SetTemporaryPassword(ctx context.Context, arg SetTemporaryPasswordParams) error
+	SetupCompleted(ctx context.Context) (*bool, error)
 	SkipScheduledPatchRun(ctx context.Context, arg SkipScheduledPatchRunParams) (int64, error)
 	ToggleHostRepository(ctx context.Context, arg ToggleHostRepositoryParams) error
 	TouchTrustedDeviceLastUsed(ctx context.Context, arg TouchTrustedDeviceLastUsedParams) error

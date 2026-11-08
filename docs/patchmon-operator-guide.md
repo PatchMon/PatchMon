@@ -1995,11 +1995,50 @@ A strength meter and per-rule checklist underneath the password field show which
 
 #### What happens when you click Next
 
-The form is validated client-side first, then the server checks that no admin user already exists before accepting the submission. If somebody has already created an admin (for example because two people opened the wizard at the same time), you'll see `Admin users already exist. This endpoint is only for first-time setup.` The first person to submit wins; log in with those credentials instead.
+The form is validated client-side first, then the server checks that first-time setup has not already run on this install. Setup runs once: the first successful submission creates the superadmin and records that setup is complete, and every later submission, including ones sent at the same moment, is refused with `Admin users already exist. This endpoint is only for first-time setup.` Deactivating or deleting accounts later does not reopen it. If you see that message, an account has already been created on this install: log in with it, or ask whoever created it.
 
 The admin user is created with role **`superadmin`**, which has every permission in the system. You can demote later or create narrower roles from **Settings → Users → Roles** once you're logged in.
 
 Keep at least one `superadmin`: only a `superadmin` can make someone an `admin`, and only a `superadmin` can use the **Admin** preset when creating a role. An `admin` can create roles and assign them only with permissions the `admin` role itself holds. See the admin guide's roles chapter for the full rules.
+
+In **Settings → Users**, and through the matching user-management API calls, PatchMon refuses to let you deactivate your own account. It also refuses to deactivate, demote or delete an active `superadmin` when no other active `superadmin` would remain, or an active `admin` when that would leave no active `admin` or `superadmin`.
+
+With `OIDC_SYNC_ROLES=true`, SSO sign-in sets each user's role from their identity provider groups, and that change is not subject to these checks. If `OIDC_SUPERADMIN_GROUP` is not set, SSO sign-in never demotes an existing `superadmin`; if it is set, a `superadmin` who is no longer in that group is demoted at their next SSO sign-in. Keep at least one `superadmin` who signs in with a local password rather than through SSO.
+
+#### Recovering administrator access {#recovering-administrator-access}
+
+If every administrator account has been lost (for example, all are deactivated, or nobody knows a superadmin password), the setup wizard does not come back. Recover from the database instead. The commands below use the stock Docker Compose service name and credentials; adjust them for your deployment.
+
+1. Open a `psql` session on the PatchMon database:
+
+   ```bash
+   docker compose exec database psql -v ON_ERROR_STOP=1 -U patchmon_user -d patchmon_db
+   ```
+
+2. Pick an existing account to restore (`alice` below), then promote and reactivate it and turn off its two-factor authentication, so a lost authenticator does not keep you out:
+
+   ```sql
+   UPDATE users SET role = 'superadmin', is_active = true, updated_at = CURRENT_TIMESTAMP WHERE username = 'alice';
+   UPDATE users SET tfa_enabled = false, tfa_secret = NULL, tfa_backup_codes = NULL, updated_at = CURRENT_TIMESTAMP WHERE username = 'alice';
+   ```
+
+   Type `\q` to leave `psql`. An SSO-only account needs nothing more: it can now sign in through your identity provider.
+
+3. If nobody knows that account's password, set a new one. The password is read without being shown and handed to `psql` through an environment variable, so it never appears on a command line or in shell history. It needs `psql` 15 or later for `\getenv` (the stock image ships 17) and the `pgcrypto` extension, which needs a database role allowed to create extensions (the stock Compose user is):
+
+   ```bash
+   printf 'New password: '; stty -echo; read -r NEW_PASSWORD; stty echo; echo; export NEW_PASSWORD
+   docker compose exec -T -e NEW_PASSWORD database psql -v ON_ERROR_STOP=1 -U patchmon_user -d patchmon_db <<'SQL'
+   CREATE EXTENSION IF NOT EXISTS pgcrypto;
+   \getenv new_password NEW_PASSWORD
+   UPDATE users SET password_hash = crypt(:'new_password', gen_salt('bf', 12)), updated_at = CURRENT_TIMESTAMP WHERE username = 'alice';
+   SQL
+   unset NEW_PASSWORD
+   ```
+
+   This works in bash, zsh and sh. Check that `psql` prints `UPDATE 1`; `UPDATE 0` means the username did not match. If the `UPDATE` fails with an error, PostgreSQL may log the statement including the password, so set a different password once you are signed in.
+
+4. Sign in as that user, change the password from your profile, set up two-factor authentication again, and review **Settings → Users** for accounts you do not recognise.
 
 ---
 
@@ -2990,10 +3029,10 @@ If you've pre-configured OIDC via environment variables before first boot:
 
 1. Set `OIDC_AUTO_CREATE_USERS=true`
 2. The setup wizard is automatically bypassed when OIDC with auto-create is enabled
-3. The **first user** to log in via OIDC is automatically promoted to **Super Admin**, regardless of group mapping, to ensure the system always has an admin
+3. The **first user** to log in via OIDC on an install with no accounts at all is automatically promoted to **Super Admin**, regardless of group mapping
 4. Subsequent OIDC users get roles based on group mapping or the default role as normal
 
-> **Note:** You do not need to configure group mapping for the first user. The auto-promotion happens because PatchMon detects no admin exists yet.
+> **Note:** You do not need to configure group mapping for the first user. The auto-promotion happens only while PatchMon has no user accounts of any kind; once one exists, every later OIDC user gets their role from group mapping or the default role.
 
 ---
 
@@ -3618,7 +3657,7 @@ No Save button is needed for the toggles at the top (except **Enable OIDC / SSO*
 
 - A PatchMon account is created automatically. The username comes from `preferred_username` (only the part before any `@`), or from the email prefix if that claim is not sent (e.g. `alice@contoso.com` becomes `alice`).
 - The role is determined by group membership; if no group matches, the **Default (fallback)** role is used.
-- If **no admin exists yet in PatchMon**, the very first OIDC user is automatically promoted to **Super Admin** regardless of groups, so you cannot lock yourself out.
+- If **PatchMon has no user accounts yet**, the very first OIDC user is automatically promoted to **Super Admin** regardless of groups, so you cannot lock yourself out.
 
 ---
 

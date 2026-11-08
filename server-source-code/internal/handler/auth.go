@@ -1901,6 +1901,40 @@ func (h *AuthHandler) SignupEnabled(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, map[string]bool{"signupEnabled": s.SignupEnabled})
 }
 
+const (
+	auditEventFirstUserCreated = "first_user_created"
+	setupCompletedMessage      = "Admin users already exist. This endpoint is only for first-time setup."
+)
+
+func (h *AuthHandler) emitFirstUserCreated(ctx context.Context, u *models.User, method string) {
+	if (h.notify == nil && h.emitEvent == nil) || h.db == nil {
+		return
+	}
+	d := h.db.DB(ctx)
+	if d == nil {
+		return
+	}
+	ev := notifications.Event{
+		Type:          "user_created",
+		Severity:      "warning",
+		Title:         "First Superadmin Created",
+		Message:       "User " + u.Username + " was created as the install's first superadmin.",
+		ReferenceType: "user",
+		ReferenceID:   u.ID,
+		Metadata: map[string]interface{}{
+			"user_id":  u.ID,
+			"username": u.Username,
+			"role":     u.Role,
+			"method":   method,
+		},
+	}
+	if h.emitEvent != nil {
+		h.emitEvent(ctx, d, hostctx.TenantHostKey(ctx), ev)
+		return
+	}
+	h.notify.EmitEvent(ctx, d, hostctx.TenantHostKey(ctx), ev)
+}
+
 // SetupAdmin handles POST /auth/setup-admin (first-time admin creation).
 func (h *AuthHandler) SetupAdmin(w http.ResponseWriter, r *http.Request) {
 	if h.log != nil {
@@ -1927,9 +1961,8 @@ func (h *AuthHandler) SetupAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	count, err := h.users.CountAdmins(r.Context())
-	if err != nil || count > 0 {
-		Error(w, http.StatusBadRequest, "Admin users already exist. This endpoint is only for first-time setup.")
+	if done, err := h.users.SetupCompleted(r.Context()); err != nil || done {
+		Error(w, http.StatusBadRequest, setupCompletedMessage)
 		return
 	}
 
@@ -1955,10 +1988,19 @@ func (h *AuthHandler) SetupAdmin(w http.ResponseWriter, r *http.Request) {
 		FirstName:    &req.FirstName,
 		LastName:     &req.LastName,
 	}
-	if err := h.users.Create(r.Context(), u); err != nil {
+	audit := newAuditEntry(r, auditEventFirstUserCreated, "", "", true, map[string]any{"method": "setup_admin", "username": u.Username, "email": u.Email})
+	if err := h.users.CreateFirstAdmin(r.Context(), u, audit); err != nil {
+		if errors.Is(err, store.ErrSetupCompleted) {
+			Error(w, http.StatusBadRequest, setupCompletedMessage)
+			return
+		}
 		Error(w, http.StatusInternalServerError, "Failed to create admin")
 		return
 	}
+	if h.log != nil {
+		h.log.Info("first-run setup created superadmin", "user_id", u.ID, "username", u.Username, "ip", h.clientIP(r))
+	}
+	h.emitFirstUserCreated(r.Context(), u, "setup_admin")
 	AutoSubscribeIfHosted(r.Context(), h.cfg != nil && h.cfg.AdminMode, h.users, h.log, u)
 
 	expiresIn := h.getJwtExpiresInSeconds(r.Context())
