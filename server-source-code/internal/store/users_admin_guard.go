@@ -70,7 +70,7 @@ func (s *UsersStore) createFirst(ctx context.Context, u *models.User, audit Audi
 }
 
 // UpdateKeepingAdmin applies Update, refusing with ErrLastSuperadmin or
-// ErrLastAdmin if it would leave the install without an active administrator.
+// ErrLastAdmin if it removes the install's last active administrator.
 func (s *UsersStore) UpdateKeepingAdmin(ctx context.Context, u *models.User) error {
 	return s.inAdminTx(ctx, func(q *db.Queries) error {
 		before, err := q.GetUserByID(ctx, u.ID)
@@ -80,8 +80,7 @@ func (s *UsersStore) UpdateKeepingAdmin(ctx context.Context, u *models.User) err
 		if err := q.UpdateUser(ctx, updateUserParams(u)); err != nil {
 			return err
 		}
-		wasSuper := before.Role == "superadmin" && before.IsActive
-		if wasSuper && (u.Role != "superadmin" || !u.IsActive) {
+		if before.IsActive && before.Role == "superadmin" && (!u.IsActive || u.Role != "superadmin") {
 			n, err := q.CountSuperadmins(ctx)
 			if err != nil {
 				return err
@@ -90,12 +89,14 @@ func (s *UsersStore) UpdateKeepingAdmin(ctx context.Context, u *models.User) err
 				return ErrLastSuperadmin
 			}
 		}
-		n, err := q.CountAdmins(ctx)
-		if err != nil {
-			return err
-		}
-		if n == 0 {
-			return ErrLastAdmin
+		if before.IsActive && isAdminRole(before.Role) && (!u.IsActive || !isAdminRole(u.Role)) {
+			n, err := q.CountAdmins(ctx)
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				return ErrLastAdmin
+			}
 		}
 		return nil
 	})
@@ -135,6 +136,10 @@ func (s *UsersStore) DeleteKeepingAdmin(ctx context.Context, id string) error {
 		}
 		return q.DeleteUser(ctx, id)
 	})
+}
+
+func isAdminRole(role string) bool {
+	return role == "admin" || role == "superadmin"
 }
 
 func (s *UsersStore) inAdminTx(ctx context.Context, fn func(*db.Queries) error) error {

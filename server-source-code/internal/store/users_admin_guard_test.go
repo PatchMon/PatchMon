@@ -140,6 +140,36 @@ func TestUpdateKeepingAdminRefusesLastAdminWithoutSuperadmin(t *testing.T) {
 	}
 }
 
+func TestUpdateKeepingAdminAllowsUpdatesThatRemoveNoAdministrator(t *testing.T) {
+	ctx := context.Background()
+	d := pgtest.OpenEmpty(t)
+	s := NewUsersStore(d)
+	member := seedUser(t, s, "host_manager", true)
+	other := seedUser(t, s, "user", true)
+	dormant := seedUser(t, s, "superadmin", false)
+
+	renamed := *member
+	renamed.Username = "renamed" + uuid.New().String()[:8]
+	if err := s.UpdateKeepingAdmin(ctx, &renamed); err != nil {
+		t.Fatalf("rename with no administrators: %v", err)
+	}
+	off := *other
+	off.IsActive = false
+	if err := s.UpdateKeepingAdmin(ctx, &off); err != nil {
+		t.Fatalf("deactivate ordinary user with no administrators: %v", err)
+	}
+	dormantRenamed := *dormant
+	dormantRenamed.Username = "dormant" + uuid.New().String()[:8]
+	if err := s.UpdateKeepingAdmin(ctx, &dormantRenamed); err != nil {
+		t.Fatalf("rename inactive superadmin: %v", err)
+	}
+	dormantDemoted := dormantRenamed
+	dormantDemoted.Role = "user"
+	if err := s.UpdateKeepingAdmin(ctx, &dormantDemoted); err != nil {
+		t.Fatalf("demote inactive superadmin: %v", err)
+	}
+}
+
 func TestConcurrentDeactivationKeepsOneSuperadmin(t *testing.T) {
 	ctx := context.Background()
 	d := pgtest.OpenEmpty(t)
