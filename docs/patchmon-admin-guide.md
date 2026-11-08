@@ -1738,6 +1738,8 @@ Stopping the run during those 10 minutes ends the check straight away. The limit
 
 The agent runs as the Local System account, so winget acts on apps installed for all users. An app installed for one user only cannot be upgraded by the agent: it ends **Not applicable** with "Not found for the system account: the app is probably installed for a single user, which the agent cannot upgrade". Upgrade it from that user's session, or reinstall it for all users.
 
+An app installed as 32-bit on 64-bit Windows stays 32-bit: when its programs are 32-bit and it is installed under `Program Files (x86)`, the agent asks winget for the 32-bit installer. If the new version has no 32-bit installer, the app is left as it is and ends **Not applicable** with "Installed as 32-bit, but the new version has no 32-bit installer: not upgraded, so a 64-bit copy is not installed alongside it". To move such an app to 64-bit, uninstall it and install the 64-bit build.
+
 ##### WSUS-managed hosts
 
 If the host gets updates from WSUS, Windows Update only offers updates that WSUS has approved for it, so PatchMon only ever installs WSUS-approved updates. WSUS stays your approval gate and PatchMon decides when they install. If the host cannot reach its update server, items fail with "Cannot reach the update server or WSUS: check proxy, firewall, WSUS URL". WSUS does not affect winget, which uses its own sources.

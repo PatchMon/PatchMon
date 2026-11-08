@@ -502,6 +502,18 @@ type fakeWinget struct {
 	calls      [][]string
 	codes      map[string]uint32
 	output     string
+	x86        map[string]bool
+	archChecks []string
+	archErr    error
+	onArch     func()
+}
+
+func (f *fakeWinget) KeepsX86(_ context.Context, id string) (bool, error) {
+	f.archChecks = append(f.archChecks, id)
+	if f.onArch != nil {
+		f.onArch()
+	}
+	return f.x86[id], f.archErr
 }
 
 func (f *fakeWinget) Resolve() error { return f.resolveErr }
