@@ -2027,7 +2027,7 @@ If every administrator account has been lost (for example, all are deactivated, 
 3. If nobody knows that account's password, set a new one. The password is read without being shown and handed to `psql` through an environment variable, so it never appears on a command line or in shell history. It needs `psql` 15 or later for `\getenv` (the stock image ships 17) and the `pgcrypto` extension, which needs a database role allowed to create extensions (the stock Compose user is):
 
    ```bash
-   read -rsp 'New password: ' NEW_PASSWORD; echo; export NEW_PASSWORD
+   printf 'New password: '; stty -echo; read -r NEW_PASSWORD; stty echo; echo; export NEW_PASSWORD
    docker compose exec -T -e NEW_PASSWORD database psql -v ON_ERROR_STOP=1 -U patchmon_user -d patchmon_db <<'SQL'
    CREATE EXTENSION IF NOT EXISTS pgcrypto;
    \getenv new_password NEW_PASSWORD
@@ -2035,6 +2035,8 @@ If every administrator account has been lost (for example, all are deactivated, 
    SQL
    unset NEW_PASSWORD
    ```
+
+   This works in bash, zsh and sh. Check that `psql` prints `UPDATE 1`; `UPDATE 0` means the username did not match. If the `UPDATE` fails with an error, PostgreSQL may log the statement including the password, so set a different password once you are signed in.
 
 4. Sign in as that user, change the password from your profile, set up two-factor authentication again, and review **Settings → Users** for accounts you do not recognise.
 
