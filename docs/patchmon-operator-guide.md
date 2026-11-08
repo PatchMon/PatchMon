@@ -1995,11 +1995,36 @@ A strength meter and per-rule checklist underneath the password field show which
 
 #### What happens when you click Next
 
-The form is validated client-side first, then the server checks that the install has no user accounts at all before accepting the submission. Once any account exists, whatever its role and whether or not it is active, the setup endpoint refuses further submissions with `Admin users already exist. This endpoint is only for first-time setup.` If you see that message, an account has already been created on this install: log in with it, or ask whoever created it.
+The form is validated client-side first, then the server checks that first-time setup has not already run on this install. Setup runs once: the first successful submission creates the superadmin and records that setup is complete, and every later submission, including ones sent at the same moment, is refused with `Admin users already exist. This endpoint is only for first-time setup.` Deactivating or deleting accounts later does not reopen it. If you see that message, an account has already been created on this install: log in with it, or ask whoever created it.
 
 The admin user is created with role **`superadmin`**, which has every permission in the system. You can demote later or create narrower roles from **Settings → Users → Roles** once you're logged in.
 
 Keep at least one `superadmin`: only a `superadmin` can make someone an `admin`, and only a `superadmin` can use the **Admin** preset when creating a role. An `admin` can create roles and assign them only with permissions the `admin` role itself holds. See the admin guide's roles chapter for the full rules.
+
+PatchMon refuses to let you deactivate your own account, and refuses a deactivation, demotion or deletion that would leave the install without an active superadmin (or, if it has none, without an active admin).
+
+#### Recovering administrator access {#recovering-administrator-access}
+
+If every administrator account has been lost (for example, all are deactivated, or nobody knows a superadmin password), the setup wizard does not come back. Recover from the database instead. The commands below use the stock Docker Compose service name and credentials; adjust them for your deployment.
+
+1. Pick an existing account to restore, then promote and reactivate it:
+
+   ```bash
+   docker compose exec database psql -U patchmon_user -d patchmon_db -c \
+     "UPDATE users SET role = 'superadmin', is_active = true, updated_at = CURRENT_TIMESTAMP WHERE username = 'alice';"
+   ```
+
+2. If nobody knows that account's password, set a new one. This uses the `pgcrypto` extension, which needs a database role allowed to create extensions (the stock Compose user is):
+
+   ```bash
+   docker compose exec database psql -U patchmon_user -d patchmon_db -c \
+     "CREATE EXTENSION IF NOT EXISTS pgcrypto;" -c \
+     "UPDATE users SET password_hash = crypt('a-new-strong-password', gen_salt('bf', 12)) WHERE username = 'alice';"
+   ```
+
+   An SSO-only account does not need this step: once reactivated and promoted it can sign in through your identity provider.
+
+3. Sign in as that user, change the password from your profile, and review **Settings → Users** for accounts you do not recognise.
 
 ---
 

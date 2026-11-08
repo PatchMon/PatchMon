@@ -5105,6 +5105,11 @@ Effects:
 - The user's row is shown with a red **Inactive** badge in the users table.
 - A sign-in attempt with a wrong password gets the usual `Invalid credentials` message. Only someone who enters the account's correct password is told `Account is disabled`, so the message cannot be used to find out which accounts exist.
 
+Restrictions:
+
+- You cannot deactivate your own account.
+- You cannot deactivate or demote the last active `superadmin`, and if there are no active superadmins you cannot deactivate or demote the last active `admin` (`Cannot deactivate or demote the last active superadmin` / `... admin`).
+
 To re-enable: edit and tick **Active** again.
 
 #### Deleting a User
@@ -5162,7 +5167,7 @@ Before a role can be deleted, reassign every user who holds it. Use **Settings â
 
 #### "Cannot delete the last superadmin user" / "Cannot delete the last admin user"
 
-At least one `superadmin` must always exist. If there are no superadmins at all, at least one `admin` must exist. Create a replacement first (and sign in as them to confirm the login works) before deleting the final one.
+At least one `superadmin` must always exist. If there are no superadmins at all, at least one `admin` must exist. Create a replacement first (and sign in as them to confirm the login works) before deleting the final one. The same rule applies to deactivating or demoting the last one. If administrator access has been lost entirely, see the operator guide's *Recovering administrator access* section.
 
 #### User's old role is still in effect after I changed it
 

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/notifications"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -335,6 +337,11 @@ func (h *UsersHandler) Update(w http.ResponseWriter, r *http.Request) {
 		u.Role = *req.Role
 	}
 	if req.IsActive != nil {
+		currentUserID, _ := r.Context().Value(middleware.UserIDKey).(string)
+		if !*req.IsActive && existing.IsActive && currentUserID != "" && userID == currentUserID {
+			Error(w, http.StatusBadRequest, "Cannot deactivate your own account")
+			return
+		}
 		u.IsActive = *req.IsActive
 	}
 
@@ -353,8 +360,15 @@ func (h *UsersHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.users.Update(r.Context(), &u); err != nil {
-		Error(w, http.StatusInternalServerError, "Failed to update user")
+	if err := h.users.UpdateKeepingAdmin(r.Context(), &u); err != nil {
+		switch {
+		case errors.Is(err, store.ErrLastSuperadmin):
+			Error(w, http.StatusBadRequest, "Cannot deactivate or demote the last active superadmin")
+		case errors.Is(err, store.ErrLastAdmin):
+			Error(w, http.StatusBadRequest, "Cannot deactivate or demote the last active admin")
+		default:
+			Error(w, http.StatusInternalServerError, "Failed to update user")
+		}
 		return
 	}
 
@@ -435,27 +449,17 @@ func (h *UsersHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var superCount, adminCount int
-	if existing.Role == "superadmin" {
-		superCount, _ = h.users.CountSuperadmins(r.Context())
-		if superCount <= 1 {
+	if err := h.users.DeleteKeepingAdmin(r.Context(), userID); err != nil {
+		switch {
+		case errors.Is(err, store.ErrLastSuperadmin):
 			Error(w, http.StatusBadRequest, "Cannot delete the last superadmin user")
-			return
+		case errors.Is(err, store.ErrLastAdmin):
+			Error(w, http.StatusBadRequest, "Cannot delete the last admin user")
+		case errors.Is(err, pgx.ErrNoRows):
+			Error(w, http.StatusNotFound, "User not found")
+		default:
+			Error(w, http.StatusInternalServerError, "Failed to delete user")
 		}
-	}
-	if existing.Role == "admin" {
-		superCount, _ = h.users.CountSuperadmins(r.Context())
-		if superCount == 0 {
-			adminCount, _ = h.users.CountActiveAdmins(r.Context())
-			if adminCount <= 1 {
-				Error(w, http.StatusBadRequest, "Cannot delete the last admin user")
-				return
-			}
-		}
-	}
-
-	if err := h.users.Delete(r.Context(), userID); err != nil {
-		Error(w, http.StatusInternalServerError, "Failed to delete user")
 		return
 	}
 
