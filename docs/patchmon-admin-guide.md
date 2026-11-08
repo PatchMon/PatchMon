@@ -5109,6 +5109,7 @@ Restrictions:
 
 - You cannot deactivate your own account.
 - You cannot deactivate or demote the last active `superadmin`, and if there are no active superadmins you cannot deactivate or demote the last active `admin` (`Cannot deactivate or demote the last active superadmin` / `... admin`).
+- These checks cover changes made here and through the user-management API. When SSO role sync is on, a user's role follows their identity provider groups at each SSO sign-in instead; see the operator guide's *Group-to-Role Mapping* section.
 
 To re-enable: edit and tick **Active** again.
 

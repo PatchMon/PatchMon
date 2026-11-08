@@ -2001,7 +2001,9 @@ The admin user is created with role **`superadmin`**, which has every permission
 
 Keep at least one `superadmin`: only a `superadmin` can make someone an `admin`, and only a `superadmin` can use the **Admin** preset when creating a role. An `admin` can create roles and assign them only with permissions the `admin` role itself holds. See the admin guide's roles chapter for the full rules.
 
-PatchMon refuses to let you deactivate your own account, and refuses a deactivation, demotion or deletion that would leave the install without an active superadmin (or, if it has none, without an active admin).
+In **Settings → Users**, and through the matching user-management API calls, PatchMon refuses to let you deactivate your own account. It also refuses to deactivate, demote or delete an active `superadmin` when no other active `superadmin` would remain, or an active `admin` when that would leave no active `admin` or `superadmin`.
+
+With `OIDC_SYNC_ROLES=true`, SSO sign-in sets each user's role from their identity provider groups, and that change is not subject to these checks. If `OIDC_SUPERADMIN_GROUP` is not set, SSO sign-in never demotes an existing `superadmin`; if it is set, a `superadmin` who is no longer in that group is demoted at their next SSO sign-in. Keep at least one `superadmin` who signs in with a local password rather than through SSO.
 
 #### Recovering administrator access {#recovering-administrator-access}
 
