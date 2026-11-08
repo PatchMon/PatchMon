@@ -110,27 +110,29 @@ func (s *UsersStore) DeleteKeepingAdmin(ctx context.Context, id string) error {
 		if err != nil {
 			return err
 		}
-		switch target.Role {
-		case "superadmin":
-			n, err := q.CountSuperadmins(ctx)
-			if err != nil {
-				return err
-			}
-			if n <= 1 {
-				return ErrLastSuperadmin
-			}
-		case "admin":
-			supers, err := q.CountSuperadmins(ctx)
-			if err != nil {
-				return err
-			}
-			if supers == 0 {
-				admins, err := q.CountActiveAdmins(ctx)
+		if target.IsActive {
+			switch target.Role {
+			case "superadmin":
+				n, err := q.CountSuperadmins(ctx)
 				if err != nil {
 					return err
 				}
-				if admins <= 1 {
-					return ErrLastAdmin
+				if n <= 1 {
+					return ErrLastSuperadmin
+				}
+			case "admin":
+				supers, err := q.CountSuperadmins(ctx)
+				if err != nil {
+					return err
+				}
+				if supers == 0 {
+					admins, err := q.CountActiveAdmins(ctx)
+					if err != nil {
+						return err
+					}
+					if admins <= 1 {
+						return ErrLastAdmin
+					}
 				}
 			}
 		}

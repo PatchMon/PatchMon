@@ -170,6 +170,32 @@ func TestUpdateKeepingAdminAllowsUpdatesThatRemoveNoAdministrator(t *testing.T) 
 	}
 }
 
+func TestDeleteKeepingAdminGuardsOnlyActiveAdministrators(t *testing.T) {
+	ctx := context.Background()
+	d := pgtest.OpenEmpty(t)
+	s := NewUsersStore(d)
+	super := seedUser(t, s, "superadmin", true)
+	if err := s.DeleteKeepingAdmin(ctx, super.ID); !errors.Is(err, ErrLastSuperadmin) {
+		t.Fatalf("delete last active superadmin: err = %v, want ErrLastSuperadmin", err)
+	}
+	inactiveSuper := seedUser(t, s, "superadmin", false)
+	if err := s.DeleteKeepingAdmin(ctx, inactiveSuper.ID); err != nil {
+		t.Fatalf("delete inactive superadmin: %v", err)
+	}
+	if _, err := d.Exec(ctx, `DELETE FROM users WHERE id = $1`, super.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	admin := seedUser(t, s, "admin", true)
+	if err := s.DeleteKeepingAdmin(ctx, admin.ID); !errors.Is(err, ErrLastAdmin) {
+		t.Fatalf("delete last active admin: err = %v, want ErrLastAdmin", err)
+	}
+	inactiveAdmin := seedUser(t, s, "admin", false)
+	if err := s.DeleteKeepingAdmin(ctx, inactiveAdmin.ID); err != nil {
+		t.Fatalf("delete inactive admin: %v", err)
+	}
+}
+
 func TestConcurrentDeactivationKeepsOneSuperadmin(t *testing.T) {
 	ctx := context.Background()
 	d := pgtest.OpenEmpty(t)
