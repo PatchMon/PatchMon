@@ -2009,24 +2009,34 @@ With `OIDC_SYNC_ROLES=true`, SSO sign-in sets each user's role from their identi
 
 If every administrator account has been lost (for example, all are deactivated, or nobody knows a superadmin password), the setup wizard does not come back. Recover from the database instead. The commands below use the stock Docker Compose service name and credentials; adjust them for your deployment.
 
-1. Pick an existing account to restore, then promote and reactivate it:
+1. Open a `psql` session on the PatchMon database:
 
    ```bash
-   docker compose exec database psql -U patchmon_user -d patchmon_db -c \
-     "UPDATE users SET role = 'superadmin', is_active = true, updated_at = CURRENT_TIMESTAMP WHERE username = 'alice';"
+   docker compose exec database psql -v ON_ERROR_STOP=1 -U patchmon_user -d patchmon_db
    ```
 
-2. If nobody knows that account's password, set a new one. This uses the `pgcrypto` extension, which needs a database role allowed to create extensions (the stock Compose user is):
+2. Pick an existing account to restore (`alice` below), then promote and reactivate it and turn off its two-factor authentication, so a lost authenticator does not keep you out:
+
+   ```sql
+   UPDATE users SET role = 'superadmin', is_active = true, updated_at = CURRENT_TIMESTAMP WHERE username = 'alice';
+   UPDATE users SET tfa_enabled = false, tfa_secret = NULL, tfa_backup_codes = NULL, updated_at = CURRENT_TIMESTAMP WHERE username = 'alice';
+   ```
+
+   Type `\q` to leave `psql`. An SSO-only account needs nothing more: it can now sign in through your identity provider.
+
+3. If nobody knows that account's password, set a new one. The password is read without being shown and handed to `psql` through an environment variable, so it never appears on a command line or in shell history. It needs `psql` 15 or later for `\getenv` (the stock image ships 17) and the `pgcrypto` extension, which needs a database role allowed to create extensions (the stock Compose user is):
 
    ```bash
-   docker compose exec database psql -U patchmon_user -d patchmon_db -c \
-     "CREATE EXTENSION IF NOT EXISTS pgcrypto;" -c \
-     "UPDATE users SET password_hash = crypt('a-new-strong-password', gen_salt('bf', 12)) WHERE username = 'alice';"
+   read -rsp 'New password: ' NEW_PASSWORD; echo; export NEW_PASSWORD
+   docker compose exec -T -e NEW_PASSWORD database psql -v ON_ERROR_STOP=1 -U patchmon_user -d patchmon_db <<'SQL'
+   CREATE EXTENSION IF NOT EXISTS pgcrypto;
+   \getenv new_password NEW_PASSWORD
+   UPDATE users SET password_hash = crypt(:'new_password', gen_salt('bf', 12)), updated_at = CURRENT_TIMESTAMP WHERE username = 'alice';
+   SQL
+   unset NEW_PASSWORD
    ```
 
-   An SSO-only account does not need this step: once reactivated and promoted it can sign in through your identity provider.
-
-3. Sign in as that user, change the password from your profile, and review **Settings → Users** for accounts you do not recognise.
+4. Sign in as that user, change the password from your profile, set up two-factor authentication again, and review **Settings → Users** for accounts you do not recognise.
 
 ---
 
