@@ -366,6 +366,8 @@ func (h *UsersHandler) Update(w http.ResponseWriter, r *http.Request) {
 			Error(w, http.StatusBadRequest, "Cannot deactivate or demote the last active superadmin")
 		case errors.Is(err, store.ErrLastAdmin):
 			Error(w, http.StatusBadRequest, "Cannot deactivate or demote the last active admin")
+		case errors.Is(err, pgx.ErrNoRows):
+			Error(w, http.StatusNotFound, "User not found")
 		default:
 			Error(w, http.StatusInternalServerError, "Failed to update user")
 		}

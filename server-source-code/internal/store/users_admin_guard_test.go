@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/pgtest"
@@ -167,6 +168,15 @@ func TestUpdateKeepingAdminAllowsUpdatesThatRemoveNoAdministrator(t *testing.T) 
 	dormantDemoted.Role = "user"
 	if err := s.UpdateKeepingAdmin(ctx, &dormantDemoted); err != nil {
 		t.Fatalf("demote inactive superadmin: %v", err)
+	}
+}
+
+func TestUpdateKeepingAdminMissingUser(t *testing.T) {
+	d := pgtest.OpenEmpty(t)
+	s := NewUsersStore(d)
+	ghost := &models.User{ID: uuid.New().String(), Username: "ghost", Email: "ghost@example.com", Role: "user", IsActive: true}
+	if err := s.UpdateKeepingAdmin(context.Background(), ghost); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("err = %v, want pgx.ErrNoRows", err)
 	}
 }
 
