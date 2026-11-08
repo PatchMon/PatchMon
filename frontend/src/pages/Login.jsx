@@ -57,6 +57,7 @@ const Login = () => {
 		disableLocalAuth: false,
 		passwordFallback: false,
 	});
+	const [oidcConfigLoaded, setOidcConfigLoaded] = useState(false);
 	const [discordConfig, setDiscordConfig] = useState({
 		enabled: false,
 		buttonText: "Login with Discord",
@@ -131,12 +132,17 @@ const Login = () => {
 		const fetchOidcConfig = async () => {
 			try {
 				const response = await fetch("/api/v1/auth/oidc/config");
-				if (response.ok) {
-					const config = await response.json();
-					setOidcConfig(config);
+				if (!response.ok) {
+					throw new Error(`Failed to fetch OIDC config: ${response.status}`);
 				}
+
+				const config = await response.json();
+				setOidcConfig(config);
 			} catch (error) {
 				console.error("Failed to fetch OIDC config:", error);
+			} finally {
+				// Fail open: the server still refuses password login when local auth is disabled.
+				setOidcConfigLoaded(true);
 			}
 		};
 		fetchOidcConfig();
@@ -679,7 +685,7 @@ const Login = () => {
 								</div>
 							)}
 							{/* Only show form fields if local auth is not disabled */}
-							{!oidcConfig.disableLocalAuth && (
+							{oidcConfigLoaded && !oidcConfig.disableLocalAuth && (
 								<div className="space-y-4">
 									<div>
 										<label
@@ -838,7 +844,7 @@ const Login = () => {
 							)}
 
 							{/* Only show local auth form if not disabled by OIDC config */}
-							{!oidcConfig.disableLocalAuth && (
+							{oidcConfigLoaded && !oidcConfig.disableLocalAuth && (
 								<div>
 									<button
 										type="submit"
@@ -905,7 +911,8 @@ const Login = () => {
 								</div>
 							)}
 
-							{signupEnabled &&
+							{oidcConfigLoaded &&
+								signupEnabled &&
 								!oidcConfig.disableLocalAuth &&
 								!oidcConfig.passwordFallback && (
 									<div className="text-center">
