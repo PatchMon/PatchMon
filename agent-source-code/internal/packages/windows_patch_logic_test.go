@@ -527,6 +527,7 @@ type fakeWinget struct {
 	storeRes   map[string]storeUpdateResult
 	storeErr   error
 	storeCalls []string
+	storeSeen  []int
 	checkErr   error
 	states     map[string]wingetUpgradeState
 	checked    []string
@@ -572,6 +573,7 @@ func (f *fakeWinget) StoreApps(apps []models.Package) map[string]string {
 
 func (f *fakeWinget) StoreUpdate(_ context.Context, target string, _ time.Duration) (storeUpdateResult, error) {
 	f.storeCalls = append(f.storeCalls, target)
+	f.storeSeen = append(f.storeSeen, len(f.calls))
 	if f.storeErr != nil {
 		return storeUpdateResult{}, f.storeErr
 	}
@@ -1094,6 +1096,7 @@ func TestRunUpdatesStoreAppsThroughTheStore(t *testing.T) {
 		store:    map[string]string{"Microsoft.WindowsTerminal": pfn, "Odd.StoreApp": ""},
 		storeRes: map[string]storeUpdateResult{pfn: {State: "Completed", PackageFamily: pfn, Before: "1.18.10301.0", After: "1.24.12741.0", InstalledForUser: true}},
 		codes:    map[string]uint32{"7zip.7zip": 0},
+		x86:      map[string]bool{"Microsoft.WindowsTerminal": true, "Odd.StoreApp": true},
 	}
 	res := runFake(WindowsPatchRequest{Targets: []WindowsPatchTarget{
 		{Kind: WindowsTargetWinget, ID: "Microsoft.WindowsTerminal"},
@@ -1111,6 +1114,35 @@ func TestRunUpdatesStoreAppsThroughTheStore(t *testing.T) {
 	}
 	if !reflect.DeepEqual(g.checked, []string{"7zip.7zip"}) || len(g.calls) != 1 {
 		t.Errorf("winget touched a store app: checked %q, calls %q", g.checked, g.calls)
+	}
+	for _, id := range g.archChecks {
+		if id != "7zip.7zip" {
+			t.Errorf("x86 check ran for store app %q", id)
+		}
+	}
+}
+
+func TestRunUpdatesStoreAppsAfterWingetAndAppInstallerLast(t *testing.T) {
+	const installer = "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe"
+	const terminal = "Microsoft.WindowsTerminal_8wekyb3d8bbwe"
+	done := storeUpdateResult{State: "Completed", Before: "1", After: "2", InstalledForUser: true}
+	g := &fakeWinget{
+		store:    map[string]string{"Microsoft.AppInstaller": installer, "Microsoft.WindowsTerminal": terminal},
+		storeRes: map[string]storeUpdateResult{installer: done, terminal: done},
+		codes:    map[string]uint32{"7zip.7zip": 0},
+	}
+	runFake(WindowsPatchRequest{Targets: []WindowsPatchTarget{
+		{Kind: WindowsTargetWinget, ID: "Microsoft.AppInstaller"},
+		{Kind: WindowsTargetWinget, ID: "Microsoft.WindowsTerminal"},
+		{Kind: WindowsTargetWinget, ID: "7zip.7zip"},
+	}}, &recorder{}, &fakeWUA{}, g)
+	if !reflect.DeepEqual(g.storeCalls, []string{terminal, installer}) {
+		t.Errorf("store order = %q", g.storeCalls)
+	}
+	for i, seen := range g.storeSeen {
+		if seen != len(g.calls) {
+			t.Errorf("store update %d ran before the winget upgrades finished", i)
+		}
 	}
 }
 

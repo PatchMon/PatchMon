@@ -1499,13 +1499,14 @@ func (r *windowsPatchRun) runWingetPhase(runCtx, stopCtx context.Context, winget
 		store = r.winget.StoreApps(apps)
 	}
 
+	var storeItems []*models.PatchRunItem
 	for _, it := range queue {
-		if reason := r.interruptReason(runCtx); reason != "" {
-			r.finish(it, itemSkipped, reason)
+		if _, ok := store[strings.ToLower(it.ID)]; ok {
+			storeItems = append(storeItems, it)
 			continue
 		}
-		if target, ok := store[strings.ToLower(it.ID)]; ok {
-			r.updateStoreApp(runCtx, it, target)
+		if reason := r.interruptReason(runCtx); reason != "" {
+			r.finish(it, itemSkipped, reason)
 			continue
 		}
 		it.StartedAt = r.ts()
@@ -1555,6 +1556,22 @@ func (r *windowsPatchRun) runWingetPhase(runCtx, stopCtx context.Context, winget
 		}
 		r.out("  %s: %s\n", it.ID, it.Message)
 	}
+
+	// Store items run after winget, App Installer last: updating it replaces the winget.exe this run resolved.
+	sort.SliceStable(storeItems, func(i, j int) bool {
+		return !isWingetPackage(store[strings.ToLower(storeItems[i].ID)]) && isWingetPackage(store[strings.ToLower(storeItems[j].ID)])
+	})
+	for _, it := range storeItems {
+		if reason := r.interruptReason(runCtx); reason != "" {
+			r.finish(it, itemSkipped, reason)
+			continue
+		}
+		r.updateStoreApp(runCtx, it, store[strings.ToLower(it.ID)])
+	}
+}
+
+func isWingetPackage(storeTarget string) bool {
+	return strings.EqualFold(storeTarget, wingetStoreFamilies["microsoft.appinstaller"])
 }
 
 func (r *windowsPatchRun) updateStoreApp(runCtx context.Context, it *models.PatchRunItem, target string) {
