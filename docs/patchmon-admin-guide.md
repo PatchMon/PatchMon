@@ -1661,6 +1661,8 @@ Hosts without winget (it ships with the App Installer package, which Windows Ser
 
 **Microsoft Store apps** (apps installed from the Store or as MSIX packages) are not upgraded with winget, because winget run as the Local System account only updates the machine's staged copy, never the copy each user runs. On a host running agent 2.1.9 or later the agent asks the Microsoft Store install service to update the app instead, waits for it to finish and checks the installed version. This works when automatic Store updates are turned off by policy. Select Store apps individually with **Patch selected**; **Patch all** leaves them out. In a run, Store apps are updated after the apps winget upgrades, and App Installer (the package that contains winget) goes last.
 
+Agent 2.1.9 and later also read the host's Microsoft Store update queue, so a Store app with an update waiting there is listed with an update available even when winget does not know about it, including apps installed for a single user. Windows' own scheduled Store scan fills the queue; the agent only reads it and never starts a scan or a download. These rows show no available version, because the Store does not say which version it will install.
+
 - If a user is signed in, the update is installed for them and the item ends **Installed** with "Updated through the Microsoft Store".
 - If nobody who has the app is signed in, the Store stages the new version for the whole machine and each user gets it the next time they sign in. The item ends **Installed** with "Updated through the Microsoft Store; each user gets the new version at their next sign-in".
 - If the Store has no update for the app, the item ends **Not applicable** with "No Microsoft Store update available".

@@ -113,6 +113,7 @@ func (m *WindowsManager) appPackages() []models.Package {
 	if hasWingetUpdate(appPackages) {
 		markStoreApps(appPackages, m.getStoreAppx(), windowsAppsDir())
 	}
+	appPackages = addPendingStoreUpdates(appPackages, m.getPendingStoreUpdates(), windowsAppsDir())
 	m.logger.WithField("count", len(appPackages)).Info("Application packages after merge")
 	return appPackages
 }

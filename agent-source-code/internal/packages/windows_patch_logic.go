@@ -853,8 +853,12 @@ func applyRestartPending(pkgs []models.Package) {
 // UpdatableWingetApps returns the apps winget would upgrade unattended: flagged for update,
 // with a winget Id, and listed by winget list --upgrade-available.
 func (m *WindowsManager) UpdatableWingetApps() []models.Package {
+	return updatableWingetApps(m.appPackages())
+}
+
+func updatableWingetApps(pkgs []models.Package) []models.Package {
 	var out []models.Package
-	for _, p := range m.appPackages() {
+	for _, p := range pkgs {
 		if p.NeedsUpdate && p.WingetID != "" && !p.WingetPinned && !p.WingetStoreApp {
 			out = append(out, p)
 		}
