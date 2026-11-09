@@ -1,0 +1,2671 @@
+{
+	"__inputs": [
+		{
+			"name": "DS_PROMETHEUS",
+			"label": "Prometheus",
+			"description": "Prometheus data source that scrapes PatchMon /metrics",
+			"type": "datasource",
+			"pluginId": "prometheus",
+			"pluginName": "Prometheus"
+		}
+	],
+	"annotations": {
+		"list": [
+			{
+				"builtIn": 1,
+				"datasource": {
+					"type": "grafana",
+					"uid": "-- Grafana --"
+				},
+				"enable": true,
+				"hide": true,
+				"iconColor": "rgba(0, 211, 255, 1)",
+				"name": "Annotations & Alerts",
+				"type": "dashboard"
+			}
+		]
+	},
+	"description": "Patch status of the hosts monitored by PatchMon, from its Prometheus exporter (/metrics).",
+	"editable": true,
+	"fiscalYearStartMonth": 0,
+	"graphTooltip": 1,
+	"id": null,
+	"links": [
+		{
+			"asDropdown": false,
+			"icon": "external link",
+			"includeVars": false,
+			"keepTime": false,
+			"tags": [],
+			"targetBlank": true,
+			"title": "PatchMon",
+			"tooltip": "PatchMon documentation",
+			"type": "link",
+			"url": "https://patchmon.net/docs"
+		}
+	],
+	"panels": [
+		{
+			"type": "row",
+			"id": 1,
+			"title": "Overview",
+			"collapsed": false,
+			"gridPos": {
+				"h": 1,
+				"w": 24,
+				"x": 0,
+				"y": 0
+			},
+			"panels": []
+		},
+		{
+			"type": "stat",
+			"id": 2,
+			"title": "Exporter",
+			"description": "Prometheus `up` of the targets that served PatchMon metrics in the last day. Down means the last scrape failed: PatchMon is unreachable, or the exporter is turned off in Settings → Metrics (it then answers 503).",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${datasource}"
+			},
+			"gridPos": {
+				"h": 4,
+				"w": 3,
+				"x": 0,
+				"y": 1
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"decimals": 0,
+					"mappings": [
+						{
+							"type": "value",
+							"options": {
+								"0": {
+									"text": "Down",
+									"color": "red",
+									"index": 0
+								},
+								"1": {
+									"text": "Up",
+									"color": "green",
+									"index": 1
+								}
+							}
+						}
+					],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "red",
+								"value": null
+							},
+							{
+								"color": "green",
+								"value": 1
+							}
+						]
+					},
+					"unit": "none"
+				},
+				"overrides": []
+			},
+			"options": {
+				"colorMode": "background",
+				"graphMode": "none",
+				"justifyMode": "center",
+				"orientation": "auto",
+				"percentChangeColorMode": "standard",
+				"reduceOptions": {
+					"calcs": ["lastNotNull"],
+					"fields": "",
+					"values": false
+				},
+				"showPercentChange": false,
+				"textMode": "value",
+				"wideLayout": true
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "min(up{job=~\"$job\",instance=~\"$instance\"} and on (job, instance) last_over_time(patchmon_hosts_total{job=~\"$job\",instance=~\"$instance\"}[1d]))",
+					"legendFormat": "__auto",
+					"range": false,
+					"instant": true,
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "stat",
+			"id": 3,
+			"title": "Hosts",
+			"description": "Hosts monitored by PatchMon that match the filters.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${datasource}"
+			},
+			"gridPos": {
+				"h": 4,
+				"w": 3,
+				"x": 3,
+				"y": 1
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"decimals": 0,
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "blue",
+								"value": null
+							}
+						]
+					},
+					"unit": "none"
+				},
+				"overrides": []
+			},
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "center",
+				"orientation": "auto",
+				"percentChangeColorMode": "standard",
+				"reduceOptions": {
+					"calcs": ["lastNotNull"],
+					"fields": "",
+					"values": false
+				},
+				"showPercentChange": false,
+				"textMode": "value",
+				"wideLayout": true
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "count(patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"})",
+					"legendFormat": "__auto",
+					"range": true,
+					"instant": false,
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "stat",
+			"id": 4,
+			"title": "Need updates",
+			"description": "Hosts with at least one pending package update (regular or security).",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${datasource}"
+			},
+			"gridPos": {
+				"h": 4,
+				"w": 3,
+				"x": 6,
+				"y": 1
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"decimals": 0,
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "orange",
+								"value": 1
+							}
+						]
+					},
+					"unit": "none"
+				},
+				"overrides": []
+			},
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "center",
+				"orientation": "auto",
+				"percentChangeColorMode": "standard",
+				"reduceOptions": {
+					"calcs": ["lastNotNull"],
+					"fields": "",
+					"values": false
+				},
+				"showPercentChange": false,
+				"textMode": "value",
+				"wideLayout": true
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "count((patchmon_host_pending_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"} + patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"}) > 0) or vector(0)",
+					"legendFormat": "__auto",
+					"range": true,
+					"instant": false,
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "stat",
+			"id": 5,
+			"title": "Need security",
+			"description": "Hosts with at least one pending security update.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${datasource}"
+			},
+			"gridPos": {
+				"h": 4,
+				"w": 3,
+				"x": 9,
+				"y": 1
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"decimals": 0,
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "red",
+								"value": 1
+							}
+						]
+					},
+					"unit": "none"
+				},
+				"overrides": []
+			},
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "center",
+				"orientation": "auto",
+				"percentChangeColorMode": "standard",
+				"reduceOptions": {
+					"calcs": ["lastNotNull"],
+					"fields": "",
+					"values": false
+				},
+				"showPercentChange": false,
+				"textMode": "value",
+				"wideLayout": true
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "count(patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"} > 0) or vector(0)",
+					"legendFormat": "__auto",
+					"range": true,
+					"instant": false,
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "stat",
+			"id": 6,
+			"title": "Need reboot",
+			"description": "Hosts that report a pending reboot.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${datasource}"
+			},
+			"gridPos": {
+				"h": 4,
+				"w": 3,
+				"x": 12,
+				"y": 1
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"decimals": 0,
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "orange",
+								"value": 1
+							}
+						]
+					},
+					"unit": "none"
+				},
+				"overrides": []
+			},
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "center",
+				"orientation": "auto",
+				"percentChangeColorMode": "standard",
+				"reduceOptions": {
+					"calcs": ["lastNotNull"],
+					"fields": "",
+					"values": false
+				},
+				"showPercentChange": false,
+				"textMode": "value",
+				"wideLayout": true
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "sum(patchmon_host_pending_reboot{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"}) or vector(0)",
+					"legendFormat": "__auto",
+					"range": true,
+					"instant": false,
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "stat",
+			"id": 7,
+			"title": "Offline",
+			"description": "Active hosts that have not reported for 3× the agent update interval. Computed by PatchMon for all its hosts: the OS and host filters do not apply.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${datasource}"
+			},
+			"gridPos": {
+				"h": 4,
+				"w": 3,
+				"x": 15,
+				"y": 1
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"decimals": 0,
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							},
+							{
+								"color": "red",
+								"value": 1
+							}
+						]
+					},
+					"unit": "none"
+				},
+				"overrides": []
+			},
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "center",
+				"orientation": "auto",
+				"percentChangeColorMode": "standard",
+				"reduceOptions": {
+					"calcs": ["lastNotNull"],
+					"fields": "",
+					"values": false
+				},
+				"showPercentChange": false,
+				"textMode": "value",
+				"wideLayout": true
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "sum(patchmon_hosts_offline_total{job=~\"$job\",instance=~\"$instance\"})",
+					"legendFormat": "__auto",
+					"range": true,
+					"instant": false,
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "stat",
+			"id": 8,
+			"title": "Pending updates",
+			"description": "Pending package updates, summed over hosts: a package pending on 10 hosts counts 10.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${datasource}"
+			},
+			"gridPos": {
+				"h": 4,
+				"w": 6,
+				"x": 18,
+				"y": 1
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"decimals": 0,
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							}
+						]
+					},
+					"unit": "none"
+				},
+				"overrides": [
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Security"
+						},
+						"properties": [
+							{
+								"id": "thresholds",
+								"value": {
+									"mode": "absolute",
+									"steps": [
+										{
+											"color": "green",
+											"value": null
+										},
+										{
+											"color": "red",
+											"value": 1
+										}
+									]
+								}
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Regular"
+						},
+						"properties": [
+							{
+								"id": "thresholds",
+								"value": {
+									"mode": "absolute",
+									"steps": [
+										{
+											"color": "green",
+											"value": null
+										},
+										{
+											"color": "orange",
+											"value": 1
+										}
+									]
+								}
+							}
+						]
+					}
+				]
+			},
+			"options": {
+				"colorMode": "value",
+				"graphMode": "area",
+				"justifyMode": "center",
+				"orientation": "auto",
+				"percentChangeColorMode": "standard",
+				"reduceOptions": {
+					"calcs": ["lastNotNull"],
+					"fields": "",
+					"values": false
+				},
+				"showPercentChange": false,
+				"textMode": "value_and_name",
+				"wideLayout": true
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "sum(patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"})",
+					"legendFormat": "Security",
+					"range": true,
+					"instant": false,
+					"refId": "A"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "sum(patchmon_host_pending_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"})",
+					"legendFormat": "Regular",
+					"range": true,
+					"instant": false,
+					"refId": "B"
+				}
+			]
+		},
+		{
+			"type": "gauge",
+			"id": 9,
+			"title": "Up to date",
+			"description": "Share of hosts with no pending package update.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${datasource}"
+			},
+			"gridPos": {
+				"h": 8,
+				"w": 4,
+				"x": 0,
+				"y": 5
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"decimals": 1,
+					"mappings": [],
+					"max": 1,
+					"min": 0,
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "red",
+								"value": null
+							},
+							{
+								"color": "orange",
+								"value": 0.8
+							},
+							{
+								"color": "green",
+								"value": 0.95
+							}
+						]
+					},
+					"unit": "percentunit"
+				},
+				"overrides": []
+			},
+			"options": {
+				"minVizHeight": 75,
+				"minVizWidth": 75,
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": ["lastNotNull"],
+					"fields": "",
+					"values": false
+				},
+				"showThresholdLabels": false,
+				"showThresholdMarkers": true,
+				"sizing": "auto"
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "1 - (count((patchmon_host_pending_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"} + patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"}) > 0) or vector(0)) / count(patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"})",
+					"legendFormat": "__auto",
+					"range": false,
+					"instant": true,
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "gauge",
+			"id": 10,
+			"title": "Free of security updates",
+			"description": "Share of hosts with no pending security update.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${datasource}"
+			},
+			"gridPos": {
+				"h": 8,
+				"w": 4,
+				"x": 4,
+				"y": 5
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"decimals": 1,
+					"mappings": [],
+					"max": 1,
+					"min": 0,
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "red",
+								"value": null
+							},
+							{
+								"color": "orange",
+								"value": 0.8
+							},
+							{
+								"color": "green",
+								"value": 0.95
+							}
+						]
+					},
+					"unit": "percentunit"
+				},
+				"overrides": []
+			},
+			"options": {
+				"minVizHeight": 75,
+				"minVizWidth": 75,
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": ["lastNotNull"],
+					"fields": "",
+					"values": false
+				},
+				"showThresholdLabels": false,
+				"showThresholdMarkers": true,
+				"sizing": "auto"
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "1 - (count(patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"} > 0) or vector(0)) / count(patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"})",
+					"legendFormat": "__auto",
+					"range": false,
+					"instant": true,
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "gauge",
+			"id": 11,
+			"title": "Reporting",
+			"description": "Share of hosts that are not offline. Computed by PatchMon for all its hosts: the OS and host filters do not apply.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${datasource}"
+			},
+			"gridPos": {
+				"h": 8,
+				"w": 4,
+				"x": 8,
+				"y": 5
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"decimals": 1,
+					"mappings": [],
+					"max": 1,
+					"min": 0,
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "red",
+								"value": null
+							},
+							{
+								"color": "orange",
+								"value": 0.8
+							},
+							{
+								"color": "green",
+								"value": 0.95
+							}
+						]
+					},
+					"unit": "percentunit"
+				},
+				"overrides": []
+			},
+			"options": {
+				"minVizHeight": 75,
+				"minVizWidth": 75,
+				"orientation": "auto",
+				"reduceOptions": {
+					"calcs": ["lastNotNull"],
+					"fields": "",
+					"values": false
+				},
+				"showThresholdLabels": false,
+				"showThresholdMarkers": true,
+				"sizing": "auto"
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "1 - sum(patchmon_hosts_offline_total{job=~\"$job\",instance=~\"$instance\"}) / sum(patchmon_hosts_total{job=~\"$job\",instance=~\"$instance\"})",
+					"legendFormat": "__auto",
+					"range": false,
+					"instant": true,
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "piechart",
+			"id": 12,
+			"title": "Hosts by OS",
+			"description": "Hosts per operating system.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${datasource}"
+			},
+			"gridPos": {
+				"h": 8,
+				"w": 5,
+				"x": 12,
+				"y": 5
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"decimals": 0,
+					"mappings": [],
+					"unit": "none"
+				},
+				"overrides": []
+			},
+			"options": {
+				"displayLabels": ["percent"],
+				"legend": {
+					"displayMode": "table",
+					"placement": "right",
+					"showLegend": true,
+					"values": ["value"]
+				},
+				"pieType": "donut",
+				"reduceOptions": {
+					"calcs": ["lastNotNull"],
+					"fields": "",
+					"values": false
+				},
+				"sort": "desc",
+				"tooltip": {
+					"hideZeros": false,
+					"mode": "single",
+					"sort": "none"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "count by (os_type) (patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"})",
+					"legendFormat": "{{os_type}}",
+					"range": false,
+					"instant": true,
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "bargauge",
+			"id": 13,
+			"title": "Hosts by OS version",
+			"description": "Hosts per operating system version.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${datasource}"
+			},
+			"gridPos": {
+				"h": 8,
+				"w": 7,
+				"x": 17,
+				"y": 5
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"decimals": 0,
+					"mappings": [],
+					"min": 0,
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "blue",
+								"value": null
+							}
+						]
+					},
+					"unit": "none"
+				},
+				"overrides": []
+			},
+			"options": {
+				"displayMode": "basic",
+				"legend": {
+					"calcs": [],
+					"displayMode": "list",
+					"placement": "bottom",
+					"showLegend": false
+				},
+				"maxVizHeight": 20,
+				"minVizHeight": 16,
+				"minVizWidth": 8,
+				"namePlacement": "left",
+				"orientation": "horizontal",
+				"reduceOptions": {
+					"calcs": ["lastNotNull"],
+					"fields": "",
+					"values": false
+				},
+				"showUnfilled": true,
+				"sizing": "manual",
+				"text": {
+					"titleSize": 12,
+					"valueSize": 14
+				},
+				"valueMode": "color"
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "sort_desc(count by (os_type, os_version) (patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"}))",
+					"legendFormat": "{{os_type}} {{os_version}}",
+					"range": false,
+					"instant": true,
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "row",
+			"id": 14,
+			"title": "Trends",
+			"collapsed": false,
+			"gridPos": {
+				"h": 1,
+				"w": 24,
+				"x": 0,
+				"y": 13
+			},
+			"panels": []
+		},
+		{
+			"type": "timeseries",
+			"id": 15,
+			"title": "Hosts",
+			"description": "Hosts that need updates, security updates or a reboot, and offline hosts. Offline is computed by PatchMon for all its hosts: the OS and host filters do not apply to it.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${datasource}"
+			},
+			"gridPos": {
+				"h": 12,
+				"w": 8,
+				"x": 0,
+				"y": 14
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"custom": {
+						"axisBorderShow": false,
+						"axisCenteredZero": false,
+						"axisColorMode": "text",
+						"axisLabel": "",
+						"axisPlacement": "auto",
+						"axisSoftMin": 0,
+						"barAlignment": 0,
+						"barWidthFactor": 0.6,
+						"drawStyle": "line",
+						"fillOpacity": 0,
+						"gradientMode": "none",
+						"hideFrom": {
+							"legend": false,
+							"tooltip": false,
+							"viz": false
+						},
+						"insertNulls": false,
+						"lineInterpolation": "stepAfter",
+						"lineWidth": 2,
+						"pointSize": 4,
+						"scaleDistribution": {
+							"type": "linear"
+						},
+						"showPoints": "never",
+						"spanNulls": false,
+						"stacking": {
+							"group": "A",
+							"mode": "none"
+						},
+						"thresholdsStyle": {
+							"mode": "off"
+						}
+					},
+					"decimals": 0,
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							}
+						]
+					},
+					"unit": "none"
+				},
+				"overrides": [
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Monitored"
+						},
+						"properties": [
+							{
+								"id": "color",
+								"value": {
+									"fixedColor": "text",
+									"mode": "fixed"
+								}
+							},
+							{
+								"id": "custom.lineStyle",
+								"value": {
+									"dash": [10, 10],
+									"fill": "dash"
+								}
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Need updates"
+						},
+						"properties": [
+							{
+								"id": "color",
+								"value": {
+									"fixedColor": "blue",
+									"mode": "fixed"
+								}
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Need security updates"
+						},
+						"properties": [
+							{
+								"id": "color",
+								"value": {
+									"fixedColor": "red",
+									"mode": "fixed"
+								}
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Need a reboot"
+						},
+						"properties": [
+							{
+								"id": "color",
+								"value": {
+									"fixedColor": "orange",
+									"mode": "fixed"
+								}
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Offline (all hosts)"
+						},
+						"properties": [
+							{
+								"id": "color",
+								"value": {
+									"fixedColor": "purple",
+									"mode": "fixed"
+								}
+							}
+						]
+					}
+				]
+			},
+			"options": {
+				"legend": {
+					"calcs": ["lastNotNull", "min", "max"],
+					"displayMode": "table",
+					"placement": "bottom",
+					"showLegend": true
+				},
+				"tooltip": {
+					"hideZeros": false,
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "count(patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"})",
+					"legendFormat": "Monitored",
+					"range": true,
+					"instant": false,
+					"refId": "A"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "count((patchmon_host_pending_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"} + patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"}) > 0)",
+					"legendFormat": "Need updates",
+					"range": true,
+					"instant": false,
+					"refId": "B"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "count(patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"} > 0)",
+					"legendFormat": "Need security updates",
+					"range": true,
+					"instant": false,
+					"refId": "C"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "sum(patchmon_host_pending_reboot{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"})",
+					"legendFormat": "Need a reboot",
+					"range": true,
+					"instant": false,
+					"refId": "D"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "sum(patchmon_hosts_offline_total{job=~\"$job\",instance=~\"$instance\"})",
+					"legendFormat": "Offline (all hosts)",
+					"range": true,
+					"instant": false,
+					"refId": "E"
+				}
+			]
+		},
+		{
+			"type": "timeseries",
+			"id": 16,
+			"title": "Pending updates",
+			"description": "Package updates waiting, summed over hosts: a package pending on 10 hosts counts 10.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${datasource}"
+			},
+			"gridPos": {
+				"h": 12,
+				"w": 8,
+				"x": 8,
+				"y": 14
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"custom": {
+						"axisBorderShow": false,
+						"axisCenteredZero": false,
+						"axisColorMode": "text",
+						"axisLabel": "",
+						"axisPlacement": "auto",
+						"axisSoftMin": 0,
+						"barAlignment": 0,
+						"barWidthFactor": 0.6,
+						"drawStyle": "line",
+						"fillOpacity": 25,
+						"gradientMode": "none",
+						"hideFrom": {
+							"legend": false,
+							"tooltip": false,
+							"viz": false
+						},
+						"insertNulls": false,
+						"lineInterpolation": "stepAfter",
+						"lineWidth": 2,
+						"pointSize": 4,
+						"scaleDistribution": {
+							"type": "linear"
+						},
+						"showPoints": "never",
+						"spanNulls": false,
+						"stacking": {
+							"group": "A",
+							"mode": "normal"
+						},
+						"thresholdsStyle": {
+							"mode": "off"
+						}
+					},
+					"decimals": 0,
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							}
+						]
+					},
+					"unit": "none"
+				},
+				"overrides": [
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Security"
+						},
+						"properties": [
+							{
+								"id": "color",
+								"value": {
+									"fixedColor": "red",
+									"mode": "fixed"
+								}
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Regular"
+						},
+						"properties": [
+							{
+								"id": "color",
+								"value": {
+									"fixedColor": "blue",
+									"mode": "fixed"
+								}
+							}
+						]
+					}
+				]
+			},
+			"options": {
+				"legend": {
+					"calcs": ["lastNotNull", "min", "max"],
+					"displayMode": "table",
+					"placement": "bottom",
+					"showLegend": true
+				},
+				"tooltip": {
+					"hideZeros": false,
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "sum(patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"})",
+					"legendFormat": "Security",
+					"range": true,
+					"instant": false,
+					"refId": "A"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "sum(patchmon_host_pending_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"})",
+					"legendFormat": "Regular",
+					"range": true,
+					"instant": false,
+					"refId": "B"
+				}
+			]
+		},
+		{
+			"type": "timeseries",
+			"id": 17,
+			"title": "Distinct packages to update",
+			"description": "Distinct packages with a pending update anywhere in the fleet: a package pending on 10 hosts counts 1. Computed by PatchMon for all its hosts: the OS and host filters do not apply.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${datasource}"
+			},
+			"gridPos": {
+				"h": 12,
+				"w": 8,
+				"x": 16,
+				"y": 14
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "palette-classic"
+					},
+					"custom": {
+						"axisBorderShow": false,
+						"axisCenteredZero": false,
+						"axisColorMode": "text",
+						"axisLabel": "",
+						"axisPlacement": "auto",
+						"axisSoftMin": 0,
+						"barAlignment": 0,
+						"barWidthFactor": 0.6,
+						"drawStyle": "line",
+						"fillOpacity": 25,
+						"gradientMode": "none",
+						"hideFrom": {
+							"legend": false,
+							"tooltip": false,
+							"viz": false
+						},
+						"insertNulls": false,
+						"lineInterpolation": "stepAfter",
+						"lineWidth": 2,
+						"pointSize": 4,
+						"scaleDistribution": {
+							"type": "linear"
+						},
+						"showPoints": "never",
+						"spanNulls": false,
+						"stacking": {
+							"group": "A",
+							"mode": "normal"
+						},
+						"thresholdsStyle": {
+							"mode": "off"
+						}
+					},
+					"decimals": 0,
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "green",
+								"value": null
+							}
+						]
+					},
+					"unit": "none"
+				},
+				"overrides": [
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "security"
+						},
+						"properties": [
+							{
+								"id": "color",
+								"value": {
+									"fixedColor": "red",
+									"mode": "fixed"
+								}
+							},
+							{
+								"id": "displayName",
+								"value": "Security"
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "regular"
+						},
+						"properties": [
+							{
+								"id": "color",
+								"value": {
+									"fixedColor": "blue",
+									"mode": "fixed"
+								}
+							},
+							{
+								"id": "displayName",
+								"value": "Regular"
+							}
+						]
+					}
+				]
+			},
+			"options": {
+				"legend": {
+					"calcs": ["lastNotNull", "min", "max"],
+					"displayMode": "table",
+					"placement": "bottom",
+					"showLegend": true
+				},
+				"tooltip": {
+					"hideZeros": false,
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "sum by (type) (patchmon_pending_updates_total{job=~\"$job\",instance=~\"$instance\"})",
+					"legendFormat": "{{type}}",
+					"range": true,
+					"instant": false,
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "row",
+			"id": 18,
+			"title": "Operating systems",
+			"collapsed": false,
+			"gridPos": {
+				"h": 1,
+				"w": 24,
+				"x": 0,
+				"y": 26
+			},
+			"panels": []
+		},
+		{
+			"type": "table",
+			"id": 19,
+			"title": "Operating systems",
+			"description": "One line per OS version. Pending updates are summed over the hosts of that version.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${datasource}"
+			},
+			"gridPos": {
+				"h": 12,
+				"w": 24,
+				"x": 0,
+				"y": 27
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"custom": {
+						"align": "auto",
+						"cellOptions": {
+							"type": "auto"
+						},
+						"filterable": true,
+						"inspect": false,
+						"minWidth": 90
+					},
+					"decimals": 0,
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "text",
+								"value": null
+							}
+						]
+					},
+					"unit": "none"
+				},
+				"overrides": [
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Up to date"
+						},
+						"properties": [
+							{
+								"id": "unit",
+								"value": "percentunit"
+							},
+							{
+								"id": "decimals",
+								"value": 0
+							},
+							{
+								"id": "min",
+								"value": 0
+							},
+							{
+								"id": "max",
+								"value": 1
+							},
+							{
+								"id": "custom.cellOptions",
+								"value": {
+									"type": "gauge",
+									"mode": "basic",
+									"valueDisplayMode": "text"
+								}
+							},
+							{
+								"id": "thresholds",
+								"value": {
+									"mode": "absolute",
+									"steps": [
+										{
+											"color": "red",
+											"value": null
+										},
+										{
+											"color": "orange",
+											"value": 0.8
+										},
+										{
+											"color": "green",
+											"value": 0.95
+										}
+									]
+								}
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Need security"
+						},
+						"properties": [
+							{
+								"id": "custom.cellOptions",
+								"value": {
+									"type": "color-text"
+								}
+							},
+							{
+								"id": "thresholds",
+								"value": {
+									"mode": "absolute",
+									"steps": [
+										{
+											"color": "green",
+											"value": null
+										},
+										{
+											"color": "red",
+											"value": 1
+										}
+									]
+								}
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Security updates"
+						},
+						"properties": [
+							{
+								"id": "custom.cellOptions",
+								"value": {
+									"type": "color-text"
+								}
+							},
+							{
+								"id": "thresholds",
+								"value": {
+									"mode": "absolute",
+									"steps": [
+										{
+											"color": "green",
+											"value": null
+										},
+										{
+											"color": "red",
+											"value": 1
+										}
+									]
+								}
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Need updates"
+						},
+						"properties": [
+							{
+								"id": "custom.cellOptions",
+								"value": {
+									"type": "color-text"
+								}
+							},
+							{
+								"id": "thresholds",
+								"value": {
+									"mode": "absolute",
+									"steps": [
+										{
+											"color": "green",
+											"value": null
+										},
+										{
+											"color": "orange",
+											"value": 1
+										}
+									]
+								}
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Regular updates"
+						},
+						"properties": [
+							{
+								"id": "custom.cellOptions",
+								"value": {
+									"type": "color-text"
+								}
+							},
+							{
+								"id": "thresholds",
+								"value": {
+									"mode": "absolute",
+									"steps": [
+										{
+											"color": "green",
+											"value": null
+										},
+										{
+											"color": "orange",
+											"value": 1
+										}
+									]
+								}
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Need reboot"
+						},
+						"properties": [
+							{
+								"id": "custom.cellOptions",
+								"value": {
+									"type": "color-text"
+								}
+							},
+							{
+								"id": "thresholds",
+								"value": {
+									"mode": "absolute",
+									"steps": [
+										{
+											"color": "green",
+											"value": null
+										},
+										{
+											"color": "orange",
+											"value": 1
+										}
+									]
+								}
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "OS"
+						},
+						"properties": [
+							{
+								"id": "unit",
+								"value": "string"
+							},
+							{
+								"id": "custom.width",
+								"value": 170
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Version"
+						},
+						"properties": [
+							{
+								"id": "unit",
+								"value": "string"
+							},
+							{
+								"id": "custom.width",
+								"value": 230
+							}
+						]
+					}
+				]
+			},
+			"options": {
+				"cellHeight": "sm",
+				"footer": {
+					"countRows": false,
+					"fields": "",
+					"reducer": ["sum"],
+					"show": false
+				},
+				"showHeader": true,
+				"sortBy": [
+					{
+						"desc": true,
+						"displayName": "Security updates"
+					}
+				]
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "count by (os_type, os_version) (patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"})",
+					"legendFormat": "",
+					"range": false,
+					"instant": true,
+					"refId": "A",
+					"format": "table"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "1 - sum by (os_type, os_version) ((patchmon_host_pending_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"} + patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"}) > bool 0) / count by (os_type, os_version) (patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"})",
+					"legendFormat": "",
+					"range": false,
+					"instant": true,
+					"refId": "B",
+					"format": "table"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "sum by (os_type, os_version) ((patchmon_host_pending_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"} + patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"}) > bool 0)",
+					"legendFormat": "",
+					"range": false,
+					"instant": true,
+					"refId": "C",
+					"format": "table"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "sum by (os_type, os_version) (patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"} > bool 0)",
+					"legendFormat": "",
+					"range": false,
+					"instant": true,
+					"refId": "D",
+					"format": "table"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "sum by (os_type, os_version) (patchmon_host_pending_reboot{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"})",
+					"legendFormat": "",
+					"range": false,
+					"instant": true,
+					"refId": "E",
+					"format": "table"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "sum by (os_type, os_version) (patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"})",
+					"legendFormat": "",
+					"range": false,
+					"instant": true,
+					"refId": "F",
+					"format": "table"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "sum by (os_type, os_version) (patchmon_host_pending_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"})",
+					"legendFormat": "",
+					"range": false,
+					"instant": true,
+					"refId": "G",
+					"format": "table"
+				}
+			],
+			"transformations": [
+				{
+					"id": "merge",
+					"options": {}
+				},
+				{
+					"id": "organize",
+					"options": {
+						"excludeByName": {
+							"Time": true
+						},
+						"indexByName": {
+							"os_type": 0,
+							"os_version": 1,
+							"Value #A": 2,
+							"Value #B": 3,
+							"Value #C": 4,
+							"Value #D": 5,
+							"Value #E": 6,
+							"Value #F": 7,
+							"Value #G": 8
+						},
+						"renameByName": {
+							"os_type": "OS",
+							"os_version": "Version",
+							"Value #A": "Hosts",
+							"Value #B": "Up to date",
+							"Value #C": "Need updates",
+							"Value #D": "Need security",
+							"Value #E": "Need reboot",
+							"Value #F": "Security updates",
+							"Value #G": "Regular updates"
+						}
+					}
+				}
+			]
+		},
+		{
+			"type": "row",
+			"id": 20,
+			"title": "Hosts",
+			"collapsed": false,
+			"gridPos": {
+				"h": 1,
+				"w": 24,
+				"x": 0,
+				"y": 39
+			},
+			"panels": []
+		},
+		{
+			"type": "bargauge",
+			"id": 21,
+			"title": "Most security updates pending",
+			"description": "The 15 hosts with the most pending security updates.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${datasource}"
+			},
+			"gridPos": {
+				"h": 12,
+				"w": 12,
+				"x": 0,
+				"y": 40
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"decimals": 0,
+					"mappings": [],
+					"min": 0,
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "orange",
+								"value": null
+							},
+							{
+								"color": "red",
+								"value": 10
+							}
+						]
+					},
+					"unit": "none"
+				},
+				"overrides": []
+			},
+			"options": {
+				"displayMode": "basic",
+				"legend": {
+					"calcs": [],
+					"displayMode": "list",
+					"placement": "bottom",
+					"showLegend": false
+				},
+				"maxVizHeight": 20,
+				"minVizHeight": 16,
+				"minVizWidth": 8,
+				"namePlacement": "left",
+				"orientation": "horizontal",
+				"reduceOptions": {
+					"calcs": ["lastNotNull"],
+					"fields": "",
+					"values": false
+				},
+				"showUnfilled": true,
+				"sizing": "manual",
+				"text": {
+					"titleSize": 12,
+					"valueSize": 14
+				},
+				"valueMode": "color"
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "sort_desc(topk(15, patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"} > 0))",
+					"legendFormat": "{{name}}",
+					"range": false,
+					"instant": true,
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "bargauge",
+			"id": 22,
+			"title": "Most regular updates pending",
+			"description": "The 15 hosts with the most pending regular (non-security) updates.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${datasource}"
+			},
+			"gridPos": {
+				"h": 12,
+				"w": 12,
+				"x": 12,
+				"y": 40
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"decimals": 0,
+					"mappings": [],
+					"min": 0,
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "blue",
+								"value": null
+							}
+						]
+					},
+					"unit": "none"
+				},
+				"overrides": []
+			},
+			"options": {
+				"displayMode": "basic",
+				"legend": {
+					"calcs": [],
+					"displayMode": "list",
+					"placement": "bottom",
+					"showLegend": false
+				},
+				"maxVizHeight": 20,
+				"minVizHeight": 16,
+				"minVizWidth": 8,
+				"namePlacement": "left",
+				"orientation": "horizontal",
+				"reduceOptions": {
+					"calcs": ["lastNotNull"],
+					"fields": "",
+					"values": false
+				},
+				"showUnfilled": true,
+				"sizing": "manual",
+				"text": {
+					"titleSize": 12,
+					"valueSize": 14
+				},
+				"valueMode": "color"
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "sort_desc(topk(15, patchmon_host_pending_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"} > 0))",
+					"legendFormat": "{{name}}",
+					"range": false,
+					"instant": true,
+					"refId": "A"
+				}
+			]
+		},
+		{
+			"type": "table",
+			"id": 23,
+			"title": "Hosts",
+			"description": "One line per host: pending security and regular updates, pending reboot, installed packages. Last report is the time since the agent last reported; it turns orange after 2 hours and red after 3 hours, PatchMon's errored and offline limits with the default 60-minute update interval.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "${datasource}"
+			},
+			"gridPos": {
+				"h": 18,
+				"w": 24,
+				"x": 0,
+				"y": 52
+			},
+			"fieldConfig": {
+				"defaults": {
+					"color": {
+						"mode": "thresholds"
+					},
+					"custom": {
+						"align": "auto",
+						"cellOptions": {
+							"type": "auto"
+						},
+						"filterable": true,
+						"inspect": false,
+						"minWidth": 90
+					},
+					"decimals": 0,
+					"mappings": [],
+					"thresholds": {
+						"mode": "absolute",
+						"steps": [
+							{
+								"color": "text",
+								"value": null
+							}
+						]
+					},
+					"unit": "none"
+				},
+				"overrides": [
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Security"
+						},
+						"properties": [
+							{
+								"id": "custom.cellOptions",
+								"value": {
+									"type": "color-text"
+								}
+							},
+							{
+								"id": "thresholds",
+								"value": {
+									"mode": "absolute",
+									"steps": [
+										{
+											"color": "green",
+											"value": null
+										},
+										{
+											"color": "red",
+											"value": 1
+										}
+									]
+								}
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Regular"
+						},
+						"properties": [
+							{
+								"id": "custom.cellOptions",
+								"value": {
+									"type": "color-text"
+								}
+							},
+							{
+								"id": "thresholds",
+								"value": {
+									"mode": "absolute",
+									"steps": [
+										{
+											"color": "green",
+											"value": null
+										},
+										{
+											"color": "orange",
+											"value": 1
+										}
+									]
+								}
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Reboot"
+						},
+						"properties": [
+							{
+								"id": "mappings",
+								"value": [
+									{
+										"type": "value",
+										"options": {
+											"0": {
+												"text": "No",
+												"color": "green",
+												"index": 0
+											},
+											"1": {
+												"text": "Required",
+												"color": "orange",
+												"index": 1
+											}
+										}
+									}
+								]
+							},
+							{
+								"id": "custom.cellOptions",
+								"value": {
+									"type": "color-text"
+								}
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Last report"
+						},
+						"properties": [
+							{
+								"id": "unit",
+								"value": "dtdurations"
+							},
+							{
+								"id": "custom.cellOptions",
+								"value": {
+									"type": "color-text"
+								}
+							},
+							{
+								"id": "thresholds",
+								"value": {
+									"mode": "absolute",
+									"steps": [
+										{
+											"color": "green",
+											"value": null
+										},
+										{
+											"color": "orange",
+											"value": 7200
+										},
+										{
+											"color": "red",
+											"value": 10800
+										}
+									]
+								}
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Host"
+						},
+						"properties": [
+							{
+								"id": "unit",
+								"value": "string"
+							},
+							{
+								"id": "custom.width",
+								"value": 300
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Hostname"
+						},
+						"properties": [
+							{
+								"id": "unit",
+								"value": "string"
+							},
+							{
+								"id": "custom.width",
+								"value": 250
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "OS"
+						},
+						"properties": [
+							{
+								"id": "unit",
+								"value": "string"
+							},
+							{
+								"id": "custom.width",
+								"value": 150
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Version"
+						},
+						"properties": [
+							{
+								"id": "unit",
+								"value": "string"
+							},
+							{
+								"id": "custom.width",
+								"value": 210
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "PatchMon"
+						},
+						"properties": [
+							{
+								"id": "unit",
+								"value": "string"
+							}
+						]
+					},
+					{
+						"matcher": {
+							"id": "byName",
+							"options": "Host ID"
+						},
+						"properties": [
+							{
+								"id": "unit",
+								"value": "string"
+							}
+						]
+					}
+				]
+			},
+			"options": {
+				"cellHeight": "sm",
+				"footer": {
+					"countRows": false,
+					"fields": "",
+					"reducer": ["sum"],
+					"show": false
+				},
+				"showHeader": true,
+				"sortBy": [
+					{
+						"desc": true,
+						"displayName": "Security"
+					}
+				]
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "max by (instance, host_id, name, hostname, os_type, os_version) (patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"})",
+					"legendFormat": "",
+					"range": false,
+					"instant": true,
+					"refId": "A",
+					"format": "table"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "max by (instance, host_id, name, hostname, os_type, os_version) (patchmon_host_pending_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"})",
+					"legendFormat": "",
+					"range": false,
+					"instant": true,
+					"refId": "B",
+					"format": "table"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "max by (instance, host_id, name, hostname, os_type, os_version) (patchmon_host_pending_reboot{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"})",
+					"legendFormat": "",
+					"range": false,
+					"instant": true,
+					"refId": "C",
+					"format": "table"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "max by (instance, host_id, name, hostname, os_type, os_version) (patchmon_host_installed_packages_total{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"})",
+					"legendFormat": "",
+					"range": false,
+					"instant": true,
+					"refId": "D",
+					"format": "table"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "${datasource}"
+					},
+					"editorMode": "code",
+					"expr": "time() - max by (instance, host_id, name, hostname, os_type, os_version) (patchmon_host_last_seen_seconds{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\",name=~\"$host\"} > 0)",
+					"legendFormat": "",
+					"range": false,
+					"instant": true,
+					"refId": "E",
+					"format": "table"
+				}
+			],
+			"transformations": [
+				{
+					"id": "merge",
+					"options": {}
+				},
+				{
+					"id": "organize",
+					"options": {
+						"excludeByName": {
+							"Time": true,
+							"host_id": true,
+							"instance": true
+						},
+						"indexByName": {
+							"name": 0,
+							"hostname": 1,
+							"os_type": 2,
+							"os_version": 3,
+							"Value #A": 4,
+							"Value #B": 5,
+							"Value #C": 6,
+							"Value #D": 7,
+							"Value #E": 8,
+							"instance": 10,
+							"host_id": 11
+						},
+						"renameByName": {
+							"name": "Host",
+							"hostname": "Hostname",
+							"os_type": "OS",
+							"os_version": "Version",
+							"instance": "PatchMon",
+							"host_id": "Host ID",
+							"Value #A": "Security",
+							"Value #B": "Regular",
+							"Value #C": "Reboot",
+							"Value #D": "Packages",
+							"Value #E": "Last report"
+						}
+					}
+				}
+			]
+		}
+	],
+	"refresh": "5m",
+	"schemaVersion": 41,
+	"tags": ["patchmon", "patching", "prometheus"],
+	"templating": {
+		"list": [
+			{
+				"name": "datasource",
+				"label": "Data source",
+				"type": "datasource",
+				"query": "prometheus",
+				"regex": "",
+				"refresh": 1,
+				"includeAll": false,
+				"multi": false,
+				"current": {
+					"selected": true,
+					"text": "${DS_PROMETHEUS}",
+					"value": "${DS_PROMETHEUS}"
+				},
+				"options": [],
+				"hide": 0
+			},
+			{
+				"name": "filters",
+				"label": "Filters",
+				"description": "Extra label filters added to every panel query, for example a tenant label your Prometheus or Thanos requires.",
+				"type": "adhoc",
+				"datasource": {
+					"type": "prometheus",
+					"uid": "${datasource}"
+				},
+				"filters": [],
+				"baseFilters": [],
+				"hide": 0
+			},
+			{
+				"name": "job",
+				"label": "Job",
+				"type": "query",
+				"datasource": {
+					"type": "prometheus",
+					"uid": "${datasource}"
+				},
+				"definition": "label_values(patchmon_hosts_total, job)",
+				"query": {
+					"qryType": 5,
+					"query": "label_values(patchmon_hosts_total, job)",
+					"refId": "PrometheusVariableQueryEditor-VariableQuery"
+				},
+				"refresh": 2,
+				"regex": "",
+				"sort": 1,
+				"includeAll": true,
+				"allValue": ".*",
+				"multi": true,
+				"current": {
+					"text": ["All"],
+					"value": ["$__all"]
+				},
+				"options": [],
+				"hide": 0
+			},
+			{
+				"name": "instance",
+				"label": "PatchMon",
+				"type": "query",
+				"datasource": {
+					"type": "prometheus",
+					"uid": "${datasource}"
+				},
+				"definition": "label_values(patchmon_hosts_total{job=~\"$job\"}, instance)",
+				"query": {
+					"qryType": 5,
+					"query": "label_values(patchmon_hosts_total{job=~\"$job\"}, instance)",
+					"refId": "PrometheusVariableQueryEditor-VariableQuery"
+				},
+				"refresh": 2,
+				"regex": "",
+				"sort": 1,
+				"includeAll": true,
+				"allValue": ".*",
+				"multi": true,
+				"current": {
+					"text": ["All"],
+					"value": ["$__all"]
+				},
+				"options": [],
+				"hide": 0
+			},
+			{
+				"name": "os_type",
+				"label": "OS",
+				"type": "query",
+				"datasource": {
+					"type": "prometheus",
+					"uid": "${datasource}"
+				},
+				"definition": "label_values(patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\"}, os_type)",
+				"query": {
+					"qryType": 5,
+					"query": "label_values(patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\"}, os_type)",
+					"refId": "PrometheusVariableQueryEditor-VariableQuery"
+				},
+				"refresh": 2,
+				"regex": "",
+				"sort": 1,
+				"includeAll": true,
+				"allValue": ".*",
+				"multi": true,
+				"current": {
+					"text": ["All"],
+					"value": ["$__all"]
+				},
+				"options": [],
+				"hide": 0
+			},
+			{
+				"name": "os_version",
+				"label": "OS version",
+				"type": "query",
+				"datasource": {
+					"type": "prometheus",
+					"uid": "${datasource}"
+				},
+				"definition": "label_values(patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\"}, os_version)",
+				"query": {
+					"qryType": 5,
+					"query": "label_values(patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\"}, os_version)",
+					"refId": "PrometheusVariableQueryEditor-VariableQuery"
+				},
+				"refresh": 2,
+				"regex": "",
+				"sort": 1,
+				"includeAll": true,
+				"allValue": ".*",
+				"multi": true,
+				"current": {
+					"text": ["All"],
+					"value": ["$__all"]
+				},
+				"options": [],
+				"hide": 0
+			},
+			{
+				"name": "host",
+				"label": "Host",
+				"type": "query",
+				"datasource": {
+					"type": "prometheus",
+					"uid": "${datasource}"
+				},
+				"definition": "label_values(patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\"}, name)",
+				"query": {
+					"qryType": 5,
+					"query": "label_values(patchmon_host_security_updates{job=~\"$job\",instance=~\"$instance\",os_type=~\"$os_type\",os_version=~\"$os_version\"}, name)",
+					"refId": "PrometheusVariableQueryEditor-VariableQuery"
+				},
+				"refresh": 2,
+				"regex": "",
+				"sort": 1,
+				"includeAll": true,
+				"allValue": ".*",
+				"multi": true,
+				"current": {
+					"text": ["All"],
+					"value": ["$__all"]
+				},
+				"options": [],
+				"hide": 0
+			}
+		]
+	},
+	"time": {
+		"from": "now-24h",
+		"to": "now"
+	},
+	"timepicker": {},
+	"timezone": "browser",
+	"title": "PatchMon",
+	"uid": "patchmon",
+	"version": 1,
+	"weekStart": ""
+}
