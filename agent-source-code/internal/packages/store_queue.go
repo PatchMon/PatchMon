@@ -10,27 +10,32 @@ import (
 
 type pendingStoreUpdate struct {
 	storeAppx
+	ProductID string `json:"ProductId"`
 	Version   string `json:"Version"`
 	Installed bool   `json:"Installed"`
 }
 
 const storeQueueScript = `
 $ErrorActionPreference = "Stop"
+$pending = @{}
 try {
   $null = [Windows.ApplicationModel.Store.Preview.InstallControl.AppInstallManager, Windows.ApplicationModel.Store.Preview, ContentType = WindowsRuntime]
   $mgr = New-Object Windows.ApplicationModel.Store.Preview.InstallControl.AppInstallManager
-  $pending = @{}
-  foreach ($it in $mgr.AppInstallItems) {
+  $items = @($mgr.AppInstallItems)
+} catch { "[]"; exit 0 }
+foreach ($it in $items) {
+  try {
     if ([string]$it.InstallType -ne "Update") { continue }
     if ([string]$it.GetCurrentStatus().InstallState -in "Completed", "Canceled") { continue }
-    $pending[[string]$it.PackageFamilyName] = $true
-  }
-} catch { "[]"; exit 0 }
+    $pending[[string]$it.PackageFamilyName] = [string]$it.ProductId
+  } catch { continue }
+}
 $ErrorActionPreference = "SilentlyContinue"
 if ($pending.Count -eq 0) { "[]"; exit 0 }
 @(Get-AppxPackage -AllUsers | Where-Object { $pending.ContainsKey([string]$_.PackageFamilyName) } | ForEach-Object {
   @{
     Name              = [string]$_.Name
+    ProductId         = $pending[[string]$_.PackageFamilyName]
     PackageFamilyName = [string]$_.PackageFamilyName
     InstallLocation   = [string]$_.InstallLocation
     SignatureKind     = [string]$_.SignatureKind
@@ -80,7 +85,7 @@ func pendingByFamily(pending []pendingStoreUpdate, windowsApps string) []pending
 		if !ok {
 			order = append(order, key)
 		}
-		if c, cmpOK := compareDottedVersions(p.Version, cur.Version); !ok || (cmpOK && c > 0) {
+		if c, cmpOK := compareDottedVersions(p.Version, cur.Version); !ok || (cmpOK && c < 0) {
 			best[key] = p
 		}
 	}
@@ -95,7 +100,8 @@ func addPendingStoreUpdates(pkgs []models.Package, pending []pendingStoreUpdate,
 	for _, u := range pendingByFamily(pending, windowsApps) {
 		matched := false
 		for i := range pkgs {
-			if target, ok := storeTarget(pkgs[i], []storeAppx{u.storeAppx}, windowsApps); ok && strings.EqualFold(target, u.PackageFamilyName) {
+			target, ok := storeTarget(pkgs[i], []storeAppx{u.storeAppx}, windowsApps)
+			if ok && target != "" && (strings.EqualFold(target, u.PackageFamilyName) || strings.EqualFold(target, u.ProductID)) {
 				pkgs[i].NeedsUpdate = true
 				pkgs[i].WingetStoreApp = true
 				matched = true

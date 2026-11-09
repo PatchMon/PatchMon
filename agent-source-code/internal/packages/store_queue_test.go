@@ -42,7 +42,7 @@ func TestAddPendingStoreUpdatesAddsOutdatedStoreApps(t *testing.T) {
 		t.Fatalf("got %d rows: %+v", len(got), got)
 	}
 	row := got[1]
-	want := models.Package{Name: "Microsoft.ScreenSketch", CurrentVersion: "11.2307.64.0", NeedsUpdate: true, SourceRepository: "msstore", WingetID: "Microsoft.ScreenSketch_8wekyb3d8bbwe", WingetStoreApp: true}
+	want := models.Package{Name: "Microsoft.ScreenSketch", CurrentVersion: "11.2210.1.0", NeedsUpdate: true, SourceRepository: "msstore", WingetID: "Microsoft.ScreenSketch_8wekyb3d8bbwe", WingetStoreApp: true}
 	if row.Name != want.Name || row.CurrentVersion != want.CurrentVersion || row.NeedsUpdate != want.NeedsUpdate || row.SourceRepository != want.SourceRepository || row.WingetID != want.WingetID || row.WingetStoreApp != want.WingetStoreApp || row.AvailableVersion != "" {
 		t.Fatalf("row = %+v", row)
 	}
@@ -74,6 +74,24 @@ func TestAddPendingStoreUpdatesMergesWithWingetRows(t *testing.T) {
 	}
 	if got[1].AvailableVersion != "1.29.380" {
 		t.Errorf("winget's available version lost: %+v", got[1])
+	}
+}
+
+func TestAddPendingStoreUpdatesMatchesProductIDsAndCase(t *testing.T) {
+	pkgs := []models.Package{
+		{Name: "Calculator", CurrentVersion: "11.2502.2.0", WingetID: "9WZDNCRFHVN5", SourceRepository: "msstore"},
+		{Name: "Paint", CurrentVersion: "11.2302.20.0", WingetID: "microsoft.paint_8wekyb3d8bbwe"},
+	}
+	calc := queued("Microsoft.WindowsCalculator", "Microsoft.WindowsCalculator_8wekyb3d8bbwe", "11.2502.2.0", true)
+	calc.ProductID = "9WZDNCRFHVN5"
+	got := addPendingStoreUpdates(pkgs, []pendingStoreUpdate{calc, queued("Microsoft.Paint", "Microsoft.Paint_8wekyb3d8bbwe", "11.2302.20.0", true)}, testWindowsApps)
+	if len(got) != 2 {
+		t.Fatalf("duplicated rows: %+v", got)
+	}
+	for _, p := range got {
+		if !p.NeedsUpdate || !p.WingetStoreApp {
+			t.Errorf("%s not marked: %+v", p.Name, p)
+		}
 	}
 }
 
