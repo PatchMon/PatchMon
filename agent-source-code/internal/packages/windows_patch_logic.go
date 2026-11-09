@@ -1571,7 +1571,7 @@ func (r *windowsPatchRun) runWingetPhase(runCtx, stopCtx context.Context, winget
 }
 
 func isWingetPackage(storeTarget string) bool {
-	return strings.EqualFold(storeTarget, wingetStoreFamilies["microsoft.appinstaller"])
+	return strings.EqualFold(storeTarget, wingetPackageFamily)
 }
 
 func (r *windowsPatchRun) updateStoreApp(runCtx context.Context, it *models.PatchRunItem, target string) {
