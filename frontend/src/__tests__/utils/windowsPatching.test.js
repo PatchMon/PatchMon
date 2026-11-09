@@ -427,7 +427,7 @@ describe("Microsoft Store apps", () => {
 		const info = windowsPatchInfo(store);
 		expect(info.patchable).toBe(false);
 		expect(info.reasonText).toBe(
-			"Microsoft Store app: updates through the Microsoft Store",
+			"Microsoft Store app: update the PatchMon agent on this host to v2.1.9 or later to patch it",
 		);
 		expect(windowsSourceLabel(info)).toBe("winget");
 		expect(windowsBadges(info)).toEqual([
@@ -454,6 +454,20 @@ describe("Microsoft Store apps", () => {
 					},
 				},
 			}),
-		).toMatch(/Windows Terminal: Microsoft Store app: updates through/);
+		).toMatch(
+			/Windows Terminal: Microsoft Store app: update the PatchMon agent/,
+		);
+	});
+
+	it("treats a Store app the server marks patchable like any winget app", () => {
+		const info = windowsPatchInfo({
+			...store,
+			patchable: true,
+			notPatchableReason: "",
+		});
+		expect(info.patchable).toBe(true);
+		expect(info.reason).toBeNull();
+		expect(windowsSourceLabel(info)).toBe("winget");
+		expect(windowsBadges(info)).toEqual([]);
 	});
 });

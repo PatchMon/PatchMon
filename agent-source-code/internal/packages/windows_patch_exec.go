@@ -210,15 +210,52 @@ func (b *wingetExecBackend) UpgradeState(ctx context.Context, id string, log fun
 	return installedUpgradeState(NewWindowsManager(quiet).parseWingetTable(out), id), nil
 }
 
-func (b *wingetExecBackend) StoreApps(apps []models.Package) map[string]bool {
+func (b *wingetExecBackend) KeepsX86(ctx context.Context, id string) (bool, error) {
+	code, out, err := b.Run(ctx, wingetDetailsArgs(id), nil)
+	if err != nil {
+		return false, err
+	}
+	if code != 0 {
+		return false, nil
+	}
+	key, ok := machineX86ARPKey(out)
+	return ok && x86OnlyBinaries(x86UninstallLocation(key)), nil
+}
+
+func (b *wingetExecBackend) StoreApps(apps []models.Package) map[string]string {
 	quiet := logrus.New()
 	quiet.SetOutput(io.Discard)
 	appx := NewWindowsManager(quiet).getStoreAppx()
-	out := map[string]bool{}
+	out := map[string]string{}
 	for _, p := range apps {
-		if isStoreApp(p, appx, windowsAppsDir()) {
-			out[strings.ToLower(p.WingetID)] = true
+		if target, ok := storeTarget(p, appx, windowsAppsDir()); ok {
+			out[strings.ToLower(p.WingetID)] = target
 		}
 	}
 	return out
+}
+
+func (b *wingetExecBackend) StoreUpdate(ctx context.Context, target string, wait time.Duration) (storeUpdateResult, error) {
+	payload, err := json.Marshal(storeUpdateRequest{Target: target, Seconds: int(wait / time.Second)})
+	if err != nil {
+		return storeUpdateResult{}, err
+	}
+	cmd := exec.CommandContext(ctx, winexec.PowerShellPath(), storePowerShellArgs()...)
+	cmd.Stdin = bytes.NewReader(payload)
+	hideWindow(cmd)
+	cmd.WaitDelay = childWaitDelay
+	var stderr bytes.Buffer
+	cmd.Stderr = &cappedBuffer{buf: &stderr, limit: 64 * 1024}
+	out, err := cmd.Output()
+	if ctx.Err() != nil {
+		return storeUpdateResult{}, ctx.Err()
+	}
+	res, perr := parseStoreUpdateOutput(out)
+	if perr != nil {
+		if err != nil {
+			return res, fmt.Errorf("PowerShell: %w: %s", err, strings.TrimSpace(stripTerminalControls(stderr.String())))
+		}
+		return res, perr
+	}
+	return res, nil
 }

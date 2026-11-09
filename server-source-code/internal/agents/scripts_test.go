@@ -2,6 +2,7 @@ package agents
 
 import (
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -92,5 +93,33 @@ func TestProxmoxDeriveMachineIDIsStable(t *testing.T) {
 	}
 	if derive("", "101", "nodeA") == derive("", "1011", "nodeA") || derive("", "10", "nodeA-1") == derive("", "1", "nodeA-10") {
 		t.Error("fallback is ambiguous between vmids")
+	}
+}
+
+func TestWindowsInstallerKeepsExistingFileACLs(t *testing.T) {
+	script := string(PatchmonWindowsInstallScript)
+	if !strings.Contains(script, "/inheritance:r") {
+		t.Fatal("install script no longer locks the config directory")
+	}
+	for i, line := range strings.Split(script, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "&") && strings.Contains(line, "/inheritance:r") && strings.Contains(line, "/T") {
+			t.Errorf("line %d applies /inheritance:r recursively, which leaves existing files with an empty ACL: %s", i+1, strings.TrimSpace(line))
+		}
+	}
+	if !strings.Contains(script, "/reset") {
+		t.Error("install script must reset existing files so they inherit the directory's ACL")
+	}
+}
+
+func TestWindowsInstallerUsesLongTempPath(t *testing.T) {
+	script := string(PatchmonWindowsInstallScript)
+	if strings.Contains(script, "Join-Path $env:TEMP") {
+		t.Error("the download path is built from $env:TEMP directly; resolve it to its long form first")
+	}
+	if !strings.Contains(script, "(Get-Item -LiteralPath $env:TEMP).FullName") {
+		t.Error("the download path must use the long form of TEMP")
+	}
+	if !regexp.MustCompile(`try\s*\{\s*Remove-Item -LiteralPath \$tempPath -Force\s*\}\s*catch`).MatchString(script) {
+		t.Error("removing the downloaded temp file must be wrapped in try/catch; -ErrorAction does not stop this error ending the install")
 	}
 }

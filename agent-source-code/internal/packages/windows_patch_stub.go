@@ -11,3 +11,5 @@ func wingetTempDir() (string, error) { return "", errNotWindows }
 func newRunTempDir(string) (string, error) { return "", errNotWindows }
 
 func pendingFileRenameValues() [][]string { return nil }
+
+func x86UninstallLocation(string) string { return "" }

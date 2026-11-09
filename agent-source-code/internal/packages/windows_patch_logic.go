@@ -57,6 +57,13 @@ var wuaScript string
 //go:embed wua_pending.ps1
 var wuaPendingScript string
 
+//go:embed store_update.ps1
+var storeUpdateScript string
+
+func storePowerShellArgs() []string {
+	return []string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", winexec.Script(storeUpdateScript)}
+}
+
 func wuaPowerShellArgs() []string {
 	return []string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", winexec.Script(wuaPendingScript + wuaScript)}
 }
@@ -466,6 +473,8 @@ type wingetOutcome struct {
 
 const msgUserScope = "Not found for the system account: the app is probably installed for a single user, which the agent cannot upgrade"
 
+const msgNo32BitUpgrade = "Installed as 32-bit, but the new version has no 32-bit installer: not upgraded, so a 64-bit copy is not installed alongside it"
+
 func classifyWingetUpgradeExit(code uint32, dryRun bool, output, id string) wingetOutcome {
 	if dryRun {
 		switch code {
@@ -513,6 +522,7 @@ var wingetCodeMessages = map[uint32]string{
 	0x8A150008:                 "Downloading the installer failed",
 	0x8A150011:                 "The installer's hash does not match its manifest",
 	0x8A15005E:                 "A winget source's server certificate was rejected: check TLS inspection or proxy settings",
+	0x8A15008E:                 "The update uses a different installer technology from the one the installed app uses: use the app's supported updater or a compatible installer",
 	0x8A150105:                 "Not enough disk space",
 	0x8A150107:                 "The installer needs internet access",
 	0x8A15010F:                 "Blocked by organisation policy",
@@ -646,10 +656,12 @@ type wingetBackend interface {
 	UpdatableApps() []models.Package
 	PendingFileRenames() []string
 	UpgradeState(ctx context.Context, id string, log func(string)) (wingetUpgradeState, error)
-	StoreApps(apps []models.Package) map[string]bool
+	StoreApps(apps []models.Package) map[string]string
+	StoreUpdate(ctx context.Context, target string, wait time.Duration) (storeUpdateResult, error)
+	KeepsX86(ctx context.Context, id string) (bool, error)
 }
 
-const msgStoreApp = "Microsoft Store app: it updates through the Store for each user, not as SYSTEM"
+const msgStoreApp = "Microsoft Store app: no Store package matches this winget Id"
 
 const msgDeferredReplace = "Installed; some files will be replaced at the next restart."
 
@@ -704,6 +716,7 @@ func newPendingRenames(before, after []string) bool {
 
 type windowsPatchTimeouts struct {
 	scan, download, downloadFeature, install, installFeature, wingetUpgrade, wingetList, heartbeat time.Duration
+	storeUpdate                                                                                    time.Duration
 	recheck, recheckEvery, recheckCall                                                             time.Duration
 }
 
@@ -715,6 +728,7 @@ var defaultWindowsPatchTimeouts = windowsPatchTimeouts{
 	installFeature:  240 * time.Minute,
 	wingetUpgrade:   30 * time.Minute,
 	wingetList:      5 * time.Minute,
+	storeUpdate:     30 * time.Minute,
 	heartbeat:       60 * time.Second,
 	recheck:         10 * time.Minute,
 	recheckEvery:    60 * time.Second,
@@ -839,8 +853,12 @@ func applyRestartPending(pkgs []models.Package) {
 // UpdatableWingetApps returns the apps winget would upgrade unattended: flagged for update,
 // with a winget Id, and listed by winget list --upgrade-available.
 func (m *WindowsManager) UpdatableWingetApps() []models.Package {
+	return updatableWingetApps(m.appPackages())
+}
+
+func updatableWingetApps(pkgs []models.Package) []models.Package {
 	var out []models.Package
-	for _, p := range m.appPackages() {
+	for _, p := range pkgs {
 		if p.NeedsUpdate && p.WingetID != "" && !p.WingetPinned && !p.WingetStoreApp {
 			out = append(out, p)
 		}
@@ -1476,7 +1494,7 @@ func (r *windowsPatchRun) runWingetPhase(runCtx, stopCtx context.Context, winget
 	}
 	r.out("[winget] %d application(s) to check\n", len(queue))
 
-	var store map[string]bool
+	var store map[string]string
 	if len(queue) > 0 {
 		apps := make([]models.Package, 0, len(queue))
 		for _, it := range queue {
@@ -1485,14 +1503,14 @@ func (r *windowsPatchRun) runWingetPhase(runCtx, stopCtx context.Context, winget
 		store = r.winget.StoreApps(apps)
 	}
 
+	var storeItems []*models.PatchRunItem
 	for _, it := range queue {
-		if reason := r.interruptReason(runCtx); reason != "" {
-			r.finish(it, itemSkipped, reason)
+		if _, ok := store[strings.ToLower(it.ID)]; ok {
+			storeItems = append(storeItems, it)
 			continue
 		}
-		if store[strings.ToLower(it.ID)] {
-			r.finish(it, itemSkipped, msgStoreApp)
-			r.out("  %s: %s\n", it.ID, it.Message)
+		if reason := r.interruptReason(runCtx); reason != "" {
+			r.finish(it, itemSkipped, reason)
 			continue
 		}
 		it.StartedAt = r.ts()
@@ -1526,18 +1544,91 @@ func (r *windowsPatchRun) runWingetPhase(runCtx, stopCtx context.Context, winget
 			if r.req.DryRun {
 				r.finish(it, itemWouldInstall, "Upgrade available")
 			} else {
-				r.upgradeApp(runCtx, it)
-				continue
+				archCtx, cancelArch := context.WithTimeout(stopCtx, r.timeouts.wingetList)
+				keepX86, err := r.winget.KeepsX86(archCtx, it.ID)
+				cancelArch()
+				if err == nil {
+					r.upgradeApp(runCtx, it, keepX86)
+					continue
+				}
+				if reason := r.interruptReason(runCtx); reason != "" {
+					r.finish(it, itemSkipped, reason)
+				} else {
+					r.finish(it, itemFailed, "winget did not complete: "+err.Error())
+				}
 			}
 		}
 		r.out("  %s: %s\n", it.ID, it.Message)
 	}
+
+	// Store items run after winget, App Installer last: updating it replaces the winget.exe this run resolved.
+	sort.SliceStable(storeItems, func(i, j int) bool {
+		return !isWingetPackage(store[strings.ToLower(storeItems[i].ID)]) && isWingetPackage(store[strings.ToLower(storeItems[j].ID)])
+	})
+	for _, it := range storeItems {
+		if reason := r.interruptReason(runCtx); reason != "" {
+			r.finish(it, itemSkipped, reason)
+			continue
+		}
+		r.updateStoreApp(runCtx, it, store[strings.ToLower(it.ID)])
+	}
 }
 
-func (r *windowsPatchRun) upgradeApp(runCtx context.Context, it *models.PatchRunItem) {
+func isWingetPackage(storeTarget string) bool {
+	return strings.EqualFold(storeTarget, wingetPackageFamily)
+}
+
+func (r *windowsPatchRun) updateStoreApp(runCtx context.Context, it *models.PatchRunItem, target string) {
+	switch {
+	case target == "":
+		r.finish(it, itemSkipped, msgStoreApp)
+	case r.req.DryRun:
+		r.finish(it, itemWouldInstall, msgStoreWouldUpdate)
+	default:
+		it.StartedAt = r.ts()
+		label := "[store] Updating " + it.ID
+		r.post(it)
+		r.out("%s...\n", label)
+		ctx, cancel := context.WithTimeout(runCtx, r.timeouts.storeUpdate)
+		defer cancel()
+		wait := storeScriptWait(ctx, r.now())
+		var res storeUpdateResult
+		var err error
+		r.withHeartbeat(label, func() {
+			res, err = r.winget.StoreUpdate(ctx, target, wait)
+		})
+		if err != nil {
+			if reason := r.interruptReason(runCtx); reason != "" {
+				r.finish(it, itemSkipped, reason)
+			} else {
+				r.finish(it, itemFailed, "Microsoft Store update did not complete: "+err.Error())
+			}
+			break
+		}
+		status, msg, hr := classifyStoreUpdate(res, wait)
+		it.HResult = hr
+		r.finish(it, status, msg)
+	}
+	r.out("  %s: %s\n", it.ID, it.Message)
+}
+
+func storeScriptWait(ctx context.Context, now time.Time) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return defaultWindowsPatchTimeouts.storeUpdate - time.Minute
+	}
+	return max(deadline.Sub(now)-time.Minute, 30*time.Second)
+}
+
+func (r *windowsPatchRun) upgradeApp(runCtx context.Context, it *models.PatchRunItem, keepX86 bool) {
 	label := "[winget] Upgrading " + it.ID
 	r.post(it)
 	r.out("%s...\n", label)
+	args := wingetUpgradeArgs(it.ID)
+	if keepX86 {
+		r.out("  %s: installed as 32-bit, upgrading with the 32-bit installer\n", it.ID)
+		args = append(args, "--architecture", "x86")
+	}
 	ctx, cancel := context.WithTimeout(runCtx, r.timeouts.wingetUpgrade)
 	defer cancel()
 	renamesBefore := r.winget.PendingFileRenames()
@@ -1545,7 +1636,7 @@ func (r *windowsPatchRun) upgradeApp(runCtx context.Context, it *models.PatchRun
 	var output string
 	var err error
 	r.withHeartbeat(label, func() {
-		code, output, err = r.winget.Run(ctx, wingetUpgradeArgs(it.ID), r.log)
+		code, output, err = r.winget.Run(ctx, args, r.log)
 	})
 	if err != nil {
 		r.finish(it, itemFailed, "winget did not complete: "+err.Error())
@@ -1553,6 +1644,9 @@ func (r *windowsPatchRun) upgradeApp(runCtx context.Context, it *models.PatchRun
 		return
 	}
 	oc := classifyWingetUpgradeExit(code, false, output, it.ID)
+	if keepX86 && code == wingetUpdateNotApplicable {
+		oc.Message = msgNo32BitUpgrade
+	}
 	if oc.Status == itemInstalled && newPendingRenames(renamesBefore, r.winget.PendingFileRenames()) {
 		oc.RebootRequired = true
 		oc.Message = msgDeferredReplace

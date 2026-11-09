@@ -156,7 +156,8 @@ Write-Host "Downloading agent from PatchMon server: $downloadURL" -ForegroundCol
 
 $binaryName = "patchmon-agent.exe"
 $targetPath = Join-Path $InstallPath $binaryName
-$tempPath = Join-Path $env:TEMP "patchmon-agent-windows-${arch}.exe"
+# PowerShell 5.1 cannot delete via an 8.3 TEMP path whose profile folder name has a dot, so use the long path.
+$tempPath = Join-Path (Get-Item -LiteralPath $env:TEMP).FullName "patchmon-agent-windows-${arch}.exe"
 
 Write-Host "Architecture: $arch" -ForegroundColor Cyan
 Write-Host "Install Path: $InstallPath" -ForegroundColor Cyan
@@ -172,13 +173,17 @@ Write-Host "Creating configuration directory..." -ForegroundColor Yellow
 New-Item -ItemType Directory -Force -Path $ConfigPath | Out-Null
 
 # Lock the config dir to SYSTEM and Administrators before any secret is written.
-# (OI)(CI) makes config.yml/credentials.yml inherit the lock; /T /C heals an older install.
+# No /T on the /inheritance:r line: it empties the ACL of existing files, so they are reset below instead.
 Write-Host "Securing configuration directory..." -ForegroundColor Yellow
 try {
-    & icacls $ConfigPath /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" /T /C | Out-Null
-    $grantExit = $LASTEXITCODE
+    & icacls $ConfigPath /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" | Out-Null
+    $aclFailed = $LASTEXITCODE -ne 0
+    foreach ($file in Get-ChildItem -LiteralPath $ConfigPath -File -Force) {
+        & icacls $file.FullName /reset /C | Out-Null
+        if ($LASTEXITCODE -ne 0) { $aclFailed = $true }
+    }
     & icacls $ConfigPath /setowner "*S-1-5-32-544" /T /C | Out-Null
-    if ($grantExit -ne 0 -or $LASTEXITCODE -ne 0) { throw "icacls reported a non-zero exit" }
+    if ($aclFailed -or $LASTEXITCODE -ne 0) { throw "icacls reported a non-zero exit" }
 } catch {
     Write-Warning "Could not fully secure $ConfigPath. Credentials may be readable by other local users until permissions are corrected."
 }
@@ -219,7 +224,11 @@ Copy-Item -Path $tempPath -Destination $targetPath -Force
 Unblock-File -Path $targetPath -ErrorAction SilentlyContinue
 
 # Clean up temp file
-Remove-Item -Path $tempPath -Force
+try {
+    Remove-Item -LiteralPath $tempPath -Force
+} catch {
+    Write-Warning "Could not delete the temporary file $tempPath. It is safe to delete it by hand."
+}
 
 # Create or update config file - ensure skip_ssl_verify reflects server settings
 $configFile = Join-Path $ConfigPath "config.yml"

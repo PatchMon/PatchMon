@@ -12,7 +12,8 @@ export const UNPATCHABLE_REASON_TEXT = {
 	not_pending: "Up to date",
 	winget_pinned:
 		"Pinned with winget pin; remove the pin on the host to update it",
-	store_app: "Microsoft Store app: updates through the Microsoft Store",
+	store_app:
+		"Microsoft Store app: update the PatchMon agent on this host to v2.1.9 or later to patch it",
 	pacman_partial_upgrade: PACMAN_SELECTED_PATCH_UNSUPPORTED,
 };
 

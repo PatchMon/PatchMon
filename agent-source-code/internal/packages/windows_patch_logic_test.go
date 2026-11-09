@@ -240,6 +240,37 @@ func TestClassifyWingetUpgradeExit(t *testing.T) {
 	}
 }
 
+// The error code was captured from a Microsoft.Edge upgrade on Windows 11.
+// Assert the explanation does not depend on localized WinGet console output.
+func TestWingetInstallerTechnologyMismatch(t *testing.T) {
+	for _, output := range []string{"", "A newer version was found, but the install technology is different from the current version installed."} {
+		g := &fakeWinget{
+			codes:  map[string]uint32{"Microsoft.Edge": 0x8A15008E},
+			output: output,
+		}
+		rec := &recorder{}
+		res := runFake(WindowsPatchRequest{Targets: []WindowsPatchTarget{
+			{Kind: WindowsTargetWinget, ID: "Microsoft.Edge"},
+		}}, rec, &fakeWUA{}, g)
+		it := itemByID(res, "Microsoft.Edge")
+		if res.Stage != "failed" || it.Status != itemFailed || it.ExitCode == nil || *it.ExitCode != 2316632206 {
+			t.Fatalf("mismatch must remain a failed update with its original exit code: %+v", res)
+		}
+		if res.RebootRequired || it.RebootRequired {
+			t.Fatal("installer mismatch must not request a reboot")
+		}
+		if !strings.Contains(it.Message, "different installer technology") || !strings.Contains(it.Message, "compatible installer") {
+			t.Errorf("missing actionable mismatch explanation: %q", it.Message)
+		}
+		if !strings.Contains(rec.output(), it.Message) {
+			t.Error("patch output must include the item explanation")
+		}
+		if len(g.calls) != 1 || !reflect.DeepEqual(g.calls[0], wingetUpgradeArgs("Microsoft.Edge")) {
+			t.Errorf("mismatch must not trigger an uninstall or fallback: %q", g.calls)
+		}
+	}
+}
+
 func TestWingetArgs(t *testing.T) {
 	if got, want := wingetUpgradeArgs("Notepad++.Notepad++"), []string{"upgrade", "--id", "Notepad++.Notepad++", "--exact", "--source", "winget", "--silent", "--accept-source-agreements", "--accept-package-agreements", "--disable-interactivity"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("upgrade args = %q", got)
@@ -492,7 +523,11 @@ func (f *fakeWUA) Install(ctx context.Context, id string, _ func(string)) (wuaOp
 }
 
 type fakeWinget struct {
-	store      map[string]bool
+	store      map[string]string
+	storeRes   map[string]storeUpdateResult
+	storeErr   error
+	storeCalls []string
+	storeSeen  []int
 	checkErr   error
 	states     map[string]wingetUpgradeState
 	checked    []string
@@ -502,6 +537,18 @@ type fakeWinget struct {
 	calls      [][]string
 	codes      map[string]uint32
 	output     string
+	x86        map[string]bool
+	archChecks []string
+	archErr    error
+	onArch     func()
+}
+
+func (f *fakeWinget) KeepsX86(_ context.Context, id string) (bool, error) {
+	f.archChecks = append(f.archChecks, id)
+	if f.onArch != nil {
+		f.onArch()
+	}
+	return f.x86[id], f.archErr
 }
 
 func (f *fakeWinget) Resolve() error { return f.resolveErr }
@@ -514,14 +561,23 @@ func (f *fakeWinget) Run(_ context.Context, args []string, log func(string)) (ui
 
 func (f *fakeWinget) UpdatableApps() []models.Package { return f.apps }
 
-func (f *fakeWinget) StoreApps(apps []models.Package) map[string]bool {
-	out := map[string]bool{}
+func (f *fakeWinget) StoreApps(apps []models.Package) map[string]string {
+	out := map[string]string{}
 	for _, p := range apps {
-		if f.store[p.WingetID] {
-			out[strings.ToLower(p.WingetID)] = true
+		if target, ok := f.store[p.WingetID]; ok {
+			out[strings.ToLower(p.WingetID)] = target
 		}
 	}
 	return out
+}
+
+func (f *fakeWinget) StoreUpdate(_ context.Context, target string, _ time.Duration) (storeUpdateResult, error) {
+	f.storeCalls = append(f.storeCalls, target)
+	f.storeSeen = append(f.storeSeen, len(f.calls))
+	if f.storeErr != nil {
+		return storeUpdateResult{}, f.storeErr
+	}
+	return f.storeRes[target], nil
 }
 
 func (f *fakeWinget) UpgradeState(_ context.Context, id string, _ func(string)) (wingetUpgradeState, error) {
@@ -1034,20 +1090,82 @@ func TestRunCheckErrorFailsItemWithCode(t *testing.T) {
 	}
 }
 
-func TestRunSkipsStoreAppsWithoutRunningWinget(t *testing.T) {
-	g := &fakeWinget{store: map[string]bool{"Microsoft.WindowsTerminal": true}, codes: map[string]uint32{"7zip.7zip": 0}}
+func TestRunUpdatesStoreAppsThroughTheStore(t *testing.T) {
+	const pfn = "Microsoft.WindowsTerminal_8wekyb3d8bbwe"
+	g := &fakeWinget{
+		store:    map[string]string{"Microsoft.WindowsTerminal": pfn, "Odd.StoreApp": ""},
+		storeRes: map[string]storeUpdateResult{pfn: {State: "Completed", PackageFamily: pfn, Before: "1.18.10301.0", After: "1.24.12741.0", InstalledForUser: true}},
+		codes:    map[string]uint32{"7zip.7zip": 0},
+		x86:      map[string]bool{"Microsoft.WindowsTerminal": true, "Odd.StoreApp": true},
+	}
 	res := runFake(WindowsPatchRequest{Targets: []WindowsPatchTarget{
+		{Kind: WindowsTargetWinget, ID: "Microsoft.WindowsTerminal"},
+		{Kind: WindowsTargetWinget, ID: "Odd.StoreApp"},
+		{Kind: WindowsTargetWinget, ID: "7zip.7zip"},
+	}}, &recorder{}, &fakeWUA{}, g)
+	if it := itemByID(res, "Microsoft.WindowsTerminal"); it.Status != itemInstalled || it.Message != msgStoreUpdated {
+		t.Errorf("store app = %+v", it)
+	}
+	if it := itemByID(res, "Odd.StoreApp"); it.Status != itemSkipped || it.Message != msgStoreApp {
+		t.Errorf("unmatched store app = %+v", it)
+	}
+	if !reflect.DeepEqual(g.storeCalls, []string{pfn}) {
+		t.Errorf("store calls = %q", g.storeCalls)
+	}
+	if !reflect.DeepEqual(g.checked, []string{"7zip.7zip"}) || len(g.calls) != 1 {
+		t.Errorf("winget touched a store app: checked %q, calls %q", g.checked, g.calls)
+	}
+	for _, id := range g.archChecks {
+		if id != "7zip.7zip" {
+			t.Errorf("x86 check ran for store app %q", id)
+		}
+	}
+}
+
+func TestRunUpdatesStoreAppsAfterWingetAndAppInstallerLast(t *testing.T) {
+	const installer = "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe"
+	const terminal = "Microsoft.WindowsTerminal_8wekyb3d8bbwe"
+	done := storeUpdateResult{State: "Completed", Before: "1", After: "2", InstalledForUser: true}
+	g := &fakeWinget{
+		store:    map[string]string{"Microsoft.AppInstaller": installer, "Microsoft.WindowsTerminal": terminal},
+		storeRes: map[string]storeUpdateResult{installer: done, terminal: done},
+		codes:    map[string]uint32{"7zip.7zip": 0},
+	}
+	runFake(WindowsPatchRequest{Targets: []WindowsPatchTarget{
+		{Kind: WindowsTargetWinget, ID: "Microsoft.AppInstaller"},
 		{Kind: WindowsTargetWinget, ID: "Microsoft.WindowsTerminal"},
 		{Kind: WindowsTargetWinget, ID: "7zip.7zip"},
 	}}, &recorder{}, &fakeWUA{}, g)
-	if it := itemByID(res, "Microsoft.WindowsTerminal"); it.Status != itemSkipped || it.Message != msgStoreApp {
+	if !reflect.DeepEqual(g.storeCalls, []string{terminal, installer}) {
+		t.Errorf("store order = %q", g.storeCalls)
+	}
+	for i, seen := range g.storeSeen {
+		if seen != len(g.calls) {
+			t.Errorf("store update %d ran before the winget upgrades finished", i)
+		}
+	}
+}
+
+func TestRunDryRunDoesNotTouchStoreApps(t *testing.T) {
+	g := &fakeWinget{store: map[string]string{"Microsoft.WindowsTerminal": "Microsoft.WindowsTerminal_8wekyb3d8bbwe"}}
+	res := runFake(WindowsPatchRequest{DryRun: true, Targets: []WindowsPatchTarget{
+		{Kind: WindowsTargetWinget, ID: "Microsoft.WindowsTerminal"},
+	}}, &recorder{}, &fakeWUA{}, g)
+	if it := itemByID(res, "Microsoft.WindowsTerminal"); it.Status != itemWouldInstall || it.Message != msgStoreWouldUpdate {
 		t.Errorf("store app = %+v", it)
 	}
-	if !reflect.DeepEqual(g.checked, []string{"7zip.7zip"}) || len(g.calls) != 1 {
-		t.Errorf("winget touched the store app: checked %q, calls %q", g.checked, g.calls)
+	if len(g.storeCalls) != 0 {
+		t.Errorf("dry run requested a Store update: %q", g.storeCalls)
 	}
-	if res.Stage != "completed" || res.ErrorMessage != "1 skipped: Microsoft.WindowsTerminal (Microsoft Store app)" {
-		t.Errorf("stage %q summary %q", res.Stage, res.ErrorMessage)
+}
+
+func TestRunReportsAFailedStoreCall(t *testing.T) {
+	g := &fakeWinget{store: map[string]string{"9NBLGGH4NNS1": "9NBLGGH4NNS1"}, storeErr: errors.New("boom")}
+	res := runFake(WindowsPatchRequest{Targets: []WindowsPatchTarget{
+		{Kind: WindowsTargetWinget, ID: "9NBLGGH4NNS1"},
+	}}, &recorder{}, &fakeWUA{}, g)
+	if it := itemByID(res, "9NBLGGH4NNS1"); it.Status != itemFailed || it.Message != "Microsoft Store update did not complete: boom" {
+		t.Errorf("store app = %+v", it)
 	}
 }
 
@@ -1363,5 +1481,19 @@ func TestStopDuringRecheckSkipsTheRestAsStopped(t *testing.T) {
 	}
 	if res.Stage != "cancelled" {
 		t.Errorf("stage = %q", res.Stage)
+	}
+}
+
+func TestStoreScriptWaitLeavesTheScriptTimeToReport(t *testing.T) {
+	now := time.Now()
+	ctx, cancel := context.WithDeadline(context.Background(), now.Add(10*time.Minute))
+	defer cancel()
+	if got := storeScriptWait(ctx, now); got != 9*time.Minute {
+		t.Errorf("wait = %v", got)
+	}
+	short, cancelShort := context.WithDeadline(context.Background(), now.Add(20*time.Second))
+	defer cancelShort()
+	if got := storeScriptWait(short, now); got != 30*time.Second {
+		t.Errorf("short wait = %v", got)
 	}
 }

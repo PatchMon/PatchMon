@@ -327,3 +327,37 @@ func TestUsersUpdateRefusesLosingTheLastAdministrator(t *testing.T) {
 		t.Fatalf("last superadmin was deactivated: %+v %v", got, err)
 	}
 }
+
+func TestLoginSettingsHidesVersionWhenGithubPanelDisabled(t *testing.T) {
+	f := newSetupFixture(t)
+	h := &SettingsHandler{settings: store.NewSettingsStore(f.db), users: f.users, cfg: &config.Config{Version: "9.9.9"}}
+	get := func() map[string]any {
+		rec := httptest.NewRecorder()
+		h.GetLoginSettings(rec, httptest.NewRequest(http.MethodGet, "/api/v1/settings/login-settings", nil))
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode: %v (%s)", err, rec.Body.String())
+		}
+		return body
+	}
+	setShow := func(show bool) {
+		if _, err := f.db.Exec(context.Background(), "UPDATE settings SET show_github_version_on_login = $1", show); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	setShow(true)
+	if got := get()["current_version"]; got != "9.9.9" {
+		t.Fatalf("panel enabled: current_version = %v, want 9.9.9", got)
+	}
+	setShow(false)
+	if got := get()["current_version"]; got != "" {
+		t.Fatalf("panel disabled: current_version = %v, want empty", got)
+	}
+
+	h.cfg.RegistryDatabaseURL = "postgres://registry"
+	setShow(true)
+	if got := get()["current_version"]; got != "" {
+		t.Fatalf("multi-context: current_version = %v, want empty", got)
+	}
+}

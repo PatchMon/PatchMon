@@ -125,13 +125,13 @@ describe("RunItemsCard", () => {
 						title: "Windows Terminal",
 						status: "skipped",
 						message:
-							"Microsoft Store app: it updates through the Store for each user, not as SYSTEM",
+							"Microsoft Store app: no Store package matches this winget Id",
 					},
 				]}
 			/>,
 		);
 		const row = within(screen.getByTestId("run-item-row"));
 		expect(row.getByText("Skipped")).toHaveClass("badge-secondary");
-		expect(row.getByText(/updates through the Store/)).toBeInTheDocument();
+		expect(row.getByText(/no Store package matches/)).toBeInTheDocument();
 	});
 });

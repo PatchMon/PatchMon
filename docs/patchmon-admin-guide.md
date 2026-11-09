@@ -357,6 +357,8 @@ Logos can be PNG, JPEG or SVG, up to 5 MB. SVG files are cleaned on upload: scri
 
 Shows the running PatchMon server version, the latest upstream version (checked daily by the `version-update-check` automation job, see Background jobs and automation), and a manual "Check for updates" button. It does not perform the upgrade. To upgrade, PatchMon is a container-image swap (see Installing PatchMon Server on Docker).
 
+The **Show GitHub Version / Release Notes on Login Screen** toggle controls the release panel on the login page. Turning it off also stops the login page from revealing the installed server version to anyone who is not signed in.
+
 #### Metrics
 
 **Path:** `/settings/metrics`
@@ -1649,18 +1651,28 @@ Windows hosts are patched from the same places as Linux hosts: Host Detail, the 
 | Windows Updates: cumulative, security, .NET, definition, driver and optional updates, and feature upgrades | The Windows Update Agent on the host, from the host's configured update source (Microsoft Update or WSUS) | Source **Windows Update** |
 | Applications that winget can upgrade | winget, by the app's exact winget Id | Source **winget** |
 | Applications found only in the registry | Nothing | **Not patchable** |
-| Microsoft Store apps | Nothing: they update through the Microsoft Store | The available update, with a **Microsoft Store app** badge; not selectable |
+| Microsoft Store apps, on a host running agent 2.1.9 or later | The Microsoft Store install service on the host, asked by the agent | Source **winget**; selectable with **Patch selected** |
+| Microsoft Store apps, on a host running an older agent | Nothing | The available update, with a **Microsoft Store app** badge; not selectable |
 | Apps pinned with `winget pin` | Nothing until the pin is removed | The available update, with a **Pinned in winget** badge; not selectable |
 
 The agent reads installed applications from the Windows registry and matches them against winget. PatchMon only ever asks winget to upgrade a package by its exact winget Id. An app that winget has no match for has no Id, so there is no safe way to tell winget which package to upgrade. These apps still report their available version, but they cannot be selected; the tooltip reads "Not patchable: this app was not found in winget. Update it with its own updater." Use the vendor's updater or your software deployment tool for them.
 
 Hosts without winget (it ships with the App Installer package, which Windows Server 2019 and 2022, Server Core and LTSC editions often do not have) list every app as Not patchable. Windows Updates still patch. Windows Server 2025 includes winget as standard.
 
-**Microsoft Store apps** (apps installed from the Store or as MSIX packages) keep showing their available update, but cannot be patched: "Microsoft Store app: updates through the Microsoft Store". The agent runs as the Local System account, and winget run as Local System only updates the machine's staged copy of a Store app, never the copy each user runs, so an upgrade would report success and change nothing. Let the Microsoft Store update them, or manage them with your Store or Intune policy.
+**Microsoft Store apps** (apps installed from the Store or as MSIX packages) are not upgraded with winget, because winget run as the Local System account only updates the machine's staged copy, never the copy each user runs. On a host running agent 2.1.9 or later the agent asks the Microsoft Store install service to update the app instead, waits for it to finish and checks the installed version. This works when automatic Store updates are turned off by policy. Select Store apps individually with **Patch selected**; **Patch all** leaves them out. In a run, Store apps are updated after the apps winget upgrades, and App Installer (the package that contains winget) goes last.
+
+Agent 2.1.9 and later also read the host's Microsoft Store update queue, so a Store app with an update waiting there is listed with an update available even when winget does not know about it, including apps installed for a single user. Windows' own scheduled Store scan fills the queue; the agent only reads it and never starts a scan or a download. Apps listed only from the queue show no available version, because the Store does not say which version it will install.
+
+- If a user is signed in, the update is installed for them and the item ends **Installed** with "Updated through the Microsoft Store".
+- If nobody who has the app is signed in, the Store stages the new version for the whole machine and each user gets it the next time they sign in. The item ends **Installed** with "Updated through the Microsoft Store; each user gets the new version at their next sign-in".
+- If the Store has no update for the app, the item ends **Not applicable** with "No Microsoft Store update available".
+- If the Store reports an error, pauses the update (for example on a metered connection) or does not finish within 30 minutes, the item ends **Failed** with the Store's error code where there is one. A timed-out update may still finish later.
+
+On a host running an older agent, Store apps keep showing their available update with a **Microsoft Store app** badge and cannot be selected: "Microsoft Store app: update the PatchMon agent on this host to v2.1.9 or later to patch it".
 
 **Pinned apps.** An app you have pinned on the host with `winget pin add` also keeps showing its update, with a **Pinned in winget** badge, and cannot be selected: "Pinned with winget pin; remove the pin on the host to update it". Pinned apps are left out of Patch all. Remove the pin (`winget pin remove`) and wait for the next report to patch it.
 
-If you select a Store app or a pinned app anyway, for example from an out-of-date page, the wizard refuses the run and lists the app with the same reason.
+If you select a pinned app, or a Store app on a host with an older agent, anyway, for example from an out-of-date page, the wizard refuses the run and lists the app with the same reason.
 
 Windows Update rows also carry badges: **Security**, **Optional**, **Driver** and **Feature upgrade**.
 
@@ -1669,7 +1681,7 @@ Windows Update rows also carry badges: **Security**, **Optional**, **Driver** an
 On a Windows host the wizard shows two scope boxes, both ticked by default. At least one must stay ticked:
 
 - **Windows Updates**: installs every pending Windows update except drivers, optional updates and feature upgrades.
-- **Applications (winget)**: upgrades each app that winget reports an upgrade for, one at a time.
+- **Applications (winget)**: upgrades each app that winget reports an upgrade for, one at a time. Microsoft Store apps are not included; select them with **Patch selected**.
 
 Patch all checks the host again when the run starts, so it installs whatever is pending at that moment, not what was pending when the run was queued or validated. Approving a validated Patch all works the same way.
 
@@ -1679,7 +1691,7 @@ To keep something out of Patch all on one host, hide the update in Windows (hidd
 
 ##### Validate first
 
-Windows supports a dry run for both **Patch selected** and **Patch all**, so the wizard offers the **Validate** step for both. A dry run searches Windows Update and asks winget whether an upgrade is available. Nothing is downloaded or installed. Each item ends **Would install**, with its expected restart behaviour, **Not applicable**, or **Skipped** when it could not be installed as things stand: a Microsoft Store app, an app pinned in winget, an update that needs user input, or an update that cannot install until the host has restarted. You can validate up to 100 packages per Windows host in one run.
+Windows supports a dry run for both **Patch selected** and **Patch all**, so the wizard offers the **Validate** step for both. A dry run searches Windows Update and asks winget whether an upgrade is available. Nothing is downloaded or installed. A dry run does not contact the Microsoft Store, so a selected Store app ends **Would install** with "Microsoft Store update would be requested" (or **Skipped** if no Store package on the host matches it); the real run reports **Not applicable** if the Store turns out to have no update. Each item ends **Would install**, with its expected restart behaviour, **Not applicable**, or **Skipped** when it could not be installed as things stand: an app pinned in winget, an update that needs user input, or an update that cannot install until the host has restarted. You can validate up to 100 packages per Windows host in one run.
 
 Approve the result as you would on Linux. When you approve a validated **Patch selected** run, only the items that would install are carried into the real run.
 
@@ -1695,7 +1707,7 @@ Run Detail shows an **Updates** card above the terminal, with one row per update
 | **Already installed** | Installed before the run reached it, for example by Windows' own automatic updates. |
 | **Would install** | Dry run only: this would be installed. |
 | **Not applicable** | No longer offered by Windows Update (installed, superseded or withdrawn), no upgrade available, or an app installed for a single user (see below). |
-| **Skipped** | The run was stopped, the run time limit was reached, a restart is needed before more updates can install, the update needs interactive input, an earlier update in the run timed out while installing, the app was pinned with `winget pin` since the last report, or the app is a Microsoft Store app ("Microsoft Store app: it updates through the Store for each user, not as SYSTEM"). |
+| **Skipped** | The run was stopped, the run time limit was reached, a restart is needed before more updates can install, the update needs interactive input, an earlier update in the run timed out while installing, the app was pinned with `winget pin` since the last report, the app is a Microsoft Store app that matches no Store package ("Microsoft Store app: no Store package matches this winget Id"), or the host has no Microsoft Store ("Microsoft Store is not available on this host"). |
 | **Failed** / **Aborted** | The install did not succeed. The Result column has the code and a hint, for example "Application is in use: close the app and retry". |
 
 One failed item does not stop the others. The run ends **Failed** if any item failed or was aborted, and its summary lists the first few ("2 of 7 failed: ..."). Skipped items never fail a run. They are listed in the run's summary instead, for example "1 skipped: 7zip.7zip (pinned in winget)", and a run whose only non-successful items were skipped ends **Completed** with that summary shown as a note.
@@ -1724,6 +1736,7 @@ Restart the host when it suits you. If a restart is still pending from an earlie
 | Downloading the run's Windows Updates | 60 minutes, or 180 minutes when a feature upgrade is included |
 | Installing one Windows Update | 180 minutes, or 240 minutes for a feature upgrade |
 | Upgrading one app with winget | 30 minutes |
+| Updating one Microsoft Store app | 30 minutes |
 
 A step that runs out of time says so. Windows usually carries on installing an update in the background after its install step times out, so the agent then asks Windows about that update once a minute for up to 10 minutes:
 
@@ -1735,6 +1748,8 @@ Stopping the run during those 10 minutes ends the check straight away. The limit
 ##### Apps installed for a single user
 
 The agent runs as the Local System account, so winget acts on apps installed for all users. An app installed for one user only cannot be upgraded by the agent: it ends **Not applicable** with "Not found for the system account: the app is probably installed for a single user, which the agent cannot upgrade". Upgrade it from that user's session, or reinstall it for all users.
+
+An app installed as 32-bit on 64-bit Windows stays 32-bit: when its programs are 32-bit and it is installed under `Program Files (x86)`, the agent asks winget for the 32-bit installer. If the new version has no 32-bit installer, the app is left as it is and ends **Not applicable** with "Installed as 32-bit, but the new version has no 32-bit installer: not upgraded, so a 64-bit copy is not installed alongside it". To move such an app to 64-bit, uninstall it and install the 64-bit build.
 
 ##### WSUS-managed hosts
 
@@ -2294,6 +2309,8 @@ The table has eight columns on desktop:
 | Actions | Inline action buttons: **Retry**, **Skip & Patch**, **Approve**, **View**. See [Inline row actions](#inline-row-actions) below. |
 
 On mobile (<768px) the table collapses into per-run cards with the same information stacked vertically. Actions sit at the bottom of each card as full-width buttons.
+
+Long package names in the desktop **Type** column are shortened with an ellipsis to keep the other columns readable. Hover over the name to see the full package name.
 
 #### Pagination and page size
 
