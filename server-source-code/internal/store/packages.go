@@ -221,6 +221,7 @@ func (s *PackagesStore) List(ctx context.Context, p ListParams) ([]PackageWithSt
 				PendingRestart:     r.PendingRestart,
 			},
 		}
+		ref.applyStoreAppGate(r.AgentVersion)
 		hostsByPkg[r.PackageID] = append(hostsByPkg[r.PackageID], ref)
 	}
 
@@ -317,6 +318,7 @@ func (s *PackagesStore) GetByID(ctx context.Context, id string) (*PackageDetail,
 				NeedsReboot:  r.HostNeedsReboot,
 			},
 		}
+		hostPackages[i].Patchable, hostPackages[i].NotPatchableReason = StoreAppPatchability(r.Patchable, r.NotPatchableReason, r.PatchSource, r.HostAgentVersion)
 		// Deduplicate source repos across host_packages rows
 		if r.SourceRepositoryID != nil {
 			if _, seen := seenRepos[*r.SourceRepositoryID]; !seen {
@@ -555,6 +557,7 @@ func (s *PackagesStore) GetHosts(ctx context.Context, packageIDOrName string, p 
 				PendingRestart:     r.PendingRestart,
 			},
 		}
+		out[i].applyStoreAppGate(r.AgentVersion)
 	}
 	return out, int(total), nil
 }

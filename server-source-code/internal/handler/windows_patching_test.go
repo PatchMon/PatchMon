@@ -177,6 +177,30 @@ func TestPlanWindowsRunPatchPackage(t *testing.T) {
 		}
 	})
 
+	t.Run("store app is patchable once the agent can update it", func(t *testing.T) {
+		storeRow := db.ResolveWindowsPatchTargetsRow{Name: "Store App", NeedsUpdate: true, WingetID: strp("Microsoft.WindowsTerminal"), NotPatchableReason: "store_app"}
+		noID := db.ResolveWindowsPatchTargetsRow{Name: "Store No Id", NeedsUpdate: true, NotPatchableReason: "store_app"}
+		for _, ver := range []string{"2.1.9", "2.1.9-rc.1", "2.2.0"} {
+			plan, reqErr, err := planWindowsRun(strp(ver), "patch_package", []string{"Store App"}, nil, fixedResolver(storeRow))
+			if err != nil || reqErr != nil {
+				t.Fatalf("%s: err=%v reqErr=%v", ver, err, reqErr)
+			}
+			if len(plan.Items) != 1 || plan.Items[0].Kind != store.PatchItemKindWinget || plan.Items[0].Identifier != "Microsoft.WindowsTerminal" {
+				t.Fatalf("%s: items = %+v", ver, plan.Items)
+			}
+		}
+		for _, ver := range []string{"2.1.8", "2.1.4"} {
+			_, reqErr, _ := planWindowsRun(strp(ver), "patch_package", []string{"Store App"}, nil, fixedResolver(storeRow))
+			if reqErr == nil || reqErr.Body["rejected"].([]windowsTargetReject)[0].Reason != rejectStoreApp {
+				t.Fatalf("%s: want store_app reject, got %v", ver, reqErr)
+			}
+		}
+		_, reqErr, _ := planWindowsRun(strp("2.1.9"), "patch_package", []string{"Store No Id"}, nil, fixedResolver(noID))
+		if reqErr == nil || reqErr.Body["rejected"].([]windowsTargetReject)[0].Reason != rejectNoWingetID {
+			t.Fatalf("store app without a winget Id: got %v", reqErr)
+		}
+	})
+
 	t.Run("name validation", func(t *testing.T) {
 		over := make([]string, maxPatchTargets+1)
 		for i := range over {

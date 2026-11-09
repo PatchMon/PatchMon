@@ -31,7 +31,7 @@ const (
 	rejectNoWingetID        = "no_winget_id"
 	rejectInvalidIdentifier = "invalid_identifier"
 	rejectWingetPinned      = "winget_pinned"
-	rejectStoreApp          = "store_app"
+	rejectStoreApp          = store.NotPatchableStoreApp
 )
 
 type windowsScope struct {
@@ -135,7 +135,7 @@ func planWindowsRun(agentVersion *string, patchType string, names []string, scop
 	if err != nil {
 		return nil, nil, err
 	}
-	items, rejects := classifyWindowsTargets(unique, rows)
+	items, rejects := classifyWindowsTargets(unique, rows, agentVersion)
 	if len(rejects) > 0 {
 		return nil, &runRequestError{Status: http.StatusBadRequest, Body: map[string]interface{}{
 			"error":    "Some selected packages cannot be patched on this host. Refresh the host's inventory and select again.",
@@ -145,7 +145,7 @@ func planWindowsRun(agentVersion *string, patchType string, names []string, scop
 	return &windowsRunPlan{Items: items}, nil, nil
 }
 
-func classifyWindowsTargets(names []string, rows []db.ResolveWindowsPatchTargetsRow) ([]store.NewPatchRunItem, []windowsTargetReject) {
+func classifyWindowsTargets(names []string, rows []db.ResolveWindowsPatchTargetsRow, agentVersion *string) ([]store.NewPatchRunItem, []windowsTargetReject) {
 	byName := make(map[string]db.ResolveWindowsPatchTargetsRow, len(rows))
 	for _, r := range rows {
 		byName[r.Name] = r
@@ -158,8 +158,12 @@ func classifyWindowsTargets(names []string, rows []db.ResolveWindowsPatchTargets
 			rejects = append(rejects, windowsTargetReject{Name: name, Reason: rejectNotFound})
 			continue
 		}
-		if !r.Patchable {
-			reason := r.NotPatchableReason
+		source := ""
+		if r.WingetID != nil && *r.WingetID != "" {
+			source = "winget"
+		}
+		patchable, reason := store.StoreAppPatchability(r.Patchable, r.NotPatchableReason, source, agentVersion)
+		if !patchable {
 			if reason == "" {
 				reason = rejectNoWingetID
 			}
