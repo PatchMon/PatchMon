@@ -27,6 +27,7 @@ type Manager struct {
 	pacmanManager  *PacmanManager
 	freebsdManager *FreeBSDManager
 	zypperManager  *ZypperManager
+	openbsdManager *OpenBSDManager
 	winManager     *WindowsManager
 
 	windowsUpdatesOmitted bool
@@ -39,6 +40,7 @@ func New(logger *logrus.Logger, cacheRefresh CacheRefreshConfig) *Manager {
 	apkManager := NewAPKManager(logger)
 	pacmanManager := NewPacmanManager(logger)
 	freebsdManager := NewFreeBSDManager(logger)
+	openbsdManager := NewOpenBSDManager(logger)
 	winManager := NewWindowsManager(logger)
 
 	return &Manager{
@@ -49,6 +51,7 @@ func New(logger *logrus.Logger, cacheRefresh CacheRefreshConfig) *Manager {
 		pacmanManager:  pacmanManager,
 		freebsdManager: freebsdManager,
 		zypperManager:  NewZypperManager(logger),
+		openbsdManager: openbsdManager,
 		winManager:     winManager,
 	}
 }
@@ -78,6 +81,8 @@ func (m *Manager) GetPackages() ([]models.Package, error) {
 		pkgs, err = m.freebsdManager.GetPackages()
 	case "zypper":
 		pkgs, err = m.zypperManager.GetPackages()
+	case "pkg_info":
+		pkgs, err = m.openbsdManager.GetPackages()
 	default:
 		return nil, fmt.Errorf("unsupported package manager: %s", packageManager)
 	}
@@ -97,7 +102,7 @@ func (m *Manager) SetAPKSecDBEnabled(enabled bool) { m.apkManager.SetSecDBEnable
 func (m *Manager) WindowsUpdatesOmitted() bool { return m.windowsUpdatesOmitted }
 
 // DetectPackageManager detects which package manager is available on the system.
-// Returns one of: apt, dnf, yum, apk, pacman, zypper, pkg, windows, or unknown.
+// Returns one of: apt, dnf, yum, apk, pacman, zypper, pkg, pkg_info, windows, or unknown.
 func (m *Manager) DetectPackageManager() string {
 	return pkgmgr.Detect()
 }
@@ -161,13 +166,16 @@ func CombinePackageData(installedPackages map[string]models.Package, upgradableP
 		upgradableMap[pkg.Name] = true
 	}
 
-	// Then add installed packages that are not upgradable (with full info including description)
+	// Then add installed packages that are not upgradable (with full info including description).
+	// AvailableVersion is set to CurrentVersion because if the package manager did not report an
+	// upgrade candidate, the installed version is already the latest available from the repository.
 	for packageName, installed := range installedPackages {
 		if !upgradableMap[packageName] {
 			packages = append(packages, models.Package{
 				Name:             packageName,
 				Description:      installed.Description,
 				CurrentVersion:   installed.CurrentVersion,
+				AvailableVersion: installed.CurrentVersion,
 				SourceRepository: installed.SourceRepository,
 				NeedsUpdate:      false,
 				IsSecurityUpdate: false,

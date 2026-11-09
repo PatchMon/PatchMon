@@ -36,7 +36,7 @@ func SystemProbe() Probe {
 	}
 }
 
-// Detect returns apt, dnf, yum, apk, pacman, zypper, pkg, windows or unknown.
+// Detect returns apt, dnf, yum, apk, pacman, zypper, pkg, pkg_info, windows or unknown.
 func Detect() string {
 	return SystemProbe().Detect()
 }
@@ -67,6 +67,9 @@ var familyByOSID = map[string]string{
 func (p Probe) Detect() string {
 	if p.GOOS == "windows" {
 		return "windows"
+	}
+	if p.GOOS == "openbsd" && p.has("pkg_info") {
+		return "pkg_info"
 	}
 	if p.GOOS == "freebsd" {
 		for _, path := range []string{"/usr/sbin/pkg", "/usr/local/sbin/pkg"} {

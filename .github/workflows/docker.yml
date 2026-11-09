@@ -114,6 +114,7 @@ jobs:
           mkdir -p ../agents-prebuilt
           for target in "linux/amd64" "linux/arm64" "linux/386" "linux/arm" \
                         "freebsd/amd64" "freebsd/arm64" "freebsd/386" "freebsd/arm" \
+                        "openbsd/amd64" "openbsd/arm64" "openbsd/386" "openbsd/arm" \
                         "windows/amd64" "windows/arm64"; do
             GOOS=${target%/*}
             GOARCH=${target#*/}

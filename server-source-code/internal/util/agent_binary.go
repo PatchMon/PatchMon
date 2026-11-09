@@ -46,6 +46,10 @@ var agentBinaryNames = map[string]string{
 	"freebsd/386":   "patchmon-agent-freebsd-386",
 	"freebsd/arm64": "patchmon-agent-freebsd-arm64",
 	"freebsd/arm":   "patchmon-agent-freebsd-arm",
+	"openbsd/amd64": "patchmon-agent-openbsd-amd64",
+	"openbsd/386":   "patchmon-agent-openbsd-386",
+	"openbsd/arm64": "patchmon-agent-openbsd-arm64",
+	"openbsd/arm":   "patchmon-agent-openbsd-arm",
 	"windows/amd64": "patchmon-agent-windows-amd64.exe",
 	"windows/arm64": "patchmon-agent-windows-arm64.exe",
 }
