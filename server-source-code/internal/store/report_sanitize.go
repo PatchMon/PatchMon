@@ -136,6 +136,7 @@ func sanitizeReportPayload(p *ReportPayload) {
 		sanitizeTextSlice(pkg.WUACategories)
 		pkg.WUAType = sanitizeText(pkg.WUAType)
 		pkg.WingetID = sanitizeText(pkg.WingetID)
+		pkg.ChocolateyID = sanitizeText(pkg.ChocolateyID)
 	}
 
 	for i := range p.Repositories {

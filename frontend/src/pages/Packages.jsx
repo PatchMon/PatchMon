@@ -848,7 +848,7 @@ const Packages = () => {
 							className="btn-primary flex items-center gap-2"
 							title={
 								isWindowsHostFilter
-									? "Install pending Windows updates and winget app upgrades on this host"
+									? "Install pending Windows updates and app upgrades through WinGet and Chocolatey on this host"
 									: "Run system package updates on this host"
 							}
 						>

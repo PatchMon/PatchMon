@@ -207,7 +207,7 @@ INSERT INTO host_packages (
     needs_update, is_security_update, source_repository_id,
     wua_guid, wua_kb, wua_severity, wua_categories,
     wua_description, wua_support_url, wua_revision_number,
-    winget_id, winget_pinned, winget_store_app, wua_browse_only, wua_update_type,
+    winget_id, winget_pinned, winget_store_app, wua_browse_only, wua_update_type, chocolatey_id, chocolatey_pinned,
     last_checked
 )
 SELECT
@@ -227,6 +227,7 @@ SELECT
     winget_store_app,
     wua_browse_only,
     NULLIF(wua_update_type, '')          AS wua_update_type,
+    NULLIF(chocolatey_id, ''), chocolatey_pinned,
     NOW()
 FROM jsonb_to_recordset(sqlc.arg('payload')::jsonb)
     AS t(
@@ -238,7 +239,7 @@ FROM jsonb_to_recordset(sqlc.arg('payload')::jsonb)
         wua_categories jsonb,
         wua_description text, wua_support_url text,
         wua_revision_number int,
-        winget_id text, winget_pinned boolean, winget_store_app boolean, wua_browse_only boolean, wua_update_type text
+        winget_id text, winget_pinned boolean, winget_store_app boolean, wua_browse_only boolean, wua_update_type text, chocolatey_id text, chocolatey_pinned boolean
     )
 ORDER BY package_id;
 

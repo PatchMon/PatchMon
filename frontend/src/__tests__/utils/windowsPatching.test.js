@@ -471,3 +471,29 @@ describe("Microsoft Store apps", () => {
 		expect(windowsBadges(info)).toEqual([]);
 	});
 });
+
+describe("Chocolatey patchability", () => {
+	it("uses the server's Chocolatey target and pin decision", () => {
+		const info = windowsPatchInfo({
+			needsUpdate: true,
+			patchable: true,
+			patchSource: "chocolatey",
+		});
+		expect(info.patchable).toBe(true);
+		expect(windowsSourceLabel(info)).toBe("Chocolatey");
+		const pinned = windowsPatchInfo({
+			needsUpdate: true,
+			patchable: false,
+			patchSource: "chocolatey",
+			notPatchableReason: "chocolatey_pinned",
+		});
+		expect(pinned.patchable).toBe(false);
+		expect(pinned.reasonText).toMatch(/Pinned in Chocolatey/);
+		expect(isBlockedUpdateReason(pinned.reason)).toBe(true);
+	});
+	it("keeps reporting-only Chocolatey rows unpatchable", () => {
+		expect(
+			windowsPatchInfo({ needsUpdate: true, name: "chocolatey:git" }).patchable,
+		).toBe(false);
+	});
+});

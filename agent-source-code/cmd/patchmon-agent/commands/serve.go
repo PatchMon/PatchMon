@@ -1935,14 +1935,15 @@ func connectOnce(out chan<- wsMsg, backoff *time.Duration) (connected bool, err 
 			Rows       int    `json:"rows"`        // Terminal rows
 			Data       string `json:"data"`        // SSH input data
 			// run_patch fields
-			PatchRunID     string                        `json:"patch_run_id"`
-			PatchType      string                        `json:"patch_type"`
-			PackageName    string                        `json:"package_name"`
-			PackageNames   []string                      `json:"package_names"`
-			DryRun         bool                          `json:"dry_run"`
-			Targets        []packages.WindowsPatchTarget `json:"targets"`
-			IncludeUpdates *bool                         `json:"include_updates"`
-			IncludeApps    *bool                         `json:"include_apps"`
+			PatchRunID        string                        `json:"patch_run_id"`
+			PatchType         string                        `json:"patch_type"`
+			PackageName       string                        `json:"package_name"`
+			PackageNames      []string                      `json:"package_names"`
+			DryRun            bool                          `json:"dry_run"`
+			Targets           []packages.WindowsPatchTarget `json:"targets"`
+			IncludeUpdates    *bool                         `json:"include_updates"`
+			IncludeApps       *bool                         `json:"include_apps"`
+			IncludeChocolatey bool                          `json:"include_chocolatey"`
 		}
 		if err := json.Unmarshal(data, &payload); err != nil {
 			logger.WithError(err).WithField("message_bytes", len(data)).Warn("Failed to parse WebSocket message")
@@ -1983,6 +1984,7 @@ func connectOnce(out chan<- wsMsg, backoff *time.Duration) (connected bool, err 
 			}
 			if runtime.GOOS == "windows" {
 				req, rejected, err := packages.NewWindowsPatchRequest(patchType, payload.DryRun, payload.Targets, payload.IncludeUpdates, payload.IncludeApps)
+				req.IncludeChocolatey = payload.IncludeChocolatey
 				for _, t := range rejected {
 					logger.WithFields(logutil.SanitizeMap(map[string]interface{}{"kind": t.Kind, "id": t.ID})).Warn("Invalid target in run_patch")
 				}

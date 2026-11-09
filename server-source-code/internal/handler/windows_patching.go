@@ -93,7 +93,7 @@ func resolveWindowsScope(scope *windowsScope) (updates, apps bool, err *runReque
 		}
 	}
 	if !updates && !apps {
-		return false, false, badRunRequest("Select Windows Updates, Applications (winget), or both")
+		return false, false, badRunRequest("Select Windows Updates, Applications (WinGet and Chocolatey), or both")
 	}
 	return updates, apps, nil
 }
@@ -185,6 +185,13 @@ func classifyWindowsTargets(names []string, rows []db.ResolveWindowsPatchTargets
 			if r.WuaKb != nil {
 				item.KB = *r.WuaKb
 			}
+		case r.ChocolateyID != nil && *r.ChocolateyID != "":
+			if !store.IsValidChocolateyID(*r.ChocolateyID) {
+				rejects = append(rejects, windowsTargetReject{Name: name, Reason: rejectInvalidIdentifier})
+				continue
+			}
+			item.Kind = store.PatchItemKindChocolatey
+			item.Identifier = strings.ToLower(*r.ChocolateyID)
 		case r.WingetID != nil && *r.WingetID != "":
 			if !store.IsValidWingetID(*r.WingetID) {
 				rejects = append(rejects, windowsTargetReject{Name: name, Reason: rejectInvalidIdentifier})

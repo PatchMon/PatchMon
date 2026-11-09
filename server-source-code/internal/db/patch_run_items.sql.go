@@ -204,13 +204,14 @@ func (q *Queries) LockPatchRunStatus(ctx context.Context, arg LockPatchRunStatus
 
 const resolveWindowsPatchTargets = `-- name: ResolveWindowsPatchTargets :many
 SELECT p.name,
-    hp.needs_update, hp.wua_guid, hp.wua_revision_number, hp.wua_kb, hp.wua_categories, hp.winget_id,
-    (hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL) AND NOT COALESCE(hp.winget_pinned, false) AND NOT COALESCE(hp.winget_store_app, false))::boolean AS patchable,
+    hp.needs_update, hp.wua_guid, hp.wua_revision_number, hp.wua_kb, hp.wua_categories, hp.winget_id, hp.chocolatey_id,
+    (hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL OR hp.chocolatey_id IS NOT NULL) AND NOT COALESCE(hp.winget_pinned, false) AND NOT COALESCE(hp.winget_store_app, false) AND NOT COALESCE(hp.chocolatey_pinned, false))::boolean AS patchable,
     (CASE
         WHEN NOT hp.needs_update THEN 'not_pending'
+        WHEN COALESCE(hp.chocolatey_pinned, false) THEN 'chocolatey_pinned'
         WHEN COALESCE(hp.winget_pinned, false) THEN 'winget_pinned'
         WHEN COALESCE(hp.winget_store_app, false) THEN 'store_app'
-        WHEN hp.wua_guid IS NULL AND hp.winget_id IS NULL THEN 'no_winget_id'
+        WHEN hp.wua_guid IS NULL AND hp.winget_id IS NULL AND hp.chocolatey_id IS NULL THEN 'no_winget_id'
         ELSE ''
     END)::text AS not_patchable_reason
 FROM host_packages hp
@@ -232,6 +233,7 @@ type ResolveWindowsPatchTargetsRow struct {
 	WuaKb              *string `json:"wua_kb"`
 	WuaCategories      []byte  `json:"wua_categories"`
 	WingetID           *string `json:"winget_id"`
+	ChocolateyID       *string `json:"chocolatey_id"`
 	Patchable          bool    `json:"patchable"`
 	NotPatchableReason string  `json:"not_patchable_reason"`
 }
@@ -253,6 +255,7 @@ func (q *Queries) ResolveWindowsPatchTargets(ctx context.Context, arg ResolveWin
 			&i.WuaKb,
 			&i.WuaCategories,
 			&i.WingetID,
+			&i.ChocolateyID,
 			&i.Patchable,
 			&i.NotPatchableReason,
 		); err != nil {

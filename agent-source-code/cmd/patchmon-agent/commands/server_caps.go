@@ -8,11 +8,13 @@ import (
 )
 
 const (
+	capabilityChocolatey     = "chocolateyPatching"
 	capabilityWingetPinned   = "wingetPinned"
 	capabilityWingetStoreApp = "wingetStoreApp"
 )
 
 var (
+	serverAcceptsChocolatey     atomic.Bool
 	serverAcceptsWingetPinned   atomic.Bool
 	serverAcceptsWingetStoreApp atomic.Bool
 )
@@ -21,6 +23,7 @@ func recordServerCapabilities(resp *models.PingResponse) {
 	if resp == nil {
 		return
 	}
+	serverAcceptsChocolatey.Store(slices.Contains(resp.Capabilities, capabilityChocolatey))
 	serverAcceptsWingetPinned.Store(slices.Contains(resp.Capabilities, capabilityWingetPinned))
 	serverAcceptsWingetStoreApp.Store(slices.Contains(resp.Capabilities, capabilityWingetStoreApp))
 }
@@ -30,6 +33,10 @@ func recordServerCapabilities(resp *models.PingResponse) {
 func withServerSupportedFields(pkgs []models.Package) []models.Package {
 	pinned, store := serverAcceptsWingetPinned.Load(), serverAcceptsWingetStoreApp.Load()
 	for i := range pkgs {
+		if !serverAcceptsChocolatey.Load() {
+			pkgs[i].ChocolateyID = ""
+			pkgs[i].ChocolateyPinned = false
+		}
 		if !pinned {
 			pkgs[i].WingetPinned = false
 		}

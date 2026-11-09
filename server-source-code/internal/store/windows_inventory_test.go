@@ -91,7 +91,7 @@ func TestPatchablePredicateIdenticalAcrossQueries(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := string(b)
-	const predicate = "THEN hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL) AND NOT COALESCE(hp.winget_pinned, false) AND NOT COALESCE(hp.winget_store_app, false)"
+	const predicate = "THEN hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL OR hp.chocolatey_id IS NOT NULL) AND NOT COALESCE(hp.winget_pinned, false) AND NOT COALESCE(hp.winget_store_app, false) AND NOT COALESCE(hp.chocolatey_pinned, false)"
 	for _, q := range []string{"GetHostPackagesWithHostsByPackageID", "GetHostRefsForPackageIDs", "ListHostsForPackage"} {
 		if !strings.Contains(namedQueryIn(t, src, q), predicate) {
 			t.Errorf("%s does not use the shared patchable predicate", q)
@@ -101,7 +101,7 @@ func TestPatchablePredicateIdenticalAcrossQueries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(namedQueryIn(t, string(items), "ResolveWindowsPatchTargets"), "hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL) AND NOT COALESCE(hp.winget_pinned, false) AND NOT COALESCE(hp.winget_store_app, false)") {
+	if !strings.Contains(namedQueryIn(t, string(items), "ResolveWindowsPatchTargets"), "hp.needs_update AND (hp.wua_guid IS NOT NULL OR hp.winget_id IS NOT NULL OR hp.chocolatey_id IS NOT NULL) AND NOT COALESCE(hp.winget_pinned, false) AND NOT COALESCE(hp.winget_store_app, false) AND NOT COALESCE(hp.chocolatey_pinned, false)") {
 		t.Error("ResolveWindowsPatchTargets does not use the shared patchable predicate")
 	}
 }

@@ -542,7 +542,7 @@ describe("PatchWizard on Windows hosts", () => {
 	it("offers both Patch all scopes, ticked, and blocks continuing with neither", async () => {
 		renderWizard(WIN, { initialStep: 0 });
 		const updates = scopeButton("Windows Updates");
-		const apps = scopeButton("Applications (winget)");
+		const apps = scopeButton("Applications (WinGet and Chocolatey)");
 		expect(updates).toHaveAttribute("aria-pressed", "true");
 		expect(apps).toHaveAttribute("aria-pressed", "true");
 		expect(
@@ -563,7 +563,7 @@ describe("PatchWizard on Windows hosts", () => {
 	it("sends the chosen scope with the Patch all trigger", async () => {
 		patchingAPI.trigger.mockResolvedValue({ patch_run_id: "r1" });
 		renderWizard(WIN, { initialStep: 0 });
-		await clickAndSettle(scopeButton("Applications (winget)"));
+		await clickAndSettle(scopeButton("Applications (WinGet and Chocolatey)"));
 		await clickAndSettle(
 			screen.getByRole("button", { name: "Skip validation" }),
 		);

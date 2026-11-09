@@ -22,8 +22,9 @@ import (
 
 // Windows patch target kinds, as carried in run_patch targets and patch run items.
 const (
-	WindowsTargetWUA    = "wua"
-	WindowsTargetWinget = "winget"
+	WindowsTargetWUA        = "wua"
+	WindowsTargetWinget     = "winget"
+	WindowsTargetChocolatey = "chocolatey"
 )
 
 const (
@@ -81,6 +82,8 @@ func ValidWindowsPatchTarget(t WindowsPatchTarget) bool {
 	switch t.Kind {
 	case WindowsTargetWUA:
 		return wuaGUIDPattern.MatchString(t.ID)
+	case WindowsTargetChocolatey:
+		return validChocolateyTarget(t.ID)
 	case WindowsTargetWinget:
 		return wingetIDPattern.MatchString(t.ID)
 	}
@@ -89,11 +92,12 @@ func ValidWindowsPatchTarget(t WindowsPatchTarget) bool {
 
 // WindowsPatchRequest describes one Windows patch run.
 type WindowsPatchRequest struct {
-	PatchAll       bool
-	DryRun         bool
-	IncludeUpdates bool
-	IncludeApps    bool
-	Targets        []WindowsPatchTarget
+	PatchAll          bool
+	DryRun            bool
+	IncludeUpdates    bool
+	IncludeApps       bool
+	IncludeChocolatey bool
+	Targets           []WindowsPatchTarget
 }
 
 // WindowsPatchHooks connects the runner to the agent's output stream, item endpoint and stop flag.
@@ -974,12 +978,13 @@ func (l *lineLogger) Output() string {
 }
 
 type windowsPatchRun struct {
-	req      WindowsPatchRequest
-	hooks    WindowsPatchHooks
-	wua      wuaBackend
-	winget   wingetBackend
-	timeouts windowsPatchTimeouts
-	now      func() time.Time
+	req        WindowsPatchRequest
+	hooks      WindowsPatchHooks
+	wua        wuaBackend
+	winget     wingetBackend
+	chocolatey chocolateyBackend
+	timeouts   windowsPatchTimeouts
+	now        func() time.Time
 
 	items          []*models.PatchRunItem
 	byKey          map[string]*models.PatchRunItem
@@ -1112,12 +1117,16 @@ func (r *windowsPatchRun) run(runCtx, stopCtx context.Context) WindowsPatchResul
 	}
 	wuaIDs := r.targetIDs(WindowsTargetWUA)
 	wingetIDs := r.targetIDs(WindowsTargetWinget)
-	if !r.req.PatchAll && len(wuaIDs)+len(wingetIDs) == 0 {
+	chocoIDs := r.targetIDs(WindowsTargetChocolatey)
+	if !r.req.PatchAll && len(wuaIDs)+len(wingetIDs)+len(chocoIDs) == 0 {
 		return WindowsPatchResult{Stage: "failed", ErrorMessage: "no valid patch targets"}
 	}
 	if !r.req.PatchAll {
 		for _, id := range wuaIDs {
 			r.upsert(models.PatchRunItem{Kind: WindowsTargetWUA, ID: strings.ToLower(id), Status: itemPending})
+		}
+		for _, id := range chocoIDs {
+			r.upsert(models.PatchRunItem{Kind: WindowsTargetChocolatey, ID: id, Status: itemPending})
 		}
 		for _, id := range wingetIDs {
 			r.upsert(models.PatchRunItem{Kind: WindowsTargetWinget, ID: id, Status: itemPending})
@@ -1138,6 +1147,9 @@ func (r *windowsPatchRun) run(runCtx, stopCtx context.Context) WindowsPatchResul
 		r.out("[winget] Skipped: not selected for this run\n")
 	}
 
+	if (r.req.PatchAll && r.req.IncludeApps && r.req.IncludeChocolatey) || len(chocoIDs) > 0 {
+		r.runChocolateyPhase(runCtx, stopCtx, chocoIDs)
+	}
 	res := WindowsPatchResult{}
 	installedUpdate := false
 	for _, it := range r.items {
@@ -1681,9 +1693,11 @@ func includesWindowsUpdates(req WindowsPatchRequest) bool {
 	return false
 }
 
-// RunWindowsPatch runs a Windows patch run with the host's WUA and winget backends.
+// RunWindowsPatch runs a Windows patch run with the host's WUA, WinGet and Chocolatey backends.
 func RunWindowsPatch(runCtx, stopCtx context.Context, req WindowsPatchRequest, hooks WindowsPatchHooks, apps func() []models.Package) WindowsPatchResult {
-	return newWindowsPatchRun(req, hooks, newWUAScriptBackend(), newWingetExecBackend(apps)).run(runCtx, stopCtx)
+	r := newWindowsPatchRun(req, hooks, newWUAScriptBackend(), newWingetExecBackend(apps))
+	r.chocolatey = &chocolateyExecBackend{}
+	return r.run(runCtx, stopCtx)
 }
 
 type lockedWriter struct {
