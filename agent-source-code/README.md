@@ -14,7 +14,47 @@ PatchMon's monitoring agent collects and reports package, system, hardware, and 
 - FreeBSD
 
 **Windows** (amd64, 386):
-- Windows 10 / 11 / Server 2016+ (WinGet, Windows Update API, registry)
+- Windows 10 / 11 / Server 2016+ (WinGet, Windows Update API, registry, optional Chocolatey inventory)
+
+## Chocolatey inventory on Windows
+
+When Chocolatey CLI is installed, the agent collects its installed packages and
+checks `choco outdated --limit-output` using the host's configured sources. CLI
+1.x uses `list --local-only`; CLI 2.x and later use the local `list` command.
+The agent does not install Chocolatey or change its sources, pins or packages.
+
+Rows use `chocolatey:<package-id>` and source `chocolatey`. Chocolatey package
+versions can differ from application versions, and meta packages need not have
+an Uninstall registry entry. These records remain separate from registry/WinGet
+application records; the same software may therefore have both records and
+contribute to both counts. This avoids guessing package ownership or replacing
+WinGet's update version with one from a different feed.
+
+This is **inventory reporting only**. Chocolatey rows have no WinGet patch target
+and cannot be upgraded through PatchMon. Pinned packages still show available
+updates, with their pin noted in the description. Chocolatey does not identify
+security updates here, so these rows are not classified as security updates.
+
+Collection runs as the agent service account (normally SYSTEM), which needs
+access to the configured feeds. The agent locates `choco.exe` through
+`ChocolateyInstall`, the standard `ProgramData` installation, or PATH. Restart
+the agent service after changing environment variables for a custom installation.
+A command failure, timeout, malformed output or inconsistent scan aborts the
+report, retaining the server's last successful inventory until a scan succeeds.
+If Chocolatey is absent, normal Windows collection continues unchanged.
+
+### Testing Chocolatey collection
+
+Run `go test ./internal/packages -run Chocolatey` for the parser/command tests.
+On Windows, set `PATCHMON_CHOCO_INTEGRATION=1` to additionally run the live
+collector against an existing Chocolatey installation and its configured feeds.
+The test does not install software or modify feed configuration.
+
+For a repeatable local-feed test, install `patchmon-inventory-fixture` and
+`patchmon-pinned-fixture` at version `1.0.0`, make `2.0.0` available in a configured
+feed, and pin the latter package. Set `PATCHMON_CHOCO_EXPECT_FIXTURES=1` to assert
+both updates. Optional `PATCHMON_CHOCO_TEST_OUTPUT` saves the collected JSON.
+Run under SYSTEM as well as an administrator to check service-account feed access.
 
 ## Installation
 
