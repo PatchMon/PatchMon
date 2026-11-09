@@ -529,38 +529,35 @@ There are two ways to run PatchMon on Kubernetes:
 - **The community Helm chart**, covered by most of this chapter. Best if you want values-driven configuration and upgrades handled for you.
 - **Plain manifests**, covered by [Deploying with plain manifests](#deploying-with-plain-manifests). Best if you deploy with Argo CD or Flux, or you simply want to see and own every object. This is also the route to follow on k3s.
 
-Either way, read the "Important: PatchMon 2.0 architecture" note below first, because it explains what changed from the 1.4.x Node.js stack.
+The community Helm chart is maintained in a separate repository:
 
-The community Helm chart for PatchMon deploys the server on any Kubernetes 1.19+ cluster. It is maintained in a separate repository:
-
-- Chart repository: [github.com/RuTHlessBEat200/PatchMon-helm](https://github.com/RuTHlessBEat200/PatchMon-helm)
+- Chart repository: [github.com/fidentity/patchmon-helm](https://github.com/fidentity/patchmon-helm)
 - Application repository: [github.com/PatchMon/PatchMon](https://github.com/PatchMon/PatchMon)
 
-> **Verify against the latest chart.** This page describes the chart values shape. The chart is community-maintained and may be a version or two behind the latest PatchMon release. Always check the [chart's own README](https://github.com/RuTHlessBEat200/PatchMon-helm) for the current value names and defaults before upgrading.
+> **Community chart.** The chart is not an official PatchMon project. It packages the upstream images but is maintained independently, so open chart issues in the chart repository and application issues in [PatchMon/PatchMon](https://github.com/PatchMon/PatchMon).
 
-#### Important: PatchMon 2.0 architecture
+This chapter describes chart `2.1.0`, which targets PatchMon `v2.1.6`. The chart may lag the latest PatchMon release by a version or two, so check the [chart's README](https://github.com/fidentity/patchmon-helm/blob/main/README.md) and its commented [`values.yaml`](https://github.com/fidentity/patchmon-helm/blob/main/values.yaml) for current value names and defaults before upgrading.
 
-The Helm chart was originally written against the 1.4.x Node.js stack, which shipped a separate `patchmon-backend` and `patchmon-frontend` image and used BullMQ for background jobs. **PatchMon 2.0 consolidates everything into a single Go binary**: the React frontend is embedded, `chi` serves both `/api/*` and the SPA, background jobs run on [Asynq](https://github.com/hibiken/asynq), and schema migrations are applied automatically at boot by [golang-migrate](https://github.com/golang-migrate/migrate).
+> **Coming from a 1.4.x chart?** Read the chart's [upgrade guide from 1.x to 2.x](https://github.com/fidentity/patchmon-helm/blob/main/docs/upgrading-1x-to-2x.md) first. PatchMon 2.0 merged the backend and frontend into a single Go binary and the chart's values changed with it, so the upgrade is not a version bump. In particular, keep `fullnameOverride` at the value your existing release used (see [`fullnameOverride` and your volumes](#helm-fullnameoverride)).
 
-Practical implications for the chart:
+#### What the chart deploys
 
-| Concept | 1.4.x (Node) | 2.0+ (Go) |
+| Component | Kind | Purpose |
 |---|---|---|
-| Containers | `patchmon-backend` + `patchmon-frontend` | Single `patchmon-server` |
-| Queue | BullMQ | Asynq |
-| Migrations | Prisma | golang-migrate (embedded, automatic) |
-| Listen port | backend 3001, frontend 3000 | server 3000 (both `/api/*` and SPA) |
-| RDP sidecar | n/a | `guacamole/guacd` (optional, required for in-browser RDP) |
+| `<fullname>-server` | StatefulSet | The whole application: `/api/*` and the embedded React SPA on port 3000. Schema migrations run automatically at boot. |
+| `<fullname>-database` | StatefulSet | Bundled single-node PostgreSQL. Disable it to use your own. |
+| `<fullname>-redis` | StatefulSet | Asynq job queues, bootstrap tokens, TFA lockout state and cross-pod agent presence. Not optional. |
+| `<fullname>-guacd` | Deployment | Apache Guacamole daemon for in-browser RDP. See [In-browser RDP](#helm-in-browser-rdp) before relying on it. |
 
-If your version of the chart still ships with separate backend and frontend deployments, set the frontend deployment to `enabled: false` and point your Ingress exclusively at the backend image tagged `ghcr.io/patchmon/patchmon-server:2.0.0` or later, exposed on port 3000. Where the chart's values file uses `backend.env.*` keys, those now map to the single `patchmon-server` container's environment.
+`<fullname>` is `fullnameOverride` when set, otherwise derived from the release name. The server needs no persistent volume: agent binaries and the SCAP compliance content ship read-only in the image, and branding assets live in the database. It runs as a StatefulSet rather than a Deployment because each pod's stable hostname is what the agent presence registry keys on.
 
 ---
 
 ### Prerequisites
 
-- Kubernetes 1.19+
-- Helm 3.0+
-- A PersistentVolume provisioner in the cluster (for PostgreSQL and Redis data)
+- Kubernetes 1.34+
+- Helm 3.8+
+- A PersistentVolume provisioner with a ReadWriteOnce StorageClass (for PostgreSQL and Redis data)
 - An Ingress controller (e.g. NGINX Ingress) for external access (strongly recommended)
 - cert-manager for automatic TLS certificate management (optional)
 - Metrics Server for HPA (optional)
@@ -571,99 +568,136 @@ If your version of the chart still ships with separate backend and frontend depl
 
 | Component | Image | Default Tag |
 |-----------|-------|-------------|
-| Server | `ghcr.io/patchmon/patchmon-server` | `2.0.0` |
-| Database | `docker.io/postgres` | `17-alpine` |
-| Redis | `docker.io/redis` | `7-alpine` |
-| guacd (RDP sidecar, optional) | `docker.io/guacamole/guacd` | `1.6.0` |
+| Server | `ghcr.io/patchmon/patchmon-server` | `2.1.6` |
+| Database | `docker.io/postgres` | `18-alpine` |
+| Redis | `docker.io/redis` | `8-alpine` |
+| guacd (optional, for in-browser RDP) | `docker.io/guacamole/guacd` | `1.6.0` |
 
 #### Available tags (server image)
 
 | Tag | Description |
 |-----|-------------|
 | `latest` | Latest stable release |
-| `x.y.z` | Exact version pin (e.g. `2.0.0`) |
-| `x.y` | Latest patch in a minor series (e.g. `2.0`) |
+| `x.y.z` | Exact version pin (e.g. `2.1.6`) |
+| `x.y` | Latest patch in a minor series (e.g. `2.1`) |
 | `x` | Latest minor and patch in a major series (e.g. `2`) |
 | `edge` | Latest development build from the main branch. Unstable, for testing only. |
 
 ---
 
-### Quick Start
+### Getting the chart
 
-The quickest way to try PatchMon on Kubernetes is the provided `values-quick-start.yaml`. It contains placeholder secrets and sensible defaults for a single-command install.
-
-> **Warning:** `values-quick-start.yaml` ships with placeholder secrets and is intended for evaluation only. Never use it in production without replacing all secret values.
-
-#### 1. Install the chart
+The chart is published in two places, both carrying the same version built from the same tag:
 
 ```bash
-wget https://raw.githubusercontent.com/RuTHlessBEat200/PatchMon-helm/refs/heads/main/values-quick-start.yaml
+# GHCR, as an OCI chart
+helm install patchmon oci://ghcr.io/fidentity/charts/patchmon --version 2.1.0
 
-helm install patchmon oci://ghcr.io/ruthlessbeat200/charts/patchmon \
+# Classic repository, for tooling without OCI support
+helm repo add patchmon https://fidentity.github.io/patchmon-helm
+helm install patchmon patchmon/patchmon --version 2.1.0
+```
+
+The examples in this chapter use the OCI reference. Swap it for `patchmon/patchmon` if you added the classic repository.
+
+The chart **generates no secrets**. A value that changed on every `helm upgrade` would invalidate every session and make every encrypted column unreadable, so you must supply four of them yourself: `jwt-secret`, `ai-encryption-key`, the PostgreSQL password and the Redis password.
+
+---
+
+### Quick Start
+
+The quickest way to try PatchMon on Kubernetes is the chart's `examples/values-quick-start.yaml`: bundled PostgreSQL and Redis, guacd, and an NGINX Ingress with cert-manager.
+
+> **Warning:** `values-quick-start.yaml` contains placeholder secrets in plain text that are the same for everyone who copies the file. It is for evaluation only.
+
+#### 1. Download and edit the values file
+
+```bash
+wget https://raw.githubusercontent.com/fidentity/patchmon-helm/main/examples/values-quick-start.yaml
+```
+
+Replace every `replace-me-*` value (`openssl rand -hex 64` for the three server secrets, `openssl rand -hex 32` for the two passwords), and change `patchmon-dev.example.com` to your hostname in `server.env.serverHost` and in the `ingress` block. If you have no Ingress controller, set `ingress.enabled: false` and use port-forwarding in step 3.
+
+#### 2. Install the chart
+
+```bash
+helm install patchmon oci://ghcr.io/fidentity/charts/patchmon \
   --namespace patchmon \
   --create-namespace \
   --values values-quick-start.yaml
 ```
 
-#### 2. Wait for pods to become ready
+Alternatively, skip the values file and pass the hostname and secrets on the command line:
+
+```bash
+helm install patchmon oci://ghcr.io/fidentity/charts/patchmon \
+  --namespace patchmon --create-namespace \
+  --set server.env.serverHost=patchmon.example.com \
+  --set server.env.serverProtocol=https \
+  --set server.jwtSecret="$(openssl rand -hex 64)" \
+  --set server.aiEncryptionKey="$(openssl rand -hex 64)" \
+  --set database.auth.password="$(openssl rand -hex 32)" \
+  --set redis.auth.password="$(openssl rand -hex 32)"
+```
+
+#### 3. Wait for pods to become ready
 
 ```bash
 kubectl get pods -n patchmon -w
 ```
 
-The server pod runs embedded migrations on first boot. Follow the logs to watch them apply:
+The server pod applies the embedded schema migrations on first boot. Follow the logs to watch them:
 
 ```bash
-kubectl logs -n patchmon deploy/patchmon-server -f
+kubectl logs -n patchmon -l app.kubernetes.io/component=server -f
 ```
 
-#### 3. Access PatchMon
+#### 4. Access PatchMon
 
 If an Ingress is configured, open the host you set (e.g. `https://patchmon.example.com`).
 
-Without Ingress, use port-forwarding:
+Without an Ingress, use port-forwarding. With the quick-start values the Service is called `patchmon-server`; otherwise check `kubectl get svc -n patchmon`:
 
 ```bash
 kubectl port-forward -n patchmon svc/patchmon-server 3000:3000
 ```
 
-Then open `http://localhost:3000` and complete the [first-time admin setup](#first-time-admin-setup).
+Then open `http://localhost:3000`, complete the [first-time admin setup](#first-time-admin-setup), and [set the Server URL](#helm-set-server-url).
 
 ---
 
 ### Production Deployment
 
-For production, start from `values-prod.yaml` in the chart repository. The example below demonstrates how to:
+For production, start from the chart's `examples/values-prod.yaml`. It:
 
-- Use an external Kubernetes Secret (managed by SOPS, Sealed Secrets, or External Secrets Operator) instead of inline passwords
-- Configure HTTPS with cert-manager
-- Set the `CORS_ORIGIN` to the external URL your users access (comma-separate multiple URLs with no spaces if PatchMon is reached from more than one origin)
+- Reads every credential from a Kubernetes Secret that you manage (with SOPS, Sealed Secrets or External Secrets Operator), so the chart renders no Secret of its own
+- Configures HTTPS through cert-manager and the NGINX websocket timeouts PatchMon needs
+- Sets resource requests and limits, and larger volumes than the defaults
+
+For external PostgreSQL and Redis, see `examples/values-external-services.yaml` and [External PostgreSQL and Redis](#helm-external-services).
 
 #### 1. Create your secrets
 
-The chart does **not** auto-generate secrets. You must supply them yourself.
+| Key | Required | Losing or changing it means |
+|-----|----------|-----------------------------|
+| `jwt-secret` | yes | Every session is invalidated |
+| `ai-encryption-key` | yes | AI credentials, agent bootstrap tokens and notification secrets become unreadable |
+| `postgres-password` | yes | — |
+| `redis-password` | yes | — |
+| `session-secret` | no | Fallback encryption key, used only when `ai-encryption-key` is unset |
+| `oidc-client-secret` | with OIDC | SSO stops working |
 
-Required secrets for a PatchMon 2.0 deployment:
-
-| Key | Description |
-|-----|-------------|
-| `postgres-password` | PostgreSQL password |
-| `redis-password` | Redis password |
-| `jwt-secret` | JWT signing secret used by the server |
-| `ai-encryption-key` | Encryption key used for AI provider credentials, bootstrap tokens, and other secrets at rest |
-| `oidc-client-secret` | OIDC client secret (only when OIDC is enabled) |
-
-**Example: creating a Secret manually**
+Back up `jwt-secret` and `ai-encryption-key` alongside your database backups. A database restored without the matching `ai-encryption-key` cannot decrypt its own secrets.
 
 ```bash
 kubectl create namespace patchmon
 
-kubectl create secret generic patchmon-secrets \
-  --namespace patchmon \
+kubectl create secret generic patchmon-secrets -n patchmon \
   --from-literal=postgres-password="$(openssl rand -hex 32)" \
   --from-literal=redis-password="$(openssl rand -hex 32)" \
   --from-literal=jwt-secret="$(openssl rand -hex 64)" \
-  --from-literal=ai-encryption-key="$(openssl rand -hex 32)"
+  --from-literal=ai-encryption-key="$(openssl rand -hex 64)" \
+  --from-literal=session-secret="$(openssl rand -hex 64)"
 ```
 
 **Recommended secret-management tools for production:**
@@ -674,36 +708,81 @@ kubectl create secret generic patchmon-secrets \
 
 #### 2. Create your values file
 
-Start from `values-prod.yaml` and adjust:
+Download `values-prod.yaml` and adjust the hostname, StorageClass and sizes:
+
+```bash
+wget https://raw.githubusercontent.com/fidentity/patchmon-helm/main/examples/values-prod.yaml
+```
 
 ```yaml
-global:
-  storageClass: "your-storage-class"
-  imageTag: "2.0.0"
-
+# Feeds every resource name and the volumeClaimTemplate names. Keep it stable
+# for the life of the release; see "fullnameOverride and your volumes".
 fullnameOverride: "patchmon-prod"
+
+global:
+  # A ReadWriteOnce StorageClass. Remove to use the cluster's default.
+  storageClass: ""
 
 server:
   env:
-    # Comma-separate with no spaces to allow multiple origins, e.g.
-    # "https://patchmon.example.com,https://patchmon.internal.lan"
-    CORS_ORIGIN: "https://patchmon.example.com"
-    ENABLE_HSTS: "true"
-    TRUST_PROXY: "true"
+    serverProtocol: https
+    serverHost: patchmon.example.com
+    serverPort: "443"
+    enableHsts: true
+    # Leave trustedProxyRanges empty for a single ingress controller. Set it
+    # only when proxies are chained, e.g. Cloudflare in front of nginx.
+    trustProxy: true
+    timezone: UTC
+
   existingSecret: "patchmon-secrets"
   existingSecretJwtKey: "jwt-secret"
   existingSecretAiEncryptionKey: "ai-encryption-key"
+  existingSecretSessionSecretKey: "session-secret"
+
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 384Mi
+
+  oidc:
+    enabled: false
+    # issuerUrl: https://auth.example.com/application/o/patchmon/
+    # clientId: patchmon
+    # existingSecret: patchmon-secrets
+    # existingSecretClientSecretKey: oidc-client-secret
+    # groups:
+    #   admin: patchmon-admins
+    #   readonly: patchmon-viewers
 
 database:
   auth:
-    existingSecret: "patchmon-secrets"
-    existingSecretPasswordKey: "postgres-password"
+    existingSecret: patchmon-secrets
+    existingSecretPasswordKey: postgres-password
+  # Fixed at install time; see "Volume sizes are fixed at install time".
+  persistence:
+    size: 20Gi
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
 
 redis:
   auth:
-    existingSecret: "patchmon-secrets"
-    existingSecretPasswordKey: "redis-password"
+    existingSecret: patchmon-secrets
+    existingSecretPasswordKey: redis-password
+  persistence:
+    size: 4Gi
 
+guacd:
+  enabled: true
+
+# Every credential comes from patchmon-secrets, so the chart renders no Secret.
 secret:
   create: false
 
@@ -712,9 +791,13 @@ ingress:
   className: nginx
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
+    # The long timeouts are not optional: agent connections, the browser SSH
+    # terminal, the RDP tunnel and live patch-run logs are all websockets.
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "86400"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "86400"
-    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
   hosts:
     - host: patchmon.example.com
       paths:
@@ -729,203 +812,331 @@ ingress:
         - patchmon.example.com
 ```
 
-> **Verify against the latest chart.** The exact value keys (`server.*` vs `backend.*`) depend on whether the chart has been updated for 2.0. If your chart still splits backend and frontend, set `frontend.enabled: false` and expose only the backend on port 3000.
+If you need in-browser RDP, replace the `guacd` block with the sidecar setup from [In-browser RDP](#helm-in-browser-rdp).
+
+Before installing, render the manifests to check the derived CORS origin and OIDC redirect URI:
+
+```bash
+helm template patchmon oci://ghcr.io/fidentity/charts/patchmon \
+  -n patchmon -f values-prod.yaml | less
+```
 
 #### 3. Install
 
 ```bash
-helm install patchmon oci://ghcr.io/ruthlessbeat200/charts/patchmon \
-  --namespace patchmon \
-  --create-namespace \
-  --values values-prod.yaml
+helm install patchmon oci://ghcr.io/fidentity/charts/patchmon \
+  -n patchmon -f values-prod.yaml --wait --timeout 15m
 ```
+
+Then complete the [first-time admin setup](#first-time-admin-setup) and set the Server URL as described below.
+
+---
+
+### Setting the Server URL {#helm-set-server-url}
+
+After creating the admin account, set **Settings → Server URL** to the address your hosts reach PatchMon on.
+
+PatchMon 2.x keeps this URL in the database, where it defaults to `http://localhost:3000`, and it is the address baked into every agent install command. The chart's `server.env.serverProtocol`, `serverHost` and `serverPort` only derive the CORS origin and the OIDC URIs; they do **not** set the Server URL. Until you set it, the install commands PatchMon hands out will point at `localhost:3000` and will not work on your hosts.
 
 ---
 
 ### Configuration Reference
 
-> **Verify against the latest chart.** The table below reflects the original chart value names. 2.0 versions of the chart are expected to drop the separate `frontend.*` block and consolidate everything under a single `server.*` block. Always diff against the chart's `values.yaml` before changing things.
+Only the values you are most likely to change are listed here. The chart's [`values.yaml`](https://github.com/fidentity/patchmon-helm/blob/main/values.yaml) is commented throughout and is the complete reference.
 
-#### Global Settings
+#### How `server.env` works
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `global.imageRegistry` | Override the image registry for all components | `""` |
-| `global.imageTag` | Override the image tag for the PatchMon image (takes priority over individual tags) | `""` |
-| `global.imagePullSecrets` | Image pull secrets applied to all pods | `[]` |
-| `global.storageClass` | Default storage class for all PVCs | `""` |
-| `nameOverride` | Override the chart name used in resource names | `""` |
-| `fullnameOverride` | Override the full resource name prefix | `""` |
-| `commonLabels` | Labels added to all resources | `{}` |
-| `commonAnnotations` | Annotations added to all resources | `{}` |
+PatchMon resolves each setting as **environment > database > default**, and the Settings UI edits the database layer. A variable present in the pod spec therefore pins that setting and greys out its field in the UI.
 
-#### Database (PostgreSQL)
+For that reason most entries under `server.env` default to `null`, with the application default recorded in a comment beside them. Set one only when you want the chart to own that setting. `false` and `0` are passed through to the pod; `null` and `""` are omitted entirely.
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `database.enabled` | Deploy the PostgreSQL StatefulSet | `true` |
-| `database.image.registry` | Image registry | `docker.io` |
-| `database.image.repository` | Image repository | `postgres` |
-| `database.image.tag` | Image tag | `17-alpine` |
-| `database.auth.database` | Database name | `patchmon_db` |
-| `database.auth.username` | Database user | `patchmon_user` |
-| `database.auth.password` | Database password (required unless `existingSecret` is set) | `""` |
-| `database.auth.existingSecret` | Existing Secret containing the password | `""` |
-| `database.auth.existingSecretPasswordKey` | Key inside the existing Secret | `postgres-password` |
-| `database.persistence.enabled` | Enable persistent storage | `true` |
-| `database.persistence.size` | PVC size | `5Gi` |
-| `database.resources.requests.cpu` | CPU request | `100m` |
-| `database.resources.requests.memory` | Memory request | `128Mi` |
-| `database.resources.limits.memory` | Memory limit | `1Gi` |
-| `database.service.port` | Service port | `5432` |
+`server.env` uses camelCase keys (`enableHsts`, `logLevel`, `jsonBodyLimit`, `rateLimitMax`, ...) that the chart maps to the environment variables listed in the [Environment Variables Reference](#patchmon-environment-variables-reference). For a variable the chart does not model, such as `ENABLE_PPROF` or one added after the chart was last updated, use `server.extraEnv` (full container env syntax, including `valueFrom`) or `server.extraEnvFrom` to pull in a whole ConfigMap or Secret.
+
+#### Global
+
+| Value | Description | Default |
+|---|---|---|
+| `global.imageRegistry` | Registry for every image, for air-gapped mirrors. Overrides per-component registries. | `""` |
+| `global.imageTag` | Overrides `server.image.tag` only. | `""` |
+| `global.imagePullSecrets` | Pull secrets for every pod. | `[]` |
+| `global.storageClass` | StorageClass for every PVC. Overrides per-component settings. | `""` |
+| `fullnameOverride` | Resource name prefix. See [`fullnameOverride` and your volumes](#helm-fullnameoverride). | `""` |
+| `commonLabels` / `commonAnnotations` | Applied to every resource. | `{}` |
+
+#### Server
+
+| Value | Description | Default |
+|---|---|---|
+| `server.image.tag` | PatchMon version. | `2.1.6` |
+| `server.replicaCount` | Replicas. More than one needs sticky sessions at the Ingress. | `1` |
+| `server.containerPort` | Port inside the container (`PORT`). | `3000` |
+| `server.env.serverProtocol` / `serverHost` / `serverPort` | The public URL, used to derive the CORS origin and the OIDC URIs. Does not set the Server URL in Settings. | `http` / `patchmon.example.com` / `""` |
+| `server.env.corsOrigin` | Overrides the derived origin. Comma-separate several origins with no spaces. | `""` (derived) |
+| `server.env.trustProxy` | Trust `X-Forwarded-*`. Needed behind an Ingress. | `true` |
+| `server.env.trustedProxyRanges` | CIDRs of chained proxies. Leave empty for a single Ingress controller. | `""` |
+| `server.env.enableHsts` | Send `Strict-Transport-Security`. | `false` |
+| `server.env.logLevel` | `debug`, `info`, `warn` or `error`. | `info` |
+| `server.env.timezone` | `TZ` for logs and scheduled jobs. | `UTC` |
+| `server.jwtSecret` / `aiEncryptionKey` / `sessionSecret` | Inline secrets. Prefer `existingSecret`. | `""` |
+| `server.existingSecret` | Read all three from this Secret instead. | `""` |
+| `server.existingSecretJwtKey` / `existingSecretAiEncryptionKey` / `existingSecretSessionSecretKey` | Keys inside that Secret. | `jwt-secret` / `ai-encryption-key` / `session-secret` |
+| `server.autoscaling.enabled` | HPA over the StatefulSet. | `false` |
+| `server.podDisruptionBudget.enabled` | PDB. Only useful above one replica. | `false` |
+| `server.extraEnv` / `extraEnvFrom` | Extra environment, full container syntax. | `[]` |
+| `server.extraVolumes` / `extraVolumeMounts` | Extra volumes, e.g. a private CA for the OIDC issuer or database TLS. | `[]` |
+| `server.sidecars` | Extra containers in the server pod. Used for the guacd sidecar. | `[]` |
+
+#### Database
+
+| Value | Description | Default |
+|---|---|---|
+| `database.enabled` | Deploy the bundled PostgreSQL. | `true` |
+| `database.image.tag` | PostgreSQL version. | `18-alpine` |
+| `database.auth.database` / `.username` / `.password` | Credentials, for bundled and external alike. | `patchmon_db` / `patchmon_user` / `""` |
+| `database.auth.existingSecret` / `.existingSecretPasswordKey` | Read the password from this Secret. | `""` / `postgres-password` |
+| `database.external.host` / `.port` | Required when `enabled` is `false`. | `""` / `5432` |
+| `database.external.sslMode` | `disable` through `verify-full`. Applied to external databases only. | `require` |
+| `database.external.extraParams` | Extra libpq parameters appended to `DATABASE_URL`. | `""` |
+| `database.persistence.size` | PVC size. Fixed at install time. | `5Gi` |
 
 #### Redis
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `redis.enabled` | Deploy the Redis StatefulSet | `true` |
-| `redis.image.tag` | Image tag | `7-alpine` |
-| `redis.auth.password` | Redis password (required unless `existingSecret` is set) | `""` |
-| `redis.auth.existingSecret` | Existing Secret containing the password | `""` |
-| `redis.auth.existingSecretPasswordKey` | Key inside the existing Secret | `redis-password` |
-| `redis.persistence.enabled` | Enable persistent storage | `true` |
-| `redis.persistence.size` | PVC size | `5Gi` |
-| `redis.resources.requests.memory` | Memory request | `10Mi` |
-| `redis.resources.limits.memory` | Memory limit | `512Mi` |
-| `redis.service.port` | Service port | `6379` |
+| Value | Description | Default |
+|---|---|---|
+| `redis.enabled` | Deploy the bundled Redis. | `true` |
+| `redis.image.tag` | Redis version. | `8-alpine` |
+| `redis.auth.password` / `.existingSecret` / `.existingSecretPasswordKey` | Required either way. | `""` / `""` / `redis-password` |
+| `redis.external.host` / `.port` / `.username` | Required when `enabled` is `false`. | `""` / `6379` / `""` |
+| `redis.external.tls.enabled` / `.verify` / `.caFile` | TLS to an external Redis. | `false` / `true` / `""` |
+| `redis.extraFlags` | Extra `redis-server` arguments, one token per entry. | `["--appendonly","yes"]` |
+| `redis.persistence.size` | PVC size. Fixed at install time. | `5Gi` |
 
-#### Server (PatchMon 2.0)
+#### guacd, Ingress and service account
 
-In 2.0 the server is a single Go binary that serves `/api/*` and the embedded React SPA on port 3000. In chart versions that have not yet been updated for 2.0, the equivalent values live under `backend.*` and `frontend.enabled` should be set to `false`.
+| Value | Description | Default |
+|---|---|---|
+| `guacd.enabled` | Deploy guacd as its own Deployment and Service. See [In-browser RDP](#helm-in-browser-rdp). | `true` |
+| `guacd.image.tag` | guacd version. | `1.6.0` |
+| `guacd.externalAddress` | `host:port` of a guacd elsewhere, used when `enabled` is `false`. | `""` |
+| `ingress.enabled` | Create an Ingress. | `false` |
+| `ingress.className` / `.annotations` / `.hosts` / `.tls` | Standard. The defaults carry the NGINX websocket timeouts. | see `values.yaml` |
+| `serviceAccount.create` | Create a ServiceAccount. No RBAC is needed. | `true` |
+| `secret.create` | Render the chart's Secret. Set `false` when every credential comes from an existing Secret. | `true` |
+| `rollOnConfigChange` | Roll the server pods when the ConfigMap or Secret changes. | `true` |
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `server.enabled` | Deploy the PatchMon server | `true` |
-| `server.image.registry` | Image registry | `ghcr.io` |
-| `server.image.repository` | Image repository | `patchmon/patchmon-server` |
-| `server.image.tag` | Image tag (overridden by `global.imageTag` if set) | `2.0.0` |
-| `server.replicaCount` | Number of replicas | `1` |
-| `server.jwtSecret` | JWT signing secret (required unless `existingSecret` is set) | `""` |
-| `server.aiEncryptionKey` | Encryption key for secrets at rest | `""` |
-| `server.existingSecret` | Name of an existing Secret for JWT and encryption key | `""` |
-| `server.existingSecretJwtKey` | Key for `JWT_SECRET` inside the existing Secret | `jwt-secret` |
-| `server.existingSecretAiEncryptionKey` | Key for `AI_ENCRYPTION_KEY` inside the existing Secret | `ai-encryption-key` |
-| `server.resources.requests.cpu` | CPU request | `100m` |
-| `server.resources.requests.memory` | Memory request | `256Mi` |
-| `server.resources.limits.memory` | Memory limit | `1Gi` |
-| `server.service.port` | Service port | `3000` |
-| `server.autoscaling.enabled` | Enable HPA | `false` |
+#### OIDC / SSO
 
-> **Migrations:** The PatchMon server runs migrations automatically at boot via embedded `golang-migrate`. You do **not** need a dedicated migration Job; remove it from the chart if one is present.
+OIDC is configured under `server.oidc`, not through raw environment variables:
 
-##### Server environment variables
+```yaml
+server:
+  oidc:
+    enabled: true
+    issuerUrl: https://auth.example.com/application/o/patchmon/
+    clientId: patchmon
+    existingSecret: patchmon-secrets
+    existingSecretClientSecretKey: oidc-client-secret
+    scopes: "openid profile email offline_access groups"
+    autoCreateUsers: true
+    syncRoles: true
+    groups:
+      admin: patchmon-admins
+      readonly: patchmon-viewers
+```
 
-The `server.env.*` keys map directly to the environment variables the PatchMon binary reads. See the [Environment Variables Reference](#patchmon-environment-variables-reference) for the full list.
+The redirect URI is derived as `<protocol>://<host>[:<port>]/api/v1/auth/oidc/callback` from `server.env`. Register exactly that with your identity provider, or set `server.oidc.redirectUri` if your provider needs something else. `helm template` prints the value it will use.
 
-| Key | Description | Default |
-|-----|-------------|---------|
-| `CORS_ORIGIN` | Browser origin(s) allowed to use PatchMon; must match the URL users type in their browser. Comma-separate to allow more than one, e.g. `https://patchmon.example.com,https://patchmon.internal.lan` | `http://localhost:3000` |
-| `ENABLE_HSTS` | Enable HSTS header for HTTPS | `false` |
-| `TRUST_PROXY` | Trust proxy headers when behind an Ingress controller | `true` |
-| `ENABLE_LOGGING` | Enable structured logging to stdout | `true` |
-| `LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) | `info` |
-| `JSON_BODY_LIMIT` | Max JSON body size | `5mb` |
-| `AGENT_UPDATE_BODY_LIMIT` | Max agent update body size | `5mb` |
-| `COMPLIANCE_BODY_LIMIT` | Max compliance scan result body size | `20mb` |
-| `AGENT_PING_BODY_LIMIT` | Max agent ping body size | `64kb` |
-| `TZ` | IANA timezone for log timestamps | `UTC` |
+`syncRoles` needs the `groups` scope to return group claims, and some providers only issue a refresh token when `offline_access` is requested, which is why both are in the default scope list. `enforceHttps` is on by default; turn it off only for a local test deployment served over plain HTTP. Other keys (`buttonText`, `defaultRole`, `disableLocalAuth`, `postLogoutUri`, `sessionTtl`, `trustUnverifiedEmail`) are documented in `values.yaml`. For provider-specific setup, see [Setting Up OIDC SSO](#setting-up-oidc-sso) and [Setting Up Azure Entra ID SSO](#setting-up-azure-entra-id-sso).
 
-> **Tip:** Many of these can be changed later from the Settings UI without a restart of the whole cluster. See Settings in the web UI.
+#### External PostgreSQL and Redis {#helm-external-services}
 
-##### OIDC / SSO
+The bundled StatefulSets are single-node, with no backups, no replication and no connection pooler. For production, consider pointing the chart at managed services, as in `examples/values-external-services.yaml`:
 
-| Key | Description | Default |
-|-----|-------------|---------|
-| `OIDC_ENABLED` | Enable OIDC authentication | `false` |
-| `OIDC_ISSUER_URL` | OIDC issuer URL | `""` |
-| `OIDC_CLIENT_ID` | OIDC client ID | `""` |
-| `OIDC_CLIENT_SECRET` | OIDC client secret (put this in an existing Secret) | `""` |
-| `OIDC_REDIRECT_URI` | Callback URL (`https://<host>/api/v1/auth/oidc/callback`) | `""` |
-| `OIDC_SCOPES` | Space-separated scopes | `openid email profile groups` |
-| `OIDC_AUTO_CREATE_USERS` | Auto-provision users on first login | `false` |
-| `OIDC_DEFAULT_ROLE` | Default role for new OIDC users | `user` |
-| `OIDC_SYNC_ROLES` | Sync roles from OIDC group claims on each login | `false` |
-| `OIDC_DISABLE_LOCAL_AUTH` | Disable local username/password authentication | `false` |
+```yaml
+database:
+  enabled: false
+  external:
+    host: postgres.example.internal
+    sslMode: verify-full
+    extraParams: "sslrootcert=/etc/ssl/patchmon/pg-ca.crt"
+  auth:
+    database: patchmon
+    username: patchmon
+    existingSecret: patchmon-db-credentials
+    existingSecretPasswordKey: password
 
-Full OIDC configuration and group-to-role mapping variables are documented in the [Environment Variables Reference](#patchmon-environment-variables-reference).
+redis:
+  enabled: false
+  external:
+    host: redis.example.internal
+    tls:
+      enabled: true
+      caFile: /etc/ssl/patchmon/redis-ca.crt
+  auth:
+    existingSecret: patchmon-redis-credentials
+    existingSecretPasswordKey: password
+```
 
-#### guacd sidecar (optional, for RDP)
+The chart assembles `DATABASE_URL` itself, with the password interpolated as `$(POSTGRES_PASSWORD)`, so it never appears in the rendered manifest. Do not set `DATABASE_URL` through `server.extraEnv`. Mount any CA files referenced above with `server.extraVolumes` and `server.extraVolumeMounts`.
 
-PatchMon 2.0 can proxy Windows RDP through the [Apache Guacamole daemon](https://guacamole.apache.org/). `guacd` must run as a second container **in the same pod as the server**, because the server hands it a per-session port on `127.0.0.1`, and `GUACD_ADDRESS` must be `127.0.0.1:4822` (the default). A `guacd` in its own Deployment and Service, reached by a Service name such as `guacd:4822`, cannot open any RDP session. `guacd` also needs a writable `/home/guacd`, for example an in-memory `emptyDir`, and should be started with `-b 127.0.0.1` so it listens on the pod's loopback only.
+#### In-browser RDP {#helm-in-browser-rdp}
 
-> **Verify against the latest chart.** Check whether your chart version can add a sidecar container to the server pod. If it cannot, deploy with the [plain manifests](#deploying-with-plain-manifests), whose **Optional: in-browser RDP** section shows the sidecar.
+> **Important:** The chart's default guacd mode does not work for in-browser RDP with PatchMon 2.x. With `guacd.enabled: true` the chart runs guacd as a separate Deployment and points `GUACD_ADDRESS` at its Service. The PatchMon server, however, opens a per-session listener on its own `127.0.0.1` and tells guacd to connect to `127.0.0.1`, which a guacd in another pod cannot reach. The server logs `GUACD_ADDRESS is not a loopback address` at startup when this is the case. `guacd.externalAddress` has the same limitation.
 
-#### Ingress
+guacd must run as a second container **in the server pod**, listening on the pod's loopback. Disable the chart's guacd and add it through `server.sidecars` instead. Leave `guacd.externalAddress` empty so the chart sets no `GUACD_ADDRESS` and the server uses its default of `127.0.0.1:4822`:
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `ingress.enabled` | Enable Ingress resource | `true` |
-| `ingress.className` | Ingress class name | `""` |
-| `ingress.annotations` | Ingress annotations | `{}` |
-| `ingress.hosts` | List of Ingress host rules | see chart `values.yaml` |
-| `ingress.tls` | TLS configuration | `[]` |
+```yaml
+guacd:
+  enabled: false
 
-**Required annotations for WebSocket support (agent WS and live patch streaming):**
+server:
+  sidecars:
+    - name: guacd
+      image: docker.io/guacamole/guacd:1.6.0
+      args: ["-b", "127.0.0.1"]
+      volumeMounts:
+        - name: guacd-tmp
+          mountPath: /tmp
+        - name: guacd-home
+          mountPath: /home/guacd
+      livenessProbe:
+        exec:
+          command: ["nc", "-z", "127.0.0.1", "4822"]
+        initialDelaySeconds: 10
+        periodSeconds: 30
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          memory: 512Mi
+      securityContext:
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+  extraVolumes:
+    - name: guacd-tmp
+      emptyDir:
+        medium: Memory
+        sizeLimit: 64Mi
+    - name: guacd-home
+      emptyDir:
+        medium: Memory
+        sizeLimit: 16Mi
+```
+
+There is deliberately no readiness probe on the sidecar: a pod is only Ready when all its containers are, so a guacd readiness failure would take the PatchMon server out of its Service. The liveness probe restarts only the guacd container. If you use `global.imageRegistry` for an air-gapped mirror, change the sidecar's `image` yourself, since sidecars are passed through as written.
+
+If you do not use RDP, set `guacd.enabled: false` and add no sidecar. Nothing else depends on guacd.
+
+#### Multiple replicas {#helm-multiple-replicas}
+
+Running more than one server replica is supported since PatchMon 2.0: there are no writeable local volumes, jobs are coordinated through Redis and Asynq, and agent presence is shared over Redis pub/sub keyed on `POD_ID`, which the chart sets from the pod name.
+
+Agent connections, the browser SSH terminal, the RDP tunnel and live patch-run logs are all websockets, so sticky sessions are required:
+
+```yaml
+server:
+  replicaCount: 3
+  podDisruptionBudget:
+    enabled: true
+ingress:
+  annotations:
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+```
+
+#### Ingress and websockets
+
+The chart's default Ingress annotations raise the NGINX proxy timeouts to 86400 seconds. Without them, agents show as "connecting" and drop every 30 to 60 seconds. These endpoints need it:
+
+| Endpoint | Used by |
+|---|---|
+| `/api/v1/agents/ws` | The PatchMon agent |
+| `/api/v1/ssh-terminal/{hostId}` | The browser SSH terminal |
+| `/api/v1/rdp/websocket-tunnel` | Browser RDP through guacd |
+| `/api/v1/patching/runs/{id}/stream` | Live patch-run logs |
 
 ```yaml
 ingress:
   annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "86400"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "86400"
-    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
 ```
 
-For detailed reverse proxy configuration (Nginx, Caddy, Traefik), see [Reverse proxy examples](#reverse-proxy-examples).
+Traefik proxies websockets without configuration. For other controllers, translate the NGINX annotations, and see [Reverse proxy examples](#reverse-proxy-examples).
+
+#### Probes
+
+`GET /health` reports on PostgreSQL and Redis as well as the process, and answers 503 while either is unreachable. The chart therefore uses it for the startup and readiness probes but **not** for liveness: a 30-second database restart would otherwise fail the liveness probe on every replica at once and restart them all. Liveness only checks that the listener accepts connections.
+
+The startup probe allows 40 × 10 s = 400 s, which is the time the first boot's schema migrations get before Kubernetes gives up.
 
 ---
 
 ### Persistent Volumes
 
-| PVC | Component | Purpose | Default Size |
+| Volume | Component | Purpose | Default Size |
 |-----|-----------|---------|--------------|
-| `postgres-data` | Database | PostgreSQL data directory | `5Gi` |
-| `redis-data` | Redis | Redis data directory | `5Gi` |
+| PostgreSQL data | `<fullname>-database` | PostgreSQL data directory | `5Gi` |
+| Redis data | `<fullname>-redis` | Redis append-only file | `5Gi` |
 
-> **No agent files volume in 2.0.** In 1.4.x, agent binaries and SCAP compliance content were stored on a `agent-files` PVC. In 2.0 both are **embedded in the server binary**, so no application-specific volume is required. If your chart still declares `backend.persistence`, it can be removed.
+Both are created from StatefulSet `volumeClaimTemplates`. The server has no volume: in 2.x, agent binaries and SCAP content are embedded in the image.
+
+#### `fullnameOverride` and your volumes {#helm-fullnameoverride}
+
+`fullnameOverride` feeds the volumeClaimTemplate names. Changing it, including changing it away from the `patchmon-prod` value the 1.4.x chart shipped with, makes the pods claim new, empty volumes while the old PVCs sit unreferenced. Run `kubectl get pvc -n patchmon` before your first upgrade and set `fullnameOverride` to match the existing names.
+
+#### Volume sizes are fixed at install time
+
+`database.persistence.size` and `redis.persistence.size` feed the StatefulSet `volumeClaimTemplates`, which Kubernetes does not allow you to change. Setting a different value on an existing release makes `helm upgrade` fail with:
+
+```
+updates to statefulset spec for fields other than 'replicas', 'ordinals',
+'template', 'updateStrategy', 'persistentVolumeClaimRetentionPolicy' and
+'minReadySeconds' are forbidden
+```
+
+Pick the size at install time. To grow a volume later, expand the PVC itself (if the StorageClass allows it), then delete the StatefulSet with `--cascade=orphan` so the next `helm upgrade` recreates it against the existing volume.
 
 ---
 
 ### Updating PatchMon
 
-#### Using `global.imageTag`
+Migrations run automatically at boot and are **not reversible**. `helm rollback` restores the manifests but not the database schema, so take a dump before any upgrade. With the bundled database:
 
 ```bash
-helm upgrade patchmon oci://ghcr.io/ruthlessbeat200/charts/patchmon \
-  -n patchmon \
-  -f values-prod.yaml \
-  --set global.imageTag=2.0.1
+kubectl exec -n patchmon <fullname>-database-0 -- \
+  pg_dump -U patchmon_user patchmon_db > patchmon-backup.sql
 ```
 
-When the new pod starts, `golang-migrate` applies any pending schema migrations automatically. No manual Job is required.
+#### Upgrading the chart
 
-#### Pinning individual tags
+Upgrading the chart also moves the server to the PatchMon version that chart release was tested against:
+
+```bash
+helm upgrade patchmon oci://ghcr.io/fidentity/charts/patchmon \
+  -n patchmon -f values-prod.yaml --wait --timeout 15m
+```
+
+Pass `--version` to pin a specific chart release.
+
+#### Changing only the PatchMon version
+
+To run a PatchMon release the chart has not caught up with yet, set the image tag:
 
 ```yaml
 server:
   image:
-    tag: "2.0.0"
+    tag: "2.1.6"
 ```
 
-#### Upgrading the chart version
+or, for a one-off upgrade, `--set global.imageTag=2.1.6`. Read the [PatchMon release notes](https://github.com/PatchMon/PatchMon/releases) first: a new release can introduce settings the chart does not model yet, which you can supply through `server.extraEnv`.
 
-```bash
-helm upgrade patchmon oci://ghcr.io/ruthlessbeat200/charts/patchmon \
-  --namespace patchmon \
-  --values values-prod.yaml \
-  --wait --timeout 10m
-```
-
-Check the [chart releases page](https://github.com/RuTHlessBEat200/PatchMon-helm/releases) and the [PatchMon releases page](https://github.com/PatchMon/PatchMon/releases) before upgrading.
+Check the [chart releases](https://github.com/fidentity/patchmon-helm/releases) and the [PatchMon releases](https://github.com/PatchMon/PatchMon/releases) before upgrading.
 
 > **Note:** For about the first 24 hours after a release is published, PatchMon may still report an older version as the latest available. That is expected and is part of our phased rollout. See [Why the newest version can take a day to appear](#why-the-newest-version-can-take-a-day-to-appear) in the Docker chapter.
 
@@ -934,10 +1145,12 @@ Check the [chart releases page](https://github.com/RuTHlessBEat200/PatchMon-helm
 ### Uninstalling
 
 ```bash
-# Uninstall the release
 helm uninstall patchmon -n patchmon
 
-# Clean up PVCs (this deletes all data)
+# StatefulSet PVCs are deliberately not removed with the release.
+kubectl get pvc -n patchmon
+
+# Delete them only if you want to destroy all data
 kubectl delete pvc -n patchmon -l app.kubernetes.io/instance=patchmon
 ```
 
@@ -952,12 +1165,14 @@ global:
   imageRegistry: "registry.example.com"
 ```
 
-This changes every image pull to use the specified registry:
+This changes every image the chart renders to use the specified registry:
 
-- `registry.example.com/postgres:17-alpine`
-- `registry.example.com/redis:7-alpine`
-- `registry.example.com/patchmon/patchmon-server:2.0.0`
-- `registry.example.com/guacamole/guacd:1.6.0` (when RDP is enabled)
+- `registry.example.com/patchmon/patchmon-server:2.1.6`
+- `registry.example.com/postgres:18-alpine`
+- `registry.example.com/redis:8-alpine`
+- `registry.example.com/guacamole/guacd:1.6.0` (when `guacd.enabled` is `true`)
+
+Images in `server.sidecars` are not rewritten; set their registry yourself.
 
 #### Horizontal Pod Autoscaling
 
@@ -970,38 +1185,7 @@ server:
     targetCPUUtilizationPercentage: 70
 ```
 
-> **Note:** Scaling the server beyond a single replica is safe as of 2.0. There are no writeable local file volumes, and background jobs are coordinated through Redis + Asynq. WebSocket connections (agent WS, SSH terminal WS, live patch streams) do need sticky sessions through the Ingress controller if you run multiple replicas; set `nginx.ingress.kubernetes.io/affinity: cookie` in your Ingress annotations.
-
-#### Using an external database
-
-Disable the built-in database and set `DATABASE_URL` to an external PostgreSQL instance:
-
-```yaml
-database:
-  enabled: false
-
-server:
-  env:
-    DATABASE_URL: "postgresql://patchmon:password@external-db.example.com:5432/patchmon"
-```
-
-#### OIDC / SSO integration
-
-```yaml
-server:
-  env:
-    OIDC_ENABLED: "true"
-    OIDC_ISSUER_URL: "https://auth.example.com/realms/master"
-    OIDC_CLIENT_ID: "patchmon"
-    OIDC_REDIRECT_URI: "https://patchmon.example.com/api/v1/auth/oidc/callback"
-    OIDC_SCOPES: "openid profile email groups"
-    OIDC_BUTTON_TEXT: "Login with SSO"
-    OIDC_AUTO_CREATE_USERS: "true"
-    OIDC_SYNC_ROLES: "true"
-    OIDC_ADMIN_GROUP: "patchmon-admins"
-```
-
-The client secret should live in a Kubernetes Secret and be mounted as `OIDC_CLIENT_SECRET`, not set inline.
+Autoscaling needs Metrics Server, and sticky sessions as described in [Multiple replicas](#helm-multiple-replicas).
 
 ---
 
@@ -1469,18 +1653,25 @@ kubectl describe pod <pod-name> -n patchmon
 kubectl logs <pod-name> -n patchmon
 ```
 
-#### Check init container logs (waiting for DB or Redis)
+#### Check init container logs (Helm chart)
+
+The chart's server pod waits for its dependencies in init containers. When it sits in `Init:`, check which one is blocking:
 
 ```bash
 kubectl logs <pod-name> -n patchmon -c wait-for-database
 kubectl logs <pod-name> -n patchmon -c wait-for-redis
+kubectl logs <pod-name> -n patchmon -c wait-for-guacd
 ```
 
 #### Check migration logs
 
-Migrations run inside the server pod on startup. Follow the startup logs:
+Migrations run inside the server pod on startup. With the Helm chart, the server is a StatefulSet, so select it by label; with the plain manifests, use `deploy/patchmon-server`:
 
 ```bash
+# Helm chart
+kubectl logs -n patchmon -l app.kubernetes.io/component=server --since=5m | grep migrate
+
+# Plain manifests
 kubectl logs -n patchmon deploy/patchmon-server --since=5m | grep migrate
 ```
 
@@ -1488,19 +1679,29 @@ You should see lines like `[migrate] running migrations from embedded binary` an
 
 #### Health check
 
-The server exposes a liveness probe at `/health`:
+`/health` reports on PostgreSQL and Redis as well as the server process:
 
 ```bash
-kubectl exec -n patchmon -it deploy/patchmon-server -- wget -qO- http://localhost:3000/health
+# Helm chart: the first pod is <fullname>-server-0, e.g. patchmon-server-0
+kubectl exec -n patchmon patchmon-server-0 -- wget -qO- 'http://localhost:3000/health?format=json'
+
+# Plain manifests
+kubectl exec -n patchmon deploy/patchmon-server -- wget -qO- 'http://localhost:3000/health?format=json'
 ```
 
-Response is `healthy` (plain text) or a JSON structure when the `Accept: application/json` header is set.
+The response is `healthy` or `unhealthy` in plain text, or a JSON structure when `?format=json` is given or the `Accept: application/json` header is set.
 
 #### Common issues
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| Pods stuck in `Init` state | Database or Redis not yet running | `kubectl describe sts -n patchmon` |
+| Pods stuck in `Init` state | PostgreSQL, Redis or guacd not reachable yet | Check the init container logs above, and `kubectl describe sts -n patchmon` |
+| Agent install commands point at `localhost:3000` | **Settings → Server URL** was never set | See [Setting the Server URL](#helm-set-server-url) |
+| Agents appear offline with several server replicas | No sticky sessions at the Ingress | See [Multiple replicas](#helm-multiple-replicas) |
+| In-browser RDP fails to connect (Helm chart) | guacd runs in its own pod, or is disabled | Run guacd as a sidecar. See [In-browser RDP](#helm-in-browser-rdp) |
+| PostgreSQL starts empty after a chart upgrade | `fullnameOverride` changed and the pods claimed new PVCs | See [`fullnameOverride` and your volumes](#helm-fullnameoverride) |
+| `helm upgrade` fails with `updates to statefulset spec ... are forbidden` | `database.persistence.size` or `redis.persistence.size` changed on an existing release | See [Volume sizes are fixed at install time](#volume-sizes-are-fixed-at-install-time) |
+| A setting is greyed out in the Settings UI | It is pinned by an environment variable | Unset it in `server.env` (Helm) or the ConfigMap (plain manifests) |
 | PVC stuck in `Pending` | No matching StorageClass | Run `kubectl get sc` and set `global.storageClass` |
 | `ImagePullBackOff` | Registry credentials missing | Check `imagePullSecrets` and image path |
 | Ingress returns 404 / 502 | Ingress misconfigured or points at wrong port | All traffic should go to `server:3000` |
@@ -1508,13 +1709,13 @@ Response is `healthy` (plain text) or a JSON structure when the `Accept: applica
 | `secret ... not found` | Required Secret not created before install | Create the Secret or set `secret.create: true` |
 | Database is empty again after every redeploy, and the setup wizard reappears | Hand-written manifests mounting the volume at `/var/lib/postgresql` instead of at `PGDATA` | See [The PostgreSQL data directory](#the-postgresql-data-directory) |
 | `initdb: error: directory ... exists but is not empty` | Volume mounted straight at `PGDATA` on block storage, which contains `lost+found` | Set `PGDATA` to a subdirectory of the mount. See [The PostgreSQL data directory](#the-postgresql-data-directory) |
-| CORS errors in browser | `CORS_ORIGIN` doesn't match the URL users see | Set it to the exact URL from the Ingress host. If the chart exposes more than one Ingress host, comma-separate them with no spaces, e.g. `https://patchmon.example.com,https://patchmon.internal.lan` |
+| Blank page after login, or CORS errors in the browser console | The CORS origin doesn't match the URL users see | With Helm, set `server.env.serverProtocol`, `serverHost` and `serverPort` to the public URL, or override with `server.env.corsOrigin`. With plain manifests, set `CORS_ORIGIN`. For more than one origin, comma-separate them with no spaces, e.g. `https://patchmon.example.com,https://patchmon.internal.lan` |
 
 ---
 
 ### Support
 
-- Chart issues: [github.com/RuTHlessBEat200/PatchMon-helm/issues](https://github.com/RuTHlessBEat200/PatchMon-helm/issues)
+- Chart issues: [github.com/fidentity/patchmon-helm/issues](https://github.com/fidentity/patchmon-helm/issues)
 - Application issues: [github.com/PatchMon/PatchMon](https://github.com/PatchMon/PatchMon)
 - Community: [Discord](https://patchmon.net/discord)
 
