@@ -687,6 +687,44 @@ func (s *HostsStore) SetHostGroupsBulk(ctx context.Context, hostIDs, groupIDs []
 	return nil
 }
 
+// ChangeHostGroupsBulk adds and removes group memberships on multiple hosts,
+// keeping every other group a host is already in. One transaction per host.
+func (s *HostsStore) ChangeHostGroupsBulk(ctx context.Context, hostIDs, addIDs, removeIDs []string) error {
+	current, err := s.GetHostGroupsForHosts(ctx, hostIDs)
+	if err != nil {
+		return err
+	}
+	for _, hid := range hostIDs {
+		ids := make([]string, 0, len(current[hid]))
+		for _, g := range current[hid] {
+			ids = append(ids, g.ID)
+		}
+		if err := s.SetHostGroups(ctx, hid, applyGroupChanges(ids, addIDs, removeIDs)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// applyGroupChanges returns current without removeIDs, plus addIDs it does not
+// already hold, in that order. A group in both lists is removed.
+func applyGroupChanges(current, addIDs, removeIDs []string) []string {
+	drop := make(map[string]bool, len(removeIDs))
+	for _, id := range removeIDs {
+		drop[id] = true
+	}
+	seen := make(map[string]bool, len(current)+len(addIDs))
+	out := make([]string, 0, len(current)+len(addIDs))
+	for _, id := range append(append([]string{}, current...), addIDs...) {
+		if drop[id] || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
 // HostPackageStats holds package counts for a host (for scoped API include=stats).
 type HostPackageStats struct {
 	Total    int

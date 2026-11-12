@@ -186,8 +186,8 @@ export const adminHostsAPI = {
 		api.put(`/hosts/${hostId}/groups`, { groupIds }),
 	bulkUpdateGroup: (hostIds, hostGroupId) =>
 		api.put("/hosts/bulk/group", { hostIds, hostGroupId }),
-	bulkUpdateGroups: (hostIds, groupIds) =>
-		api.put("/hosts/bulk/groups", { hostIds, groupIds }),
+	bulkChangeGroups: (hostIds, addGroupIds, removeGroupIds) =>
+		api.put("/hosts/bulk/groups", { hostIds, addGroupIds, removeGroupIds }),
 	toggleAutoUpdate: (hostId, autoUpdate) =>
 		api.patch(`/hosts/${hostId}/auto-update`, { auto_update: autoUpdate }),
 	toggleHostDownAlerts: (hostId, enabled) =>

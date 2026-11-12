@@ -66,6 +66,11 @@ import {
 	userPreferencesAPI,
 } from "../utils/api";
 import {
+	bulkGroupChanges,
+	countGroupMembers,
+	groupCheckState,
+} from "../utils/bulkGroupChanges";
+import {
 	hasConfigVersionMismatch,
 	hasHostIdMismatch,
 	hasIdentityConflict,
@@ -652,8 +657,8 @@ const Hosts = () => {
 	}, [hosts]);
 
 	const bulkUpdateGroupMutation = useMutation({
-		mutationFn: ({ hostIds, groupIds }) =>
-			adminHostsAPI.bulkUpdateGroups(hostIds, groupIds),
+		mutationFn: ({ hostIds, addGroupIds, removeGroupIds }) =>
+			adminHostsAPI.bulkChangeGroups(hostIds, addGroupIds, removeGroupIds),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["hosts"] });
 			setSelectedHosts([]);
@@ -828,8 +833,12 @@ const Hosts = () => {
 		}
 	};
 
-	const handleBulkAssign = (groupIds) => {
-		bulkUpdateGroupMutation.mutate({ hostIds: selectedHosts, groupIds });
+	const handleBulkAssign = ({ addGroupIds, removeGroupIds }) => {
+		bulkUpdateGroupMutation.mutate({
+			hostIds: selectedHosts,
+			addGroupIds,
+			removeGroupIds,
+		});
 	};
 
 	const handleBulkDelete = () => {
@@ -2807,7 +2816,14 @@ const BulkAssignModal = ({
 	onAssign,
 	isLoading,
 }) => {
-	const [selectedGroupIds, setSelectedGroupIds] = useState([]);
+	// Group id -> checked, only for the groups the user clicked.
+	const [choices, setChoices] = useState({});
+	const memberCounts = useMemo(
+		() => countGroupMembers(hosts, selectedHosts),
+		[hosts, selectedHosts],
+	);
+	const checkState = (groupId) =>
+		groupCheckState(groupId, memberCounts, selectedHosts.length, choices);
 
 	// Fetch host groups for selection
 	const { data: hostGroups } = useQuery({
@@ -2821,17 +2837,13 @@ const BulkAssignModal = ({
 
 	const handleSubmit = (e) => {
 		e.preventDefault();
-		onAssign(selectedGroupIds);
+		onAssign(bulkGroupChanges(memberCounts, selectedHosts.length, choices));
 	};
 
+	// A mixed group becomes checked on the first click.
 	const toggleGroup = (groupId) => {
-		setSelectedGroupIds((prev) => {
-			if (prev.includes(groupId)) {
-				return prev.filter((id) => id !== groupId);
-			} else {
-				return [...prev, groupId];
-			}
-		});
+		const checked = checkState(groupId) !== true;
+		setChoices((prev) => ({ ...prev, [groupId]: checked }));
 	};
 
 	const modal = (
@@ -2878,14 +2890,18 @@ const BulkAssignModal = ({
 								<label
 									key={group.id}
 									className={`flex items-center gap-3 p-3 border-2 rounded-lg transition-all duration-200 cursor-pointer ${
-										selectedGroupIds.includes(group.id)
+										checkState(group.id) !== false
 											? "border-primary-500 bg-primary-50 dark:bg-primary-900/30"
 											: "border-secondary-300 dark:border-secondary-600 bg-white dark:bg-secondary-700 hover:border-secondary-400 dark:hover:border-secondary-500"
 									}`}
 								>
 									<input
 										type="checkbox"
-										checked={selectedGroupIds.includes(group.id)}
+										checked={checkState(group.id) === true}
+										ref={(el) => {
+											if (el)
+												el.indeterminate = checkState(group.id) === "mixed";
+										}}
 										onChange={() => toggleGroup(group.id)}
 										className="w-4 h-4 text-primary-600 bg-gray-100 border-gray-300 rounded focus:ring-primary-500 dark:focus:ring-primary-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
 									/>
@@ -2904,8 +2920,9 @@ const BulkAssignModal = ({
 							))}
 						</div>
 						<p className="mt-2 text-sm text-secondary-500 dark:text-white">
-							Select one or more groups to assign these hosts to, or leave
-							ungrouped.
+							Checked groups are added to every selected host and unchecked ones
+							removed. A partly checked group is in some of the hosts and stays
+							as it is unless you click it.
 						</p>
 					</div>
 
