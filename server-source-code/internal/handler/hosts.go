@@ -856,9 +856,13 @@ func (h *HostsHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 
 // BulkUpdateGroups handles PUT /hosts/bulk/groups.
 func (h *HostsHandler) BulkUpdateGroups(w http.ResponseWriter, r *http.Request) {
+	// groupIds replaces each host's groups. addGroupIds / removeGroupIds
+	// change only those groups and keep the rest of each host's memberships.
 	var req struct {
-		HostIds  []string `json:"hostIds"`
-		GroupIds []string `json:"groupIds"`
+		HostIds        []string `json:"hostIds"`
+		GroupIds       []string `json:"groupIds"`
+		AddGroupIds    []string `json:"addGroupIds"`
+		RemoveGroupIds []string `json:"removeGroupIds"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		Error(w, http.StatusBadRequest, "Invalid request body")
@@ -868,7 +872,15 @@ func (h *HostsHandler) BulkUpdateGroups(w http.ResponseWriter, r *http.Request) 
 		Error(w, http.StatusBadRequest, "Host IDs must be an array")
 		return
 	}
+	changeOnly := req.AddGroupIds != nil || req.RemoveGroupIds != nil
+	if changeOnly && req.GroupIds != nil {
+		Error(w, http.StatusBadRequest, "Send either groupIds or addGroupIds/removeGroupIds, not both")
+		return
+	}
 	groupIds := req.GroupIds
+	if changeOnly {
+		groupIds = req.AddGroupIds
+	}
 	if groupIds == nil {
 		groupIds = []string{}
 	}
@@ -881,7 +893,13 @@ func (h *HostsHandler) BulkUpdateGroups(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	if err := h.hosts.SetHostGroupsBulk(r.Context(), req.HostIds, groupIds); err != nil {
+	var err error
+	if changeOnly {
+		err = h.hosts.ChangeHostGroupsBulk(r.Context(), req.HostIds, groupIds, req.RemoveGroupIds)
+	} else {
+		err = h.hosts.SetHostGroupsBulk(r.Context(), req.HostIds, groupIds)
+	}
+	if err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to update host groups")
 		return
 	}
