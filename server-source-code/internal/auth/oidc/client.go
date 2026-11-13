@@ -23,6 +23,7 @@ const (
 	maxMicrosoftGraphPhotoBytes = 1 << 20
 	maxProviderResponseBytes    = 2 << 20
 	providerRequestTimeout      = 30 * time.Second
+	microsoftGraphPhotoTimeout  = 2 * time.Second
 )
 
 var errProviderResponseTooLarge = errors.New("oidc: provider response exceeds size limit")
@@ -475,7 +476,12 @@ func resolveProviderPicture(ctx context.Context, issuerURL string, token *oauth2
 	// If Graph fetch succeeds, prefer it; otherwise fall back to the raw claim only
 	// if it's a renderable non-Graph URL (rare but possible for hybrid setups).
 	if token != nil && token.AccessToken != "" {
-		picture, err := fetchMicrosoftGraphPhotoDataURL(ctx, token)
+		// A profile photo is cosmetic. Give the Graph request its own short
+		// deadline so a slow photo endpoint cannot consume the login request's
+		// context and prevent the user lookup that follows Exchange from running.
+		photoCtx, cancel := context.WithTimeout(ctx, microsoftGraphPhotoTimeout)
+		picture, err := fetchMicrosoftGraphPhotoDataURL(photoCtx, token)
+		cancel()
 		if err == nil && picture != "" {
 			return picture, nil
 		}
