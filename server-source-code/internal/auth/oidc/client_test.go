@@ -2,10 +2,12 @@ package oidc
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -153,6 +155,46 @@ func TestResolveProviderPictureGraphUrlNoFallback(t *testing.T) {
 	}
 	if isMicrosoftGraphURL("https://example.com/avatar.png") {
 		t.Fatal("expected non-Graph URL to not match detector")
+	}
+}
+
+func TestResolveProviderPictureBoundsGraphFetchWithoutCancelingLoginContext(t *testing.T) {
+	// Not parallel: mutates package-level microsoftGraphPhotoURL.
+	requestCanceled := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+		close(requestCanceled)
+	}))
+	defer server.Close()
+
+	originalURL := microsoftGraphPhotoURL
+	microsoftGraphPhotoURL = server.URL
+	t.Cleanup(func() {
+		microsoftGraphPhotoURL = originalURL
+	})
+
+	parent, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ctx := context.WithValue(parent, oauth2.HTTPClient, server.Client())
+	got, err := resolveProviderPicture(
+		ctx,
+		"https://login.microsoftonline.com/tenant-id/v2.0",
+		&oauth2.Token{AccessToken: "access-token"},
+		"https://graph.microsoft.com/v1.0/me/photo/$value",
+	)
+	if got != "" {
+		t.Fatalf("expected no photo after Graph timeout, got %q", got)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected Graph request deadline error, got %v", err)
+	}
+	select {
+	case <-requestCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("Graph request was not canceled when its photo deadline expired")
+	}
+	if err := parent.Err(); err != nil {
+		t.Fatalf("photo timeout canceled the login context: %v", err)
 	}
 }
 
