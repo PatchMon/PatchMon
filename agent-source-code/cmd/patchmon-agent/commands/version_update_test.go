@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"testing"
 
 	"golang.org/x/crypto/blake2b"
@@ -42,9 +43,9 @@ func signData(t *testing.T, priv ed25519.PrivateKey, keyID, data []byte, trusted
 	sigRaw = append(sigRaw, sig...)
 	sigB64 := base64.StdEncoding.EncodeToString(sigRaw)
 
-	// Global signature covers "trusted comment: <comment>\n"
+	// The global signature covers the signature followed by the comment text.
 	tc := fmt.Sprintf("trusted comment: %s", trustedComment)
-	globalSig := ed25519.Sign(priv, []byte(tc+"\n"))
+	globalSig := ed25519.Sign(priv, append(append([]byte{}, sig...), trustedComment...))
 	globalB64 := base64.StdEncoding.EncodeToString(globalSig)
 
 	sigFile := fmt.Sprintf("untrusted comment: minisign signature\n%s\n%s\n%s\n", sigB64, tc, globalB64)
@@ -99,6 +100,23 @@ func TestVerifyMinisignSignature(t *testing.T) {
 		}
 	})
 
+	t.Run("altered trusted comment is rejected", func(t *testing.T) {
+		// A server replaying an old valid signature with a raised version must
+		// not get past the downgrade check.
+		sigFile := signData(t, priv, keyID, data, "PatchMon Agent 1.0.0")
+		forged := strings.Replace(string(sigFile), "PatchMon Agent 1.0.0", "PatchMon Agent 9.9.9", 1)
+		if _, err := verifyMinisignSignature(pubKeyB64, data, []byte(forged)); err == nil {
+			t.Fatal("expected a rewritten trusted comment to fail verification")
+		}
+	})
+
+	t.Run("signature that is not an agent signature is rejected", func(t *testing.T) {
+		sigFile := signData(t, priv, keyID, data, "PatchMon SSG 0.1.80 ssg-debian12-ds.xml")
+		if _, err := verifyMinisignSignature(pubKeyB64, data, sigFile); err == nil {
+			t.Fatal("expected a non-agent trusted comment to fail")
+		}
+	})
+
 	t.Run("version is extracted from trusted comment", func(t *testing.T) {
 		sigFile := signData(t, priv, keyID, data, "PatchMon Agent 1.9.3")
 		version, err := verifyMinisignSignature(pubKeyB64, data, sigFile)
@@ -109,6 +127,29 @@ func TestVerifyMinisignSignature(t *testing.T) {
 			t.Errorf("expected version 1.9.3, got %q", version)
 		}
 	})
+}
+
+// TestVerifyMinisignRealSignature checks the parser against a signature made by
+// the minisign tool itself (throwaway key, no password), so the format above
+// cannot drift from what sign-all produces.
+func TestVerifyMinisignRealSignature(t *testing.T) {
+	const pub = "RWSSkLb7h5RYIT5eo40pL9u86VAKYqZ0oNvRPSnIYEdjVvVEEruicMaz"
+	data := []byte("PatchMon minisign test vector\n")
+	sig := []byte("untrusted comment: signature from minisign secret key\n" +
+		"RUSSkLb7h5RYIbTfQDXJsSsIdSIcZgQ02/EL/J92MaydRwHdGUkAxC10S2T9WnLq+VljLVNcIQW58J2mVMP0XThFaYNQvvoYdww=\n" +
+		"trusted comment: PatchMon Agent 2.1.9-fork.3\n" +
+		"S9zhrUBYXI3UfIYZgc5Lmh4ZQpMWMqUXNU2m0K6wPWIkvowOTWfpcdlUq2dIYMgNYcMlrI6y88t/OI9J3tcPAg==\n")
+	version, err := verifyMinisignSignature(pub, data, sig)
+	if err != nil {
+		t.Fatalf("real minisign signature rejected: %v", err)
+	}
+	if version != "2.1.9-fork.3" {
+		t.Fatalf("version = %q", version)
+	}
+	forged := strings.Replace(string(sig), "2.1.9-fork.3", "9.9.9", 1)
+	if _, err := verifyMinisignSignature(pub, data, []byte(forged)); err == nil {
+		t.Fatal("rewritten trusted comment accepted")
+	}
 }
 
 func TestDowngradeProtection(t *testing.T) {

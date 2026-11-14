@@ -681,32 +681,47 @@ func getPlatform() string {
 	}
 }
 
-// verifyMinisignSignature verifies a minisign Ed25519 signature over data using the given base64-encoded public key.
-// Returns the version string extracted from the trusted comment (format: "PatchMon Agent <version>").
-// The minisign public key format is: base64(algorithm[2] + keyID[8] + ed25519PublicKey[32])
-// The minisign signature format (per line): untrusted comment, base64(algorithm[2] + keyID[8] + signature[64]), trusted comment, global signature.
+// verifyMinisignSignature verifies a minisign signature over an agent binary and
+// returns the version from its trusted comment ("PatchMon Agent <version>").
 func verifyMinisignSignature(publicKeyB64 string, data, sigFile []byte) (string, error) {
-	// Decode public key
+	trustedComment, err := verifyMinisign(publicKeyB64, data, sigFile)
+	if err != nil {
+		return "", err
+	}
+	version, ok := strings.CutPrefix(trustedComment, "PatchMon Agent ")
+	if !ok || version == "" {
+		return "", fmt.Errorf("trusted comment %q is not an agent signature", trustedComment)
+	}
+	return strings.TrimPrefix(version, "v"), nil
+}
+
+// verifyMinisign verifies a minisign Ed25519 signature over data using the given
+// base64-encoded public key and returns the authenticated trusted comment.
+//
+// The public key is base64(algorithm[2] + keyID[8] + ed25519PublicKey[32]). The
+// signature file has four lines: untrusted comment, base64(algorithm[2] +
+// keyID[8] + signature[64]), "trusted comment: <text>", and the global
+// signature. The global signature covers signature[64] followed by the trusted
+// comment text; without checking it the trusted comment, and so the version
+// used for downgrade protection, could be rewritten freely.
+func verifyMinisign(publicKeyB64 string, data, sigFile []byte) (string, error) {
 	pubKeyRaw, err := base64.StdEncoding.DecodeString(publicKeyB64)
 	if err != nil {
 		return "", fmt.Errorf("invalid public key encoding: %w", err)
 	}
-	// algorithm(2) + keyID(8) + ed25519 key(32) = 42 bytes
 	if len(pubKeyRaw) != 42 {
 		return "", fmt.Errorf("invalid public key length: expected 42 bytes, got %d", len(pubKeyRaw))
 	}
 	if pubKeyRaw[0] != 'E' || pubKeyRaw[1] != 'd' {
 		return "", fmt.Errorf("unsupported signing algorithm: expected Ed (Ed25519)")
 	}
-	pubKey := ed25519.PublicKey(pubKeyRaw[10:]) // skip algorithm(2) + keyID(8)
+	pubKey := ed25519.PublicKey(pubKeyRaw[10:])
 
-	// Parse signature file: line 0 = untrusted comment, line 1 = base64 sig, line 2 = trusted comment, line 3 = global sig
 	lines := strings.Split(strings.ReplaceAll(string(sigFile), "\r\n", "\n"), "\n")
-	// Filter empty trailing lines
 	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
 		lines = lines[:len(lines)-1]
 	}
-	if len(lines) < 4 {
+	if len(lines) != 4 {
 		return "", fmt.Errorf("invalid signature file: expected 4 lines, got %d", len(lines))
 	}
 
@@ -714,31 +729,35 @@ func verifyMinisignSignature(publicKeyB64 string, data, sigFile []byte) (string,
 	if err != nil {
 		return "", fmt.Errorf("invalid signature encoding: %w", err)
 	}
-	// algorithm(2) + keyID(8) + signature(64) = 74 bytes
 	if len(sigRaw) != 74 {
 		return "", fmt.Errorf("invalid signature length: expected 74 bytes, got %d", len(sigRaw))
 	}
+	// Only the prehashed form (ED): minisign's default, and what sign-all makes.
 	if sigRaw[0] != 'E' || sigRaw[1] != 'D' {
-		return "", fmt.Errorf("unsupported signature algorithm: expected Ed")
+		return "", fmt.Errorf("unsupported signature algorithm: expected ED (prehashed Ed25519)")
 	}
-	// Verify key ID matches
 	if !bytes.Equal(pubKeyRaw[2:10], sigRaw[2:10]) {
 		return "", fmt.Errorf("signature key ID does not match public key")
 	}
-	sig := sigRaw[10:] // skip algorithm(2) + keyID(8)
+	sig := sigRaw[10:]
 
-	// minisign signs a prehash: Blake2b-512 of the data
 	h := blake2b.Sum512(data)
 	if !ed25519.Verify(pubKey, h[:], sig) {
 		return "", fmt.Errorf("Ed25519 signature is invalid")
 	}
 
-	// Extract version from trusted comment (format: "trusted comment: PatchMon Agent <version>")
-	trustedComment := strings.TrimPrefix(strings.TrimSpace(lines[2]), "trusted comment: ")
-	signedVersion := strings.TrimPrefix(strings.TrimSpace(trustedComment), "PatchMon Agent ")
-	signedVersion = strings.TrimPrefix(signedVersion, "v")
-
-	return signedVersion, nil
+	trustedComment, ok := strings.CutPrefix(lines[2], "trusted comment: ")
+	if !ok {
+		return "", fmt.Errorf("invalid signature file: missing trusted comment")
+	}
+	globalSig, err := base64.StdEncoding.DecodeString(strings.TrimSpace(lines[3]))
+	if err != nil || len(globalSig) != ed25519.SignatureSize {
+		return "", fmt.Errorf("invalid global signature")
+	}
+	if !ed25519.Verify(pubKey, append(append([]byte{}, sig...), trustedComment...), globalSig) {
+		return "", fmt.Errorf("global signature is invalid: the trusted comment was altered")
+	}
+	return trustedComment, nil
 }
 
 // fetchAgentSignature downloads the minisign signature file for the agent binary from the server.
