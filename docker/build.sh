@@ -73,6 +73,10 @@ if [ "$SKIP_AGENTS" = "true" ]; then
 else
   echo "==> Building agent binaries"
   make -C agent-source-code build-linux build-freebsd build-windows VERSION="$VERSION"
+  # Agents refuse any update without a valid signature, so an unsigned image
+  # would strand every host on its current version.
+  echo "==> Signing agent binaries"
+  make -C agent-source-code sign-all VERSION="$VERSION"
 fi
 
 mkdir -p agents-prebuilt
