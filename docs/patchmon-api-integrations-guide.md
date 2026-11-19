@@ -3916,6 +3916,8 @@ curl -s "https://patchmon.example.com/api/v1/auto-enrollment/script?type=proxmox
   - [Get Host Notes](#get-host-notes)
   - [Get Host Integrations](#get-host-integrations)
   - [Delete Host](#delete-host)
+  - [Host Group Management](#host-group-management)
+  - [Enrollment Token Management](#enrollment-token-management)
 - [Usage Examples](#usage-examples)
 - [Security Best Practices](#security-best-practices)
 - [Troubleshooting](#troubleshooting)
@@ -3988,7 +3990,7 @@ Fill in the following fields:
 | Field | Description | Example |
 |-------|-------------|---------|
 | **Token Name** | A descriptive name for identification and audit purposes | `Ansible Inventory`, `Monitoring Dashboard` |
-| **Scopes** | The permissions this credential should have (at least one required) | `host: get` |
+| **Scopes** | The permissions this credential should have; select the actions the tool needs | `host: get` |
 
 **Optional Fields:**
 
@@ -4117,7 +4119,28 @@ API credentials use a **resource–action** scope model:
 
 - Scopes are **explicit**: no inheritance or wildcards. Each action must be explicitly granted.
 - `get` does **not** automatically include `delete` or any other action.
-- At least one action must be granted for at least one resource. Credentials with no scopes will be rejected during creation.
+- Credentials with empty scopes have no access to scoped endpoints.
+
+#### Host Group and Enrollment Token Resources
+
+| Resource | Actions | Purpose |
+|----------|---------|---------|
+| `host_group` | `get`, `create`, `update`, `delete` | Manage host group records |
+| `enrollment_token` | `get`, `create`, `update`, `delete` | Manage enrollment-only tokens |
+
+Each action is selectable independently in the API credential creation and edit dialogs under **Settings → Integrations → API**. Existing API credentials can receive these permissions by editing their scopes there; their key and secret remain usable. Existing `host` scopes keep their meaning and gain no additional access automatically. Legacy `host` selections (`put`, `patch`, `update`) remain valid for compatibility but do not grant access to additional scoped routes.
+
+For unattended deployment administration, grant the actions needed by the deployment tool, for example:
+
+```json
+{
+  "host": ["get", "delete"],
+  "host_group": ["get", "create", "update"],
+  "enrollment_token": ["get", "create", "update"]
+}
+```
+
+The `delete` actions for `host_group` and `enrollment_token` are optional and must be explicitly selected. No new permissions are granted to existing credentials by default. These scopes cannot create or edit API credentials, modify their scopes, or manage GetHomepage credentials. User session authentication and the existing administrative endpoints remain available as before.
 
 ---
 
@@ -4140,6 +4163,16 @@ All endpoints are prefixed with `/api/v1/api` and require Basic Authentication w
 | `/api/v1/api/hosts/:id/notes` | GET | `host:get` | Get host notes |
 | `/api/v1/api/hosts/:id/integrations` | GET | `host:get` | Get host integration status |
 | `/api/v1/api/hosts/:id` | DELETE | `host:delete` | Delete a host and all related data |
+| `/api/v1/api/host-groups` | GET | `host_group:get` | List host groups |
+| `/api/v1/api/host-groups/:id` | GET | `host_group:get` | Retrieve a host group |
+| `/api/v1/api/host-groups` | POST | `host_group:create` | Create a host group |
+| `/api/v1/api/host-groups/:id` | PUT | `host_group:update` | Update a host group |
+| `/api/v1/api/host-groups/:id` | DELETE | `host_group:delete` | Delete a host group |
+| `/api/v1/api/auto-enrollment/tokens` | GET | `enrollment_token:get` | List enrollment-only tokens |
+| `/api/v1/api/auto-enrollment/tokens/:tokenId` | GET | `enrollment_token:get` | Retrieve an enrollment-only token |
+| `/api/v1/api/auto-enrollment/tokens` | POST | `enrollment_token:create` | Create an enrollment-only token |
+| `/api/v1/api/auto-enrollment/tokens/:tokenId` | PATCH | `enrollment_token:update` | Update an enrollment-only token |
+| `/api/v1/api/auto-enrollment/tokens/:tokenId` | DELETE | `enrollment_token:delete` | Delete an enrollment-only token |
 
 ---
 
@@ -4770,6 +4803,71 @@ DELETE /api/v1/api/hosts/:id
 
 ---
 
+#### Host Group Management
+
+Use Basic Auth with an API integration credential and the action-specific `host_group` scope. List and single-record GET requests require `host_group:get`; creating, updating, and deleting require `create`, `update`, and `delete` respectively. An update permission does not require or grant a read permission.
+
+`POST /api/v1/api/host-groups` accepts:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Group name |
+| `description` | string | No | Free-form text, including JSON serialized as a string |
+| `color` | string | No | Display color; defaults to `#3B82F6` |
+
+`PUT /api/v1/api/host-groups/:id` accepts any of these fields and leaves omitted fields unchanged. Updating the group preserves its ID and existing host memberships. Descriptions are stored and returned as supplied, without parsing or reformatting their contents. No NetBox-specific database fields are needed.
+
+List responses are JSON arrays of group records and include `_count.hosts`. Single-record GET, POST (201), and PUT (200) responses are group objects with the stable `id`, `name`, `description`, `color`, `created_at`, and `updated_at` fields. Read the new group ID directly from `response.json()["id"]` in Python. DELETE returns `200` with `{"message":"Host group deleted successfully"}`.
+
+#### Enrollment Token Management
+
+Use Basic Auth with an API integration credential and the action-specific `enrollment_token` scope. These routes manage enrollment-only tokens (`proxmox-lxc`, `direct-host`, and legacy enrollment tokens without an integration type); they do not expose administrative API or GetHomepage credential management. The list filters out those credentials, and requesting one directly returns `403`. An auto-enrollment token cannot itself authenticate to any scoped administrative route.
+
+`POST /api/v1/api/auto-enrollment/tokens` accepts:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `token_name` | string | Yes | Name, up to 255 characters |
+| `max_hosts_per_day` | integer | No | Daily host creation limit, 1–1000; defaults to 100 |
+| `default_host_group_id` | string or null | No | Existing host group ID assigned to new hosts |
+| `allowed_ip_ranges` | array of strings | No | Exact IPs or CIDR ranges; `[]` allows all IPs |
+| `expires_at` | string or null | No | RFC3339 timestamp or `YYYY-MM-DDTHH:mm`; empty/null means no expiration |
+| `metadata` | object | No | Custom values such as source and tenant ID; `integration_type` defaults to `proxmox-lxc`, or may be `direct-host` |
+
+`PATCH /api/v1/api/auto-enrollment/tokens/:tokenId` accepts the same configuration fields and `is_active` (boolean). Omitted fields remain unchanged. Set `is_active` to `false` to revoke enrollment access, or `true` to reactivate the token. Set `default_host_group_id` or `expires_at` to `""` or `null` to clear it. Metadata updates merge supplied keys with existing metadata while preserving the enrollment integration type.
+
+The `scopes` field and attempts to change a token into an API or GetHomepage credential are rejected. The API never lets a scoped credential edit itself or grant additional API permissions.
+
+Creation returns `201` with this envelope:
+
+```json
+{
+  "message": "Auto-enrollment token created successfully",
+  "token": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "token_name": "NetBox customer-example",
+    "token_key": "patchmon_ae_...",
+    "token_secret": "save-this-secret-once",
+    "max_hosts_per_day": 100,
+    "default_host_group": {
+      "id": "d6813213-3cab-40ad-a2ab-760987eeb647",
+      "name": "Customer Example",
+      "color": "#3B82F6"
+    },
+    "created_by": null,
+    "expires_at": null,
+    "scopes": null
+  },
+  "warning": "Save the token_secret now - it cannot be retrieved later!"
+}
+```
+
+Read the key and plaintext secret from `response.json()["token"]["token_key"]` and `response.json()["token"]["token_secret"]` immediately and store both securely. This scoped API returns them only during creation. PatchMon persists the secret's bcrypt hash and cannot retrieve the plaintext again.
+
+List responses are JSON arrays. Single-record GET returns the token record directly. Both contain configuration fields, `id`, usage counters, `metadata`, and associated group/user details. The scoped GET, list, and PATCH responses omit `token_key`, `token_secret`, and the secret hash. PATCH returns `{"message":"Token updated successfully","token":{...}}` with the same configuration record. DELETE returns `{"message":"Auto-enrollment token deleted successfully","deleted_token":{"id":"...","token_name":"..."}}`. Existing user-session administration retains its response contract.
+
+Invalid/disabled/expired/deleted credentials return `401`; missing scopes and IP restrictions return `403`; a nonexistent group or token returns `404`. Invalid request fields return `400`. The calling API credential's restrictions and the created enrollment token's restrictions are enforced independently.
+
 #### Common Error Responses (All Endpoints)
 
 **404 Not Found**: Host does not exist (for single-host endpoints):
@@ -4793,6 +4891,57 @@ See the [Troubleshooting](#troubleshooting) section for authentication and permi
 ### Usage Examples
 
 #### cURL Examples
+
+##### Manage Host Groups and Enrollment Tokens
+
+Set `PATCHMON_API_KEY` and `PATCHMON_API_SECRET` to a scoped API credential. The following Bash examples use `jq` to capture the stable group ID. Each request uses Basic Auth; no user JWT or browser login is needed at runtime.
+
+1. List host groups:
+
+```bash
+curl --fail-with-body -u "${PATCHMON_API_KEY}:${PATCHMON_API_SECRET}" \
+  https://patchmon.example.com/api/v1/api/host-groups
+```
+
+2. Create a host group and capture its ID:
+
+```bash
+GROUP_ID=$(curl --fail-with-body -sS \
+  -u "${PATCHMON_API_KEY}:${PATCHMON_API_SECRET}" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Customer Example","description":"{}","color":"#3B82F6"}' \
+  https://patchmon.example.com/api/v1/api/host-groups | jq -er '.id')
+```
+
+3. Update its description with serialized JSON:
+
+```bash
+curl --fail-with-body -u "${PATCHMON_API_KEY}:${PATCHMON_API_SECRET}" \
+  -X PUT -H 'Content-Type: application/json' \
+  -d '{"description":"{\"netbox_object\":\"tenancy.tenant:203\",\"netbox_slug\":\"customer-example\",\"timestamp\":\"2026-11-19T14:00:00Z\"}"}' \
+  "https://patchmon.example.com/api/v1/api/host-groups/${GROUP_ID}"
+```
+
+4. Create an enrollment token assigned to that group:
+
+```bash
+jq -n --arg group_id "$GROUP_ID" \
+  '{token_name:"NetBox customer-example",max_hosts_per_day:100,
+    default_host_group_id:$group_id,allowed_ip_ranges:[],
+    metadata:{source:"netbox",tenant_id:203,tenant_slug:"customer-example"}}' \
+  | curl --fail-with-body -u "${PATCHMON_API_KEY}:${PATCHMON_API_SECRET}" \
+      -H 'Content-Type: application/json' --data-binary @- \
+      https://patchmon.example.com/api/v1/api/auto-enrollment/tokens
+```
+
+Save the `token.token_key` and `token.token_secret` from this response in the deployment tool's secret store. Avoid writing this response into shared logs.
+
+5. List enrollment tokens (keys and secrets are omitted):
+
+```bash
+curl --fail-with-body -u "${PATCHMON_API_KEY}:${PATCHMON_API_SECRET}" \
+  https://patchmon.example.com/api/v1/api/auto-enrollment/tokens
+```
 
 ##### List All Hosts
 

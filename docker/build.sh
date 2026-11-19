@@ -6,16 +6,17 @@
 # repo declares one, so the version has to be passed into the image build.
 # This script works it out for you and passes it through as a build arg.
 #
-# The image no longer compiles anything: it copies prebuilt binaries out of
-# agents-prebuilt/ and server-prebuilt/, both gitignored. This script produces
-# them, which is why a plain `docker build` on a clean checkout will not work.
+# Docker builds the frontend, server and bundled agents in builder containers.
+# Only Docker and Bash are required locally; Git is used to resolve the version
+# when --version is omitted.
 #
 # Usage:
 #   ./docker/build.sh                      # version from the nearest git tag
 #   ./docker/build.sh --version 2.0.1      # pin a version (useful for testing
 #                                          # the auto-update path)
 #   ./docker/build.sh --tag mytag          # image tag (default: local)
-#   ./docker/build.sh --skip-agents        # reuse whatever is in agents-prebuilt/
+#   ./docker/build.sh --platform linux/arm64 # cross-build for another platform
+#   ./docker/build.sh --skip-agents        # reuse all 10 agents in agents-prebuilt/
 # =============================================================================
 
 set -euo pipefail
@@ -26,18 +27,28 @@ cd "$ROOT"
 VERSION=""
 IMAGE_TAG="local"
 SKIP_AGENTS="false"
+PLATFORM=""
 
 die() { echo "error: $*" >&2; exit 1; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --version) VERSION="${2:-}"; shift 2 ;;
-    --tag)     IMAGE_TAG="${2:-}"; shift 2 ;;
+    --version|--tag|--platform)
+      [ $# -ge 2 ] && [ -n "$2" ] && [[ "$2" != --* ]] || die "$1 requires a value"
+      case "$1" in
+        --version) VERSION="$2" ;;
+        --tag) IMAGE_TAG="$2" ;;
+        --platform) PLATFORM="$2" ;;
+      esac
+      shift 2
+      ;;
     --skip-agents) SKIP_AGENTS="true"; shift ;;
     -h|--help) sed -n '2,25p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) die "unknown option: $1" ;;
   esac
 done
+
+command -v docker >/dev/null 2>&1 || die "Docker is required to build the image"
 
 # `--abbrev=0` gives the bare nearest tag (v2.0.2), not v2.0.2-60-gABC. A
 # suffix is read as a pre-release, so v2.0.2-60-gABC sorts just below 2.0.2 and
@@ -48,7 +59,9 @@ done
 # pre-release is the one CI mints for edge images, in
 # .github/actions/release-context.
 if [ -z "$VERSION" ]; then
-  VERSION="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
+  command -v git >/dev/null 2>&1 || die "Git is required to resolve the version; install Git or pass --version"
+  VERSION="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+  VERSION="${VERSION#v}"
 fi
 
 if [ -z "$VERSION" ]; then
@@ -60,63 +73,37 @@ if [ -z "$VERSION" ]; then
       ./docker/build.sh --version 2.0.3"
 fi
 
-if ! printf '%s' "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   die "version '$VERSION' is not MAJOR.MINOR.PATCH. Local builds must pass a bare
   release version; edge pre-releases like 2.0.3-rc.61 are minted by CI only."
 fi
 
 echo "==> Version: $VERSION"
 
-# The server image bundles agent binaries from agents-prebuilt/ (gitignored).
+# Normal builds compile every bundled agent in Docker. This opt-in compatibility
+# path reuses explicitly staged binaries, as the release image pipeline does.
+build_args=(--build-arg "VERSION=$VERSION")
 if [ "$SKIP_AGENTS" = "true" ]; then
-  echo "==> Skipping agent build"
-else
-  echo "==> Building agent binaries"
-  make -C agent-source-code build-linux build-freebsd build-windows VERSION="$VERSION"
+  for target in linux/amd64 linux/arm64 linux/386 linux/arm \
+                freebsd/amd64 freebsd/arm64 freebsd/386 freebsd/arm \
+                windows/amd64 windows/arm64; do
+    suffix=""; case "$target" in windows/*) suffix=".exe" ;; esac
+    binary="agents-prebuilt/patchmon-agent-${target/\//-}${suffix}"
+    [ -s "$binary" ] || die "--skip-agents requires $binary; omit the flag to build agents in Docker"
+  done
+  build_args+=(--build-arg AGENT_SOURCE=agents-prebuilt)
+  echo "==> Reusing agents-prebuilt/"
 fi
 
-mkdir -p agents-prebuilt
-shopt -s nullglob
-agent_bins=(agent-source-code/build/patchmon-agent-*)
-if [ ${#agent_bins[@]} -eq 0 ]; then
-  die "agents-prebuilt/ has nothing to copy and no agents were built.
-  Run without --skip-agents, or build them with:
-      make -C agent-source-code build-linux build-freebsd build-windows"
+if [ -n "$PLATFORM" ]; then
+  build_args+=(--platform "$PLATFORM")
 fi
-cp -f "${agent_bins[@]}" agents-prebuilt/
-echo "==> Staged ${#agent_bins[@]} agent binaries"
-
-echo "==> Building frontend for embed"
-# --include-workspace-root is load-bearing. `npm ci` wipes node_modules and then
-# reinstalls only what it is told to, so without it the root devDependencies are
-# dropped, taking lefthook and biome with them. The visible symptom is a
-# pre-commit hook that stops running and reports "Can't find lefthook in PATH",
-# silently, on every commit after a local image build.
-npm ci --workspace=frontend --include=dev --include-workspace-root
-npm run build --workspace=frontend
-# Cleared first: Vite emits content-hashed filenames, so copying into an
-# existing dist/ accumulates every past build and embeds them all.
-rm -rf server-source-code/cmd/server/static/frontend/dist
-mkdir -p server-source-code/cmd/server/static/frontend
-cp -r frontend/dist server-source-code/cmd/server/static/frontend/
-
-# The image copies these in rather than compiling; both platforms it supports
-# are built so `docker build --platform` works either way. Community counts are
-# left out, so a local image shows the compiled-in defaults.
-echo "==> Building server binaries for embed"
-mkdir -p server-prebuilt
-for arch in amd64 arm64; do
-  ( cd server-source-code && \
-    GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build -buildvcs=false \
-      -ldflags="-s -w -X github.com/PatchMon/PatchMon/server-source-code/internal/config.DefaultVersion=${VERSION}" \
-      -o "../server-prebuilt/patchmon-server-linux-${arch}" ./cmd/server )
-  echo "    linux/${arch}"
-done
 
 echo "==> Building image patchmon-server:${IMAGE_TAG}"
 docker build \
   -f docker/server.Dockerfile \
   -t "patchmon-server:${IMAGE_TAG}" \
+  "${build_args[@]}" \
   .
 
 echo ""

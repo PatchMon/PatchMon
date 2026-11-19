@@ -217,7 +217,7 @@ This section is for developers who want to contribute to PatchMon or run it in d
 
 ## Development Setup
 
-For development with live reload and source code mounting:
+Docker and Docker Compose are sufficient for the full development environment. Go, Node.js, npm and Make run inside build containers.
 
 1. Clone the repository:
    ```bash
@@ -227,7 +227,7 @@ For development with live reload and source code mounting:
 
 2. Start development environment:
    ```bash
-   docker compose -f docker/docker-compose.dev.yml up
+   docker compose -f docker/docker-compose.dev.yml up --build
    ```
    _See [Development Commands](#development-commands) for more options._
 
@@ -240,25 +240,44 @@ For development with live reload and source code mounting:
 
 The development compose file (`docker/docker-compose.dev.yml`):
 - Builds images locally from source using development targets
-- Enables hot reload with Docker Compose watch functionality
+- Rebuilds and restarts the server on Go source changes when using Docker Compose watch
 - Exposes database and backend ports for testing and development
-- Mounts source code directly into containers for live development
+- Builds the frontend and bundled agents inside containers
 - Supports debugging with enhanced logging
 
 ## Building Images Locally
 
-Both Dockerfiles use multi-stage builds with separate development and production targets.
+`docker/server.Dockerfile` uses multi-stage builds with separate `development` and `production` targets. A clean checkout and Docker with BuildKit are sufficient: dependency installation, frontend compilation, Go compilation and agent cross-compilation all happen in builder containers. The production image receives the finished server, ten Linux/FreeBSD/Windows agent binaries, and compliance content.
+
+BuildKit reuses dependency and compiler caches. Local Go/npm installations and prebuilt `agents-prebuilt/` or `server-prebuilt/` directories are unnecessary.
 
 **Note:** When using locally-built images (e.g. `patchmon-server:dev`), do **not** run `docker compose pull` for the full stack—Compose will try to pull that name from Docker Hub and fail (it exists only on your machine). Use `docker compose up -d` so Compose uses your local image, or run `docker compose pull database redis` if you only want to refresh Postgres/Redis.
 
-**Server agent binaries:** The server image includes agent scripts and prebuilt binaries. To build locally, run `make build-all-for-docker` in `agent-source-code/` first so `agents-prebuilt/` is populated.
-
 ```bash
+# Resolve the version from Git and build everything in containers
+./docker/build.sh
+
+# Pin a version explicitly
+./docker/build.sh --version 2.0.1 --tag local
+
 # Build development image
 docker build -f docker/server.Dockerfile --target development --provenance=false --sbom=false -t patchmon-server:dev .
 
 # Build production image (default target)
-docker build -f docker/server.Dockerfile --provenance=false --sbom=false -t patchmon-server:latest .
+docker build -f docker/server.Dockerfile --build-arg VERSION=2.0.1 --provenance=false --sbom=false -t patchmon-server:local .
+
+# Cross-build a single-platform image
+./docker/build.sh --version 2.0.1 --platform linux/arm64
+```
+
+Run these commands from the repository root. The wrapper needs Bash and uses Git unless `--version` is supplied. A direct `docker build` defaults to version `0.0.0` if no `VERSION` argument is given. Agent install/remove scripts remain embedded in the server binary.
+
+For a multi-platform registry image, use Buildx:
+
+```bash
+docker buildx build -f docker/server.Dockerfile \
+  --platform linux/amd64,linux/arm64 --build-arg VERSION=2.0.1 \
+  -t your-registry.example/patchmon-server:2.0.1 --push .
 ```
 
 ## Development Commands
@@ -288,11 +307,10 @@ docker compose -f docker/docker-compose.dev.yml up -d --build
 ```
 
 ### Development Ports
-The development setup exposes additional ports for debugging:
+The development setup exposes:
 - **Database**: `5432` - Direct PostgreSQL access
 - **Redis**: `6379` - Direct Redis access
-- **Backend**: `3001` - API server with development features
-- **Frontend**: `3000` - React development server with hot reload
+- **Application**: `3000` - Go API server and embedded frontend
 
 ## Development Workflow
 
@@ -309,9 +327,9 @@ The development setup exposes additional ports for debugging:
    ```
 
 3. **Code Changes**: 
-   - **Frontend/Backend Source**: Files are synced automatically with watch mode
-   - **Package.json Changes**: Triggers automatic service rebuild
-   - **Prisma Schema Changes**: Backend service restarts automatically
+   - **Go server source**: Docker Compose watch rebuilds and restarts the server
+   - **Frontend or agent source**: Rebuild the server with `docker compose -f docker/docker-compose.dev.yml up -d --build server`
+   - **Go database migrations**: Applied by the server at startup
 
 4. **Database Access**: Connect database client directly to `localhost:5432`
 5. **Redis Access**: Connect Redis client directly to `localhost:6379`
@@ -323,7 +341,7 @@ The development setup exposes additional ports for debugging:
 
 ### Features in Development Mode
 
-- **Hot Reload**: Automatic code synchronization and service restarts
+- **Watch Mode**: Automatic rebuilds and service restarts on Go server source changes
 - **Enhanced Logging**: Detailed logs for debugging
 - **Direct Access**: Exposed ports for database, Redis, and API debugging  
 - **Health Checks**: Built-in health monitoring for services

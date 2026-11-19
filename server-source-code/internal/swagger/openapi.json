@@ -48,9 +48,315 @@
 				"bearerFormat": "JWT",
 				"description": "PatchMon user session token, sent as a Bearer token or in the token cookie set at login. Used by web UI endpoints."
 			}
+		},
+		"schemas": {
+			"ScopedApiScopes": {
+				"type": "object",
+				"properties": {
+					"host": {
+						"type": "array",
+						"items": {
+							"type": "string",
+							"enum": ["get", "delete", "put", "patch", "update"]
+						}
+					},
+					"host_group": {
+						"type": "array",
+						"items": {
+							"type": "string",
+							"enum": ["get", "create", "update", "delete"]
+						}
+					},
+					"enrollment_token": {
+						"type": "array",
+						"items": {
+							"type": "string",
+							"enum": ["get", "create", "update", "delete"]
+						}
+					}
+				},
+				"additionalProperties": false,
+				"description": "Explicit resource/action permissions for API integration credentials. Existing credentials gain no scopes automatically. Delete permissions are optional and are never granted implicitly. Empty scopes authorize no routes. Legacy host put/patch/update selections are accepted for compatibility and grant no additional route capabilities. Only user-session administrators can edit API credential scopes.",
+				"example": {
+					"host": ["get", "delete"],
+					"host_group": ["get", "create", "update"],
+					"enrollment_token": ["get", "create", "update"]
+				}
+			},
+			"ScopedHostGroupCreate": {
+				"type": "object",
+				"properties": {
+					"name": { "type": "string", "description": "Group name." },
+					"description": {
+						"type": "string",
+						"nullable": true,
+						"description": "Free-form text. JSON serialized as a string is returned unchanged.",
+						"example": "{\"netbox_object\":\"tenancy.tenant:203\",\"netbox_slug\":\"customer-example\"}"
+					},
+					"color": {
+						"type": "string",
+						"example": "#3B82F6",
+						"description": "Group display color."
+					}
+				},
+				"required": ["name"]
+			},
+			"ScopedHostGroupUpdate": {
+				"type": "object",
+				"properties": {
+					"name": { "type": "string", "description": "Group name." },
+					"description": {
+						"type": "string",
+						"nullable": true,
+						"description": "Free-form text. JSON serialized as a string is returned unchanged.",
+						"example": "{\"netbox_object\":\"tenancy.tenant:203\",\"netbox_slug\":\"customer-example\"}"
+					},
+					"color": {
+						"type": "string",
+						"example": "#3B82F6",
+						"description": "Group display color."
+					}
+				},
+				"description": "Omitted fields retain their current values. Updates preserve the group ID and host memberships."
+			},
+			"ScopedHostGroup": {
+				"type": "object",
+				"properties": {
+					"id": {
+						"type": "string",
+						"format": "uuid",
+						"description": "Stable group identifier."
+					},
+					"name": { "type": "string", "description": "Group name." },
+					"description": {
+						"type": "string",
+						"nullable": true,
+						"description": "Free-form text. JSON serialized as a string is returned unchanged.",
+						"example": "{\"netbox_object\":\"tenancy.tenant:203\",\"netbox_slug\":\"customer-example\"}"
+					},
+					"color": {
+						"type": "string",
+						"example": "#3B82F6",
+						"description": "Group display color."
+					},
+					"created_at": { "type": "string", "format": "date-time" },
+					"updated_at": { "type": "string", "format": "date-time" },
+					"_count": {
+						"type": "object",
+						"properties": { "hosts": { "type": "integer", "minimum": 0 } },
+						"description": "Present in list responses."
+					}
+				},
+				"required": [
+					"id",
+					"name",
+					"description",
+					"color",
+					"created_at",
+					"updated_at"
+				]
+			},
+			"ScopedEnrollmentTokenCreate": {
+				"type": "object",
+				"properties": {
+					"token_name": { "type": "string", "minLength": 1, "maxLength": 255 },
+					"max_hosts_per_day": {
+						"type": "integer",
+						"minimum": 1,
+						"maximum": 1000,
+						"default": 100
+					},
+					"default_host_group_id": {
+						"type": "string",
+						"nullable": true,
+						"description": "Existing group ID. Empty string or null clears the assignment."
+					},
+					"allowed_ip_ranges": {
+						"type": "array",
+						"items": { "type": "string" },
+						"description": "Exact IP addresses or CIDR ranges. An empty array permits any client IP.",
+						"example": ["192.0.2.0/24"]
+					},
+					"expires_at": {
+						"type": "string",
+						"nullable": true,
+						"description": "RFC3339 timestamp or YYYY-MM-DDTHH:mm. Empty string or null clears expiration.",
+						"example": "2027-01-01T00:00:00Z"
+					},
+					"metadata": {
+						"type": "object",
+						"properties": {
+							"integration_type": {
+								"type": "string",
+								"enum": ["proxmox-lxc", "direct-host"],
+								"default": "proxmox-lxc"
+							}
+						},
+						"additionalProperties": true,
+						"description": "Custom metadata. New enrollment tokens default to proxmox-lxc. API/GetHomepage integration types are forbidden. On PATCH, supplied keys merge with existing metadata; integration_type cannot change."
+					}
+				},
+				"required": ["token_name"],
+				"description": "Create an enrollment-only token. The scopes field is forbidden, even when null. API credentials and GetHomepage credentials cannot be created through this endpoint."
+			},
+			"ScopedEnrollmentTokenUpdate": {
+				"type": "object",
+				"properties": {
+					"token_name": { "type": "string", "minLength": 1, "maxLength": 255 },
+					"max_hosts_per_day": {
+						"type": "integer",
+						"minimum": 1,
+						"maximum": 1000,
+						"default": 100
+					},
+					"default_host_group_id": {
+						"type": "string",
+						"nullable": true,
+						"description": "Existing group ID. Empty string or null clears the assignment."
+					},
+					"allowed_ip_ranges": {
+						"type": "array",
+						"items": { "type": "string" },
+						"description": "Exact IP addresses or CIDR ranges. An empty array permits any client IP.",
+						"example": ["192.0.2.0/24"]
+					},
+					"expires_at": {
+						"type": "string",
+						"nullable": true,
+						"description": "RFC3339 timestamp or YYYY-MM-DDTHH:mm. Empty string or null clears expiration.",
+						"example": "2027-01-01T00:00:00Z"
+					},
+					"metadata": {
+						"type": "object",
+						"properties": {
+							"integration_type": {
+								"type": "string",
+								"enum": ["proxmox-lxc", "direct-host"],
+								"default": "proxmox-lxc"
+							}
+						},
+						"additionalProperties": true,
+						"description": "Custom metadata. New enrollment tokens default to proxmox-lxc. API/GetHomepage integration types are forbidden. On PATCH, supplied keys merge with existing metadata; integration_type cannot change."
+					},
+					"is_active": {
+						"type": "boolean",
+						"description": "False revokes enrollment access; true reactivates the token."
+					}
+				},
+				"description": "Update supplied configuration fields; omitted fields remain unchanged. The scopes field is forbidden. The enrollment integration type is immutable."
+			},
+			"ScopedEnrollmentToken": {
+				"type": "object",
+				"properties": {
+					"id": { "type": "string", "format": "uuid" },
+					"token_name": { "type": "string" },
+					"is_active": { "type": "boolean" },
+					"allowed_ip_ranges": {
+						"type": "array",
+						"items": { "type": "string" }
+					},
+					"max_hosts_per_day": { "type": "integer" },
+					"hosts_created_today": { "type": "integer" },
+					"last_used_at": {
+						"type": "string",
+						"format": "date-time",
+						"nullable": true
+					},
+					"expires_at": {
+						"type": "string",
+						"format": "date-time",
+						"nullable": true
+					},
+					"created_at": { "type": "string", "format": "date-time" },
+					"default_host_group_id": { "type": "string", "nullable": true },
+					"metadata": {
+						"type": "object",
+						"additionalProperties": true,
+						"nullable": true
+					},
+					"scopes": {
+						"type": "object",
+						"nullable": true,
+						"description": "Enrollment-only tokens have no administrative scopes."
+					},
+					"host_groups": {
+						"type": "object",
+						"nullable": true,
+						"properties": {
+							"id": { "type": "string" },
+							"name": { "type": "string" },
+							"color": { "type": "string" }
+						}
+					},
+					"users": {
+						"type": "object",
+						"nullable": true,
+						"properties": {
+							"id": { "type": "string" },
+							"username": { "type": "string" },
+							"first_name": { "type": "string", "nullable": true },
+							"last_name": { "type": "string", "nullable": true }
+						}
+					}
+				},
+				"required": ["id", "token_name", "is_active"],
+				"description": "Enrollment-token configuration returned by scoped GET, list and PATCH. No token_key, token_secret or secret hash is exposed. Keys and plaintext secrets are returned only during creation."
+			},
+			"ScopedEnrollmentTokenCreated": {
+				"type": "object",
+				"properties": {
+					"message": {
+						"type": "string",
+						"example": "Auto-enrollment token created successfully"
+					},
+					"token": {
+						"type": "object",
+						"properties": {
+							"id": { "type": "string", "format": "uuid" },
+							"token_name": { "type": "string" },
+							"token_key": { "type": "string" },
+							"token_secret": {
+								"type": "string",
+								"description": "Plaintext secret returned only in this creation response. Store it securely; only the bcrypt hash is persisted."
+							},
+							"max_hosts_per_day": { "type": "integer" },
+							"default_host_group": {
+								"type": "object",
+								"nullable": true,
+								"properties": {
+									"id": { "type": "string" },
+									"name": { "type": "string" },
+									"color": { "type": "string" }
+								}
+							},
+							"created_by": { "type": "object", "nullable": true },
+							"expires_at": {
+								"type": "string",
+								"format": "date-time",
+								"nullable": true
+							},
+							"scopes": { "type": "object", "nullable": true }
+						},
+						"required": ["id", "token_key", "token_secret"]
+					},
+					"warning": {
+						"type": "string",
+						"example": "Save the token_secret now - it cannot be retrieved later!"
+					}
+				},
+				"required": ["message", "token", "warning"]
+			}
 		}
 	},
 	"tags": [
+		{
+			"name": "Scoped API - Host Groups",
+			"description": "Host group administration using explicit host_group scopes and API Basic Auth."
+		},
+		{
+			"name": "Scoped API - Enrollment Tokens",
+			"description": "Enrollment-only token administration using explicit enrollment_token scopes and API Basic Auth."
+		},
 		{
 			"name": "Scoped API - Hosts",
 			"description": "Endpoints using scoped credentials (Basic Auth, integration_type api)"
@@ -77,6 +383,558 @@
 		}
 	],
 	"paths": {
+		"/api/host-groups": {
+			"get": {
+				"tags": ["Scoped API - Host Groups"],
+				"summary": "List host groups",
+				"description": "Requires Basic Auth with an API integration credential (metadata.integration_type api) and the explicit host_group:get scope. Credential activation, expiration and IP restrictions apply. Stable group IDs are returned as id. Descriptions, including JSON serialized as a string, are returned unchanged. List records include _count.hosts.",
+				"security": [{ "basicAuth": [] }],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": { "$ref": "#/components/schemas/ScopedHostGroup" }
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Missing, invalid, disabled, expired or deleted API credential; enrollment-only credentials are not administrative credentials.",
+						"content": {
+							"application/json": { "example": { "error": "Invalid API key" } }
+						}
+					},
+					"403": {
+						"description": "Required scope is missing, the client IP is forbidden, or the target is a protected credential.",
+						"content": {
+							"application/json": {
+								"example": {
+									"error": "Access denied",
+									"message": "This API key does not have the required permissions"
+								}
+							}
+						}
+					},
+					"500": { "description": "Internal server error." }
+				}
+			},
+			"post": {
+				"tags": ["Scoped API - Host Groups"],
+				"summary": "Create a host group",
+				"description": "Requires Basic Auth with an API integration credential (metadata.integration_type api) and the explicit host_group:create scope. Credential activation, expiration and IP restrictions apply. Stable group IDs are returned as id. Descriptions, including JSON serialized as a string, are returned unchanged.",
+				"security": [{ "basicAuth": [] }],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": { "$ref": "#/components/schemas/ScopedHostGroupCreate" }
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Success",
+						"content": {
+							"application/json": {
+								"schema": { "$ref": "#/components/schemas/ScopedHostGroup" }
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request fields or forbidden scope/integration-type configuration.",
+						"content": {
+							"application/json": {
+								"example": { "error": "Invalid request body" }
+							}
+						}
+					},
+					"401": {
+						"description": "Missing, invalid, disabled, expired or deleted API credential; enrollment-only credentials are not administrative credentials.",
+						"content": {
+							"application/json": { "example": { "error": "Invalid API key" } }
+						}
+					},
+					"403": {
+						"description": "Required scope is missing, the client IP is forbidden, or the target is a protected credential.",
+						"content": {
+							"application/json": {
+								"example": {
+									"error": "Access denied",
+									"message": "This API key does not have the required permissions"
+								}
+							}
+						}
+					},
+					"500": { "description": "Internal server error." }
+				}
+			}
+		},
+		"/api/host-groups/{id}": {
+			"get": {
+				"tags": ["Scoped API - Host Groups"],
+				"summary": "Retrieve a host group",
+				"description": "Requires Basic Auth with an API integration credential (metadata.integration_type api) and the explicit host_group:get scope. Credential activation, expiration and IP restrictions apply. Stable group IDs are returned as id. Descriptions, including JSON serialized as a string, are returned unchanged.",
+				"security": [{ "basicAuth": [] }],
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "format": "uuid" }
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {
+							"application/json": {
+								"schema": { "$ref": "#/components/schemas/ScopedHostGroup" }
+							}
+						}
+					},
+					"401": {
+						"description": "Missing, invalid, disabled, expired or deleted API credential; enrollment-only credentials are not administrative credentials.",
+						"content": {
+							"application/json": { "example": { "error": "Invalid API key" } }
+						}
+					},
+					"403": {
+						"description": "Required scope is missing, the client IP is forbidden, or the target is a protected credential.",
+						"content": {
+							"application/json": {
+								"example": {
+									"error": "Access denied",
+									"message": "This API key does not have the required permissions"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Host group or enrollment token not found.",
+						"content": {
+							"application/json": {
+								"example": { "error": "Host group not found" }
+							}
+						}
+					},
+					"500": { "description": "Internal server error." }
+				}
+			},
+			"put": {
+				"tags": ["Scoped API - Host Groups"],
+				"summary": "Update a host group",
+				"description": "Requires Basic Auth with an API integration credential (metadata.integration_type api) and the explicit host_group:update scope. Credential activation, expiration and IP restrictions apply. Stable group IDs are returned as id. Descriptions, including JSON serialized as a string, are returned unchanged. Omitted fields, group identity and existing host memberships are preserved.",
+				"security": [{ "basicAuth": [] }],
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "format": "uuid" }
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": { "$ref": "#/components/schemas/ScopedHostGroupUpdate" }
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {
+							"application/json": {
+								"schema": { "$ref": "#/components/schemas/ScopedHostGroup" }
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request fields or forbidden scope/integration-type configuration.",
+						"content": {
+							"application/json": {
+								"example": { "error": "Invalid request body" }
+							}
+						}
+					},
+					"401": {
+						"description": "Missing, invalid, disabled, expired or deleted API credential; enrollment-only credentials are not administrative credentials.",
+						"content": {
+							"application/json": { "example": { "error": "Invalid API key" } }
+						}
+					},
+					"403": {
+						"description": "Required scope is missing, the client IP is forbidden, or the target is a protected credential.",
+						"content": {
+							"application/json": {
+								"example": {
+									"error": "Access denied",
+									"message": "This API key does not have the required permissions"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Host group or enrollment token not found.",
+						"content": {
+							"application/json": {
+								"example": { "error": "Host group not found" }
+							}
+						}
+					},
+					"500": { "description": "Internal server error." }
+				}
+			},
+			"delete": {
+				"tags": ["Scoped API - Host Groups"],
+				"summary": "Delete a host group",
+				"description": "Requires Basic Auth with an API integration credential (metadata.integration_type api) and the explicit host_group:delete scope. Credential activation, expiration and IP restrictions apply. Delete access must be granted explicitly.",
+				"security": [{ "basicAuth": [] }],
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "format": "uuid" }
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"message": {
+											"type": "string",
+											"example": "Host group deleted successfully"
+										}
+									}
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Missing, invalid, disabled, expired or deleted API credential; enrollment-only credentials are not administrative credentials.",
+						"content": {
+							"application/json": { "example": { "error": "Invalid API key" } }
+						}
+					},
+					"403": {
+						"description": "Required scope is missing, the client IP is forbidden, or the target is a protected credential.",
+						"content": {
+							"application/json": {
+								"example": {
+									"error": "Access denied",
+									"message": "This API key does not have the required permissions"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Host group or enrollment token not found.",
+						"content": {
+							"application/json": {
+								"example": { "error": "Host group not found" }
+							}
+						}
+					},
+					"500": { "description": "Internal server error." }
+				}
+			}
+		},
+		"/api/auto-enrollment/tokens": {
+			"get": {
+				"tags": ["Scoped API - Enrollment Tokens"],
+				"summary": "List enrollment-only tokens",
+				"description": "Requires Basic Auth with an API integration credential (metadata.integration_type api) and the explicit enrollment_token:get scope. Credential activation, expiration and IP restrictions apply. Only proxmox-lxc/direct-host enrollment tokens and legacy enrollment tokens without an integration_type are accessible. API and GetHomepage credentials cannot be managed. Protected credentials are filtered from the list. No token keys, plaintext secrets or secret hashes are returned.",
+				"security": [{ "basicAuth": [] }],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "array",
+									"items": {
+										"$ref": "#/components/schemas/ScopedEnrollmentToken"
+									}
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Missing, invalid, disabled, expired or deleted API credential; enrollment-only credentials are not administrative credentials.",
+						"content": {
+							"application/json": { "example": { "error": "Invalid API key" } }
+						}
+					},
+					"403": {
+						"description": "Required scope is missing, the client IP is forbidden, or the target is a protected credential.",
+						"content": {
+							"application/json": {
+								"example": {
+									"error": "Access denied",
+									"message": "This API key does not have the required permissions"
+								}
+							}
+						}
+					},
+					"500": { "description": "Internal server error." }
+				}
+			},
+			"post": {
+				"tags": ["Scoped API - Enrollment Tokens"],
+				"summary": "Create an enrollment-only token",
+				"description": "Requires Basic Auth with an API integration credential (metadata.integration_type api) and the explicit enrollment_token:create scope. Credential activation, expiration and IP restrictions apply. Only proxmox-lxc/direct-host enrollment tokens and legacy enrollment tokens without an integration_type are accessible. API and GetHomepage credentials cannot be managed. The key and plaintext secret are returned together once. Existing enrollment validation and bcrypt hashing are reused. The scopes field is rejected.",
+				"security": [{ "basicAuth": [] }],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/ScopedEnrollmentTokenCreate"
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Created. Save the plaintext token secret now.",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ScopedEnrollmentTokenCreated"
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request fields or forbidden scope/integration-type configuration.",
+						"content": {
+							"application/json": {
+								"example": { "error": "Invalid request body" }
+							}
+						}
+					},
+					"401": {
+						"description": "Missing, invalid, disabled, expired or deleted API credential; enrollment-only credentials are not administrative credentials.",
+						"content": {
+							"application/json": { "example": { "error": "Invalid API key" } }
+						}
+					},
+					"403": {
+						"description": "Required scope is missing, the client IP is forbidden, or the target is a protected credential.",
+						"content": {
+							"application/json": {
+								"example": {
+									"error": "Access denied",
+									"message": "This API key does not have the required permissions"
+								}
+							}
+						}
+					},
+					"500": { "description": "Internal server error." }
+				}
+			}
+		},
+		"/api/auto-enrollment/tokens/{tokenId}": {
+			"get": {
+				"tags": ["Scoped API - Enrollment Tokens"],
+				"summary": "Retrieve an enrollment-only token",
+				"description": "Requires Basic Auth with an API integration credential (metadata.integration_type api) and the explicit enrollment_token:get scope. Credential activation, expiration and IP restrictions apply. Only proxmox-lxc/direct-host enrollment tokens and legacy enrollment tokens without an integration_type are accessible. API and GetHomepage credentials cannot be managed. No token key, plaintext secret or secret hash is returned.",
+				"security": [{ "basicAuth": [] }],
+				"parameters": [
+					{
+						"name": "tokenId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "format": "uuid" }
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {
+							"application/json": {
+								"schema": {
+									"$ref": "#/components/schemas/ScopedEnrollmentToken"
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Missing, invalid, disabled, expired or deleted API credential; enrollment-only credentials are not administrative credentials.",
+						"content": {
+							"application/json": { "example": { "error": "Invalid API key" } }
+						}
+					},
+					"403": {
+						"description": "Required scope is missing, the client IP is forbidden, or the target is a protected credential.",
+						"content": {
+							"application/json": {
+								"example": {
+									"error": "Access denied",
+									"message": "This API key does not have the required permissions"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Host group or enrollment token not found.",
+						"content": {
+							"application/json": { "example": { "error": "Token not found" } }
+						}
+					},
+					"500": { "description": "Internal server error." }
+				}
+			},
+			"patch": {
+				"tags": ["Scoped API - Enrollment Tokens"],
+				"summary": "Update an enrollment-only token",
+				"description": "Requires Basic Auth with an API integration credential (metadata.integration_type api) and the explicit enrollment_token:update scope. Credential activation, expiration and IP restrictions apply. Only proxmox-lxc/direct-host enrollment tokens and legacy enrollment tokens without an integration_type are accessible. API and GetHomepage credentials cannot be managed. Set is_active false/true to revoke/reactivate. Metadata keys merge while preserving the integration type. Scope changes are rejected. Existing keys and secrets are never returned.",
+				"security": [{ "basicAuth": [] }],
+				"parameters": [
+					{
+						"name": "tokenId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "format": "uuid" }
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"$ref": "#/components/schemas/ScopedEnrollmentTokenUpdate"
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"message": {
+											"type": "string",
+											"example": "Token updated successfully"
+										},
+										"token": {
+											"$ref": "#/components/schemas/ScopedEnrollmentToken"
+										}
+									}
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request fields or forbidden scope/integration-type configuration.",
+						"content": {
+							"application/json": {
+								"example": { "error": "Invalid request body" }
+							}
+						}
+					},
+					"401": {
+						"description": "Missing, invalid, disabled, expired or deleted API credential; enrollment-only credentials are not administrative credentials.",
+						"content": {
+							"application/json": { "example": { "error": "Invalid API key" } }
+						}
+					},
+					"403": {
+						"description": "Required scope is missing, the client IP is forbidden, or the target is a protected credential.",
+						"content": {
+							"application/json": {
+								"example": {
+									"error": "Access denied",
+									"message": "This API key does not have the required permissions"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Host group or enrollment token not found.",
+						"content": {
+							"application/json": { "example": { "error": "Token not found" } }
+						}
+					},
+					"500": { "description": "Internal server error." }
+				}
+			},
+			"delete": {
+				"tags": ["Scoped API - Enrollment Tokens"],
+				"summary": "Delete an enrollment-only token",
+				"description": "Requires Basic Auth with an API integration credential (metadata.integration_type api) and the explicit enrollment_token:delete scope. Credential activation, expiration and IP restrictions apply. Only proxmox-lxc/direct-host enrollment tokens and legacy enrollment tokens without an integration_type are accessible. API and GetHomepage credentials cannot be managed. Delete access must be granted explicitly.",
+				"security": [{ "basicAuth": [] }],
+				"parameters": [
+					{
+						"name": "tokenId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "format": "uuid" }
+					}
+				],
+				"responses": {
+					"200": {
+						"description": "Success",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"message": {
+											"type": "string",
+											"example": "Auto-enrollment token deleted successfully"
+										},
+										"deleted_token": {
+											"type": "object",
+											"properties": {
+												"id": { "type": "string" },
+												"token_name": { "type": "string" }
+											}
+										}
+									}
+								}
+							}
+						}
+					},
+					"401": {
+						"description": "Missing, invalid, disabled, expired or deleted API credential; enrollment-only credentials are not administrative credentials.",
+						"content": {
+							"application/json": { "example": { "error": "Invalid API key" } }
+						}
+					},
+					"403": {
+						"description": "Required scope is missing, the client IP is forbidden, or the target is a protected credential.",
+						"content": {
+							"application/json": {
+								"example": {
+									"error": "Access denied",
+									"message": "This API key does not have the required permissions"
+								}
+							}
+						}
+					},
+					"404": {
+						"description": "Host group or enrollment token not found.",
+						"content": {
+							"application/json": { "example": { "error": "Token not found" } }
+						}
+					},
+					"500": { "description": "Internal server error." }
+				}
+			}
+		},
 		"/api/hosts": {
 			"get": {
 				"tags": ["Scoped API - Hosts"],

@@ -1,50 +1,111 @@
-# Development stage - run with go run, source can be volume-mounted for live reload
-FROM golang:1.26.10-alpine3.24 AS development
+# syntax=docker/dockerfile:1
 
-RUN apk add --no-cache git ca-certificates tzdata curl nodejs npm
+ARG GO_IMAGE=golang:1.26.10-alpine3.24
+ARG NODE_IMAGE=node:22-alpine3.24
+ARG VERSION=0.0.0
+# CI can reuse container-built release artifacts; local builds use source.
+ARG SERVER_SOURCE=server-builder
+ARG AGENT_SOURCE=agent-builder
 
-WORKDIR /app
+FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS frontend-builder
+WORKDIR /src
+COPY package.json package-lock.json ./
+COPY frontend/package.json ./frontend/package.json
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --workspace=frontend --include=dev --ignore-scripts
+COPY frontend/ ./frontend/
+RUN npm run build --workspace=frontend
 
-# Copy agent binaries (run `make build-all-for-docker` in agent-source-code if agents-prebuilt is missing).
-# Scripts are not copied: they are go:embed'ed into the server binary.
-COPY --chmod=755 agents-prebuilt/patchmon-agent-* ./agents/
+FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS go-builder
+RUN apk add --no-cache git ca-certificates
+ENV CGO_ENABLED=0
 
-# Build frontend for embed
-WORKDIR /app/frontend
-COPY frontend/package*.json ./
-RUN npm install --ignore-scripts --legacy-peer-deps 2>/dev/null || true
-COPY frontend/ ./
-RUN npm run build
-
-WORKDIR /app/server
-COPY server-source-code/ ./
-RUN mkdir -p cmd/server/static/frontend && cp -r /app/frontend/dist cmd/server/static/frontend/
-
+# All server image architectures bundle the same ten cross-compiled agents.
+FROM go-builder AS agent-builder
+WORKDIR /src/agent
+COPY agent-source-code/go.mod agent-source-code/go.sum ./
 RUN go mod download
+COPY agent-source-code/ ./
+ARG VERSION
+# Preserve linker metadata used to inspect agent versions across platforms.
+RUN --mount=type=cache,id=patchmon-agent-go-build,target=/root/.cache/go-build \
+    set -eu; \
+    mkdir -p /out/agents; \
+    for target in linux/amd64 linux/arm64 linux/386 linux/arm \
+                  freebsd/amd64 freebsd/arm64 freebsd/386 freebsd/arm \
+                  windows/amd64 windows/arm64; do \
+      target_os="${target%/*}"; target_arch="${target#*/}"; suffix=""; \
+      if [ "$target_os" = windows ]; then suffix=".exe"; fi; \
+      GOOS="$target_os" GOARCH="$target_arch" GOARM=6 \
+        go build -buildvcs=false \
+          -ldflags="-s -w -X patchmon-agent/internal/pkgversion.Version=${VERSION}" \
+          -o "/out/agents/patchmon-agent-${target_os}-${target_arch}${suffix}" ./cmd/patchmon-agent; \
+    done
 
-EXPOSE 3000
+# Export targets let CI publish these same binaries as release assets.
+FROM scratch AS agent-binaries
+COPY --from=agent-builder /out/agents/ /
 
-HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=5 \
-  CMD curl -f http://localhost:${PORT:-3000}/health || exit 1
+FROM go-builder AS server-source
+WORKDIR /src/server
+COPY server-source-code/go.mod server-source-code/go.sum ./
+RUN go mod download
+COPY server-source-code/ ./
+COPY --from=frontend-builder /src/frontend/dist ./cmd/server/static/frontend/dist
+COPY --chmod=755 docker/build-server.sh /usr/local/bin/build-patchmon-server
+ARG VERSION
+ARG GITHUB_STARS=""
+ARG DISCORD_MEMBERS=""
+ARG YOUTUBE_SUBSCRIBERS=""
+ARG LINKEDIN_FOLLOWERS=""
 
-# Default: run server. Override CMD or use volume mount for live reload
-ENV AGENTS_DIR=/app/agents
+# Compile natively for the requested image platform without compiler emulation.
+FROM server-source AS server-builder
+ARG TARGETOS
+ARG TARGETARCH
+ARG TARGETVARIANT
+RUN --mount=type=cache,id=patchmon-server-go-build,target=/root/.cache/go-build \
+    test "$TARGETOS" = linux \
+    && build-patchmon-server /out "$TARGETARCH"
+
+FROM server-source AS server-binaries-builder
+ARG SERVER_ARCHES="amd64 arm64"
+RUN --mount=type=cache,id=patchmon-server-go-build,target=/root/.cache/go-build \
+    build-patchmon-server /out "$SERVER_ARCHES"
+
+FROM scratch AS server-binaries
+COPY --from=server-binaries-builder /out/ /
+
+# Optional CI inputs: BuildKit skips these stages for normal source builds.
+FROM scratch AS agents-prebuilt
+COPY --chmod=755 agents-prebuilt/patchmon-agent-* /out/agents/
+
+FROM scratch AS server-prebuilt
+ARG TARGETARCH
+COPY --chmod=755 server-prebuilt/patchmon-server-linux-${TARGETARCH} /out/patchmon-server-linux-${TARGETARCH}
+
+FROM ${AGENT_SOURCE} AS agent-artifacts
+FROM ${SERVER_SOURCE} AS server-artifacts
+
+# Development retains Go and source on the requested runtime platform.
+FROM ${GO_IMAGE} AS development
+RUN apk add --no-cache git ca-certificates tzdata curl
+WORKDIR /app/server
+COPY server-source-code/go.mod server-source-code/go.sum ./
+RUN go mod download
+COPY server-source-code/ ./
+COPY --from=frontend-builder /src/frontend/dist ./cmd/server/static/frontend/dist
+COPY --from=agent-artifacts /out/agents/ /app/agents/
 ENV PORT=3000
+ENV AGENTS_DIR=/app/agents
+EXPOSE 3000
+HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=5 \
+    CMD curl -f http://localhost:${PORT:-3000}/health || exit 1
 CMD ["go", "run", "./cmd/server"]
 
-# SSG content stage — download ComplianceAsCode datastream files at build time.
-# Pass --build-arg SSG_VERSION=0.1.80 to pin a specific version; otherwise
-# the latest GitHub release is resolved automatically.
-#
-# Pinned to $BUILDPLATFORM for the same reason as frontend-builder: the payload
-# is ssg-*-ds.xml datastream files, which are architecture-independent. Left
-# unpinned, this stage downloaded and unpacked the same ~30s archive once per
-# target platform, and did the unpacking under QEMU for the non-native one.
+# SCAP datastreams are architecture-independent and downloaded only once.
 FROM --platform=$BUILDPLATFORM alpine:3.24 AS ssg-content
 ARG SSG_VERSION=""
-# Use shell variable VER to avoid Docker ARG substitution in the wget URL.
-# Docker substitutes ${SSG_VERSION} at parse time; when empty, the URL would be
-# .../v/scap-security-guide-.zip. VER is set once from ARG, then expanded by the shell.
 RUN apk add --no-cache wget unzip jq \
     && VER="${SSG_VERSION}" \
     && if [ -z "${VER}" ]; then \
@@ -54,7 +115,7 @@ RUN apk add --no-cache wget unzip jq \
          echo "Using pinned SSG version: ${VER}"; \
        fi \
     && if [ -z "${VER}" ] || [ "${VER}" = "null" ]; then \
-         echo "ERROR: Could not resolve SSG version (GitHub API may be rate-limited). Pass --build-arg SSG_VERSION=x.y.z to pin." >&2; exit 1; \
+         echo "ERROR: Could not resolve SSG version. Pass --build-arg SSG_VERSION=x.y.z to pin." >&2; exit 1; \
        fi \
     && wget -q "https://github.com/ComplianceAsCode/content/releases/download/v${VER}/scap-security-guide-${VER}.zip" -O /tmp/ssg.zip \
     && mkdir -p /tmp/ssg-extract /ssg-content \
@@ -63,38 +124,20 @@ RUN apk add --no-cache wget unzip jq \
     && echo "${VER}" > /ssg-content/.ssg-version \
     && rm -rf /tmp/ssg.zip /tmp/ssg-extract
 
-# Production stage — hardened Alpine runtime (no -dev; no shell/apk). Use 3.24 for production.
-FROM dhi.io/alpine-base:3.24
-
-# Runtime image has no apk; ca-certificates/tzdata are in the base. No RUN needed.
-
+# Runtime has the compiled payload and the shell/wget used by startup/health.
+FROM alpine:3.24 AS production
+RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
-
-# Prebuilt by CI or by docker/build.sh, the same way agents-prebuilt/ is. The
-# version, community counts, frontend and release notes are all baked in at
-# compile time, so this image and the release assets are the same binary.
 ARG TARGETARCH
-COPY --chmod=755 server-prebuilt/patchmon-server-linux-${TARGETARCH} ./patchmon-server
-
-# Copy SSG content (SCAP datastream files for compliance scanning)
+COPY --from=server-artifacts --chmod=755 /out/patchmon-server-linux-${TARGETARCH} ./patchmon-server
+COPY --from=agent-artifacts --chmod=755 /out/agents/ ./agents/
 COPY --from=ssg-content /ssg-content ./ssg-content/
-
-# Copy agent binaries to /app/agents (in-image, read-only; no volume).
-# Scripts are not copied: they are go:embed'ed into the server binary.
-COPY --chmod=755 agents-prebuilt/patchmon-agent-* ./agents/
-
-# Entrypoint starts server (no volume copy; agents served from image)
 COPY --chmod=755 docker/backend.docker-entrypoint.sh ./entrypoint.sh
-
 ENV PORT=3000
 ENV AGENTS_DIR=/app/agents
 ENV SSG_CONTENT_DIR=/app/ssg-content
-# Cap Go heap to reduce RAM (override at runtime if needed, e.g. GOMEMLIMIT=128MiB)
 ENV GOMEMLIMIT=256MiB
-
 EXPOSE 3000
-
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=5 \
-  CMD wget -q -O /dev/null http://localhost:${PORT:-3000}/health || exit 1
-
+    CMD wget -q -O /dev/null http://localhost:${PORT:-3000}/health || exit 1
 ENTRYPOINT ["./entrypoint.sh"]

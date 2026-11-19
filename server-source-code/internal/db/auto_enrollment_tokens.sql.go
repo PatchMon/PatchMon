@@ -293,8 +293,9 @@ UPDATE auto_enrollment_tokens SET
     expires_at = $5,
     default_host_group_id = $6,
     scopes = $7,
-    updated_at = $8
-WHERE id = $9
+    metadata = $8,
+    updated_at = $9
+WHERE id = $10
 `
 
 type UpdateAutoEnrollmentTokenParams struct {
@@ -305,6 +306,7 @@ type UpdateAutoEnrollmentTokenParams struct {
 	ExpiresAt          pgtype.Timestamp `json:"expires_at"`
 	DefaultHostGroupID *string          `json:"default_host_group_id"`
 	Scopes             []byte           `json:"scopes"`
+	Metadata           []byte           `json:"metadata"`
 	UpdatedAt          pgtype.Timestamp `json:"updated_at"`
 	ID                 string           `json:"id"`
 }
@@ -318,6 +320,7 @@ func (q *Queries) UpdateAutoEnrollmentToken(ctx context.Context, arg UpdateAutoE
 		arg.ExpiresAt,
 		arg.DefaultHostGroupID,
 		arg.Scopes,
+		arg.Metadata,
 		arg.UpdatedAt,
 		arg.ID,
 	)
