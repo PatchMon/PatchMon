@@ -17,7 +17,7 @@ func RequireApiScope(resource, action string) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Only validate scopes for API type tokens (metadata already checked in ApiAuth)
+			// Fail closed even if this middleware is used without ApiAuth.
 			var metadata struct {
 				IntegrationType string `json:"integration_type"`
 			}
@@ -25,7 +25,7 @@ func RequireApiScope(resource, action string) func(http.Handler) http.Handler {
 				_ = json.Unmarshal(token.Metadata, &metadata)
 			}
 			if metadata.IntegrationType != "api" {
-				next.ServeHTTP(w, r)
+				apiError(w, http.StatusUnauthorized, "Invalid API key type")
 				return
 			}
 
