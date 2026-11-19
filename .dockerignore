@@ -40,10 +40,10 @@
 **/*.prof
 **/patchmon-server
 **/patchmon-server-*
-# Prebuilt server binaries are the image's payload; the rule above would drop them.
+# Optional CI artifacts exported by container builds; ordinary builds use source.
 !server-prebuilt/patchmon-server-linux-*
-# Exclude agent binaries from agents/ (they're copied from agents-prebuilt/ instead)
-# but keep agents/ scripts (install, remove, etc.)
+# Agents are built in a container or supplied explicitly as CI artifacts.
+# Installation scripts are embedded from server-source-code/internal/agents/.
 agents/patchmon-agent-*
 
 # Temporary files
