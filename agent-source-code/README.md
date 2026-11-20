@@ -122,6 +122,8 @@ integrations:
     docker_bench_enabled: false
   ssh-proxy-enabled: false
   rdp-proxy-enabled: false
+remote_actions:
+  enabled: true
 ```
 
 | Field | Description |
@@ -136,6 +138,7 @@ integrations:
 | `skip_ssl_verify` | Skip TLS verification (for self-signed or internal CA certs) |
 | `integrations` | Toggle integrations on/off (synced from server) |
 | `compliance.scan_interval` | Compliance scan interval in minutes (default 1440 = 24h, min 60, max 10080). Runs independently from the report timer. |
+| `remote_actions.enabled` | Whether the server may change this host (default `true`). With `false` the agent refuses patch runs (dry runs still work), agent self-updates from the server, scanner installs, SSG upgrades, rule remediation (a compliance scan then runs without it) and pushed config, and keeps reporting. Only an edit of this file changes it; the server cannot. The local `update-agent` command still works. |
 
 ### Example Credentials File
 
