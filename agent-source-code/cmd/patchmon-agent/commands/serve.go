@@ -505,6 +505,11 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 				logger.Info("Running Docker image update check on server request...")
 				go triggerDockerImageCheck(ctx)
 			case "run_patch":
+				// A dry run only simulates, so it stays allowed.
+				if !m.dryRun && remoteActionRefused("run_patch") {
+					go rejectPatchRun(m.patchRunID, msgRemoteActionsDisabled)
+					break
+				}
 				endPatchRun, ok := beginPatchRun()
 				if !ok {
 					go rejectPatchRun(m.patchRunID, msgAgentUpdating)
@@ -528,6 +533,9 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					}
 				}(m)
 			case "compliance_scan":
+				if m.enableRemediation && remoteActionRefused("compliance_scan remediation") {
+					m.enableRemediation = false
+				}
 				logger.WithFields(logutil.SanitizeMap(map[string]interface{}{
 					"profile_type":       m.profileType,
 					"profile_id":         m.profileID,
@@ -640,6 +648,9 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					logger.WithField("patch_run_id", logutil.Sanitize(m.patchRunID)).Debug("Patch run stop requested but no matching run is active")
 				}
 			case "upgrade_ssg":
+				if remoteActionRefused("upgrade_ssg") {
+					break
+				}
 				targetVersion := m.version
 				logger.WithField("target_version", targetVersion).Info("Upgrading SSG content packages...")
 				go func() {
@@ -659,6 +670,8 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					defer finishInstallScanner()
 					if err := runInstallScanner(); errors.Is(err, errComplianceDisabled) {
 						logger.Info("Install scanner refused: compliance is disabled in config.yml")
+					} else if errors.Is(err, errRemoteActionsDisabled) {
+						logger.Info("Install scanner refused: remote actions are disabled in config.yml")
 					} else if err != nil {
 						logger.WithError(err).Warn("install_scanner failed")
 					} else {
@@ -666,6 +679,9 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					}
 				}()
 			case "remediate_rule":
+				if remoteActionRefused("remediate_rule") {
+					break
+				}
 				logger.WithField("rule_id", logutil.Sanitize(m.ruleID)).Info("Remediating single rule...")
 				go func(ruleID, profileID string) {
 					if err := remediateSingleRule(ruleID, profileID); err != nil {
@@ -688,6 +704,9 @@ func runServiceLoop(stopCh <-chan struct{}) error {
 					}
 				}(m)
 			case "apply_config":
+				if remoteActionRefused("apply_config") {
+					break
+				}
 				if err := applyConfig(m.applyConfig); err != nil {
 					logger.WithError(err).Warn("apply_config failed")
 				} else {
@@ -948,6 +967,11 @@ func runInstallScanner() error {
 		addEvent("complete", "failed", installRefusedMessage)
 		sendStatus("disabled", installRefusedMessage, nil)
 		return errComplianceDisabled
+	}
+	if remoteActionRefused("install_scanner") {
+		addEvent("complete", "failed", msgRemoteActionsDisabled)
+		sendStatus("failed", msgRemoteActionsDisabled, nil)
+		return errRemoteActionsDisabled
 	}
 
 	// Step 1: Detect OS

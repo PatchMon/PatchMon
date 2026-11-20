@@ -504,6 +504,9 @@ func (m *Manager) saveConfigLocked() error {
 	configViper.Set("apt", map[string]interface{}{
 		"disable_retries": m.aptDisableRetriesLocked(),
 	})
+	configViper.Set("remote_actions", map[string]interface{}{
+		"enabled": m.remoteActionsEnabledLocked(),
+	})
 
 	return writeConfigAtomically(configViper, m.configFile)
 }
@@ -764,6 +767,18 @@ func (m *Manager) GetAptDisableRetries() bool {
 
 func (m *Manager) aptDisableRetriesLocked() bool {
 	return m.config.Apt.DisableRetries == nil || *m.config.Apt.DisableRetries
+}
+
+// GetRemoteActionsEnabled defaults to true when the key is absent. There is no setter:
+// only an edit of config.yml on the host turns remote actions off or back on.
+func (m *Manager) GetRemoteActionsEnabled() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.remoteActionsEnabledLocked()
+}
+
+func (m *Manager) remoteActionsEnabledLocked() bool {
+	return m.config.RemoteActions.Enabled == nil || *m.config.RemoteActions.Enabled
 }
 
 // IsIntegrationEnabled checks if an integration is enabled

@@ -399,12 +399,21 @@ type Config struct {
 	DockerUpdateCheck         DockerUpdateCheckConfig `yaml:"docker_update_check" mapstructure:"docker_update_check"`
 	APKSecDB                  APKSecDBConfig          `yaml:"apk_secdb" mapstructure:"apk_secdb"`
 	Apt                       AptConfig               `yaml:"apt" mapstructure:"apt"`
+	RemoteActions             RemoteActionsConfig     `yaml:"remote_actions" mapstructure:"remote_actions"`
 	HostID                    string                  `yaml:"host_id" mapstructure:"host_id"`
 	ConfigVersion             string                  `yaml:"config_version" mapstructure:"config_version"`
 }
 
 // APKSecDBConfig controls the Alpine secdb lookup that flags security updates.
 type APKSecDBConfig struct {
+	Enabled *bool `yaml:"enabled" mapstructure:"enabled"`
+}
+
+// RemoteActionsConfig controls whether the server may change this host: patch runs,
+// agent self-updates, compliance installs and remediation, and pushed config. Only
+// config.yml sets it; nothing the server sends can.
+type RemoteActionsConfig struct {
+	// nil means true.
 	Enabled *bool `yaml:"enabled" mapstructure:"enabled"`
 }
 

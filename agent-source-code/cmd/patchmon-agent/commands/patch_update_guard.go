@@ -50,6 +50,9 @@ func beginPatchRun() (end func(), ok bool) {
 
 // updateAgentUnlessPatching updates the agent now, or defers it while a patch run is active.
 func updateAgentUnlessPatching() (deferred bool, err error) {
+	if remoteActionRefused("update_agent") {
+		return false, errRemoteActionsDisabled
+	}
 	patchUpdateMu.Lock()
 	if activePatchRuns > 0 {
 		agentUpdateDeferred = true
