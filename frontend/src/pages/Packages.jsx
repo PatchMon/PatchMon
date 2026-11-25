@@ -1123,6 +1123,27 @@ const Packages = () => {
 							<>
 								{/* Mobile Card Layout */}
 								<div className="md:hidden space-y-3 pb-4">
+									<button
+										type="button"
+										onClick={handleSelectAllOnPage}
+										disabled={selectableOnPage.length === 0}
+										className="btn-outline min-h-[44px] inline-flex items-center gap-2 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+									>
+										{allSelectableOnPageSelected ? (
+											<CheckSquare
+												aria-hidden="true"
+												className="h-5 w-5 text-primary-600"
+											/>
+										) : (
+											<Square
+												aria-hidden="true"
+												className="h-5 w-5 text-secondary-400"
+											/>
+										)}
+										{allSelectableOnPageSelected
+											? "Deselect all on page"
+											: "Select all on page"}
+									</button>
 									{paginatedPackages.map((pkg) => {
 										const isSelected = selectedPackages.includes(pkg.name);
 										return (
