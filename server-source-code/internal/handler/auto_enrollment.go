@@ -25,7 +25,6 @@ import (
 	"github.com/PatchMon/PatchMon/server-source-code/internal/util"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -50,10 +49,15 @@ type AutoEnrollmentHandler struct {
 	presence   agentPresence
 	log        *slog.Logger
 	cfg        *config.Config
+	audit      *store.AuditLogsStore
 }
 
 func NewAutoEnrollmentHandler(tokens *store.AutoEnrollmentStore, hostGroups *store.HostGroupsStore, hosts *store.HostsStore, settings *store.SettingsStore, presence agentPresence, log *slog.Logger, cfg *config.Config) *AutoEnrollmentHandler {
 	return &AutoEnrollmentHandler{tokens: tokens, hostGroups: hostGroups, hosts: hosts, settings: settings, presence: presence, log: log, cfg: cfg}
+}
+
+func (h *AutoEnrollmentHandler) SetAuditLogs(audit *store.AuditLogsStore) {
+	h.audit = audit
 }
 
 // List handles GET /auto-enrollment/tokens
@@ -66,9 +70,12 @@ func (h *AutoEnrollmentHandler) List(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to list tokens")
 		return
 	}
-	items := make([]store.TokenListItem, len(rows))
-	for i, row := range rows {
-		items[i] = store.RowToTokenListItem(row)
+	items := make([]store.TokenListItem, 0, len(rows))
+	for _, row := range rows {
+		if middleware.GetApiToken(r.Context()) != nil && !isEnrollmentToken(row.Metadata) {
+			continue
+		}
+		items = append(items, enrollmentTokenResponse(r, store.RowToTokenListItem(row)))
 	}
 	JSON(w, http.StatusOK, items)
 }
@@ -81,7 +88,10 @@ func (h *AutoEnrollmentHandler) GetByID(w http.ResponseWriter, r *http.Request) 
 		Error(w, http.StatusNotFound, "Token not found")
 		return
 	}
-	JSON(w, http.StatusOK, store.IDRowToTokenListItem(row))
+	if !allowEnrollmentTokenManagement(w, r, row.Metadata) {
+		return
+	}
+	JSON(w, http.StatusOK, enrollmentTokenResponse(r, store.IDRowToTokenListItem(row)))
 }
 
 // Create handles POST /auto-enrollment/tokens
@@ -103,6 +113,19 @@ func (h *AutoEnrollmentHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "Token name is required (max 255 characters)")
 		return
 	}
+	if middleware.GetApiToken(r.Context()) != nil && len(req.Scopes) > 0 {
+		Error(w, http.StatusForbidden, "Scoped credentials cannot assign API permissions")
+		return
+	}
+	if err := validateEnrollmentConfig(req.MaxHostsPerDay, req.AllowedIPRanges); err != nil {
+		Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	expiresAt, err := parseEnrollmentExpiration(req.ExpiresAt)
+	if err != nil {
+		Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	if req.DefaultHostGroupID != nil && *req.DefaultHostGroupID != "" {
 		if _, err := h.hostGroups.GetByID(r.Context(), *req.DefaultHostGroupID); err != nil {
@@ -112,17 +135,18 @@ func (h *AutoEnrollmentHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse metadata to check integration_type for scope validation
-	var metaMap map[string]interface{}
-	if len(req.Metadata) > 0 {
-		_ = json.Unmarshal(req.Metadata, &metaMap)
-	}
-	if metaMap == nil {
-		metaMap = map[string]interface{}{}
+	metaMap, err := enrollmentMetadata(req.Metadata)
+	if err != nil {
+		Error(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	if _, ok := metaMap["integration_type"]; !ok {
 		metaMap["integration_type"] = "proxmox-lxc"
 	}
 	metadataBytes, _ := json.Marshal(metaMap)
+	if !allowEnrollmentTokenManagement(w, r, metadataBytes) {
+		return
+	}
 
 	integrationType, _ := metaMap["integration_type"].(string)
 
@@ -150,18 +174,8 @@ func (h *AutoEnrollmentHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	maxHostsPerDay := int32(100)
-	if req.MaxHostsPerDay != nil && *req.MaxHostsPerDay >= 1 && *req.MaxHostsPerDay <= 1000 {
+	if req.MaxHostsPerDay != nil {
 		maxHostsPerDay = *req.MaxHostsPerDay
-	}
-
-	var expiresAt pgtype.Timestamp
-	if req.ExpiresAt != nil && *req.ExpiresAt != "" {
-		// Support both RFC3339 and datetime-local format (e.g. "2026-03-15T10:00")
-		if t, err := time.Parse(time.RFC3339, *req.ExpiresAt); err == nil {
-			expiresAt = pgtime.From(t)
-		} else if t, err := time.Parse("2006-01-02T15:04", *req.ExpiresAt); err == nil {
-			expiresAt = pgtime.From(t)
-		}
 	}
 
 	allowedIPRanges := req.AllowedIPRanges
@@ -209,6 +223,7 @@ func (h *AutoEnrollmentHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, msg)
 		return
 	}
+	recordResourceAudit(r, h.audit, "enrollment_token", id, "created")
 
 	// Fetch back with joins so we have host_groups and users in response
 	row, err := h.tokens.GetByID(r.Context(), id)
@@ -244,18 +259,26 @@ func (h *AutoEnrollmentHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusNotFound, "Token not found")
 		return
 	}
+	if !allowEnrollmentTokenManagement(w, r, existing.Metadata) {
+		return
+	}
 
 	var req struct {
 		TokenName          *string         `json:"token_name"`
 		IsActive           *bool           `json:"is_active"`
 		MaxHostsPerDay     *int32          `json:"max_hosts_per_day"`
 		AllowedIPRanges    *[]string       `json:"allowed_ip_ranges"`
-		ExpiresAt          *string         `json:"expires_at"`
-		DefaultHostGroupID *string         `json:"default_host_group_id"`
+		ExpiresAt          json.RawMessage `json:"expires_at"`
+		DefaultHostGroupID json.RawMessage `json:"default_host_group_id"`
 		Scopes             json.RawMessage `json:"scopes"`
+		Metadata           json.RawMessage `json:"metadata"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		Error(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if middleware.GetApiToken(r.Context()) != nil && len(req.Scopes) > 0 {
+		Error(w, http.StatusForbidden, "Scoped credentials cannot assign API permissions")
 		return
 	}
 
@@ -267,6 +290,17 @@ func (h *AutoEnrollmentHandler) Update(w http.ResponseWriter, r *http.Request) {
 	expiresAt := existing.ExpiresAt
 	hostGroupID := existing.DefaultHostGroupID
 	scopes := existing.Scopes
+	metadata := existing.Metadata
+	if len(req.Metadata) > 0 {
+		metadata, err = mergeEnrollmentMetadata(existing.Metadata, req.Metadata)
+		if err != nil {
+			Error(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if !allowEnrollmentTokenManagement(w, r, metadata) {
+			return
+		}
+	}
 
 	if req.TokenName != nil {
 		if *req.TokenName == "" || len(*req.TokenName) > 255 {
@@ -279,31 +313,37 @@ func (h *AutoEnrollmentHandler) Update(w http.ResponseWriter, r *http.Request) {
 		isActive = *req.IsActive
 	}
 	if req.MaxHostsPerDay != nil {
-		if *req.MaxHostsPerDay < 1 || *req.MaxHostsPerDay > 1000 {
-			Error(w, http.StatusBadRequest, "Max hosts per day must be between 1 and 1000")
-			return
-		}
 		maxHostsPerDay = *req.MaxHostsPerDay
 	}
 	if req.AllowedIPRanges != nil {
 		allowedIPRanges = *req.AllowedIPRanges
 	}
-	if req.ExpiresAt != nil {
-		if *req.ExpiresAt == "" {
-			expiresAt = pgtype.Timestamp{}
-		} else if t, err := time.Parse(time.RFC3339, *req.ExpiresAt); err == nil {
-			expiresAt = pgtime.From(t)
+	if len(req.ExpiresAt) > 0 {
+		var value *string
+		if err := json.Unmarshal(req.ExpiresAt, &value); err != nil {
+			Error(w, http.StatusBadRequest, "Expiration must be a date string or null")
+			return
+		}
+		expiresAt, err = parseEnrollmentExpiration(value)
+		if err != nil {
+			Error(w, http.StatusBadRequest, err.Error())
+			return
 		}
 	}
-	if req.DefaultHostGroupID != nil {
-		if *req.DefaultHostGroupID == "" {
+	if len(req.DefaultHostGroupID) > 0 {
+		var value *string
+		if err := json.Unmarshal(req.DefaultHostGroupID, &value); err != nil {
+			Error(w, http.StatusBadRequest, "Host group ID must be a string or null")
+			return
+		}
+		if value == nil || *value == "" {
 			hostGroupID = nil
 		} else {
-			if _, err := h.hostGroups.GetByID(r.Context(), *req.DefaultHostGroupID); err != nil {
+			if _, err := h.hostGroups.GetByID(r.Context(), *value); err != nil {
 				Error(w, http.StatusBadRequest, "Host group not found")
 				return
 			}
-			hostGroupID = req.DefaultHostGroupID
+			hostGroupID = value
 		}
 	}
 
@@ -327,6 +367,10 @@ func (h *AutoEnrollmentHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if allowedIPRanges == nil {
 		allowedIPRanges = []string{}
 	}
+	if err := validateEnrollmentConfig(req.MaxHostsPerDay, allowedIPRanges); err != nil {
+		Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	now := pgtime.Now()
 	err = h.tokens.Update(r.Context(), db.UpdateAutoEnrollmentTokenParams{
@@ -337,6 +381,7 @@ func (h *AutoEnrollmentHandler) Update(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:          expiresAt,
 		DefaultHostGroupID: hostGroupID,
 		Scopes:             scopes,
+		Metadata:           metadata,
 		UpdatedAt:          now,
 		ID:                 tokenID,
 	})
@@ -344,6 +389,7 @@ func (h *AutoEnrollmentHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to update token")
 		return
 	}
+	recordResourceAudit(r, h.audit, "enrollment_token", tokenID, "updated")
 
 	row, err := h.tokens.GetByID(r.Context(), tokenID)
 	if err != nil {
@@ -354,7 +400,7 @@ func (h *AutoEnrollmentHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Token updated successfully",
-		"token":   item,
+		"token":   enrollmentTokenResponse(r, item),
 	})
 }
 
@@ -367,12 +413,16 @@ func (h *AutoEnrollmentHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusNotFound, "Token not found")
 		return
 	}
+	if !allowEnrollmentTokenManagement(w, r, existing.Metadata) {
+		return
+	}
 
 	if err := h.tokens.Delete(r.Context(), tokenID); err != nil {
 		Error(w, http.StatusInternalServerError, "Failed to delete token")
 		return
 	}
 
+	recordResourceAudit(r, h.audit, "enrollment_token", tokenID, "deleted")
 	JSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Auto-enrollment token deleted successfully",
 		"deleted_token": map[string]string{
@@ -951,26 +1001,3 @@ func generateEnrollmentCredentials() (tokenKey, tokenSecret, hashedSecret string
 	}
 	return tokenKey, tokenSecret, string(hash), nil
 }
-
-func validateScopes(raw json.RawMessage) error {
-	var scopes map[string]interface{}
-	if err := json.Unmarshal(raw, &scopes); err != nil {
-		return &scopeError{"Scopes must be an object"}
-	}
-	for resource, actions := range scopes {
-		arr, ok := actions.([]interface{})
-		if !ok {
-			return &scopeError{"Scopes for resource \"" + resource + "\" must be an array of actions"}
-		}
-		for _, a := range arr {
-			if _, ok := a.(string); !ok {
-				return &scopeError{"All actions in scopes must be strings"}
-			}
-		}
-	}
-	return nil
-}
-
-type scopeError struct{ msg string }
-
-func (e *scopeError) Error() string { return e.msg }

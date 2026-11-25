@@ -66,7 +66,7 @@ func (s *AutoEnrollmentStore) Delete(ctx context.Context, id string) error {
 type TokenListItem struct {
 	ID                 string          `json:"id"`
 	TokenName          string          `json:"token_name"`
-	TokenKey           string          `json:"token_key"`
+	TokenKey           string          `json:"token_key,omitempty"`
 	IsActive           bool            `json:"is_active"`
 	AllowedIPRanges    []string        `json:"allowed_ip_ranges"`
 	MaxHostsPerDay     int32           `json:"max_hosts_per_day"`

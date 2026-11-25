@@ -133,7 +133,7 @@ Looking for a starting point? Check issues labelled [`good first issue`](https:/
 | `agent-source-code/` | Go agent (Linux, FreeBSD, Windows) |
 | `frontend/` | React + Vite frontend, bundled into the server binary |
 | `docker/` | Dockerfiles and compose files |
-| `agents/` | Prebuilt agent binaries and install/remove scripts |
+| `server-source-code/internal/agents/` | Install/remove scripts embedded into the server |
 | `tools/` | Developer tooling |
 
 ---
@@ -141,6 +141,10 @@ Looking for a starting point? Check issues labelled [`good first issue`](https:/
 ## Development Environment
 
 ### Prerequisites
+
+For container builds and the complete development stack, install **Docker with BuildKit** and **Docker Compose**. The image builds Go code and the frontend in containers, so Go, Node.js, npm and Make are not required on the host. The optional `docker/build.sh` wrapper also uses Bash and Git (Git is unnecessary with an explicit `--version`).
+
+For running components directly on the host:
 
 - **Go** 1.26+
 - **Node.js** 22+
@@ -190,29 +194,33 @@ make build-all      # Build all platforms
 ./docker/build.sh                    # builds patchmon-server:local
 ./docker/build.sh --tag mytag        # custom image tag
 ./docker/build.sh --version 2.0.1    # pin the version it reports
+./docker/build.sh --platform linux/arm64 # cross-build a single-platform image
 ```
 
-Use this rather than calling `docker build` directly. The git tag is the only
-place a version is declared: no source file contains one, so the version has to
-be passed into the image as a build arg, and `.dockerignore` excludes `.git` so
-the Dockerfile cannot work it out for itself. `docker/build.sh` derives it from
-`git describe --tags --abbrev=0` and passes it through, along with building the
-agent binaries the image bundles.
+The wrapper resolves the version with `git describe --tags --abbrev=0` and passes
+it to Docker. All compilation happens in the multi-stage Dockerfile: Node builds
+the frontend, Go embeds it into the server, and a separate Go builder cross-compiles
+the ten Linux, FreeBSD and Windows agents. The runtime image receives the compiled
+server, agent binaries and compliance content. BuildKit caches dependencies and
+compilation between builds; no local `node_modules`, `dist`, `agents-prebuilt/`
+or `server-prebuilt/` directory is needed or generated.
 
-If you would rather drive `docker build` yourself:
+You can also build directly from a clean checkout:
 
 ```bash
 docker build -f docker/server.Dockerfile \
-  --build-arg VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')" \
+  --build-arg VERSION=2.0.1 \
   -t patchmon-server:local .
 ```
 
-Only bare `MAJOR.MINOR.PATCH` is accepted. The server parses versions as
-dot-separated integers and discards parse errors, so anything with a suffix
-(`2.0.2-60-gabc1234`, `dev`) silently reads as `2.0.0` and makes the instance
-think an update is available. The build rejects those rather than letting it
-through. Omitting `VERSION` entirely builds an image reporting `0.0.0`, which is
-a deliberate signal that the version was never injected.
+The wrapper accepts bare `MAJOR.MINOR.PATCH` versions; release automation supplies
+its own version metadata. Omitting `VERSION` in a direct Docker build uses `0.0.0`,
+which indicates an unstamped local build. `.dockerignore` excludes `.git`, so the
+Dockerfile cannot discover the tag itself.
+
+`--skip-agents` is an optional compatibility path for reusing all ten binaries
+already staged in `agents-prebuilt/`. Normal builds compile the agents in Docker
+and reuse the BuildKit cache automatically.
 
 The version is worked out with `git describe`, which walks back through history
 to find the nearest tag. A shallow clone (`git clone --depth 1`) has no history

@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { Link } from "react-router-dom";
+import ApiScopeSelector from "../../components/settings/ApiScopeSelector";
 import ModalPortal from "../../components/ui/ModalPortal";
 import { useConfirm } from "../../contexts/ConfirmContext";
 import { useToast } from "../../contexts/ToastContext";
@@ -146,6 +147,15 @@ function CheckmkExportButton({ include_additional_fields }) {
 	);
 }
 
+const empty_token_form = () => ({
+	token_name: "",
+	max_hosts_per_day: 100,
+	default_host_group_id: "",
+	allowed_ip_ranges: "",
+	expires_at: "",
+	scopes: { host: [] },
+});
+
 const Integrations = () => {
 	const confirm = useConfirm();
 	const toast = useToast();
@@ -173,16 +183,7 @@ const Integrations = () => {
 	const _queryClient = useQueryClient();
 
 	// Form state
-	const [form_data, setFormData] = useState({
-		token_name: "",
-		max_hosts_per_day: 100,
-		default_host_group_id: "",
-		allowed_ip_ranges: "",
-		expires_at: "",
-		scopes: {
-			host: [],
-		},
-	});
+	const [form_data, setFormData] = useState(empty_token_form);
 
 	const [copy_success, setCopySuccess] = useState({});
 	const [checkmk_additional_fields, setCheckmkAdditionalFields] =
@@ -304,16 +305,7 @@ const Integrations = () => {
 			// Keep usage_type so the success modal can use it
 
 			// Reset form
-			setFormData({
-				token_name: "",
-				max_hosts_per_day: 100,
-				default_host_group_id: "",
-				allowed_ip_ranges: "",
-				expires_at: "",
-				scopes: {
-					host: [],
-				},
-			});
+			setFormData(empty_token_form());
 		} catch (error) {
 			console.error("Failed to create token:", error);
 			console.error("Server response:", error.response?.data);
@@ -407,16 +399,7 @@ const Integrations = () => {
 			load_tokens();
 
 			// Reset form
-			setFormData({
-				token_name: "",
-				max_hosts_per_day: 100,
-				default_host_group_id: "",
-				allowed_ip_ranges: "",
-				expires_at: "",
-				scopes: {
-					host: [],
-				},
-			});
+			setFormData(empty_token_form());
 		} catch (error) {
 			console.error("Failed to update token:", error);
 			const error_message = error.response?.data?.errors
@@ -1106,7 +1089,10 @@ const Integrations = () => {
 								</div>
 								<button
 									type="button"
-									onClick={() => setShowCreateModal(true)}
+									onClick={() => {
+										setFormData(empty_token_form());
+										setShowCreateModal(true);
+									}}
 									className="btn-primary flex items-center gap-2 w-full sm:w-auto justify-center sm:justify-start"
 								>
 									<Plus className="h-4 w-4" />
@@ -1887,47 +1873,10 @@ const Integrations = () => {
 											<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
 												Scopes *
 											</span>
-											<div className="border border-secondary-300 dark:border-secondary-600 rounded-md p-4 bg-secondary-50 dark:bg-secondary-900">
-												<div className="mb-3">
-													<p className="text-xs font-semibold text-secondary-700 dark:text-white mb-2">
-														Host Permissions
-													</p>
-													<div className="space-y-2">
-														{["get", "put", "patch", "update", "delete"].map(
-															(action) => (
-																<label
-																	key={action}
-																	className="flex items-center gap-2"
-																>
-																	<input
-																		type="checkbox"
-																		checked={
-																			form_data.scopes?.host?.includes(
-																				action,
-																			) || false
-																		}
-																		onChange={() =>
-																			toggle_scope_action("host", action)
-																		}
-																		className="rounded border-secondary-300 dark:border-secondary-600 text-primary-600 focus:ring-primary-500 dark:focus:ring-primary-400"
-																	/>
-																	<span className="text-sm text-secondary-700 dark:text-white uppercase">
-																		{action}
-																	</span>
-																	<span className="text-xs text-secondary-500 dark:text-white">
-																		{action === "get" && "- Read host data"}
-																		{action === "put" && "- Replace host data"}
-																		{action === "patch" && "- Update host data"}
-																		{action === "update" &&
-																			"- Modify host data"}
-																		{action === "delete" && "- Delete hosts"}
-																	</span>
-																</label>
-															),
-														)}
-													</div>
-												</div>
-											</div>
+											<ApiScopeSelector
+												scopes={form_data.scopes}
+												onToggle={toggle_scope_action}
+											/>
 											<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 												Select the permissions this API credential should have
 											</p>
@@ -2631,47 +2580,10 @@ const Integrations = () => {
 											<span className="block text-sm font-medium text-secondary-700 dark:text-white mb-2">
 												Scopes
 											</span>
-											<div className="border border-secondary-300 dark:border-secondary-600 rounded-md p-4 bg-secondary-50 dark:bg-secondary-900">
-												<div className="mb-3">
-													<p className="text-xs font-semibold text-secondary-700 dark:text-white mb-2">
-														Host Permissions
-													</p>
-													<div className="space-y-2">
-														{["get", "put", "patch", "update", "delete"].map(
-															(action) => (
-																<label
-																	key={action}
-																	className="flex items-center gap-2"
-																>
-																	<input
-																		type="checkbox"
-																		checked={
-																			form_data.scopes?.host?.includes(
-																				action,
-																			) || false
-																		}
-																		onChange={() =>
-																			toggle_scope_action("host", action)
-																		}
-																		className="rounded border-secondary-300 dark:border-secondary-600 text-primary-600 focus:ring-primary-500 dark:focus:ring-primary-400"
-																	/>
-																	<span className="text-sm text-secondary-700 dark:text-white uppercase">
-																		{action}
-																	</span>
-																	<span className="text-xs text-secondary-500 dark:text-white">
-																		{action === "get" && "- Read host data"}
-																		{action === "put" && "- Replace host data"}
-																		{action === "patch" && "- Update host data"}
-																		{action === "update" &&
-																			"- Modify host data"}
-																		{action === "delete" && "- Delete hosts"}
-																	</span>
-																</label>
-															),
-														)}
-													</div>
-												</div>
-											</div>
+											<ApiScopeSelector
+												scopes={form_data.scopes}
+												onToggle={toggle_scope_action}
+											/>
 											<p className="mt-1 text-xs text-secondary-500 dark:text-white">
 												Update the permissions for this API credential
 											</p>

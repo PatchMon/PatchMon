@@ -46,8 +46,9 @@ UPDATE auto_enrollment_tokens SET
     expires_at = $5,
     default_host_group_id = $6,
     scopes = $7,
-    updated_at = $8
-WHERE id = $9;
+    metadata = $8,
+    updated_at = $9
+WHERE id = $10;
 
 -- name: DeleteAutoEnrollmentToken :exec
 DELETE FROM auto_enrollment_tokens WHERE id = $1;

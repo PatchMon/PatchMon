@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/PatchMon/PatchMon/server-source-code/internal/middleware"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/models"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"github.com/go-chi/chi/v5"
@@ -13,6 +14,22 @@ import (
 type HostGroupsHandler struct {
 	hostGroups *store.HostGroupsStore
 	hosts      *store.HostsStore
+	audit      *store.AuditLogsStore
+}
+
+func (h *HostGroupsHandler) SetAuditLogs(audit *store.AuditLogsStore) {
+	h.audit = audit
+}
+
+// Scoped responses use the same field names as the existing list endpoint.
+func hostGroupResponse(r *http.Request, group *models.HostGroup) interface{} {
+	if middleware.GetApiToken(r.Context()) == nil {
+		return group
+	}
+	return map[string]interface{}{
+		"id": group.ID, "name": group.Name, "description": group.Description,
+		"color": group.Color, "created_at": group.CreatedAt, "updated_at": group.UpdatedAt,
+	}
 }
 
 // NewHostGroupsHandler creates a new host groups handler.
@@ -62,7 +79,7 @@ func (h *HostGroupsHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusNotFound, "Host group not found")
 		return
 	}
-	JSON(w, http.StatusOK, group)
+	JSON(w, http.StatusOK, hostGroupResponse(r, group))
 }
 
 // Create handles POST /host-groups.
@@ -93,7 +110,8 @@ func (h *HostGroupsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to create host group")
 		return
 	}
-	JSON(w, http.StatusCreated, g)
+	recordResourceAudit(r, h.audit, "host_group", g.ID, "created")
+	JSON(w, http.StatusCreated, hostGroupResponse(r, g))
 }
 
 // Update handles PUT /host-groups/:id.
@@ -114,6 +132,10 @@ func (h *HostGroupsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Name != nil {
+		if *req.Name == "" {
+			Error(w, http.StatusBadRequest, "Name is required")
+			return
+		}
 		group.Name = *req.Name
 	}
 	if req.Description != nil {
@@ -126,7 +148,8 @@ func (h *HostGroupsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to update host group")
 		return
 	}
-	JSON(w, http.StatusOK, group)
+	recordResourceAudit(r, h.audit, "host_group", group.ID, "updated")
+	JSON(w, http.StatusOK, hostGroupResponse(r, group))
 }
 
 // Delete handles DELETE /host-groups/:id.
@@ -141,6 +164,7 @@ func (h *HostGroupsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusInternalServerError, "Failed to delete host group")
 		return
 	}
+	recordResourceAudit(r, h.audit, "host_group", id, "deleted")
 	JSON(w, http.StatusOK, map[string]string{"message": "Host group deleted successfully"})
 }
 

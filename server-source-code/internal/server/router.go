@@ -196,6 +196,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		queueInspector,
 	)
 	hostGroupsHandler := handler.NewHostGroupsHandler(hostGroupsStore, hostsStore)
+	hostGroupsHandler.SetAuditLogs(auditLogsStore)
 	dashboardPrefsHandler := handler.NewDashboardPreferencesHandler(dashboardPrefsStore)
 	dockerHandler := handler.NewDockerHandler(dockerStore, registry)
 	reportStore := store.NewReportStore(dbProvider)
@@ -204,6 +205,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 	complianceHandler := handler.NewComplianceHandler(complianceStore, hostsStore, registry, queueClient, queueInspector, integrationStatusStore, cfg.SSGContentDir, notifyEmit, reportStore).WithJobHistory(store.NewJobHistoryStore(dbProvider))
 	autoEnrollmentStore := store.NewAutoEnrollmentStore(dbProvider)
 	autoEnrollmentHandler := handler.NewAutoEnrollmentHandler(autoEnrollmentStore, hostGroupsStore, hostsStore, settingsStore, registry, log, cfg)
+	autoEnrollmentHandler.SetAuditLogs(auditLogsStore)
 
 	var bootstrapStore *store.BootstrapStore
 	var sshTicketStore *store.SshTicketStore
@@ -399,6 +401,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		// Scoped API (Basic Auth with auto_enrollment_tokens, integration_type "api")
 		r.Route("/api", func(r chi.Router) {
 			r.Use(middleware.ApiAuth(autoEnrollmentStore, log))
+			r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitGeneral), middleware.RequireApiScope("patching", "trigger"), hostctx.RequireModule("patching")).Post("/patching/trigger", patchingHandler.ScopedTrigger(auditLogsStore))
 			r.With(middleware.RequireApiScope("host", "get")).Get("/hosts", apiHostsHandler.ListHosts)
 			r.With(middleware.RequireApiScope("host", "get")).Get("/hosts/{id}/stats", apiHostsHandler.GetHostStats)
 			r.With(middleware.RequireApiScope("host", "get")).Get("/hosts/{id}/info", apiHostsHandler.GetHostInfo)
@@ -410,6 +413,16 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 			r.With(middleware.RequireApiScope("host", "get")).Get("/hosts/{id}/notes", apiHostsHandler.GetHostNotes)
 			r.With(middleware.RequireApiScope("host", "get")).Get("/hosts/{id}/integrations", apiHostsHandler.GetHostIntegrations)
 			r.With(middleware.RequireApiScope("host", "delete")).Delete("/hosts/{id}", apiHostsHandler.DeleteHost)
+			r.With(middleware.RequireApiScope("host_group", "get")).Get("/host-groups", hostGroupsHandler.List)
+			r.With(middleware.RequireApiScope("host_group", "get")).Get("/host-groups/{id}", hostGroupsHandler.GetByID)
+			r.With(middleware.RequireApiScope("host_group", "create")).Post("/host-groups", hostGroupsHandler.Create)
+			r.With(middleware.RequireApiScope("host_group", "update")).Put("/host-groups/{id}", hostGroupsHandler.Update)
+			r.With(middleware.RequireApiScope("host_group", "delete")).Delete("/host-groups/{id}", hostGroupsHandler.Delete)
+			r.With(middleware.RequireApiScope("enrollment_token", "get")).Get("/auto-enrollment/tokens", autoEnrollmentHandler.List)
+			r.With(middleware.RequireApiScope("enrollment_token", "get")).Get("/auto-enrollment/tokens/{tokenId}", autoEnrollmentHandler.GetByID)
+			r.With(middleware.RequireApiScope("enrollment_token", "create")).Post("/auto-enrollment/tokens", autoEnrollmentHandler.Create)
+			r.With(middleware.RequireApiScope("enrollment_token", "update")).Patch("/auto-enrollment/tokens/{tokenId}", autoEnrollmentHandler.Update)
+			r.With(middleware.RequireApiScope("enrollment_token", "delete")).Delete("/auto-enrollment/tokens/{tokenId}", autoEnrollmentHandler.Delete)
 		})
 
 		// GetHomepage widget API (Basic Auth with auto_enrollment_tokens, integration_type "gethomepage")

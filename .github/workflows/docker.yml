@@ -99,31 +99,23 @@ jobs:
           token: ${{ github.token }}
           fetch-notes: 'false'
 
-      - name: Set up Go
-        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
-        with:
-          go-version-file: 'agent-source-code/go.mod'
-          cache-dependency-path: 'agent-source-code/go.sum'
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
       - name: Build all agent binaries
-        working-directory: agent-source-code
-        env:
-          CGO_ENABLED: 0
-          VERSION: ${{ steps.ctx.outputs.version }}
-        run: |
-          mkdir -p ../agents-prebuilt
-          for target in "linux/amd64" "linux/arm64" "linux/386" "linux/arm" \
-                        "freebsd/amd64" "freebsd/arm64" "freebsd/386" "freebsd/arm" \
-                        "windows/amd64" "windows/arm64"; do
-            GOOS=${target%/*}
-            GOARCH=${target#*/}
-            export GOOS GOARCH
-            case "$GOARCH" in arm) export GOARM=6 ;; *) unset GOARM ;; esac
-            SUFFIX=""; case "$GOOS" in windows) SUFFIX=".exe" ;; esac
-            go build -buildvcs=false \
-              -ldflags="-s -w -X patchmon-agent/internal/pkgversion.Version=$VERSION" \
-              -o "../agents-prebuilt/patchmon-agent-${GOOS}-${GOARCH}${SUFFIX}" ./cmd/patchmon-agent
-          done
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: docker/server.Dockerfile
+          target: agent-binaries
+          platforms: linux/amd64
+          build-args: |
+            VERSION=${{ steps.ctx.outputs.version }}
+          outputs: type=local,dest=agents-prebuilt
+          cache-from: type=gha,scope=agents
+          # PR runtime tokens cannot export caches; keep fork builds read-only.
+          cache-to: ${{ github.event_name != 'pull_request_target' && 'type=gha,mode=max,scope=agents' || '' }}
+          provenance: false
 
       - name: Upload agent binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -137,8 +129,8 @@ jobs:
     permissions:
       contents: read
     # Same gate as build-agents: a fork PR builds only on the approving label
-    # event. This job runs `npm ci`, i.e. fork-controlled lifecycle scripts, so
-    # it must stay read-only and secret-free.
+    # event. Frontend and Go builds run inside BuildKit; this job remains
+    # read-only and secret-free.
     if: |
       github.event_name != 'pull_request_target' ||
       github.event.pull_request.head.repo.full_name == github.repository ||
@@ -192,71 +184,30 @@ jobs:
             fi
           done
 
-      - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version-file: "package.json"
-          cache: "npm"
-
-      # Built once for every architecture: the output is static JS/CSS/HTML and
-      # is embedded into each binary by //go:embed.
-      - name: Build frontend for embed
-        run: |
-          npm ci
-          npm run build --workspace=frontend
-          rm -rf server-source-code/cmd/server/static/frontend/dist
-          mkdir -p server-source-code/cmd/server/static/frontend
-          cp -r frontend/dist server-source-code/cmd/server/static/frontend/
-
-      - name: Set up Go
-        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417
-        with:
-          go-version-file: 'server-source-code/go.mod'
-          cache-dependency-path: 'server-source-code/go.sum'
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
       # A release needs all four architectures for the release page. Every other
       # event only needs the two the image is built for, so PRs do not pay for
       # 386 and arm.
       - name: Build server binaries
-        working-directory: server-source-code
-        env:
-          CGO_ENABLED: 0
-          VERSION: ${{ steps.ctx.outputs.version }}
-          GITHUB_STARS: ${{ steps.social.outputs.github }}
-          DISCORD_MEMBERS: ${{ steps.social.outputs.discord }}
-          YOUTUBE_SUBSCRIBERS: ${{ steps.social.outputs.youtube }}
-          LINKEDIN_FOLLOWERS: ${{ steps.social.outputs.linkedin }}
-        run: |
-          set -euo pipefail
-          mkdir -p ../server-prebuilt
-
-          SOCIAL_PKG="github.com/PatchMon/PatchMon/server-source-code/internal/social"
-          LDFLAGS="-s -w -X github.com/PatchMon/PatchMon/server-source-code/internal/config.DefaultVersion=${VERSION}"
-          for pair in "GitHubStars:${GITHUB_STARS}" "DiscordMembers:${DISCORD_MEMBERS}" \
-                      "YouTubeSubscribers:${YOUTUBE_SUBSCRIBERS}" "LinkedInFollowers:${LINKEDIN_FOLLOWERS}"; do
-            name="${pair%%:*}"; value="${pair#*:}"
-            [ -n "$value" ] || continue
-            if printf '%s' "$value" | grep -qE '^[0-9]+$'; then
-              LDFLAGS="$LDFLAGS -X $SOCIAL_PKG.$name=$value"
-            else
-              echo "::warning::ignoring non-numeric social count $name='$value'"
-            fi
-          done
-
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            ARCHES="amd64 arm64 386 arm"
-          else
-            ARCHES="amd64 arm64"
-          fi
-          echo "building: $ARCHES"
-
-          for arch in $ARCHES; do
-            export GOOS=linux GOARCH="$arch"
-            case "$arch" in arm) export GOARM=6 ;; *) unset GOARM ;; esac
-            go build -buildvcs=false -ldflags="$LDFLAGS" \
-              -o "../server-prebuilt/patchmon-server-linux-${arch}" ./cmd/server
-          done
-          ls -la ../server-prebuilt
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: docker/server.Dockerfile
+          target: server-binaries
+          platforms: linux/amd64
+          build-args: |
+            VERSION=${{ steps.ctx.outputs.version }}
+            SERVER_ARCHES=${{ github.ref_type == 'tag' && 'amd64 arm64 386 arm' || 'amd64 arm64' }}
+            GITHUB_STARS=${{ steps.social.outputs.github }}
+            DISCORD_MEMBERS=${{ steps.social.outputs.discord }}
+            YOUTUBE_SUBSCRIBERS=${{ steps.social.outputs.youtube }}
+            LINKEDIN_FOLLOWERS=${{ steps.social.outputs.linkedin }}
+          outputs: type=local,dest=server-prebuilt
+          cache-from: type=gha,scope=server-binaries
+          cache-to: ${{ github.event_name != 'pull_request_target' && 'type=gha,mode=max,scope=server-binaries' || '' }}
+          provenance: false
 
       - name: Upload server binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -392,6 +343,11 @@ jobs:
         with:
           context: .
           file: docker/server.Dockerfile
+          target: production
+          # Reuse the container-built release artefacts byte-for-byte.
+          build-args: |
+            SERVER_SOURCE=server-prebuilt
+            AGENT_SOURCE=agents-prebuilt
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
           tags: ${{ steps.meta.outputs.tags }}
@@ -399,9 +355,9 @@ jobs:
           cache-from: type=gha,scope=server
           cache-to: type=gha,mode=max,scope=server
           provenance: false
-          # Force gzip on all layers (including base image layers from dhi.io/alpine-base
-          # which ship as zstd). Without force-compression, mixed zstd/gzip manifests
-          # break Podman <5.7 and Docker without the containerd image store.
+          # Force gzip on all layers, including the runtime base image. Mixed
+          # zstd/gzip manifests break Podman <5.7 and Docker without the
+          # containerd image store.
           # See: https://github.com/PatchMon/PatchMon/issues/679
           outputs: type=image,compression=gzip,force-compression=true
 
@@ -520,6 +476,10 @@ jobs:
         with:
           context: .
           file: docker/server.Dockerfile
+          target: production
+          build-args: |
+            SERVER_SOURCE=server-prebuilt
+            AGENT_SOURCE=agents-prebuilt
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
           tags: ${{ steps.meta-harbor.outputs.tags }}
@@ -540,9 +500,9 @@ jobs:
           # cache-from; they simply do not write back.
           cache-from: type=gha,scope=server
           provenance: false
-          # Force gzip on all layers (including base image layers from dhi.io/alpine-base
-          # which ship as zstd). Without force-compression, mixed zstd/gzip manifests
-          # break Podman <5.7 and Docker without the containerd image store.
+          # Force gzip on all layers, including the runtime base image. Mixed
+          # zstd/gzip manifests break Podman <5.7 and Docker without the
+          # containerd image store.
           # See: https://github.com/PatchMon/PatchMon/issues/679
           outputs: type=image,compression=gzip,force-compression=true
 

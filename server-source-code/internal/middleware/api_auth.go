@@ -13,11 +13,15 @@ import (
 
 	"github.com/PatchMon/PatchMon/server-source-code/internal/clientip"
 	"github.com/PatchMon/PatchMon/server-source-code/internal/db"
-	"github.com/PatchMon/PatchMon/server-source-code/internal/store"
 	"golang.org/x/crypto/bcrypt"
 )
 
 const ApiTokenKey contextKey = "api_token"
+
+type apiTokenStore interface {
+	GetByKey(context.Context, string) (db.AutoEnrollmentToken, error)
+	UpdateLastUsedAt(context.Context, string) error
+}
 
 // apiError writes a JSON error response for scoped API (doc parity).
 func apiError(w http.ResponseWriter, code int, errorMsg string) {
@@ -30,7 +34,7 @@ func apiError(w http.ResponseWriter, code int, errorMsg string) {
 // (auto_enrollment_tokens where metadata.integration_type == "api"), updates last_used_at,
 // and attaches the token to the request context.
 // Pass a logger for debug-level API auth logging.
-func ApiAuth(tokens *store.AutoEnrollmentStore, log *slog.Logger) func(http.Handler) http.Handler {
+func ApiAuth(tokens apiTokenStore, log *slog.Logger) func(http.Handler) http.Handler {
 	return ApiAuthForIntegration(tokens, "api", log)
 }
 
@@ -38,7 +42,7 @@ func ApiAuth(tokens *store.AutoEnrollmentStore, log *slog.Logger) func(http.Hand
 // (auto_enrollment_tokens where metadata.integration_type == integrationType), updates last_used_at,
 // and attaches the token to the request context.
 // Use for integration-specific endpoints (e.g. "gethomepage").
-func ApiAuthForIntegration(tokens *store.AutoEnrollmentStore, integrationType string, log *slog.Logger) func(http.Handler) http.Handler {
+func ApiAuthForIntegration(tokens apiTokenStore, integrationType string, log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			auth := r.Header.Get("Authorization")
@@ -69,14 +73,14 @@ func ApiAuthForIntegration(tokens *store.AutoEnrollmentStore, integrationType st
 			apiKey, apiSecret := parts[0], parts[1]
 
 			if log != nil {
-				log.Debug("api_auth validating", "path", r.URL.Path, "api_key", apiKey)
+				log.Debug("api_auth validating", "path", r.URL.Path)
 			}
 
 			ctx := r.Context()
 			token, err := tokens.GetByKey(ctx, apiKey)
 			if err != nil {
 				if log != nil {
-					log.Debug("api_auth failed: token not found", "path", r.URL.Path, "api_key", apiKey, "error", err)
+					log.Debug("api_auth failed: token not found", "path", r.URL.Path)
 				}
 				apiError(w, http.StatusUnauthorized, "Invalid API key")
 				return
@@ -90,7 +94,7 @@ func ApiAuthForIntegration(tokens *store.AutoEnrollmentStore, integrationType st
 				return
 			}
 
-			if token.ExpiresAt.Valid && token.ExpiresAt.Time.Before(time.Now()) {
+			if token.ExpiresAt.Valid && !token.ExpiresAt.Time.After(time.Now()) {
 				if log != nil {
 					log.Debug("api_auth failed: token expired", "path", r.URL.Path, "token_id", token.ID)
 				}
