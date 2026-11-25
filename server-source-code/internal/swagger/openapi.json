@@ -350,6 +350,10 @@
 	},
 	"tags": [
 		{
+			"name": "Scoped API - Patching",
+			"description": "Trigger patch runs using explicit patching:trigger scope and Basic Auth."
+		},
+		{
 			"name": "Scoped API - Host Groups",
 			"description": "Host group administration using explicit host_group scopes and API Basic Auth."
 		},
@@ -383,6 +387,134 @@
 		}
 	],
 	"paths": {
+		"/api/patching/trigger": {
+			"post": {
+				"tags": [
+					"Scoped API - Patching"
+				],
+				"summary": "Trigger a patch run",
+				"description": "Requires an API integration credential with the explicit patching:trigger scope and the patching module. Reuses the native patching handler. An immediate override bypasses the policy delay; omitted override uses the effective policy. The credential is not a user JWT. Active-run conflicts and native validation remain in effect. This scope can trigger patches on any host accessible in the credential database context.",
+				"security": [
+					{
+						"basicAuth": []
+					}
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"required": [
+									"host_id",
+									"patch_type"
+								],
+								"properties": {
+									"host_id": {
+										"type": "string",
+										"format": "uuid"
+									},
+									"patch_type": {
+										"type": "string",
+										"enum": [
+											"patch_all",
+											"patch_package"
+										]
+									},
+									"package_name": {
+										"type": "string"
+									},
+									"package_names": {
+										"type": "array",
+										"items": {
+											"type": "string"
+										}
+									},
+									"dry_run": {
+										"type": "boolean",
+										"default": false
+									},
+									"pending_approval": {
+										"type": "boolean",
+										"default": false
+									},
+									"schedule_override": {
+										"type": "string",
+										"enum": [
+											"immediate"
+										]
+									},
+									"windows_scope": {
+										"type": "object",
+										"description": "Native Windows patch scope, if applicable."
+									}
+								},
+								"example": {
+									"host_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+									"patch_type": "patch_all",
+									"schedule_override": "immediate"
+								}
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Patch run queued, scheduled, or submitted for approval.",
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"message": {
+											"type": "string"
+										},
+										"patch_run_id": {
+											"type": "string",
+											"format": "uuid"
+										},
+										"job_id": {
+											"type": "string"
+										},
+										"run_at": {
+											"type": "string",
+											"format": "date-time"
+										},
+										"queued": {
+											"type": "boolean"
+										},
+										"pending_approval": {
+											"type": "boolean"
+										}
+									}
+								}
+							}
+						}
+					},
+					"400": {
+						"description": "Invalid request or unsupported patch targets."
+					},
+					"401": {
+						"description": "Missing or invalid API credential."
+					},
+					"403": {
+						"description": "Scope, IP restriction or module access denied."
+					},
+					"404": {
+						"description": "Host not found."
+					},
+					"409": {
+						"description": "Host already has an active patch run."
+					},
+					"429": {
+						"description": "Rate limit exceeded."
+					},
+					"500": {
+						"description": "Patch run or queue failure."
+					}
+				}
+			}
+		},
 		"/api/host-groups": {
 			"get": {
 				"tags": ["Scoped API - Host Groups"],

@@ -10,6 +10,11 @@ const resources = [
 		label: "Enrollment Token",
 		actions: ["get", "create", "update", "delete"],
 	},
+	{
+		resource: "patching",
+		label: "Patching",
+		actions: ["trigger"],
+	},
 ];
 
 export default function ApiScopeSelector({ scopes, onToggle }) {

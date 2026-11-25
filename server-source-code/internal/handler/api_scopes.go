@@ -9,6 +9,7 @@ var apiScopeActions = map[string]map[string]bool{
 	"host":             {"get": true, "put": true, "patch": true, "update": true, "delete": true},
 	"host_group":       {"get": true, "create": true, "update": true, "delete": true},
 	"enrollment_token": {"get": true, "create": true, "update": true, "delete": true},
+	"patching":         {"trigger": true},
 }
 
 func validateScopes(raw json.RawMessage) error {

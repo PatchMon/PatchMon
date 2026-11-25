@@ -1061,6 +1061,22 @@ func (h *PatchingHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
+	h.trigger(w, r, nil)
+}
+
+// ScopedTrigger reuses the native patch pipeline without impersonating a user.
+// The router must enforce API credential authentication, scope and module access.
+func (h *PatchingHandler) ScopedTrigger(audit *store.AuditLogsStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if middleware.GetApiToken(r.Context()) == nil {
+			JSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+			return
+		}
+		h.trigger(w, r, audit)
+	}
+}
+
+func (h *PatchingHandler) trigger(w http.ResponseWriter, r *http.Request, audit *store.AuditLogsStore) {
 	var body struct {
 		HostID       string   `json:"host_id"`
 		PatchType    string   `json:"patch_type"`
@@ -1244,6 +1260,7 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 	// Pending-approval runs don't enqueue any work — they sit in the DB
 	// until someone approves them. Short-circuit here.
 	if body.PendingApproval {
+		recordResourceAudit(r, audit, "patch_run", patchRunID, "trigger")
 		JSON(w, http.StatusOK, map[string]interface{}{
 			"message":          "Submitted for approval",
 			"patch_run_id":     patchRunID,
@@ -1282,6 +1299,7 @@ func (h *PatchingHandler) Trigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	recordResourceAudit(r, audit, "patch_run", patchRunID, "trigger")
 	msg := "Patch queued"
 	if body.DryRun {
 		msg = "Dry run queued"

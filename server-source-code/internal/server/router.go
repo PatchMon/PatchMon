@@ -401,6 +401,7 @@ func NewRouter(ctx context.Context, cfg *config.Config, db *database.DB, rdb *re
 		// Scoped API (Basic Auth with auto_enrollment_tokens, integration_type "api")
 		r.Route("/api", func(r chi.Router) {
 			r.Use(middleware.ApiAuth(autoEnrollmentStore, log))
+			r.With(middleware.RateLimit(redisResolver, cfgResolver, middleware.RateLimitGeneral), middleware.RequireApiScope("patching", "trigger"), hostctx.RequireModule("patching")).Post("/patching/trigger", patchingHandler.ScopedTrigger(auditLogsStore))
 			r.With(middleware.RequireApiScope("host", "get")).Get("/hosts", apiHostsHandler.ListHosts)
 			r.With(middleware.RequireApiScope("host", "get")).Get("/hosts/{id}/stats", apiHostsHandler.GetHostStats)
 			r.With(middleware.RequireApiScope("host", "get")).Get("/hosts/{id}/info", apiHostsHandler.GetHostInfo)
