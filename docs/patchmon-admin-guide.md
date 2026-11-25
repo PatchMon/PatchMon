@@ -1226,6 +1226,7 @@ Two flows produce a patch run from the Packages page:
 #### Patch selected packages across chosen hosts
 
 1. Tick the checkbox on each package to include. The header shows `N selected`.
+   On narrow screens, use **Select all on page** above the package cards to select the eligible packages on the current page. **Deselect all on page** clears only that page, leaving other pages selected.
 2. Click **Patch selected (N)** (top right).
 3. The **Patch wizard** opens in multi-host mode, discovers which hosts have the selected packages installed and need updates, and lets you pick which to include.
 4. If the **Host** filter is already set to a single host, the wizard locks to that host to avoid offering unrelated hosts.
