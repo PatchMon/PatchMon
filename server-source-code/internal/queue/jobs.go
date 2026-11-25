@@ -24,6 +24,7 @@ const (
 	TypeRefreshIntegrationStatus = "refresh_integration_status"
 	TypeDockerInventoryRefresh   = "docker_inventory_refresh"
 	TypeUpdateAgent              = "update_agent"
+	TypeRebootHost               = "reboot_host"
 	TypeSessionCleanup           = "session-cleanup"
 	TypeOrphanedRepoCleanup      = "orphaned-repo-cleanup"
 	TypeOrphanedPkgCleanup       = "orphaned-package-cleanup"
@@ -36,6 +37,7 @@ const (
 	TypeInstallComplianceTools   = "install_compliance_tools"
 	TypeSSGUpgrade               = "ssg_upgrade"
 	TypeRunPatch                 = "run_patch"
+	TypeAutoPatchDispatch        = "auto_patch_dispatch"
 	TypeScheduledReportsDispatch = "scheduled_reports_dispatch"
 	TypeScheduledReportRun       = "scheduled_report_run"
 	QueueAgentCommands           = "agent-commands"
@@ -143,6 +145,10 @@ type RunPatchPayload struct {
 	PackageName  *string  `json:"package_name,omitempty"`
 	PackageNames []string `json:"package_names,omitempty"`
 	DryRun       bool     `json:"dry_run,omitempty"`
+	// RebootIfRequired tells the agent to reboot after a successful run iff
+	// the host still flags a pending reboot. Set by policy-driven automatic
+	// runs (patch_policies.auto_reboot); manual runs leave it false.
+	RebootIfRequired bool `json:"reboot_if_required,omitempty"`
 }
 
 // NewRunPatchTask creates a run_patch task.
@@ -273,6 +279,30 @@ func NewUpdateAgentTask(apiID, host string, bypassSettings bool) (*asynq.Task, e
 		return nil, err
 	}
 	return asynq.NewTask(TypeUpdateAgent, payload, asynq.Queue(QueueAgentCommands), asynq.MaxRetry(3)), nil
+}
+
+// RebootHostPayload is the payload for the reboot_host job.
+type RebootHostPayload struct {
+	ApiID        string `json:"api_id"`
+	Host         string `json:"host,omitempty"`
+	DelayMinutes int    `json:"delay_minutes"`
+	Reason       string `json:"reason,omitempty"`
+}
+
+// NewRebootHostTask creates a reboot_host task. MaxRetry is intentionally
+// low: rebooting a host that has come back online from a stale queued task
+// would be a nasty surprise, so we'd rather drop than retry.
+func NewRebootHostTask(apiID, host string, delayMinutes int, reason string) (*asynq.Task, error) {
+	payload, err := json.Marshal(RebootHostPayload{
+		ApiID:        apiID,
+		Host:         host,
+		DelayMinutes: delayMinutes,
+		Reason:       reason,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TypeRebootHost, payload, asynq.Queue(QueueAgentCommands), asynq.MaxRetry(1)), nil
 }
 
 // AutomationRetention keeps completed automation tasks in Redis for 7 days for dashboard visibility.
@@ -696,6 +726,82 @@ func (h *UpdateAgentHandler) ProcessTask(ctx context.Context, t *asynq.Task) err
 	return nil
 }
 
+// RebootHostHandler handles reboot_host jobs.
+type RebootHostHandler struct {
+	registry *agentregistry.Registry
+	db       *database.DB
+	log      *slog.Logger
+}
+
+// NewRebootHostHandler creates a reboot_host handler.
+func NewRebootHostHandler(registry *agentregistry.Registry, db *database.DB, log *slog.Logger) *RebootHostHandler {
+	return &RebootHostHandler{registry: registry, db: db, log: log}
+}
+
+// ProcessTask implements asynq.Handler.
+func (h *RebootHostHandler) ProcessTask(ctx context.Context, t *asynq.Task) error {
+	var p RebootHostPayload
+	if err := json.Unmarshal(t.Payload(), &p); err != nil {
+		return err
+	}
+
+	taskID, _ := asynq.GetTaskID(ctx)
+	retryCount, _ := asynq.GetRetryCount(ctx)
+	attempt := int32(retryCount + 1)
+
+	if h.db != nil && taskID != "" && retryCount == 0 {
+		host, err := h.db.Queries.GetHostByApiID(ctx, p.ApiID)
+		var hostID *string
+		if err == nil {
+			hostID = &host.ID
+		}
+		apiIDPtr := &p.ApiID
+		_ = h.db.Queries.InsertJobHistory(ctx, db.InsertJobHistoryParams{
+			ID:            uuid.New().String(),
+			JobID:         taskID,
+			QueueName:     QueueAgentCommands,
+			JobName:       TypeRebootHost,
+			HostID:        hostID,
+			ApiID:         apiIDPtr,
+			Status:        "active",
+			AttemptNumber: attempt,
+		})
+	}
+
+	if !h.registry.IsConnected(p.ApiID) {
+		h.log.Warn("reboot_host: agent not connected", "api_id", p.ApiID)
+		if taskID != "" && h.db != nil {
+			msg := "Agent not connected"
+			_ = h.db.Queries.UpdateJobHistoryFailed(ctx, db.UpdateJobHistoryFailedParams{JobID: taskID, ErrorMessage: &msg})
+		}
+		// Drop (don't retry): a queued reboot that fires later on a fresh
+		// session would be unexpected.
+		return nil
+	}
+
+	wsMsg := map[string]interface{}{
+		"type":                 "reboot_host",
+		"reboot_delay_minutes": p.DelayMinutes,
+	}
+	if p.Reason != "" {
+		wsMsg["reboot_reason"] = p.Reason
+	}
+	msg, err := json.Marshal(wsMsg)
+	if err != nil {
+		return err
+	}
+	if err := h.registry.SendMessage(p.ApiID, websocket.TextMessage, msg); err != nil {
+		h.log.Warn("reboot_host: write failed", "api_id", p.ApiID, "error", err)
+		return err
+	}
+
+	if taskID != "" && h.db != nil {
+		_ = h.db.Queries.UpdateJobHistoryCompleted(ctx, taskID)
+	}
+	h.log.Info("reboot_host sent", "api_id", p.ApiID, "delay_minutes", p.DelayMinutes)
+	return nil
+}
+
 // RunPatchHandler handles run_patch jobs.
 type RunPatchHandler struct {
 	registry    *agentregistry.Registry
@@ -910,6 +1016,9 @@ func buildRunPatchMessage(p RunPatchPayload, run *db.GetPatchRunByIDRow, windows
 		"patch_run_id": p.PatchRunID,
 		"patch_type":   p.PatchType,
 		"dry_run":      p.DryRun,
+	}
+	if p.RebootIfRequired {
+		payload["reboot_if_required"] = true
 	}
 	if !windows {
 		if p.PackageName != nil {
