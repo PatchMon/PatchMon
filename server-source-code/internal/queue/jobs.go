@@ -37,6 +37,7 @@ const (
 	TypeInstallComplianceTools   = "install_compliance_tools"
 	TypeSSGUpgrade               = "ssg_upgrade"
 	TypeRunPatch                 = "run_patch"
+	TypeAutoPatchDispatch        = "auto_patch_dispatch"
 	TypeScheduledReportsDispatch = "scheduled_reports_dispatch"
 	TypeScheduledReportRun       = "scheduled_report_run"
 	QueueAgentCommands           = "agent-commands"
@@ -144,6 +145,10 @@ type RunPatchPayload struct {
 	PackageName  *string  `json:"package_name,omitempty"`
 	PackageNames []string `json:"package_names,omitempty"`
 	DryRun       bool     `json:"dry_run,omitempty"`
+	// RebootIfRequired tells the agent to reboot after a successful run iff
+	// the host still flags a pending reboot. Set by policy-driven automatic
+	// runs (patch_policies.auto_reboot); manual runs leave it false.
+	RebootIfRequired bool `json:"reboot_if_required,omitempty"`
 }
 
 // NewRunPatchTask creates a run_patch task.
@@ -1011,6 +1016,9 @@ func buildRunPatchMessage(p RunPatchPayload, run *db.GetPatchRunByIDRow, windows
 		"patch_run_id": p.PatchRunID,
 		"patch_type":   p.PatchType,
 		"dry_run":      p.DryRun,
+	}
+	if p.RebootIfRequired {
+		payload["reboot_if_required"] = true
 	}
 	if !windows {
 		if p.PackageName != nil {
