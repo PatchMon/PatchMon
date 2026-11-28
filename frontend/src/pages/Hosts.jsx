@@ -2708,6 +2708,7 @@ const Hosts = () => {
 					onClose={() => setShowBulkAssignModal(false)}
 					onAssign={handleBulkAssign}
 					isLoading={bulkUpdateGroupMutation.isPending}
+					error={bulkUpdateGroupMutation.error}
 				/>
 			)}
 
@@ -2800,14 +2801,46 @@ const Hosts = () => {
 };
 
 // Bulk Assign Modal Component
-const BulkAssignModal = ({
+export const BulkAssignModal = ({
 	selectedHosts,
 	hosts,
 	onClose,
 	onAssign,
 	isLoading,
+	error,
 }) => {
 	const [selectedGroupIds, setSelectedGroupIds] = useState([]);
+	const [showCreateGroup, setShowCreateGroup] = useState(false);
+	const [groupName, setGroupName] = useState("");
+	const groupNameId = useId();
+	const queryClient = useQueryClient();
+	const createGroup = useMutation({
+		mutationFn: (name) => hostGroupsAPI.create({ name }),
+		onSuccess: async ({ data }) => {
+			// Create returns the Go model; List returns lowercase field names.
+			const group = {
+				id: data.ID,
+				name: data.Name,
+				color: data.Color,
+				description: data.Description,
+			};
+			// Keep the new group visible even if an older list request is in flight.
+			await queryClient.cancelQueries({ queryKey: ["hostGroups"] });
+			queryClient.setQueryData(["hostGroups"], (groups = []) => [
+				...groups.filter((existing) => existing.id !== group.id),
+				group,
+			]);
+			setSelectedGroupIds((ids) => [...ids, group.id]);
+			setGroupName("");
+			setShowCreateGroup(false);
+			queryClient.invalidateQueries({ queryKey: ["hostGroups"] });
+		},
+	});
+	const busy = isLoading || createGroup.isPending;
+	const handleCreateGroup = (event) => {
+		event.preventDefault();
+		if (groupName.trim() && !busy) createGroup.mutate(groupName.trim());
+	};
 
 	// Fetch host groups for selection
 	const { data: hostGroups } = useQuery({
@@ -2821,7 +2854,7 @@ const BulkAssignModal = ({
 
 	const handleSubmit = (e) => {
 		e.preventDefault();
-		onAssign(selectedGroupIds);
+		if (!busy) onAssign(selectedGroupIds);
 	};
 
 	const toggleGroup = (groupId) => {
@@ -2836,7 +2869,7 @@ const BulkAssignModal = ({
 
 	const modal = (
 		<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[120]">
-			<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 w-full max-w-md">
+			<div className="bg-white dark:bg-secondary-800 rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
 				<div className="flex justify-between items-center mb-4">
 					<h3 className="text-lg font-semibold text-secondary-900 dark:text-white">
 						Assign to Host Groups
@@ -2844,6 +2877,8 @@ const BulkAssignModal = ({
 					<button
 						type="button"
 						onClick={onClose}
+						disabled={busy}
+						aria-label="Close group assignment"
 						className="text-secondary-400 hover:text-secondary-600 dark:text-white dark:hover:text-secondary-100"
 					>
 						<X className="h-5 w-5" />
@@ -2867,7 +2902,72 @@ const BulkAssignModal = ({
 					</div>
 				</div>
 
+				{showCreateGroup ? (
+					<form onSubmit={handleCreateGroup} className="mb-4 space-y-2">
+						<label htmlFor={groupNameId} className="block text-sm font-medium">
+							New group name
+						</label>
+						<input
+							id={groupNameId}
+							className="w-full px-3 py-2 border border-secondary-300 dark:border-secondary-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-secondary-700 text-secondary-900 dark:text-white"
+							value={groupName}
+							onChange={(event) => setGroupName(event.target.value)}
+							disabled={busy}
+							required
+						/>
+						<p className="text-sm text-secondary-500 dark:text-secondary-300">
+							Create a group, then use Assign to Groups to save host membership.
+							The group will remain if you cancel assignment.
+						</p>
+						{createGroup.isError && (
+							<p
+								role="alert"
+								className="text-sm text-red-600 dark:text-red-400"
+							>
+								{createGroup.error?.response?.data?.error ||
+									"Failed to create group. Please try again."}
+							</p>
+						)}
+						<div className="flex gap-2">
+							<button
+								type="submit"
+								className="btn-primary"
+								disabled={busy || !groupName.trim()}
+							>
+								{createGroup.isPending ? "Creating..." : "Create and select"}
+							</button>
+							<button
+								type="button"
+								className="btn-outline"
+								disabled={busy}
+								onClick={() => setShowCreateGroup(false)}
+							>
+								Cancel new group
+							</button>
+						</div>
+					</form>
+				) : (
+					<button
+						type="button"
+						className="btn-outline mb-4 flex items-center gap-2"
+						disabled={busy}
+						onClick={() => {
+							createGroup.reset();
+							setShowCreateGroup(true);
+						}}
+					>
+						<Plus className="h-4 w-4" />
+						Create new group
+					</button>
+				)}
+
 				<form onSubmit={handleSubmit} className="space-y-4">
+					{error && (
+						<p role="alert" className="text-sm text-red-600 dark:text-red-400">
+							{error.response?.data?.error ||
+								"Failed to assign groups. Please try again."}
+						</p>
+					)}
 					<div>
 						<span className="block text-sm font-medium text-secondary-700 dark:text-secondary-200 mb-3">
 							Host Groups
@@ -2885,6 +2985,7 @@ const BulkAssignModal = ({
 								>
 									<input
 										type="checkbox"
+										disabled={busy}
 										checked={selectedGroupIds.includes(group.id)}
 										onChange={() => toggleGroup(group.id)}
 										className="w-4 h-4 text-primary-600 bg-gray-100 border-gray-300 rounded focus:ring-primary-500 dark:focus:ring-primary-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
@@ -2914,11 +3015,11 @@ const BulkAssignModal = ({
 							type="button"
 							onClick={onClose}
 							className="btn-outline"
-							disabled={isLoading}
+							disabled={busy}
 						>
 							Cancel
 						</button>
-						<button type="submit" className="btn-primary" disabled={isLoading}>
+						<button type="submit" className="btn-primary" disabled={busy}>
 							{isLoading ? "Assigning..." : "Assign to Groups"}
 						</button>
 					</div>
