@@ -997,6 +997,8 @@ On step 2 of the **Add Host** wizard (**Host details**) tick each group the host
 4. Click **Assign to Group**. A modal lists every group with a checkbox.
 5. Tick one or more groups and click **Assign to Groups**. All selected hosts are updated in a single call.
 
+To create a group without leaving this dialog, click **Create new group**, enter its name, and click **Create and select**. The new group is automatically checked alongside any other groups you selected. Click **Assign to Groups** to save the host memberships. Creating a group and assigning hosts are separate steps: cancelling the assignment leaves the new group available in Settings → Host Groups. You can edit its colour and description there.
+
 > **Note on bulk behaviour:** the bulk assign modal **sets** the selected groups on each host. It does not add to existing memberships. If you want to add a group without removing others, use the inline edit on the Hosts table or the Host Groups selector on the Host Detail page.
 
 #### From the Host Detail page
